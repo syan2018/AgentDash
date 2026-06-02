@@ -18,7 +18,7 @@ use crate::session::types::{
     HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
     SessionPromptLifecycle,
 };
-use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchFollowUpSource {
     Explicit,
@@ -125,7 +125,7 @@ pub struct LaunchPlan {
 
 pub struct LaunchPlanInput {
     pub resolved_payload: ResolvedPromptPayload,
-    pub launch_request: RuntimeLaunchRequest,
+    pub launch_envelope: FrameLaunchEnvelope,
     pub session_id: String,
     pub turn_id: String,
     pub lifecycle: SessionPromptLifecycle,
@@ -148,19 +148,12 @@ pub struct LaunchPlanInput {
 
 impl LaunchPlan {
     pub fn build(input: LaunchPlanInput) -> Self {
-        let working_directory = input
-            .launch_request
-            .working_directory
-            .clone()
-            .expect("RuntimeLaunchRequest.working_directory 必须在 launch 前解析");
-        let executor_config = input
-            .launch_request
-            .executor_config
-            .clone()
-            .expect("RuntimeLaunchRequest.executor_config 必须在 launch 前解析");
-        let mcp_servers = input.launch_request.typed_mcp_servers.clone();
-        let vfs = input.launch_request.typed_vfs.clone();
-        let identity = input.launch_request.identity.clone();
+        let working_directory = input.launch_envelope.working_directory.clone();
+        let executor_config = input.launch_envelope.executor_config.clone();
+        let mcp_servers = input.launch_envelope.mcp_servers.clone();
+        let vfs = input.launch_envelope.vfs.clone();
+        let has_vfs = !vfs.mounts.is_empty();
+        let identity = input.launch_envelope.intent.identity.clone();
         let title_hint = input
             .resolved_payload
             .text_prompt
@@ -183,19 +176,19 @@ impl LaunchPlan {
             follow_up_session_id: input.follow_up_session_id,
             follow_up_source: input.follow_up_source,
             pending_transition_count,
-            vfs_source: input.launch_request.resolution_trace.vfs_source.clone(),
+            vfs_source: input.launch_envelope.resolution_trace.vfs_source.clone(),
             pending_vfs_overlay_applied: input
-                .launch_request
+                .launch_envelope
                 .resolution_trace
                 .pending_overlay_applied,
-            mcp_source: input.launch_request.resolution_trace.mcp_source.clone(),
+            mcp_source: input.launch_envelope.resolution_trace.mcp_source.clone(),
             capability_source: input
-                .launch_request
+                .launch_envelope
                 .resolution_trace
                 .capability_source
                 .clone(),
             working_directory: working_directory.clone(),
-            has_vfs: vfs.is_some(),
+            has_vfs,
             backend_execution_backend_id: input
                 .backend_execution
                 .as_ref()
@@ -234,13 +227,13 @@ impl LaunchPlan {
             working_directory: working_directory.clone(),
             executor_config: executor_config.clone(),
             mcp_servers: mcp_servers.clone(),
-            has_vfs: vfs.is_some(),
+            has_vfs,
         };
         let trace = LaunchPlanTrace {
             entries: vec![
                 LaunchPlanTraceEntry {
                     stage: "construction",
-                    source: "RuntimeLaunchRequest".to_string(),
+                    source: "FrameLaunchEnvelope".to_string(),
                 },
                 LaunchPlanTraceEntry {
                     stage: "runtime_command",
@@ -263,7 +256,7 @@ impl LaunchPlan {
             environment_variables: input.environment_variables,
             executor_config,
             mcp_servers,
-            vfs,
+            vfs: if has_vfs { Some(vfs) } else { None },
             backend_execution: input
                 .backend_execution
                 .as_ref()
@@ -280,12 +273,12 @@ impl LaunchPlan {
             context_frames: Vec::new(),
             assembled_tools: Vec::new(),
         };
-        let context_bundle = input.launch_request.context_bundle.clone();
-        let continuation_context_frame = input.launch_request.continuation_context_frame.clone();
+        let context_bundle = input.launch_envelope.context_bundle.clone();
+        let continuation_context_frame = input.launch_envelope.continuation_context_frame.clone();
         Self {
             resolved_payload: input.resolved_payload,
             title_hint,
-            discovered_guidelines: input.launch_request.discovered_guidelines.clone(),
+            discovered_guidelines: input.launch_envelope.intent.discovered_guidelines.clone(),
             context_bundle,
             continuation_context_frame,
             lifecycle,

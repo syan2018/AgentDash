@@ -18,7 +18,7 @@ use crate::session::types::{
     BackendSelectionInput, BackendSelectionInputMode, HookSnapshotReloadTrigger, SessionMeta,
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, resolve_session_prompt_lifecycle,
 };
-use crate::workflow::runtime_launch::{FrameLaunchEnvelope, RuntimeLaunchRequest};
+use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
 pub(in crate::session) struct LaunchPlanner<'a> {
     deps: LaunchPlanningDeps,
@@ -49,24 +49,28 @@ impl<'a> LaunchPlanner<'a> {
         let sid = input.session_id.to_string();
         let command = input.command;
 
-        // envelope 的三个核心字段已在边界验证为 non-optional
         let working_directory = input.launch_envelope.working_directory.clone();
         let executor_config = input.launch_envelope.executor_config.clone();
         let capability_state = input.launch_envelope.capability_state.clone();
 
-        let mut req = input.launch_envelope.into_launch_request();
+        let mut context_bundle = input.launch_envelope.context_bundle.clone();
+        let terminal_hook_effect_binding =
+            input.launch_envelope.intent.terminal_hook_effect_binding.clone();
+        let typed_vfs = input.launch_envelope.vfs.clone();
+        let _mcp_servers = input.launch_envelope.mcp_servers.clone();
+        let environment_variables = input.launch_envelope.intent.environment_variables.clone();
+        let prompt_blocks = input.launch_envelope.intent.prompt_blocks.clone();
+        let base_capability_override = input.launch_envelope.base_capability_state.clone();
 
-        let mut context_bundle = req.context_bundle.clone();
-        let terminal_hook_effect_binding = req.terminal_hook_effect_binding.clone();
         let mut prompt_input = command.user_input().clone();
-        if let Some(blocks) = req.prompt_blocks.clone() {
+        if let Some(blocks) = prompt_blocks.clone() {
             prompt_input.prompt_blocks = Some(blocks);
         }
-        if let Some(config) = req.executor_config.clone() {
+        if let Some(config) = Some(executor_config.clone()) {
             prompt_input.executor_config = Some(config);
         }
-        if !req.environment_variables.is_empty() {
-            prompt_input.env = req.environment_variables.clone();
+        if !environment_variables.is_empty() {
+            prompt_input.env = environment_variables.clone();
         }
         let resolved_payload = prompt_input
             .resolve_prompt_payload()
@@ -76,20 +80,16 @@ impl<'a> LaunchPlanner<'a> {
             .iter()
             .map(|command| command.pending_capability_state_transition())
             .collect::<Vec<_>>();
-        let default_mount_root = req
-            .typed_vfs
-            .as_ref()
-            .and_then(|vfs| vfs.default_mount())
+        let default_mount_root = typed_vfs
+            .default_mount()
             .map(|mount| {
                 crate::session::path_policy::resolve_session_working_directory(&mount.root_ref)
                     .map_err(ConnectorError::InvalidConfig)
             })
             .transpose()?
             .unwrap_or_else(|| working_directory.clone());
-        let base_capability_state = req
-            .base_capability_state
-            .clone()
-            .unwrap_or_else(|| capability_state.clone());
+        let base_capability_state =
+            base_capability_override.unwrap_or_else(|| capability_state.clone());
 
         let supports_repository_restore = self
             .deps
@@ -134,7 +134,7 @@ impl<'a> LaunchPlanner<'a> {
         {
             bundle.merge(fragments.clone());
         }
-        req.context_bundle = context_bundle.clone();
+        // context_bundle 在 hook contribution merge 后直接传递给 LaunchPlanInput
 
         let context_audit_bus = self.deps.current_context_audit_bus().await;
         let runtime_delegate = hook_runtime.as_ref().map(|hs| {
@@ -212,14 +212,17 @@ impl<'a> LaunchPlanner<'a> {
                 input.session_id,
                 input.turn_id,
                 &prompt_input,
-                &req,
+                Some(&typed_vfs),
                 &executor_config.executor,
                 command.reason_tag(),
             )
             .await?;
+        // 将更新后的 context_bundle 写回 envelope
+        let mut launch_envelope = input.launch_envelope;
+        launch_envelope.context_bundle = context_bundle.clone();
         let launch_plan = LaunchPlan::build(LaunchPlanInput {
             resolved_payload,
-            launch_request: req,
+            launch_envelope,
             session_id: sid,
             turn_id: input.turn_id.to_string(),
             lifecycle: prompt_lifecycle,
@@ -248,7 +251,7 @@ impl<'a> LaunchPlanner<'a> {
         session_id: &str,
         turn_id: &str,
         prompt_input: &crate::session::types::UserPromptInput,
-        req: &RuntimeLaunchRequest,
+        typed_vfs: Option<&Vfs>,
         executor_id: &str,
         reason_tag: &str,
     ) -> Result<Option<ExecutionPlacementPlan>, ConnectorError> {
@@ -278,7 +281,7 @@ impl<'a> LaunchPlanner<'a> {
                 reason_tag,
             )?),
             None if has_available_relay_executor(transport.as_ref(), executor_id) => Some(
-                selection_request_from_vfs_hint(executor_id, req.typed_vfs.as_ref(), reason_tag),
+                selection_request_from_vfs_hint(executor_id, typed_vfs, reason_tag),
             ),
             None => None,
         };
@@ -298,9 +301,7 @@ impl<'a> LaunchPlanner<'a> {
             placement.claim_reason.clone(),
         );
         lease.workspace_id = None;
-        lease.root_ref = req
-            .typed_vfs
-            .as_ref()
+        lease.root_ref = typed_vfs
             .and_then(|vfs| vfs.default_mount())
             .map(|mount| mount.root_ref.clone());
         let lease_id = lease.id;

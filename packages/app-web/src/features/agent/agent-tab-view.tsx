@@ -8,7 +8,7 @@ import type { ProjectAgentSummary } from "../../types";
 import { useLifecycleStore } from "../../stores/lifecycleStore";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
-import { ActiveLifecycleList } from "./active-session-list";
+import { ActiveSessionList } from "./active-session-list";
 import { ProjectAgentView } from "../project/project-agent-view";
 
 export function AgentTabView() {
@@ -67,13 +67,11 @@ export function AgentTabView() {
         projectId: currentProjectId,
         agentId: result.agent_ref.agent_id,
       });
-      navigate(`/agent/${result.agent_ref.agent_id}`, {
-        state: {
-          run_id: result.run_ref.run_id,
-          frame_id: result.frame_ref.frame_id,
-          runtime_session_id: result.runtime_session_ref?.runtime_session_id ?? null,
-        },
-      });
+
+      const runtimeSessionId = result.runtime_session_ref?.runtime_session_id;
+      if (runtimeSessionId) {
+        navigate(`/session/${runtimeSessionId}`);
+      }
     },
     [currentProjectId, fetchAndIngestRun, fetchFrame, launchProjectAgent, navigate],
   );
@@ -82,7 +80,11 @@ export function AgentTabView() {
     (runId: string, agentId: string) => {
       if (!currentProjectId) return;
       setSelectedAgent({ projectId: currentProjectId, agentId });
-      navigate(`/agent/${agentId}`, { state: { run_id: runId } });
+
+      const primarySessionId = useLifecycleStore.getState().primarySessionId(runId);
+      if (primarySessionId) {
+        navigate(`/session/${primarySessionId}`);
+      }
     },
     [currentProjectId, navigate],
   );
@@ -111,7 +113,7 @@ export function AgentTabView() {
       </aside>
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        <ActiveLifecycleList
+        <ActiveSessionList
           projectId={currentProjectId}
           isLoading={lifecycleLoading}
           selectedAgentId={selectedAgentId}

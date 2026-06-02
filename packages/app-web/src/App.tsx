@@ -25,9 +25,9 @@ const StoryPage = lazy(async () => {
   return { default: module.StoryPage };
 });
 
-const RuntimeSessionTracePage = lazy(async () => {
+const SessionPage = lazy(async () => {
   const module = await import("./pages/SessionPage");
-  return { default: module.RuntimeSessionTracePage };
+  return { default: module.SessionPage };
 });
 
 const LifecycleRunPage = lazy(async () => {
@@ -161,14 +161,11 @@ function BootstrapErrorState({
   );
 }
 
-// ─── /session/:sessionId → RuntimeTraceView 路由包装器 ──
-//
-// 此路由已降级为 Runtime Trace 入口，不再作为业务 lifecycle 主视图。
-// 业务导航通过 /run/:id、/subject/:kind/:id、/agent/:id 进入。
+// ─── /session/:sessionId → 会话主视图路由包装器 ──
 
 function SessionRouteWrapper() {
   const { sessionId } = useParams<{ sessionId: string }>();
-  return <RuntimeSessionTracePage sessionId={sessionId} />;
+  return <SessionPage sessionId={sessionId} />;
 }
 
 // ─── 认证守卫 ──────────────────────────────────────────

@@ -187,7 +187,7 @@ export function WorkspaceLayout() {
           })}
         </div>
 
-        {/* Lifecycle 快捷列表：以 project subject/run/agent 索引作为主导航 */}
+        {/* 会话快捷列表 */}
         <SessionShortcutList projectId={currentProjectId} />
 
         {/* 底栏 */}

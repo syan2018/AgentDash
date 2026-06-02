@@ -25,6 +25,7 @@ import {
   fetchAgentFrameRuntime,
   fetchRuntimeTrace,
 } from "../services/lifecycle";
+import { fetchSessionMeta, type SessionMeta } from "../services/session";
 
 // ─── State Shape ─────────────────────────────────────────
 
@@ -35,6 +36,8 @@ interface LifecycleState {
   frames: Map<string, AgentFrameRuntimeView>;
   subjectExecutions: Map<string, SubjectExecutionView>;
   runtimeTraces: Map<string, RuntimeSessionTraceView>;
+  /** runtime_session_id → SessionMeta 缓存，用于列表显示 session title */
+  sessionMetas: Map<string, SessionMeta>;
 
   isLoading: boolean;
   error: string | null;
@@ -46,6 +49,7 @@ interface LifecycleState {
   setFrame: (frame: AgentFrameRuntimeView) => void;
   setSubjectExecution: (view: SubjectExecutionView) => void;
   setRuntimeTrace: (trace: RuntimeSessionTraceView) => void;
+  setSessionMeta: (meta: SessionMeta) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
 
@@ -58,12 +62,16 @@ interface LifecycleState {
   fetchSubjectExecution: (subjectKind: string, subjectId: string) => Promise<SubjectExecutionView | null>;
   fetchFrame: (frameId: string) => Promise<AgentFrameRuntimeView | null>;
   fetchRuntimeTrace: (runtimeSessionId: string) => Promise<RuntimeSessionTraceView | null>;
+  /** 批量拉取 session meta 并缓存到 sessionMetas */
+  hydrateSessionMetas: (sessionIds: string[]) => Promise<void>;
 
   // ── derived views ──
   /** 按 subject association 聚合：返回指定 subject 关联的所有 run */
   runsBySubject: (subjectKind: string, subjectId: string) => LifecycleRunView[];
   /** 返回指定 run 下的所有 agent */
   agentsByRun: (runId: string) => LifecycleAgentView[];
+  /** 返回指定 run 的主 session id（第一个 runtime_trace_ref） */
+  primarySessionId: (runId: string) => string | null;
 }
 
 // ─── Store ───────────────────────────────────────────────
@@ -75,6 +83,7 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   frames: new Map(),
   subjectExecutions: new Map(),
   runtimeTraces: new Map(),
+  sessionMetas: new Map(),
   isLoading: false,
   error: null,
 
@@ -119,6 +128,13 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
       const next = new Map(s.runtimeTraces);
       next.set(trace.runtime_session_ref.runtime_session_id, trace);
       return { runtimeTraces: next };
+    }),
+
+  setSessionMeta: (meta) =>
+    set((s) => {
+      const next = new Map(s.sessionMetas);
+      next.set(meta.id, meta);
+      return { sessionMetas: next };
     }),
 
   setLoading: (loading) => set({ isLoading: loading }),
@@ -169,6 +185,13 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
         get().ingestRun(run);
       }
       set({ isLoading: false });
+
+      const sessionIds = view.runs.flatMap(
+        (r) => r.runtime_trace_refs.map((ref) => ref.runtime_session_id),
+      );
+      if (sessionIds.length > 0) {
+        void get().hydrateSessionMetas(sessionIds);
+      }
     } catch (e) {
       set({ isLoading: false, error: (e as Error).message });
     }
@@ -210,6 +233,23 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
     }
   },
 
+  hydrateSessionMetas: async (sessionIds) => {
+    const existing = get().sessionMetas;
+    const missing = sessionIds.filter((id) => !existing.has(id));
+    if (missing.length === 0) return;
+
+    const results = await Promise.allSettled(
+      missing.map((id) => fetchSessionMeta(id)),
+    );
+    const nextMetas = new Map(get().sessionMetas);
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        nextMetas.set(result.value.id, result.value);
+      }
+    }
+    set({ sessionMetas: nextMetas });
+  },
+
   // ── derived views ──
 
   runsBySubject: (subjectKind, subjectId) => {
@@ -229,5 +269,10 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
       if (agent.agent_ref.run_id === runId) result.push(agent);
     }
     return result;
+  },
+
+  primarySessionId: (runId) => {
+    const run = get().runs.get(runId);
+    return run?.runtime_trace_refs[0]?.runtime_session_id ?? null;
   },
 }));

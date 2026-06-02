@@ -642,6 +642,19 @@ impl AgentAssignmentRepository for PostgresAgentAssignmentRepository {
         Ok(())
     }
 
+    async fn get(&self, assignment_id: Uuid) -> Result<Option<AgentAssignment>, DomainError> {
+        sqlx::query_as::<_, AssignmentRow>(
+            r#"SELECT id,run_id,graph_instance_id,activity_key,attempt,agent_id,frame_id,lease_status,assigned_at,released_at
+               FROM agent_assignments WHERE id=$1"#,
+        )
+        .bind(assignment_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
+    }
+
     async fn find_for_attempt(
         &self,
         graph_instance_id: Uuid,

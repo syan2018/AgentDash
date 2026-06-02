@@ -296,6 +296,9 @@ impl AgentFrameBuilder {
                 .as_ref()
                 .and_then(|frame| frame.execution_profile_json.clone())
         });
+        frame.visible_canvas_mount_ids_json = current
+            .as_ref()
+            .and_then(|frame| frame.visible_canvas_mount_ids_json.clone());
         frame.created_by_id = self.created_by_id.clone();
 
         repo.create(&frame).await?;
@@ -461,13 +464,15 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let graph_instance_id = Uuid::new_v4();
 
-        let frame1 = AgentFrameBuilder::new(agent_id)
+        let mut frame1 = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("session-1")
             .with_graph_instance(graph_instance_id, "implement")
             .with_execution_profile_raw(serde_json::json!({"executor": "local"}))
             .build(&repo)
             .await
             .expect("frame1");
+        frame1.append_visible_canvas_mount("demo");
+        repo.items.lock().unwrap()[0] = frame1.clone();
 
         let frame2 = AgentFrameBuilder::new(agent_id)
             .with_capability(serde_json::json!({"tools": []}))
@@ -483,6 +488,7 @@ mod tests {
             frame2.execution_profile_json,
             Some(serde_json::json!({"executor": "local"}))
         );
+        assert_eq!(frame2.visible_canvas_mount_ids(), vec!["demo".to_string()]);
     }
 
     #[tokio::test]

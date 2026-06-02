@@ -426,7 +426,9 @@ impl<'a> LifecycleDispatchService<'a> {
                 frame.id,
                 agent.id,
                 Some(graph_instance.id),
-                Some("entry".to_string()),
+                frame.activity_key
+                    .clone()
+                    .or_else(|| Some(workflow_graph.entry_activity_key.clone())),
             );
             anchor_repo.upsert(&anchor).await?;
         }
@@ -1163,6 +1165,15 @@ mod tests {
             self.items.lock().unwrap().push(assignment.clone());
             Ok(())
         }
+        async fn get(&self, assignment_id: Uuid) -> Result<Option<AgentAssignment>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|assignment| assignment.id == assignment_id)
+                .cloned())
+        }
         async fn find_for_attempt(
             &self,
             graph_instance_id: Uuid,
@@ -1345,6 +1356,60 @@ mod tests {
             let session_id = Uuid::new_v4();
             self.items.lock().unwrap().push(session_id);
             Ok(session_id)
+        }
+    }
+
+    #[derive(Default)]
+    struct InMemoryExecutionAnchorRepo {
+        items: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
+    }
+    #[async_trait::async_trait]
+    impl RuntimeSessionExecutionAnchorRepository for InMemoryExecutionAnchorRepo {
+        async fn upsert(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
+            let mut items = self.items.lock().unwrap();
+            if let Some(existing) = items
+                .iter_mut()
+                .find(|item| item.runtime_session_id == anchor.runtime_session_id)
+            {
+                *existing = anchor.clone();
+            } else {
+                items.push(anchor.clone());
+            }
+            Ok(())
+        }
+
+        async fn update_assignment(
+            &self,
+            runtime_session_id: &str,
+            assignment_id: Uuid,
+            attempt: i32,
+        ) -> Result<(), DomainError> {
+            let mut items = self.items.lock().unwrap();
+            let anchor = items
+                .iter_mut()
+                .find(|item| item.runtime_session_id == runtime_session_id)
+                .ok_or_else(|| DomainError::NotFound {
+                    entity: "runtime_session_execution_anchor",
+                    id: runtime_session_id.to_string(),
+                })?;
+            anchor.fill_assignment(assignment_id, attempt);
+            Ok(())
+        }
+
+        async fn find_by_session(
+            &self,
+            runtime_session_id: &str,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|item| item.runtime_session_id == runtime_session_id)
+                .cloned())
         }
     }
 
@@ -1796,6 +1861,7 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
+        let anchor_repo = InMemoryExecutionAnchorRepo::default();
         seed_freeform_graph(&workflow_repo, project_id);
         let custom_graph = seed_custom_graph(
             &workflow_repo,
@@ -1822,7 +1888,8 @@ mod tests {
             &gate_repo,
             &lineage_repo,
             &runtime_session_creator,
-        );
+        )
+        .with_anchor_repo(&anchor_repo);
 
         let mut intent = new_task_execution_intent(project_id, Uuid::new_v4());
         intent.parent_run_id = Some(existing_run.id);
@@ -1841,6 +1908,10 @@ mod tests {
         assert_eq!(frames[0].activity_key.as_deref(), Some("custom_main"));
         assert_eq!(assignments[0].activity_key, "custom_main");
         assert_eq!(assignments[0].graph_instance_id, existing_instance.id);
+        let anchors = anchor_repo.items.lock().unwrap().clone();
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].activity_key.as_deref(), Some("custom_main"));
+        assert_eq!(anchors[0].assignment_id, Some(assignments[0].id));
     }
 
     #[tokio::test]

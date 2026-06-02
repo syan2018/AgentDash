@@ -142,6 +142,7 @@ impl LifecycleOrchestrator {
             self.repos.lifecycle_agent_repo.as_ref(),
             self.repos.agent_assignment_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
+            Some(self.repos.execution_anchor_repo.as_ref()),
         )
         .await
         .map_err(|error| error.to_string())?
@@ -194,6 +195,7 @@ impl LifecycleOrchestrator {
             self.repos.lifecycle_agent_repo.as_ref(),
             self.repos.agent_assignment_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
+            Some(self.repos.execution_anchor_repo.as_ref()),
         )
         .await
         .map_err(|error| error.to_string())?

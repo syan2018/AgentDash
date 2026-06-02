@@ -145,6 +145,7 @@ pub trait AgentFrameRepository: Send + Sync {
 #[async_trait::async_trait]
 pub trait AgentAssignmentRepository: Send + Sync {
     async fn create(&self, assignment: &AgentAssignment) -> Result<(), DomainError>;
+    async fn get(&self, assignment_id: Uuid) -> Result<Option<AgentAssignment>, DomainError>;
     async fn find_for_attempt(
         &self,
         graph_instance_id: Uuid,

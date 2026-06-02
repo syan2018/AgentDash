@@ -597,6 +597,16 @@ mod tests {
             Ok(())
         }
 
+        async fn get(&self, assignment_id: Uuid) -> Result<Option<AgentAssignment>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|assignment| assignment.id == assignment_id)
+                .cloned())
+        }
+
         async fn find_for_attempt(
             &self,
             graph_instance_id: Uuid,

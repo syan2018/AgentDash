@@ -1,6 +1,7 @@
 use agentdash_domain::workflow::{
     AgentAssignment, AgentAssignmentRepository, AgentFrame, AgentFrameRepository,
     LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
 };
 use uuid::Uuid;
 
@@ -100,6 +101,7 @@ pub struct ActivityRuntimeAssociationResolver<'a> {
     frame_repo: &'a dyn AgentFrameRepository,
     assignment_repo: &'a dyn AgentAssignmentRepository,
     run_repo: &'a dyn LifecycleRunRepository,
+    anchor_repo: Option<&'a dyn RuntimeSessionExecutionAnchorRepository>,
 }
 
 impl<'a> ActivityRuntimeAssociationResolver<'a> {
@@ -112,13 +114,33 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
             frame_repo,
             assignment_repo,
             run_repo,
+            anchor_repo: None,
         }
+    }
+
+    pub fn with_anchor_repo(
+        mut self,
+        anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    ) -> Self {
+        self.anchor_repo = Some(anchor_repo);
+        self
     }
 
     pub async fn resolve_by_runtime_session(
         &self,
         session_id: &str,
     ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
+        if let Some(anchor_repo) = self.anchor_repo {
+            if let Some(anchor) = anchor_repo.find_by_session(session_id).await.map_err(|e| {
+                ActivityRuntimeAssociationError::Repository {
+                    operation: "runtime session execution anchor",
+                    message: e.to_string(),
+                }
+            })? {
+                return self.resolve_by_anchor(session_id, anchor).await;
+            }
+        }
+
         let Some(current_frame) = self
             .frame_repo
             .find_by_runtime_session(session_id)
@@ -147,6 +169,80 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
         })?;
 
         let attempt = u32::try_from(assignment.attempt).map_err(|_| {
+            ActivityRuntimeAssociationError::InvalidAttempt {
+                assignment_id: assignment.id,
+                attempt: assignment.attempt,
+            }
+        })?;
+        let run = self
+            .run_repo
+            .get_by_id(assignment.run_id)
+            .await
+            .map_err(|e| ActivityRuntimeAssociationError::Repository {
+                operation: "lifecycle run",
+                message: e.to_string(),
+            })?
+            .ok_or(ActivityRuntimeAssociationError::MissingLifecycleRun {
+                assignment_id: assignment.id,
+                run_id: assignment.run_id,
+            })?;
+        Ok(Some(ActivityRuntimeAssociation {
+            run,
+            attempt,
+            assignment,
+        }))
+    }
+
+    async fn resolve_by_anchor(
+        &self,
+        session_id: &str,
+        anchor: RuntimeSessionExecutionAnchor,
+    ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
+        let Some(assignment_id) = anchor.assignment_id else {
+            let Some(frame) = self.frame_repo.get(anchor.launch_frame_id).await.map_err(|e| {
+                ActivityRuntimeAssociationError::Repository {
+                    operation: "anchor launch AgentFrame",
+                    message: e.to_string(),
+                }
+            })? else {
+                return Ok(None);
+            };
+            if frame.graph_instance_id.is_none() && frame.activity_key.is_none() {
+                return Ok(None);
+            }
+            return Err(ActivityRuntimeAssociationError::MissingAssignment {
+                runtime_session_id: session_id.to_string(),
+                frame_id: frame.id,
+                agent_id: frame.agent_id,
+            });
+        };
+
+        let assignment = self
+            .assignment_repo
+            .get(assignment_id)
+            .await
+            .map_err(|e| ActivityRuntimeAssociationError::Repository {
+                operation: "anchor AgentAssignment",
+                message: e.to_string(),
+            })?
+            .ok_or_else(|| ActivityRuntimeAssociationError::MissingAssignment {
+                runtime_session_id: session_id.to_string(),
+                frame_id: anchor.launch_frame_id,
+                agent_id: anchor.agent_id,
+            })?;
+
+        if assignment.run_id != anchor.run_id
+            || assignment.agent_id != anchor.agent_id
+            || assignment.frame_id != anchor.launch_frame_id
+        {
+            return Err(ActivityRuntimeAssociationError::MissingAssignment {
+                runtime_session_id: session_id.to_string(),
+                frame_id: anchor.launch_frame_id,
+                agent_id: anchor.agent_id,
+            });
+        }
+
+        let attempt = u32::try_from(anchor.attempt.unwrap_or(assignment.attempt)).map_err(|_| {
             ActivityRuntimeAssociationError::InvalidAttempt {
                 assignment_id: assignment.id,
                 attempt: assignment.attempt,
@@ -286,9 +382,13 @@ pub async fn resolve_activity_session_association(
     _agent_repo: &dyn LifecycleAgentRepository,
     assignment_repo: &dyn AgentAssignmentRepository,
     run_repo: &dyn LifecycleRunRepository,
+    anchor_repo: Option<&dyn RuntimeSessionExecutionAnchorRepository>,
 ) -> Result<Option<LifecycleActivitySessionAssociation>, ActivityRuntimeAssociationError> {
-    let resolver =
+    let mut resolver =
         ActivityRuntimeAssociationResolver::new(frame_repo, assignment_repo, run_repo);
+    if let Some(anchor_repo) = anchor_repo {
+        resolver = resolver.with_anchor_repo(anchor_repo);
+    }
     Ok(resolver
         .resolve_by_runtime_session(session_id)
         .await?
@@ -314,8 +414,7 @@ mod tests {
     use super::select_assignment_for_runtime_frame;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentAssignmentRepository, AgentFrame, AgentFrameRepository, LifecycleAgent,
-        LifecycleAgentRepository, LifecycleRunRepository,
+        AgentAssignmentRepository, AgentFrame, AgentFrameRepository, LifecycleRunRepository,
     };
     use std::collections::HashMap;
 
@@ -386,35 +485,6 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct TestAgentRepo {
-        agents: HashMap<Uuid, LifecycleAgent>,
-    }
-
-    #[async_trait::async_trait]
-    impl LifecycleAgentRepository for TestAgentRepo {
-        async fn create(&self, _agent: &LifecycleAgent) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
-            Ok(self.agents.get(&id).cloned())
-        }
-
-        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
-            Ok(self
-                .agents
-                .values()
-                .filter(|agent| agent.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, _agent: &LifecycleAgent) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
     struct TestAssignmentRepo {
         assignments: Vec<AgentAssignment>,
     }
@@ -423,6 +493,14 @@ mod tests {
     impl AgentAssignmentRepository for TestAssignmentRepo {
         async fn create(&self, _assignment: &AgentAssignment) -> Result<(), DomainError> {
             Ok(())
+        }
+
+        async fn get(&self, assignment_id: Uuid) -> Result<Option<AgentAssignment>, DomainError> {
+            Ok(self
+                .assignments
+                .iter()
+                .find(|assignment| assignment.id == assignment_id)
+                .cloned())
         }
 
         async fn find_for_attempt(
@@ -520,6 +598,37 @@ mod tests {
 
         async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
             Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct TestAnchorRepo {
+        anchors: HashMap<String, RuntimeSessionExecutionAnchor>,
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeSessionExecutionAnchorRepository for TestAnchorRepo {
+        async fn upsert(
+            &self,
+            _anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn update_assignment(
+            &self,
+            _runtime_session_id: &str,
+            _assignment_id: Uuid,
+            _attempt: i32,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn find_by_session(
+            &self,
+            runtime_session_id: &str,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self.anchors.get(runtime_session_id).cloned())
         }
     }
 
@@ -696,8 +805,6 @@ mod tests {
         let launch_frame_id = Uuid::new_v4();
         let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
         run.id = run_id;
-        let mut agent = LifecycleAgent::new_root(run_id, project_id, "worker");
-        agent.id = agent_id;
         let mut current_frame = AgentFrame::new_revision(agent_id, 2, "capability_update");
         current_frame.runtime_session_refs_json = AgentFrame::runtime_session_refs_json(["sess-1"]);
         current_frame.graph_instance_id = Some(graph_instance_id);
@@ -712,9 +819,6 @@ mod tests {
         );
         let frame_repo = TestFrameRepo {
             frames: [(current_frame.id, current_frame)].into_iter().collect(),
-        };
-        let agent_repo = TestAgentRepo {
-            agents: [(agent_id, agent)].into_iter().collect(),
         };
         let assignment_repo = TestAssignmentRepo {
             assignments: vec![assignment.clone()],
@@ -741,6 +845,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolver_prefers_execution_anchor_assignment_evidence() {
+        let project_id = Uuid::new_v4();
+        let lifecycle_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let graph_instance_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let launch_frame_id = Uuid::new_v4();
+        let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
+        run.id = run_id;
+        let assignment = AgentAssignment::new(
+            run_id,
+            graph_instance_id,
+            "custom_main",
+            3,
+            agent_id,
+            launch_frame_id,
+        );
+        let mut anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "sess-anchor",
+            run_id,
+            launch_frame_id,
+            agent_id,
+            Some(graph_instance_id),
+            Some("custom_main".to_string()),
+        );
+        anchor.fill_assignment(assignment.id, assignment.attempt);
+        let frame_repo = TestFrameRepo::default();
+        let assignment_repo = TestAssignmentRepo {
+            assignments: vec![assignment.clone()],
+        };
+        let run_repo = TestRunRepo {
+            runs: [(run_id, run)].into_iter().collect(),
+        };
+        let anchor_repo = TestAnchorRepo {
+            anchors: [("sess-anchor".to_string(), anchor)].into_iter().collect(),
+        };
+        let resolver =
+            ActivityRuntimeAssociationResolver::new(&frame_repo, &assignment_repo, &run_repo)
+                .with_anchor_repo(&anchor_repo);
+
+        let association = resolver
+            .resolve_by_runtime_session("sess-anchor")
+            .await
+            .expect("anchor resolver should not error")
+            .expect("anchor assignment should resolve");
+
+        assert_eq!(association.assignment.id, assignment.id);
+        assert_eq!(association.assignment.activity_key, "custom_main");
+        assert_eq!(association.attempt, 3);
+    }
+
+    #[tokio::test]
     async fn resolver_errors_when_lifecycle_frame_has_no_assignment() {
         let project_id = Uuid::new_v4();
         let lifecycle_id = Uuid::new_v4();
@@ -748,8 +904,6 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
         run.id = run_id;
-        let mut agent = LifecycleAgent::new_root(run_id, project_id, "worker");
-        agent.id = agent_id;
         let mut current_frame = AgentFrame::new_revision(agent_id, 2, "capability_update");
         current_frame.runtime_session_refs_json = AgentFrame::runtime_session_refs_json(["sess-1"]);
         current_frame.graph_instance_id = Some(Uuid::new_v4());
@@ -757,9 +911,6 @@ mod tests {
         let frame_id = current_frame.id;
         let frame_repo = TestFrameRepo {
             frames: [(frame_id, current_frame)].into_iter().collect(),
-        };
-        let agent_repo = TestAgentRepo {
-            agents: [(agent_id, agent)].into_iter().collect(),
         };
         let assignment_repo = TestAssignmentRepo::default();
         let run_repo = TestRunRepo {
@@ -794,8 +945,6 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
         run.id = run_id;
-        let mut agent = LifecycleAgent::new_root(run_id, project_id, "worker");
-        agent.id = agent_id;
         let mut current_frame = AgentFrame::new_revision(agent_id, 1, "agent_launch");
         current_frame.runtime_session_refs_json = AgentFrame::runtime_session_refs_json(["sess-1"]);
         let frame_repo = TestFrameRepo {

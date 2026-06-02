@@ -282,8 +282,7 @@ mod tests {
                 subject_ref: SubjectRef::new("task", Uuid::new_v4()),
                 association_id: Uuid::new_v4(),
             },
-            runtime_session_ref: None,
-            trace_ref: None,
+            delivery_runtime_ref: None,
         });
         let json = serde_json::to_string(&result).expect("serialize");
         assert!(!json.contains("runtime_session_ref"));

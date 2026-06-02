@@ -15,6 +15,13 @@ import type { SessionTabLayout } from "../features/workspace-panel/tab-type-regi
 
 export type TitleSource = "auto" | "source" | "user";
 
+export type SessionExecutionStatusValue =
+  | "idle"
+  | "running"
+  | "completed"
+  | "failed"
+  | "interrupted";
+
 export interface SessionMeta {
   id: string;
   title: string;
@@ -22,6 +29,7 @@ export interface SessionMeta {
   createdAt: number;
   updatedAt: number;
   lastEventSeq?: number;
+  lastExecutionStatus?: SessionExecutionStatusValue;
   tabLayout?: SessionTabLayout | null;
 }
 

@@ -9,32 +9,34 @@ import { useEffect, useMemo, useState } from "react";
 import { useLifecycleStore } from "../../stores/lifecycleStore";
 import { findStoryById, useStoryStore } from "../../stores/storyStore";
 import type { LifecycleRunView, LifecycleAgentView } from "../../types";
+import type { SessionExecutionStatusValue } from "../../services/session";
 import { formatRelativeTime } from "../../lib/format";
 import { groupSessionsBySubject, type SessionEntry, type SessionGroup } from "./lifecycle-grouping";
 
-// ─── Status helpers ──────────────────────────────────────
+// ─── Session 执行状态展示映射 ─────────────────────────────
+// 来源：SessionMeta.lastExecutionStatus（后端 ExecutionStatus enum）
 
-const statusLabel: Record<string, string> = {
-  active: "就绪",
+const executionStatusLabel: Record<SessionExecutionStatusValue, string> = {
+  idle: "就绪",
+  running: "执行中",
   completed: "已完成",
   failed: "失败",
-  paused: "已暂停",
-  pending: "待启动",
+  interrupted: "已中断",
 };
 
-const statusDotColor: Record<string, string> = {
-  active: "bg-emerald-500",
+const executionStatusDotColor: Record<SessionExecutionStatusValue, string> = {
+  idle: "bg-emerald-500",
+  running: "bg-sky-500 animate-pulse",
   completed: "bg-blue-500",
   failed: "bg-red-500",
-  paused: "bg-amber-500",
-  pending: "bg-gray-400",
+  interrupted: "bg-amber-500",
 };
 
-function StatusDot({ status }: { status: string }) {
+function StatusDot({ status }: { status: SessionExecutionStatusValue }) {
   return (
     <span
-      className={`inline-block h-2 w-2 shrink-0 rounded-full ${statusDotColor[status] ?? "bg-gray-400"}`}
-      title={statusLabel[status] ?? status}
+      className={`inline-block h-2 w-2 shrink-0 rounded-full ${executionStatusDotColor[status] ?? "bg-gray-400"}`}
+      title={executionStatusLabel[status] ?? status}
     />
   );
 }
@@ -45,6 +47,7 @@ interface SessionRowProps {
   run: LifecycleRunView;
   agent: LifecycleAgentView;
   sessionTitle: string | null;
+  executionStatus: SessionExecutionStatusValue;
   isSelected: boolean;
   onSelect: () => void;
   /** sub-agent 行缩进 */
@@ -84,6 +87,7 @@ function SessionRow({
   run,
   agent,
   sessionTitle,
+  executionStatus,
   isSelected,
   onSelect,
   indent,
@@ -105,7 +109,7 @@ function SessionRow({
       } ${isSelected ? "bg-primary/10" : "hover:bg-muted/40"}`}
     >
       <div className="flex items-center gap-2">
-        <StatusDot status={agent.status} />
+        <StatusDot status={executionStatus} />
         <span className={`min-w-0 flex-1 truncate text-xs font-medium ${
           isSelected ? "text-foreground" : "text-foreground/90"
         }`}>
@@ -149,7 +153,7 @@ function SessionRow({
           </>
         )}
         <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/60">
-          {statusLabel[agent.status] ?? agent.status}
+          {executionStatusLabel[executionStatus] ?? executionStatus}
         </span>
       </div>
     </button>
@@ -250,17 +254,16 @@ function SubjectGroupHeader({
 
 // ─── ActiveSessionList ──────────────────────────────────
 
-/** 将 lifecycle agent status 归并到用户可见的筛选 tab */
+/** 将 session execution status 归并到用户可见的筛选 tab */
 type StatusFilterGroup = "all" | "running" | "idle" | "ended";
 
-function statusGroupOf(status: string): Exclude<StatusFilterGroup, "all"> {
+function statusGroupOf(status: SessionExecutionStatusValue): Exclude<StatusFilterGroup, "all"> {
   switch (status) {
     case "running": return "running";
-    case "active":
-    case "paused":
-    case "pending": return "idle";
+    case "idle": return "idle";
     case "completed":
     case "failed":
+    case "interrupted":
     default: return "ended";
   }
 }
@@ -303,6 +306,7 @@ export function ActiveSessionList({
     subAgents: LifecycleAgentView[];
     sessionTitle: string | null;
     primarySessionId: string | null;
+    executionStatus: SessionExecutionStatusValue;
   }
 
   const runEntries = useMemo(() => {
@@ -325,6 +329,7 @@ export function ActiveSessionList({
         subAgents: subs,
         sessionTitle: meta?.title ?? null,
         primarySessionId,
+        executionStatus: meta?.lastExecutionStatus ?? "idle",
       });
     }
 
@@ -338,6 +343,7 @@ export function ActiveSessionList({
       agent: re.primaryAgent,
       sessionTitle: re.sessionTitle,
       primarySessionId: re.primarySessionId,
+      executionStatus: re.executionStatus,
     }));
   }, [runEntries]);
 
@@ -364,7 +370,7 @@ export function ActiveSessionList({
     let list = sessionEntries;
 
     if (statusFilter !== "all") {
-      list = list.filter((e) => statusGroupOf(e.agent.status) === statusFilter);
+      list = list.filter((e) => statusGroupOf(e.executionStatus) === statusFilter);
     }
 
     if (keyword.trim()) {
@@ -471,6 +477,7 @@ export function ActiveSessionList({
                           run={entry.run}
                           agent={entry.agent}
                           sessionTitle={entry.sessionTitle}
+                          executionStatus={entry.executionStatus}
                           isSelected={selectedAgentId === entry.agent.agent_ref.agent_id}
                           onSelect={() => onSelectAgent(runId, entry.agent.agent_ref.agent_id)}
                           subAgentCount={subs.length}
@@ -483,6 +490,7 @@ export function ActiveSessionList({
                             run={entry.run}
                             agent={sub}
                             sessionTitle={null}
+                            executionStatus={entry.executionStatus}
                             isSelected={selectedAgentId === sub.agent_ref.agent_id}
                             onSelect={() => onSelectAgent(runId, sub.agent_ref.agent_id)}
                             indent
@@ -508,6 +516,7 @@ export function ActiveSessionList({
                     run={entry.run}
                     agent={entry.agent}
                     sessionTitle={entry.sessionTitle}
+                    executionStatus={entry.executionStatus}
                     isSelected={selectedAgentId === entry.agent.agent_ref.agent_id}
                     onSelect={() => onSelectAgent(runId, entry.agent.agent_ref.agent_id)}
                     subAgentCount={subs.length}
@@ -520,6 +529,7 @@ export function ActiveSessionList({
                       run={entry.run}
                       agent={sub}
                       sessionTitle={null}
+                      executionStatus={entry.executionStatus}
                       isSelected={selectedAgentId === sub.agent_ref.agent_id}
                       onSelect={() => onSelectAgent(runId, sub.agent_ref.agent_id)}
                       indent

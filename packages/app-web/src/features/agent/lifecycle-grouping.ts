@@ -7,6 +7,7 @@
  */
 
 import type { LifecycleRunView, LifecycleAgentView } from "../../types";
+import type { SessionExecutionStatusValue } from "../../services/session";
 import { findStoryById, useStoryStore } from "../../stores/storyStore";
 
 export interface SessionEntry {
@@ -14,6 +15,7 @@ export interface SessionEntry {
   agent: LifecycleAgentView;
   sessionTitle: string | null;
   primarySessionId: string | null;
+  executionStatus: SessionExecutionStatusValue;
 }
 
 export type SessionGroupKind = "story" | "task" | "project";

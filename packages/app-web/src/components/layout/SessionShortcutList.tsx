@@ -9,31 +9,27 @@ import { useEffect, useMemo } from "react";
 import { useLocation, useMatch, useNavigate } from "react-router-dom";
 import { StatusDot, type StatusDotTone } from "@agentdash/ui";
 import { useLifecycleStore } from "../../stores/lifecycleStore";
-import type { LifecycleAgentView, LifecycleRunView } from "../../types";
+import type { SessionExecutionStatusValue } from "../../services/session";
 
-const AGENT_STATUS_TONE: Record<string, StatusDotTone> = {
-  active: "success",
+/** 基于 session 执行状态的视觉映射 */
+const EXECUTION_STATUS_TONE: Record<SessionExecutionStatusValue, StatusDotTone> = {
+  idle: "success",
   running: "success",
-  ready: "info",
   completed: "info",
   failed: "danger",
-  paused: "warning",
-  pending: "muted",
-  cancelled: "warning",
+  interrupted: "warning",
 };
 
-const STATUS_LABEL: Record<string, string> = {
-  active: "就绪",
-  running: "运行中",
+const EXECUTION_STATUS_LABEL: Record<SessionExecutionStatusValue, string> = {
+  idle: "就绪",
+  running: "执行中",
   completed: "已完成",
   failed: "失败",
-  paused: "已暂停",
-  pending: "待启动",
-  cancelled: "已取消",
+  interrupted: "已中断",
 };
 
-function agentStatusTone(status: string): StatusDotTone {
-  return AGENT_STATUS_TONE[status] ?? "muted";
+function executionStatusTone(status: SessionExecutionStatusValue): StatusDotTone {
+  return EXECUTION_STATUS_TONE[status] ?? "muted";
 }
 
 function formatUpdatedAt(value: string): string {
@@ -50,7 +46,7 @@ function formatUpdatedAt(value: string): string {
 interface SessionShortcutEntry {
   runtimeSessionId: string;
   sessionTitle: string;
-  agentStatus: string;
+  executionStatus: SessionExecutionStatusValue;
   agentRole: string;
   updatedAt: string;
   runId: string;
@@ -100,7 +96,7 @@ export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
       entries.push({
         runtimeSessionId: primarySessionId,
         sessionTitle: meta?.title?.trim() || primaryAgent?.agent_role || primaryAgent?.agent_kind || "会话",
-        agentStatus: primaryAgent?.status ?? "pending",
+        executionStatus: meta?.lastExecutionStatus ?? "idle",
         agentRole: primaryAgent?.agent_role || primaryAgent?.agent_kind || "",
         updatedAt: primaryAgent?.updated_at ?? run.last_activity_at,
         runId: run.run_ref.run_id,
@@ -152,11 +148,11 @@ export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
               >
                 <div className="flex items-center gap-2">
                   <StatusDot
-                    tone={agentStatusTone(entry.agentStatus)}
+                    tone={executionStatusTone(entry.executionStatus)}
                     size="sm"
-                    pulse={entry.agentStatus === "active" || entry.agentStatus === "running"}
+                    pulse={entry.executionStatus === "running"}
                     className="shrink-0"
-                    title={STATUS_LABEL[entry.agentStatus] ?? entry.agentStatus}
+                    title={EXECUTION_STATUS_LABEL[entry.executionStatus] ?? entry.executionStatus}
                   />
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
                     {entry.sessionTitle}

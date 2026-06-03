@@ -78,7 +78,7 @@ use crate::vfs::{
     resolve_context_bindings,
 };
 use crate::workflow::{
-    ActiveWorkflowProjection, ActivityActivationInput, ActivityPortArtifactRef,
+    ActiveWorkflowProjection, ActivityActivationInput, ActivityAttemptArtifactScope,
     activate_activity_with_platform, ensure_active_workflow_lifecycle_mount,
     load_scoped_port_output_map,
 };
@@ -1286,14 +1286,14 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
         project_id: spec.run.project_id,
     };
 
-    let artifact_ref = ActivityPortArtifactRef {
+    let artifact_scope = ActivityAttemptArtifactScope {
+        run_id: spec.run.id,
         graph_instance_id: spec.graph_instance_id,
         activity_key: spec.activity.key.clone(),
         attempt: spec.attempt,
     };
     let port_output_map =
-        load_scoped_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id, &artifact_ref)
-            .await;
+        load_scoped_port_output_map(repos.inline_file_repo.as_ref(), &artifact_scope).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
     let mut activation = activate_activity_with_platform(
@@ -1303,6 +1303,7 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
             workflow: spec.workflow,
             run_id: spec.run.id,
             graph_instance_id: spec.graph_instance_id,
+            attempt: spec.attempt,
             lifecycle_key: &spec.lifecycle.key,
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, spec.run.project_id).await,
@@ -1623,14 +1624,14 @@ pub(in crate::session) async fn compose_companion_with_workflow(
 
     // ── 2. Workflow activity activation（产出 lifecycle mount + 能力 + MCP） ──
     let owner_ctx = CapabilityScopeCtx::Project { project_id };
-    let artifact_ref = ActivityPortArtifactRef {
+    let artifact_scope = ActivityAttemptArtifactScope {
+        run_id: spec.run.id,
         graph_instance_id: spec.graph_instance_id,
         activity_key: spec.activity.key.clone(),
         attempt: spec.attempt,
     };
     let port_output_map =
-        load_scoped_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id, &artifact_ref)
-            .await;
+        load_scoped_port_output_map(repos.inline_file_repo.as_ref(), &artifact_scope).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
     let activation = activate_activity_with_platform(
@@ -1640,6 +1641,7 @@ pub(in crate::session) async fn compose_companion_with_workflow(
             workflow: spec.workflow,
             run_id: spec.run.id,
             graph_instance_id: spec.graph_instance_id,
+            attempt: spec.attempt,
             lifecycle_key: &spec.lifecycle.key,
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, project_id).await,

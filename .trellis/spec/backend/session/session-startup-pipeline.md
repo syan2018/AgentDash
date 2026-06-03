@@ -1,6 +1,6 @@
 # Session Startup Pipeline
 
-本 appendix 定义当前 session 构建与 prompt launch 的生产主线。目标控制面中，当前 `Session` 语义降级为 `RuntimeSession`；本主线会被 `AgentFrame -> RuntimeLaunchRequest -> ExecutionContext` 投影替代，业务入口不得继续把 session owner 当作控制面事实源。模块不变量见 [Session Architecture](./architecture.md)。
+本 appendix 定义当前 session 构建与 prompt launch 的生产主线。目标控制面中，当前 `Session` 语义降级为 `RuntimeSession`；本主线由 `AgentFrame -> FrameLaunchEnvelope -> ExecutionContext` 投影承接，业务入口不得继续把 session owner 当作控制面事实源。模块不变量见 [Session Architecture](./architecture.md)。
 
 ## Pipeline
 
@@ -55,7 +55,7 @@ Routine source metadata 只表达触发来源与当前 execution facts。`routin
 
 `SessionConstructionProvider::build_construction` 直接输出 launch-ready `SessionConstructionPlan`，不是 seed、partial plan 或等待 planner 补齐的中间形态。
 
-目标迁移中，`SessionConstructionPlan` 会降为 `AgentFrameBuilder` 内部的 `AgentFrameConstructionPlan`。业务模块不得把它作为 command input 或 public contract；它只服务 `AgentFrame` revision 与 `RuntimeLaunchRequest` 生成。
+目标迁移中，`SessionConstructionPlan` 会降为 `AgentFrameBuilder` 内部的 `AgentFrameConstructionPlan`。业务模块不得把它作为 command input 或 public contract；它只服务 `AgentFrame` revision 与 `FrameLaunchEnvelope` 生成。
 
 `SessionConstructionPlan` 至少覆盖：
 

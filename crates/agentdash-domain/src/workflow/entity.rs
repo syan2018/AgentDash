@@ -6,9 +6,10 @@ use crate::shared_library::InstalledAssetSource;
 
 use super::validation::{validate_agent_procedure, validate_workflow_graph};
 use super::value_objects::{
-    ActivityDefinition, ActivityExecutionClaimStatus, ActivityLifecycleRunState, ActivityRunStatus,
-    ActivityTransition, AgentProcedureContract, DefinitionSource, EffectiveSessionContract,
-    ExecutorRunRef, LifecycleExecutionEntry, LifecycleRunStatus, ValidationIssue,
+    ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaimStatus,
+    ActivityLifecycleRunState, ActivityRunStatus, ActivityTransition, AgentProcedureContract,
+    DefinitionSource, EffectiveSessionContract, ExecutorRunRef, LifecycleExecutionEntry,
+    LifecycleRunStatus, ValidationIssue,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,10 +185,11 @@ impl WorkflowGraph {
 /// 结构化的活跃 Activity 引用。替代旧的 `"graph_instance_id:activity_key"` 字符串拼接。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveActivityRef {
+    pub run_id: Uuid,
     pub graph_instance_id: Uuid,
     pub activity_key: String,
-    pub attempt: i32,
-    pub status: super::value_objects::ActivityAttemptStatus,
+    pub attempt: u32,
+    pub status: ActivityAttemptStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,10 +208,6 @@ pub struct LifecycleRun {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_graph_id: Option<Uuid>,
     pub status: LifecycleRunStatus,
-    /// Read-model-only：从 `WorkflowGraphInstance.activity_state` 派生的活跃 activity 集合。
-    /// 业务逻辑应使用 `active_activity_refs()` 而非直接读取此字段。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub active_node_keys: Vec<String>,
     #[serde(default)]
     pub execution_log: Vec<LifecycleExecutionEntry>,
     pub created_at: DateTime<Utc>,
@@ -218,28 +216,6 @@ pub struct LifecycleRun {
 }
 
 impl LifecycleRun {
-    /// 从 `active_node_keys` 解析出结构化 `ActiveActivityRef` 列表。
-    pub fn active_activity_refs(&self) -> Vec<ActiveActivityRef> {
-        self.active_node_keys
-            .iter()
-            .filter_map(|key| {
-                let (gi_str, activity_key) = key.split_once(':')?;
-                let graph_instance_id = Uuid::parse_str(gi_str).ok()?;
-                Some(ActiveActivityRef {
-                    graph_instance_id,
-                    activity_key: activity_key.to_string(),
-                    attempt: 0,
-                    status: super::value_objects::ActivityAttemptStatus::Running,
-                })
-            })
-            .collect()
-    }
-
-    /// 返回是否存在活跃 activity。业务代码应使用此方法代替 `current_activity_key`。
-    pub fn has_active_activity(&self) -> bool {
-        !self.active_node_keys.is_empty()
-    }
-
     pub fn new_control(project_id: Uuid, root_graph_id: Uuid) -> Self {
         let now = Utc::now();
         Self {
@@ -248,7 +224,6 @@ impl LifecycleRun {
             topology: LifecycleRunTopology::WorkflowGraph,
             root_graph_id: Some(root_graph_id),
             status: LifecycleRunStatus::Ready,
-            active_node_keys: Vec::new(),
             execution_log: Vec::new(),
             created_at: now,
             updated_at: now,
@@ -264,7 +239,6 @@ impl LifecycleRun {
             topology: LifecycleRunTopology::Graphless,
             root_graph_id: None,
             status: LifecycleRunStatus::Ready,
-            active_node_keys: Vec::new(),
             execution_log: Vec::new(),
             created_at: now,
             updated_at: now,
@@ -278,15 +252,6 @@ impl LifecycleRun {
     {
         let states = states.into_iter().collect::<Vec<_>>();
         self.status = aggregate_lifecycle_status(states.iter().map(|(_, state)| state.status));
-        self.active_node_keys = states
-            .iter()
-            .flat_map(|(graph_instance_id, state)| {
-                active_activity_keys(state)
-                    .into_iter()
-                    .map(|activity_key| format!("{graph_instance_id}:{activity_key}"))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
         let now = Utc::now();
         self.updated_at = now;
         self.last_activity_at = now;
@@ -302,20 +267,44 @@ impl LifecycleRun {
     }
 }
 
-fn active_activity_keys(activity_state: &ActivityLifecycleRunState) -> Vec<String> {
-    activity_state
-        .attempts
-        .iter()
-        .filter(|attempt| {
-            matches!(
-                attempt.status,
-                super::value_objects::ActivityAttemptStatus::Ready
-                    | super::value_objects::ActivityAttemptStatus::Claiming
-                    | super::value_objects::ActivityAttemptStatus::Running
-            )
+pub fn active_activity_refs_from_states<'a, I>(run_id: Uuid, states: I) -> Vec<ActiveActivityRef>
+where
+    I: IntoIterator<Item = (Uuid, &'a ActivityLifecycleRunState)>,
+{
+    states
+        .into_iter()
+        .flat_map(|(graph_instance_id, activity_state)| {
+            activity_state
+                .attempts
+                .iter()
+                .filter(|attempt| {
+                    matches!(
+                        attempt.status,
+                        ActivityAttemptStatus::Ready
+                            | ActivityAttemptStatus::Claiming
+                            | ActivityAttemptStatus::Running
+                    )
+                })
+                .map(move |attempt| ActiveActivityRef {
+                    run_id,
+                    graph_instance_id,
+                    activity_key: attempt.activity_key.clone(),
+                    attempt: attempt.attempt,
+                    status: attempt.status,
+                })
         })
-        .map(|attempt| attempt.activity_key.clone())
         .collect()
+}
+
+pub fn has_active_activity_state(activity_state: &ActivityLifecycleRunState) -> bool {
+    activity_state.attempts.iter().any(|attempt| {
+        matches!(
+            attempt.status,
+            ActivityAttemptStatus::Ready
+                | ActivityAttemptStatus::Claiming
+                | ActivityAttemptStatus::Running
+        )
+    })
 }
 
 fn aggregate_lifecycle_status<I>(statuses: I) -> LifecycleRunStatus

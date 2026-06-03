@@ -12,7 +12,7 @@ Activity lifecycle 的目标模型是 `LifecycleRun(topology=workflow_graph) -> 
 - root graph 只是 `WorkflowGraphInstance(role=root)`；当前 `LifecycleRun.lifecycle_id` 只是 root graph backfill 来源。
 - Activity runtime identity 必须以 `graph_instance_id + activity_key` 为 namespace。
 - Attempt / claim / assignment key 必须包含 `graph_instance_id + activity_key + attempt`。
-- `WorkflowGraphInstance.activity_state` 是 activity runtime state 的权威状态源；`LifecycleRun.active_node_keys` 只服务 run-level read model 和 UI 快速展示。
+- `WorkflowGraphInstance.activity_state` 是 activity runtime state 的权威状态源；run-level active display 通过 `LifecycleRunView.active_activity_refs` 从 graph instance attempts 派生。
 - Scheduler 负责 durable claim 和 executor 启动；executor 只通过事件把结果交还给 `LifecycleEngine`。
 - Function executor 即使立即完成，也必须产出 Activity terminal event，而不是直接修改 run state。
 - Hook evaluation 可以报告 completion metadata，但 durable state advancement 仍由 ActivityEvent application 拥有。

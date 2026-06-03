@@ -1022,10 +1022,9 @@ mod tests {
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
         AgentFrameHookSnapshotQuery, ContextTokenStats, ExecutionHookProvider,
         HookCompactionDecision, HookCompletionStatus, HookControlTarget, HookDiagnosticEntry,
-        HookError, HookEvaluationQuery, HookInjection, HookPendingAction,
-        HookPendingActionResolutionKind, HookResolution, HookRuntimeAccess, HookTraceTrigger,
-        HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider, RuntimeEventSource,
-        SessionSnapshotMetadata,
+        HookError, HookInjection, HookPendingAction, HookPendingActionResolutionKind,
+        HookResolution, HookRuntimeAccess, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
+        NoopExecutionHookProvider, RuntimeEventSource, SessionSnapshotMetadata,
     };
 
     #[derive(Clone)]

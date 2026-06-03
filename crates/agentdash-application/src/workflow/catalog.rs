@@ -177,7 +177,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeMap;
     use std::sync::Mutex;
 
     use uuid::Uuid;

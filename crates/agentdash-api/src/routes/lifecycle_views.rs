@@ -249,18 +249,24 @@ async fn authorize_runtime_session_shell(
     current_user: &agentdash_plugin_api::AuthIdentity,
     runtime_session_id: &str,
 ) -> Result<Uuid, ApiError> {
-    let meta = state
+    let _meta = state
         .services
         .session_core
         .get_session_meta(runtime_session_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("会话 {runtime_session_id} 不存在")))?;
-    let project_id_raw = meta.project_id.as_deref().ok_or_else(|| {
-        ApiError::BadRequest(format!(
-            "runtime session 缺少 project shell: {runtime_session_id}"
-        ))
-    })?;
-    let project_id = parse_uuid(project_id_raw, "session_project_id")?;
+    let anchor = state
+        .repos
+        .execution_anchor_repo
+        .find_by_session(runtime_session_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "runtime session 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
+            ))
+        })?;
+    let run = load_lifecycle_run(state, anchor.run_id).await?;
+    let project_id = run.project_id;
     load_project_with_permission(state, current_user, project_id, ProjectPermission::View).await?;
     Ok(project_id)
 }

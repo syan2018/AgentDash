@@ -305,8 +305,7 @@ pub(crate) fn frame_builder_from_existing(
 
 /// 从已持久化的 AgentFrame 直接构造 FrameLaunchEnvelope，合并 extras 和 command 覆盖。
 ///
-/// 替代此前 `RuntimeLaunchRequest::from_frame()` + `apply_command_and_extras()` +
-/// `FrameLaunchEnvelope::try_from_launch_request()` 的三步链路。
+/// 替代此前从 frame 构建 launch request、应用 command/extras、再转换 envelope 的三步链路。
 pub(crate) fn build_envelope_from_frame(
     frame: &AgentFrame,
     extras: Option<AssemblyLaunchExtras>,

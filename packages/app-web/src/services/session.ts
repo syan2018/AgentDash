@@ -1,5 +1,6 @@
 import { api, type ApiHttpError } from "../api/client";
 import { requireStringField } from "../api/mappers";
+import { settingsApi } from "../api/settings";
 import type {
   CreateSessionForkRequest,
   RollbackSessionProjectionRequest,
@@ -10,6 +11,7 @@ import type {
   SessionProjectionRollbackResponse,
   SessionProjectionViewResponse,
 } from "../generated/session-contracts";
+import type { JsonValue } from "../generated/common-contracts";
 import type { SessionExecutionState, SessionExecutionStatus } from "../types";
 import type { SessionTabLayout } from "../features/workspace-panel/tab-type-registry";
 
@@ -30,7 +32,6 @@ export interface SessionMeta {
   updatedAt: number;
   lastEventSeq?: number;
   lastExecutionStatus?: SessionExecutionStatusValue;
-  tabLayout?: SessionTabLayout | null;
 }
 
 export type PersistedSessionEvent = SessionEventResponse;
@@ -148,9 +149,9 @@ export async function saveSessionTabLayout(
   sessionId: string,
   layout: SessionTabLayout,
 ): Promise<void> {
-  await api.patch<unknown>(
-    `/sessions/${encodeURIComponent(sessionId)}/meta`,
-    { tab_layout: layout },
+  await settingsApi.update(
+    { scope: "user" },
+    [{ key: sessionTabLayoutSettingKey(sessionId), value: sessionTabLayoutToJson(layout) }],
   );
 }
 
@@ -161,6 +162,26 @@ export async function saveSessionTabLayout(
 export async function loadSessionTabLayout(
   sessionId: string,
 ): Promise<SessionTabLayout | null> {
-  const meta = await fetchSessionMeta(sessionId);
-  return isSessionTabLayout(meta.tabLayout) ? meta.tabLayout : null;
+  const settings = await settingsApi.list({
+    scope: "user",
+    category: sessionTabLayoutSettingKey(sessionId),
+  });
+  const setting = settings.find((entry) => entry.key === sessionTabLayoutSettingKey(sessionId));
+  return isSessionTabLayout(setting?.value) ? setting.value : null;
+}
+
+function sessionTabLayoutSettingKey(sessionId: string): string {
+  return `ui.session_tab_layout.${sessionId}`;
+}
+
+function sessionTabLayoutToJson(layout: SessionTabLayout): JsonValue {
+  return {
+    tabs: layout.tabs.map((tab) => ({
+      type_id: tab.type_id,
+      uri: tab.uri,
+      title: tab.title,
+      pinned: tab.pinned,
+    })),
+    active_tab_uri: layout.active_tab_uri,
+  };
 }

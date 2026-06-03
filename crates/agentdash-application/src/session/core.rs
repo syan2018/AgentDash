@@ -61,11 +61,7 @@ impl SessionCoreService {
             last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-
-            tab_layout: None,
-            project_id: None,
         };
         self.stores.meta.create_session(&meta).await?;
         Ok(meta)

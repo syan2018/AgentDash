@@ -433,6 +433,7 @@ pub struct ActivityPortValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct ActivityOutputArtifact {
+    pub graph_instance_id: String,
     pub activity_key: String,
     pub attempt: u32,
     pub port_key: String,
@@ -442,9 +443,11 @@ pub struct ActivityOutputArtifact {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct ActivityInputArtifact {
+    pub graph_instance_id: String,
     pub activity_key: String,
     pub attempt: u32,
     pub port_key: String,
+    pub source_graph_instance_id: String,
     pub source_activity_key: String,
     pub source_attempt: u32,
     pub source_port_key: String,
@@ -454,6 +457,7 @@ pub struct ActivityInputArtifact {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct ActivityLifecycleRunState {
+    pub graph_instance_id: String,
     pub status: ActivityRunStatus,
     pub attempts: Vec<ActivityAttemptState>,
     pub outputs: Vec<ActivityOutputArtifact>,
@@ -617,9 +621,6 @@ pub struct RuntimeSessionRefDto {
 #[serde(rename_all = "snake_case")]
 pub struct SessionShellDto {
     pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub project_id: Option<String>,
     pub title: String,
     pub title_source: String,
     pub created_at: i64,
@@ -629,9 +630,6 @@ pub struct SessionShellDto {
     #[ts(optional)]
     pub last_turn_id: Option<String>,
     pub last_delivery_status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "JsonValue")]
-    pub tab_layout: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -743,6 +741,16 @@ pub struct ActivityAttemptView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct ActiveActivityRefDto {
+    pub run_id: String,
+    pub graph_instance_id: String,
+    pub activity_key: String,
+    pub attempt: u32,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct ActivityStateView {
     pub activity_key: String,
     pub status: String,
@@ -806,6 +814,8 @@ pub struct LifecycleRunView {
     pub status: LifecycleRunStatus,
     #[serde(default)]
     pub workflow_graph_instances: Vec<WorkflowGraphInstanceView>,
+    #[serde(default)]
+    pub active_activity_refs: Vec<ActiveActivityRefDto>,
     #[serde(default)]
     pub agents: Vec<LifecycleAgentView>,
     #[serde(default)]

@@ -2,7 +2,7 @@
 //!
 //! - Execution log recording (`PendingExecutionLogEntry` → `LifecycleRun.execution_log`)
 //! - Activity summary materialization (→ inline_fs `session_records/{activity_key}/summary`)
-//! - Port output map loading (← inline_fs `port_outputs/`)
+//! - Scoped activity port output loading (← inline_fs `port_outputs/`)
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -163,23 +163,27 @@ pub async fn materialize_activity_summary(
     let _ = repo.upsert_file(&file).await;
 }
 
-/// Activity attempt 级别的 port output artifact 引用。
+/// Activity attempt 级别的 port output artifact scope。
 #[derive(Debug, Clone)]
-pub struct ActivityPortArtifactRef {
+pub struct ActivityAttemptArtifactScope {
+    pub run_id: Uuid,
     pub graph_instance_id: Uuid,
     pub activity_key: String,
     pub attempt: u32,
 }
 
-impl ActivityPortArtifactRef {
-    pub fn inline_path(&self, port_key: &str) -> String {
-        format!(
-            "{}/{}/{}/{}",
-            self.graph_instance_id, self.activity_key, self.attempt, port_key
-        )
+impl ActivityAttemptArtifactScope {
+    pub fn port_ref(&self, port_key: impl Into<String>) -> ActivityPortArtifactRef {
+        ActivityPortArtifactRef {
+            run_id: self.run_id,
+            graph_instance_id: self.graph_instance_id,
+            activity_key: self.activity_key.clone(),
+            attempt: self.attempt,
+            port_key: port_key.into(),
+        }
     }
 
-    fn path_prefix(&self) -> String {
+    pub(crate) fn path_prefix(&self) -> String {
         format!(
             "{}/{}/{}/",
             self.graph_instance_id, self.activity_key, self.attempt
@@ -187,24 +191,46 @@ impl ActivityPortArtifactRef {
     }
 }
 
+/// Activity attempt scoped port artifact 引用。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityPortArtifactRef {
+    pub run_id: Uuid,
+    pub graph_instance_id: Uuid,
+    pub activity_key: String,
+    pub attempt: u32,
+    pub port_key: String,
+}
+
+impl ActivityPortArtifactRef {
+    pub fn inline_path(&self) -> String {
+        format!(
+            "{}/{}/{}/{}",
+            self.graph_instance_id, self.activity_key, self.attempt, self.port_key
+        )
+    }
+}
+
 /// 加载 activity attempt 级别的 port output map（仅含非空内容）。
 pub async fn load_scoped_port_output_map(
     repo: &dyn InlineFileRepository,
-    run_id: Uuid,
-    artifact_ref: &ActivityPortArtifactRef,
+    scope: &ActivityAttemptArtifactScope,
 ) -> BTreeMap<String, String> {
-    let prefix = artifact_ref.path_prefix();
-    repo.list_files(InlineFileOwnerKind::LifecycleRun, run_id, "port_outputs")
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|f| {
-            let port_key = f.path.strip_prefix(&prefix)?.to_string();
-            if port_key.is_empty() || port_key.contains('/') {
-                return None;
-            }
-            let content = f.into_text_content()?;
-            (!content.trim().is_empty()).then_some((port_key, content))
-        })
-        .collect()
+    let prefix = scope.path_prefix();
+    repo.list_files(
+        InlineFileOwnerKind::LifecycleRun,
+        scope.run_id,
+        "port_outputs",
+    )
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter_map(|f| {
+        let port_key = f.path.strip_prefix(&prefix)?.to_string();
+        if port_key.is_empty() || port_key.contains('/') {
+            return None;
+        }
+        let content = f.into_text_content()?;
+        (!content.trim().is_empty()).then_some((port_key, content))
+    })
+    .collect()
 }

@@ -10,12 +10,13 @@ use agentdash_agent_protocol::BackboneEvent;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
     ActivityAttemptState, ActivityAttemptStatus, ExecutorRunRef, LifecycleRun, LifecycleRunStatus,
-    WorkflowGraphInstance,
+    WorkflowGraphInstance, active_activity_refs_from_states,
 };
 use serde::Serialize;
 use uuid::Uuid;
 
 use crate::session::{PersistedSessionEvent, SessionPersistence};
+use crate::workflow::execution_log::{ActivityAttemptArtifactScope, ActivityPortArtifactRef};
 
 pub mod session_items;
 
@@ -258,12 +259,16 @@ impl LifecycleJourneyProjection {
         Ok(summary_archive_markdown(&compaction))
     }
 
-    pub async fn list_port_outputs(&self, run_id: Uuid) -> JourneyResult<BTreeMap<String, String>> {
+    pub async fn list_scoped_port_outputs(
+        &self,
+        scope: &ActivityAttemptArtifactScope,
+    ) -> JourneyResult<BTreeMap<String, String>> {
+        let prefix = scope.path_prefix();
         let files = self
             .inline_file_repo
             .list_files(
                 InlineFileOwnerKind::LifecycleRun,
-                run_id,
+                scope.run_id,
                 PORT_OUTPUTS_CONTAINER,
             )
             .await
@@ -271,80 +276,47 @@ impl LifecycleJourneyProjection {
         Ok(files
             .into_iter()
             .filter_map(|file| {
-                let path = file.path.clone();
-                file.into_text_content().map(|content| (path, content))
+                let port_key = file.path.strip_prefix(&prefix)?.to_string();
+                if port_key.is_empty() || port_key.contains('/') {
+                    return None;
+                }
+                file.into_text_content().map(|content| (port_key, content))
             })
             .collect())
     }
 
-    pub async fn read_port_output(&self, run_id: Uuid, port_key: &str) -> JourneyResult<String> {
-        self.inline_file_repo
-            .get_file(
-                InlineFileOwnerKind::LifecycleRun,
-                run_id,
-                PORT_OUTPUTS_CONTAINER,
-                port_key,
-            )
-            .await
-            .map_err(map_domain_err)?
-            .and_then(|file| file.into_text_content())
-            .ok_or_else(|| {
-                LifecycleJourneyError::NotFound(format!("port output 不存在: {port_key}"))
-            })
-    }
-
-    /// 读取 activity attempt 级别的 scoped port output。
     pub async fn read_scoped_port_output(
         &self,
-        run_id: Uuid,
-        scoped_path: &str,
+        artifact_ref: &ActivityPortArtifactRef,
     ) -> JourneyResult<String> {
         self.inline_file_repo
             .get_file(
                 InlineFileOwnerKind::LifecycleRun,
-                run_id,
+                artifact_ref.run_id,
                 PORT_OUTPUTS_CONTAINER,
-                scoped_path,
+                &artifact_ref.inline_path(),
             )
             .await
             .map_err(map_domain_err)?
             .and_then(|file| file.into_text_content())
             .ok_or_else(|| {
-                LifecycleJourneyError::NotFound(format!("port output 不存在: {scoped_path}"))
+                LifecycleJourneyError::NotFound(format!(
+                    "port output 不存在: {}",
+                    artifact_ref.inline_path()
+                ))
             })
     }
 
-    pub async fn write_port_output(
-        &self,
-        run_id: Uuid,
-        port_key: &str,
-        content: &str,
-    ) -> JourneyResult<()> {
-        let file = InlineFile::new(
-            InlineFileOwnerKind::LifecycleRun,
-            run_id,
-            PORT_OUTPUTS_CONTAINER,
-            port_key.to_string(),
-            content.to_string(),
-        );
-        self.inline_file_repo
-            .upsert_file(&file)
-            .await
-            .map_err(map_domain_err)
-    }
-
-    /// 写入 activity attempt 级别的 scoped port output。
     pub async fn write_scoped_port_output(
         &self,
-        run_id: Uuid,
-        scoped_path: &str,
+        artifact_ref: &ActivityPortArtifactRef,
         content: &str,
     ) -> JourneyResult<()> {
         let file = InlineFile::new(
             InlineFileOwnerKind::LifecycleRun,
-            run_id,
+            artifact_ref.run_id,
             PORT_OUTPUTS_CONTAINER,
-            scoped_path.to_string(),
+            artifact_ref.inline_path(),
             content.to_string(),
         );
         self.inline_file_repo
@@ -483,7 +455,7 @@ pub struct LifecycleRunOverview<'a> {
     project_id: Uuid,
     root_graph_id: Option<Uuid>,
     status: &'a LifecycleRunStatus,
-    current_activity_key: Option<String>,
+    active_activity_refs: Vec<String>,
     step_count: usize,
     log_count: usize,
     created_at: chrono::DateTime<chrono::Utc>,
@@ -500,7 +472,29 @@ pub fn run_overview<'a>(
         project_id: run.project_id,
         root_graph_id: run.root_graph_id,
         status: &run.status,
-        current_activity_key: run.active_node_keys.first().cloned(),
+        active_activity_refs: active_activity_refs_from_states(
+            run.id,
+            graph_instances.iter().filter_map(|instance| {
+                instance
+                    .activity_state
+                    .as_ref()
+                    .map(|state| (instance.id, state))
+            }),
+        )
+        .into_iter()
+        .map(|active| {
+            format!(
+                "{}:{}#{}:{}",
+                active.graph_instance_id,
+                active.activity_key,
+                active.attempt,
+                serde_json::to_value(active.status)
+                    .ok()
+                    .and_then(|value| value.as_str().map(ToOwned::to_owned))
+                    .unwrap_or_else(|| "unknown".to_string())
+            )
+        })
+        .collect(),
         step_count: graph_instances
             .iter()
             .filter_map(|instance| instance.activity_state.as_ref())

@@ -8,9 +8,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::context::capability::CompanionAgentEntry;
-use crate::{
-    AgentConfig, SessionMcpServer, ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs,
-};
+use crate::{SessionMcpServer, ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs};
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum SessionStoreError {
@@ -279,9 +277,6 @@ pub struct SessionMeta {
     pub title: String,
     #[serde(default)]
     pub title_source: TitleSource,
-    /// 所属 project（session 创建时确定，不可变）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(default)]
@@ -293,11 +288,7 @@ pub struct SessionMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_terminal_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_config: Option<AgentConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tab_layout: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

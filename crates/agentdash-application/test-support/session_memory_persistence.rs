@@ -970,9 +970,7 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
         current.last_terminal_message = incoming.last_terminal_message.clone();
     }
 
-    current.executor_config = incoming.executor_config.clone();
     current.executor_session_id = incoming.executor_session_id.clone();
-    current.tab_layout = incoming.tab_layout.clone();
 }
 
 pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &BackboneEnvelope) {
@@ -1059,17 +1057,13 @@ mod tests {
             id: id.to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
             last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-
-            tab_layout: None,
         }
     }
 
@@ -1101,17 +1095,13 @@ mod tests {
             id: "sess-memory".to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
             last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-
-            tab_layout: None,
         };
         persistence
             .create_session(&meta)
@@ -1127,10 +1117,6 @@ mod tests {
         stale.last_delivery_status = ExecutionStatus::Running;
         stale.last_turn_id = Some("t-old".to_string());
         stale.executor_session_id = Some("exec-1".to_string());
-        stale.tab_layout = Some(serde_json::json!({
-            "tabs": [{"type_id": "session", "uri": "session://main", "title": "Session", "pinned": true}],
-            "active_tab_uri": "session://main"
-        }));
 
         persistence
             .append_event(
@@ -1151,14 +1137,6 @@ mod tests {
             .expect("session 应存在");
         assert_eq!(merged.last_event_seq, 1);
         assert_eq!(merged.executor_session_id.as_deref(), Some("exec-1"));
-        assert_eq!(
-            merged
-                .tab_layout
-                .as_ref()
-                .and_then(|layout| layout.get("active_tab_uri"))
-                .and_then(|value| value.as_str()),
-            Some("session://main")
-        );
     }
 
     #[tokio::test]
@@ -1168,17 +1146,13 @@ mod tests {
             id: "sess-effects".to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
             last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-
-            tab_layout: None,
         };
         persistence
             .create_session(&meta)
@@ -1237,17 +1211,13 @@ mod tests {
             id: "sess-runtime-command".to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
             last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-
-            tab_layout: None,
         };
         persistence
             .create_session(&meta)

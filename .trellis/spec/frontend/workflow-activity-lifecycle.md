@@ -67,6 +67,7 @@ type LifecycleRunView = {
   root_graph_id?: string | null
   status: LifecycleRunStatus
   workflow_graph_instances: WorkflowGraphInstanceView[]
+  active_activity_refs: ActiveActivityRef[]
   agents: LifecycleAgentView[]
   subject_associations: LifecycleSubjectAssociationDto[]
   runtime_trace_refs: RuntimeSessionRef[]

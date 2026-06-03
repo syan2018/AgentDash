@@ -25,8 +25,6 @@ pub struct SessionExecutionStateResponse {
 pub struct UpdateSessionMetaRequest {
     #[serde(default)]
     pub title: Option<String>,
-    #[serde(default)]
-    pub tab_layout: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -825,8 +825,21 @@ mod tests {
         let run_repo = TestRunRepo {
             runs: [(run_id, run)].into_iter().collect(),
         };
+        let mut anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "sess-1",
+            run_id,
+            launch_frame_id,
+            agent_id,
+            Some(graph_instance_id),
+            Some("implement".to_string()),
+        );
+        anchor.fill_assignment(assignment.id, assignment.attempt);
+        let anchor_repo = TestAnchorRepo {
+            anchors: [("sess-1".to_string(), anchor)].into_iter().collect(),
+        };
         let resolver =
             ActivityRuntimeAssociationResolver::new(&frame_repo, &assignment_repo, &run_repo);
+        let resolver = resolver.with_anchor_repo(&anchor_repo);
 
         let association = resolver
             .resolve_by_runtime_session("sess-1")
@@ -904,6 +917,8 @@ mod tests {
         current_frame.graph_instance_id = Some(Uuid::new_v4());
         current_frame.activity_key = Some("implement".to_string());
         let frame_id = current_frame.id;
+        let graph_instance_id = current_frame.graph_instance_id;
+        let activity_key = current_frame.activity_key.clone();
         let frame_repo = TestFrameRepo {
             frames: [(frame_id, current_frame)].into_iter().collect(),
         };
@@ -911,8 +926,20 @@ mod tests {
         let run_repo = TestRunRepo {
             runs: [(run_id, run)].into_iter().collect(),
         };
+        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "sess-1",
+            run_id,
+            frame_id,
+            agent_id,
+            graph_instance_id,
+            activity_key,
+        );
+        let anchor_repo = TestAnchorRepo {
+            anchors: [("sess-1".to_string(), anchor)].into_iter().collect(),
+        };
         let resolver =
             ActivityRuntimeAssociationResolver::new(&frame_repo, &assignment_repo, &run_repo);
+        let resolver = resolver.with_anchor_repo(&anchor_repo);
 
         let error = resolver
             .resolve_by_runtime_session("sess-1")

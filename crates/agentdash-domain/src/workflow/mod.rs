@@ -25,7 +25,8 @@ pub use dispatch::{
 };
 pub use entity::{
     ActiveActivityRef, ActivityExecutionClaim, AgentProcedure, LifecycleRun, LifecycleRunTopology,
-    WorkflowGraph, build_effective_contract,
+    WorkflowGraph, active_activity_refs_from_states, build_effective_contract,
+    has_active_activity_state,
 };
 pub use lifecycle_agent::{LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::LifecycleGate;

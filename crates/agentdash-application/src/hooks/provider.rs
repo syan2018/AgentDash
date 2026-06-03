@@ -211,16 +211,16 @@ impl AppExecutionHookProvider {
                         }
                     },
                     fulfilled_port_keys: {
-                        let artifact_ref =
-                            crate::workflow::execution_log::ActivityPortArtifactRef {
+                        let artifact_scope =
+                            crate::workflow::execution_log::ActivityAttemptArtifactScope {
+                                run_id: workflow.run.id,
                                 graph_instance_id: workflow.graph_instance_id,
                                 activity_key: workflow.active_activity.key.clone(),
                                 attempt: workflow.active_attempt.attempt,
                             };
                         let map = crate::workflow::load_scoped_port_output_map(
                             self.inline_file_repo.as_ref(),
-                            workflow.run.id,
-                            &artifact_ref,
+                            &artifact_scope,
                         )
                         .await;
                         if map.is_empty() {
@@ -431,7 +431,7 @@ mod tests {
     use agentdash_spi::hooks::HookRuntimeAccess;
     use agentdash_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
-        AgentFrameHookSnapshotQuery, HookEvaluationQuery, HookResolution,
+        AgentFrameHookSnapshotQuery, HookResolution,
     };
     use agentdash_spi::{
         AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,

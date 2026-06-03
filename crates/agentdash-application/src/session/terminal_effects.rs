@@ -477,17 +477,13 @@ mod tests {
                 id: "sess-hook-replay".to_string(),
                 title: "hook replay".to_string(),
                 title_source: TitleSource::Auto,
-                project_id: None,
                 created_at: 1,
                 updated_at: 1,
                 last_event_seq: 0,
                 last_delivery_status: ExecutionStatus::Idle,
                 last_turn_id: None,
                 last_terminal_message: None,
-                executor_config: None,
                 executor_session_id: None,
-
-                tab_layout: None,
             })
             .await
             .expect("session should be created");

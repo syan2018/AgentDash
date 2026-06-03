@@ -43,38 +43,34 @@ use crate::dto::{
     SessionEventsQuery, SessionExecutionStateResponse, UpdateSessionMetaRequest,
 };
 
-/// Session trace 权限检查以 session shell 的 project 为入口；若存在 anchor，再校验 run project 一致。
+/// Session trace 权限检查通过 RuntimeSessionExecutionAnchor 进入 LifecycleRun project。
 pub async fn ensure_session_permission(
     state: &AppState,
     user: &agentdash_plugin_api::AuthIdentity,
     session_id: &str,
     permission: ProjectPermission,
 ) -> Result<(), ApiError> {
-    let meta = state
+    let _meta = state
         .services
         .session_core
         .get_session_meta(session_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("会话 {session_id} 不存在")))?;
-    let session_project_id_raw = meta.project_id.as_deref().ok_or_else(|| {
-        ApiError::BadRequest(format!("runtime session 缺少 project shell: {session_id}"))
-    })?;
-    let session_project_id = parse_uuid_param(session_project_id_raw, "session_project_id")?;
-    load_project_with_permission(state, user, session_project_id, permission).await?;
-
-    if let Some(anchor) = state
+    let anchor = match state
         .repos
         .execution_anchor_repo
         .find_by_session(session_id)
         .await?
     {
-        let run = load_lifecycle_run_for_session(state, anchor.run_id).await?;
-        if run.project_id != session_project_id {
+        Some(anchor) => anchor,
+        None => {
             return Err(ApiError::BadRequest(format!(
-                "runtime session project 与 anchor run project 不一致: {session_id}"
+                "runtime session 缺少 RuntimeSessionExecutionAnchor: {session_id}"
             )));
         }
-    }
+    };
+    let run = load_lifecycle_run_for_session(state, anchor.run_id).await?;
+    load_project_with_permission(state, user, run.project_id, permission).await?;
     Ok(())
 }
 
@@ -163,45 +159,25 @@ pub async fn get_session_runtime_control(
         .get_session_meta(&runtime_session_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", runtime_session_id)))?;
-    let Some(session_project_id_raw) = meta.project_id.as_deref() else {
-        return Err(ApiError::BadRequest(format!(
-            "runtime session 缺少 project shell: {runtime_session_id}"
-        )));
-    };
-    let session_project_id = parse_uuid_param(session_project_id_raw, "session_project_id")?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        session_project_id,
-        ProjectPermission::View,
-    )
-    .await?;
-
     let Some(anchor) = state
         .repos
         .execution_anchor_repo
         .find_by_session(&runtime_session_id)
         .await?
     else {
-        return Ok(Json(SessionRuntimeControlView {
-            runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
-            session_meta: session_shell_dto(&meta),
-            anchor: None,
-            run: None,
-            agent: None,
-            frame_runtime: None,
-            subject_associations: Vec::new(),
-            can_send: false,
-            send_unavailable_reason: Some("当前 Session 尚未关联 Lifecycle 控制面。".to_string()),
-        }));
+        return Err(ApiError::BadRequest(format!(
+            "runtime session 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
+        )));
     };
 
     let run = load_lifecycle_run_for_session(state.as_ref(), anchor.run_id).await?;
-    if run.project_id != session_project_id {
-        return Err(ApiError::BadRequest(format!(
-            "runtime session project 与 anchor run project 不一致: {runtime_session_id}"
-        )));
-    }
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        run.project_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let agent = state
         .repos
         .lifecycle_agent_repo
@@ -287,16 +263,7 @@ pub async fn get_project_sessions(
     )
     .await?;
 
-    let project_id_string = project_id.to_string();
-    let mut metas = state
-        .services
-        .session_core
-        .list_sessions()
-        .await?
-        .into_iter()
-        .filter(|meta| meta.project_id.as_deref() == Some(project_id_string.as_str()))
-        .collect::<Vec<_>>();
-    metas.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    let metas = state.services.session_core.list_sessions().await?;
 
     let session_ids = metas.iter().map(|meta| meta.id.clone()).collect::<Vec<_>>();
     let anchors = state
@@ -321,17 +288,28 @@ pub async fn get_project_sessions(
         .map(|run| (run.id, run))
         .collect::<HashMap<_, _>>();
 
-    let mut sessions = Vec::with_capacity(metas.len());
-    for meta in metas {
-        let entry = project_session_entry(
-            state.as_ref(),
-            &meta,
-            anchors_by_session.get(&meta.id),
-            &runs_by_id,
-        )
-        .await?;
+    let metas_by_id = metas
+        .into_iter()
+        .map(|meta| (meta.id.clone(), meta))
+        .collect::<HashMap<_, _>>();
+    let mut sessions = Vec::new();
+    for anchor in anchors_by_session.values() {
+        let Some(run) = runs_by_id.get(&anchor.run_id) else {
+            return Err(ApiError::NotFound(format!(
+                "lifecycle_run 不存在: {}",
+                anchor.run_id
+            )));
+        };
+        if run.project_id != project_id {
+            continue;
+        }
+        let Some(meta) = metas_by_id.get(&anchor.runtime_session_id) else {
+            continue;
+        };
+        let entry = project_session_entry(state.as_ref(), meta, Some(anchor), &runs_by_id).await?;
         sessions.push(entry);
     }
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     Ok(Json(ProjectSessionListView {
         project_id: project_id.to_string(),
@@ -519,7 +497,6 @@ async fn project_session_entry(
 fn session_shell_dto(meta: &SessionMeta) -> SessionShellDto {
     SessionShellDto {
         id: meta.id.clone(),
-        project_id: meta.project_id.clone(),
         title: meta.title.clone(),
         title_source: serialized_string(&meta.title_source),
         created_at: meta.created_at,
@@ -527,7 +504,6 @@ fn session_shell_dto(meta: &SessionMeta) -> SessionShellDto {
         last_event_seq: meta.last_event_seq,
         last_turn_id: meta.last_turn_id.clone(),
         last_delivery_status: serialized_string(&meta.last_delivery_status),
-        tab_layout: meta.tab_layout.clone(),
     }
 }
 
@@ -647,7 +623,6 @@ mod tests {
             id: id.to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: event_seq,
@@ -662,9 +637,7 @@ mod tests {
                 None
             },
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: executor_session_id.map(String::from),
-            tab_layout: None,
         }
     }
 
@@ -835,10 +808,8 @@ pub async fn update_session_meta(
     Path(session_id): Path<String>,
     Json(req): Json<UpdateSessionMetaRequest>,
 ) -> Result<Json<SessionMeta>, ApiError> {
-    if req.title.is_none() && req.tab_layout.is_none() {
-        return Err(ApiError::BadRequest(
-            "必须提供 title 或 tab_layout".to_string(),
-        ));
+    if req.title.is_none() {
+        return Err(ApiError::BadRequest("必须提供 title".to_string()));
     }
     if let Some(title) = req.title.as_deref()
         && title.trim().is_empty()
@@ -856,9 +827,6 @@ pub async fn update_session_meta(
                     meta.title = title.to_string();
                     meta.title_source = TitleSource::User;
                 }
-            }
-            if let Some(tab_layout) = req.tab_layout.clone() {
-                meta.tab_layout = Some(tab_layout);
             }
         })
         .await

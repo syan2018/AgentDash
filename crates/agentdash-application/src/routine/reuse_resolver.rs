@@ -814,7 +814,6 @@ mod tests {
             topology: agentdash_domain::workflow::LifecycleRunTopology::WorkflowGraph,
             root_graph_id: Some(Uuid::new_v4()),
             status: LifecycleRunStatus::Ready,
-            active_node_keys: Vec::new(),
             execution_log: Vec::new(),
             created_at: now,
             updated_at: now,

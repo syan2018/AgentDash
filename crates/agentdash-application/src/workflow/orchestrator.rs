@@ -28,7 +28,7 @@ use crate::session::SessionTerminalCallback;
 use crate::session::{
     SessionCapabilityService, SessionCoreService, SessionHookService, SessionLaunchService,
 };
-use crate::workflow::execution_log::ActivityPortArtifactRef;
+use crate::workflow::execution_log::ActivityAttemptArtifactScope;
 use crate::workflow::{
     ActivityEvent, ActivityLifecycleRunService, AgentActivityExecutorLauncher,
     AgentActivityLaunchContext, AgentActivityRuntimePort, load_scoped_port_output_map,
@@ -243,17 +243,15 @@ impl LifecycleOrchestrator {
                     .unwrap_or_else(|| "agent 主动标记 activity failed".to_string()),
             }
         } else {
-            let artifact_ref = ActivityPortArtifactRef {
+            let artifact_scope = ActivityAttemptArtifactScope {
+                run_id: association.run.id,
                 graph_instance_id: association.graph_instance_id,
                 activity_key: association.activity_key.clone(),
                 attempt: association.attempt,
             };
-            let port_output_map = load_scoped_port_output_map(
-                self.repos.inline_file_repo.as_ref(),
-                association.run.id,
-                &artifact_ref,
-            )
-            .await;
+            let port_output_map =
+                load_scoped_port_output_map(self.repos.inline_file_repo.as_ref(), &artifact_scope)
+                    .await;
             let required_output_keys = match &activity.completion_policy {
                 ActivityCompletionPolicy::OutputPorts { required_ports } => required_ports.clone(),
                 _ => Vec::new(),
@@ -276,7 +274,7 @@ impl LifecycleOrchestrator {
                     orchestration_warning: None,
                 });
             }
-            let outputs = activity_outputs_from_port_map(activity, port_output_map)?;
+            let outputs = activity_outputs_from_scoped_port_map(activity, port_output_map)?;
             ActivityEvent::ActivityCompleted {
                 activity_key: association.activity_key.clone(),
                 attempt: association.attempt,
@@ -444,7 +442,7 @@ impl SessionTerminalCallback for LifecycleOrchestrator {
     }
 }
 
-fn activity_outputs_from_port_map(
+fn activity_outputs_from_scoped_port_map(
     activity: &ActivityDefinition,
     port_output_map: std::collections::BTreeMap<String, String>,
 ) -> Result<Vec<ActivityPortValue>, String> {
@@ -536,7 +534,7 @@ mod tests {
     #[test]
     fn activity_outputs_parse_declared_json_ports() {
         let activity = test_activity_with_outputs(&["result"]);
-        let outputs = activity_outputs_from_port_map(
+        let outputs = activity_outputs_from_scoped_port_map(
             &activity,
             BTreeMap::from([
                 ("ignored".to_string(), "\"not declared\"".to_string()),
@@ -553,7 +551,7 @@ mod tests {
     #[test]
     fn activity_outputs_reject_invalid_json_port_content() {
         let activity = test_activity_with_outputs(&["result"]);
-        let error = activity_outputs_from_port_map(
+        let error = activity_outputs_from_scoped_port_map(
             &activity,
             BTreeMap::from([("result".to_string(), "plain text".to_string())]),
         )

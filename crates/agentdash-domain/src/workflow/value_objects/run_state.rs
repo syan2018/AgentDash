@@ -44,6 +44,7 @@ pub struct ActivityPortValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActivityOutputArtifact {
+    pub graph_instance_id: Uuid,
     pub activity_key: String,
     pub attempt: u32,
     pub port_key: String,
@@ -53,9 +54,11 @@ pub struct ActivityOutputArtifact {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActivityInputArtifact {
+    pub graph_instance_id: Uuid,
     pub activity_key: String,
     pub attempt: u32,
     pub port_key: String,
+    pub source_graph_instance_id: Uuid,
     pub source_activity_key: String,
     pub source_attempt: u32,
     pub source_port_key: String,

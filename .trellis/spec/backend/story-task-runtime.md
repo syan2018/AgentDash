@@ -48,7 +48,7 @@
 
 ### RuntimeSession（纯 runtime trace 容器）
 
-- `SessionMeta` 持有 `project_id`（创建时确定，用于按项目查询 runtime trace 列表）。
+- `SessionMeta` 只持有 runtime trace shell：title projection、event sequence head、delivery status 和 last turn 指针。
 - `RuntimeSession` 不通过任何 binding 表与业务实体关联。
 - 业务上下文反查只能走 trace 链路：`runtime_session_id → RuntimeSessionExecutionAnchor → AgentFrame / LifecycleAgent / LifecycleRun → LifecycleSubjectAssociation`。
 - capability / permission scope 由 `AgentFrame`、`PermissionGrant` 与 association 推导，不由 session owner 推导。
@@ -67,7 +67,7 @@
 | Task ↔ LifecycleAgent | 0..N | `LifecycleSubjectAssociation(anchor_agent_id, subject_kind=Task)` |
 | ActivityAttemptState ↔ LifecycleAgent | 0..N | `AgentAssignment(graph_instance_id, activity_key, attempt, agent_id, frame_id)` |
 | RoutineExecution → LifecycleRun | 1:N | `LifecycleSubjectAssociation(subject_kind=RoutineExecution, role=Source)` |
-| Project ↔ RuntimeSession | 1:N | `SessionMeta.project_id` |
+| Project ↔ RuntimeSession | 1:N | `RuntimeSessionExecutionAnchor.run_id → LifecycleRun.project_id` read model |
 
 ---
 
@@ -105,7 +105,9 @@ task_id → SubjectRef(kind=Task, id=task_id)
 ### 查找 Project 下所有 RuntimeSessions
 
 ```text
-project_id → SessionMeta query by project_id
+project_id → RuntimeSessionExecutionAnchor
+           → LifecycleRun(project_id)
+           → SessionMeta by runtime_session_id
 ```
 
 ### 查找 RuntimeSession 的业务上下文（trace 反查）

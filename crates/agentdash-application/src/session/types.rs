@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub use agentdash_spi::CapabilityState;
+use agentdash_spi::PromptPayload;
 pub use agentdash_spi::session_persistence::{
     ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CapabilityArtifactSource,
     CapabilityContributionRecord, CapabilityDeclarationRecord, CapabilityDimensionKey,
@@ -14,7 +15,6 @@ pub use agentdash_spi::session_persistence::{
     RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, SessionMeta,
     SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect, TitleSource,
 };
-use agentdash_spi::{AgentConfig, PromptPayload};
 
 /// 纯用户输入 — HTTP 反序列化的目标。
 /// 不包含任何后端注入字段。
@@ -104,7 +104,6 @@ pub enum SessionPromptLifecycle {
 /// Session launch 阶段只消费 runtime trace 所需的持久化事实。
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeTraceLaunchState {
-    pub executor_config: Option<AgentConfig>,
     pub executor_session_id: Option<String>,
     pub last_event_seq: u64,
 }
@@ -121,7 +120,6 @@ impl RuntimeTraceLaunchState {
 impl From<&SessionMeta> for RuntimeTraceLaunchState {
     fn from(meta: &SessionMeta) -> Self {
         Self {
-            executor_config: meta.executor_config.clone(),
             executor_session_id: meta.executor_session_id.clone(),
             last_event_seq: meta.last_event_seq,
         }

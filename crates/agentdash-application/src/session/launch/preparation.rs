@@ -1,5 +1,4 @@
 use agentdash_agent_protocol::SourceInfo;
-use agentdash_domain::common::AgentConfig;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SharedHookRuntime,
 };
@@ -37,7 +36,6 @@ pub(in crate::session) struct PreparedTurn {
     pub accepted_context_frames_to_emit: Vec<ContextFrame>,
     pub pending_transition_application: PendingRuntimeContextApplication,
     pub pending_command_ids: Vec<uuid::Uuid>,
-    pub executor_config_for_meta: AgentConfig,
     pub is_owner_bootstrap: bool,
     pub hook_runtime: Option<SharedHookRuntime>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
@@ -277,7 +275,6 @@ impl TurnPreparer {
             hook_runtime.as_ref(),
             &context.turn.context_frames,
         );
-        let executor_config_for_meta = context.session.executor_config.clone();
 
         Ok(PreparedTurn {
             session_id,
@@ -290,7 +287,6 @@ impl TurnPreparer {
             accepted_context_frames_to_emit,
             pending_transition_application,
             pending_command_ids,
-            executor_config_for_meta,
             is_owner_bootstrap,
             hook_runtime,
             post_turn_handler,

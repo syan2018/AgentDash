@@ -3,13 +3,12 @@ use agentdash_domain::workflow::{LifecycleRun, LifecycleRunStatus};
 pub fn select_active_run(runs: Vec<LifecycleRun>) -> Option<LifecycleRun> {
     runs.into_iter()
         .filter(|run| {
-            run.has_active_activity()
-                && matches!(
-                    run.status,
-                    LifecycleRunStatus::Ready
-                        | LifecycleRunStatus::Running
-                        | LifecycleRunStatus::Blocked
-                )
+            matches!(
+                run.status,
+                LifecycleRunStatus::Ready
+                    | LifecycleRunStatus::Running
+                    | LifecycleRunStatus::Blocked
+            )
         })
         .max_by_key(|run| (active_run_status_priority(run.status), run.updated_at))
 }

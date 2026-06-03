@@ -28,7 +28,8 @@ use crate::session::{
 };
 use crate::session::{CapabilityArtifactSource, RuntimeCapabilityTransition, SetToolAccessEffect};
 use crate::workflow::activity_activation::apply_to_frame_runtime_target;
-use crate::workflow::execution_log::ActivityPortArtifactRef;
+use crate::workflow::execution_log::ActivityAttemptArtifactScope;
+use crate::workflow::frame_surface::AgentFrameSurfaceExt;
 use crate::workflow::{
     AgentFrameBuilder, RuntimeSessionCreationRequest, activate_activity_with_platform,
     agent_mcp_entries_from_servers, build_capability_state_for_activation,
@@ -305,21 +306,42 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
         self.session_core
             .get_session_meta(runtime_session_id)
             .await
-            .map_err(|error| format!("读取 runtime session meta 失败: {error}"))
-            .map(|meta| meta.and_then(|meta| meta.executor_config))
+            .map_err(|error| format!("读取 runtime session meta 失败: {error}"))?
+            .ok_or_else(|| format!("runtime session 不存在: {runtime_session_id}"))?;
+        let Some(anchor) = self
+            .repos
+            .execution_anchor_repo
+            .find_by_session(runtime_session_id)
+            .await
+            .map_err(|error| format!("读取 RuntimeSessionExecutionAnchor 失败: {error}"))?
+        else {
+            return Ok(None);
+        };
+        let frame = self
+            .repos
+            .agent_frame_repo
+            .get_current(anchor.agent_id)
+            .await
+            .map_err(|error| format!("读取 current AgentFrame 失败: {error}"))?
+            .or(self
+                .repos
+                .agent_frame_repo
+                .get(anchor.launch_frame_id)
+                .await
+                .map_err(|error| format!("读取 launch AgentFrame 失败: {error}"))?);
+        Ok(frame.and_then(|frame| frame.typed_execution_profile()))
     }
 
     async fn set_executor_config(
         &self,
         runtime_session_id: &str,
-        executor_config: AgentConfig,
+        _executor_config: AgentConfig,
     ) -> Result<(), String> {
         self.session_core
-            .update_session_meta(runtime_session_id, move |meta| {
-                meta.executor_config = Some(executor_config.clone());
-            })
+            .get_session_meta(runtime_session_id)
             .await
-            .map_err(|error| format!("继承 executor config 失败: {error}"))?;
+            .map_err(|error| format!("读取 runtime session meta 失败: {error}"))?
+            .ok_or_else(|| format!("runtime session 不存在: {runtime_session_id}"))?;
         Ok(())
     }
 
@@ -484,20 +506,18 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
 
         let available_presets =
             crate::session::load_available_presets(&self.repos, definition.project_id).await;
-        let artifact_ref = ActivityPortArtifactRef {
+        let artifact_scope = ActivityAttemptArtifactScope {
+            run_id: claim.run_id,
             graph_instance_id: claim.graph_instance_id,
             activity_key: claim.activity_key.clone(),
             attempt: claim.attempt,
         };
-        let ready_port_keys = load_scoped_port_output_map(
-            self.repos.inline_file_repo.as_ref(),
-            claim.run_id,
-            &artifact_ref,
-        )
-        .await
-        .keys()
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
+        let ready_port_keys =
+            load_scoped_port_output_map(self.repos.inline_file_repo.as_ref(), &artifact_scope)
+                .await
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
 
         let current_frame = self
             .repos
@@ -528,6 +548,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                     workflow: Some(&workflow),
                     run_id: claim.run_id,
                     graph_instance_id: claim.graph_instance_id,
+                    attempt: claim.attempt,
                     lifecycle_key: &definition.key,
                     agent_mcp_servers: agent_mcp_entries_from_servers(&runtime_mcp_servers),
                     available_presets,
@@ -582,6 +603,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                     workflow: Some(&workflow),
                     run_id: claim.run_id,
                     graph_instance_id: claim.graph_instance_id,
+                    attempt: claim.attempt,
                     lifecycle_key: &definition.key,
                     agent_mcp_servers,
                     available_presets,

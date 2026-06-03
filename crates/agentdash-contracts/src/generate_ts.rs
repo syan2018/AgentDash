@@ -96,9 +96,9 @@ use agentdash_contracts::vfs::{
     UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
-    ActivityAttemptView, ActivityDefinition, ActivityLifecycleRunState, ActivityStateView,
-    ActivityTransition, AgentAssignmentRefDto, AgentFrameRefDto, AgentFrameRuntimeView,
-    AgentProcedureContract, DefinitionSource, DeleteAgentProcedureResponse,
+    ActiveActivityRefDto, ActivityAttemptView, ActivityDefinition, ActivityLifecycleRunState,
+    ActivityStateView, ActivityTransition, AgentAssignmentRefDto, AgentFrameRefDto,
+    AgentFrameRuntimeView, AgentProcedureContract, DefinitionSource, DeleteAgentProcedureResponse,
     DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
     HookPresetResponse, HookPresetsResponse, LifecycleAgentMessageRequest,
     LifecycleAgentMessageResponse, LifecycleAgentRefDto, LifecycleAgentView,
@@ -300,6 +300,7 @@ fn main() {
             export_all::<AgentAssignmentRefDto>(dir);
             export_all::<StoryLaunchResult>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
+            export_all::<ActiveActivityRefDto>(dir);
             export_all::<ActivityAttemptView>(dir);
             export_all::<ActivityStateView>(dir);
             export_all::<WorkflowGraphInstanceView>(dir);

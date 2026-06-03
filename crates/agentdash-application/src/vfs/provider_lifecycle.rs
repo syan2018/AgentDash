@@ -16,6 +16,7 @@ use super::provider_skill_asset::{
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
 use crate::runtime::{Mount, RuntimeFileEntry};
 use crate::session::SessionPersistence;
+use crate::workflow::execution_log::ActivityAttemptArtifactScope;
 use crate::workflow::lifecycle::journey::{
     LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, attempt_session_id,
     current_step, current_step_session_id, filter_session_items, find_step,
@@ -94,29 +95,35 @@ fn parse_graph_instance_id_from_metadata(mount: &Mount) -> Result<Uuid, MountErr
         .map_err(|error| MountError::OperationFailed(format!("graph_instance_id 无效: {error}")))
 }
 
-/// 从 mount metadata 解析 activity scope（graph_instance_id / activity_key / attempt），
-/// 构建 scoped port output 的 inline file path。有 scope 返回
-/// `{graph_instance_id}/{activity_key}/{attempt}/{port_key}`，无 scope 返回 `{port_key}`。
-fn scoped_port_output_path(mount: &Mount, port_key: &str) -> Result<String, MountError> {
-    let graph_instance_id = mount
-        .metadata
-        .get("graph_instance_id")
-        .and_then(|v| v.as_str());
-    let activity_key = mount.metadata.get("activity_key").and_then(|v| v.as_str());
-    let attempt = mount.metadata.get("attempt").and_then(|v| v.as_u64());
-
-    match (graph_instance_id, activity_key, attempt) {
-        (Some(gi), Some(ak), Some(att)) => Ok(format!("{gi}/{ak}/{att}/{port_key}")),
-        _ => Ok(port_key.to_string()),
-    }
-}
-
 fn resolve_lifecycle_id_for_runs(active_run: &LifecycleRun) -> Result<Uuid, MountError> {
     active_run.root_graph_id.ok_or_else(|| {
         MountError::OperationFailed(format!(
             "lifecycle run {} 不属于 workflow graph topology",
             active_run.id
         ))
+    })
+}
+
+fn activity_scope_from_mount(mount: &Mount) -> Result<ActivityAttemptArtifactScope, MountError> {
+    let run_id = parse_run_id_from_metadata(mount)?;
+    let graph_instance_id = parse_graph_instance_id_from_metadata(mount)?;
+    let activity_key = mount
+        .metadata
+        .get("activity_key")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| MountError::OperationFailed("mount metadata 缺少 activity_key".to_string()))?
+        .to_string();
+    let attempt = mount
+        .metadata
+        .get("attempt")
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| MountError::OperationFailed("mount metadata 缺少 attempt".to_string()))?;
+    Ok(ActivityAttemptArtifactScope {
+        run_id,
+        graph_instance_id,
+        activity_key,
+        attempt,
     })
 }
 
@@ -254,29 +261,20 @@ impl MountProvider for LifecycleMountProvider {
 
         let content = match segs.as_slice() {
             ["artifacts"] | ["active", "artifacts"] => {
-                let run_id = parse_run_id_from_metadata(mount)?;
+                let scope = activity_scope_from_mount(mount)?;
                 let map = self
                     .journey
-                    .list_port_outputs(run_id)
+                    .list_scoped_port_outputs(&scope)
                     .await
                     .map_err(map_journey_err)?;
                 to_json_pretty(&map).map_err(map_journey_err)?
             }
             ["artifacts", port_key] | ["active", "artifacts", port_key] => {
-                let run_id = parse_run_id_from_metadata(mount)?;
-                let scoped_path = scoped_port_output_path(mount, port_key)?;
-                match self
-                    .journey
-                    .read_scoped_port_output(run_id, &scoped_path)
+                let artifact_ref = activity_scope_from_mount(mount)?.port_ref(*port_key);
+                self.journey
+                    .read_scoped_port_output(&artifact_ref)
                     .await
-                {
-                    Ok(content) => content,
-                    Err(_) => self
-                        .journey
-                        .read_port_output(run_id, port_key)
-                        .await
-                        .map_err(map_journey_err)?,
-                }
+                    .map_err(map_journey_err)?
             }
             _ => {
                 let active = load_active_context(
@@ -466,16 +464,18 @@ impl MountProvider for LifecycleMountProvider {
                     )));
                 }
 
-                let run_id = parse_run_id_from_metadata(mount)?;
-                let scoped_path = scoped_port_output_path(mount, port_key)?;
+                let artifact_ref = activity_scope_from_mount(mount)?.port_ref(*port_key);
                 self.journey
-                    .write_scoped_port_output(run_id, &scoped_path, content)
+                    .write_scoped_port_output(&artifact_ref, content)
                     .await
                     .map_err(map_journey_err)?;
                 info!(
-                    run_id = %run_id,
+                    run_id = %artifact_ref.run_id,
+                    graph_instance_id = %artifact_ref.graph_instance_id,
+                    activity_key = %artifact_ref.activity_key,
+                    attempt = artifact_ref.attempt,
                     port_key = %port_key,
-                    scoped_path = %scoped_path,
+                    scoped_path = %artifact_ref.inline_path(),
                     content_len = content.len(),
                     "lifecycle VFS: wrote scoped port output"
                 );
@@ -571,10 +571,10 @@ impl MountProvider for LifecycleMountProvider {
                 })
                 .collect(),
             ["artifacts"] | ["active", "artifacts"] => {
-                let run_id = parse_run_id_from_metadata(mount)?;
+                let scope = activity_scope_from_mount(mount)?;
                 let files = self
                     .journey
-                    .list_port_outputs(run_id)
+                    .list_scoped_port_outputs(&scope)
                     .await
                     .map_err(map_journey_err)?;
                 let display_root = if matches!(segs.as_slice(), ["active", "artifacts"]) {
@@ -1296,17 +1296,13 @@ mod tests {
             id: session_id.to_string(),
             title: "Lifecycle node".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
             last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-
-            tab_layout: None,
         }
     }
 
@@ -1554,11 +1550,13 @@ mod tests {
             .await
             .expect("commit compaction");
 
-        let mount = crate::vfs::build_lifecycle_mount_with_ports(
+        let mount = crate::vfs::build_lifecycle_mount_with_activity_scope(
             run.id,
             graph_instance.id,
             "test-lifecycle",
             &["report".into()],
+            Some("analyze"),
+            Some(1),
         );
         let provider = LifecycleMountProvider::new(
             run_repo,

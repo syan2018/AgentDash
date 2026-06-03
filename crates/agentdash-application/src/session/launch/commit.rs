@@ -59,7 +59,6 @@ impl TurnCommitter {
             session_meta,
             now,
             turn_id,
-            &prepared.executor_config_for_meta,
             prepared.is_owner_bootstrap,
             &prepared.title_hint,
         );
@@ -138,7 +137,6 @@ fn apply_turn_start_meta(
     meta: &mut SessionMeta,
     now: i64,
     turn_id: &str,
-    executor_config: &agentdash_domain::common::AgentConfig,
     _is_owner_bootstrap: bool,
     title_hint: &str,
 ) {
@@ -146,7 +144,6 @@ fn apply_turn_start_meta(
     meta.last_delivery_status = ExecutionStatus::Running;
     meta.last_turn_id = Some(turn_id.to_string());
     meta.last_terminal_message = None;
-    meta.executor_config = Some(executor_config.clone());
     if meta.title.trim().is_empty() {
         meta.title = title_hint.to_string();
     }

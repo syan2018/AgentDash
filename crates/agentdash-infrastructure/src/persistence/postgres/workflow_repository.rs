@@ -34,8 +34,8 @@ impl PostgresWorkflowRepository {
 
 const WF_COLS: &str = "id,project_id,key,name,description,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const WG_COLS: &str = "id,project_id,key,name,description,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,topology,root_graph_id,status,active_node_keys,execution_log,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,topology,root_graph_id,status,active_node_keys,execution_log,created_at,updated_at,last_activity_at";
+const RUN_COLS: &str = "id,project_id,topology,root_graph_id,status,execution_log,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,topology,root_graph_id,status,execution_log,created_at,updated_at,last_activity_at";
 const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,graph_instance_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
 
 #[async_trait::async_trait]
@@ -522,14 +522,13 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
         .bind(topology_to_db(run.topology))
         .bind(run.root_graph_id.map(|id| id.to_string()))
         .bind(serde_json::to_string(&run.status)?)
-        .bind(serde_json::to_string(&run.active_node_keys)?)
         .bind(serde_json::to_string(&run.execution_log)?)
         .bind(run.created_at)
         .bind(run.updated_at)
@@ -611,12 +610,11 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,topology=$2,root_graph_id=$3,status=$4,active_node_keys=$5,execution_log=$6,updated_at=$7,last_activity_at=$8 WHERE id=$9")
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,topology=$2,root_graph_id=$3,status=$4,execution_log=$5,updated_at=$6,last_activity_at=$7 WHERE id=$8")
             .bind(run.project_id.to_string())
             .bind(topology_to_db(run.topology))
             .bind(run.root_graph_id.map(|id| id.to_string()))
             .bind(serde_json::to_string(&run.status)?)
-            .bind(serde_json::to_string(&run.active_node_keys)?)
             .bind(serde_json::to_string(&run.execution_log)?)
             .bind(chrono::Utc::now()).bind(run.last_activity_at).bind(run.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
@@ -756,7 +754,6 @@ struct LifecycleRunRow {
     topology: String,
     root_graph_id: Option<String>,
     status: String,
-    active_node_keys: String,
     execution_log: String,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
@@ -776,10 +773,6 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
                 .map(|id| parse_uuid(id, "root_graph"))
                 .transpose()?,
             status: serde_json::from_str(&row.status)?,
-            active_node_keys: parse_json_column(
-                &row.active_node_keys,
-                "lifecycle_runs.active_node_keys",
-            )?,
             execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
             created_at: row.created_at,
             updated_at: row.updated_at,

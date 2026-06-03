@@ -13,10 +13,10 @@ use sqlx::{PgPool, Row};
 
 use crate::persistence::session_core::{
     backbone_event_type_name, compaction_from_row, encode_optional_u64_as_i64, encode_u64_as_i64,
-    json_string, lineage_from_row, map_meta_row, optional_json_string, parse_non_negative_u64,
-    persisted_event_from_row, projection_from_envelope, projection_head_from_row,
-    projection_segment_from_row, runtime_command_from_row, sqlx_to_session_store_error,
-    terminal_effect_from_row, title_source_to_str, validate_commit_session,
+    json_string, lineage_from_row, map_meta_row, parse_non_negative_u64, persisted_event_from_row,
+    projection_from_envelope, projection_head_from_row, projection_segment_from_row,
+    runtime_command_from_row, sqlx_to_session_store_error, terminal_effect_from_row,
+    title_source_to_str, validate_commit_session,
 };
 
 pub struct PostgresSessionRepository {
@@ -158,31 +158,24 @@ fn validate_runtime_delivery_command(
 impl SessionMetaStore for PostgresSessionRepository {
     async fn create_session(&self, meta: &SessionMeta) -> SessionStoreResult<()> {
         let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
-        let executor_config_json =
-            optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
-        let tab_layout_json = optional_json_string(meta.tab_layout.as_ref(), "tab_layout_json")?;
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_delivery_status,
-                last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, tab_layout_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
+                last_turn_id, last_terminal_message, executor_session_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
         )
         .bind(&meta.id)
         .bind(&meta.title)
         .bind(title_source_to_str(meta.title_source))
-        .bind(&meta.project_id)
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
         .bind(meta.last_delivery_status.to_string())
         .bind(&meta.last_turn_id)
         .bind(&meta.last_terminal_message)
-        .bind(executor_config_json)
         .bind(&meta.executor_session_id)
-        .bind(tab_layout_json)
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_session_store_error)?;
@@ -192,9 +185,8 @@ impl SessionMetaStore for PostgresSessionRepository {
     async fn get_session_meta(&self, session_id: &str) -> SessionStoreResult<Option<SessionMeta>> {
         let row = sqlx::query(
             r#"
-            SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_delivery_status,
-                   last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, tab_layout_json
+            SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
+                   last_turn_id, last_terminal_message, executor_session_id
             FROM sessions
             WHERE id = $1
             "#,
@@ -209,9 +201,8 @@ impl SessionMetaStore for PostgresSessionRepository {
     async fn list_sessions(&self) -> SessionStoreResult<Vec<SessionMeta>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_delivery_status,
-                   last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, tab_layout_json
+            SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
+                   last_turn_id, last_terminal_message, executor_session_id
             FROM sessions
             ORDER BY updated_at DESC
             "#,
@@ -224,20 +215,15 @@ impl SessionMetaStore for PostgresSessionRepository {
 
     async fn save_session_meta(&self, meta: &SessionMeta) -> SessionStoreResult<()> {
         let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
-        let executor_config_json =
-            optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
-        let tab_layout_json = optional_json_string(meta.tab_layout.as_ref(), "tab_layout_json")?;
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_delivery_status,
-                last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, tab_layout_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
+                last_turn_id, last_terminal_message, executor_session_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 title_source = excluded.title_source,
-                project_id = COALESCE(excluded.project_id, sessions.project_id),
                 created_at = excluded.created_at,
                 updated_at = GREATEST(sessions.updated_at, excluded.updated_at),
                 last_event_seq = GREATEST(sessions.last_event_seq, excluded.last_event_seq),
@@ -256,24 +242,19 @@ impl SessionMetaStore for PostgresSessionRepository {
                         THEN excluded.last_terminal_message
                     ELSE sessions.last_terminal_message
                 END,
-                executor_config_json = excluded.executor_config_json,
-                executor_session_id = excluded.executor_session_id,
-                tab_layout_json = excluded.tab_layout_json
+                executor_session_id = excluded.executor_session_id
             "#,
         )
         .bind(&meta.id)
         .bind(&meta.title)
         .bind(title_source_to_str(meta.title_source))
-        .bind(&meta.project_id)
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
         .bind(meta.last_delivery_status.to_string())
         .bind(&meta.last_turn_id)
         .bind(&meta.last_terminal_message)
-        .bind(executor_config_json)
         .bind(&meta.executor_session_id)
-        .bind(tab_layout_json)
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_session_store_error)?;
@@ -1653,17 +1634,13 @@ mod tests {
             id: id.to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
             last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-
-            tab_layout: None,
         }
     }
 
@@ -1803,17 +1780,13 @@ mod tests {
             id: "sess-1".to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
             last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-
-            tab_layout: None,
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 
@@ -1868,17 +1841,13 @@ mod tests {
             id: session_id.clone(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
             last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-
-            tab_layout: None,
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 
@@ -1891,10 +1860,6 @@ mod tests {
         stale.last_delivery_status = ExecutionStatus::Running;
         stale.last_turn_id = Some("t-old".to_string());
         stale.executor_session_id = Some("exec-1".to_string());
-        stale.tab_layout = Some(serde_json::json!({
-            "tabs": [{"type_id": "session", "uri": "session://main", "title": "Session", "pinned": true}],
-            "active_tab_uri": "session://main"
-        }));
 
         let terminal = turn_terminal_envelope(&session_id, "t-new", "turn_completed", "done");
         repo.append_event(&session_id, &terminal)
@@ -1916,14 +1881,6 @@ mod tests {
         assert_eq!(merged.last_turn_id.as_deref(), Some("t-new"));
         assert_eq!(merged.last_terminal_message.as_deref(), Some("done"));
         assert_eq!(merged.executor_session_id.as_deref(), Some("exec-1"));
-        assert_eq!(
-            merged
-                .tab_layout
-                .as_ref()
-                .and_then(|value| value.get("active_tab_uri"))
-                .and_then(|value| value.as_str()),
-            Some("session://main")
-        );
     }
 
     #[tokio::test]

@@ -8,10 +8,11 @@ This task is ready for implementation as a database/business semantics convergen
 
 Closeout blockers for the lifecycle control-plane PR:
 
-1. Phase 1 Session Runtime Head.
+1. Phase 1 Session Runtime Head. Completed in the current closeout pass.
    - `sessions` must not keep business ownership, executor behavior or UI layout as durable Session facts if the PR claims Session is only runtime trace / delivery substrate.
-2. Phase 2 Lifecycle Run Ledger.
-   - `lifecycle_runs.active_node_keys` and `execution_log` must not contradict the scoped artifact and active projection closeout model.
+2. Phase 2 Lifecycle Run Ledger. Partially completed in the current closeout pass.
+   - `lifecycle_runs.active_node_keys` is removed by the active projection task.
+   - `lifecycle_runs.execution_log` remains as audit-owner cleanup. It can move later if final review confirms it is read-model/audit only and not runtime control fact source.
 
 Can move later when not blocking this PR:
 
@@ -40,15 +41,15 @@ Can move later when not blocking this PR:
 
 ## Phase 1: Session Runtime Head
 
-- [ ] Remove or relocate `executor_config_json` to AgentFrame execution profile / connector launch input.
-- [ ] Move `tab_layout_json` to scoped UI/settings state.
-- [ ] Remove `sessions.project_id` as business ownership fact; expose project through anchor/read model when needed.
-- [ ] Update session repository, SPI persistence DTOs, API DTOs and frontend `SessionShellDto` usage.
+- [x] Remove or relocate `executor_config_json` to AgentFrame execution profile / connector launch input.
+- [x] Move `tab_layout_json` to scoped UI/settings state.
+- [x] Remove `sessions.project_id` as business ownership fact; expose project through anchor/read model when needed.
+- [x] Update session repository, SPI persistence DTOs, API DTOs and frontend `SessionShellDto` usage.
 
 ## Phase 2: Lifecycle Run Ledger
 
 - [ ] Coordinate with `06-02-lifecycle-run-active-projection-structure` before changing `active_node_keys`.
-- [ ] Remove `active_node_keys` from schema/repository after structured active refs are derived from graph instance state.
+- [x] Remove `active_node_keys` from schema/repository after structured active refs are derived from graph instance state.
 - [ ] Move `execution_log` to an explicit audit/event owner or remove if replaced by existing transition/event tables.
 - [ ] Update workflow repository tests and lifecycle specs.
 

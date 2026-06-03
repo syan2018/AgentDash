@@ -3,6 +3,8 @@
 
 import type { JsonValue } from "./common-contracts";
 
+export type ActiveActivityRefDto = { run_id: string, graph_instance_id: string, activity_key: string, attempt: number, status: string, };
+
 export type ActivityAttemptState = { activity_key: string, attempt: number, status: ActivityAttemptStatus, executor_run?: ExecutorRunRef, started_at?: string, completed_at?: string, summary?: string, };
 
 export type ActivityAttemptStatus = "pending" | "ready" | "claiming" | "running" | "completed" | "failed" | "cancelled";
@@ -15,15 +17,15 @@ export type ActivityDefinition = { key: string, description: string, executor: A
 
 export type ActivityExecutorSpec = { "kind": "agent" } & AgentActivityExecutorSpec | { "kind": "function" } & FunctionActivityExecutorSpec | { "kind": "human" } & HumanActivityExecutorSpec;
 
-export type ActivityInputArtifact = { activity_key: string, attempt: number, port_key: string, source_activity_key: string, source_attempt: number, source_port_key: string, value: JsonValue, created_at: string, };
+export type ActivityInputArtifact = { graph_instance_id: string, activity_key: string, attempt: number, port_key: string, source_graph_instance_id: string, source_activity_key: string, source_attempt: number, source_port_key: string, value: JsonValue, created_at: string, };
 
 export type ActivityIterationPolicy = { max_attempts?: number, artifact_alias: ArtifactAliasPolicy, };
 
 export type ActivityJoinPolicy = "all" | "any" | "first" | { "n_of_m": { n: number, } };
 
-export type ActivityLifecycleRunState = { status: ActivityRunStatus, attempts: Array<ActivityAttemptState>, outputs: Array<ActivityOutputArtifact>, inputs: Array<ActivityInputArtifact>, };
+export type ActivityLifecycleRunState = { graph_instance_id: string, status: ActivityRunStatus, attempts: Array<ActivityAttemptState>, outputs: Array<ActivityOutputArtifact>, inputs: Array<ActivityInputArtifact>, };
 
-export type ActivityOutputArtifact = { activity_key: string, attempt: number, port_key: string, value: JsonValue, created_at: string, };
+export type ActivityOutputArtifact = { graph_instance_id: string, activity_key: string, attempt: number, port_key: string, value: JsonValue, created_at: string, };
 
 export type ActivityRunStatus = "ready" | "running" | "blocked" | "completed" | "failed" | "cancelled";
 
@@ -109,7 +111,7 @@ export type LifecycleRunStatus = "draft" | "ready" | "running" | "blocked" | "co
 
 export type LifecycleRunTopology = "graphless" | "workflow_graph";
 
-export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string, topology: LifecycleRunTopology, root_graph_id?: string, status: LifecycleRunStatus, workflow_graph_instances: Array<WorkflowGraphInstanceView>, agents: Array<LifecycleAgentView>, subject_associations: Array<LifecycleSubjectAssociationDto>, runtime_trace_refs: Array<RuntimeSessionRefDto>, execution_log: Array<LifecycleExecutionEntry>, created_at: string, updated_at: string, last_activity_at: string, };
+export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string, topology: LifecycleRunTopology, root_graph_id?: string, status: LifecycleRunStatus, workflow_graph_instances: Array<WorkflowGraphInstanceView>, active_activity_refs: Array<ActiveActivityRefDto>, agents: Array<LifecycleAgentView>, subject_associations: Array<LifecycleSubjectAssociationDto>, runtime_trace_refs: Array<RuntimeSessionRefDto>, execution_log: Array<LifecycleExecutionEntry>, created_at: string, updated_at: string, last_activity_at: string, };
 
 export type LifecycleSubjectAssociationDto = { id: string, anchor_run_id: string, anchor_agent_id?: string, subject_ref: SubjectRefDto, role: string, metadata?: JsonValue, created_at: string, };
 
@@ -133,7 +135,7 @@ export type RuntimeSessionTraceView = { runtime_session_ref: RuntimeSessionRefDt
 
 export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: LifecycleAgentView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, can_send: boolean, send_unavailable_reason?: string, };
 
-export type SessionShellDto = { id: string, project_id?: string, title: string, title_source: string, created_at: bigint, updated_at: bigint, last_event_seq: bigint, last_turn_id?: string, last_delivery_status: string, tab_layout?: JsonValue, };
+export type SessionShellDto = { id: string, title: string, title_source: string, created_at: bigint, updated_at: bigint, last_event_seq: bigint, last_turn_id?: string, last_delivery_status: string, };
 
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
 

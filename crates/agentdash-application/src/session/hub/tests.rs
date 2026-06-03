@@ -2141,7 +2141,6 @@ async fn emit_context_frame_persists_agent_visible_frame() {
 
 #[tokio::test]
 async fn start_prompt_triggers_session_start_before_connector_prompt() {
-    let base = tempfile::tempdir().expect("tempdir");
     let connector = Arc::new(SessionStartAwareConnector::default());
     let queries = Arc::new(TokioMutex::new(Vec::new()));
     let frame_repo = Arc::new(MemoryAgentFrameRepository::default());

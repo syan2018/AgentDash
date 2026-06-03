@@ -42,13 +42,13 @@ const EXECUTOR_SOURCE_LABELS: Record<string, string> = {
   "task.dispatch_preference.agent_type": "Task 显式 agent_type",
   "task.dispatch_preference.preset_name": "Task 预设",
   "project.config.default_agent_type": "Project 默认 Agent",
-  "session.meta.executor_config": "当前 Session 实际执行器",
   unresolved: "未解析",
 };
 
 function describeExecutorSource(source: string): string {
   if (EXECUTOR_SOURCE_LABELS[source]) return EXECUTOR_SOURCE_LABELS[source];
   if (source.startsWith("project.config.agent_presets[")) return "Project Agent 预设";
+  if (source.startsWith("project_agents[")) return "Project Agent 配置";
   return source;
 }
 
@@ -111,6 +111,12 @@ function resolveActiveAttempt(
 }
 
 function activeAttemptLabels(run: LifecycleRunView | null): string[] {
+  if (!run) return [];
+  if (run.active_activity_refs.length > 0) {
+    return run.active_activity_refs.map((active) => (
+      `${active.graph_instance_id}:${active.activity_key}#${active.attempt}`
+    ));
+  }
   return collectAttempts(run)
     .filter((attempt) => (
       attempt.status === "running"
@@ -119,8 +125,8 @@ function activeAttemptLabels(run: LifecycleRunView | null): string[] {
     ))
     .map((attempt) => (
       attempt.graph_instance_id
-        ? `${attempt.graph_instance_id}:${attempt.activity_key}`
-        : attempt.activity_key
+        ? `${attempt.graph_instance_id}:${attempt.activity_key}#${attempt.attempt}`
+        : `${attempt.activity_key}#${attempt.attempt}`
     ));
 }
 

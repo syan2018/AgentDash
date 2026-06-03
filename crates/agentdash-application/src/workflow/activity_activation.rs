@@ -36,7 +36,7 @@ use crate::platform_config::PlatformConfig;
 use crate::session::SessionCapabilityService;
 use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
 use crate::session::types::AgentFrameRuntimeTarget;
-use crate::vfs::build_lifecycle_mount_with_ports;
+use crate::vfs::build_lifecycle_mount_with_activity_scope;
 use crate::workflow::frame_builder::AgentFrameBuilder;
 
 /// 激活一个 lifecycle activity 所需的全部纯计算输入。
@@ -57,6 +57,8 @@ pub struct ActivityActivationInput<'a> {
     pub run_id: Uuid,
     /// 当前 Activity 所属 graph instance，用于把 lifecycle VFS 绑定到状态事实源。
     pub graph_instance_id: Uuid,
+    /// 当前 Activity attempt，用于把 lifecycle VFS artifact 写入绑定到精确 attempt。
+    pub attempt: u32,
     /// lifecycle key,lifecycle mount 路径的一部分。
     pub lifecycle_key: &'a str,
     /// agent config 内联 MCP server(向前兼容 `mcp:<name>` 解析)。
@@ -176,11 +178,13 @@ pub fn activate_activity_with_platform(
         .iter()
         .map(|p| p.key.clone())
         .collect();
-    let lifecycle_mount = build_lifecycle_mount_with_ports(
+    let lifecycle_mount = build_lifecycle_mount_with_activity_scope(
         input.run_id,
         input.graph_instance_id,
         input.lifecycle_key,
         &writable_port_keys,
+        Some(&input.active_activity.key),
+        Some(input.attempt),
     );
     let lifecycle_vfs = Vfs {
         mounts: vec![lifecycle_mount.clone()],
@@ -465,6 +469,7 @@ mod tests {
             workflow: None,
             run_id: Uuid::new_v4(),
             graph_instance_id: Uuid::new_v4(),
+            attempt: 1,
             lifecycle_key: "trellis_dev_task",
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
@@ -500,6 +505,7 @@ mod tests {
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
             graph_instance_id: Uuid::new_v4(),
+            attempt: 1,
             lifecycle_key: "lc_admin",
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
@@ -532,6 +538,7 @@ mod tests {
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
             graph_instance_id: Uuid::new_v4(),
+            attempt: 1,
             lifecycle_key: "lc_phase",
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
@@ -570,6 +577,7 @@ mod tests {
             workflow: Some(&full_read_workflow),
             run_id,
             graph_instance_id: Uuid::new_v4(),
+            attempt: 1,
             lifecycle_key: "lc_phase",
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
@@ -638,6 +646,7 @@ mod tests {
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
             graph_instance_id: Uuid::new_v4(),
+            attempt: 1,
             lifecycle_key: "lc_phase",
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
@@ -699,6 +708,7 @@ mod tests {
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
             graph_instance_id: Uuid::new_v4(),
+            attempt: 1,
             lifecycle_key: "lc",
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
@@ -743,6 +753,7 @@ mod tests {
             workflow: None,
             run_id: Uuid::new_v4(),
             graph_instance_id: Uuid::new_v4(),
+            attempt: 1,
             lifecycle_key: "lc",
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
@@ -800,6 +811,7 @@ mod tests {
             workflow: None,
             run_id: Uuid::new_v4(),
             graph_instance_id: Uuid::new_v4(),
+            attempt: 1,
             lifecycle_key: "lc",
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),

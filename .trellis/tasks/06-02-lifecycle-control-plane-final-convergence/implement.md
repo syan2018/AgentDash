@@ -6,15 +6,12 @@ This task is a final review / closeout target, not an implementation work packag
 
 ## Recommended Order Before PR Merge
 
-1. `06-02-scoped-lifecycle-artifacts` — closeout blocker.
-   - Finish this before active projection cleanup because completion policy, hook gate and VFS output all need the scoped Activity attempt fact source.
-2. `06-02-lifecycle-run-active-projection-structure` — closeout blocker.
-   - Finish after scoped artifacts or in a separate worker that only owns active projection, because both touch Activity attempt identity but different write paths.
-3. `06-03-database-business-semantic-convergence` Phase 1-2 only — closeout blocker if Session / Lifecycle schema fields still contradict the target control plane.
-   - For this PR, prioritize `sessions` runtime head and `lifecycle_runs` ledger cleanup.
-4. `06-01-lifecycle-control-plane-concept-alignment` final review — closeout review.
+1. `06-03-database-business-semantic-convergence` remaining review.
+   - Session Runtime Head is complete; `active_node_keys` is removed through the active projection task.
+   - `lifecycle_runs.execution_log` remains as audit-owner cleanup. Treat it as non-blocking if final review confirms it is read-model/audit only and not runtime control fact source.
+2. `06-01-lifecycle-control-plane-concept-alignment` final review — closeout review.
    - Run after implementation blockers are done or explicitly marked non-blocking.
-5. This task final closeout — closeout review.
+3. This task final closeout — closeout review.
    - Run last to decide whether the PR is merge-ready.
 
 ## Can Move Later
@@ -27,8 +24,6 @@ This task is a final review / closeout target, not an implementation work packag
 ## Checklist
 
 - [ ] Confirm remaining task statuses:
-  - `06-02-scoped-lifecycle-artifacts`
-  - `06-02-lifecycle-run-active-projection-structure`
   - `06-03-database-business-semantic-convergence`
   - `06-01-lifecycle-control-plane-concept-alignment`
 - [ ] Run final residual scans listed in `prd.md`.

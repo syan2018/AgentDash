@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use agentdash_contracts::workflow::{
-    ActivityAttemptView, ActivityStateView, AgentAssignmentRefDto,
+    ActiveActivityRefDto, ActivityAttemptView, ActivityStateView, AgentAssignmentRefDto,
     ExecutorRunRef as ContractExecutorRunRef, LifecycleAgentRefDto, LifecycleAgentView,
     LifecycleExecutionEntry as ContractLifecycleExecutionEntry,
     LifecycleExecutionEventKind as ContractLifecycleExecutionEventKind, LifecycleRunRefDto,
@@ -25,7 +25,7 @@ use agentdash_domain::workflow::{
     LifecycleAgent, LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind, LifecycleRun,
     LifecycleRunStatus as DomainLifecycleRunStatus,
     LifecycleRunTopology as DomainLifecycleRunTopology, LifecycleSubjectAssociation, SubjectRef,
-    WorkflowGraphInstance,
+    WorkflowGraphInstance, active_activity_refs_from_states,
 };
 
 use crate::repository_set::RepositorySet;
@@ -67,6 +67,7 @@ pub async fn build_lifecycle_run_view_with_preloaded(
         .list_by_run(run.id)
         .await?;
     let workflow_graph_instances = workflow_graph_instances_for_run(&graph_instances, &assignments);
+    let active_activity_refs = active_activity_refs_for_run(run, &graph_instances);
     let runtime_trace_refs = collect_runtime_trace_refs(repos, run.id).await?;
 
     Ok(assemble_lifecycle_run_view(
@@ -77,6 +78,7 @@ pub async fn build_lifecycle_run_view_with_preloaded(
             .map(association_to_dto)
             .collect(),
         workflow_graph_instances,
+        active_activity_refs,
         runtime_trace_refs,
     ))
 }
@@ -310,6 +312,7 @@ fn assemble_lifecycle_run_view(
     agents: Vec<LifecycleAgentView>,
     subject_associations: Vec<LifecycleSubjectAssociationDto>,
     workflow_graph_instances: Vec<WorkflowGraphInstanceView>,
+    active_activity_refs: Vec<ActiveActivityRefDto>,
     runtime_trace_refs: Vec<RuntimeSessionRefDto>,
 ) -> LifecycleRunView {
     LifecycleRunView {
@@ -321,6 +324,7 @@ fn assemble_lifecycle_run_view(
         root_graph_id: run.root_graph_id.map(|id| id.to_string()),
         status: status_to_dto(run.status),
         workflow_graph_instances,
+        active_activity_refs,
         agents,
         subject_associations,
         runtime_trace_refs,
@@ -354,6 +358,30 @@ fn workflow_graph_instances_for_run(
                 .unwrap_or_default(),
         })
         .collect()
+}
+
+fn active_activity_refs_for_run(
+    run: &LifecycleRun,
+    graph_instances: &[WorkflowGraphInstance],
+) -> Vec<ActiveActivityRefDto> {
+    active_activity_refs_from_states(
+        run.id,
+        graph_instances.iter().filter_map(|instance| {
+            instance
+                .activity_state
+                .as_ref()
+                .map(|state| (instance.id, state))
+        }),
+    )
+    .into_iter()
+    .map(|active| ActiveActivityRefDto {
+        run_id: active.run_id.to_string(),
+        graph_instance_id: active.graph_instance_id.to_string(),
+        activity_key: active.activity_key,
+        attempt: active.attempt,
+        status: serialized_string(&active.status),
+    })
+    .collect()
 }
 
 fn activity_state_views(
@@ -505,4 +533,65 @@ fn serialized_string(value: &impl Serialize) -> String {
         .ok()
         .and_then(|v| v.as_str().map(ToOwned::to_owned))
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::workflow::{
+        ActivityAttemptState, ActivityAttemptStatus, ActivityRunStatus,
+    };
+
+    fn state(
+        graph_instance_id: Uuid,
+        activity_key: &str,
+        attempt: u32,
+        status: ActivityAttemptStatus,
+    ) -> ActivityLifecycleRunState {
+        ActivityLifecycleRunState {
+            graph_instance_id,
+            status: ActivityRunStatus::Running,
+            attempts: vec![ActivityAttemptState {
+                activity_key: activity_key.to_string(),
+                attempt,
+                status,
+                executor_run: None,
+                started_at: None,
+                completed_at: None,
+                summary: None,
+            }],
+            outputs: Vec::new(),
+            inputs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn active_refs_keep_same_activity_key_separate_by_graph_instance() {
+        let run = LifecycleRun::new_control(Uuid::new_v4(), Uuid::new_v4());
+        let mut first = WorkflowGraphInstance::new_root(run.id, run.root_graph_id.unwrap());
+        first
+            .replace_activity_state(state(first.id, "main", 1, ActivityAttemptStatus::Running))
+            .expect("first state");
+        let mut second =
+            WorkflowGraphInstance::new(run.id, run.root_graph_id.unwrap(), "task_execution");
+        second
+            .replace_activity_state(state(second.id, "main", 2, ActivityAttemptStatus::Ready))
+            .expect("second state");
+
+        let refs = active_activity_refs_for_run(&run, &[first.clone(), second.clone()]);
+
+        assert_eq!(refs.len(), 2);
+        assert!(refs.iter().any(|active| {
+            active.graph_instance_id == first.id.to_string()
+                && active.activity_key == "main"
+                && active.attempt == 1
+                && active.status == "running"
+        }));
+        assert!(refs.iter().any(|active| {
+            active.graph_instance_id == second.id.to_string()
+                && active.activity_key == "main"
+                && active.attempt == 2
+                && active.status == "ready"
+        }));
+    }
 }

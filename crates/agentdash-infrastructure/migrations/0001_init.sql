@@ -288,8 +288,7 @@ CREATE TABLE lifecycle_runs (
     execution_log text DEFAULT '[]'::text NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
-    last_activity_at timestamp with time zone NOT NULL,
-    active_node_keys text DEFAULT '[]'::text NOT NULL
+    last_activity_at timestamp with time zone NOT NULL
 );
 
 CREATE TABLE lifecycle_subject_associations (
@@ -664,11 +663,8 @@ CREATE TABLE sessions (
     last_delivery_status text DEFAULT 'idle'::text NOT NULL,
     last_turn_id text,
     last_terminal_message text,
-    executor_config_json text,
     executor_session_id text,
-    title_source text DEFAULT 'auto'::text NOT NULL,
-    tab_layout_json text,
-    project_id text
+    title_source text DEFAULT 'auto'::text NOT NULL
 );
 
 CREATE TABLE settings (

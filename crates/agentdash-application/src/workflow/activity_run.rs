@@ -562,7 +562,14 @@ mod tests {
             persisted_run.status,
             agentdash_domain::workflow::LifecycleRunStatus::Completed
         );
-        assert!(persisted_run.active_node_keys.is_empty());
+        assert!(state.attempts.iter().all(|attempt| {
+            !matches!(
+                attempt.status,
+                ActivityAttemptStatus::Ready
+                    | ActivityAttemptStatus::Claiming
+                    | ActivityAttemptStatus::Running
+            )
+        }));
     }
 
     #[tokio::test]
@@ -666,6 +673,19 @@ mod tests {
             .await
             .expect("run query")
             .expect("run");
-        assert_eq!(run.active_node_keys, vec![format!("{}:main", second.id)]);
+        let active_refs = agentdash_domain::workflow::active_activity_refs_from_states(
+            run.id,
+            [&first, &second].into_iter().filter_map(|instance| {
+                instance
+                    .activity_state
+                    .as_ref()
+                    .map(|state| (instance.id, state))
+            }),
+        );
+        assert_eq!(active_refs.len(), 1);
+        assert_eq!(active_refs[0].graph_instance_id, second.id);
+        assert_eq!(active_refs[0].activity_key, "main");
+        assert_eq!(active_refs[0].attempt, 1);
+        assert_eq!(active_refs[0].status, ActivityAttemptStatus::Ready);
     }
 }

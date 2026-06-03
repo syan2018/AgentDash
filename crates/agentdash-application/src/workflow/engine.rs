@@ -302,6 +302,7 @@ fn complete_attempt(
 
     for output in outputs {
         state.outputs.push(ActivityOutputArtifact {
+            graph_instance_id: state.graph_instance_id,
             activity_key: activity_key.to_string(),
             attempt,
             port_key: output.port_key,
@@ -471,9 +472,11 @@ fn bind_transition_artifacts(
                 ))
             })?;
         state.inputs.push(ActivityInputArtifact {
+            graph_instance_id: state.graph_instance_id,
             activity_key: target_activity_key.to_string(),
             attempt: target_attempt,
             port_key: binding.to_port.clone(),
+            source_graph_instance_id: source.graph_instance_id,
             source_activity_key: source.activity_key.clone(),
             source_attempt: source.attempt,
             source_port_key: source.port_key.clone(),

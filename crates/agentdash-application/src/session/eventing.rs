@@ -754,17 +754,13 @@ mod tests {
             id: session_id.to_string(),
             title: "New session".to_string(),
             title_source,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
             last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: Some("thread-1".to_string()),
-
-            tab_layout: None,
         }
     }
 

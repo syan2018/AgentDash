@@ -68,12 +68,7 @@ pub(super) async fn compose(
         Some(TaskLaunchPhase::Start) => StoryStepPhase::Start,
         _ => StoryStepPhase::Continue,
     };
-    let explicit_executor_config = input
-        .command
-        .user_input()
-        .executor_config
-        .clone()
-        .or_else(|| input.runtime_trace_state.executor_config.clone());
+    let explicit_executor_config = input.command.user_input().executor_config.clone();
     let builder =
         frame_builder_from_existing(frame, input.session_id.as_str(), input.session_id.as_str())?;
     let (builder, extras, hook_binding) = svc

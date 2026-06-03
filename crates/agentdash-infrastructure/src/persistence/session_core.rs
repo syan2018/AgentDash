@@ -43,9 +43,6 @@ where
             row.get::<String, _>("title_source"),
             "sessions.title_source",
         )?,
-        project_id: row
-            .try_get::<Option<String>, _>("project_id")
-            .unwrap_or(None),
         created_at: row.get::<i64, _>("created_at"),
         updated_at: row.get::<i64, _>("updated_at"),
         last_event_seq: parse_non_negative_u64(
@@ -58,15 +55,7 @@ where
         )?,
         last_turn_id: row.get::<Option<String>, _>("last_turn_id"),
         last_terminal_message: row.get::<Option<String>, _>("last_terminal_message"),
-        executor_config: parse_optional_json_column(
-            row.get::<Option<String>, _>("executor_config_json"),
-            "executor_config_json",
-        )?,
         executor_session_id: row.get::<Option<String>, _>("executor_session_id"),
-        tab_layout: parse_optional_json_column(
-            row.get::<Option<String>, _>("tab_layout_json"),
-            "tab_layout_json",
-        )?,
     })
 }
 
@@ -435,13 +424,6 @@ pub(crate) fn json_string<T: serde::Serialize>(
         .map_err(|error| SessionStoreError::InvalidData(format!("序列化 {column} 失败: {error}")))
 }
 
-pub(crate) fn optional_json_string<T: serde::Serialize>(
-    value: Option<&T>,
-    column: &str,
-) -> SessionStoreResult<Option<String>> {
-    value.map(|inner| json_string(inner, column)).transpose()
-}
-
 pub(crate) fn title_source_to_str(source: TitleSource) -> &'static str {
     match source {
         TitleSource::Auto => "auto",
@@ -557,18 +539,6 @@ pub(crate) fn parse_optional_non_negative_u64(
 pub(crate) fn parse_non_negative_u32(value: i64, field: &str) -> SessionStoreResult<u32> {
     u32::try_from(value)
         .map_err(|_| SessionStoreError::InvalidData(format!("{field} 超出 u32 范围: {value}")))
-}
-
-pub(crate) fn parse_optional_json_column<T: serde::de::DeserializeOwned>(
-    raw: Option<String>,
-    column: &str,
-) -> SessionStoreResult<Option<T>> {
-    match raw {
-        Some(value) => serde_json::from_str(&value).map(Some).map_err(|error| {
-            SessionStoreError::InvalidData(format!("解析 {column} 失败: {error}"))
-        }),
-        None => Ok(None),
-    }
 }
 
 pub(crate) fn parse_json_column(

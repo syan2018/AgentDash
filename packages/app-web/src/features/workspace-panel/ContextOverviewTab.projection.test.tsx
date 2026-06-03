@@ -13,7 +13,7 @@ import { ContextOverviewTab } from "./ContextOverviewTab";
 const contextSnapshot: SessionContextSnapshot = {
   executor: {
     executor: "PI_AGENT",
-    source: "session.meta.executor_config",
+    source: "project_agents[agent-1]",
   },
   project_defaults: {
     context_containers: [],
@@ -111,6 +111,15 @@ const lifecycleRunView: LifecycleRunView = {
   topology: "workflow_graph",
   root_graph_id: "lifecycle-projection",
   status: "running",
+  active_activity_refs: [
+    {
+      run_id: "run-projection-123456",
+      graph_instance_id: "graph-instance-projection",
+      activity_key: "implement",
+      attempt: 2,
+      status: "running",
+    },
+  ],
   workflow_graph_instances: [
     {
       id: "graph-instance-projection",

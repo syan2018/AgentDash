@@ -189,8 +189,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     }
     return null;
   }, [loadedOwnerStory, ownerStoryId, storiesByProjectId]);
-  const ownerProjectId = runtimeControl?.session_meta.project_id
-    ?? sessionLifecycleRun?.project_id
+  const ownerProjectId = sessionLifecycleRun?.project_id
     ?? runContext?.project_id
     ?? ownerStory?.project_id
     ?? null;

@@ -11,6 +11,9 @@
 - RuntimeSession 到 Frame / Assignment 的直接锚定。
 - FrameLaunchEnvelope 与 Session launch boundary。
 - 前端 Session runtime frame query。
+- Scoped lifecycle artifacts。
+- LifecycleRun active projection structure。
+- Lifecycle 控制面长链路 Frame 化父任务。
 - Graphless 默认 Agent Runtime。
 - Session-Agent channel integration。
 - Session Runtime control source convergence。
@@ -18,8 +21,6 @@
 
 仍需完成：
 
-- `06-02-scoped-lifecycle-artifacts`
-- `06-02-lifecycle-run-active-projection-structure`
 - `06-03-database-business-semantic-convergence`
 - `06-01-lifecycle-control-plane-concept-alignment` 的最终概念/实现一致性 review。
 
@@ -32,8 +33,8 @@
 
 ## Acceptance Criteria
 
-- [ ] `06-02-scoped-lifecycle-artifacts` 已完成或明确不阻断合并。
-- [ ] `06-02-lifecycle-run-active-projection-structure` 已完成或明确不阻断合并。
+- [x] `06-02-scoped-lifecycle-artifacts` 已完成或明确不阻断合并。
+- [x] `06-02-lifecycle-run-active-projection-structure` 已完成或明确不阻断合并。
 - [ ] `06-03-database-business-semantic-convergence` 已完成必要 slice，或明确剩余字段不阻断本 PR。
 - [ ] `06-01-lifecycle-control-plane-concept-alignment` 已完成最终 review 记录。
 - [ ] contracts / generated TS 与当前 backend DTO 一致。

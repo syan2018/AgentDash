@@ -171,7 +171,7 @@ impl RuntimeContextInspectionPlanner {
         story: &Story,
         session_meta: Option<&SessionMeta>,
     ) -> Result<Option<RuntimeContextInspectionPlan>, String> {
-        let Some(session_meta) = session_meta else {
+        let Some(_session_meta) = session_meta else {
             return Ok(None);
         };
         let session_id = session_id.into();
@@ -184,18 +184,10 @@ impl RuntimeContextInspectionPlanner {
         let workspace = resolve_project_workspace(repos, &project).await?;
         let project_vfs_mounts = load_project_vfs_mounts(repos, project.id).await?;
 
-        let connector_config = session_meta.executor_config.clone();
-        let resolved_config = connector_config.clone();
         let default_agent_type =
             normalize_optional_string(project.config.default_agent_type.clone());
-        let effective_agent_type = resolved_config
-            .as_ref()
-            .and_then(|c| normalize_optional_string(Some(c.executor.clone())))
-            .or(default_agent_type.clone());
-        let use_vfs = connector_config
-            .as_ref()
-            .is_some_and(|c| c.is_cloud_native())
-            || (resolved_config.is_none() && default_agent_type.is_some());
+        let effective_agent_type = default_agent_type.clone();
+        let use_vfs = default_agent_type.is_some();
         let active_workflow = resolve_active_workflow_projection_for_session(
             &session_id,
             repos.agent_procedure_repo.as_ref(),
@@ -276,9 +268,7 @@ impl RuntimeContextInspectionPlanner {
         );
         let effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
             cap_output.tool.mcp_servers.clone();
-        let executor_source = if session_meta.executor_config.is_some() {
-            "session.meta.executor_config"
-        } else if effective_agent_type.is_some() {
+        let executor_source = if effective_agent_type.is_some() {
             "project.config.default_agent_type"
         } else {
             "unresolved"
@@ -288,7 +278,7 @@ impl RuntimeContextInspectionPlanner {
             project,
             story: Some(story.clone()),
             workspace,
-            resolved_config,
+            resolved_config: None,
             vfs,
             mcp_servers: session_mcp_servers_to_runtime(&effective_mcp_servers),
             working_dir: None,
@@ -325,7 +315,7 @@ impl RuntimeContextInspectionPlanner {
         owner: ResolvedSessionOwner,
         project: &Project,
         binding_label: &str,
-        session_meta: &SessionMeta,
+        _session_meta: &SessionMeta,
     ) -> Result<RuntimeContextInspectionPlan, String> {
         let session_id = session_id.into();
         let agent_key = Self::parse_project_dispatch_label(binding_label)
@@ -336,10 +326,7 @@ impl RuntimeContextInspectionPlanner {
         let workspace = resolve_project_workspace(repos, project).await?;
         let project_vfs_mounts = load_project_vfs_mounts(repos, project.id).await?;
 
-        let connector_config = session_meta
-            .executor_config
-            .clone()
-            .or_else(|| Some(project_agent.executor_config.clone()));
+        let connector_config = Some(project_agent.executor_config.clone());
         let resolved_config = connector_config.clone();
         let use_vfs = connector_config
             .as_ref()
@@ -449,11 +436,7 @@ impl RuntimeContextInspectionPlanner {
         let mut effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
             cap_output.tool.mcp_servers.clone();
         effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
-        let executor_source = if session_meta.executor_config.is_some() {
-            "session.meta.executor_config".to_string()
-        } else {
-            project_agent.source.clone()
-        };
+        let executor_source = project_agent.source.clone();
 
         let plan = build_bootstrap_plan(BootstrapPlanInput {
             project: project.clone(),

@@ -7,6 +7,7 @@ use crate::workflow::{
 use std::sync::Arc;
 
 use agentdash_domain::workflow::ActivityAttemptStatus;
+use agentdash_domain::workflow::active_activity_refs_from_states;
 use agentdash_spi::ExecutionContext;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{
@@ -141,6 +142,25 @@ impl AgentTool for CompleteLifecycleNodeTool {
 fn build_tool_result(
     result: crate::workflow::AdvanceCurrentNodeResult,
 ) -> Result<AgentToolResult, AgentToolError> {
+    let active_activity_refs = result
+        .graph_instance
+        .activity_state
+        .as_ref()
+        .map(|state| {
+            active_activity_refs_from_states(result.run.id, [(result.graph_instance.id, state)])
+                .into_iter()
+                .map(|active| {
+                    serde_json::json!({
+                        "run_id": active.run_id,
+                        "graph_instance_id": active.graph_instance_id,
+                        "activity_key": active.activity_key,
+                        "attempt": active.attempt,
+                        "status": format!("{:?}", active.status).to_lowercase(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     match result.status {
         AdvanceCurrentNodeStatus::Failed => Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
@@ -214,13 +234,19 @@ fn build_tool_result(
                 })
                 .unwrap_or_default();
             let successor_info = if newly_ready.is_empty() {
-                if result.run.active_node_keys.is_empty() {
+                if active_activity_refs.is_empty() {
                     "lifecycle 已全部完成。".to_string()
                 } else {
-                    format!(
-                        "活跃 activity: [{}]",
-                        result.run.active_node_keys.join(", ")
-                    )
+                    let active_labels = active_activity_refs
+                        .iter()
+                        .filter_map(|value| {
+                            let graph_instance_id = value.get("graph_instance_id")?.as_str()?;
+                            let activity_key = value.get("activity_key")?.as_str()?;
+                            let attempt = value.get("attempt")?.as_u64()?;
+                            Some(format!("{graph_instance_id}:{activity_key}#{attempt}"))
+                        })
+                        .collect::<Vec<_>>();
+                    format!("活跃 activity: [{}]", active_labels.join(", "))
                 }
             } else {
                 format!("后继 activity 已就绪: [{}]", newly_ready.join(", "))
@@ -244,7 +270,7 @@ fn build_tool_result(
                     "activity_key": result.activity_key,
                     "outcome": "completed",
                     "run_status": format!("{:?}", result.run.status),
-                    "active_node_keys": result.run.active_node_keys,
+                    "active_activity_refs": active_activity_refs,
                     "orchestration_warning": result.orchestration_warning,
                 })),
             })

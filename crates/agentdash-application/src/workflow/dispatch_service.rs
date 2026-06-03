@@ -64,17 +64,13 @@ impl RuntimeSessionCreator for SessionPersistenceRuntimeSessionCreator {
             id: session_id.to_string(),
             title: runtime_session_title(&request),
             title_source: TitleSource::Auto,
-            project_id: Some(request.project_id.to_string()),
             created_at: now,
             updated_at: now,
             last_event_seq: 0,
             last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-
-            tab_layout: None,
         };
         self.persistence
             .create_session(&meta)
@@ -931,7 +927,6 @@ fn create_lifecycle_run(project_id: Uuid, root_graph_id: Uuid) -> LifecycleRun {
         topology: agentdash_domain::workflow::LifecycleRunTopology::WorkflowGraph,
         root_graph_id: Some(root_graph_id),
         status: agentdash_domain::workflow::LifecycleRunStatus::Ready,
-        active_node_keys: Vec::new(),
         execution_log: Vec::new(),
         created_at: now,
         updated_at: now,
@@ -1968,12 +1963,18 @@ mod tests {
                 .graph_instance_id,
             result.graph_instance_ref
         );
+        let active_attempts = instances[0]
+            .activity_state
+            .as_ref()
+            .expect("activity state")
+            .attempts
+            .iter()
+            .filter(|attempt| attempt.status == ActivityAttemptStatus::Ready)
+            .collect::<Vec<_>>();
+        assert_eq!(active_attempts.len(), 1);
         assert_eq!(
-            runs[0].active_node_keys,
-            vec![format!(
-                "{}:{}",
-                result.graph_instance_ref, workflow_graph.entry_activity_key
-            )]
+            active_attempts[0].activity_key,
+            workflow_graph.entry_activity_key
         );
         assert!(agent_repo.items.lock().unwrap().is_empty());
         assert!(assignment_repo.items.lock().unwrap().is_empty());

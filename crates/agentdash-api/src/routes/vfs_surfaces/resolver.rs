@@ -41,10 +41,9 @@ pub(crate) async fn resolve_surface_bundle(
             let project =
                 load_project_with_permission(state.as_ref(), current_user, *project_id, permission)
                     .await?;
-            let workspace =
-                resolve_project_workspace(&state.repos, &project)
-                    .await
-                    .map_err(ApiError::Internal)?;
+            let workspace = resolve_project_workspace(&state.repos, &project)
+                .await
+                .map_err(ApiError::Internal)?;
             let project_vfs_mounts = load_project_vfs_mounts(state, project.id).await?;
             state
                 .services
@@ -75,10 +74,9 @@ pub(crate) async fn resolve_surface_bundle(
                     "story_id 与 project_id 不属于同一 Project".into(),
                 ));
             }
-            let workspace =
-                resolve_project_workspace(&state.repos, &project)
-                    .await
-                    .map_err(ApiError::Internal)?;
+            let workspace = resolve_project_workspace(&state.repos, &project)
+                .await
+                .map_err(ApiError::Internal)?;
             let project_vfs_mounts = load_project_vfs_mounts(state, project.id).await?;
             state
                 .services

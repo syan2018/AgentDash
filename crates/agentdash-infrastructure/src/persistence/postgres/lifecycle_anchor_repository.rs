@@ -271,12 +271,13 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
     async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
         sqlx::query(
             r#"UPDATE lifecycle_agents
-               SET status=$1, bootstrap_status=$2, current_frame_id=$3, updated_at=$4
-               WHERE id=$5"#,
+               SET status=$1, bootstrap_status=$2, current_frame_id=$3, project_agent_id=$4, updated_at=$5
+               WHERE id=$6"#,
         )
         .bind(&agent.status)
         .bind(&agent.bootstrap_status)
         .bind(agent.current_frame_id.map(|id| id.to_string()))
+        .bind(agent.project_agent_id.map(|id| id.to_string()))
         .bind(agent.updated_at)
         .bind(agent.id.to_string())
         .execute(&self.pool)
@@ -1135,10 +1136,7 @@ impl TryFrom<AnchorRow> for RuntimeSessionExecutionAnchor {
             launch_frame_id: parse_uuid(&row.launch_frame_id, "rsea.launch_frame_id")?,
             agent_id: parse_uuid(&row.agent_id, "rsea.agent_id")?,
             assignment_id: opt_uuid(row.assignment_id.as_ref(), "rsea.assignment_id")?,
-            graph_instance_id: opt_uuid(
-                row.graph_instance_id.as_ref(),
-                "rsea.graph_instance_id",
-            )?,
+            graph_instance_id: opt_uuid(row.graph_instance_id.as_ref(), "rsea.graph_instance_id")?,
             activity_key: row.activity_key,
             attempt: row.attempt,
             created_by_kind: row.created_by_kind,
@@ -1149,9 +1147,7 @@ impl TryFrom<AnchorRow> for RuntimeSessionExecutionAnchor {
 }
 
 #[async_trait::async_trait]
-impl RuntimeSessionExecutionAnchorRepository
-    for PostgresRuntimeSessionExecutionAnchorRepository
-{
+impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecutionAnchorRepository {
     async fn upsert(&self, a: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
         sqlx::query(
             r#"INSERT INTO runtime_session_execution_anchors

@@ -615,6 +615,26 @@ pub struct RuntimeSessionRefDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct LifecycleAgentMessageRequest {
+    #[ts(type = "Array<JsonValue>")]
+    pub prompt_blocks: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub executor_config: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleAgentMessageResponse {
+    pub runtime_session_id: String,
+    pub turn_id: String,
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: LifecycleAgentRefDto,
+    pub frame_ref: AgentFrameRefDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct AgentAssignmentRefDto {
     pub assignment_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

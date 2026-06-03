@@ -12,6 +12,10 @@ import type {
   RuntimeSessionTraceView,
   SubjectExecutionView,
 } from "../types";
+import type {
+  LifecycleAgentMessageRequest,
+  LifecycleAgentMessageResponse,
+} from "../generated/workflow-contracts";
 
 export async function fetchLifecycleRun(runId: string): Promise<LifecycleRunView> {
   return api.get<LifecycleRunView>(`/lifecycle-runs/${encodeURIComponent(runId)}/view`);
@@ -47,5 +51,15 @@ export async function fetchSessionFrameRuntime(
 ): Promise<AgentFrameRuntimeView> {
   return api.get<AgentFrameRuntimeView>(
     `/sessions/${encodeURIComponent(runtimeSessionId)}/frame-runtime`,
+  );
+}
+
+export async function sendLifecycleAgentMessageByRuntimeSession(
+  runtimeSessionId: string,
+  request: LifecycleAgentMessageRequest,
+): Promise<LifecycleAgentMessageResponse> {
+  return api.post<LifecycleAgentMessageResponse>(
+    `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/messages`,
+    request,
   );
 }

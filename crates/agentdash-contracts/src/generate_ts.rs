@@ -66,14 +66,14 @@ use agentdash_contracts::project_agent::{
 };
 use agentdash_contracts::session::{
     ApproveToolCallResponse, CancelSessionResponse, CreateSessionForkRequest,
-    DeleteSessionResponse, PromptSessionResponse, RejectToolCallResponse,
-    RollbackSessionProjectionRequest, SessionCommandStateResponse, SessionEventResponse,
-    SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
-    SessionLineageRecordResponse, SessionLineageRelationKindDto, SessionLineageStatusDto,
-    SessionLineageViewResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
-    SessionProjectionMessageRefResponse, SessionProjectionRollbackResponse,
-    SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
-    SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
+    DeleteSessionResponse, RejectToolCallResponse, RollbackSessionProjectionRequest,
+    SessionCommandStateResponse, SessionEventResponse, SessionEventsPageResponse,
+    SessionForkChildSessionResponse, SessionForkResponse, SessionLineageRecordResponse,
+    SessionLineageRelationKindDto, SessionLineageStatusDto, SessionLineageViewResponse,
+    SessionMessageRefDto, SessionNdjsonEnvelope, SessionProjectionMessageRefResponse,
+    SessionProjectionRollbackResponse, SessionProjectionSegmentProvenanceResponse,
+    SessionProjectionSegmentViewResponse, SessionProjectionSourceRangeResponse,
+    SessionProjectionViewResponse,
 };
 use agentdash_contracts::settings::{
     SettingResponse, SettingUpdate, SettingsScopeKind, SettingsScopeQuery, UpdateSettingsRequest,
@@ -100,7 +100,8 @@ use agentdash_contracts::workflow::{
     ActivityTransition, AgentAssignmentRefDto, AgentFrameRefDto, AgentFrameRuntimeView,
     AgentProcedureContract, DefinitionSource, DeleteAgentProcedureResponse,
     DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
-    HookPresetResponse, HookPresetsResponse, LifecycleAgentRefDto, LifecycleAgentView,
+    HookPresetResponse, HookPresetsResponse, LifecycleAgentMessageRequest,
+    LifecycleAgentMessageResponse, LifecycleAgentRefDto, LifecycleAgentView,
     LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunView,
     LifecycleSubjectAssociationDto, ProjectActiveAgentsView, RegisterHookPresetResponse,
     RuntimeSessionRefDto, RuntimeSessionTraceView, StoryLaunchResult, SubjectExecutionView,
@@ -211,7 +212,6 @@ fn main() {
             export_all::<SessionNdjsonEnvelope>(dir);
             export_all::<SessionCommandStateResponse>(dir);
             export_all::<DeleteSessionResponse>(dir);
-            export_all::<PromptSessionResponse>(dir);
             export_all::<CancelSessionResponse>(dir);
             export_all::<ApproveToolCallResponse>(dir);
             export_all::<RejectToolCallResponse>(dir);
@@ -290,6 +290,8 @@ fn main() {
             export_all::<LifecycleAgentRefDto>(dir);
             export_all::<AgentFrameRefDto>(dir);
             export_all::<RuntimeSessionRefDto>(dir);
+            export_all::<LifecycleAgentMessageRequest>(dir);
+            export_all::<LifecycleAgentMessageResponse>(dir);
             export_all::<AgentAssignmentRefDto>(dir);
             export_all::<StoryLaunchResult>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);

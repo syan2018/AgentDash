@@ -1,7 +1,7 @@
 use agentdash_domain::workflow::{
     AgentAssignment, AgentAssignmentRepository, AgentFrame, AgentFrameRepository,
-    LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchor,
+    RuntimeSessionExecutionAnchorRepository,
 };
 use uuid::Uuid;
 
@@ -157,16 +157,13 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
             return Ok(None);
         }
 
-        let assignment = select_assignment_for_frame(
-            self.assignment_repo,
-            &current_frame,
-        )
-        .await?
-        .ok_or_else(|| ActivityRuntimeAssociationError::MissingAssignment {
-            runtime_session_id: session_id.to_string(),
-            frame_id: current_frame.id,
-            agent_id: current_frame.agent_id,
-        })?;
+        let assignment = select_assignment_for_frame(self.assignment_repo, &current_frame)
+            .await?
+            .ok_or_else(|| ActivityRuntimeAssociationError::MissingAssignment {
+                runtime_session_id: session_id.to_string(),
+                frame_id: current_frame.id,
+                agent_id: current_frame.agent_id,
+            })?;
 
         let attempt = u32::try_from(assignment.attempt).map_err(|_| {
             ActivityRuntimeAssociationError::InvalidAttempt {
@@ -199,12 +196,15 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
         anchor: RuntimeSessionExecutionAnchor,
     ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
         let Some(assignment_id) = anchor.assignment_id else {
-            let Some(frame) = self.frame_repo.get(anchor.launch_frame_id).await.map_err(|e| {
-                ActivityRuntimeAssociationError::Repository {
+            let Some(frame) = self
+                .frame_repo
+                .get(anchor.launch_frame_id)
+                .await
+                .map_err(|e| ActivityRuntimeAssociationError::Repository {
                     operation: "anchor launch AgentFrame",
                     message: e.to_string(),
-                }
-            })? else {
+                })?
+            else {
                 return Ok(None);
             };
             if frame.graph_instance_id.is_none() && frame.activity_key.is_none() {
@@ -242,12 +242,13 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
             });
         }
 
-        let attempt = u32::try_from(anchor.attempt.unwrap_or(assignment.attempt)).map_err(|_| {
-            ActivityRuntimeAssociationError::InvalidAttempt {
-                assignment_id: assignment.id,
-                attempt: assignment.attempt,
-            }
-        })?;
+        let attempt =
+            u32::try_from(anchor.attempt.unwrap_or(assignment.attempt)).map_err(|_| {
+                ActivityRuntimeAssociationError::InvalidAttempt {
+                    assignment_id: assignment.id,
+                    attempt: assignment.attempt,
+                }
+            })?;
         let run = self
             .run_repo
             .get_by_id(assignment.run_id)
@@ -284,10 +285,7 @@ pub(crate) async fn select_assignment_for_frame(
             message: e.to_string(),
         })?;
 
-    if let Some(assignment) = active_for_agent
-        .iter()
-        .find(|a| a.frame_id == frame.id)
-    {
+    if let Some(assignment) = active_for_agent.iter().find(|a| a.frame_id == frame.id) {
         return Ok(Some(assignment.clone()));
     }
 
@@ -296,9 +294,7 @@ pub(crate) async fn select_assignment_for_frame(
     {
         let scoped: Vec<_> = active_for_agent
             .iter()
-            .filter(|a| {
-                a.graph_instance_id == graph_instance_id && a.activity_key == activity_key
-            })
+            .filter(|a| a.graph_instance_id == graph_instance_id && a.activity_key == activity_key)
             .collect();
         match scoped.as_slice() {
             [assignment] => return Ok(Some((*assignment).clone())),
@@ -409,9 +405,9 @@ pub async fn resolve_activity_session_association(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     #[allow(deprecated)]
     use super::select_assignment_for_runtime_frame;
+    use super::*;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         AgentAssignmentRepository, AgentFrame, AgentFrameRepository, LifecycleRunRepository,
@@ -608,10 +604,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl RuntimeSessionExecutionAnchorRepository for TestAnchorRepo {
-        async fn upsert(
-            &self,
-            _anchor: &RuntimeSessionExecutionAnchor,
-        ) -> Result<(), DomainError> {
+        async fn upsert(&self, _anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
             Ok(())
         }
 
@@ -826,11 +819,8 @@ mod tests {
         let run_repo = TestRunRepo {
             runs: [(run_id, run)].into_iter().collect(),
         };
-        let resolver = ActivityRuntimeAssociationResolver::new(
-            &frame_repo,
-            &assignment_repo,
-            &run_repo,
-        );
+        let resolver =
+            ActivityRuntimeAssociationResolver::new(&frame_repo, &assignment_repo, &run_repo);
 
         let association = resolver
             .resolve_by_runtime_session("sess-1")
@@ -916,11 +906,8 @@ mod tests {
         let run_repo = TestRunRepo {
             runs: [(run_id, run)].into_iter().collect(),
         };
-        let resolver = ActivityRuntimeAssociationResolver::new(
-            &frame_repo,
-            &assignment_repo,
-            &run_repo,
-        );
+        let resolver =
+            ActivityRuntimeAssociationResolver::new(&frame_repo, &assignment_repo, &run_repo);
 
         let error = resolver
             .resolve_by_runtime_session("sess-1")
@@ -954,11 +941,8 @@ mod tests {
         let run_repo = TestRunRepo {
             runs: [(run_id, run)].into_iter().collect(),
         };
-        let resolver = ActivityRuntimeAssociationResolver::new(
-            &frame_repo,
-            &assignment_repo,
-            &run_repo,
-        );
+        let resolver =
+            ActivityRuntimeAssociationResolver::new(&frame_repo, &assignment_repo, &run_repo);
 
         assert!(
             resolver
@@ -974,11 +958,8 @@ mod tests {
         let frame_repo = TestFrameRepo::default();
         let assignment_repo = TestAssignmentRepo::default();
         let run_repo = TestRunRepo::default();
-        let resolver = ActivityRuntimeAssociationResolver::new(
-            &frame_repo,
-            &assignment_repo,
-            &run_repo,
-        );
+        let resolver =
+            ActivityRuntimeAssociationResolver::new(&frame_repo, &assignment_repo, &run_repo);
 
         assert!(
             resolver

@@ -1,6 +1,7 @@
 pub(crate) mod activity_activation;
 mod activity_run;
 pub mod agent_executor;
+pub mod agent_message;
 mod catalog;
 mod completion;
 mod definition;
@@ -38,6 +39,11 @@ pub use agent_executor::{
     AgentActivityAssignmentTarget, AgentActivityExecutorLauncher, AgentActivityLaunchContext,
     AgentActivityRuntimePort, AgentActivitySessionPort, ContinueRootExecutionPolicy,
     RuntimeSessionDeliveryPolicy,
+};
+pub use agent_message::{
+    LifecycleAgentMessageCommand, LifecycleAgentMessageDelivery, LifecycleAgentMessageDeliveryPort,
+    LifecycleAgentMessageDispatch, LifecycleAgentMessageService,
+    SessionLaunchLifecycleAgentMessageDeliveryPort,
 };
 pub use agentdash_domain::workflow::{
     ActivityInputArtifact, ActivityLifecycleRunState, ActivityOutputArtifact, ActivityPortValue,

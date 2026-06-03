@@ -3,7 +3,9 @@
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::ConnectorError;
 
-use crate::session::construction_planner::{build_project_agent_context, resolve_project_workspace};
+use crate::session::construction_planner::{
+    build_project_agent_context, resolve_project_workspace,
+};
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::{AgentLevelMcp, OwnerBootstrapSpec, OwnerScope};
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
@@ -22,10 +24,7 @@ pub(super) async fn compose(
     input: &SessionConstructionProviderInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let project_agent_id = agent.project_agent_id.ok_or_else(|| {
-        ConnectorError::InvalidConfig(format!(
-            "LifecycleAgent {} 缺少 project_agent_id",
-            agent.id
-        ))
+        ConnectorError::InvalidConfig(format!("LifecycleAgent {} 缺少 project_agent_id", agent.id))
     })?;
     let project = svc
         .repos
@@ -45,25 +44,20 @@ pub(super) async fn compose(
         .ok_or_else(|| {
             ConnectorError::InvalidConfig(format!("ProjectAgent {} 不存在", project_agent_id))
         })?;
-    let agent_context =
-        build_project_agent_context(&svc.repos, &project_agent)
-            .await
-            .map_err(connector_internal)?;
-    let workspace =
-        resolve_project_workspace(&svc.repos, &project)
-            .await
-            .map_err(connector_internal)?;
+    let agent_context = build_project_agent_context(&svc.repos, &project_agent)
+        .await
+        .map_err(connector_internal)?;
+    let workspace = resolve_project_workspace(&svc.repos, &project)
+        .await
+        .map_err(connector_internal)?;
     let executor_config = merge_user_executor_config(
         input.command.user_input().executor_config.clone(),
         &agent_context.executor_config,
     );
     let lifecycle = owner_prompt_lifecycle(svc.prompt_lifecycle(Some(&executor_config), input));
     let user_prompt_blocks = required_prompt_blocks(input.command.user_input())?;
-    let builder = frame_builder_from_existing(
-        frame,
-        input.session_id.as_str(),
-        input.session_id.as_str(),
-    )?;
+    let builder =
+        frame_builder_from_existing(frame, input.session_id.as_str(), input.session_id.as_str())?;
     let (builder, extras) = svc
         .assembler()
         .compose_owner_bootstrap_to_frame(

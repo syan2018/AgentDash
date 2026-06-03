@@ -268,9 +268,10 @@ async fn resolve_terminal_launch_target(
     )
     .await?;
     let result = resolve_session_frame_vfs(state, current_user, session_id).await?;
-    let vfs = result.vfs.as_ref().ok_or_else(|| {
-        ApiError::BadRequest("AgentFrame 未记录 VFS，无法创建终端".into())
-    })?;
+    let vfs = result
+        .vfs
+        .as_ref()
+        .ok_or_else(|| ApiError::BadRequest("AgentFrame 未记录 VFS，无法创建终端".into()))?;
     let target = terminal_launch_target_from_vfs(vfs)?;
     if !state
         .services

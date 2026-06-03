@@ -28,12 +28,12 @@ use crate::session::SessionTerminalCallback;
 use crate::session::{
     SessionCapabilityService, SessionCoreService, SessionHookService, SessionLaunchService,
 };
+use crate::workflow::execution_log::ActivityPortArtifactRef;
 use crate::workflow::{
     ActivityEvent, ActivityLifecycleRunService, AgentActivityExecutorLauncher,
     AgentActivityLaunchContext, AgentActivityRuntimePort, load_scoped_port_output_map,
     session_terminal_summary,
 };
-use crate::workflow::execution_log::ActivityPortArtifactRef;
 
 #[derive(Debug)]
 pub struct OrchestrationResult {

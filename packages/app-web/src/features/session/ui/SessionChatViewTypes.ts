@@ -62,6 +62,9 @@ export interface SessionChatViewProps {
     executorConfig?: ExecutorConfig,
   ) => Promise<void>;
 
+  /** 未提供 Agent dispatcher 时展示的不可发送原因。 */
+  sendUnavailableReason?: string;
+
   // ─── 布局插槽 ────────────────────────────────────────
 
   /** 渲染在状态栏下方、流区域上方 */

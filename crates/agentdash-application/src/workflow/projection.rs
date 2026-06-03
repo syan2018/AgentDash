@@ -82,8 +82,7 @@ pub async fn resolve_active_workflow_projection_for_session(
     run_repo: &dyn LifecycleRunRepository,
     graph_instance_repo: &dyn WorkflowGraphInstanceRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
-    let resolver =
-        ActivityRuntimeAssociationResolver::new(frame_repo, assignment_repo, run_repo);
+    let resolver = ActivityRuntimeAssociationResolver::new(frame_repo, assignment_repo, run_repo);
     let Some(association) = resolver
         .resolve_by_runtime_session(session_id)
         .await

@@ -21,6 +21,9 @@ import {
   type WorkspaceRuntimeData,
 } from "../features/workspace-panel";
 import { useSessionRuntimeState } from "../features/workspace-panel/model/useSessionRuntimeState";
+import { sendLifecycleAgentMessageByRuntimeSession } from "../services/lifecycle";
+import type { ExecutorConfig } from "../services/executor";
+import type { JsonValue } from "../generated/common-contracts";
 import { fetchSessionMeta, updateSessionTitle } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
@@ -150,6 +153,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const taskExecutorSummary = null;
 
   const runContext: SubjectRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
+  const activeFrame = sessionRuntimeState.frame;
 
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
   const storiesByProjectId = useStoryStore((s) => s.storiesByProjectId);
@@ -238,6 +242,63 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     if (!currentSessionId) return;
     scheduleHookRuntimeRefresh("message_sent", true);
   }, [currentSessionId, scheduleHookRuntimeRefresh]);
+
+  const sessionSendReady = useMemo(() => {
+    if (!currentSessionId || !activeFrame) return false;
+    return activeFrame.runtime_session_refs.some(
+      (ref) => ref.runtime_session_id === currentSessionId,
+    );
+  }, [activeFrame, currentSessionId]);
+
+  const sendUnavailableReason = useMemo(() => {
+    if (!currentSessionId) return "当前没有可发送的 Session。";
+    if (sessionRuntimeState.status === "loading" || sessionRuntimeState.status === "refreshing") {
+      return "正在解析当前 Session 的 Agent dispatcher…";
+    }
+    if (sessionRuntimeState.error) return sessionRuntimeState.error;
+    if (!activeFrame) {
+      return "当前 Session 只是 runtime trace，未关联可继续对话的 Agent。请从 Agent 入口创建或重新打开会话。";
+    }
+    if (!sessionSendReady) {
+      return "当前 AgentFrame 未绑定这个 delivery RuntimeSession，无法继续发送消息。";
+    }
+    return undefined;
+  }, [
+    activeFrame,
+    currentSessionId,
+    sessionRuntimeState.error,
+    sessionRuntimeState.status,
+    sessionSendReady,
+  ]);
+
+  const handleAgentSessionSend = useCallback(async (
+    sessionId: string | null,
+    prompt: string,
+    executorConfig?: ExecutorConfig,
+  ) => {
+    if (!sessionId || sessionId !== currentSessionId) {
+      throw new Error("当前 Session 尚未就绪，无法发送消息。");
+    }
+    if (!sessionSendReady) {
+      throw new Error(sendUnavailableReason ?? "当前 Session 未连接到 Agent dispatcher。");
+    }
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      throw new Error("请输入要发送的消息。");
+    }
+    await sendLifecycleAgentMessageByRuntimeSession(sessionId, {
+      prompt_blocks: [{ type: "text", text: trimmed }],
+      executor_config: executorConfig as unknown as JsonValue | undefined,
+    });
+    await refreshSessionRuntimeContext();
+    scheduleHookRuntimeRefresh("agent_message_sent", true);
+  }, [
+    currentSessionId,
+    refreshSessionRuntimeContext,
+    scheduleHookRuntimeRefresh,
+    sendUnavailableReason,
+    sessionSendReady,
+  ]);
 
   const handleTurnEnd = useCallback(() => {
     scheduleHookRuntimeRefresh("turn_end", true);
@@ -477,7 +538,9 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
               onSystemEvent={handleSystemEvent}
               executorHint={executorHint}
               agentDefaults={taskExecutorSummary}
+              customSend={sessionSendReady ? handleAgentSessionSend : undefined}
               inputPrefix={ownerBindingBar}
+              sendUnavailableReason={sendUnavailableReason}
             />
           </div>
         </Panel>

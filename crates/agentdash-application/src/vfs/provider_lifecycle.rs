@@ -98,14 +98,15 @@ fn parse_graph_instance_id_from_metadata(mount: &Mount) -> Result<Uuid, MountErr
 /// 构建 scoped port output 的 inline file path。有 scope 返回
 /// `{graph_instance_id}/{activity_key}/{attempt}/{port_key}`，无 scope 返回 `{port_key}`。
 fn scoped_port_output_path(mount: &Mount, port_key: &str) -> Result<String, MountError> {
-    let graph_instance_id = mount.metadata.get("graph_instance_id").and_then(|v| v.as_str());
+    let graph_instance_id = mount
+        .metadata
+        .get("graph_instance_id")
+        .and_then(|v| v.as_str());
     let activity_key = mount.metadata.get("activity_key").and_then(|v| v.as_str());
     let attempt = mount.metadata.get("attempt").and_then(|v| v.as_u64());
 
     match (graph_instance_id, activity_key, attempt) {
-        (Some(gi), Some(ak), Some(att)) => {
-            Ok(format!("{gi}/{ak}/{att}/{port_key}"))
-        }
+        (Some(gi), Some(ak), Some(att)) => Ok(format!("{gi}/{ak}/{att}/{port_key}")),
         _ => Ok(port_key.to_string()),
     }
 }

@@ -3,6 +3,7 @@ import type { JsonValue } from "../../../generated/common-contracts";
 import type { BackboneEvent, Turn } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "../model/types";
 import { computeProjectionRefreshKey } from "./SessionChatView";
+import { isSessionComposerSendDisabled } from "./SessionChatViewParts";
 
 const completedTurn: Turn = {
   id: "turn-1",
@@ -111,5 +112,40 @@ describe("computeProjectionRefreshKey", () => {
     ];
 
     expect(computeProjectionRefreshKey(events)).toBe(2);
+  });
+});
+
+describe("isSessionComposerSendDisabled", () => {
+  it("没有 Agent dispatcher 时即使有输入也不可发送", () => {
+    expect(isSessionComposerSendDisabled({
+      hasDispatcher: false,
+      hasSession: true,
+      inputValue: "hello",
+      isActionRunning: false,
+      isCancelling: false,
+      isSending: false,
+    })).toBe(true);
+  });
+
+  it("没有 Agent dispatcher 时仍允许取消正在运行的 turn", () => {
+    expect(isSessionComposerSendDisabled({
+      hasDispatcher: false,
+      hasSession: true,
+      inputValue: "",
+      isActionRunning: true,
+      isCancelling: false,
+      isSending: false,
+    })).toBe(false);
+  });
+
+  it("有 Agent dispatcher 时由父级发送入口接管提交", () => {
+    expect(isSessionComposerSendDisabled({
+      hasDispatcher: true,
+      hasSession: true,
+      inputValue: "hello",
+      isActionRunning: false,
+      isCancelling: false,
+      isSending: false,
+    })).toBe(false);
   });
 });

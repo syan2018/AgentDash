@@ -12,8 +12,6 @@ export type CreateSessionForkRequest = { title?: string, fork_point_ref?: Sessio
 
 export type DeleteSessionResponse = { deleted: boolean, sessionId: string, };
 
-export type PromptSessionResponse = { started: boolean, sessionId: string, turnId: string, };
-
 export type RejectToolCallResponse = { rejected: boolean, sessionId: string, toolCallId: string, };
 
 export type RollbackSessionProjectionRequest = { target_event_seq: number, active_compaction_id?: string, reason?: string, };

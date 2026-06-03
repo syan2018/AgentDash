@@ -98,10 +98,9 @@ pub async fn list_project_agents(
 
     let mut response = Vec::with_capacity(agents.len());
     for agent in &agents {
-        let bridge =
-            build_project_agent_context(&state.repos, agent)
-                .await
-                .map_err(ApiError::Internal)?;
+        let bridge = build_project_agent_context(&state.repos, agent)
+            .await
+            .map_err(ApiError::Internal)?;
         response.push(build_project_agent_summary(&project, &bridge));
     }
 
@@ -137,10 +136,9 @@ pub async fn launch_project_agent(
         .await
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
-    let agent_context =
-        build_project_agent_context(&state.repos, &project_agent)
-            .await
-            .map_err(ApiError::Internal)?;
+    let agent_context = build_project_agent_context(&state.repos, &project_agent)
+        .await
+        .map_err(ApiError::Internal)?;
 
     // 解析 workflow graph ref（ProjectAgent 未配置时显式使用 freeform graph）
     let workflow_graph_ref = WorkflowGraphRef::ByKey {

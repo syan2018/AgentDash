@@ -123,9 +123,9 @@ agent.pi.system_prompt       # PiAgent 系统提示词
 ## 数据流
 
 ```
-前端 ExecutorSelector → { executor, model_id, thinking_level }
-  → POST /sessions/{id}/prompt
-  → 后端按 model_id 选择 provider bridge
+SessionPage / Agent 入口 → LifecycleAgent message command { prompt_blocks, executor_config }
+  → AgentFrame / LifecycleAgent 解析 delivery RuntimeSession
+  → Runtime delivery pipeline 按 model_id 选择 provider bridge
   → agent.set_thinking_level(thinking_level)
   → AgentLoop → LLM API
 ```

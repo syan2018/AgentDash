@@ -7,7 +7,9 @@ use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::ConnectorError;
 
-use crate::session::construction_planner::{build_project_agent_context, resolve_project_workspace};
+use crate::session::construction_planner::{
+    build_project_agent_context, resolve_project_workspace,
+};
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::{AgentLevelMcp, OwnerBootstrapSpec, OwnerScope};
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
@@ -30,21 +32,17 @@ pub(super) async fn compose(
     let project = load_project_for_story(svc, &story).await?;
     let workspace = resolve_story_owner_workspace(svc, &story, &project).await?;
     let project_agent = resolve_story_project_agent(svc, &agent, project.id).await?;
-    let agent_context =
-        build_project_agent_context(&svc.repos, &project_agent)
-            .await
-            .map_err(connector_internal)?;
+    let agent_context = build_project_agent_context(&svc.repos, &project_agent)
+        .await
+        .map_err(connector_internal)?;
     let executor_config = merge_user_executor_config(
         input.command.user_input().executor_config.clone(),
         &agent_context.executor_config,
     );
     let lifecycle = owner_prompt_lifecycle(svc.prompt_lifecycle(Some(&executor_config), input));
     let user_prompt_blocks = required_prompt_blocks(input.command.user_input())?;
-    let builder = frame_builder_from_existing(
-        frame,
-        input.session_id.as_str(),
-        input.session_id.as_str(),
-    )?;
+    let builder =
+        frame_builder_from_existing(frame, input.session_id.as_str(), input.session_id.as_str())?;
     agent.project_agent_id = Some(project_agent.id);
 
     let (builder, extras) = svc
@@ -150,9 +148,7 @@ async fn resolve_story_owner_workspace(
             .await
             .map_err(connector_internal)?
             .ok_or_else(|| {
-                ConnectorError::InvalidConfig(format!(
-                    "Story 默认 Workspace {workspace_id} 不存在"
-                ))
+                ConnectorError::InvalidConfig(format!("Story 默认 Workspace {workspace_id} 不存在"))
             })
             .map(Some);
     }

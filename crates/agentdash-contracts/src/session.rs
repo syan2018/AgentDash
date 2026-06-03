@@ -121,14 +121,6 @@ pub struct DeleteSessionResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct PromptSessionResponse {
-    pub started: bool,
-    pub session_id: String,
-    pub turn_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
 pub struct CancelSessionResponse {
     pub cancelled: bool,
     pub session_id: String,

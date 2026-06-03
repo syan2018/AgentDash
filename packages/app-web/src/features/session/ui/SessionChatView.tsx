@@ -70,6 +70,7 @@ export function SessionChatView({
   inputPlaceholder,
   idleSendLabel = "发送",
   initialInputValue,
+  sendUnavailableReason,
 }: SessionChatViewProps) {
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -356,8 +357,8 @@ export function SessionChatView({
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
 
+    if (!customSendRef.current) return;
     // customSend 模式允许空 prompt（如 Task 直接执行）
-    if (!customSendRef.current && !trimmed) return;
     if (isSending) return;
 
     setSendError(null);
@@ -366,12 +367,8 @@ export function SessionChatView({
     setIsSending(true);
 
     try {
-      if (customSendRef.current) {
-        // customSend 全接管：session 创建 + 消息发送一体处理
-        await customSendRef.current(sessionId, trimmed, executorConfig);
-      } else {
-        throw new Error("Runtime trace 页面不再支持直接发送 prompt；请从 Run、Subject 或 Agent 入口派发执行。");
-      }
+      // customSend 全接管：session 创建 + 消息发送一体处理
+      await customSendRef.current(sessionId, trimmed, executorConfig);
 
       execConfig.recordUsage();
       clearInput();
@@ -541,6 +538,7 @@ export function SessionChatView({
         isSending={isSending}
         promptTemplates={promptTemplates}
         richInputRef={richInputRef}
+        sendUnavailableReason={sendUnavailableReason}
         showExecutorSelector={showExecutorSelector}
         workspaceId={workspaceId}
         onAtTrigger={handleAtTrigger}

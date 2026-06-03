@@ -417,16 +417,15 @@ impl<'a> LifecycleDispatchService<'a> {
             None
         };
         // ── 第一段 anchor 写入：frame 已创建，assignment 尚未创建 ──
-        if let (Some(anchor_repo), Some(session_id)) =
-            (self.anchor_repo, runtime_session_ref)
-        {
+        if let (Some(anchor_repo), Some(session_id)) = (self.anchor_repo, runtime_session_ref) {
             let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
                 session_id.to_string(),
                 run.id,
                 frame.id,
                 agent.id,
                 Some(graph_instance.id),
-                frame.activity_key
+                frame
+                    .activity_key
                     .clone()
                     .or_else(|| Some(workflow_graph.entry_activity_key.clone())),
             );
@@ -453,11 +452,7 @@ impl<'a> LifecycleDispatchService<'a> {
             (self.anchor_repo, runtime_session_ref, &assignment)
         {
             anchor_repo
-                .update_assignment(
-                    &session_id.to_string(),
-                    assignment.id,
-                    assignment.attempt,
-                )
+                .update_assignment(&session_id.to_string(), assignment.id, assignment.attempt)
                 .await?;
         }
 
@@ -1365,10 +1360,7 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl RuntimeSessionExecutionAnchorRepository for InMemoryExecutionAnchorRepo {
-        async fn upsert(
-            &self,
-            anchor: &RuntimeSessionExecutionAnchor,
-        ) -> Result<(), DomainError> {
+        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items
                 .iter_mut()

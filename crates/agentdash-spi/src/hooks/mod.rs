@@ -122,7 +122,11 @@ pub struct SessionSnapshotMetadata {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ActiveWorkflowMeta {
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "lifecycle_id")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "lifecycle_id"
+    )]
     pub workflow_graph_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_key: Option<String>,

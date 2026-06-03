@@ -10,12 +10,6 @@ use uuid::Uuid;
 use crate::{mcp_preset::resolve_preset_mcp_refs, repository_set::RepositorySet};
 
 #[cfg(test)]
-use agentdash_domain::{story::Story, task::TaskDispatchPreference};
-#[cfg(test)]
-use agentdash_spi::CapabilityScopeCtx;
-#[cfg(test)]
-use std::path::PathBuf;
-#[cfg(test)]
 use crate::{
     canvas::append_visible_canvas_mounts,
     capability::{
@@ -41,6 +35,12 @@ use crate::{
         ensure_active_workflow_lifecycle_mount, resolve_active_workflow_projection_for_session,
     },
 };
+#[cfg(test)]
+use agentdash_domain::{story::Story, task::TaskDispatchPreference};
+#[cfg(test)]
+use agentdash_spi::CapabilityScopeCtx;
+#[cfg(test)]
+use std::path::PathBuf;
 
 #[cfg(test)]
 use super::construction::{

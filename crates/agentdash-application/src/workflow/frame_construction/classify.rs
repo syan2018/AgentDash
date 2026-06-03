@@ -8,7 +8,9 @@ use agentdash_spi::ConnectorError;
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
-use super::{FrameConstructionService, build_envelope_from_frame, connector_internal, frame_surface_ready};
+use super::{
+    FrameConstructionService, build_envelope_from_frame, connector_internal, frame_surface_ready,
+};
 
 /// 根据 frame/agent/run 状态分类后路由到对应的 composer。
 pub(super) async fn route_and_compose(
@@ -34,9 +36,7 @@ pub(super) async fn route_and_compose(
     }
 
     // 4. task association
-    if input.command.task_hint().is_some()
-        || has_task_association(svc, run.id, agent.id).await?
-    {
+    if input.command.task_hint().is_some() || has_task_association(svc, run.id, agent.id).await? {
         return super::composer_task::compose(svc, &frame, agent, run, &input).await;
     }
 
@@ -47,13 +47,7 @@ pub(super) async fn route_and_compose(
 
     // 6. 尝试直接使用已有 frame surface
     if frame_surface_ready(&frame) {
-        return build_envelope_from_frame(
-            &frame,
-            None,
-            &input.command,
-            None,
-            &input.session_id,
-        );
+        return build_envelope_from_frame(&frame, None, &input.command, None, &input.session_id);
     }
 
     Err(ConnectorError::InvalidConfig(format!(

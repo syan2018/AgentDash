@@ -218,4 +218,24 @@ describe("ContextOverviewTab projection contract", () => {
     expect(html).toContain("进度 1/2");
     expect(html).toContain("graph-instance-projection:implement");
   });
+
+  it("无 owner/context snapshot 时仍从 lifecycle run projection 展示运行状态", () => {
+    const html = renderToStaticMarkup(
+      <ContextOverviewTab
+        contextSnapshot={null}
+        ownerStory={null}
+        ownerProjectName=""
+        executorSummary={null}
+        runtimeSurface={null}
+        hookRuntime={null}
+        sessionCapabilities={null}
+        lifecycleRuns={[lifecycleRunView]}
+      />,
+    );
+
+    expect(html).toContain("会话上下文");
+    expect(html).toContain("Session Agent");
+    expect(html).toContain("Run · Running");
+    expect(html).not.toContain("当前会话还没有关联的上下文信息。");
+  });
 });

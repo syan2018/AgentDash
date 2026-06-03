@@ -3,7 +3,7 @@ import type { JsonValue } from "../../../generated/common-contracts";
 import type { BackboneEvent, Turn } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "../model/types";
 import { computeProjectionRefreshKey } from "./SessionChatView";
-import { isSessionComposerSendDisabled } from "./SessionChatViewParts";
+import { isSessionComposerSendDisabled } from "./SessionChatComposerState";
 
 const completedTurn: Turn = {
   id: "turn-1",

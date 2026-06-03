@@ -150,8 +150,13 @@ export function ContextOverviewTab({
   const isProjectLevel = contextSnapshot?.owner_context.owner_level === "project";
   const title = isProjectLevel ? ownerProjectName : (ownerStory?.title ?? "会话上下文");
   const composition = contextSnapshot?.effective.session_composition ?? null;
+  const hasRuntimeContext =
+    lifecycleRuns.length > 0 ||
+    Boolean(hookRuntime) ||
+    Boolean(runtimeSurface) ||
+    Boolean(sessionCapabilities);
 
-  if (!contextSnapshot && !ownerStory) {
+  if (!contextSnapshot && !ownerStory && !hasRuntimeContext) {
     return (
       <div className="flex h-full min-h-[200px] items-center justify-center px-6">
         <p className="text-center text-sm text-muted-foreground">
@@ -179,7 +184,7 @@ export function ContextOverviewTab({
                 ? contextSnapshot.owner_context.agent_display_name
                 : null)
               ?? "Project Agent"
-            : executorSummary?.executor ?? "Story 会话 Agent"
+            : executorSummary?.executor ?? (ownerStory ? "Story 会话 Agent" : "Session Agent")
         }
         executor={isProjectLevel ? contextSnapshot?.executor : executorSummary}
       />

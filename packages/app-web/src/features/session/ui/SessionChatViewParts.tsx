@@ -16,6 +16,7 @@ import {
 } from "../../file-reference";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
 import type { SessionDisplayItem, TokenUsageInfo } from "../model/types";
+import { isSessionComposerSendDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
 
 type ExecutorDiscoveryState = ReturnType<typeof useExecutorDiscovery>;
@@ -63,26 +64,6 @@ function getItemKey(item: SessionDisplayItem): string {
   if (isAggregatedGroup(item)) return item.groupKey;
   if (isAggregatedThinkingGroup(item)) return item.groupKey;
   return item.id;
-}
-
-export interface SessionComposerActionState {
-  hasDispatcher: boolean;
-  hasSession: boolean;
-  isActionRunning: boolean;
-  isCancelling: boolean;
-  isSending: boolean;
-  inputValue: string;
-}
-
-export function isSessionComposerSendDisabled(state: SessionComposerActionState): boolean {
-  return state.isSending ||
-    state.isCancelling ||
-    (!state.hasDispatcher && !(state.hasSession && state.isActionRunning)) ||
-    (
-      state.hasSession && state.isActionRunning
-        ? false
-        : state.hasDispatcher ? false : !state.inputValue.trim()
-    );
 }
 
 function ContextUsageRing({ usage }: { usage: TokenUsageInfo | null }) {

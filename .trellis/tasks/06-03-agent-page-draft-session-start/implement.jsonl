@@ -1,0 +1,8 @@
+{"file":".trellis/spec/cross-layer/architecture.md","reason":"确认前后端共享 DTO、HTTP JSON 和 Dashboard/API 边界。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"新增 Rust contract 和 generated TS 时遵守同一事实源与 drift check 契约。"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"确认 RuntimeSession 只承载 delivery/trace，不承载业务归属。"}
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"首条消息 materialize 后必须继续走现有 launch pipeline accepted 边界。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"确认 graphless LifecycleRun、LifecycleAgent、AgentFrame、RuntimeSessionExecutionAnchor 的控制面职责。"}
+{"file":".trellis/spec/backend/workflow/lifecycle-run-link.md","reason":"确认 RuntimeSession 反查 Subject/Run/Agent 的关联路径和 anchor 语义。"}
+{"file":".trellis/spec/frontend/architecture.md","reason":"Draft route 与 SessionPage 分支需要符合前端分层和页面职责。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"前端 service mapper 和 generated contract 使用必须保持类型安全。"}

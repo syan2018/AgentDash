@@ -39,9 +39,11 @@
 
 业务库的 schema 事实源是 `crates/agentdash-infrastructure/migrations/`。日常 schema 变更按正常 migration 链新增文件推进，原因是 migration 历史是仓库内可审计的结构演进事实，开发期本地库、测试库和 embedded PostgreSQL 都应观察同一条递进路径。
 
+已提交的 migration 文件是历史事实，日常 feature / bugfix / refactor 任务严禁修改、删除或重命名，包括当前 baseline `0001_init.sql`。预研期“不保留旧兼容路径”只表示新 migration 可以直接把 schema 推到正确目标，不表示可以重写历史 migration。只有明确授权的数据库 baseline squash / reset / merge 任务可以修改既有 migration；该任务必须在 `prd.md` / `design.md` 写明授权范围、重建数据库要求和验证命令。
+
 Repository 启动逻辑只观察已迁移 schema。API bootstrap 不调用 PostgreSQL repository schema 初始化；需要直接构造 `AppState` 或 repository 的测试路径也先运行 migrations，再执行 readiness 检查。Repository 可以保留无 DDL 的 readiness helper，但不能创建表、补列、建索引或执行 schema 数据迁移。
 
-预研期允许定期压缩 PostgreSQL migration 基线。阶段性 squash 时整理 `0001_init.sql` 表达当前正确 schema，避免开发期重命名、回填和旧模型迁移长期分散当前事实。`0001_init.sql` 应保持为手工整理后的 schema baseline：只保留 DDL、约束、索引、序列和必要扩展，不保留 pg_dump header、object comments、`public.` 前缀噪音、回填默认值或旧约束命名。进入需要保留真实环境数据的阶段后，migration 历史转为增量审计事实，不再随意压缩。
+预研期允许在明确的数据库 baseline squash / reset / merge 时间点压缩 PostgreSQL migration 基线。阶段性 squash 时整理 `0001_init.sql` 表达当前正确 schema，避免开发期重命名、回填和旧模型迁移长期分散当前事实。`0001_init.sql` 应保持为手工整理后的 schema baseline：只保留 DDL、约束、索引、序列和必要扩展，不保留 pg_dump header、object comments、`public.` 前缀噪音、回填默认值或旧约束命名。进入需要保留真实环境数据的阶段后，migration 历史转为增量审计事实，不再随意压缩。
 
 初始化 migration 只表达 schema、约束、索引和必要扩展。Builtin / Plugin Shared Library assets、LLM Provider、auth session、settings、backend registration、runtime health、session / lifecycle runtime facts 都由启动期 seed、API use case 或 runtime repository 写入，原因是这些数据随代码、插件、用户配置或运行状态变化，不属于 schema 基线。
 
@@ -54,6 +56,7 @@ Repository 启动逻辑只观察已迁移 schema。API bootstrap 不调用 Postg
 ### Checklist
 
 - [ ] PostgreSQL 新增 migration 文件
+- [ ] `pnpm run migration:guard` 通过；如果修改既有 migration，当前任务必须是明确授权的 baseline squash / reset / merge
 - [ ] PostgreSQL integration / bootstrap / local embedded runtime 路径通过 migration runner 初始化真实 schema
 - [ ] 更新 INSERT/SELECT/UPSERT 语句和 `map_*_row` 函数
 - [ ] 更新测试代码
@@ -63,6 +66,80 @@ Repository 启动逻辑只观察已迁移 schema。API bootstrap 不调用 Postg
 - Repository 主线不再读写旧列
 - PostgreSQL 新增 migration 用 `DROP COLUMN IF EXISTS`
 - 阶段性 squash 后，基线 migration 与当前 schema 目标保持一致
+
+## Scenario: Migration History Guard
+
+### 1. Scope / Trigger
+
+- Trigger: 任意新增、删除、重命名或修改 `crates/agentdash-infrastructure/migrations/*.sql`。
+- Scope: PostgreSQL migration 历史、embedded PostgreSQL 初始化、repository readiness 和 CI / pre-commit guard。
+
+### 2. Signatures
+
+- 新增 migration 文件命名：`NNNN_<description>.sql`，`NNNN` 必须大于当前最大已提交 migration version。
+- 守卫命令：
+
+```powershell
+pnpm run migration:guard
+```
+
+- 授权 baseline rewrite 时才允许：
+
+```powershell
+$env:ALLOW_MIGRATION_BASELINE_REWRITE='1'; pnpm run migration:guard
+```
+
+### 3. Contracts
+
+- 普通任务只能新增 migration 文件；不能修改、删除或重命名已提交 migration。
+- 已提交 migration 的定义以 `HEAD` 中存在的 `crates/agentdash-infrastructure/migrations/*.sql` 为准。
+- baseline squash / reset / merge 任务必须在任务文档中写明：
+  - 修改哪些既有 migration。
+  - 为什么当前时间点需要重写 baseline。
+  - 哪些数据库目录或外部数据库需要重建。
+  - 允许使用 `ALLOW_MIGRATION_BASELINE_REWRITE=1` 的验证命令。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| staged diff 新增 `crates/agentdash-infrastructure/migrations/0002_x.sql` | 允许 |
+| staged diff 修改 `crates/agentdash-infrastructure/migrations/0001_init.sql` | 拒绝 |
+| staged diff 删除已提交 migration | 拒绝 |
+| staged diff rename 已提交 migration | 拒绝 |
+| `ALLOW_MIGRATION_BASELINE_REWRITE=1` | 允许，但只用于已授权 baseline 任务 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `0002_add_runtime_session_anchor_fks.sql` 新增 FK，repository 和 tests 同步更新。
+- Base: 没有 migration diff，guard 直接通过。
+- Bad: 在功能任务中直接修改 `0001_init.sql` 增加 FK；这会让本地库、测试库和任务审计观察到不同历史。
+
+### 6. Tests Required
+
+- 任意数据库 schema 变更 PR 必须运行 `pnpm run migration:guard`。
+- 新 migration 必须由 migration runner 初始化真实 schema，并通过相关 repository integration 或 bootstrap readiness 测试。
+- baseline squash / reset / merge 任务必须额外验证干净数据库初始化，并记录旧 embedded PostgreSQL data 目录重建要求。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+feature task -> edit crates/agentdash-infrastructure/migrations/0001_init.sql
+```
+
+#### Correct
+
+```text
+feature task -> add crates/agentdash-infrastructure/migrations/0002_<change>.sql
+```
+
+#### Correct Only In Authorized Baseline Task
+
+```text
+database baseline squash task -> document approval -> edit 0001_init.sql -> rebuild dev DB -> run guard with ALLOW_MIGRATION_BASELINE_REWRITE=1
+```
 
 ---
 

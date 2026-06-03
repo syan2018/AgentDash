@@ -2,6 +2,40 @@
 -- PostgreSQL database dump
 --
 
+\restrict N5TTefl61zsErwvFHO0p32QnQLHLJ5P09fi91zQkXQIGb1kfNFJ5PZybHCEEdYI
+
+-- Dumped from database version 18.3
+-- Dumped by pg_dump version 18.3
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
+
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
 
 --
 -- Name: activity_execution_claims; Type: TABLE; Schema: public; Owner: -
@@ -102,16 +136,16 @@ CREATE TABLE public.agent_lineages (
 --
 
 CREATE TABLE public.agent_procedures (
-    id text CONSTRAINT agent_procedures_id_not_null NOT NULL,
-    key text CONSTRAINT agent_procedures_key_not_null NOT NULL,
-    name text CONSTRAINT agent_procedures_name_not_null NOT NULL,
-    description text DEFAULT ''::text CONSTRAINT agent_procedures_description_not_null NOT NULL,
-    source text CONSTRAINT agent_procedures_source_not_null NOT NULL,
-    version integer CONSTRAINT agent_procedures_version_not_null NOT NULL,
-    contract text CONSTRAINT agent_procedures_contract_not_null NOT NULL,
-    created_at timestamp with time zone CONSTRAINT agent_procedures_created_at_not_null NOT NULL,
-    updated_at timestamp with time zone CONSTRAINT agent_procedures_updated_at_not_null NOT NULL,
-    project_id text DEFAULT '00000000-0000-0000-0000-000000000000'::text CONSTRAINT agent_procedures_project_id_not_null NOT NULL,
+    id text CONSTRAINT workflow_definitions_id_not_null NOT NULL,
+    key text CONSTRAINT workflow_definitions_key_not_null NOT NULL,
+    name text CONSTRAINT workflow_definitions_name_not_null NOT NULL,
+    description text DEFAULT ''::text CONSTRAINT workflow_definitions_description_not_null NOT NULL,
+    source text CONSTRAINT workflow_definitions_source_not_null NOT NULL,
+    version integer CONSTRAINT workflow_definitions_version_not_null NOT NULL,
+    contract text CONSTRAINT workflow_definitions_contract_not_null NOT NULL,
+    created_at timestamp with time zone CONSTRAINT workflow_definitions_created_at_not_null NOT NULL,
+    updated_at timestamp with time zone CONSTRAINT workflow_definitions_updated_at_not_null NOT NULL,
+    project_id text DEFAULT '00000000-0000-0000-0000-000000000000'::text CONSTRAINT workflow_definitions_project_id_not_null NOT NULL,
     library_asset_id text,
     source_ref text,
     source_version text,
@@ -1000,6 +1034,32 @@ CREATE TABLE public.stories (
 
 
 --
+-- Name: tasks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tasks (
+    id text NOT NULL,
+    project_id text NOT NULL,
+    story_id text NOT NULL,
+    workspace_id text,
+    title text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    agent_binding text DEFAULT '{}'::text NOT NULL,
+    artifacts text DEFAULT '[]'::text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: TABLE tasks; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.tasks IS 'DEPRECATED（自 migration 0020 起）: Task 合入 Story aggregate（stories.tasks JSONB）；本表仅作只读回滚参照，不再接受写入。';
+
+
+--
 -- Name: user_preferences; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1046,23 +1106,23 @@ CREATE TABLE public.views (
 --
 
 CREATE TABLE public.workflow_graphs (
-    id text CONSTRAINT workflow_graphs_id_not_null NOT NULL,
-    key text CONSTRAINT workflow_graphs_key_not_null NOT NULL,
-    name text CONSTRAINT workflow_graphs_name_not_null NOT NULL,
-    description text DEFAULT ''::text CONSTRAINT workflow_graphs_description_not_null NOT NULL,
-    source text CONSTRAINT workflow_graphs_source_not_null NOT NULL,
-    version integer CONSTRAINT workflow_graphs_version_not_null NOT NULL,
-    created_at timestamp with time zone CONSTRAINT workflow_graphs_created_at_not_null NOT NULL,
-    updated_at timestamp with time zone CONSTRAINT workflow_graphs_updated_at_not_null NOT NULL,
-    project_id text DEFAULT '00000000-0000-0000-0000-000000000000'::text CONSTRAINT workflow_graphs_project_id_not_null NOT NULL,
+    id text CONSTRAINT lifecycle_definitions_id_not_null NOT NULL,
+    key text CONSTRAINT lifecycle_definitions_key_not_null NOT NULL,
+    name text CONSTRAINT lifecycle_definitions_name_not_null NOT NULL,
+    description text DEFAULT ''::text CONSTRAINT lifecycle_definitions_description_not_null NOT NULL,
+    source text CONSTRAINT lifecycle_definitions_source_not_null NOT NULL,
+    version integer CONSTRAINT lifecycle_definitions_version_not_null NOT NULL,
+    created_at timestamp with time zone CONSTRAINT lifecycle_definitions_created_at_not_null NOT NULL,
+    updated_at timestamp with time zone CONSTRAINT lifecycle_definitions_updated_at_not_null NOT NULL,
+    project_id text DEFAULT '00000000-0000-0000-0000-000000000000'::text CONSTRAINT lifecycle_definitions_project_id_not_null NOT NULL,
     library_asset_id text,
     source_ref text,
     source_version text,
     source_digest text,
     installed_at timestamp with time zone,
-    entry_activity_key text DEFAULT ''::text CONSTRAINT workflow_graphs_entry_activity_key_not_null NOT NULL,
-    activities text DEFAULT '[]'::text CONSTRAINT workflow_graphs_activities_not_null NOT NULL,
-    transitions text DEFAULT '[]'::text CONSTRAINT workflow_graphs_transitions_not_null NOT NULL
+    entry_activity_key text DEFAULT ''::text CONSTRAINT lifecycle_definitions_entry_activity_key_not_null NOT NULL,
+    activities text DEFAULT '[]'::text CONSTRAINT lifecycle_definitions_activities_not_null NOT NULL,
+    transitions text DEFAULT '[]'::text CONSTRAINT lifecycle_definitions_transitions_not_null NOT NULL
 );
 
 
@@ -1286,11 +1346,11 @@ ALTER TABLE ONLY public.lifecycle_agents
 
 
 --
--- Name: workflow_graphs workflow_graphs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: workflow_graphs lifecycle_definitions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.workflow_graphs
-    ADD CONSTRAINT workflow_graphs_pkey PRIMARY KEY (id);
+    ADD CONSTRAINT lifecycle_definitions_pkey PRIMARY KEY (id);
 
 
 --
@@ -1598,6 +1658,14 @@ ALTER TABLE ONLY public.stories
 
 
 --
+-- Name: tasks tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: user_preferences user_preferences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1622,11 +1690,11 @@ ALTER TABLE ONLY public.views
 
 
 --
--- Name: agent_procedures agent_procedures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: agent_procedures workflow_definitions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.agent_procedures
-    ADD CONSTRAINT agent_procedures_pkey PRIMARY KEY (id);
+    ADD CONSTRAINT workflow_definitions_pkey PRIMARY KEY (id);
 
 
 --
@@ -1842,17 +1910,17 @@ CREATE INDEX idx_lifecycle_agents_run_id ON public.lifecycle_agents USING btree 
 
 
 --
--- Name: idx_workflow_graphs_library_asset_id; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_lifecycle_definitions_library_asset_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_workflow_graphs_library_asset_id ON public.workflow_graphs USING btree (library_asset_id);
+CREATE INDEX idx_lifecycle_definitions_library_asset_id ON public.workflow_graphs USING btree (library_asset_id);
 
 
 --
--- Name: idx_workflow_graphs_project_key; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_lifecycle_definitions_project_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_workflow_graphs_project_key ON public.workflow_graphs USING btree (project_id, key);
+CREATE UNIQUE INDEX idx_lifecycle_definitions_project_key ON public.workflow_graphs USING btree (project_id, key);
 
 
 --
@@ -2234,17 +2302,17 @@ CREATE UNIQUE INDEX idx_skill_assets_project_key ON public.skill_assets USING bt
 
 
 --
--- Name: idx_agent_procedures_library_asset_id; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_workflow_definitions_library_asset_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_agent_procedures_library_asset_id ON public.agent_procedures USING btree (library_asset_id);
+CREATE INDEX idx_workflow_definitions_library_asset_id ON public.agent_procedures USING btree (library_asset_id);
 
 
 --
--- Name: idx_agent_procedures_project_key; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_workflow_definitions_project_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_agent_procedures_project_key ON public.agent_procedures USING btree (project_id, key);
+CREATE UNIQUE INDEX idx_workflow_definitions_project_key ON public.agent_procedures USING btree (project_id, key);
 
 
 --
@@ -2465,3 +2533,6 @@ ALTER TABLE ONLY public.session_terminal_effects
 --
 -- PostgreSQL database dump complete
 --
+
+\unrestrict N5TTefl61zsErwvFHO0p32QnQLHLJ5P09fi91zQkXQIGb1kfNFJ5PZybHCEEdYI
+

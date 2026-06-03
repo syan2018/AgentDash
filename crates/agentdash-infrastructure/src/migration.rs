@@ -4,6 +4,7 @@ use sqlx::PgPool;
 const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "activity_execution_claims",
     "agent_assignments",
+    "agent_frame_transitions",
     "agent_frames",
     "agent_lineages",
     "agent_procedures",
@@ -37,6 +38,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "routine_executions",
     "routines",
     "runtime_health",
+    "runtime_session_execution_anchors",
     "session_compactions",
     "session_events",
     "session_lineage",

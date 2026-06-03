@@ -1,2 +1,0 @@
--- New runs create workflow instances, agents, frames, assignments, and subject associations directly.
--- Keep this historical version id as a no-op so migration ordering remains stable.

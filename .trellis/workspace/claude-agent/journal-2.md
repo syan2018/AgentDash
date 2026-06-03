@@ -1032,3 +1032,36 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 57: 重建开发期数据库初始化基线
+
+**Date**: 2026-06-03
+**Task**: 重建开发期数据库初始化基线
+**Branch**: `codex/refactor-lifecycle-control-plane`
+
+### Summary
+
+将 PostgreSQL migration 历史压缩为新的 0001 初始化基线，移除开发期遗留表，补齐 readiness 覆盖，并验证新空 embedded PostgreSQL 只运行 version 1 migration。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fa40c4c8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

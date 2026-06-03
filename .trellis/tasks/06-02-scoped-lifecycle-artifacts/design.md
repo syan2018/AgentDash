@@ -1,8 +1,6 @@
 # Scoped Lifecycle Artifacts Design
 
-## Artifact Ref
-
-目标 ref：
+## Target Ref
 
 ```rust
 pub struct ActivityPortArtifactRef {
@@ -14,27 +12,26 @@ pub struct ActivityPortArtifactRef {
 }
 ```
 
-Inline file path 可采用：
+若继续复用 inline lifecycle files，path builder 必须隐藏 raw path：
 
 ```text
 activity_port_outputs/{graph_instance_id}/{activity_key}/{attempt}/{port_key}
+activity_port_inputs/{graph_instance_id}/{activity_key}/{attempt}/{port_key}
 ```
 
-输入 artifact 可采用：
-
-```text
-port_inputs/{graph_instance_id}/{activity_key}/{attempt}/{port_key}
-```
+若新增 first-class repository，表名建议为 `lifecycle_activity_port_artifacts`，唯一键为 `(run_id, graph_instance_id, activity_key, attempt, port_key, direction)`。
 
 ## Write Flow
 
 ```text
-lifecycle_vfs artifacts/{port_key}
-  -> load active context by mount metadata graph_instance_id
-  -> current running/claiming attempt
-  -> validate port_key in active activity output ports
-  -> write scoped artifact
+lifecycle VFS artifacts/{port_key}
+  -> mount metadata resolves run_id + graph_instance_id
+  -> WorkflowGraphInstance.activity_state resolves active activity attempt
+  -> validate port_key against declared output ports
+  -> write ActivityPortArtifactRef
 ```
+
+VFS 不得从 run-level output map 反查当前 activity。
 
 ## Read Flow
 
@@ -42,16 +39,16 @@ Completion / hook gate：
 
 ```text
 ActivityAttemptRef
-  -> list scoped outputs for this attempt
-  -> validate declared ports
+  -> list outputs for same run + graph_instance + activity + attempt
+  -> compare against declared required output ports
 ```
 
 Artifact binding：
 
 ```text
-upstream ActivityAttemptRef + from_port
-  -> resolve output by alias policy
-  -> create downstream input artifact
+upstream ActivityAttemptRef + from_port + alias policy
+  -> resolve scoped output
+  -> create downstream scoped input
 ```
 
 Read model：
@@ -59,34 +56,24 @@ Read model：
 ```text
 run_id
   -> list scoped artifacts
-  -> group by graph_instance/activity/attempt/port
+  -> group by graph instance / activity / attempt / port
+  -> expose ActivityOutputArtifact[]
 ```
-
-物理存储可以新增 first-class `lifecycle_activity_artifacts` 表；若继续使用 inline files，则必须通过 typed helper 暴露 `ActivityPortArtifactRef`，调用方不能直接拼 raw path。
 
 ## Affected Areas
 
-- `workflow/execution_log.rs`
-- `workflow/lifecycle/journey/mod.rs`
-- `workflow/orchestrator.rs`
-- `workflow/agent_executor.rs`
-- `workflow/activity_activation.rs`
-- `session/assembler.rs`
-- `hooks/provider.rs`
-- `hooks/rules.rs`
-- `scripts/hook-presets/port_output_gate.rhai`
-- `vfs/provider_lifecycle.rs`
-- `vfs/lifecycle_catalog.rs`
-- `workflow/lifecycle_run_view_builder.rs`
-
-## Migration
-
-Add migration to reshape existing inline lifecycle files. Since the project is pre-release, runtime code should not keep compatibility branches after migration.
+- `crates/agentdash-application/src/workflow/lifecycle/journey/mod.rs`
+- `crates/agentdash-application/src/workflow/orchestrator.rs`
+- `crates/agentdash-application/src/vfs/provider_lifecycle.rs`
+- `crates/agentdash-application/src/hooks/*`
+- `crates/agentdash-contracts/src/workflow.rs`
+- `crates/agentdash-infrastructure/migrations/0001_init.sql`
+- `packages/app-web/src/generated/workflow-contracts.ts`
 
 ## Validation
 
-- Unit: path builder/parser roundtrip for scoped artifact refs。
-- Integration: two graph instances write same `result` port and complete independently。
-- Integration: retry attempt writes new output without overwriting previous attempt history。
-- Hook test: `port_output_gate` scopes to current attempt。
-- VFS test: two graph mounts in the same run can write/read the same port key independently。
+- Unit: scoped artifact ref path/repository key roundtrip.
+- Integration: two graph instances write same `result` port and complete independently.
+- Integration: retry attempt writes a new output without overwriting previous attempt history.
+- Hook: `port_output_gate` scopes to current attempt.
+- VFS: two graph mounts in one run can read/write same port key independently.

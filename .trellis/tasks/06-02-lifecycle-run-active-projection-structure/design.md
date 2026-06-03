@@ -1,45 +1,6 @@
 # LifecycleRun Active Projection Structure Design
 
-## ActiveActivityRef
-
-```rust
-pub struct ActiveActivityRef {
-    pub graph_instance_id: Uuid,
-    pub activity_key: String,
-    pub attempt: Option<u32>,
-    pub status: String,
-}
-```
-
-Domain 可保存为 `active_activity_refs`，或只在 read builder 中从 `WorkflowGraphInstance.activity_state` 派生。推荐优先 read-builder 派生，减少 run aggregate 双写。
-
-## Projection Rule
-
-```text
-WorkflowGraphInstance.activity_state.attempts
-  -> Ready / Claiming / Running attempts
-  -> ActiveActivityRef[]
-  -> LifecycleRunView.active_activity_refs
-```
-
-`LifecycleRun.status` 仍可由 graph instance states 聚合。
-
-## Public Exposure Convergence
-
-本任务处理 active projection 时同步收敛公开类型暴露：业务运行态字段落在 Agent / Lifecycle 锚定的 generated contracts 上，Session 保持 runtime trace / turn / transport adapter 的语义。
-
-目标入口关系：
-
-```text
-runtime_session_id
-  -> session-indexed adapter endpoint
-  -> AgentFrameRuntimeView / RuntimeSessionExecutionAnchor / ActivityAttemptRef
-  -> LifecycleRunView / WorkflowGraphInstanceView / ActivityAttemptView
-```
-
-`runtime_session_id` 可以作为查询参数或路径参数帮助定位 runtime trace，但返回体应立即回到 Agent / Lifecycle read model。这样前端无需维护 session-first runtime view，也无需从 session resource 再推导 frame、agent、activity。
-
-`ActiveActivityRef` 若进入公开 contract，应复用 Activity attempt identity：
+## Target Projection
 
 ```rust
 pub struct ActiveActivityRef {
@@ -51,32 +12,51 @@ pub struct ActiveActivityRef {
 }
 ```
 
-这个类型属于 Lifecycle read model，而不是 Session read model。Session trace DTO 可以引用它或引用 `ActivityAttemptRefDto`，但不应成为 active workflow 的所有者。
+Projection rule:
 
-## Naming
+```text
+WorkflowGraphInstance.activity_state.attempts
+  -> Ready / Claiming / Running attempts
+  -> ActiveActivityRef[]
+  -> LifecycleRunView.active_activity_refs
+```
 
-`LifecycleRun.lifecycle_id` 当前表达 root graph backfill 来源。目标命名建议：
+`LifecycleRun.status` may still be aggregated from graph instance states, but active Activity identity should not be persisted as a run-level string list.
 
-- domain: `root_graph_id`
-- DTO: `root_graph_id`
+## Persistence Choice
 
-如果仍需兼容 task history，迁移直接 rename，不保留运行时双字段。
+Recommended target: derive active refs in the read builder from graph instance state. This avoids double-writing `lifecycle_runs.active_node_keys` and `lifecycle_workflow_instances.activity_state_json`.
+
+If implementation keeps a temporary debug column, it must be named and documented as display/cache only. It must not be used by workflow advancement, completion, hook gates, or public route contracts.
+
+## Public Exposure
+
+Active runtime exposure belongs to Lifecycle / WorkflowGraphInstance / ActivityAttempt read models. Session-indexed endpoints may use `runtime_session_id` as an adapter key, but returned runtime state should remain Agent / Lifecycle anchored.
+
+Target route contract relationship:
+
+```text
+runtime_session_id
+  -> RuntimeSessionExecutionAnchor
+  -> AgentFrameRuntimeView / LifecycleRunView
+  -> ActiveActivityRef[] / ActivityAttemptRef
+```
 
 ## Affected Areas
 
 - `crates/agentdash-domain/src/workflow/entity.rs`
 - `crates/agentdash-contracts/src/workflow.rs`
 - `crates/agentdash-application/src/workflow/lifecycle_run_view_builder.rs`
-- `crates/agentdash-api/src/routes/lifecycle_views.rs`
+- `crates/agentdash-application/src/workflow/tools/advance_node.rs`
+- `crates/agentdash-application/src/workflow/lifecycle/journey/mod.rs`
 - `crates/agentdash-infrastructure/src/persistence/postgres/workflow_repository.rs`
-- `packages/app-web/src/types/lifecycle-views.ts`
-- `packages/app-web/src/stores/lifecycleStore.ts`
-- `packages/app-web/src/services/lifecycle.ts`
-- `packages/app-web/src/types/session.ts`
+- `crates/agentdash-infrastructure/migrations/0001_init.sql`
+- `packages/app-web/src/generated/workflow-contracts.ts`
+- frontend stores/components that display active Activity state
 
 ## Validation
 
-- Unit: two graph instances with same activity key produce two distinct refs。
-- Contract: generated TS includes structured refs。
-- Frontend: active display uses graph instance id, not split string。
-- Exposure: session-indexed runtime query returns Agent / Lifecycle anchored generated contract types。
+- Unit: two graph instances with same activity key produce two distinct active refs.
+- Contract: generated TS includes `active_activity_refs`.
+- Backend: advancement/completion does not read `active_node_keys`.
+- Frontend: active display uses structured graph/activity identity.

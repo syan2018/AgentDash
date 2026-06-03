@@ -1,33 +1,35 @@
 # LifecycleRun Active Projection Structure Implement Plan
 
-## Context Recovery
+## Dispatch Scope
 
-- Start from `research/audit-context-index.md` after context compaction.
-- Use that index as the required audit manifest for parent task context, sibling dependencies, specs, research files, code paths, migrations, frontend consumers, and validation commands.
-- Treat this task as the parent convergence tail item: implement after runtime session anchors, scoped lifecycle artifacts, frontend session runtime query, and frame launch envelope have established their target facts.
+This task is ready for implementation after or alongside scoped lifecycle artifacts. It owns active Activity projection cleanup only. Do not reopen archived runtime anchor, frame envelope, frontend runtime query, graphless runtime, or session-agent channel tasks.
 
 ## Checklist
 
-- [ ] Add `ActiveActivityRef` domain/contract DTO.
-- [ ] Decide whether refs are persisted or read-builder derived.
-- [ ] Update `sync_graph_instance_activity_projections` or remove run-level active string persistence.
-- [ ] Update lifecycle run view builder.
-- [ ] Update infrastructure migration for field rename/removal if persisted.
-- [ ] Update generated TS and frontend types/store usage.
-- [ ] Audit session-indexed DTO/service exposure and keep active runtime state on Agent / Lifecycle anchored generated contracts.
-- [ ] Remove business use of `current_activity_key()`.
-- [ ] Add multi graph instance same key tests.
+- [ ] Move `ActiveActivityRef` into public contract shape with `run_id + graph_instance_id + activity_key + attempt + status`.
+- [ ] Update `LifecycleRunView` builder to derive refs from `WorkflowGraphInstance.activity_state`.
+- [ ] Remove business reliance on `LifecycleRun.active_node_keys`.
+- [ ] Update `advance_node` output to structured active refs.
+- [ ] Remove or rename `lifecycle_runs.active_node_keys` in migration / repository if it is no longer needed.
+- [ ] Remove `current_activity_key()` as business helper, or constrain it to tests/debug with clear naming.
+- [ ] Regenerate generated TS and update frontend consumers.
+- [ ] Update backend workflow specs to state that active projection is derived from graph instance state.
+- [ ] Add multi graph instance same activity key tests.
 
 ## Validation Commands
 
 - [ ] `cargo test -p agentdash-domain workflow`
 - [ ] `cargo test -p agentdash-application workflow::lifecycle_run_view_builder`
+- [ ] `cargo test -p agentdash-application workflow::tools`
 - [ ] `pnpm run contracts:check`
 - [ ] `pnpm --filter app-web test`
-- [ ] Focused frontend check for session runtime query consuming Agent / Lifecycle anchored generated types.
+
+## Review Gate
+
+- [ ] `rg "active_node_keys|current_activity_key" crates packages .trellis/spec` shows no production business fact-source usage.
+- [ ] Any remaining `active_node_keys` reference is either removed, test-only, or explicitly debug/cache-only.
 
 ## Risk Points
 
-- Some old tests may assert string active keys; update them to assert structured identity.
-- Avoid adding a second persisted active projection unless it has a clear synchronization owner.
-- Keep session-indexed endpoints as adapters that return Agent / Lifecycle anchored views; otherwise the project gains another public runtime model to keep synchronized.
+- Removing the column before read builder derivation is complete can make active UI blank.
+- Keeping both persisted strings and derived refs without a single owner will recreate the split fact source this task is meant to remove.

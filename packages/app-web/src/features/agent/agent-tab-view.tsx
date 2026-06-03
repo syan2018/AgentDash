@@ -76,19 +76,13 @@ export function AgentTabView() {
     [currentProjectId, fetchAndIngestLifecycleRun, fetchFrame, launchProjectAgent, navigate],
   );
 
-  const handleSelectAgent = useCallback(
-    (lifecycleRunId: string, agentId: string) => {
+  const handleOpenSession = useCallback(
+    (runtimeSessionId: string, agentId?: string) => {
       if (!currentProjectId) return;
-      setSelectedAgent({ projectId: currentProjectId, agentId });
-
-      const store = useLifecycleStore.getState();
-      const agent = store.agents.get(agentId);
-      const sessionId =
-        agent?.delivery_runtime_ref?.runtime_session_id
-        ?? store.deliveryRuntimeSessionIdForLifecycleRun(lifecycleRunId);
-      if (sessionId) {
-        navigate(`/session/${sessionId}`);
+      if (agentId) {
+        setSelectedAgent({ projectId: currentProjectId, agentId });
       }
+      navigate(`/session/${runtimeSessionId}`);
     },
     [currentProjectId, navigate],
   );
@@ -121,7 +115,7 @@ export function AgentTabView() {
           projectId={currentProjectId}
           isLoading={lifecycleLoading}
           selectedAgentId={selectedAgentId}
-          onSelectAgent={handleSelectAgent}
+          onOpenSession={handleOpenSession}
         />
       </div>
     </div>

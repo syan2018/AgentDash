@@ -203,6 +203,7 @@ impl RuntimeContextInspectionPlanner {
             repos.lifecycle_agent_repo.as_ref(),
             repos.agent_assignment_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
+            repos.execution_anchor_repo.as_ref(),
             repos.workflow_graph_instance_repo.as_ref(),
         )
         .await?;
@@ -350,6 +351,7 @@ impl RuntimeContextInspectionPlanner {
             repos.lifecycle_agent_repo.as_ref(),
             repos.agent_assignment_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
+            repos.execution_anchor_repo.as_ref(),
             repos.workflow_graph_instance_repo.as_ref(),
         )
         .await?;

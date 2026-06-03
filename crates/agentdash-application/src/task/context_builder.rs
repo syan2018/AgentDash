@@ -241,6 +241,7 @@ async fn find_active_workflow_via_task_sessions(
             repos.lifecycle_agent_repo.as_ref(),
             repos.agent_assignment_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
+            repos.execution_anchor_repo.as_ref(),
             repos.workflow_graph_instance_repo.as_ref(),
         )
         .await
@@ -258,12 +259,24 @@ async fn resolve_visible_canvas_mount_ids(
     let Some(session_id) = runtime_session_id else {
         return Vec::new();
     };
-    match repos
-        .agent_frame_repo
-        .find_by_runtime_session(session_id)
+    let Ok(Some(anchor)) = repos
+        .execution_anchor_repo
+        .find_by_session(session_id)
         .await
-    {
+    else {
+        return Vec::new();
+    };
+    let Ok(Some(agent)) = repos.lifecycle_agent_repo.get(anchor.agent_id).await else {
+        return Vec::new();
+    };
+    if agent.run_id != anchor.run_id {
+        return Vec::new();
+    }
+    match repos.agent_frame_repo.get_current(agent.id).await {
         Ok(Some(frame)) => frame.visible_canvas_mount_ids(),
-        _ => Vec::new(),
+        _ => match repos.agent_frame_repo.get(anchor.launch_frame_id).await {
+            Ok(Some(frame)) => frame.visible_canvas_mount_ids(),
+            _ => Vec::new(),
+        },
     }
 }

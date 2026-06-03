@@ -102,15 +102,18 @@ SubjectRef(kind, id)
   -> LifecycleRun / LifecycleAgent
 ```
 
-### RuntimeSession -> Subject（trace 反查）
+### RuntimeSession -> Subject（控制面反查）
 
 ```text
 runtime_session_id
-  -> AgentFrameRepository.find_by_runtime_session(runtime_session_id)
+  -> RuntimeSessionExecutionAnchorRepository.find_by_session(runtime_session_id)
+  -> launch/current AgentFrame
   -> LifecycleAgent
   -> LifecycleRun
   -> LifecycleSubjectAssociationRepository.list_by_anchor(run_id, agent_id?)
 ```
+
+RuntimeSessionExecutionAnchor 是 runtime trace 到 run / agent / frame / assignment / attempt 的权威索引，原因是 `RuntimeSession` 只表达消息流和投递证据，业务归属必须落到 lifecycle 控制面。
 
 ### Task Projection
 
@@ -153,5 +156,5 @@ Run / subject APIs return subject/agent/run refs and projection refs as their co
 | Unit | Association anchor | `anchor_agent_id` 非空时属于 `anchor_run_id` |
 | Unit | Subject roundtrip | kind / role serde roundtrip |
 | Integration | subject lookup | `SubjectRef` 可以找到 run / agent anchors |
-| Integration | runtime trace lookup | RuntimeSession 只能通过 AgentFrame 反查到 association |
+| Integration | runtime trace lookup | RuntimeSession 只能通过 RuntimeSessionExecutionAnchor 反查到 association |
 | API | subject/run views | 不返回 binding owner shape |

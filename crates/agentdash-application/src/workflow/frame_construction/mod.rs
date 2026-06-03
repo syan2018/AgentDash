@@ -82,15 +82,62 @@ impl FrameConstructionService {
         input: SessionConstructionProviderInput,
     ) -> Result<FrameLaunchEnvelope, ConnectorError> {
         let session_id = input.session_id.clone();
-        let frame = self
+        let anchor = self
             .repos
-            .agent_frame_repo
-            .find_by_runtime_session(&session_id)
+            .execution_anchor_repo
+            .find_by_session(&session_id)
             .await
             .map_err(connector_internal)?
             .ok_or_else(|| {
                 ConnectorError::InvalidConfig(format!(
-                    "RuntimeSession {session_id} 没有关联 AgentFrame，拒绝 launch"
+                    "RuntimeSession {session_id} 缺少 RuntimeSessionExecutionAnchor，拒绝 launch"
+                ))
+            })?;
+        let agent = self
+            .repos
+            .lifecycle_agent_repo
+            .get(anchor.agent_id)
+            .await
+            .map_err(connector_internal)?
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(format!(
+                    "RuntimeSessionExecutionAnchor 指向的 LifecycleAgent {} 不存在",
+                    anchor.agent_id
+                ))
+            })?;
+        let run = self
+            .repos
+            .lifecycle_run_repo
+            .get_by_id(anchor.run_id)
+            .await
+            .map_err(connector_internal)?
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(format!(
+                    "LifecycleAgent {} 指向的 LifecycleRun {} 不存在",
+                    agent.id, agent.run_id
+                ))
+            })?;
+        if agent.run_id != run.id || agent.project_id != run.project_id {
+            return Err(ConnectorError::InvalidConfig(format!(
+                "RuntimeSession {session_id} 的 anchor agent/run 不一致"
+            )));
+        }
+        let frame = self
+            .repos
+            .agent_frame_repo
+            .get_current(agent.id)
+            .await
+            .map_err(connector_internal)?
+            .or(self
+                .repos
+                .agent_frame_repo
+                .get(anchor.launch_frame_id)
+                .await
+                .map_err(connector_internal)?)
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(format!(
+                    "LifecycleAgent {} 没有可用 AgentFrame，拒绝 launch",
+                    agent.id
                 ))
             })?;
 
@@ -106,31 +153,6 @@ impl FrameConstructionService {
                 &input.session_id,
             );
         }
-
-        let agent = self
-            .repos
-            .lifecycle_agent_repo
-            .get(frame.agent_id)
-            .await
-            .map_err(connector_internal)?
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig(format!(
-                    "AgentFrame {} 指向的 LifecycleAgent {} 不存在",
-                    frame.id, frame.agent_id
-                ))
-            })?;
-        let run = self
-            .repos
-            .lifecycle_run_repo
-            .get_by_id(agent.run_id)
-            .await
-            .map_err(connector_internal)?
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig(format!(
-                    "LifecycleAgent {} 指向的 LifecycleRun {} 不存在",
-                    agent.id, agent.run_id
-                ))
-            })?;
 
         classify::route_and_compose(self, frame, agent, run, input).await
     }

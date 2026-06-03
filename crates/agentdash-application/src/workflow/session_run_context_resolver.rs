@@ -1,7 +1,7 @@
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
-    AgentFrameRepository, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
+    LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository, LifecycleSubjectAssociation,
+    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::hooks::SubjectRunContext;
@@ -12,7 +12,7 @@ use crate::ApplicationError;
 pub struct SubjectRunContextResolver<'a> {
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
     lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
-    agent_frame_repo: &'a dyn AgentFrameRepository,
+    execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     story_repo: &'a dyn StoryRepository,
 }
@@ -21,27 +21,27 @@ impl<'a> SubjectRunContextResolver<'a> {
     pub fn new(
         lifecycle_run_repo: &'a dyn LifecycleRunRepository,
         lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
-        agent_frame_repo: &'a dyn AgentFrameRepository,
+        execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         story_repo: &'a dyn StoryRepository,
     ) -> Self {
         Self {
             lifecycle_run_repo,
             lifecycle_subject_association_repo,
-            agent_frame_repo,
+            execution_anchor_repo,
             lifecycle_agent_repo,
             story_repo,
         }
     }
 
-    /// RuntimeSession → AgentFrame → LifecycleAgent → LifecycleRun → SubjectAssociations → context
+    /// RuntimeSession → RuntimeSessionExecutionAnchor → LifecycleAgent → LifecycleRun → SubjectAssociations → context
     pub async fn resolve_for_session(
         &self,
         session_id: &str,
     ) -> Result<Option<SubjectRunContext>, ApplicationError> {
-        let Some(frame) = self
-            .agent_frame_repo
-            .find_by_runtime_session(session_id)
+        let Some(anchor) = self
+            .execution_anchor_repo
+            .find_by_session(session_id)
             .await
             .map_err(ApplicationError::from)?
         else {
@@ -49,15 +49,18 @@ impl<'a> SubjectRunContextResolver<'a> {
         };
         let Some(agent) = self
             .lifecycle_agent_repo
-            .get(frame.agent_id)
+            .get(anchor.agent_id)
             .await
             .map_err(ApplicationError::from)?
         else {
             return Ok(None);
         };
+        if agent.run_id != anchor.run_id {
+            return Ok(None);
+        }
         let Some(run) = self
             .lifecycle_run_repo
-            .get_by_id(agent.run_id)
+            .get_by_id(anchor.run_id)
             .await
             .map_err(ApplicationError::from)?
         else {

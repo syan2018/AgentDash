@@ -9,7 +9,9 @@ import type {
   AgentFrameRuntimeView,
   LifecycleRunView,
   ProjectActiveAgentsView,
+  ProjectSessionListView,
   RuntimeSessionTraceView,
+  SessionRuntimeControlView,
   SubjectExecutionView,
 } from "../types";
 import type {
@@ -33,6 +35,20 @@ export async function fetchSubjectExecution(
 export async function fetchProjectActiveAgents(projectId: string): Promise<ProjectActiveAgentsView> {
   return api.get<ProjectActiveAgentsView>(
     `/projects/${encodeURIComponent(projectId)}/active-agents`,
+  );
+}
+
+export async function fetchProjectSessionList(projectId: string): Promise<ProjectSessionListView> {
+  return api.get<ProjectSessionListView>(
+    `/projects/${encodeURIComponent(projectId)}/sessions`,
+  );
+}
+
+export async function fetchSessionRuntimeControl(
+  runtimeSessionId: string,
+): Promise<SessionRuntimeControlView> {
+  return api.get<SessionRuntimeControlView>(
+    `/sessions/${encodeURIComponent(runtimeSessionId)}/runtime-control`,
   );
 }
 

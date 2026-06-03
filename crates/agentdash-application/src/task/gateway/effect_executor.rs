@@ -177,32 +177,43 @@ impl TaskHookEffectExecutor {
         &'a self,
         turn_id: &'a str,
     ) -> Result<VerifiedTaskArtifactContext<'a>, String> {
-        let frame = self
+        let anchor = self
             .repos
-            .agent_frame_repo
-            .find_by_runtime_session(&self.session_id)
+            .execution_anchor_repo
+            .find_by_session(&self.session_id)
             .await
             .map_err(|error| error.to_string())?
-            .ok_or_else(|| "runtime session 未关联 AgentFrame，拒绝执行 task effect".to_string())?;
+            .ok_or_else(|| {
+                "runtime session 缺少 RuntimeSessionExecutionAnchor，拒绝执行 task effect"
+                    .to_string()
+            })?;
 
         let agent = self
             .repos
             .lifecycle_agent_repo
-            .get(frame.agent_id)
+            .get(anchor.agent_id)
             .await
             .map_err(|error| error.to_string())?
-            .ok_or_else(|| "AgentFrame 未关联 LifecycleAgent，拒绝执行 task effect".to_string())?;
+            .ok_or_else(|| {
+                "RuntimeSessionExecutionAnchor 未关联 LifecycleAgent，拒绝执行 task effect"
+                    .to_string()
+            })?;
+        if agent.run_id != anchor.run_id {
+            return Err(
+                "runtime session anchor agent/run 不一致，拒绝执行 task effect".to_string(),
+            );
+        }
 
         let mut associations = self
             .repos
             .lifecycle_subject_association_repo
-            .list_by_anchor(agent.run_id, Some(agent.id))
+            .list_by_anchor(anchor.run_id, Some(agent.id))
             .await
             .map_err(|error| error.to_string())?;
         associations.extend(
             self.repos
                 .lifecycle_subject_association_repo
-                .list_by_anchor(agent.run_id, None)
+                .list_by_anchor(anchor.run_id, None)
                 .await
                 .map_err(|error| error.to_string())?,
         );
@@ -223,7 +234,7 @@ impl TaskHookEffectExecutor {
             turn_id,
             agent.run_id,
             agent.id,
-            frame.id,
+            anchor.launch_frame_id,
             &self.backend_id,
         ))
     }

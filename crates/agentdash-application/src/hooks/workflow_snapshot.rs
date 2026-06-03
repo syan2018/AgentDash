@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use agentdash_domain::workflow::{
     AgentAssignmentRepository, AgentFrameRepository, AgentProcedureRepository,
-    LifecycleAgentRepository, LifecycleRunRepository, WorkflowGraphInstanceRepository,
-    WorkflowGraphRepository,
+    LifecycleAgentRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+    WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
 use agentdash_spi::{HookError, hooks::HookControlTarget, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
@@ -26,6 +26,7 @@ pub struct WorkflowSnapshotBuilder {
     lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
 }
 
@@ -37,6 +38,7 @@ impl WorkflowSnapshotBuilder {
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
         workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
     ) -> Self {
         Self {
@@ -46,6 +48,7 @@ impl WorkflowSnapshotBuilder {
             lifecycle_agent_repo,
             agent_assignment_repo,
             lifecycle_run_repo,
+            execution_anchor_repo,
             workflow_graph_instance_repo,
         }
     }
@@ -73,6 +76,7 @@ impl WorkflowSnapshotBuilder {
             self.lifecycle_agent_repo.as_ref(),
             self.agent_assignment_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
+            self.execution_anchor_repo.as_ref(),
             self.workflow_graph_instance_repo.as_ref(),
         )
         .await
@@ -83,9 +87,9 @@ impl WorkflowSnapshotBuilder {
         &self,
         session_id: &str,
     ) -> Result<Option<HookControlTarget>, HookError> {
-        let Some(frame) = self
-            .agent_frame_repo
-            .find_by_runtime_session(session_id)
+        let Some(anchor) = self
+            .execution_anchor_repo
+            .find_by_session(session_id)
             .await
             .map_err(map_hook_error)?
         else {
@@ -93,9 +97,25 @@ impl WorkflowSnapshotBuilder {
         };
         let Some(agent) = self
             .lifecycle_agent_repo
-            .get(frame.agent_id)
+            .get(anchor.agent_id)
             .await
             .map_err(map_hook_error)?
+        else {
+            return Ok(None);
+        };
+        if agent.run_id != anchor.run_id {
+            return Ok(None);
+        }
+        let Some(frame) = self
+            .agent_frame_repo
+            .get_current(agent.id)
+            .await
+            .map_err(map_hook_error)?
+            .or(self
+                .agent_frame_repo
+                .get(anchor.launch_frame_id)
+                .await
+                .map_err(map_hook_error)?)
         else {
             return Ok(None);
         };

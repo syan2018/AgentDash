@@ -525,43 +525,21 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .await
         .map_err(db_err)?;
 
-        if let Some(anchor) = anchor_row {
-            let agent_id = parse_uuid(&anchor.agent_id, "rsea.agent_id")?;
-            // anchor 是 launch evidence；取该 agent 当前最新 frame revision
-            let frame = sqlx::query_as::<_, FrameRow>(
-                r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
-                          effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                          runtime_session_refs_json,execution_profile_json,
-                          visible_canvas_mount_ids_json,
-                          created_by_kind,created_by_id,created_at
-                   FROM agent_frames WHERE agent_id=$1
-                   ORDER BY created_at DESC LIMIT 1"#,
-            )
-            .bind(agent_id.to_string())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db_err)?
-            .map(TryInto::try_into)
-            .transpose()?;
-            if frame.is_some() {
-                return Ok(frame);
-            }
-        }
+        let Some(anchor) = anchor_row else {
+            return Ok(None);
+        };
 
-        // Fallback: 旧 JSON contains 查询（兼容未迁移的旧数据）
+        let agent_id = parse_uuid(&anchor.agent_id, "rsea.agent_id")?;
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       runtime_session_refs_json,execution_profile_json,
                       visible_canvas_mount_ids_json,
                       created_by_kind,created_by_id,created_at
-               FROM agent_frames
-               WHERE runtime_session_refs_json::jsonb @> jsonb_build_array(
-                   jsonb_build_object('kind', 'runtime_session', 'session_id', $1::text)
-               )
+               FROM agent_frames WHERE agent_id=$1
                ORDER BY created_at DESC LIMIT 1"#,
         )
-        .bind(runtime_session_id)
+        .bind(agent_id.to_string())
         .fetch_optional(&self.pool)
         .await
         .map_err(db_err)?
@@ -1214,6 +1192,93 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
                WHERE runtime_session_id = $1"#,
         )
         .bind(runtime_session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
+    }
+
+    async fn list_by_run(
+        &self,
+        run_id: Uuid,
+    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+        sqlx::query_as::<_, AnchorRow>(
+            r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
+                      assignment_id, graph_instance_id, activity_key, attempt,
+                      created_by_kind, created_at, updated_at
+               FROM runtime_session_execution_anchors
+               WHERE run_id = $1
+               ORDER BY updated_at DESC"#,
+        )
+        .bind(run_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
+    }
+
+    async fn list_by_agent(
+        &self,
+        agent_id: Uuid,
+    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+        sqlx::query_as::<_, AnchorRow>(
+            r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
+                      assignment_id, graph_instance_id, activity_key, attempt,
+                      created_by_kind, created_at, updated_at
+               FROM runtime_session_execution_anchors
+               WHERE agent_id = $1
+               ORDER BY updated_at DESC"#,
+        )
+        .bind(agent_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
+    }
+
+    async fn list_by_project_session_ids(
+        &self,
+        runtime_session_ids: &[String],
+    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+        if runtime_session_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        sqlx::query_as::<_, AnchorRow>(
+            r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
+                      assignment_id, graph_instance_id, activity_key, attempt,
+                      created_by_kind, created_at, updated_at
+               FROM runtime_session_execution_anchors
+               WHERE runtime_session_id = ANY($1)
+               ORDER BY updated_at DESC"#,
+        )
+        .bind(runtime_session_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
+    }
+
+    async fn latest_for_agent(
+        &self,
+        agent_id: Uuid,
+    ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+        sqlx::query_as::<_, AnchorRow>(
+            r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
+                      assignment_id, graph_instance_id, activity_key, attempt,
+                      created_by_kind, created_at, updated_at
+               FROM runtime_session_execution_anchors
+               WHERE agent_id = $1
+               ORDER BY updated_at DESC
+               LIMIT 1"#,
+        )
+        .bind(agent_id.to_string())
         .fetch_optional(&self.pool)
         .await
         .map_err(db_err)?

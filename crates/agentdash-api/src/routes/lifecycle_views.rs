@@ -12,7 +12,9 @@ use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentFrameRuntimeView, LifecycleRunView, ProjectActiveAgentsView,
     RuntimeSessionRefDto, RuntimeSessionTraceView, SubjectExecutionView,
 };
-use agentdash_domain::workflow::{AgentFrame, LifecycleRun, SubjectRef};
+use agentdash_domain::workflow::{
+    AgentFrame, LifecycleRun, RuntimeSessionExecutionAnchor, SubjectRef,
+};
 
 use crate::{
     app_state::AppState,
@@ -110,7 +112,8 @@ pub async fn get_agent_frame_runtime(
     )
     .await?;
 
-    Ok(Json(agent_frame_runtime_to_view(&frame)))
+    let runtime_refs = runtime_refs_for_agent(state.as_ref(), frame.agent_id).await?;
+    Ok(Json(agent_frame_runtime_to_view(&frame, runtime_refs)))
 }
 
 /// `GET /sessions/{id}/frame-runtime` — 通过 runtime session id 直接查 frame runtime。
@@ -120,32 +123,19 @@ pub async fn get_session_frame_runtime(
     CurrentUser(current_user): CurrentUser,
     Path(runtime_session_id): Path<String>,
 ) -> Result<Json<AgentFrameRuntimeView>, ApiError> {
-    let frame = state
-        .repos
-        .agent_frame_repo
-        .find_by_runtime_session(&runtime_session_id)
-        .await?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "runtime_session 未附着到 AgentFrame: {runtime_session_id}"
-            ))
-        })?;
-    let agent = state
-        .repos
-        .lifecycle_agent_repo
-        .get(frame.agent_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_agent 不存在: {}", frame.agent_id)))?;
-    let run = load_lifecycle_run(state.as_ref(), agent.run_id).await?;
-    load_project_with_permission(
+    let session_project_id =
+        authorize_runtime_session_shell(state.as_ref(), &current_user, &runtime_session_id).await?;
+    let anchor = load_runtime_session_anchor(state.as_ref(), &runtime_session_id).await?;
+    let frame = resolve_frame_from_anchor(
         state.as_ref(),
-        &current_user,
-        run.project_id,
-        ProjectPermission::View,
+        &anchor,
+        session_project_id,
+        &runtime_session_id,
     )
     .await?;
 
-    Ok(Json(agent_frame_runtime_to_view(&frame)))
+    let runtime_refs = runtime_refs_for_agent(state.as_ref(), frame.agent_id).await?;
+    Ok(Json(agent_frame_runtime_to_view(&frame, runtime_refs)))
 }
 
 pub async fn get_session_trace(
@@ -153,30 +143,25 @@ pub async fn get_session_trace(
     CurrentUser(current_user): CurrentUser,
     Path(runtime_session_id): Path<String>,
 ) -> Result<Json<RuntimeSessionTraceView>, ApiError> {
-    let frame = state
+    let session_project_id =
+        authorize_runtime_session_shell(state.as_ref(), &current_user, &runtime_session_id).await?;
+    let frame = match state
         .repos
-        .agent_frame_repo
-        .find_by_runtime_session(&runtime_session_id)
+        .execution_anchor_repo
+        .find_by_session(&runtime_session_id)
         .await?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "runtime_session 未附着到 AgentFrame: {runtime_session_id}"
-            ))
-        })?;
-    let agent = state
-        .repos
-        .lifecycle_agent_repo
-        .get(frame.agent_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_agent 不存在: {}", frame.agent_id)))?;
-    let run = load_lifecycle_run(state.as_ref(), agent.run_id).await?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        run.project_id,
-        ProjectPermission::View,
-    )
-    .await?;
+    {
+        Some(anchor) => Some(
+            resolve_frame_from_anchor(
+                state.as_ref(),
+                &anchor,
+                session_project_id,
+                &runtime_session_id,
+            )
+            .await?,
+        ),
+        None => None,
+    };
 
     let events = state
         .services
@@ -190,7 +175,7 @@ pub async fn get_session_trace(
 
     Ok(Json(RuntimeSessionTraceView {
         runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
-        frame_ref: Some(agent_frame_ref(&frame)),
+        frame_ref: frame.as_ref().map(agent_frame_ref),
         events,
         turns: Vec::new(),
     }))
@@ -285,11 +270,110 @@ async fn load_lifecycle_run(state: &AppState, run_id: Uuid) -> Result<LifecycleR
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))
 }
 
+async fn authorize_runtime_session_shell(
+    state: &AppState,
+    current_user: &agentdash_plugin_api::AuthIdentity,
+    runtime_session_id: &str,
+) -> Result<Uuid, ApiError> {
+    let meta = state
+        .services
+        .session_core
+        .get_session_meta(runtime_session_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("会话 {runtime_session_id} 不存在")))?;
+    let project_id_raw = meta.project_id.as_deref().ok_or_else(|| {
+        ApiError::BadRequest(format!(
+            "runtime session 缺少 project shell: {runtime_session_id}"
+        ))
+    })?;
+    let project_id = parse_uuid(project_id_raw, "session_project_id")?;
+    load_project_with_permission(state, current_user, project_id, ProjectPermission::View).await?;
+    Ok(project_id)
+}
+
+async fn load_runtime_session_anchor(
+    state: &AppState,
+    runtime_session_id: &str,
+) -> Result<RuntimeSessionExecutionAnchor, ApiError> {
+    state
+        .repos
+        .execution_anchor_repo
+        .find_by_session(runtime_session_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "runtime_session 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
+            ))
+        })
+}
+
+async fn resolve_frame_from_anchor(
+    state: &AppState,
+    anchor: &RuntimeSessionExecutionAnchor,
+    session_project_id: Uuid,
+    runtime_session_id: &str,
+) -> Result<AgentFrame, ApiError> {
+    let run = load_lifecycle_run(state, anchor.run_id).await?;
+    if run.project_id != session_project_id {
+        return Err(ApiError::BadRequest(format!(
+            "runtime session project 与 anchor run project 不一致: {runtime_session_id}"
+        )));
+    }
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(anchor.agent_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("lifecycle_agent 不存在: {}", anchor.agent_id))
+        })?;
+    if agent.run_id != run.id || agent.project_id != run.project_id {
+        return Err(ApiError::BadRequest(format!(
+            "runtime session anchor agent 与 run 不一致: {runtime_session_id}"
+        )));
+    }
+    state
+        .repos
+        .agent_frame_repo
+        .get_current(agent.id)
+        .await?
+        .or(state
+            .repos
+            .agent_frame_repo
+            .get(anchor.launch_frame_id)
+            .await?)
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "lifecycle_agent {} 没有 current AgentFrame",
+                agent.id
+            ))
+        })
+}
+
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("无效的 {field}: {raw}")))
 }
 
-fn agent_frame_runtime_to_view(frame: &AgentFrame) -> AgentFrameRuntimeView {
+pub(crate) async fn runtime_refs_for_agent(
+    state: &AppState,
+    agent_id: Uuid,
+) -> Result<Vec<RuntimeSessionRefDto>, ApiError> {
+    Ok(state
+        .repos
+        .execution_anchor_repo
+        .list_by_agent(agent_id)
+        .await?
+        .into_iter()
+        .map(|anchor| RuntimeSessionRefDto {
+            runtime_session_id: anchor.runtime_session_id,
+        })
+        .collect())
+}
+
+pub(crate) fn agent_frame_runtime_to_view(
+    frame: &AgentFrame,
+    runtime_session_refs: Vec<RuntimeSessionRefDto>,
+) -> AgentFrameRuntimeView {
     AgentFrameRuntimeView {
         frame_ref: agent_frame_ref(frame),
         procedure_id: frame.procedure_id.map(|id| id.to_string()),
@@ -302,16 +386,12 @@ fn agent_frame_runtime_to_view(frame: &AgentFrame) -> AgentFrameRuntimeView {
         context_slice: frame.context_slice_json.clone().unwrap_or(Value::Null),
         vfs_surface: frame.vfs_surface_json.clone().unwrap_or(Value::Null),
         mcp_surface: frame.mcp_surface_json.clone().unwrap_or(Value::Null),
-        runtime_session_refs: frame
-            .runtime_session_ids()
-            .into_iter()
-            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id })
-            .collect(),
+        runtime_session_refs,
         execution_profile: frame.execution_profile_json.clone(),
     }
 }
 
-fn agent_frame_ref(frame: &AgentFrame) -> AgentFrameRefDto {
+pub(crate) fn agent_frame_ref(frame: &AgentFrame) -> AgentFrameRefDto {
     AgentFrameRefDto {
         agent_id: frame.agent_id.to_string(),
         frame_id: frame.id.to_string(),

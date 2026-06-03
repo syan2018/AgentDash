@@ -6,8 +6,8 @@ use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, AgentAssignmentRepository, AgentFrameRepository,
     AgentProcedureRepository, LifecycleAgentRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, WorkflowGraphInstanceRepository,
-    WorkflowGraphRepository, build_effective_contract,
+    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
+    WorkflowGraphInstanceRepository, WorkflowGraphRepository, build_effective_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -52,6 +52,7 @@ impl AppExecutionHookProvider {
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
         workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
         lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
@@ -76,6 +77,7 @@ impl AppExecutionHookProvider {
                 lifecycle_agent_repo,
                 agent_assignment_repo,
                 lifecycle_run_repo,
+                execution_anchor_repo,
                 workflow_graph_instance_repo,
             ),
             script_engine: HookScriptEngine::new(evaluator),

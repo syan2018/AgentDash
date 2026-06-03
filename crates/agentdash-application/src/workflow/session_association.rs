@@ -130,64 +130,19 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
         &self,
         session_id: &str,
     ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
-        if let Some(anchor_repo) = self.anchor_repo {
-            if let Some(anchor) = anchor_repo.find_by_session(session_id).await.map_err(|e| {
-                ActivityRuntimeAssociationError::Repository {
-                    operation: "runtime session execution anchor",
-                    message: e.to_string(),
-                }
-            })? {
-                return self.resolve_by_anchor(session_id, anchor).await;
-            }
-        }
-
-        let Some(current_frame) = self
-            .frame_repo
-            .find_by_runtime_session(session_id)
-            .await
-            .map_err(|e| ActivityRuntimeAssociationError::Repository {
-                operation: "runtime session 对应 AgentFrame",
+        let Some(anchor_repo) = self.anchor_repo else {
+            return Ok(None);
+        };
+        let Some(anchor) = anchor_repo.find_by_session(session_id).await.map_err(|e| {
+            ActivityRuntimeAssociationError::Repository {
+                operation: "runtime session execution anchor",
                 message: e.to_string(),
-            })?
+            }
+        })?
         else {
             return Ok(None);
         };
-
-        if current_frame.graph_instance_id.is_none() && current_frame.activity_key.is_none() {
-            return Ok(None);
-        }
-
-        let assignment = select_assignment_for_frame(self.assignment_repo, &current_frame)
-            .await?
-            .ok_or_else(|| ActivityRuntimeAssociationError::MissingAssignment {
-                runtime_session_id: session_id.to_string(),
-                frame_id: current_frame.id,
-                agent_id: current_frame.agent_id,
-            })?;
-
-        let attempt = u32::try_from(assignment.attempt).map_err(|_| {
-            ActivityRuntimeAssociationError::InvalidAttempt {
-                assignment_id: assignment.id,
-                attempt: assignment.attempt,
-            }
-        })?;
-        let run = self
-            .run_repo
-            .get_by_id(assignment.run_id)
-            .await
-            .map_err(|e| ActivityRuntimeAssociationError::Repository {
-                operation: "lifecycle run",
-                message: e.to_string(),
-            })?
-            .ok_or(ActivityRuntimeAssociationError::MissingLifecycleRun {
-                assignment_id: assignment.id,
-                run_id: assignment.run_id,
-            })?;
-        Ok(Some(ActivityRuntimeAssociation {
-            run,
-            attempt,
-            assignment,
-        }))
+        self.resolve_by_anchor(session_id, anchor).await
     }
 
     async fn resolve_by_anchor(

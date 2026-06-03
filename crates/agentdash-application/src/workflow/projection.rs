@@ -2,7 +2,8 @@ use agentdash_domain::workflow::{
     ActivityAttemptState, ActivityDefinition, ActivityExecutorSpec, AgentAssignmentRepository,
     AgentFrameRepository, AgentProcedure, AgentProcedureContract, AgentProcedureRepository,
     LifecycleAgentRepository, LifecycleNodeType, LifecycleRun, LifecycleRunRepository,
-    WorkflowGraph, WorkflowGraphInstanceRepository, WorkflowGraphRepository,
+    RuntimeSessionExecutionAnchorRepository, WorkflowGraph, WorkflowGraphInstanceRepository,
+    WorkflowGraphRepository,
 };
 use agentdash_spi::hooks::HookControlTarget;
 
@@ -71,7 +72,7 @@ fn derive_node_facts(activity: &ActivityDefinition) -> (Option<String>, Lifecycl
 /// 解析任意 RuntimeSession 的 Activity workflow projection。
 ///
 /// 生产链路只允许 RuntimeSession 作为 trace lookup 起点：
-/// RuntimeSession -> AgentFrame -> LifecycleAgent -> AgentAssignment -> ActivityAttemptState。
+/// RuntimeSession -> RuntimeSessionExecutionAnchor -> AgentAssignment -> ActivityAttemptState。
 pub async fn resolve_active_workflow_projection_for_session(
     session_id: &str,
     definition_repo: &dyn AgentProcedureRepository,
@@ -80,9 +81,11 @@ pub async fn resolve_active_workflow_projection_for_session(
     _agent_repo: &dyn LifecycleAgentRepository,
     assignment_repo: &dyn AgentAssignmentRepository,
     run_repo: &dyn LifecycleRunRepository,
+    anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
     graph_instance_repo: &dyn WorkflowGraphInstanceRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
-    let resolver = ActivityRuntimeAssociationResolver::new(frame_repo, assignment_repo, run_repo);
+    let resolver = ActivityRuntimeAssociationResolver::new(frame_repo, assignment_repo, run_repo)
+        .with_anchor_repo(anchor_repo);
     let Some(association) = resolver
         .resolve_by_runtime_session(session_id)
         .await

@@ -1148,7 +1148,11 @@ CREATE INDEX idx_routines_project ON routines USING btree (project_id);
 
 CREATE INDEX idx_rsea_agent ON runtime_session_execution_anchors USING btree (agent_id);
 
+CREATE INDEX idx_rsea_launch_frame ON runtime_session_execution_anchors USING btree (launch_frame_id);
+
 CREATE INDEX idx_rsea_run ON runtime_session_execution_anchors USING btree (run_id);
+
+CREATE INDEX idx_rsea_run_agent ON runtime_session_execution_anchors USING btree (run_id, agent_id);
 
 CREATE INDEX idx_runtime_health_last_seen_at ON runtime_health USING btree (last_seen_at);
 

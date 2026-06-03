@@ -160,75 +160,46 @@ where
             .find_by_session(runtime_session_id)
             .await?;
 
-        if let Some(anchor) = anchor {
-            let agent = self
-                .lifecycle_agent_repo
-                .get(anchor.agent_id)
-                .await?
-                .ok_or_else(|| {
-                    WorkflowApplicationError::NotFound(format!(
-                        "lifecycle_agent 不存在: {}",
-                        anchor.agent_id
-                    ))
-                })?;
-            if agent.run_id != anchor.run_id {
-                return Err(WorkflowApplicationError::Conflict(format!(
-                    "RuntimeSessionExecutionAnchor run {} 与 LifecycleAgent run {} 不一致",
-                    anchor.run_id, agent.run_id
-                )));
-            }
-            let run = self
-                .lifecycle_run_repo
-                .get_by_id(anchor.run_id)
-                .await?
-                .ok_or_else(|| {
-                    WorkflowApplicationError::NotFound(format!(
-                        "lifecycle_run 不存在: {}",
-                        anchor.run_id
-                    ))
-                })?;
-            let frame = self
-                .agent_frame_repo
-                .get_current(agent.id)
-                .await?
-                .or(self.agent_frame_repo.get(anchor.launch_frame_id).await?)
-                .ok_or_else(|| {
-                    WorkflowApplicationError::NotFound(format!(
-                        "lifecycle_agent {} 没有 current AgentFrame",
-                        agent.id
-                    ))
-                })?;
-            self.validate_frame(runtime_session_id, &agent, &frame)?;
-            return Ok((run, agent, frame));
-        }
-
-        let frame = self
-            .agent_frame_repo
-            .find_by_runtime_session(runtime_session_id)
-            .await?
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "runtime_session 未附着到 AgentFrame: {runtime_session_id}"
-                ))
-            })?;
+        let anchor = anchor.ok_or_else(|| {
+            WorkflowApplicationError::NotFound(format!(
+                "runtime_session 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
+            ))
+        })?;
         let agent = self
             .lifecycle_agent_repo
-            .get(frame.agent_id)
+            .get(anchor.agent_id)
             .await?
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!(
                     "lifecycle_agent 不存在: {}",
-                    frame.agent_id
+                    anchor.agent_id
                 ))
             })?;
+        if agent.run_id != anchor.run_id {
+            return Err(WorkflowApplicationError::Conflict(format!(
+                "RuntimeSessionExecutionAnchor run {} 与 LifecycleAgent run {} 不一致",
+                anchor.run_id, agent.run_id
+            )));
+        }
         let run = self
             .lifecycle_run_repo
-            .get_by_id(agent.run_id)
+            .get_by_id(anchor.run_id)
             .await?
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!(
                     "lifecycle_run 不存在: {}",
-                    agent.run_id
+                    anchor.run_id
+                ))
+            })?;
+        let frame = self
+            .agent_frame_repo
+            .get_current(agent.id)
+            .await?
+            .or(self.agent_frame_repo.get(anchor.launch_frame_id).await?)
+            .ok_or_else(|| {
+                WorkflowApplicationError::NotFound(format!(
+                    "lifecycle_agent {} 没有 current AgentFrame",
+                    agent.id
                 ))
             })?;
         self.validate_frame(runtime_session_id, &agent, &frame)?;
@@ -237,7 +208,7 @@ where
 
     fn validate_frame(
         &self,
-        runtime_session_id: &str,
+        _runtime_session_id: &str,
         agent: &LifecycleAgent,
         frame: &AgentFrame,
     ) -> Result<(), WorkflowApplicationError> {
@@ -245,16 +216,6 @@ where
             return Err(WorkflowApplicationError::Conflict(format!(
                 "AgentFrame {} 不属于 LifecycleAgent {}",
                 frame.id, agent.id
-            )));
-        }
-        if !frame
-            .runtime_session_ids()
-            .iter()
-            .any(|attached| attached == runtime_session_id)
-        {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "AgentFrame {} 未绑定 delivery RuntimeSession {}",
-                frame.id, runtime_session_id
             )));
         }
         Ok(())

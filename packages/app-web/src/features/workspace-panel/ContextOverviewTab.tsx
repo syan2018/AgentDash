@@ -33,7 +33,7 @@ export interface ContextOverviewTabProps {
   runtimeSurface: ResolvedVfsSurface | null;
   hookRuntime: AgentFrameHookRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
-  lifecycleRuns: LifecycleRunView[];
+  lifecycleRun: LifecycleRunView | null;
 }
 
 // ─── Constants ──────────────────────────────────────────
@@ -68,19 +68,12 @@ function formatAttemptStatus(status: string): string {
 }
 
 function resolveActiveRun(
-  lifecycleRuns: LifecycleRunView[],
+  lifecycleRun: LifecycleRunView | null,
   activeWorkflow: ActiveWorkflowHookMetadata | null,
 ): LifecycleRunView | null {
-  if (activeWorkflow) {
-    const matched = lifecycleRuns.find((run) => run.run_ref.run_id === activeWorkflow.run_id);
-    if (matched) return matched;
-  }
-  return (
-    lifecycleRuns.find((run) => run.status === "running")
-    ?? lifecycleRuns.find((run) => run.status === "ready")
-    ?? lifecycleRuns[0]
-    ?? null
-  );
+  if (!lifecycleRun) return null;
+  if (activeWorkflow && lifecycleRun.run_ref.run_id !== activeWorkflow.run_id) return null;
+  return lifecycleRun;
 }
 
 function collectAttempts(run: LifecycleRunView | null): ActivityAttemptView[] {
@@ -145,13 +138,13 @@ export function ContextOverviewTab({
   runtimeSurface,
   hookRuntime,
   sessionCapabilities,
-  lifecycleRuns,
+  lifecycleRun,
 }: ContextOverviewTabProps) {
   const isProjectLevel = contextSnapshot?.owner_context.owner_level === "project";
   const title = isProjectLevel ? ownerProjectName : (ownerStory?.title ?? "会话上下文");
   const composition = contextSnapshot?.effective.session_composition ?? null;
   const hasRuntimeContext =
-    lifecycleRuns.length > 0 ||
+    Boolean(lifecycleRun) ||
     Boolean(hookRuntime) ||
     Boolean(runtimeSurface) ||
     Boolean(sessionCapabilities);
@@ -196,7 +189,7 @@ export function ContextOverviewTab({
 
       <WorkflowContextCard
         hookRuntime={hookRuntime}
-        lifecycleRuns={lifecycleRuns}
+        lifecycleRun={lifecycleRun}
         runtimeSurface={runtimeSurface}
         composition={composition}
       />
@@ -221,17 +214,17 @@ export function ContextOverviewTab({
 
 function WorkflowContextCard({
   hookRuntime,
-  lifecycleRuns,
+  lifecycleRun,
   runtimeSurface,
   composition,
 }: {
   hookRuntime: AgentFrameHookRuntimeInfo | null;
-  lifecycleRuns: LifecycleRunView[];
+  lifecycleRun: LifecycleRunView | null;
   runtimeSurface: ResolvedVfsSurface | null;
   composition: SessionComposition | null;
 }) {
   const activeWorkflow = hookRuntime?.snapshot.metadata?.active_workflow ?? null;
-  const activeRun = resolveActiveRun(lifecycleRuns, activeWorkflow);
+  const activeRun = resolveActiveRun(lifecycleRun, activeWorkflow);
   const activeAttempt = resolveActiveAttempt(activeRun, activeWorkflow);
   const activeLabels = activeAttemptLabels(activeRun);
   const lifecycleMounts = runtimeSurface?.mounts.filter((mount) => mount.provider === "lifecycle_vfs") ?? [];

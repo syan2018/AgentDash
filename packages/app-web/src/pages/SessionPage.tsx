@@ -24,18 +24,15 @@ import { useSessionRuntimeState } from "../features/workspace-panel/model/useSes
 import { sendLifecycleAgentMessageByRuntimeSession } from "../services/lifecycle";
 import type { ExecutorConfig } from "../services/executor";
 import type { JsonValue } from "../generated/common-contracts";
-import { fetchSessionMeta, updateSessionTitle } from "../services/session";
+import { updateSessionTitle } from "../services/session";
 import { useLifecycleStore } from "../stores/lifecycleStore";
 import { useProjectStore } from "../stores/projectStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
-import {
-  resolveSessionLifecycleDetailTarget,
-  resolveSessionLifecycleRunId,
-} from "./SessionPage.lifecycle";
 import type {
   RuntimeTraceAgentContext,
   SessionNavigationState,
+  SessionRuntimeControlView,
   SubjectRunContext,
   Story,
   StoryNavigationState,
@@ -52,16 +49,15 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const location = useLocation();
   const selectProject = useProjectStore((state) => state.selectProject);
   const projects = useProjectStore((state) => state.projects);
-  const currentProjectId = useProjectStore((state) => state.currentProjectId);
-  const lifecycleRuns = useLifecycleStore((state) => state.lifecycleRuns);
-  const lifecycleAgents = useLifecycleStore((state) => state.agents);
-  const fetchProjectActiveAgents = useLifecycleStore((state) => state.fetchProjectActiveAgents);
   const fetchAndIngestLifecycleRun = useLifecycleStore((state) => state.fetchAndIngestLifecycleRun);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
   const hookRuntimeRefreshTimerRef = useRef<number | null>(null);
 
-  const [sessionTitle, setSessionTitle] = useState<string>("");
+  const [sessionTitleOverride, setSessionTitleOverride] = useState<{
+    sessionId: string;
+    title: string;
+  } | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editingTitleValue, setEditingTitleValue] = useState("");
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -71,7 +67,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     story: Story | null;
   } | null>(null);
   const [activeCanvasId, setActiveCanvasId] = useState<string | null>(null);
-  const activeAgentsFetchKeyRef = useRef<string | null>(null);
 
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
@@ -99,23 +94,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   );
   const traceAgentContext = (routeState?.trace_agent ?? null) as RuntimeTraceAgentContext | null;
   const currentSessionId = propSessionId ?? null;
-
-  // ─── 加载初始标题 ──────────────────────────────────────
-
-  useEffect(() => {
-    if (!propSessionId) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const meta = await fetchSessionMeta(propSessionId);
-        if (!cancelled) setSessionTitle(meta.title);
-      } catch { /* 加载失败保留空标题 */ }
-    })();
-    return () => {
-      cancelled = true;
-      setSessionTitle("");
-    };
-  }, [propSessionId]);
 
   useEffect(() => {
     return () => {
@@ -154,6 +132,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [currentSessionId, refreshSessionRuntimeHook]);
 
   const activeSessionContext = sessionRuntimeState.context;
+  const runtimeControl: SessionRuntimeControlView | null = sessionRuntimeState.control;
+  const sessionTitle =
+    sessionTitleOverride?.sessionId === currentSessionId
+      ? sessionTitleOverride.title
+      : runtimeControl?.session_meta.title ?? "";
   const activeHookRuntime = sessionRuntimeState.hook_runtime?.runtime_adapter_session_id === currentSessionId
     ? sessionRuntimeState.hook_runtime
     : null;
@@ -164,33 +147,22 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const taskExecutorSummary = null;
 
   const runContext: SubjectRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
-  const activeFrame = sessionRuntimeState.frame;
-  const activeWorkflowRunId =
-    activeHookRuntime?.snapshot.metadata?.active_workflow?.run_id ?? null;
-  const sessionLifecycleRunId = useMemo(() => resolveSessionLifecycleRunId({
-    currentSessionId,
-    activeWorkflowRunId,
-    activeFrame,
-    agents: lifecycleAgents,
-  }), [activeFrame, activeWorkflowRunId, currentSessionId, lifecycleAgents]);
-  const sessionLifecycleDetailTarget = useMemo(() => resolveSessionLifecycleDetailTarget({
-    currentSessionId,
-    activeWorkflowRunId,
-    activeFrame,
-    agents: lifecycleAgents,
-  }), [activeFrame, activeWorkflowRunId, currentSessionId, lifecycleAgents]);
-  const sessionLifecycleRun = sessionLifecycleRunId
-    ? lifecycleRuns.get(sessionLifecycleRunId) ?? null
-    : null;
+  const sessionLifecycleRun = runtimeControl?.run ?? null;
+  const sessionLifecycleRunId = runtimeControl?.run?.run_ref.run_id ?? null;
+  const sessionLifecycleAgentId = runtimeControl?.agent?.agent_ref.agent_id ?? null;
+  const sessionLifecycleFrameId = runtimeControl?.frame_runtime?.frame_ref.frame_id ?? null;
+  const sessionLifecycleDetailTarget = useMemo(() => {
+    if (!sessionLifecycleRunId || !sessionLifecycleAgentId) return null;
+    return {
+      runId: sessionLifecycleRunId,
+      agentId: sessionLifecycleAgentId,
+      frameId: sessionLifecycleFrameId,
+    };
+  }, [sessionLifecycleAgentId, sessionLifecycleFrameId, sessionLifecycleRunId]);
 
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
   const storiesByProjectId = useStoryStore((s) => s.storiesByProjectId);
   const ownerStoryId = runContext?.story_id ?? null;
-
-  useEffect(() => {
-    if (!sessionLifecycleRunId || sessionLifecycleRun) return;
-    void fetchAndIngestLifecycleRun(sessionLifecycleRunId);
-  }, [fetchAndIngestLifecycleRun, sessionLifecycleRun, sessionLifecycleRunId]);
 
   useEffect(() => {
     const cached = ownerStoryId ? findStoryById(storiesByProjectId, ownerStoryId) : null;
@@ -217,7 +189,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     }
     return null;
   }, [loadedOwnerStory, ownerStoryId, storiesByProjectId]);
-  const ownerProjectId = runContext?.project_id ?? ownerStory?.project_id ?? null;
+  const ownerProjectId = runtimeControl?.session_meta.project_id
+    ?? sessionLifecycleRun?.project_id
+    ?? runContext?.project_id
+    ?? ownerStory?.project_id
+    ?? null;
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null
     : null;
@@ -225,18 +201,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     ? (ownerProject?.name?.trim() || runContext.project_id)
     : "";
   const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
-  const activeAgentsFetchProjectId = ownerProjectId ?? currentProjectId;
-
-  useEffect(() => {
-    if (!activeAgentsFetchProjectId || !activeFrame) return;
-    const agentId = activeFrame.frame_ref.agent_id;
-    if (lifecycleAgents.has(agentId)) return;
-
-    const fetchKey = `${activeAgentsFetchProjectId}:${agentId}`;
-    if (activeAgentsFetchKeyRef.current === fetchKey) return;
-    activeAgentsFetchKeyRef.current = fetchKey;
-    void fetchProjectActiveAgents(activeAgentsFetchProjectId);
-  }, [activeAgentsFetchProjectId, activeFrame, fetchProjectActiveAgents, lifecycleAgents]);
 
   useEffect(() => {
     if (!ownerProjectId) return;
@@ -290,11 +254,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [currentSessionId, scheduleHookRuntimeRefresh]);
 
   const sessionSendReady = useMemo(() => {
-    if (!currentSessionId || !activeFrame) return false;
-    return activeFrame.runtime_session_refs.some(
-      (ref) => ref.runtime_session_id === currentSessionId,
-    );
-  }, [activeFrame, currentSessionId]);
+    return Boolean(currentSessionId && runtimeControl?.can_send);
+  }, [currentSessionId, runtimeControl?.can_send]);
 
   const sendUnavailableReason = useMemo(() => {
     if (!currentSessionId) return "当前没有可发送的 Session。";
@@ -302,16 +263,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       return "正在解析当前 Session 的 Agent dispatcher…";
     }
     if (sessionRuntimeState.error) return sessionRuntimeState.error;
-    if (!activeFrame) {
-      return "当前 Session 只是 runtime trace，未关联可继续对话的 Agent。请从 Agent 入口创建或重新打开会话。";
-    }
-    if (!sessionSendReady) {
-      return "当前 AgentFrame 未绑定这个 delivery RuntimeSession，无法继续发送消息。";
-    }
+    if (!sessionSendReady) return runtimeControl?.send_unavailable_reason ?? "当前 Session 不可发送。";
     return undefined;
   }, [
-    activeFrame,
     currentSessionId,
+    runtimeControl?.send_unavailable_reason,
     sessionRuntimeState.error,
     sessionRuntimeState.status,
     sessionSendReady,
@@ -372,8 +328,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       case "session_meta_updated": {
         const data = extractPlatformEventData(_event);
         const newTitle = typeof data?.title === "string" ? (data.title as string).trim() : "";
-        if (newTitle) {
-          setSessionTitle(newTitle);
+        if (newTitle && currentSessionId) {
+          setSessionTitleOverride({ sessionId: currentSessionId, title: newTitle });
         }
         break;
       }
@@ -393,7 +349,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       default:
         break;
     }
-  }, [scheduleHookRuntimeRefresh, refreshSessionRuntimeContext, expandWorkspacePanel]);
+  }, [currentSessionId, scheduleHookRuntimeRefresh, refreshSessionRuntimeContext, expandWorkspacePanel]);
 
   const handleBackToOwner = useCallback(() => {
     if (!effectiveReturnTarget) return;
@@ -436,7 +392,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     setIsEditingTitle(false);
     const trimmed = editingTitleValue.trim();
     if (!trimmed || !currentSessionId || trimmed === sessionTitle) return;
-    setSessionTitle(trimmed);
+    setSessionTitleOverride({ sessionId: currentSessionId, title: trimmed });
     try {
       await updateSessionTitle(currentSessionId, trimmed);
     } catch { /* API 调用失败静默处理 */ }
@@ -451,6 +407,13 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
     projectId: ownerProjectId,
     sessionId: currentSessionId,
+    runtimeSessionId: currentSessionId,
+    sessionMeta: runtimeControl?.session_meta ?? null,
+    controlAnchor: runtimeControl?.anchor ?? null,
+    lifecycleRun: runtimeControl?.run ?? null,
+    lifecycleAgent: runtimeControl?.agent ?? null,
+    frameRuntime: runtimeControl?.frame_runtime ?? null,
+    subjectAssociations: runtimeControl?.subject_associations ?? [],
     runtimeStatus: sessionRuntimeState.status,
     runtimeError: sessionRuntimeState.error,
     extensionRuntime,
@@ -462,11 +425,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     workspaceBackend,
     hookRuntime: activeHookRuntime,
     sessionCapabilities,
-    lifecycleRuns: sessionLifecycleRun ? [sessionLifecycleRun] : [],
     activeCanvasId,
   }), [
     ownerProjectId,
     currentSessionId,
+    runtimeControl,
     sessionRuntimeState.status,
     sessionRuntimeState.error,
     extensionRuntime,
@@ -478,7 +441,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     workspaceBackend,
     activeHookRuntime,
     sessionCapabilities,
-    sessionLifecycleRun,
     activeCanvasId,
   ]);
 

@@ -1,16 +1,16 @@
 /**
- * Session Runtime State — 通过后端 `/sessions/{id}/frame-runtime` 直接查询。
+ * Session Runtime State — 通过后端 `/sessions/{id}/runtime-control` 直接查询。
  *
  * 不再遍历 lifecycleStore 的 frame cache 做本地反查，
- * 而是让后端通过 `find_by_runtime_session` 精确锚定 frame 并返回 runtime view。
+ * 而是让后端通过 RuntimeSessionExecutionAnchor 返回 Session control view。
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { AgentFrameHookRuntimeInfo } from "../../../types";
+import type { AgentFrameHookRuntimeInfo, SessionRuntimeControlView } from "../../../types";
 import type { SessionRuntimeStateStatus } from "../../workspace-runtime";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
-import { fetchSessionFrameRuntime } from "../../../services/lifecycle";
+import { fetchSessionRuntimeControl } from "../../../services/lifecycle";
 import type { AgentFrameRuntimeView } from "../../../types";
 
 export type { SessionRuntimeStateStatus };
@@ -31,6 +31,7 @@ export interface SessionRuntimeProjectionState {
   context: SessionContextPayload | null;
   hook_runtime: AgentFrameHookRuntimeInfo | null;
   frame: AgentFrameRuntimeView | null;
+  control: SessionRuntimeControlView | null;
   error: string | null;
 }
 
@@ -47,6 +48,7 @@ export function emptySessionRuntimeState(): SessionRuntimeProjectionState {
     context: null,
     hook_runtime: null,
     frame: null,
+    control: null,
     error: null,
   };
 }
@@ -68,6 +70,8 @@ export function useSessionRuntimeState({
   sourceKey,
 }: UseSessionRuntimeStateInput) {
   const [state, setState] = useState<SessionRuntimeProjectionState>(() => emptySessionRuntimeState());
+  const ingestLifecycleRun = useLifecycleStore((s) => s.ingestLifecycleRun);
+  const setAgent = useLifecycleStore((s) => s.setAgent);
   const setFrame = useLifecycleStore((s) => s.setFrame);
 
   const loadFrameContext = useCallback(async (
@@ -84,20 +88,30 @@ export function useSessionRuntimeState({
       context: null,
       hook_runtime: null,
       frame: null,
+      control: null,
       error: null,
     });
 
     try {
-      const frameView = await fetchSessionFrameRuntime(sid);
+      const control = await fetchSessionRuntimeControl(sid);
       if (!canCommit()) return;
-      setFrame(frameView);
+      if (control.run) {
+        ingestLifecycleRun(control.run);
+      }
+      if (control.agent) {
+        setAgent(control.agent);
+      }
+      if (control.frame_runtime) {
+        setFrame(control.frame_runtime);
+      }
       setState({
         session_id: sid,
         source_key: skey,
         status: "ready",
         context: null,
         hook_runtime: null,
-        frame: frameView,
+        frame: control.frame_runtime ?? null,
+        control,
         error: null,
       });
     } catch (error: unknown) {
@@ -111,10 +125,11 @@ export function useSessionRuntimeState({
         context: null,
         hook_runtime: null,
         frame: null,
+        control: null,
         error: is404 ? null : errorMessage(error),
       });
     }
-  }, [setFrame]);
+  }, [ingestLifecycleRun, setAgent, setFrame]);
 
   useEffect(() => {
     if (!sessionId || !sourceKey) {

@@ -105,8 +105,6 @@ const sessionCapabilities: SessionBaselineCapabilities = {
   ],
 };
 
-const lifecycleRuns: LifecycleRunView[] = [];
-
 const lifecycleRunView: LifecycleRunView = {
   run_ref: { run_id: "run-projection-123456" },
   project_id: "project-projection",
@@ -190,7 +188,7 @@ describe("ContextOverviewTab projection contract", () => {
         runtimeSurface={runtimeSurface}
         hookRuntime={null}
         sessionCapabilities={sessionCapabilities}
-        lifecycleRuns={lifecycleRuns}
+        lifecycleRun={null}
       />,
     );
 
@@ -210,7 +208,7 @@ describe("ContextOverviewTab projection contract", () => {
         runtimeSurface={runtimeSurface}
         hookRuntime={hookRuntime}
         sessionCapabilities={sessionCapabilities}
-        lifecycleRuns={[lifecycleRunView]}
+        lifecycleRun={lifecycleRunView}
       />,
     );
 
@@ -230,7 +228,7 @@ describe("ContextOverviewTab projection contract", () => {
         runtimeSurface={null}
         hookRuntime={null}
         sessionCapabilities={null}
-        lifecycleRuns={[lifecycleRunView]}
+        lifecycleRun={lifecycleRunView}
       />,
     );
 

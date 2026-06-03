@@ -615,6 +615,51 @@ pub struct RuntimeSessionRefDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct SessionShellDto {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub project_id: Option<String>,
+    pub title: String,
+    pub title_source: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub last_event_seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_turn_id: Option<String>,
+    pub last_delivery_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub tab_layout: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeSessionExecutionAnchorDto {
+    pub runtime_session_id: String,
+    pub run_id: String,
+    pub agent_id: String,
+    pub launch_frame_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub assignment_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub graph_instance_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub activity_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub attempt: Option<i32>,
+    pub created_by_kind: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct LifecycleAgentMessageRequest {
     #[ts(type = "Array<JsonValue>")]
     pub prompt_blocks: Vec<Value>,
@@ -831,6 +876,65 @@ pub struct RuntimeSessionTraceView {
     pub events: Vec<Value>,
     #[serde(default)]
     pub turns: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionRuntimeControlView {
+    pub runtime_session_ref: RuntimeSessionRefDto,
+    pub session_meta: SessionShellDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub anchor: Option<RuntimeSessionExecutionAnchorDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub run: Option<LifecycleRunView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent: Option<LifecycleAgentView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub frame_runtime: Option<AgentFrameRuntimeView>,
+    #[serde(default)]
+    pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
+    pub can_send: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub send_unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ProjectSessionListEntry {
+    pub runtime_session_id: String,
+    pub title: String,
+    pub delivery_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub run_status: Option<LifecycleRunStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub run_ref: Option<LifecycleRunRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_ref: Option<LifecycleAgentRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub frame_ref: Option<AgentFrameRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub subject_ref: Option<SubjectRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub subject_label: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ProjectSessionListView {
+    pub project_id: String,
+    pub sessions: Vec<ProjectSessionListEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

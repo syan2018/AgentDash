@@ -117,13 +117,23 @@ export type OutputPortDefinition = { key: string, description: string, gate_stra
 
 export type ProjectActiveAgentsView = { project_id: string, runs: Array<LifecycleRunView>, agents: Array<LifecycleAgentView>, };
 
+export type ProjectSessionListEntry = { runtime_session_id: string, title: string, delivery_status: string, run_status?: LifecycleRunStatus, run_ref?: LifecycleRunRefDto, agent_ref?: LifecycleAgentRefDto, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, updated_at: string, };
+
+export type ProjectSessionListView = { project_id: string, sessions: Array<ProjectSessionListEntry>, };
+
 export type RegisterHookPresetResponse = { registered: boolean, key: string, };
+
+export type RuntimeSessionExecutionAnchorDto = { runtime_session_id: string, run_id: string, agent_id: string, launch_frame_id: string, assignment_id?: string, graph_instance_id?: string, activity_key?: string, attempt?: number, created_by_kind: string, created_at: string, updated_at: string, };
 
 export type RuntimeSessionPolicy = "create_new" | "deliver_to_current_trace";
 
 export type RuntimeSessionRefDto = { runtime_session_id: string, };
 
 export type RuntimeSessionTraceView = { runtime_session_ref: RuntimeSessionRefDto, frame_ref?: AgentFrameRefDto, events: Array<JsonValue>, turns: Array<JsonValue>, };
+
+export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: LifecycleAgentView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, can_send: boolean, send_unavailable_reason?: string, };
+
+export type SessionShellDto = { id: string, project_id?: string, title: string, title_source: string, created_at: bigint, updated_at: bigint, last_event_seq: bigint, last_turn_id?: string, last_delivery_status: string, tab_layout?: JsonValue, };
 
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
 

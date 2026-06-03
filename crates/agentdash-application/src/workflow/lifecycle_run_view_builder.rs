@@ -24,8 +24,8 @@ use agentdash_domain::workflow::{
     ActivityLifecycleRunState, AgentAssignment, ExecutorRunRef as DomainExecutorRunRef,
     LifecycleAgent, LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind, LifecycleRun,
     LifecycleRunStatus as DomainLifecycleRunStatus,
-    LifecycleRunTopology as DomainLifecycleRunTopology, LifecycleSubjectAssociation,
-    RuntimeSessionSelectionPolicy, SubjectRef, WorkflowGraphInstance,
+    LifecycleRunTopology as DomainLifecycleRunTopology, LifecycleSubjectAssociation, SubjectRef,
+    WorkflowGraphInstance,
 };
 
 use crate::repository_set::RepositorySet;
@@ -67,7 +67,7 @@ pub async fn build_lifecycle_run_view_with_preloaded(
         .list_by_run(run.id)
         .await?;
     let workflow_graph_instances = workflow_graph_instances_for_run(&graph_instances, &assignments);
-    let runtime_trace_refs = collect_runtime_trace_refs(repos, &agents).await?;
+    let runtime_trace_refs = collect_runtime_trace_refs(repos, run.id).await?;
 
     Ok(assemble_lifecycle_run_view(
         run,
@@ -173,24 +173,17 @@ pub async fn build_project_active_agents_view(
 
 async fn collect_runtime_trace_refs(
     repos: &RepositorySet,
-    agents: &[LifecycleAgent],
+    run_id: Uuid,
 ) -> Result<Vec<RuntimeSessionRefDto>, DomainError> {
-    let mut refs = Vec::new();
-    for agent in agents {
-        for frame in repos.agent_frame_repo.list_by_agent(agent.id).await? {
-            for session_id in frame.runtime_session_ids() {
-                if !refs
-                    .iter()
-                    .any(|item: &RuntimeSessionRefDto| item.runtime_session_id == session_id)
-                {
-                    refs.push(RuntimeSessionRefDto {
-                        runtime_session_id: session_id,
-                    });
-                }
-            }
-        }
-    }
-    Ok(refs)
+    Ok(repos
+        .execution_anchor_repo
+        .list_by_run(run_id)
+        .await?
+        .into_iter()
+        .map(|anchor| RuntimeSessionRefDto {
+            runtime_session_id: anchor.runtime_session_id,
+        })
+        .collect())
 }
 
 // ── Pure conversion functions (pub for reuse) ──────────────────
@@ -266,23 +259,11 @@ async fn resolve_agent_delivery_runtime_session_id(
     repos: &RepositorySet,
     agent: &LifecycleAgent,
 ) -> Result<Option<String>, DomainError> {
-    if let Some(frame_id) = agent.current_frame_id {
-        if let Some(frame) = repos.agent_frame_repo.get(frame_id).await? {
-            if let Some(session_id) =
-                frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::LaunchPrimary)
-            {
-                return Ok(Some(session_id));
-            }
-        }
-    }
-
     Ok(repos
-        .agent_frame_repo
-        .get_current(agent.id)
+        .execution_anchor_repo
+        .latest_for_agent(agent.id)
         .await?
-        .and_then(|frame| {
-            frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::LaunchPrimary)
-        }))
+        .map(|anchor| anchor.runtime_session_id))
 }
 
 // ── Internal pure helpers ──────────────────────────────────────

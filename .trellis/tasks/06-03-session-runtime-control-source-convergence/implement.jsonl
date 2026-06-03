@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Backend layer ownership, route/use-case/repository boundaries for Session control read models."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Schema and migration constraints for anchor table and session shell fields."}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "Repository trait and Postgres implementation changes for RuntimeSessionExecutionAnchor queries."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Session as runtime/message shell rather than business control root."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Session launch and runtime delivery boundaries behind AgentFrame/Lifecycle control plane."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Runtime command, delivery status, and Session persistence boundaries."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "LifecycleRun, LifecycleAgent, AgentFrame, RuntimeSessionExecutionAnchor invariants."}
+{"file": ".trellis/spec/backend/workflow/lifecycle-run-link.md", "reason": "Subject association and runtime trace lookup contract."}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Frontend does not create business fact sources and consumes backend runtime projections."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Generated DTO and mapper changes for SessionRuntimeControlView and ProjectSessionListView."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Store boundary changes for lifecycleStore and session list data."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Lifecycle runtime projection keys and single-run WorkspacePanel observation."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Rust DTO to generated TypeScript contract update requirements."}

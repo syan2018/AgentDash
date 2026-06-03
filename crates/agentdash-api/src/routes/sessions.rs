@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io;
 use std::sync::Arc;
@@ -11,12 +12,17 @@ use axum::{
     response::IntoResponse,
 };
 use tokio::time::MissedTickBehavior;
+use uuid::Uuid;
 
+use crate::routes::lifecycle_views::{
+    agent_frame_ref, agent_frame_runtime_to_view, runtime_refs_for_agent,
+};
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::session::{
     SessionExecutionState, SessionForkRequest, SessionMeta,
     SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
 };
+use agentdash_application::workflow::lifecycle_run_view_builder;
 use agentdash_contracts::session::{
     ApproveToolCallResponse, CancelSessionResponse, CreateSessionForkRequest,
     DeleteSessionResponse, RejectToolCallResponse, RollbackSessionProjectionRequest,
@@ -24,6 +30,12 @@ use agentdash_contracts::session::{
     SessionForkChildSessionResponse, SessionForkResponse, SessionLineageViewResponse,
     SessionNdjsonEnvelope, SessionProjectionRollbackResponse, SessionProjectionViewResponse,
 };
+use agentdash_contracts::workflow::{
+    LifecycleAgentRefDto, LifecycleRunRefDto, ProjectSessionListEntry, ProjectSessionListView,
+    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, SessionRuntimeControlView,
+    SessionShellDto, SubjectRefDto,
+};
+use agentdash_domain::workflow::{LifecycleRun, RuntimeSessionExecutionAnchor};
 
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
@@ -31,30 +43,38 @@ use crate::dto::{
     SessionEventsQuery, SessionExecutionStateResponse, UpdateSessionMetaRequest,
 };
 
-/// Session trace 权限检查 — 必须先解析到 AgentFrame，再通过 LifecycleAgent 所属项目确认权限。
+/// Session trace 权限检查以 session shell 的 project 为入口；若存在 anchor，再校验 run project 一致。
 pub async fn ensure_session_permission(
     state: &AppState,
     user: &agentdash_plugin_api::AuthIdentity,
     session_id: &str,
     permission: ProjectPermission,
 ) -> Result<(), ApiError> {
-    let frame = state
+    let meta = state
+        .services
+        .session_core
+        .get_session_meta(session_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("会话 {session_id} 不存在")))?;
+    let session_project_id_raw = meta.project_id.as_deref().ok_or_else(|| {
+        ApiError::BadRequest(format!("runtime session 缺少 project shell: {session_id}"))
+    })?;
+    let session_project_id = parse_uuid_param(session_project_id_raw, "session_project_id")?;
+    load_project_with_permission(state, user, session_project_id, permission).await?;
+
+    if let Some(anchor) = state
         .repos
-        .agent_frame_repo
-        .find_by_runtime_session(session_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!("runtime_session 未附着到 AgentFrame: {session_id}"))
-        })?;
-    let agent = state
-        .repos
-        .lifecycle_agent_repo
-        .get(frame.agent_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_agent 不存在: {}", frame.agent_id)))?;
-    load_project_with_permission(state, user, agent.project_id, permission).await?;
+        .execution_anchor_repo
+        .find_by_session(session_id)
+        .await?
+    {
+        let run = load_lifecycle_run_for_session(state, anchor.run_id).await?;
+        if run.project_id != session_project_id {
+            return Err(ApiError::BadRequest(format!(
+                "runtime session project 与 anchor run project 不一致: {session_id}"
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -65,6 +85,14 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/sessions/{id}",
             axum::routing::get(get_session).delete(delete_session),
+        )
+        .route(
+            "/sessions/{id}/runtime-control",
+            axum::routing::get(get_session_runtime_control),
+        )
+        .route(
+            "/projects/{id}/sessions",
+            axum::routing::get(get_project_sessions),
         )
         .route(
             "/sessions/{id}/meta",
@@ -122,6 +150,181 @@ pub async fn get_session(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
     Ok(Json(meta))
+}
+
+pub async fn get_session_runtime_control(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(runtime_session_id): Path<String>,
+) -> Result<Json<SessionRuntimeControlView>, ApiError> {
+    let meta = state
+        .services
+        .session_core
+        .get_session_meta(&runtime_session_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", runtime_session_id)))?;
+    let Some(session_project_id_raw) = meta.project_id.as_deref() else {
+        return Err(ApiError::BadRequest(format!(
+            "runtime session 缺少 project shell: {runtime_session_id}"
+        )));
+    };
+    let session_project_id = parse_uuid_param(session_project_id_raw, "session_project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        session_project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let Some(anchor) = state
+        .repos
+        .execution_anchor_repo
+        .find_by_session(&runtime_session_id)
+        .await?
+    else {
+        return Ok(Json(SessionRuntimeControlView {
+            runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
+            session_meta: session_shell_dto(&meta),
+            anchor: None,
+            run: None,
+            agent: None,
+            frame_runtime: None,
+            subject_associations: Vec::new(),
+            can_send: false,
+            send_unavailable_reason: Some("当前 Session 尚未关联 Lifecycle 控制面。".to_string()),
+        }));
+    };
+
+    let run = load_lifecycle_run_for_session(state.as_ref(), anchor.run_id).await?;
+    if run.project_id != session_project_id {
+        return Err(ApiError::BadRequest(format!(
+            "runtime session project 与 anchor run project 不一致: {runtime_session_id}"
+        )));
+    }
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(anchor.agent_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("lifecycle_agent 不存在: {}", anchor.agent_id))
+        })?;
+    if agent.run_id != run.id || agent.project_id != run.project_id {
+        return Err(ApiError::BadRequest(format!(
+            "runtime session anchor agent 与 run 不一致: {runtime_session_id}"
+        )));
+    }
+    let frame = state.repos.agent_frame_repo.get_current(agent.id).await?;
+    let frame_runtime = match frame {
+        Some(frame) => {
+            let runtime_refs = runtime_refs_for_agent(state.as_ref(), agent.id).await?;
+            Some(agent_frame_runtime_to_view(&frame, runtime_refs))
+        }
+        None => None,
+    };
+    let run_view = lifecycle_run_view_builder::build_lifecycle_run_view(&state.repos, &run).await?;
+    let agent_view = run_view
+        .agents
+        .iter()
+        .find(|view| view.agent_ref.agent_id == agent.id.to_string())
+        .cloned();
+    let agent_id_string = agent.id.to_string();
+    let subject_associations = run_view
+        .subject_associations
+        .iter()
+        .filter(|assoc| {
+            assoc.anchor_agent_id.as_deref() == Some(agent_id_string.as_str())
+                || assoc.anchor_agent_id.is_none()
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let can_send = frame_runtime.is_some() && !is_terminal_agent_status(&agent.status);
+    let send_unavailable_reason = if can_send {
+        None
+    } else if is_terminal_agent_status(&agent.status) {
+        Some("当前 Agent 已结束，不能继续发送消息。".to_string())
+    } else {
+        Some("当前 Agent 没有可投递的 runtime frame。".to_string())
+    };
+
+    Ok(Json(SessionRuntimeControlView {
+        runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
+        session_meta: session_shell_dto(&meta),
+        anchor: Some(anchor_dto(&anchor)),
+        run: Some(run_view),
+        agent: agent_view,
+        frame_runtime,
+        subject_associations,
+        can_send,
+        send_unavailable_reason,
+    }))
+}
+
+pub async fn get_project_sessions(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(project_id): Path<String>,
+) -> Result<Json<ProjectSessionListView>, ApiError> {
+    let project_id = parse_uuid_param(&project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let project_id_string = project_id.to_string();
+    let mut metas = state
+        .services
+        .session_core
+        .list_sessions()
+        .await?
+        .into_iter()
+        .filter(|meta| meta.project_id.as_deref() == Some(project_id_string.as_str()))
+        .collect::<Vec<_>>();
+    metas.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+    let session_ids = metas.iter().map(|meta| meta.id.clone()).collect::<Vec<_>>();
+    let anchors = state
+        .repos
+        .execution_anchor_repo
+        .list_by_project_session_ids(&session_ids)
+        .await?;
+    let anchors_by_session = anchors
+        .into_iter()
+        .map(|anchor| (anchor.runtime_session_id.clone(), anchor))
+        .collect::<HashMap<_, _>>();
+    let run_ids = anchors_by_session
+        .values()
+        .map(|anchor| anchor.run_id)
+        .collect::<Vec<_>>();
+    let runs_by_id = state
+        .repos
+        .lifecycle_run_repo
+        .list_by_ids(&run_ids)
+        .await?
+        .into_iter()
+        .map(|run| (run.id, run))
+        .collect::<HashMap<_, _>>();
+
+    let mut sessions = Vec::with_capacity(metas.len());
+    for meta in metas {
+        let entry = project_session_entry(
+            state.as_ref(),
+            &meta,
+            anchors_by_session.get(&meta.id),
+            &runs_by_id,
+        )
+        .await?;
+        sessions.push(entry);
+    }
+
+    Ok(Json(ProjectSessionListView {
+        project_id: project_id.to_string(),
+        sessions,
+    }))
 }
 
 fn map_session_event(
@@ -220,6 +423,180 @@ fn session_command_state_response(
             message,
         },
     }
+}
+
+async fn load_lifecycle_run_for_session(
+    state: &AppState,
+    run_id: Uuid,
+) -> Result<LifecycleRun, ApiError> {
+    state
+        .repos
+        .lifecycle_run_repo
+        .get_by_id(run_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))
+}
+
+async fn project_session_entry(
+    state: &AppState,
+    meta: &SessionMeta,
+    anchor: Option<&RuntimeSessionExecutionAnchor>,
+    runs_by_id: &HashMap<Uuid, LifecycleRun>,
+) -> Result<ProjectSessionListEntry, ApiError> {
+    let Some(anchor) = anchor else {
+        return Ok(ProjectSessionListEntry {
+            runtime_session_id: meta.id.clone(),
+            title: session_list_title(meta),
+            delivery_status: serialized_string(&meta.last_execution_status),
+            run_status: None,
+            run_ref: None,
+            agent_ref: None,
+            frame_ref: None,
+            subject_ref: None,
+            subject_label: None,
+            updated_at: meta.updated_at.to_string(),
+        });
+    };
+
+    let run = runs_by_id
+        .get(&anchor.run_id)
+        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {}", anchor.run_id)))?;
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(anchor.agent_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("lifecycle_agent 不存在: {}", anchor.agent_id))
+        })?;
+    let frame_ref = state
+        .repos
+        .agent_frame_repo
+        .get_current(agent.id)
+        .await?
+        .map(|frame| agent_frame_ref(&frame));
+    let associations = state
+        .repos
+        .lifecycle_subject_association_repo
+        .list_by_anchor(run.id, Some(agent.id))
+        .await?;
+    let subject = associations.first();
+
+    Ok(ProjectSessionListEntry {
+        runtime_session_id: meta.id.clone(),
+        title: session_list_title(meta),
+        delivery_status: serialized_string(&meta.last_execution_status),
+        run_status: Some(lifecycle_run_status_to_contract(run.status)),
+        run_ref: Some(LifecycleRunRefDto {
+            run_id: run.id.to_string(),
+        }),
+        agent_ref: Some(LifecycleAgentRefDto {
+            run_id: agent.run_id.to_string(),
+            agent_id: agent.id.to_string(),
+        }),
+        frame_ref,
+        subject_ref: subject.map(|association| SubjectRefDto {
+            kind: association.subject_kind.clone(),
+            id: association.subject_id.to_string(),
+        }),
+        subject_label: subject.and_then(subject_label_from_metadata),
+        updated_at: meta.updated_at.to_string(),
+    })
+}
+
+fn session_shell_dto(meta: &SessionMeta) -> SessionShellDto {
+    SessionShellDto {
+        id: meta.id.clone(),
+        project_id: meta.project_id.clone(),
+        title: meta.title.clone(),
+        title_source: serialized_string(&meta.title_source),
+        created_at: meta.created_at,
+        updated_at: meta.updated_at,
+        last_event_seq: meta.last_event_seq,
+        last_turn_id: meta.last_turn_id.clone(),
+        last_delivery_status: serialized_string(&meta.last_execution_status),
+        tab_layout: meta.tab_layout.clone(),
+    }
+}
+
+fn anchor_dto(anchor: &RuntimeSessionExecutionAnchor) -> RuntimeSessionExecutionAnchorDto {
+    RuntimeSessionExecutionAnchorDto {
+        runtime_session_id: anchor.runtime_session_id.clone(),
+        run_id: anchor.run_id.to_string(),
+        agent_id: anchor.agent_id.to_string(),
+        launch_frame_id: anchor.launch_frame_id.to_string(),
+        assignment_id: anchor.assignment_id.map(|id| id.to_string()),
+        graph_instance_id: anchor.graph_instance_id.map(|id| id.to_string()),
+        activity_key: anchor.activity_key.clone(),
+        attempt: anchor.attempt,
+        created_by_kind: anchor.created_by_kind.clone(),
+        created_at: anchor.created_at.to_rfc3339(),
+        updated_at: anchor.updated_at.to_rfc3339(),
+    }
+}
+
+fn lifecycle_run_status_to_contract(
+    status: agentdash_domain::workflow::LifecycleRunStatus,
+) -> agentdash_contracts::workflow::LifecycleRunStatus {
+    match status {
+        agentdash_domain::workflow::LifecycleRunStatus::Draft => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Draft
+        }
+        agentdash_domain::workflow::LifecycleRunStatus::Ready => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Ready
+        }
+        agentdash_domain::workflow::LifecycleRunStatus::Running => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Running
+        }
+        agentdash_domain::workflow::LifecycleRunStatus::Blocked => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Blocked
+        }
+        agentdash_domain::workflow::LifecycleRunStatus::Completed => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Completed
+        }
+        agentdash_domain::workflow::LifecycleRunStatus::Failed => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Failed
+        }
+        agentdash_domain::workflow::LifecycleRunStatus::Cancelled => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Cancelled
+        }
+    }
+}
+
+fn session_list_title(meta: &SessionMeta) -> String {
+    let title = meta.title.trim();
+    if title.is_empty() {
+        "会话加载中...".to_string()
+    } else {
+        title.to_string()
+    }
+}
+
+fn subject_label_from_metadata(
+    association: &agentdash_domain::workflow::LifecycleSubjectAssociation,
+) -> Option<String> {
+    let metadata = association.metadata_json.as_ref()?;
+    ["label", "title", "name"]
+        .iter()
+        .find_map(|key| metadata.get(key).and_then(|value| value.as_str()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn is_terminal_agent_status(status: &str) -> bool {
+    matches!(status, "completed" | "failed" | "cancelled")
+}
+
+fn serialized_string<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn parse_uuid_param(raw: &str, field: &str) -> Result<Uuid, ApiError> {
+    Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("无效的 {field}: {raw}")))
 }
 
 pub async fn list_session_events(

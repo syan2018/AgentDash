@@ -104,9 +104,10 @@ use agentdash_contracts::workflow::{
     LifecycleAgentMessageResponse, LifecycleAgentRefDto, LifecycleAgentView,
     LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology,
     LifecycleRunView, LifecycleSubjectAssociationDto, ProjectActiveAgentsView,
-    RegisterHookPresetResponse, RuntimeSessionRefDto, RuntimeSessionTraceView, StoryLaunchResult,
-    SubjectExecutionView, SubjectRefDto, ValidateHookScriptResponse, ValidationIssue,
-    WorkflowGraphInstanceView,
+    ProjectSessionListEntry, ProjectSessionListView, RegisterHookPresetResponse,
+    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, RuntimeSessionTraceView,
+    SessionRuntimeControlView, SessionShellDto, StoryLaunchResult, SubjectExecutionView,
+    SubjectRefDto, ValidateHookScriptResponse, ValidationIssue, WorkflowGraphInstanceView,
 };
 use ts_rs::TS;
 
@@ -292,6 +293,8 @@ fn main() {
             export_all::<LifecycleAgentRefDto>(dir);
             export_all::<AgentFrameRefDto>(dir);
             export_all::<RuntimeSessionRefDto>(dir);
+            export_all::<SessionShellDto>(dir);
+            export_all::<RuntimeSessionExecutionAnchorDto>(dir);
             export_all::<LifecycleAgentMessageRequest>(dir);
             export_all::<LifecycleAgentMessageResponse>(dir);
             export_all::<AgentAssignmentRefDto>(dir);
@@ -306,6 +309,9 @@ fn main() {
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
             export_all::<RuntimeSessionTraceView>(dir);
+            export_all::<SessionRuntimeControlView>(dir);
+            export_all::<ProjectSessionListEntry>(dir);
+            export_all::<ProjectSessionListView>(dir);
             export_all::<DefinitionSource>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);
             export_all::<DeleteAgentProcedureResponse>(dir);

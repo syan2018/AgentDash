@@ -37,44 +37,39 @@ pub async fn send_lifecycle_agent_message(
         return Err(ApiError::BadRequest("prompt_blocks 不能为空".to_string()));
     }
 
-    let frame = state
+    let anchor = state
         .repos
-        .agent_frame_repo
-        .find_by_runtime_session(&runtime_session_id)
+        .execution_anchor_repo
+        .find_by_session(&runtime_session_id)
         .await
         .map_err(ApiError::from)?
         .ok_or_else(|| {
             ApiError::NotFound(format!(
-                "RuntimeSession 未附着到 AgentFrame: {runtime_session_id}"
+                "RuntimeSession 缺少控制面锚点: {runtime_session_id}"
             ))
         })?;
-
-    if !frame
-        .runtime_session_ids()
-        .iter()
-        .any(|session_id| session_id == &runtime_session_id)
-    {
-        return Err(ApiError::Conflict(format!(
-            "AgentFrame {} 未绑定 delivery RuntimeSession {}",
-            frame.id, runtime_session_id
-        )));
-    }
 
     let agent = state
         .repos
         .lifecycle_agent_repo
-        .get(frame.agent_id)
+        .get(anchor.agent_id)
         .await
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("LifecycleAgent 不存在: {}", frame.agent_id)))?;
+        .ok_or_else(|| ApiError::NotFound(format!("LifecycleAgent 不存在: {}", anchor.agent_id)))?;
 
     let run = state
         .repos
         .lifecycle_run_repo
-        .get_by_id(agent.run_id)
+        .get_by_id(anchor.run_id)
         .await
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("LifecycleRun 不存在: {}", agent.run_id)))?;
+        .ok_or_else(|| ApiError::NotFound(format!("LifecycleRun 不存在: {}", anchor.run_id)))?;
+
+    if agent.run_id != run.id {
+        return Err(ApiError::Conflict(format!(
+            "RuntimeSession anchor agent 与 run 不一致: {runtime_session_id}"
+        )));
+    }
 
     load_project_with_permission(
         state.as_ref(),

@@ -35,7 +35,7 @@ impl PostgresWorkflowRepository {
 const WF_COLS: &str = "id,project_id,key,name,description,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const WG_COLS: &str = "id,project_id,key,name,description,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const RUN_COLS: &str = "id,project_id,root_graph_id,status,active_node_keys,execution_log,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,root_graph_id,status,active_node_keys,record_artifacts,execution_log,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,root_graph_id,status,active_node_keys,execution_log,created_at,updated_at,last_activity_at";
 const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,graph_instance_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
 
 #[async_trait::async_trait]
@@ -522,14 +522,13 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
         .bind(run.root_graph_id.to_string())
         .bind(serde_json::to_string(&run.status)?)
         .bind(serde_json::to_string(&run.active_node_keys)?)
-        .bind("{}")
         .bind(serde_json::to_string(&run.execution_log)?)
         .bind(run.created_at)
         .bind(run.updated_at)

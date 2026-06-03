@@ -1,0 +1,28 @@
+{
+  "id": "database-semantic-baseline-audit",
+  "name": "database-semantic-baseline-audit",
+  "title": "数据库语义基线正式评估",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-06-03",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/refactor-lifecycle-control-plane",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-03-database-business-semantic-convergence"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

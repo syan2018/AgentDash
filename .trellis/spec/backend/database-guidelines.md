@@ -37,11 +37,11 @@
 
 ### PostgreSQL
 
-业务库的 schema 事实源是 `crates/agentdash-infrastructure/migrations/`。新增表、列、索引、约束、删除列和数据修正都通过递增编号 `.sql` 文件表达。预研阶段的历史 migration 同时承担干净库基线职责；当列类型这类基线 contract 改变时，历史建表语句和 forward migration 需要一起表达同一个目标 schema，原因是干净库初始化、已有开发库升级和 embedded Postgres 都应收敛到同一结构。
+业务库的 schema 事实源是 `crates/agentdash-infrastructure/migrations/`。当前预研基线采用单个 hand-curated `0001_init.sql` 表达目标结构；新增表、列、索引、约束、删除列和数据修正都先收敛到这个初始化基线。这样做的原因是项目尚未进入需要保留真实环境数据的阶段，干净库初始化和 embedded PostgreSQL 恢复路径应直接观察当前正确 schema，而不是回放开发期历史重命名、回填和旧模型迁移。
 
 Repository 启动逻辑只观察已迁移 schema。API bootstrap 不调用 PostgreSQL repository schema 初始化；需要直接构造 `AppState` 或 repository 的测试路径也先运行 migrations，再执行 readiness 检查。Repository 可以保留无 DDL 的 readiness helper，但不能创建表、补列、建索引或执行 schema 数据迁移。
 
-预研期允许阶段性压缩 PostgreSQL migration 基线。阶段性 squash 的目标是让 `0001_init.sql` 表达当前正确 schema，避免开发期重命名、回填和旧模型迁移长期分散当前事实。进入需要保留真实环境数据的阶段后，migration 历史转为增量审计事实，不再随意压缩。
+预研期允许阶段性压缩 PostgreSQL migration 基线。阶段性 squash 的目标是让 `0001_init.sql` 表达当前正确 schema，避免开发期重命名、回填和旧模型迁移长期分散当前事实。`0001_init.sql` 应保持为手工整理后的 schema baseline：只保留 DDL、约束、索引、序列和必要扩展，不保留 pg_dump header、object comments、`public.` 前缀噪音、回填默认值或旧约束命名。进入需要保留真实环境数据的阶段后，migration 历史转为增量审计事实，不再随意压缩。
 
 初始化 migration 只表达 schema、约束、索引和必要扩展。Builtin / Plugin Shared Library assets、LLM Provider、auth session、settings、backend registration、runtime health、session / lifecycle runtime facts 都由启动期 seed、API use case 或 runtime repository 写入，原因是这些数据随代码、插件、用户配置或运行状态变化，不属于 schema 基线。
 

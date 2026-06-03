@@ -1065,3 +1065,36 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 58: 数据库初始化基线语义收敛
+
+**Date**: 2026-06-03
+**Task**: 数据库初始化基线语义收敛
+**Branch**: `codex/refactor-lifecycle-control-plane`
+
+### Summary
+
+完成数据库语义基线正式评估，拆分业务语义收敛任务，并落地初始化 migration 的 P0 baseline correctness 与 hand-curated baseline 修复。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dff8a4b8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

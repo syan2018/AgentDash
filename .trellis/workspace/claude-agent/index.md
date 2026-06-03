@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 58
+- **Total Sessions**: 59
 - **Last Active**: 2026-06-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1100 | Active |
+| `journal-2.md` | ~1133 | Active |
 | `journal-1.md` | ~1892 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 59 | 2026-06-03 | Lifecycle 概念与前端命名清理 | `95b5378b` | `codex/refactor-lifecycle-control-plane` |
 | 58 | 2026-06-03 | 数据库初始化基线语义收敛 | `dff8a4b8` | `codex/refactor-lifecycle-control-plane` |
 | 57 | 2026-06-03 | 重建开发期数据库初始化基线 | `fa40c4c8` | `codex/refactor-lifecycle-control-plane` |
 | 56 | 2026-06-01 | Lifecycle 控制面旧模型硬切清场 | `08690e1d`, `b308caa4`, `876a063d` | `codex/refactor-lifecycle-control-plane` |

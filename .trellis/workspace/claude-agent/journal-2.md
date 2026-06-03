@@ -1098,3 +1098,36 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 59: Lifecycle 概念与前端命名清理
+
+**Date**: 2026-06-03
+**Task**: Lifecycle 概念与前端命名清理
+**Branch**: `codex/refactor-lifecycle-control-plane`
+
+### Summary
+
+沉淀 Lifecycle 控制面核心不变量，归档前端命名盘点，并完成低风险 Procedure/Runtime/GraphInstance 命名与文案清理。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `95b5378b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -35,7 +35,7 @@ export function InjectionPanel({
   return (
     <section className="space-y-4">
       <div>
-        <label className="agentdash-form-label">Session 指引</label>
+        <label className="agentdash-form-label">Agent Procedure 指引</label>
         <textarea
           value={injection.guidance ?? ""}
           onChange={(e) => onGuidanceChange(e.target.value || null)}

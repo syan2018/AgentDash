@@ -5,6 +5,7 @@
 ## Invariants
 
 - 前端读写 `WorkflowGraph` definition；当前 `ActivityLifecycleDefinition` 是迁移来源。
+- 用户层 Workflow 资产入口以 `WorkflowGraph` definition 为主；Agent Activity 关联的 `AgentProcedure` 提供单个 Activity contract，可作为编辑器配套 draft 维护。
 - Run view 必须支持同一个 `LifecycleRun` 下多个 `WorkflowGraphInstance`。
 - Frontend store normalize by run、graph instance、subject、agent、frame。
 - `/session/:id` 是 `RuntimeTraceView`，不是业务 runtime root。
@@ -74,7 +75,8 @@ type LifecycleRunView = {
 
 ## Store Boundary
 
-- `workflowStore` / lifecycle store indexes runs by `run_id`。
+- `workflowStore` owns `WorkflowGraph` definition drafts, validation state, editor selection; Agent Activity 的 `AgentProcedure` draft 是配套 contract 编辑数据。
+- `lifecycleStore` owns runtime projections: runs indexed by `run_id`。
 - graph instances indexed by `graph_instance_id`。
 - subject execution indexed by `subject_kind + subject_id`。
 - agents indexed by `agent_id` and frames by `frame_id`。

@@ -41,7 +41,7 @@ function renderInspector(activity: ActivityDefinition) {
       activity={activity}
       workflowDraft={draft}
       isEntry={false}
-      availableWorkflows={[]}
+      availableProcedures={[]}
       hookPresets={[]}
       targetKinds={["story"]}
       projectId="p1"
@@ -74,7 +74,7 @@ describe("ActivityInspector", () => {
     expect(markup).toContain("Join Policy");
     expect(markup).toContain("iter:3/per_attempt");
     expect(markup).toContain("n_of_m(2)");
-    expect(markup).toContain("Workflow 来源");
+    expect(markup).toContain("Procedure 来源");
     expect(markup).toContain("Agent Reuse");
     expect(markup).toContain("Runtime Session");
   });

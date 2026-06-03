@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  mergeWorkflowPortsIntoLifecycleStep,
+  mergeProcedurePortsIntoLifecycleActivity,
   syncLifecycleStepPortsForArtifactEdges,
 } from "./lifecycle-port-sync";
 import type { ActivityDefinition, ActivityTransition, AgentProcedure } from "../../../types";
 
-function workflow(key: string, ports: {
+function procedure(key: string, ports: {
   output?: string[];
   input?: string[];
 } = {}): AgentProcedure {
@@ -74,12 +74,12 @@ function artifactTransition(from: string, fromPort: string, to: string, toPort: 
 }
 
 describe("lifecycle port sync", () => {
-  it("copies workflow ports referenced by artifact edges into step-level ports", () => {
+  it("copies procedure ports referenced by artifact edges into activity-level ports", () => {
     const result = syncLifecycleStepPortsForArtifactEdges({
       steps: [step("research", "research_wf"), step("implement", "implement_wf")],
-      workflows: [
-        workflow("research_wf", { output: ["research_report"] }),
-        workflow("implement_wf", { input: ["research_input"] }),
+      procedures: [
+        procedure("research_wf", { output: ["research_report"] }),
+        procedure("implement_wf", { input: ["research_input"] }),
       ],
       edges: [
         artifactTransition("research", "research_report", "implement", "research_input"),
@@ -100,10 +100,10 @@ describe("lifecycle port sync", () => {
     ]);
   });
 
-  it("creates default step ports when no workflow recommendation exists", () => {
+  it("creates default activity ports when no procedure recommendation exists", () => {
     const result = syncLifecycleStepPortsForArtifactEdges({
       steps: [step("research", ""), step("implement", "")],
-      workflows: [],
+      procedures: [],
       edges: [
         artifactTransition("research", "research_report", "implement", "research_input"),
       ],
@@ -122,8 +122,8 @@ describe("lifecycle port sync", () => {
     ]);
   });
 
-  it("merges saved workflow ports into the lifecycle step without duplicating existing ports", () => {
-    const merged = mergeWorkflowPortsIntoLifecycleStep(
+  it("merges saved procedure ports into the lifecycle activity without duplicating existing ports", () => {
+    const merged = mergeProcedurePortsIntoLifecycleActivity(
       {
         ...step("implement", "implement_wf"),
         input_ports: [{
@@ -133,7 +133,7 @@ describe("lifecycle port sync", () => {
           standalone_fulfillment: "required",
         }],
       },
-      workflow("implement_wf", { input: ["research_input", "spec_input"], output: ["implementation_report"] }),
+      procedure("implement_wf", { input: ["research_input", "spec_input"], output: ["implementation_report"] }),
     );
 
     expect(merged.input_ports.map((port) => port.key)).toEqual(["research_input", "spec_input"]);

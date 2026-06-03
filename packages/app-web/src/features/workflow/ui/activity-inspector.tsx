@@ -49,7 +49,7 @@ export interface ActivityInspectorProps {
   activity: ActivityDefinition;
   workflowDraft: WorkflowEditorDraft;
   isEntry: boolean;
-  availableWorkflows: AgentProcedure[];
+  availableProcedures: AgentProcedure[];
   hookPresets: HookRulePreset[];
   targetKinds: WorkflowTargetKind[];
   projectId: string;
@@ -77,7 +77,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
     activity,
     workflowDraft,
     isEntry,
-    availableWorkflows,
+    availableProcedures,
     hookPresets,
     targetKinds,
     projectId,
@@ -271,7 +271,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
             <ExecutorSection
               activity={activity}
               workflowDraft={workflowDraft}
-              availableWorkflows={availableWorkflows}
+              availableProcedures={availableProcedures}
               isEntry={isEntry}
               onExecutorChange={handleExecutorChange}
             />

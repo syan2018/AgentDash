@@ -25,6 +25,10 @@ function JsonBlock({ value }: { value: unknown }) {
   );
 }
 
+function shortGraphInstanceId(graphInstanceId: string | undefined): string | null {
+  return graphInstanceId ? graphInstanceId.slice(0, 8) : null;
+}
+
 function SubjectExecutionSummary({ view }: { view: SubjectExecutionView | null }) {
   const navigate = useNavigate();
 
@@ -38,6 +42,7 @@ function SubjectExecutionSummary({ view }: { view: SubjectExecutionView | null }
 
   const currentAgent = view.current_agent;
   const latestAttempt = view.latest_attempt;
+  const latestAttemptGraphInstanceId = shortGraphInstanceId(latestAttempt?.graph_instance_id);
 
   return (
     <div className="space-y-3">
@@ -59,9 +64,10 @@ function SubjectExecutionSummary({ view }: { view: SubjectExecutionView | null }
           )}
         </div>
         <div className="rounded-[8px] border border-border bg-background p-3">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Latest Attempt</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Latest Activity Attempt</p>
           {latestAttempt ? (
             <p className="mt-2 text-xs text-foreground">
+              {latestAttemptGraphInstanceId ? `graph instance ${latestAttemptGraphInstanceId} · ` : ""}
               {latestAttempt.activity_key} #{latestAttempt.attempt} · {latestAttempt.status}
             </p>
           ) : (

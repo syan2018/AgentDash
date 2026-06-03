@@ -70,9 +70,26 @@ export function useSessionRuntimeState({
   const [state, setState] = useState<SessionRuntimeProjectionState>(() => emptySessionRuntimeState());
   const setFrame = useLifecycleStore((s) => s.setFrame);
 
-  const loadFrameContext = useCallback(async (sid: string, skey: string) => {
+  const loadFrameContext = useCallback(async (
+    sid: string,
+    skey: string,
+    canCommit: () => boolean = () => true,
+  ) => {
+    await Promise.resolve();
+    if (!canCommit()) return;
+    setState({
+      session_id: sid,
+      source_key: skey,
+      status: "loading",
+      context: null,
+      hook_runtime: null,
+      frame: null,
+      error: null,
+    });
+
     try {
       const frameView = await fetchSessionFrameRuntime(sid);
+      if (!canCommit()) return;
       setFrame(frameView);
       setState({
         session_id: sid,
@@ -84,6 +101,7 @@ export function useSessionRuntimeState({
         error: null,
       });
     } catch (error: unknown) {
+      if (!canCommit()) return;
       // 404 表示 session 没有关联 AgentFrame（freeform session），视为正常空状态
       const is404 = error instanceof Error && error.message.includes("404");
       setState({
@@ -100,27 +118,17 @@ export function useSessionRuntimeState({
 
   useEffect(() => {
     if (!sessionId || !sourceKey) {
-      setState(emptySessionRuntimeState());
       return;
     }
 
     let cancelled = false;
-    setState({
-      session_id: sessionId,
-      source_key: sourceKey,
-      status: "loading",
-      context: null,
-      hook_runtime: null,
-      frame: null,
-      error: null,
-    });
-
-    void loadFrameContext(sessionId, sourceKey).then(() => {
-      if (cancelled) return;
-    });
+    const timeoutId = window.setTimeout(() => {
+      void loadFrameContext(sessionId, sourceKey, () => !cancelled);
+    }, 0);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timeoutId);
     };
   }, [sessionId, sourceKey, loadFrameContext]);
 

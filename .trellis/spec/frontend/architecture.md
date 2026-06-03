@@ -9,6 +9,7 @@
 - API 字段直接使用后端 `snake_case`，前端不做 camelCase/snake_case 双风格兼容。
 - API 响应必须经 mapper 从 `unknown` 转换为 typed object。
 - Story / Task / Session / Workflow 等业务状态以后端为准，前端不自行推断权威状态。
+- Lifecycle 运行态以后端 `LifecycleRunView` / `SubjectExecutionView` / `AgentFrameRuntimeView` 为准；`RuntimeSession` 页面只展示 trace，不作为业务执行归属事实源。
 - Project 是顶层导航和隔离单元；Workspace、Story、Assets、runtime preview 都按 Project scope 组织。
 - Session workspace panel、context overview 和 VFS tab 以 `runtime_surface` 作为 runtime mount 展示与浏览能力的唯一 UI 输入。
 - Feature module 遵循 model / ui 分离，跨 feature 共享能力进入明确的 shared package 或 primitive。
@@ -46,6 +47,7 @@
 - Assets Extension 类目消费 Project extension management API，原因是安装、来源状态、package mode 与卸载/下载动作的事实源是 `ProjectExtensionInstallation`，runtime projection 只服务 WorkspacePanel 与 Gateway admission。
 - Marketplace Extension 卡片和详情抽屉使用 `LibraryAssetDto.extension_package_artifact` 判断 packaged template 可安装性，原因是浏览、安装与发布后的 package 可用状态需要共享同一 Shared Library 合同。
 - WorkspacePanel 是 extension/canvas tab 的 composition root；extension-runtime 与 canvas-panel 不反向依赖 workspace-panel，原因是插件 tab 注册、Canvas 预览和 workspace runtime context 需要保持单向装配关系。
+- Workflow 资产入口是 `WorkflowGraph` 定义态入口；Agent Activity 关联的 `AgentProcedure` contract 可以作为编辑器配套 draft 一起维护。运行态观察进入 `lifecycleStore`，原因是 graph definition 与 lifecycle projection 的变化节奏不同。
 
 ## Contract Appendices
 

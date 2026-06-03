@@ -34,6 +34,10 @@ function EmptyHint({ message }: { message: string }) {
   );
 }
 
+function shortId(id: string): string {
+  return id.slice(0, 8);
+}
+
 function RunSummary({ run }: { run: LifecycleRunView }) {
   const navigate = useNavigate();
   return (
@@ -47,7 +51,7 @@ function RunSummary({ run }: { run: LifecycleRunView }) {
             {run.status}
           </span>
           <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 text-muted-foreground">
-            graph {run.workflow_graph_instances.length}
+            graph instances {run.workflow_graph_instances.length}
           </span>
           <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 text-muted-foreground">
             agent {run.agents.length}
@@ -190,6 +194,11 @@ function AgentSummary({
               <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 font-mono text-muted-foreground">
                 {frame.frame_ref.frame_id}
               </span>
+              {frame.graph_instance_id && (
+                <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 font-mono text-muted-foreground">
+                  graph instance {shortId(frame.graph_instance_id)}
+                </span>
+              )}
               {frame.activity_key && (
                 <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 text-muted-foreground">
                   {frame.activity_key}

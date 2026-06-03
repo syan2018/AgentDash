@@ -11,6 +11,7 @@ Activity lifecycle 的目标模型是 `WorkflowGraph -> WorkflowGraphInstance ->
 - root graph 只是 `WorkflowGraphInstance(role=root)`；当前 `LifecycleRun.lifecycle_id` 只是 root graph backfill 来源。
 - Activity runtime identity 必须以 `graph_instance_id + activity_key` 为 namespace。
 - Attempt / claim / assignment key 必须包含 `graph_instance_id + activity_key + attempt`。
+- `WorkflowGraphInstance.activity_state` 是 activity runtime state 的权威状态源；`LifecycleRun.active_node_keys` 只服务 run-level read model 和 UI 快速展示。
 - Scheduler 负责 durable claim 和 executor 启动；executor 只通过事件把结果交还给 `LifecycleEngine`。
 - Function executor 即使立即完成，也必须产出 Activity terminal event，而不是直接修改 run state。
 - Hook evaluation 可以报告 completion metadata，但 durable state advancement 仍由 ActivityEvent application 拥有。
@@ -100,6 +101,17 @@ WorkflowGraphInstance
 ```
 
 `complete_lifecycle_node`、terminal callback、VFS lifecycle provider、hook advance/resolution 都应使用 assignment / graph instance refs 推进 Activity。Session-indexed lookup 只能作为 trace adapter，并必须立即反查到 frame/agent/assignment。
+
+Runtime session 反查优先级：
+
+```text
+runtime_session_id
+  -> RuntimeSessionExecutionAnchor
+  -> run_id / launch_frame_id / agent_id / assignment_id / graph_instance_id / activity_key / attempt
+  -> ActivityEvent application
+```
+
+`AgentFrame.runtime_session_refs` 可以辅助展示 frame 关联的 trace，但不作为 activity attempt 反查的权威索引。
 
 ## Function Executor
 

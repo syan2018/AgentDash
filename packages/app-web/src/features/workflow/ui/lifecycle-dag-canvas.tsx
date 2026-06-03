@@ -2,7 +2,7 @@
  * LifecycleDagCanvas —— 纯 DAG 画布（ReactFlow）的可复用封装。
  *
  * 受控组件：
- * - 输入：activities / transitions / entry_activity_key + 可选 workflowDefs（供节点 label 渲染）
+ * - 输入：activities / transitions / entry_activity_key + 可选 procedureDefs（供节点 label 渲染）
  * - 输出：onActivitiesChange / onEdgesChange（整体替换），以及 onSelectActivity
  * - 不读写 store；所有副作用（位置持久化、布局计算）仍由画布自身管理
  */
@@ -66,12 +66,12 @@ function savePositions(lifecycleKey: string, positions: Record<string, { x: numb
 
 // ─── 数据转换：domain ↔ ReactFlow ───
 
-function buildActivityTooltip(step: ActivityDefinition, workflowName: string | null): string {
+function buildActivityTooltip(step: ActivityDefinition, procedureName: string | null): string {
   const lines: string[] = [];
   if (step.description) lines.push(step.description);
   if (step.executor.kind === "agent") {
     lines.push(
-      `Agent · ${workflowName ?? step.executor.procedure_key} · ${step.executor.agent_reuse_policy} / ${step.executor.runtime_session_policy}`,
+      `Agent · ${procedureName ?? step.executor.procedure_key} · ${step.executor.agent_reuse_policy} / ${step.executor.runtime_session_policy}`,
     );
   } else if (step.executor.kind === "human") {
     lines.push(`Human · ${step.executor.title ?? step.executor.form_schema_key}`);
@@ -99,14 +99,14 @@ function countValidationIssuesForActivity(issues: ValidationIssue[], activityKey
 function stepsToNodes(
   steps: ActivityDefinition[],
   entryStepKey: string,
-  workflowDefs: AgentProcedure[],
+  procedureDefs: AgentProcedure[],
   positions: Record<string, { x: number; y: number }>,
   validationIssues: ValidationIssue[],
 ): Node<DagNodeData>[] {
-  const wfMap = new Map(workflowDefs.map((d) => [d.key, d]));
+  const procedureByKey = new Map(procedureDefs.map((procedure) => [procedure.key, procedure]));
   return steps.map((step, idx) => {
-    const ProcedureKey = step.executor.kind === "agent" ? step.executor.procedure_key : null;
-    const wf = ProcedureKey ? wfMap.get(ProcedureKey) : null;
+    const procedureKey = step.executor.kind === "agent" ? step.executor.procedure_key : null;
+    const procedure = procedureKey ? procedureByKey.get(procedureKey) : null;
     const data: DagNodeData = {
       activityKey: step.key,
       description: step.description,
@@ -116,7 +116,7 @@ function stepsToNodes(
       validationCount: countValidationIssuesForActivity(validationIssues, step.key),
       inputPorts: step.input_ports,
       outputPorts: step.output_ports,
-      tooltip: buildActivityTooltip(step, wf?.name ?? null),
+      tooltip: buildActivityTooltip(step, procedure?.name ?? null),
     };
     return {
       id: step.key,
@@ -229,7 +229,7 @@ export interface LifecycleDagCanvasProps {
   activities: ActivityDefinition[];
   transitions: ActivityTransition[];
   entryActivityKey: string;
-  workflowDefs: AgentProcedure[];
+  procedureDefs: AgentProcedure[];
   selectedActivityKey: string | null;
   /** 当前选中的 transition id（与 selectedActivityKey 互斥，由 shell 的 selection 模型派生） */
   selectedTransitionId?: string | null;
@@ -257,7 +257,7 @@ function LifecycleDagCanvasInner({
   activities,
   transitions,
   entryActivityKey,
-  workflowDefs,
+  procedureDefs,
   selectedActivityKey,
   selectedTransitionId = null,
   onSelectActivity,
@@ -281,13 +281,13 @@ function LifecycleDagCanvasInner({
   // positions cache 保留拖动后的坐标，validationIssues 与 selectedTransitionId
   // 也一并参与 deps 以驱动徽章和高亮刷新。
   useEffect(() => {
-    setNodes(stepsToNodes(activities, entryActivityKey, workflowDefs, positions.current, validationIssues));
+    setNodes(stepsToNodes(activities, entryActivityKey, procedureDefs, positions.current, validationIssues));
     setRfEdges(lifecycleEdgesToRfEdges(transitions, selectedTransitionId));
   }, [
     activities,
     transitions,
     entryActivityKey,
-    workflowDefs,
+    procedureDefs,
     validationIssues,
     selectedTransitionId,
     setNodes,
@@ -450,7 +450,7 @@ function LifecycleDagCanvasInner({
         const synced = syncLifecycleStepPortsForArtifactEdges({
           steps: newSteps,
           edges: nextEdges,
-          workflows: workflowDefs,
+          procedures: procedureDefs,
         });
         if (synced.changed || newSteps !== activities) onActivitiesChange(synced.steps);
         onEdgesChange(nextEdges);
@@ -472,7 +472,7 @@ function LifecycleDagCanvasInner({
         onEdgesChange([...transitions, newEdge]);
       }
     },
-    [transitions, activities, workflowDefs, onActivitiesChange, onEdgesChange],
+    [transitions, activities, procedureDefs, onActivitiesChange, onEdgesChange],
   );
 
   const handleNodeClick: NodeMouseHandler = useCallback(
@@ -495,7 +495,7 @@ function LifecycleDagCanvasInner({
   }, [onSelectActivity, onSelectTransition]);
 
   const handleAutoLayout = useCallback(() => {
-    const freshNodes = stepsToNodes(activities, entryActivityKey, workflowDefs, positions.current, validationIssues);
+    const freshNodes = stepsToNodes(activities, entryActivityKey, procedureDefs, positions.current, validationIssues);
     const freshEdges = lifecycleEdgesToRfEdges(transitions, selectedTransitionId);
     const laid = applyDagreLayout(freshNodes, freshEdges);
     setNodes(laid);
@@ -508,7 +508,7 @@ function LifecycleDagCanvasInner({
     activities,
     transitions,
     entryActivityKey,
-    workflowDefs,
+    procedureDefs,
     validationIssues,
     selectedTransitionId,
     setNodes,

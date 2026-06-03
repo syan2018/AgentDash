@@ -1484,6 +1484,14 @@ mod tests {
             Ok(())
         }
 
+        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+            self.items
+                .lock()
+                .unwrap()
+                .retain(|item| item.runtime_session_id != runtime_session_id);
+            Ok(())
+        }
+
         async fn find_by_session(
             &self,
             runtime_session_id: &str,

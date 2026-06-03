@@ -987,6 +987,11 @@ mod tests {
             Ok(())
         }
 
+        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+            self.anchors.lock().unwrap().remove(runtime_session_id);
+            Ok(())
+        }
+
         async fn find_by_session(
             &self,
             runtime_session_id: &str,

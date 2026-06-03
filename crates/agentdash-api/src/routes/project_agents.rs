@@ -3,7 +3,12 @@ use std::sync::Arc;
 use agentdash_application::session::construction_planner::{
     ResolvedProjectAgentContext, build_project_agent_context,
 };
+use agentdash_application::workflow::{
+    ProjectAgentSessionStartCommand, ProjectAgentSessionStartRepos,
+    ProjectAgentSessionStartService, SessionLaunchLifecycleAgentMessageDeliveryPort,
+};
 use agentdash_domain::{agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project};
+use agentdash_spi::AgentConfig;
 use axum::{
     Json,
     extract::{Path, State},
@@ -12,8 +17,9 @@ use uuid::Uuid;
 
 use agentdash_contracts::core::DeletedFlagResponse;
 use agentdash_contracts::project_agent::{
-    CreateProjectAgentRequest, ProjectAgent as ProjectAgentResponse, ProjectAgentExecutor,
-    ProjectAgentLaunchResult, ProjectAgentSummary, ThinkingLevel, UpdateProjectAgentRequest,
+    CreateProjectAgentRequest, CreateProjectAgentSessionRequest,
+    ProjectAgent as ProjectAgentResponse, ProjectAgentExecutor, ProjectAgentLaunchResult,
+    ProjectAgentSessionStartResult, ProjectAgentSummary, ThinkingLevel, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
@@ -72,6 +78,10 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/projects/{id}/agents/{project_agent_id}/launch",
             axum::routing::post(launch_project_agent),
+        )
+        .route(
+            "/projects/{id}/agents/{project_agent_id}/sessions",
+            axum::routing::post(create_project_agent_session),
         )
 }
 
@@ -224,6 +234,75 @@ pub async fn launch_project_agent(
             }),
         assignment_ref: None,
         subject_ref: intent.subject_ref.as_ref().map(|subject| SubjectRefDto {
+            kind: subject.kind.clone(),
+            id: subject.id.to_string(),
+        }),
+    }))
+}
+
+pub async fn create_project_agent_session(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((project_id, agent_key)): Path<(String, String)>,
+    Json(req): Json<CreateProjectAgentSessionRequest>,
+) -> Result<Json<ProjectAgentSessionStartResult>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let project = load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let project_agent_id = parse_project_agent_id(&agent_key)?;
+    let executor_config = req
+        .executor_config
+        .map(serde_json::from_value::<AgentConfig>)
+        .transpose()
+        .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
+
+    let service = ProjectAgentSessionStartService::new(
+        ProjectAgentSessionStartRepos::from_repository_set(&state.repos),
+        &state.services.session_core,
+    );
+    let delivery =
+        SessionLaunchLifecycleAgentMessageDeliveryPort::new(state.services.session_launch.clone());
+    let dispatch = service
+        .start_session(
+            ProjectAgentSessionStartCommand {
+                project_id,
+                project_agent_id,
+                prompt_blocks: req.prompt_blocks,
+                executor_config,
+                identity: Some(current_user.clone()),
+            },
+            delivery,
+        )
+        .await
+        .map_err(ApiError::from)?;
+
+    let agent_context = build_project_agent_context(&state.repos, &dispatch.project_agent)
+        .await
+        .map_err(ApiError::Internal)?;
+    let summary = build_project_agent_summary(&project, &agent_context);
+
+    Ok(Json(ProjectAgentSessionStartResult {
+        runtime_session_id: dispatch.runtime_session_id,
+        turn_id: dispatch.turn_id,
+        agent: summary,
+        run_ref: LifecycleRunRefDto {
+            run_id: dispatch.run_id.to_string(),
+        },
+        agent_ref: LifecycleAgentRefDto {
+            run_id: dispatch.run_id.to_string(),
+            agent_id: dispatch.agent_id.to_string(),
+        },
+        frame_ref: AgentFrameRefDto {
+            agent_id: dispatch.agent_id.to_string(),
+            frame_id: dispatch.frame_id.to_string(),
+            revision: Some(dispatch.frame_revision),
+        },
+        subject_ref: dispatch.subject_ref.as_ref().map(|subject| SubjectRefDto {
             kind: subject.kind.clone(),
             id: subject.id.to_string(),
         }),

@@ -13,7 +13,9 @@ import type {
   Project,
   ProjectAgent,
   ProjectAgentLaunchResult,
+  ProjectAgentSessionStartResult,
   ProjectAgentSummary,
+  CreateProjectAgentSessionRequest,
   ProjectConfig,
   ProjectRole,
   ProjectSubjectGrant,
@@ -208,6 +210,17 @@ export async function launchProjectAgent(
     {},
   );
   return mapProjectAgentLaunchResult(response);
+}
+
+export async function createProjectAgentRuntimeSession(
+  projectId: string,
+  agentKey: string,
+  payload: CreateProjectAgentSessionRequest,
+): Promise<ProjectAgentSessionStartResult> {
+  return api.post<ProjectAgentSessionStartResult>(
+    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/sessions`,
+    payload,
+  );
 }
 
 // ─── Grant API ───────────────────────────────────────────

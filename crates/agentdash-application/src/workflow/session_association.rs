@@ -578,6 +578,10 @@ mod tests {
             Ok(())
         }
 
+        async fn delete_by_session(&self, _runtime_session_id: &str) -> Result<(), DomainError> {
+            Ok(())
+        }
+
         async fn find_by_session(
             &self,
             runtime_session_id: &str,

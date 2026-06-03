@@ -3,7 +3,7 @@
   "name": "agent-page-draft-session-start",
   "title": "Agent 页 Draft 会话启动",
   "description": "Agent 页点击 ProjectAgent 后先进入未持久化 Draft 输入态，首条消息提交时再创建 graphless lifecycle/runtime session 并立即投递，避免未发送会话留下空控制面数据。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": "feature",
   "scope": "cross-layer",
   "package": null,

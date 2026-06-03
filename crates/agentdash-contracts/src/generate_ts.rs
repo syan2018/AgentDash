@@ -61,7 +61,8 @@ use agentdash_contracts::permission::{
     PermissionGrantStatusDto,
 };
 use agentdash_contracts::project_agent::{
-    CreateProjectAgentRequest, ProjectAgent, ProjectAgentExecutor, ProjectAgentLaunchResult,
+    CreateProjectAgentRequest, CreateProjectAgentSessionRequest, ProjectAgent,
+    ProjectAgentExecutor, ProjectAgentLaunchResult, ProjectAgentSessionStartResult,
     ProjectAgentSummary, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::session::{
@@ -444,6 +445,8 @@ fn main() {
             export_all::<ProjectAgentExecutor>(dir);
             export_all::<ProjectAgentSummary>(dir);
             export_all::<ProjectAgentLaunchResult>(dir);
+            export_all::<CreateProjectAgentSessionRequest>(dir);
+            export_all::<ProjectAgentSessionStartResult>(dir);
             export_all::<CreateProjectAgentRequest>(dir);
             export_all::<UpdateProjectAgentRequest>(dir);
         },

@@ -9,6 +9,8 @@ export type AgentFrameRefDto = { agent_id: string, frame_id: string, revision?: 
 
 export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, };
 
+export type CreateProjectAgentSessionRequest = { prompt_blocks: Array<JsonValue>, executor_config?: JsonValue, };
+
 export type LifecycleAgentRefDto = { run_id: string, agent_id: string, };
 
 export type LifecycleRunRefDto = { run_id: string, };
@@ -18,6 +20,8 @@ export type ProjectAgent = { id: string, project_id: string, name: string, agent
 export type ProjectAgentExecutor = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, permission_policy?: string, };
 
 export type ProjectAgentLaunchResult = { created: boolean, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: LifecycleAgentRefDto, frame_ref: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, assignment_ref?: AgentAssignmentRefDto, subject_ref?: SubjectRefDto, };
+
+export type ProjectAgentSessionStartResult = { runtime_session_id: string, turn_id: string, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: LifecycleAgentRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
 
 export type ProjectAgentSummary = { key: string, display_name: string, description: string, executor: ProjectAgentExecutor, preset_name?: string, source: string, };
 

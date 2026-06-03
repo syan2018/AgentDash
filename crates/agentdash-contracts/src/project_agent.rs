@@ -68,6 +68,27 @@ pub struct ProjectAgentLaunchResult {
     pub subject_ref: Option<SubjectRefDto>,
 }
 
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct CreateProjectAgentSessionRequest {
+    pub prompt_blocks: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub executor_config: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ProjectAgentSessionStartResult {
+    pub runtime_session_id: String,
+    pub turn_id: String,
+    pub agent: ProjectAgentSummary,
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: LifecycleAgentRefDto,
+    pub frame_ref: AgentFrameRefDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub subject_ref: Option<SubjectRefDto>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ProjectAgent {
     pub id: String,

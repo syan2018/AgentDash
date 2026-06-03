@@ -1113,6 +1113,18 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
         Ok(())
     }
 
+    async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+        sqlx::query(
+            r#"DELETE FROM runtime_session_execution_anchors
+               WHERE runtime_session_id = $1"#,
+        )
+        .bind(runtime_session_id)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(())
+    }
+
     async fn find_by_session(
         &self,
         runtime_session_id: &str,

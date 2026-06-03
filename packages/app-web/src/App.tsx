@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./api/queryClient";
 import { WorkspaceLayout } from "./components/layout/workspace-layout";
@@ -166,6 +166,16 @@ function BootstrapErrorState({
 function SessionRouteWrapper() {
   const { sessionId } = useParams<{ sessionId: string }>();
   return <SessionPage sessionId={sessionId} />;
+}
+
+function DraftSessionRouteWrapper() {
+  const [searchParams] = useSearchParams();
+  return (
+    <SessionPage
+      draftProjectId={searchParams.get("project_id") ?? undefined}
+      draftProjectAgentId={searchParams.get("project_agent_id") ?? undefined}
+    />
+  );
 }
 
 // ─── 认证守卫 ──────────────────────────────────────────
@@ -342,6 +352,7 @@ function AppContent() {
           {/* 统一 Workflow 编辑器路由 */}
           <Route path="/workflow/:id" element={<LifecycleEditorShellPage />} />
 
+          <Route path="/session/new" element={<DraftSessionRouteWrapper />} />
           <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />
           <Route path="/run/:runId" element={<LifecycleRunPage />} />
           <Route path="/subject/:kind/:id" element={<SubjectExecutionPage />} />

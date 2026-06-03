@@ -1,5 +1,5 @@
 /**
- * AgentTabView — ProjectAgent launch + lifecycle 执行入口。
+ * AgentTabView — ProjectAgent Draft 会话入口。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -11,6 +11,14 @@ import { useWorkflowStore } from "../../stores/workflowStore";
 import { ActiveSessionList } from "./active-session-list";
 import { ProjectAgentView } from "../project/project-agent-view";
 
+export function projectAgentDraftSessionPath(projectId: string, agentKey: string): string {
+  const params = new URLSearchParams({
+    project_id: projectId,
+    project_agent_id: agentKey,
+  });
+  return `/session/new?${params.toString()}`;
+}
+
 export function AgentTabView() {
   const navigate = useNavigate();
   const {
@@ -18,12 +26,9 @@ export function AgentTabView() {
     projects,
     agentsByProjectId,
     fetchProjectAgents,
-    launchProjectAgent,
     isLoading: projectLoading,
     error: projectError,
   } = useProjectStore();
-  const fetchAndIngestLifecycleRun = useLifecycleStore((s) => s.fetchAndIngestLifecycleRun);
-  const fetchFrame = useLifecycleStore((s) => s.fetchFrame);
   const lifecycleLoading = useLifecycleStore((s) => s.isLoading);
 
   const [selectedAgent, setSelectedAgent] = useState<{
@@ -54,26 +59,18 @@ export function AgentTabView() {
     selectedAgent?.projectId === currentProjectId ? selectedAgent.agentId : null;
 
   const handleLaunchAgent = useCallback(
-    async (agent: ProjectAgentSummary) => {
+    (agent: ProjectAgentSummary) => {
       if (!currentProjectId) return;
-      const result = await launchProjectAgent(currentProjectId, agent.key);
-      if (!result) return;
-
-      await Promise.allSettled([
-        fetchAndIngestLifecycleRun(result.run_ref.run_id),
-        fetchFrame(result.frame_ref.frame_id),
-      ]);
-      setSelectedAgent({
-        projectId: currentProjectId,
-        agentId: result.agent_ref.agent_id,
+      navigate(projectAgentDraftSessionPath(currentProjectId, agent.key), {
+        state: {
+          trace_agent: {
+            display_name: agent.display_name,
+            executor_hint: agent.executor.executor,
+          },
+        },
       });
-
-      const runtimeSessionId = result.delivery_runtime_ref?.runtime_session_id;
-      if (runtimeSessionId) {
-        navigate(`/session/${runtimeSessionId}`);
-      }
     },
-    [currentProjectId, fetchAndIngestLifecycleRun, fetchFrame, launchProjectAgent, navigate],
+    [currentProjectId, navigate],
   );
 
   const handleOpenSession = useCallback(

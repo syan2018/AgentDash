@@ -21,9 +21,11 @@ import type {
   ProjectVfsMountResponse,
 } from "../generated/vfs-contracts";
 import type {
+  CreateProjectAgentSessionRequest as GeneratedCreateProjectAgentSessionRequest,
   ProjectAgent as GeneratedProjectAgent,
   ProjectAgentExecutor as GeneratedProjectAgentExecutor,
   ProjectAgentLaunchResult as GeneratedProjectAgentLaunchResult,
+  ProjectAgentSessionStartResult as GeneratedProjectAgentSessionStartResult,
   ProjectAgentSummary as GeneratedProjectAgentSummary,
 } from "../generated/project-agent-contracts";
 
@@ -272,6 +274,15 @@ export type ProjectAgentSummary = Omit<
 
 export type ProjectAgentLaunchResult = Omit<
   GeneratedProjectAgentLaunchResult,
+  "agent"
+> & {
+  agent: ProjectAgentSummary;
+};
+
+export type CreateProjectAgentSessionRequest = GeneratedCreateProjectAgentSessionRequest;
+
+export type ProjectAgentSessionStartResult = Omit<
+  GeneratedProjectAgentSessionStartResult,
   "agent"
 > & {
   agent: ProjectAgentSummary;

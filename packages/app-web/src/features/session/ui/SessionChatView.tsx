@@ -158,31 +158,46 @@ export function SessionChatView({
     () => resolveExecutorFromHint(executorHint, discovery.executors),
     [discovery.executors, executorHint],
   );
+  const executorHydrationKey = useMemo(() => {
+    if (sessionId) return sessionId;
+    const source = toExecutorConfigSource(agentDefaults);
+    if (source) {
+      return [
+        "draft",
+        source.executor ?? "",
+        source.providerId ?? "",
+        source.modelId ?? "",
+        source.thinkingLevel ?? "",
+        source.permissionPolicy ?? "",
+      ].join(":");
+    }
+    return resolvedHint ? `draft:${resolvedHint}` : null;
+  }, [agentDefaults, resolvedHint, sessionId]);
 
   // 每个 session 仅 hydrate 一次（用户手改后切走再切回不会被再次覆盖）。
   // 首帧 agentDefaults 可能还没到，effect 会等 agentDefaults 就绪后再命中条件。
   const hydratedSessionRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!sessionId) return;
-    if (hydratedSessionRef.current === sessionId) return;
+    if (!executorHydrationKey) return;
+    if (hydratedSessionRef.current === executorHydrationKey) return;
 
     const source = toExecutorConfigSource(agentDefaults);
     const hasSource = source && Object.keys(source).length > 0;
     if (hasSource) {
-      hydratedSessionRef.current = sessionId;
+      hydratedSessionRef.current = executorHydrationKey;
       hydrateExecutor(source);
       return;
     }
     // 无 agentDefaults 时回退到 hint（保持旧行为）
     if (resolvedHint) {
-      const marker = `${sessionId}:${resolvedHint}`;
+      const marker = `${executorHydrationKey}:${resolvedHint}`;
       if (appliedHintRef.current !== marker) {
         appliedHintRef.current = marker;
-        hydratedSessionRef.current = sessionId;
+        hydratedSessionRef.current = executorHydrationKey;
         setExecutor(resolvedHint);
       }
     }
-  }, [sessionId, agentDefaults, resolvedHint, hydrateExecutor, setExecutor]);
+  }, [executorHydrationKey, agentDefaults, resolvedHint, hydrateExecutor, setExecutor]);
 
   useEffect(() => {
     if (execProviderId.trim() || !execModelId.trim()) return;

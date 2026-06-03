@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import type {
   ContextContainerDefinition,
+  CreateProjectAgentSessionRequest,
   ProjectAgent,
   ProjectAgentLaunchResult,
+  ProjectAgentSessionStartResult,
   ProjectRole,
   ProjectSubjectGrant,
   ProjectAgentSummary,
@@ -66,6 +68,11 @@ interface ProjectState {
   cloneProject: (projectId: string, payload?: { name?: string; description?: string }) => Promise<Project | null>;
   fetchProjectAgents: (projectId: string) => Promise<ProjectAgentSummary[]>;
   launchProjectAgent: (projectId: string, agentKey: string) => Promise<ProjectAgentLaunchResult | null>;
+  createProjectAgentRuntimeSession: (
+    projectId: string,
+    agentKey: string,
+    payload: CreateProjectAgentSessionRequest,
+  ) => Promise<ProjectAgentSessionStartResult | null>;
   selectProject: (id: string | null) => void;
   deleteProject: (id: string) => Promise<boolean>;
 }
@@ -366,6 +373,23 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   launchProjectAgent: async (projectId, agentKey) => {
     try {
       const result = await projectService.launchProjectAgent(projectId, agentKey);
+      set((state) => ({
+        agentsByProjectId: {
+          ...state.agentsByProjectId,
+          [projectId]: upsertAgentSummary(state.agentsByProjectId[projectId] ?? [], result.agent),
+        },
+        error: null,
+      }));
+      return result;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  createProjectAgentRuntimeSession: async (projectId, agentKey, payload) => {
+    try {
+      const result = await projectService.createProjectAgentRuntimeSession(projectId, agentKey, payload);
       set((state) => ({
         agentsByProjectId: {
           ...state.agentsByProjectId,

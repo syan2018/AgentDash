@@ -34,6 +34,7 @@ import type {
   SessionNavigationState,
   SessionRuntimeControlView,
   SubjectRunContext,
+  ProjectAgentSummary,
   Story,
   StoryNavigationState,
 } from "../types";
@@ -42,13 +43,22 @@ import type {
 
 interface SessionPageProps {
   sessionId?: string;
+  draftProjectId?: string;
+  draftProjectAgentId?: string;
 }
 
-export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
+export function SessionPage({
+  sessionId: propSessionId,
+  draftProjectId,
+  draftProjectAgentId,
+}: SessionPageProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const selectProject = useProjectStore((state) => state.selectProject);
   const projects = useProjectStore((state) => state.projects);
+  const agentsByProjectId = useProjectStore((state) => state.agentsByProjectId);
+  const fetchProjectAgents = useProjectStore((state) => state.fetchProjectAgents);
+  const createProjectAgentRuntimeSession = useProjectStore((state) => state.createProjectAgentRuntimeSession);
   const fetchAndIngestLifecycleRun = useLifecycleStore((state) => state.fetchAndIngestLifecycleRun);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
@@ -94,6 +104,20 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   );
   const traceAgentContext = (routeState?.trace_agent ?? null) as RuntimeTraceAgentContext | null;
   const currentSessionId = propSessionId ?? null;
+  const draftProjectAgentKey = !currentSessionId ? draftProjectAgentId?.trim() || null : null;
+  const draftProjectIdValue = !currentSessionId ? draftProjectId?.trim() || null : null;
+  const isProjectAgentDraft = Boolean(draftProjectIdValue && draftProjectAgentKey);
+  const draftProjectAgent: ProjectAgentSummary | null = useMemo(() => {
+    if (!draftProjectIdValue || !draftProjectAgentKey) return null;
+    return (agentsByProjectId[draftProjectIdValue] ?? [])
+      .find((agent) => agent.key === draftProjectAgentKey) ?? null;
+  }, [agentsByProjectId, draftProjectAgentKey, draftProjectIdValue]);
+
+  useEffect(() => {
+    if (!draftProjectIdValue || currentSessionId) return;
+    if (agentsByProjectId[draftProjectIdValue]) return;
+    void fetchProjectAgents(draftProjectIdValue);
+  }, [agentsByProjectId, currentSessionId, draftProjectIdValue, fetchProjectAgents]);
 
   useEffect(() => {
     return () => {
@@ -133,10 +157,14 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   const activeSessionContext = sessionRuntimeState.context;
   const runtimeControl: SessionRuntimeControlView | null = sessionRuntimeState.control;
-  const sessionTitle =
-    sessionTitleOverride?.sessionId === currentSessionId
-      ? sessionTitleOverride.title
-      : runtimeControl?.session_meta.title ?? "";
+  const draftSessionTitle =
+    draftProjectAgent?.display_name
+    ?? traceAgentContext?.display_name
+    ?? "新会话";
+  const runtimeSessionTitle = sessionTitleOverride?.sessionId === currentSessionId
+    ? sessionTitleOverride.title
+    : runtimeControl?.session_meta.title ?? "";
+  const sessionTitle = isProjectAgentDraft ? draftSessionTitle : runtimeSessionTitle;
   const activeHookRuntime = sessionRuntimeState.hook_runtime?.runtime_adapter_session_id === currentSessionId
     ? sessionRuntimeState.hook_runtime
     : null;
@@ -192,12 +220,15 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const ownerProjectId = sessionLifecycleRun?.project_id
     ?? runContext?.project_id
     ?? ownerStory?.project_id
+    ?? draftProjectIdValue
     ?? null;
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null
     : null;
   const ownerProjectName = runContext?.scope === "project"
     ? (ownerProject?.name?.trim() || runContext.project_id)
+    : isProjectAgentDraft
+      ? (ownerProject?.name?.trim() || "")
     : "";
   const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
 
@@ -207,6 +238,9 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [fetchWorkspaces, ownerProjectId]);
 
   const effectiveReturnTarget = useMemo(() => {
+    if (isProjectAgentDraft && draftProjectIdValue) {
+      return { owner_type: "project" as const, project_id: draftProjectIdValue };
+    }
     if (!runContext) return null;
     if (runContext.scope === "project") {
       return { owner_type: "project" as const, project_id: runContext.project_id };
@@ -218,11 +252,13 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       return { owner_type: "task" as const, story_id: runContext.story_id, task_id: runContext.task_id };
     }
     return null;
-  }, [runContext]);
+  }, [draftProjectIdValue, isProjectAgentDraft, runContext]);
 
   // ─── 页面级回调 ───────────────────────────────────────
 
-  const executorHint = traceAgentContext?.executor_hint ?? null;
+  const executorHint = draftProjectAgent?.executor.executor
+    ?? traceAgentContext?.executor_hint
+    ?? null;
   const chatWorkspaceId =
     sessionWorkspaceId
     ?? ownerStory?.default_workspace_id
@@ -253,10 +289,29 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [currentSessionId, scheduleHookRuntimeRefresh]);
 
   const sessionSendReady = useMemo(() => {
+    if (isProjectAgentDraft) {
+      return Boolean(draftProjectIdValue && draftProjectAgentKey && draftProjectAgent);
+    }
     return Boolean(currentSessionId && runtimeControl?.can_send);
-  }, [currentSessionId, runtimeControl?.can_send]);
+  }, [
+    currentSessionId,
+    draftProjectAgent,
+    draftProjectAgentKey,
+    draftProjectIdValue,
+    isProjectAgentDraft,
+    runtimeControl?.can_send,
+  ]);
 
   const sendUnavailableReason = useMemo(() => {
+    if (isProjectAgentDraft) {
+      if (!draftProjectIdValue || !draftProjectAgentKey) {
+        return "Draft 会话缺少 ProjectAgent 参数。";
+      }
+      if (!draftProjectAgent) {
+        return "正在加载 ProjectAgent 配置。";
+      }
+      return undefined;
+    }
     if (!currentSessionId) return "当前没有可发送的 Session。";
     if (sessionRuntimeState.status === "loading" || sessionRuntimeState.status === "refreshing") {
       return "正在解析当前 Session 的 Agent dispatcher…";
@@ -266,6 +321,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     return undefined;
   }, [
     currentSessionId,
+    draftProjectAgent,
+    draftProjectAgentKey,
+    draftProjectIdValue,
+    isProjectAgentDraft,
     runtimeControl?.send_unavailable_reason,
     sessionRuntimeState.error,
     sessionRuntimeState.status,
@@ -277,15 +336,38 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     prompt: string,
     executorConfig?: ExecutorConfig,
   ) => {
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      throw new Error("请输入要发送的消息。");
+    }
+    if (isProjectAgentDraft) {
+      if (!draftProjectIdValue || !draftProjectAgentKey || !draftProjectAgent) {
+        throw new Error(sendUnavailableReason ?? "当前 Draft 尚未就绪。");
+      }
+      const response = await createProjectAgentRuntimeSession(draftProjectIdValue, draftProjectAgentKey, {
+        prompt_blocks: [{ type: "text", text: trimmed }],
+        executor_config: executorConfig as unknown as JsonValue | undefined,
+      });
+      if (!response) {
+        throw new Error("创建 ProjectAgent 会话失败。");
+      }
+      void fetchAndIngestLifecycleRun(response.run_ref.run_id);
+      navigate(`/session/${response.runtime_session_id}`, {
+        replace: true,
+        state: {
+          trace_agent: {
+            display_name: response.agent.display_name,
+            executor_hint: response.agent.executor.executor,
+          },
+        },
+      });
+      return;
+    }
     if (!sessionId || sessionId !== currentSessionId) {
       throw new Error("当前 Session 尚未就绪，无法发送消息。");
     }
     if (!sessionSendReady) {
       throw new Error(sendUnavailableReason ?? "当前 Session 未连接到 Agent dispatcher。");
-    }
-    const trimmed = prompt.trim();
-    if (!trimmed) {
-      throw new Error("请输入要发送的消息。");
     }
     const response = await sendLifecycleAgentMessageByRuntimeSession(sessionId, {
       prompt_blocks: [{ type: "text", text: trimmed }],
@@ -295,8 +377,14 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     void refreshSessionRuntimeContext().catch(() => {});
     scheduleHookRuntimeRefresh("agent_message_sent", true);
   }, [
+    createProjectAgentRuntimeSession,
     currentSessionId,
+    draftProjectAgent,
+    draftProjectAgentKey,
+    draftProjectIdValue,
     fetchAndIngestLifecycleRun,
+    isProjectAgentDraft,
+    navigate,
     refreshSessionRuntimeContext,
     scheduleHookRuntimeRefresh,
     sendUnavailableReason,
@@ -476,6 +564,19 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       )}
     </div>
   ) : null;
+  const draftBindingBar = isProjectAgentDraft ? (
+    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-[12px] border border-border bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
+      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 uppercase">
+        Draft
+      </span>
+      <span className="min-w-0 truncate">
+        {draftProjectAgent?.display_name ?? traceAgentContext?.display_name ?? "ProjectAgent"}
+      </span>
+      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5">
+        待发送
+      </span>
+    </div>
+  ) : null;
 
   // ─── 路由 state 驱动自动展开右栏 ───────────────────────
   useEffect(() => {
@@ -493,7 +594,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       <header className="flex shrink-0 items-center justify-between border-b border-border bg-background px-5 py-3.5">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="inline-flex rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            SESSION
+            {isProjectAgentDraft ? "DRAFT" : "SESSION"}
           </span>
           {hasSession && isEditingTitle ? (
             <input
@@ -568,10 +669,12 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
               onTurnEnd={handleTurnEnd}
               onSystemEvent={handleSystemEvent}
               executorHint={executorHint}
-              agentDefaults={taskExecutorSummary}
+              agentDefaults={draftProjectAgent?.executor ?? taskExecutorSummary}
               customSend={sessionSendReady ? handleAgentSessionSend : undefined}
-              inputPrefix={ownerBindingBar}
+              inputPrefix={ownerBindingBar ?? draftBindingBar}
               sendUnavailableReason={sendUnavailableReason}
+              inputPlaceholder={isProjectAgentDraft ? "输入首条消息，Ctrl+Enter 发送…" : undefined}
+              idleSendLabel={isProjectAgentDraft ? "开始" : "发送"}
             />
           </div>
         </Panel>

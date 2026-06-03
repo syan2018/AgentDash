@@ -18,6 +18,7 @@ pub mod lifecycle;
 pub mod lifecycle_gate_service;
 pub mod lifecycle_run_view_builder;
 pub mod orchestrator;
+mod project_agent_session_start;
 pub mod projection;
 pub(crate) mod run;
 pub mod runtime_launch;
@@ -78,6 +79,10 @@ pub use lifecycle_gate_service::LifecycleGateService;
 pub use orchestrator::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
+};
+pub use project_agent_session_start::{
+    ProjectAgentSessionStartCommand, ProjectAgentSessionStartDispatch,
+    ProjectAgentSessionStartRepos, ProjectAgentSessionStartService,
 };
 #[cfg(test)]
 pub(crate) use projection::activity_projection;

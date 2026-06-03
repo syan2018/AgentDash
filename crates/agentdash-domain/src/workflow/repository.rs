@@ -195,6 +195,8 @@ pub trait RuntimeSessionExecutionAnchorRepository: Send + Sync {
         assignment_id: Uuid,
         attempt: i32,
     ) -> Result<(), DomainError>;
+    /// 按 runtime_session_id 删除锚点。
+    async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError>;
     /// 按 runtime_session_id 查找锚点。
     async fn find_by_session(
         &self,

@@ -834,42 +834,6 @@ mod tests {
                 .collect())
         }
 
-        async fn attach_runtime_session_ref(
-            &self,
-            frame_id: Uuid,
-            runtime_session_id: &str,
-        ) -> Result<(), DomainError> {
-            let mut frames = self.frames.write().await;
-            let frame = frames
-                .iter_mut()
-                .find(|frame| frame.id == frame_id)
-                .ok_or_else(|| DomainError::NotFound {
-                    entity: "agent_frame",
-                    id: frame_id.to_string(),
-                })?;
-            frame.attach_runtime_session_ref(runtime_session_id);
-            Ok(())
-        }
-
-        async fn find_frame_by_runtime_ref_projection(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self
-                .frames
-                .read()
-                .await
-                .iter()
-                .filter(|frame| {
-                    frame
-                        .runtime_session_ids()
-                        .iter()
-                        .any(|session_id| session_id == runtime_session_id)
-                })
-                .max_by_key(|frame| frame.revision)
-                .cloned())
-        }
-
         async fn append_visible_canvas_mount(
             &self,
             frame_id: Uuid,
@@ -1002,6 +966,7 @@ mod tests {
     struct EmptyHookProvider {
         active_run_id: Uuid,
         frame_repo: Arc<MemoryAgentFrameRepository>,
+        runtime_frame_id: Uuid,
     }
 
     impl EmptyHookProvider {
@@ -1024,12 +989,12 @@ mod tests {
     impl ExecutionHookProvider for EmptyHookProvider {
         async fn resolve_runtime_hook_target(
             &self,
-            runtime_session_id: &str,
+            _runtime_session_id: &str,
         ) -> Result<Option<agentdash_spi::hooks::HookControlTarget>, agentdash_spi::hooks::HookError>
         {
             let frame = self
                 .frame_repo
-                .find_frame_by_runtime_ref_projection(runtime_session_id)
+                .get(self.runtime_frame_id)
                 .await
                 .map_err(|e| agentdash_spi::hooks::HookError::Runtime(e.to_string()))?;
             Ok(frame.map(|f| agentdash_spi::hooks::HookControlTarget {
@@ -1275,12 +1240,16 @@ mod tests {
         let base = tempfile::tempdir().expect("tempdir");
         let active_run_id = Uuid::new_v4();
         let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        let frame = AgentFrame::new_initial(Uuid::new_v4());
+        let frame_id = frame.id;
+        frame_repo.create(&frame).await.expect("frame 应能写入");
         let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
             Arc::new(PendingConnector),
             Some(Arc::new(EmptyHookProvider {
                 active_run_id,
                 frame_repo: frame_repo.clone(),
+                runtime_frame_id: frame_id,
             })),
             Arc::new(MemorySessionPersistence::default()),
         )
@@ -1291,11 +1260,6 @@ mod tests {
             .create_session("present-canvas")
             .await
             .expect("session 应能创建");
-        let frame = AgentFrame::new_initial(
-            Uuid::new_v4(),
-            AgentFrame::runtime_session_refs_json([session.id.as_str()]),
-        );
-        frame_repo.create(&frame).await.expect("frame 应能写入");
         hub.ensure_session(&session.id).await;
         let turn_id = hub
             .start_prompt(
@@ -1342,7 +1306,7 @@ mod tests {
             .expect("present_canvas 应成功");
 
         let updated_frame = frame_repo
-            .find_frame_by_runtime_ref_projection(&session.id)
+            .get(frame_id)
             .await
             .expect("frame 查询应成功")
             .expect("frame 应存在");

@@ -433,13 +433,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             })
             .await
             .map_err(|error| format!("创建 activity runtime session 失败: {error}"))?;
-        let runtime_session_id = session_id.to_string();
-        self.repos
-            .agent_frame_repo
-            .attach_runtime_session_ref(frame.id, &runtime_session_id)
-            .await
-            .map_err(|error| format!("写回 AgentFrame runtime session ref 失败: {error}"))?;
-        Ok(runtime_session_id)
+        Ok(session_id.to_string())
     }
 
     async fn resolve_continue_root_runtime_target(
@@ -1182,17 +1176,12 @@ mod tests {
             let (agent_id, mut frame) = match assignment_target {
                 AgentActivityAssignmentTarget::CreateNewAgent => {
                     let agent_id = uuid::Uuid::new_v4();
-                    (agent_id, AgentFrame::new_initial(agent_id, None))
+                    (agent_id, AgentFrame::new_initial(agent_id))
                 }
                 AgentActivityAssignmentTarget::ReuseFrame(target) => {
                     let agent_id =
                         uuid::Uuid::parse_str("00000000-0000-0000-0000-0000000000a1").unwrap();
-                    let mut frame = AgentFrame::new_initial(
-                        agent_id,
-                        AgentFrame::runtime_session_refs_json([target
-                            .delivery_runtime_session_id
-                            .as_str()]),
-                    );
+                    let mut frame = AgentFrame::new_initial(agent_id);
                     frame.id = target.frame_id;
                     (agent_id, frame)
                 }

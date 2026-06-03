@@ -80,7 +80,6 @@ pub struct AgentFrameBuilder {
     vfs_surface: Option<serde_json::Value>,
     mcp_surface: Option<serde_json::Value>,
     execution_profile: Option<serde_json::Value>,
-    runtime_session_refs: Vec<String>,
     graph_instance_id: Option<Uuid>,
     activity_key: Option<String>,
     created_by_kind: String,
@@ -97,7 +96,6 @@ impl AgentFrameBuilder {
             vfs_surface: None,
             mcp_surface: None,
             execution_profile: None,
-            runtime_session_refs: Vec::new(),
             graph_instance_id: None,
             activity_key: None,
             created_by_kind: "frame_builder".to_string(),
@@ -205,8 +203,7 @@ impl AgentFrameBuilder {
         self
     }
 
-    pub fn with_runtime_session(mut self, session_id: impl Into<String>) -> Self {
-        self.runtime_session_refs.push(session_id.into());
+    pub fn with_runtime_session(self, _session_id: impl Into<String>) -> Self {
         self
     }
 
@@ -235,20 +232,6 @@ impl AgentFrameBuilder {
             Some(current) => current.revision + 1,
             None => 1,
         };
-
-        let mut runtime_session_refs = current
-            .as_ref()
-            .map(AgentFrame::runtime_session_ids)
-            .unwrap_or_default();
-        for session_id in &self.runtime_session_refs {
-            if !runtime_session_refs
-                .iter()
-                .any(|existing| existing == session_id)
-            {
-                runtime_session_refs.push(session_id.clone());
-            }
-        }
-        let session_refs_json = AgentFrame::runtime_session_refs_json(&runtime_session_refs);
 
         let procedure_id = self
             .procedure_ref
@@ -290,7 +273,6 @@ impl AgentFrameBuilder {
                 .as_ref()
                 .and_then(|frame| frame.mcp_surface_json.clone())
         });
-        frame.runtime_session_refs_json = session_refs_json;
         frame.execution_profile_json = self.execution_profile.clone().or_else(|| {
             current
                 .as_ref()
@@ -310,9 +292,7 @@ impl AgentFrameBuilder {
 mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_domain::workflow::{
-        MountDirective, RUNTIME_SESSION_REF_KIND, ToolCapabilityDirective,
-    };
+    use agentdash_domain::workflow::{MountDirective, ToolCapabilityDirective};
     use agentdash_spi::{McpTransportConfig, ToolCluster};
     use std::{collections::BTreeSet, sync::Mutex};
 
@@ -365,28 +345,6 @@ mod tests {
                 .cloned()
                 .collect())
         }
-        async fn attach_runtime_session_ref(
-            &self,
-            frame_id: Uuid,
-            runtime_session_id: &str,
-        ) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            let frame = items
-                .iter_mut()
-                .find(|frame| frame.id == frame_id)
-                .ok_or_else(|| DomainError::NotFound {
-                    entity: "agent_frame",
-                    id: frame_id.to_string(),
-                })?;
-            frame.attach_runtime_session_ref(runtime_session_id);
-            Ok(())
-        }
-        async fn find_frame_by_runtime_ref_projection(
-            &self,
-            _runtime_session_id: &str,
-        ) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(None)
-        }
         async fn append_visible_canvas_mount(
             &self,
             _frame_id: Uuid,
@@ -437,7 +395,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_with_runtime_session_refs() {
+    async fn build_with_runtime_session_does_not_persist_frame_refs() {
         let repo = InMemoryFrameRepo::default();
         let agent_id = Uuid::new_v4();
         let session_id = Uuid::new_v4();
@@ -448,18 +406,12 @@ mod tests {
             .await
             .expect("build");
 
-        let refs = frame.runtime_session_refs_json.unwrap();
-        let arr = refs.as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["kind"].as_str().unwrap(), RUNTIME_SESSION_REF_KIND);
-        assert_eq!(
-            arr[0]["session_id"].as_str().unwrap(),
-            session_id.to_string()
-        );
+        assert_eq!(frame.agent_id, agent_id);
+        assert_eq!(frame.revision, 1);
     }
 
     #[tokio::test]
-    async fn build_revision_carries_forward_runtime_refs_and_activity_scope() {
+    async fn build_revision_carries_forward_activity_scope() {
         let repo = InMemoryFrameRepo::default();
         let agent_id = Uuid::new_v4();
         let graph_instance_id = Uuid::new_v4();
@@ -481,7 +433,6 @@ mod tests {
             .expect("frame2");
 
         assert_eq!(frame2.revision, frame1.revision + 1);
-        assert_eq!(frame2.runtime_session_ids(), vec!["session-1".to_string()]);
         assert_eq!(frame2.graph_instance_id, Some(graph_instance_id));
         assert_eq!(frame2.activity_key.as_deref(), Some("implement"));
         assert_eq!(
@@ -584,7 +535,6 @@ mod tests {
         assert_eq!(frame.procedure_id, Some(proc_id));
         assert_eq!(frame.graph_instance_id, Some(graph_instance_id));
         assert_eq!(frame.activity_key.as_deref(), Some("implement"));
-        assert_eq!(frame.runtime_session_ids(), vec!["runtime-1".to_string()]);
         assert_eq!(
             frame
                 .execution_profile_json

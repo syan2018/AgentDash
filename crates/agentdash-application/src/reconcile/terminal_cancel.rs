@@ -17,7 +17,7 @@ use agentdash_domain::task::TaskStatus;
 use agentdash_domain::workflow::{
     ActivityExecutionClaimRepository, AgentAssignmentRepository, AgentFrameRepository,
     LifecycleAgentRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    RuntimeSessionExecutionAnchorRepository, RuntimeSessionSelectionPolicy, SubjectRef,
+    RuntimeDeliverySelectionPolicy, RuntimeSessionExecutionAnchorRepository, SubjectRef,
     WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
 
@@ -189,7 +189,7 @@ impl TerminalCancelCoordinator {
         match service
             .prepare_runtime_cancel_delivery(
                 &subject,
-                RuntimeSessionSelectionPolicy::LatestAttached,
+                RuntimeDeliverySelectionPolicy::LatestAttached,
                 Some("terminal_status_cancel".to_string()),
             )
             .await

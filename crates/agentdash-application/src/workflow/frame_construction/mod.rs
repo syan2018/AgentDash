@@ -14,9 +14,7 @@ mod composer_task;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_domain::workflow::{
-    AgentFrame, AgentProcedureRef, LifecycleAgent, RuntimeSessionSelectionPolicy,
-};
+use agentdash_domain::workflow::{AgentFrame, AgentProcedureRef, LifecycleAgent};
 use agentdash_spi::{AgentConfig, AgentConnector, ConnectorError};
 
 use crate::context::SharedContextAuditBus;
@@ -288,16 +286,8 @@ pub(crate) fn frame_builder_from_existing(
     runtime_session_id: &str,
     created_by_id: &str,
 ) -> Result<AgentFrameBuilder, ConnectorError> {
-    let runtime_session_id = frame
-        .select_runtime_session_id(runtime_session_policy(runtime_session_id))
-        .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!(
-                "AgentFrame {} 缺少 runtime_session ref",
-                frame.id
-            ))
-        })?;
     let mut builder = AgentFrameBuilder::new(frame.agent_id)
-        .with_runtime_session(runtime_session_id)
+        .with_runtime_session(runtime_session_id.to_string())
         .with_created_by("session_launch", Some(created_by_id.to_string()));
     if let Some(procedure_id) = frame.procedure_id {
         builder = builder.with_procedure(AgentProcedureRef::ById(procedure_id));
@@ -313,12 +303,6 @@ pub(crate) fn frame_builder_from_existing(
     Ok(builder)
 }
 
-pub(crate) fn runtime_session_policy(runtime_session_id: &str) -> RuntimeSessionSelectionPolicy {
-    RuntimeSessionSelectionPolicy::Specific {
-        runtime_session_id: runtime_session_id.to_string(),
-    }
-}
-
 /// 从已持久化的 AgentFrame 直接构造 FrameLaunchEnvelope，合并 extras 和 command 覆盖。
 ///
 /// 替代此前 `RuntimeLaunchRequest::from_frame()` + `apply_command_and_extras()` +
@@ -330,8 +314,7 @@ pub(crate) fn build_envelope_from_frame(
     hook_binding: Option<TerminalHookEffectBinding>,
     runtime_session_id: &str,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
-    let surface =
-        FrameRuntimeSurface::from_frame(frame, runtime_session_policy(runtime_session_id));
+    let surface = FrameRuntimeSurface::from_frame(frame, Some(runtime_session_id.to_string()));
 
     let mut vfs = frame.typed_vfs().unwrap_or_default();
     let mut executor_config = frame.typed_execution_profile();

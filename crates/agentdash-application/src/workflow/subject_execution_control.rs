@@ -4,9 +4,9 @@ use agentdash_domain::workflow::{
     ActivityBindingRefs, ActivityExecutionClaimRepository, ActivityExecutionClaimStatus,
     AgentAssignment, AgentAssignmentRepository, AgentFrame, AgentFrameRepository, LifecycleAgent,
     LifecycleAgentRepository, LifecycleRunRepository, LifecycleSubjectAssociation,
-    LifecycleSubjectAssociationRepository, RuntimeControlRefs,
-    RuntimeSessionExecutionAnchorRepository, RuntimeSessionSelectionPolicy, SubjectRef,
-    WorkflowGraphInstanceRepository, WorkflowGraphRepository,
+    LifecycleSubjectAssociationRepository, RuntimeControlRefs, RuntimeDeliverySelectionPolicy,
+    RuntimeSessionExecutionAnchorRepository, SubjectRef, WorkflowGraphInstanceRepository,
+    WorkflowGraphRepository,
 };
 
 use super::{ActivityEvent, ActivityLifecycleRunService, WorkflowApplicationError};
@@ -14,7 +14,7 @@ use super::{ActivityEvent, ActivityLifecycleRunService, WorkflowApplicationError
 #[derive(Debug, Clone)]
 pub struct CancelSubjectExecutionCommand {
     pub subject_ref: SubjectRef,
-    pub runtime_selection_policy: RuntimeSessionSelectionPolicy,
+    pub runtime_selection_policy: RuntimeDeliverySelectionPolicy,
     pub reason: Option<String>,
 }
 
@@ -118,7 +118,7 @@ impl<'a> SubjectExecutionControlService<'a> {
     pub async fn prepare_runtime_cancel_delivery(
         &self,
         subject_ref: &SubjectRef,
-        policy: RuntimeSessionSelectionPolicy,
+        policy: RuntimeDeliverySelectionPolicy,
         reason: Option<String>,
     ) -> Result<Option<RuntimeCancelDeliveryCommand>, WorkflowApplicationError> {
         let target = self.resolve_cancel_target(subject_ref).await?;
@@ -325,24 +325,24 @@ impl<'a> SubjectExecutionControlService<'a> {
     async fn runtime_delivery_command(
         &self,
         target: &SubjectExecutionCancelTarget,
-        policy: RuntimeSessionSelectionPolicy,
+        policy: RuntimeDeliverySelectionPolicy,
         reason: Option<String>,
     ) -> Result<Option<RuntimeCancelDeliveryCommand>, WorkflowApplicationError> {
         let runtime_session_id = match policy {
-            RuntimeSessionSelectionPolicy::Specific { runtime_session_id } => self
+            RuntimeDeliverySelectionPolicy::Specific { runtime_session_id } => self
                 .execution_anchor_repo
                 .find_by_session(&runtime_session_id)
                 .await?
                 .filter(|anchor| anchor.agent_id == target.agent.id)
                 .map(|anchor| anchor.runtime_session_id),
-            RuntimeSessionSelectionPolicy::LaunchPrimary => self
+            RuntimeDeliverySelectionPolicy::LaunchPrimary => self
                 .execution_anchor_repo
                 .list_by_agent(target.agent.id)
                 .await?
                 .into_iter()
                 .min_by_key(|anchor| anchor.created_at)
                 .map(|anchor| anchor.runtime_session_id),
-            RuntimeSessionSelectionPolicy::LatestAttached => self
+            RuntimeDeliverySelectionPolicy::LatestAttached => self
                 .execution_anchor_repo
                 .latest_for_agent(target.agent.id)
                 .await?
@@ -773,35 +773,6 @@ mod tests {
                 .collect())
         }
 
-        async fn attach_runtime_session_ref(
-            &self,
-            frame_id: Uuid,
-            runtime_session_id: &str,
-        ) -> Result<(), DomainError> {
-            let mut frames = self.frames.lock().unwrap();
-            if let Some(frame) = frames.iter_mut().find(|frame| frame.id == frame_id) {
-                frame.attach_runtime_session_ref(runtime_session_id);
-            }
-            Ok(())
-        }
-
-        async fn find_frame_by_runtime_ref_projection(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self
-                .frames
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|frame| {
-                    frame
-                        .runtime_session_ids()
-                        .iter()
-                        .any(|session_id| session_id == runtime_session_id)
-                })
-                .cloned())
-        }
         async fn append_visible_canvas_mount(
             &self,
             _frame_id: Uuid,
@@ -1093,8 +1064,6 @@ mod tests {
         let mut frame = AgentFrame::new_revision(agent.id, 1, "test");
         frame.graph_instance_id = Some(graph_instance.id);
         frame.activity_key = Some("main".to_string());
-        frame.runtime_session_refs_json =
-            AgentFrame::runtime_session_refs_json(["runtime-1", "runtime-2"]);
         agent.set_current_frame(frame.id);
         agent_repo.create(&agent).await.expect("agent");
         frame_repo.create(&frame).await.expect("frame");
@@ -1153,7 +1122,7 @@ mod tests {
         let result = service
             .cancel_subject_execution(CancelSubjectExecutionCommand {
                 subject_ref: subject.clone(),
-                runtime_selection_policy: RuntimeSessionSelectionPolicy::LatestAttached,
+                runtime_selection_policy: RuntimeDeliverySelectionPolicy::LatestAttached,
                 reason: Some("user cancel".to_string()),
             })
             .await
@@ -1216,9 +1185,7 @@ mod tests {
         let run = LifecycleRun::new_graphless(project_id);
         run_repo.create(&run).await.expect("run");
         let mut agent = LifecycleAgent::new_root(run.id, project_id, "task_agent");
-        let mut frame = AgentFrame::new_revision(agent.id, 1, "test");
-        frame.runtime_session_refs_json =
-            AgentFrame::runtime_session_refs_json(["runtime-graphless-1"]);
+        let frame = AgentFrame::new_revision(agent.id, 1, "test");
         agent.set_current_frame(frame.id);
         agent_repo.create(&agent).await.expect("agent");
         frame_repo.create(&frame).await.expect("frame");
@@ -1255,7 +1222,7 @@ mod tests {
         let result = service
             .cancel_subject_execution(CancelSubjectExecutionCommand {
                 subject_ref: subject.clone(),
-                runtime_selection_policy: RuntimeSessionSelectionPolicy::LatestAttached,
+                runtime_selection_policy: RuntimeDeliverySelectionPolicy::LatestAttached,
                 reason: Some("user cancel".to_string()),
             })
             .await

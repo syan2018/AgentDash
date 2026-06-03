@@ -126,17 +126,6 @@ pub trait AgentFrameRepository: Send + Sync {
     async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
     async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError>;
-    async fn attach_runtime_session_ref(
-        &self,
-        frame_id: Uuid,
-        runtime_session_id: &str,
-    ) -> Result<(), DomainError>;
-    /// 仅供 runtime surface 展示投影读取 frame refs；业务控制面反查必须使用
-    /// `RuntimeSessionExecutionAnchorRepository::find_by_session`。
-    async fn find_frame_by_runtime_ref_projection(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<Option<AgentFrame>, DomainError>;
     async fn append_visible_canvas_mount(
         &self,
         frame_id: Uuid,

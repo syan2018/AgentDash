@@ -26,7 +26,7 @@ LaunchCommand
 - `CommittedTurn` 表达 user/start/context/capability/meta/runtime-command/title 等 accepted 后事实已提交。
 - `AttachedTurn` 表达 stream 已接入 `SessionTurnProcessor` 与 stream adapter supervision。
 - `ExecutionContext` 是 connector-facing projection，不是 application 层事实源。
-- 目标控制面中，`AgentFrame` 是 capability / context / VFS / MCP / runtime refs 的事实源；`SessionConstructionPlan` 与 `LaunchPlan` 将降为 frame builder / runtime adapter 的内部结构。
+- 目标控制面中，`AgentFrame` 是 capability / context / VFS / MCP 的事实源；runtime trace/delivery refs 由 `RuntimeSessionExecutionAnchor` 索引和投影。`SessionConstructionPlan` 与 `LaunchPlan` 将降为 frame builder / runtime adapter 的内部结构。
 - `RuntimeSession` 只能作为 delivery / trace substrate。业务 command path 必须从 `ExecutionIntent`、`SubjectRef`、run/agent/frame refs 或 graph instance refs 开始。
 - 通过 runtime session 反查业务上下文时，走 `RuntimeSessionExecutionAnchor -> AgentFrame -> LifecycleAgent -> LifecycleRun -> LifecycleSubjectAssociation`；没有 anchor 的 runtime trace 只能作为不可继续发送的消息壳展示。
 - runtime map、active turn、connector live session 是三个不同问题，不能用一个状态互相推断。

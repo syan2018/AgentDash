@@ -13,7 +13,7 @@ mod value_objects;
 mod workflow_graph_instance;
 
 pub use agent_assignment::AgentAssignment;
-pub use agent_frame::{AgentFrame, RUNTIME_SESSION_REF_KIND, RuntimeSessionSelectionPolicy};
+pub use agent_frame::AgentFrame;
 pub use agent_lineage::AgentLineage;
 pub use dispatch::{
     ActivityBindingRefs, AgentLaunchDispatchResult, AgentLaunchIntent, AgentPolicy,
@@ -38,7 +38,7 @@ pub use repository::{
     WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
 };
-pub use runtime_session_anchor::RuntimeSessionExecutionAnchor;
+pub use runtime_session_anchor::{RuntimeDeliverySelectionPolicy, RuntimeSessionExecutionAnchor};
 pub use validation::{validate_agent_procedure, validate_workflow_graph};
 pub use value_objects::{
     ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,

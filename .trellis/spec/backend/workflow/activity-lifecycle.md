@@ -99,7 +99,7 @@ WorkflowGraphInstance
   -> AgentAssignment(run_id, graph_instance_id, activity_key, attempt, agent_id, frame_id)
   -> LifecycleAgent
   -> AgentFrame
-  -> RuntimeSession refs
+  -> RuntimeSessionExecutionAnchor refs
 ```
 
 `complete_lifecycle_node`、terminal callback、VFS lifecycle provider、hook advance/resolution 都应使用 assignment / graph instance refs 推进 Activity。Session-indexed lookup 只能作为 trace adapter，并必须立即反查到 frame/agent/assignment。
@@ -113,7 +113,7 @@ runtime_session_id
   -> ActivityEvent application
 ```
 
-`AgentFrame.runtime_session_refs` 可以辅助展示 frame 关联的 trace，但不作为 activity attempt 反查的权威索引。
+`AgentFrameRuntimeView.runtime_session_refs` 从 `RuntimeSessionExecutionAnchor` read model 投影，原因是 frame surface 与 runtime trace 索引有不同变化节奏。
 
 ## Function Executor
 

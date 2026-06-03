@@ -157,7 +157,7 @@ Contract:
 
 - `POST /sessions` 创建 project-scoped 业务会话，必须先校验调用者对 `project_id` 有 `Edit` 权限。
 - 新入口提交 graphless `ExecutionIntent(subject_ref=Project, agent_policy=create/reuse, runtime_policy=create_runtime_session)`，由 dispatch 创建或复用 `LifecycleRun`、`LifecycleAgent`、`AgentFrame`、`RuntimeSession` 和 `RuntimeSessionExecutionAnchor`。
-- Project 归属写入 `LifecycleSubjectAssociation`，runtime refs 写入 `AgentFrame`，runtime trace 反查优先使用 `RuntimeSessionExecutionAnchor`。
+- Project 归属写入 `LifecycleSubjectAssociation`，runtime trace/delivery refs 写入 `RuntimeSessionExecutionAnchor`，原因是 Session shell 只承载消息流，业务控制面反查需要稳定索引。
 - 显式 Activity workflow launch 才创建 `WorkflowGraphInstance` 与 `AgentAssignment`。
 
 ## Ready Gate

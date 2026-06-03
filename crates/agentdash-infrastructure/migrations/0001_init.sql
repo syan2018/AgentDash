@@ -48,7 +48,6 @@ CREATE TABLE agent_frames (
     context_slice_json text,
     vfs_surface_json text,
     mcp_surface_json text,
-    runtime_session_refs_json text,
     created_by_kind text NOT NULL,
     created_by_id text,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,

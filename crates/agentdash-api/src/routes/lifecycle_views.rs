@@ -44,10 +44,6 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_session_trace),
         )
         .route(
-            "/sessions/{id}/frame-runtime",
-            axum::routing::get(get_session_frame_runtime),
-        )
-        .route(
             "/projects/{id}/active-agents",
             axum::routing::get(get_project_active_agents),
         )
@@ -109,28 +105,6 @@ pub async fn get_agent_frame_runtime(
         &current_user,
         run.project_id,
         ProjectPermission::View,
-    )
-    .await?;
-
-    let runtime_refs = runtime_refs_for_agent(state.as_ref(), frame.agent_id).await?;
-    Ok(Json(agent_frame_runtime_to_view(&frame, runtime_refs)))
-}
-
-/// `GET /sessions/{id}/frame-runtime` — 通过 runtime session id 直接查 frame runtime。
-/// 替代前端从 lifecycleStore 遍历 frames 的 findFrameIdForSession。
-pub async fn get_session_frame_runtime(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(runtime_session_id): Path<String>,
-) -> Result<Json<AgentFrameRuntimeView>, ApiError> {
-    let session_project_id =
-        authorize_runtime_session_shell(state.as_ref(), &current_user, &runtime_session_id).await?;
-    let anchor = load_runtime_session_anchor(state.as_ref(), &runtime_session_id).await?;
-    let frame = resolve_frame_from_anchor(
-        state.as_ref(),
-        &anchor,
-        session_project_id,
-        &runtime_session_id,
     )
     .await?;
 
@@ -289,22 +263,6 @@ async fn authorize_runtime_session_shell(
     let project_id = parse_uuid(project_id_raw, "session_project_id")?;
     load_project_with_permission(state, current_user, project_id, ProjectPermission::View).await?;
     Ok(project_id)
-}
-
-async fn load_runtime_session_anchor(
-    state: &AppState,
-    runtime_session_id: &str,
-) -> Result<RuntimeSessionExecutionAnchor, ApiError> {
-    state
-        .repos
-        .execution_anchor_repo
-        .find_by_session(runtime_session_id)
-        .await?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "runtime_session 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
-            ))
-        })
 }
 
 async fn resolve_frame_from_anchor(

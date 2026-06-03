@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use agentdash_domain::workflow::{AgentFrame, AgentProcedureRef, RuntimeSessionSelectionPolicy};
+use agentdash_domain::workflow::{AgentFrame, AgentProcedureRef};
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
     AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, SessionContextBundle,
@@ -42,7 +42,7 @@ pub struct FrameRuntimeSurface {
 }
 
 impl FrameRuntimeSurface {
-    pub fn from_frame(frame: &AgentFrame, runtime_policy: RuntimeSessionSelectionPolicy) -> Self {
+    pub fn from_frame(frame: &AgentFrame, runtime_session_id: Option<String>) -> Self {
         Self {
             agent_id: frame.agent_id,
             frame_id: frame.id,
@@ -64,7 +64,7 @@ impl FrameRuntimeSurface {
                 .mcp_surface_json
                 .clone()
                 .unwrap_or(serde_json::Value::Null),
-            runtime_session_id: frame.select_runtime_session_id(runtime_policy),
+            runtime_session_id,
             graph_instance_id: frame.graph_instance_id,
             activity_key: frame.activity_key.clone(),
         }
@@ -134,11 +134,8 @@ mod tests {
         frame.context_slice_json = Some(serde_json::json!({"project": "demo"}));
         frame.vfs_surface_json = Some(serde_json::json!({"mounts": []}));
         frame.mcp_surface_json = Some(serde_json::json!({"servers": []}));
-        frame.runtime_session_refs_json =
-            AgentFrame::runtime_session_refs_json([session_id.to_string()]);
 
-        let surface =
-            FrameRuntimeSurface::from_frame(&frame, RuntimeSessionSelectionPolicy::LaunchPrimary);
+        let surface = FrameRuntimeSurface::from_frame(&frame, Some(session_id.to_string()));
 
         assert_eq!(surface.agent_id, agent_id);
         assert_eq!(surface.frame_id, frame.id);
@@ -163,10 +160,9 @@ mod tests {
     #[test]
     fn frame_runtime_surface_from_frame_handles_empty_fields() {
         let agent_id = Uuid::new_v4();
-        let frame = AgentFrame::new_initial(agent_id, None);
+        let frame = AgentFrame::new_initial(agent_id);
 
-        let surface =
-            FrameRuntimeSurface::from_frame(&frame, RuntimeSessionSelectionPolicy::LaunchPrimary);
+        let surface = FrameRuntimeSurface::from_frame(&frame, None);
 
         assert_eq!(surface.agent_id, agent_id);
         assert_eq!(surface.frame_revision, 1);
@@ -185,14 +181,10 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let s1 = Uuid::new_v4();
         let s2 = Uuid::new_v4();
-        let mut frame = AgentFrame::new_revision(agent_id, 2, "test");
-        frame.runtime_session_refs_json =
-            AgentFrame::runtime_session_refs_json([s1.to_string(), s2.to_string()]);
+        let frame = AgentFrame::new_revision(agent_id, 2, "test");
 
-        let primary =
-            FrameRuntimeSurface::from_frame(&frame, RuntimeSessionSelectionPolicy::LaunchPrimary);
-        let latest =
-            FrameRuntimeSurface::from_frame(&frame, RuntimeSessionSelectionPolicy::LatestAttached);
+        let primary = FrameRuntimeSurface::from_frame(&frame, Some(s1.to_string()));
+        let latest = FrameRuntimeSurface::from_frame(&frame, Some(s2.to_string()));
         assert_eq!(primary.runtime_session_id, Some(s1.to_string()));
         assert_eq!(latest.runtime_session_id, Some(s2.to_string()));
     }

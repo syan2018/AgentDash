@@ -554,35 +554,6 @@ mod tests {
                 .collect())
         }
 
-        async fn attach_runtime_session_ref(
-            &self,
-            frame_id: Uuid,
-            runtime_session_id: &str,
-        ) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(frame) = items.iter_mut().find(|frame| frame.id == frame_id) {
-                frame.attach_runtime_session_ref(runtime_session_id);
-            }
-            Ok(())
-        }
-
-        async fn find_frame_by_runtime_ref_projection(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|frame| {
-                    frame
-                        .runtime_session_ids()
-                        .iter()
-                        .any(|id| id == runtime_session_id)
-                })
-                .cloned())
-        }
         async fn append_visible_canvas_mount(
             &self,
             _frame_id: Uuid,

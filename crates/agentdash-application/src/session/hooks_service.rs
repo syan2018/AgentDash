@@ -247,14 +247,23 @@ pub(crate) async fn build_frame_hook_runtime(
             frame.id, frame.agent_id, target.agent_id
         )));
     }
-    if !frame
-        .runtime_session_ids()
-        .iter()
-        .any(|id| id == session_id)
-    {
+    let Some(anchor_repo) = hub.execution_anchor_repo.as_ref() else {
+        return Err(ConnectorError::Runtime(
+            "RuntimeSessionExecutionAnchorRepository 未注入，拒绝创建 hook runtime".to_string(),
+        ));
+    };
+    let anchor = anchor_repo
+        .find_by_session(session_id)
+        .await
+        .map_err(|error| {
+            ConnectorError::Runtime(format!(
+                "查询 Hook target 对应 RuntimeSessionExecutionAnchor 失败: {error}"
+            ))
+        })?;
+    if !anchor.is_some_and(|anchor| anchor.agent_id == target.agent_id) {
         return Err(ConnectorError::Runtime(format!(
-            "Hook target frame `{}` does not reference delivery RuntimeSession `{session_id}`",
-            frame.id
+            "Hook target agent `{}` does not own delivery RuntimeSession `{session_id}`",
+            target.agent_id
         )));
     }
     Ok(Some(Arc::new(AgentFrameHookRuntime::from_frame(

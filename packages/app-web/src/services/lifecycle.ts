@@ -62,14 +62,6 @@ export async function fetchRuntimeTrace(runtimeSessionId: string): Promise<Runti
   );
 }
 
-export async function fetchSessionFrameRuntime(
-  runtimeSessionId: string,
-): Promise<AgentFrameRuntimeView> {
-  return api.get<AgentFrameRuntimeView>(
-    `/sessions/${encodeURIComponent(runtimeSessionId)}/frame-runtime`,
-  );
-}
-
 export async function sendLifecycleAgentMessageByRuntimeSession(
   runtimeSessionId: string,
   request: LifecycleAgentMessageRequest,

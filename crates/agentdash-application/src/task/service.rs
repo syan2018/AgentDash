@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource,
-    RunPolicy, RuntimePolicy, RuntimeSessionSelectionPolicy, SubjectExecutionIntent, SubjectRef,
+    RunPolicy, RuntimeDeliverySelectionPolicy, RuntimePolicy, SubjectExecutionIntent, SubjectRef,
 };
 
 use crate::repository_set::RepositorySet;
@@ -196,7 +196,7 @@ impl StoryActivityActivationService {
         let cancel_result = control
             .cancel_subject_execution(CancelSubjectExecutionCommand {
                 subject_ref: subject_ref.clone(),
-                runtime_selection_policy: RuntimeSessionSelectionPolicy::LatestAttached,
+                runtime_selection_policy: RuntimeDeliverySelectionPolicy::LatestAttached,
                 reason: Some("task_cancel_requested".to_string()),
             })
             .await

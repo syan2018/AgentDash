@@ -32,7 +32,7 @@
 
 ### LifecycleRun
 
-- 不拥有 `RuntimeSession`；旧 `LifecycleRun.session_id` 是迁移来源，目标上迁入 root `LifecycleAgent` / `AgentFrame.runtime_session_refs` 后删除。
+- 不拥有 `RuntimeSession`；runtime session 到 run / agent / frame 的关系由 `RuntimeSessionExecutionAnchor` 索引。
 - 业务归属通过 `LifecycleSubjectAssociation` 表达。
 - `topology=graphless` 的运行态由 run / agent / frame / runtime session anchor 与 subject association 表达。`topology=workflow_graph` 的运行态按 `WorkflowGraphInstance` 分 namespace；activity state、claim、assignment、attempt key 必须包含 `graph_instance_id`。
 - 推进规则见 [workflow/lifecycle-edge.md](./workflow/lifecycle-edge.md)。

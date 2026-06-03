@@ -128,42 +128,6 @@ impl AgentFrameRepository for MemoryAgentFrameRepository {
             .collect())
     }
 
-    async fn attach_runtime_session_ref(
-        &self,
-        frame_id: uuid::Uuid,
-        runtime_session_id: &str,
-    ) -> Result<(), DomainError> {
-        let mut frames = self.frames.lock().await;
-        let frame = frames
-            .iter_mut()
-            .find(|frame| frame.id == frame_id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_frame",
-                id: frame_id.to_string(),
-            })?;
-        frame.attach_runtime_session_ref(runtime_session_id);
-        Ok(())
-    }
-
-    async fn find_frame_by_runtime_ref_projection(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<Option<AgentFrame>, DomainError> {
-        Ok(self
-            .frames
-            .lock()
-            .await
-            .iter()
-            .filter(|frame| {
-                frame
-                    .runtime_session_ids()
-                    .iter()
-                    .any(|session_id| session_id == runtime_session_id)
-            })
-            .max_by_key(|frame| frame.revision)
-            .cloned())
-    }
-
     async fn append_visible_canvas_mount(
         &self,
         frame_id: uuid::Uuid,
@@ -275,10 +239,8 @@ impl LifecycleAgentRepository for MemoryLifecycleAgentRepository {
 }
 
 async fn attach_test_frame(hub: &SessionRuntimeInner, session_id: &str) -> AgentFrame {
-    let frame = AgentFrame::new_initial(
-        uuid::Uuid::new_v4(),
-        AgentFrame::runtime_session_refs_json([session_id]),
-    );
+    let _ = session_id;
+    let frame = AgentFrame::new_initial(uuid::Uuid::new_v4());
     hub.agent_frame_repo
         .as_ref()
         .expect("test hub should provide AgentFrameRepository")
@@ -1647,15 +1609,12 @@ struct RecordingHookProvider {
 impl ExecutionHookProvider for RecordingHookProvider {
     async fn resolve_runtime_hook_target(
         &self,
-        runtime_session_id: &str,
+        _runtime_session_id: &str,
     ) -> Result<Option<HookControlTarget>, agentdash_spi::hooks::HookError> {
         let Some(ref repo) = self.frame_repo else {
             return Ok(None);
         };
-        let frame = repo
-            .find_frame_by_runtime_ref_projection(runtime_session_id)
-            .await
-            .map_err(|e| agentdash_spi::hooks::HookError::Runtime(e.to_string()))?;
+        let frame = repo.frames.lock().await.iter().next().cloned();
         Ok(frame.map(|f| HookControlTarget {
             run_id: uuid::Uuid::new_v4(),
             agent_id: f.agent_id,

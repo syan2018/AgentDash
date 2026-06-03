@@ -396,38 +396,6 @@ mod tests {
                 .collect())
         }
 
-        async fn attach_runtime_session_ref(
-            &self,
-            frame_id: Uuid,
-            runtime_session_id: &str,
-        ) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            let frame = items
-                .iter_mut()
-                .find(|frame| frame.id == frame_id)
-                .expect("frame");
-            frame.attach_runtime_session_ref(runtime_session_id);
-            Ok(())
-        }
-
-        async fn find_frame_by_runtime_ref_projection(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|frame| {
-                    frame
-                        .runtime_session_ids()
-                        .iter()
-                        .any(|attached| attached == runtime_session_id)
-                })
-                .cloned())
-        }
-
         async fn append_visible_canvas_mount(
             &self,
             _frame_id: Uuid,
@@ -555,9 +523,7 @@ mod tests {
         let mut run = LifecycleRun::new_control(project_id, Uuid::new_v4());
         run.created_at = Utc::now();
         let mut agent = LifecycleAgent::new_root(run.id, project_id, "project_agent");
-        let mut frame = AgentFrame::new_revision(agent.id, 1, "test");
-        frame.runtime_session_refs_json =
-            AgentFrame::runtime_session_refs_json([runtime_session_id]);
+        let frame = AgentFrame::new_revision(agent.id, 1, "test");
         agent.set_current_frame(frame.id);
         run_repo.items.lock().unwrap().push(run.clone());
         agent_repo.items.lock().unwrap().push(agent.clone());

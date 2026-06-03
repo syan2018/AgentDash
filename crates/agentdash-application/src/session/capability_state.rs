@@ -828,7 +828,7 @@ mod tests {
 
     #[test]
     fn project_from_empty_frame_returns_default_state() {
-        let frame = AgentFrame::new_initial(Uuid::new_v4(), None);
+        let frame = AgentFrame::new_initial(Uuid::new_v4());
         let state = project_capability_state_from_frame(&frame);
         assert_eq!(state, CapabilityState::default());
     }
@@ -858,7 +858,7 @@ mod tests {
         }];
 
         let surfaces = capability_state_to_frame_surfaces(&state);
-        let mut frame = AgentFrame::new_initial(Uuid::new_v4(), None);
+        let mut frame = AgentFrame::new_initial(Uuid::new_v4());
         frame.effective_capability_json = surfaces.effective_capability_json;
         frame.vfs_surface_json = surfaces.vfs_surface_json;
         frame.mcp_surface_json = surfaces.mcp_surface_json;
@@ -885,7 +885,7 @@ mod tests {
             links: Vec::new(),
         };
 
-        let mut frame = AgentFrame::new_initial(Uuid::new_v4(), None);
+        let mut frame = AgentFrame::new_initial(Uuid::new_v4());
         frame.effective_capability_json = surfaces.effective_capability_json;
         frame.vfs_surface_json = serde_json::to_value(&override_vfs).ok();
 

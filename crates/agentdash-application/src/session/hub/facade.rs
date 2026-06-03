@@ -158,8 +158,6 @@ impl SessionRuntimeInner {
 #[cfg(test)]
 #[allow(deprecated)]
 fn envelope_from_construction(construction: RuntimeContextInspectionPlan) -> FrameLaunchEnvelope {
-    use agentdash_domain::workflow::RuntimeSessionSelectionPolicy;
-
     let executor_config = construction
         .execution_profile
         .executor_config

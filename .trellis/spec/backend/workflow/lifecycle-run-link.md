@@ -146,7 +146,7 @@ Run / subject APIs return subject/agent/run refs and projection refs as their co
 ## Migration Sources
 
 - 现有 `LifecycleRunLink` rows backfill 到 `LifecycleSubjectAssociation(anchor_run_id=run_id, anchor_agent_id=null, ...)`。
-- 现有 `LifecycleRun.session_id` backfill 到 root `LifecycleAgent` / `AgentFrame.runtime_session_refs`，不进入 subject association。
+- `RuntimeSessionExecutionAnchor` 记录 runtime session 到 run / agent / launch frame 的索引，不进入 subject association。
 - Existing `session_lineage` remains `RuntimeSessionLineage` unless parent/child agent identity can be resolved; agent control tree belongs to `AgentLineage`。
 
 ## Validation

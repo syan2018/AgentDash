@@ -313,7 +313,6 @@ struct FrameRow {
     context_slice_json: Option<String>,
     vfs_surface_json: Option<String>,
     mcp_surface_json: Option<String>,
-    runtime_session_refs_json: Option<String>,
     execution_profile_json: Option<String>,
     visible_canvas_mount_ids_json: Option<String>,
     created_by_kind: String,
@@ -350,10 +349,6 @@ impl TryFrom<FrameRow> for AgentFrame {
             context_slice_json: parse_opt_json(row.context_slice_json, "context_slice_json")?,
             vfs_surface_json: parse_opt_json(row.vfs_surface_json, "vfs_surface_json")?,
             mcp_surface_json: parse_opt_json(row.mcp_surface_json, "mcp_surface_json")?,
-            runtime_session_refs_json: parse_opt_json(
-                row.runtime_session_refs_json,
-                "runtime_session_refs_json",
-            )?,
             execution_profile_json: parse_opt_json(
                 row.execution_profile_json,
                 "execution_profile_json",
@@ -385,10 +380,10 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"INSERT INTO agent_frames
                 (id, agent_id, revision, procedure_id, graph_instance_id, activity_key,
                  effective_capability_json, context_slice_json, vfs_surface_json, mcp_surface_json,
-                 runtime_session_refs_json, execution_profile_json,
                  visible_canvas_mount_ids_json,
+                 execution_profile_json,
                  created_by_kind, created_by_id, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"#,
         )
         .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
@@ -400,9 +395,8 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .bind(opt_json_str(&frame.context_slice_json)?)
         .bind(opt_json_str(&frame.vfs_surface_json)?)
         .bind(opt_json_str(&frame.mcp_surface_json)?)
-        .bind(opt_json_str(&frame.runtime_session_refs_json)?)
-        .bind(opt_json_str(&frame.execution_profile_json)?)
         .bind(opt_json_str(&frame.visible_canvas_mount_ids_json)?)
+        .bind(opt_json_str(&frame.execution_profile_json)?)
         .bind(&frame.created_by_kind)
         .bind(&frame.created_by_id)
         .bind(frame.created_at)
@@ -416,8 +410,8 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      runtime_session_refs_json,execution_profile_json,
                       visible_canvas_mount_ids_json,
+                      execution_profile_json,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE id=$1"#,
         )
@@ -433,8 +427,8 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      runtime_session_refs_json,execution_profile_json,
                       visible_canvas_mount_ids_json,
+                      execution_profile_json,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE agent_id=$1 ORDER BY revision DESC LIMIT 1"#,
         )
@@ -450,8 +444,8 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      runtime_session_refs_json,execution_profile_json,
                       visible_canvas_mount_ids_json,
+                      execution_profile_json,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE agent_id=$1 ORDER BY revision ASC"#,
         )
@@ -462,28 +456,6 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .into_iter()
         .map(TryInto::try_into)
         .collect()
-    }
-
-    async fn attach_runtime_session_ref(
-        &self,
-        frame_id: Uuid,
-        runtime_session_id: &str,
-    ) -> Result<(), DomainError> {
-        let mut frame = self
-            .get(frame_id)
-            .await?
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_frame",
-                id: frame_id.to_string(),
-            })?;
-        frame.attach_runtime_session_ref(runtime_session_id);
-        sqlx::query("UPDATE agent_frames SET runtime_session_refs_json=$1 WHERE id=$2")
-            .bind(opt_json_str(&frame.runtime_session_refs_json)?)
-            .bind(frame_id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(db_err)?;
-        Ok(())
     }
 
     async fn append_visible_canvas_mount(
@@ -506,45 +478,6 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             .await
             .map_err(db_err)?;
         Ok(())
-    }
-
-    async fn find_frame_by_runtime_ref_projection(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<Option<AgentFrame>, DomainError> {
-        // 优先通过 execution anchor 表查询（O(1) 精确匹配）
-        let anchor_row = sqlx::query_as::<_, AnchorRow>(
-            r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
-                      assignment_id, graph_instance_id, activity_key, attempt,
-                      created_by_kind, created_at, updated_at
-               FROM runtime_session_execution_anchors
-               WHERE runtime_session_id = $1"#,
-        )
-        .bind(runtime_session_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        let Some(anchor) = anchor_row else {
-            return Ok(None);
-        };
-
-        let agent_id = parse_uuid(&anchor.agent_id, "rsea.agent_id")?;
-        sqlx::query_as::<_, FrameRow>(
-            r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
-                      effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      runtime_session_refs_json,execution_profile_json,
-                      visible_canvas_mount_ids_json,
-                      created_by_kind,created_by_id,created_at
-               FROM agent_frames WHERE agent_id=$1
-               ORDER BY created_at DESC LIMIT 1"#,
-        )
-        .bind(agent_id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
     }
 }
 

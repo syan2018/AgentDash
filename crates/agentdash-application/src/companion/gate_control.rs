@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository, LifecycleGate,
-    LifecycleGateRepository, RuntimeSessionExecutionAnchorRepository,
-    RuntimeSessionSelectionPolicy,
+    LifecycleGateRepository, RuntimeDeliverySelectionPolicy,
+    RuntimeSessionExecutionAnchorRepository,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -374,13 +374,13 @@ impl CompanionGateControlService {
         let parent_delivery_runtime_session_id = self
             .select_delivery_runtime_session_id(
                 parent_agent_id,
-                RuntimeSessionSelectionPolicy::LatestAttached,
+                RuntimeDeliverySelectionPolicy::LatestAttached,
             )
             .await?;
         let child_delivery_runtime_session_id = self
             .select_delivery_runtime_session_id(
                 child_frame.agent_id,
-                RuntimeSessionSelectionPolicy::Specific {
+                RuntimeDeliverySelectionPolicy::Specific {
                     runtime_session_id: child_runtime_session_id,
                 },
             )
@@ -451,7 +451,7 @@ impl CompanionGateControlService {
         let child_delivery_runtime_session_id = self
             .select_delivery_runtime_session_id(
                 child_frame.agent_id,
-                RuntimeSessionSelectionPolicy::Specific {
+                RuntimeDeliverySelectionPolicy::Specific {
                     runtime_session_id: command.child_runtime_session_id.clone(),
                 },
             )
@@ -484,7 +484,7 @@ impl CompanionGateControlService {
         let parent_delivery_runtime_session_id = self
             .select_delivery_runtime_session_id(
                 parent_agent_id,
-                RuntimeSessionSelectionPolicy::LatestAttached,
+                RuntimeDeliverySelectionPolicy::LatestAttached,
             )
             .await?
             .ok_or_else(|| {
@@ -603,7 +603,7 @@ impl CompanionGateControlService {
         let parent_delivery_runtime_session_id = self
             .select_delivery_runtime_session_id(
                 parent_frame.agent_id,
-                RuntimeSessionSelectionPolicy::Specific {
+                RuntimeDeliverySelectionPolicy::Specific {
                     runtime_session_id: command.parent_runtime_session_id.clone(),
                 },
             )
@@ -688,7 +688,7 @@ impl CompanionGateControlService {
 
         self.select_delivery_runtime_session_id(
             frame.agent_id,
-            RuntimeSessionSelectionPolicy::LatestAttached,
+            RuntimeDeliverySelectionPolicy::LatestAttached,
         )
         .await
     }
@@ -696,23 +696,23 @@ impl CompanionGateControlService {
     async fn select_delivery_runtime_session_id(
         &self,
         agent_id: Uuid,
-        policy: RuntimeSessionSelectionPolicy,
+        policy: RuntimeDeliverySelectionPolicy,
     ) -> Result<Option<String>, ApplicationError> {
         let runtime_session_id = match policy {
-            RuntimeSessionSelectionPolicy::Specific { runtime_session_id } => self
+            RuntimeDeliverySelectionPolicy::Specific { runtime_session_id } => self
                 .anchor_repo
                 .find_by_session(&runtime_session_id)
                 .await?
                 .filter(|anchor| anchor.agent_id == agent_id)
                 .map(|anchor| anchor.runtime_session_id),
-            RuntimeSessionSelectionPolicy::LaunchPrimary => self
+            RuntimeDeliverySelectionPolicy::LaunchPrimary => self
                 .anchor_repo
                 .list_by_agent(agent_id)
                 .await?
                 .into_iter()
                 .min_by_key(|anchor| anchor.created_at)
                 .map(|anchor| anchor.runtime_session_id),
-            RuntimeSessionSelectionPolicy::LatestAttached => self
+            RuntimeDeliverySelectionPolicy::LatestAttached => self
                 .anchor_repo
                 .latest_for_agent(agent_id)
                 .await?
@@ -789,6 +789,20 @@ mod tests {
     #[derive(Default)]
     struct MemoryFrameRepo {
         frames: Mutex<HashMap<Uuid, AgentFrame>>,
+        runtime_sessions_by_frame: Mutex<HashMap<Uuid, Vec<String>>>,
+    }
+
+    impl MemoryFrameRepo {
+        fn seed_runtime_sessions<I, S>(&self, frame_id: Uuid, session_ids: I)
+        where
+            I: IntoIterator<Item = S>,
+            S: Into<String>,
+        {
+            self.runtime_sessions_by_frame
+                .lock()
+                .unwrap()
+                .insert(frame_id, session_ids.into_iter().map(Into::into).collect());
+        }
     }
 
     #[async_trait]
@@ -821,35 +835,6 @@ mod tests {
                 .filter(|frame| frame.agent_id == agent_id)
                 .cloned()
                 .collect())
-        }
-
-        async fn attach_runtime_session_ref(
-            &self,
-            frame_id: Uuid,
-            runtime_session_id: &str,
-        ) -> Result<(), DomainError> {
-            if let Some(frame) = self.frames.lock().unwrap().get_mut(&frame_id) {
-                frame.attach_runtime_session_ref(runtime_session_id);
-            }
-            Ok(())
-        }
-
-        async fn find_frame_by_runtime_ref_projection(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self
-                .frames
-                .lock()
-                .unwrap()
-                .values()
-                .find(|frame| {
-                    frame
-                        .runtime_session_ids()
-                        .iter()
-                        .any(|session_id| session_id == runtime_session_id)
-                })
-                .cloned())
         }
 
         async fn append_visible_canvas_mount(
@@ -958,17 +943,20 @@ mod tests {
     impl MemoryAnchorRepo {
         fn from_frame_repo(frame_repo: &MemoryFrameRepo, run_id: Uuid) -> Self {
             let mut anchors = HashMap::new();
+            let sessions_by_frame = frame_repo.runtime_sessions_by_frame.lock().unwrap();
             for frame in frame_repo.frames.lock().unwrap().values() {
-                for runtime_session_id in frame.runtime_session_ids() {
-                    let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-                        runtime_session_id.clone(),
-                        run_id,
-                        frame.id,
-                        frame.agent_id,
-                        frame.graph_instance_id,
-                        frame.activity_key.clone(),
-                    );
-                    anchors.insert(runtime_session_id, anchor);
+                if let Some(session_ids) = sessions_by_frame.get(&frame.id) {
+                    for runtime_session_id in session_ids {
+                        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+                            runtime_session_id.clone(),
+                            run_id,
+                            frame.id,
+                            frame.agent_id,
+                            frame.graph_instance_id,
+                            frame.activity_key.clone(),
+                        );
+                        anchors.insert(runtime_session_id.clone(), anchor);
+                    }
                 }
             }
             Self {
@@ -1121,12 +1109,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn respond_resolves_gate_and_delivers_by_frame_runtime_ref() {
+    async fn respond_resolves_gate_and_delivers_by_anchor_runtime_ref() {
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
-        let mut frame = AgentFrame::new_revision(agent_id, 1, "test");
-        frame.runtime_session_refs_json =
-            AgentFrame::runtime_session_refs_json(["session-old", "session-latest"]);
+        let frame = AgentFrame::new_revision(agent_id, 1, "test");
         let frame_id = frame.id;
         let gate = LifecycleGate::open(
             run_id,
@@ -1145,6 +1131,7 @@ mod tests {
         gate_repo.create(&gate).await.expect("seed gate");
         let frame_repo = Arc::new(MemoryFrameRepo::default());
         frame_repo.create(&frame).await.expect("seed frame");
+        frame_repo.seed_runtime_sessions(frame_id, ["session-old", "session-latest"]);
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
         let service = service_for_test(
@@ -1195,8 +1182,7 @@ mod tests {
     async fn respond_rejects_already_closed_gate() {
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
-        let mut frame = AgentFrame::new_revision(agent_id, 1, "test");
-        frame.runtime_session_refs_json = AgentFrame::runtime_session_refs_json(["session-1"]);
+        let frame = AgentFrame::new_revision(agent_id, 1, "test");
         let mut gate = LifecycleGate::open(
             run_id,
             Some(agent_id),
@@ -1211,6 +1197,7 @@ mod tests {
         gate_repo.create(&gate).await.expect("seed gate");
         let frame_repo = Arc::new(MemoryFrameRepo::default());
         frame_repo.create(&frame).await.expect("seed frame");
+        frame_repo.seed_runtime_sessions(frame.id, ["session-1"]);
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
         let service = service_for_test(
@@ -1239,12 +1226,8 @@ mod tests {
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
 
-        let mut parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
-        parent_frame.runtime_session_refs_json =
-            AgentFrame::runtime_session_refs_json(["parent-session"]);
-        let mut child_frame = AgentFrame::new_revision(child_agent_id, 1, "child");
-        child_frame.runtime_session_refs_json =
-            AgentFrame::runtime_session_refs_json(["child-session"]);
+        let parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
+        let child_frame = AgentFrame::new_revision(child_agent_id, 1, "child");
 
         let gate = LifecycleGate::open(
             run_id,
@@ -1274,10 +1257,12 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
+        frame_repo.seed_runtime_sessions(parent_frame.id, ["parent-session"]);
         frame_repo
             .create(&child_frame)
             .await
             .expect("seed child frame");
+        frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
@@ -1363,13 +1348,9 @@ mod tests {
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
 
-        let mut parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
-        parent_frame.runtime_session_refs_json =
-            AgentFrame::runtime_session_refs_json(["parent-session"]);
+        let parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
         let parent_frame_id = parent_frame.id;
-        let mut child_frame = AgentFrame::new_revision(child_agent_id, 1, "child");
-        child_frame.runtime_session_refs_json =
-            AgentFrame::runtime_session_refs_json(["child-session"]);
+        let child_frame = AgentFrame::new_revision(child_agent_id, 1, "child");
         let child_frame_id = child_frame.id;
         let lineage = AgentLineage::new(
             run_id,
@@ -1386,10 +1367,12 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
+        frame_repo.seed_runtime_sessions(parent_frame_id, ["parent-session"]);
         frame_repo
             .create(&child_frame)
             .await
             .expect("seed child frame");
+        frame_repo.seed_runtime_sessions(child_frame_id, ["child-session"]);
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
@@ -1462,9 +1445,7 @@ mod tests {
     async fn resolve_parent_request_resolves_only_parent_owned_gate() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
-        let mut parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
-        parent_frame.runtime_session_refs_json =
-            AgentFrame::runtime_session_refs_json(["parent-session"]);
+        let parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
         let parent_frame_id = parent_frame.id;
         let mut gate = LifecycleGate::open(
             run_id,
@@ -1487,6 +1468,7 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
+        frame_repo.seed_runtime_sessions(parent_frame_id, ["parent-session"]);
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
         let service = service_for_test(
@@ -1553,12 +1535,9 @@ mod tests {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let other_agent_id = Uuid::new_v4();
-        let mut parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
-        parent_frame.runtime_session_refs_json =
-            AgentFrame::runtime_session_refs_json(["parent-session"]);
+        let parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
         let parent_frame_id = parent_frame.id;
-        let mut other_frame = AgentFrame::new_revision(other_agent_id, 1, "other");
-        other_frame.runtime_session_refs_json = AgentFrame::runtime_session_refs_json(["other"]);
+        let other_frame = AgentFrame::new_revision(other_agent_id, 1, "other");
         let mut gate = LifecycleGate::open(
             run_id,
             Some(parent_agent_id),
@@ -1576,10 +1555,12 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
+        frame_repo.seed_runtime_sessions(parent_frame_id, ["parent-session"]);
         frame_repo
             .create(&other_frame)
             .await
             .expect("seed other frame");
+        frame_repo.seed_runtime_sessions(other_frame.id, ["other"]);
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
         let service = service_for_test(

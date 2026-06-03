@@ -19,7 +19,7 @@
 | `LifecycleRunView` | 展示 run、graph instances、agents、gates、subject associations 与 runtime trace refs |
 | `WorkflowGraphInstanceView` | 展示某个 graph instance 的 role、status、activities、attempts、artifact state |
 | `LifecycleAgentView` | 展示 run 内 agent identity、role、status、lineage、current frame |
-| `AgentFrameRuntimeView` | 展示 frame revision 的 procedure、capability、context、VFS、MCP、runtime refs |
+| `AgentFrameRuntimeView` | 展示 frame revision 的 procedure、capability、context、VFS、MCP，以及由 anchor read model 投影的 runtime refs |
 | `SubjectExecutionView` | 展示业务 subject 的执行投影，例如 current agent、latest attempt、artifacts |
 | `RuntimeSessionTraceView` | 展示 event stream、turns、tools、projection、debug、lineage |
 

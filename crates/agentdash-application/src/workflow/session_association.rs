@@ -432,30 +432,6 @@ mod tests {
                 .collect())
         }
 
-        async fn attach_runtime_session_ref(
-            &self,
-            _frame_id: Uuid,
-            _runtime_session_id: &str,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn find_frame_by_runtime_ref_projection(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self
-                .frames
-                .values()
-                .filter(|frame| {
-                    frame
-                        .runtime_session_ids()
-                        .iter()
-                        .any(|session_id| session_id == runtime_session_id)
-                })
-                .max_by_key(|frame| frame.revision)
-                .cloned())
-        }
         async fn append_visible_canvas_mount(
             &self,
             _frame_id: Uuid,
@@ -830,7 +806,6 @@ mod tests {
         let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
         run.id = run_id;
         let mut current_frame = AgentFrame::new_revision(agent_id, 2, "capability_update");
-        current_frame.runtime_session_refs_json = AgentFrame::runtime_session_refs_json(["sess-1"]);
         current_frame.graph_instance_id = Some(graph_instance_id);
         current_frame.activity_key = Some("implement".to_string());
         let assignment = AgentAssignment::new(
@@ -926,7 +901,6 @@ mod tests {
         let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
         run.id = run_id;
         let mut current_frame = AgentFrame::new_revision(agent_id, 2, "capability_update");
-        current_frame.runtime_session_refs_json = AgentFrame::runtime_session_refs_json(["sess-1"]);
         current_frame.graph_instance_id = Some(Uuid::new_v4());
         current_frame.activity_key = Some("implement".to_string());
         let frame_id = current_frame.id;
@@ -963,8 +937,7 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
         run.id = run_id;
-        let mut current_frame = AgentFrame::new_revision(agent_id, 1, "agent_launch");
-        current_frame.runtime_session_refs_json = AgentFrame::runtime_session_refs_json(["sess-1"]);
+        let current_frame = AgentFrame::new_revision(agent_id, 1, "agent_launch");
         let frame_repo = TestFrameRepo {
             frames: [(current_frame.id, current_frame)].into_iter().collect(),
         };

@@ -2,10 +2,25 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Anchor-first runtime delivery selection.
+///
+/// Selection is resolved from `RuntimeSessionExecutionAnchorRepository`, so
+/// delivery commands never consult AgentFrame persistence for runtime refs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeDeliverySelectionPolicy {
+    /// The runtime session currently handled by the runtime adapter.
+    Specific { runtime_session_id: String },
+    /// The earliest runtime session recorded for the agent.
+    LaunchPrimary,
+    /// The latest runtime session recorded for the agent.
+    LatestAttached,
+}
+
 /// RuntimeSession -> 控制面实体的 launch evidence 锚点。
 ///
 /// 在 dispatch / orchestrator launch 创建 RuntimeSession 时同步写入，
-/// 替代原来从 `agent_frames.runtime_session_refs_json` 做 JSON contains 反查的模式。
+/// 让 runtime trace 能稳定反查到 lifecycle 控制面。
 ///
 /// 这是 **launch evidence**——记录创建时刻的 frame/agent/assignment 关联，
 /// 不被后续 frame revision 覆盖。查询最新 frame 仍需按 `agent_id` 取 current。

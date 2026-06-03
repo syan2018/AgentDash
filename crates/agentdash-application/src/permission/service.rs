@@ -320,11 +320,6 @@ impl PermissionGrantService {
         if let Some(profile) = current_frame.execution_profile_json.clone() {
             builder = builder.with_execution_profile_raw(profile);
         }
-        for session_id in current_frame.runtime_session_ids() {
-            builder = builder.with_runtime_session(session_id);
-        }
-        builder = builder.with_runtime_session(grant.source_runtime_session_id.clone());
-
         let effect_frame = builder
             .build(self.frame_repo.as_ref())
             .await
@@ -458,7 +453,7 @@ mod tests {
     use agentdash_domain::permission::{
         GrantStatus, PermissionGrantRepository, PolicyDecision, PolicyOutcome,
     };
-    use agentdash_domain::workflow::{AgentFrameRepository, RuntimeSessionSelectionPolicy};
+    use agentdash_domain::workflow::AgentFrameRepository;
     use agentdash_spi::ToolCluster;
     use tokio::sync::Mutex;
 
@@ -599,41 +594,6 @@ mod tests {
                 .collect())
         }
 
-        async fn attach_runtime_session_ref(
-            &self,
-            frame_id: Uuid,
-            runtime_session_id: &str,
-        ) -> Result<(), DomainError> {
-            let mut items = self.items.lock().await;
-            let frame = items
-                .iter_mut()
-                .find(|frame| frame.id == frame_id)
-                .ok_or_else(|| DomainError::NotFound {
-                    entity: "agent_frame",
-                    id: frame_id.to_string(),
-                })?;
-            frame.attach_runtime_session_ref(runtime_session_id);
-            Ok(())
-        }
-
-        async fn find_frame_by_runtime_ref_projection(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .await
-                .iter()
-                .filter(|frame| {
-                    frame
-                        .runtime_session_ids()
-                        .iter()
-                        .any(|id| id == runtime_session_id)
-                })
-                .max_by_key(|frame| frame.revision)
-                .cloned())
-        }
         async fn append_visible_canvas_mount(
             &self,
             _frame_id: Uuid,
@@ -703,12 +663,7 @@ mod tests {
                 .contains(&ToolCapability::new("file_write"))
         );
         assert!(state.tool.enabled_clusters.contains(&ToolCluster::Write));
-        assert_eq!(
-            current
-                .select_runtime_session_id(RuntimeSessionSelectionPolicy::LaunchPrimary)
-                .as_deref(),
-            Some("runtime-session-1")
-        );
+        assert_eq!(current.agent_id, agent_id);
     }
 
     /// Grants from different runtime sessions targeting the same `effect_frame_id`

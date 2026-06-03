@@ -1,5 +1,8 @@
 {"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"检查新增协议事件是否记录为跨层共享事实，而不是前端私有 key。"}
 {"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查 generated TypeScript 与 Rust contract/protocol drift 是否按规范验证。"}
 {"file":".trellis/spec/backend/session/context-compaction-projection.md","reason":"检查 steer 用户输入是否进入 transcript / projection 事实源。"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"检查 runtime control command 是否在统一 gateway/control 边界分发。"}
 {"file":".trellis/spec/frontend/hook-guidelines.md","reason":"检查前端 feed 聚合 hard boundary 与可见性规则是否同步。"}
 {"file":"references/codex/codex-rs/app-server-protocol/src/protocol/thread_history.rs","reason":"对照 Codex mid-turn steer 的同 turn UserMessage 重建语义。"}
+{"file":"crates/agentdash-contracts/src/workflow.rs","reason":"检查 SessionRuntimeControlView actions 能否完整解释输入栏状态。"}
+{"file":"crates/agentdash-relay/src/protocol/prompt.rs","reason":"检查 relay steer payload 是否不再保留私有 JSON 控制语义。"}

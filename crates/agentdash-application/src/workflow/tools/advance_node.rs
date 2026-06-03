@@ -7,6 +7,7 @@ use crate::workflow::{
 use std::sync::Arc;
 
 use agentdash_domain::workflow::ActivityAttemptStatus;
+use agentdash_domain::workflow::active_activity_refs_from_states;
 use agentdash_spi::ExecutionContext;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{
@@ -26,7 +27,7 @@ pub struct CompleteLifecycleNodeTool {
     repos: crate::repository_set::RepositorySet,
     session_services: Option<SessionToolServices>,
     current_turn_id: String,
-    hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
+    hook_runtime: Option<agentdash_spi::hooks::SharedHookRuntime>,
     platform_config: SharedPlatformConfig,
     function_runner: Arc<dyn FunctionRunner>,
 }
@@ -65,7 +66,7 @@ impl CompleteLifecycleNodeTool {
             repos,
             session_services,
             current_turn_id: context.session.turn_id.clone(),
-            hook_session: context.turn.hook_session.clone(),
+            hook_runtime: context.turn.hook_runtime.clone(),
             platform_config,
             function_runner,
         }
@@ -98,7 +99,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
         let params: CompleteLifecycleNodeParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
 
-        let hook_session = self.hook_session.as_ref().ok_or_else(|| {
+        let hook_runtime = self.hook_runtime.as_ref().ok_or_else(|| {
             AgentToolError::ExecutionFailed(
                 "当前 session 没有 hook runtime，无法推进 lifecycle node".to_string(),
             )
@@ -122,12 +123,12 @@ impl AgentTool for CompleteLifecycleNodeTool {
             StepOutcome::Completed => LifecycleNodeAdvanceOutcome::Completed,
             StepOutcome::Failed => LifecycleNodeAdvanceOutcome::Failed,
         };
-        let snapshot = hook_session.snapshot();
+        let snapshot = hook_runtime.snapshot();
         let result = orchestrator
             .advance_current_activity(AdvanceCurrentActivityInput {
-                hook_session: hook_session.clone(),
+                hook_runtime: hook_runtime.clone(),
                 turn_id: self.current_turn_id.clone(),
-                session_id: snapshot.session_id.clone(),
+                runtime_session_id: snapshot.runtime_adapter_session_id.clone(),
                 outcome,
                 summary: params.summary.clone(),
             })
@@ -141,26 +142,45 @@ impl AgentTool for CompleteLifecycleNodeTool {
 fn build_tool_result(
     result: crate::workflow::AdvanceCurrentNodeResult,
 ) -> Result<AgentToolResult, AgentToolError> {
+    let active_activity_refs = result
+        .graph_instance
+        .activity_state
+        .as_ref()
+        .map(|state| {
+            active_activity_refs_from_states(result.run.id, [(result.graph_instance.id, state)])
+                .into_iter()
+                .map(|active| {
+                    serde_json::json!({
+                        "run_id": active.run_id,
+                        "graph_instance_id": active.graph_instance_id,
+                        "activity_key": active.activity_key,
+                        "attempt": active.attempt,
+                        "status": format!("{:?}", active.status).to_lowercase(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     match result.status {
         AdvanceCurrentNodeStatus::Failed => Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
                 "Activity `{}` 已标记为 **Failed**。{}",
-                result.step_key,
+                result.activity_key,
                 result
-                    .run
+                    .graph_instance
                     .activity_state
                     .as_ref()
                     .and_then(|state| state
                         .attempts
                         .iter()
-                        .find(|attempt| attempt.activity_key == result.step_key))
+                        .find(|attempt| attempt.activity_key == result.activity_key))
                     .and_then(|attempt| attempt.summary.as_deref())
                     .unwrap_or("")
             ))],
             is_error: false,
             details: Some(serde_json::json!({
                 "run_id": result.run.id,
-                "step_key": result.step_key,
+                "activity_key": result.activity_key,
                 "outcome": "failed",
                 "run_status": format!("{:?}", result.run.status),
             })),
@@ -175,14 +195,14 @@ fn build_tool_result(
                 format!(
                     "Activity `{}` 因连续 {gate_collision_count} 次门禁碰撞已标记为 **Failed**。\n\
                      未交付的 output port: [{}]",
-                    result.step_key, missing_list
+                    result.activity_key, missing_list
                 )
             } else {
                 format!(
                     "**门禁拒绝**（碰撞 {gate_collision_count}/3）：Activity `{}` 尚有 {} 个 output port 未交付。\n\
                      缺失: [{}]\n\n\
                      请通过 `write_file` 写入 `lifecycle://artifacts/{{port_key}}` 完成交付后重试。",
-                    result.step_key,
+                    result.activity_key,
                     missing_output_keys.len(),
                     missing_list
                 )
@@ -192,7 +212,7 @@ fn build_tool_result(
                 is_error: true,
                 details: Some(serde_json::json!({
                     "run_id": result.run.id,
-                    "step_key": result.step_key,
+                    "activity_key": result.activity_key,
                     "gate_collision_count": gate_collision_count,
                     "missing_ports": missing_output_keys,
                     "status": if terminal_failed { "failed" } else { "gate_rejected" },
@@ -201,7 +221,7 @@ fn build_tool_result(
         }
         AdvanceCurrentNodeStatus::Completed => {
             let newly_ready: Vec<&str> = result
-                .run
+                .graph_instance
                 .activity_state
                 .as_ref()
                 .map(|state| {
@@ -214,13 +234,19 @@ fn build_tool_result(
                 })
                 .unwrap_or_default();
             let successor_info = if newly_ready.is_empty() {
-                if result.run.active_node_keys.is_empty() {
+                if active_activity_refs.is_empty() {
                     "lifecycle 已全部完成。".to_string()
                 } else {
-                    format!(
-                        "活跃 activity: [{}]",
-                        result.run.active_node_keys.join(", ")
-                    )
+                    let active_labels = active_activity_refs
+                        .iter()
+                        .filter_map(|value| {
+                            let graph_instance_id = value.get("graph_instance_id")?.as_str()?;
+                            let activity_key = value.get("activity_key")?.as_str()?;
+                            let attempt = value.get("attempt")?.as_u64()?;
+                            Some(format!("{graph_instance_id}:{activity_key}#{attempt}"))
+                        })
+                        .collect::<Vec<_>>();
+                    format!("活跃 activity: [{}]", active_labels.join(", "))
                 }
             } else {
                 format!("后继 activity 已就绪: [{}]", newly_ready.join(", "))
@@ -228,20 +254,23 @@ fn build_tool_result(
             let message = if let Some(warning) = result.orchestration_warning.as_deref() {
                 format!(
                     "Activity `{}` 已完成。{successor_info}\n[warning] {warning}",
-                    result.step_key
+                    result.activity_key
                 )
             } else {
-                format!("Activity `{}` 已完成。{successor_info}", result.step_key)
+                format!(
+                    "Activity `{}` 已完成。{successor_info}",
+                    result.activity_key
+                )
             };
             Ok(AgentToolResult {
                 content: vec![ContentPart::text(message)],
                 is_error: false,
                 details: Some(serde_json::json!({
                     "run_id": result.run.id,
-                    "step_key": result.step_key,
+                    "activity_key": result.activity_key,
                     "outcome": "completed",
                     "run_status": format!("{:?}", result.run.status),
-                    "active_node_keys": result.run.active_node_keys,
+                    "active_activity_refs": active_activity_refs,
                     "orchestration_warning": result.orchestration_warning,
                 })),
             })

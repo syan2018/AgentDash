@@ -1,5 +1,5 @@
 /**
- * Story / Task / StorySession service 层。
+ * Story / Task service 层。
  *
  * 收口 story 相关的 api.client 调用与后端 JSON ↔ 前端类型的 mapper。
  * storyStore 只消费此层导出的函数，不直连 api。
@@ -8,34 +8,15 @@
 import { api } from "../api/client";
 import { requireStringField } from "../api/mappers";
 import type {
-  AgentBinding,
+  TaskDispatchPreference,
   ContextContainerDefinition,
   ContextSourceRef,
-  ExecutionVfs,
-  ResolvedVfsSurface,
   SessionComposition,
-  SessionContextSnapshot,
   Story,
   StoryContext,
-  StorySessionInfo,
-  StoryRunsResponse,
-  StoryRunOverviewDto,
   Task,
 } from "../types";
 import { isThinkingLevel } from "../types";
-
-// ─── 字段读取工具 ────────────────────────────────────────
-
-const readNullableStringField = (raw: Record<string, unknown>, field: string): string | null => {
-  const value = raw[field];
-  if (value == null) {
-    return null;
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  throw new Error(`字段 ${field} 必须是字符串或 null`);
-};
 
 // ─── 状态/枚举归一化 ─────────────────────────────────────
 
@@ -53,6 +34,8 @@ const normalizeTaskStatus = (value: string): Task["status"] => {
       return "completed";
     case "failed":
       return "failed";
+    case "cancelled":
+      return "cancelled";
     default:
       throw new Error(`未知 Task 状态: ${value}`);
   }
@@ -149,30 +132,30 @@ const mapStory = (raw: Record<string, unknown>): Story => {
   };
 };
 
-const mapAgentBinding = (raw: unknown): AgentBinding => {
+const mapDispatchPreference = (raw: unknown): TaskDispatchPreference => {
   if (!raw || typeof raw !== "object") {
-    throw new Error("Task 缺少 agent_binding");
+    throw new Error("Task 缺少 dispatch_preference");
   }
 
-  const binding = raw as Record<string, unknown>;
+  const pref = raw as Record<string, unknown>;
   return {
-    agent_type: binding.agent_type ? String(binding.agent_type) : null,
-    agent_pid: binding.agent_pid ? String(binding.agent_pid) : null,
-    preset_name: binding.preset_name ? String(binding.preset_name) : null,
-    prompt_template: binding.prompt_template ? String(binding.prompt_template) : null,
-    initial_context: binding.initial_context ? String(binding.initial_context) : null,
+    agent_type: pref.agent_type ? String(pref.agent_type) : null,
+    agent_pid: pref.agent_pid ? String(pref.agent_pid) : null,
+    preset_name: pref.preset_name ? String(pref.preset_name) : null,
+    prompt_template: pref.prompt_template ? String(pref.prompt_template) : null,
+    initial_context: pref.initial_context ? String(pref.initial_context) : null,
     thinking_level:
-      binding.thinking_level == null
+      pref.thinking_level == null
         ? null
-        : isThinkingLevel(binding.thinking_level)
-          ? binding.thinking_level
+        : isThinkingLevel(pref.thinking_level)
+          ? pref.thinking_level
           : (() => {
-              throw new Error(`未知 thinking_level: ${String(binding.thinking_level)}`);
+              throw new Error(`未知 thinking_level: ${String(pref.thinking_level)}`);
             })(),
-    context_sources: Array.isArray(binding.context_sources)
-      ? (binding.context_sources as ContextSourceRef[])
+    context_sources: Array.isArray(pref.context_sources)
+      ? (pref.context_sources as ContextSourceRef[])
       : (() => {
-          throw new Error("agent_binding.context_sources 必须是数组");
+          throw new Error("dispatch_preference.context_sources 必须是数组");
         })(),
   };
 };
@@ -205,11 +188,10 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     project_id: requireStringField(raw, "project_id"),
     story_id: requireStringField(raw, "story_id"),
     workspace_id: raw.workspace_id ? String(raw.workspace_id) : null,
-    lifecycle_step_key: raw.lifecycle_step_key ? String(raw.lifecycle_step_key) : null,
     title: requireStringField(raw, "title"),
     description: raw.description ? String(raw.description) : "",
     status: normalizeTaskStatus(requireStringField(raw, "status")),
-    agent_binding: mapAgentBinding(raw.agent_binding),
+    dispatch_preference: mapDispatchPreference(raw.dispatch_preference),
     artifacts:
       raw.artifacts == null
         ? []
@@ -226,31 +208,6 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     created_at: requireStringField(raw, "created_at"),
     updated_at: requireStringField(raw, "updated_at"),
   };
-};
-
-/** Story 级会话绑定条目（替代已移除的 SessionBinding） */
-export interface StorySessionEntry {
-  id: string;
-  session_id: string;
-  label: string;
-  session_title?: string;
-  session_updated_at?: number;
-}
-
-const mapStorySessionEntry = (raw: Record<string, unknown>): StorySessionEntry => ({
-  id: requireStringField(raw, "id"),
-  session_id: requireStringField(raw, "session_id"),
-  label: requireStringField(raw, "label"),
-  session_title: raw.session_title != null ? String(raw.session_title) : undefined,
-  session_updated_at: raw.session_updated_at != null ? Number(raw.session_updated_at) : undefined,
-});
-
-const requireStorySessionField = (raw: Record<string, unknown>, field: string): string => {
-  const value = raw[field];
-  if (typeof value === "string" && value.length > 0) {
-    return value;
-  }
-  throw new Error(`StorySessionInfo 缺少必填字段: ${field}`);
 };
 
 // ─── 事件 payload → 实体的可映射性判定 ──────────────────
@@ -363,8 +320,7 @@ export interface CreateTaskPayload {
   title: string;
   description?: string;
   workspace_id?: string | null;
-  lifecycle_step_key?: string | null;
-  agent_binding?: AgentBinding;
+  dispatch_preference?: TaskDispatchPreference;
 }
 
 export async function createTask(storyId: string, payload: CreateTaskPayload): Promise<Task> {
@@ -376,8 +332,7 @@ export interface UpdateTaskPayload {
   title?: string;
   description?: string;
   workspace_id?: string | null;
-  lifecycle_step_key?: string | null;
-  agent_binding?: AgentBinding;
+  dispatch_preference?: TaskDispatchPreference;
 }
 
 export async function updateTask(taskId: string, payload: UpdateTaskPayload): Promise<Task> {
@@ -412,7 +367,7 @@ export async function continueTaskExecution(
 
 export async function cancelTaskExecution(taskId: string): Promise<Task> {
   const raw = await api.post<Record<string, unknown>>(`/tasks/${taskId}/cancel`, {});
-  return mapTask(raw);
+  return mapTask(raw.task as Record<string, unknown>);
 }
 
 export async function deleteTask(taskId: string): Promise<void> {
@@ -422,86 +377,4 @@ export async function deleteTask(taskId: string): Promise<void> {
 export async function fetchTasks(storyId: string): Promise<Task[]> {
   const response = await api.get<Record<string, unknown>[]>(`/stories/${storyId}/tasks`);
   return response.map(mapTask);
-}
-
-export interface TaskSessionPayload {
-  task_id: string;
-  workspace_id: string | null;
-  session_id: string | null;
-  task_status: Task["status"];
-  agent_binding: AgentBinding;
-  session_title: string | null;
-  last_activity: number | null;
-  vfs: ExecutionVfs | null;
-  runtime_surface: ResolvedVfsSurface | null;
-  context_snapshot: SessionContextSnapshot | null;
-}
-
-export async function fetchTaskSession(taskId: string): Promise<TaskSessionPayload> {
-  const raw = await api.get<Record<string, unknown>>(`/tasks/${taskId}/session`);
-  return {
-    task_id: requireStringField(raw, "task_id"),
-    workspace_id: readNullableStringField(raw, "workspace_id"),
-    session_id: readNullableStringField(raw, "session_id"),
-    task_status: normalizeTaskStatus(requireStringField(raw, "task_status")),
-    agent_binding: mapAgentBinding(raw.agent_binding),
-    session_title: readNullableStringField(raw, "session_title"),
-    last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
-    vfs: (raw.vfs as ExecutionVfs) ?? null,
-    runtime_surface: (raw.runtime_surface as ResolvedVfsSurface | undefined) ?? null,
-    context_snapshot: (raw.context_snapshot as SessionContextSnapshot) ?? null,
-  };
-}
-
-// ─── Story Runs API (run-oriented) ───────────────────────
-
-export async function fetchStoryRuns(storyId: string): Promise<StoryRunOverviewDto[]> {
-  const response = await api.get<StoryRunsResponse>(`/stories/${storyId}/runs`);
-  return response.runs;
-}
-
-export async function fetchActiveStoryRun(storyId: string): Promise<StoryRunOverviewDto | null> {
-  const response = await api.get<StoryRunOverviewDto | null>(`/stories/${storyId}/runs/active`);
-  return response;
-}
-
-// ─── Story Session 绑定 API ──────────────────────────────
-
-export async function fetchStorySessionInfo(
-  storyId: string,
-  bindingId: string,
-): Promise<StorySessionInfo> {
-  const raw = await api.get<Record<string, unknown>>(`/stories/${storyId}/sessions/${bindingId}`);
-  return {
-    binding_id: requireStorySessionField(raw, "binding_id"),
-    session_id: requireStorySessionField(raw, "session_id"),
-    session_title: readNullableStringField(raw, "session_title"),
-    last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
-    vfs: (raw.vfs as ExecutionVfs) ?? null,
-    runtime_surface: (raw.runtime_surface as StorySessionInfo["runtime_surface"]) ?? null,
-    context_snapshot: (raw.context_snapshot as StorySessionInfo["context_snapshot"]) ?? null,
-  };
-}
-
-export async function fetchStorySessions(storyId: string): Promise<StorySessionEntry[]> {
-  const response = await api.get<Record<string, unknown>[]>(`/stories/${storyId}/sessions`);
-  return response.map(mapStorySessionEntry);
-}
-
-export interface CreateStorySessionInput {
-  session_id?: string;
-  title?: string;
-  label?: string;
-}
-
-export async function createStorySession(
-  storyId: string,
-  input: CreateStorySessionInput,
-): Promise<StorySessionEntry> {
-  const raw = await api.post<Record<string, unknown>>(`/stories/${storyId}/sessions`, input);
-  return mapStorySessionEntry(raw);
-}
-
-export async function unbindStorySession(storyId: string, bindingId: string): Promise<void> {
-  await api.delete(`/stories/${storyId}/sessions/${bindingId}`);
 }

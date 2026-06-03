@@ -780,8 +780,8 @@ pub fn normalize_inline_files(
     Ok(normalized)
 }
 
-pub fn build_lifecycle_mount(run_id: Uuid, lifecycle_key: &str) -> Mount {
-    build_lifecycle_mount_with_ports(run_id, lifecycle_key, &[])
+pub fn build_lifecycle_mount(run_id: Uuid, graph_instance_id: Uuid, lifecycle_key: &str) -> Mount {
+    build_lifecycle_mount_with_ports(run_id, graph_instance_id, lifecycle_key, &[])
 }
 
 pub fn build_routine_mount(
@@ -831,8 +831,27 @@ pub fn build_routine_mount(
 /// `artifacts/{port_key}` 仍由 `writable_port_keys` 做路径级白名单控制。
 pub fn build_lifecycle_mount_with_ports(
     run_id: Uuid,
+    graph_instance_id: Uuid,
     lifecycle_key: &str,
     writable_port_keys: &[String],
+) -> Mount {
+    build_lifecycle_mount_with_activity_scope(
+        run_id,
+        graph_instance_id,
+        lifecycle_key,
+        writable_port_keys,
+        None,
+        None,
+    )
+}
+
+pub fn build_lifecycle_mount_with_activity_scope(
+    run_id: Uuid,
+    graph_instance_id: Uuid,
+    lifecycle_key: &str,
+    writable_port_keys: &[String],
+    activity_key: Option<&str>,
+    attempt: Option<u32>,
 ) -> Mount {
     let capabilities = vec![
         MountCapability::Read,
@@ -841,20 +860,29 @@ pub fn build_lifecycle_mount_with_ports(
         MountCapability::Search,
     ];
 
+    let mut metadata = serde_json::json!({
+        "run_id": run_id.to_string(),
+        "graph_instance_id": graph_instance_id.to_string(),
+        "lifecycle_key": lifecycle_key,
+        "writable_port_keys": writable_port_keys,
+        "directory_hint": lifecycle_directory_hint()
+    });
+    if let Some(activity_key) = activity_key {
+        metadata["activity_key"] = serde_json::json!(activity_key);
+    }
+    if let Some(attempt) = attempt {
+        metadata["attempt"] = serde_json::json!(attempt);
+    }
+
     Mount {
         id: "lifecycle".to_string(),
         provider: PROVIDER_LIFECYCLE_VFS.to_string(),
         backend_id: String::new(),
-        root_ref: format!("lifecycle://run/{run_id}"),
+        root_ref: format!("lifecycle://run/{run_id}/graph/{graph_instance_id}"),
         capabilities,
         default_write: false,
         display_name: "Lifecycle 执行记录".to_string(),
-        metadata: serde_json::json!({
-            "run_id": run_id.to_string(),
-            "lifecycle_key": lifecycle_key,
-            "writable_port_keys": writable_port_keys,
-            "directory_hint": lifecycle_directory_hint()
-        }),
+        metadata,
     }
 }
 

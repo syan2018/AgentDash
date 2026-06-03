@@ -2,7 +2,6 @@
   "key": "trellis_dag_task",
   "name": "Trellis DAG Lifecycle / Task",
   "description": "DAG 编排示例：research → implement，每个 Activity 创建独立 session。",
-  "binding_kinds": ["story"],
   "workflows": [
     {
       "key": "trellis_dag_task_research",
@@ -72,7 +71,7 @@
       }
     }
   ],
-  "lifecycle": {
+  "graph": {
     "key": "trellis_dag_task",
     "name": "Trellis DAG Lifecycle / Task",
     "description": "DAG 编排示例：research → implement，每个 activity 为独立 Agent Session。",
@@ -83,8 +82,9 @@
         "description": "需求分析与技术调研（独立 Agent Session）。",
         "executor": {
           "kind": "agent",
-          "workflow_key": "trellis_dag_task_research",
-          "session_policy": "spawn_child"
+          "procedure_key": "trellis_dag_task_research",
+          "agent_reuse_policy": "create_activity_agent",
+          "runtime_session_policy": "create_new"
         },
         "output_ports": [
           {
@@ -103,8 +103,9 @@
         "description": "基于调研结论执行实现（独立 Agent Session）。",
         "executor": {
           "kind": "agent",
-          "workflow_key": "trellis_dag_task_implement",
-          "session_policy": "spawn_child"
+          "procedure_key": "trellis_dag_task_implement",
+          "agent_reuse_policy": "create_activity_agent",
+          "runtime_session_policy": "create_new"
         },
         "input_ports": [
           {

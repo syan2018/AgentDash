@@ -18,9 +18,9 @@ import { useProjectStore } from "../../../stores/projectStore";
 import { useWorkflowStore } from "../../../stores/workflowStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
 import type {
-  ActivityLifecycleDefinition,
+  WorkflowGraph,
   LibraryAssetDto,
-  WorkflowDefinitionSource,
+  DefinitionSource,
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
 import {
@@ -41,7 +41,7 @@ import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
 import { useLibraryPublishedAssets } from "../_shared/useLibraryPublishedAssets";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 
-type DeleteTarget = { id: string; name: string; source: WorkflowDefinitionSource };
+type DeleteTarget = { id: string; name: string; source: DefinitionSource };
 
 export function WorkflowCategoryPanel() {
   const navigate = useNavigate();
@@ -59,7 +59,7 @@ export function WorkflowCategoryPanel() {
   const [notice, setNotice] = useState<DismissibleNoticeData | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
-  const [publishTarget, setPublishTarget] = useState<ActivityLifecycleDefinition | null>(null);
+  const [publishTarget, setPublishTarget] = useState<WorkflowGraph | null>(null);
   const { publishedByKey, reloadPublished } = useLibraryPublishedAssets("workflow_template");
 
   useEffect(() => {
@@ -161,11 +161,11 @@ function LifecycleAssetGrid({
   onDelete,
   busyKey,
 }: {
-  items: ActivityLifecycleDefinition[];
+  items: WorkflowGraph[];
   publishedByKey: Map<string, LibraryAssetDto>;
-  onEdit: (lc: ActivityLifecycleDefinition) => void;
-  onPublish: (lc: ActivityLifecycleDefinition) => void;
-  onDelete: (lc: ActivityLifecycleDefinition) => void;
+  onEdit: (lc: WorkflowGraph) => void;
+  onPublish: (lc: WorkflowGraph) => void;
+  onDelete: (lc: WorkflowGraph) => void;
   busyKey: string | null;
 }) {
   if (items.length === 0) {
@@ -206,11 +206,11 @@ function LifecycleAssetCard({
   onDelete,
   isDeleting,
 }: {
-  item: ActivityLifecycleDefinition;
+  item: WorkflowGraph;
   published: LibraryAssetDto | null;
-  onEdit: (lc: ActivityLifecycleDefinition) => void;
-  onPublish: (lc: ActivityLifecycleDefinition) => void;
-  onDelete: (lc: ActivityLifecycleDefinition) => void;
+  onEdit: (lc: WorkflowGraph) => void;
+  onPublish: (lc: WorkflowGraph) => void;
+  onDelete: (lc: WorkflowGraph) => void;
   isDeleting: boolean;
 }) {
   const stepCount = item.activities.length;

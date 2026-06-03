@@ -33,6 +33,7 @@ const taskStatusConfig: Record<TaskStatus, { label: string; className: string }>
   awaiting_verification: { label: "待验收", className: "border-warning/20 bg-warning/10 text-warning" },
   completed: { label: "已完成", className: "border-success/20 bg-success/10 text-success" },
   failed: { label: "失败", className: "border-destructive/20 bg-destructive/10 text-destructive" },
+  cancelled: { label: "已取消", className: "border-warning/20 bg-warning/10 text-warning" },
 };
 
 interface BadgeProps {

@@ -12,8 +12,8 @@ use agentdash_spi::Vfs;
 
 use crate::auth::{CurrentUser, ProjectPermission};
 use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
-use crate::routes::acp_sessions::ensure_session_permission;
-use crate::session_construction::build_session_context_plan;
+use crate::routes::sessions::ensure_session_permission;
+use crate::session_construction::resolve_session_frame_vfs;
 use crate::{app_state::AppState, rpc::ApiError};
 
 /// GET /api/sessions/:session_id/terminals
@@ -267,13 +267,11 @@ async fn resolve_terminal_launch_target(
         ProjectPermission::View,
     )
     .await?;
-    let plan = build_session_context_plan(state, current_user, session_id)
-        .await?
-        .ok_or_else(|| ApiError::BadRequest("Session 未绑定可用 owner，无法创建终端".into()))?;
-    let vfs =
-        plan.context_projection.vfs.as_ref().ok_or_else(|| {
-            ApiError::BadRequest("Session context 未产出 VFS，无法创建终端".into())
-        })?;
+    let result = resolve_session_frame_vfs(state, current_user, session_id).await?;
+    let vfs = result
+        .vfs
+        .as_ref()
+        .ok_or_else(|| ApiError::BadRequest("AgentFrame 未记录 VFS，无法创建终端".into()))?;
     let target = terminal_launch_target_from_vfs(vfs)?;
     if !state
         .services

@@ -1,5 +1,6 @@
 import { api, type ApiHttpError } from "../api/client";
 import { requireStringField } from "../api/mappers";
+import { settingsApi } from "../api/settings";
 import type {
   CreateSessionForkRequest,
   RollbackSessionProjectionRequest,
@@ -10,22 +11,18 @@ import type {
   SessionProjectionRollbackResponse,
   SessionProjectionViewResponse,
 } from "../generated/session-contracts";
-import type {
-  AgentBinding,
-  ContextSourceRef,
-  ExecutionVfs,
-  HookSessionRuntimeInfo,
-  ProjectSessionEntry,
-  ResolvedVfsSurface,
-  SessionBaselineCapabilities,
-  SessionContextSnapshot,
-  SessionExecutionState,
-  SessionExecutionStatus,
-} from "../types";
-import { isThinkingLevel } from "../types";
+import type { JsonValue } from "../generated/common-contracts";
+import type { SessionExecutionState, SessionExecutionStatus } from "../types";
 import type { SessionTabLayout } from "../features/workspace-panel/tab-type-registry";
 
 export type TitleSource = "auto" | "source" | "user";
+
+export type SessionExecutionStatusValue =
+  | "idle"
+  | "running"
+  | "completed"
+  | "failed"
+  | "interrupted";
 
 export interface SessionMeta {
   id: string;
@@ -34,29 +31,11 @@ export interface SessionMeta {
   createdAt: number;
   updatedAt: number;
   lastEventSeq?: number;
-  tabLayout?: SessionTabLayout | null;
+  lastExecutionStatus?: SessionExecutionStatusValue;
 }
 
 export type PersistedSessionEvent = SessionEventResponse;
 export type SessionEventsPage = SessionEventsPageResponse;
-
-export interface FetchSessionsOptions {
-  excludeBound?: boolean;
-}
-
-export async function fetchSessions(options?: FetchSessionsOptions): Promise<SessionMeta[]> {
-  const params = new URLSearchParams();
-  if (options?.excludeBound) {
-    params.set("exclude_bound", "true");
-  }
-  const query = params.toString();
-  const path = query ? `/sessions?${query}` : "/sessions";
-  return api.get<SessionMeta[]>(path);
-}
-
-export async function createSession(title: string | undefined, projectId: string): Promise<SessionMeta> {
-  return api.post<SessionMeta>("/sessions", { title, project_id: projectId });
-}
 
 export async function fetchSessionMeta(id: string): Promise<SessionMeta> {
   return api.get<SessionMeta>(`/sessions/${encodeURIComponent(id)}`);
@@ -81,59 +60,6 @@ export async function deleteSession(id: string): Promise<void> {
 
 export async function updateSessionTitle(id: string, title: string): Promise<SessionMeta> {
   return api.patch<SessionMeta>(`/sessions/${encodeURIComponent(id)}/meta`, { title });
-}
-
-function mapSessionContextAgentBinding(raw: unknown): AgentBinding | null {
-  if (raw == null || typeof raw !== "object") {
-    return null;
-  }
-  const binding = raw as Record<string, unknown>;
-  return {
-    agent_type: binding.agent_type != null ? String(binding.agent_type) : null,
-    agent_pid: binding.agent_pid != null ? String(binding.agent_pid) : null,
-    preset_name: binding.preset_name != null ? String(binding.preset_name) : null,
-    prompt_template: binding.prompt_template != null ? String(binding.prompt_template) : null,
-    initial_context: binding.initial_context != null ? String(binding.initial_context) : null,
-    thinking_level:
-      binding.thinking_level == null
-        ? null
-        : isThinkingLevel(binding.thinking_level)
-          ? binding.thinking_level
-          : (() => {
-              throw new Error(`未知的 thinking_level: ${String(binding.thinking_level)}`);
-            })(),
-    context_sources: Array.isArray(binding.context_sources)
-      ? binding.context_sources as ContextSourceRef[]
-      : [],
-  };
-}
-
-export interface SessionContextPayload {
-  workspace_id: string | null;
-  agent_binding: AgentBinding | null;
-  vfs: ExecutionVfs | null;
-  runtime_surface: ResolvedVfsSurface | null;
-  context_snapshot: SessionContextSnapshot | null;
-  session_capabilities: SessionBaselineCapabilities | null;
-}
-
-/** GET /sessions/{id}/context — 与旧版 task/story/project 分端点行为对齐（由后端按绑定解析） */
-export async function fetchSessionContext(sessionId: string): Promise<SessionContextPayload | null> {
-  let raw: Record<string, unknown>;
-  try {
-    raw = await api.get<Record<string, unknown>>(`/sessions/${encodeURIComponent(sessionId)}/context`);
-  } catch (err) {
-    if ((err as ApiHttpError).status === 404) return null;
-    throw err;
-  }
-  return {
-    workspace_id: raw.workspace_id != null ? String(raw.workspace_id) : null,
-    agent_binding: mapSessionContextAgentBinding(raw.agent_binding),
-    vfs: (raw.vfs as ExecutionVfs | undefined) ?? null,
-    runtime_surface: (raw.runtime_surface as ResolvedVfsSurface | undefined) ?? null,
-    context_snapshot: (raw.context_snapshot as SessionContextSnapshot | undefined) ?? null,
-    session_capabilities: (raw.session_capabilities as SessionBaselineCapabilities | undefined) ?? null,
-  };
 }
 
 /** GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。 */
@@ -172,15 +98,6 @@ export async function rollbackSessionProjection(
     `/sessions/${encodeURIComponent(sessionId)}/projection/rollback`,
     request,
   );
-}
-
-export async function fetchSessionHookRuntime(id: string): Promise<HookSessionRuntimeInfo | null> {
-  try {
-    return await api.get<HookSessionRuntimeInfo>(`/sessions/${encodeURIComponent(id)}/hook-runtime`);
-  } catch (err) {
-    if ((err as ApiHttpError).status === 404) return null;
-    throw err;
-  }
 }
 
 function normalizeSessionExecutionStatus(value: unknown): SessionExecutionStatus {
@@ -232,9 +149,9 @@ export async function saveSessionTabLayout(
   sessionId: string,
   layout: SessionTabLayout,
 ): Promise<void> {
-  await api.patch<unknown>(
-    `/sessions/${encodeURIComponent(sessionId)}/meta`,
-    { tab_layout: layout },
+  await settingsApi.update(
+    { scope: "user" },
+    [{ key: sessionTabLayoutSettingKey(sessionId), value: sessionTabLayoutToJson(layout) }],
   );
 }
 
@@ -245,70 +162,26 @@ export async function saveSessionTabLayout(
 export async function loadSessionTabLayout(
   sessionId: string,
 ): Promise<SessionTabLayout | null> {
-  const meta = await fetchSessionMeta(sessionId);
-  return isSessionTabLayout(meta.tabLayout) ? meta.tabLayout : null;
+  const settings = await settingsApi.list({
+    scope: "user",
+    category: sessionTabLayoutSettingKey(sessionId),
+  });
+  const setting = settings.find((entry) => entry.key === sessionTabLayoutSettingKey(sessionId));
+  return isSessionTabLayout(setting?.value) ? setting.value : null;
 }
 
-// ─── 项目会话列表 ─────────────────────────────────────
-// 获取指定项目的所有活跃会话（包含 agent / story / task 层级）
-
-function normalizeProjectSessionEntryStatus(
-  value: unknown,
-): ProjectSessionEntry["execution_status"] {
-  switch (value) {
-    case "idle":
-    case "running":
-    case "completed":
-    case "failed":
-    case "interrupted":
-      return value;
-    default:
-      throw new Error(`未知的项目会话执行状态: ${String(value ?? "")}`);
-  }
+function sessionTabLayoutSettingKey(sessionId: string): string {
+  return `ui.session_tab_layout.${sessionId}`;
 }
 
-function normalizeOwnerType(value: unknown): ProjectSessionEntry["owner_type"] {
-  switch (value) {
-    case "project":
-    case "story":
-    case "task":
-      return value;
-    default:
-      throw new Error(`未知的项目会话 owner_type: ${String(value ?? "")}`);
-  }
-}
-
-function normalizeParentRelationKind(value: unknown): ProjectSessionEntry["parent_relation_kind"] {
-  if (value == null) return null;
-  switch (value) {
-    case "fork": return "fork";
-    case "companion": return "companion";
-    case "spawned_agent": return "spawned_agent";
-    case "rollback_branch": return "rollback_branch";
-    default:
-      throw new Error(`未知的项目会话 parent_relation_kind: ${String(value ?? "")}`);
-  }
-}
-
-function mapProjectSessionEntry(raw: Record<string, unknown>): ProjectSessionEntry {
+function sessionTabLayoutToJson(layout: SessionTabLayout): JsonValue {
   return {
-    session_id: requireStringField(raw, "session_id"),
-    session_title: raw.session_title != null ? String(raw.session_title) : null,
-    last_activity: raw.last_activity != null ? Number(raw.last_activity) : null,
-    execution_status: normalizeProjectSessionEntryStatus(raw.execution_status),
-    owner_type: normalizeOwnerType(raw.owner_type),
-    owner_id: requireStringField(raw, "owner_id"),
-    owner_title: raw.owner_title != null ? String(raw.owner_title) : null,
-    story_id: raw.story_id != null ? String(raw.story_id) : null,
-    story_title: raw.story_title != null ? String(raw.story_title) : null,
-    agent_key: raw.agent_key != null ? String(raw.agent_key) : null,
-    agent_display_name: raw.agent_display_name != null ? String(raw.agent_display_name) : null,
-    parent_session_id: raw.parent_session_id != null ? String(raw.parent_session_id) : null,
-    parent_relation_kind: normalizeParentRelationKind(raw.parent_relation_kind),
+    tabs: layout.tabs.map((tab) => ({
+      type_id: tab.type_id,
+      uri: tab.uri,
+      title: tab.title,
+      pinned: tab.pinned,
+    })),
+    active_tab_uri: layout.active_tab_uri,
   };
-}
-
-export async function fetchProjectSessions(projectId: string): Promise<ProjectSessionEntry[]> {
-  const raw = await api.get<Record<string, unknown>[]>(`/projects/${encodeURIComponent(projectId)}/sessions`);
-  return raw.map(mapProjectSessionEntry);
 }

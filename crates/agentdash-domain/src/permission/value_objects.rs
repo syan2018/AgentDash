@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::workflow::{RunLinkSubjectKind, ToolCapabilityPath};
+use crate::workflow::ToolCapabilityPath;
 
 /// Grant 的生效范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -8,26 +8,26 @@ use crate::workflow::{RunLinkSubjectKind, ToolCapabilityPath};
 pub enum GrantScope {
     /// 仅当前 turn 有效（turn 结束后自动撤销）
     Turn,
-    /// 整个 session 生命周期有效
-    Session,
-    /// 绑定到 workflow step（step 完成后自动撤销）
-    WorkflowStep,
+    /// AgentFrame 生命周期有效（frame revision 更替前持续生效）
+    AgentFrame,
+    /// 绑定到 Activity（activity 完成后自动撤销）
+    Activity,
 }
 
 impl GrantScope {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Turn => "turn",
-            Self::Session => "session",
-            Self::WorkflowStep => "workflow_step",
+            Self::AgentFrame => "agent_frame",
+            Self::Activity => "activity",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim() {
             "turn" => Some(Self::Turn),
-            "session" => Some(Self::Session),
-            "workflow_step" => Some(Self::WorkflowStep),
+            "agent_frame" => Some(Self::AgentFrame),
+            "activity" => Some(Self::Activity),
             _ => None,
         }
     }
@@ -99,7 +99,7 @@ impl GrantStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopeEscalationIntent {
     /// 目标 scope 类型（如 Story → Agent 将创建/管理 Story）
-    pub target_subject_kind: RunLinkSubjectKind,
+    pub target_subject_kind: String,
     /// 期望获取的具体 capability paths（escalation 后额外解锁的部分）
     pub unlocked_paths: Vec<ToolCapabilityPath>,
 }
@@ -129,11 +129,17 @@ mod tests {
     fn grant_scope_roundtrip() {
         for scope in [
             GrantScope::Turn,
-            GrantScope::Session,
-            GrantScope::WorkflowStep,
+            GrantScope::AgentFrame,
+            GrantScope::Activity,
         ] {
             assert_eq!(GrantScope::parse(scope.as_str()), Some(scope));
         }
+    }
+
+    #[test]
+    fn grant_scope_rejects_legacy_values() {
+        assert_eq!(GrantScope::parse("session"), None);
+        assert_eq!(GrantScope::parse("workflow_step"), None);
     }
 
     #[test]

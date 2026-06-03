@@ -1,10 +1,10 @@
-import type { AgentBinding } from "./index";
+import type { TaskDispatchPreference } from "./index";
 
 // ─── Session Types ─────────────────────────────────
 
 export type CapabilityScope = "project" | "story" | "task";
 
-export interface SessionRunContext {
+export interface SubjectRunContext {
   project_id: string;
   story_id?: string | null;
   task_id?: string | null;
@@ -15,23 +15,8 @@ export interface SessionRunContext {
 
 export interface SessionTaskContext {
   task_id: string;
-  agent_binding?: AgentBinding;
+  dispatch_preference?: TaskDispatchPreference;
 }
-
-export type SessionReturnTarget =
-  | {
-      owner_type: "project";
-      project_id: string;
-    }
-  | {
-      owner_type: "story";
-      story_id: string;
-    }
-  | {
-      owner_type: "task";
-      story_id: string;
-      task_id: string;
-    };
 
 export interface HookInjection {
   slot: string;
@@ -94,15 +79,15 @@ export interface SessionExecutionState {
 }
 
 export interface ActiveWorkflowHookMetadata {
-  lifecycle_id: string;
+  workflow_graph_id: string;
   lifecycle_key: string;
   lifecycle_name: string;
   run_id: string;
   run_status: string;
-  step_key: string;
-  step_title: string;
+  activity_key: string;
+  activity_title: string;
   primary_workflow_id: string;
-  workflow_key?: string | null;
+  procedure_key?: string | null;
   primary_workflow_name: string;
 }
 
@@ -110,9 +95,9 @@ export interface HookRuntimeMetadata {
   active_workflow?: ActiveWorkflowHookMetadata | null;
 }
 
-export interface SessionHookSnapshot {
-  session_id: string;
-  run_context?: SessionRunContext | null;
+export interface AgentFrameHookSnapshot {
+  runtime_adapter_session_id: string;
+  run_context?: SubjectRunContext | null;
   sources: string[];
   tags: string[];
   injections: HookInjection[];
@@ -120,16 +105,16 @@ export interface SessionHookSnapshot {
   metadata?: HookRuntimeMetadata | null;
 }
 
-export interface HookSessionRuntimeInfo {
-  session_id: string;
+export interface AgentFrameHookRuntimeInfo {
+  runtime_adapter_session_id: string;
   revision: number;
-  snapshot: SessionHookSnapshot;
+  snapshot: AgentFrameHookSnapshot;
   diagnostics: HookDiagnosticEntry[];
   trace: HookTraceEntry[];
   pending_actions: HookPendingAction[];
 }
 
-export interface ProjectSessionAgentContext {
+export interface RuntimeTraceAgentContext {
   agent_key: string;
   display_name: string;
   executor_hint?: string | null;
@@ -137,8 +122,7 @@ export interface ProjectSessionAgentContext {
 
 export interface SessionNavigationState {
   task_context?: SessionTaskContext;
-  project_agent?: ProjectSessionAgentContext;
-  return_to?: SessionReturnTarget;
+  trace_agent?: RuntimeTraceAgentContext;
   open_workspace_panel?: boolean;
 }
 

@@ -84,7 +84,8 @@ packages/app-web/src/
 │   ├── storyStore.ts               # Story/Task 数据
 │   ├── coordinatorStore.ts         # 后端连接管理
 │   ├── eventStore.ts               # Project NDJSON 事件流状态
-│   ├── workflowStore.ts            # Workflow 管理
+│   ├── workflowStore.ts            # WorkflowGraph 定义态管理
+│   ├── lifecycleStore.ts           # Lifecycle 运行态 view projection
 │   ├── sessionHistoryStore.ts      # 会话历史
 │   ├── settingsStore.ts            # 全局设置
 │   ├── currentUserStore.ts         # 当前用户

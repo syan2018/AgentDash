@@ -1,12 +1,10 @@
-﻿//! Hub 的 hook 调度职责。
+//! Hub 的 hook 调度职责。
 //!
 //! 集中：
 //! - `emit_session_hook_trigger`（从 `session/event_bridge.rs` 迁入，顺手删 `_tx` 占位）
-//! - `ensure_hook_session_runtime`（按需懒重建 hook snapshot runtime）
+//! - `ensure_hook_runtime`（按需懒重建 hook snapshot runtime）
 //! - `collect_runtime_context_update_injections`（PhaseNode 等 runtime context 更新）
 //! - `schedule_hook_auto_resume`（hook 级 auto-resume，经 provider 后转 prompt）
-
-use std::sync::Arc;
 
 use super::super::auto_resume_context_frame::build_auto_resume_context_frame;
 use super::super::hook_delegate::{
@@ -14,7 +12,7 @@ use super::super::hook_delegate::{
 };
 use super::super::hook_events::build_hook_trace_envelope;
 use super::super::hook_messages as msg;
-use super::super::hook_runtime::HookSessionRuntime;
+use super::super::hooks_service::{build_frame_hook_runtime, resolve_runtime_hook_target};
 use super::super::hub_support::session_hook_trace_decision;
 use super::super::launch::LaunchCommand;
 use super::super::terminal_effects::{
@@ -25,8 +23,9 @@ use super::SessionRuntimeInner;
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
-    HookEffect, HookEvaluationQuery, HookInjection, HookSessionRuntimeAccess, HookTraceEntry,
-    HookTrigger, SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    AgentFrameHookSnapshotQuery, HookEffect, HookInjection, HookRuntimeAccess,
+    HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookTraceEntry, HookTrigger,
+    RuntimeAdapterProvenance, SharedHookRuntime,
 };
 
 /// `emit_session_hook_trigger` 的入参（在 hub 内部多处构造，故暴露给 super）。
@@ -56,7 +55,7 @@ impl SessionRuntimeInner {
     /// （broadcast Sender）始终未被使用，PR 6 清理时一并删除。
     pub(in crate::session) async fn emit_session_hook_trigger(
         &self,
-        hook_session: &dyn HookSessionRuntimeAccess,
+        hook_runtime: &dyn HookRuntimeAccess,
         input: &HookTriggerInput<'_>,
     ) -> HookTriggerDispatchResult {
         let HookTriggerInput {
@@ -67,15 +66,19 @@ impl SessionRuntimeInner {
             refresh_reason,
             ref source,
         } = *input;
-        match hook_session
-            .evaluate(HookEvaluationQuery {
-                session_id: session_id.to_string(),
+        let turn_id_value = turn_id.map(ToString::to_string);
+        match hook_runtime
+            .evaluate_from_provenance(HookRuntimeEvaluationQuery {
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    hook_runtime.session_id().to_string(),
+                    turn_id_value.clone(),
+                    "hub_hook_trigger",
+                ),
                 trigger: *trigger,
-                turn_id: turn_id.map(ToString::to_string),
                 tool_name: None,
                 tool_call_id: None,
                 subagent_type: None,
-                snapshot: Some(hook_session.snapshot()),
+                snapshot: Some(hook_runtime.snapshot()),
                 payload: payload.clone(),
                 token_stats: None,
             })
@@ -83,10 +86,13 @@ impl SessionRuntimeInner {
         {
             Ok(resolution) => {
                 if resolution.refresh_snapshot {
-                    let _ = hook_session
-                        .refresh(SessionHookRefreshQuery {
-                            session_id: session_id.to_string(),
-                            turn_id: turn_id.map(ToString::to_string),
+                    let _ = hook_runtime
+                        .refresh_from_provenance(HookRuntimeRefreshQuery {
+                            provenance: RuntimeAdapterProvenance::runtime_session(
+                                hook_runtime.session_id().to_string(),
+                                turn_id_value.clone(),
+                                "hub_hook_refresh",
+                            ),
                             reason: Some(refresh_reason.to_string()),
                         })
                         .await;
@@ -95,9 +101,9 @@ impl SessionRuntimeInner {
                 let trace_injections = resolution.injections.clone();
                 if let Some(trace_trigger) = trigger.trace_trigger() {
                     let trace = HookTraceEntry {
-                        sequence: hook_session.next_trace_sequence(),
+                        sequence: hook_runtime.next_trace_sequence(),
                         timestamp_ms: chrono::Utc::now().timestamp_millis(),
-                        revision: hook_session.revision(),
+                        revision: hook_runtime.revision(),
                         trigger: trace_trigger,
                         decision: session_hook_trace_decision(trigger, &resolution).to_string(),
                         tool_name: None,
@@ -110,7 +116,7 @@ impl SessionRuntimeInner {
                         diagnostics: resolution.diagnostics,
                         injections: trace_injections.clone(),
                     };
-                    hook_session.append_trace(trace.clone());
+                    hook_runtime.append_trace(trace.clone());
                     // 活跃 in-process connector 会通过 trace_broadcast → hook_trace_rx
                     // 把同一条 trace 发回 turn stream。Hub 侧只在没有 live runtime
                     // 时兜底持久化，避免前端出现重复 Hook 卡片。
@@ -155,12 +161,11 @@ impl SessionRuntimeInner {
         &self,
         session_id: &str,
     ) -> Vec<HookInjection> {
-        let Some(hook_session) = self.runtime_registry.hook_session_runtime(session_id).await
-        else {
+        let Some(hook_runtime) = self.runtime_registry.hook_runtime(session_id).await else {
             return Vec::new();
         };
 
-        let injections = hook_session.snapshot().injections;
+        let injections = hook_runtime.snapshot().injections;
         if injections.is_empty() {
             return Vec::new();
         }
@@ -178,12 +183,16 @@ impl SessionRuntimeInner {
         injections
     }
 
-    pub async fn ensure_hook_session_runtime(
+    /// Delivery adapter: 根据 RuntimeSession id 按需懒重建 hook runtime。
+    ///
+    /// 业务控制路径应使用 `SessionHookService::ensure_hook_runtime_for_target`，
+    /// 此方法仅供 hub 内部从 delivery session 反查 frame target 的 adapter 场景。
+    pub(crate) async fn ensure_hook_runtime_for_delivery_session(
         &self,
         session_id: &str,
         turn_id: Option<&str>,
-    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
-        if let Some(runtime) = self.runtime_registry.hook_session_runtime(session_id).await {
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
+        if let Some(runtime) = self.runtime_registry.hook_runtime(session_id).await {
             return Ok(Some(runtime));
         }
 
@@ -201,25 +210,32 @@ impl SessionRuntimeInner {
             return Ok(None);
         };
 
+        let Some(target) = resolve_runtime_hook_target(provider.as_ref(), session_id).await? else {
+            return Ok(None);
+        };
         let snapshot = provider
-            .load_session_snapshot(SessionHookSnapshotQuery {
-                session_id: session_id.to_string(),
-                turn_id: turn_id.map(ToString::to_string),
+            .load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: target.clone(),
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    session_id.to_string(),
+                    turn_id.map(ToString::to_string),
+                    "hook_runtime_lazy_rebuild",
+                ),
             })
             .await
             .map_err(|error| {
                 ConnectorError::Runtime(format!("重建会话 Hook snapshot 失败: {error}"))
             })?;
 
-        let rebuilt_runtime = Arc::new(HookSessionRuntime::new(
-            session_id.to_string(),
-            provider.clone(),
-            snapshot,
-        ));
+        let Some(rebuilt_runtime) =
+            build_frame_hook_runtime(self, session_id, target, provider.clone(), snapshot).await?
+        else {
+            return Ok(None);
+        };
 
         Ok(self
             .runtime_registry
-            .set_hook_session_if_absent(session_id, rebuilt_runtime)
+            .set_hook_runtime_if_absent(session_id, rebuilt_runtime)
             .await)
     }
 
@@ -296,11 +312,11 @@ impl SessionRuntimeInner {
 impl TerminalHookTriggerPort for SessionRuntimeInner {
     async fn emit_terminal_hook_trigger(
         &self,
-        hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+        hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
         input: TerminalHookTriggerRequest<'_>,
     ) -> Vec<HookEffect> {
         self.emit_session_hook_trigger(
-            hook_session,
+            hook_runtime,
             &HookTriggerInput {
                 session_id: input.session_id,
                 turn_id: input.turn_id,

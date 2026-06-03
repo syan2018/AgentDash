@@ -23,11 +23,15 @@ use agentdash_domain::shared_library::{
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
-    ActivityExecutionClaimRepository, ActivityLifecycleDefinitionRepository,
-    LifecycleRunLinkRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
-    WorkflowTemplateInstallRepository,
+    ActivityExecutionClaimRepository, AgentAssignmentRepository, AgentFrameRepository,
+    AgentLineageRepository, AgentProcedureRepository, LifecycleAgentRepository,
+    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    RuntimeSessionExecutionAnchorRepository, WorkflowGraphInstanceRepository,
+    WorkflowGraphRepository, WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
+
+use crate::workflow::RuntimeSessionCreator;
 
 /// 持久化层端口 — 所有 Repository trait 对象的集合
 ///
@@ -60,12 +64,20 @@ pub struct RepositorySet {
     pub skill_asset_repo: Arc<dyn SkillAssetRepository>,
     pub project_agent_repo: Arc<dyn ProjectAgentRepository>,
     pub project_vfs_mount_repo: Arc<dyn ProjectVfsMountRepository>,
-    pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
+    pub agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
     pub workflow_template_install_repo: Arc<dyn WorkflowTemplateInstallRepository>,
-    pub activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
+    pub workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
     pub activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    pub lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
+    pub workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
+    pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
+    pub agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
+    pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
+    pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
+    pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
+    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,

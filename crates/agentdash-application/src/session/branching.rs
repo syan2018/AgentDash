@@ -11,7 +11,7 @@ use super::persistence::{
     SessionLineageRelationKind, SessionLineageStatus, SessionProjectionHeadRecord,
     SessionProjectionSegmentRecord, SessionStoreSet,
 };
-use super::types::{ExecutionStatus, SessionBootstrapState, SessionMeta, TitleSource};
+use super::types::{ExecutionStatus, SessionMeta, TitleSource};
 
 #[derive(Debug, Clone)]
 pub struct SessionForkRequest {
@@ -428,19 +428,13 @@ fn child_session_meta(parent: &SessionMeta, title: Option<&str>, now: i64) -> Se
             .map(ToString::to_string)
             .unwrap_or_else(|| format!("{} 分支", parent.title)),
         title_source: TitleSource::Auto,
-        project_id: parent.project_id.clone(),
         created_at: now,
         updated_at: now,
         last_event_seq: 0,
-        last_execution_status: ExecutionStatus::Idle,
+        last_delivery_status: ExecutionStatus::Idle,
         last_turn_id: None,
         last_terminal_message: None,
-        executor_config: parent.executor_config.clone(),
         executor_session_id: None,
-        companion_context: None,
-        tab_layout: None,
-        visible_canvas_mount_ids: Vec::new(),
-        bootstrap_state: SessionBootstrapState::Plain,
     }
 }
 
@@ -792,19 +786,13 @@ mod tests {
             id: id.to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-            companion_context: None,
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         }
     }
 

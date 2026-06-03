@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import type {
   AgentPreset,
   CapabilityDirective,
   CapabilityKey,
   Project,
   ProjectAgent,
-  ProjectAgentSession,
   ProjectAgentSummary,
-  SessionNavigationState,
 } from "../../types";
 import { CAPABILITY_OPTIONS, THINKING_LEVEL_OPTIONS } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
@@ -22,14 +19,12 @@ import {
 } from "./agent-preset-editor";
 import type { PresetFormState } from "./agent-preset-editor";
 import { filterAgents } from "./agent-filter";
-import { formatRelativeTime } from "../../lib/format";
 import {
   CardMenu,
   CreateButton,
   DismissibleNotice,
   type DismissibleNoticeData,
   StatusDot,
-  type StatusDotTone,
 } from "@agentdash/ui";
 
 const EMPTY_PROJECT_AGENTS: ProjectAgent[] = [];
@@ -40,97 +35,6 @@ export interface ProjectAgentViewProps {
   isLoading?: boolean;
   error?: string | null;
   onOpenAgent: (agent: ProjectAgentSummary) => void;
-  onForceNewSession?: (agent: ProjectAgentSummary) => void;
-}
-
-type ActivityLevel = "active" | "recent" | "idle" | "none";
-
-function getActivityLevel(timestamp: number | null | undefined): ActivityLevel {
-  if (timestamp == null) return "none";
-  const ts = timestamp < 1e12 ? timestamp * 1000 : timestamp;
-  const diffMs = Date.now() - ts;
-  if (diffMs < 5 * 60 * 1000) return "active";
-  if (diffMs < 60 * 60 * 1000) return "recent";
-  return "idle";
-}
-
-const activityDotTone: Record<ActivityLevel, StatusDotTone> = {
-  active: "success",
-  recent: "warning",
-  idle: "muted",
-  none: "muted",
-};
-
-function SessionHistoryPanel({
-  projectId,
-  agentKey,
-  agentDisplayName,
-  executorHint,
-}: {
-  projectId: string;
-  agentKey: string;
-  agentDisplayName: string;
-  executorHint: string;
-}) {
-  const navigate = useNavigate();
-  const { fetchProjectAgentSessions } = useProjectStore();
-  const [sessions, setSessions] = useState<ProjectAgentSession[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-
-  const loadHistory = useCallback(async () => {
-    if (isLoading) return;
-    setIsLoading(true);
-    try {
-      const result = await fetchProjectAgentSessions(projectId, agentKey);
-      setSessions(result);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [fetchProjectAgentSessions, projectId, agentKey, isLoading]);
-
-  const toggleExpanded = () => {
-    const next = !expanded;
-    setExpanded(next);
-    if (next && sessions.length === 0) void loadHistory();
-  };
-
-  const handleNavigate = (sessionId: string) => {
-    const state: SessionNavigationState = {
-      return_to: { owner_type: "project", project_id: projectId },
-      project_agent: {
-        agent_key: agentKey,
-        display_name: agentDisplayName,
-        executor_hint: executorHint,
-      },
-    };
-    navigate(`/session/${sessionId}`, { state });
-  };
-
-  return (
-    <div>
-      <button type="button" onClick={toggleExpanded} className="text-[11px] text-muted-foreground transition-colors hover:text-foreground">
-        {expanded ? "收起历史" : "查看历史会话"}
-      </button>
-      {expanded && (
-        <div className="mt-2 max-h-36 space-y-1 overflow-y-auto">
-          {isLoading && sessions.length === 0 && <p className="text-[11px] text-muted-foreground">加载中...</p>}
-          {!isLoading && sessions.length === 0 && <p className="text-[11px] text-muted-foreground">暂无历史会话</p>}
-          {sessions.map((s) => (
-            <button
-              key={s.binding_id}
-              type="button"
-              onClick={() => handleNavigate(s.session_id)}
-              className="flex w-full items-center justify-between rounded-[8px] border border-border bg-secondary/30 px-2.5 py-1.5 text-left transition-colors hover:bg-secondary"
-            >
-              <span className="truncate text-xs text-foreground">{s.session_title ?? "无标题会话"}</span>
-              <span className="ml-2 shrink-0 text-[10px] text-muted-foreground">{formatRelativeTime(s.last_activity, { emptyLabel: "无活动" })}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 // ─── Agent 创建/链接对话框 ───
@@ -149,12 +53,10 @@ function CreateAgentDialog({
   const { createProjectAgent, fetchProjectAgents } = useProjectStore();
   const { agentTypeOptions, isDiscoveryLoading } = useAgentTypeOptions();
   const lifecycles = useWorkflowStore((s) => s.lifecycleDefinitions);
-  const definitions = useWorkflowStore((s) => s.definitions);
 
   const [form, setForm] = useState<PresetFormState>(() => presetToForm({ name: "", agent_type: "PI_AGENT", config: {} }));
   const [selectedLifecycleKey, setSelectedLifecycleKey] = useState("");
-  const [selectedWorkflowKey, setSelectedWorkflowKey] = useState("");
-  const [bindMode, setBindMode] = useState<"lifecycle" | "workflow" | "none">("none");
+  const [bindMode, setBindMode] = useState<"lifecycle" | "none">("none");
   const [isSaving, setIsSaving] = useState(false);
 
   const patchForm = (patch: Partial<PresetFormState>) => setForm((prev) => ({ ...prev, ...patch }));
@@ -173,8 +75,6 @@ function CreateAgentDialog({
       };
       if (bindMode === "lifecycle" && selectedLifecycleKey) {
         projectAgentPayload.default_lifecycle_key = selectedLifecycleKey;
-      } else if (bindMode === "workflow" && selectedWorkflowKey) {
-        projectAgentPayload.default_workflow_key = selectedWorkflowKey;
       }
       await createProjectAgent(projectId, projectAgentPayload);
       await fetchProjectAgents(projectId);
@@ -186,7 +86,6 @@ function CreateAgentDialog({
 
   // status 字段自 migration 0013 起已废弃，后端不再维护；直接透传全部定义。
   const activeLifecycles = lifecycles;
-  const activeWorkflows = definitions;
 
   return (
     <>
@@ -215,7 +114,7 @@ function CreateAgentDialog({
             <div className="border-t border-border/50 pt-3">
               <label className="text-xs font-medium text-muted-foreground">默认工作流绑定</label>
               <div className="mt-1 flex gap-1 rounded-[8px] border border-border bg-secondary/35 p-0.5">
-                {(["none", "lifecycle", "workflow"] as const).map((mode) => (
+                {(["none", "lifecycle"] as const).map((mode) => (
                   <button
                     key={mode}
                     type="button"
@@ -226,7 +125,7 @@ function CreateAgentDialog({
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    {mode === "none" ? "无" : mode === "lifecycle" ? "Lifecycle" : "Workflow"}
+                    {mode === "none" ? "无" : "Lifecycle"}
                   </button>
                 ))}
               </div>
@@ -240,19 +139,6 @@ function CreateAgentDialog({
                   <option value="">选择 Lifecycle…</option>
                   {activeLifecycles.map((l) => (
                     <option key={l.key} value={l.key}>{l.name} ({l.key})</option>
-                  ))}
-                </select>
-              )}
-
-              {bindMode === "workflow" && (
-                <select
-                  value={selectedWorkflowKey}
-                  onChange={(e) => setSelectedWorkflowKey(e.target.value)}
-                  className="mt-2 w-full rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
-                >
-                  <option value="">选择 Workflow…</option>
-                  {activeWorkflows.map((w) => (
-                    <option key={w.key} value={w.key}>{w.name} ({w.key})</option>
                   ))}
                 </select>
               )}
@@ -290,7 +176,6 @@ export function ProjectAgentView({
   isLoading = false,
   error = null,
   onOpenAgent,
-  onForceNewSession,
 }: ProjectAgentViewProps) {
   const { deleteProjectAgent, fetchProjectAgents, updateProjectAgent } = useProjectStore();
   const projectAgentConfigs = useProjectStore((s) => s.projectAgentConfigsByProjectId[project.id]) ?? EMPTY_PROJECT_AGENTS;
@@ -356,9 +241,7 @@ export function ProjectAgentView({
 
   const sortedAgents = useMemo(() => {
     return [...agents].sort((a, b) => {
-      const aTime = a.session?.last_activity ?? 0;
-      const bTime = b.session?.last_activity ?? 0;
-      return bTime - aTime;
+      return a.display_name.localeCompare(b.display_name, "zh-CN");
     });
   }, [agents]);
 
@@ -366,8 +249,6 @@ export function ProjectAgentView({
     () => filterAgents(sortedAgents, searchKeyword),
     [sortedAgents, searchKeyword],
   );
-
-  const activeCount = agents.filter((a) => a.session != null).length;
 
   const toggleExpand = useCallback((agentKey: string) => {
     setExpandedAgentKeys((prev) => {
@@ -378,18 +259,11 @@ export function ProjectAgentView({
     });
   }, []);
 
-  const handleQuickNewSession = useCallback(
+  const handleQuickLaunch = useCallback(
     (agent: ProjectAgentSummary) => {
-      // 复用展开态“新对话/打开会话”按钮的 handler：
-      // 若该 agent 已有活跃会话且父组件提供了强制新开的入口，则强制新建；
-      // 否则走常规 onOpenAgent（若无会话则新建，若有会话则继续）。
-      if (agent.session && onForceNewSession) {
-        onForceNewSession(agent);
-      } else {
-        onOpenAgent(agent);
-      }
+      onOpenAgent(agent);
     },
-    [onForceNewSession, onOpenAgent],
+    [onOpenAgent],
   );
 
   if (isLoading && agents.length === 0) {
@@ -412,7 +286,6 @@ export function ProjectAgentView({
               <h2 className="truncate text-sm font-semibold tracking-tight text-foreground">Agent Hub</h2>
               <p className="truncate text-[11px] text-muted-foreground">
                 {agents.length} 个 Agent
-                {activeCount > 0 && ` · ${activeCount} 个活跃会话`}
               </p>
             </div>
           </div>
@@ -486,7 +359,6 @@ export function ProjectAgentView({
         <div className="flex-1 overflow-y-auto px-3 py-3">
           <div className="flex flex-col gap-2">
             {visibleAgents.map((agent) => {
-              const activity = getActivityLevel(agent.session?.last_activity);
               const projectAgentConfig = findProjectAgentConfig(agent);
               const config = projectAgentConfig?.config ?? {};
               const rawDirectives = Array.isArray(config.capability_directives)
@@ -531,10 +403,10 @@ export function ProjectAgentView({
                   {/* ── 卡片头部：状态点 + 名称 + 操作按钮组 ── */}
                   <div className="flex items-start gap-2">
                     <StatusDot
-                      tone={activityDotTone[activity]}
+                      tone="muted"
                       size="md"
                       className="mt-1.5 shrink-0"
-                      title={formatRelativeTime(agent.session?.last_activity, { emptyLabel: "无活动" })}
+                      title="ProjectAgent"
                     />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium text-foreground" title={agent.display_name}>
@@ -561,10 +433,10 @@ export function ProjectAgentView({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleQuickNewSession(agent);
+                          handleQuickLaunch(agent);
                         }}
-                        aria-label="新建会话"
-                        title="新建会话"
+                        aria-label="启动 Agent"
+                        title="启动 Agent"
                         className="inline-flex h-7 w-7 items-center justify-center rounded-[8px] bg-secondary/50 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                       >
                         <svg
@@ -737,48 +609,19 @@ export function ProjectAgentView({
                         </button>
                       </div>
 
-                      {/* 当前会话信息 */}
-                      {agent.session && (
-                        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                          <span className="truncate">{agent.session.session_title ?? "会话进行中"}</span>
-                          <span className="ml-2 shrink-0">{formatRelativeTime(agent.session.last_activity, { emptyLabel: "无活动" })}</span>
-                        </div>
-                      )}
-
-                      {/* 历史会话面板 */}
-                      <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-                        <SessionHistoryPanel
-                          projectId={project.id}
-                          agentKey={agent.key}
-                          agentDisplayName={agent.display_name}
-                          executorHint={agent.executor.executor}
-                        />
-                      </div>
-
                       {/* 操作按钮 */}
                       <div
                         className="flex gap-2"
                         onClick={(e) => e.stopPropagation()}
                         onKeyDown={(e) => e.stopPropagation()}
                       >
-                        {(!onForceNewSession || !agent.session) && (
-                          <button
-                            type="button"
-                            onClick={() => onOpenAgent(agent)}
-                            className="flex-1 rounded-[8px] border border-primary bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-95"
-                          >
-                            {agent.session ? "继续对话" : "打开 Agent 会话"}
-                          </button>
-                        )}
-                        {agent.session && onForceNewSession && (
-                          <button
-                            type="button"
-                            onClick={() => onForceNewSession(agent)}
-                            className="flex-1 rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                          >
-                            新对话
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => onOpenAgent(agent)}
+                          className="flex-1 rounded-[8px] border border-primary bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-95"
+                        >
+                          启动 Agent
+                        </button>
                       </div>
                     </div>
                   )}

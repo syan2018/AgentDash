@@ -5,7 +5,7 @@
 
 use agentdash_spi::Vfs;
 
-use crate::vfs::build_lifecycle_mount_with_ports;
+use crate::vfs::build_lifecycle_mount_with_activity_scope;
 use crate::workflow::projection::ActiveWorkflowProjection;
 
 fn empty_vfs() -> Vfs {
@@ -28,10 +28,13 @@ pub fn writable_port_keys_for_active_workflow(workflow: &ActiveWorkflowProjectio
 }
 
 pub fn append_active_workflow_lifecycle_mount(vfs: &mut Vfs, workflow: &ActiveWorkflowProjection) {
-    let mount = build_lifecycle_mount_with_ports(
+    let mount = build_lifecycle_mount_with_activity_scope(
         workflow.run.id,
+        workflow.graph_instance_id,
         &workflow.lifecycle.key,
         &writable_port_keys_for_active_workflow(workflow),
+        Some(&workflow.active_activity.key),
+        Some(workflow.active_attempt.attempt),
     );
 
     if let Some(existing) = vfs
@@ -61,12 +64,12 @@ pub fn ensure_active_workflow_lifecycle_mount(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vfs::build_lifecycle_mount_with_ports;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
-        ActivityLifecycleDefinition, ActivityLifecycleRunState, ActivityRunStatus,
-        BashExecExecutorSpec, FunctionActivityExecutorSpec, LifecycleRun, OutputPortDefinition,
-        WorkflowBindingKind, WorkflowDefinitionSource,
+        ActivityLifecycleRunState, ActivityRunStatus, BashExecExecutorSpec, DefinitionSource,
+        FunctionActivityExecutorSpec, LifecycleRun, OutputPortDefinition, WorkflowGraph,
     };
     use uuid::Uuid;
 
@@ -94,19 +97,19 @@ mod tests {
             iteration_policy: Default::default(),
             join_policy: Default::default(),
         };
-        let lifecycle = ActivityLifecycleDefinition::new(
+        let lifecycle = WorkflowGraph::new(
             project_id,
             "workflow_admin",
             "Workflow Admin",
             "Workflow admin lifecycle",
-            vec![WorkflowBindingKind::Project],
-            WorkflowDefinitionSource::BuiltinSeed,
+            DefinitionSource::BuiltinSeed,
             "plan",
             vec![activity.clone()],
             vec![],
         )
         .expect("lifecycle");
         let activity_state = ActivityLifecycleRunState {
+            graph_instance_id: uuid::Uuid::new_v4(),
             status: ActivityRunStatus::Running,
             attempts: vec![ActivityAttemptState {
                 activity_key: "plan".to_string(),
@@ -120,20 +123,21 @@ mod tests {
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let run = LifecycleRun::new_activity(
-            project_id,
-            lifecycle.id,
-            Some("sess-owner".to_string()),
-            activity_state,
-        )
-        .expect("run");
+        let mut run = LifecycleRun::new_control(project_id, lifecycle.id);
+        run.sync_graph_instance_activity_projections([(
+            activity_state.graph_instance_id,
+            &activity_state,
+        )]);
+        let active_attempt = activity_state.attempts[0].clone();
 
         ActiveWorkflowProjection {
             run,
+            graph_instance_id: activity_state.graph_instance_id,
             lifecycle,
             active_activity: activity,
+            active_attempt,
             active_node_type: agentdash_domain::workflow::LifecycleNodeType::AgentNode,
-            active_workflow_key: None,
+            active_procedure_key: None,
             primary_workflow: None,
         }
     }
@@ -164,7 +168,10 @@ mod tests {
         assert_eq!(lifecycle.provider, "lifecycle_vfs");
         assert_eq!(
             lifecycle.root_ref,
-            format!("lifecycle://run/{}", workflow.run.id)
+            format!(
+                "lifecycle://run/{}/graph/{}",
+                workflow.run.id, workflow.graph_instance_id
+            )
         );
         assert!(lifecycle.capabilities.contains(&MountCapability::Write));
         assert_eq!(
@@ -183,7 +190,7 @@ mod tests {
         let base = Vfs {
             mounts: vec![
                 workspace_mount(),
-                build_lifecycle_mount_with_ports(stale_run_id, "stale", &[]),
+                build_lifecycle_mount_with_ports(stale_run_id, Uuid::new_v4(), "stale", &[]),
             ],
             default_mount_id: Some("main".to_string()),
             source_project_id: None,
@@ -202,7 +209,10 @@ mod tests {
         assert_eq!(lifecycle_mounts.len(), 1);
         assert_eq!(
             lifecycle_mounts[0].root_ref,
-            format!("lifecycle://run/{}", workflow.run.id)
+            format!(
+                "lifecycle://run/{}/graph/{}",
+                workflow.run.id, workflow.graph_instance_id
+            )
         );
         assert_eq!(vfs.default_mount_id.as_deref(), Some("main"));
     }

@@ -1,6 +1,5 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
-use crate::session::companion_wait::CompanionWaitRegistry;
 use crate::session::{
     SessionCapabilityService, SessionControlService, SessionCoreService, SessionEventingService,
     SessionHookService, SessionLaunchService,
@@ -94,7 +93,6 @@ pub struct SessionToolServices {
     pub launch: SessionLaunchService,
     pub hooks: SessionHookService,
     pub capability: SessionCapabilityService,
-    pub companion_wait_registry: CompanionWaitRegistry,
 }
 
 #[derive(Clone, Default)]
@@ -132,7 +130,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         let identity = context.session.identity.clone();
         let session_id = context
             .turn
-            .hook_session
+            .hook_runtime
             .as_ref()
             .map(|session| session.session_id().to_string())
             .unwrap_or_else(|| context.session.turn_id.clone());
@@ -243,12 +241,14 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 "companion_request",
                 Some(ToolCluster::Collaboration),
             ) {
-                tools.push(Arc::new(CompanionRequestTool::new(
+                let mut companion_request_tool = CompanionRequestTool::new(
                     self.repos.project_agent_repo.clone(),
                     self.repos.clone(),
                     self.session_services_handle.clone(),
                     context,
-                )));
+                );
+                companion_request_tool.resolve_lifecycle_anchors().await;
+                tools.push(Arc::new(companion_request_tool));
             }
             if flow.is_capability_tool_enabled(
                 CAP_COLLABORATION,
@@ -256,6 +256,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 Some(ToolCluster::Collaboration),
             ) {
                 tools.push(Arc::new(CompanionRespondTool::new(
+                    self.repos.clone(),
                     self.session_services_handle.clone(),
                     context,
                 )));
@@ -287,7 +288,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                         self.session_services_handle.clone(),
                         context
                             .turn
-                            .hook_session
+                            .hook_runtime
                             .as_ref()
                             .map(|session| session.session_id().to_string()),
                     )));
@@ -305,7 +306,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
                 if let Some(session_id) = context
                     .turn
-                    .hook_session
+                    .hook_runtime
                     .as_ref()
                     .map(|session| session.session_id().to_string())
                 {
@@ -334,8 +335,8 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 }
 
 fn project_id_from_context(context: &ExecutionContext) -> Option<Uuid> {
-    if let Some(hook_session) = context.turn.hook_session.as_ref() {
-        let snapshot = hook_session.snapshot();
+    if let Some(hook_runtime) = context.turn.hook_runtime.as_ref() {
+        let snapshot = hook_runtime.snapshot();
 
         if let Some(run_context) = &snapshot.run_context {
             return Some(run_context.project_id);

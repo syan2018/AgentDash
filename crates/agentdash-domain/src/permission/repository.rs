@@ -12,19 +12,19 @@ pub trait PermissionGrantRepository: Send + Sync {
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<PermissionGrant>, DomainError>;
 
-    /// 查询 session 下所有活跃 grant（status = applied | scope_escalated）。
-    async fn list_active_by_session(
+    /// 查询 effect_frame_id 下所有活跃 grant（status = applied | scope_escalated）。
+    async fn list_active_by_frame(
         &self,
-        session_id: &str,
+        effect_frame_id: Uuid,
     ) -> Result<Vec<PermissionGrant>, DomainError>;
 
     /// 查询 LifecycleRun 下所有活跃 grant。
     async fn list_active_by_run(&self, run_id: Uuid) -> Result<Vec<PermissionGrant>, DomainError>;
 
-    /// 查询 session 下有 scope_escalation_intent 且状态为 Applied 的 grant。
+    /// 查询 effect_frame_id 下有 scope_escalation_intent 且状态为 Applied 的 grant。
     async fn find_active_escalation_grant(
         &self,
-        session_id: &str,
+        effect_frame_id: Uuid,
         target_subject_kind: &str,
     ) -> Result<Option<PermissionGrant>, DomainError>;
 

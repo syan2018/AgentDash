@@ -34,7 +34,9 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 
 ### Profile
 
-- `LocalRuntimeProfile` 持久化在 Tauri app config dir 下的 `desktop-runtime-profile.json`（snake_case）
+- `agentdash-local::runtime_paths` 是本机 runtime 路径事实源；数据库、机器身份、extension artifact cache、runtime profile 和本机 MCP servers 配置都从同一个 `local-runtime` data root 派生，原因是这些文件共同服务本机后端生命周期，Tauri 壳只负责通过 command 调用本机 runtime。
+- `LocalRuntimeProfile` 持久化在 `local-runtime/config/local-runtime-profile.json`（snake_case）。
+- 本机 MCP servers 配置持久化在 `local-runtime/config/local-mcp-servers.json`。
 - 每次 profile load/save/start 都必须用 `agentdash-local` 机器身份覆盖 canonical machine id
 - `access_token` 可以为空，server 在无 token 时通过自身认证 provider 解析当前用户
 - `workspace_roots` 表达显式登记的 workspace root 集合；为空时不构成异常，也不限制本机目录浏览。执行类能力仍以 session `mount_root_ref` 为当前 workspace root 边界。

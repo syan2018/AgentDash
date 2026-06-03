@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Check backend layering and API/use-case/repository separation."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Check schema and migration edits follow project database conventions."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Check Session remains message shell and not business ownership root."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Check runtime delivery remains behind control-plane launch and continuation use cases."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Check RuntimeSessionExecutionAnchor is the control-plane lookup source."}
+{"file": ".trellis/spec/backend/workflow/lifecycle-run-link.md", "reason": "Check subject association and runtime trace lookup contracts."}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Check frontend Session and WorkspacePanel consume backend projection rather than reconstructing facts."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Check generated DTO and service mapper safety."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Check lifecycle/session stores do not preserve duplicate session list facts."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Check LifecycleRun observation remains single-run projection for Session WorkspacePanel."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check cross-layer DTO generation and contract drift."}

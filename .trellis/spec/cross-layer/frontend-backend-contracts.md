@@ -42,7 +42,7 @@ crates/agentdash-contracts/
     session.rs           # Session event page DTO / NDJSON envelope / runtime projection
     extension_runtime.rs # Project extension runtime surface DTO
     extension_package.rs # Packaged extension artifact upload/install/download DTO
-    workflow.rs          # WorkflowContract / lifecycle / activity DTO
+    workflow.rs          # AgentProcedureContract / lifecycle / activity DTO
     vfs.rs               # ResolvedVfsSurface / mount / edit capability DTO
     shared_library.rs    # Library asset install/publish DTO
     project_agent.rs     # ProjectAgent config/session summary DTO

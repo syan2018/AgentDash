@@ -8,7 +8,6 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use tokio::sync::Mutex;
 
-use super::super::companion_wait::CompanionWaitRegistry;
 use super::super::construction_provider::SharedSessionConstructionProvider;
 use super::super::persistence::{SessionPersistence, SessionStoreSet};
 use super::super::runtime_registry::SessionRuntimeRegistry;
@@ -49,12 +48,7 @@ impl SessionRuntimeInner {
     }
 
     pub fn control_service(&self) -> super::super::control::SessionControlService {
-        super::super::control::SessionControlService::new(
-            self.stores.clone(),
-            self.eventing_service(),
-            self.companion_wait_registry.clone(),
-            self.connector.clone(),
-        )
+        super::super::control::SessionControlService::new(self.connector.clone())
     }
 
     pub fn launch_service(&self) -> super::super::launch::SessionLaunchService {
@@ -106,7 +100,6 @@ impl SessionRuntimeInner {
             persistence,
             vfs_service: None,
             extra_skill_dirs: Vec::new(),
-            companion_wait_registry: CompanionWaitRegistry::default(),
             terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
             hook_effect_handler_registry: Arc::new(tokio::sync::RwLock::new(None)),
             session_construction_provider: Arc::new(tokio::sync::RwLock::new(None)),
@@ -117,6 +110,10 @@ impl SessionRuntimeInner {
             mcp_relay_provider: None,
             backend_execution_transport: None,
             backend_execution_lease_repo: None,
+            agent_frame_repo: None,
+            execution_anchor_repo: None,
+            lifecycle_agent_repo: None,
+            lifecycle_gate_repo: None,
         }
     }
 
@@ -153,6 +150,41 @@ impl SessionRuntimeInner {
     ) -> Self {
         self.backend_execution_transport = Some(transport);
         self.backend_execution_lease_repo = Some(lease_repo);
+        self
+    }
+
+    /// 注入 LifecycleGate 仓储（用于 companion_wait durable 等待）
+    pub fn with_lifecycle_gate_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>,
+    ) -> Self {
+        self.lifecycle_gate_repo = Some(repo);
+        self
+    }
+
+    /// 注入 AgentFrame 仓储（用于 capability state 变更时写入 frame revision）
+    pub fn with_agent_frame_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::AgentFrameRepository>,
+    ) -> Self {
+        self.agent_frame_repo = Some(repo);
+        self
+    }
+
+    pub fn with_execution_anchor_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::RuntimeSessionExecutionAnchorRepository>,
+    ) -> Self {
+        self.execution_anchor_repo = Some(repo);
+        self
+    }
+
+    /// 注入 LifecycleAgent 仓储（launch path 需要查询 agent bootstrap 状态）
+    pub fn with_lifecycle_agent_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>,
+    ) -> Self {
+        self.lifecycle_agent_repo = Some(repo);
         self
     }
 

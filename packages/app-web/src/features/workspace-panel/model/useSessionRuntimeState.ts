@@ -1,21 +1,37 @@
+/**
+ * Session Runtime State — 通过后端 `/sessions/{id}/runtime-control` 直接查询。
+ *
+ * 不再遍历 lifecycleStore 的 frame cache 做本地反查，
+ * 而是让后端通过 RuntimeSessionExecutionAnchor 返回 Session control view。
+ */
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import {
-  fetchSessionContext,
-  fetchSessionHookRuntime,
-  type SessionContextPayload,
-} from "../../../services/session";
-import type { HookSessionRuntimeInfo } from "../../../types";
+import type { AgentFrameHookRuntimeInfo, SessionRuntimeControlView } from "../../../types";
 import type { SessionRuntimeStateStatus } from "../../workspace-runtime";
+import { useLifecycleStore } from "../../../stores/lifecycleStore";
+import { fetchSessionRuntimeControl } from "../../../services/lifecycle";
+import type { AgentFrameRuntimeView } from "../../../types";
 
 export type { SessionRuntimeStateStatus };
+
+export interface SessionContextPayload {
+  workspace_id: string | null;
+  agent_binding: null;
+  vfs: null;
+  runtime_surface: null;
+  context_snapshot: null;
+  session_capabilities: null;
+}
 
 export interface SessionRuntimeProjectionState {
   session_id: string | null;
   source_key: string | null;
   status: SessionRuntimeStateStatus;
   context: SessionContextPayload | null;
-  hook_runtime: HookSessionRuntimeInfo | null;
+  hook_runtime: AgentFrameHookRuntimeInfo | null;
+  frame: AgentFrameRuntimeView | null;
+  control: SessionRuntimeControlView | null;
   error: string | null;
 }
 
@@ -31,6 +47,8 @@ export function emptySessionRuntimeState(): SessionRuntimeProjectionState {
     status: "idle",
     context: null,
     hook_runtime: null,
+    frame: null,
+    control: null,
     error: null,
   };
 }
@@ -52,121 +70,97 @@ export function useSessionRuntimeState({
   sourceKey,
 }: UseSessionRuntimeStateInput) {
   const [state, setState] = useState<SessionRuntimeProjectionState>(() => emptySessionRuntimeState());
+  const ingestLifecycleRun = useLifecycleStore((s) => s.ingestLifecycleRun);
+  const setAgent = useLifecycleStore((s) => s.setAgent);
+  const setFrame = useLifecycleStore((s) => s.setFrame);
+
+  const loadFrameContext = useCallback(async (
+    sid: string,
+    skey: string,
+    canCommit: () => boolean = () => true,
+  ) => {
+    await Promise.resolve();
+    if (!canCommit()) return;
+    setState({
+      session_id: sid,
+      source_key: skey,
+      status: "loading",
+      context: null,
+      hook_runtime: null,
+      frame: null,
+      control: null,
+      error: null,
+    });
+
+    try {
+      const control = await fetchSessionRuntimeControl(sid);
+      if (!canCommit()) return;
+      if (control.run) {
+        ingestLifecycleRun(control.run);
+      }
+      if (control.agent) {
+        setAgent(control.agent);
+      }
+      if (control.frame_runtime) {
+        setFrame(control.frame_runtime);
+      }
+      setState({
+        session_id: sid,
+        source_key: skey,
+        status: "ready",
+        context: null,
+        hook_runtime: null,
+        frame: control.frame_runtime ?? null,
+        control,
+        error: null,
+      });
+    } catch (error: unknown) {
+      if (!canCommit()) return;
+      // 404 表示 session 没有关联 AgentFrame，视为正常空状态
+      const is404 = error instanceof Error && error.message.includes("404");
+      setState({
+        session_id: sid,
+        source_key: skey,
+        status: is404 ? "ready" : "error",
+        context: null,
+        hook_runtime: null,
+        frame: null,
+        control: null,
+        error: is404 ? null : errorMessage(error),
+      });
+    }
+  }, [ingestLifecycleRun, setAgent, setFrame]);
 
   useEffect(() => {
     if (!sessionId || !sourceKey) {
-      setState(emptySessionRuntimeState());
       return;
     }
 
     let cancelled = false;
-    setState({
-      session_id: sessionId,
-      source_key: sourceKey,
-      status: "loading",
-      context: null,
-      hook_runtime: null,
-      error: null,
-    });
-
-    void Promise.all([
-      fetchSessionContext(sessionId),
-      fetchSessionHookRuntime(sessionId).catch(() => null),
-    ])
-      .then(([context, hookRuntime]) => {
-        if (cancelled) return;
-        setState({
-          session_id: sessionId,
-          source_key: sourceKey,
-          status: "ready",
-          context,
-          hook_runtime: hookRuntime,
-          error: null,
-        });
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setState({
-          session_id: sessionId,
-          source_key: sourceKey,
-          status: "error",
-          context: null,
-          hook_runtime: null,
-          error: errorMessage(error),
-        });
-      });
+    const timeoutId = window.setTimeout(() => {
+      void loadFrameContext(sessionId, sourceKey, () => !cancelled);
+    }, 0);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timeoutId);
     };
-  }, [sessionId, sourceKey]);
+  }, [sessionId, sourceKey, loadFrameContext]);
 
   const refreshContext = useCallback(async () => {
     if (!sessionId || !sourceKey) return;
-    setState((current) => {
-      if (!stateMatches(current, sessionId, sourceKey)) {
-        return {
-          session_id: sessionId,
-          source_key: sourceKey,
-          status: "loading",
-          context: null,
-          hook_runtime: null,
-          error: null,
-        };
-      }
-      return {
-        ...current,
-        status: current.context ? "refreshing" : "loading",
-        error: null,
-      };
-    });
-
-    try {
-      const context = await fetchSessionContext(sessionId);
-      setState((current) => {
-        if (!stateMatches(current, sessionId, sourceKey)) return current;
-        return {
-          ...current,
-          status: "ready",
-          context,
-          error: null,
-        };
-      });
-    } catch (error: unknown) {
-      setState((current) => {
-        if (!stateMatches(current, sessionId, sourceKey)) return current;
-        return {
-          ...current,
-          status: "error",
-          context: null,
-          error: errorMessage(error),
-        };
-      });
-    }
-  }, [sessionId, sourceKey]);
+    setState((current) => ({
+      ...current,
+      status: current.frame ? "refreshing" : "loading",
+      error: null,
+    }));
+    await loadFrameContext(sessionId, sourceKey);
+  }, [sessionId, sourceKey, loadFrameContext]);
 
   const refreshHookRuntime = useCallback(async () => {
     if (!sessionId || !sourceKey) return;
-    try {
-      const hookRuntime = await fetchSessionHookRuntime(sessionId);
-      setState((current) => {
-        if (!stateMatches(current, sessionId, sourceKey)) return current;
-        return {
-          ...current,
-          hook_runtime: hookRuntime,
-          error: null,
-        };
-      });
-    } catch {
-      setState((current) => {
-        if (!stateMatches(current, sessionId, sourceKey)) return current;
-        return {
-          ...current,
-          hook_runtime: null,
-        };
-      });
-    }
-  }, [sessionId, sourceKey]);
+    await loadFrameContext(sessionId, sourceKey);
+  }, [sessionId, sourceKey, loadFrameContext]);
 
   const activeState = useMemo(() => {
     return selectActiveSessionRuntimeState(state, sessionId, sourceKey);

@@ -25,18 +25,10 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
         agentdash_application::session::stall_detector::DEFAULT_STALL_TIMEOUT_MS,
     );
 
-    let routine_executor = Arc::new(
-        RoutineExecutor::new(
-            state.repos.clone(),
-            state.services.session_core.clone(),
-            state.services.session_launch.clone(),
-            state.services.vfs_service.clone(),
-            state.services.connector.clone(),
-            state.config.platform_config.clone(),
-            state.services.backend_registry.clone(),
-        )
-        .with_audit_bus(state.services.audit_bus.clone()),
-    );
+    let routine_executor = Arc::new(RoutineExecutor::new(
+        state.repos.clone(),
+        state.services.backend_registry.clone(),
+    ));
     if let Some(s) = Arc::get_mut(state) {
         s.services.routine_executor = Some(routine_executor.clone());
     }

@@ -2,22 +2,23 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::value_objects::{AgentBinding, Artifact, TaskStatus};
+use super::value_objects::{Artifact, TaskDispatchPreference, TaskExecutionProjection, TaskStatus};
 
 /// Task — 用户工作项状态视图
 ///
 /// 面向用户展示的工作项容器，承载归属关系、状态投影、声明式执行偏好和结果摘要。
-/// 真实执行在 Session / LifecycleRun 中发生；Task 通过 workspace_id 外键关联逻辑工作空间。
+/// 真实执行由 LifecycleRun / LifecycleAgent / AgentFrame 证据链承载；
+/// Task 通过 workspace_id 外键关联逻辑工作空间。
 ///
 /// Task entity 不持有 AgentDash 内部 session_id，也不持有执行器原生 resume id。
-/// Session 归属由 LifecycleRunLink 与 CapabilityScope 管理。
+/// 业务归属由 LifecycleSubjectAssociation 与 CapabilityScope 管理。
 ///
 /// **M2：投影字段可见性规则**（见 `.trellis/spec/backend/story-task-runtime.md` §2.4）
 ///
 /// - `status` / `artifacts` 是 LifecycleStepState 的**只读投影**；外部代码不可直写。
 /// - 字段设置为 `pub(crate)`（限 domain crate 内部可见），仅通过 [`Task::apply_projection`]
 ///   与聚合层 [`Story::apply_task_projection`] 经由 projector 修改。
-/// - spec 字段（title / description / agent_binding / workspace_id 等）保持公开可写；
+/// - spec 字段（title / description / dispatch_preference / workspace_id 等）保持公开可写；
 ///   但 `Story::update_task` 的 closure 签名通过 [`TaskSpecMut`] 收紧，仅允许改 spec。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
@@ -26,18 +27,15 @@ pub struct Task {
     pub story_id: Uuid,
     /// 关联的 Workspace（外键，替代原 workspace_path 字符串）
     pub workspace_id: Option<Uuid>,
-    /// 绑定的 lifecycle step key。
-    ///
-    /// Task 属于 Story aggregate，是外层用户可见执行单元；LifecycleStepDefinition 是可复用模板，
-    /// 不应反向持有具体 task id。这里由 Task 指向它要启动/投影的 step key。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lifecycle_step_key: Option<String>,
     pub title: String,
     pub description: String,
     /// 执行状态：只读投影字段，外部不可直写（M2）。
     pub(crate) status: TaskStatus,
-    /// 结构化 Agent 绑定信息
-    pub agent_binding: AgentBinding,
+    /// Authoring-time agent execution preference (static config, NOT runtime truth).
+    ///
+    /// Consumed by `resolve_task_executor_config` at dispatch to build `AgentConfig`;
+    /// after dispatch, runtime truth is owned by `LifecycleAgent → AgentFrame`.
+    pub dispatch_preference: TaskDispatchPreference,
     /// 结构化执行产物列表：只读投影字段，外部不可直写（M2）。
     pub(crate) artifacts: Vec<Artifact>,
     pub created_at: DateTime<Utc>,
@@ -52,11 +50,10 @@ impl Task {
             project_id,
             story_id,
             workspace_id: None,
-            lifecycle_step_key: None,
             title,
             description,
             status: TaskStatus::Pending,
-            agent_binding: AgentBinding::default(),
+            dispatch_preference: TaskDispatchPreference::default(),
             artifacts: vec![],
             created_at: now,
             updated_at: now,
@@ -73,32 +70,13 @@ impl Task {
         &self.artifacts
     }
 
-    /// M2 projection：将 Activity attempt 状态投射到 Task。
-    ///
-    /// 状态映射规则：
-    /// - `Pending` → `TaskStatus::Pending`
-    /// - `Ready` / `Claiming` → `TaskStatus::Assigned`
-    /// - `Running` → `TaskStatus::Running`
-    /// - `Completed` → `TaskStatus::AwaitingVerification`
-    ///   （Task 完成态由业务（hook / verification）进一步推进为 Completed/Failed）
-    /// - `Failed` / `Cancelled` → `TaskStatus::Failed`
+    /// M2 projection：将 Task execution projection 投射到 Task。
     ///
     /// 返回 `true` 表示状态发生变化，`false` 表示投影后状态不变。
     ///
     /// 仅 domain crate 内部可调用；应用层通过 `Story::apply_task_projection` 间接触达。
-    pub(crate) fn apply_projection(
-        &mut self,
-        attempt_status: crate::workflow::ActivityAttemptStatus,
-    ) -> bool {
-        use crate::workflow::ActivityAttemptStatus as S;
-
-        let next = match attempt_status {
-            S::Pending => TaskStatus::Pending,
-            S::Ready | S::Claiming => TaskStatus::Assigned,
-            S::Running => TaskStatus::Running,
-            S::Completed => TaskStatus::AwaitingVerification,
-            S::Failed | S::Cancelled => TaskStatus::Failed,
-        };
+    pub(crate) fn apply_projection(&mut self, projection: TaskExecutionProjection) -> bool {
+        let next = projection.status;
 
         if self.status == next {
             return false;
@@ -151,8 +129,7 @@ pub struct TaskSpecMut<'a> {
     pub title: &'a mut String,
     pub description: &'a mut String,
     pub workspace_id: &'a mut Option<Uuid>,
-    pub lifecycle_step_key: &'a mut Option<String>,
-    pub agent_binding: &'a mut AgentBinding,
+    pub dispatch_preference: &'a mut TaskDispatchPreference,
     pub updated_at: &'a mut DateTime<Utc>,
 }
 
@@ -166,8 +143,7 @@ impl<'a> TaskSpecMut<'a> {
             title: &mut task.title,
             description: &mut task.description,
             workspace_id: &mut task.workspace_id,
-            lifecycle_step_key: &mut task.lifecycle_step_key,
-            agent_binding: &mut task.agent_binding,
+            dispatch_preference: &mut task.dispatch_preference,
             updated_at: &mut task.updated_at,
         }
     }

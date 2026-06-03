@@ -4,19 +4,20 @@ import type {
   ActivityDefinition,
   ActivityExecutorSpec,
   ActivityJoinPolicy,
-  AgentSessionPolicy,
+  AgentReusePolicy,
   ArtifactAliasPolicy,
   CapabilityDirective,
   HookRulePreset,
   InputPortDefinition,
   OutputPortDefinition,
+  RuntimeSessionPolicy,
   WorkflowContextBinding,
-  WorkflowDefinition,
+  AgentProcedure,
   WorkflowHookRuleSpec,
   WorkflowInjectionSpec,
   WorkflowTargetKind,
 } from "../../../types";
-import type { WorkflowEditorDraft } from "../../../stores/workflowStore";
+import type { AgentProcedureDraft } from "../../../stores/workflowStore";
 import {
   CapabilityPanel,
   HookRulesPanel,
@@ -247,14 +248,14 @@ export function IdentitySection({
 
 export function ExecutorSection({
   activity,
-  workflowDraft,
-  availableWorkflows,
+  procedureDraft,
+  availableProcedures,
   isEntry,
   onExecutorChange,
 }: {
   activity: ActivityDefinition;
-  workflowDraft: WorkflowEditorDraft;
-  availableWorkflows: WorkflowDefinition[];
+  procedureDraft: AgentProcedureDraft;
+  availableProcedures: AgentProcedure[];
   isEntry: boolean;
   onExecutorChange: (next: ActivityExecutorSpec) => void;
 }) {
@@ -263,8 +264,9 @@ export function ExecutorSection({
     if (kind === "agent") {
       onExecutorChange({
         kind: "agent",
-        workflow_key: workflowDraft.key,
-        session_policy: "spawn_child",
+        procedure_key: procedureDraft.key,
+        agent_reuse_policy: "create_activity_agent",
+        runtime_session_policy: "create_new",
       });
     } else if (kind === "human") {
       onExecutorChange({
@@ -303,8 +305,8 @@ export function ExecutorSection({
       {activity.executor.kind === "agent" && (
         <AgentExecutorForm
           executor={activity.executor}
-          workflowKeyHint={workflowDraft.key}
-          availableWorkflows={availableWorkflows}
+          procedureKeyHint={procedureDraft.key}
+          availableProcedures={availableProcedures}
           onChange={onExecutorChange}
         />
       )}
@@ -322,37 +324,37 @@ export function ExecutorSection({
 
 function AgentExecutorForm({
   executor,
-  workflowKeyHint,
-  availableWorkflows,
+  procedureKeyHint,
+  availableProcedures,
   onChange,
 }: {
   executor: Extract<ActivityExecutorSpec, { kind: "agent" }>;
-  workflowKeyHint: string;
-  availableWorkflows: WorkflowDefinition[];
+  procedureKeyHint: string;
+  availableProcedures: AgentProcedure[];
   onChange: (next: ActivityExecutorSpec) => void;
 }) {
-  const sortedWorkflows = [...availableWorkflows].sort((a, b) =>
+  const sortedProcedures = [...availableProcedures].sort((a, b) =>
     a.name.localeCompare(b.name, "zh-CN"),
   );
-  const isOwn = executor.workflow_key === workflowKeyHint;
+  const isOwn = executor.procedure_key === procedureKeyHint;
   const mode: "own" | "reference" = isOwn ? "own" : "reference";
 
   return (
     <div className="grid gap-2">
       <div>
-        <label className="agentdash-form-label">Workflow 来源</label>
+        <label className="agentdash-form-label">Procedure 来源</label>
         <div className="flex gap-1 rounded-[8px] border border-border bg-secondary/35 p-1">
           <ModeButton
             active={mode === "own"}
-            onClick={() => onChange({ ...executor, workflow_key: workflowKeyHint })}
+            onClick={() => onChange({ ...executor, procedure_key: procedureKeyHint })}
           >
             专属（随此 activity 创建）
           </ModeButton>
           <ModeButton
             active={mode === "reference"}
             onClick={() => {
-              const first = sortedWorkflows.find((w) => w.key !== workflowKeyHint);
-              onChange({ ...executor, workflow_key: first?.key ?? "" });
+              const first = sortedProcedures.find((procedure) => procedure.key !== procedureKeyHint);
+              onChange({ ...executor, procedure_key: first?.key ?? "" });
             }}
           >
             引用已有
@@ -362,48 +364,64 @@ function AgentExecutorForm({
 
       {mode === "own" ? (
         <div className="rounded-[8px] border border-primary/30 bg-primary/5 px-3 py-2">
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Workflow Key</p>
-          <p className="mt-0.5 truncate font-mono text-xs text-foreground">{workflowKeyHint}</p>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Procedure Key</p>
+          <p className="mt-0.5 truncate font-mono text-xs text-foreground">{procedureKeyHint}</p>
         </div>
       ) : (
         <div>
-          <label className="agentdash-form-label">引用 Workflow</label>
+          <label className="agentdash-form-label">引用 Procedure</label>
           <select
-            value={executor.workflow_key}
-            onChange={(e) => onChange({ ...executor, workflow_key: e.target.value })}
+            value={executor.procedure_key}
+            onChange={(e) => onChange({ ...executor, procedure_key: e.target.value })}
             className="agentdash-form-select"
           >
-            {!sortedWorkflows.some((w) => w.key === executor.workflow_key) && (
-              <option value={executor.workflow_key}>
-                {executor.workflow_key || "(请选择)"}
+            {!sortedProcedures.some((procedure) => procedure.key === executor.procedure_key) && (
+              <option value={executor.procedure_key}>
+                {executor.procedure_key || "(请选择)"}
               </option>
             )}
-            {sortedWorkflows
-              .filter((w) => w.key !== workflowKeyHint)
-              .map((w) => (
-                <option key={w.id} value={w.key}>
-                  {w.name}{w.name !== w.key ? ` · ${w.key}` : ""}
+            {sortedProcedures
+              .filter((procedure) => procedure.key !== procedureKeyHint)
+              .map((procedure) => (
+                <option key={procedure.id} value={procedure.key}>
+                  {procedure.name}{procedure.name !== procedure.key ? ` · ${procedure.key}` : ""}
                 </option>
               ))}
           </select>
           <p className="mt-1 text-[11px] text-warning">
-            修改 Contract 会影响所有引用此 workflow 的 activity
+            修改 Contract 会影响所有引用此 procedure 的 activity
           </p>
         </div>
       )}
 
       <div>
-        <label className="agentdash-form-label">Session Policy</label>
+        <label className="agentdash-form-label">Agent Reuse</label>
         <select
-          value={executor.session_policy}
+          value={executor.agent_reuse_policy}
           onChange={(e) =>
-            onChange({ ...executor, session_policy: e.target.value as AgentSessionPolicy })
+            onChange({ ...executor, agent_reuse_policy: e.target.value as AgentReusePolicy })
           }
           className="agentdash-form-select"
         >
-          <option value="spawn_child">Spawn Child</option>
-          <option value="continue_root">Continue Root</option>
-          <option value="attach_existing">Attach Existing</option>
+          <option value="create_activity_agent">Create Activity Agent</option>
+          <option value="continue_current_agent">Continue Current Agent</option>
+        </select>
+      </div>
+
+      <div>
+        <label className="agentdash-form-label">Runtime Session</label>
+        <select
+          value={executor.runtime_session_policy}
+          onChange={(e) =>
+            onChange({
+              ...executor,
+              runtime_session_policy: e.target.value as RuntimeSessionPolicy,
+            })
+          }
+          className="agentdash-form-select"
+        >
+          <option value="create_new">Create New</option>
+          <option value="deliver_to_current_trace">Deliver To Current Trace</option>
         </select>
       </div>
     </div>
@@ -906,8 +924,8 @@ function ActivityInputPortsList({
 
 // ─── Contract tab 内容 ─────────────────────────────────
 
-export function WorkflowContractTabContent({
-  workflowDraft,
+export function AgentProcedureContractTabContent({
+  procedureDraft,
   hookPresets,
   targetKinds,
   projectId,
@@ -922,7 +940,7 @@ export function WorkflowContractTabContent({
   onContractOutputPortsChange,
   onContractInputPortsChange,
 }: {
-  workflowDraft: WorkflowEditorDraft;
+  procedureDraft: AgentProcedureDraft;
   hookPresets: HookRulePreset[];
   targetKinds: WorkflowTargetKind[];
   projectId: string;
@@ -940,13 +958,13 @@ export function WorkflowContractTabContent({
   return (
     <div className="space-y-3">
       <div className="rounded-[8px] border border-dashed border-border bg-secondary/15 px-3 py-2">
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Workflow Key</p>
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Procedure Key</p>
         <p className="mt-0.5 truncate font-mono text-xs text-foreground">
-          {workflowDraft.key || "(未命名)"}
+          {procedureDraft.key || "(未命名)"}
         </p>
       </div>
       <InjectionPanel
-        injection={workflowDraft.contract.injection}
+        injection={procedureDraft.contract.injection}
         compact
         onGuidanceChange={(guidance) => onUpdateInjection({ guidance: guidance ?? undefined })}
         onBindingChange={onBindingChange}
@@ -956,12 +974,12 @@ export function WorkflowContractTabContent({
       <CapabilityPanel
         projectId={projectId}
         targetKinds={targetKinds}
-        directives={workflowDraft.contract.capability_config.tool_directives}
+        directives={procedureDraft.contract.capability_config.tool_directives}
         compact
         onDirectivesChange={onDirectivesChange}
       />
       <HookRulesPanel
-        hookRules={workflowDraft.contract.hook_rules}
+        hookRules={procedureDraft.contract.hook_rules}
         presets={hookPresets}
         compact
         onAdd={onAddHookRule}
@@ -969,8 +987,8 @@ export function WorkflowContractTabContent({
         onRemove={onRemoveHookRule}
       />
       <PortsPanel
-        outputPorts={workflowDraft.contract.output_ports ?? []}
-        inputPorts={workflowDraft.contract.input_ports ?? []}
+        outputPorts={procedureDraft.contract.output_ports ?? []}
+        inputPorts={procedureDraft.contract.input_ports ?? []}
         compact
         onOutputChange={onContractOutputPortsChange}
         onInputChange={onContractInputPortsChange}
@@ -993,4 +1011,3 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
  * 双层 ports 同步：contract 改后，把改动合并到 activity ports，保留 step-extra
  * （activity 自加的、不在旧 contract 集合里的 port）。
  */
-

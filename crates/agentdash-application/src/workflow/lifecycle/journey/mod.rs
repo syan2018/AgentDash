@@ -9,12 +9,14 @@ use std::sync::Arc;
 use agentdash_agent_protocol::BackboneEvent;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
-    ActivityAttemptState, ExecutorRunRef, LifecycleRun, LifecycleRunStatus,
+    ActivityAttemptState, ActivityAttemptStatus, ExecutorRunRef, LifecycleRun, LifecycleRunStatus,
+    WorkflowGraphInstance, active_activity_refs_from_states,
 };
 use serde::Serialize;
 use uuid::Uuid;
 
 use crate::session::{PersistedSessionEvent, SessionPersistence};
+use crate::workflow::execution_log::{ActivityAttemptArtifactScope, ActivityPortArtifactRef};
 
 pub mod session_items;
 
@@ -101,7 +103,7 @@ impl LifecycleJourneyProjection {
                 let meta_json = serde_json::json!({
                     "session_id": session_id,
                     "title": meta.title,
-                    "status": meta.last_execution_status,
+                    "status": meta.last_delivery_status,
                     "last_event_seq": meta.last_event_seq,
                     "created_at": meta.created_at,
                     "updated_at": meta.updated_at,
@@ -257,12 +259,16 @@ impl LifecycleJourneyProjection {
         Ok(summary_archive_markdown(&compaction))
     }
 
-    pub async fn list_port_outputs(&self, run_id: Uuid) -> JourneyResult<BTreeMap<String, String>> {
+    pub async fn list_scoped_port_outputs(
+        &self,
+        scope: &ActivityAttemptArtifactScope,
+    ) -> JourneyResult<BTreeMap<String, String>> {
+        let prefix = scope.path_prefix();
         let files = self
             .inline_file_repo
             .list_files(
                 InlineFileOwnerKind::LifecycleRun,
-                run_id,
+                scope.run_id,
                 PORT_OUTPUTS_CONTAINER,
             )
             .await
@@ -270,39 +276,47 @@ impl LifecycleJourneyProjection {
         Ok(files
             .into_iter()
             .filter_map(|file| {
-                let path = file.path.clone();
-                file.into_text_content().map(|content| (path, content))
+                let port_key = file.path.strip_prefix(&prefix)?.to_string();
+                if port_key.is_empty() || port_key.contains('/') {
+                    return None;
+                }
+                file.into_text_content().map(|content| (port_key, content))
             })
             .collect())
     }
 
-    pub async fn read_port_output(&self, run_id: Uuid, port_key: &str) -> JourneyResult<String> {
+    pub async fn read_scoped_port_output(
+        &self,
+        artifact_ref: &ActivityPortArtifactRef,
+    ) -> JourneyResult<String> {
         self.inline_file_repo
             .get_file(
                 InlineFileOwnerKind::LifecycleRun,
-                run_id,
+                artifact_ref.run_id,
                 PORT_OUTPUTS_CONTAINER,
-                port_key,
+                &artifact_ref.inline_path(),
             )
             .await
             .map_err(map_domain_err)?
             .and_then(|file| file.into_text_content())
             .ok_or_else(|| {
-                LifecycleJourneyError::NotFound(format!("port output 不存在: {port_key}"))
+                LifecycleJourneyError::NotFound(format!(
+                    "port output 不存在: {}",
+                    artifact_ref.inline_path()
+                ))
             })
     }
 
-    pub async fn write_port_output(
+    pub async fn write_scoped_port_output(
         &self,
-        run_id: Uuid,
-        port_key: &str,
+        artifact_ref: &ActivityPortArtifactRef,
         content: &str,
     ) -> JourneyResult<()> {
         let file = InlineFile::new(
             InlineFileOwnerKind::LifecycleRun,
-            run_id,
+            artifact_ref.run_id,
             PORT_OUTPUTS_CONTAINER,
-            port_key.to_string(),
+            artifact_ref.inline_path(),
             content.to_string(),
         );
         self.inline_file_repo
@@ -314,7 +328,7 @@ impl LifecycleJourneyProjection {
     pub async fn records_map(
         &self,
         run_id: Uuid,
-        step_key: &str,
+        activity_key: &str,
     ) -> JourneyResult<BTreeMap<String, String>> {
         let files = self
             .inline_file_repo
@@ -325,7 +339,7 @@ impl LifecycleJourneyProjection {
             )
             .await
             .map_err(map_domain_err)?;
-        let prefix = format!("{step_key}/");
+        let prefix = format!("{activity_key}/");
         Ok(files
             .into_iter()
             .filter_map(|file| {
@@ -337,19 +351,23 @@ impl LifecycleJourneyProjection {
             .collect())
     }
 
-    pub async fn read_records_map(&self, run_id: Uuid, step_key: &str) -> JourneyResult<String> {
-        let map = self.records_map(run_id, step_key).await?;
+    pub async fn read_records_map(
+        &self,
+        run_id: Uuid,
+        activity_key: &str,
+    ) -> JourneyResult<String> {
+        let map = self.records_map(run_id, activity_key).await?;
         to_json_pretty(&map)
     }
 
     pub async fn read_record(
         &self,
         run_id: Uuid,
-        step_key: &str,
+        activity_key: &str,
         rest: &[&str],
     ) -> JourneyResult<String> {
         let name = join_rest(rest)?;
-        let path = format!("{step_key}/{name}");
+        let path = format!("{activity_key}/{name}");
         self.inline_file_repo
             .get_file(
                 InlineFileOwnerKind::LifecycleRun,
@@ -366,12 +384,12 @@ impl LifecycleJourneyProjection {
     pub async fn write_record(
         &self,
         run_id: Uuid,
-        step_key: &str,
+        activity_key: &str,
         rest: &[&str],
         content: &str,
     ) -> JourneyResult<String> {
         let name = join_rest(rest)?;
-        let path = format!("{step_key}/{name}");
+        let path = format!("{activity_key}/{name}");
         let file = InlineFile::new(
             InlineFileOwnerKind::LifecycleRun,
             run_id,
@@ -413,20 +431,20 @@ impl LifecycleJourneyProjection {
     pub async fn read_node_conclusions(
         &self,
         run_id: Uuid,
-        step_key: &str,
+        activity_key: &str,
     ) -> JourneyResult<String> {
         self.inline_file_repo
             .get_file(
                 InlineFileOwnerKind::LifecycleRun,
                 run_id,
                 SESSION_RECORDS_CONTAINER,
-                &format!("{step_key}/conclusions"),
+                &format!("{activity_key}/conclusions"),
             )
             .await
             .map_err(map_domain_err)?
             .and_then(|file| file.into_text_content())
             .ok_or_else(|| {
-                LifecycleJourneyError::NotFound(format!("node `{step_key}` 没有 conclusions"))
+                LifecycleJourneyError::NotFound(format!("node `{activity_key}` 没有 conclusions"))
             })
     }
 }
@@ -435,10 +453,9 @@ impl LifecycleJourneyProjection {
 pub struct LifecycleRunOverview<'a> {
     id: Uuid,
     project_id: Uuid,
-    lifecycle_id: Uuid,
-    session_id: Option<&'a str>,
+    root_graph_id: Option<Uuid>,
     status: &'a LifecycleRunStatus,
-    current_step_key: Option<&'a str>,
+    active_activity_refs: Vec<String>,
     step_count: usize,
     log_count: usize,
     created_at: chrono::DateTime<chrono::Utc>,
@@ -446,19 +463,43 @@ pub struct LifecycleRunOverview<'a> {
     last_activity_at: chrono::DateTime<chrono::Utc>,
 }
 
-pub fn run_overview(run: &LifecycleRun) -> LifecycleRunOverview<'_> {
+pub fn run_overview<'a>(
+    run: &'a LifecycleRun,
+    graph_instances: &[WorkflowGraphInstance],
+) -> LifecycleRunOverview<'a> {
     LifecycleRunOverview {
         id: run.id,
         project_id: run.project_id,
-        lifecycle_id: run.lifecycle_id,
-        session_id: run.session_id.as_deref(),
+        root_graph_id: run.root_graph_id,
         status: &run.status,
-        current_step_key: run.current_step_key(),
-        step_count: run
-            .activity_state
-            .as_ref()
+        active_activity_refs: active_activity_refs_from_states(
+            run.id,
+            graph_instances.iter().filter_map(|instance| {
+                instance
+                    .activity_state
+                    .as_ref()
+                    .map(|state| (instance.id, state))
+            }),
+        )
+        .into_iter()
+        .map(|active| {
+            format!(
+                "{}:{}#{}:{}",
+                active.graph_instance_id,
+                active.activity_key,
+                active.attempt,
+                serde_json::to_value(active.status)
+                    .ok()
+                    .and_then(|value| value.as_str().map(ToOwned::to_owned))
+                    .unwrap_or_else(|| "unknown".to_string())
+            )
+        })
+        .collect(),
+        step_count: graph_instances
+            .iter()
+            .filter_map(|instance| instance.activity_state.as_ref())
             .map(|state| state.attempts.len())
-            .unwrap_or(0),
+            .sum(),
         log_count: run.execution_log.len(),
         created_at: run.created_at,
         updated_at: run.updated_at,
@@ -499,51 +540,73 @@ pub fn group_events_into_turn_summaries(events: &[PersistedSessionEvent]) -> Vec
 }
 
 /// 取展示用的 Activity attempt 列表（投影 node 列表用）。
-pub fn step_states_from_run(run: &LifecycleRun) -> Vec<ActivityAttemptState> {
-    run.activity_state
-        .as_ref()
-        .map(|state| state.attempts.clone())
-        .unwrap_or_default()
+pub fn step_states_from_graph_instance(
+    graph_instance: &WorkflowGraphInstance,
+) -> JourneyResult<Vec<ActivityAttemptState>> {
+    Ok(graph_instance_state(graph_instance)?.attempts.clone())
 }
 
-pub fn find_step(run: &LifecycleRun, key: &str) -> JourneyResult<ActivityAttemptState> {
-    run.activity_state
-        .as_ref()
-        .and_then(|state| {
-            state
-                .attempts
-                .iter()
-                .find(|attempt| attempt.activity_key == key)
-                .cloned()
-        })
+pub fn find_step(
+    graph_instance: &WorkflowGraphInstance,
+    key: &str,
+) -> JourneyResult<ActivityAttemptState> {
+    graph_instance_state(graph_instance)?
+        .attempts
+        .iter()
+        .find(|attempt| attempt.activity_key == key)
+        .cloned()
         .ok_or_else(|| LifecycleJourneyError::NotFound(format!("node 不存在: {key}")))
 }
 
-pub fn current_step(run: &LifecycleRun) -> JourneyResult<ActivityAttemptState> {
-    let key = run.current_step_key().ok_or_else(|| {
-        LifecycleJourneyError::NotFound("当前 lifecycle run 没有活跃 node".to_string())
-    })?;
-    find_step(run, key)
+pub fn current_step(graph_instance: &WorkflowGraphInstance) -> JourneyResult<ActivityAttemptState> {
+    graph_instance_state(graph_instance)?
+        .attempts
+        .iter()
+        .find(|attempt| {
+            matches!(
+                attempt.status,
+                ActivityAttemptStatus::Ready
+                    | ActivityAttemptStatus::Claiming
+                    | ActivityAttemptStatus::Running
+            )
+        })
+        .cloned()
+        .ok_or_else(|| {
+            LifecycleJourneyError::NotFound("当前 graph instance 没有活跃 node".to_string())
+        })
 }
 
 pub fn attempt_session_id(attempt: &ActivityAttemptState) -> Option<String> {
     match &attempt.executor_run {
-        Some(ExecutorRunRef::AgentSession { session_id }) => Some(session_id.clone()),
+        Some(ExecutorRunRef::RuntimeSession { session_id }) => Some(session_id.clone()),
         _ => None,
     }
 }
 
-pub fn step_session_id(run: &LifecycleRun, key: &str) -> JourneyResult<String> {
-    attempt_session_id(&find_step(run, key)?)
+pub fn step_session_id(graph_instance: &WorkflowGraphInstance, key: &str) -> JourneyResult<String> {
+    attempt_session_id(&find_step(graph_instance, key)?)
         .ok_or_else(|| LifecycleJourneyError::NotFound(format!("node `{key}` 没有关联 session")))
 }
 
-pub fn current_step_session_id(run: &LifecycleRun) -> JourneyResult<(String, String)> {
-    let attempt = current_step(run)?;
+pub fn current_step_session_id(
+    graph_instance: &WorkflowGraphInstance,
+) -> JourneyResult<(String, String)> {
+    let attempt = current_step(graph_instance)?;
     let session_id = attempt_session_id(&attempt).ok_or_else(|| {
         LifecycleJourneyError::NotFound(format!("node `{}` 没有关联 session", attempt.activity_key))
     })?;
     Ok((attempt.activity_key, session_id))
+}
+
+fn graph_instance_state(
+    graph_instance: &WorkflowGraphInstance,
+) -> JourneyResult<&agentdash_domain::workflow::ActivityLifecycleRunState> {
+    graph_instance.activity_state.as_ref().ok_or_else(|| {
+        LifecycleJourneyError::NotFound(format!(
+            "graph instance {} 缺少 activity state",
+            graph_instance.id
+        ))
+    })
 }
 
 pub fn join_rest(rest: &[&str]) -> JourneyResult<String> {

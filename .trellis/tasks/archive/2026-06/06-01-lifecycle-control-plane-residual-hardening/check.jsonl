@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/prd.md", "reason": "Original lifecycle control-plane target model and acceptance criteria."}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/refactor-plan.md", "reason": "Phase plan and hard-cutover expectations used as verification baseline."}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/module-gap-analysis.md", "reason": "Module-level target ownership and known repeated fact clusters."}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/abstraction-boundary-and-coupling-review.md", "reason": "Guardrails for avoiding compatibility wrappers and empty abstraction layers."}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/lifecycle-entity-association-map.md", "reason": "Expected entity associations for run, LifecycleAgent, AgentFrame, SubjectRef and RuntimeSession."}

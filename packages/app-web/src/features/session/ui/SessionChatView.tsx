@@ -1,17 +1,17 @@
 /**
  * 可复用的会话聊天视图
  *
- * 包含完整的 ACP 会话交互能力：流式输出、富文本输入（@ 文件引用）、
+ * 包含完整的会话交互能力：流式输出、富文本输入（@ 文件引用）、
  * 执行器选择、上下文用量指示、发送/取消。
  *
- * SessionPage 和 StorySessionPanel 等场景复用此组件，
+ * SessionPage 等 runtime trace 场景复用此组件，
  * 由父组件管理 sessionId 生命周期和外层导航。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionFeed } from "../model";
 import { extractPlatformEventType } from "../model/platformEvent";
-import { promptSession, type ExecutorConfig } from "../../../services/executor";
+import type { ExecutorConfig } from "../../../services/executor";
 import {
   useExecutorDiscovery,
   useExecutorConfig,
@@ -20,10 +20,9 @@ import {
 import type { ExecutorConfigSource } from "../../executor-selector/model/types";
 import {
   useFileReference,
-  buildPromptBlocks,
   type RichInputRef,
 } from "../../file-reference";
-import { batchReadFiles, type FileEntry } from "../../../services/filePicker";
+import type { FileEntry } from "../../../services/filePicker";
 import {
   fetchSessionExecutionState,
 } from "../../../services/session";
@@ -56,8 +55,6 @@ const ACTION_RUNNING_RELEASE_DELAY_MS = 300;
 export function SessionChatView({
   sessionId,
   workspaceId,
-  onCreateSession,
-  onSessionIdChange,
   onMessageSent,
   onTurnEnd,
   onSystemEvent,
@@ -73,6 +70,7 @@ export function SessionChatView({
   inputPlaceholder,
   idleSendLabel = "发送",
   initialInputValue,
+  sendUnavailableReason,
 }: SessionChatViewProps) {
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -220,7 +218,7 @@ export function SessionChatView({
     execConfig.permissionPolicy,
   ]);
 
-  // ─── ACP 会话流 ──────────────────────────────────────
+  // ─── 会话流 ──────────────────────────────────────────
 
   const streamSessionId = sessionId ?? "__placeholder__";
   const hasSession = sessionId !== null;
@@ -359,8 +357,8 @@ export function SessionChatView({
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
 
+    if (!customSendRef.current) return;
     // customSend 模式允许空 prompt（如 Task 直接执行）
-    if (!customSendRef.current && !trimmed) return;
     if (isSending) return;
 
     setSendError(null);
@@ -369,35 +367,8 @@ export function SessionChatView({
     setIsSending(true);
 
     try {
-      if (customSendRef.current) {
-        // customSend 全接管：session 创建 + 消息发送一体处理
-        await customSendRef.current(sessionId, trimmed, executorConfig);
-      } else {
-        // 默认流程：onCreateSession → promptSession
-        let sid = sessionId;
-        if (!sid) {
-          if (!onCreateSession) { setSendError("当前无法创建新会话"); return; }
-          const title = trimmed.slice(0, 30) + (trimmed.length > 30 ? "…" : "");
-          sid = await onCreateSession(title);
-          onSessionIdChange?.(sid);
-        }
-
-        if (fileRef.references.length > 0) {
-          if (!workspaceId) {
-            throw new Error("当前会话没有可用的工作空间，无法附加文件引用");
-          }
-          const paths = fileRef.references.map((r) => r.relPath);
-          const batchResult = await batchReadFiles(workspaceId, paths);
-          const blocks = buildPromptBlocks(trimmed, batchResult.files);
-          await promptSession(sid, { promptBlocks: blocks, executorConfig });
-          fileRef.clearReferences();
-        } else {
-          await promptSession(sid, {
-            promptBlocks: buildPromptBlocks(trimmed, []),
-            executorConfig,
-          });
-        }
-      }
+      // customSend 全接管：session 创建 + 消息发送一体处理
+      await customSendRef.current(sessionId, trimmed, executorConfig);
 
       execConfig.recordUsage();
       clearInput();
@@ -410,7 +381,7 @@ export function SessionChatView({
     } finally {
       setIsSending(false);
     }
-  }, [isSending, sessionId, executorConfig, execConfig, onCreateSession, onSessionIdChange, onMessageSent, fileRef, clearInput, refreshExecutionState, workspaceId]);
+  }, [isSending, sessionId, executorConfig, execConfig, onMessageSent, clearInput, refreshExecutionState]);
 
   const handleCancel = useCallback(async () => {
     if (!hasSession || !sessionId) return;
@@ -567,6 +538,7 @@ export function SessionChatView({
         isSending={isSending}
         promptTemplates={promptTemplates}
         richInputRef={richInputRef}
+        sendUnavailableReason={sendUnavailableReason}
         showExecutorSelector={showExecutorSelector}
         workspaceId={workspaceId}
         onAtTrigger={handleAtTrigger}

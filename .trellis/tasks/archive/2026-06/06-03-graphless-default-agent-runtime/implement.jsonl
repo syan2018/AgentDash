@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Backend clean architecture boundaries and repository/application/API separation for workflow control-plane changes."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "PostgreSQL schema baseline and migration rules for lifecycle run topology changes."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Structured error mapping for dispatch and repository changes."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust backend quality conventions and DTO naming rules."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Workflow graph, lifecycle run, graph instance, assignment, frame, and runtime anchor invariants."}
+{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "Activity graph execution contract that must remain intact for explicit lifecycle runs."}
+{"file": ".trellis/spec/backend/workflow/lifecycle-run-link.md", "reason": "Subject association and run/agent anchor lookup contract for graphless subject execution."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Rust contract to generated TypeScript workflow for DTO shape changes."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Frontend generated DTO consumption and mapper boundaries for optional graph/assignment fields."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Frontend store update conventions for lifecycle/project/session stores."}
+{"file": ".trellis/tasks/06-03-graphless-default-agent-runtime/research/graphless-runtime-audit.md", "reason": "Repository audit of current graph dependencies, optional anchor fields, and default freeform entrypoints."}

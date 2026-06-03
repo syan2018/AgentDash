@@ -3,7 +3,8 @@ mod repository;
 mod value_objects;
 
 pub use entity::{
-    Routine, RoutineExecution, RoutineExecutionStatus, RoutineTriggerConfig, SessionStrategy,
+    DispatchStrategy, Routine, RoutineDispatchRefs, RoutineExecution, RoutineExecutionStatus,
+    RoutineTriggerConfig,
 };
 pub use repository::{RoutineExecutionRepository, RoutineRepository};
 pub use value_objects::{

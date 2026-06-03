@@ -1,4 +1,4 @@
-use agentdash_spi::hooks::SharedHookSessionRuntime;
+use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{SessionMcpServer, Vfs};
 use async_trait::async_trait;
 use std::io;
@@ -11,8 +11,10 @@ use super::hub::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextApplication,
     PendingRuntimeContextTransitionInput, RuntimeContextTransitionOutcome,
 };
-use super::runtime_commands::RuntimeCommandRecord;
-use super::types::{CapabilityState, PendingCapabilityStateTransition};
+use super::runtime_commands::{
+    AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeDeliveryCommand,
+};
+use super::types::{AgentFrameRuntimeTarget, CapabilityState, PendingCapabilityStateTransition};
 use crate::runtime_gateway::{
     McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
 };
@@ -39,6 +41,51 @@ impl SessionCapabilityService {
         self.hub.get_latest_capability_state(session_id).await
     }
 
+    /// Delivery adapter: 把 RuntimeSession id 解析为对应的 AgentFrame id。
+    ///
+    /// 仅用于已知 delivery session 但尚未拥有 `AgentFrameRuntimeTarget` 的
+    /// adapter 边界（如 canvas tool、workflow executor 入口）。业务控制路径应
+    /// 直接传递 `AgentFrameRuntimeTarget`，不应依赖此方法做反查。
+    pub(crate) async fn resolve_runtime_session_frame_id(
+        &self,
+        session_id: &str,
+    ) -> Result<uuid::Uuid, String> {
+        self.hub
+            .resolve_runtime_session_frame_id(session_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    /// Delivery adapter: 把 RuntimeSession id 解析为完整的 `AgentFrameRuntimeTarget`。
+    ///
+    /// 仅用于 adapter 边界将 session 维度入口转换为 frame-first 控制目标。
+    /// 内部业务路径应直接持有并传递 `AgentFrameRuntimeTarget`。
+    pub(crate) async fn resolve_runtime_session_target(
+        &self,
+        session_id: &str,
+    ) -> Result<AgentFrameRuntimeTarget, String> {
+        let frame_id = self.resolve_runtime_session_frame_id(session_id).await?;
+        Ok(AgentFrameRuntimeTarget {
+            frame_id,
+            delivery_runtime_session_id: session_id.to_string(),
+        })
+    }
+
+    /// Canvas mount 写入 AgentFrame（通过 AgentFrameRepository 追加）。
+    pub(crate) async fn append_visible_canvas_mount_to_frame(
+        &self,
+        session_id: &str,
+        mount_id: &str,
+    ) -> Result<(), String> {
+        let frame_id = self.resolve_runtime_session_frame_id(session_id).await?;
+        let repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
+            format!("session `{session_id}` 无 AgentFrame repository，无法写入 canvas mount")
+        })?;
+        repo.append_visible_canvas_mount(frame_id, mount_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     pub async fn list_requested_runtime_commands(
         &self,
         session_id: &str,
@@ -51,13 +98,18 @@ impl SessionCapabilityService {
             .map_err(Into::into)
     }
 
-    pub async fn enqueue_pending_capability_state_transition(
+    pub async fn enqueue_runtime_delivery_command(
         &self,
-        session_id: &str,
-        transition: PendingCapabilityStateTransition,
+        delivery_runtime_session_id: &str,
+        delivery: RuntimeDeliveryCommand,
+        frame_transition: AgentFrameTransitionRecord,
     ) -> std::io::Result<()> {
         self.hub
-            .enqueue_pending_capability_state_transition(session_id, transition)
+            .enqueue_runtime_delivery_command(
+                delivery_runtime_session_id,
+                delivery,
+                frame_transition,
+            )
             .await
     }
 
@@ -77,7 +129,7 @@ impl SessionCapabilityService {
 
     pub(crate) async fn apply_live_runtime_context_transition(
         &self,
-        hook_session: &agentdash_spi::hooks::SharedHookSessionRuntime,
+        hook_runtime: &agentdash_spi::hooks::SharedHookRuntime,
         mut input: LiveRuntimeContextTransitionInput,
     ) -> Result<RuntimeContextTransitionOutcome, String> {
         self.derive_skill_baseline_for_transition_state(
@@ -86,26 +138,34 @@ impl SessionCapabilityService {
         )
         .await;
         self.hub
-            .apply_live_runtime_context_transition(hook_session, input)
+            .apply_live_runtime_context_transition(hook_runtime, input)
             .await
     }
 
     pub(crate) async fn apply_live_vfs_capability_state(
         &self,
-        hook_session: &SharedHookSessionRuntime,
-        session_id: &str,
+        hook_runtime: &SharedHookRuntime,
+        target: AgentFrameRuntimeTarget,
         before_state: CapabilityState,
         active_vfs: Vfs,
         phase_node: &str,
         apply_mode: &'static str,
     ) -> Result<RuntimeContextTransitionOutcome, String> {
+        let session_id = target.delivery_runtime_session_id.clone();
+        if hook_runtime.session_id() != session_id {
+            return Err(format!(
+                "Hook runtime session `{}` 与 delivery RuntimeSession `{session_id}` 不一致，拒绝热更新能力状态",
+                hook_runtime.session_id()
+            ));
+        }
         let mut after_state = before_state.clone();
         after_state.vfs.active = Some(active_vfs);
         let capability_keys = after_state.capability_keys();
         self.apply_live_runtime_context_transition(
-            hook_session,
+            hook_runtime,
             LiveRuntimeContextTransitionInput {
-                session_id: session_id.to_string(),
+                target_frame_id: target.frame_id,
+                delivery_runtime_session_id: session_id,
                 turn_id: None,
                 phase_node: phase_node.to_string(),
                 run_id: None,
@@ -155,7 +215,7 @@ impl SessionCapabilityService {
         &self,
         session_id: &str,
         turn_id: &str,
-        hook_session: Option<&agentdash_spi::hooks::SharedHookSessionRuntime>,
+        hook_runtime: Option<&agentdash_spi::hooks::SharedHookRuntime>,
         before_state: CapabilityState,
         final_capability_state: &CapabilityState,
         transitions: &[PendingCapabilityStateTransition],
@@ -165,7 +225,7 @@ impl SessionCapabilityService {
             .apply_pending_runtime_context_transitions_on_turn(
                 session_id,
                 turn_id,
-                hook_session,
+                hook_runtime,
                 before_state,
                 final_capability_state,
                 transitions,

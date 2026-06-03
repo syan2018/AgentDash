@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "LifecycleRun / WorkflowGraphInstance / AgentAssignment 的目标不变量"}
+{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "Activity executor、scheduler、artifact 与 terminal callback 契约"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Session launch pipeline 与 Frame / RuntimeLaunchRequest 迁移方向"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Session runtime supervision 与 terminal cleanup 边界"}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "前端 Activity lifecycle 编辑与运行观察契约"}

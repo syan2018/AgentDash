@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Check Session remains user-facing shell and no frontend business fact source is introduced."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Check command paths do not use RuntimeSession as lifecycle primary key."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Check AgentFrame/LifecycleAgent control-plane ownership is preserved."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Check public prompt path cleanup and runtime delivery boundary."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check generated DTO and API contract drift."}
+{"file": "crates/agentdash-api/src/routes/lifecycle_agents.rs", "reason": "Verified LifecycleAgent message route resolves runtime session to AgentFrame/LifecycleAgent before runtime delivery."}
+{"file": "packages/app-web/src/pages/SessionPage.tsx", "reason": "Verified Session page sends through LifecycleAgent service and disables session-first prompt behavior."}
+{"file": "packages/app-web/src/features/session/ui/SessionChatViewParts.tsx", "reason": "Verified composer has explicit non-sendable state without Agent dispatcher."}
+{"file": "crates/agentdash-infrastructure/src/persistence/postgres/lifecycle_anchor_repository.rs", "reason": "Verified LifecycleAgent project_agent_id persists through repository update for Project Agent continuation."}

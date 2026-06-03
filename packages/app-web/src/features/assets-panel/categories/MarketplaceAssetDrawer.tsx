@@ -498,8 +498,8 @@ function parseWorkflowPayload(raw: unknown): WorkflowParsed | null {
   }
   const transitions = Array.isArray(lifecycle.transitions) ? lifecycle.transitions : [];
   const workflows = Array.isArray(template.workflows) ? template.workflows : [];
-  const bindingKinds = Array.isArray(template.binding_kinds)
-    ? template.binding_kinds.filter((v): v is string => typeof v === "string")
+  const bindingKinds = Array.isArray(template.target_kinds)
+    ? template.target_kinds.filter((v): v is string => typeof v === "string")
     : [];
   return {
     activities,

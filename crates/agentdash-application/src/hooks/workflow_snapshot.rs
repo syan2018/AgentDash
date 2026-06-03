@@ -1,13 +1,18 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    ActivityLifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    AgentAssignmentRepository, AgentFrameRepository, AgentProcedureRepository,
+    LifecycleAgentRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+    WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
-use agentdash_spi::{HookError, hooks::PendingExecutionLogEntry};
+use agentdash_spi::{HookError, hooks::HookControlTarget, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
 
 use crate::workflow::execution_log as workflow_recording;
-use crate::workflow::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
+use crate::workflow::{
+    ActiveWorkflowProjection, resolve_active_workflow_projection_for_session,
+    resolve_active_workflow_projection_for_target, select_assignment_for_frame,
+};
 
 fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
     HookError::Runtime(error.to_string())
@@ -15,21 +20,36 @@ fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
 
 /// 根据 session 信息构建 ActiveWorkflowProjection，以及 workflow 推进与日志写入。
 pub struct WorkflowSnapshotBuilder {
-    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-    activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
+    agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
+    workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
+    agent_frame_repo: Arc<dyn AgentFrameRepository>,
+    lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+    agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
 }
 
 impl WorkflowSnapshotBuilder {
     pub fn new(
-        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-        activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
+        agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
+        workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
+        agent_frame_repo: Arc<dyn AgentFrameRepository>,
+        lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+        agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+        workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
     ) -> Self {
         Self {
-            workflow_definition_repo,
-            activity_lifecycle_definition_repo,
+            agent_procedure_repo,
+            workflow_graph_repo,
+            agent_frame_repo,
+            lifecycle_agent_repo,
+            agent_assignment_repo,
             lifecycle_run_repo,
+            execution_anchor_repo,
+            workflow_graph_instance_repo,
         }
     }
 
@@ -50,9 +70,80 @@ impl WorkflowSnapshotBuilder {
     ) -> Result<Option<ActiveWorkflowProjection>, HookError> {
         resolve_active_workflow_projection_for_session(
             session_id,
-            self.workflow_definition_repo.as_ref(),
-            self.activity_lifecycle_definition_repo.as_ref(),
+            self.agent_procedure_repo.as_ref(),
+            self.workflow_graph_repo.as_ref(),
+            self.agent_frame_repo.as_ref(),
+            self.lifecycle_agent_repo.as_ref(),
+            self.agent_assignment_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
+            self.execution_anchor_repo.as_ref(),
+            self.workflow_graph_instance_repo.as_ref(),
+        )
+        .await
+        .map_err(HookError::Runtime)
+    }
+
+    pub async fn resolve_hook_control_target_for_runtime_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<HookControlTarget>, HookError> {
+        let Some(anchor) = self
+            .execution_anchor_repo
+            .find_by_session(session_id)
+            .await
+            .map_err(map_hook_error)?
+        else {
+            return Ok(None);
+        };
+        let Some(agent) = self
+            .lifecycle_agent_repo
+            .get(anchor.agent_id)
+            .await
+            .map_err(map_hook_error)?
+        else {
+            return Ok(None);
+        };
+        if agent.run_id != anchor.run_id {
+            return Ok(None);
+        }
+        let Some(frame) = self
+            .agent_frame_repo
+            .get_current(agent.id)
+            .await
+            .map_err(map_hook_error)?
+            .or(self
+                .agent_frame_repo
+                .get(anchor.launch_frame_id)
+                .await
+                .map_err(map_hook_error)?)
+        else {
+            return Ok(None);
+        };
+        let assignment_id =
+            select_assignment_for_frame(self.agent_assignment_repo.as_ref(), &frame)
+                .await
+                .map_err(|error| HookError::Runtime(error.to_string()))?
+                .map(|assignment| assignment.id);
+        Ok(Some(HookControlTarget {
+            run_id: agent.run_id,
+            agent_id: agent.id,
+            frame_id: frame.id,
+            assignment_id,
+        }))
+    }
+
+    pub async fn resolve_active_workflow_for_target(
+        &self,
+        target: &HookControlTarget,
+    ) -> Result<Option<ActiveWorkflowProjection>, HookError> {
+        resolve_active_workflow_projection_for_target(
+            target,
+            self.agent_procedure_repo.as_ref(),
+            self.workflow_graph_repo.as_ref(),
+            self.agent_frame_repo.as_ref(),
+            self.agent_assignment_repo.as_ref(),
+            self.lifecycle_run_repo.as_ref(),
+            self.workflow_graph_instance_repo.as_ref(),
         )
         .await
         .map_err(HookError::Runtime)

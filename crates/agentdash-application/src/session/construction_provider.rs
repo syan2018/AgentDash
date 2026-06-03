@@ -1,4 +1,4 @@
-﻿//! Session construction provider 契约。
+//! Session construction provider 契约。
 //!
 //! Session 的主通道（用户 HTTP prompt）和 auto-resume 通道都必须通过同一份
 //! construction 逻辑才能拿到 owner context / MCP server 绑定 / flow capabilities /
@@ -10,17 +10,14 @@
 
 use std::sync::Arc;
 
-use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityLifecycleDefinition, LifecycleRun, WorkflowDefinition,
-};
+use super::launch::LaunchCommand;
+use super::runtime_commands::RuntimeCommandRecord;
+use super::types::RuntimeTraceLaunchState;
+use crate::workflow::runtime_launch::FrameLaunchEnvelope;
+use agentdash_domain::workflow::{ActivityDefinition, AgentProcedure, LifecycleRun, WorkflowGraph};
 use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
 use uuid::Uuid;
-
-use super::construction::SessionConstructionPlan;
-use super::launch::LaunchCommand;
-use super::runtime_commands::RuntimeCommandRecord;
-use super::types::SessionMeta;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskLaunchPhase {
@@ -46,9 +43,10 @@ pub struct RoutineLaunchSource {
 #[derive(Clone)]
 pub struct CompanionLaunchWorkflowSource {
     pub run: LifecycleRun,
-    pub lifecycle: ActivityLifecycleDefinition,
+    pub graph_instance_id: Uuid,
+    pub lifecycle: WorkflowGraph,
     pub activity: ActivityDefinition,
-    pub workflow: Option<WorkflowDefinition>,
+    pub workflow: Option<AgentProcedure>,
 }
 
 #[derive(Clone)]
@@ -64,20 +62,23 @@ pub struct CompanionLaunchSource {
 pub struct SessionConstructionProviderInput {
     pub session_id: String,
     pub command: LaunchCommand,
-    pub session_meta: SessionMeta,
+    pub runtime_trace_state: RuntimeTraceLaunchState,
     pub had_existing_runtime: bool,
     pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
+    pub agent_needs_bootstrap: bool,
 }
 
-/// 用于把 source command 构建成与主通道一致的 construction plan。
+/// Session launch 的 construction provider 契约。
+///
+/// 实现方负责从 session 元数据推断 owner / workspace / capability / context 等
+/// 运行时字段，产出 `FrameLaunchEnvelope` 驱动 connector 启动。
 #[async_trait]
 pub trait SessionConstructionProvider: Send + Sync {
-    /// 依据 session 的 owner binding / workspace / agent preset / workflow 等信息，
-    /// 补齐后端注入字段（mcp_servers / vfs / capability_state / context_bundle 等）。
-    async fn build_construction(
+    /// 产出 FrameLaunchEnvelope —— session launch 的唯一输入。
+    async fn build_frame_construction(
         &self,
         input: SessionConstructionProviderInput,
-    ) -> Result<SessionConstructionPlan, ConnectorError>;
+    ) -> Result<FrameLaunchEnvelope, ConnectorError>;
 }
 
 /// 动态类型别名，便于在 hub 内存储。

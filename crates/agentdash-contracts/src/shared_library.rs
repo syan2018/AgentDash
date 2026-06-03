@@ -201,7 +201,7 @@ pub struct ProjectAssetSourceStatusDto {
     pub mcp_presets: Vec<ProjectAssetSourceStatusItemDto>,
     pub skill_assets: Vec<ProjectAssetSourceStatusItemDto>,
     pub vfs_mounts: Vec<ProjectAssetSourceStatusItemDto>,
-    pub workflow_definitions: Vec<ProjectAssetSourceStatusItemDto>,
-    pub activity_lifecycle_definitions: Vec<ProjectAssetSourceStatusItemDto>,
+    pub agent_procedures: Vec<ProjectAssetSourceStatusItemDto>,
+    pub workflow_graphs: Vec<ProjectAssetSourceStatusItemDto>,
     pub extension_installations: Vec<ProjectAssetSourceStatusItemDto>,
 }

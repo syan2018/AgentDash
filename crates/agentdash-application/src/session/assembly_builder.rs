@@ -10,7 +10,10 @@ use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
-use crate::session::construction::SessionConstructionPlan;
+#[cfg(test)]
+#[allow(deprecated)]
+use crate::session::construction::RuntimeContextInspectionPlan;
+#[cfg(test)]
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::UserPromptInput;
 use crate::vfs::build_lifecycle_mount_with_ports;
@@ -30,10 +33,12 @@ use crate::vfs::build_lifecycle_mount_with_ports;
 ///
 /// **注**：`mcp_servers` 已迁移为 `Vec<SessionMcpServer>` 内部类型，relay 标记
 /// 内嵌于每个 server 实例，不再作为独立字段传递。
-pub(super) fn apply_session_assembly(
-    mut plan: SessionConstructionPlan,
+#[cfg(test)]
+#[allow(deprecated)]
+pub(crate) fn apply_session_assembly(
+    mut plan: RuntimeContextInspectionPlan,
     prepared: SessionAssemblyBuilder,
-) -> SessionConstructionPlan {
+) -> RuntimeContextInspectionPlan {
     if let Some(blocks) = prepared.prompt_blocks {
         plan.prompt.prompt_blocks = Some(blocks);
     }
@@ -131,11 +136,16 @@ impl SessionAssemblyBuilder {
     pub(super) fn append_lifecycle_mount(
         mut self,
         run_id: Uuid,
+        graph_instance_id: Uuid,
         lifecycle_key: &str,
         writable_port_keys: &[String],
     ) -> Self {
-        let lifecycle_mount =
-            build_lifecycle_mount_with_ports(run_id, lifecycle_key, writable_port_keys);
+        let lifecycle_mount = build_lifecycle_mount_with_ports(
+            run_id,
+            graph_instance_id,
+            lifecycle_key,
+            writable_port_keys,
+        );
         let mut overlay = Vfs::default();
         overlay.mounts.push(lifecycle_mount);
         self.vfs = Some(compose_vfs_with_overlay_and_directives(
@@ -302,16 +312,19 @@ impl SessionAssemblyBuilder {
     /// 一步完成 lifecycle node 装配（VFS + 能力 + MCP + prompt）。
     pub(super) fn apply_lifecycle_activation(
         mut self,
-        activation: &crate::workflow::StepActivation,
+        activation: &crate::workflow::ActivityActivation,
         inherited_executor_config: Option<AgentConfig>,
     ) -> Self {
-        self.vfs = Some(compose_vfs_with_overlay_and_directives(
-            self.vfs.as_ref(),
-            &activation.lifecycle_vfs,
-            &activation.mount_directives,
-        ));
-        self.capability_state = Some(activation.capability_state.clone());
-        self.mcp_servers = activation.mcp_servers.clone();
+        let surface = crate::workflow::frame_builder::build_lifecycle_activation_surface(
+            crate::workflow::frame_builder::AgentFrameActivationSurfaceInput {
+                activation,
+                base_vfs: self.vfs.as_ref(),
+                inherit_skills_from: None,
+            },
+        );
+        self.vfs = Some(surface.vfs);
+        self.capability_state = Some(surface.capability_state);
+        self.mcp_servers = surface.mcp_servers;
         self.prompt_blocks = Some(vec![serde_json::json!({
             "type": "text",
             "text": "请执行当前 lifecycle 节点。",
@@ -359,4 +372,52 @@ pub(super) fn slice_companion_bundle(
         .bootstrap_fragments
         .retain(|fragment| keep_slot(fragment.slot.as_str()));
     sliced
+}
+
+/// 将 `SessionAssemblyBuilder` 投影到 `AgentFrameBuilder`，同时提取 launch 数据。
+///
+/// 替代 `apply_session_assembly`（合入 RuntimeContextInspectionPlan）的新路径。
+/// frame builder 接收 surface 数据（capability/VFS/MCP），
+/// 返回的 launch extras 包含 context bundle / prompt / executor config 等 launch-only 数据。
+pub(super) fn project_assembly_to_frame(
+    frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+    prepared: SessionAssemblyBuilder,
+) -> (
+    crate::workflow::frame_builder::AgentFrameBuilder,
+    AssemblyLaunchExtras,
+) {
+    let frame_builder =
+        frame_builder.with_surface_input(crate::workflow::frame_builder::AgentFrameSurfaceInput {
+            capability_state: prepared.capability_state.as_ref(),
+            vfs: prepared.vfs.as_ref(),
+            mcp_servers: &prepared.mcp_servers,
+            execution_profile: prepared.executor_config.as_ref(),
+            context_bundle: prepared.context_bundle.as_ref(),
+        });
+    let extras = AssemblyLaunchExtras {
+        context_bundle: prepared.context_bundle,
+        prompt_blocks: prepared.prompt_blocks,
+        executor_config: prepared.executor_config,
+        mcp_servers: prepared.mcp_servers,
+        vfs: prepared.vfs,
+        capability_state: prepared.capability_state,
+        environment_variables: prepared.env,
+        workspace_defaults: prepared.workspace_defaults,
+    };
+
+    (frame_builder, extras)
+}
+
+/// `project_assembly_to_frame` 的 launch-only 输出。
+///
+/// 这些数据不写入 AgentFrame，而是传递给 FrameLaunchEnvelope 或 launch pipeline。
+pub struct AssemblyLaunchExtras {
+    pub context_bundle: Option<SessionContextBundle>,
+    pub prompt_blocks: Option<Vec<serde_json::Value>>,
+    pub executor_config: Option<AgentConfig>,
+    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub vfs: Option<Vfs>,
+    pub capability_state: Option<CapabilityState>,
+    pub environment_variables: HashMap<String, String>,
+    pub workspace_defaults: Option<Workspace>,
 }

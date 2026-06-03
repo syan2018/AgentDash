@@ -1,0 +1,6 @@
+{"check":"pnpm run contracts:check","reason":"Generated contracts must include target lifecycle refs/views and exclude old session-first DTOs."}
+{"check":"pnpm run frontend:check","reason":"Frontend currently fails on old session-first residue; must pass after cutover."}
+{"check":"cargo test --workspace","reason":"Backend lifecycle dispatch, assignment, subject projection, migration, and gate tests must pass."}
+{"check":"pnpm run frontend:test","reason":"Frontend state/routes/components must no longer assert old session-first behavior."}
+{"check":"pnpm run e2e:test:critical","reason":"Critical user flows must be rewritten to ProjectAgent launch and SubjectExecutionView semantics."}
+{"check":"rg -n \"SessionConstructionPlan|ProjectAgentSession|OpenProjectAgentSessionResult|TaskSessionPayload|lifecycle_step_key|LifecycleRunLinkDto|RunLinksResponse|fetchWorkflowRunsBySession|agent_session|/workflow-definitions|/activity-lifecycle-definitions\" crates packages/app-web/src tests/e2e","reason":"Hard cleanup residue scan."}

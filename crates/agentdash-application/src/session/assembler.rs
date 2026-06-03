@@ -6,8 +6,8 @@
 //!
 //! | 路径 | 实现入口 |
 //! |---|---|
-//! | ACP Story/Project | `api::routes::acp_sessions` → `SessionRequestAssembler::compose_owner_bootstrap` |
-//! | Story step activation | `task::service::StoryStepActivationService::activate_story_step` → `SessionRequestAssembler::compose_story_step` |
+//! | Story/Project | lifecycle dispatch → `SessionRequestAssembler::compose_owner_bootstrap` |
+//! | Story activity activation | `task::service::StoryActivityActivationService::activate_story_activity` → `SessionRequestAssembler::compose_story_step` |
 //! | Routine | `routine::executor::build_project_agent_prompt_request` → `SessionRequestAssembler::compose_owner_bootstrap`(带 trigger tag) |
 //! | Workflow AgentNode | `workflow::orchestrator::start_agent_node_prompt` → `compose_lifecycle_node` |
 //! | Companion | `companion::tools` → `compose_companion` |
@@ -23,7 +23,7 @@
 //! ```
 //!
 //! compose 函数内部共享 building blocks(`load_available_presets` /
-//! `build_owner_context` / `activate_step_with_platform` 等),不再重复散落。
+//! `build_owner_context` / `activate_activity_with_platform` 等),不再重复散落。
 //! 后续必须继续把 task effect / hook 迁移字段拆入 `LaunchPlan` / outbox。
 
 use std::collections::BTreeSet;
@@ -34,7 +34,7 @@ use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
 use agentdash_domain::workflow::ToolCapabilityDirective;
-use agentdash_domain::workflow::{ActivityDefinition, ActivityLifecycleDefinition, LifecycleRun};
+use agentdash_domain::workflow::{ActivityDefinition, LifecycleRun, WorkflowGraph};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
@@ -66,10 +66,9 @@ use crate::project::context_builder::{ProjectContextBuildInput, contribute_proje
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::runtime_bridge::session_mcp_servers_to_runtime;
+use crate::session::assembly_builder::SessionAssemblyBuilder;
 #[cfg(test)]
 use crate::session::assembly_builder::slice_companion_bundle;
-use crate::session::assembly_builder::{SessionAssemblyBuilder, apply_session_assembly};
-use crate::session::construction::SessionConstructionPlan;
 use crate::session::post_turn_handler::TerminalHookEffectBinding;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
@@ -79,8 +78,9 @@ use crate::vfs::{
     resolve_context_bindings,
 };
 use crate::workflow::{
-    ActiveWorkflowProjection, StepActivationInput, activate_step_with_platform,
-    ensure_active_workflow_lifecycle_mount, load_port_output_map,
+    ActiveWorkflowProjection, ActivityActivationInput, ActivityAttemptArtifactScope,
+    activate_activity_with_platform, ensure_active_workflow_lifecycle_mount,
+    load_scoped_port_output_map,
 };
 use crate::workspace::BackendAvailability;
 
@@ -707,7 +707,7 @@ impl<'a> SessionRequestAssembler<'a> {
     }
 
     /// Owner 级 session bootstrap(Story / Project / Routine)。
-    async fn compose_owner_bootstrap(
+    pub(in crate::session) async fn compose_owner_bootstrap(
         &self,
         spec: OwnerBootstrapSpec<'_>,
     ) -> Result<SessionAssemblyBuilder, String> {
@@ -773,14 +773,27 @@ impl<'a> SessionRequestAssembler<'a> {
         Ok(builder.build())
     }
 
-    pub async fn compose_owner_bootstrap_prompt(
+    /// owner_bootstrap 的 frame builder 路径。
+    ///
+    /// 返回 `(AgentFrameBuilder, AssemblyLaunchExtras)`：
+    /// - frame builder 携带所有 surface 数据，调用方 `.build()` 持久化
+    /// - extras 包含 context bundle / prompt / executor config 等 launch 数据
+    pub async fn compose_owner_bootstrap_to_frame(
         &self,
-        plan: SessionConstructionPlan,
+        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
         spec: OwnerBootstrapSpec<'_>,
-    ) -> Result<SessionConstructionPlan, String> {
-        self.compose_owner_bootstrap(spec)
-            .await
-            .map(|prepared| apply_session_assembly(plan, prepared))
+    ) -> Result<
+        (
+            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::session::assembly_builder::AssemblyLaunchExtras,
+        ),
+        String,
+    > {
+        let prepared = self.compose_owner_bootstrap(spec).await?;
+        Ok(crate::session::assembly_builder::project_assembly_to_frame(
+            frame_builder,
+            prepared,
+        ))
     }
 
     fn resolve_story_step_executor_config(
@@ -917,7 +930,7 @@ impl<'a> SessionRequestAssembler<'a> {
         effective_agent_type: Option<&str>,
     ) -> Result<(SessionContextBundle, TaskExecutionPhase), TaskExecutionError> {
         let mut declared_sources = spec.story.context.source_refs.clone();
-        declared_sources.extend(spec.task.agent_binding.context_sources.clone());
+        declared_sources.extend(spec.task.dispatch_preference.context_sources.clone());
         let resolved_workspace_sources = resolve_workspace_declared_sources(
             self.availability,
             self.vfs_service,
@@ -984,16 +997,16 @@ impl<'a> SessionRequestAssembler<'a> {
                 mcp_servers: &task_mcp_servers,
                 session_composition: effective_session_composition.as_ref(),
                 agent_type: effective_agent_type,
-                preset_name: spec.task.agent_binding.preset_name.as_deref(),
+                preset_name: spec.task.dispatch_preference.preset_name.as_deref(),
                 has_custom_prompt_template: spec
                     .task
-                    .agent_binding
+                    .dispatch_preference
                     .prompt_template
                     .as_deref()
                     .is_some_and(|value| !value.trim().is_empty()),
                 has_initial_context: spec
                     .task
-                    .agent_binding
+                    .dispatch_preference
                     .initial_context
                     .as_deref()
                     .is_some_and(|value| !value.trim().is_empty()),
@@ -1028,9 +1041,9 @@ impl<'a> SessionRequestAssembler<'a> {
     /// 5. CapabilityResolver（以 workflow baseline 或空集为输入）
     /// 6. 组装 `Vec<Contribution>` → `build_session_context_bundle` 产出 bundle 与 prompt resource block
     ///
-    /// 输出统一为 `SessionAssemblyBuilder`；调用方通过 `apply_session_assembly` 合入 base
-    /// construction provider handoff 后交 launch executor 派发。
-    async fn compose_story_step(
+    /// 输出统一为 `SessionAssemblyBuilder`；调用方投影到 `AgentFrameBuilder`，
+    /// 再由 frame 生成 runtime launch request。
+    pub(in crate::session) async fn compose_story_step(
         &self,
         spec: StoryStepSpec<'_>,
     ) -> Result<SessionAssemblyBuilder, TaskExecutionError> {
@@ -1081,85 +1094,109 @@ impl<'a> SessionRequestAssembler<'a> {
         Ok(builder.build())
     }
 
-    pub async fn compose_story_step_prompt(
+    /// story_step 的 frame builder 路径。
+    pub async fn compose_story_step_to_frame(
         &self,
-        plan: SessionConstructionPlan,
+        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
         spec: StoryStepSpec<'_>,
-    ) -> Result<SessionConstructionPlan, TaskExecutionError> {
+    ) -> Result<
+        (
+            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::session::assembly_builder::AssemblyLaunchExtras,
+            Option<crate::session::post_turn_handler::TerminalHookEffectBinding>,
+        ),
+        TaskExecutionError,
+    > {
         let task_id = spec.task.id;
         let backend_id = resolve_task_backend_id(self.repos, self.availability, spec.task).await?;
-        self.compose_story_step(spec).await.map(|prepared| {
-            let mut plan = apply_session_assembly(plan, prepared);
-            plan.effects.terminal_hook_effect_binding = Some(TerminalHookEffectBinding {
-                handler: serde_json::json!({
-                    "kind": "task",
-                    "task_id": task_id,
-                    "backend_id": backend_id,
-                }),
-                supported_effect_kinds: TaskHookEffectExecutor::SUPPORTED_KINDS
-                    .iter()
-                    .map(|kind| (*kind).to_string())
-                    .collect(),
-            });
-            plan
-        })
+        let prepared = self.compose_story_step(spec).await?;
+        let (fb, extras) =
+            crate::session::assembly_builder::project_assembly_to_frame(frame_builder, prepared);
+        let hook_binding = Some(TerminalHookEffectBinding {
+            handler: serde_json::json!({
+                "kind": "task",
+                "task_id": task_id,
+                "backend_id": backend_id,
+            }),
+            supported_effect_kinds: TaskHookEffectExecutor::SUPPORTED_KINDS
+                .iter()
+                .map(|kind| (*kind).to_string())
+                .collect(),
+        });
+        Ok((fb, extras, hook_binding))
     }
 
-    pub async fn compose_lifecycle_node_prompt(
+    /// lifecycle_node 的 frame builder 路径。
+    pub async fn compose_lifecycle_node_to_frame(
         &self,
-        plan: SessionConstructionPlan,
+        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
         spec: LifecycleNodeSpec<'_>,
-    ) -> Result<SessionConstructionPlan, String> {
-        compose_lifecycle_node_prompt_with_audit(
-            plan,
+    ) -> Result<
+        (
+            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::session::assembly_builder::AssemblyLaunchExtras,
+        ),
+        String,
+    > {
+        let prepared = compose_lifecycle_node_with_audit(
             self.repos,
             self.platform_config,
             spec,
             self.audit_bus.clone(),
             None,
         )
-        .await
-    }
-
-    pub fn compose_companion_prompt(
-        &self,
-        plan: SessionConstructionPlan,
-        spec: CompanionSpec<'_>,
-    ) -> SessionConstructionPlan {
-        compose_companion_prompt(plan, spec)
-    }
-
-    pub async fn compose_companion_prompt_from_parent(
-        &self,
-        plan: SessionConstructionPlan,
-        spec: CompanionParentSpec<'_>,
-    ) -> Result<SessionConstructionPlan, String> {
-        let parent_facts = self
-            .resolve_companion_parent_facts(spec.parent_session_id)
-            .await?;
-        Ok(compose_companion_prompt(
-            plan,
-            CompanionSpec {
-                parent_vfs: parent_facts.parent_vfs.as_ref(),
-                parent_mcp_servers: &parent_facts.parent_mcp_servers,
-                parent_context_bundle: parent_facts.parent_context_bundle.as_ref(),
-                slice_mode: spec.slice_mode,
-                companion_executor_config: spec.companion_executor_config,
-                dispatch_prompt: spec.dispatch_prompt,
-            },
+        .await?;
+        Ok(crate::session::assembly_builder::project_assembly_to_frame(
+            frame_builder,
+            prepared,
         ))
     }
 
-    pub async fn compose_companion_with_workflow_prompt_from_parent(
+    /// companion 的 frame builder 路径。
+    pub async fn compose_companion_to_frame(
         &self,
-        plan: SessionConstructionPlan,
+        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+        spec: CompanionParentSpec<'_>,
+    ) -> Result<
+        (
+            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::session::assembly_builder::AssemblyLaunchExtras,
+        ),
+        String,
+    > {
+        let parent_facts = self
+            .resolve_companion_parent_facts(spec.parent_session_id)
+            .await?;
+        let prepared = compose_companion(CompanionSpec {
+            parent_vfs: parent_facts.parent_vfs.as_ref(),
+            parent_mcp_servers: &parent_facts.parent_mcp_servers,
+            parent_context_bundle: parent_facts.parent_context_bundle.as_ref(),
+            slice_mode: spec.slice_mode,
+            companion_executor_config: spec.companion_executor_config,
+            dispatch_prompt: spec.dispatch_prompt,
+        });
+        Ok(crate::session::assembly_builder::project_assembly_to_frame(
+            frame_builder,
+            prepared,
+        ))
+    }
+
+    /// companion + workflow 的 frame builder 路径。
+    pub async fn compose_companion_with_workflow_to_frame(
+        &self,
+        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
         spec: CompanionParentWorkflowSpec<'_>,
-    ) -> Result<SessionConstructionPlan, String> {
+    ) -> Result<
+        (
+            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::session::assembly_builder::AssemblyLaunchExtras,
+        ),
+        String,
+    > {
         let parent_facts = self
             .resolve_companion_parent_facts(spec.companion.parent_session_id)
             .await?;
-        compose_companion_with_workflow_prompt(
-            plan,
+        let prepared = compose_companion_with_workflow(
             self.repos,
             self.platform_config,
             CompanionWorkflowSpec {
@@ -1172,15 +1209,21 @@ impl<'a> SessionRequestAssembler<'a> {
                     dispatch_prompt: spec.companion.dispatch_prompt,
                 },
                 run: spec.run,
+                graph_instance_id: spec.graph_instance_id,
+                attempt: spec.attempt,
                 lifecycle: spec.lifecycle,
                 activity: spec.activity,
                 workflow: spec.workflow,
             },
         )
-        .await
+        .await?;
+        Ok(crate::session::assembly_builder::project_assembly_to_frame(
+            frame_builder,
+            prepared,
+        ))
     }
 
-    async fn resolve_companion_parent_facts(
+    pub(crate) async fn resolve_companion_parent_facts(
         &self,
         parent_session_id: &str,
     ) -> Result<CompanionParentFacts, String> {
@@ -1203,29 +1246,36 @@ impl<'a> SessionRequestAssembler<'a> {
     }
 }
 
-pub async fn compose_lifecycle_node_prompt(
-    plan: SessionConstructionPlan,
-    repos: &RepositorySet,
-    platform_config: &PlatformConfig,
-    spec: LifecycleNodeSpec<'_>,
-) -> Result<SessionConstructionPlan, String> {
-    compose_lifecycle_node_prompt_with_audit(plan, repos, platform_config, spec, None, None).await
-}
-
-pub async fn compose_lifecycle_node_prompt_with_audit(
-    plan: SessionConstructionPlan,
+/// lifecycle_node 的 frame builder 路径（free-standing 版本）。
+pub async fn compose_lifecycle_node_to_frame_with_audit(
+    frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
-) -> Result<SessionConstructionPlan, String> {
-    compose_lifecycle_node_with_audit(repos, platform_config, spec, audit_bus, audit_session_key)
-        .await
-        .map(|prepared| apply_session_assembly(plan, prepared))
+) -> Result<
+    (
+        crate::workflow::frame_builder::AgentFrameBuilder,
+        crate::session::assembly_builder::AssemblyLaunchExtras,
+    ),
+    String,
+> {
+    let prepared = compose_lifecycle_node_with_audit(
+        repos,
+        platform_config,
+        spec,
+        audit_bus,
+        audit_session_key,
+    )
+    .await?;
+    Ok(crate::session::assembly_builder::project_assembly_to_frame(
+        frame_builder,
+        prepared,
+    ))
 }
 
-async fn compose_lifecycle_node_with_audit(
+pub(in crate::session) async fn compose_lifecycle_node_with_audit(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
@@ -1236,15 +1286,24 @@ async fn compose_lifecycle_node_with_audit(
         project_id: spec.run.project_id,
     };
 
-    let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
+    let artifact_scope = ActivityAttemptArtifactScope {
+        run_id: spec.run.id,
+        graph_instance_id: spec.graph_instance_id,
+        activity_key: spec.activity.key.clone(),
+        attempt: spec.attempt,
+    };
+    let port_output_map =
+        load_scoped_port_output_map(repos.inline_file_repo.as_ref(), &artifact_scope).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
-    let mut activation = activate_step_with_platform(
-        &StepActivationInput {
+    let mut activation = activate_activity_with_platform(
+        &ActivityActivationInput {
             owner_ctx,
             active_activity: spec.activity,
             workflow: spec.workflow,
             run_id: spec.run.id,
+            graph_instance_id: spec.graph_instance_id,
+            attempt: spec.attempt,
             lifecycle_key: &spec.lifecycle.key,
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, spec.run.project_id).await,
@@ -1313,21 +1372,19 @@ async fn compose_lifecycle_node_with_audit(
 fn activity_node_type(
     activity: &ActivityDefinition,
 ) -> agentdash_domain::workflow::LifecycleNodeType {
-    use agentdash_domain::workflow::{ActivityExecutorSpec, AgentSessionPolicy, LifecycleNodeType};
+    use agentdash_domain::workflow::{ActivityExecutorSpec, LifecycleNodeType};
     match &activity.executor {
-        ActivityExecutorSpec::Agent(spec) => match spec.session_policy {
-            AgentSessionPolicy::ContinueRoot => LifecycleNodeType::PhaseNode,
-            AgentSessionPolicy::SpawnChild | AgentSessionPolicy::AttachExisting => {
-                LifecycleNodeType::AgentNode
-            }
-        },
+        ActivityExecutorSpec::Agent(spec) if spec.continues_current_agent() => {
+            LifecycleNodeType::PhaseNode
+        }
+        ActivityExecutorSpec::Agent(_) => LifecycleNodeType::AgentNode,
         _ => LifecycleNodeType::AgentNode,
     }
 }
 
 fn contribute_lifecycle_context(
     spec: &LifecycleNodeSpec<'_>,
-    activation: &crate::workflow::StepActivation,
+    activation: &crate::workflow::ActivityActivation,
     ready_port_keys: &BTreeSet<String>,
 ) -> Contribution {
     let mut fragments = Vec::new();
@@ -1426,7 +1483,7 @@ fn contribute_lifecycle_context(
 /// 在父 session 作用域内即可完成,不需要 assembler 的完整服务依赖)。
 ///
 /// 内部委托给 `SessionAssemblyBuilder::apply_companion_slice`。
-fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
+pub(in crate::session) fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
     SessionAssemblyBuilder::new()
         .apply_companion_slice(
             spec.parent_vfs,
@@ -1437,13 +1494,6 @@ fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
             spec.dispatch_prompt,
         )
         .build()
-}
-
-pub fn compose_companion_prompt(
-    plan: SessionConstructionPlan,
-    spec: CompanionSpec<'_>,
-) -> SessionConstructionPlan {
-    apply_session_assembly(plan, compose_companion(spec))
 }
 
 fn build_story_step_trigger_prompt_blocks(phase: TaskExecutionPhase) -> Vec<serde_json::Value> {
@@ -1470,7 +1520,7 @@ pub enum StoryStepPhase {
 
 /// Task execution session 场景下 compose 所需的完整上下文。
 ///
-/// 用于 `StoryStepActivationService` 的 task 启动 / 续跑路径
+/// 用于 `StoryActivityActivationService` 的 task 启动 / 续跑路径
 /// （`start_task` / `continue_task` 直接以 task 为入口调 compose）。
 ///
 /// 与 `LifecycleNodeSpec`（orchestrator 的 phase node 使用）不同：
@@ -1491,7 +1541,7 @@ pub struct StoryStepSpec<'a> {
     pub explicit_executor_config: Option<AgentConfig>,
     /// 若为 true,executor 解析失败时直接返回 Err;否则返回 failed 状态继续。
     pub strict_config_resolution: bool,
-    /// 对应活跃 lifecycle run 的投影（由 facade 通过 LifecycleRunLink 定位后传入）。
+    /// 对应活跃 lifecycle run 的投影（由 facade 通过 subject association 定位后传入）。
     pub active_workflow: Option<ActiveWorkflowProjection>,
     /// 审计总线用于索引的 session key。
     pub audit_session_key: Option<String>,
@@ -1500,9 +1550,11 @@ pub struct StoryStepSpec<'a> {
 /// Lifecycle AgentNode compose 输入。
 pub struct LifecycleNodeSpec<'a> {
     pub run: &'a LifecycleRun,
-    pub lifecycle: &'a ActivityLifecycleDefinition,
+    pub graph_instance_id: Uuid,
+    pub attempt: u32,
+    pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
-    pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
+    pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
     pub inherited_executor_config: Option<AgentConfig>,
 }
 
@@ -1527,15 +1579,17 @@ pub struct CompanionParentSpec<'a> {
 pub struct CompanionParentWorkflowSpec<'a> {
     pub companion: CompanionParentSpec<'a>,
     pub run: &'a LifecycleRun,
-    pub lifecycle: &'a ActivityLifecycleDefinition,
+    pub graph_instance_id: Uuid,
+    pub attempt: u32,
+    pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
-    pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
+    pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
 }
 
-struct CompanionParentFacts {
-    parent_vfs: Option<Vfs>,
-    parent_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    parent_context_bundle: Option<SessionContextBundle>,
+pub(crate) struct CompanionParentFacts {
+    pub(crate) parent_vfs: Option<Vfs>,
+    pub(crate) parent_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub(crate) parent_context_bundle: Option<SessionContextBundle>,
 }
 
 /// Companion + Workflow 组合 compose 输入。
@@ -1543,16 +1597,18 @@ pub struct CompanionWorkflowSpec<'a> {
     pub companion: CompanionSpec<'a>,
     /// 已创建的 lifecycle run。
     pub run: &'a LifecycleRun,
-    pub lifecycle: &'a ActivityLifecycleDefinition,
+    pub graph_instance_id: Uuid,
+    pub attempt: u32,
+    pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
-    pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
+    pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
 }
 
 /// Companion + Workflow 组合组装。
 ///
 /// 基于 companion VFS slice 叠加 lifecycle mount 和 workflow 能力/MCP，
 /// 通过 `SessionAssemblyBuilder` 声明式组合两个关注点。
-async fn compose_companion_with_workflow(
+pub(in crate::session) async fn compose_companion_with_workflow(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: CompanionWorkflowSpec<'_>,
@@ -1566,17 +1622,26 @@ async fn compose_companion_with_workflow(
     let slice =
         build_companion_execution_slice(comp.parent_vfs, comp.parent_mcp_servers, comp.slice_mode);
 
-    // ── 2. Workflow step activation（产出 lifecycle mount + 能力 + MCP） ──
+    // ── 2. Workflow activity activation（产出 lifecycle mount + 能力 + MCP） ──
     let owner_ctx = CapabilityScopeCtx::Project { project_id };
-    let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
+    let artifact_scope = ActivityAttemptArtifactScope {
+        run_id: spec.run.id,
+        graph_instance_id: spec.graph_instance_id,
+        activity_key: spec.activity.key.clone(),
+        attempt: spec.attempt,
+    };
+    let port_output_map =
+        load_scoped_port_output_map(repos.inline_file_repo.as_ref(), &artifact_scope).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
-    let activation = activate_step_with_platform(
-        &StepActivationInput {
+    let activation = activate_activity_with_platform(
+        &ActivityActivationInput {
             owner_ctx,
             active_activity: spec.activity,
             workflow: spec.workflow,
             run_id: spec.run.id,
+            graph_instance_id: spec.graph_instance_id,
+            attempt: spec.attempt,
             lifecycle_key: &spec.lifecycle.key,
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, project_id).await,
@@ -1590,9 +1655,7 @@ async fn compose_companion_with_workflow(
     );
 
     // ── 3. 用 builder 组合 companion + workflow 两个层 ──
-    let mut vfs = slice.vfs.unwrap_or_default();
-    vfs.mounts.push(activation.lifecycle_mount.clone());
-
+    //
     // 继承父 bundle 并叠加 workflow injection 片段。workflow injection 作为独立
     // fragment 注入 Bundle，替代旧的字符串拼接路径。
     // 渲染文本由共享 `render_workflow_injection` 产出（SummaryOnly 模式 —— companion
@@ -1633,25 +1696,12 @@ async fn compose_companion_with_workflow(
     })];
 
     Ok(SessionAssemblyBuilder::new()
-        .with_vfs(vfs)
-        .with_resolved_capabilities(activation.capability_state.clone())
-        .with_mcp_servers(slice.mcp_servers)
-        .append_mcp_servers(activation.mcp_servers.iter().cloned())
+        .with_vfs(slice.vfs.unwrap_or_default())
+        .apply_lifecycle_activation(&activation, Some(comp.companion_executor_config.clone()))
+        .append_mcp_servers(slice.mcp_servers.into_iter())
         .with_optional_context_bundle(merged_bundle)
         .with_prompt_blocks(prompt_blocks)
-        .with_executor_config(comp.companion_executor_config.clone())
         .build())
-}
-
-pub async fn compose_companion_with_workflow_prompt(
-    plan: SessionConstructionPlan,
-    repos: &RepositorySet,
-    platform_config: &PlatformConfig,
-    spec: CompanionWorkflowSpec<'_>,
-) -> Result<SessionConstructionPlan, String> {
-    compose_companion_with_workflow(repos, platform_config, spec)
-        .await
-        .map(|prepared| apply_session_assembly(plan, prepared))
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1694,9 +1744,9 @@ async fn resolve_owner_workflow_tool_directives(
         .map(str::trim)
         .filter(|s| !s.is_empty())?;
 
-    // 2. 查 activity lifecycle 定义 → entry activity → workflow_key
+    // 2. 查 activity lifecycle 定义 → entry activity → procedure_key
     let lifecycle = repos
-        .activity_lifecycle_definition_repo
+        .workflow_graph_repo
         .get_by_project_and_key(project_id, lifecycle_key)
         .await
         .ok()
@@ -1705,15 +1755,17 @@ async fn resolve_owner_workflow_tool_directives(
         .activities
         .iter()
         .find(|a| a.key == lifecycle.entry_activity_key)?;
-    let workflow_key = match &entry_activity.executor {
-        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => spec.workflow_key.as_str(),
+    let procedure_key = match &entry_activity.executor {
+        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => {
+            spec.procedure_key.as_str()
+        }
         _ => return None,
     };
 
     // 3. 查 workflow 定义 → contract.capability_config.tool_directives
     let workflow = repos
-        .workflow_definition_repo
-        .get_by_project_and_key(project_id, workflow_key)
+        .agent_procedure_repo
+        .get_by_project_and_key(project_id, procedure_key)
         .await
         .ok()
         .flatten()?;
@@ -1722,18 +1774,48 @@ async fn resolve_owner_workflow_tool_directives(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::vfs::build_lifecycle_mount_with_ports;
     use agentdash_domain::workflow::{
-        ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition,
-        ActivityLifecycleRunState, AgentActivityExecutorSpec, InputPortDefinition,
-        OutputPortDefinition, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
-        WorkflowDefinitionSource, WorkflowInjectionSpec,
+        ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleRunState,
+        AgentActivityExecutorSpec, AgentProcedure, AgentProcedureContract, DefinitionSource,
+        InputPortDefinition, LifecycleNodeType, OutputPortDefinition, WorkflowGraph,
+        WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
 
     // ── companion bundle fragment 裁剪回归（PR 5d · E8①） ──
+
+    fn activity_with_agent_executor(executor: AgentActivityExecutorSpec) -> ActivityDefinition {
+        ActivityDefinition {
+            key: "implement".to_string(),
+            description: String::new(),
+            executor: ActivityExecutorSpec::Agent(executor),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            completion_policy: Default::default(),
+            iteration_policy: Default::default(),
+            join_policy: Default::default(),
+        }
+    }
+
+    #[test]
+    fn activity_node_type_follows_agent_reuse_policy() {
+        assert_eq!(
+            activity_node_type(&activity_with_agent_executor(
+                AgentActivityExecutorSpec::create_activity_agent("wf_impl")
+            )),
+            LifecycleNodeType::AgentNode
+        );
+        assert_eq!(
+            activity_node_type(&activity_with_agent_executor(
+                AgentActivityExecutorSpec::continue_current_agent("wf_impl")
+            )),
+            LifecycleNodeType::PhaseNode
+        );
+    }
 
     fn bundle_with_slots(slots: &[&str]) -> agentdash_spi::SessionContextBundle {
         let mut bundle = agentdash_spi::SessionContextBundle::new(
@@ -1892,10 +1974,14 @@ mod tests {
         }
     }
 
-    fn test_step_activation(run_id: Uuid) -> crate::workflow::StepActivation {
-        let lifecycle_mount =
-            build_lifecycle_mount_with_ports(run_id, "test-lifecycle", &["report".to_string()]);
-        crate::workflow::StepActivation {
+    fn test_activity_activation(run_id: Uuid) -> crate::workflow::ActivityActivation {
+        let lifecycle_mount = build_lifecycle_mount_with_ports(
+            run_id,
+            Uuid::new_v4(),
+            "test-lifecycle",
+            &["report".to_string()],
+        );
+        crate::workflow::ActivityActivation {
             capability_state: Default::default(),
             mcp_servers: Vec::new(),
             tool_directives: Vec::new(),
@@ -1920,7 +2006,7 @@ mod tests {
     #[test]
     fn append_lifecycle_mount_creates_vfs_when_base_is_absent() {
         let prepared = SessionAssemblyBuilder::new()
-            .append_lifecycle_mount(Uuid::new_v4(), "test-lifecycle", &[])
+            .append_lifecycle_mount(Uuid::new_v4(), Uuid::new_v4(), "test-lifecycle", &[])
             .build();
 
         let vfs = prepared.vfs.expect("lifecycle mount should create VFS");
@@ -1938,7 +2024,7 @@ mod tests {
 
     #[test]
     fn apply_lifecycle_activation_merges_existing_vfs() {
-        let activation = test_step_activation(Uuid::new_v4());
+        let activation = test_activity_activation(Uuid::new_v4());
         let base_vfs = Vfs {
             mounts: vec![test_workspace_mount()],
             default_mount_id: Some("workspace".to_string()),
@@ -1969,10 +2055,9 @@ mod tests {
         let activity = ActivityDefinition {
             key: "implement".to_string(),
             description: "实现功能".to_string(),
-            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                workflow_key: "wf_impl".to_string(),
-                session_policy: Default::default(),
-            }),
+            executor: ActivityExecutorSpec::Agent(
+                AgentActivityExecutorSpec::create_activity_agent("wf_impl"),
+            ),
             input_ports: vec![InputPortDefinition {
                 key: "design".to_string(),
                 description: "设计方案".to_string(),
@@ -1990,19 +2075,20 @@ mod tests {
             iteration_policy: Default::default(),
             join_policy: Default::default(),
         };
-        let lifecycle = ActivityLifecycleDefinition::new(
+        let lifecycle = WorkflowGraph::new(
             project_id,
             "dev",
             "Dev",
             "dev lifecycle",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::BuiltinSeed,
+            DefinitionSource::BuiltinSeed,
             "implement",
             vec![activity.clone()],
             vec![],
         )
         .expect("lifecycle");
+        let graph_instance_id = uuid::Uuid::new_v4();
         let activity_state = ActivityLifecycleRunState {
+            graph_instance_id,
             status: agentdash_domain::workflow::ActivityRunStatus::Running,
             attempts: vec![agentdash_domain::workflow::ActivityAttemptState {
                 activity_key: "implement".to_string(),
@@ -2016,35 +2102,31 @@ mod tests {
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let run = agentdash_domain::workflow::LifecycleRun::new_activity(
-            project_id,
-            lifecycle.id,
-            Some("sess-story".to_string()),
-            activity_state,
-        )
-        .expect("run");
-        let workflow = WorkflowDefinition::new(
+        let mut run =
+            agentdash_domain::workflow::LifecycleRun::new_control(project_id, lifecycle.id);
+        run.sync_graph_instance_activity_projections([(graph_instance_id, &activity_state)]);
+        let workflow = AgentProcedure::new(
             project_id,
             "wf_impl",
             "Implementation",
             "实现工作流",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::BuiltinSeed,
-            WorkflowContract {
+            DefinitionSource::BuiltinSeed,
+            AgentProcedureContract {
                 injection: WorkflowInjectionSpec {
                     guidance: Some("交付可验证实现。\n\n保持上下文收口。".to_string()),
                     context_bindings: vec![],
                 },
-                ..WorkflowContract::default()
+                ..AgentProcedureContract::default()
             },
         )
         .expect("workflow");
         let mount = crate::vfs::build_lifecycle_mount_with_ports(
             run.id,
+            graph_instance_id,
             &lifecycle.key,
             &["summary".into()],
         );
-        let activation = crate::workflow::StepActivation {
+        let activation = crate::workflow::ActivityActivation {
             capability_state: Default::default(),
             mcp_servers: vec![],
             tool_directives: Vec::new(),
@@ -2067,6 +2149,8 @@ mod tests {
 
         let spec = LifecycleNodeSpec {
             run: &run,
+            graph_instance_id,
+            attempt: 1,
             lifecycle: &lifecycle,
             activity: &activity,
             workflow: Some(&workflow),
@@ -2107,14 +2191,15 @@ mod tests {
     mod apply_session_assembly_tests {
         use super::super::*;
         use crate::session::UserPromptInput;
-        use crate::session::construction::{ResolvedSessionOwner, SessionConstructionPlan};
+        use crate::session::assembly_builder::apply_session_assembly;
+        use crate::session::construction::{ResolvedSessionOwner, RuntimeContextInspectionPlan};
         use agentdash_spi::Vfs;
         use std::collections::HashMap;
 
-        fn base_plan() -> SessionConstructionPlan {
+        fn base_plan() -> RuntimeContextInspectionPlan {
             let user_input = UserPromptInput::from_text("ping");
             let owner = ResolvedSessionOwner::project(uuid::Uuid::new_v4());
-            SessionConstructionPlan::from_source_input("test-session", owner, &user_input)
+            RuntimeContextInspectionPlan::from_source_input("test-session", owner, &user_input)
         }
 
         fn session_server(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {

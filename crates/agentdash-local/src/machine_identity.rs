@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::runtime_paths::machine_identity_path;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct LocalMachineIdentity {
@@ -67,48 +69,6 @@ fn normalize_machine_identity(identity: LocalMachineIdentity) -> LocalMachineIde
         machine_label,
         legacy_machine_ids,
     }
-}
-
-fn machine_identity_path() -> anyhow::Result<PathBuf> {
-    Ok(local_data_dir()?.join("machine-identity.json"))
-}
-
-fn local_data_dir() -> anyhow::Result<PathBuf> {
-    if cfg!(windows) {
-        if let Some(value) = non_empty_env("APPDATA").or_else(|| non_empty_env("LOCALAPPDATA")) {
-            return Ok(PathBuf::from(value).join("AgentDash").join("local-runtime"));
-        }
-    }
-
-    if cfg!(target_os = "macos") {
-        if let Some(home) = non_empty_env("HOME") {
-            return Ok(PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("AgentDash")
-                .join("local-runtime"));
-        }
-    }
-
-    if let Some(value) = non_empty_env("XDG_DATA_HOME") {
-        return Ok(PathBuf::from(value).join("agentdash").join("local-runtime"));
-    }
-    if let Some(home) = non_empty_env("HOME") {
-        return Ok(PathBuf::from(home)
-            .join(".local")
-            .join("share")
-            .join("agentdash")
-            .join("local-runtime"));
-    }
-
-    anyhow::bail!("无法定位本机 runtime 数据目录")
-}
-
-fn non_empty_env(name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 fn local_hostname() -> Option<String> {

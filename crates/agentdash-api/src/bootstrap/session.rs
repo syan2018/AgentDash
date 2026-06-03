@@ -108,10 +108,15 @@ pub(crate) async fn build_session_runtime(
     let hook_provider = Arc::new(AppExecutionHookProvider::new(
         repos.project_repo.clone(),
         repos.story_repo.clone(),
-        repos.workflow_definition_repo.clone(),
-        repos.activity_lifecycle_definition_repo.clone(),
+        repos.agent_procedure_repo.clone(),
+        repos.workflow_graph_repo.clone(),
+        repos.agent_frame_repo.clone(),
+        repos.lifecycle_agent_repo.clone(),
+        repos.agent_assignment_repo.clone(),
         repos.lifecycle_run_repo.clone(),
-        repos.lifecycle_run_link_repo.clone(),
+        repos.execution_anchor_repo.clone(),
+        repos.workflow_graph_instance_repo.clone(),
+        repos.lifecycle_subject_association_repo.clone(),
         repos.inline_file_repo.clone(),
         |preset_scripts| {
             Arc::new(agentdash_infrastructure::RhaiHookScriptEvaluator::new(
@@ -129,7 +134,11 @@ pub(crate) async fn build_session_runtime(
     .with_extra_skill_dirs(extra_skill_dirs.clone())
     .with_runtime_tool_provider(runtime_tool_provider)
     .with_mcp_relay_provider(mcp_relay_provider)
-    .with_backend_execution_placement(relay_transport, repos.backend_execution_lease_repo.clone());
+    .with_backend_execution_placement(relay_transport, repos.backend_execution_lease_repo.clone())
+    .with_agent_frame_repo(repos.agent_frame_repo.clone())
+    .with_execution_anchor_repo(repos.execution_anchor_repo.clone())
+    .with_lifecycle_agent_repo(repos.lifecycle_agent_repo.clone())
+    .with_lifecycle_gate_repo(repos.lifecycle_gate_repo.clone());
     if let Some((base_sp, user_prefs)) = prompt_config {
         session_runtime_builder =
             session_runtime_builder.with_system_prompt_config(base_sp, user_prefs);
@@ -167,7 +176,6 @@ pub(crate) async fn build_session_runtime(
             launch: session_launch.clone(),
             hooks: session_hooks.clone(),
             capability: session_capability.clone(),
-            companion_wait_registry: session_runtime_builder.companion_wait_registry(),
         })
         .await;
 

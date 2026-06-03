@@ -5,12 +5,12 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 pub use agentdash_spi::session_persistence::{
-    CompactionProjectionCommitResult, NewCompactionProjectionCommit, NewTerminalEffectRecord,
-    PendingCapabilityStateTransition, PersistedSessionEvent, RuntimeCommandRecord,
-    RuntimeCommandStatus, SessionCompactionRecord, SessionCompactionStatus, SessionCompactionStore,
-    SessionEventBacklog, SessionEventPage, SessionEventStore, SessionLineageRecord,
-    SessionLineageRelationKind, SessionLineageStatus, SessionLineageStore, SessionMeta,
-    SessionMetaStore, SessionPersistence, SessionProjectionHeadRecord,
+    AgentFrameTransitionRecord, CompactionProjectionCommitResult, NewCompactionProjectionCommit,
+    NewTerminalEffectRecord, PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus,
+    RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStatus,
+    SessionCompactionStore, SessionEventBacklog, SessionEventPage, SessionEventStore,
+    SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus, SessionLineageStore,
+    SessionMeta, SessionMetaStore, SessionPersistence, SessionProjectionHeadRecord,
     SessionProjectionSegmentRecord, SessionProjectionStore, SessionRuntimeCommandStore,
     SessionStoreError, SessionStoreResult, SessionTerminalEffectStore, TerminalEffectRecord,
     TerminalEffectStatus,
@@ -161,13 +161,18 @@ impl SessionTerminalEffectStore for SessionPersistenceStoreAdapter {
 
 #[async_trait]
 impl SessionRuntimeCommandStore for SessionPersistenceStoreAdapter {
-    async fn upsert_runtime_command_request(
+    async fn upsert_runtime_delivery_command(
         &self,
-        session_id: &str,
-        transition: PendingCapabilityStateTransition,
+        delivery_runtime_session_id: &str,
+        delivery: RuntimeDeliveryCommand,
+        frame_transition: AgentFrameTransitionRecord,
     ) -> SessionStoreResult<RuntimeCommandRecord> {
         self.persistence
-            .upsert_runtime_command_request(session_id, transition)
+            .upsert_runtime_delivery_command(
+                delivery_runtime_session_id,
+                delivery,
+                frame_transition,
+            )
             .await
     }
 

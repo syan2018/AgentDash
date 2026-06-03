@@ -2,9 +2,7 @@
 
 use async_trait::async_trait;
 
-use agentdash_relay::{
-    McpEnvVarRelay, McpHttpHeaderRelay, McpTransportConfigRelay, RelayMessage,
-};
+use agentdash_relay::{McpEnvVarRelay, McpHttpHeaderRelay, McpTransportConfigRelay, RelayMessage};
 use agentdash_spi::ConnectorError;
 use agentdash_spi::platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo, RelayProbeResult,

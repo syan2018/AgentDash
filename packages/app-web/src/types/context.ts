@@ -138,23 +138,3 @@ export interface SkillEntry {
 export interface SessionBaselineCapabilities {
   skills: SkillEntry[];
 }
-
-export interface StorySessionInfo {
-  binding_id: string;
-  session_id: string;
-  session_title: string | null;
-  last_activity: number | null;
-  vfs: ExecutionVfs | null;
-  runtime_surface: ResolvedVfsSurface | null;
-  context_snapshot: SessionContextSnapshot | null;
-}
-
-export interface ProjectSessionInfo {
-  binding_id: string;
-  session_id: string;
-  session_title: string | null;
-  last_activity: number | null;
-  vfs: ExecutionVfs | null;
-  runtime_surface: ResolvedVfsSurface | null;
-  context_snapshot: SessionContextSnapshot | null;
-}

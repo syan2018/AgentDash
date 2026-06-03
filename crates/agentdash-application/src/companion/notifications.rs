@@ -1,12 +1,9 @@
 ﻿//! Companion 子域的 notification 构造 helpers。
 //!
-//! PR 7d：`build_companion_human_response_notification` 从
-//! `session/continuation.rs` 挪出来。原位置是因为早期把所有"历史事件
-//! 转 notification"逻辑都堆进去了，但这个函数与"continuation transcript
-//! 重建"毫无关系——它构造的是 companion "用户回应" 事件通知（由
-//! `hub::respond_companion_request` 持久化进事件流，让 Context Inspector
-//! 能看到人类回应）。归位到 `companion/`，让调用链"companion 工具请求 →
-//! companion 工具回应"全部落在一个子域。
+//! `build_companion_human_response_notification` 构造的是 companion "用户回应"
+//! 事件通知，不属于 continuation transcript 重建。用户回应先 resolve durable
+//! `LifecycleGate`，再由 companion gate delivery adapter 写入 runtime event stream，
+//! 让 Context Inspector 能看到人类回应。
 
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -14,9 +11,9 @@ use agentdash_agent_protocol::{
 
 /// 构造 companion "人类回应" 事件通知。
 ///
-/// 调用方：`session runtime::respond_companion_request`（hub/facade.rs）。
-/// 被 registered 的 companion tool 在 pending 状态等待时，HTTP 层触发此
-/// 函数产出 `BackboneEnvelope`，进事件流供 Inspector 可视化。
+/// 调用方：`companion::gate_control` 的 runtime delivery adapter。
+/// 被 registered 的 companion tool 等待 gate resolve 时，HTTP 层先写 gate truth，
+/// 再由 delivery adapter 产出 `BackboneEnvelope` 供 Inspector 可视化。
 pub fn build_companion_human_response_notification(
     session_id: &str,
     turn_id: Option<&str>,
@@ -66,6 +63,36 @@ pub fn build_companion_human_response_notification(
     )
     .with_trace(TraceInfo {
         turn_id: turn_id.map(ToString::to_string),
+        entry_index: None,
+    })
+}
+
+pub fn build_companion_event_notification(
+    session_id: &str,
+    turn_id: &str,
+    event_type: &str,
+    message: String,
+    data: serde_json::Value,
+) -> BackboneEnvelope {
+    let source = SourceInfo {
+        connector_id: "agentdash-companion".to_string(),
+        connector_type: "runtime_tool".to_string(),
+        executor_id: None,
+    };
+
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: event_type.to_string(),
+            value: serde_json::json!({
+                "message": message,
+                "data": data,
+            }),
+        }),
+        session_id,
+        source,
+    )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
         entry_index: None,
     })
 }

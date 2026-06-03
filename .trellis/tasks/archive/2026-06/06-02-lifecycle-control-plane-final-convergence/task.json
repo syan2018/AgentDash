@@ -1,0 +1,35 @@
+{
+  "id": "lifecycle-control-plane-final-convergence",
+  "name": "lifecycle-control-plane-final-convergence",
+  "title": "Lifecycle 控制面最终收束",
+  "description": "把 Lifecycle 控制面重构从当前 ~55% 推进到 100%：Companion Gate 迁移、Hook runtime frame-native 切换、业务入口最终收束、命名契约清理、验证闭环。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-06-02",
+  "completedAt": "2026-06-03",
+  "branch": null,
+  "base_branch": "codex/refactor-lifecycle-control-plane",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-02-lifecycle-control-plane-refactor-closeout-review"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "Successor to residual-hardening and structural-audit. Reference concept-alignment for target model.",
+  "meta": {
+    "predecessor_tasks": [
+      "06-01-lifecycle-control-plane-residual-hardening",
+      "06-01-lifecycle-control-plane-structural-audit"
+    ],
+    "reference_task": "06-01-lifecycle-control-plane-concept-alignment",
+    "strategy": "phased_convergence_with_verification_gates"
+  }
+}

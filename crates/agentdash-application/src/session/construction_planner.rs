@@ -2,23 +2,21 @@ use agentdash_domain::{
     agent::ProjectAgent,
     common::{AgentConfig, AgentPresetConfig},
     project::Project,
-    story::Story,
-    task::AgentBinding,
     workspace::Workspace,
 };
-use agentdash_spi::CapabilityScopeCtx;
-use std::path::PathBuf;
+#[cfg(test)]
 use uuid::Uuid;
 
+use crate::{mcp_preset::resolve_preset_mcp_refs, repository_set::RepositorySet};
+
+#[cfg(test)]
 use crate::{
     canvas::append_visible_canvas_mounts,
     capability::{
         CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
         ContextContributions, McpCandidates, ToolContribution,
     },
-    mcp_preset::resolve_preset_mcp_refs,
     platform_config::PlatformConfig,
-    repository_set::RepositorySet,
     runtime_bridge::session_mcp_servers_to_runtime,
     session::{
         ExecutorResolution, SessionCapabilityProjectionInput, SessionMeta,
@@ -35,16 +33,25 @@ use crate::{
     },
     workflow::{
         ensure_active_workflow_lifecycle_mount, resolve_active_workflow_projection_for_session,
+        resolve_current_frame_for_runtime_session,
     },
 };
+#[cfg(test)]
+use agentdash_domain::{story::Story, task::TaskDispatchPreference};
+#[cfg(test)]
+use agentdash_spi::CapabilityScopeCtx;
+#[cfg(test)]
+use std::path::PathBuf;
 
+#[cfg(test)]
 use super::construction::{
-    ResolvedSessionOwner, SessionConstructionContextProjection, SessionConstructionPlan,
+    ResolvedSessionOwner, RuntimeContextInspectionPlan, SessionConstructionContextProjection,
 };
 
-pub struct SessionConstructionPlanner;
+#[cfg(test)]
+pub struct RuntimeContextInspectionPlanner;
 
-pub const PROJECT_AGENT_SESSION_LABEL_PREFIX: &str = "project_agent:";
+pub const PROJECT_AGENT_BINDING_LABEL_PREFIX: &str = "project_agent:";
 
 #[derive(Debug, Clone)]
 pub struct ResolvedProjectAgentContext {
@@ -59,19 +66,20 @@ pub struct ResolvedProjectAgentContext {
     pub project_agent: ProjectAgent,
 }
 
-impl SessionConstructionPlanner {
-    pub fn parse_project_agent_session_label(label: &str) -> Option<&str> {
+#[cfg(test)]
+impl RuntimeContextInspectionPlanner {
+    pub fn parse_project_dispatch_label(label: &str) -> Option<&str> {
         let agent_key = label
             .trim()
-            .strip_prefix(PROJECT_AGENT_SESSION_LABEL_PREFIX)?;
+            .strip_prefix(PROJECT_AGENT_BINDING_LABEL_PREFIX)?;
         if agent_key.trim().is_empty() {
             return None;
         }
         Some(agent_key)
     }
 
-    pub fn project_agent_session_label(agent_key: &str) -> String {
-        format!("{PROJECT_AGENT_SESSION_LABEL_PREFIX}{}", agent_key.trim())
+    pub fn project_dispatch_label(agent_key: &str) -> String {
+        format!("{PROJECT_AGENT_BINDING_LABEL_PREFIX}{}", agent_key.trim())
     }
 
     pub async fn resolve_project_workspace(
@@ -120,16 +128,16 @@ impl SessionConstructionPlanner {
         owner: ResolvedSessionOwner,
         task_id: Uuid,
         workspace_id: Option<Uuid>,
-        agent_binding: AgentBinding,
-        session_meta: Option<&SessionMeta>,
-    ) -> SessionConstructionPlan {
+        dispatch_preference: TaskDispatchPreference,
+        _session_meta: Option<&SessionMeta>,
+    ) -> RuntimeContextInspectionPlan {
         let session_id = session_id.into();
         let built_context = crate::task::context_builder::build_task_session_context(
             repos,
             vfs_service,
             platform_config,
             task_id,
-            session_meta,
+            Some(session_id.as_str()),
         )
         .await;
         let resolved_vfs = built_context
@@ -144,7 +152,7 @@ impl SessionConstructionPlanner {
             owner,
             SessionConstructionContextProjection {
                 workspace_id,
-                agent_binding: Some(agent_binding),
+                dispatch_preference: Some(dispatch_preference),
                 vfs: resolved_vfs,
                 runtime_surface: None,
                 context_snapshot: built_context.and_then(|context| context.context_snapshot),
@@ -162,8 +170,8 @@ impl SessionConstructionPlanner {
         owner: ResolvedSessionOwner,
         story: &Story,
         session_meta: Option<&SessionMeta>,
-    ) -> Result<Option<SessionConstructionPlan>, String> {
-        let Some(session_meta) = session_meta else {
+    ) -> Result<Option<RuntimeContextInspectionPlan>, String> {
+        let Some(_session_meta) = session_meta else {
             return Ok(None);
         };
         let session_id = session_id.into();
@@ -176,23 +184,20 @@ impl SessionConstructionPlanner {
         let workspace = resolve_project_workspace(repos, &project).await?;
         let project_vfs_mounts = load_project_vfs_mounts(repos, project.id).await?;
 
-        let connector_config = session_meta.executor_config.clone();
-        let resolved_config = connector_config.clone();
         let default_agent_type =
             normalize_optional_string(project.config.default_agent_type.clone());
-        let effective_agent_type = resolved_config
-            .as_ref()
-            .and_then(|c| normalize_optional_string(Some(c.executor.clone())))
-            .or(default_agent_type.clone());
-        let use_vfs = connector_config
-            .as_ref()
-            .is_some_and(|c| c.is_cloud_native())
-            || (resolved_config.is_none() && default_agent_type.is_some());
+        let effective_agent_type = default_agent_type.clone();
+        let use_vfs = default_agent_type.is_some();
         let active_workflow = resolve_active_workflow_projection_for_session(
             &session_id,
-            repos.workflow_definition_repo.as_ref(),
-            repos.activity_lifecycle_definition_repo.as_ref(),
+            repos.agent_procedure_repo.as_ref(),
+            repos.workflow_graph_repo.as_ref(),
+            repos.agent_frame_repo.as_ref(),
+            repos.lifecycle_agent_repo.as_ref(),
+            repos.agent_assignment_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
+            repos.execution_anchor_repo.as_ref(),
+            repos.workflow_graph_instance_repo.as_ref(),
         )
         .await?;
 
@@ -213,12 +218,14 @@ impl SessionConstructionPlanner {
             None
         };
         vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
+        let canvas_mount_ids =
+            resolve_visible_canvas_mount_ids_from_frame(repos, &session_id).await;
         if let Some(vfs) = vfs.as_mut() {
             append_visible_canvas_mounts(
                 repos.canvas_repo.as_ref(),
                 project.id,
                 vfs,
-                &session_meta.visible_canvas_mount_ids,
+                &canvas_mount_ids,
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -227,8 +234,8 @@ impl SessionConstructionPlanner {
         let workflow_tool = crate::capability::resolve_session_workflow_context(
             crate::capability::SessionWorkflowRepos {
                 project_agent: repos.project_agent_repo.as_ref(),
-                activity_lifecycle_def: repos.activity_lifecycle_definition_repo.as_ref(),
-                workflow_def: repos.workflow_definition_repo.as_ref(),
+                activity_lifecycle_def: repos.workflow_graph_repo.as_ref(),
+                workflow_def: repos.agent_procedure_repo.as_ref(),
             },
             crate::capability::SessionWorkflowOwner::Story {
                 project_id: story.project_id,
@@ -261,9 +268,7 @@ impl SessionConstructionPlanner {
         );
         let effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
             cap_output.tool.mcp_servers.clone();
-        let executor_source = if session_meta.executor_config.is_some() {
-            "session.meta.executor_config"
-        } else if effective_agent_type.is_some() {
+        let executor_source = if effective_agent_type.is_some() {
             "project.config.default_agent_type"
         } else {
             "unresolved"
@@ -273,7 +278,7 @@ impl SessionConstructionPlanner {
             project,
             story: Some(story.clone()),
             workspace,
-            resolved_config,
+            resolved_config: None,
             vfs,
             mcp_servers: session_mcp_servers_to_runtime(&effective_mcp_servers),
             working_dir: None,
@@ -292,7 +297,7 @@ impl SessionConstructionPlanner {
             owner,
             SessionConstructionContextProjection {
                 workspace_id: None,
-                agent_binding: None,
+                dispatch_preference: None,
                 vfs: plan.vfs.clone(),
                 runtime_surface: None,
                 context_snapshot: Some(snapshot),
@@ -310,10 +315,10 @@ impl SessionConstructionPlanner {
         owner: ResolvedSessionOwner,
         project: &Project,
         binding_label: &str,
-        session_meta: &SessionMeta,
-    ) -> Result<SessionConstructionPlan, String> {
+        _session_meta: &SessionMeta,
+    ) -> Result<RuntimeContextInspectionPlan, String> {
         let session_id = session_id.into();
-        let agent_key = Self::parse_project_agent_session_label(binding_label)
+        let agent_key = Self::parse_project_dispatch_label(binding_label)
             .ok_or_else(|| format!("无效的项目 Agent session label: {binding_label}"))?;
         let project_agent = resolve_project_agent_context(repos, project.id, agent_key)
             .await?
@@ -321,19 +326,21 @@ impl SessionConstructionPlanner {
         let workspace = resolve_project_workspace(repos, project).await?;
         let project_vfs_mounts = load_project_vfs_mounts(repos, project.id).await?;
 
-        let connector_config = session_meta
-            .executor_config
-            .clone()
-            .or_else(|| Some(project_agent.executor_config.clone()));
+        let connector_config = Some(project_agent.executor_config.clone());
         let resolved_config = connector_config.clone();
         let use_vfs = connector_config
             .as_ref()
             .is_some_and(|c| c.is_cloud_native());
         let active_workflow = resolve_active_workflow_projection_for_session(
             &session_id,
-            repos.workflow_definition_repo.as_ref(),
-            repos.activity_lifecycle_definition_repo.as_ref(),
+            repos.agent_procedure_repo.as_ref(),
+            repos.workflow_graph_repo.as_ref(),
+            repos.agent_frame_repo.as_ref(),
+            repos.lifecycle_agent_repo.as_ref(),
+            repos.agent_assignment_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
+            repos.execution_anchor_repo.as_ref(),
+            repos.workflow_graph_instance_repo.as_ref(),
         )
         .await?;
 
@@ -364,12 +371,14 @@ impl SessionConstructionPlanner {
 
         vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
 
+        let canvas_mount_ids =
+            resolve_visible_canvas_mount_ids_from_frame(repos, &session_id).await;
         if let Some(vfs) = vfs.as_mut() {
             append_visible_canvas_mounts(
                 repos.canvas_repo.as_ref(),
                 project.id,
                 vfs,
-                &session_meta.visible_canvas_mount_ids,
+                &canvas_mount_ids,
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -391,8 +400,8 @@ impl SessionConstructionPlanner {
         let workflow_tool = crate::capability::resolve_session_workflow_context(
             crate::capability::SessionWorkflowRepos {
                 project_agent: repos.project_agent_repo.as_ref(),
-                activity_lifecycle_def: repos.activity_lifecycle_definition_repo.as_ref(),
-                workflow_def: repos.workflow_definition_repo.as_ref(),
+                activity_lifecycle_def: repos.workflow_graph_repo.as_ref(),
+                workflow_def: repos.agent_procedure_repo.as_ref(),
             },
             crate::capability::SessionWorkflowOwner::Project {
                 project_id: project.id,
@@ -427,11 +436,7 @@ impl SessionConstructionPlanner {
         let mut effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
             cap_output.tool.mcp_servers.clone();
         effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
-        let executor_source = if session_meta.executor_config.is_some() {
-            "session.meta.executor_config".to_string()
-        } else {
-            project_agent.source.clone()
-        };
+        let executor_source = project_agent.source.clone();
 
         let plan = build_bootstrap_plan(BootstrapPlanInput {
             project: project.clone(),
@@ -459,7 +464,7 @@ impl SessionConstructionPlanner {
             owner,
             SessionConstructionContextProjection {
                 workspace_id: None,
-                agent_binding: None,
+                dispatch_preference: None,
                 vfs: plan.vfs.clone(),
                 runtime_surface: None,
                 context_snapshot: Some(snapshot),
@@ -472,12 +477,12 @@ impl SessionConstructionPlanner {
         session_id: impl Into<String>,
         owner: ResolvedSessionOwner,
         projection: SessionConstructionContextProjection,
-    ) -> SessionConstructionPlan {
-        SessionConstructionPlan::new(session_id, owner, projection)
+    ) -> RuntimeContextInspectionPlan {
+        RuntimeContextInspectionPlan::new(session_id, owner, projection)
     }
 }
 
-async fn resolve_project_workspace(
+pub async fn resolve_project_workspace(
     repos: &RepositorySet,
     project: &Project,
 ) -> Result<Option<Workspace>, String> {
@@ -491,6 +496,7 @@ async fn resolve_project_workspace(
     Ok(None)
 }
 
+#[cfg(test)]
 async fn load_project_presets(
     repos: &RepositorySet,
     project_id: Uuid,
@@ -508,6 +514,7 @@ async fn load_project_presets(
     }
 }
 
+#[cfg(test)]
 async fn load_project_vfs_mounts(
     repos: &RepositorySet,
     project_id: Uuid,
@@ -519,6 +526,7 @@ async fn load_project_vfs_mounts(
         .map_err(|error| format!("读取 Project VFS Mount 失败: {error}"))
 }
 
+#[cfg(test)]
 async fn resolve_project_agent_context(
     repos: &RepositorySet,
     project_id: Uuid,
@@ -539,7 +547,7 @@ async fn resolve_project_agent_context(
     build_project_agent_context(repos, &agent).await.map(Some)
 }
 
-async fn build_project_agent_context(
+pub async fn build_project_agent_context(
     repos: &RepositorySet,
     agent: &ProjectAgent,
 ) -> Result<ResolvedProjectAgentContext, String> {
@@ -583,4 +591,23 @@ async fn build_project_agent_context(
         preset_mcp_servers,
         project_agent: agent.clone(),
     })
+}
+
+/// 从 AgentFrame 中读取 visible_canvas_mount_ids（通过 runtime session ref 反查）。
+#[cfg(test)]
+async fn resolve_visible_canvas_mount_ids_from_frame(
+    repos: &RepositorySet,
+    runtime_session_id: &str,
+) -> Vec<String> {
+    match resolve_current_frame_for_runtime_session(
+        runtime_session_id,
+        repos.execution_anchor_repo.as_ref(),
+        repos.lifecycle_agent_repo.as_ref(),
+        repos.agent_frame_repo.as_ref(),
+    )
+    .await
+    {
+        Ok(Some((_anchor, _agent, frame))) => frame.visible_canvas_mount_ids(),
+        _ => Vec::new(),
+    }
 }

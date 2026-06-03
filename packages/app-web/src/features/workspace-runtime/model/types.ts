@@ -1,12 +1,17 @@
 import type {
   ExtensionRuntimeProjectionResponse,
-  HookSessionRuntimeInfo,
+  AgentFrameHookRuntimeInfo,
+  AgentFrameRuntimeView,
+  LifecycleRunView,
+  LifecycleAgentView,
+  LifecycleSubjectAssociationDto,
+  RuntimeSessionExecutionAnchorDto,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
   SessionContextSnapshot,
+  SessionShellDto,
   Story,
   TaskSessionExecutorSummary,
-  WorkflowRun,
 } from "../../../types";
 
 export type SessionRuntimeStateStatus = "idle" | "loading" | "ready" | "refreshing" | "error";
@@ -29,6 +34,13 @@ export interface WorkspaceBackendTarget {
 export interface WorkspaceRuntimeData {
   projectId: string | null;
   sessionId: string | null;
+  runtimeSessionId: string | null;
+  sessionMeta: SessionShellDto | null;
+  controlAnchor: RuntimeSessionExecutionAnchorDto | null;
+  lifecycleRun: LifecycleRunView | null;
+  lifecycleAgent: LifecycleAgentView | null;
+  frameRuntime: AgentFrameRuntimeView | null;
+  subjectAssociations: LifecycleSubjectAssociationDto[];
   runtimeStatus: SessionRuntimeStateStatus;
   runtimeError: string | null;
   extensionRuntime: ProjectExtensionRuntimeState;
@@ -38,8 +50,7 @@ export interface WorkspaceRuntimeData {
   executorSummary: TaskSessionExecutorSummary | null;
   runtimeSurface: ResolvedVfsSurface | null;
   workspaceBackend: WorkspaceBackendTarget | null;
-  hookRuntime: HookSessionRuntimeInfo | null;
+  hookRuntime: AgentFrameHookRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
-  workflowRuns: WorkflowRun[];
   activeCanvasId: string | null;
 }

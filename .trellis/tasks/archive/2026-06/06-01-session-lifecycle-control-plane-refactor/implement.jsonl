@@ -1,0 +1,12 @@
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/refactor-plan.md", "reason": "上一轮控制面重构阶段计划，提供目标结构与迁移顺序。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/semantic-inventory.md", "reason": "目标概念边界：Lifecycle、RuntimeSession、Task、Association、Agent/Frame。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/terminology-notes.md", "reason": "目标命名收敛：LifecycleAgent、AgentFrame、AgentProcedure、RuntimeSession。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/lifecycle-entity-association-map.md", "reason": "当前实体图与目标实体图，支撑 association 与 same-run / independent run 决策。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/abstraction-boundary-and-coupling-review.md", "reason": "新增抽象预算与防止多层转发的边界规则。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/research/persistence-contracts-gap.md", "reason": "数据库、contracts、API 的结构差异与迁移缺口。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/research/frontend-gap.md", "reason": "前端 session-first surface 与目标 actor/subject views 的迁移面。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "当前 Session 子系统事实源与 launch/runtime/projection 基线。"}
+{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "Activity-only lifecycle runtime contract。"}
+{"file": ".trellis/spec/backend/workflow/lifecycle-run-link.md", "reason": "当前 LifecycleRunLink 与 Session demotion 规范，后续需演化为 actor-aware association。"}
+{"file": ".trellis/spec/backend/story-task-runtime.md", "reason": "Story / Task / Session / LifecycleRun 当前关系拓扑。"}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "前端 Activity lifecycle 运行观察契约。"}

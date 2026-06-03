@@ -9,6 +9,7 @@ use crate::session::types::UserPromptInput;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchSource {
     HttpPrompt,
+    LifecycleAgentUserMessage,
     HookAutoResume,
     CompanionDispatch,
     CompanionParentResume,
@@ -96,6 +97,7 @@ impl LaunchCommand {
     pub fn reason_tag(&self) -> &'static str {
         match self.source {
             LaunchSource::HttpPrompt => "http_prompt",
+            LaunchSource::LifecycleAgentUserMessage => "lifecycle_agent_user_message",
             LaunchSource::HookAutoResume => "hook_auto_resume",
             LaunchSource::CompanionDispatch => "companion_dispatch",
             LaunchSource::CompanionParentResume => "companion_parent_resume",
@@ -131,6 +133,20 @@ impl LaunchCommand {
         identity: Option<agentdash_spi::AuthIdentity>,
     ) -> Self {
         Self::command_with(input, identity, None, None, None, LaunchSource::HttpPrompt)
+    }
+
+    pub fn lifecycle_agent_user_message_input(
+        input: UserPromptInput,
+        identity: Option<agentdash_spi::AuthIdentity>,
+    ) -> Self {
+        Self::command_with(
+            input,
+            identity,
+            None,
+            None,
+            None,
+            LaunchSource::LifecycleAgentUserMessage,
+        )
     }
 
     pub fn hook_auto_resume_input(input: UserPromptInput) -> Self {

@@ -1,10 +1,10 @@
 use agentdash_domain::workflow::{WorkflowHookRuleSpec, WorkflowHookTrigger};
-use agentdash_spi::SessionHookSnapshot;
+use agentdash_spi::AgentFrameHookSnapshot;
 
-pub(super) const REGISTRY_ITEM: fn(&SessionHookSnapshot) -> Option<WorkflowHookRuleSpec> =
+pub(super) const REGISTRY_ITEM: fn(&AgentFrameHookSnapshot) -> Option<WorkflowHookRuleSpec> =
     build_rule;
 
-fn build_rule(snapshot: &SessionHookSnapshot) -> Option<WorkflowHookRuleSpec> {
+fn build_rule(snapshot: &AgentFrameHookSnapshot) -> Option<WorkflowHookRuleSpec> {
     if !has_task_owner(snapshot) {
         return None;
     }
@@ -20,7 +20,7 @@ fn build_rule(snapshot: &SessionHookSnapshot) -> Option<WorkflowHookRuleSpec> {
     })
 }
 
-fn has_task_owner(snapshot: &SessionHookSnapshot) -> bool {
+fn has_task_owner(snapshot: &AgentFrameHookSnapshot) -> bool {
     snapshot
         .run_context
         .as_ref()

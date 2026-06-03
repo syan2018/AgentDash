@@ -6,7 +6,6 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import { useEventStore } from "../../stores/eventStore";
 import { useCurrentUserStore } from "../../stores/currentUserStore";
-import { useProjectSessions } from "../../queries/projectSessions";
 import { ProjectCreateDrawer } from "../../features/project/project-selector";
 import type { Project } from "../../types";
 import { SidebarFooter, type FooterPanelKey } from "./SidebarFooter";
@@ -33,7 +32,7 @@ const NAV_ITEMS: NavItem[] = [
     key: "agent",
     label: "Agent",
     defaultPath: "/dashboard/agent",
-    pathPrefixes: ["/dashboard/agent", "/session/"],
+    pathPrefixes: ["/dashboard/agent", "/agent/", "/run/", "/subject/", "/session/"],
     icon: (
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 8V4H8" />
@@ -91,8 +90,6 @@ export function WorkspaceLayout() {
   const { backends } = useCoordinatorStore();
   const { connectionState } = useEventStore();
   const { currentUser } = useCurrentUserStore();
-  // Sidebar 会话列表：30s 轮询保持最近会话不过期（与 agent tab 各自独立刷新）
-  const { sessions } = useProjectSessions(currentProjectId, { refetchInterval: 30_000 });
 
   const [activeFooterPanel, setActiveFooterPanel] = useState<FooterPanelKey | null>(null);
 
@@ -113,6 +110,9 @@ export function WorkspaceLayout() {
 
   // 路由高亮匹配：useMatch 调用顺序必须稳定
   const agentDashboardMatch = useMatch("/dashboard/agent");
+  const agentRouteMatch = useMatch("/agent/:agentId");
+  const runRouteMatch = useMatch("/run/:runId");
+  const subjectRouteMatch = useMatch("/subject/:kind/:id");
   const sessionRouteMatch = useMatch("/session/:sessionId");
   const storyDashboardMatch = useMatch("/dashboard/story");
   const storyRouteMatch = useMatch("/story/:storyId");
@@ -121,7 +121,7 @@ export function WorkspaceLayout() {
   const routineDashboardMatch = useMatch("/dashboard/routine");
 
   const activeMap: Record<NavKey, boolean> = {
-    agent: !!agentDashboardMatch || !!sessionRouteMatch,
+    agent: !!agentDashboardMatch || !!agentRouteMatch || !!runRouteMatch || !!subjectRouteMatch || !!sessionRouteMatch,
     story: !!storyDashboardMatch || !!storyRouteMatch,
     assets: !!assetsDashboardMatch || !!unifiedWorkflowEditorMatch,
     routine: !!routineDashboardMatch,
@@ -187,8 +187,8 @@ export function WorkspaceLayout() {
           })}
         </div>
 
-        {/* Session 快捷列表：flex-1 填充中段，内部自滚 */}
-        <SessionShortcutList sessions={sessions} />
+        {/* 会话快捷列表 */}
+        <SessionShortcutList projectId={currentProjectId} />
 
         {/* 底栏 */}
         <SidebarFooter

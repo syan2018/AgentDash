@@ -27,7 +27,7 @@ describe("unified lifecycle editor", () => {
     useWorkflowStore.getState().closeLifecycleEditor();
   });
 
-  it("openLifecycleForm 初始化单 step + 对应 workflow draft", () => {
+  it("openLifecycleForm 初始化单 step + 对应 AgentProcedure draft", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("project-1", {
       key: "my_wf",
@@ -40,18 +40,19 @@ describe("unified lifecycle editor", () => {
     expect(editor.draft?.key).toBe("my_wf");
     expect(editor.draft?.activities).toHaveLength(1);
     expect(editor.draft?.activities[0].key).toBe("start");
-    // 自动派生 workflow_key
+    // 自动派生 procedure_key
     expect(editor.draft?.activities[0].executor).toEqual({
       kind: "agent",
-      workflow_key: "my_wf_start",
-      session_policy: "spawn_child",
+      procedure_key: "my_wf_start",
+      agent_reuse_policy: "create_activity_agent",
+      runtime_session_policy: "create_new",
     });
-    expect(editor.workflowDraftsByActivityKey["start"]).toBeDefined();
-    expect(editor.workflowDraftsByActivityKey["start"].key).toBe("my_wf_start");
+    expect(editor.procedureDraftsByActivityKey["start"]).toBeDefined();
+    expect(editor.procedureDraftsByActivityKey["start"].key).toBe("my_wf_start");
     expect(selectedActivityKey(editor)).toBe("start");
   });
 
-  it("addLifecycleEditorActivity 添加新 step 自动派生 workflow_key 并选中", () => {
+  it("addLifecycleEditorActivity 添加新 step 自动派生 procedure_key 并选中", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("project-1", { key: "lc1", initial_activity_key: "start" });
     const newKey = store.addLifecycleEditorActivity();
@@ -60,10 +61,10 @@ describe("unified lifecycle editor", () => {
     expect(newKey).toBeTruthy();
     expect(editor.draft?.activities).toHaveLength(2);
     expect(selectedActivityKey(editor)).toBe(newKey);
-    expect(editor.workflowDraftsByActivityKey[newKey!]?.key).toBe(`lc1_${newKey}`);
+    expect(editor.procedureDraftsByActivityKey[newKey!]?.key).toBe(`lc1_${newKey}`);
   });
 
-  it("removeLifecycleEditorActivity 同步清掉 workflow draft 和相关 edges", () => {
+  it("removeLifecycleEditorActivity 同步清掉 AgentProcedure draft 和相关 edges", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("project-1", { key: "lc2", initial_activity_key: "start" });
     const second = store.addLifecycleEditorActivity()!;
@@ -77,10 +78,10 @@ describe("unified lifecycle editor", () => {
     const editor = useWorkflowStore.getState().lifecycleEditor;
     expect(editor.draft?.activities).toHaveLength(1);
     expect(editor.draft?.transitions).toHaveLength(0);
-    expect(editor.workflowDraftsByActivityKey[second]).toBeUndefined();
+    expect(editor.procedureDraftsByActivityKey[second]).toBeUndefined();
   });
 
-  it("updateLifecycleEditorDraft target_kinds 同步到所有 step workflow drafts", () => {
+  it("updateLifecycleEditorDraft target_kinds 同步到所有 AgentProcedure drafts", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("project-1", { key: "lc3", initial_activity_key: "start" });
     store.addLifecycleEditorActivity();
@@ -88,7 +89,7 @@ describe("unified lifecycle editor", () => {
 
     const editor = useWorkflowStore.getState().lifecycleEditor;
     expect(editor.draft?.target_kinds).toEqual(["project"]);
-    for (const draft of Object.values(editor.workflowDraftsByActivityKey)) {
+    for (const draft of Object.values(editor.procedureDraftsByActivityKey)) {
       expect(draft.target_kinds).toEqual(["project"]);
     }
   });
@@ -105,8 +106,8 @@ describe("unified lifecycle editor", () => {
     const editor = useWorkflowStore.getState().lifecycleEditor;
     expect(editor.draft?.entry_activity_key).toBe("kickoff");
     expect(editor.draft?.transitions[0].from).toBe("kickoff");
-    expect(editor.workflowDraftsByActivityKey.kickoff).toBeDefined();
-    expect(editor.workflowDraftsByActivityKey.start).toBeUndefined();
+    expect(editor.procedureDraftsByActivityKey.kickoff).toBeDefined();
+    expect(editor.procedureDraftsByActivityKey.start).toBeUndefined();
   });
 });
 

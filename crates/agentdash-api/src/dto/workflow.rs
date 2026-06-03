@@ -1,5 +1,5 @@
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityTransition, ValidationIssue, WorkflowBindingKind, WorkflowContract,
+    ActivityDefinition, ActivityTransition, AgentProcedureContract, ValidationIssue,
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,14 +12,12 @@ pub struct WorkflowValidationResponse {
 #[derive(Debug, Deserialize, Default)]
 pub struct ListWorkflowsQuery {
     pub project_id: Option<String>,
-    pub binding_kind: Option<WorkflowBindingKind>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct StartWorkflowRunRequest {
     pub lifecycle_id: Option<String>,
     pub lifecycle_key: Option<String>,
-    pub session_id: String,
     pub project_id: String,
 }
 
@@ -31,43 +29,39 @@ pub struct SubmitHumanDecisionRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateWorkflowDefinitionRequest {
+pub struct CreateAgentProcedureRequest {
     pub project_id: String,
     pub key: String,
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
-    pub contract: WorkflowContract,
+    pub contract: AgentProcedureContract,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateWorkflowDefinitionRequest {
+pub struct UpdateAgentProcedureRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
-    pub contract: Option<WorkflowContract>,
+    pub contract: Option<AgentProcedureContract>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ValidateWorkflowDefinitionRequest {
+pub struct ValidateAgentProcedureRequest {
     pub project_id: String,
     pub key: String,
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
-    pub contract: WorkflowContract,
+    pub contract: AgentProcedureContract,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateActivityLifecycleDefinitionRequest {
+pub struct CreateWorkflowGraphRequest {
     pub project_id: String,
     pub key: String,
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub entry_activity_key: String,
     pub activities: Vec<ActivityDefinition>,
     #[serde(default)]
@@ -75,23 +69,21 @@ pub struct CreateActivityLifecycleDefinitionRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateActivityLifecycleDefinitionRequest {
+pub struct UpdateWorkflowGraphRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
     pub entry_activity_key: Option<String>,
     pub activities: Option<Vec<ActivityDefinition>>,
     pub transitions: Option<Vec<ActivityTransition>>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ValidateActivityLifecycleDefinitionRequest {
+pub struct ValidateWorkflowGraphRequest {
     pub project_id: String,
     pub key: String,
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub entry_activity_key: String,
     pub activities: Vec<ActivityDefinition>,
     #[serde(default)]

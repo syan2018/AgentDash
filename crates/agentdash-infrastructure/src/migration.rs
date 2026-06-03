@@ -3,6 +3,11 @@ use sqlx::PgPool;
 
 const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "activity_execution_claims",
+    "agent_assignments",
+    "agent_frame_transitions",
+    "agent_frames",
+    "agent_lineages",
+    "agent_procedures",
     "auth_sessions",
     "backend_execution_leases",
     "backend_workspace_inventory",
@@ -14,12 +19,16 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "group_memberships",
     "groups",
     "inline_fs_files",
-    "lifecycle_definitions",
+    "lifecycle_agents",
+    "lifecycle_gates",
     "lifecycle_runs",
+    "lifecycle_subject_associations",
+    "lifecycle_workflow_instances",
     "library_assets",
     "llm_providers",
     "llm_provider_user_credentials",
     "mcp_presets",
+    "permission_grants",
     "project_agents",
     "project_backend_access",
     "project_extension_installations",
@@ -29,6 +38,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "routine_executions",
     "routines",
     "runtime_health",
+    "runtime_session_execution_anchors",
     "session_compactions",
     "session_events",
     "session_lineage",
@@ -44,12 +54,13 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "user_preferences",
     "users",
     "views",
-    "workflow_definitions",
+    "workflow_graphs",
     "workspace_bindings",
     "workspaces",
 ];
 
 pub async fn run_postgres_migrations(pool: &PgPool) -> Result<(), DomainError> {
+    // sqlx::migrate! 在编译期收集 migration 元数据；迁移文件变更时同步刷新本模块。
     sqlx::migrate!("./migrations")
         .run(pool)
         .await

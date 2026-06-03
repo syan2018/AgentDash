@@ -121,8 +121,8 @@ pub fn project_source_status_response(
     mcp_presets: Vec<ProjectAssetSourceStatusItemDto>,
     skill_assets: Vec<ProjectAssetSourceStatusItemDto>,
     vfs_mounts: Vec<ProjectAssetSourceStatusItemDto>,
-    workflow_definitions: Vec<ProjectAssetSourceStatusItemDto>,
-    activity_lifecycle_definitions: Vec<ProjectAssetSourceStatusItemDto>,
+    agent_procedures: Vec<ProjectAssetSourceStatusItemDto>,
+    workflow_graphs: Vec<ProjectAssetSourceStatusItemDto>,
     extension_installations: Vec<ProjectAssetSourceStatusItemDto>,
 ) -> ProjectAssetSourceStatusDto {
     ProjectAssetSourceStatusDto {
@@ -130,8 +130,8 @@ pub fn project_source_status_response(
         mcp_presets,
         skill_assets,
         vfs_mounts,
-        workflow_definitions,
-        activity_lifecycle_definitions,
+        agent_procedures,
+        workflow_graphs,
         extension_installations,
     }
 }

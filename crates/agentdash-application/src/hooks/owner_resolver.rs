@@ -2,29 +2,29 @@ use std::sync::Arc;
 
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
-use agentdash_domain::workflow::{LifecycleRun, LifecycleRunLinkRepository};
-use agentdash_spi::hooks::SessionRunContext;
+use agentdash_domain::workflow::{LifecycleRun, LifecycleSubjectAssociationRepository};
+use agentdash_spi::hooks::SubjectRunContext;
 
 use crate::ApplicationError;
-use crate::workflow::build_session_run_context;
+use crate::workflow::build_subject_run_context;
 
-/// 从 LifecycleRunLink 反查 project/story/task 实体，构建 SessionRunContext。
+/// 从 LifecycleSubjectAssociation 反查 project/story/task 实体，构建 SubjectRunContext。
 pub struct SessionOwnerResolver {
     project_repo: Arc<dyn ProjectRepository>,
     story_repo: Arc<dyn StoryRepository>,
-    lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
+    lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
 }
 
 impl SessionOwnerResolver {
     pub fn new(
         project_repo: Arc<dyn ProjectRepository>,
         story_repo: Arc<dyn StoryRepository>,
-        lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
+        lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     ) -> Self {
         Self {
             project_repo,
             story_repo,
-            lifecycle_run_link_repo,
+            lifecycle_subject_association_repo,
         }
     }
 
@@ -39,12 +39,12 @@ impl SessionOwnerResolver {
     pub async fn resolve_run_context(
         &self,
         run: &LifecycleRun,
-    ) -> Result<SessionRunContext, ApplicationError> {
-        let links = self
-            .lifecycle_run_link_repo
-            .list_by_run(run.id)
+    ) -> Result<SubjectRunContext, ApplicationError> {
+        let associations = self
+            .lifecycle_subject_association_repo
+            .list_by_anchor(run.id, None)
             .await
             .map_err(ApplicationError::from)?;
-        build_session_run_context(run.project_id, &links, self.story_repo.as_ref()).await
+        build_subject_run_context(run.project_id, &associations, self.story_repo.as_ref()).await
     }
 }

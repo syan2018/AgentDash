@@ -7,9 +7,7 @@ use crate::session::hub_support::{
     build_user_message_envelopes,
 };
 use crate::session::persistence::SessionRuntimeCommandStore;
-use crate::session::types::{
-    ExecutionStatus, ResolvedPromptPayload, SessionBootstrapState, SessionMeta, TitleSource,
-};
+use crate::session::types::{ExecutionStatus, ResolvedPromptPayload, SessionMeta, TitleSource};
 
 pub(in crate::session) struct CommittedTurn {
     pub accepted: ConnectorAcceptedTurn,
@@ -61,7 +59,6 @@ impl TurnCommitter {
             session_meta,
             now,
             turn_id,
-            &prepared.executor_config_for_meta,
             prepared.is_owner_bootstrap,
             &prepared.title_hint,
         );
@@ -140,18 +137,13 @@ fn apply_turn_start_meta(
     meta: &mut SessionMeta,
     now: i64,
     turn_id: &str,
-    executor_config: &agentdash_domain::common::AgentConfig,
-    is_owner_bootstrap: bool,
+    _is_owner_bootstrap: bool,
     title_hint: &str,
 ) {
     meta.updated_at = now;
-    meta.last_execution_status = ExecutionStatus::Running;
+    meta.last_delivery_status = ExecutionStatus::Running;
     meta.last_turn_id = Some(turn_id.to_string());
     meta.last_terminal_message = None;
-    meta.executor_config = Some(executor_config.clone());
-    if is_owner_bootstrap {
-        meta.bootstrap_state = SessionBootstrapState::Bootstrapped;
-    }
     if meta.title.trim().is_empty() {
         meta.title = title_hint.to_string();
     }
@@ -194,8 +186,10 @@ async fn commit_runtime_commands_applied(
 mod tests {
     use super::*;
     use crate::session::persistence::{SessionStoreError, SessionStoreResult};
-    use crate::session::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
-    use crate::session::types::PendingCapabilityStateTransition;
+    use crate::session::runtime_commands::{
+        AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeCommandStatus,
+        RuntimeDeliveryCommand,
+    };
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use uuid::Uuid;
@@ -223,10 +217,11 @@ mod tests {
 
     #[async_trait]
     impl SessionRuntimeCommandStore for FailingApplyRuntimeCommandStore {
-        async fn upsert_runtime_command_request(
+        async fn upsert_runtime_delivery_command(
             &self,
-            _session_id: &str,
-            _transition: PendingCapabilityStateTransition,
+            _delivery_runtime_session_id: &str,
+            _delivery: RuntimeDeliveryCommand,
+            _frame_transition: AgentFrameTransitionRecord,
         ) -> SessionStoreResult<RuntimeCommandRecord> {
             Err(SessionStoreError::Internal("not used".to_string()))
         }

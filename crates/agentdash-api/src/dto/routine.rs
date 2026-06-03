@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::routine::{Routine, RoutineExecution};
+use agentdash_domain::workflow::AgentRuntimeRefs;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -27,7 +28,7 @@ pub struct RoutineResponse {
     pub prompt_template: String,
     pub project_agent_id: String,
     pub trigger_config: serde_json::Value,
-    pub session_strategy: serde_json::Value,
+    pub dispatch_strategy: serde_json::Value,
     pub enabled: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -43,7 +44,7 @@ impl From<Routine> for RoutineResponse {
             prompt_template: r.prompt_template,
             project_agent_id: r.project_agent_id.to_string(),
             trigger_config: serde_json::to_value(&r.trigger_config).unwrap_or_default(),
-            session_strategy: serde_json::to_value(&r.session_strategy).unwrap_or_default(),
+            dispatch_strategy: serde_json::to_value(&r.dispatch_strategy).unwrap_or_default(),
             enabled: r.enabled,
             created_at: r.created_at.to_rfc3339(),
             updated_at: r.updated_at.to_rfc3339(),
@@ -60,7 +61,8 @@ pub struct RoutineExecutionResponse {
     pub trigger_source: String,
     pub trigger_payload: Option<serde_json::Value>,
     pub resolved_prompt: Option<String>,
-    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_refs: Option<AgentRuntimeRefs>,
     pub status: String,
     pub started_at: String,
     pub completed_at: Option<String>,
@@ -76,7 +78,7 @@ impl From<RoutineExecution> for RoutineExecutionResponse {
             trigger_source: e.trigger_source,
             trigger_payload: e.trigger_payload,
             resolved_prompt: e.resolved_prompt,
-            session_id: e.session_id,
+            runtime_refs: e.dispatch_refs.map(|r| r.runtime_refs),
             status: format!("{:?}", e.status).to_lowercase(),
             started_at: e.started_at.to_rfc3339(),
             completed_at: e.completed_at.map(|t| t.to_rfc3339()),
@@ -93,7 +95,7 @@ pub struct CreateRoutineRequest {
     pub project_agent_id: String,
     pub trigger_config: serde_json::Value,
     #[serde(default)]
-    pub session_strategy: Option<serde_json::Value>,
+    pub dispatch_strategy: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,7 +104,7 @@ pub struct UpdateRoutineRequest {
     pub prompt_template: Option<String>,
     pub project_agent_id: Option<String>,
     pub trigger_config: Option<serde_json::Value>,
-    pub session_strategy: Option<serde_json::Value>,
+    pub dispatch_strategy: Option<serde_json::Value>,
     pub enabled: Option<bool>,
 }
 

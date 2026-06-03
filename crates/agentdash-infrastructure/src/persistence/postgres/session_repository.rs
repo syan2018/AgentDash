@@ -1,22 +1,19 @@
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::session_persistence::{
-    CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
-    RuntimeCommandRecord, RuntimeCommandStatus, SessionCompactionRecord, SessionCompactionStore,
-    SessionEventBacklog, SessionEventPage, SessionEventStore, SessionLineageRecord,
-    SessionLineageRelationKind, SessionLineageStatus, SessionLineageStore, SessionMeta,
-    SessionMetaStore, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
-    SessionProjectionStore, SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult,
-    SessionTerminalEffectStore, TerminalEffectRecord, TerminalEffectStatus,
-};
-use agentdash_spi::session_persistence::{
-    NewTerminalEffectRecord, PendingCapabilityStateTransition,
+    AgentFrameTransitionRecord, CompactionProjectionCommitResult, NewCompactionProjectionCommit,
+    NewTerminalEffectRecord, PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus,
+    RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStore, SessionEventBacklog,
+    SessionEventPage, SessionEventStore, SessionLineageRecord, SessionLineageRelationKind,
+    SessionLineageStatus, SessionLineageStore, SessionMeta, SessionMetaStore,
+    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionProjectionStore,
+    SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult, SessionTerminalEffectStore,
+    TerminalEffectRecord, TerminalEffectStatus,
 };
 use sqlx::{PgPool, Row};
 
 use crate::persistence::session_core::{
-    backbone_event_type_name, bootstrap_state_to_str, compaction_from_row,
-    encode_optional_u64_as_i64, encode_u64_as_i64, json_string, lineage_from_row, map_meta_row,
-    optional_json_string, parse_non_negative_u64, persisted_event_from_row,
+    backbone_event_type_name, compaction_from_row, encode_optional_u64_as_i64, encode_u64_as_i64,
+    json_string, lineage_from_row, map_meta_row, parse_non_negative_u64, persisted_event_from_row,
     projection_from_envelope, projection_head_from_row, projection_segment_from_row,
     runtime_command_from_row, sqlx_to_session_store_error, terminal_effect_from_row,
     title_source_to_str, validate_commit_session,
@@ -42,6 +39,7 @@ impl PostgresSessionRepository {
                 "session_projection_heads",
                 "session_projection_segments",
                 "session_terminal_effects",
+                "agent_frame_transitions",
                 "session_runtime_commands",
             ],
         )
@@ -137,27 +135,35 @@ impl PostgresSessionRepository {
     }
 }
 
+fn validate_runtime_delivery_command(
+    delivery: &RuntimeDeliveryCommand,
+    frame_transition: &AgentFrameTransitionRecord,
+) -> SessionStoreResult<()> {
+    if delivery.frame_transition_id != frame_transition.id {
+        return Err(SessionStoreError::InvalidInput(format!(
+            "runtime delivery frame_transition_id {} 与 frame transition {} 不一致",
+            delivery.frame_transition_id, frame_transition.id
+        )));
+    }
+    if delivery.target_frame_id != frame_transition.target_frame_id {
+        return Err(SessionStoreError::InvalidInput(format!(
+            "runtime delivery target_frame_id {} 与 frame transition target {} 不一致",
+            delivery.target_frame_id, frame_transition.target_frame_id
+        )));
+    }
+    Ok(())
+}
+
 #[async_trait::async_trait]
 impl SessionMetaStore for PostgresSessionRepository {
     async fn create_session(&self, meta: &SessionMeta) -> SessionStoreResult<()> {
         let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
-        let executor_config_json =
-            optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
-        let companion_context_json =
-            optional_json_string(meta.companion_context.as_ref(), "companion_context_json")?;
-        let tab_layout_json = optional_json_string(meta.tab_layout.as_ref(), "tab_layout_json")?;
-        let visible_canvas_mount_ids_json = json_string(
-            &meta.visible_canvas_mount_ids,
-            "visible_canvas_mount_ids_json",
-        )?;
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
-                last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
-                bootstrap_state
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
+                last_turn_id, last_terminal_message, executor_session_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
         )
         .bind(&meta.id)
@@ -166,15 +172,10 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
-        .bind(meta.last_execution_status.to_string())
+        .bind(meta.last_delivery_status.to_string())
         .bind(&meta.last_turn_id)
         .bind(&meta.last_terminal_message)
-        .bind(executor_config_json)
         .bind(&meta.executor_session_id)
-        .bind(companion_context_json)
-        .bind(tab_layout_json)
-        .bind(visible_canvas_mount_ids_json)
-        .bind(bootstrap_state_to_str(meta.bootstrap_state))
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_session_store_error)?;
@@ -184,10 +185,8 @@ impl SessionMetaStore for PostgresSessionRepository {
     async fn get_session_meta(&self, session_id: &str) -> SessionStoreResult<Option<SessionMeta>> {
         let row = sqlx::query(
             r#"
-            SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
-                   last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
-                   bootstrap_state
+            SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
+                   last_turn_id, last_terminal_message, executor_session_id
             FROM sessions
             WHERE id = $1
             "#,
@@ -202,10 +201,8 @@ impl SessionMetaStore for PostgresSessionRepository {
     async fn list_sessions(&self) -> SessionStoreResult<Vec<SessionMeta>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
-                   last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
-                   bootstrap_state
+            SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
+                   last_turn_id, last_terminal_message, executor_session_id
             FROM sessions
             ORDER BY updated_at DESC
             "#,
@@ -218,33 +215,22 @@ impl SessionMetaStore for PostgresSessionRepository {
 
     async fn save_session_meta(&self, meta: &SessionMeta) -> SessionStoreResult<()> {
         let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
-        let executor_config_json =
-            optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
-        let companion_context_json =
-            optional_json_string(meta.companion_context.as_ref(), "companion_context_json")?;
-        let tab_layout_json = optional_json_string(meta.tab_layout.as_ref(), "tab_layout_json")?;
-        let visible_canvas_mount_ids_json = json_string(
-            &meta.visible_canvas_mount_ids,
-            "visible_canvas_mount_ids_json",
-        )?;
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
-                last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
-                bootstrap_state
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
+                last_turn_id, last_terminal_message, executor_session_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 title_source = excluded.title_source,
                 created_at = excluded.created_at,
                 updated_at = GREATEST(sessions.updated_at, excluded.updated_at),
                 last_event_seq = GREATEST(sessions.last_event_seq, excluded.last_event_seq),
-                last_execution_status = CASE
+                last_delivery_status = CASE
                     WHEN excluded.last_event_seq >= sessions.last_event_seq
-                        THEN excluded.last_execution_status
-                    ELSE sessions.last_execution_status
+                        THEN excluded.last_delivery_status
+                    ELSE sessions.last_delivery_status
                 END,
                 last_turn_id = CASE
                     WHEN excluded.last_event_seq >= sessions.last_event_seq
@@ -256,16 +242,7 @@ impl SessionMetaStore for PostgresSessionRepository {
                         THEN excluded.last_terminal_message
                     ELSE sessions.last_terminal_message
                 END,
-                executor_config_json = excluded.executor_config_json,
-                executor_session_id = excluded.executor_session_id,
-                companion_context_json = excluded.companion_context_json,
-                tab_layout_json = excluded.tab_layout_json,
-                visible_canvas_mount_ids_json = excluded.visible_canvas_mount_ids_json,
-                bootstrap_state = CASE
-                    WHEN sessions.bootstrap_state = 'bootstrapped'
-                        THEN sessions.bootstrap_state
-                    ELSE excluded.bootstrap_state
-                END
+                executor_session_id = excluded.executor_session_id
             "#,
         )
         .bind(&meta.id)
@@ -274,15 +251,10 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
-        .bind(meta.last_execution_status.to_string())
+        .bind(meta.last_delivery_status.to_string())
         .bind(&meta.last_turn_id)
         .bind(&meta.last_terminal_message)
-        .bind(executor_config_json)
         .bind(&meta.executor_session_id)
-        .bind(companion_context_json)
-        .bind(tab_layout_json)
-        .bind(visible_canvas_mount_ids_json)
-        .bind(bootstrap_state_to_str(meta.bootstrap_state))
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_session_store_error)?;
@@ -413,7 +385,7 @@ impl SessionEventStore for PostgresSessionRepository {
             UPDATE sessions
             SET
                 updated_at = $1,
-                last_execution_status = COALESCE($2, last_execution_status),
+                last_delivery_status = COALESCE($2, last_delivery_status),
                 last_turn_id = COALESCE($3, last_turn_id),
                 last_terminal_message = CASE
                     WHEN $4 THEN NULL
@@ -425,7 +397,7 @@ impl SessionEventStore for PostgresSessionRepository {
             "#,
         )
         .bind(committed_at_ms)
-        .bind(&projection.last_execution_status)
+        .bind(&projection.last_delivery_status)
         .bind(&projection.turn_id)
         .bind(projection.clear_terminal_message)
         .bind(&projection.last_terminal_message)
@@ -686,11 +658,13 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
 
 #[async_trait::async_trait]
 impl SessionRuntimeCommandStore for PostgresSessionRepository {
-    async fn upsert_runtime_command_request(
+    async fn upsert_runtime_delivery_command(
         &self,
-        session_id: &str,
-        transition: PendingCapabilityStateTransition,
+        delivery_runtime_session_id: &str,
+        delivery: RuntimeDeliveryCommand,
+        frame_transition: AgentFrameTransitionRecord,
     ) -> SessionStoreResult<RuntimeCommandRecord> {
+        validate_runtime_delivery_command(&delivery, &frame_transition)?;
         let mut tx = self
             .pool
             .begin()
@@ -711,39 +685,77 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         .bind(now)
         .bind(now)
         .bind("superseded_by_new_requested_command")
-        .bind(session_id)
-        .bind(&transition.phase_node)
+        .bind(delivery_runtime_session_id)
+        .bind(&frame_transition.phase_node)
         .bind(RuntimeCommandStatus::Requested.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_to_session_store_error)?;
+
+        let capability_keys_json = json_string(
+            &frame_transition.capability_keys,
+            "agent_frame_transitions.capability_keys_json",
+        )?;
+        let transition_json = json_string(
+            &frame_transition.transition,
+            "agent_frame_transitions.transition_json",
+        )?;
+        sqlx::query(
+            r#"
+            INSERT INTO agent_frame_transitions (
+                id, target_frame_id, run_id, lifecycle_key, phase_node,
+                capability_keys_json, transition_json, source_turn_id, created_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT(id) DO UPDATE SET
+                target_frame_id = excluded.target_frame_id,
+                run_id = excluded.run_id,
+                lifecycle_key = excluded.lifecycle_key,
+                phase_node = excluded.phase_node,
+                capability_keys_json = excluded.capability_keys_json,
+                transition_json = excluded.transition_json,
+                source_turn_id = excluded.source_turn_id,
+                created_at_ms = excluded.created_at_ms
+            "#,
+        )
+        .bind(&frame_transition.id)
+        .bind(frame_transition.target_frame_id.to_string())
+        .bind(frame_transition.run_id.to_string())
+        .bind(&frame_transition.lifecycle_key)
+        .bind(&frame_transition.phase_node)
+        .bind(capability_keys_json)
+        .bind(transition_json)
+        .bind(&frame_transition.source_turn_id)
+        .bind(frame_transition.created_at_ms)
         .execute(&mut *tx)
         .await
         .map_err(sqlx_to_session_store_error)?;
 
         let record = RuntimeCommandRecord {
             id: uuid::Uuid::new_v4(),
-            session_id: session_id.to_string(),
-            transition_id: transition.id.clone(),
-            phase_node: transition.phase_node.clone(),
+            session_id: delivery_runtime_session_id.to_string(),
+            frame_transition_id: frame_transition.id.clone(),
+            phase_node: frame_transition.phase_node.clone(),
             status: RuntimeCommandStatus::Requested,
-            transition,
+            delivery,
+            frame_transition,
             created_at_ms: now,
             updated_at_ms: now,
             applied_at_ms: None,
             failed_at_ms: None,
             last_error: None,
         };
-        let payload_json =
-            json_string(&record.transition, "session_runtime_commands.payload_json")?;
+        let payload_json = json_string(&record.delivery, "session_runtime_commands.payload_json")?;
         sqlx::query(
             r#"
             INSERT INTO session_runtime_commands (
-                id, session_id, transition_id, phase_node, status, payload_json,
+                id, session_id, frame_transition_id, phase_node, status, payload_json,
                 created_at_ms, updated_at_ms, applied_at_ms, failed_at_ms, last_error
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
         )
         .bind(record.id.to_string())
         .bind(&record.session_id)
-        .bind(&record.transition_id)
+        .bind(&record.frame_transition_id)
         .bind(&record.phase_node)
         .bind(record.status.as_str())
         .bind(payload_json)
@@ -765,11 +777,21 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
     ) -> SessionStoreResult<Vec<RuntimeCommandRecord>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, session_id, transition_id, phase_node, status, payload_json,
-                   created_at_ms, updated_at_ms, applied_at_ms, failed_at_ms, last_error
-            FROM session_runtime_commands
-            WHERE session_id = $1 AND status = $2
-            ORDER BY created_at_ms ASC
+            SELECT c.id, c.session_id, c.frame_transition_id, c.phase_node, c.status, c.payload_json,
+                   c.created_at_ms, c.updated_at_ms, c.applied_at_ms, c.failed_at_ms, c.last_error,
+                   t.id AS frame_transition_record_id,
+                   t.target_frame_id AS frame_transition_target_frame_id,
+                   t.run_id AS frame_transition_run_id,
+                   t.lifecycle_key AS frame_transition_lifecycle_key,
+                   t.phase_node AS frame_transition_phase_node,
+                   t.capability_keys_json AS frame_transition_capability_keys_json,
+                   t.transition_json AS frame_transition_transition_json,
+                   t.source_turn_id AS frame_transition_source_turn_id,
+                   t.created_at_ms AS frame_transition_created_at_ms
+            FROM session_runtime_commands c
+            JOIN agent_frame_transitions t ON t.id = c.frame_transition_id
+            WHERE c.session_id = $1 AND c.status = $2
+            ORDER BY c.created_at_ms ASC
             "#,
         )
         .bind(session_id)
@@ -809,11 +831,21 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         let limit = i64::from(limit.max(1));
         let rows = sqlx::query(
             r#"
-            SELECT id, session_id, transition_id, phase_node, status, payload_json,
-                   created_at_ms, updated_at_ms, applied_at_ms, failed_at_ms, last_error
-            FROM session_runtime_commands
-            WHERE status = ANY($1)
-            ORDER BY updated_at_ms ASC, created_at_ms ASC
+            SELECT c.id, c.session_id, c.frame_transition_id, c.phase_node, c.status, c.payload_json,
+                   c.created_at_ms, c.updated_at_ms, c.applied_at_ms, c.failed_at_ms, c.last_error,
+                   t.id AS frame_transition_record_id,
+                   t.target_frame_id AS frame_transition_target_frame_id,
+                   t.run_id AS frame_transition_run_id,
+                   t.lifecycle_key AS frame_transition_lifecycle_key,
+                   t.phase_node AS frame_transition_phase_node,
+                   t.capability_keys_json AS frame_transition_capability_keys_json,
+                   t.transition_json AS frame_transition_transition_json,
+                   t.source_turn_id AS frame_transition_source_turn_id,
+                   t.created_at_ms AS frame_transition_created_at_ms
+            FROM session_runtime_commands c
+            JOIN agent_frame_transitions t ON t.id = c.frame_transition_id
+            WHERE c.status = ANY($1)
+            ORDER BY c.updated_at_ms ASC, c.created_at_ms ASC
             LIMIT $2
             "#,
         )
@@ -1046,7 +1078,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
             UPDATE sessions
             SET
                 updated_at = $1,
-                last_execution_status = COALESCE($2, last_execution_status),
+                last_delivery_status = COALESCE($2, last_delivery_status),
                 last_turn_id = COALESCE($3, last_turn_id),
                 last_terminal_message = CASE
                     WHEN $4 THEN NULL
@@ -1058,7 +1090,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
             "#,
         )
         .bind(committed_at_ms)
-        .bind(&projection.last_execution_status)
+        .bind(&projection.last_delivery_status)
         .bind(&projection.turn_id)
         .bind(projection.clear_terminal_message)
         .bind(&projection.last_terminal_message)
@@ -1543,7 +1575,7 @@ mod tests {
         BackboneEvent, ItemCompletedNotification, PlatformEvent, SourceInfo, TraceInfo,
     };
     use agentdash_spi::session_persistence::{
-        ExecutionStatus, SessionBootstrapState, SessionCompactionRecord, SessionCompactionStatus,
+        ExecutionStatus, SessionCompactionRecord, SessionCompactionStatus,
         SessionProjectionHeadRecord, SessionProjectionSegmentRecord, TitleSource,
     };
     use chrono::Utc;
@@ -1602,19 +1634,13 @@ mod tests {
             id: id.to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-            companion_context: None,
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         }
     }
 
@@ -1754,19 +1780,13 @@ mod tests {
             id: "sess-1".to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-            companion_context: None,
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 
@@ -1821,19 +1841,13 @@ mod tests {
             id: session_id.clone(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-            companion_context: None,
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 
@@ -1843,14 +1857,9 @@ mod tests {
             .expect("应能读取 session meta")
             .expect("session 应存在");
         stale.updated_at = 10;
-        stale.last_execution_status = ExecutionStatus::Running;
+        stale.last_delivery_status = ExecutionStatus::Running;
         stale.last_turn_id = Some("t-old".to_string());
         stale.executor_session_id = Some("exec-1".to_string());
-        stale.tab_layout = Some(serde_json::json!({
-            "tabs": [{"type_id": "session", "uri": "session://main", "title": "Session", "pinned": true}],
-            "active_tab_uri": "session://main"
-        }));
-        stale.visible_canvas_mount_ids = vec!["canvas-a".to_string()];
 
         let terminal = turn_terminal_envelope(&session_id, "t-new", "turn_completed", "done");
         repo.append_event(&session_id, &terminal)
@@ -1868,19 +1877,10 @@ mod tests {
             .expect("session 应存在");
 
         assert_eq!(merged.last_event_seq, 1);
-        assert_eq!(merged.last_execution_status, ExecutionStatus::Completed);
+        assert_eq!(merged.last_delivery_status, ExecutionStatus::Completed);
         assert_eq!(merged.last_turn_id.as_deref(), Some("t-new"));
         assert_eq!(merged.last_terminal_message.as_deref(), Some("done"));
         assert_eq!(merged.executor_session_id.as_deref(), Some("exec-1"));
-        assert_eq!(
-            merged
-                .tab_layout
-                .as_ref()
-                .and_then(|value| value.get("active_tab_uri"))
-                .and_then(|value| value.as_str()),
-            Some("session://main")
-        );
-        assert_eq!(merged.visible_canvas_mount_ids, vec!["canvas-a"]);
     }
 
     #[tokio::test]

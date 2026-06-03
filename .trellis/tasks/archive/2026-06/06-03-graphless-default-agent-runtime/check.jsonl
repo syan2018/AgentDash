@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify schema baseline and repository SQL match graphless lifecycle requirements."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Check error semantics remain structured across domain/application/API boundaries."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Check Rust quality, DTO naming, and backend test expectations."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Check workflow invariants after separating graphless runtime from explicit Activity graph."}
+{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "Check explicit workflow graph execution remains intact."}
+{"file": ".trellis/spec/backend/workflow/lifecycle-run-link.md", "reason": "Check graphless subject association and runtime lookup semantics."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check Rust contracts and generated TypeScript are synchronized."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Check frontend generated DTO usage and optional fields handling."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Check store state shape handles graphless lifecycle runs."}
+{"file": ".trellis/tasks/06-03-graphless-default-agent-runtime/research/graphless-runtime-audit.md", "reason": "Check implementation covers audited freeform entrypoints and optional anchor assumptions."}

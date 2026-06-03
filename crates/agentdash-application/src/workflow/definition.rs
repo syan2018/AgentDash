@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityLifecycleDefinition, ActivityTransition, WorkflowBindingKind,
-    WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
+    ActivityDefinition, ActivityTransition, AgentProcedure, AgentProcedureContract,
+    DefinitionSource, WorkflowGraph,
 };
 
 pub const TRELLIS_DAG_TASK_TEMPLATE_KEY: &str = "trellis_dag_task";
@@ -15,10 +15,9 @@ pub struct BuiltinWorkflowTemplateBundle {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
     #[serde(default)]
     pub workflows: Vec<BuiltinWorkflowTemplate>,
-    pub lifecycle: BuiltinLifecycleTemplate,
+    pub graph: BuiltinLifecycleTemplate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -26,7 +25,7 @@ pub struct BuiltinWorkflowTemplate {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub contract: WorkflowContract,
+    pub contract: AgentProcedureContract,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -43,44 +42,39 @@ pub struct BuiltinLifecycleTemplate {
 
 #[derive(Debug, Clone)]
 pub struct BuiltinWorkflowBundle {
-    pub workflows: Vec<WorkflowDefinition>,
-    pub lifecycle: ActivityLifecycleDefinition,
+    pub procedures: Vec<AgentProcedure>,
+    pub graph: WorkflowGraph,
 }
 
 impl BuiltinWorkflowTemplateBundle {
     pub fn build_bundle(&self, project_id: Uuid) -> Result<BuiltinWorkflowBundle, String> {
-        let workflows = self
+        let procedures = self
             .workflows
             .iter()
             .map(|template| {
-                WorkflowDefinition::new(
+                AgentProcedure::new(
                     project_id,
                     template.key.clone(),
                     template.name.clone(),
                     template.description.clone(),
-                    self.binding_kinds.clone(),
-                    WorkflowDefinitionSource::BuiltinSeed,
+                    DefinitionSource::BuiltinSeed,
                     template.contract.clone(),
                 )
             })
             .collect::<Result<Vec<_>, String>>()?;
 
-        let lifecycle = ActivityLifecycleDefinition::new(
+        let graph = WorkflowGraph::new(
             project_id,
-            self.lifecycle.key.clone(),
-            self.lifecycle.name.clone(),
-            self.lifecycle.description.clone(),
-            self.binding_kinds.clone(),
-            WorkflowDefinitionSource::BuiltinSeed,
-            self.lifecycle.entry_activity_key.clone(),
-            self.lifecycle.activities.clone(),
-            self.lifecycle.transitions.clone(),
+            self.graph.key.clone(),
+            self.graph.name.clone(),
+            self.graph.description.clone(),
+            DefinitionSource::BuiltinSeed,
+            self.graph.entry_activity_key.clone(),
+            self.graph.activities.clone(),
+            self.graph.transitions.clone(),
         )?;
 
-        Ok(BuiltinWorkflowBundle {
-            workflows,
-            lifecycle,
-        })
+        Ok(BuiltinWorkflowBundle { procedures, graph })
     }
 }
 
@@ -143,12 +137,7 @@ mod tests {
         let bundle = build_builtin_workflow_bundle(Uuid::new_v4(), TRELLIS_DAG_TASK_TEMPLATE_KEY)
             .expect("build bundle");
 
-        assert_eq!(bundle.lifecycle.key, TRELLIS_DAG_TASK_TEMPLATE_KEY);
-        // Model C 收敛：trellis_dag_task 的挂载类型从 "task" 迁移到 "story"
-        assert_eq!(
-            bundle.lifecycle.binding_kinds,
-            vec![WorkflowBindingKind::Story]
-        );
+        assert_eq!(bundle.graph.key, TRELLIS_DAG_TASK_TEMPLATE_KEY);
     }
 
     #[test]
@@ -157,18 +146,13 @@ mod tests {
             build_builtin_workflow_bundle(Uuid::new_v4(), BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY)
                 .expect("build builtin_workflow_admin bundle");
 
-        assert_eq!(bundle.lifecycle.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
-        assert_eq!(
-            bundle.lifecycle.binding_kinds,
-            vec![WorkflowBindingKind::Project],
-            "workflow_management 仅在 Project 级 session 可见，lifecycle 必须绑定到 Project"
-        );
-        assert_eq!(bundle.workflows.len(), 2);
-        assert_eq!(bundle.lifecycle.activities.len(), 2);
-        assert_eq!(bundle.lifecycle.entry_activity_key, "plan");
+        assert_eq!(bundle.graph.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
+        assert_eq!(bundle.procedures.len(), 2);
+        assert_eq!(bundle.graph.activities.len(), 2);
+        assert_eq!(bundle.graph.entry_activity_key, "plan");
 
         let activity_keys = bundle
-            .lifecycle
+            .graph
             .activities
             .iter()
             .map(|activity| activity.key.as_str())
@@ -176,8 +160,8 @@ mod tests {
         assert_eq!(activity_keys, vec!["plan", "apply"]);
 
         // 必须显式声明 plan → apply 的 flow transition，确保调度器可确定下一 Activity。
-        assert_eq!(bundle.lifecycle.transitions.len(), 1);
-        let transition = &bundle.lifecycle.transitions[0];
+        assert_eq!(bundle.graph.transitions.len(), 1);
+        let transition = &bundle.graph.transitions[0];
         assert_eq!(transition.from, "plan");
         assert_eq!(transition.to, "apply");
         assert!(transition.artifact_bindings.is_empty());
@@ -185,7 +169,7 @@ mod tests {
         // 工具能力声明统一进入 workflow.contract.capability_config.tool_directives。
         // 每个 workflow 都必须显式声明 workflow_management，让绑定此 lifecycle 的 Project
         // session 在启动时拿到 workflow 管理工具集。
-        for workflow in &bundle.workflows {
+        for workflow in &bundle.procedures {
             assert!(
                 workflow
                     .contract
@@ -199,15 +183,15 @@ mod tests {
         }
 
         let plan = bundle
-            .workflows
+            .procedures
             .iter()
-            .find(|workflow| workflow.key == "builtin_workflow_admin_plan")
-            .expect("plan workflow exists");
+            .find(|p| p.key == "builtin_workflow_admin_plan")
+            .expect("plan procedure exists");
         let apply = bundle
-            .workflows
+            .procedures
             .iter()
-            .find(|workflow| workflow.key == "builtin_workflow_admin_apply")
-            .expect("apply workflow exists");
+            .find(|p| p.key == "builtin_workflow_admin_apply")
+            .expect("apply procedure exists");
         for tool in ["upsert_workflow_tool", "upsert_lifecycle_tool"] {
             assert!(
                 plan.contract

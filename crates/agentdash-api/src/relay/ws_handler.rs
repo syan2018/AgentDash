@@ -633,7 +633,7 @@ async fn authorize_backend_token(
             ))
         }
         Err(err) => {
-            tracing::error!(error = %err, "relay 握手 token 查找失败");
+            tracing::error!(error = %err, error_debug = ?err, "relay 握手 token 查找失败");
             Err(AuthResponseError::internal(
                 "relay token 校验失败",
                 "服务端无法完成 token 校验",

@@ -14,7 +14,7 @@ import { listProjectVfsMounts } from "../../../services/projectVfsMounts";
 import { fetchProjectExtensions } from "../../../services/extensionManagement";
 import type { ProjectExtensionManagementItemResponse } from "../../../generated/extension-management-contracts";
 import type {
-  ActivityLifecycleDefinition,
+  WorkflowGraph,
   McpPresetDto,
   ProjectVfsMount,
   ProjectAgent,
@@ -303,7 +303,7 @@ function WorkflowList({ onPick }: { onPick: (s: AssetPickerSelection) => void })
     <PickList
       items={visible}
       keyOf={(lc) => lc.id}
-      titleOf={(lc: ActivityLifecycleDefinition) => lc.name}
+      titleOf={(lc: WorkflowGraph) => lc.name}
       hintOf={(lc) => `key: ${lc.key}`}
       onPick={(lc) =>
         onPick({

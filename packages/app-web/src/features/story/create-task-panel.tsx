@@ -1,19 +1,19 @@
 import { useCallback, useState } from "react";
 import { Button, Field, Select, TextInput, Textarea } from "@agentdash/ui";
 import type {
-  AgentBinding,
+  TaskDispatchPreference,
   ContextSourceRef,
   ProjectConfig,
   Story,
   Workspace,
 } from "../../types";
-import { AgentBindingFields } from "../task/agent-binding-fields";
+import { DispatchPreferenceFields } from "../task/dispatch-preference-fields";
 import {
-  createDefaultAgentBinding,
-  hasAgentBindingSelection,
-  normalizeAgentBinding,
+  createDefaultDispatchPreference,
+  hasDispatchPreferenceSelection,
+  normalizeDispatchPreference,
   resolveDefaultWorkspaceId,
-} from "../task/agent-binding";
+} from "../task/dispatch-preference";
 import { useStoryStore } from "../../stores/storyStore";
 import { Tooltip } from "../../components/ui/tooltip";
 
@@ -39,7 +39,7 @@ export function CreateTaskPanel({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [workspaceId, setWorkspaceId] = useState(() => resolveDefaultWorkspaceId(projectConfig, workspaces));
-  const [agentBinding, setAgentBinding] = useState<AgentBinding>(() => createDefaultAgentBinding(projectConfig));
+  const [dispatchPref, setDispatchPref] = useState<TaskDispatchPreference>(() => createDefaultDispatchPreference(projectConfig));
   const [selectedContextIndexes, setSelectedContextIndexes] = useState<number[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formMessage, setFormMessage] = useState<string | null>(null);
@@ -48,7 +48,7 @@ export function CreateTaskPanel({
 
   const openPanel = useCallback(() => {
     setWorkspaceId(defaultWorkspaceId);
-    setAgentBinding(createDefaultAgentBinding(projectConfig));
+    setDispatchPref(createDefaultDispatchPreference(projectConfig));
     setSelectedContextIndexes([]);
     setFormMessage(null);
     setIsExpanded(true);
@@ -68,7 +68,7 @@ export function CreateTaskPanel({
 
   const handleSubmit = async () => {
     if (!title.trim()) return;
-    if (!hasAgentBindingSelection(agentBinding, projectConfig)) {
+    if (!hasDispatchPreferenceSelection(dispatchPref, projectConfig)) {
       setFormMessage("请指定 Agent 类型或预设，或先在 Project 配置中设置 default_agent_type");
       return;
     }
@@ -82,8 +82,8 @@ export function CreateTaskPanel({
         title: title.trim(),
         description: description.trim() || undefined,
         workspace_id: workspaceId || null,
-        agent_binding: normalizeAgentBinding({
-          ...agentBinding,
+        dispatch_preference: normalizeDispatchPreference({
+          ...dispatchPref,
           context_sources: selectedContexts,
         }),
       });
@@ -93,7 +93,7 @@ export function CreateTaskPanel({
       setTitle("");
       setDescription("");
       setWorkspaceId(defaultWorkspaceId);
-      setAgentBinding(createDefaultAgentBinding(projectConfig));
+      setDispatchPref(createDefaultDispatchPreference(projectConfig));
       setSelectedContextIndexes([]);
       setIsExpanded(false);
     } finally {
@@ -159,10 +159,10 @@ export function CreateTaskPanel({
           />
         </Field>
 
-        <AgentBindingFields
-          value={agentBinding}
+        <DispatchPreferenceFields
+          value={dispatchPref}
           projectConfig={projectConfig}
-          onChange={setAgentBinding}
+          onChange={setDispatchPref}
         />
 
         {availableContexts.length > 0 && (

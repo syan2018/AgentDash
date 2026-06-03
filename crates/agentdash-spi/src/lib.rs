@@ -70,15 +70,17 @@ pub use extension_package::{
 pub use hooks::script::HookScriptEvaluator;
 pub use hooks::trace::build_hook_trace_envelope;
 pub use hooks::{
-    ActiveWorkflowMeta, ContextFrame, ContextFrameSection, ContextTokenStats,
-    ExecutionHookProvider, HookApprovalRequest, HookCompactionDecision, HookCompletionStatus,
-    HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery, HookEvaluationTrigger,
-    HookInjection, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
-    HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookStepAdvanceRequest,
+    ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
+    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, AgentFrameRuntimeSnapshot, ContextFrame,
+    ContextFrameSection, ContextTokenStats, ExecutionHookProvider, HookApprovalRequest,
+    HookCompactionDecision, HookCompletionStatus, HookControlTarget, HookDiagnosticEntry,
+    HookEffect, HookError, HookEvaluationQuery, HookEvaluationTrigger, HookInjection,
+    HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
+    HookRuntimeAccess, HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookStepAdvanceRequest,
     HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
-    RuntimeContextFragmentEntry, RuntimeEventSource, RuntimeHookInjectionEntry, RuntimeSkillEntry,
-    RuntimeToolSchemaEntry, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
-    SessionRunContext, SessionSnapshotMetadata, SharedHookSessionRuntime, action_type,
+    RuntimeAdapterProvenance, RuntimeContextFragmentEntry, RuntimeEventSource,
+    RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry, SessionSnapshotMetadata,
+    SharedHookRuntime, SubjectRunContext, action_type,
 };
 
 // ─── platform ───────────────────────────────────────────────
@@ -105,18 +107,18 @@ pub use platform::tool_capability::{
 };
 
 pub use session_persistence::{
-    ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CapabilityArtifactSource,
-    CapabilityContributionRecord, CapabilityDeclarationRecord, CapabilityDimensionKey,
-    CompactionProjectionCommitResult, CompanionSessionContext, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
+    AgentFrameTransitionRecord, ApplyMountOperationsEffect, ApplyVfsOverlayEffect,
+    CapabilityArtifactSource, CapabilityContributionRecord, CapabilityDeclarationRecord,
+    CapabilityDimensionKey, CompactionProjectionCommitResult, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
     EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
     EFFECT_TYPE_SET_MCP_SERVER_SET, EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus,
     NewCompactionProjectionCommit, NewTerminalEffectRecord, PendingCapabilityStateTransition,
     PersistedSessionEvent, RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition,
-    RuntimeCommandRecord, RuntimeCommandStatus, SESSION_PROJECTION_KIND_AUDIT,
-    SESSION_PROJECTION_KIND_HANDOFF, SESSION_PROJECTION_KIND_MODEL_CONTEXT,
-    SESSION_PROJECTION_KIND_TIMELINE, SessionBootstrapState, SessionCompactionRecord,
-    SessionCompactionStatus, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
-    SessionEventStore, SessionMeta, SessionMetaStore, SessionPersistence,
+    RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand, RuntimeDeliveryCommandKind,
+    SESSION_PROJECTION_KIND_AUDIT, SESSION_PROJECTION_KIND_HANDOFF,
+    SESSION_PROJECTION_KIND_MODEL_CONTEXT, SESSION_PROJECTION_KIND_TIMELINE,
+    SessionCompactionRecord, SessionCompactionStatus, SessionCompactionStore, SessionEventBacklog,
+    SessionEventPage, SessionEventStore, SessionMeta, SessionMetaStore, SessionPersistence,
     SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionProjectionStore,
     SessionRuntimeCommandStore, SessionTerminalEffectStore, SetCompanionAgentRosterEffect,
     SetMcpServerSetEffect, SetToolAccessEffect, TerminalEffectRecord, TerminalEffectStatus,

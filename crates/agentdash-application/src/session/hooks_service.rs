@@ -3,12 +3,13 @@ use std::sync::Arc;
 
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
-    HookSessionRuntimeAccess, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookControlTarget,
+    HookRuntimeAccess, HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime,
 };
 
-use super::hook_runtime::HookSessionRuntime;
 use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
+use super::types::AgentFrameRuntimeTarget;
+use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 
 #[derive(Clone)]
 pub struct SessionHookService {
@@ -20,47 +21,78 @@ impl SessionHookService {
         Self { hub }
     }
 
-    pub async fn ensure_hook_session_runtime(
+    /// 基于 `AgentFrameRuntimeTarget` 确保 hook runtime 就绪并校验 target 一致性。
+    pub async fn ensure_hook_runtime_for_target(
         &self,
-        session_id: &str,
+        target: &AgentFrameRuntimeTarget,
         turn_id: Option<&str>,
-    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
-        self.hub
-            .ensure_hook_session_runtime(session_id, turn_id)
-            .await
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
+        let Some(runtime) = self
+            .hub
+            .ensure_hook_runtime_for_delivery_session(&target.delivery_runtime_session_id, turn_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        validate_hook_runtime_target(runtime.as_ref(), target)?;
+        Ok(Some(runtime))
     }
 
-    pub async fn get_hook_session_runtime(
+    /// 基于 `AgentFrameRuntimeTarget` 查找已缓存的 hook runtime 并校验 target 一致性。
+    pub async fn get_hook_runtime_for_target(
         &self,
-        session_id: &str,
-    ) -> Option<SharedHookSessionRuntime> {
-        self.hub.get_hook_session_runtime(session_id).await
+        target: &AgentFrameRuntimeTarget,
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
+        let Some(runtime) = self
+            .hub
+            .get_hook_runtime_by_delivery_session(&target.delivery_runtime_session_id)
+            .await
+        else {
+            return Ok(None);
+        };
+        validate_hook_runtime_target(runtime.as_ref(), target)?;
+        Ok(Some(runtime))
     }
 
-    pub async fn reload_session_hook_runtime(
+    pub async fn reload_hook_runtime(
         &self,
         session_id: &str,
         turn_id: &str,
         executor: &str,
         permission_policy: Option<&str>,
         working_directory: &Path,
-    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
         let Some(provider) = self.hub.hook_provider.as_ref() else {
             self.hub
                 .runtime_registry
                 .with_runtime_mut(session_id, |runtime| {
                     if let Some(runtime) = runtime {
-                        runtime.hook_session = None;
+                        runtime.hook_runtime = None;
                     }
                 })
                 .await;
             return Ok(None);
         };
 
+        let Some(target) = resolve_runtime_hook_target(provider.as_ref(), session_id).await? else {
+            self.hub
+                .runtime_registry
+                .with_runtime_mut(session_id, |session_runtime| {
+                    if let Some(session_runtime) = session_runtime {
+                        session_runtime.hook_runtime = None;
+                    }
+                })
+                .await;
+            return Ok(None);
+        };
         let mut snapshot = provider
-            .load_session_snapshot(SessionHookSnapshotQuery {
-                session_id: session_id.to_string(),
-                turn_id: Some(turn_id.to_string()),
+            .load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: target.clone(),
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    session_id.to_string(),
+                    Some(turn_id.to_string()),
+                    "hook_runtime_reload",
+                ),
             })
             .await
             .map_err(|error| {
@@ -75,17 +107,26 @@ impl SessionHookService {
             working_directory,
         );
 
-        let runtime = Arc::new(HookSessionRuntime::new(
-            session_id.to_string(),
-            provider.clone(),
-            snapshot,
-        ));
+        let runtime =
+            build_frame_hook_runtime(&self.hub, session_id, target, provider.clone(), snapshot)
+                .await?;
+        let Some(runtime) = runtime else {
+            self.hub
+                .runtime_registry
+                .with_runtime_mut(session_id, |session_runtime| {
+                    if let Some(session_runtime) = session_runtime {
+                        session_runtime.hook_runtime = None;
+                    }
+                })
+                .await;
+            return Ok(None);
+        };
 
         self.hub
             .runtime_registry
             .with_runtime_mut(session_id, |session_runtime| {
                 if let Some(session_runtime) = session_runtime {
-                    session_runtime.hook_session = Some(runtime.clone());
+                    session_runtime.hook_runtime = Some(runtime.clone());
                 }
             })
             .await;
@@ -93,23 +134,19 @@ impl SessionHookService {
         Ok(Some(runtime))
     }
 
-    pub(crate) async fn resolve_hook_session(
+    pub(crate) async fn resolve_hook_runtime(
         &self,
         session_id: &str,
         turn_id: &str,
         executor_config: &agentdash_domain::common::AgentConfig,
         working_directory: &Path,
         is_owner_bootstrap: bool,
-    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
-        let existing = self
-            .hub
-            .runtime_registry
-            .hook_session_runtime(session_id)
-            .await;
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
+        let existing = self.hub.runtime_registry.hook_runtime(session_id).await;
 
         if is_owner_bootstrap || existing.is_none() {
             return self
-                .reload_session_hook_runtime(
+                .reload_hook_runtime(
                     session_id,
                     turn_id,
                     executor_config.executor.as_str(),
@@ -121,9 +158,12 @@ impl SessionHookService {
 
         if let Some(ref hs) = existing {
             let _ = hs
-                .refresh(SessionHookRefreshQuery {
-                    session_id: session_id.to_string(),
-                    turn_id: Some(turn_id.to_string()),
+                .refresh_from_provenance(HookRuntimeRefreshQuery {
+                    provenance: RuntimeAdapterProvenance::runtime_session(
+                        session_id.to_string(),
+                        Some(turn_id.to_string()),
+                        "subsequent_turn_refresh",
+                    ),
                     reason: Some("subsequent_turn_refresh".to_string()),
                 })
                 .await;
@@ -133,17 +173,37 @@ impl SessionHookService {
 
     pub(crate) async fn emit_session_hook_trigger(
         &self,
-        hook_session: &dyn HookSessionRuntimeAccess,
+        hook_runtime: &dyn HookRuntimeAccess,
         input: &HookTriggerInput<'_>,
     ) -> HookTriggerDispatchResult {
         self.hub
-            .emit_session_hook_trigger(hook_session, input)
+            .emit_session_hook_trigger(hook_runtime, input)
             .await
     }
 }
 
+fn validate_hook_runtime_target(
+    hook_runtime: &dyn HookRuntimeAccess,
+    target: &AgentFrameRuntimeTarget,
+) -> Result<(), ConnectorError> {
+    let control_target = hook_runtime.control_target();
+    if hook_runtime.session_id() == target.delivery_runtime_session_id
+        && control_target.frame_id == target.frame_id
+    {
+        return Ok(());
+    }
+
+    Err(ConnectorError::Runtime(format!(
+        "Hook runtime target mismatch: runtime session `{}` / frame `{}` cannot apply to delivery RuntimeSession `{}` / frame `{}`",
+        hook_runtime.session_id(),
+        control_target.frame_id,
+        target.delivery_runtime_session_id,
+        target.frame_id
+    )))
+}
+
 fn enrich_hook_snapshot_runtime_metadata(
-    snapshot: &mut SessionHookSnapshot,
+    snapshot: &mut AgentFrameHookSnapshot,
     turn_id: &str,
     connector_id: &str,
     executor: &str,
@@ -158,4 +218,73 @@ fn enrich_hook_snapshot_runtime_metadata(
     metadata.executor = Some(executor.to_string());
     metadata.permission_policy = permission_policy.map(ToString::to_string);
     metadata.working_directory = Some(working_directory.to_string_lossy().replace('\\', "/"));
+}
+
+pub(crate) async fn build_frame_hook_runtime(
+    hub: &SessionRuntimeInner,
+    session_id: &str,
+    target: HookControlTarget,
+    provider: Arc<dyn agentdash_spi::hooks::ExecutionHookProvider>,
+    snapshot: AgentFrameHookSnapshot,
+) -> Result<Option<SharedHookRuntime>, ConnectorError> {
+    let Some(frame_repo) = hub.agent_frame_repo.as_ref() else {
+        return Err(ConnectorError::Runtime(
+            "AgentFrameRepository 未注入，拒绝创建 hook runtime".to_string(),
+        ));
+    };
+    let Some(frame) = frame_repo.get(target.frame_id).await.map_err(|error| {
+        ConnectorError::Runtime(format!("查询 Hook target 对应 AgentFrame 失败: {error}"))
+    })?
+    else {
+        return Err(ConnectorError::Runtime(format!(
+            "Hook target frame `{}` 不存在",
+            target.frame_id
+        )));
+    };
+    if frame.agent_id != target.agent_id {
+        return Err(ConnectorError::Runtime(format!(
+            "Hook target frame `{}` belongs to agent `{}`, not `{}`",
+            frame.id, frame.agent_id, target.agent_id
+        )));
+    }
+    let Some(anchor_repo) = hub.execution_anchor_repo.as_ref() else {
+        return Err(ConnectorError::Runtime(
+            "RuntimeSessionExecutionAnchorRepository 未注入，拒绝创建 hook runtime".to_string(),
+        ));
+    };
+    let anchor = anchor_repo
+        .find_by_session(session_id)
+        .await
+        .map_err(|error| {
+            ConnectorError::Runtime(format!(
+                "查询 Hook target 对应 RuntimeSessionExecutionAnchor 失败: {error}"
+            ))
+        })?;
+    if !anchor.is_some_and(|anchor| anchor.agent_id == target.agent_id) {
+        return Err(ConnectorError::Runtime(format!(
+            "Hook target agent `{}` does not own delivery RuntimeSession `{session_id}`",
+            target.agent_id
+        )));
+    }
+    Ok(Some(Arc::new(AgentFrameHookRuntime::from_frame(
+        target.run_id,
+        &frame,
+        session_id.to_string(),
+        provider,
+        snapshot,
+    ))))
+}
+
+pub(crate) async fn resolve_runtime_hook_target(
+    provider: &dyn ExecutionHookProvider,
+    session_id: &str,
+) -> Result<Option<HookControlTarget>, ConnectorError> {
+    provider
+        .resolve_runtime_hook_target(session_id)
+        .await
+        .map_err(|error| {
+            ConnectorError::Runtime(format!(
+                "解析 RuntimeSession `{session_id}` 的 Hook control target 失败: {error}"
+            ))
+        })
 }

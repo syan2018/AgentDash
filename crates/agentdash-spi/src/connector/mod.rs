@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::context::capability::SkillEntry;
-use crate::hooks::{ContextFrame, HookSessionRuntimeAccess};
+use crate::hooks::{ContextFrame, HookRuntimeAccess};
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 
 pub mod capability_delta;
@@ -95,7 +95,7 @@ pub struct ExecutionBackendPlacement {
 /// 会随 session hot-update 或 hook 触发而重建。
 #[derive(Clone, Default)]
 pub struct ExecutionTurnFrame {
-    pub hook_session: Option<Arc<dyn HookSessionRuntimeAccess>>,
+    pub hook_runtime: Option<Arc<dyn HookRuntimeAccess>>,
     pub capability_state: CapabilityState,
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
     /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
@@ -142,7 +142,7 @@ impl std::fmt::Debug for ExecutionContext {
         f.debug_struct("ExecutionContext")
             .field("turn_id", &self.session.turn_id)
             .field("executor_config", &self.session.executor_config)
-            .field("hook_session", &self.turn.hook_session)
+            .field("hook_runtime", &self.turn.hook_runtime)
             .field(
                 "runtime_delegate",
                 &self.turn.runtime_delegate.as_ref().map(|_| ".."),
@@ -266,11 +266,18 @@ pub struct SkillDimension {
     pub skills: Vec<SkillEntry>,
 }
 
-/// 解析后的能力运行态。
+/// 解析后的能力运行态——AgentFrame revision 的只读投影。
 ///
-/// 维度化唯一状态容器 = Resolver 最终产出 = 运行时唯一真相 = delta 基准。
-/// 配置层的 `ToolCapabilityDirective` 与 resolver 内部归约态都必须编译到这里，
-/// 运行期不再维护并行的 surface / flow capability 状态。
+/// **数据流向**：
+/// - **写入**：所有写入通过 `AgentFrameBuilder::with_capability_state` →
+///   AgentFrame revision（持久化权威源）→ 内存缓存同步。
+/// - **读取**：运行时读取来自内存缓存（`SessionProfile.capability_state` /
+///   `TurnExecution.capability_state`），缓存内容与最新 frame revision 保持一致。
+/// - **投影**：`project_capability_state_from_frame` 从 AgentFrame JSON 反序列化出此结构。
+///
+/// 保留此结构体用于序列化、事件 payload（`CapabilityStateDelta`）、
+/// 以及各层消费者的只读查询。直接对字段赋值仅限于 diff 应用路径
+/// （`replay_effect` 等纯函数在 clone 副本上操作）。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityState {
     /// 工具 + MCP 维度。

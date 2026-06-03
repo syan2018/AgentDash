@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -43,6 +44,7 @@ pub struct ActivityPortValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActivityOutputArtifact {
+    pub graph_instance_id: Uuid,
     pub activity_key: String,
     pub attempt: u32,
     pub port_key: String,
@@ -52,9 +54,11 @@ pub struct ActivityOutputArtifact {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActivityInputArtifact {
+    pub graph_instance_id: Uuid,
     pub activity_key: String,
     pub attempt: u32,
     pub port_key: String,
+    pub source_graph_instance_id: Uuid,
     pub source_activity_key: String,
     pub source_attempt: u32,
     pub source_port_key: String,
@@ -64,6 +68,10 @@ pub struct ActivityInputArtifact {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActivityLifecycleRunState {
+    /// 当前 run state 所属的 graph instance，用于保证同一 LifecycleRun
+    /// 内不同 WorkflowGraphInstance 的同名 activity key 互不干扰。
+    #[serde(default = "Uuid::nil")]
+    pub graph_instance_id: Uuid,
     pub status: ActivityRunStatus,
     pub attempts: Vec<ActivityAttemptState>,
     pub outputs: Vec<ActivityOutputArtifact>,
@@ -84,7 +92,7 @@ pub enum ActivityRunStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutorRunRef {
-    AgentSession { session_id: String },
+    RuntimeSession { session_id: String },
     FunctionRun { run_id: String },
     HumanDecision { decision_id: String },
 }
@@ -144,8 +152,8 @@ pub enum LifecycleRunStatus {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleExecutionEventKind {
-    StepActivated,
-    StepCompleted,
+    ActivityActivated,
+    ActivityCompleted,
     ConstraintBlocked,
     CompletionEvaluated,
     ArtifactAppended,
@@ -155,7 +163,7 @@ pub enum LifecycleExecutionEventKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LifecycleExecutionEntry {
     pub timestamp: DateTime<Utc>,
-    pub step_key: String,
+    pub activity_key: String,
     pub event_kind: LifecycleExecutionEventKind,
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

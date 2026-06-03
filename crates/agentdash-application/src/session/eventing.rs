@@ -738,7 +738,7 @@ mod tests {
     use crate::session::{
         MemorySessionPersistence,
         persistence::SessionStoreSet,
-        types::{ExecutionStatus, SessionBootstrapState, SessionMeta},
+        types::{ExecutionStatus, SessionMeta},
     };
 
     fn test_eventing_service(stores: SessionStoreSet) -> SessionEventingService {
@@ -754,19 +754,13 @@ mod tests {
             id: session_id.to_string(),
             title: "New session".to_string(),
             title_source,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: Some("thread-1".to_string()),
-            companion_context: None,
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         }
     }
 

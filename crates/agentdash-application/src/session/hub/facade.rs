@@ -1,4 +1,4 @@
-﻿//! `SessionRuntimeInner` 装配对象的内部 helper 与测试入口。
+//! `SessionRuntimeInner` 装配对象的内部 helper 与测试入口。
 //!
 //! 新的外部调用点必须依赖具体 service；Commit 8 会继续把内部业务实现
 //! 下沉到明确的能力服务或依赖包。
@@ -6,16 +6,22 @@
 use std::io;
 
 #[cfg(test)]
-#[cfg(test)]
-use super::super::construction::SessionConstructionPlan;
+#[allow(deprecated)]
+use super::super::construction::RuntimeContextInspectionPlan;
 #[cfg(test)]
 use super::super::launch::{SessionLaunchDeps, SessionLaunchOrchestrator};
-use super::super::types::*;
+#[cfg(test)]
+use super::super::types::{SessionExecutionState, SessionMeta};
+use super::super::{AgentFrameTransitionRecord, RuntimeDeliveryCommand};
 use super::SessionRuntimeInner;
+#[cfg(test)]
+use crate::workflow::runtime_launch::{
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
+};
 use agentdash_agent_protocol::BackboneEnvelope;
 #[cfg(test)]
 use agentdash_spi::ConnectorError;
-use agentdash_spi::hooks::{ContextFrame, SharedHookSessionRuntime};
+use agentdash_spi::hooks::{ContextFrame, SharedHookRuntime};
 #[cfg(test)]
 use agentdash_spi::session_persistence::SessionStoreResult;
 
@@ -49,11 +55,15 @@ impl SessionRuntimeInner {
         let _ = self.eventing_service().ensure_session(session_id).await;
     }
 
-    pub async fn get_hook_session_runtime(
+    /// Delivery adapter: 根据 RuntimeSession id 查找已缓存的 hook runtime。
+    ///
+    /// 业务控制路径应使用 `SessionHookService::get_hook_runtime_for_target`，
+    /// 此方法仅供 hub 内部 adapter 场景使用。
+    pub(crate) async fn get_hook_runtime_by_delivery_session(
         &self,
         session_id: &str,
-    ) -> Option<SharedHookSessionRuntime> {
-        self.runtime_registry.hook_session_runtime(session_id).await
+    ) -> Option<SharedHookRuntime> {
+        self.runtime_registry.hook_runtime(session_id).await
     }
 
     pub(crate) async fn emit_context_frame(
@@ -67,14 +77,19 @@ impl SessionRuntimeInner {
             .await
     }
 
-    pub(crate) async fn enqueue_pending_capability_state_transition(
+    pub(crate) async fn enqueue_runtime_delivery_command(
         &self,
-        session_id: &str,
-        transition: PendingCapabilityStateTransition,
+        delivery_runtime_session_id: &str,
+        delivery: RuntimeDeliveryCommand,
+        frame_transition: AgentFrameTransitionRecord,
     ) -> io::Result<()> {
         self.stores
             .runtime_commands
-            .upsert_runtime_command_request(session_id, transition)
+            .upsert_runtime_delivery_command(
+                delivery_runtime_session_id,
+                delivery,
+                frame_transition,
+            )
             .await?;
         Ok(())
     }
@@ -82,13 +97,6 @@ impl SessionRuntimeInner {
     pub async fn has_live_executor_session(&self, session_id: &str) -> bool {
         self.core_service()
             .has_live_executor_session(session_id)
-            .await
-    }
-
-    #[cfg(test)]
-    pub async fn mark_owner_bootstrap_pending(&self, session_id: &str) -> SessionStoreResult<()> {
-        self.core_service()
-            .mark_owner_bootstrap_pending(session_id)
             .await
     }
 
@@ -111,13 +119,15 @@ impl SessionRuntimeInner {
     ///
     /// 生产入口必须走 [`LaunchCommand`]，不能重新引入已组装 prompt 的旁路。
     #[cfg(test)]
+    #[allow(deprecated)]
     pub(crate) async fn start_prompt(
         &self,
         session_id: &str,
-        construction: SessionConstructionPlan,
+        construction: RuntimeContextInspectionPlan,
     ) -> Result<String, ConnectorError> {
+        let envelope = envelope_from_construction(construction);
         SessionLaunchOrchestrator::new(SessionLaunchDeps::from_inner(self))
-            .launch_with_construction_for_test(session_id, construction)
+            .launch_with_envelope_for_test(session_id, envelope)
             .await
     }
 
@@ -142,5 +152,61 @@ impl SessionRuntimeInner {
         self.eventing_service()
             .persist_notification(session_id, envelope)
             .await
+    }
+}
+
+#[cfg(test)]
+#[allow(deprecated)]
+fn envelope_from_construction(construction: RuntimeContextInspectionPlan) -> FrameLaunchEnvelope {
+    let executor_config = construction
+        .execution_profile
+        .executor_config
+        .unwrap_or_else(|| agentdash_spi::AgentConfig::new("test"));
+    let capability_state = construction
+        .projections
+        .capability_state
+        .unwrap_or_default();
+    let vfs = construction.surface.vfs.unwrap_or_default();
+    let working_directory = construction
+        .workspace
+        .working_directory
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+
+    FrameLaunchEnvelope {
+        surface: FrameRuntimeSurface {
+            agent_id: uuid::Uuid::new_v4(),
+            frame_id: uuid::Uuid::new_v4(),
+            frame_revision: 1,
+            procedure_ref: None,
+            capability_surface: serde_json::Value::Null,
+            context_slice: serde_json::Value::Null,
+            vfs_surface: serde_json::Value::Null,
+            mcp_surface: serde_json::Value::Null,
+            runtime_session_id: Some(construction.session_id.clone()),
+            graph_instance_id: None,
+            activity_key: None,
+        },
+        intent: FrameLaunchIntent {
+            prompt_blocks: construction.prompt.prompt_blocks,
+            environment_variables: construction.prompt.environment_variables,
+            identity: None,
+            terminal_hook_effect_binding: None,
+            discovered_guidelines: construction.projections.discovered_guidelines,
+            extension_runtime: construction.projections.extension_runtime,
+        },
+        working_directory,
+        executor_config,
+        capability_state,
+        vfs,
+        mcp_servers: construction.projections.mcp_servers,
+        context_bundle: construction.context.bundle,
+        continuation_context_frame: None,
+        base_capability_state: construction.resolution.runtime_base_capability_state,
+        resolution_trace: LaunchResolutionTrace {
+            vfs_source: construction.resolution.vfs_source,
+            mcp_source: construction.resolution.mcp_source,
+            capability_source: construction.resolution.capability_source,
+            pending_overlay_applied: construction.resolution.pending_overlay_applied,
+        },
     }
 }

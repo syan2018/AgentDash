@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::hooks::{
-    HookEffect, HookSessionRuntimeAccess, HookTraceTrigger, HookTrigger, SharedHookSessionRuntime,
+    HookEffect, HookRuntimeAccess, HookTraceTrigger, HookTrigger, SharedHookRuntime,
 };
 use tokio::sync::RwLock;
 
@@ -50,7 +50,7 @@ pub(crate) struct TerminalEffectDispatchInput {
     pub terminal_kind: TurnTerminalKind,
     pub terminal_message: Option<String>,
     pub source: SourceInfo,
-    pub hook_session: Option<SharedHookSessionRuntime>,
+    pub hook_runtime: Option<SharedHookRuntime>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
 }
 
@@ -80,7 +80,7 @@ pub(crate) struct TerminalHookTriggerRequest<'a> {
 pub(crate) trait TerminalHookTriggerPort: Send + Sync {
     async fn emit_terminal_hook_trigger(
         &self,
-        hook_session: &dyn HookSessionRuntimeAccess,
+        hook_runtime: &dyn HookRuntimeAccess,
         input: TerminalHookTriggerRequest<'_>,
     ) -> Vec<HookEffect>;
 }
@@ -102,12 +102,12 @@ impl SessionTerminalEffectDispatcher {
         let mut batch = EnqueuedTerminalEffects::default();
         let terminal_state = input.terminal_kind.state_tag().to_string();
 
-        if let Some(hook_session) = input.hook_session.as_ref() {
+        if let Some(hook_runtime) = input.hook_runtime.as_ref() {
             let effects = self
                 .deps
                 .hook_trigger
                 .emit_terminal_hook_trigger(
-                    hook_session.as_ref(),
+                    hook_runtime.as_ref(),
                     TerminalHookTriggerRequest {
                         session_id: &input.session_id,
                         turn_id: Some(&input.turn_id),
@@ -175,7 +175,7 @@ impl SessionTerminalEffectDispatcher {
             .await;
         }
 
-        if should_auto_resume(input.terminal_kind, input.hook_session.as_ref()) {
+        if should_auto_resume(input.terminal_kind, input.hook_runtime.as_ref()) {
             self.enqueue(
                 &mut batch,
                 NewTerminalEffectRecord {
@@ -414,11 +414,11 @@ const MAX_TERMINAL_EFFECT_ATTEMPTS: u32 = 3;
 
 fn should_auto_resume(
     terminal_kind: TurnTerminalKind,
-    hook_session: Option<&SharedHookSessionRuntime>,
+    hook_runtime: Option<&SharedHookRuntime>,
 ) -> bool {
     matches!(terminal_kind, TurnTerminalKind::Completed)
-        && hook_session.as_ref().is_some_and(|hook_session| {
-            let trace = hook_session.trace();
+        && hook_runtime.as_ref().is_some_and(|hook_runtime| {
+            let trace = hook_runtime.trace();
             trace
                 .iter()
                 .rev()
@@ -442,7 +442,7 @@ mod tests {
 
     use crate::session::hub::SessionRuntimeInner;
     use crate::session::post_turn_handler::TerminalHookEffectHandlerRegistry;
-    use crate::session::types::{ExecutionStatus, SessionBootstrapState, SessionMeta, TitleSource};
+    use crate::session::types::{ExecutionStatus, SessionMeta, TitleSource};
     use crate::session::{MemorySessionPersistence, SessionMetaStore};
 
     #[test]
@@ -477,19 +477,13 @@ mod tests {
                 id: "sess-hook-replay".to_string(),
                 title: "hook replay".to_string(),
                 title_source: TitleSource::Auto,
-                project_id: None,
                 created_at: 1,
                 updated_at: 1,
                 last_event_seq: 0,
-                last_execution_status: ExecutionStatus::Idle,
+                last_delivery_status: ExecutionStatus::Idle,
                 last_turn_id: None,
                 last_terminal_message: None,
-                executor_config: None,
                 executor_session_id: None,
-                companion_context: None,
-                tab_layout: None,
-                visible_canvas_mount_ids: Vec::new(),
-                bootstrap_state: SessionBootstrapState::Plain,
             })
             .await
             .expect("session should be created");

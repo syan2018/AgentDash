@@ -4,45 +4,42 @@ use uuid::Uuid;
 
 use crate::shared_library::InstalledAssetSource;
 
-use super::validation::{validate_activity_lifecycle_definition, validate_workflow_definition};
+use super::validation::{validate_agent_procedure, validate_workflow_graph};
 use super::value_objects::{
-    ActivityDefinition, ActivityExecutionClaimStatus, ActivityLifecycleRunState, ActivityRunStatus,
-    ActivityTransition, EffectiveSessionContract, ExecutorRunRef, LifecycleExecutionEntry,
-    LifecycleRunStatus, ValidationIssue, WorkflowBindingKind, WorkflowContract,
-    WorkflowDefinitionSource, normalize_workflow_binding_kinds,
+    ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaimStatus,
+    ActivityLifecycleRunState, ActivityRunStatus, ActivityTransition, AgentProcedureContract,
+    DefinitionSource, EffectiveSessionContract, ExecutorRunRef, LifecycleExecutionEntry,
+    LifecycleRunStatus, ValidationIssue,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowDefinition {
+pub struct AgentProcedure {
     pub id: Uuid,
     pub project_id: Uuid,
     pub key: String,
     pub name: String,
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
-    pub source: WorkflowDefinitionSource,
+    pub source: DefinitionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_source: Option<InstalledAssetSource>,
     pub version: i32,
-    pub contract: WorkflowContract,
+    pub contract: AgentProcedureContract,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-impl WorkflowDefinition {
+impl AgentProcedure {
     pub fn new(
         project_id: Uuid,
         key: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
-        binding_kinds: Vec<WorkflowBindingKind>,
-        source: WorkflowDefinitionSource,
-        contract: WorkflowContract,
+        source: DefinitionSource,
+        contract: AgentProcedureContract,
     ) -> Result<Self, String> {
         let key = key.into();
         let name = name.into();
-        let binding_kinds = normalize_workflow_binding_kinds(binding_kinds)?;
-        validate_workflow_definition(&key, &name, &contract)?;
+        validate_agent_procedure(&key, &name, &contract)?;
 
         let now = Utc::now();
         Ok(Self {
@@ -51,7 +48,6 @@ impl WorkflowDefinition {
             key,
             name,
             description: description.into(),
-            binding_kinds,
             source,
             installed_source: None,
             version: 1,
@@ -62,10 +58,10 @@ impl WorkflowDefinition {
     }
 
     pub fn validate_full(&self) -> Vec<ValidationIssue> {
-        match validate_workflow_definition(&self.key, &self.name, &self.contract) {
+        match validate_agent_procedure(&self.key, &self.name, &self.contract) {
             Ok(()) => Vec::new(),
             Err(error) => vec![ValidationIssue::error(
-                "workflow_definition_invalid",
+                "agent_procedure_invalid",
                 error,
                 "contract",
             )],
@@ -74,14 +70,13 @@ impl WorkflowDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActivityLifecycleDefinition {
+pub struct WorkflowGraph {
     pub id: Uuid,
     pub project_id: Uuid,
     pub key: String,
     pub name: String,
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
-    pub source: WorkflowDefinitionSource,
+    pub source: DefinitionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_source: Option<InstalledAssetSource>,
     pub version: i32,
@@ -96,6 +91,7 @@ pub struct ActivityLifecycleDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivityExecutionClaim {
     pub run_id: Uuid,
+    pub graph_instance_id: Uuid,
     pub activity_key: String,
     pub attempt: u32,
     pub claim_id: Uuid,
@@ -111,6 +107,7 @@ pub struct ActivityExecutionClaim {
 impl ActivityExecutionClaim {
     pub fn new(
         run_id: Uuid,
+        graph_instance_id: Uuid,
         activity_key: impl Into<String>,
         attempt: u32,
         executor_kind: impl Into<String>,
@@ -119,12 +116,13 @@ impl ActivityExecutionClaim {
         let now = Utc::now();
         Self {
             run_id,
+            graph_instance_id,
             activity_key: activity_key.clone(),
             attempt,
             claim_id: Uuid::new_v4(),
             executor_kind: executor_kind.into(),
             status: ActivityExecutionClaimStatus::Claiming,
-            idempotency_key: format!("{run_id}:{activity_key}:{attempt}"),
+            idempotency_key: format!("{run_id}:{graph_instance_id}:{activity_key}:{attempt}"),
             executor_run_ref: None,
             created_at: now,
             updated_at: now,
@@ -132,14 +130,13 @@ impl ActivityExecutionClaim {
     }
 }
 
-impl ActivityLifecycleDefinition {
+impl WorkflowGraph {
     pub fn new(
         project_id: Uuid,
         key: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
-        binding_kinds: Vec<WorkflowBindingKind>,
-        source: WorkflowDefinitionSource,
+        source: DefinitionSource,
         entry_activity_key: impl Into<String>,
         activities: Vec<ActivityDefinition>,
         transitions: Vec<ActivityTransition>,
@@ -147,14 +144,7 @@ impl ActivityLifecycleDefinition {
         let key = key.into();
         let name = name.into();
         let entry_activity_key = entry_activity_key.into();
-        let binding_kinds = normalize_workflow_binding_kinds(binding_kinds)?;
-        validate_activity_lifecycle_definition(
-            &key,
-            &name,
-            &entry_activity_key,
-            &activities,
-            &transitions,
-        )?;
+        validate_workflow_graph(&key, &name, &entry_activity_key, &activities, &transitions)?;
 
         let now = Utc::now();
         Ok(Self {
@@ -163,7 +153,6 @@ impl ActivityLifecycleDefinition {
             key,
             name,
             description: description.into(),
-            binding_kinds,
             source,
             installed_source: None,
             version: 1,
@@ -176,7 +165,7 @@ impl ActivityLifecycleDefinition {
     }
 
     pub fn validate_full(&self) -> Vec<ValidationIssue> {
-        match validate_activity_lifecycle_definition(
+        match validate_workflow_graph(
             &self.key,
             &self.name,
             &self.entry_activity_key,
@@ -185,7 +174,7 @@ impl ActivityLifecycleDefinition {
         ) {
             Ok(()) => Vec::new(),
             Err(error) => vec![ValidationIssue::error(
-                "activity_lifecycle_definition_invalid",
+                "workflow_graph_invalid",
                 error,
                 "activities",
             )],
@@ -193,74 +182,76 @@ impl ActivityLifecycleDefinition {
     }
 }
 
+/// 结构化的活跃 Activity 引用。替代旧的 `"graph_instance_id:activity_key"` 字符串拼接。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActiveActivityRef {
+    pub run_id: Uuid,
+    pub graph_instance_id: Uuid,
+    pub activity_key: String,
+    pub attempt: u32,
+    pub status: ActivityAttemptStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleRunTopology {
+    Graphless,
+    WorkflowGraph,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleRun {
     pub id: Uuid,
     pub project_id: Uuid,
-    pub lifecycle_id: Uuid,
-    /// 仅表示当前 run 关联的 runtime session（用于 event log、debug replay 等）。
-    /// 业务归属（如 Story、RoutineExecution）通过 `LifecycleRunLink` 显式关联层表达，
-    /// 不再由此字段推断。
+    pub topology: LifecycleRunTopology,
+    /// 此 run 关联的 root WorkflowGraph ID；graphless run 不拥有 WorkflowGraph。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
+    pub root_graph_id: Option<Uuid>,
     pub status: LifecycleRunStatus,
-    /// 当前所有可执行（Ready/Running）的 node key 集合。
-    /// 线性 lifecycle 中此集合只有 0 或 1 个元素。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub active_node_keys: Vec<String>,
     #[serde(default)]
     pub execution_log: Vec<LifecycleExecutionEntry>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub activity_state: Option<ActivityLifecycleRunState>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
 }
 
 impl LifecycleRun {
-    /// 返回「当前活跃」的首个 step key。线性推进时即唯一活跃 step；
-    /// DAG 下返回 `active_node_keys.first()`。
-    pub fn current_step_key(&self) -> Option<&str> {
-        self.active_node_keys.first().map(String::as_str)
-    }
-
-    pub fn new_activity(
-        project_id: Uuid,
-        lifecycle_id: Uuid,
-        session_id: Option<String>,
-        activity_state: ActivityLifecycleRunState,
-    ) -> Result<Self, String> {
-        if activity_state.attempts.is_empty() {
-            return Err("activity lifecycle run 至少需要一个 attempt".to_string());
-        }
+    pub fn new_control(project_id: Uuid, root_graph_id: Uuid) -> Self {
         let now = Utc::now();
-        let active_node_keys = active_activity_keys(&activity_state);
-        let status = lifecycle_status_from_activity_status(activity_state.status);
-        Ok(Self {
+        Self {
             id: Uuid::new_v4(),
             project_id,
-            lifecycle_id,
-            session_id,
-            status,
-            active_node_keys,
+            topology: LifecycleRunTopology::WorkflowGraph,
+            root_graph_id: Some(root_graph_id),
+            status: LifecycleRunStatus::Ready,
             execution_log: Vec::new(),
-            activity_state: Some(activity_state),
             created_at: now,
             updated_at: now,
             last_activity_at: now,
-        })
+        }
     }
 
-    /// 绑定 runtime session（attempt 开始执行时调用）。
-    pub fn bind_runtime_session(&mut self, session_id: String) {
-        self.session_id = Some(session_id);
-        self.updated_at = Utc::now();
+    pub fn new_graphless(project_id: Uuid) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            project_id,
+            topology: LifecycleRunTopology::Graphless,
+            root_graph_id: None,
+            status: LifecycleRunStatus::Ready,
+            execution_log: Vec::new(),
+            created_at: now,
+            updated_at: now,
+            last_activity_at: now,
+        }
     }
 
-    pub fn replace_activity_state(&mut self, activity_state: ActivityLifecycleRunState) {
-        self.status = lifecycle_status_from_activity_status(activity_state.status);
-        self.active_node_keys = active_activity_keys(&activity_state);
-        self.activity_state = Some(activity_state);
+    pub fn sync_graph_instance_activity_projections<'a, I>(&mut self, states: I)
+    where
+        I: IntoIterator<Item = (Uuid, &'a ActivityLifecycleRunState)>,
+    {
+        let states = states.into_iter().collect::<Vec<_>>();
+        self.status = aggregate_lifecycle_status(states.iter().map(|(_, state)| state.status));
         let now = Utc::now();
         self.updated_at = now;
         self.last_activity_at = now;
@@ -276,48 +267,108 @@ impl LifecycleRun {
     }
 }
 
-fn active_activity_keys(activity_state: &ActivityLifecycleRunState) -> Vec<String> {
-    activity_state
-        .attempts
-        .iter()
-        .filter(|attempt| {
-            matches!(
-                attempt.status,
-                super::value_objects::ActivityAttemptStatus::Ready
-                    | super::value_objects::ActivityAttemptStatus::Claiming
-                    | super::value_objects::ActivityAttemptStatus::Running
-            )
+pub fn active_activity_refs_from_states<'a, I>(run_id: Uuid, states: I) -> Vec<ActiveActivityRef>
+where
+    I: IntoIterator<Item = (Uuid, &'a ActivityLifecycleRunState)>,
+{
+    states
+        .into_iter()
+        .flat_map(|(graph_instance_id, activity_state)| {
+            activity_state
+                .attempts
+                .iter()
+                .filter(|attempt| {
+                    matches!(
+                        attempt.status,
+                        ActivityAttemptStatus::Ready
+                            | ActivityAttemptStatus::Claiming
+                            | ActivityAttemptStatus::Running
+                    )
+                })
+                .map(move |attempt| ActiveActivityRef {
+                    run_id,
+                    graph_instance_id,
+                    activity_key: attempt.activity_key.clone(),
+                    attempt: attempt.attempt,
+                    status: attempt.status,
+                })
         })
-        .map(|attempt| attempt.activity_key.clone())
         .collect()
 }
 
-fn lifecycle_status_from_activity_status(status: ActivityRunStatus) -> LifecycleRunStatus {
-    match status {
-        ActivityRunStatus::Ready => LifecycleRunStatus::Ready,
-        ActivityRunStatus::Running => LifecycleRunStatus::Running,
-        ActivityRunStatus::Blocked => LifecycleRunStatus::Blocked,
-        ActivityRunStatus::Completed => LifecycleRunStatus::Completed,
-        ActivityRunStatus::Failed => LifecycleRunStatus::Failed,
-        ActivityRunStatus::Cancelled => LifecycleRunStatus::Cancelled,
+pub fn has_active_activity_state(activity_state: &ActivityLifecycleRunState) -> bool {
+    activity_state.attempts.iter().any(|attempt| {
+        matches!(
+            attempt.status,
+            ActivityAttemptStatus::Ready
+                | ActivityAttemptStatus::Claiming
+                | ActivityAttemptStatus::Running
+        )
+    })
+}
+
+fn aggregate_lifecycle_status<I>(statuses: I) -> LifecycleRunStatus
+where
+    I: IntoIterator<Item = ActivityRunStatus>,
+{
+    let statuses = statuses.into_iter().collect::<Vec<_>>();
+    if statuses.is_empty() {
+        return LifecycleRunStatus::Ready;
     }
+    if statuses
+        .iter()
+        .any(|status| *status == ActivityRunStatus::Failed)
+    {
+        return LifecycleRunStatus::Failed;
+    }
+    if statuses
+        .iter()
+        .any(|status| *status == ActivityRunStatus::Running)
+    {
+        return LifecycleRunStatus::Running;
+    }
+    if statuses
+        .iter()
+        .any(|status| *status == ActivityRunStatus::Ready)
+    {
+        return LifecycleRunStatus::Ready;
+    }
+    if statuses
+        .iter()
+        .any(|status| *status == ActivityRunStatus::Blocked)
+    {
+        return LifecycleRunStatus::Blocked;
+    }
+    if statuses
+        .iter()
+        .all(|status| *status == ActivityRunStatus::Completed)
+    {
+        return LifecycleRunStatus::Completed;
+    }
+    if statuses
+        .iter()
+        .all(|status| *status == ActivityRunStatus::Cancelled)
+    {
+        return LifecycleRunStatus::Cancelled;
+    }
+    LifecycleRunStatus::Running
 }
 
 pub fn build_effective_contract(
     lifecycle_key: &str,
-    active_step_key: &str,
-    primary_workflow: Option<&WorkflowDefinition>,
+    active_activity_key: &str,
+    primary_workflow: Option<&AgentProcedure>,
 ) -> EffectiveSessionContract {
     match primary_workflow {
         Some(w) => EffectiveSessionContract {
             lifecycle_key: Some(lifecycle_key.to_string()),
-            active_step_key: Some(active_step_key.to_string()),
+            active_activity_key: Some(active_activity_key.to_string()),
             injection: w.contract.injection.clone(),
             hook_rules: w.contract.hook_rules.clone(),
         },
         None => EffectiveSessionContract {
             lifecycle_key: Some(lifecycle_key.to_string()),
-            active_step_key: Some(active_step_key.to_string()),
+            active_activity_key: Some(active_activity_key.to_string()),
             ..Default::default()
         },
     }
@@ -328,8 +379,8 @@ mod tests {
     use super::*;
     use crate::workflow::value_objects::{WorkflowContextBinding, WorkflowInjectionSpec};
 
-    fn contract() -> WorkflowContract {
-        WorkflowContract {
+    fn contract() -> AgentProcedureContract {
+        AgentProcedureContract {
             injection: WorkflowInjectionSpec {
                 guidance: Some("follow the workflow".to_string()),
                 context_bindings: vec![WorkflowContextBinding {
@@ -340,19 +391,18 @@ mod tests {
                 }],
                 ..WorkflowInjectionSpec::default()
             },
-            ..WorkflowContract::default()
+            ..AgentProcedureContract::default()
         }
     }
 
     #[test]
     fn effective_contract_matches_primary_workflow() {
-        let primary = WorkflowDefinition::new(
+        let primary = AgentProcedure::new(
             Uuid::new_v4(),
             "wf_primary",
             "Primary",
             "desc",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::BuiltinSeed,
+            DefinitionSource::BuiltinSeed,
             contract(),
         )
         .expect("primary");
@@ -364,14 +414,19 @@ mod tests {
     #[test]
     fn activity_execution_claim_uses_attempt_idempotency_key() {
         let run_id = Uuid::new_v4();
-        let claim = ActivityExecutionClaim::new(run_id, "plan", 2, "agent");
+        let graph_instance_id = Uuid::new_v4();
+        let claim = ActivityExecutionClaim::new(run_id, graph_instance_id, "plan", 2, "agent");
 
         assert_eq!(claim.run_id, run_id);
+        assert_eq!(claim.graph_instance_id, graph_instance_id);
         assert_eq!(claim.activity_key, "plan");
         assert_eq!(claim.attempt, 2);
         assert_eq!(claim.executor_kind, "agent");
         assert_eq!(claim.status, ActivityExecutionClaimStatus::Claiming);
-        assert_eq!(claim.idempotency_key, format!("{run_id}:plan:2"));
+        assert_eq!(
+            claim.idempotency_key,
+            format!("{run_id}:{graph_instance_id}:plan:2")
+        );
         assert!(claim.status.is_active());
         assert!(!ActivityExecutionClaimStatus::Succeeded.is_active());
     }

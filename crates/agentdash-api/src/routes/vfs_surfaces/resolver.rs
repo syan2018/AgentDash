@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_application::session::construction_planner::SessionConstructionPlanner;
+use agentdash_application::session::construction_planner::resolve_project_workspace;
 use agentdash_application::vfs::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource, SessionMountTarget,
     build_project_agent_knowledge_vfs, build_project_skill_asset_management_mount,
@@ -14,9 +14,9 @@ use crate::{
         ProjectPermission, load_project_with_permission, load_story_and_project_with_permission,
         load_task_story_project_with_permission,
     },
-    routes::acp_sessions::ensure_session_permission,
+    routes::sessions::ensure_session_permission,
     rpc::ApiError,
-    session_construction::build_session_context_plan,
+    session_construction::resolve_session_frame_vfs,
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
 };
 
@@ -41,10 +41,9 @@ pub(crate) async fn resolve_surface_bundle(
             let project =
                 load_project_with_permission(state.as_ref(), current_user, *project_id, permission)
                     .await?;
-            let workspace =
-                SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
-                    .await
-                    .map_err(ApiError::Internal)?;
+            let workspace = resolve_project_workspace(&state.repos, &project)
+                .await
+                .map_err(ApiError::Internal)?;
             let project_vfs_mounts = load_project_vfs_mounts(state, project.id).await?;
             state
                 .services
@@ -75,10 +74,9 @@ pub(crate) async fn resolve_surface_bundle(
                     "story_id 与 project_id 不属于同一 Project".into(),
                 ));
             }
-            let workspace =
-                SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
-                    .await
-                    .map_err(ApiError::Internal)?;
+            let workspace = resolve_project_workspace(&state.repos, &project)
+                .await
+                .map_err(ApiError::Internal)?;
             let project_vfs_mounts = load_project_vfs_mounts(state, project.id).await?;
             state
                 .services
@@ -117,7 +115,7 @@ pub(crate) async fn resolve_surface_bundle(
                     .await
                     .map_err(ApiError::from)?
             } else {
-                SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
+                resolve_project_workspace(&state.repos, &project)
                     .await
                     .map_err(ApiError::Internal)?
             };
@@ -202,9 +200,9 @@ pub(crate) async fn resolve_surface_bundle(
         }
         ResolvedVfsSurfaceSource::SessionRuntime { session_id } => {
             ensure_session_permission(state.as_ref(), current_user, session_id, permission).await?;
-            build_session_context_plan(state, current_user, session_id)
+            resolve_session_frame_vfs(state, current_user, session_id)
                 .await?
-                .and_then(|plan| plan.context_projection.vfs)
+                .vfs
                 .unwrap_or_default()
         }
     };

@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { mapActivityLifecycleDefinition, mapWorkflowDefinition } from "./workflow";
+import { mapWorkflowGraph, mapAgentProcedure } from "./workflow";
 
 describe("workflow service mappers", () => {
   it("preserves backend capability_config tool directives", () => {
-    const definition = mapWorkflowDefinition({
+    const definition = mapAgentProcedure({
       id: "wf-1",
       project_id: "project-1",
       key: "builtin_workflow_admin_apply",
       name: "Workflow Admin / Apply",
       description: "",
-      binding_kinds: ["project"],
+      target_kinds: ["project"],
       source: "builtin_seed",
       version: 1,
       contract: {
@@ -40,13 +40,13 @@ describe("workflow service mappers", () => {
   });
 
   it("preserves activity lifecycle agent executor and ports during mapping", () => {
-    const definition = mapActivityLifecycleDefinition({
+    const definition = mapWorkflowGraph({
       id: "lc-1",
       project_id: "project-1",
       key: "builtin_workflow_admin",
       name: "Workflow Admin",
       description: "",
-      binding_kinds: ["project"],
+      target_kinds: ["project"],
       source: "builtin_seed",
       version: 3,
       entry_activity_key: "plan",
@@ -56,8 +56,9 @@ describe("workflow service mappers", () => {
           description: "Plan",
           executor: {
             kind: "agent",
-            workflow_key: "builtin_workflow_admin_plan",
-            session_policy: "spawn_child",
+            procedure_key: "builtin_workflow_admin_plan",
+            agent_reuse_policy: "create_activity_agent",
+            runtime_session_policy: "create_new",
           },
           output_ports: [],
           input_ports: [
@@ -82,8 +83,9 @@ describe("workflow service mappers", () => {
 
     expect(definition.activities[0].executor).toEqual({
       kind: "agent",
-      workflow_key: "builtin_workflow_admin_plan",
-      session_policy: "spawn_child",
+      procedure_key: "builtin_workflow_admin_plan",
+      agent_reuse_policy: "create_activity_agent",
+      runtime_session_policy: "create_new",
     });
     expect(definition.activities[0].input_ports[0].standalone_fulfillment).toEqual({
       optional: { default_value: "复用当前方案" },

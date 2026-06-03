@@ -1,0 +1,641 @@
+table_name,ordinal_position,column_name,data_type,udt_name,is_nullable,column_default
+_sqlx_migrations,1,version,bigint,int8,NO,
+_sqlx_migrations,2,description,text,text,NO,
+_sqlx_migrations,3,installed_on,timestamp with time zone,timestamptz,NO,now()
+_sqlx_migrations,4,success,boolean,bool,NO,
+_sqlx_migrations,5,checksum,bytea,bytea,NO,
+_sqlx_migrations,6,execution_time,bigint,int8,NO,
+activity_execution_claims,1,claim_id,text,text,NO,
+activity_execution_claims,2,run_id,text,text,NO,
+activity_execution_claims,3,activity_key,text,text,NO,
+activity_execution_claims,4,attempt,integer,int4,NO,
+activity_execution_claims,5,executor_kind,text,text,NO,
+activity_execution_claims,6,status,text,text,NO,
+activity_execution_claims,7,idempotency_key,text,text,NO,
+activity_execution_claims,8,executor_run_ref,text,text,YES,
+activity_execution_claims,9,created_at,timestamp with time zone,timestamptz,NO,
+activity_execution_claims,10,updated_at,timestamp with time zone,timestamptz,NO,
+activity_execution_claims,11,graph_instance_id,text,text,NO,'00000000-0000-0000-0000-000000000000'::text
+agent_assignments,1,id,text,text,NO,
+agent_assignments,2,run_id,text,text,NO,
+agent_assignments,3,graph_instance_id,text,text,NO,
+agent_assignments,4,activity_key,text,text,NO,
+agent_assignments,5,attempt,integer,int4,NO,
+agent_assignments,6,agent_id,text,text,NO,
+agent_assignments,7,frame_id,text,text,NO,
+agent_assignments,8,lease_status,text,text,NO,'active'::text
+agent_assignments,9,assigned_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+agent_assignments,10,released_at,timestamp with time zone,timestamptz,YES,
+agent_frame_transitions,1,id,text,text,NO,
+agent_frame_transitions,2,target_frame_id,text,text,NO,
+agent_frame_transitions,3,run_id,text,text,NO,
+agent_frame_transitions,4,lifecycle_key,text,text,NO,
+agent_frame_transitions,5,phase_node,text,text,NO,
+agent_frame_transitions,6,capability_keys_json,text,text,NO,
+agent_frame_transitions,7,transition_json,text,text,NO,
+agent_frame_transitions,8,source_turn_id,text,text,YES,
+agent_frame_transitions,9,created_at_ms,bigint,int8,NO,
+agent_frames,1,id,text,text,NO,
+agent_frames,2,agent_id,text,text,NO,
+agent_frames,3,revision,integer,int4,NO,1
+agent_frames,4,procedure_id,text,text,YES,
+agent_frames,5,graph_instance_id,text,text,YES,
+agent_frames,6,activity_key,text,text,YES,
+agent_frames,7,effective_capability_json,text,text,YES,
+agent_frames,8,context_slice_json,text,text,YES,
+agent_frames,9,vfs_surface_json,text,text,YES,
+agent_frames,10,mcp_surface_json,text,text,YES,
+agent_frames,11,runtime_session_refs_json,text,text,YES,
+agent_frames,12,created_by_kind,text,text,NO,'backfill'::text
+agent_frames,13,created_by_id,text,text,YES,
+agent_frames,14,created_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+agent_frames,15,execution_profile_json,text,text,YES,
+agent_frames,16,visible_canvas_mount_ids_json,text,text,YES,
+agent_lineages,1,id,text,text,NO,
+agent_lineages,2,run_id,text,text,NO,
+agent_lineages,3,parent_agent_id,text,text,YES,
+agent_lineages,4,child_agent_id,text,text,NO,
+agent_lineages,5,relation_kind,text,text,NO,
+agent_lineages,6,source_frame_id,text,text,YES,
+agent_lineages,7,metadata_json,text,text,YES,
+agent_lineages,8,created_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+agent_procedures,1,id,text,text,NO,
+agent_procedures,2,key,text,text,NO,
+agent_procedures,3,name,text,text,NO,
+agent_procedures,4,description,text,text,NO,''::text
+agent_procedures,7,source,text,text,NO,
+agent_procedures,9,version,integer,int4,NO,
+agent_procedures,10,contract,text,text,NO,
+agent_procedures,11,created_at,timestamp with time zone,timestamptz,NO,
+agent_procedures,12,updated_at,timestamp with time zone,timestamptz,NO,
+agent_procedures,13,project_id,text,text,NO,'00000000-0000-0000-0000-000000000000'::text
+agent_procedures,15,library_asset_id,text,text,YES,
+agent_procedures,16,source_ref,text,text,YES,
+agent_procedures,17,source_version,text,text,YES,
+agent_procedures,18,source_digest,text,text,YES,
+agent_procedures,19,installed_at,timestamp with time zone,timestamptz,YES,
+auth_sessions,1,token_hash,text,text,NO,
+auth_sessions,2,identity_json,text,text,NO,
+auth_sessions,3,expires_at,bigint,int8,YES,
+auth_sessions,4,revoked_at,bigint,int8,YES,
+auth_sessions,5,created_at,bigint,int8,NO,
+auth_sessions,6,updated_at,bigint,int8,NO,
+backend_execution_leases,1,id,text,text,NO,
+backend_execution_leases,2,backend_id,text,text,NO,
+backend_execution_leases,3,session_id,text,text,NO,
+backend_execution_leases,4,turn_id,text,text,NO,
+backend_execution_leases,5,executor_id,text,text,NO,
+backend_execution_leases,6,workspace_id,text,text,YES,
+backend_execution_leases,7,root_ref,text,text,YES,
+backend_execution_leases,8,selection_mode,text,text,NO,
+backend_execution_leases,9,state,text,text,NO,
+backend_execution_leases,10,claim_reason,text,text,YES,
+backend_execution_leases,11,terminal_kind,text,text,YES,
+backend_execution_leases,12,release_reason,text,text,YES,
+backend_execution_leases,13,claimed_at,timestamp with time zone,timestamptz,NO,
+backend_execution_leases,14,activated_at,timestamp with time zone,timestamptz,YES,
+backend_execution_leases,15,released_at,timestamp with time zone,timestamptz,YES,
+backend_execution_leases,16,last_seen_at,timestamp with time zone,timestamptz,NO,
+backend_execution_leases,17,created_at,timestamp with time zone,timestamptz,NO,
+backend_execution_leases,18,updated_at,timestamp with time zone,timestamptz,NO,
+backend_workspace_inventory,1,id,text,text,NO,
+backend_workspace_inventory,2,backend_id,text,text,NO,
+backend_workspace_inventory,3,root_ref,text,text,NO,
+backend_workspace_inventory,4,identity_kind,text,text,NO,
+backend_workspace_inventory,5,identity_payload,text,text,NO,'{}'::text
+backend_workspace_inventory,6,detected_facts,text,text,NO,'{}'::text
+backend_workspace_inventory,7,status,text,text,NO,'available'::text
+backend_workspace_inventory,8,source,text,text,NO,'manual_refresh'::text
+backend_workspace_inventory,9,last_seen_at,timestamp with time zone,timestamptz,NO,
+backend_workspace_inventory,10,last_error,text,text,YES,
+backend_workspace_inventory,11,created_at,timestamp with time zone,timestamptz,NO,
+backend_workspace_inventory,12,updated_at,timestamp with time zone,timestamptz,NO,
+backends,1,id,text,text,NO,
+backends,2,name,text,text,NO,
+backends,3,endpoint,text,text,NO,
+backends,4,auth_token,text,text,YES,
+backends,5,enabled,boolean,bool,NO,true
+backends,6,backend_type,text,text,NO,'local'::text
+backends,7,created_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+backends,8,owner_user_id,text,text,YES,
+backends,9,profile_id,text,text,YES,
+backends,10,device_id,text,text,YES,
+backends,11,device,jsonb,jsonb,NO,'{}'::jsonb
+backends,12,last_claimed_at,timestamp with time zone,timestamptz,YES,
+backends,13,machine_id,text,text,YES,
+backends,14,machine_label,text,text,YES,
+backends,15,legacy_machine_ids,jsonb,jsonb,NO,'[]'::jsonb
+backends,16,visibility,text,text,NO,'private'::text
+backends,17,share_scope_kind,text,text,NO,'user'::text
+backends,18,share_scope_id,text,text,YES,
+backends,19,capability_slot,text,text,NO,'default'::text
+canvas_bindings,1,canvas_id,text,text,NO,
+canvas_bindings,2,alias,text,text,NO,
+canvas_bindings,3,source_uri,text,text,NO,
+canvas_bindings,4,content_type,text,text,NO,'application/json'::text
+canvas_files,1,canvas_id,text,text,NO,
+canvas_files,2,path,text,text,NO,
+canvas_files,3,content,text,text,NO,''::text
+canvases,1,id,text,text,NO,
+canvases,2,project_id,text,text,NO,
+canvases,3,mount_id,text,text,NO,''::text
+canvases,4,title,text,text,NO,
+canvases,5,description,text,text,NO,''::text
+canvases,6,entry_file,text,text,NO,
+canvases,7,sandbox_config,text,text,NO,'{}'::text
+canvases,8,created_at,timestamp with time zone,timestamptz,NO,
+canvases,9,updated_at,timestamp with time zone,timestamptz,NO,
+extension_package_artifacts,1,id,text,text,NO,
+extension_package_artifacts,3,extension_id,text,text,NO,
+extension_package_artifacts,4,package_name,text,text,NO,
+extension_package_artifacts,5,package_version,text,text,NO,
+extension_package_artifacts,6,asset_version,text,text,NO,
+extension_package_artifacts,7,source_version,text,text,NO,
+extension_package_artifacts,8,storage_ref,text,text,NO,
+extension_package_artifacts,9,archive_digest,text,text,NO,
+extension_package_artifacts,10,manifest_digest,text,text,NO,
+extension_package_artifacts,11,manifest,jsonb,jsonb,NO,
+extension_package_artifacts,12,byte_size,bigint,int8,NO,
+extension_package_artifacts,13,created_at,timestamp with time zone,timestamptz,NO,
+extension_package_artifacts,14,updated_at,timestamp with time zone,timestamptz,NO,
+extension_package_artifacts,15,owner_kind,text,text,NO,
+extension_package_artifacts,16,owner_id,text,text,NO,
+group_memberships,1,user_id,text,text,NO,
+group_memberships,2,group_id,text,text,NO,
+group_memberships,3,created_at,timestamp with time zone,timestamptz,NO,
+group_memberships,4,updated_at,timestamp with time zone,timestamptz,NO,
+groups,1,group_id,text,text,NO,
+groups,2,display_name,text,text,YES,
+groups,3,created_at,timestamp with time zone,timestamptz,NO,
+groups,4,updated_at,timestamp with time zone,timestamptz,NO,
+inline_fs_files,1,id,text,text,NO,
+inline_fs_files,2,owner_kind,text,text,NO,
+inline_fs_files,3,owner_id,text,text,NO,
+inline_fs_files,4,container_id,text,text,NO,
+inline_fs_files,5,path,text,text,NO,
+inline_fs_files,7,updated_at,timestamp with time zone,timestamptz,NO,
+inline_fs_files,8,content_kind,text,text,NO,
+inline_fs_files,9,mime_type,text,text,YES,
+inline_fs_files,10,text_content,text,text,YES,
+inline_fs_files,11,binary_content,bytea,bytea,YES,
+inline_fs_files,12,size_bytes,bigint,int8,NO,
+library_assets,1,id,text,text,NO,
+library_assets,2,asset_type,text,text,NO,
+library_assets,3,scope,text,text,NO,
+library_assets,4,owner_id,text,text,YES,
+library_assets,5,key,text,text,NO,
+library_assets,6,display_name,text,text,NO,
+library_assets,7,description,text,text,YES,
+library_assets,8,version,text,text,NO,
+library_assets,9,source,text,text,NO,
+library_assets,10,source_ref,text,text,YES,
+library_assets,11,payload_digest,text,text,NO,
+library_assets,12,deprecated,boolean,bool,NO,false
+library_assets,13,payload,jsonb,jsonb,NO,
+library_assets,14,created_at,timestamp with time zone,timestamptz,NO,
+library_assets,15,updated_at,timestamp with time zone,timestamptz,NO,
+lifecycle_agents,1,id,text,text,NO,
+lifecycle_agents,2,run_id,text,text,NO,
+lifecycle_agents,3,project_id,text,text,NO,
+lifecycle_agents,4,agent_kind,text,text,NO,
+lifecycle_agents,5,agent_role,text,text,NO,'primary'::text
+lifecycle_agents,6,project_agent_id,text,text,YES,
+lifecycle_agents,7,status,text,text,NO,'active'::text
+lifecycle_agents,8,current_frame_id,text,text,YES,
+lifecycle_agents,9,created_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+lifecycle_agents,10,updated_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+lifecycle_agents,11,bootstrap_status,text,text,NO,'not_applicable'::text
+lifecycle_gates,1,id,text,text,NO,
+lifecycle_gates,2,run_id,text,text,NO,
+lifecycle_gates,3,agent_id,text,text,YES,
+lifecycle_gates,4,frame_id,text,text,YES,
+lifecycle_gates,5,gate_kind,text,text,NO,
+lifecycle_gates,6,correlation_id,text,text,NO,
+lifecycle_gates,7,status,text,text,NO,'open'::text
+lifecycle_gates,8,payload_json,text,text,YES,
+lifecycle_gates,9,resolved_by,text,text,YES,
+lifecycle_gates,10,created_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+lifecycle_gates,11,resolved_at,timestamp with time zone,timestamptz,YES,
+lifecycle_runs,1,id,text,text,NO,
+lifecycle_runs,2,project_id,text,text,NO,
+lifecycle_runs,3,root_graph_id,text,text,NO,
+lifecycle_runs,6,status,text,text,NO,
+lifecycle_runs,9,record_artifacts,text,text,NO,
+lifecycle_runs,10,execution_log,text,text,NO,'[]'::text
+lifecycle_runs,11,created_at,timestamp with time zone,timestamptz,NO,
+lifecycle_runs,12,updated_at,timestamp with time zone,timestamptz,NO,
+lifecycle_runs,13,last_activity_at,timestamp with time zone,timestamptz,NO,
+lifecycle_runs,17,active_node_keys,text,text,NO,'[]'::text
+lifecycle_subject_associations,1,id,text,text,NO,
+lifecycle_subject_associations,2,anchor_run_id,text,text,NO,
+lifecycle_subject_associations,3,anchor_agent_id,text,text,YES,
+lifecycle_subject_associations,4,subject_kind,text,text,NO,
+lifecycle_subject_associations,5,subject_id,text,text,NO,
+lifecycle_subject_associations,6,role,text,text,NO,
+lifecycle_subject_associations,7,metadata_json,text,text,YES,
+lifecycle_subject_associations,8,created_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+lifecycle_workflow_instances,1,id,text,text,NO,
+lifecycle_workflow_instances,2,run_id,text,text,NO,
+lifecycle_workflow_instances,3,graph_id,text,text,NO,
+lifecycle_workflow_instances,4,role,text,text,NO,
+lifecycle_workflow_instances,5,status,text,text,NO,'active'::text
+lifecycle_workflow_instances,6,activity_state_json,text,text,YES,
+lifecycle_workflow_instances,7,created_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+lifecycle_workflow_instances,8,updated_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+llm_provider_user_credentials,1,id,text,text,NO,
+llm_provider_user_credentials,2,provider_id,text,text,NO,
+llm_provider_user_credentials,3,user_id,text,text,NO,
+llm_provider_user_credentials,4,api_key_ciphertext,text,text,NO,
+llm_provider_user_credentials,5,created_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+llm_provider_user_credentials,6,updated_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+llm_provider_user_credentials,7,verification_status,text,text,NO,'unverified'::text
+llm_provider_user_credentials,8,verification_message,text,text,NO,''::text
+llm_provider_user_credentials,9,verified_at,timestamp with time zone,timestamptz,YES,
+llm_providers,1,id,text,text,NO,
+llm_providers,2,name,text,text,NO,
+llm_providers,3,slug,text,text,NO,
+llm_providers,4,protocol,text,text,NO,
+llm_providers,6,base_url,text,text,NO,''::text
+llm_providers,7,wire_api,text,text,NO,''::text
+llm_providers,8,default_model,text,text,NO,''::text
+llm_providers,9,models,text,text,NO,'[]'::text
+llm_providers,10,blocked_models,text,text,NO,'[]'::text
+llm_providers,11,env_api_key,text,text,NO,''::text
+llm_providers,12,discovery_url,text,text,NO,''::text
+llm_providers,13,sort_order,integer,int4,NO,0
+llm_providers,14,enabled,boolean,bool,NO,true
+llm_providers,15,created_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+llm_providers,16,updated_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+llm_providers,17,credential_mode,text,text,NO,'global_only'::text
+llm_providers,18,global_api_key_ciphertext,text,text,NO,''::text
+mcp_presets,1,id,text,text,NO,
+mcp_presets,2,project_id,text,text,NO,
+mcp_presets,4,description,text,text,YES,
+mcp_presets,6,source,text,text,NO,
+mcp_presets,7,builtin_key,text,text,YES,
+mcp_presets,8,created_at,timestamp with time zone,timestamptz,NO,
+mcp_presets,9,updated_at,timestamp with time zone,timestamptz,NO,
+mcp_presets,10,key,text,text,NO,
+mcp_presets,11,display_name,text,text,NO,
+mcp_presets,12,transport,text,text,NO,
+mcp_presets,13,route_policy,text,text,NO,
+mcp_presets,14,library_asset_id,text,text,YES,
+mcp_presets,15,source_ref,text,text,YES,
+mcp_presets,16,source_version,text,text,YES,
+mcp_presets,17,source_digest,text,text,YES,
+mcp_presets,18,installed_at,timestamp with time zone,timestamptz,YES,
+permission_grants,1,id,text,text,NO,
+permission_grants,2,run_id,text,text,NO,
+permission_grants,3,source_runtime_session_id,text,text,NO,
+permission_grants,4,source_turn_id,text,text,YES,
+permission_grants,5,source_tool_call_id,text,text,YES,
+permission_grants,6,requested_paths,jsonb,jsonb,NO,
+permission_grants,7,reason,text,text,NO,
+permission_grants,8,grant_scope,text,text,NO,
+permission_grants,9,expires_at,timestamp with time zone,timestamptz,YES,
+permission_grants,10,scope_escalation_intent,jsonb,jsonb,YES,
+permission_grants,11,status,text,text,NO,'created'::text
+permission_grants,12,policy_decision,jsonb,jsonb,YES,
+permission_grants,13,approved_by,text,text,YES,
+permission_grants,14,created_at,timestamp with time zone,timestamptz,NO,
+permission_grants,15,updated_at,timestamp with time zone,timestamptz,NO,
+permission_grants,16,effect_frame_id,text,text,YES,
+project_agents,1,id,text,text,NO,
+project_agents,2,project_id,text,text,NO,
+project_agents,3,name,text,text,NO,
+project_agents,4,agent_type,text,text,NO,
+project_agents,5,config,text,text,NO,'{}'::text
+project_agents,6,installed_library_asset_id,text,text,YES,
+project_agents,7,installed_source_ref,text,text,YES,
+project_agents,8,installed_source_version,text,text,YES,
+project_agents,9,installed_source_digest,text,text,YES,
+project_agents,10,installed_at,timestamp with time zone,timestamptz,YES,
+project_agents,11,default_lifecycle_key,text,text,YES,
+project_agents,12,is_default_for_story,boolean,bool,NO,false
+project_agents,13,is_default_for_task,boolean,bool,NO,false
+project_agents,14,knowledge_enabled,boolean,bool,NO,false
+project_agents,16,created_at,timestamp with time zone,timestamptz,NO,
+project_agents,17,updated_at,timestamp with time zone,timestamptz,NO,
+project_backend_access,1,id,text,text,NO,
+project_backend_access,2,project_id,text,text,NO,
+project_backend_access,3,backend_id,text,text,NO,
+project_backend_access,4,status,text,text,NO,'active'::text
+project_backend_access,5,access_mode,text,text,NO,'use_inventory'::text
+project_backend_access,6,priority,integer,int4,NO,0
+project_backend_access,7,root_policy,text,text,NO,"'{""kind"":""backend_inventory""}'::text"
+project_backend_access,8,capability_policy,text,text,NO,'{}'::text
+project_backend_access,9,note,text,text,YES,
+project_backend_access,10,created_by,text,text,YES,
+project_backend_access,11,created_at,timestamp with time zone,timestamptz,NO,
+project_backend_access,12,updated_at,timestamp with time zone,timestamptz,NO,
+project_extension_installations,1,id,text,text,NO,
+project_extension_installations,2,project_id,text,text,NO,
+project_extension_installations,3,extension_key,text,text,NO,
+project_extension_installations,4,display_name,text,text,NO,
+project_extension_installations,5,enabled,boolean,bool,NO,true
+project_extension_installations,6,config,jsonb,jsonb,NO,'{}'::jsonb
+project_extension_installations,7,manifest,jsonb,jsonb,NO,
+project_extension_installations,8,installed_library_asset_id,text,text,YES,
+project_extension_installations,9,installed_source_ref,text,text,YES,
+project_extension_installations,10,installed_source_version,text,text,YES,
+project_extension_installations,11,installed_source_digest,text,text,YES,
+project_extension_installations,12,installed_at,timestamp with time zone,timestamptz,YES,
+project_extension_installations,13,created_at,timestamp with time zone,timestamptz,NO,
+project_extension_installations,14,updated_at,timestamp with time zone,timestamptz,NO,
+project_extension_installations,15,package_artifact_id,text,text,YES,
+project_extension_installations,16,package_name,text,text,YES,
+project_extension_installations,17,package_version,text,text,YES,
+project_extension_installations,18,package_asset_version,text,text,YES,
+project_extension_installations,19,package_source_version,text,text,YES,
+project_extension_installations,20,artifact_storage_ref,text,text,YES,
+project_extension_installations,21,artifact_archive_digest,text,text,YES,
+project_extension_installations,22,artifact_manifest_digest,text,text,YES,
+project_subject_grants,1,project_id,text,text,NO,
+project_subject_grants,2,subject_type,text,text,NO,
+project_subject_grants,3,subject_id,text,text,NO,
+project_subject_grants,4,role,text,text,NO,
+project_subject_grants,5,granted_by_user_id,text,text,NO,
+project_subject_grants,6,created_at,timestamp with time zone,timestamptz,NO,
+project_subject_grants,7,updated_at,timestamp with time zone,timestamptz,NO,
+project_vfs_mounts,1,id,text,text,NO,
+project_vfs_mounts,2,project_id,text,text,NO,
+project_vfs_mounts,3,mount_id,text,text,NO,
+project_vfs_mounts,4,display_name,text,text,NO,
+project_vfs_mounts,5,description,text,text,YES,
+project_vfs_mounts,6,capabilities,text,text,NO,'[]'::text
+project_vfs_mounts,8,installed_source,text,text,YES,
+project_vfs_mounts,9,content,text,text,NO,
+project_vfs_mounts,10,created_at,timestamp with time zone,timestamptz,NO,
+project_vfs_mounts,11,updated_at,timestamp with time zone,timestamptz,NO,
+projects,1,id,text,text,NO,
+projects,2,name,text,text,NO,
+projects,3,description,text,text,NO,''::text
+projects,4,config,text,text,NO,'{}'::text
+projects,5,created_by_user_id,text,text,NO,'system'::text
+projects,6,updated_by_user_id,text,text,NO,'system'::text
+projects,7,visibility,text,text,NO,'private'::text
+projects,8,is_template,boolean,bool,NO,false
+projects,9,cloned_from_project_id,text,text,YES,
+projects,10,created_at,timestamp with time zone,timestamptz,NO,
+projects,11,updated_at,timestamp with time zone,timestamptz,NO,
+routine_executions,1,id,text,text,NO,
+routine_executions,2,routine_id,text,text,NO,
+routine_executions,3,trigger_source,text,text,NO,
+routine_executions,4,trigger_payload,text,text,YES,
+routine_executions,5,resolved_prompt,text,text,YES,
+routine_executions,7,status,text,text,NO,'pending'::text
+routine_executions,8,started_at,timestamp with time zone,timestamptz,NO,
+routine_executions,9,completed_at,timestamp with time zone,timestamptz,YES,
+routine_executions,10,error,text,text,YES,
+routine_executions,11,entity_key,text,text,YES,
+routine_executions,12,dispatch_run_id,text,text,YES,
+routine_executions,13,dispatch_agent_id,text,text,YES,
+routine_executions,14,dispatch_frame_id,text,text,YES,
+routine_executions,15,dispatch_assignment_id,text,text,YES,
+routines,1,id,text,text,NO,
+routines,2,project_id,text,text,NO,
+routines,3,name,text,text,NO,
+routines,4,prompt_template,text,text,NO,
+routines,5,project_agent_id,text,text,NO,
+routines,6,trigger_config,text,text,NO,
+routines,7,dispatch_strategy,text,text,NO,
+routines,8,enabled,boolean,bool,NO,true
+routines,9,created_at,timestamp with time zone,timestamptz,NO,
+routines,10,updated_at,timestamp with time zone,timestamptz,NO,
+routines,11,last_fired_at,timestamp with time zone,timestamptz,YES,
+runtime_health,1,backend_id,text,text,NO,
+runtime_health,2,profile_id,text,text,YES,
+runtime_health,3,name,text,text,NO,
+runtime_health,4,status,text,text,NO,
+runtime_health,5,version,text,text,YES,
+runtime_health,6,capabilities,jsonb,jsonb,NO,'{}'::jsonb
+runtime_health,7,workspace_roots,jsonb,jsonb,NO,'[]'::jsonb
+runtime_health,8,device,jsonb,jsonb,NO,'{}'::jsonb
+runtime_health,9,connected_at,timestamp with time zone,timestamptz,YES,
+runtime_health,10,last_seen_at,timestamp with time zone,timestamptz,YES,
+runtime_health,11,disconnected_at,timestamp with time zone,timestamptz,YES,
+runtime_health,12,disconnect_reason,text,text,YES,
+runtime_health,13,created_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+runtime_health,14,updated_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+runtime_session_execution_anchors,1,runtime_session_id,text,text,NO,
+runtime_session_execution_anchors,2,run_id,uuid,uuid,NO,
+runtime_session_execution_anchors,3,launch_frame_id,uuid,uuid,NO,
+runtime_session_execution_anchors,4,agent_id,uuid,uuid,NO,
+runtime_session_execution_anchors,5,assignment_id,uuid,uuid,YES,
+runtime_session_execution_anchors,6,graph_instance_id,uuid,uuid,YES,
+runtime_session_execution_anchors,7,activity_key,text,text,YES,
+runtime_session_execution_anchors,8,attempt,integer,int4,YES,
+runtime_session_execution_anchors,9,created_by_kind,text,text,NO,
+runtime_session_execution_anchors,10,created_at,timestamp with time zone,timestamptz,NO,now()
+runtime_session_execution_anchors,11,updated_at,timestamp with time zone,timestamptz,NO,now()
+session_compactions,1,id,text,text,NO,
+session_compactions,2,session_id,text,text,NO,
+session_compactions,4,projection_kind,text,text,NO,
+session_compactions,5,projection_version,bigint,int8,NO,
+session_compactions,6,lifecycle_item_id,text,text,NO,
+session_compactions,7,start_event_seq,bigint,int8,NO,
+session_compactions,8,completed_event_seq,bigint,int8,YES,
+session_compactions,9,failed_event_seq,bigint,int8,YES,
+session_compactions,10,status,text,text,NO,
+session_compactions,11,trigger,text,text,NO,
+session_compactions,12,reason,text,text,YES,
+session_compactions,13,phase,text,text,YES,
+session_compactions,14,strategy,text,text,NO,
+session_compactions,15,budget_scope,text,text,YES,
+session_compactions,16,base_head_event_seq,bigint,int8,YES,
+session_compactions,17,source_start_event_seq,bigint,int8,YES,
+session_compactions,18,source_end_event_seq,bigint,int8,YES,
+session_compactions,19,first_kept_event_seq,bigint,int8,YES,
+session_compactions,20,summary,text,text,NO,''::text
+session_compactions,21,replacement_projection_json,text,text,NO,'{}'::text
+session_compactions,22,token_stats_json,text,text,NO,'{}'::text
+session_compactions,23,diagnostics_json,text,text,NO,'{}'::text
+session_compactions,24,created_by,text,text,YES,
+session_compactions,25,created_at_ms,bigint,int8,NO,
+session_compactions,26,completed_at_ms,bigint,int8,YES,
+session_events,1,session_id,text,text,NO,
+session_events,2,event_seq,bigint,int8,NO,
+session_events,3,occurred_at_ms,bigint,int8,NO,
+session_events,4,committed_at_ms,bigint,int8,NO,
+session_events,5,session_update_type,text,text,NO,
+session_events,6,turn_id,text,text,YES,
+session_events,7,entry_index,bigint,int8,YES,
+session_events,8,tool_call_id,text,text,YES,
+session_events,9,notification_json,text,text,NO,
+session_lineage,1,child_session_id,text,text,NO,
+session_lineage,2,parent_session_id,text,text,NO,
+session_lineage,3,relation_kind,text,text,NO,
+session_lineage,4,fork_point_event_seq,bigint,int8,YES,
+session_lineage,5,fork_point_ref_json,text,text,NO,'{}'::text
+session_lineage,6,fork_point_compaction_id,text,text,YES,
+session_lineage,7,status,text,text,NO,
+session_lineage,8,created_at_ms,bigint,int8,NO,
+session_lineage,9,updated_at_ms,bigint,int8,NO,
+session_lineage,10,metadata_json,text,text,NO,'{}'::text
+session_projection_heads,1,session_id,text,text,NO,
+session_projection_heads,3,projection_kind,text,text,NO,
+session_projection_heads,4,projection_version,bigint,int8,NO,
+session_projection_heads,5,head_event_seq,bigint,int8,NO,
+session_projection_heads,6,active_compaction_id,text,text,YES,
+session_projection_heads,7,updated_by_event_seq,bigint,int8,YES,
+session_projection_heads,8,updated_at_ms,bigint,int8,NO,
+session_projection_segments,1,id,text,text,NO,
+session_projection_segments,2,session_id,text,text,NO,
+session_projection_segments,4,projection_kind,text,text,NO,
+session_projection_segments,5,projection_version,bigint,int8,NO,
+session_projection_segments,6,sort_order,bigint,int8,NO,
+session_projection_segments,7,segment_type,text,text,NO,
+session_projection_segments,8,origin,text,text,NO,
+session_projection_segments,9,synthetic,boolean,bool,NO,false
+session_projection_segments,10,source_start_event_seq,bigint,int8,YES,
+session_projection_segments,11,source_end_event_seq,bigint,int8,YES,
+session_projection_segments,12,source_refs_json,text,text,NO,'[]'::text
+session_projection_segments,13,generated_by_compaction_id,text,text,YES,
+session_projection_segments,14,content_json,text,text,NO,
+session_projection_segments,15,token_estimate,bigint,int8,YES,
+session_projection_segments,16,created_at_ms,bigint,int8,NO,
+session_runtime_commands,1,id,text,text,NO,
+session_runtime_commands,2,session_id,text,text,NO,
+session_runtime_commands,4,phase_node,text,text,NO,
+session_runtime_commands,5,status,text,text,NO,
+session_runtime_commands,6,payload_json,text,text,NO,
+session_runtime_commands,7,created_at_ms,bigint,int8,NO,
+session_runtime_commands,8,updated_at_ms,bigint,int8,NO,
+session_runtime_commands,9,applied_at_ms,bigint,int8,YES,
+session_runtime_commands,10,failed_at_ms,bigint,int8,YES,
+session_runtime_commands,11,last_error,text,text,YES,
+session_runtime_commands,12,frame_transition_id,text,text,NO,
+session_terminal_effects,1,id,text,text,NO,
+session_terminal_effects,2,session_id,text,text,NO,
+session_terminal_effects,3,turn_id,text,text,NO,
+session_terminal_effects,4,terminal_event_seq,bigint,int8,NO,
+session_terminal_effects,5,effect_type,text,text,NO,
+session_terminal_effects,6,payload_json,text,text,NO,
+session_terminal_effects,7,status,text,text,NO,
+session_terminal_effects,8,attempt_count,bigint,int8,NO,0
+session_terminal_effects,9,created_at_ms,bigint,int8,NO,
+session_terminal_effects,10,updated_at_ms,bigint,int8,NO,
+session_terminal_effects,11,last_error,text,text,YES,
+sessions,1,id,text,text,NO,
+sessions,2,title,text,text,NO,
+sessions,3,created_at,bigint,int8,NO,
+sessions,4,updated_at,bigint,int8,NO,
+sessions,5,last_event_seq,bigint,int8,NO,0
+sessions,6,last_execution_status,text,text,NO,'idle'::text
+sessions,7,last_turn_id,text,text,YES,
+sessions,8,last_terminal_message,text,text,YES,
+sessions,9,executor_config_json,text,text,YES,
+sessions,10,executor_session_id,text,text,YES,
+sessions,14,title_source,text,text,NO,'auto'::text
+sessions,17,tab_layout_json,text,text,YES,
+sessions,18,project_id,text,text,YES,
+settings,1,scope_kind,text,text,NO,
+settings,2,scope_id,text,text,NO,''::text
+settings,3,key,text,text,NO,
+settings,4,value,text,text,NO,
+settings,5,updated_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+skill_assets,1,id,text,text,NO,
+skill_assets,2,project_id,text,text,NO,
+skill_assets,3,key,text,text,NO,
+skill_assets,4,display_name,text,text,NO,
+skill_assets,5,description,text,text,NO,
+skill_assets,6,source,text,text,NO,
+skill_assets,7,builtin_key,text,text,YES,
+skill_assets,8,disable_model_invocation,boolean,bool,NO,false
+skill_assets,9,created_at,timestamp with time zone,timestamptz,NO,
+skill_assets,10,updated_at,timestamp with time zone,timestamptz,NO,
+skill_assets,11,remote_source_url,text,text,YES,
+skill_assets,12,remote_imported_at,timestamp with time zone,timestamptz,YES,
+skill_assets,13,remote_digest,text,text,YES,
+skill_assets,14,library_asset_id,text,text,YES,
+skill_assets,15,source_ref,text,text,YES,
+skill_assets,16,source_version,text,text,YES,
+skill_assets,17,source_digest,text,text,YES,
+skill_assets,18,installed_at,timestamp with time zone,timestamptz,YES,
+state_changes,1,id,bigint,int8,NO,nextval('state_changes_id_seq'::regclass)
+state_changes,2,project_id,text,text,NO,''::text
+state_changes,3,entity_id,text,text,NO,
+state_changes,4,kind,text,text,NO,
+state_changes,5,payload,text,text,NO,'{}'::text
+state_changes,6,backend_id,text,text,YES,
+state_changes,7,created_at,timestamp with time zone,timestamptz,NO,
+stories,1,id,text,text,NO,
+stories,2,project_id,text,text,NO,
+stories,3,default_workspace_id,text,text,YES,
+stories,4,title,text,text,NO,
+stories,5,description,text,text,NO,''::text
+stories,6,status,text,text,NO,'created'::text
+stories,7,priority,text,text,NO,'p2'::text
+stories,8,story_type,text,text,NO,'feature'::text
+stories,9,tags,text,text,NO,'[]'::text
+stories,10,task_count,integer,int4,NO,0
+stories,11,context,text,text,NO,'{}'::text
+stories,12,created_at,timestamp with time zone,timestamptz,NO,
+stories,13,updated_at,timestamp with time zone,timestamptz,NO,
+stories,14,tasks,jsonb,jsonb,NO,'[]'::jsonb
+tasks,1,id,text,text,NO,
+tasks,2,project_id,text,text,NO,
+tasks,3,story_id,text,text,NO,
+tasks,4,workspace_id,text,text,YES,
+tasks,5,title,text,text,NO,
+tasks,6,description,text,text,NO,''::text
+tasks,7,status,text,text,NO,'pending'::text
+tasks,11,agent_binding,text,text,NO,'{}'::text
+tasks,12,artifacts,text,text,NO,'[]'::text
+tasks,13,created_at,timestamp with time zone,timestamptz,NO,
+tasks,14,updated_at,timestamp with time zone,timestamptz,NO,
+user_preferences,1,key,text,text,NO,
+user_preferences,2,value,text,text,NO,
+users,1,user_id,text,text,NO,
+users,2,subject,text,text,NO,
+users,3,auth_mode,text,text,NO,
+users,4,display_name,text,text,YES,
+users,5,email,text,text,YES,
+users,6,is_admin,boolean,bool,NO,false
+users,7,provider,text,text,YES,
+users,8,created_at,timestamp with time zone,timestamptz,NO,
+users,9,updated_at,timestamp with time zone,timestamptz,NO,
+users,10,avatar_url,text,text,YES,
+views,1,id,text,text,NO,
+views,2,name,text,text,NO,
+views,3,backend_ids,text,text,NO,'[]'::text
+views,4,filters,text,text,NO,'{}'::text
+views,5,sort_by,text,text,YES,
+views,6,created_at,timestamp with time zone,timestamptz,NO,CURRENT_TIMESTAMP
+workflow_graphs,1,id,text,text,NO,
+workflow_graphs,2,key,text,text,NO,
+workflow_graphs,3,name,text,text,NO,
+workflow_graphs,4,description,text,text,NO,''::text
+workflow_graphs,7,source,text,text,NO,
+workflow_graphs,9,version,integer,int4,NO,
+workflow_graphs,12,created_at,timestamp with time zone,timestamptz,NO,
+workflow_graphs,13,updated_at,timestamp with time zone,timestamptz,NO,
+workflow_graphs,15,project_id,text,text,NO,'00000000-0000-0000-0000-000000000000'::text
+workflow_graphs,17,library_asset_id,text,text,YES,
+workflow_graphs,18,source_ref,text,text,YES,
+workflow_graphs,19,source_version,text,text,YES,
+workflow_graphs,20,source_digest,text,text,YES,
+workflow_graphs,21,installed_at,timestamp with time zone,timestamptz,YES,
+workflow_graphs,22,entry_activity_key,text,text,NO,''::text
+workflow_graphs,23,activities,text,text,NO,'[]'::text
+workflow_graphs,24,transitions,text,text,NO,'[]'::text
+workspace_bindings,1,id,text,text,NO,
+workspace_bindings,2,workspace_id,text,text,NO,
+workspace_bindings,3,backend_id,text,text,NO,
+workspace_bindings,4,root_ref,text,text,NO,
+workspace_bindings,5,status,text,text,NO,'pending'::text
+workspace_bindings,6,detected_facts,text,text,NO,'{}'::text
+workspace_bindings,7,last_verified_at,timestamp with time zone,timestamptz,YES,
+workspace_bindings,8,priority,integer,int4,NO,0
+workspace_bindings,9,created_at,timestamp with time zone,timestamptz,NO,
+workspace_bindings,10,updated_at,timestamp with time zone,timestamptz,NO,
+workspaces,1,id,text,text,NO,
+workspaces,2,project_id,text,text,NO,
+workspaces,3,name,text,text,NO,
+workspaces,4,identity_kind,text,text,NO,'local_dir'::text
+workspaces,5,identity_payload,text,text,NO,'{}'::text
+workspaces,6,resolution_policy,text,text,NO,'prefer_online'::text
+workspaces,7,default_binding_id,text,text,YES,
+workspaces,8,status,text,text,NO,'pending'::text
+workspaces,9,created_at,timestamp with time zone,timestamptz,NO,
+workspaces,10,updated_at,timestamp with time zone,timestamptz,NO,

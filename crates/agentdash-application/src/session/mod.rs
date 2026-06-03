@@ -10,15 +10,14 @@ pub mod capability_service;
 pub mod capability_state;
 mod compaction_checkpoint;
 mod compaction_context_frame;
-pub mod companion_wait;
-pub mod construction;
+#[cfg(test)]
+pub(crate) mod construction;
 pub mod construction_planner;
 pub mod construction_provider;
-pub mod construction_use_case;
 pub mod context;
 mod context_frame;
 mod context_projector;
-pub mod context_query_use_case;
+// context_query_use_case 已删除：所有 API 消费者已迁移至 frame-based read model
 pub mod continuation;
 pub mod control;
 pub mod core;
@@ -28,7 +27,6 @@ pub mod eventing;
 pub mod hook_delegate;
 pub mod hook_events;
 mod hook_messages;
-pub mod hook_runtime;
 pub mod hooks_service;
 pub(crate) mod hub;
 mod hub_support;
@@ -57,13 +55,14 @@ pub mod turn_processor;
 mod turn_supervisor;
 pub mod types;
 
+pub use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 pub use assembler::{
     AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, CompanionSpec,
     CompanionWorkflowSpec, LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
-    SessionRequestAssembler, StoryStepPhase, StoryStepSpec, compose_companion_prompt,
-    compose_companion_with_workflow_prompt, compose_lifecycle_node_prompt,
-    compose_lifecycle_node_prompt_with_audit, extract_agent_mcp_entries, load_available_presets,
+    SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
+    compose_lifecycle_node_to_frame_with_audit, extract_agent_mcp_entries, load_available_presets,
 };
+pub use assembly_builder::AssemblyLaunchExtras;
 pub use branching::{
     SessionBranchingService, SessionForkRequest, SessionForkResult, SessionLineageView,
     SessionProjectionRollbackRequest, SessionProjectionRollbackResult,
@@ -76,12 +75,14 @@ pub use capability_projection::{
 pub use capability_service::SessionCapabilityService;
 pub use capability_state::{
     CapabilityDimensionModule, CapabilityDimensionRegistry, CapabilityStateDelta,
-    CompanionCapabilityDimensionModule, McpCapabilityDimensionModule, NamedEntityDelta,
-    RuntimeCapabilityProjectionContext, RuntimeCapabilityReplay, RuntimeCapabilityReplayContext,
-    RuntimeContextTransition, SetDelta, ToolCapabilityDimensionModule,
-    VfsCapabilityDimensionModule, VfsSurfaceDelta, apply_runtime_capability_transition,
+    CompanionCapabilityDimensionModule, FrameCapabilitySurfaces, McpCapabilityDimensionModule,
+    NamedEntityDelta, RuntimeCapabilityProjectionContext, RuntimeCapabilityReplay,
+    RuntimeCapabilityReplayContext, RuntimeContextTransition, SetDelta,
+    ToolCapabilityDimensionModule, VfsCapabilityDimensionModule, VfsSurfaceDelta,
+    apply_runtime_capability_transition, capability_state_to_frame_surfaces,
     compose_vfs_with_overlay_and_directives, compute_capability_state_delta, merge_vfs_overlay,
-    replay_runtime_capability_transition, replay_runtime_capability_transitions,
+    project_capability_state_from_frame, replay_runtime_capability_transition,
+    replay_runtime_capability_transitions,
 };
 pub use construction_provider::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, RoutineLaunchSource,
@@ -96,7 +97,6 @@ pub use effects_service::SessionEffectsService;
 pub use eventing::SessionEventingService;
 pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_envelope;
-pub use hook_runtime::HookSessionRuntime;
 pub use hooks_service::SessionHookService;
 pub use hub_support::TurnTerminalKind;
 pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, SessionLaunchService};
@@ -115,7 +115,10 @@ pub use post_turn_handler::{
 };
 pub use prompt_vfs::local_workspace_vfs;
 pub use runtime_builder::SessionRuntimeBuilder;
-pub use runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
+pub use runtime_commands::{
+    AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand,
+    RuntimeDeliveryCommandKind,
+};
 pub use runtime_control::SessionRuntimeService;
 pub use runtime_services::SessionRuntimeServices;
 pub use terminal_effects::{
@@ -124,14 +127,14 @@ pub use terminal_effects::{
 pub use title_service::SessionTitleService;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
-    ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CapabilityArtifactSource,
-    CapabilityContributionRecord, CapabilityDeclarationRecord, CapabilityDimensionKey,
-    CapabilityState, CompanionSessionContext, DECLARATION_TYPE_CAPABILITY_DIRECTIVE,
+    AgentFrameRuntimeTarget, ApplyMountOperationsEffect, ApplyVfsOverlayEffect,
+    CapabilityArtifactSource, CapabilityContributionRecord, CapabilityDeclarationRecord,
+    CapabilityDimensionKey, CapabilityState, DECLARATION_TYPE_CAPABILITY_DIRECTIVE,
     DECLARATION_TYPE_MOUNT_OPERATION, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
     EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
     EFFECT_TYPE_SET_MCP_SERVER_SET, EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus,
     HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
-    RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, SessionBootstrapState,
+    RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, RuntimeTraceLaunchState,
     SessionExecutionState, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
     SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect, TitleSource,
     UserPromptInput, resolve_session_prompt_lifecycle,

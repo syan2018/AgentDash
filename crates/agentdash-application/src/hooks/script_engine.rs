@@ -124,8 +124,10 @@ impl HookScriptEngine {
             "tool_name": ctx.query.tool_name,
             "tool_call_id": ctx.query.tool_call_id,
             "subagent_type": ctx.query.subagent_type,
-            "turn_id": ctx.query.turn_id,
-            "session_id": ctx.query.session_id,
+            "turn_id": ctx.query.turn_id(),
+            "session_id": ctx.query.runtime_session_id(),
+            "hook_target": ctx.query.target.as_ref(),
+            "provenance": ctx.query.provenance,
             "payload": ctx.query.payload,
 
             "snapshot": {
@@ -136,10 +138,10 @@ impl HookScriptEngine {
 
             "workflow": {
                 "lifecycle_key": aw.and_then(|a| a.lifecycle_key.as_deref()),
-                "step_key": aw.and_then(|a| a.step_key.as_deref()),
-                "step_status": aw.and_then(|a| a.step_status.as_deref()),
+                "activity_key": aw.and_then(|a| a.activity_key.as_deref()),
+                "activity_status": aw.and_then(|a| a.activity_status.as_deref()),
                 "node_type": aw.and_then(|a| a.node_type.as_deref()),
-                "workflow_key": aw.and_then(|a| a.workflow_key.as_deref()),
+                "procedure_key": aw.and_then(|a| a.procedure_key.as_deref()),
                 "transition_policy": aw.and_then(|a| a.transition_policy.as_deref()),
                 "run_status": aw.and_then(|a| a.run_status.as_ref().map(|s| format!("{s:?}").to_ascii_lowercase())),
                 "run_id": aw.and_then(|a| a.run_id.map(|id| id.to_string())),
@@ -319,19 +321,24 @@ fn empty_decision() -> ScriptDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hooks::rules::HookRuleEvaluationQuery;
     use agentdash_infrastructure::RhaiHookScriptEvaluator;
-    use agentdash_spi::{HookEvaluationQuery, HookTrigger, SessionHookSnapshot};
+    use agentdash_spi::{
+        AgentFrameHookSnapshot, HookControlTarget, HookEvaluationQuery, HookTrigger,
+        RuntimeAdapterProvenance,
+    };
+    use uuid::Uuid;
 
     fn test_engine() -> HookScriptEngine {
         HookScriptEngine::new(Arc::new(RhaiHookScriptEvaluator::new(&[])))
     }
 
-    fn base_ctx() -> (SessionHookSnapshot, HookEvaluationQuery) {
-        let snapshot = SessionHookSnapshot {
-            session_id: "sess-test".to_string(),
-            ..SessionHookSnapshot::default()
+    fn base_ctx() -> (AgentFrameHookSnapshot, HookRuleEvaluationQuery) {
+        let snapshot = AgentFrameHookSnapshot {
+            runtime_adapter_session_id: "sess-test".to_string(),
+            ..AgentFrameHookSnapshot::default()
         };
-        let query = HookEvaluationQuery {
+        let query = HookRuleEvaluationQuery::from_session_query(HookEvaluationQuery {
             session_id: "sess-test".to_string(),
             trigger: HookTrigger::BeforeTool,
             turn_id: None,
@@ -341,7 +348,7 @@ mod tests {
             snapshot: None,
             payload: None,
             token_stats: None,
-        };
+        });
         (snapshot, query)
     }
 
@@ -355,6 +362,52 @@ mod tests {
         };
         let result = engine.eval_script("#{}", &ctx, None).unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn context_carries_frame_target_and_runtime_provenance() {
+        let snapshot = AgentFrameHookSnapshot {
+            runtime_adapter_session_id: "sess-frame".to_string(),
+            ..AgentFrameHookSnapshot::default()
+        };
+        let target = HookControlTarget {
+            run_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
+            agent_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap(),
+            frame_id: Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap(),
+            assignment_id: Some(Uuid::parse_str("44444444-4444-4444-4444-444444444444").unwrap()),
+        };
+        let query = HookRuleEvaluationQuery {
+            target: Some(target),
+            provenance: RuntimeAdapterProvenance::runtime_session(
+                "sess-frame",
+                Some("turn-frame".to_string()),
+                "frame_evaluation_test",
+            ),
+            trigger: HookTrigger::BeforeTool,
+            tool_name: Some("shell_exec".to_string()),
+            tool_call_id: None,
+            subagent_type: None,
+            payload: None,
+            token_stats: None,
+        };
+        let ctx = HookEvaluationContext {
+            snapshot: &snapshot,
+            query: &query,
+        };
+
+        let ctx_value = HookScriptEngine::build_ctx_value(&ctx, None);
+
+        assert_eq!(
+            ctx_value["hook_target"]["frame_id"],
+            "33333333-3333-3333-3333-333333333333"
+        );
+        assert_eq!(
+            ctx_value["hook_target"]["assignment_id"],
+            "44444444-4444-4444-4444-444444444444"
+        );
+        assert_eq!(ctx_value["session_id"], "sess-frame");
+        assert_eq!(ctx_value["turn_id"], "turn-frame");
+        assert_eq!(ctx_value["provenance"]["source"], "frame_evaluation_test");
     }
 
     #[test]

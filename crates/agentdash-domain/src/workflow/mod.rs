@@ -1,34 +1,60 @@
+mod agent_assignment;
+mod agent_frame;
+mod agent_lineage;
+pub mod dispatch;
 mod entity;
+mod lifecycle_agent;
+mod lifecycle_gate;
+mod lifecycle_subject_association;
 mod repository;
-mod run_link;
+mod runtime_session_anchor;
 mod validation;
 mod value_objects;
+mod workflow_graph_instance;
 
+pub use agent_assignment::AgentAssignment;
+pub use agent_frame::AgentFrame;
+pub use agent_lineage::AgentLineage;
+pub use dispatch::{
+    ActivityBindingRefs, AgentLaunchDispatchResult, AgentLaunchIntent, AgentPolicy,
+    AgentProcedureRef, AgentRuntimeRefs, CapabilityPolicy, ContextPolicy, ExecutionDispatchResult,
+    ExecutionIntent, ExecutionSource, GatePolicy, InteractionDispatchIntent,
+    InteractionGateOpenedDispatchResult, LifecycleRunStartDispatchResult, LifecycleRunStartIntent,
+    RunPolicy, RuntimeControlRefs, RuntimePolicy, SubjectExecutionDispatchResult,
+    SubjectExecutionIntent, SubjectExecutionRef, WorkflowGraphRef,
+};
 pub use entity::{
-    ActivityExecutionClaim, ActivityLifecycleDefinition, LifecycleRun, WorkflowDefinition,
-    build_effective_contract,
+    ActiveActivityRef, ActivityExecutionClaim, AgentProcedure, LifecycleRun, LifecycleRunTopology,
+    WorkflowGraph, active_activity_refs_from_states, build_effective_contract,
+    has_active_activity_state,
 };
+pub use lifecycle_agent::{LifecycleAgent, bootstrap_status};
+pub use lifecycle_gate::LifecycleGate;
+pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 pub use repository::{
-    ActivityExecutionClaimRepository, ActivityLifecycleDefinitionRepository,
-    LifecycleRunRepository, WorkflowDefinitionRepository, WorkflowTemplateInstallBundle,
-    WorkflowTemplateInstallRepository, WorkflowTemplateInstallResult,
+    ActivityExecutionClaimRepository, AgentAssignmentRepository, AgentFrameRepository,
+    AgentLineageRepository, AgentProcedureRepository, LifecycleAgentRepository,
+    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    RuntimeSessionExecutionAnchorRepository, WorkflowGraphInstanceRepository,
+    WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
+    WorkflowTemplateInstallResult,
 };
-pub use run_link::{LifecycleRunLink, LifecycleRunLinkRepository, RunLinkRole, RunLinkSubjectKind};
-pub use validation::{validate_activity_lifecycle_definition, validate_workflow_definition};
+pub use runtime_session_anchor::{RuntimeDeliverySelectionPolicy, RuntimeSessionExecutionAnchor};
+pub use validation::{validate_agent_procedure, validate_workflow_graph};
 pub use value_objects::{
     ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
     ActivityExecutionClaimStatus, ActivityExecutorSpec, ActivityInputArtifact,
     ActivityIterationPolicy, ActivityJoinPolicy, ActivityLifecycleRunState, ActivityOutputArtifact,
     ActivityPortValue, ActivityRunStatus, ActivityTransition, ActivityTransitionKind,
-    AgentActivityExecutorSpec, AgentSessionPolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy,
-    ArtifactBinding, BashExecExecutorSpec, CapabilityConfig, ContextStrategy,
-    EffectiveSessionContract, ExecutorRunRef, FunctionActivityExecutorSpec, GateStrategy,
-    HumanActivityExecutorSpec, HumanApprovalExecutorSpec, InputPortDefinition,
+    AgentActivityExecutorSpec, AgentProcedureContract, AgentReusePolicy, ApiRequestExecutorSpec,
+    ArtifactAliasPolicy, ArtifactBinding, BashExecExecutorSpec, CapabilityConfig, ContextStrategy,
+    DefinitionSource, EffectiveSessionContract, ExecutorRunRef, FunctionActivityExecutorSpec,
+    GateStrategy, HumanActivityExecutorSpec, HumanApprovalExecutorSpec, InputPortDefinition,
     LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleNodeType, LifecycleRunStatus,
-    MountDirective, OutputPortDefinition, StandaloneFulfillment, ToolCapabilityDirective,
-    ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState, TransitionCondition,
-    ValidationIssue, ValidationSeverity, WorkflowBindingKind, WorkflowContextBinding,
-    WorkflowContract, WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger,
-    WorkflowInjectionSpec, WorkflowSessionTerminalState, normalize_workflow_binding_kinds,
-    reduce_tool_capability_directives, workflow_binding_kinds_cover,
+    MountDirective, OutputPortDefinition, RuntimeSessionPolicy, StandaloneFulfillment,
+    ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState,
+    TransitionCondition, ValidationIssue, ValidationSeverity, WorkflowContextBinding,
+    WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowSessionTerminalState,
+    reduce_tool_capability_directives,
 };
+pub use workflow_graph_instance::WorkflowGraphInstance;

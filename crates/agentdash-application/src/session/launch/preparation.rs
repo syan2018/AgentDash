@@ -1,7 +1,6 @@
 use agentdash_agent_protocol::SourceInfo;
-use agentdash_domain::common::AgentConfig;
 use agentdash_spi::hooks::{
-    ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SharedHookSessionRuntime,
+    ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SharedHookRuntime,
 };
 use agentdash_spi::{ConnectorError, ExecutionContext};
 
@@ -37,9 +36,8 @@ pub(in crate::session) struct PreparedTurn {
     pub accepted_context_frames_to_emit: Vec<ContextFrame>,
     pub pending_transition_application: PendingRuntimeContextApplication,
     pub pending_command_ids: Vec<uuid::Uuid>,
-    pub executor_config_for_meta: AgentConfig,
     pub is_owner_bootstrap: bool,
-    pub hook_session: Option<SharedHookSessionRuntime>,
+    pub hook_runtime: Option<SharedHookRuntime>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
 }
 
@@ -68,9 +66,9 @@ impl TurnPreparer {
         let title_hint = launch_plan.title_hint.clone();
         let resolved_follow_up_session_id = launch_plan.summary.follow_up_session_id.clone();
         let post_turn_handler = launch_plan.terminal_effects.post_turn_handler.clone();
-        let hook_session = launch_plan.context.turn.hook_session.clone();
+        let hook_runtime = launch_plan.context.turn.hook_runtime.clone();
         let hook_snapshot_contribution = launch_plan.hooks.snapshot_contribution.clone();
-        let context_bundle = launch_plan.construction.context.bundle.clone();
+        let context_bundle = launch_plan.context_bundle.clone();
         let discovered_guidelines = launch_plan.discovered_guidelines.clone();
         let base_capability_state = launch_plan.runtime_commands.base_capability_state.clone();
         let capability_state = launch_plan.context.turn.capability_state.clone();
@@ -169,7 +167,7 @@ impl TurnPreparer {
                 .apply_pending_runtime_context_transitions_on_turn(
                     &session_id,
                     &turn_id,
-                    hook_session.as_ref(),
+                    hook_runtime.as_ref(),
                     base_capability_state,
                     &capability_state,
                     &launch_plan.runtime_commands.pending_capability_transitions,
@@ -191,16 +189,16 @@ impl TurnPreparer {
         };
 
         if is_owner_bootstrap {
-            if let Some(hook_session) = hook_session.as_ref() {
+            if let Some(hook_runtime) = hook_runtime.as_ref() {
                 let initial_caps = capability_keys.clone();
                 if !initial_caps.is_empty() {
-                    let _ = hook_session.update_capabilities(initial_caps.clone());
+                    let _ = hook_runtime.update_capabilities(initial_caps.clone());
                 }
 
                 let _start_effects = deps
                     .hooks
                     .emit_session_hook_trigger(
-                        hook_session.as_ref(),
+                        hook_runtime.as_ref(),
                         &HookTriggerInput {
                             session_id: &session_id,
                             turn_id: Some(&turn_id),
@@ -247,26 +245,19 @@ impl TurnPreparer {
             accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
-        if let Some(frame) = launch_plan
-            .construction
-            .context
-            .continuation_context_frame
-            .clone()
-        {
+        if let Some(frame) = launch_plan.continuation_context_frame.clone() {
             accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
         turn_context_frames.extend(owner_bootstrap_frames);
         turn_context_frames.extend(pending_transition_application.context_frames.clone());
 
-        if let Some(hook_session_runtime) = hook_session.as_ref() {
-            turn_context_frames.extend(collect_queued_turn_start_frames(
-                hook_session_runtime.as_ref(),
-            ));
+        if let Some(hook_runtime_for) = hook_runtime.as_ref() {
+            turn_context_frames.extend(collect_queued_turn_start_frames(hook_runtime_for.as_ref()));
 
-            let snapshot = hook_session_runtime.snapshot();
-            let runtime = hook_session_runtime.runtime_snapshot();
-            let pending_action_frames = hook_session_runtime
+            let snapshot = hook_runtime_for.snapshot();
+            let runtime = hook_runtime_for.runtime_snapshot();
+            let pending_action_frames = hook_runtime_for
                 .unresolved_pending_actions()
                 .into_iter()
                 .filter_map(|action| {
@@ -281,10 +272,9 @@ impl TurnPreparer {
         context.turn.context_frames = dedupe_context_frames(turn_context_frames);
 
         enqueue_context_frames_for_transform_context(
-            hook_session.as_ref(),
+            hook_runtime.as_ref(),
             &context.turn.context_frames,
         );
-        let executor_config_for_meta = context.session.executor_config.clone();
 
         Ok(PreparedTurn {
             session_id,
@@ -297,18 +287,17 @@ impl TurnPreparer {
             accepted_context_frames_to_emit,
             pending_transition_application,
             pending_command_ids,
-            executor_config_for_meta,
             is_owner_bootstrap,
-            hook_session,
+            hook_runtime,
             post_turn_handler,
         })
     }
 }
 
 fn collect_queued_turn_start_frames(
-    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+    hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
 ) -> Vec<ContextFrame> {
-    hook_session
+    hook_runtime
         .collect_turn_start_notices_for_injection()
         .into_iter()
         .filter_map(notice_to_context_frame)
@@ -372,10 +361,10 @@ fn should_include_connector_startup_context(
 }
 
 fn enqueue_context_frames_for_transform_context(
-    hook_session: Option<&SharedHookSessionRuntime>,
+    hook_runtime: Option<&SharedHookRuntime>,
     frames: &[ContextFrame],
 ) {
-    let Some(hook_session) = hook_session else {
+    let Some(hook_runtime) = hook_runtime else {
         return;
     };
     for frame in frames {
@@ -385,7 +374,7 @@ fn enqueue_context_frames_for_transform_context(
         if frame.rendered_text.trim().is_empty() {
             continue;
         }
-        hook_session.enqueue_turn_start_notice(HookTurnStartNotice {
+        hook_runtime.enqueue_turn_start_notice(HookTurnStartNotice {
             id: frame.id.clone(),
             created_at_ms: frame.created_at_ms,
             source: frame.source.clone(),

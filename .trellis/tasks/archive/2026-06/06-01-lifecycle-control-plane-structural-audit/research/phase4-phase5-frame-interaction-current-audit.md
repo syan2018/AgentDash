@@ -1,0 +1,311 @@
+# Research: Phase 4/5 Frame Interaction Current Audit
+
+- Query: 旁路审计 Phase 4/5 的结构性风险：AgentFrame surface owner、hook/capability target、companion/gate、task cancel、routine reuse、permission provenance 是否仍存在模型过度耦合。
+- Scope: internal
+- Date: 2026-06-02
+- Note: 本文是阶段性 current audit 快照；后续 slice 已在 `implement.md` 与 `structural-analysis.md` 追加落地记录。表中直接涉及 ContinueRoot policy split 的状态已按 2026-06-02 最新 slice 校准，其他阶段性记录仍保留原审计语境。
+
+## Findings
+
+### Files Found
+
+- `.trellis/workflow.md` — Trellis 阶段、task/research 输出约束与实现前置阅读流程。
+- `.trellis/spec/project-overview.md` — 项目边界与分层约束。
+- `.trellis/spec/backend/session/architecture.md` — session/runtime/frame 边界相关规范入口。
+- `.trellis/spec/backend/session/session-startup-pipeline.md` — runtime 启动、session assembler、frame projection 相关规范。
+- `.trellis/spec/backend/session/runtime-execution-state.md` — runtime execution state 与 session delivery 的语义边界。
+- `.trellis/spec/backend/hooks/execution-hook-runtime.md` — hook runtime 的 frame target 与 runtime provenance 规范。
+- `.trellis/spec/backend/capability/architecture.md` — capability surface 与 AgentFrame 的归属边界。
+- `.trellis/spec/backend/capability/capability-dimension-pipeline.md` — capability/VFS/MCP 维度投影规范。
+- `.trellis/spec/backend/permission/architecture.md` — permission grant frame anchor 与 runtime provenance 规范。
+- `.trellis/spec/backend/permission/policy-engine.md` — permission policy/effect 应用规范。
+- `.trellis/spec/backend/workflow/activity-lifecycle.md` — lifecycle run/agent/frame/assignment 分层规范。
+- `.trellis/spec/backend/story-task-runtime.md` — Story/Task execution 与 runtime 调度相关规范。
+- `.trellis/spec/frontend/workflow-activity-lifecycle.md` — frontend workflow/task execution 投影规范。
+- `.trellis/tasks/06-01-lifecycle-control-plane-structural-audit/prd.md` — 本轮结构审计目标和验收口径。
+- `.trellis/tasks/06-01-lifecycle-control-plane-structural-audit/design.md` — Phase 4/5 结构设计意图。
+- `.trellis/tasks/06-01-lifecycle-control-plane-structural-audit/implement.md` — Phase 4/5 已完成/未完成 gate 清单。
+- `.trellis/tasks/06-01-lifecycle-control-plane-structural-audit/structural-analysis.md` — P1-08/P1-09/P1-10/P1-20/P1-21/P1-22 风险定义。
+- `.trellis/tasks/06-01-lifecycle-control-plane-structural-audit/research/phase4-stepactivation-continue-root-followup.md` — Phase 4 StepActivation/ContinueRoot 既有跟进研究。
+- `.trellis/tasks/06-01-lifecycle-control-plane-structural-audit/research/phase4-hook-capability-targets-followup.md` — Phase 4 hook/capability target 既有跟进研究。
+- `crates/agentdash-application/src/workflow/frame_builder.rs` — AgentFrameBuilder 和 frame revision projection。
+- `crates/agentdash-application/src/workflow/step_activation.rs` — StepActivation DTO 与 running-session apply 路径。
+- `crates/agentdash-application/src/workflow/agent_executor.rs` — workflow agent assignment、ContinueRoot 与 pending frame transition。
+- `crates/agentdash-application/src/session/hub/runtime_context_transition.rs` — live/pending runtime context transition 与 delivery command。
+- `crates/agentdash-application/src/session/hub/tool_builder.rs` — runtime session -> frame 解析与 capability live update。
+- `crates/agentdash-application/src/session/assembler.rs` — session assembly 到 AgentFrameBuilder/StepActivation 的投影。
+- `crates/agentdash-application/src/workflow/frame_hook_runtime.rs` — frame-first hook runtime adapter。
+- `crates/agentdash-application/src/session/hub/hook_dispatch.rs` — session hub hook runtime 创建入口。
+- `crates/agentdash-application/src/session/hooks_service.rs` — session facade hook snapshot/refresh 入口。
+- `crates/agentdash-application/src/hooks/provider.rs` — production hook provider frame/session 双路径实现。
+- `crates/agentdash-application/src/canvas/tools.rs` — canvas capability live update 调用路径。
+- `crates/agentdash-application/src/companion/tools.rs` — companion dispatch/wait/resume/notification 与 parent routing。
+- `crates/agentdash-application/src/workflow/lifecycle_gate_service.rs` — durable lifecycle gate service。
+- `crates/agentdash-domain/src/workflow/lifecycle_gate.rs` — LifecycleGate domain model。
+- `crates/agentdash-application/src/task/service.rs` — task start/continue/cancel service。
+- `crates/agentdash-api/src/routes/task_execution.rs` — task execution routes。
+- `packages/app-web/src/services/story.ts` — frontend task execution API consumption。
+- `crates/agentdash-application/src/routine/dispatch.rs` — routine execution intent/reuse mapping。
+- `crates/agentdash-application/src/routine/executor.rs` — routine reuse run resolution。
+- `crates/agentdash-application/src/permission/service.rs` — permission grant query/effect application。
+- `crates/agentdash-domain/src/permission/entity.rs` — permission grant frame anchor/runtime provenance fields。
+- `crates/agentdash-domain/src/permission/repository.rs` — permission repository query surface。
+- `crates/agentdash-api/src/routes/project_agents.rs` — freeform project agent launch route。
+- `crates/agentdash-api/src/routes/story_runs.rs` — story execution projection route。
+
+### Gate Status
+
+| Gate | Status | Code Evidence | Model Over-Coupling |
+| --- | --- | --- | --- |
+| Phase 4: AgentFrame transition 与 RuntimeDeliveryCommand 分离 | pass | `AgentFrameRuntimeTarget` 显式包含 `frame_id` 与 `delivery_runtime_session_id`（`crates/agentdash-application/src/session/types.rs:58`），`RuntimeDeliveryCommand` 只记录 delivery target frame/transition（`crates/agentdash-spi/src/session_persistence.rs:426`），live transition 同时写 frame transition 与 runtime delivery outbox（`crates/agentdash-application/src/session/hub/runtime_context_transition.rs:195`）。 | 否。核心数据模型已把 frame effect 与 runtime delivery 拆开。 |
+| Phase 4: StepActivation 纳入 AgentFrame surface owner / AgentFrameBuilder | fail | `StepActivationInput`/`StepActivation` 仍是 workflow 层独立 DTO（`crates/agentdash-application/src/workflow/step_activation.rs:44`, `crates/agentdash-application/src/workflow/step_activation.rs:91`），assembler 直接消费 activation（`crates/agentdash-application/src/session/assembler.rs:1377`, `crates/agentdash-application/src/session/assembler.rs:1600`），companion skill projection 直接改 `activation.lifecycle_vfs`（`crates/agentdash-application/src/companion/skill_projection.rs:9`, `crates/agentdash-application/src/companion/skill_projection.rs:50`）。 | 是。procedure/context/capability/VFS/MCP/runtime refs 的同源装配还不是一个封装内的 frame surface 阶段，StepActivation 仍可被多个上层 owner 拼装。 |
+| Phase 4: AgentFrameBuilder 覆盖 StepActivation 同源 surface 测试 | pass | `AgentFrameBuilder` 通过 `AgentFrameSurfaceInput` 统一吸收 capability/VFS/MCP/context/execution profile surface，`build_lifecycle_activation_surface` 负责 lifecycle activation surface 归一化；`lifecycle_activation_surface_outputs_single_coherent_frame_revision` 覆盖一次 activation surface 同时产出 procedure/context/capability/VFS/MCP/runtime refs/activity scope。 | 否。测试 gate 已闭合；剩余耦合在 StepActivation 独立 DTO、companion projection 与 ContinueRoot 入口，不在同源 frame revision 断言本身。 |
+| Phase 4: hook snapshot/refresh/evaluate 以 AgentFrame target 为 primary target | partial | SPI 已有 `HookControlTarget` 与 `RuntimeAdapterProvenance`（`crates/agentdash-spi/src/hooks/mod.rs:542`, `crates/agentdash-spi/src/hooks/mod.rs:552`），frame query 已存在（`crates/agentdash-spi/src/hooks/mod.rs:576`），`FrameHookRuntime` 会把 session-shaped query 转成 frame target（`crates/agentdash-application/src/workflow/frame_hook_runtime.rs:155`, `crates/agentdash-application/src/workflow/frame_hook_runtime.rs:272`, `crates/agentdash-application/src/workflow/frame_hook_runtime.rs:316`）。`SessionHookService::ensure_hook_runtime_for_target` / `get_hook_runtime_for_target` 会校验 hook runtime 的 session 与 frame target（`crates/agentdash-application/src/session/hooks_service.rs:32`, `crates/agentdash-application/src/session/hooks_service.rs:52`, `crates/agentdash-application/src/session/hooks_service.rs:176`），workflow/canvas capability caller 已迁到 target-aware 入口（`crates/agentdash-application/src/workflow/agent_executor.rs:357`, `crates/agentdash-application/src/canvas/tools.rs:612`）。但 SPI/session facade 仍保留 `SessionHookSnapshotQuery`/`SessionHookRefreshQuery`/`HookEvaluationQuery`（`crates/agentdash-spi/src/hooks/mod.rs:612`, `crates/agentdash-spi/src/hooks/mod.rs:718`），production provider 的 frame evaluate 仍回落到 session-shaped `HookEvaluationQuery`（`crates/agentdash-application/src/hooks/provider.rs:281`），hub lazy rebuild 入口仍 `ensure_hook_runtime(session_id)`（`crates/agentdash-application/src/session/hub/hook_dispatch.rs:178`），companion parent hook 仍 session-first。 | 是。hook control target 已建好，workflow/canvas capability caller 也会校验 target；剩余耦合在 hook SPI/session facade、hub lazy rebuild 与 companion parent hook。 |
+| Phase 4: capability live update 以 AgentFrame target 为 primary target | partial | core primitive `replace_current_capability_state(AgentFrameRuntimeTarget, state)` 会校验 delivery session 属于 target frame并写 AgentFrame revision（`crates/agentdash-application/src/session/hub/tool_builder.rs:101`, `crates/agentdash-application/src/session/hub/tool_builder.rs:118`, `crates/agentdash-application/src/session/hub/tool_builder.rs:154`）。`StepActivation::apply_to_frame_runtime_target` 已要求调用方传入 `AgentFrameRuntimeTarget` 与 base surface（`crates/agentdash-application/src/workflow/step_activation.rs:290`, `crates/agentdash-application/src/workflow/step_activation.rs:308`），workflow live/pending transition 已通过 `resolve_runtime_session_target` 取得显式 target。canvas capability sync 已拆为 runtime-delivery adapter 与 target-first apply helper，并通过 `get_hook_runtime_for_target` 校验 hook runtime target。ContinueRoot executor 与 definition vocabulary 已拆为 agent reuse policy + runtime session policy。剩余缺口是 hook SPI/session facade 与 hub lazy rebuild 仍存在 session-shaped owner 入口。 | 是。StepActivation、canvas apply helper 与 ContinueRoot start/apply 已停止自行反查 frame；剩余耦合集中在 hook/session facade，而不是 capability primitive 本身。 |
+| Phase 4: RuntimeSession 多引用选择策略 | pass | domain 暴露 `RuntimeSessionSelectionPolicy::{Specific, LaunchPrimary, LatestAttached}`（`crates/agentdash-domain/src/workflow/agent_frame.rs:8`），`select_runtime_session_id` 必须显式传 policy（`crates/agentdash-domain/src/workflow/agent_frame.rs:135`），runtime launch 也从 frame + policy 选择 runtime（`crates/agentdash-application/src/workflow/runtime_launch.rs:1`, `crates/agentdash-application/src/workflow/runtime_launch.rs:89`）。 | 否。选择入口已从“随手拿第一个 session”转为显式策略；剩余风险是 `LatestAttached` 仍是顺序策略，不是业务 owner。 |
+| Phase 4: ContinueRoot policy split | pass | `AgentActivityLaunchContext` 已移除 `root_runtime_session_id`，普通 agent activity 使用 `source_runtime_session_ref` 作为 provenance；ContinueRoot 使用 `ContinueRootExecutionPolicy { AgentReusePolicy, RuntimeSessionDeliveryPolicy }`。definition-level `AgentActivityExecutorSpec` 已改为 `agent_reuse_policy + runtime_session_policy`，freeform / ProjectAgent auto lifecycle / shared-library current-shape normalizer / builtin seeds 均使用 `continue_current_agent + deliver_to_current_trace` 或 `create_activity_agent + create_new`。`rg -n "AgentSessionPolicy|\\bsession_policy\\b" ...` 无命中。 | 否。agent/frame reuse 与 runtime delivery 已在 definition contract 与 executor boundary 双层拆开；runtime session 只剩 provenance/delivery target。 |
+| Phase 4: session_id 仅作为 runtime adapter provenance | partial | hook provenance 类型存在（`crates/agentdash-spi/src/hooks/mod.rs:552`），permission query 也已 frame/run primary；ContinueRoot executor boundary 已把 runtime session 降为 source/delivery provenance。剩余 session primary surface 主要在 hook SPI/session facade、hub lazy rebuild 与部分 delivery adapter；这些入口仍需要被包进 frame/assignment target-aware service。 | 是。runtime session provenance 的模型已经出现，但 hook/session facade 还没有统一收口。 |
+| Phase 5: Story root / freeform launch 进入 dispatch taxonomy | pass | project agent/freeform launch 已构造 `AgentLaunchIntent` 并调用 `LifecycleDispatchService::launch_agent`；freeform lifecycle seed 使用 `continue_current_agent + deliver_to_current_trace`。Story root launch 已由 `StoryLifecycleLaunchService` 构造 `AgentLaunchIntent(subject_ref=story)` 并委派 dispatch，runtime construction 只消费 Story association 组成 frame surface。 | 否。Story/freeform 写入口已由 dispatch 创建 run/agent/frame/runtime surface；freeform 不再通过 session-shaped ContinueRoot policy 表达 definition。 |
+| Phase 5: Task start/continue command target | partial | backend start/continue 已构造 `SubjectExecutionIntent`，subject 为 `task`，通过 `LifecycleDispatchService::execute_subject` 调度（`crates/agentdash-application/src/task/service.rs:118`, `crates/agentdash-application/src/task/service.rs:163`, `crates/agentdash-application/src/task/service.rs:279`），API 返回 run/agent/frame/assignment/subject_execution/trace refs（`crates/agentdash-api/src/routes/task_execution.rs:20`, `crates/agentdash-api/src/routes/task_execution.rs:70`）。frontend 仍 POST 后丢弃 start/continue response 并重新 fetch Task（`packages/app-web/src/services/story.ts:350`, `packages/app-web/src/services/story.ts:358`）。 | 部分是。后端 target 已从 session 迁到 subject execution；前端仍以 Task record 作为命令反馈模型，削弱 SubjectExecution contract。 |
+| Phase 5: Task cancel command target | pass with caveat | 后续 slice 新增 `SubjectExecutionControlService` 与 `CancelSubjectExecutionCommand`，cancel 以 `SubjectRef("task", task_id)` 解析 association/agent/assignment/frame，再写 `ActivityCancelled`、abandon claim、release assignment，runtime cancel 只作为 `RuntimeCancelDeliveryCommand` 投递（`crates/agentdash-application/src/workflow/subject_execution_control.rs`, `crates/agentdash-application/src/task/service.rs`, `crates/agentdash-api/src/bootstrap/turn_dispatcher.rs`）。API cancel response 返回 Task projection 与 lifecycle refs（`crates/agentdash-api/src/dto/task_execution.rs`, `crates/agentdash-api/src/routes/task_execution.rs`）。后续 projection slice 新增 `TaskExecutionProjection` 与 `TaskStatus::Cancelled`，Task view 不再把 cancel 合并为 failed。 | active assignment 控制面否，gate 层仍是。`SubjectExecutionControlService` 尚未处理 open `LifecycleGate` cancel；如果 Task execution 进入 wait/gate，cancel truth 和 gate truth 仍会分裂。 |
+| Phase 5: companion wait/resume/gate/notification 分层 | partial | `LifecycleGate` domain/service 已存在 durable wait/resume 点（`crates/agentdash-domain/src/workflow/lifecycle_gate.rs:5`, `crates/agentdash-application/src/workflow/lifecycle_gate_service.rs:1`），companion request wait 会 open interaction gate。后续 slice 已把 human response route 收束到 `/companion-gates/{gate_id}/respond`，并把 child-to-parent result return 迁入 `CompanionGateControlService::complete_child_result_to_parent`：child completion resolve child-owned gate，parent/child notification 由 delivery adapter 产生。parent request 发起侧仍通过 parent hook runtime pending action 与 parent session notification 表达 waiting/control truth。 | 是。gate 已承担 human respond 与 parent result return 的 durable truth，但 parent request / hook control 仍以 runtime session 为中心。 |
+| Phase 5: companion parent hook/capability target | fail | parent companion result 通过 `ensure_hook_runtime(&parent_session_id)` 创建 hook runtime 并 evaluate pending action（`crates/agentdash-application/src/companion/tools.rs:687`, `crates/agentdash-application/src/companion/tools.rs:704`），helper `evaluate_subagent_hook` 仍使用 `HookEvaluationQuery { session_id }` 和 `SessionHookRefreshQuery`（`crates/agentdash-application/src/companion/tools.rs:1562`, `crates/agentdash-application/src/companion/tools.rs:1581`）。 | 是。CompanionChannel/Gate/Notification 没有完全分层，parent session 仍是 hook/capability/control 的聚合锚点。 |
+| Phase 5: Routine reuse 通过 LifecycleAgentReuseResolver / subject association | fail | 未找到 `LifecycleAgentReuseResolver` 或等价封装。routine reuse intent 仍把 reuse 表达成 `parent_run_id = reuse_run_id` + `RunPolicy::ReuseExisting` + `AgentPolicy::Resume`（`crates/agentdash-application/src/routine/dispatch.rs:55`, `crates/agentdash-application/src/routine/dispatch.rs:64`），executor 通过 entity key 找最近 routine execution 并取 `existing.dispatch_refs.run_id`（`crates/agentdash-application/src/routine/executor.rs:270`, `crates/agentdash-application/src/routine/executor.rs:296`），dispatch service 的 run reuse 只认 `parent_run_id`（`crates/agentdash-application/src/workflow/dispatch_service.rs:452`）。 | 是。reuse policy 仍耦合到 parent run id，缺少按 routine/entity/subject association 解析可复用 agent/frame 的封装。 |
+| Phase 5: permission query 中 runtime session 只是 provenance | pass with caveat | Grant domain 以 `effect_frame_id` 为 effect anchor，`source_runtime_session_id` 是 source 字段（`crates/agentdash-domain/src/permission/entity.rs:17`, `crates/agentdash-domain/src/permission/entity.rs:51`）；repository 查询面是 frame/run/escalation-by-frame，没有 source runtime query（`crates/agentdash-domain/src/permission/repository.rs:15`）；API list query 只接受 `effect_frame_id` 或 `run_id`（`crates/agentdash-api/src/routes/permission_grants.rs:104`），contracts query 也只有 `effect_frame_id`/`run_id`/`status`（`crates/agentdash-contracts/src/permission.rs:28`）。Caveat: `apply_frame_effect` 在构建新 frame revision 时会把 `grant.source_runtime_session_id` 再加入 runtime refs（`crates/agentdash-application/src/permission/service.rs:323`）。 | 查询侧否，effect 应用侧部分是。runtime session 不再是 permission query primary target，但 source runtime provenance 被重新写进 frame runtime refs，容易让 provenance 重新参与 delivery ownership。 |
+
+### Code Patterns
+
+1. AgentFrameBuilder 已经成为 frame revision 的主要写入工具，但不是 StepActivation 的唯一 owner。
+
+   - `AgentFrameBuilder` 注释说明它接收 StepActivation/CapabilityResolver/Context 并成为 frame facts source（`crates/agentdash-application/src/workflow/frame_builder.rs:1`）。
+   - builder 字段覆盖 procedure/context/capability/VFS/MCP/execution profile/runtime refs/activity scope（`crates/agentdash-application/src/workflow/frame_builder.rs:24`）。
+   - `with_capability_state` 同时投影 capability/VFS/MCP surface（`crates/agentdash-application/src/workflow/frame_builder.rs:82`）。
+   - `build()` 写入 revision 并 carry forward 未显式替换的 surface（`crates/agentdash-application/src/workflow/frame_builder.rs:149`, `crates/agentdash-application/src/workflow/frame_builder.rs:193`）。
+   - 但 `StepActivation` 仍是 workflow 层独立 DTO，`apply_to_frame_runtime_target` 由 `AgentActivityExecutor` 直接调用；activation -> frame transition 还不是 builder-owned stage。
+
+2. Runtime delivery split 的底层结构是正确的，但调用层仍常以 runtime session 开局。
+
+   - `LiveRuntimeContextTransitionInput` 同时要求 `target_frame_id` 和 `delivery_runtime_session_id`（`crates/agentdash-application/src/session/hub/runtime_context_transition.rs:29`）。
+   - live transition 用 `AgentFrameRuntimeTarget` 写 capability state（`crates/agentdash-application/src/session/hub/runtime_context_transition.rs:110`）。
+   - `resolve_runtime_session_target(session_id)` 当前作为 application adapter lookup 存在，workflow live/pending transition、canvas capability sync 与 ContinueRoot start/apply 内部已消费显式 `AgentFrameRuntimeTarget`；ContinueRoot definition/freeform contract 已拆成 agent reuse policy 与 runtime session policy，不再保留 `AgentSessionPolicy::ContinueRoot` 词表。
+
+3. Hook runtime 形成了 frame target/provenance 双模型，但 session facade 尚未收口。
+
+   - `FrameHookRuntime::control_target` 与 `runtime_provenance` 可生成 frame target/provenance（`crates/agentdash-application/src/workflow/frame_hook_runtime.rs:155`）。
+   - frame refresh/evaluate adapter 测试证明错误 query.session_id 不会改变 provider 收到的 frame target（`crates/agentdash-application/src/workflow/frame_hook_runtime.rs:731`）。
+   - production provider 仍保留 `load_session_snapshot`/`refresh_session_snapshot`，并在 frame evaluate 内调用旧 `evaluate_hook(HookEvaluationQuery { session_id })`（`crates/agentdash-application/src/hooks/provider.rs:281`, `crates/agentdash-application/src/hooks/provider.rs:309`）。
+
+4. Companion gate 已耐久化，notification 和 hook 仍是 session delivery。
+
+   - `LifecycleGate::open/resolve/is_open` 提供 durable gate 状态（`crates/agentdash-domain/src/workflow/lifecycle_gate.rs:30`）。
+   - companion wait 可通过 `LifecycleDispatchService::open_interaction_gate` 生成 gate（`crates/agentdash-application/src/companion/tools.rs:378`）。
+   - 后续 slice 已将 human respond 与 parent result return 收束进 `CompanionGateControlService`；parent request 初始通知与 hook pending action 仍通过 parent runtime session / hook runtime 表达。
+
+5. Task start/continue/cancel active assignment path 已进入 subject execution control boundary，projection vocabulary 已区分 cancelled/failed；gate cancellation 仍未闭合。
+
+   - start/continue service 注释明确通过 ExecutionIntent dispatch 编排 Task execution（`crates/agentdash-application/src/task/service.rs:29`）。
+   - start/continue 都构造 `SubjectExecutionIntent` 并 dispatch（`crates/agentdash-application/src/task/service.rs:118`, `crates/agentdash-application/src/task/service.rs:163`）。
+   - cancel 通过 `CancelSubjectExecutionCommand` 写 workflow cancellation truth，并把 runtime cancel 降为 delivery command（`crates/agentdash-application/src/workflow/subject_execution_control.rs:87`, `crates/agentdash-application/src/task/service.rs:211`, `crates/agentdash-api/src/bootstrap/turn_dispatcher.rs:23`）。
+   - `SubjectExecutionControlService` 当前没有 `LifecycleGateRepository` dependency，open gate cancellation 尚未进入同一 command transaction。
+   - `TaskExecutionProjection` 已把 `ActivityAttemptStatus::Cancelled` 映射为 `TaskStatus::Cancelled`，这是 execution outcome 到 Task view status 的封装边界。
+
+6. Routine reuse 已脱离 raw session，但仍绑定 parent_run_id。
+
+   - reuse helper 将 `reuse_run_id` 填入 `parent_run_id`（`crates/agentdash-application/src/routine/dispatch.rs:55`）。
+   - dispatch service 的 `resolve_or_create_run` 在 `ReuseExisting` 下只检查 `intent.parent_run_id`（`crates/agentdash-application/src/workflow/dispatch_service.rs:452`）。
+   - `AgentPolicy::Reuse|Resume` 只按 run 列出 agent 并取第一个 active agent（`crates/agentdash-application/src/workflow/dispatch_service.rs:529`）。
+
+7. Permission query 模型基本收敛到 frame/run。
+
+   - `PermissionGrantRepository` 只暴露 frame/run/escalation-by-frame 查询（`crates/agentdash-domain/src/permission/repository.rs:15`）。
+   - `PermissionGrantService::list_active_by_frame` 与 `find_active_escalation_by_frame` 是 application query surface（`crates/agentdash-application/src/permission/service.rs:223`, `crates/agentdash-application/src/permission/service.rs:235`）。
+   - migration `0081_permission_grants_frame_anchor.sql` 将旧 session field 改名为 `source_runtime_session_id` 并加 `effect_frame_id` index（`crates/agentdash-infrastructure/migrations/0081_permission_grants_frame_anchor.sql:1`）。
+
+### Incomplete Points And Coupling Cause
+
+| Incomplete Point | Is Over-Coupling? | Cause |
+| --- | --- | --- |
+| StepActivation 仍独立于 AgentFrameBuilder | yes | activation 既承载 lifecycle input，又暴露 capability/VFS/MCP/runtime refs 给 assembler、companion projection、executor 使用；没有一个 `AgentFrameSurfaceService` 负责把 activation 变成唯一 frame transition。 |
+| Hook snapshot/refresh/evaluate session facade 未收口 | yes | SPI 已有 frame target/provenance，但 provider/service/hub 仍保留 session primary API，导致任何调用者都可绕过 frame target。 |
+| Capability live update caller session-first | yes | `replace_current_capability_state` 封装正确，但 target resolution 没有被集中在 runtime adapter 边界；上层工具仍直接以 session 找 frame。 |
+| ContinueRoot definition vocabulary | no | definition/freeform 层已把 `AgentSessionPolicy::ContinueRoot` 收束为 `AgentReusePolicy::ContinueCurrentAgent + RuntimeSessionPolicy::DeliverToCurrentTrace`；普通 Agent activity 是 `CreateActivityAgent + CreateNew`。 |
+| Story/freeform launch 的 ContinueRoot vocabulary | no | freeform route 已走 dispatch taxonomy，freeform lifecycle seed 不再声明 session-shaped policy；Story root launch 已由后续 Story lifecycle launch slice 进入 dispatch。 |
+| Task wait/gate cancellation 未进 SubjectExecutionControlService | yes | active assignment cancel 已关闭，但 `LifecycleGate` 没有作为 subject execution control target 被解析和取消；wait/gate 状态会让 cancellation truth 与 gate truth 分裂。 |
+| Companion notification 与 parent hook 仍以 session 为 delivery/control | yes | LifecycleGate 已 durable，但 `CompanionChannel`、`LifecycleGate`、`RuntimeNotification` 未形成清晰封装；parent session 仍被用来挂 hook pending action 和 notification。 |
+| Routine reuse 依赖 parent_run_id | yes | 缺少按 routine/entity/subject association 解析可复用 lifecycle agent/frame 的 resolver；`RunPolicy::ReuseExisting` 被迫使用 parent_run_id 作为复用载体。 |
+| Permission effect apply 把 source runtime 加回 frame refs | partial | query 侧已 frame/run primary，但 effect 应用侧让 provenance 字段重新进入 runtime refs；如果没有显式校验 source runtime 属于 effect frame，会模糊 provenance 与 delivery ownership。 |
+
+### Minimal Structural Fix Order
+
+1. 收敛 AgentFrame surface owner。
+
+   建立或强化 `AgentFrameSurfaceService` 作为 StepActivation -> AgentFrame transition 的唯一封装：输入 lifecycle activity/procedure/context/capability/VFS/MCP/runtime delivery intent，输出 persisted AgentFrame revision 和 runtime delivery command。`StepActivation` 保持在该封装内部，companion skill projection、session assembler、agent executor 只提交 surface intent，不直接改 activation 字段。补一组同源 builder 测试：同一 activation 产出 procedure/context/capability/VFS/MCP/runtime refs/activity scope，并验证 carry-forward 不混入旧 owner。
+
+2. 收口 hook/capability primary target。
+
+   将 application production 调用面改为 `HookControlTarget` 和 `AgentFrameRuntimeTarget`，把 `SessionHookSnapshotQuery`、`SessionHookRefreshQuery`、`HookEvaluationQuery { session_id }` 限在 runtime adapter/test helper 内。`ensure_hook_runtime` 的上层入口应接收 frame/agent/run/assignment target，runtime session 只作为 `RuntimeAdapterProvenance`。capability live update caller 不再自行 `resolve_runtime_session_frame_id`，统一通过 target resolver 封装取得 `AgentFrameRuntimeTarget`。
+
+3. 拆 ContinueRoot 为 agent reuse policy 与 runtime delivery policy。（已完成）
+
+   当前 definition contract 使用 `AgentReusePolicy + RuntimeSessionPolicy`，executor boundary 使用 `ContinueRootExecutionPolicy + RuntimeSessionDeliveryPolicy`。`start_continue_root` 不再以 root runtime session 作为 executor config、assignment、activity 的共同锚点；freeform lifecycle 的 open-ended activity 已引用新的 lifecycle-level policy。
+
+4. 引入 Task cancel lifecycle command。
+
+   增加 `CancelSubjectExecutionCommand` 或等价 application service：以 `SubjectExecutionRef`/assignment/frame 为 target，先更新 lifecycle subject execution、assignment/gate/run 状态，再生成 runtime cancel delivery。API 返回 subject execution command result，frontend 使用该 result 更新 workflow/task execution 投影。
+
+   后续 slice 已完成 active assignment command boundary 与 Task execution projection vocabulary；剩余工作转为 gate cancellation：open `LifecycleGate` 需要进入同一个 cancel transaction。
+
+5. 切分 CompanionChannel、LifecycleGate、RuntimeNotification。
+
+   `CompanionChannel` 负责 parent/child/gate correlation；`LifecycleGate` 只负责 durable wait/resume truth；`RuntimeNotification` 只接收 frame/assignment/gate target 并在 adapter 层选择 runtime session delivery。后续 slice 已完成 human respond 与 parent result return 的 gate-first boundary；下一步是让 parent request hook evaluation 使用 parent `HookControlTarget`，initial notification 注入不再由 parent session id 决定。
+
+6. 增加 LifecycleAgentReuseResolver 并迁移 routine reuse。
+
+   resolver 输入 routine key、entity key、subject association、reuse strategy，输出可复用 run/agent/frame/assignment 或明确创建新 lifecycle execution。routine dispatch 不再把复用编码成 `parent_run_id`；`RunPolicy::ReuseExisting` 只接受 resolver 产物。
+
+7. 固化 permission provenance 边界。
+
+   permission query 保持 `effect_frame_id`/`run_id` primary。`apply_frame_effect` 对 `source_runtime_session_id` 做 provenance-only 处理：要么校验它已属于 effect frame 的 runtime refs，要么不把它加入新 frame runtime refs。effect frame owner 由 `effect_frame_id` 决定，source runtime 只用于 audit/turn/tool-call trace。
+
+8. 补齐 cross-layer contract checks。
+
+   将 Phase 4/5 的静态 gate 做成 focused checks：production application paths 不出现 session-primary hook/capability query；task cancel 不调用 `cancel_session` 作为业务入口；routine reuse 不写 `parent_run_id`；permission list query 不接受 source runtime session；frontend task start/continue/cancel 使用 generated subject execution response。
+
+### External References
+
+- 未使用外部引用。本次审计仅基于本地 `.trellis/` 文档、spec 与当前代码。
+
+### Related Specs
+
+- `.trellis/spec/backend/session/architecture.md`
+- `.trellis/spec/backend/session/session-startup-pipeline.md`
+- `.trellis/spec/backend/session/runtime-execution-state.md`
+- `.trellis/spec/backend/hooks/execution-hook-runtime.md`
+- `.trellis/spec/backend/capability/architecture.md`
+- `.trellis/spec/backend/capability/capability-dimension-pipeline.md`
+- `.trellis/spec/backend/permission/architecture.md`
+- `.trellis/spec/backend/permission/policy-engine.md`
+- `.trellis/spec/backend/workflow/activity-lifecycle.md`
+- `.trellis/spec/backend/story-task-runtime.md`
+- `.trellis/spec/frontend/workflow-activity-lifecycle.md`
+
+## Caveats / Not Found
+
+- `python ./.trellis/scripts/task.py current --source` 返回当前无 active task；本次按用户显式给出的 task path 写入 research 文档。
+- 修复前未找到 `LifecycleAgentReuseResolver` 或等价命名封装；后续 post-fix update 已记录 Routine reuse slice。
+- 修复前未找到 Story root launch 的写路径；后续 Story lifecycle launch slice 已将 Story root/freeform 写入口迁入 dispatch。
+- 本审计未运行测试，也未修改任何代码/规格文件；结论来自静态阅读与 targeted search。
+
+## Post-Fix Update: 2026-06-02 Routine Reuse
+
+本文件前文记录的是修复前静态审计结果；随后已完成 Routine Reuse structural slice：
+
+- `LifecycleAgentReuseResolver` 已新增为 Routine reuse 查询边界，使用 routine execution 历史、entity key、dispatch refs、run/agent/frame/assignment 和 `LifecycleSubjectAssociation` 验证可复用 lifecycle anchor。
+- `DispatchStrategy::Reuse` 无有效 active agent anchor 时返回 conflict；`DispatchStrategy::PerEntity` 首次 entity 触发显式创建新 anchor，已有同 entity target 时显式复用 `parent_run_id + parent_agent_id`。
+- `LifecycleDispatchService` 对 explicit `parent_agent_id` 校验 run/project/status，同一 run 多 active agent 时只复用指定 agent；`RunPolicy::ReuseExisting` / `AppendGraph` 缺 `parent_run_id` 会拒绝。
+- 因此表格中的「Phase 5: Routine reuse 通过 LifecycleAgentReuseResolver / subject association」已从 fail 更新为 pass；Phase 5 其它 gate 仍保持前文状态。
+
+已验证：
+
+- `cargo test -p agentdash-application routine::reuse_resolver --lib -- --format terse`
+- `cargo test -p agentdash-application routine::dispatch --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::dispatch_service --lib -- --format terse`
+- `cargo check -p agentdash-application`
+
+## Post-Fix Update: 2026-06-02 AgentFrame Surface Projection
+
+本文件前文记录的是修复前静态审计结果；随后已完成 AgentFrameBuilder 同源 surface gate：
+
+- `AgentFrameSurfaceInput` 已新增为 assembly -> AgentFrame revision 的投影边界，session assembly 不再逐列拼写 capability/VFS/MCP/context/execution profile surface。
+- `build_lifecycle_activation_surface` 已新增为 lifecycle activation -> frame surface 的归一化 stage，集中合并 base VFS、activation lifecycle VFS、mount directives、MCP servers 与 capability state。
+- `lifecycle_activation_surface_outputs_single_coherent_frame_revision` 证明一次 activation surface 能在同一 AgentFrame revision 中同时写入 procedure、context、capability、VFS/MCP、runtime refs 与 graph activity scope。
+- 因此表格中的「Phase 4: AgentFrameBuilder 覆盖 StepActivation 同源 surface 测试」已从 partial 更新为 pass；「Phase 4: StepActivation 纳入 AgentFrame surface owner / AgentFrameBuilder」仍保持 fail/partial，因为 StepActivation 独立 DTO、companion projection 与 ContinueRoot 仍未完全收口。
+
+已验证：
+
+- `cargo test -p agentdash-application workflow::frame_builder --lib -- --format terse`
+- `cargo check -p agentdash-application`
+
+## Post-Fix Update: 2026-06-02 StepActivation Live Target
+
+本文件前文关于 StepActivation live apply 的修复前证据已过期；随后已完成 workflow 内部 applier 的 target-first 收口：
+
+- `SessionCapabilityService::resolve_runtime_session_target` 把 runtime adapter lookup 包装成 `AgentFrameRuntimeTarget`，调用者不再直接传裸 `target_frame_id`。
+- `StepActivation::apply_to_frame_runtime_target` 接收 `AgentFrameRuntimeTarget` 与 base capability surface，函数内部不再解析 runtime session 的 frame，也不再自行读取 current capability state。
+- `AgentActivityExecutor` live 与 pending transition 都显式传递 `target_frame_id + delivery_runtime_session_id`。
+- 因此表格中的「Phase 4: capability live update 以 AgentFrame target 为 primary target」保持 partial 但证据更新：StepActivation applier 子问题已关闭；canvas direct frame lookup 当时仍未关闭，ContinueRoot root session policy、companion parent request initial notification / hook control 仍未关闭。
+
+已验证：
+
+- `cargo test -p agentdash-application workflow::step_activation --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::agent_executor --lib -- --format terse`
+- `cargo check -p agentdash-application`
+- `cargo fmt --all --check`
+- `git diff --check`
+
+## Post-Fix Update: 2026-06-02 Canvas Capability Target
+
+canvas capability sync 已完成 direct frame lookup 收口：
+
+- `sync_canvas_mount_capability_state_for_runtime_delivery` 是 runtime delivery adapter，负责在有 base capability state 与 hook runtime 时解析 `AgentFrameRuntimeTarget`。
+- `sync_canvas_mount_capability_state` 接收 `AgentFrameRuntimeTarget`、base capability state 与 hook runtime，再调用 `apply_live_vfs_capability_state`；canvas apply helper 不再构造裸 frame id。
+- `resolve_runtime_session_frame_id(` 在 application src 只剩 `SessionCapabilityService` 与 hub adapter 内部命中。
+- 因此表格中的 capability live update gate 仍保持 partial，但 canvas direct lookup 子问题已关闭；剩余耦合是 hook SPI/session facade、ContinueRoot root runtime policy 与 companion parent request initial notification / hook control。
+
+已验证：
+
+- `cargo test -p agentdash-application canvas::tools::tests::present_canvas_updates_meta_capability_skill_and_events --lib -- --format terse`
+- `cargo check -p agentdash-application`
+
+## Post-Fix Update: 2026-06-02 Hook Runtime Target-Aware Caller
+
+workflow/canvas capability caller 已不再裸用 session-first hook getter：
+
+- `SessionHookService::ensure_hook_runtime_for_target` / `get_hook_runtime_for_target` 以 `AgentFrameRuntimeTarget` 为输入，在 adapter lookup 后校验 hook runtime 的 `session_id` 与 `control_target.frame_id`。
+- `AgentActivityExecutor` 先解析 target，再通过 target-aware ensure 获取 hook runtime。
+- canvas capability sync 先解析 target，再通过 target-aware getter 获取 hook runtime。
+- 因此表格中的 hook/capability gate 仍保持 partial，但 workflow/canvas caller 子问题已关闭；剩余耦合集中在 SPI/session facade、hub lazy rebuild、companion parent hook 与 ContinueRoot policy。
+
+已验证：
+
+- `cargo test -p agentdash-application workflow::agent_executor --lib -- --format terse`
+- `cargo test -p agentdash-application canvas::tools::tests::present_canvas_updates_meta_capability_skill_and_events --lib -- --format terse`
+- `cargo check -p agentdash-application`
+
+## Post-Fix Update: 2026-06-02 ContinueRoot Target Resolution
+
+ContinueRoot start/apply 内部已不再反复分发 root runtime session：
+
+- `AgentActivitySessionPort::resolve_continue_root_runtime_target` 作为 root runtime adapter，输出 `AgentFrameRuntimeTarget`。
+- `start_continue_root` 解析 `root_target` 后，executor config、assignment、apply 与返回的 delivery ref 都来自 target。
+- `apply_continue_root_activity` 接收 `AgentFrameRuntimeTarget`，live/pending transition 不再自行解析 root runtime session。
+- 因此表格中的 ContinueRoot policy split 从 fail 更新为 partial；剩余问题是 `AgentActivityLaunchContext` 和 freeform lifecycle policy 仍未表达 AgentReusePolicy + RuntimeSessionPolicy。
+
+已验证：
+
+- `cargo test -p agentdash-application workflow::agent_executor --lib -- --format terse`
+- `cargo check -p agentdash-application`
+
+## Post-Fix Update: 2026-06-02 ContinueRoot Definition Vocabulary
+
+ContinueRoot policy split 已从 executor boundary 上移到 workflow definition contract：
+
+- `AgentActivityExecutorSpec` 已删除 `AgentSessionPolicy/session_policy`，统一使用显式必填的 `AgentReusePolicy` 与 `RuntimeSessionPolicy`。
+- freeform lifecycle、ProjectAgent auto lifecycle、shared-library current-shape normalizer 与 builtin workflow seeds 都写入 `continue_current_agent + deliver_to_current_trace` 或 `create_activity_agent + create_new`。
+- executor 通过 `creates_activity_agent()` / `continues_current_agent()` helper 选择 create-agent 或 reuse-current-frame path；projection 与 session assembler 也以同一 helper 推导 `AgentNode` / `PhaseNode`。
+- contracts generated TS、frontend mapper/store/editor 已同步为两段 policy，不保留旧 `session_policy` 或缺字段默认入口。
+
+已验证：
+
+- `rg -n "AgentSessionPolicy|\\bsession_policy\\b" crates/agentdash-domain/src crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-contracts/src packages/app-web/src` 无命中。
+- `cargo check -p agentdash-domain`
+- `cargo check -p agentdash-contracts`
+- `cargo check -p agentdash-application`
+- `cargo check -p agentdash-api`
+- `pnpm run contracts:check`
+- `pnpm --filter app-web run typecheck`
+- `cargo test -p agentdash-domain activity_executor_serializes_agent_kind`
+- `cargo test -p agentdash-application agent_executor`
+- `cargo test -p agentdash-application derives_node_type_from_agent_reuse_policy`
+- `cargo test -p agentdash-application activity_node_type_follows_agent_reuse_policy`
+- `pnpm --filter app-web exec vitest run src/services/workflow.test.ts src/stores/workflowStore.test.ts src/features/workflow/ui/activity-inspector.test.tsx src/features/workflow/ui/transition-inspector.test.tsx src/features/workflow/model/lifecycle-port-sync.test.ts`

@@ -3,9 +3,10 @@ use uuid::Uuid;
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::routine::{
-    Routine, RoutineExecution, RoutineExecutionRepository, RoutineExecutionStatus,
-    RoutineRepository,
+    Routine, RoutineDispatchRefs, RoutineExecution, RoutineExecutionRepository,
+    RoutineExecutionStatus, RoutineRepository,
 };
+use agentdash_domain::workflow::AgentRuntimeRefs;
 
 // ────────────────────────────── Routine ──────────────────────────────
 
@@ -31,7 +32,7 @@ struct RoutineRow {
     prompt_template: String,
     project_agent_id: String,
     trigger_config: String,
-    session_strategy: String,
+    dispatch_strategy: String,
     enabled: bool,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
@@ -49,9 +50,9 @@ impl TryFrom<RoutineRow> for Routine {
             prompt_template: row.prompt_template,
             project_agent_id: parse_uuid(&row.project_agent_id, "routines.project_agent_id")?,
             trigger_config: parse_json_column(&row.trigger_config, "routines.trigger_config")?,
-            session_strategy: parse_json_column(
-                &row.session_strategy,
-                "routines.session_strategy",
+            dispatch_strategy: parse_json_column(
+                &row.dispatch_strategy,
+                "routines.dispatch_strategy",
             )?,
             enabled: row.enabled,
             created_at: row.created_at,
@@ -66,11 +67,11 @@ impl RoutineRepository for PostgresRoutineRepository {
     async fn create(&self, routine: &Routine) -> Result<(), DomainError> {
         let trigger_config_json =
             serialize_json_column(&routine.trigger_config, "routines.trigger_config")?;
-        let session_strategy_json =
-            serialize_json_column(&routine.session_strategy, "routines.session_strategy")?;
+        let dispatch_strategy_json =
+            serialize_json_column(&routine.dispatch_strategy, "routines.dispatch_strategy")?;
 
         sqlx::query(
-            "INSERT INTO routines (id, project_id, name, prompt_template, project_agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at)
+            "INSERT INTO routines (id, project_id, name, prompt_template, project_agent_id, trigger_config, dispatch_strategy, enabled, created_at, updated_at, last_fired_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(routine.id.to_string())
@@ -79,7 +80,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(&routine.prompt_template)
         .bind(routine.project_agent_id.to_string())
         .bind(trigger_config_json)
-        .bind(session_strategy_json)
+        .bind(dispatch_strategy_json)
         .bind(routine.enabled)
         .bind(routine.created_at)
         .bind(routine.updated_at)
@@ -92,7 +93,7 @@ impl RoutineRepository for PostgresRoutineRepository {
 
     async fn get_by_id(&self, id: Uuid) -> Result<Option<Routine>, DomainError> {
         let row: Option<RoutineRow> = sqlx::query_as(
-            "SELECT id, project_id, name, prompt_template, project_agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
+            "SELECT id, project_id, name, prompt_template, project_agent_id, trigger_config, dispatch_strategy, enabled, created_at, updated_at, last_fired_at
              FROM routines WHERE id = $1",
         )
         .bind(id.to_string())
@@ -104,7 +105,7 @@ impl RoutineRepository for PostgresRoutineRepository {
 
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Routine>, DomainError> {
         let rows: Vec<RoutineRow> = sqlx::query_as(
-            "SELECT id, project_id, name, prompt_template, project_agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
+            "SELECT id, project_id, name, prompt_template, project_agent_id, trigger_config, dispatch_strategy, enabled, created_at, updated_at, last_fired_at
              FROM routines WHERE project_id = $1 ORDER BY name",
         )
         .bind(project_id.to_string())
@@ -121,7 +122,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         // 使用 PostgreSQL JSONB 包含运算符，比 TEXT LIKE 更可靠
         let containment = serde_json::json!({"type": trigger_type}).to_string();
         let rows: Vec<RoutineRow> = sqlx::query_as(
-            "SELECT id, project_id, name, prompt_template, project_agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
+            "SELECT id, project_id, name, prompt_template, project_agent_id, trigger_config, dispatch_strategy, enabled, created_at, updated_at, last_fired_at
              FROM routines WHERE enabled = TRUE AND trigger_config::jsonb @> $1::jsonb",
         )
         .bind(containment)
@@ -134,11 +135,11 @@ impl RoutineRepository for PostgresRoutineRepository {
     async fn update(&self, routine: &Routine) -> Result<(), DomainError> {
         let trigger_config_json =
             serialize_json_column(&routine.trigger_config, "routines.trigger_config")?;
-        let session_strategy_json =
-            serialize_json_column(&routine.session_strategy, "routines.session_strategy")?;
+        let dispatch_strategy_json =
+            serialize_json_column(&routine.dispatch_strategy, "routines.dispatch_strategy")?;
 
         sqlx::query(
-            "UPDATE routines SET name=$2, prompt_template=$3, project_agent_id=$4, trigger_config=$5, session_strategy=$6, enabled=$7, updated_at=$8, last_fired_at=$9
+            "UPDATE routines SET name=$2, prompt_template=$3, project_agent_id=$4, trigger_config=$5, dispatch_strategy=$6, enabled=$7, updated_at=$8, last_fired_at=$9
              WHERE id=$1",
         )
         .bind(routine.id.to_string())
@@ -146,7 +147,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(&routine.prompt_template)
         .bind(routine.project_agent_id.to_string())
         .bind(trigger_config_json)
-        .bind(session_strategy_json)
+        .bind(dispatch_strategy_json)
         .bind(routine.enabled)
         .bind(routine.updated_at)
         .bind(routine.last_fired_at)
@@ -169,7 +170,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         // 使用 PostgreSQL JSONB 包含运算符精确匹配 endpoint_id
         let containment = serde_json::json!({"endpoint_id": endpoint_id}).to_string();
         let row: Option<RoutineRow> = sqlx::query_as(
-            "SELECT id, project_id, name, prompt_template, project_agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
+            "SELECT id, project_id, name, prompt_template, project_agent_id, trigger_config, dispatch_strategy, enabled, created_at, updated_at, last_fired_at
              FROM routines WHERE trigger_config::jsonb @> $1::jsonb LIMIT 1",
         )
         .bind(containment)
@@ -203,7 +204,10 @@ struct ExecutionRow {
     trigger_source: String,
     trigger_payload: Option<String>,
     resolved_prompt: Option<String>,
-    session_id: Option<String>,
+    dispatch_run_id: Option<String>,
+    dispatch_agent_id: Option<String>,
+    dispatch_frame_id: Option<String>,
+    dispatch_assignment_id: Option<String>,
     status: String,
     started_at: chrono::DateTime<chrono::Utc>,
     completed_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -215,6 +219,22 @@ impl TryFrom<ExecutionRow> for RoutineExecution {
     type Error = DomainError;
 
     fn try_from(row: ExecutionRow) -> Result<Self, Self::Error> {
+        let dispatch_refs = match (
+            row.dispatch_run_id,
+            row.dispatch_agent_id,
+            row.dispatch_frame_id,
+            row.dispatch_assignment_id,
+        ) {
+            (Some(run_id), Some(agent_id), Some(frame_id), _assignment_id) => {
+                Some(RoutineDispatchRefs::new(AgentRuntimeRefs::new(
+                    parse_uuid(&run_id, "routine_executions.dispatch_run_id")?,
+                    parse_uuid(&agent_id, "routine_executions.dispatch_agent_id")?,
+                    parse_uuid(&frame_id, "routine_executions.dispatch_frame_id")?,
+                    None,
+                )))
+            }
+            _ => None,
+        };
         Ok(RoutineExecution {
             id: parse_uuid(&row.id, "routine_executions.id")?,
             routine_id: parse_uuid(&row.routine_id, "routine_executions.routine_id")?,
@@ -225,7 +245,7 @@ impl TryFrom<ExecutionRow> for RoutineExecution {
                 .map(|s| parse_json_column(s, "routine_executions.trigger_payload"))
                 .transpose()?,
             resolved_prompt: row.resolved_prompt,
-            session_id: row.session_id,
+            dispatch_refs,
             status: parse_execution_status(&row.status)?,
             started_at: row.started_at,
             completed_at: row.completed_at,
@@ -245,15 +265,23 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
             .transpose()?;
 
         sqlx::query(
-            "INSERT INTO routine_executions (id, routine_id, trigger_source, trigger_payload, resolved_prompt, session_id, status, started_at, completed_at, error, entity_key)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            "INSERT INTO routine_executions (id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_assignment_id, status, started_at, completed_at, error, entity_key)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         )
         .bind(execution.id.to_string())
         .bind(execution.routine_id.to_string())
         .bind(&execution.trigger_source)
         .bind(trigger_payload_json)
         .bind(&execution.resolved_prompt)
-        .bind(&execution.session_id)
+        .bind(execution.dispatch_refs.as_ref().map(|r| r.run_id().to_string()))
+        .bind(execution.dispatch_refs.as_ref().map(|r| r.agent_id().to_string()))
+        .bind(execution.dispatch_refs.as_ref().map(|r| r.frame_id().to_string()))
+        .bind(
+            execution
+                .dispatch_refs
+                .as_ref()
+                .and_then(|r| r.assignment_id().map(|assignment_id| assignment_id.to_string())),
+        )
         .bind(status_to_str(execution.status))
         .bind(execution.started_at)
         .bind(execution.completed_at)
@@ -267,7 +295,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
 
     async fn get_by_id(&self, id: Uuid) -> Result<Option<RoutineExecution>, DomainError> {
         let row: Option<ExecutionRow> = sqlx::query_as(
-            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, session_id, status, started_at, completed_at, error, entity_key
+            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_assignment_id, status, started_at, completed_at, error, entity_key
              FROM routine_executions WHERE id = $1",
         )
         .bind(id.to_string())
@@ -285,13 +313,21 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
             .transpose()?;
 
         sqlx::query(
-            "UPDATE routine_executions SET trigger_payload=$2, resolved_prompt=$3, session_id=$4, status=$5, completed_at=$6, error=$7, entity_key=$8
+            "UPDATE routine_executions SET trigger_payload=$2, resolved_prompt=$3, dispatch_run_id=$4, dispatch_agent_id=$5, dispatch_frame_id=$6, dispatch_assignment_id=$7, status=$8, completed_at=$9, error=$10, entity_key=$11
              WHERE id=$1",
         )
         .bind(execution.id.to_string())
         .bind(trigger_payload_json)
         .bind(&execution.resolved_prompt)
-        .bind(&execution.session_id)
+        .bind(execution.dispatch_refs.as_ref().map(|r| r.run_id().to_string()))
+        .bind(execution.dispatch_refs.as_ref().map(|r| r.agent_id().to_string()))
+        .bind(execution.dispatch_refs.as_ref().map(|r| r.frame_id().to_string()))
+        .bind(
+            execution
+                .dispatch_refs
+                .as_ref()
+                .and_then(|r| r.assignment_id().map(|assignment_id| assignment_id.to_string())),
+        )
         .bind(status_to_str(execution.status))
         .bind(execution.completed_at)
         .bind(&execution.error)
@@ -309,7 +345,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         offset: u32,
     ) -> Result<Vec<RoutineExecution>, DomainError> {
         let rows: Vec<ExecutionRow> = sqlx::query_as(
-            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, session_id, status, started_at, completed_at, error, entity_key
+            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_assignment_id, status, started_at, completed_at, error, entity_key
              FROM routine_executions WHERE routine_id = $1 ORDER BY started_at DESC LIMIT $2 OFFSET $3",
         )
         .bind(routine_id.to_string())
@@ -327,7 +363,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         entity_key: &str,
     ) -> Result<Option<RoutineExecution>, DomainError> {
         let row: Option<ExecutionRow> = sqlx::query_as(
-            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, session_id, status, started_at, completed_at, error, entity_key
+            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_assignment_id, status, started_at, completed_at, error, entity_key
              FROM routine_executions WHERE routine_id = $1 AND entity_key = $2 ORDER BY started_at DESC LIMIT 1",
         )
         .bind(routine_id.to_string())
@@ -364,8 +400,7 @@ fn serialize_json_column<T: serde::Serialize>(
 fn parse_execution_status(raw: &str) -> Result<RoutineExecutionStatus, DomainError> {
     match raw {
         "pending" => Ok(RoutineExecutionStatus::Pending),
-        "running" => Ok(RoutineExecutionStatus::Running),
-        "completed" => Ok(RoutineExecutionStatus::Completed),
+        "dispatched" => Ok(RoutineExecutionStatus::Dispatched),
         "failed" => Ok(RoutineExecutionStatus::Failed),
         "skipped" => Ok(RoutineExecutionStatus::Skipped),
         other => Err(DomainError::InvalidConfig(format!(
@@ -377,8 +412,7 @@ fn parse_execution_status(raw: &str) -> Result<RoutineExecutionStatus, DomainErr
 fn status_to_str(status: RoutineExecutionStatus) -> &'static str {
     match status {
         RoutineExecutionStatus::Pending => "pending",
-        RoutineExecutionStatus::Running => "running",
-        RoutineExecutionStatus::Completed => "completed",
+        RoutineExecutionStatus::Dispatched => "dispatched",
         RoutineExecutionStatus::Failed => "failed",
         RoutineExecutionStatus::Skipped => "skipped",
     }

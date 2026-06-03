@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::canvas::{build_canvas, upsert_canvas_binding};
+use crate::session::AgentFrameRuntimeTarget;
 use crate::vfs::build_canvas_mount_id;
 use crate::vfs::tools::SharedSessionToolServicesHandle;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
@@ -557,25 +558,30 @@ async fn expose_canvas_to_session(
         && let Some(session_id) = current_session_id
     {
         let mount_id = canvas.mount_id.clone();
-        session_services
-            .core
-            .update_session_meta(session_id, move |meta| {
-                if !meta
-                    .visible_canvas_mount_ids
-                    .iter()
-                    .any(|item| item == &mount_id)
-                {
-                    meta.visible_canvas_mount_ids.push(mount_id);
-                }
-            })
+        if let Err(error) = session_services
+            .capability
+            .append_visible_canvas_mount_to_frame(session_id, &mount_id)
             .await
-            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-        sync_canvas_mount_capability_state(vfs, &session_services, session_id, canvas).await?;
+        {
+            tracing::warn!(
+                session_id = %session_id,
+                mount_id = %mount_id,
+                %error,
+                "Canvas mount 写入 AgentFrame 失败，降级为仅 VFS 可见"
+            );
+        }
+        sync_canvas_mount_capability_state_for_runtime_delivery(
+            vfs,
+            &session_services,
+            session_id,
+            canvas,
+        )
+        .await?;
     }
     Ok(())
 }
 
-async fn sync_canvas_mount_capability_state(
+async fn sync_canvas_mount_capability_state_for_runtime_delivery(
     vfs: &SharedRuntimeVfs,
     session_services: &crate::vfs::tools::SessionToolServices,
     session_id: &str,
@@ -594,10 +600,17 @@ async fn sync_canvas_mount_capability_state(
         return Ok(());
     };
 
-    let Some(hook_session) = session_services
-        .hooks
-        .get_hook_session_runtime(session_id)
+    let target = session_services
+        .capability
+        .resolve_runtime_session_target(session_id)
         .await
+        .map_err(AgentToolError::ExecutionFailed)?;
+
+    let Some(hook_runtime) = session_services
+        .hooks
+        .get_hook_runtime_for_target(&target)
+        .await
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
     else {
         tracing::debug!(
             session_id = %session_id,
@@ -607,12 +620,23 @@ async fn sync_canvas_mount_capability_state(
         return Ok(());
     };
 
+    sync_canvas_mount_capability_state(vfs, session_services, target, before_state, hook_runtime)
+        .await
+}
+
+async fn sync_canvas_mount_capability_state(
+    vfs: &SharedRuntimeVfs,
+    session_services: &crate::vfs::tools::SessionToolServices,
+    target: AgentFrameRuntimeTarget,
+    before_state: crate::session::CapabilityState,
+    hook_runtime: agentdash_spi::hooks::SharedHookRuntime,
+) -> Result<(), AgentToolError> {
     let active_vfs = vfs.snapshot().await;
     session_services
         .capability
         .apply_live_vfs_capability_state(
-            &hook_session,
-            session_id,
+            &hook_runtime,
+            target,
             before_state,
             active_vfs,
             "canvas",
@@ -653,15 +677,20 @@ fn build_canvas_presented_notification(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
 
     use agentdash_domain::DomainError;
+    use agentdash_domain::workflow::{
+        AgentFrame, AgentFrameRepository, LifecycleGate, LifecycleGateRepository,
+    };
     use agentdash_spi::hooks::{
-        ExecutionHookProvider, HookEvaluationQuery, HookResolution, SessionHookRefreshQuery,
-        SessionHookSnapshot, SessionHookSnapshotQuery,
+        ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
+        AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookResolution,
+        SessionSnapshotMetadata,
     };
     use agentdash_spi::{AgentConnector, CapabilityState, ConnectorError, PromptPayload, Vfs};
     use async_trait::async_trait;
@@ -670,7 +699,7 @@ mod tests {
 
     use crate::session::construction::{
         ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
-        SessionConstructionPlan,
+        RuntimeContextInspectionPlan,
     };
     use crate::session::hub::SessionRuntimeInner;
     use crate::session::{MemorySessionPersistence, UserPromptInput, local_workspace_vfs};
@@ -764,6 +793,115 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct MemoryAgentFrameRepository {
+        frames: RwLock<Vec<AgentFrame>>,
+    }
+
+    #[async_trait]
+    impl AgentFrameRepository for MemoryAgentFrameRepository {
+        async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
+            self.frames.write().await.push(frame.clone());
+            Ok(())
+        }
+
+        async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self
+                .frames
+                .read()
+                .await
+                .iter()
+                .find(|frame| frame.id == frame_id)
+                .cloned())
+        }
+
+        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            let frames = self.frames.read().await;
+            Ok(frames
+                .iter()
+                .filter(|frame| frame.agent_id == agent_id)
+                .max_by_key(|frame| frame.revision)
+                .cloned())
+        }
+
+        async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
+            Ok(self
+                .frames
+                .read()
+                .await
+                .iter()
+                .filter(|frame| frame.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn append_visible_canvas_mount(
+            &self,
+            frame_id: Uuid,
+            mount_id: &str,
+        ) -> Result<(), DomainError> {
+            let mut frames = self.frames.write().await;
+            let frame = frames
+                .iter_mut()
+                .find(|frame| frame.id == frame_id)
+                .ok_or_else(|| DomainError::NotFound {
+                    entity: "agent_frame",
+                    id: frame_id.to_string(),
+                })?;
+            frame.append_visible_canvas_mount(mount_id);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryLifecycleGateRepository {
+        gates: RwLock<Vec<LifecycleGate>>,
+    }
+
+    #[async_trait]
+    impl LifecycleGateRepository for MemoryLifecycleGateRepository {
+        async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
+            self.gates.write().await.push(gate.clone());
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<LifecycleGate>, DomainError> {
+            Ok(self
+                .gates
+                .read()
+                .await
+                .iter()
+                .find(|gate| gate.id == id)
+                .cloned())
+        }
+
+        async fn list_open_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(self
+                .gates
+                .read()
+                .await
+                .iter()
+                .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
+            let mut gates = self.gates.write().await;
+            if let Some(existing) = gates.iter_mut().find(|existing| existing.id == gate.id) {
+                *existing = gate.clone();
+                return Ok(());
+            }
+            Err(DomainError::NotFound {
+                entity: "lifecycle_gate",
+                id: gate.id.to_string(),
+            })
+        }
+    }
+
+    #[derive(Default)]
     struct PendingConnector;
 
     #[async_trait]
@@ -825,34 +963,65 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct EmptyHookProvider;
+    struct EmptyHookProvider {
+        active_run_id: Uuid,
+        frame_repo: Arc<MemoryAgentFrameRepository>,
+        runtime_frame_id: Uuid,
+    }
+
+    impl EmptyHookProvider {
+        fn snapshot(&self, session_id: String) -> AgentFrameHookSnapshot {
+            AgentFrameHookSnapshot {
+                runtime_adapter_session_id: session_id,
+                metadata: Some(SessionSnapshotMetadata {
+                    active_workflow: Some(ActiveWorkflowMeta {
+                        run_id: Some(self.active_run_id),
+                        ..ActiveWorkflowMeta::default()
+                    }),
+                    ..SessionSnapshotMetadata::default()
+                }),
+                ..AgentFrameHookSnapshot::default()
+            }
+        }
+    }
 
     #[async_trait]
     impl ExecutionHookProvider for EmptyHookProvider {
-        async fn load_session_snapshot(
+        async fn resolve_runtime_hook_target(
             &self,
-            query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
-            Ok(SessionHookSnapshot {
-                session_id: query.session_id,
-                ..SessionHookSnapshot::default()
-            })
+            _runtime_session_id: &str,
+        ) -> Result<Option<agentdash_spi::hooks::HookControlTarget>, agentdash_spi::hooks::HookError>
+        {
+            let frame = self
+                .frame_repo
+                .get(self.runtime_frame_id)
+                .await
+                .map_err(|e| agentdash_spi::hooks::HookError::Runtime(e.to_string()))?;
+            Ok(frame.map(|f| agentdash_spi::hooks::HookControlTarget {
+                run_id: self.active_run_id,
+                agent_id: f.agent_id,
+                frame_id: f.id,
+                assignment_id: None,
+            }))
         }
 
-        async fn refresh_session_snapshot(
+        async fn load_frame_snapshot(
             &self,
-            query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
-            Ok(SessionHookSnapshot {
-                session_id: query.session_id,
-                ..SessionHookSnapshot::default()
-            })
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
+            Ok(self.snapshot(query.provenance.runtime_session_id.unwrap_or_default()))
         }
 
-        async fn evaluate_hook(
+        async fn refresh_frame_snapshot(
             &self,
-            _query: HookEvaluationQuery,
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
+            Ok(self.snapshot(query.provenance.runtime_session_id.unwrap_or_default()))
+        }
+
+        async fn evaluate_frame_hook(
+            &self,
+            _query: AgentFrameHookEvaluationQuery,
         ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
             Ok(HookResolution::default())
         }
@@ -862,7 +1031,7 @@ mod tests {
         session_id: &str,
         project_id: Uuid,
         working_dir: &std::path::Path,
-    ) -> SessionConstructionPlan {
+    ) -> RuntimeContextInspectionPlan {
         let user_input = UserPromptInput {
             executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
             ..UserPromptInput::from_text("present canvas")
@@ -875,7 +1044,7 @@ mod tests {
             },
         };
         let mut construction =
-            SessionConstructionPlan::from_source_input(session_id, owner, &user_input);
+            RuntimeContextInspectionPlan::from_source_input(session_id, owner, &user_input);
         let vfs = local_workspace_vfs(working_dir);
         let mut capability_state =
             CapabilityState::from_clusters([agentdash_spi::ToolCluster::Canvas]);
@@ -1069,12 +1238,24 @@ mod tests {
         registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
         let vfs_service = Arc::new(VfsService::new(Arc::new(registry)));
         let base = tempfile::tempdir().expect("tempdir");
+        let active_run_id = Uuid::new_v4();
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        let frame = AgentFrame::new_initial(Uuid::new_v4());
+        let frame_id = frame.id;
+        frame_repo.create(&frame).await.expect("frame 应能写入");
+        let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
             Arc::new(PendingConnector),
-            Some(Arc::new(EmptyHookProvider)),
+            Some(Arc::new(EmptyHookProvider {
+                active_run_id,
+                frame_repo: frame_repo.clone(),
+                runtime_frame_id: frame_id,
+            })),
             Arc::new(MemorySessionPersistence::default()),
         )
-        .with_vfs_service(vfs_service);
+        .with_vfs_service(vfs_service)
+        .with_agent_frame_repo(frame_repo.clone())
+        .with_lifecycle_gate_repo(gate_repo);
         let session = hub
             .create_session("present-canvas")
             .await
@@ -1088,7 +1269,7 @@ mod tests {
             .await
             .expect("prompt 应能启动");
         hub.hook_service()
-            .reload_session_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
+            .reload_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
             .await
             .expect("hook runtime 应能刷新");
 
@@ -1101,7 +1282,6 @@ mod tests {
                 launch: hub.launch_service(),
                 hooks: hub.hook_service(),
                 capability: hub.capability_service(),
-                companion_wait_registry: hub.companion_wait_registry.clone(),
             })
             .await;
 
@@ -1125,12 +1305,15 @@ mod tests {
             .await
             .expect("present_canvas 应成功");
 
-        let meta = hub
-            .get_session_meta(&session.id)
+        let updated_frame = frame_repo
+            .get(frame_id)
             .await
-            .expect("meta 查询应成功")
-            .expect("meta 应存在");
-        assert_eq!(meta.visible_canvas_mount_ids, vec!["demo".to_string()]);
+            .expect("frame 查询应成功")
+            .expect("frame 应存在");
+        assert_eq!(
+            updated_frame.visible_canvas_mount_ids(),
+            vec!["demo".to_string()]
+        );
 
         let state = hub
             .get_current_capability_state(&session.id)

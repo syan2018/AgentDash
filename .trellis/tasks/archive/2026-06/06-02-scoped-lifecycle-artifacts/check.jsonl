@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Check graph-instance scoped Activity identity"}
+{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "Check output ports and terminal completion contract"}

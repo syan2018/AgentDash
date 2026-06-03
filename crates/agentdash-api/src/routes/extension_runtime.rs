@@ -15,7 +15,7 @@ use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{ExtensionRuntimeProjectionResponse, extension_runtime_projection_response};
 use crate::routes::backend_access::ensure_project_backend_access;
 use crate::rpc::ApiError;
-use crate::session_construction::build_session_context_plan;
+use crate::session_construction::resolve_session_frame_vfs;
 use agentdash_application::extension_package::{
     ExtensionPackageArtifactUseCaseError, ReadExtensionPackageWebviewAssetInput,
     read_extension_package_webview_asset,
@@ -318,10 +318,8 @@ async fn resolve_extension_invocation_workspace(
     session_id: &str,
     backend_id: &str,
 ) -> Result<Option<ExtensionInvocationWorkspaceContext>, ApiError> {
-    let Some(plan) = build_session_context_plan(state, current_user, session_id).await? else {
-        return Ok(None);
-    };
-    let Some(vfs) = plan.surface.vfs.as_ref() else {
+    let result = resolve_session_frame_vfs(state, current_user, session_id).await?;
+    let Some(vfs) = result.vfs.as_ref() else {
         return Ok(None);
     };
     Ok(select_extension_invocation_workspace(vfs, backend_id))

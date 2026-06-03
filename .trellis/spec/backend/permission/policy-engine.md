@@ -10,7 +10,7 @@
 
 - Agent 提交 capability grant request 后，必须经 policy engine 评估才能进入 approval 流程
 - Scope escalation 在 action 实际成功后由 coordinator 验证 intent 并创建关联层
-- 涉及跨模块数据流：`ProjectAgent.config` + `WorkflowContract` → `PolicyDecision` → grant state transition
+- 涉及跨模块数据流：`ProjectAgent.config` + `AgentProcedureContract` → `PolicyDecision` → grant state transition
 
 ### 2. Signatures
 
@@ -49,21 +49,21 @@ impl PermissionGrantCompiler {
 // crates/agentdash-application/src/permission/escalation.rs
 pub struct ScopeEscalationCoordinator {
     grant_repo: Arc<dyn PermissionGrantRepository>,
-    link_repo: Arc<dyn LifecycleRunLinkRepository>,
+    association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
 }
 
 impl ScopeEscalationCoordinator {
     pub async fn try_escalate(
         &self,
-        session_id: &str,
-        created_subject_kind: RunLinkSubjectKind,
+        frame_id: Uuid,
+        created_subject_kind: SubjectKind,
         created_subject_id: Uuid,
     ) -> Result<Option<EscalationResult>, String>;
 }
 
 pub struct EscalationResult {
     pub grant_id: Uuid,
-    pub link: LifecycleRunLink,
+    pub association: LifecycleSubjectAssociation,
     pub unlocked_paths: Vec<ToolCapabilityPath>,
 }
 ```
@@ -76,7 +76,7 @@ pub struct EscalationResult {
 |-----------|--------|------|-------------|
 | requested_paths | companion_request payload | `Vec<ToolCapabilityPath>` | Non-empty（empty → Rejected） |
 | agent_auto_grantable | `ProjectAgent.config.auto_grantable_capabilities` | `Vec<ToolCapabilityPath>` | From JSON array of strings |
-| lifecycle_requestable | `WorkflowContract.requestable_capabilities` | `Vec<ToolCapabilityPath>` | From JSON array of strings |
+| lifecycle_requestable | `AgentProcedureContract.requestable_capabilities` | `Vec<ToolCapabilityPath>` | From JSON array of strings |
 
 #### Policy Evaluation Output
 
@@ -113,11 +113,11 @@ pub struct PolicyDecision {
 
 | Input | Type | Constraint |
 |-------|------|-----------|
-| session_id | &str | Active session with applied grant |
-| created_subject_kind | RunLinkSubjectKind | Must match grant's `scope_escalation_intent.target_subject_kind` |
+| frame_id | Uuid | AgentFrame that receives the applied grant effect |
+| created_subject_kind | SubjectKind | Must match grant's `scope_escalation_intent.target_subject_kind` |
 | created_subject_id | Uuid | The just-created entity ID |
 
-Result if matched: Creates `LifecycleRunLink(role=ControlScope)` + marks grant `ScopeEscalated` + returns `unlocked_paths`.
+Result if matched: creates `LifecycleSubjectAssociation(role=ControlScope)` anchored to run/agent context + marks grant `ScopeEscalated` + returns `unlocked_paths`.
 
 ### 4. Validation & Error Matrix
 
@@ -154,8 +154,8 @@ Grant applied with scope_escalation_intent:
   { target_subject_kind: Story, unlocked_paths: [task_management] }
 
 Agent calls create_story → success → story_id = X
-→ ScopeEscalationCoordinator::try_escalate(session, Story, X)
-→ Creates LifecycleRunLink(run_id, Story, X, ControlScope)
+→ ScopeEscalationCoordinator::try_escalate(frame_id, Story, X)
+→ Creates LifecycleSubjectAssociation(anchor_run_id, anchor_agent_id, Story, X, ControlScope)
 → Grant → ScopeEscalated
 → Returns unlocked_paths: [task_management]
 → Caller compiles secondary RuntimeCapabilityTransition

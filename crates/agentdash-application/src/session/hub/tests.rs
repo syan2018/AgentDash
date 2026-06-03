@@ -1,4 +1,5 @@
 //! `SessionRuntimeInner` 行为测试（从原 `hub.rs` 迁移；PR 6 拆分）。
+#![allow(deprecated)]
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -13,11 +14,15 @@ use agentdash_domain::backend::{
     BackendExecutionLease, BackendExecutionLeaseRepository, BackendExecutionSelectionMode,
     BackendExecutionTerminalKind,
 };
-use agentdash_spi::CapabilityScopeCtx;
+use agentdash_domain::workflow::{
+    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
+    LifecycleGateRepository,
+};
 use agentdash_spi::hooks::{
-    ContextFrame, ContextFrameSection, ExecutionHookProvider, HookEvaluationQuery, HookInjection,
-    HookResolution, HookTraceTrigger, HookTrigger, RuntimeEventSource, SessionHookRefreshQuery,
-    SessionHookSnapshot, SessionHookSnapshotQuery,
+    ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
+    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, ContextFrame, ContextFrameSection,
+    ExecutionHookProvider, HookControlTarget, HookEvaluationQuery, HookInjection, HookResolution,
+    HookTraceTrigger, HookTrigger, RuntimeEventSource, SessionSnapshotMetadata,
 };
 use agentdash_spi::{
     AgentConfig, AgentConnector, CapabilityState, CompactionProjectionCommitResult, ConnectorError,
@@ -32,8 +37,7 @@ use tokio::sync::{Mutex as TokioMutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::super::MemorySessionPersistence;
-use super::super::RuntimeCommandStatus;
-use super::super::construction::{ConstructionResolutionPlan, SessionConstructionPlan};
+use super::super::construction::{ConstructionResolutionPlan, RuntimeContextInspectionPlan};
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
     TurnExecution, TurnState, build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
@@ -41,8 +45,9 @@ use super::super::hub_support::{
 use super::super::local_workspace_vfs;
 use super::super::types::{
     EFFECT_TYPE_APPLY_VFS_OVERLAY, PendingCapabilityStateTransition, RuntimeCapabilityTransition,
-    SessionBootstrapState, SessionExecutionState, UserPromptInput,
+    SessionExecutionState, UserPromptInput,
 };
+use super::super::{AgentFrameTransitionRecord, RuntimeCommandStatus, RuntimeDeliveryCommand};
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
 };
@@ -51,6 +56,7 @@ use crate::session::capability_state::{
     CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
     ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
 };
+use crate::session::types::AgentFrameRuntimeTarget;
 use crate::vfs::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
     MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
@@ -67,11 +73,213 @@ fn test_hub(
     connector: Arc<dyn AgentConnector>,
     hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
 ) -> SessionRuntimeInner {
+    let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+    let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
     SessionRuntimeInner::new_with_hooks_and_persistence(
         connector,
         hook_provider,
         Arc::new(MemorySessionPersistence::default()),
     )
+    .with_agent_frame_repo(frame_repo)
+    .with_lifecycle_gate_repo(gate_repo)
+}
+
+#[derive(Default)]
+struct MemoryAgentFrameRepository {
+    frames: TokioMutex<Vec<AgentFrame>>,
+}
+
+#[async_trait::async_trait]
+impl AgentFrameRepository for MemoryAgentFrameRepository {
+    async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
+        self.frames.lock().await.push(frame.clone());
+        Ok(())
+    }
+
+    async fn get(&self, frame_id: uuid::Uuid) -> Result<Option<AgentFrame>, DomainError> {
+        Ok(self
+            .frames
+            .lock()
+            .await
+            .iter()
+            .find(|frame| frame.id == frame_id)
+            .cloned())
+    }
+
+    async fn get_current(&self, agent_id: uuid::Uuid) -> Result<Option<AgentFrame>, DomainError> {
+        Ok(self
+            .frames
+            .lock()
+            .await
+            .iter()
+            .filter(|frame| frame.agent_id == agent_id)
+            .max_by_key(|frame| frame.revision)
+            .cloned())
+    }
+
+    async fn list_by_agent(&self, agent_id: uuid::Uuid) -> Result<Vec<AgentFrame>, DomainError> {
+        Ok(self
+            .frames
+            .lock()
+            .await
+            .iter()
+            .filter(|frame| frame.agent_id == agent_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn append_visible_canvas_mount(
+        &self,
+        frame_id: uuid::Uuid,
+        mount_id: &str,
+    ) -> Result<(), DomainError> {
+        let mut frames = self.frames.lock().await;
+        let frame = frames
+            .iter_mut()
+            .find(|frame| frame.id == frame_id)
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "agent_frame",
+                id: frame_id.to_string(),
+            })?;
+        frame.append_visible_canvas_mount(mount_id);
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct MemoryLifecycleGateRepository {
+    gates: TokioMutex<Vec<LifecycleGate>>,
+}
+
+#[async_trait::async_trait]
+impl LifecycleGateRepository for MemoryLifecycleGateRepository {
+    async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
+        self.gates.lock().await.push(gate.clone());
+        Ok(())
+    }
+
+    async fn get(&self, id: uuid::Uuid) -> Result<Option<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .await
+            .iter()
+            .find(|gate| gate.id == id)
+            .cloned())
+    }
+
+    async fn list_open_for_agent(
+        &self,
+        agent_id: uuid::Uuid,
+    ) -> Result<Vec<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .await
+            .iter()
+            .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+            .cloned()
+            .collect())
+    }
+
+    async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
+        let mut gates = self.gates.lock().await;
+        let existing = gates
+            .iter_mut()
+            .find(|existing| existing.id == gate.id)
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "lifecycle_gate",
+                id: gate.id.to_string(),
+            })?;
+        *existing = gate.clone();
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct MemoryLifecycleAgentRepository {
+    agents: TokioMutex<Vec<LifecycleAgent>>,
+}
+
+#[async_trait::async_trait]
+impl LifecycleAgentRepository for MemoryLifecycleAgentRepository {
+    async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
+        self.agents.lock().await.push(agent.clone());
+        Ok(())
+    }
+
+    async fn get(&self, id: uuid::Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
+        Ok(self
+            .agents
+            .lock()
+            .await
+            .iter()
+            .find(|a| a.id == id)
+            .cloned())
+    }
+
+    async fn list_by_run(&self, run_id: uuid::Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
+        Ok(self
+            .agents
+            .lock()
+            .await
+            .iter()
+            .filter(|a| a.run_id == run_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
+        let mut agents = self.agents.lock().await;
+        if let Some(existing) = agents.iter_mut().find(|a| a.id == agent.id) {
+            *existing = agent.clone();
+        }
+        Ok(())
+    }
+}
+
+async fn attach_test_frame(hub: &SessionRuntimeInner, session_id: &str) -> AgentFrame {
+    let _ = session_id;
+    let frame = AgentFrame::new_initial(uuid::Uuid::new_v4());
+    hub.agent_frame_repo
+        .as_ref()
+        .expect("test hub should provide AgentFrameRepository")
+        .create(&frame)
+        .await
+        .expect("test frame should persist");
+    frame
+}
+
+async fn register_hook_target(
+    targets: &Arc<TokioMutex<HashMap<String, HookControlTarget>>>,
+    session_id: &str,
+    frame: &AgentFrame,
+) -> HookControlTarget {
+    let target = HookControlTarget {
+        run_id: uuid::Uuid::new_v4(),
+        agent_id: frame.agent_id,
+        frame_id: frame.id,
+        assignment_id: None,
+    };
+    targets
+        .lock()
+        .await
+        .insert(session_id.to_string(), target.clone());
+    target
+}
+
+fn test_hook_snapshot(session_id: String) -> AgentFrameHookSnapshot {
+    AgentFrameHookSnapshot {
+        runtime_adapter_session_id: session_id,
+        metadata: Some(SessionSnapshotMetadata {
+            active_workflow: Some(ActiveWorkflowMeta {
+                run_id: Some(uuid::Uuid::new_v4()),
+                ..ActiveWorkflowMeta::default()
+            }),
+            ..SessionSnapshotMetadata::default()
+        }),
+        ..AgentFrameHookSnapshot::default()
+    }
 }
 
 fn runtime_transition_from_state(
@@ -99,7 +307,7 @@ fn runtime_transition_from_state(
     RuntimeCapabilityTransition::from_records(Vec::new(), effects)
 }
 
-fn simple_prompt_request(prompt: &str) -> SessionConstructionPlan {
+fn simple_prompt_request(prompt: &str) -> RuntimeContextInspectionPlan {
     let user_input = UserPromptInput {
         executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
         ..UserPromptInput::from_text(prompt)
@@ -112,7 +320,7 @@ fn simple_prompt_request(prompt: &str) -> SessionConstructionPlan {
         },
     };
     let mut construction =
-        SessionConstructionPlan::from_source_input("test-session", owner, &user_input);
+        RuntimeContextInspectionPlan::from_source_input("test-session", owner, &user_input);
     let root = std::env::current_dir().expect("current dir");
     let vfs = local_workspace_vfs(&root);
     let mut capability_state = CapabilityState::default();
@@ -132,7 +340,7 @@ fn simple_prompt_request(prompt: &str) -> SessionConstructionPlan {
     construction
 }
 
-fn owner_bootstrap_request(prompt: &str, system_context: &str) -> SessionConstructionPlan {
+fn owner_bootstrap_request(prompt: &str, system_context: &str) -> RuntimeContextInspectionPlan {
     let mut construction = simple_prompt_request(prompt);
     let bundle_session_id = uuid::Uuid::new_v4();
     let bundle = crate::context::build_continuation_bundle_from_markdown(
@@ -829,6 +1037,7 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
         .create_session("capability-surface")
         .await
         .expect("create");
+    let frame = attach_test_frame(&hub, &session.id).await;
 
     let initial_flow =
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Read]);
@@ -878,9 +1087,15 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
     target_state.tool.mcp_servers = vec![target_mcp.clone()];
     target_state.vfs.active = Some(target_vfs.clone());
 
-    hub.replace_current_capability_state(&session.id, target_state.clone())
-        .await
-        .expect("replace capability state");
+    hub.replace_current_capability_state(
+        AgentFrameRuntimeTarget {
+            frame_id: frame.id,
+            delivery_runtime_session_id: session.id.clone(),
+        },
+        target_state.clone(),
+    )
+    .await
+    .expect("replace capability state");
 
     let (turn, profile) = hub
         .runtime_registry
@@ -900,11 +1115,45 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
 }
 
 #[tokio::test]
+async fn replace_current_capability_state_requires_matching_frame_target() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None);
+    let session = hub
+        .create_session("capability-surface")
+        .await
+        .expect("create");
+    let frame = attach_test_frame(&hub, "another-session").await;
+
+    let error = match hub
+        .replace_current_capability_state(
+            AgentFrameRuntimeTarget {
+                frame_id: frame.id,
+                delivery_runtime_session_id: session.id.clone(),
+            },
+            CapabilityState::default(),
+        )
+        .await
+    {
+        Ok(_) => panic!("mismatched frame/session target should fail"),
+        Err(error) => error,
+    };
+
+    match error {
+        ConnectorError::Runtime(message) => {
+            assert!(message.contains("未绑定 delivery RuntimeSession"));
+        }
+        other => panic!("expected runtime error, got {other}"),
+    }
+}
+
+#[tokio::test]
 async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs() {
     let base = tempfile::tempdir().expect("tempdir");
     let queries = Arc::new(TokioMutex::new(Vec::new()));
+    let hook_targets = Arc::new(TokioMutex::new(HashMap::new()));
     let hook_provider = Arc::new(StaticResolutionHookProvider {
         queries,
+        target_by_session: hook_targets.clone(),
         resolution: HookResolution::default(),
     });
     let hub = test_hub(
@@ -917,9 +1166,11 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
         .create_session("canvas-skill-capability")
         .await
         .expect("create");
+    let frame = attach_test_frame(&hub, &session.id).await;
+    register_hook_target(&hook_targets, &session.id, &frame).await;
     let _rx = hub.ensure_session(&session.id).await;
     hub.hook_service()
-        .reload_session_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
+        .reload_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
         .await
         .expect("hook runtime should load");
 
@@ -961,8 +1212,8 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
 
     let active_vfs = canvas_skill_vfs();
     let skills = vec![canvas_skill_entry()];
-    let hook_session = hub
-        .get_hook_session_runtime(&session.id)
+    let hook_runtime = hub
+        .get_hook_runtime_by_delivery_session(&session.id)
         .await
         .expect("hook runtime should exist");
     let mut after_state = before_state.clone();
@@ -972,9 +1223,10 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
     let outcome = hub
         .capability_service()
         .apply_live_runtime_context_transition(
-            &hook_session,
+            &hook_runtime,
             LiveRuntimeContextTransitionInput {
-                session_id: session.id.clone(),
+                target_frame_id: frame.id,
+                delivery_runtime_session_id: session.id.clone(),
                 turn_id: None,
                 phase_node: "canvas".to_string(),
                 run_id: None,
@@ -1055,9 +1307,10 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
 
     hub.capability_service()
         .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
-            session_id: session.id.clone(),
+            target_frame_id: uuid::Uuid::new_v4(),
+            delivery_runtime_session_id: session.id.clone(),
             turn_id: None,
-            transition_id: "transition-skill-vfs".to_string(),
+            frame_transition_id: "transition-skill-vfs".to_string(),
             phase_node: "review".to_string(),
             run_id: uuid::Uuid::new_v4(),
             lifecycle_key: "dev".to_string(),
@@ -1078,13 +1331,15 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
         .expect("runtime commands should load");
     let command = commands
         .iter()
-        .find(|command| command.transition_id == "transition-skill-vfs")
+        .find(|command| command.frame_transition_id == "transition-skill-vfs")
         .expect("pending transition should exist");
-    let payload = serde_json::to_value(&command.transition).expect("transition serializes");
+    let payload = serde_json::to_value(&command.delivery).expect("delivery serializes");
+    assert!(payload.get("frame_transition_id").is_some());
+    assert!(payload.get("transition").is_none());
     assert!(payload.get("state").is_none());
     assert_eq!(
         command
-            .transition
+            .frame_transition
             .transition
             .effects
             .iter()
@@ -1173,8 +1428,8 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
     target_flow.tool.mcp_servers = vec![target_mcp];
     target_flow.vfs.active = Some(pending_vfs);
 
-    hub.enqueue_pending_capability_state_transition(
-        &session.id,
+    let frame_transition = AgentFrameTransitionRecord::from_pending(
+        uuid::Uuid::new_v4(),
         PendingCapabilityStateTransition {
             id: "transition-1".to_string(),
             run_id: uuid::Uuid::new_v4(),
@@ -1185,9 +1440,11 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
             created_at: 1,
             source_turn_id: None,
         },
-    )
-    .await
-    .expect("enqueue pending transition");
+    );
+    let delivery = RuntimeDeliveryCommand::pending_runtime_context(&frame_transition);
+    hub.enqueue_runtime_delivery_command(&session.id, delivery, frame_transition)
+        .await
+        .expect("enqueue pending transition");
 
     hub.start_prompt(&session.id, simple_prompt_request("hello"))
         .await
@@ -1211,7 +1468,7 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
         .await
         .expect("runtime commands should load");
     assert_eq!(applied_commands.len(), 1);
-    assert_eq!(applied_commands[0].transition_id, "transition-1");
+    assert_eq!(applied_commands[0].frame_transition_id, "transition-1");
 
     let events = hub
         .persistence
@@ -1313,7 +1570,7 @@ impl AgentConnector for SessionStartAwareConnector {
         _prompt: &PromptPayload,
         context: agentdash_spi::ExecutionContext,
     ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-        let seen = context.turn.hook_session.as_ref().is_some_and(|runtime| {
+        let seen = context.turn.hook_runtime.as_ref().is_some_and(|runtime| {
             runtime
                 .trace()
                 .iter()
@@ -1345,71 +1602,219 @@ impl AgentConnector for SessionStartAwareConnector {
 
 struct RecordingHookProvider {
     queries: Arc<TokioMutex<Vec<HookEvaluationQuery>>>,
+    frame_repo: Option<Arc<MemoryAgentFrameRepository>>,
 }
 
 #[async_trait::async_trait]
 impl ExecutionHookProvider for RecordingHookProvider {
-    async fn load_session_snapshot(
+    async fn resolve_runtime_hook_target(
         &self,
-        query: SessionHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
-        Ok(SessionHookSnapshot {
-            session_id: query.session_id,
-            ..SessionHookSnapshot::default()
-        })
+        _runtime_session_id: &str,
+    ) -> Result<Option<HookControlTarget>, agentdash_spi::hooks::HookError> {
+        let Some(ref repo) = self.frame_repo else {
+            return Ok(None);
+        };
+        let frame = repo.frames.lock().await.iter().next().cloned();
+        Ok(frame.map(|f| HookControlTarget {
+            run_id: uuid::Uuid::new_v4(),
+            agent_id: f.agent_id,
+            frame_id: f.id,
+            assignment_id: None,
+        }))
     }
-    async fn refresh_session_snapshot(
+
+    async fn load_frame_snapshot(
         &self,
-        query: SessionHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
-        Ok(SessionHookSnapshot {
-            session_id: query.session_id,
-            ..SessionHookSnapshot::default()
-        })
+        query: AgentFrameHookSnapshotQuery,
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
+        Ok(test_hook_snapshot(
+            query.provenance.runtime_session_id.unwrap_or_default(),
+        ))
     }
-    async fn evaluate_hook(
+
+    async fn refresh_frame_snapshot(
         &self,
-        query: HookEvaluationQuery,
+        query: AgentFrameHookRefreshQuery,
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
+        Ok(test_hook_snapshot(
+            query.provenance.runtime_session_id.unwrap_or_default(),
+        ))
+    }
+
+    async fn evaluate_frame_hook(
+        &self,
+        query: AgentFrameHookEvaluationQuery,
     ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
-        self.queries.lock().await.push(query);
+        self.queries.lock().await.push(HookEvaluationQuery {
+            session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+            trigger: query.trigger,
+            turn_id: query.provenance.turn_id,
+            tool_name: query.tool_name,
+            tool_call_id: query.tool_call_id,
+            subagent_type: query.subagent_type,
+            snapshot: query.snapshot,
+            payload: query.payload,
+            token_stats: query.token_stats,
+        });
         Ok(HookResolution::default())
     }
 }
 
 struct StaticResolutionHookProvider {
     queries: Arc<TokioMutex<Vec<HookEvaluationQuery>>>,
+    target_by_session: Arc<TokioMutex<HashMap<String, HookControlTarget>>>,
     resolution: HookResolution,
 }
 
 #[async_trait::async_trait]
 impl ExecutionHookProvider for StaticResolutionHookProvider {
-    async fn load_session_snapshot(
+    async fn resolve_runtime_hook_target(
         &self,
-        query: SessionHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
-        Ok(SessionHookSnapshot {
-            session_id: query.session_id,
-            ..SessionHookSnapshot::default()
-        })
+        runtime_session_id: &str,
+    ) -> Result<Option<HookControlTarget>, agentdash_spi::hooks::HookError> {
+        Ok(self
+            .target_by_session
+            .lock()
+            .await
+            .get(runtime_session_id)
+            .cloned())
     }
 
-    async fn refresh_session_snapshot(
+    async fn load_frame_snapshot(
         &self,
-        query: SessionHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
-        Ok(SessionHookSnapshot {
-            session_id: query.session_id,
-            ..SessionHookSnapshot::default()
-        })
+        query: AgentFrameHookSnapshotQuery,
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
+        Ok(test_hook_snapshot(
+            query.provenance.runtime_session_id.unwrap_or_default(),
+        ))
     }
 
-    async fn evaluate_hook(
+    async fn refresh_frame_snapshot(
         &self,
-        query: HookEvaluationQuery,
+        query: AgentFrameHookRefreshQuery,
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
+        Ok(test_hook_snapshot(
+            query.provenance.runtime_session_id.unwrap_or_default(),
+        ))
+    }
+
+    async fn evaluate_frame_hook(
+        &self,
+        query: AgentFrameHookEvaluationQuery,
     ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
-        self.queries.lock().await.push(query);
+        self.queries.lock().await.push(HookEvaluationQuery {
+            session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+            trigger: query.trigger,
+            turn_id: query.provenance.turn_id,
+            tool_name: query.tool_name,
+            tool_call_id: query.tool_call_id,
+            subagent_type: query.subagent_type,
+            snapshot: query.snapshot,
+            payload: query.payload,
+            token_stats: query.token_stats,
+        });
         Ok(self.resolution.clone())
     }
+}
+
+struct SnapshotRecordingHookProvider {
+    target_by_session: Arc<TokioMutex<HashMap<String, HookControlTarget>>>,
+    frame_snapshot_queries: Arc<TokioMutex<Vec<AgentFrameHookSnapshotQuery>>>,
+}
+
+#[async_trait::async_trait]
+impl ExecutionHookProvider for SnapshotRecordingHookProvider {
+    async fn resolve_runtime_hook_target(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<Option<HookControlTarget>, agentdash_spi::hooks::HookError> {
+        Ok(self
+            .target_by_session
+            .lock()
+            .await
+            .get(runtime_session_id)
+            .cloned())
+    }
+
+    async fn load_frame_snapshot(
+        &self,
+        query: AgentFrameHookSnapshotQuery,
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
+        let session_id = query
+            .provenance
+            .runtime_session_id
+            .clone()
+            .unwrap_or_default();
+        self.frame_snapshot_queries.lock().await.push(query);
+        Ok(test_hook_snapshot(session_id))
+    }
+
+    async fn refresh_frame_snapshot(
+        &self,
+        query: AgentFrameHookRefreshQuery,
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
+        let session_id = query
+            .provenance
+            .runtime_session_id
+            .clone()
+            .unwrap_or_default();
+        self.frame_snapshot_queries
+            .lock()
+            .await
+            .push(AgentFrameHookSnapshotQuery {
+                target: query.target,
+                provenance: query.provenance,
+            });
+        Ok(test_hook_snapshot(session_id))
+    }
+
+    async fn evaluate_frame_hook(
+        &self,
+        _query: AgentFrameHookEvaluationQuery,
+    ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
+        Ok(HookResolution::default())
+    }
+}
+
+#[tokio::test]
+async fn lazy_hook_runtime_rebuild_loads_snapshot_from_frame_target() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let target_by_session = Arc::new(TokioMutex::new(HashMap::new()));
+    let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
+    let hook_provider = Arc::new(SnapshotRecordingHookProvider {
+        target_by_session: target_by_session.clone(),
+        frame_snapshot_queries: frame_snapshot_queries.clone(),
+    });
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(PendingConnector),
+        Some(hook_provider),
+    );
+    let session = hub
+        .create_session("lazy-hook-target")
+        .await
+        .expect("create");
+    let frame = attach_test_frame(&hub, &session.id).await;
+    let target = register_hook_target(&target_by_session, &session.id, &frame).await;
+
+    let runtime = hub
+        .ensure_hook_runtime_for_delivery_session(&session.id, Some("turn-lazy"))
+        .await
+        .expect("lazy hook runtime rebuild should not fail")
+        .expect("hook runtime should be rebuilt");
+
+    assert_eq!(runtime.control_target(), target);
+    let frame_queries = frame_snapshot_queries.lock().await;
+    assert_eq!(frame_queries.len(), 1);
+    assert_eq!(frame_queries[0].target, target);
+    assert_eq!(
+        frame_queries[0].provenance.runtime_session_id.as_deref(),
+        Some(session.id.as_str())
+    );
+    assert_eq!(
+        frame_queries[0].provenance.source,
+        "hook_runtime_lazy_rebuild"
+    );
 }
 
 #[derive(Default)]
@@ -1487,8 +1892,10 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         content: "请使用 phase B 的工具约束继续推进。".to_string(),
         source: "workflow:phase_b".to_string(),
     };
+    let hook_targets = Arc::new(TokioMutex::new(HashMap::new()));
     let provider = Arc::new(StaticResolutionHookProvider {
         queries: queries.clone(),
+        target_by_session: hook_targets.clone(),
         resolution: HookResolution::default(),
     });
     let connector = Arc::new(NotificationCapturingConnector::default());
@@ -1498,10 +1905,12 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         .create_session("capability-hook-injection")
         .await
         .expect("create");
+    let frame = attach_test_frame(&hub, &session.id).await;
+    register_hook_target(&hook_targets, &session.id, &frame).await;
     let _rx = hub.ensure_session(&session.id).await;
 
     hub.hook_service()
-        .reload_session_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
+        .reload_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
         .await
         .expect("hook runtime should load");
     let bundle_session_uuid = uuid::Uuid::new_v4();
@@ -1527,13 +1936,13 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         })
         .await;
 
-    let hook_session = hub
-        .get_hook_session_runtime(&session.id)
+    let hook_runtime = hub
+        .get_hook_runtime_by_delivery_session(&session.id)
         .await
         .expect("hook runtime should remain available");
-    let mut snapshot = hook_session.snapshot();
+    let mut snapshot = hook_runtime.snapshot();
     snapshot.injections = vec![injection.clone()];
-    hook_session.replace_snapshot(snapshot);
+    hook_runtime.replace_snapshot(snapshot);
 
     let result = hub
         .collect_runtime_context_update_injections(&session.id)
@@ -1554,7 +1963,7 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
     );
     drop(captured);
 
-    let trace = hook_session.trace();
+    let trace = hook_runtime.trace();
     assert!(
         trace.is_empty(),
         "runtime context update 不是 HookTrace trigger，不应写 trace"
@@ -1659,103 +2068,6 @@ fn build_user_notifications_preserves_block_types_and_index() {
     assert_eq!(envelopes[1].trace.entry_index, Some(1));
 }
 
-#[tokio::test]
-async fn respond_companion_request_resolves_waiting_tool_and_persists_response_event() {
-    struct NoopConnector;
-
-    #[async_trait::async_trait]
-    impl AgentConnector for NoopConnector {
-        fn connector_id(&self) -> &'static str {
-            "noop"
-        }
-        fn connector_type(&self) -> agentdash_spi::ConnectorType {
-            agentdash_spi::ConnectorType::LocalExecutor
-        }
-        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
-            agentdash_spi::ConnectorCapabilities::default()
-        }
-        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
-            Vec::new()
-        }
-        async fn discover_options_stream(
-            &self,
-            _executor: &str,
-            _working_dir: Option<PathBuf>,
-        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
-        {
-            Ok(Box::pin(stream::empty()))
-        }
-        async fn prompt(
-            &self,
-            _session_id: &str,
-            _follow_up_session_id: Option<&str>,
-            _prompt: &PromptPayload,
-            _context: agentdash_spi::ExecutionContext,
-        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-            Ok(Box::pin(stream::empty()))
-        }
-        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn approve_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn reject_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-            _reason: Option<String>,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-    }
-
-    let base = tempfile::tempdir().expect("tempdir");
-    let hub = test_hub(base.path().to_path_buf(), Arc::new(NoopConnector), None);
-    let session = hub.create_session("test").await.expect("create session");
-    let payload = json!({
-        "type": "decision",
-        "status": "approved",
-        "choice": "YES",
-        "summary": "YES"
-    });
-
-    let rx = hub
-        .companion_wait_registry
-        .register(&session.id, "req-1", "turn-1", Some("approval".to_string()))
-        .await;
-
-    hub.control_service()
-        .respond_companion_request(&session.id, "req-1", payload.clone())
-        .await
-        .expect("respond should succeed");
-
-    assert_eq!(rx.await.expect("wait registry should resolve"), payload);
-
-    let events = hub
-        .persistence
-        .list_all_events(&session.id)
-        .await
-        .expect("events should load");
-    let response = events
-        .iter()
-        .find(|event| {
-            event.session_update_type == "platform_event"
-                && event
-                    .notification
-                    .event
-                    .as_ref()
-                    .is_platform_session_meta_update("companion_human_response")
-        })
-        .expect("response event should exist");
-
-    assert_eq!(response.turn_id.as_deref(), Some("turn-1"));
-}
-
 /// Trait extension for BackboneEvent to check platform event keys.
 trait BackboneEventExt {
     fn as_ref(&self) -> &BackboneEvent;
@@ -1829,21 +2141,28 @@ async fn emit_context_frame_persists_agent_visible_frame() {
 
 #[tokio::test]
 async fn start_prompt_triggers_session_start_before_connector_prompt() {
-    let base = tempfile::tempdir().expect("tempdir");
     let connector = Arc::new(SessionStartAwareConnector::default());
     let queries = Arc::new(TokioMutex::new(Vec::new()));
+    let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
     let hook_provider = Arc::new(RecordingHookProvider {
         queries: queries.clone(),
+        frame_repo: Some(frame_repo.clone()),
     });
-    let hub = test_hub(
-        base.path().to_path_buf(),
+    let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
+    let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
+    let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
         connector.clone(),
         Some(hook_provider),
-    );
+        Arc::new(MemorySessionPersistence::default()),
+    )
+    .with_agent_frame_repo(frame_repo)
+    .with_lifecycle_gate_repo(gate_repo)
+    .with_lifecycle_agent_repo(agent_repo.clone());
     let session = hub.create_session("test").await.expect("create session");
-    hub.mark_owner_bootstrap_pending(&session.id)
-        .await
-        .expect("should mark pending");
+    let frame = attach_test_frame(&hub, &session.id).await;
+    let mut agent = LifecycleAgent::new_root(uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), "test");
+    agent.id = frame.agent_id;
+    agent_repo.create(&agent).await.expect("create agent");
 
     hub.start_prompt(&session.id, owner_bootstrap_request("hello", "ctx"))
         .await
@@ -1858,32 +2177,6 @@ async fn start_prompt_triggers_session_start_before_connector_prompt() {
             .iter()
             .any(|query| matches!(query.trigger, HookTrigger::SessionStart))
     );
-}
-
-#[tokio::test]
-async fn owner_bootstrap_marks_session_meta_bootstrapped() {
-    let base = tempfile::tempdir().expect("tempdir");
-    let connector = Arc::new(SessionStartAwareConnector::default());
-    let queries = Arc::new(TokioMutex::new(Vec::new()));
-    let hook_provider = Arc::new(RecordingHookProvider {
-        queries: queries.clone(),
-    });
-    let hub = test_hub(base.path().to_path_buf(), connector, Some(hook_provider));
-    let session = hub.create_session("test").await.expect("create session");
-    hub.mark_owner_bootstrap_pending(&session.id)
-        .await
-        .expect("should mark pending");
-
-    hub.start_prompt(&session.id, owner_bootstrap_request("hello", "ctx"))
-        .await
-        .expect("prompt should start");
-
-    let meta = hub
-        .get_session_meta(&session.id)
-        .await
-        .expect("meta should load")
-        .expect("session should exist");
-    assert_eq!(meta.bootstrap_state, SessionBootstrapState::Bootstrapped);
 }
 
 #[tokio::test]
@@ -2701,11 +2994,8 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(FailingConnector), None);
     let session = hub.create_session("test").await.expect("create session");
-    hub.mark_owner_bootstrap_pending(&session.id)
-        .await
-        .expect("should mark pending");
-    hub.enqueue_pending_capability_state_transition(
-        &session.id,
+    let frame_transition = AgentFrameTransitionRecord::from_pending(
+        uuid::Uuid::new_v4(),
         PendingCapabilityStateTransition {
             id: "transition-fail".to_string(),
             run_id: uuid::Uuid::new_v4(),
@@ -2716,9 +3006,11 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
             created_at: 1,
             source_turn_id: None,
         },
-    )
-    .await
-    .expect("enqueue pending transition");
+    );
+    let delivery = RuntimeDeliveryCommand::pending_runtime_context(&frame_transition);
+    hub.enqueue_runtime_delivery_command(&session.id, delivery, frame_transition)
+        .await
+        .expect("enqueue pending transition");
 
     let error = hub
         .start_prompt(&session.id, owner_bootstrap_request("hello", "ctx"))
@@ -2726,20 +3018,13 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
         .expect_err("prompt should fail");
     assert!(error.to_string().contains("connector setup failed"));
 
-    let meta = hub
-        .get_session_meta(&session.id)
-        .await
-        .expect("meta should load")
-        .expect("session should exist");
-    assert_eq!(meta.bootstrap_state, SessionBootstrapState::Pending);
-
     let requested_commands = hub
         .persistence
         .list_runtime_commands_by_status(&[RuntimeCommandStatus::Requested], 10)
         .await
         .expect("runtime commands should load");
     assert_eq!(requested_commands.len(), 1);
-    assert_eq!(requested_commands[0].transition_id, "transition-fail");
+    assert_eq!(requested_commands[0].frame_transition_id, "transition-fail");
 }
 
 #[tokio::test]
@@ -3016,6 +3301,7 @@ async fn schedule_hook_auto_resume_strict_mode_requires_provider() {
 #[tokio::test]
 async fn schedule_hook_auto_resume_routes_through_provider() {
     use crate::session::{SessionConstructionProvider, SessionConstructionProviderInput};
+    use crate::workflow::runtime_launch::FrameLaunchEnvelope;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct SpyConstructionProvider {
@@ -3026,10 +3312,10 @@ async fn schedule_hook_auto_resume_routes_through_provider() {
 
     #[async_trait::async_trait]
     impl SessionConstructionProvider for SpyConstructionProvider {
-        async fn build_construction(
+        async fn build_frame_construction(
             &self,
             input: SessionConstructionProviderInput,
-        ) -> Result<SessionConstructionPlan, ConnectorError> {
+        ) -> Result<FrameLaunchEnvelope, ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = input
                 .command

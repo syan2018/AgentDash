@@ -1,7 +1,7 @@
 import { api } from "../api/client";
-import type { ContentBlock } from "@agentclientprotocol/sdk";
 import type { ThinkingLevel } from "../types";
 import type { PermissionPolicy } from "../features/executor-selector/model/types";
+import type { CompanionGateRespondResponse } from "../generated/companion-contracts";
 
 export type ExecutorProfile = string;
 
@@ -14,20 +14,6 @@ export interface ExecutorConfig {
   agent_id?: string;
   thinking_level?: ThinkingLevel;
   permission_policy?: PermissionPolicy;
-}
-
-export interface PromptSessionRequest {
-  promptBlocks: ContentBlock[];
-  workingDir?: string;
-  env?: Record<string, string>;
-  executorConfig?: ExecutorConfig;
-}
-
-export async function promptSession(sessionId: string, req: PromptSessionRequest): Promise<void> {
-  await api.post<void>(
-    `/sessions/${encodeURIComponent(sessionId)}/prompt`,
-    req,
-  );
 }
 
 export async function approveToolCall(sessionId: string, toolCallId: string): Promise<void> {
@@ -49,12 +35,11 @@ export async function rejectToolCall(
 }
 
 export async function respondCompanionRequest(
-  sessionId: string,
-  requestId: string,
+  gateId: string,
   payload: Record<string, unknown>,
-): Promise<void> {
-  await api.post<void>(
-    `/sessions/${encodeURIComponent(sessionId)}/companion-requests/${encodeURIComponent(requestId)}/respond`,
+): Promise<CompanionGateRespondResponse> {
+  return api.post<CompanionGateRespondResponse>(
+    `/companion-gates/${encodeURIComponent(gateId)}/respond`,
     { payload },
   );
 }

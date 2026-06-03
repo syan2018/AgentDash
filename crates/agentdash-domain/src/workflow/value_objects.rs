@@ -1,5 +1,4 @@
 mod activity_def;
-mod binding;
 mod capability;
 mod contract;
 mod hook_rule;
@@ -13,22 +12,21 @@ mod run_state;
 pub use activity_def::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
     ActivityJoinPolicy, ActivityTransition, ActivityTransitionKind, AgentActivityExecutorSpec,
-    AgentSessionPolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy, ArtifactBinding,
+    AgentReusePolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy, ArtifactBinding,
     BashExecExecutorSpec, FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
-    HumanApprovalExecutorSpec, TransitionCondition,
-};
-pub use binding::{
-    WorkflowBindingKind, normalize_workflow_binding_kinds, workflow_binding_kinds_cover,
+    HumanApprovalExecutorSpec, RuntimeSessionPolicy, TransitionCondition,
 };
 pub use capability::{
     CapabilityConfig, ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction,
     ToolCapabilitySlotState, reduce_tool_capability_directives,
 };
-pub use contract::{EffectiveSessionContract, WorkflowContract, WorkflowSessionTerminalState};
+pub use contract::{
+    AgentProcedureContract, EffectiveSessionContract, WorkflowSessionTerminalState,
+};
 pub use hook_rule::{WorkflowHookRuleSpec, WorkflowHookTrigger};
 pub use injection::{WorkflowContextBinding, WorkflowInjectionSpec};
 pub use lifecycle_def::LifecycleNodeType;
-pub use metadata::{ValidationIssue, ValidationSeverity, WorkflowDefinitionSource};
+pub use metadata::{DefinitionSource, ValidationIssue, ValidationSeverity};
 pub use mount_directive::MountDirective;
 pub use ports::{
     ContextStrategy, GateStrategy, InputPortDefinition, OutputPortDefinition, StandaloneFulfillment,
@@ -41,15 +39,15 @@ pub use run_state::{
 };
 
 #[cfg(test)]
-use super::validation::{validate_activity_lifecycle_definition, validate_workflow_definition};
+use super::validation::{validate_agent_procedure, validate_workflow_graph};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::common::Mount;
 
-    fn sample_contract() -> WorkflowContract {
-        WorkflowContract {
+    fn sample_contract() -> AgentProcedureContract {
+        AgentProcedureContract {
             injection: WorkflowInjectionSpec {
                 guidance: Some("read spec first".to_string()),
                 context_bindings: vec![WorkflowContextBinding {
@@ -60,12 +58,12 @@ mod tests {
                 }],
                 ..WorkflowInjectionSpec::default()
             },
-            ..WorkflowContract::default()
+            ..AgentProcedureContract::default()
         }
     }
 
     #[test]
-    fn validate_workflow_definition_rejects_duplicate_output_port_keys() {
+    fn validate_agent_procedure_rejects_duplicate_output_port_keys() {
         let mut contract = sample_contract();
         contract.output_ports = vec![
             OutputPortDefinition {
@@ -82,7 +80,7 @@ mod tests {
             },
         ];
 
-        let error = validate_workflow_definition("wf", "Workflow", &contract).expect_err("fail");
+        let error = validate_agent_procedure("wf", "Workflow", &contract).expect_err("fail");
         assert!(error.contains("重复"));
     }
 
@@ -94,10 +92,9 @@ mod tests {
         ActivityDefinition {
             key: key.to_string(),
             description: String::new(),
-            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                workflow_key: format!("workflow.{key}"),
-                session_policy: AgentSessionPolicy::SpawnChild,
-            }),
+            executor: ActivityExecutorSpec::Agent(
+                AgentActivityExecutorSpec::create_activity_agent(format!("workflow.{key}")),
+            ),
             input_ports,
             output_ports,
             completion_policy: ActivityCompletionPolicy::ExecutorTerminal,
@@ -156,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_activity_lifecycle_accepts_human_approval_loop() {
+    fn validate_workflow_graph_accepts_human_approval_loop() {
         let activities = vec![
             activity_agent(
                 "plan",
@@ -224,18 +221,12 @@ mod tests {
             },
         ];
 
-        validate_activity_lifecycle_definition(
-            "lc",
-            "Lifecycle",
-            "plan",
-            &activities,
-            &transitions,
-        )
-        .expect("approval loop should be bounded by typed decision and retry policy");
+        validate_workflow_graph("lc", "Lifecycle", "plan", &activities, &transitions)
+            .expect("approval loop should be bounded by typed decision and retry policy");
     }
 
     #[test]
-    fn validate_activity_lifecycle_rejects_missing_artifact_port() {
+    fn validate_workflow_graph_rejects_missing_artifact_port() {
         let activities = vec![
             activity_agent("plan", vec![], vec![output_port("proposal")]),
             activity_agent("implement", vec![input_port("approved_plan")], vec![]),
@@ -254,19 +245,13 @@ mod tests {
             max_traversals: None,
         }];
 
-        let err = validate_activity_lifecycle_definition(
-            "lc",
-            "Lifecycle",
-            "plan",
-            &activities,
-            &transitions,
-        )
-        .expect_err("missing output port should fail");
+        let err = validate_workflow_graph("lc", "Lifecycle", "plan", &activities, &transitions)
+            .expect_err("missing output port should fail");
         assert!(err.contains("from_port"));
     }
 
     #[test]
-    fn validate_activity_lifecycle_rejects_unbounded_entry_loop() {
+    fn validate_workflow_graph_rejects_unbounded_entry_loop() {
         let mut plan = activity_agent("plan", vec![], vec![output_port("proposal")]);
         plan.iteration_policy.max_attempts = None;
         let activities = vec![
@@ -297,19 +282,13 @@ mod tests {
             },
         ];
 
-        let err = validate_activity_lifecycle_definition(
-            "lc",
-            "Lifecycle",
-            "plan",
-            &activities,
-            &transitions,
-        )
-        .expect_err("unbounded loop should fail");
+        let err = validate_workflow_graph("lc", "Lifecycle", "plan", &activities, &transitions)
+            .expect_err("unbounded loop should fail");
         assert!(err.contains("循环 transition"));
     }
 
     #[test]
-    fn validate_activity_lifecycle_rejects_unconditional_self_loop() {
+    fn validate_workflow_graph_rejects_unconditional_self_loop() {
         let activities = vec![activity_agent(
             "plan",
             vec![],
@@ -324,14 +303,8 @@ mod tests {
             max_traversals: Some(3),
         }];
 
-        let err = validate_activity_lifecycle_definition(
-            "lc",
-            "Lifecycle",
-            "plan",
-            &activities,
-            &transitions,
-        )
-        .expect_err("unconditional self loop should fail");
+        let err = validate_workflow_graph("lc", "Lifecycle", "plan", &activities, &transitions)
+            .expect_err("unconditional self loop should fail");
         assert!(err.contains("无条件自环"));
     }
 
@@ -368,51 +341,15 @@ mod tests {
 
     #[test]
     fn activity_executor_serializes_agent_kind() {
-        let executor = ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-            workflow_key: "workflow.plan".to_string(),
-            session_policy: AgentSessionPolicy::SpawnChild,
-        });
+        let executor = ActivityExecutorSpec::Agent(
+            AgentActivityExecutorSpec::create_activity_agent("workflow.plan"),
+        );
 
         let value = serde_json::to_value(executor).expect("serialize executor");
         assert_eq!(value["kind"], "agent");
-        assert_eq!(value["workflow_key"], "workflow.plan");
-        assert_eq!(value["session_policy"], "spawn_child");
-    }
-
-    #[test]
-    fn workflow_binding_kind_from_owner_type_uses_binding_scope() {
-        assert_eq!(
-            WorkflowBindingKind::from_owner_type(" story "),
-            Some(WorkflowBindingKind::Story)
-        );
-        assert_eq!(
-            WorkflowBindingKind::from_binding_scope("project"),
-            Some(WorkflowBindingKind::Project)
-        );
-        // Model C 收敛：binding_kind 不再接受 "task"
-        assert_eq!(WorkflowBindingKind::from_owner_type("task"), None);
-        assert_eq!(WorkflowBindingKind::from_owner_type("session"), None);
-    }
-
-    #[test]
-    fn workflow_binding_scope_conversions_stay_consistent() {
-        assert_eq!(
-            normalize_workflow_binding_kinds(vec![
-                WorkflowBindingKind::Story,
-                WorkflowBindingKind::Project,
-                WorkflowBindingKind::Story,
-            ])
-            .unwrap(),
-            vec![WorkflowBindingKind::Project, WorkflowBindingKind::Story]
-        );
-        assert!(workflow_binding_kinds_cover(
-            &[WorkflowBindingKind::Story],
-            &[WorkflowBindingKind::Project, WorkflowBindingKind::Story]
-        ));
-        assert!(!workflow_binding_kinds_cover(
-            &[WorkflowBindingKind::Project, WorkflowBindingKind::Story],
-            &[WorkflowBindingKind::Story]
-        ));
+        assert_eq!(value["procedure_key"], "workflow.plan");
+        assert_eq!(value["agent_reuse_policy"], "create_activity_agent");
+        assert_eq!(value["runtime_session_policy"], "create_new");
     }
 
     #[test]
@@ -626,7 +563,7 @@ mod tests {
     #[test]
     fn workflow_contract_capability_config_default_empty() {
         let json = r#"{}"#;
-        let contract: WorkflowContract = serde_json::from_str(json).unwrap();
+        let contract: AgentProcedureContract = serde_json::from_str(json).unwrap();
         assert!(contract.capability_config.is_empty());
 
         let back = serde_json::to_string(&contract).unwrap();
@@ -638,7 +575,7 @@ mod tests {
 
     #[test]
     fn workflow_contract_tool_directives_roundtrip() {
-        let contract = WorkflowContract {
+        let contract = AgentProcedureContract {
             capability_config: CapabilityConfig {
                 tool_directives: vec![
                     ToolCapabilityDirective::add_simple("workflow_management"),
@@ -647,19 +584,19 @@ mod tests {
                 ],
                 ..CapabilityConfig::default()
             },
-            ..WorkflowContract::default()
+            ..AgentProcedureContract::default()
         };
         let json = serde_json::to_string(&contract).unwrap();
         assert!(json.contains("capability_config"));
         assert!(json.contains("tool_directives"));
         assert!(!json.contains("capability_directives"));
-        let back: WorkflowContract = serde_json::from_str(&json).unwrap();
+        let back: AgentProcedureContract = serde_json::from_str(&json).unwrap();
         assert_eq!(back.capability_config, contract.capability_config);
     }
 
     #[test]
     fn capability_config_mount_directives_roundtrip() {
-        let contract = WorkflowContract {
+        let contract = AgentProcedureContract {
             capability_config: CapabilityConfig {
                 mount_directives: vec![MountDirective::AddMount {
                     mount: Mount {
@@ -675,13 +612,13 @@ mod tests {
                 }],
                 ..CapabilityConfig::default()
             },
-            ..WorkflowContract::default()
+            ..AgentProcedureContract::default()
         };
         let json = serde_json::to_string(&contract).unwrap();
         assert!(json.contains("capability_config"));
         assert!(json.contains("mount_directives"));
 
-        let back: WorkflowContract = serde_json::from_str(&json).unwrap();
+        let back: AgentProcedureContract = serde_json::from_str(&json).unwrap();
         assert_eq!(back.capability_config, contract.capability_config);
     }
 
@@ -690,7 +627,8 @@ mod tests {
         // 旧数据可能残留 constraints / completion / capabilities 字段，
         // 移除 deny_unknown_fields 后应静默忽略
         let json = r#"{"constraints":[],"completion":{"checks":[]},"capabilities":["workflow_management"]}"#;
-        let contract: WorkflowContract = serde_json::from_str(json).expect("旧数据应当可反序列化");
+        let contract: AgentProcedureContract =
+            serde_json::from_str(json).expect("旧数据应当可反序列化");
         assert!(contract.output_ports.is_empty());
     }
 }

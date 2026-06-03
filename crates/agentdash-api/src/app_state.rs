@@ -21,7 +21,7 @@ use agentdash_application::session::{
     SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
     SessionRuntimeService, SessionTitleService,
 };
-use agentdash_application::task::service::StoryStepActivationService;
+use agentdash_application::task::service::StoryActivityActivationService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::vfs::MountProviderRegistry;
 use agentdash_application::vfs::{VfsMutationDispatcher, VfsService};
@@ -67,8 +67,8 @@ pub struct ServiceSet {
     pub vfs_registry: VfsDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
     pub mount_provider_registry: Arc<MountProviderRegistry>,
-    /// Story step activation 服务 — task route 仅作为用户入口转发到这里
-    pub story_step_activation_service: Arc<StoryStepActivationService>,
+    /// Story activity activation 服务 — task route 仅作为用户入口转发到这里
+    pub story_activity_activation_service: Arc<StoryActivityActivationService>,
     /// Hook 提供者 — 供 API 层验证脚本等管理接口使用
     pub hook_provider: Arc<AppExecutionHookProvider>,
     /// 统一认证会话服务（application 层）
@@ -230,11 +230,10 @@ impl AppState {
                 project_repo: project_repo_port.clone(),
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
-                lifecycle_run_link_repo: repos.lifecycle_run_link_repo.clone(),
-                workflow_definition_repo: repos.workflow_definition_repo.clone(),
-                activity_lifecycle_definition_repo: repos
-                    .activity_lifecycle_definition_repo
+                lifecycle_subject_association_repo: repos
+                    .lifecycle_subject_association_repo
                     .clone(),
+                workflow_graph_instance_repo: repos.workflow_graph_instance_repo.clone(),
                 lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;
@@ -259,8 +258,15 @@ impl AppState {
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
                 session_runtime.clone(),
                 story_repo_port.clone(),
-                repos.lifecycle_run_link_repo.clone(),
+                repos.workflow_graph_repo.clone(),
                 repos.lifecycle_run_repo.clone(),
+                repos.workflow_graph_instance_repo.clone(),
+                repos.activity_execution_claim_repo.clone(),
+                repos.lifecycle_subject_association_repo.clone(),
+                repos.lifecycle_agent_repo.clone(),
+                repos.agent_frame_repo.clone(),
+                repos.agent_assignment_repo.clone(),
+                repos.execution_anchor_repo.clone(),
             ),
         );
 
@@ -272,12 +278,8 @@ impl AppState {
             .set_context_audit_bus(audit_bus.clone())
             .await;
 
-        let story_step_activation_service = Arc::new(StoryStepActivationService {
+        let story_activity_activation_service = Arc::new(StoryActivityActivationService {
             repos: repos.clone(),
-            session_core: session_core.clone(),
-            session_eventing: session_eventing.clone(),
-            session_launch: session_launch.clone(),
-            backend_availability: backend_registry.clone(),
             dispatcher: dispatcher.clone(),
             lock_map: lock_map.clone(),
         });
@@ -305,7 +307,7 @@ impl AppState {
                 terminal_cache,
                 vfs_registry,
                 mount_provider_registry,
-                story_step_activation_service,
+                story_activity_activation_service,
                 hook_provider,
                 auth_session_service,
                 terminal_cancel_coordinator,
@@ -327,9 +329,8 @@ impl AppState {
 
         let mut state = Arc::new(state);
 
-        // 注入 SessionConstructionProvider：让 session 内部 auto-resume 等 prompt
-        // 路径与 HTTP 主通道共享同一条 `build_session_construction_for_launch`，
-        // 避免 owner / MCP / capability_state / context_bundle 漂移。
+        // 注入 RuntimeSession launch provider：所有 prompt 先定位 AgentFrame，
+        // 再从 frame revision 投影 connector 所需的 runtime surface。
         {
             let provider = Arc::new(
                 crate::bootstrap::session_construction_provider::AppStateSessionConstructionProvider::new(

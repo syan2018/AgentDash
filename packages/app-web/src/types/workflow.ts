@@ -1,7 +1,6 @@
 // ─── Workflow ─────────────────────────────────────────
 import type { JsonValue } from "../generated/common-contracts";
 import type {
-  ActivityAttemptState,
   ActivityAttemptStatus,
   ActivityCompletionPolicy,
   ActivityDefinition as GeneratedActivityDefinition,
@@ -9,13 +8,12 @@ import type {
   ActivityInputArtifact,
   ActivityIterationPolicy,
   ActivityJoinPolicy,
-  ActivityLifecycleRunState,
   ActivityOutputArtifact,
   ActivityRunStatus,
   ActivityTransition as GeneratedActivityTransition,
   ActivityTransitionKind,
   AgentActivityExecutorSpec,
-  AgentSessionPolicy,
+  AgentReusePolicy,
   ApiRequestExecutorSpec,
   ArtifactAliasPolicy,
   ArtifactBinding,
@@ -33,16 +31,16 @@ import type {
   LifecycleExecutionEventKind,
   LifecycleRunStatus,
   OutputPortDefinition,
+  RuntimeSessionPolicy,
   StandaloneFulfillment,
   ToolCapabilityDirective,
   ToolCapabilityPath,
   TransitionCondition,
   ValidationIssue,
   ValidationSeverity,
-  WorkflowBindingKind,
   WorkflowContextBinding,
-  WorkflowContract as GeneratedWorkflowContract,
-  WorkflowDefinitionSource,
+  AgentProcedureContract as GeneratedAgentProcedureContract,
+  DefinitionSource,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
@@ -50,19 +48,17 @@ import type {
 import type { InstalledAssetSourceDto } from "./shared-library";
 
 export type {
-  ActivityAttemptState,
   ActivityAttemptStatus,
   ActivityCompletionPolicy,
   ActivityExecutorSpec,
   ActivityInputArtifact,
   ActivityIterationPolicy,
   ActivityJoinPolicy,
-  ActivityLifecycleRunState,
   ActivityOutputArtifact,
   ActivityRunStatus,
   ActivityTransitionKind,
   AgentActivityExecutorSpec,
-  AgentSessionPolicy,
+  AgentReusePolicy,
   ApiRequestExecutorSpec,
   ArtifactAliasPolicy,
   ArtifactBinding,
@@ -80,21 +76,21 @@ export type {
   LifecycleExecutionEventKind,
   LifecycleRunStatus,
   OutputPortDefinition,
+  RuntimeSessionPolicy,
   StandaloneFulfillment,
   ToolCapabilityDirective,
   ToolCapabilityPath,
   TransitionCondition,
   ValidationIssue,
   ValidationSeverity,
-  WorkflowBindingKind,
   WorkflowContextBinding,
-  WorkflowDefinitionSource,
+  DefinitionSource,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
 };
 
-export type WorkflowTargetKind = WorkflowBindingKind;
+export type WorkflowTargetKind = "project" | "story";
 export type WorkflowRunStatus = LifecycleRunStatus;
 export type CapabilityDirective = ToolCapabilityDirective;
 
@@ -105,8 +101,8 @@ export interface WorkflowCapabilityConfig extends GeneratedCapabilityConfig {
 
 export type CapabilityConfig = WorkflowCapabilityConfig;
 
-export interface WorkflowContract
-  extends Omit<GeneratedWorkflowContract, "capability_config" | "output_ports" | "input_ports"> {
+export interface AgentProcedureContract
+  extends Omit<GeneratedAgentProcedureContract, "capability_config" | "output_ports" | "input_ports"> {
   capability_config: WorkflowCapabilityConfig;
   output_ports: OutputPortDefinition[];
   input_ports: InputPortDefinition[];
@@ -234,7 +230,7 @@ export interface WorkflowTemplateWorkflow {
   key: string;
   name: string;
   description: string;
-  contract: WorkflowContract;
+  contract: AgentProcedureContract;
 }
 
 export interface WorkflowTemplate {
@@ -253,29 +249,29 @@ export interface WorkflowTemplate {
   };
 }
 
-export interface WorkflowDefinition {
+export interface AgentProcedure {
   id: string;
   project_id: string;
   key: string;
   name: string;
   description: string;
   target_kinds: WorkflowTargetKind[];
-  source: WorkflowDefinitionSource;
+  source: DefinitionSource;
   installed_source?: InstalledAssetSourceDto | null;
   version: number;
-  contract: WorkflowContract;
+  contract: AgentProcedureContract;
   created_at: string;
   updated_at: string;
 }
 
-export interface ActivityLifecycleDefinition {
+export interface WorkflowGraph {
   id: string;
   project_id: string;
   key: string;
   name: string;
   description: string;
   target_kinds: WorkflowTargetKind[];
-  source: WorkflowDefinitionSource;
+  source: DefinitionSource;
   installed_source?: InstalledAssetSourceDto | null;
   version: number;
   entry_activity_key: string;
@@ -288,12 +284,10 @@ export interface ActivityLifecycleDefinition {
 export interface WorkflowRun {
   id: string;
   project_id: string;
-  lifecycle_id: string;
-  session_id: string;
+  topology: "graphless" | "workflow_graph";
+  root_graph_id?: string;
   status: WorkflowRunStatus;
-  active_node_keys?: string[];
   execution_log: LifecycleExecutionEntry[];
-  activity_state?: ActivityLifecycleRunState | null;
   created_at: string;
   updated_at: string;
   last_activity_at: string;

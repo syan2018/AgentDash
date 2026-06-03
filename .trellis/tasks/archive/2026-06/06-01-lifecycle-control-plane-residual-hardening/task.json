@@ -1,0 +1,29 @@
+{
+  "id": "lifecycle-control-plane-residual-hardening",
+  "name": "lifecycle-control-plane-residual-hardening",
+  "title": "Lifecycle 控制面残存问题硬收口",
+  "description": "报告 Lifecycle 控制面硬切后残存问题，并以快速失败方式收掉错误 API 与散落 session-first 路径。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-06-01",
+  "completedAt": "2026-06-02",
+  "branch": null,
+  "base_branch": "codex/refactor-lifecycle-control-plane",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "Follow-up to 06-01-lifecycle-control-plane-concept-alignment review.",
+  "meta": {
+    "related_task": "06-01-lifecycle-control-plane-concept-alignment",
+    "strategy": "hard_cutover_fast_failure"
+  }
+}

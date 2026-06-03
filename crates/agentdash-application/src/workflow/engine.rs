@@ -4,8 +4,8 @@ use serde_json::Value;
 
 use agentdash_domain::workflow::{
     ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityInputArtifact,
-    ActivityLifecycleDefinition, ActivityLifecycleRunState, ActivityOutputArtifact,
-    ActivityPortValue, ActivityRunStatus, ActivityTransition, ExecutorRunRef, TransitionCondition,
+    ActivityLifecycleRunState, ActivityOutputArtifact, ActivityPortValue, ActivityRunStatus,
+    ActivityTransition, ExecutorRunRef, TransitionCondition, WorkflowGraph,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -36,6 +36,11 @@ pub enum ActivityEvent {
         activity_key: String,
         attempt: u32,
         error: String,
+    },
+    ActivityCancelled {
+        activity_key: String,
+        attempt: u32,
+        reason: Option<String>,
     },
     HumanDecisionSubmitted {
         activity_key: String,
@@ -109,7 +114,8 @@ pub struct LifecycleEngine;
 
 impl LifecycleEngine {
     pub fn initialize(
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
+        graph_instance_id: uuid::Uuid,
     ) -> Result<ActivityLifecycleRunState, LifecycleEngineError> {
         if !definition
             .activities
@@ -145,6 +151,7 @@ impl LifecycleEngine {
                 }),
         );
         let mut state = ActivityLifecycleRunState {
+            graph_instance_id,
             status: ActivityRunStatus::Ready,
             attempts,
             outputs: vec![],
@@ -155,7 +162,7 @@ impl LifecycleEngine {
     }
 
     pub fn apply_event(
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         state: &mut ActivityLifecycleRunState,
         event: ActivityEvent,
     ) -> Result<(), LifecycleEngineError> {
@@ -228,6 +235,18 @@ impl LifecycleEngine {
                 attempt_state.completed_at = Some(now);
                 attempt_state.summary = Some(error);
             }
+            ActivityEvent::ActivityCancelled {
+                activity_key,
+                attempt,
+                reason,
+            } => {
+                let attempt_state = find_attempt_mut(state, &activity_key, attempt)?;
+                expect_cancellable_status(attempt_state)?;
+                let now = Utc::now();
+                attempt_state.status = ActivityAttemptStatus::Cancelled;
+                attempt_state.completed_at = Some(now);
+                attempt_state.summary = reason;
+            }
             ActivityEvent::HumanDecisionSubmitted {
                 activity_key,
                 attempt,
@@ -254,7 +273,7 @@ impl LifecycleEngine {
 }
 
 fn complete_attempt(
-    definition: &ActivityLifecycleDefinition,
+    definition: &WorkflowGraph,
     state: &mut ActivityLifecycleRunState,
     activity_key: &str,
     attempt: u32,
@@ -283,6 +302,7 @@ fn complete_attempt(
 
     for output in outputs {
         state.outputs.push(ActivityOutputArtifact {
+            graph_instance_id: state.graph_instance_id,
             activity_key: activity_key.to_string(),
             attempt,
             port_key: output.port_key,
@@ -335,7 +355,7 @@ fn validate_completion_policy(
 }
 
 fn advance_successors(
-    definition: &ActivityLifecycleDefinition,
+    definition: &WorkflowGraph,
     state: &mut ActivityLifecycleRunState,
     completed_activity_key: &str,
 ) -> Result<(), LifecycleEngineError> {
@@ -375,7 +395,7 @@ fn advance_successors(
 }
 
 fn create_ready_attempt(
-    definition: &ActivityLifecycleDefinition,
+    definition: &WorkflowGraph,
     state: &mut ActivityLifecycleRunState,
     activity_key: &str,
     incoming: &[&ActivityTransition],
@@ -452,9 +472,11 @@ fn bind_transition_artifacts(
                 ))
             })?;
         state.inputs.push(ActivityInputArtifact {
+            graph_instance_id: state.graph_instance_id,
             activity_key: target_activity_key.to_string(),
             attempt: target_attempt,
             port_key: binding.to_port.clone(),
+            source_graph_instance_id: source.graph_instance_id,
             source_activity_key: source.activity_key.clone(),
             source_attempt: source.attempt,
             source_port_key: source.port_key.clone(),
@@ -466,7 +488,7 @@ fn bind_transition_artifacts(
 }
 
 fn transition_condition_matches(
-    definition: &ActivityLifecycleDefinition,
+    definition: &WorkflowGraph,
     state: &ActivityLifecycleRunState,
     transition: &ActivityTransition,
 ) -> bool {
@@ -580,10 +602,27 @@ fn expect_status(
     }
 }
 
-fn derive_run_status(
-    definition: &ActivityLifecycleDefinition,
-    state: &mut ActivityLifecycleRunState,
-) {
+fn expect_cancellable_status(
+    attempt_state: &ActivityAttemptState,
+) -> Result<(), LifecycleEngineError> {
+    if matches!(
+        attempt_state.status,
+        ActivityAttemptStatus::Ready
+            | ActivityAttemptStatus::Claiming
+            | ActivityAttemptStatus::Running
+    ) {
+        Ok(())
+    } else {
+        Err(LifecycleEngineError::InvalidAttemptStatus {
+            activity_key: attempt_state.activity_key.clone(),
+            attempt: attempt_state.attempt,
+            expected: "ready/claiming/running attempt",
+            actual: attempt_state.status,
+        })
+    }
+}
+
+fn derive_run_status(definition: &WorkflowGraph, state: &mut ActivityLifecycleRunState) {
     if state.attempts.iter().any(|attempt| {
         matches!(
             attempt.status,
@@ -607,6 +646,14 @@ fn derive_run_status(
         .any(|attempt| attempt.status == ActivityAttemptStatus::Failed)
     {
         state.status = ActivityRunStatus::Failed;
+        return;
+    }
+    if state
+        .attempts
+        .iter()
+        .any(|attempt| attempt.status == ActivityAttemptStatus::Cancelled)
+    {
+        state.status = ActivityRunStatus::Cancelled;
         return;
     }
     if state
@@ -646,12 +693,15 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
         ActivityIterationPolicy, ActivityTransitionKind, AgentActivityExecutorSpec,
-        AgentSessionPolicy, ArtifactAliasPolicy, ArtifactBinding, HumanActivityExecutorSpec,
-        HumanApprovalExecutorSpec, OutputPortDefinition, WorkflowBindingKind,
-        WorkflowDefinitionSource,
+        ArtifactAliasPolicy, ArtifactBinding, DefinitionSource, HumanActivityExecutorSpec,
+        HumanApprovalExecutorSpec, OutputPortDefinition,
     };
 
     use super::*;
+
+    fn test_graph_instance_id() -> uuid::Uuid {
+        uuid::Uuid::new_v4()
+    }
 
     fn output_port(key: &str) -> OutputPortDefinition {
         OutputPortDefinition {
@@ -662,23 +712,21 @@ mod tests {
         }
     }
 
-    fn approval_definition() -> ActivityLifecycleDefinition {
-        ActivityLifecycleDefinition::new(
+    fn approval_definition() -> WorkflowGraph {
+        WorkflowGraph::new(
             Uuid::new_v4(),
             "approval_flow",
             "Approval flow",
             "",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             "plan",
             vec![
                 ActivityDefinition {
                     key: "plan".to_string(),
                     description: "plan".to_string(),
-                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        workflow_key: "wf_plan".to_string(),
-                        session_policy: AgentSessionPolicy::SpawnChild,
-                    }),
+                    executor: ActivityExecutorSpec::Agent(
+                        AgentActivityExecutorSpec::create_activity_agent("wf_plan"),
+                    ),
                     input_ports: vec![agentdash_domain::workflow::InputPortDefinition {
                         key: "feedback".to_string(),
                         description: "feedback".to_string(),
@@ -725,10 +773,9 @@ mod tests {
                 ActivityDefinition {
                     key: "implement".to_string(),
                     description: "implement".to_string(),
-                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        workflow_key: "wf_implement".to_string(),
-                        session_policy: AgentSessionPolicy::SpawnChild,
-                    }),
+                    executor: ActivityExecutorSpec::Agent(
+                        AgentActivityExecutorSpec::create_activity_agent("wf_implement"),
+                    ),
                     input_ports: vec![agentdash_domain::workflow::InputPortDefinition {
                         key: "approved_plan".to_string(),
                         description: "approved plan".to_string(),
@@ -795,23 +842,21 @@ mod tests {
         .expect("definition")
     }
 
-    fn artifact_condition_definition() -> ActivityLifecycleDefinition {
-        ActivityLifecycleDefinition::new(
+    fn artifact_condition_definition() -> WorkflowGraph {
+        WorkflowGraph::new(
             Uuid::new_v4(),
             "artifact_condition",
             "Artifact condition",
             "",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             "plan",
             vec![
                 ActivityDefinition {
                     key: "plan".to_string(),
                     description: "plan".to_string(),
-                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        workflow_key: "wf_plan".to_string(),
-                        session_policy: AgentSessionPolicy::SpawnChild,
-                    }),
+                    executor: ActivityExecutorSpec::Agent(
+                        AgentActivityExecutorSpec::create_activity_agent("wf_plan"),
+                    ),
                     input_ports: vec![],
                     output_ports: vec![output_port("proposal")],
                     completion_policy: ActivityCompletionPolicy::OutputPorts {
@@ -823,10 +868,9 @@ mod tests {
                 ActivityDefinition {
                     key: "implement".to_string(),
                     description: "implement".to_string(),
-                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        workflow_key: "wf_implement".to_string(),
-                        session_policy: AgentSessionPolicy::SpawnChild,
-                    }),
+                    executor: ActivityExecutorSpec::Agent(
+                        AgentActivityExecutorSpec::create_activity_agent("wf_implement"),
+                    ),
                     input_ports: vec![agentdash_domain::workflow::InputPortDefinition {
                         key: "approved_plan".to_string(),
                         description: "approved plan".to_string(),
@@ -863,7 +907,7 @@ mod tests {
     }
 
     fn start_attempt(
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         state: &mut ActivityLifecycleRunState,
         activity_key: &str,
         attempt: u32,
@@ -883,7 +927,7 @@ mod tests {
             ActivityEvent::ExecutorStarted {
                 activity_key: activity_key.to_string(),
                 attempt,
-                executor_run: ExecutorRunRef::AgentSession {
+                executor_run: ExecutorRunRef::RuntimeSession {
                     session_id: format!("{activity_key}-{attempt}"),
                 },
             },
@@ -892,9 +936,75 @@ mod tests {
     }
 
     #[test]
+    fn cancelling_running_attempt_marks_graph_cancelled() {
+        let definition = approval_definition();
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
+
+        start_attempt(&definition, &mut state, "plan", 1);
+        LifecycleEngine::apply_event(
+            &definition,
+            &mut state,
+            ActivityEvent::ActivityCancelled {
+                activity_key: "plan".to_string(),
+                attempt: 1,
+                reason: Some("user requested cancel".to_string()),
+            },
+        )
+        .expect("cancel");
+
+        let attempt = state
+            .attempts
+            .iter()
+            .find(|attempt| attempt.activity_key == "plan" && attempt.attempt == 1)
+            .expect("plan attempt");
+        assert_eq!(attempt.status, ActivityAttemptStatus::Cancelled);
+        assert_eq!(attempt.summary.as_deref(), Some("user requested cancel"));
+        assert_eq!(state.status, ActivityRunStatus::Cancelled);
+    }
+
+    #[test]
+    fn cancelling_terminal_attempt_is_rejected() {
+        let definition = approval_definition();
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
+
+        start_attempt(&definition, &mut state, "plan", 1);
+        LifecycleEngine::apply_event(
+            &definition,
+            &mut state,
+            ActivityEvent::ActivityFailed {
+                activity_key: "plan".to_string(),
+                attempt: 1,
+                error: "failed".to_string(),
+            },
+        )
+        .expect("fail");
+
+        let error = LifecycleEngine::apply_event(
+            &definition,
+            &mut state,
+            ActivityEvent::ActivityCancelled {
+                activity_key: "plan".to_string(),
+                attempt: 1,
+                reason: None,
+            },
+        )
+        .expect_err("terminal attempt cannot be cancelled");
+        assert!(matches!(
+            error,
+            LifecycleEngineError::InvalidAttemptStatus {
+                actual: ActivityAttemptStatus::Failed,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn approval_rejection_creates_next_plan_attempt_with_feedback() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
 
         start_attempt(&definition, &mut state, "plan", 1);
         LifecycleEngine::apply_event(
@@ -952,7 +1062,8 @@ mod tests {
     #[test]
     fn approval_approved_activates_implement_with_latest_plan() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
 
         start_attempt(&definition, &mut state, "plan", 1);
         LifecycleEngine::apply_event(
@@ -999,7 +1110,8 @@ mod tests {
     #[test]
     fn completion_policy_rejects_missing_output_port() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         start_attempt(&definition, &mut state, "plan", 1);
 
         let error = LifecycleEngine::apply_event(
@@ -1028,7 +1140,8 @@ mod tests {
     #[test]
     fn scheduler_start_failure_can_retry_claiming_attempt() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         LifecycleEngine::apply_event(
             &definition,
             &mut state,
@@ -1061,7 +1174,8 @@ mod tests {
     #[test]
     fn failed_attempt_does_not_activate_successor() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         start_attempt(&definition, &mut state, "plan", 1);
 
         LifecycleEngine::apply_event(
@@ -1136,7 +1250,8 @@ mod tests {
             max_traversals: None,
         });
 
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         start_attempt(&definition, &mut state, "plan", 1);
         LifecycleEngine::apply_event(
             &definition,
@@ -1194,7 +1309,8 @@ mod tests {
     #[test]
     fn artifact_field_condition_activates_successor_on_matching_path() {
         let definition = artifact_condition_definition();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         start_attempt(&definition, &mut state, "plan", 1);
 
         LifecycleEngine::apply_event(

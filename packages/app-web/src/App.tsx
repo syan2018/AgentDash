@@ -30,6 +30,21 @@ const SessionPage = lazy(async () => {
   return { default: module.SessionPage };
 });
 
+const LifecycleRunPage = lazy(async () => {
+  const module = await import("./pages/LifecyclePages");
+  return { default: module.LifecycleRunPage };
+});
+
+const SubjectExecutionPage = lazy(async () => {
+  const module = await import("./pages/LifecyclePages");
+  return { default: module.SubjectExecutionPage };
+});
+
+const LifecycleAgentPage = lazy(async () => {
+  const module = await import("./pages/LifecyclePages");
+  return { default: module.LifecycleAgentPage };
+});
+
 const SettingsPage = lazy(async () => {
   const module = await import("./pages/SettingsPage");
   return { default: module.SettingsPage };
@@ -146,7 +161,7 @@ function BootstrapErrorState({
   );
 }
 
-// ─── /session/:sessionId 路由包装器 ───────────────────
+// ─── /session/:sessionId → 会话主视图路由包装器 ──
 
 function SessionRouteWrapper() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -328,6 +343,9 @@ function AppContent() {
           <Route path="/workflow/:id" element={<LifecycleEditorShellPage />} />
 
           <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />
+          <Route path="/run/:runId" element={<LifecycleRunPage />} />
+          <Route path="/subject/:kind/:id" element={<SubjectExecutionPage />} />
+          <Route path="/agent/:agentId" element={<LifecycleAgentPage />} />
 
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/projects/:projectId/settings" element={<ProjectSettingsPage />} />

@@ -7,9 +7,9 @@ use agentdash_agent_protocol::{
     AgentDashThreadItem, BackboneEnvelope, BackboneEvent, PlatformEvent,
 };
 use agentdash_spi::session_persistence::{
-    ExecutionStatus, NewCompactionProjectionCommit, PendingCapabilityStateTransition,
-    PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus, SessionBootstrapState,
-    SessionCompactionRecord, SessionCompactionStatus, SessionLineageRecord,
+    AgentFrameTransitionRecord, ExecutionStatus, NewCompactionProjectionCommit,
+    PersistedSessionEvent, RuntimeCapabilityTransition, RuntimeCommandRecord, RuntimeCommandStatus,
+    RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStatus, SessionLineageRecord,
     SessionLineageRelationKind, SessionLineageStatus, SessionMeta, SessionProjectionHeadRecord,
     SessionProjectionSegmentRecord, SessionStoreError, SessionStoreResult, TerminalEffectRecord,
     TerminalEffectStatus, TerminalEffectType, TitleSource,
@@ -43,45 +43,19 @@ where
             row.get::<String, _>("title_source"),
             "sessions.title_source",
         )?,
-        project_id: row
-            .try_get::<Option<String>, _>("project_id")
-            .unwrap_or(None),
         created_at: row.get::<i64, _>("created_at"),
         updated_at: row.get::<i64, _>("updated_at"),
         last_event_seq: parse_non_negative_u64(
             row.get::<i64, _>("last_event_seq"),
             "sessions.last_event_seq",
         )?,
-        last_execution_status: parse_execution_status(
-            row.get::<String, _>("last_execution_status"),
-            "sessions.last_execution_status",
+        last_delivery_status: parse_execution_status(
+            row.get::<String, _>("last_delivery_status"),
+            "sessions.last_delivery_status",
         )?,
         last_turn_id: row.get::<Option<String>, _>("last_turn_id"),
         last_terminal_message: row.get::<Option<String>, _>("last_terminal_message"),
-        executor_config: parse_optional_json_column(
-            row.get::<Option<String>, _>("executor_config_json"),
-            "executor_config_json",
-        )?,
         executor_session_id: row.get::<Option<String>, _>("executor_session_id"),
-        companion_context: parse_optional_json_column(
-            row.get::<Option<String>, _>("companion_context_json"),
-            "companion_context_json",
-        )?,
-        tab_layout: parse_optional_json_column(
-            row.get::<Option<String>, _>("tab_layout_json"),
-            "tab_layout_json",
-        )?,
-        visible_canvas_mount_ids: parse_optional_json_column(
-            row.get::<Option<String>, _>("visible_canvas_mount_ids_json"),
-            "visible_canvas_mount_ids_json",
-        )?
-        .ok_or_else(|| {
-            SessionStoreError::InvalidData("缺少 visible_canvas_mount_ids_json".to_string())
-        })?,
-        bootstrap_state: parse_bootstrap_state(
-            row.get::<String, _>("bootstrap_state"),
-            "sessions.bootstrap_state",
-        )?,
     })
 }
 
@@ -172,23 +146,82 @@ where
     let id = uuid::Uuid::parse_str(&id_raw)
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     let payload_json = row.get::<String, _>("payload_json");
-    let transition = serde_json::from_str::<PendingCapabilityStateTransition>(&payload_json)
+    let delivery = serde_json::from_str::<RuntimeDeliveryCommand>(&payload_json)
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
+    let frame_transition = agent_frame_transition_from_row(row)?;
+    let frame_transition_id = row.get::<String, _>("frame_transition_id");
+    if delivery.frame_transition_id != frame_transition_id
+        || frame_transition.id != frame_transition_id
+        || delivery.target_frame_id != frame_transition.target_frame_id
+    {
+        return Err(SessionStoreError::InvalidData(format!(
+            "session_runtime_commands {} delivery 与 agent_frame_transitions {} 不一致",
+            id, frame_transition.id
+        )));
+    }
     Ok(RuntimeCommandRecord {
         id,
         session_id: row.get::<String, _>("session_id"),
-        transition_id: row.get::<String, _>("transition_id"),
+        frame_transition_id,
         phase_node: row.get::<String, _>("phase_node"),
         status: parse_runtime_command_status(
             row.get::<String, _>("status"),
             "session_runtime_commands.status",
         )?,
-        transition,
+        delivery,
+        frame_transition,
         created_at_ms: row.get::<i64, _>("created_at_ms"),
         updated_at_ms: row.get::<i64, _>("updated_at_ms"),
         applied_at_ms: row.get::<Option<i64>, _>("applied_at_ms"),
         failed_at_ms: row.get::<Option<i64>, _>("failed_at_ms"),
         last_error: row.get::<Option<String>, _>("last_error"),
+    })
+}
+
+fn agent_frame_transition_from_row<R>(row: &R) -> SessionStoreResult<AgentFrameTransitionRecord>
+where
+    R: Row,
+    for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> &'a str: sqlx::ColumnIndex<R>,
+{
+    let target_frame_id_raw = row.get::<String, _>("frame_transition_target_frame_id");
+    let target_frame_id = uuid::Uuid::parse_str(&target_frame_id_raw).map_err(|error| {
+        SessionStoreError::InvalidData(format!(
+            "agent_frame_transitions.target_frame_id 不是 UUID: {error}"
+        ))
+    })?;
+    let run_id_raw = row.get::<String, _>("frame_transition_run_id");
+    let run_id = uuid::Uuid::parse_str(&run_id_raw).map_err(|error| {
+        SessionStoreError::InvalidData(format!("agent_frame_transitions.run_id 不是 UUID: {error}"))
+    })?;
+    let capability_keys_json = row.get::<String, _>("frame_transition_capability_keys_json");
+    let capability_keys = serde_json::from_str::<std::collections::BTreeSet<String>>(
+        &capability_keys_json,
+    )
+    .map_err(|error| {
+        SessionStoreError::InvalidData(format!(
+            "解析 agent_frame_transitions.capability_keys_json 失败: {error}"
+        ))
+    })?;
+    let transition_json = row.get::<String, _>("frame_transition_transition_json");
+    let transition = serde_json::from_str::<RuntimeCapabilityTransition>(&transition_json)
+        .map_err(|error| {
+            SessionStoreError::InvalidData(format!(
+                "解析 agent_frame_transitions.transition_json 失败: {error}"
+            ))
+        })?;
+    Ok(AgentFrameTransitionRecord {
+        id: row.get::<String, _>("frame_transition_record_id"),
+        target_frame_id,
+        run_id,
+        lifecycle_key: row.get::<String, _>("frame_transition_lifecycle_key"),
+        phase_node: row.get::<String, _>("frame_transition_phase_node"),
+        capability_keys,
+        transition,
+        created_at_ms: row.get::<i64, _>("frame_transition_created_at_ms"),
+        source_turn_id: row.get::<Option<String>, _>("frame_transition_source_turn_id"),
     })
 }
 
@@ -391,13 +424,6 @@ pub(crate) fn json_string<T: serde::Serialize>(
         .map_err(|error| SessionStoreError::InvalidData(format!("序列化 {column} 失败: {error}")))
 }
 
-pub(crate) fn optional_json_string<T: serde::Serialize>(
-    value: Option<&T>,
-    column: &str,
-) -> SessionStoreResult<Option<String>> {
-    value.map(|inner| json_string(inner, column)).transpose()
-}
-
 pub(crate) fn title_source_to_str(source: TitleSource) -> &'static str {
     match source {
         TitleSource::Auto => "auto",
@@ -481,28 +507,6 @@ pub(crate) fn parse_title_source(value: String, field: &str) -> SessionStoreResu
     }
 }
 
-pub(crate) fn bootstrap_state_to_str(state: SessionBootstrapState) -> &'static str {
-    match state {
-        SessionBootstrapState::Plain => "plain",
-        SessionBootstrapState::Pending => "pending",
-        SessionBootstrapState::Bootstrapped => "bootstrapped",
-    }
-}
-
-pub(crate) fn parse_bootstrap_state(
-    value: String,
-    field: &str,
-) -> SessionStoreResult<SessionBootstrapState> {
-    match value.as_str() {
-        "plain" => Ok(SessionBootstrapState::Plain),
-        "pending" => Ok(SessionBootstrapState::Pending),
-        "bootstrapped" => Ok(SessionBootstrapState::Bootstrapped),
-        other => Err(SessionStoreError::InvalidData(format!(
-            "{field} 非法: {other}"
-        ))),
-    }
-}
-
 pub(crate) fn encode_u64_as_i64(value: u64, field: &str) -> SessionStoreResult<i64> {
     i64::try_from(value).map_err(|_| {
         SessionStoreError::InvalidData(format!("{field} 超出 i64 可表示范围: {value}"))
@@ -535,18 +539,6 @@ pub(crate) fn parse_optional_non_negative_u64(
 pub(crate) fn parse_non_negative_u32(value: i64, field: &str) -> SessionStoreResult<u32> {
     u32::try_from(value)
         .map_err(|_| SessionStoreError::InvalidData(format!("{field} 超出 u32 范围: {value}")))
-}
-
-pub(crate) fn parse_optional_json_column<T: serde::de::DeserializeOwned>(
-    raw: Option<String>,
-    column: &str,
-) -> SessionStoreResult<Option<T>> {
-    match raw {
-        Some(value) => serde_json::from_str(&value).map(Some).map_err(|error| {
-            SessionStoreError::InvalidData(format!("解析 {column} 失败: {error}"))
-        }),
-        None => Ok(None),
-    }
 }
 
 pub(crate) fn parse_json_column(
@@ -666,7 +658,7 @@ pub(crate) fn sqlx_to_session_store_error(error: sqlx::Error) -> SessionStoreErr
 
 /// 从 envelope 推导出需要回写到 `sessions` 行的投影字段。
 pub(crate) struct SessionProjection {
-    pub last_execution_status: Option<String>,
+    pub last_delivery_status: Option<String>,
     pub turn_id: Option<String>,
     pub last_terminal_message: Option<String>,
     pub clear_terminal_message: bool,
@@ -681,7 +673,7 @@ pub(crate) fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionPr
     let tool_call_id = envelope_tool_call_id(envelope);
 
     let mut projection = SessionProjection {
-        last_execution_status: None,
+        last_delivery_status: None,
         turn_id,
         last_terminal_message: None,
         clear_terminal_message: false,
@@ -692,7 +684,7 @@ pub(crate) fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionPr
 
     match &envelope.event {
         BackboneEvent::TurnStarted(_) => {
-            projection.last_execution_status = Some("running".to_string());
+            projection.last_delivery_status = Some("running".to_string());
             projection.clear_terminal_message = true;
         }
         BackboneEvent::TurnCompleted(n) => {
@@ -706,11 +698,11 @@ pub(crate) fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionPr
                 }
                 _ => "completed",
             };
-            projection.last_execution_status = Some(status.to_string());
+            projection.last_delivery_status = Some(status.to_string());
             projection.last_terminal_message = n.turn.error.as_ref().map(|e| e.message.clone());
         }
         BackboneEvent::Error(e) => {
-            projection.last_execution_status = Some("failed".to_string());
+            projection.last_delivery_status = Some("failed".to_string());
             projection.last_terminal_message = Some(e.error.message.clone());
         }
         BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
@@ -728,7 +720,7 @@ pub(crate) fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionPr
                     "turn_interrupted" => "interrupted",
                     _ => "completed",
                 };
-                projection.last_execution_status = Some(status.to_string());
+                projection.last_delivery_status = Some(status.to_string());
             }
             projection.last_terminal_message = value
                 .get("message")

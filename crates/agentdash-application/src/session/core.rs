@@ -5,7 +5,7 @@ use futures::future::join_all;
 use super::hub_support::meta_to_execution_state;
 use super::persistence::{SessionStoreError, SessionStoreResult, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
-use super::types::{ExecutionStatus, SessionBootstrapState, SessionExecutionState, SessionMeta};
+use super::types::{ExecutionStatus, SessionExecutionState, SessionMeta};
 
 #[derive(Clone)]
 pub struct SessionCoreService {
@@ -31,7 +31,7 @@ impl SessionCoreService {
         let sessions = self.stores.meta.list_sessions().await?;
         Ok(sessions
             .into_iter()
-            .filter(|meta| meta.last_execution_status == ExecutionStatus::Running)
+            .filter(|meta| meta.last_delivery_status == ExecutionStatus::Running)
             .collect())
     }
 
@@ -58,16 +58,10 @@ impl SessionCoreService {
             created_at: now,
             updated_at: now,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-            companion_context: None,
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
-            project_id: None,
         };
         self.stores.meta.create_session(&meta).await?;
         Ok(meta)
@@ -187,14 +181,5 @@ impl SessionCoreService {
 
     pub async fn has_live_executor_session(&self, session_id: &str) -> bool {
         self.connector.has_live_session(session_id).await
-    }
-
-    pub async fn mark_owner_bootstrap_pending(&self, session_id: &str) -> SessionStoreResult<()> {
-        let _ = self
-            .update_session_meta(session_id, |meta| {
-                meta.bootstrap_state = SessionBootstrapState::Pending;
-            })
-            .await?;
-        Ok(())
     }
 }

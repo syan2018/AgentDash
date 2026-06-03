@@ -2,7 +2,7 @@
  * ActivityInspector happy-path 渲染测试。
  *
  * 用 renderToStaticMarkup 校验三段（Identity / Executor / Ports & Policy）+
- * Workflow Contract 折叠区均出现，覆盖 4 种 executor.kind 与 5 种
+ * AgentProcedure Contract 折叠区均出现，覆盖 4 种 executor.kind 与 5 种
  * completion_policy.kind 的字段渲染入口。
  */
 
@@ -10,7 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec } from "../../../types";
-import { createActivityWorkflowDraft } from "../../../stores/workflowStore";
+import { createActivityProcedureDraft } from "../../../stores/workflowStore";
 import { ActivityInspector } from "./activity-inspector";
 
 function makeActivity(
@@ -19,7 +19,12 @@ function makeActivity(
   return {
     key: "implement",
     description: "实现该需求",
-    executor: { kind: "agent", workflow_key: "demo.implement", session_policy: "spawn_child" },
+    executor: {
+      kind: "agent",
+      procedure_key: "demo.implement",
+      agent_reuse_policy: "create_activity_agent",
+      runtime_session_policy: "create_new",
+    },
     output_ports: [{ key: "done", description: "完成", gate_strategy: "existence" }],
     input_ports: [],
     completion_policy: { kind: "executor_terminal" },
@@ -30,18 +35,18 @@ function makeActivity(
 }
 
 function renderInspector(activity: ActivityDefinition) {
-  const draft = createActivityWorkflowDraft("p1", "demo", activity.key, ["story"]);
+  const draft = createActivityProcedureDraft("p1", "demo", activity.key, ["story"]);
   return renderToStaticMarkup(
     <ActivityInspector
       activity={activity}
-      workflowDraft={draft}
+      procedureDraft={draft}
       isEntry={false}
-      availableWorkflows={[]}
+      availableProcedures={[]}
       hookPresets={[]}
       targetKinds={["story"]}
       projectId="p1"
       onActivityChange={() => undefined}
-      onWorkflowChange={() => undefined}
+      onProcedureDraftChange={() => undefined}
       onSetExecutor={() => null}
       onSetCompletionPolicy={() => undefined}
       onSetIterationPolicy={() => undefined}
@@ -69,8 +74,9 @@ describe("ActivityInspector", () => {
     expect(markup).toContain("Join Policy");
     expect(markup).toContain("iter:3/per_attempt");
     expect(markup).toContain("n_of_m(2)");
-    expect(markup).toContain("Workflow 来源");
-    expect(markup).toContain("Session Policy");
+    expect(markup).toContain("Procedure 来源");
+    expect(markup).toContain("Agent Reuse");
+    expect(markup).toContain("Runtime Session");
   });
 
   it("Function bash_exec executor 渲染 command/args/working_directory 字段", () => {
@@ -92,7 +98,7 @@ describe("ActivityInspector", () => {
     expect(markup).toContain("Working Directory");
     // Function api_request 表单字段不应出现
     expect(markup).not.toContain("URL Template");
-    // Workflow Contract 段（Agent only）也不应出现
+    // AgentProcedure Contract 段（Agent only）也不应出现
     expect(markup).not.toContain("资产标准接口");
   });
 

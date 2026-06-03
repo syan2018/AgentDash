@@ -1,17 +1,12 @@
-//! Task 生命周期事件 → Session notification / overview 桥接。
+//! Task 生命周期事件 → backbone notification 桥接。
 //!
-//! 职责：把 Task 侧的状态事件封装成 `BackboneEnvelope`（`PlatformEvent::SessionMetaUpdate`），
-//! 以及从 `SessionCoreService` 拉取最小 SessionOverview 供 Task service 使用。
+//! 保留 bridge_task_status_event_to_envelope 供 lifecycle 事件桥接使用。
 
 use serde_json::Value;
 
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
-
-use crate::task::execution::TaskExecutionError;
-
-use super::errors::map_internal_error;
 
 pub fn bridge_task_status_event_to_envelope(
     session_id: &str,
@@ -44,18 +39,4 @@ pub fn bridge_task_status_event_to_envelope(
         turn_id: Some(turn_id.to_string()),
         entry_index: None,
     })
-}
-
-pub async fn get_session_overview(
-    session_core: &crate::session::SessionCoreService,
-    session_id: &str,
-) -> Result<Option<crate::task::execution::SessionOverview>, TaskExecutionError> {
-    let meta = session_core
-        .get_session_meta(session_id)
-        .await
-        .map_err(map_internal_error)?;
-    Ok(meta.map(|value| crate::task::execution::SessionOverview {
-        title: value.title,
-        updated_at: value.updated_at,
-    }))
 }

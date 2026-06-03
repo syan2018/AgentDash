@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use agentdash_agent_types::DynAgentTool;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookInjection, RuntimeEventSource, SetDelta,
-    SharedHookSessionRuntime,
+    SharedHookRuntime,
 };
 use uuid::Uuid;
 
@@ -18,15 +18,17 @@ use super::super::context_frame::{self, ContextFramePayload};
 use super::super::dimension::{self, DimensionDelta};
 use super::SessionRuntimeInner;
 use crate::hooks::hook_injection_to_fragment;
+use crate::session::types::AgentFrameRuntimeTarget;
 use crate::session::{
-    CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition,
-    RuntimeCapabilityTransition, RuntimeContextTransition, apply_runtime_capability_transition,
-    compute_capability_state_delta,
+    AgentFrameTransitionRecord, CapabilityState, CapabilityStateDelta,
+    PendingCapabilityStateTransition, RuntimeCapabilityTransition, RuntimeContextTransition,
+    RuntimeDeliveryCommand, apply_runtime_capability_transition, compute_capability_state_delta,
 };
 
 #[derive(Debug, Clone)]
 pub(crate) struct LiveRuntimeContextTransitionInput {
-    pub session_id: String,
+    pub target_frame_id: Uuid,
+    pub delivery_runtime_session_id: String,
     pub turn_id: Option<String>,
     pub phase_node: String,
     #[allow(dead_code)]
@@ -48,9 +50,10 @@ pub(crate) struct RuntimeContextTransitionOutcome {
 
 #[derive(Debug, Clone)]
 pub(crate) struct PendingRuntimeContextTransitionInput {
-    pub session_id: String,
+    pub target_frame_id: Uuid,
+    pub delivery_runtime_session_id: String,
     pub turn_id: Option<String>,
-    pub transition_id: String,
+    pub frame_transition_id: String,
     pub phase_node: String,
     pub run_id: Uuid,
     pub lifecycle_key: String,
@@ -92,7 +95,7 @@ pub(crate) fn build_initial_capability_state_frame(
 impl SessionRuntimeInner {
     pub(crate) async fn apply_live_runtime_context_transition(
         &self,
-        hook_session: &SharedHookSessionRuntime,
+        hook_runtime: &SharedHookRuntime,
         input: LiveRuntimeContextTransitionInput,
     ) -> Result<RuntimeContextTransitionOutcome, String> {
         let state_changed = input.before_state.as_ref() != Some(&input.after_state);
@@ -105,15 +108,21 @@ impl SessionRuntimeInner {
         }
 
         let tools = self
-            .replace_current_capability_state(&input.session_id, input.after_state.clone())
+            .replace_current_capability_state(
+                AgentFrameRuntimeTarget {
+                    frame_id: input.target_frame_id,
+                    delivery_runtime_session_id: input.delivery_runtime_session_id.clone(),
+                },
+                input.after_state.clone(),
+            )
             .await
             .map_err(|error| format!("Phase node 能力状态热更新失败: {error}"))?;
 
-        let delta = hook_session.update_capabilities(input.capability_keys.clone());
+        let delta = hook_runtime.update_capabilities(input.capability_keys.clone());
         let notification_delta = delta.clone().unwrap_or_else(|| input.key_delta.clone());
 
         let injections = self
-            .collect_runtime_context_update_injections(&input.session_id)
+            .collect_runtime_context_update_injections(&input.delivery_runtime_session_id)
             .await;
         let state_delta = compute_capability_state_delta(
             input.before_state.as_ref(),
@@ -121,10 +130,14 @@ impl SessionRuntimeInner {
             &input.capability_keys,
         );
         let notice = build_live_context_frame(&input, &notification_delta, &state_delta, &tools);
-        self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
-            .await
-            .map_err(|error| format!("Phase node runtime context notice 持久化失败: {error}"))?;
-        let _ = context_frame::enqueue_context_frame(hook_session, &notice);
+        self.emit_context_frame(
+            &input.delivery_runtime_session_id,
+            input.turn_id.as_deref(),
+            &notice,
+        )
+        .await
+        .map_err(|error| format!("Phase node runtime context notice 持久化失败: {error}"))?;
+        let _ = context_frame::enqueue_context_frame(hook_runtime, &notice);
 
         // assignment_context 作为独立 frame 一职一责地发出，不再和能力/工具 delta 混装。
         if let Some(workflow_frame) = build_workflow_assignment_context_frame(
@@ -132,10 +145,14 @@ impl SessionRuntimeInner {
             input.apply_mode,
             &injections,
         ) {
-            self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &workflow_frame)
-                .await
-                .map_err(|error| format!("Phase node mission context frame 持久化失败: {error}"))?;
-            let _ = context_frame::enqueue_context_frame(hook_session, &workflow_frame);
+            self.emit_context_frame(
+                &input.delivery_runtime_session_id,
+                input.turn_id.as_deref(),
+                &workflow_frame,
+            )
+            .await
+            .map_err(|error| format!("Phase node mission context frame 持久化失败: {error}"))?;
+            let _ = context_frame::enqueue_context_frame(hook_runtime, &workflow_frame);
         }
 
         Ok(RuntimeContextTransitionOutcome {
@@ -164,7 +181,7 @@ impl SessionRuntimeInner {
             steering_capability_delta: None,
         };
         let Some(pending_transition) = transition.to_pending_capability_state_transition(
-            input.transition_id,
+            input.frame_transition_id,
             input.transition,
             input.source_turn_id,
             input.created_at,
@@ -175,14 +192,21 @@ impl SessionRuntimeInner {
             ));
         };
 
-        self.enqueue_pending_capability_state_transition(&input.session_id, pending_transition)
-            .await
-            .map_err(|error| {
-                format!(
-                    "PhaseNode `{}` 能力状态 pending transition 写入失败: {error}",
-                    input.phase_node
-                )
-            })?;
+        let frame_transition =
+            AgentFrameTransitionRecord::from_pending(input.target_frame_id, pending_transition);
+        let delivery = RuntimeDeliveryCommand::pending_runtime_context(&frame_transition);
+        self.enqueue_runtime_delivery_command(
+            &input.delivery_runtime_session_id,
+            delivery,
+            frame_transition,
+        )
+        .await
+        .map_err(|error| {
+            format!(
+                "PhaseNode `{}` 能力状态 pending transition delivery 写入失败: {error}",
+                input.phase_node
+            )
+        })?;
 
         let state_delta = compute_capability_state_delta(
             input.before_state.as_ref(),
@@ -203,14 +227,18 @@ impl SessionRuntimeInner {
             &[],
             &input.after_state.skill.skills,
         );
-        self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
-            .await
-            .map_err(|error| {
-                format!(
-                    "PhaseNode `{}` pending 事件持久化失败: {error}",
-                    input.phase_node
-                )
-            })?;
+        self.emit_context_frame(
+            &input.delivery_runtime_session_id,
+            input.turn_id.as_deref(),
+            &notice,
+        )
+        .await
+        .map_err(|error| {
+            format!(
+                "PhaseNode `{}` pending 事件持久化失败: {error}",
+                input.phase_node
+            )
+        })?;
 
         Ok(())
     }
@@ -219,7 +247,7 @@ impl SessionRuntimeInner {
         &self,
         session_id: &str,
         _turn_id: &str,
-        hook_session: Option<&SharedHookSessionRuntime>,
+        hook_runtime: Option<&SharedHookRuntime>,
         before_state: CapabilityState,
         final_capability_state: &CapabilityState,
         transitions: &[PendingCapabilityStateTransition],
@@ -230,10 +258,10 @@ impl SessionRuntimeInner {
             return application;
         }
 
-        if let Some(hook_session) = hook_session
+        if let Some(hook_runtime) = hook_runtime
             && let Some(last_transition) = transitions.last()
         {
-            let _ = hook_session.update_capabilities(last_transition.capability_keys.clone());
+            let _ = hook_runtime.update_capabilities(last_transition.capability_keys.clone());
         }
 
         let mut pending_event_before_state = before_state;
@@ -249,7 +277,7 @@ impl SessionRuntimeInner {
                     Err(error) => {
                         tracing::warn!(
                             session_id,
-                            transition_id = %pending.id,
+                            frame_transition_id = %pending.id,
                             "pending runtime capability transition replay failed before event emission: {error}"
                         );
                         pending_event_before_state.clone()
@@ -294,7 +322,7 @@ impl SessionRuntimeInner {
 
     async fn emit_runtime_context_changed_notice(&self, input: &LiveRuntimeContextTransitionInput) {
         let injections = self
-            .collect_runtime_context_update_injections(&input.session_id)
+            .collect_runtime_context_update_injections(&input.delivery_runtime_session_id)
             .await;
         if let Some(notice) = build_workflow_assignment_context_frame(
             &input.phase_node,
@@ -302,10 +330,17 @@ impl SessionRuntimeInner {
             &injections,
         ) {
             let _ = self
-                .emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
+                .emit_context_frame(
+                    &input.delivery_runtime_session_id,
+                    input.turn_id.as_deref(),
+                    &notice,
+                )
                 .await;
-            if let Some(hook_session) = self.get_hook_session_runtime(&input.session_id).await {
-                let _ = context_frame::enqueue_context_frame(&hook_session, &notice);
+            if let Some(hook_runtime) = self
+                .get_hook_runtime_by_delivery_session(&input.delivery_runtime_session_id)
+                .await
+            {
+                let _ = context_frame::enqueue_context_frame(&hook_runtime, &notice);
             }
         }
     }
@@ -531,7 +566,8 @@ mod tests {
     #[test]
     fn live_context_frame_includes_tool_schema_delta_only() {
         let input = LiveRuntimeContextTransitionInput {
-            session_id: "session-1".to_string(),
+            target_frame_id: Uuid::new_v4(),
+            delivery_runtime_session_id: "session-1".to_string(),
             turn_id: Some("turn-1".to_string()),
             phase_node: "apply".to_string(),
             run_id: None,

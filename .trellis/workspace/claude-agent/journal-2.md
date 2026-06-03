@@ -997,3 +997,137 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 56: Lifecycle 控制面旧模型硬切清场
+
+**Date**: 2026-06-01
+**Task**: Lifecycle 控制面旧模型硬切清场
+**Branch**: `codex/refactor-lifecycle-control-plane`
+
+### Summary
+
+创建并执行 lifecycle 控制面 hard cutover 任务，删除 run-link/session-first 公共面，接通 generated refs/views、subject execution、runtime trace，并完成 baseline/migration 与验证收口。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `08690e1d` | (see git log) |
+| `b308caa4` | (see git log) |
+| `876a063d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 57: 重建开发期数据库初始化基线
+
+**Date**: 2026-06-03
+**Task**: 重建开发期数据库初始化基线
+**Branch**: `codex/refactor-lifecycle-control-plane`
+
+### Summary
+
+将 PostgreSQL migration 历史压缩为新的 0001 初始化基线，移除开发期遗留表，补齐 readiness 覆盖，并验证新空 embedded PostgreSQL 只运行 version 1 migration。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fa40c4c8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 58: 数据库初始化基线语义收敛
+
+**Date**: 2026-06-03
+**Task**: 数据库初始化基线语义收敛
+**Branch**: `codex/refactor-lifecycle-control-plane`
+
+### Summary
+
+完成数据库语义基线正式评估，拆分业务语义收敛任务，并落地初始化 migration 的 P0 baseline correctness 与 hand-curated baseline 修复。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dff8a4b8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 59: Lifecycle 概念与前端命名清理
+
+**Date**: 2026-06-03
+**Task**: Lifecycle 概念与前端命名清理
+**Branch**: `codex/refactor-lifecycle-control-plane`
+
+### Summary
+
+沉淀 Lifecycle 控制面核心不变量，归档前端命名盘点，并完成低风险 Procedure/Runtime/GraphInstance 命名与文案清理。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `95b5378b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

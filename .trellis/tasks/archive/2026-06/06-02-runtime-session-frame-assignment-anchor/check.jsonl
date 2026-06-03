@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Check LifecycleRun / Assignment / RuntimeSession authority"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Check terminal cleanup remains session runtime responsibility"}

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "检查 workflow 控制面事实源是否保持一致"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "检查 Session launch 是否只保留运行监督职责"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查 turn lifecycle / terminal cleanup / runtime command 边界"}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "检查跨层 read model、API、frontend 数据流"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "检查前端 store 与服务层职责边界"}

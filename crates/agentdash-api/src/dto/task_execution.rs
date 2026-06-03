@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_application::session::context::SessionContextSnapshot;
+use agentdash_contracts::core::TaskResponse;
 use agentdash_domain::task::TaskStatus;
+use agentdash_domain::workflow::AgentRuntimeRefs;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct StartTaskRequest {
@@ -12,13 +13,15 @@ pub struct StartTaskRequest {
     pub executor_config: Option<agentdash_spi::AgentConfig>,
 }
 
+/// Task start 结果 — 返回 lifecycle 控制面锚点引用。
 #[derive(Debug, Serialize)]
 pub struct StartTaskResponse {
     pub task_id: Uuid,
-    pub session_id: String,
-    pub turn_id: String,
+    pub runtime_refs: AgentRuntimeRefs,
+    pub subject_execution_ref: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery_runtime_ref: Option<Uuid>,
     pub status: TaskStatus,
-    pub context_sources: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -29,30 +32,40 @@ pub struct ContinueTaskRequest {
     pub executor_config: Option<agentdash_spi::AgentConfig>,
 }
 
+/// Task continue 结果 — 返回 lifecycle 控制面锚点引用。
 #[derive(Debug, Serialize)]
 pub struct ContinueTaskResponse {
     pub task_id: Uuid,
-    pub session_id: String,
-    pub turn_id: String,
+    pub runtime_refs: AgentRuntimeRefs,
+    pub subject_execution_ref: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery_runtime_ref: Option<Uuid>,
     pub status: TaskStatus,
-    pub context_sources: Vec<String>,
 }
 
+/// Task cancel 结果 — Task view 来自 lifecycle projection，runtime delivery 仅为追踪引用。
 #[derive(Debug, Serialize)]
-pub struct TaskSessionResponse {
+pub struct CancelTaskResponse {
+    pub task: TaskResponse,
+    pub runtime_refs: AgentRuntimeRefs,
+    pub subject_execution_ref: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_delivery_ref: Option<String>,
+}
+
+/// Task 执行视图 — 从 lifecycle facts 投影。
+#[derive(Debug, Serialize)]
+pub struct TaskExecutionViewResponse {
     pub task_id: Uuid,
-    pub workspace_id: Option<Uuid>,
-    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_ref: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_ref: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_ref: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery_runtime_ref: Option<Uuid>,
     pub task_status: TaskStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_execution_status: Option<String>,
-    pub agent_binding: agentdash_domain::task::AgentBinding,
-    pub session_title: Option<String>,
-    pub last_activity: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vfs: Option<agentdash_spi::Vfs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runtime_surface: Option<agentdash_application::vfs::ResolvedVfsSurface>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_snapshot: Option<SessionContextSnapshot>,
 }

@@ -2,7 +2,7 @@ import { useState } from "react";
 import type {
   ActiveWorkflowHookMetadata,
   HookInjection,
-  HookSessionRuntimeInfo,
+  AgentFrameHookRuntimeInfo,
   HookTraceEntry,
 } from "../../types";
 import { SurfaceCard } from "./surface-card";
@@ -12,7 +12,7 @@ import { SurfaceCard } from "./surface-card";
 export function HookRuntimeSurfaceCard({
   hookRuntime,
 }: {
-  hookRuntime: HookSessionRuntimeInfo;
+  hookRuntime: AgentFrameHookRuntimeInfo;
 }) {
   const { snapshot } = hookRuntime;
   const activeWorkflow = snapshot.metadata?.active_workflow ?? null;
@@ -106,24 +106,24 @@ function HookRuntimeWorkflowMetaCard({
     <div className="mt-3 rounded-[8px] border border-border bg-background/70 px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-foreground">
-          {metadata.lifecycle_name} / {metadata.step_title}
+          {metadata.lifecycle_name} / {metadata.activity_title}
         </span>
         <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
           run: {metadata.run_status}
         </span>
         <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
-          step: {metadata.step_key}
+          activity: {metadata.activity_key}
         </span>
       </div>
       <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
         <span className="rounded-[8px] border border-border bg-background px-2 py-1">
-          lifecycle_id: {metadata.lifecycle_id}
+          workflow_graph_id: {metadata.workflow_graph_id}
         </span>
         <span className="rounded-[8px] border border-border bg-background px-2 py-1">
           run_id: {metadata.run_id}
         </span>
         <span className="rounded-[8px] border border-border bg-background px-2 py-1">
-          workflow: {metadata.workflow_key ?? "—"}
+          workflow: {metadata.procedure_key ?? "—"}
         </span>
       </div>
     </div>
@@ -163,7 +163,7 @@ function HookInjectionRow({ injection }: { injection: HookInjection }) {
 export function HookRuntimeDiagnosticsCard({
   hookRuntime,
 }: {
-  hookRuntime: HookSessionRuntimeInfo;
+  hookRuntime: AgentFrameHookRuntimeInfo;
 }) {
   return (
     <SurfaceCard eyebrow="Hook 诊断" title="运行时命中记录">
@@ -195,7 +195,7 @@ export function HookRuntimeDiagnosticsCard({
 export function HookRuntimeTraceCard({
   hookRuntime,
 }: {
-  hookRuntime: HookSessionRuntimeInfo;
+  hookRuntime: AgentFrameHookRuntimeInfo;
 }) {
   return (
     <SurfaceCard eyebrow="Hook Trace" title="最近触发记录">
@@ -220,7 +220,7 @@ export function HookRuntimeTraceCard({
 export function HookRuntimePendingActionsCard({
   hookRuntime,
 }: {
-  hookRuntime: HookSessionRuntimeInfo;
+  hookRuntime: AgentFrameHookRuntimeInfo;
 }) {
   return (
     <SurfaceCard eyebrow="Hook Actions" title="干预项状态">

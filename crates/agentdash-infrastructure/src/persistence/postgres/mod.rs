@@ -5,6 +5,7 @@ mod backend_repository;
 mod canvas_repository;
 mod extension_package_artifact_repository;
 mod inline_file_repository;
+mod lifecycle_anchor_repository;
 mod llm_provider_repository;
 mod mcp_preset_repository;
 mod permission_grant_repository;
@@ -13,7 +14,6 @@ mod project_extension_installation_repository;
 mod project_repository;
 mod project_vfs_mount_repository;
 mod routine_repository;
-mod run_link_repository;
 mod runtime_health_repository;
 mod session_repository;
 mod settings_repository;
@@ -146,6 +146,12 @@ pub use backend_repository::PostgresBackendRepository;
 pub use canvas_repository::PostgresCanvasRepository;
 pub use extension_package_artifact_repository::PostgresExtensionPackageArtifactRepository;
 pub use inline_file_repository::PostgresInlineFileRepository;
+pub use lifecycle_anchor_repository::{
+    PostgresAgentAssignmentRepository, PostgresAgentFrameRepository,
+    PostgresAgentLineageRepository, PostgresLifecycleAgentRepository,
+    PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
+    PostgresRuntimeSessionExecutionAnchorRepository, PostgresWorkflowGraphInstanceRepository,
+};
 pub use llm_provider_repository::{
     PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
 };
@@ -156,7 +162,6 @@ pub use project_extension_installation_repository::PostgresProjectExtensionInsta
 pub use project_repository::PostgresProjectRepository;
 pub use project_vfs_mount_repository::PostgresProjectVfsMountRepository;
 pub use routine_repository::{PostgresRoutineExecutionRepository, PostgresRoutineRepository};
-pub use run_link_repository::PostgresRunLinkRepository;
 pub use runtime_health_repository::PostgresRuntimeHealthRepository;
 pub use session_repository::PostgresSessionRepository;
 pub use settings_repository::PostgresSettingsRepository;

@@ -13,13 +13,13 @@ use super::persistence::{
     SessionProjectionSegmentRecord, SessionProjectionStore, SessionRuntimeCommandStore,
     SessionStoreError, SessionStoreResult, SessionTerminalEffectStore,
 };
-use super::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
+use super::runtime_commands::{
+    AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand,
+};
 use super::terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus,
 };
-use super::types::{
-    ExecutionStatus, PendingCapabilityStateTransition, SessionBootstrapState, SessionMeta,
-};
+use super::types::{ExecutionStatus, PendingCapabilityStateTransition, SessionMeta};
 
 #[derive(Clone, Default)]
 pub struct MemorySessionPersistence {
@@ -307,21 +307,23 @@ impl SessionTerminalEffectStore for MemorySessionPersistence {
 
 #[async_trait::async_trait]
 impl SessionRuntimeCommandStore for MemorySessionPersistence {
-    async fn upsert_runtime_command_request(
+    async fn upsert_runtime_delivery_command(
         &self,
-        session_id: &str,
-        transition: PendingCapabilityStateTransition,
+        delivery_runtime_session_id: &str,
+        delivery: RuntimeDeliveryCommand,
+        frame_transition: AgentFrameTransitionRecord,
     ) -> SessionStoreResult<RuntimeCommandRecord> {
         let mut guard = self.inner.lock().await;
-        if !guard.metas.contains_key(session_id) {
+        validate_runtime_delivery_command(&delivery, &frame_transition)?;
+        if !guard.metas.contains_key(delivery_runtime_session_id) {
             return Err(SessionStoreError::NotFound(format!(
-                "session {session_id} 不存在"
+                "session {delivery_runtime_session_id} 不存在"
             )));
         }
         let now = chrono::Utc::now().timestamp_millis();
         for command in guard.runtime_commands.iter_mut().filter(|command| {
-            command.session_id == session_id
-                && command.phase_node == transition.phase_node
+            command.session_id == delivery_runtime_session_id
+                && command.phase_node == frame_transition.phase_node
                 && command.status == RuntimeCommandStatus::Requested
         }) {
             command.status = RuntimeCommandStatus::Failed;
@@ -331,11 +333,12 @@ impl SessionRuntimeCommandStore for MemorySessionPersistence {
         }
         let record = RuntimeCommandRecord {
             id: uuid::Uuid::new_v4(),
-            session_id: session_id.to_string(),
-            transition_id: transition.id.clone(),
-            phase_node: transition.phase_node.clone(),
+            session_id: delivery_runtime_session_id.to_string(),
+            frame_transition_id: frame_transition.id.clone(),
+            phase_node: frame_transition.phase_node.clone(),
             status: RuntimeCommandStatus::Requested,
-            transition,
+            delivery,
+            frame_transition,
             created_at_ms: now,
             updated_at_ms: now,
             applied_at_ms: None,
@@ -399,6 +402,25 @@ impl SessionRuntimeCommandStore for MemorySessionPersistence {
         records.truncate(limit);
         Ok(records)
     }
+}
+
+fn validate_runtime_delivery_command(
+    delivery: &RuntimeDeliveryCommand,
+    frame_transition: &AgentFrameTransitionRecord,
+) -> SessionStoreResult<()> {
+    if delivery.frame_transition_id != frame_transition.id {
+        return Err(SessionStoreError::InvalidInput(format!(
+            "runtime delivery frame_transition_id {} 与 frame transition {} 不一致",
+            delivery.frame_transition_id, frame_transition.id
+        )));
+    }
+    if delivery.target_frame_id != frame_transition.target_frame_id {
+        return Err(SessionStoreError::InvalidInput(format!(
+            "runtime delivery target_frame_id {} 与 frame transition target {} 不一致",
+            delivery.target_frame_id, frame_transition.target_frame_id
+        )));
+    }
+    Ok(())
 }
 
 #[async_trait::async_trait]
@@ -943,19 +965,12 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     current.last_event_seq = current.last_event_seq.max(incoming.last_event_seq);
 
     if incoming_event_seq >= current_event_seq {
-        current.last_execution_status = incoming.last_execution_status;
+        current.last_delivery_status = incoming.last_delivery_status;
         current.last_turn_id = incoming.last_turn_id.clone();
         current.last_terminal_message = incoming.last_terminal_message.clone();
     }
 
-    current.executor_config = incoming.executor_config.clone();
     current.executor_session_id = incoming.executor_session_id.clone();
-    current.companion_context = incoming.companion_context.clone();
-    current.tab_layout = incoming.tab_layout.clone();
-    current.visible_canvas_mount_ids = incoming.visible_canvas_mount_ids.clone();
-    if current.bootstrap_state != SessionBootstrapState::Bootstrapped {
-        current.bootstrap_state = incoming.bootstrap_state;
-    }
 }
 
 pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &BackboneEnvelope) {
@@ -968,14 +983,14 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
 
     match &envelope.event {
         BackboneEvent::TurnStarted(_) => {
-            meta.last_execution_status = ExecutionStatus::Running;
+            meta.last_delivery_status = ExecutionStatus::Running;
             meta.last_terminal_message = None;
         }
         BackboneEvent::TurnCompleted(_) => {
-            meta.last_execution_status = ExecutionStatus::Completed;
+            meta.last_delivery_status = ExecutionStatus::Completed;
         }
         BackboneEvent::Error(_) => {
-            meta.last_execution_status = ExecutionStatus::Failed;
+            meta.last_delivery_status = ExecutionStatus::Failed;
         }
         BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
             executor_session_id,
@@ -988,7 +1003,7 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
             {
                 meta.last_turn_id = Some(turn_id);
                 meta.last_terminal_message = message;
-                meta.last_execution_status = terminal_kind.into();
+                meta.last_delivery_status = terminal_kind.into();
             } else if key == "executor_session_bound" {
                 if let Some(esid) = value.as_str() {
                     meta.executor_session_id = Some(esid.to_string());
@@ -1042,19 +1057,13 @@ mod tests {
             id: id.to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-            companion_context: None,
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         }
     }
 
@@ -1086,19 +1095,13 @@ mod tests {
             id: "sess-memory".to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-            companion_context: None,
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         };
         persistence
             .create_session(&meta)
@@ -1111,14 +1114,9 @@ mod tests {
             .expect("应能读取 meta")
             .expect("session 应存在");
         stale.updated_at = 10;
-        stale.last_execution_status = ExecutionStatus::Running;
+        stale.last_delivery_status = ExecutionStatus::Running;
         stale.last_turn_id = Some("t-old".to_string());
         stale.executor_session_id = Some("exec-1".to_string());
-        stale.tab_layout = Some(serde_json::json!({
-            "tabs": [{"type_id": "session", "uri": "session://main", "title": "Session", "pinned": true}],
-            "active_tab_uri": "session://main"
-        }));
-        stale.visible_canvas_mount_ids = vec!["canvas-a".to_string()];
 
         persistence
             .append_event(
@@ -1139,15 +1137,6 @@ mod tests {
             .expect("session 应存在");
         assert_eq!(merged.last_event_seq, 1);
         assert_eq!(merged.executor_session_id.as_deref(), Some("exec-1"));
-        assert_eq!(
-            merged
-                .tab_layout
-                .as_ref()
-                .and_then(|layout| layout.get("active_tab_uri"))
-                .and_then(|value| value.as_str()),
-            Some("session://main")
-        );
-        assert_eq!(merged.visible_canvas_mount_ids, vec!["canvas-a"]);
     }
 
     #[tokio::test]
@@ -1157,19 +1146,13 @@ mod tests {
             id: "sess-effects".to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-            companion_context: None,
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         };
         persistence
             .create_session(&meta)
@@ -1228,41 +1211,53 @@ mod tests {
             id: "sess-runtime-command".to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-            companion_context: None,
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         };
         persistence
             .create_session(&meta)
             .await
             .expect("应能创建 session");
 
-        let transition = |id: &str| PendingCapabilityStateTransition {
-            id: id.to_string(),
-            run_id: uuid::Uuid::new_v4(),
-            lifecycle_key: "dev".to_string(),
-            phase_node: "review".to_string(),
-            capability_keys: std::collections::BTreeSet::new(),
-            transition: RuntimeCapabilityTransition::default(),
-            created_at: 1,
-            source_turn_id: None,
+        let target_frame_id = uuid::Uuid::new_v4();
+        let delivery_input = |id: &str| {
+            let frame_transition = AgentFrameTransitionRecord::from_pending(
+                target_frame_id,
+                PendingCapabilityStateTransition {
+                    id: id.to_string(),
+                    run_id: uuid::Uuid::new_v4(),
+                    lifecycle_key: "dev".to_string(),
+                    phase_node: "review".to_string(),
+                    capability_keys: std::collections::BTreeSet::new(),
+                    transition: RuntimeCapabilityTransition::default(),
+                    created_at: 1,
+                    source_turn_id: None,
+                },
+            );
+            let delivery = RuntimeDeliveryCommand::pending_runtime_context(&frame_transition);
+            (delivery, frame_transition)
         };
+        let (first_delivery, first_transition) = delivery_input("cmd-1");
         let first = persistence
-            .upsert_runtime_command_request("sess-runtime-command", transition("cmd-1"))
+            .upsert_runtime_delivery_command(
+                "sess-runtime-command",
+                first_delivery,
+                first_transition,
+            )
             .await
             .expect("应能写入第一条 command");
+        let (second_delivery, second_transition) = delivery_input("cmd-2");
         let second = persistence
-            .upsert_runtime_command_request("sess-runtime-command", transition("cmd-2"))
+            .upsert_runtime_delivery_command(
+                "sess-runtime-command",
+                second_delivery,
+                second_transition,
+            )
             .await
             .expect("应能写入第二条 command");
 
@@ -1283,10 +1278,15 @@ mod tests {
             failed[0].last_error.as_deref(),
             Some("superseded_by_new_requested_command")
         );
-        let payload = serde_json::to_value(&pending[0].transition)
-            .expect("runtime command transition should serialize");
-        assert!(payload.get("transition").is_some());
+        let payload = serde_json::to_value(&pending[0].delivery)
+            .expect("runtime delivery command should serialize");
+        assert!(payload.get("frame_transition_id").is_some());
+        assert!(payload.get("transition").is_none());
         assert!(payload.get("state").is_none());
+        assert_eq!(
+            pending[0].frame_transition.transition,
+            RuntimeCapabilityTransition::default()
+        );
 
         persistence
             .mark_runtime_commands_applied(&[second.id])
@@ -1297,7 +1297,7 @@ mod tests {
             .await
             .expect("应能查询 applied command");
         assert_eq!(applied.len(), 1);
-        assert_eq!(applied[0].transition_id, "cmd-2");
+        assert_eq!(applied[0].frame_transition_id, "cmd-2");
     }
 
     #[tokio::test]

@@ -7,7 +7,7 @@ interface TaskCardProps {
 }
 
 export function TaskCard({ task, onClick }: TaskCardProps) {
-  const agentLabel = task.agent_binding?.agent_type ?? "未指定";
+  const agentLabel = task.dispatch_preference?.agent_type ?? "未指定";
 
   return (
     <button

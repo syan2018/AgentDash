@@ -39,7 +39,22 @@ interface WorkspaceEntity {
 
 interface TaskEntity {
   id: string;
-  session_id?: string | null;
+}
+
+interface StartTaskResponse {
+  trace_ref?: string;
+}
+
+interface RuntimeTraceRef {
+  runtime_session_id: string;
+}
+
+interface LifecycleRunView {
+  runtime_trace_refs: RuntimeTraceRef[];
+}
+
+interface SubjectExecutionView {
+  runs: LifecycleRunView[];
 }
 
 async function ensureBackend(request: APIRequestContext, suffix: string): Promise<BackendConfig> {
@@ -147,7 +162,7 @@ async function createTask(request: APIRequestContext, storyId: string, suffix: s
     data: {
       title: `E2E 抽屉返回 Task ${suffix}`,
       description: "用于验证抽屉与会话回跳",
-      agent_binding: {
+      dispatch_preference: {
         agent_type: "codex",
       },
     },
@@ -157,17 +172,22 @@ async function createTask(request: APIRequestContext, storyId: string, suffix: s
 }
 
 async function bindTaskSession(request: APIRequestContext, taskId: string): Promise<string> {
-  await request.post(`${API_ORIGIN}/tasks/${taskId}/start`, {
+  const startResp = await request.post(`${API_ORIGIN}/tasks/${taskId}/start`, {
     data: {},
   });
+  expect(startResp.ok(), await startResp.text()).toBeTruthy();
+  const startResult = (await startResp.json()) as StartTaskResponse;
+  if (startResult.trace_ref) return startResult.trace_ref;
 
+  let traceId = "";
   await expect
     .poll(
       async () => {
-        const taskResp = await request.get(`${API_ORIGIN}/tasks/${taskId}`);
-        if (!taskResp.ok()) return "";
-        const task = (await taskResp.json()) as TaskEntity;
-        return task.session_id ?? "";
+        const executionResp = await request.get(`${API_ORIGIN}/subjects/task/${taskId}/execution`);
+        if (!executionResp.ok()) return "";
+        const view = (await executionResp.json()) as SubjectExecutionView;
+        traceId = view.runs.flatMap((run) => run.runtime_trace_refs).at(0)?.runtime_session_id ?? "";
+        return traceId;
       },
       {
         timeout: 20_000,
@@ -175,10 +195,7 @@ async function bindTaskSession(request: APIRequestContext, taskId: string): Prom
     )
     .not.toBe("");
 
-  const latestResp = await request.get(`${API_ORIGIN}/tasks/${taskId}`);
-  expect(latestResp.ok()).toBeTruthy();
-  const latest = (await latestResp.json()) as TaskEntity;
-  return latest.session_id as string;
+  return traceId;
 }
 
 test("Task 抽屉返回链路稳定：关闭不反弹、会话返回后可正常关闭", async ({ page, request }) => {
@@ -215,8 +232,8 @@ test("Task 抽屉返回链路稳定：关闭不反弹、会话返回后可正常
   // 3) 会话页返回任务：回到 Story 后抽屉可关闭且不反弹
   await page.getByRole("button", { name: new RegExp(`E2E 抽屉返回 Task ${suffix}`) }).click();
   await expect(page.locator("aside.fixed")).toHaveCount(1);
-  await page.getByRole("button", { name: "刷新状态" }).click();
-  await page.locator("aside.fixed").last().getByRole("button", { name: "会话页" }).click();
+  await page.getByRole("button", { name: "刷新" }).click();
+  await page.locator("aside.fixed").last().getByRole("button", { name: /^trace / }).first().click();
   await expect(page).toHaveURL(new RegExp(`/session/${sessionId}$`));
 
   await page.getByRole("button", { name: "返回任务" }).click();

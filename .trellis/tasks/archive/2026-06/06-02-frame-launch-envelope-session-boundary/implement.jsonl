@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Session construction and launch pipeline authority"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Session runtime supervision boundary"}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Capability projection and transition replay"}
+{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "AgentFrame and Activity executor launch relationship"}

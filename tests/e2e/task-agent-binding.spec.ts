@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("Task 创建与详情编辑使用统一 agent_binding 结构", async ({ page }) => {
+test("Task 创建与详情编辑使用统一 dispatch_preference 结构", async ({ page }) => {
   const suffix = Date.now().toString();
   const projectName = `E2E 项目 ${suffix}`;
   const storyTitle = `E2E Story ${suffix}`;

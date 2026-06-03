@@ -1,3 +1,20 @@
+//! Task executor configuration resolution — static config → dispatch-time policy bridge.
+//!
+//! This module resolves the `AgentConfig` that will be used when dispatching a Task.
+//! It bridges the gap between **Task static config** (the `TaskDispatchPreference` preference the
+//! user sets at authoring time) and **dispatch-time policy** (the `AgentConfig` that
+//! `SubjectExecutionIntent` consumes to create `LifecycleAgent` / `AgentFrame`).
+//!
+//! **Resolution priority** (first match wins):
+//! 1. Explicit `AgentConfig` passed by the caller (e.g. API override)
+//! 2. `Task.dispatch_preference.agent_type` — direct agent type preference
+//! 3. `Task.dispatch_preference.preset_name` → resolved against `ProjectConfig.agent_presets`
+//! 4. `Project.config.default_agent_type` — project-level fallback
+//!
+//! Once resolved, the result feeds into dispatch and is **consumed** — the Task entity
+//! does not participate in runtime decisions after this point. Runtime truth lives in
+//! `LifecycleAgent → AgentFrame`.
+
 use agentdash_domain::{
     common::AgentPresetConfig,
     project::{AgentPreset, Project},
@@ -18,20 +35,20 @@ pub fn resolve_task_executor_source(
         return "explicit.executor_config".to_string();
     }
     if task
-        .agent_binding
+        .dispatch_preference
         .agent_type
         .as_deref()
         .is_some_and(|value| !value.trim().is_empty())
     {
-        return "task.agent_binding.agent_type".to_string();
+        return "task.dispatch_preference.agent_type".to_string();
     }
     if task
-        .agent_binding
+        .dispatch_preference
         .preset_name
         .as_deref()
         .is_some_and(|value| !value.trim().is_empty())
     {
-        return "task.agent_binding.preset_name".to_string();
+        return "task.dispatch_preference.preset_name".to_string();
     }
     if project
         .config
@@ -46,7 +63,7 @@ pub fn resolve_task_executor_source(
 
 /// 确定 Task 最终使用的 executor 配置
 ///
-/// 优先级：显式传入 > Task.agent_binding > Preset → Project default
+/// 优先级：显式传入 > Task.dispatch_preference > Preset → Project default
 pub fn resolve_task_executor_config(
     explicit: Option<AgentConfig>,
     task: &Task,
@@ -62,11 +79,12 @@ pub fn resolve_task_agent_config(
     task: &Task,
     project: &Project,
 ) -> Result<Option<AgentConfig>, TaskExecutionError> {
-    if let Some(agent_type) = normalize_option_string(task.agent_binding.agent_type.clone()) {
+    if let Some(agent_type) = normalize_option_string(task.dispatch_preference.agent_type.clone()) {
         return Ok(Some(AgentConfig::new(agent_type)));
     }
 
-    if let Some(preset_name) = normalize_option_string(task.agent_binding.preset_name.clone()) {
+    if let Some(preset_name) = normalize_option_string(task.dispatch_preference.preset_name.clone())
+    {
         let preset = project
             .config
             .agent_presets

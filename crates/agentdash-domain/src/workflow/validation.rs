@@ -1,16 +1,16 @@
 use super::value_objects::*;
 
-pub fn validate_workflow_definition(
+pub fn validate_agent_procedure(
     key: &str,
     name: &str,
-    contract: &WorkflowContract,
+    contract: &AgentProcedureContract,
 ) -> Result<(), String> {
-    validate_identity("workflow.key", key)?;
-    validate_non_empty("workflow.name", name)?;
-    validate_contract(contract, "workflow.contract")
+    validate_identity("procedure.key", key)?;
+    validate_non_empty("procedure.name", name)?;
+    validate_contract(contract, "procedure.contract")
 }
 
-pub fn validate_activity_lifecycle_definition(
+pub fn validate_workflow_graph(
     key: &str,
     name: &str,
     entry_activity_key: &str,
@@ -67,7 +67,7 @@ fn validate_activity_executor(
 ) -> Result<(), String> {
     match executor {
         ActivityExecutorSpec::Agent(spec) => {
-            validate_identity(&format!("{field_path}.workflow_key"), &spec.workflow_key)?;
+            validate_identity(&format!("{field_path}.procedure_key"), &spec.procedure_key)?;
         }
         ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::ApiRequest(spec)) => {
             validate_non_empty(&format!("{field_path}.method"), &spec.method)?;
@@ -371,7 +371,7 @@ fn find_activity<'a>(
         .find(|activity| activity.key == activity_key)
 }
 
-fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<(), String> {
+fn validate_contract(contract: &AgentProcedureContract, field_path: &str) -> Result<(), String> {
     validate_capability_config(
         &contract.capability_config,
         &format!("{field_path}.capability_config"),

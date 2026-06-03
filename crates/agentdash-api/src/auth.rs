@@ -155,7 +155,6 @@ pub async fn authenticate_request(
         }
     };
 
-    persist_identity_snapshot_or_service_unavailable(state.as_ref(), &identity).await?;
     authorize_authenticated_request(provider.as_ref(), &identity, &auth_request).await?;
 
     request.extensions_mut().insert(identity.clone());

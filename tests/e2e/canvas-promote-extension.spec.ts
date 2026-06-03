@@ -34,8 +34,10 @@ interface ProjectAgentEntity {
   id: string;
 }
 
-interface OpenProjectAgentSessionResult {
-  session_id: string;
+interface ProjectAgentLaunchResult {
+  runtime_session_ref?: {
+    runtime_session_id?: string;
+  };
 }
 
 interface CanvasEntity {
@@ -162,19 +164,19 @@ async function createProjectAgent(
   return (await resp.json()) as ProjectAgentEntity;
 }
 
-async function openProjectAgentSession(
+async function launchProjectAgentRuntime(
   request: APIRequestContext,
   projectId: string,
   agentId: string,
 ): Promise<string> {
-  const resp = await request.post(
-    `${API_ORIGIN}/projects/${projectId}/agents/${agentId}/session?force_new=true`,
-    { data: {} },
-  );
+  const resp = await request.post(`${API_ORIGIN}/projects/${projectId}/agents/${agentId}/launch`, {
+    data: {},
+  });
   expect(resp.ok(), await resp.text()).toBeTruthy();
-  const result = (await resp.json()) as OpenProjectAgentSessionResult;
-  expect(result.session_id).not.toBe("");
-  return result.session_id;
+  const result = (await resp.json()) as ProjectAgentLaunchResult;
+  const sessionId = result.runtime_session_ref?.runtime_session_id ?? "";
+  expect(sessionId).not.toBe("");
+  return sessionId;
 }
 
 async function createPromotableCanvas(
@@ -258,7 +260,7 @@ test("Canvas 可发布为 packaged extension 并作为 WorkspacePanel tab 运行
   const workspace = await createWorkspace(request, project.id, suffix);
   await updateProjectDefaultWorkspace(request, project, workspace.id);
   const agent = await createProjectAgent(request, project.id, suffix);
-  const sessionId = await openProjectAgentSession(request, project.id, agent.id);
+  const sessionId = await launchProjectAgentRuntime(request, project.id, agent.id);
   const canvas = await createPromotableCanvas(request, project.id, suffix);
   const promoted = await promoteCanvas(request, canvas.id);
   expect(promoted.extension_id).toBe(`canvas-${canvas.mount_id}`);

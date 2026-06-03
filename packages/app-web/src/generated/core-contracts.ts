@@ -3,8 +3,6 @@
 
 import type { JsonValue } from "./common-contracts";
 
-export type AgentBinding = { agent_type: string | null, agent_pid: string | null, preset_name: string | null, prompt_template: string | null, initial_context: string | null, context_sources: Array<ContextSourceRef>, };
-
 export type AgentPreset = { name: string, agent_type: string, config: JsonValue, };
 
 export type Artifact = { id: string, artifact_type: ArtifactType, content: JsonValue, created_at: string, };
@@ -89,11 +87,11 @@ export type StoryStatus = "created" | "context_ready" | "decomposed" | "executin
 
 export type StoryType = "feature" | "bugfix" | "refactor" | "docs" | "test" | "other";
 
-export type TaskResponse = { id: string, project_id: string, story_id: string, workspace_id: string | null, lifecycle_step_key: string | null, title: string, description: string, status: TaskStatus, agent_binding: AgentBinding, artifacts: Array<Artifact>, created_at: string, updated_at: string, };
+export type TaskDispatchPreference = { agent_type: string | null, agent_pid: string | null, preset_name: string | null, prompt_template: string | null, initial_context: string | null, context_sources: Array<ContextSourceRef>, };
 
-export type TaskStatus = "pending" | "assigned" | "running" | "awaiting_verification" | "completed" | "failed";
+export type TaskResponse = { id: string, project_id: string, story_id: string, workspace_id: string | null, title: string, description: string, status: TaskStatus, dispatch_preference: TaskDispatchPreference, artifacts: Array<Artifact>, created_at: string, updated_at: string, };
 
-export type UnboundBindingResponse = { unbound: boolean, binding_id: string, };
+export type TaskStatus = "pending" | "assigned" | "running" | "awaiting_verification" | "completed" | "failed" | "cancelled";
 
 export type UpdatedIdResponse = { updated: string, };
 

@@ -1,8 +1,8 @@
 //! Lifecycle run data I/O helpers.
 //!
 //! - Execution log recording (`PendingExecutionLogEntry` → `LifecycleRun.execution_log`)
-//! - Step summary materialization (→ inline_fs `session_records/{step_key}/summary`)
-//! - Port output map loading (← inline_fs `port_outputs/`)
+//! - Activity summary materialization (→ inline_fs `session_records/{activity_key}/summary`)
+//! - Scoped activity port output loading (← inline_fs `port_outputs/`)
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -19,8 +19,8 @@ use super::error::WorkflowApplicationError;
 
 fn parse_event_kind(s: &str) -> Option<LifecycleExecutionEventKind> {
     match s {
-        "step_activated" => Some(LifecycleExecutionEventKind::StepActivated),
-        "step_completed" => Some(LifecycleExecutionEventKind::StepCompleted),
+        "activity_activated" => Some(LifecycleExecutionEventKind::ActivityActivated),
+        "activity_completed" => Some(LifecycleExecutionEventKind::ActivityCompleted),
         "constraint_blocked" => Some(LifecycleExecutionEventKind::ConstraintBlocked),
         "completion_evaluated" => Some(LifecycleExecutionEventKind::CompletionEvaluated),
         "artifact_appended" => Some(LifecycleExecutionEventKind::ArtifactAppended),
@@ -32,7 +32,7 @@ fn parse_event_kind(s: &str) -> Option<LifecycleExecutionEventKind> {
 fn to_domain_entry(entry: &PendingExecutionLogEntry) -> Option<LifecycleExecutionEntry> {
     Some(LifecycleExecutionEntry {
         timestamp: Utc::now(),
-        step_key: entry.step_key.clone(),
+        activity_key: entry.activity_key.clone(),
         event_kind: parse_event_kind(&entry.event_kind)?,
         summary: entry.summary.clone(),
         detail: entry.detail.clone(),
@@ -71,77 +71,72 @@ pub async fn flush_execution_log_entries(
     Ok(())
 }
 
-/// Build a `PendingExecutionLogEntry` for a step-completed event.
-pub fn step_completed_entry(
+pub fn activity_completed_entry(
     run_id: &str,
-    step_key: &str,
+    activity_key: &str,
     summary: &str,
 ) -> PendingExecutionLogEntry {
     PendingExecutionLogEntry {
         run_id: run_id.to_string(),
-        step_key: step_key.to_string(),
-        event_kind: "step_completed".to_string(),
+        activity_key: activity_key.to_string(),
+        event_kind: "activity_completed".to_string(),
         summary: summary.to_string(),
         detail: None,
     }
 }
 
-/// Build a `PendingExecutionLogEntry` for a completion-evaluated event.
 pub fn completion_evaluated_entry(
     run_id: &str,
-    step_key: &str,
+    activity_key: &str,
     satisfied: bool,
     summary: &str,
 ) -> PendingExecutionLogEntry {
     PendingExecutionLogEntry {
         run_id: run_id.to_string(),
-        step_key: step_key.to_string(),
+        activity_key: activity_key.to_string(),
         event_kind: "completion_evaluated".to_string(),
         summary: summary.to_string(),
         detail: Some(serde_json::json!({ "satisfied": satisfied })),
     }
 }
 
-/// Build a `PendingExecutionLogEntry` for a constraint-blocked event.
 pub fn constraint_blocked_entry(
     run_id: &str,
-    step_key: &str,
+    activity_key: &str,
     reason: &str,
 ) -> PendingExecutionLogEntry {
     PendingExecutionLogEntry {
         run_id: run_id.to_string(),
-        step_key: step_key.to_string(),
+        activity_key: activity_key.to_string(),
         event_kind: "constraint_blocked".to_string(),
         summary: reason.to_string(),
         detail: None,
     }
 }
 
-/// Build a `PendingExecutionLogEntry` for a context-injected event.
 pub fn context_injected_entry(
     run_id: &str,
-    step_key: &str,
+    activity_key: &str,
     summary: &str,
 ) -> PendingExecutionLogEntry {
     PendingExecutionLogEntry {
         run_id: run_id.to_string(),
-        step_key: step_key.to_string(),
+        activity_key: activity_key.to_string(),
         event_kind: "context_injected".to_string(),
         summary: summary.to_string(),
         detail: None,
     }
 }
 
-/// Build a `PendingExecutionLogEntry` for an artifact-appended event.
 pub fn artifact_appended_entry(
     run_id: &str,
-    step_key: &str,
+    activity_key: &str,
     artifact_type: &str,
     title: &str,
 ) -> PendingExecutionLogEntry {
     PendingExecutionLogEntry {
         run_id: run_id.to_string(),
-        step_key: step_key.to_string(),
+        activity_key: activity_key.to_string(),
         event_kind: "artifact_appended".to_string(),
         summary: format!("{artifact_type}: {title}"),
         detail: Some(serde_json::json!({
@@ -151,36 +146,91 @@ pub fn artifact_appended_entry(
     }
 }
 
-/// 将 step summary 物化到 inline_fs（`session_records/{step_key}/summary`）。
-pub async fn materialize_step_summary(
+/// 将 activity summary 物化到 inline_fs（`session_records/{activity_key}/summary`）。
+pub async fn materialize_activity_summary(
     repo: &dyn InlineFileRepository,
     run_id: Uuid,
-    step_key: &str,
+    activity_key: &str,
     summary: &str,
 ) {
     let file = InlineFile::new(
         InlineFileOwnerKind::LifecycleRun,
         run_id,
         "session_records",
-        format!("{step_key}/summary"),
+        format!("{activity_key}/summary"),
         summary.to_string(),
     );
     let _ = repo.upsert_file(&file).await;
 }
 
-/// 加载 lifecycle run 的 port output map（仅含非空内容）。
-pub async fn load_port_output_map(
+/// Activity attempt 级别的 port output artifact scope。
+#[derive(Debug, Clone)]
+pub struct ActivityAttemptArtifactScope {
+    pub run_id: Uuid,
+    pub graph_instance_id: Uuid,
+    pub activity_key: String,
+    pub attempt: u32,
+}
+
+impl ActivityAttemptArtifactScope {
+    pub fn port_ref(&self, port_key: impl Into<String>) -> ActivityPortArtifactRef {
+        ActivityPortArtifactRef {
+            run_id: self.run_id,
+            graph_instance_id: self.graph_instance_id,
+            activity_key: self.activity_key.clone(),
+            attempt: self.attempt,
+            port_key: port_key.into(),
+        }
+    }
+
+    pub(crate) fn path_prefix(&self) -> String {
+        format!(
+            "{}/{}/{}/",
+            self.graph_instance_id, self.activity_key, self.attempt
+        )
+    }
+}
+
+/// Activity attempt scoped port artifact 引用。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityPortArtifactRef {
+    pub run_id: Uuid,
+    pub graph_instance_id: Uuid,
+    pub activity_key: String,
+    pub attempt: u32,
+    pub port_key: String,
+}
+
+impl ActivityPortArtifactRef {
+    pub fn inline_path(&self) -> String {
+        format!(
+            "{}/{}/{}/{}",
+            self.graph_instance_id, self.activity_key, self.attempt, self.port_key
+        )
+    }
+}
+
+/// 加载 activity attempt 级别的 port output map（仅含非空内容）。
+pub async fn load_scoped_port_output_map(
     repo: &dyn InlineFileRepository,
-    run_id: Uuid,
+    scope: &ActivityAttemptArtifactScope,
 ) -> BTreeMap<String, String> {
-    repo.list_files(InlineFileOwnerKind::LifecycleRun, run_id, "port_outputs")
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|f| {
-            let path = f.path.clone();
-            let content = f.into_text_content()?;
-            (!content.trim().is_empty()).then_some((path, content))
-        })
-        .collect()
+    let prefix = scope.path_prefix();
+    repo.list_files(
+        InlineFileOwnerKind::LifecycleRun,
+        scope.run_id,
+        "port_outputs",
+    )
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter_map(|f| {
+        let port_key = f.path.strip_prefix(&prefix)?.to_string();
+        if port_key.is_empty() || port_key.contains('/') {
+            return None;
+        }
+        let content = f.into_text_content()?;
+        (!content.trim().is_empty()).then_some((port_key, content))
+    })
+    .collect()
 }

@@ -8,7 +8,9 @@ use crate::repository_set::RepositorySet;
 use crate::session::{DynPostTurnHandler, PostTurnHandler, TerminalHookEffectHandlerRegistry};
 
 use super::{
-    artifact_ops::{ToolCallArtifactInput, persist_tool_call_artifact},
+    artifact_ops::{
+        ToolCallArtifactInput, VerifiedTaskArtifactContext, persist_tool_call_artifact,
+    },
     repo_ops::update_task_status,
 };
 use agentdash_domain::task::TaskStatus;
@@ -80,15 +82,25 @@ impl TaskHookEffectExecutor {
 
         let turn_id = envelope.trace.turn_id.as_deref().unwrap_or_default();
 
+        let verified_context = match self.validate_runtime_task_anchor(turn_id).await {
+            Ok(context) => context,
+            Err(error) => {
+                tracing::warn!(
+                    task_id = %self.task_id,
+                    session_id = %self.session_id,
+                    error = %error,
+                    "拒绝写入未绑定 task lifecycle anchor 的 runtime artifact"
+                );
+                return;
+            }
+        };
+
         let _ = persist_tool_call_artifact(
             &self.repos,
             ToolCallArtifactInput {
-                task_id: self.task_id,
-                session_id: &self.session_id,
-                turn_id,
+                context: verified_context,
                 tool_call_id: &tool_call_id,
                 patch,
-                backend_id: &self.backend_id,
                 reason: "hook_event_item",
             },
         )
@@ -135,9 +147,14 @@ impl TaskHookEffectExecutor {
 
         let next_status = status_str.parse::<TaskStatus>()?;
 
+        let verified_context = self.validate_runtime_task_anchor(turn_id).await?;
+
         let context = serde_json::json!({
-            "session_id": self.session_id,
-            "turn_id": turn_id,
+            "run_id": verified_context.run_id(),
+            "agent_id": verified_context.agent_id(),
+            "frame_id": verified_context.frame_id(),
+            "session_id": verified_context.session_id(),
+            "turn_id": verified_context.turn_id(),
             "reason": reason,
             "source": "hook_effect",
         });
@@ -154,6 +171,72 @@ impl TaskHookEffectExecutor {
         .map_err(|e| e.to_string())?;
 
         Ok(())
+    }
+
+    async fn validate_runtime_task_anchor<'a>(
+        &'a self,
+        turn_id: &'a str,
+    ) -> Result<VerifiedTaskArtifactContext<'a>, String> {
+        let anchor = self
+            .repos
+            .execution_anchor_repo
+            .find_by_session(&self.session_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| {
+                "runtime session 缺少 RuntimeSessionExecutionAnchor，拒绝执行 task effect"
+                    .to_string()
+            })?;
+
+        let agent = self
+            .repos
+            .lifecycle_agent_repo
+            .get(anchor.agent_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| {
+                "RuntimeSessionExecutionAnchor 未关联 LifecycleAgent，拒绝执行 task effect"
+                    .to_string()
+            })?;
+        if agent.run_id != anchor.run_id {
+            return Err(
+                "runtime session anchor agent/run 不一致，拒绝执行 task effect".to_string(),
+            );
+        }
+
+        let mut associations = self
+            .repos
+            .lifecycle_subject_association_repo
+            .list_by_anchor(anchor.run_id, Some(agent.id))
+            .await
+            .map_err(|error| error.to_string())?;
+        associations.extend(
+            self.repos
+                .lifecycle_subject_association_repo
+                .list_by_anchor(anchor.run_id, None)
+                .await
+                .map_err(|error| error.to_string())?,
+        );
+
+        let matches_task = associations
+            .iter()
+            .any(|assoc| assoc.subject_kind == "task" && assoc.subject_id == self.task_id);
+        if !matches_task {
+            return Err(format!(
+                "runtime session 所属 agent {} 未关联 task {}",
+                agent.id, self.task_id
+            ));
+        }
+
+        Ok(VerifiedTaskArtifactContext::new(
+            self.task_id,
+            &self.session_id,
+            turn_id,
+            agent.run_id,
+            agent.id,
+            anchor.launch_frame_id,
+            &self.backend_id,
+        ))
     }
 }
 

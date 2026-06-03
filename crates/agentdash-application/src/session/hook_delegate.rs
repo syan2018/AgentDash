@@ -19,15 +19,15 @@ use crate::context::{AuditTrigger, SharedContextAuditBus, emit_fragment};
 use crate::hooks::hook_injection_to_fragment;
 
 use agentdash_spi::hooks::{
-    ContextTokenStats, HookDiagnosticEntry, HookEvaluationQuery, HookInjection,
-    HookSessionRuntimeSnapshot, HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
-    SessionHookRefreshQuery, SharedHookSessionRuntime,
+    AgentFrameRuntimeSnapshot, ContextTokenStats, HookDiagnosticEntry, HookInjection,
+    HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookTraceEntry, HookTraceTrigger,
+    HookTrigger, HookTurnStartNotice, RuntimeAdapterProvenance, SharedHookRuntime,
 };
 
 const COMPACTION_FAILURE_FUSE_LIMIT: u32 = 3;
 
 pub struct HookRuntimeDelegate {
-    hook_session: SharedHookSessionRuntime,
+    hook_runtime: SharedHookRuntime,
     default_mount_root_ref: Option<String>,
     audit_bus: Option<SharedContextAuditBus>,
     injection_sink: Option<DynRuntimeHookInjectionSink>,
@@ -130,26 +130,26 @@ impl RuntimeHookInjectionSink for SessionRuntimeHookInjectionSink {
 
 impl HookRuntimeDelegate {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(hook_session: SharedHookSessionRuntime) -> DynAgentRuntimeDelegate {
-        Self::new_with_mount_root(hook_session, None)
+    pub fn new(hook_runtime: SharedHookRuntime) -> DynAgentRuntimeDelegate {
+        Self::new_with_mount_root(hook_runtime, None)
     }
 
     #[allow(clippy::new_ret_no_self)]
     pub fn new_with_mount_root(
-        hook_session: SharedHookSessionRuntime,
+        hook_runtime: SharedHookRuntime,
         default_mount_root_ref: Option<String>,
     ) -> DynAgentRuntimeDelegate {
-        Self::new_with_mount_root_and_audit(hook_session, default_mount_root_ref, None)
+        Self::new_with_mount_root_and_audit(hook_runtime, default_mount_root_ref, None)
     }
 
     #[allow(clippy::new_ret_no_self)]
     pub fn new_with_mount_root_and_audit(
-        hook_session: SharedHookSessionRuntime,
+        hook_runtime: SharedHookRuntime,
         default_mount_root_ref: Option<String>,
         audit_bus: Option<SharedContextAuditBus>,
     ) -> DynAgentRuntimeDelegate {
         Self::new_with_mount_root_audit_and_sink(
-            hook_session,
+            hook_runtime,
             default_mount_root_ref,
             audit_bus,
             None,
@@ -158,13 +158,13 @@ impl HookRuntimeDelegate {
 
     #[allow(clippy::new_ret_no_self)]
     pub fn new_with_mount_root_audit_and_sink(
-        hook_session: SharedHookSessionRuntime,
+        hook_runtime: SharedHookRuntime,
         default_mount_root_ref: Option<String>,
         audit_bus: Option<SharedContextAuditBus>,
         injection_sink: Option<DynRuntimeHookInjectionSink>,
     ) -> DynAgentRuntimeDelegate {
         Arc::new(Self {
-            hook_session,
+            hook_runtime,
             default_mount_root_ref,
             audit_bus,
             injection_sink,
@@ -180,13 +180,16 @@ impl HookRuntimeDelegate {
         payload: Option<serde_json::Value>,
         token_stats: Option<ContextTokenStats>,
     ) -> Result<EvaluatedResolution, AgentRuntimeError> {
-        let snapshot = self.hook_session.snapshot();
+        let snapshot = self.hook_runtime.snapshot();
         let resolution = self
-            .hook_session
-            .evaluate(HookEvaluationQuery {
-                session_id: self.hook_session.session_id().to_string(),
+            .hook_runtime
+            .evaluate_from_provenance(HookRuntimeEvaluationQuery {
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    self.hook_runtime.session_id().to_string(),
+                    None,
+                    "runtime_delegate_hook_evaluate",
+                ),
                 trigger,
-                turn_id: None,
                 tool_name,
                 tool_call_id,
                 subagent_type,
@@ -198,10 +201,13 @@ impl HookRuntimeDelegate {
             .map_err(map_runtime_error)?;
 
         if resolution.refresh_snapshot {
-            self.hook_session
-                .refresh(SessionHookRefreshQuery {
-                    session_id: self.hook_session.session_id().to_string(),
-                    turn_id: None,
+            self.hook_runtime
+                .refresh_from_provenance(HookRuntimeRefreshQuery {
+                    provenance: RuntimeAdapterProvenance::runtime_session(
+                        self.hook_runtime.session_id().to_string(),
+                        None,
+                        "runtime_delegate_hook_refresh",
+                    ),
                     reason: Some(format!("trigger:{:?}", trigger)),
                 })
                 .await
@@ -211,9 +217,9 @@ impl HookRuntimeDelegate {
             .await;
 
         Ok(EvaluatedResolution {
-            snapshot: self.hook_session.snapshot(),
+            snapshot: self.hook_runtime.snapshot(),
             resolution,
-            runtime: self.hook_session.runtime_snapshot(),
+            runtime: self.hook_runtime.runtime_snapshot(),
         })
     }
 
@@ -224,7 +230,7 @@ impl HookRuntimeDelegate {
     ) {
         if let Some(sink) = self.injection_sink.as_ref() {
             sink.emit_injections(
-                self.hook_session.session_id(),
+                self.hook_runtime.session_id(),
                 RuntimeInjectionSource::Hook(trigger),
                 injections,
             )
@@ -250,7 +256,7 @@ impl HookRuntimeDelegate {
             emit_fragment(
                 bus.as_ref(),
                 bundle_id,
-                self.hook_session.session_id(),
+                self.hook_runtime.session_id(),
                 bundle_session_uuid,
                 AuditTrigger::HookInjection {
                     trigger: trigger_label.clone(),
@@ -274,7 +280,7 @@ impl HookRuntimeDelegate {
         });
 
         if let Some(usage) = last_usage {
-            let snapshot = self.hook_session.snapshot();
+            let snapshot = self.hook_runtime.snapshot();
             let context_window = snapshot
                 .metadata
                 .as_ref()
@@ -282,7 +288,7 @@ impl HookRuntimeDelegate {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
 
-            self.hook_session.update_token_stats(ContextTokenStats {
+            self.hook_runtime.update_token_stats(ContextTokenStats {
                 last_input_tokens: usage.context_input_tokens(),
                 current_context_tokens: usage.context_input_tokens(),
                 pending_estimate_tokens: 0,
@@ -308,7 +314,7 @@ impl HookRuntimeDelegate {
         let decision = decision.into();
         let include_injections = should_include_trace_injections(&trigger, &decision);
         let trace = HookTraceEntry {
-            sequence: self.hook_session.next_trace_sequence(),
+            sequence: self.hook_runtime.next_trace_sequence(),
             timestamp_ms: chrono::Utc::now().timestamp_millis(),
             revision: evaluated.runtime.revision,
             trigger: trace_trigger,
@@ -327,7 +333,7 @@ impl HookRuntimeDelegate {
                 Vec::new()
             },
         };
-        self.hook_session.append_trace(trace);
+        self.hook_runtime.append_trace(trace);
     }
 }
 
@@ -340,10 +346,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
     ) -> Result<Option<CompactionParams>, AgentRuntimeError> {
         self.update_token_stats_from_messages(&input.context.messages);
 
-        let last_usage = self.hook_session.token_stats();
+        let last_usage = self.hook_runtime.token_stats();
         let default_keep_last_n = 20_u32;
         let default_reserve_tokens = 16_384_u64;
-        let snapshot = self.hook_session.snapshot();
+        let snapshot = self.hook_runtime.snapshot();
         let context_window = snapshot
             .metadata
             .as_ref()
@@ -366,12 +372,12 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             reserve_tokens: default_reserve_tokens,
         };
         if provider_estimate > 0 || context_window > 0 {
-            self.hook_session
+            self.hook_runtime
                 .update_token_stats(live_token_stats.clone());
         }
-        let consecutive_failures = self.hook_session.compaction_failure_count();
+        let consecutive_failures = self.hook_runtime.compaction_failure_count();
         if consecutive_failures >= COMPACTION_FAILURE_FUSE_LIMIT {
-            self.hook_session
+            self.hook_runtime
                 .append_diagnostics_vec(vec![HookDiagnosticEntry {
                     code: "context_compaction_fused".to_string(),
                     message: format!(
@@ -452,7 +458,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         result: CompactionResult,
         _cancel: CancellationToken,
     ) -> Result<(), AgentRuntimeError> {
-        self.hook_session.reset_compaction_failures();
+        self.hook_runtime.reset_compaction_failures();
         let summary_length = match &result.summary_message {
             AgentMessage::CompactionSummary { summary, .. } => summary.chars().count(),
             _ => 0,
@@ -498,7 +504,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         input: CompactionFailureInput,
         _cancel: CancellationToken,
     ) -> Result<(), AgentRuntimeError> {
-        let failures = self.hook_session.record_compaction_failure(&input.error);
+        let failures = self.hook_runtime.record_compaction_failure(&input.error);
         let mut diagnostics = vec![HookDiagnosticEntry {
             code: "context_compaction_failed".to_string(),
             message: format!("上下文压缩 {} 失败: {}", input.item_id, input.error),
@@ -509,7 +515,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 message: format!("上下文压缩连续失败 {failures} 次，已停止自动重试"),
             });
         }
-        self.hook_session.append_diagnostics_vec(diagnostics);
+        self.hook_runtime.append_diagnostics_vec(diagnostics);
         Ok(())
     }
 
@@ -552,9 +558,9 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         }
 
         let turn_start_messages = collect_turn_start_injection_messages(
-            self.hook_session.as_ref(),
+            self.hook_runtime.as_ref(),
             &evaluated.snapshot,
-            &self.hook_session.runtime_snapshot(),
+            &self.hook_runtime.runtime_snapshot(),
         );
         if should_trace_user_prompt_context_injection(
             &evaluated.runtime,
@@ -772,7 +778,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             .await?;
 
         // BeforeStop 只做 gate：暂存 runtime 事件统一留到下一次 TurnStart 注入。
-        let unresolved_runtime_events = self.hook_session.unresolved_pending_actions();
+        let unresolved_runtime_events = self.hook_runtime.unresolved_pending_actions();
         let completion_satisfied = evaluated
             .resolution
             .completion
@@ -858,9 +864,9 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
 }
 
 struct EvaluatedResolution {
-    snapshot: agentdash_spi::hooks::SessionHookSnapshot,
+    snapshot: agentdash_spi::hooks::AgentFrameHookSnapshot,
     resolution: agentdash_spi::hooks::HookResolution,
-    runtime: HookSessionRuntimeSnapshot,
+    runtime: AgentFrameRuntimeSnapshot,
 }
 
 #[derive(Default)]
@@ -878,7 +884,7 @@ fn should_include_trace_injections(trigger: &HookTrigger, decision: &str) -> boo
 }
 
 fn should_trace_user_prompt_context_injection(
-    runtime: &HookSessionRuntimeSnapshot,
+    runtime: &AgentFrameRuntimeSnapshot,
     injections: &[HookInjection],
     pending_consumed: usize,
 ) -> bool {
@@ -902,16 +908,16 @@ fn should_trace_user_prompt_context_injection(
 }
 
 fn collect_turn_start_injection_messages(
-    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
-    snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
-    runtime: &HookSessionRuntimeSnapshot,
+    hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
+    snapshot: &agentdash_spi::hooks::AgentFrameHookSnapshot,
+    runtime: &AgentFrameRuntimeSnapshot,
 ) -> TurnStartInjectionMessages {
     let mut messages = TurnStartInjectionMessages::default();
-    let turn_start_notices = collect_turn_start_notice_messages(hook_session);
+    let turn_start_notices = collect_turn_start_notice_messages(hook_runtime);
     messages.consumed += turn_start_notices.len();
     messages.steering.extend(turn_start_notices);
 
-    let actions = hook_session.collect_pending_actions_for_injection();
+    let actions = hook_runtime.collect_pending_actions_for_injection();
     messages.consumed += actions.len();
     for action in actions {
         let Some(frame) = build_pending_action_context_frame(snapshot, &action, runtime) else {
@@ -938,9 +944,9 @@ fn collect_turn_start_injection_messages(
 }
 
 fn collect_turn_start_notice_messages(
-    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+    hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
 ) -> Vec<AgentMessage> {
-    let notices = hook_session.collect_turn_start_notices_for_injection();
+    let notices = hook_runtime.collect_turn_start_notices_for_injection();
     if notices.is_empty() {
         return Vec::new();
     }
@@ -1011,14 +1017,14 @@ mod tests {
 
     use super::{HookRuntimeDelegate, RuntimeHookInjectionSink, RuntimeInjectionSource};
     use crate::context::{AuditFilter, InMemoryContextAuditBus, SharedContextAuditBus};
-    use crate::session::HookSessionRuntime;
+    use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
     use agentdash_spi::hooks::{
-        ContextTokenStats, ExecutionHookProvider, HookCompactionDecision, HookCompletionStatus,
-        HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection, HookPendingAction,
-        HookPendingActionResolutionKind, HookResolution, HookSessionRuntimeAccess,
-        HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
-        RuntimeEventSource, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
-        SessionSnapshotMetadata,
+        AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
+        AgentFrameHookSnapshotQuery, ContextTokenStats, ExecutionHookProvider,
+        HookCompactionDecision, HookCompletionStatus, HookControlTarget, HookDiagnosticEntry,
+        HookError, HookInjection, HookPendingAction, HookPendingActionResolutionKind,
+        HookResolution, HookRuntimeAccess, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
+        NoopExecutionHookProvider, RuntimeEventSource, SessionSnapshotMetadata,
     };
 
     #[derive(Clone)]
@@ -1061,29 +1067,29 @@ mod tests {
 
     #[async_trait]
     impl ExecutionHookProvider for CompletionSatisfiedProvider {
-        async fn load_session_snapshot(
+        async fn load_frame_snapshot(
             &self,
-            query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
-                session_id: query.session_id,
-                ..SessionHookSnapshot::default()
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
-        async fn refresh_session_snapshot(
+        async fn refresh_frame_snapshot(
             &self,
-            query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
-                session_id: query.session_id,
-                ..SessionHookSnapshot::default()
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
-        async fn evaluate_hook(
+        async fn evaluate_frame_hook(
             &self,
-            query: HookEvaluationQuery,
+            query: AgentFrameHookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
             Ok(HookResolution {
                 completion: matches!(query.trigger, HookTrigger::BeforeStop).then_some(
@@ -1101,29 +1107,29 @@ mod tests {
 
     #[async_trait]
     impl ExecutionHookProvider for CompletionBlockedProvider {
-        async fn load_session_snapshot(
+        async fn load_frame_snapshot(
             &self,
-            query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
-                session_id: query.session_id,
-                ..SessionHookSnapshot::default()
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
-        async fn refresh_session_snapshot(
+        async fn refresh_frame_snapshot(
             &self,
-            query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
-                session_id: query.session_id,
-                ..SessionHookSnapshot::default()
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
-        async fn evaluate_hook(
+        async fn evaluate_frame_hook(
             &self,
-            query: HookEvaluationQuery,
+            query: AgentFrameHookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
             Ok(HookResolution {
                 completion: matches!(query.trigger, HookTrigger::BeforeStop).then_some(
@@ -1141,12 +1147,12 @@ mod tests {
 
     #[async_trait]
     impl ExecutionHookProvider for RecordingCompactionProvider {
-        async fn load_session_snapshot(
+        async fn load_frame_snapshot(
             &self,
-            query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
-                session_id: query.session_id,
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 metadata: Some(SessionSnapshotMetadata {
                     active_workflow: None,
                     turn_id: None,
@@ -1159,24 +1165,24 @@ mod tests {
                         serde_json::json!(64_000_u64),
                     )]),
                 }),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
-        async fn refresh_session_snapshot(
+        async fn refresh_frame_snapshot(
             &self,
-            query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            self.load_session_snapshot(SessionHookSnapshotQuery {
-                session_id: query.session_id,
-                turn_id: query.turn_id,
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: query.target,
+                provenance: query.provenance,
             })
             .await
         }
 
-        async fn evaluate_hook(
+        async fn evaluate_frame_hook(
             &self,
-            query: HookEvaluationQuery,
+            query: AgentFrameHookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
             self.triggers
                 .lock()
@@ -1210,30 +1216,30 @@ mod tests {
 
     #[async_trait]
     impl ExecutionHookProvider for StaticCompanionContextProvider {
-        async fn load_session_snapshot(
+        async fn load_frame_snapshot(
             &self,
-            query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
-                session_id: query.session_id,
-                ..SessionHookSnapshot::default()
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
-        async fn refresh_session_snapshot(
+        async fn refresh_frame_snapshot(
             &self,
-            query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            self.load_session_snapshot(SessionHookSnapshotQuery {
-                session_id: query.session_id,
-                turn_id: query.turn_id,
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: query.target,
+                provenance: query.provenance,
             })
             .await
         }
 
-        async fn evaluate_hook(
+        async fn evaluate_frame_hook(
             &self,
-            query: HookEvaluationQuery,
+            query: AgentFrameHookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
             if !matches!(query.trigger, HookTrigger::UserPromptSubmit) {
                 return Ok(HookResolution::default());
@@ -1244,9 +1250,6 @@ mod tests {
                     code: "active_workflow_resolved".to_string(),
                     message: "命中活跃 workflow".to_string(),
                 }],
-                // PR 4 之后 companion_agents 统一走 Bundle 一条路径，delegate 不再
-                // 维护 HOOK_USER_MESSAGE_SKIP_SLOTS；这里仍用 workflow slot 以保持
-                // 测试断言与 hook markdown 渲染逻辑的对齐。
                 injections: vec![HookInjection {
                     slot: "workflow".to_string(),
                     content: "## Workflow\n- step: implement".to_string(),
@@ -1257,32 +1260,33 @@ mod tests {
         }
     }
 
+    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for AfterTurnInjectionProvider {
-        async fn load_session_snapshot(
+        async fn load_frame_snapshot(
             &self,
-            query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
-                session_id: query.session_id,
-                ..SessionHookSnapshot::default()
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
-        async fn refresh_session_snapshot(
+        async fn refresh_frame_snapshot(
             &self,
-            query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            self.load_session_snapshot(SessionHookSnapshotQuery {
-                session_id: query.session_id,
-                turn_id: query.turn_id,
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: query.target,
+                provenance: query.provenance,
             })
             .await
         }
 
-        async fn evaluate_hook(
+        async fn evaluate_frame_hook(
             &self,
-            query: HookEvaluationQuery,
+            query: AgentFrameHookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
             if !matches!(query.trigger, HookTrigger::AfterTurn) {
                 return Ok(HookResolution::default());
@@ -1300,15 +1304,15 @@ mod tests {
 
     #[tokio::test]
     async fn before_stop_is_blocked_until_blocking_review_action_is_resolved() {
-        let hook_session = Arc::new(HookSessionRuntime::new(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(CompletionSatisfiedProvider),
-            SessionHookSnapshot {
-                session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+            AgentFrameHookSnapshot {
+                runtime_adapter_session_id: "sess-hook".to_string(),
+                ..AgentFrameHookSnapshot::default()
             },
         ));
-        hook_session.enqueue_pending_action(HookPendingAction {
+        hook_runtime.enqueue_pending_action(HookPendingAction {
             id: "blocking-1".to_string(),
             created_at_ms: 1_710_000_000_000,
             title: "Companion review 需要处理".to_string(),
@@ -1328,7 +1332,7 @@ mod tests {
                 source: "subagent_blocking_review".to_string(),
             }],
         });
-        let delegate = HookRuntimeDelegate::new(hook_session.clone());
+        let delegate = HookRuntimeDelegate::new(hook_runtime.clone());
 
         let first = delegate
             .before_stop(
@@ -1356,7 +1360,7 @@ mod tests {
             StopDecision::Stop => panic!("存在 blocking_review action 时不应允许 stop"),
         }
 
-        let action = hook_session
+        let action = hook_runtime
             .resolve_pending_action(
                 "blocking-1",
                 HookPendingActionResolutionKind::Adopted,
@@ -1389,15 +1393,15 @@ mod tests {
 
     #[tokio::test]
     async fn before_stop_can_continue_without_fake_steering_when_only_stop_gate_blocks() {
-        let hook_session = Arc::new(HookSessionRuntime::new(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(CompletionBlockedProvider),
-            SessionHookSnapshot {
-                session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+            AgentFrameHookSnapshot {
+                runtime_adapter_session_id: "sess-hook".to_string(),
+                ..AgentFrameHookSnapshot::default()
             },
         ));
-        let delegate = HookRuntimeDelegate::new(hook_session);
+        let delegate = HookRuntimeDelegate::new(hook_runtime);
 
         let result = delegate
             .before_stop(
@@ -1436,18 +1440,28 @@ mod tests {
     #[tokio::test]
     async fn evaluate_compaction_uses_before_compact_hook_decision() {
         let provider = RecordingCompactionProvider::default();
-        let hook_session = Arc::new(HookSessionRuntime::new(
+        let snapshot = provider
+            .load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: HookControlTarget {
+                    run_id: uuid::Uuid::nil(),
+                    agent_id: uuid::Uuid::nil(),
+                    frame_id: uuid::Uuid::nil(),
+                    assignment_id: None,
+                },
+                provenance: agentdash_spi::hooks::RuntimeAdapterProvenance::runtime_session(
+                    "sess-hook".to_string(),
+                    None,
+                    "test",
+                ),
+            })
+            .await
+            .expect("snapshot should load");
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
-            provider
-                .load_session_snapshot(SessionHookSnapshotQuery {
-                    session_id: "sess-hook".to_string(),
-                    turn_id: None,
-                })
-                .await
-                .expect("snapshot should load"),
+            snapshot,
         ));
-        hook_session.update_token_stats(ContextTokenStats {
+        hook_runtime.update_token_stats(ContextTokenStats {
             last_input_tokens: 50_000,
             current_context_tokens: 50_000,
             pending_estimate_tokens: 0,
@@ -1455,7 +1469,7 @@ mod tests {
             effective_context_window: 64_000,
             reserve_tokens: 16_384,
         });
-        let delegate = HookRuntimeDelegate::new(hook_session);
+        let delegate = HookRuntimeDelegate::new(hook_runtime);
 
         let decision = delegate
             .evaluate_compaction(
@@ -1512,18 +1526,28 @@ mod tests {
     #[tokio::test]
     async fn after_compaction_emits_after_compact_hook_payload() {
         let provider = RecordingCompactionProvider::default();
-        let hook_session = Arc::new(HookSessionRuntime::new(
+        let snapshot = provider
+            .load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: HookControlTarget {
+                    run_id: uuid::Uuid::nil(),
+                    agent_id: uuid::Uuid::nil(),
+                    frame_id: uuid::Uuid::nil(),
+                    assignment_id: None,
+                },
+                provenance: agentdash_spi::hooks::RuntimeAdapterProvenance::runtime_session(
+                    "sess-hook".to_string(),
+                    None,
+                    "test",
+                ),
+            })
+            .await
+            .expect("snapshot should load");
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
-            provider
-                .load_session_snapshot(SessionHookSnapshotQuery {
-                    session_id: "sess-hook".to_string(),
-                    turn_id: None,
-                })
-                .await
-                .expect("snapshot should load"),
+            snapshot,
         ));
-        let delegate = HookRuntimeDelegate::new(hook_session);
+        let delegate = HookRuntimeDelegate::new(hook_runtime);
 
         delegate
             .after_compaction(
@@ -1577,18 +1601,28 @@ mod tests {
     #[tokio::test]
     async fn repeated_compaction_failures_fuse_future_auto_compaction() {
         let provider = RecordingCompactionProvider::default();
-        let hook_session = Arc::new(HookSessionRuntime::new(
+        let snapshot = provider
+            .load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: HookControlTarget {
+                    run_id: uuid::Uuid::nil(),
+                    agent_id: uuid::Uuid::nil(),
+                    frame_id: uuid::Uuid::nil(),
+                    assignment_id: None,
+                },
+                provenance: agentdash_spi::hooks::RuntimeAdapterProvenance::runtime_session(
+                    "sess-hook".to_string(),
+                    None,
+                    "test",
+                ),
+            })
+            .await
+            .expect("snapshot should load");
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
-            provider
-                .load_session_snapshot(SessionHookSnapshotQuery {
-                    session_id: "sess-hook".to_string(),
-                    turn_id: None,
-                })
-                .await
-                .expect("snapshot should load"),
+            snapshot,
         ));
-        let delegate = HookRuntimeDelegate::new(hook_session.clone());
+        let delegate = HookRuntimeDelegate::new(hook_runtime.clone());
 
         for index in 1..=3 {
             delegate
@@ -1625,7 +1659,7 @@ mod tests {
             .expect("evaluate_compaction should succeed");
 
         assert!(decision.is_none(), "连续失败后不应继续触发自动压缩");
-        assert_eq!(hook_session.compaction_failure_count(), 3);
+        assert_eq!(hook_runtime.compaction_failure_count(), 3);
         assert!(
             provider
                 .triggers
@@ -1635,7 +1669,7 @@ mod tests {
             "熔断后不应继续执行 before_compact hook"
         );
         assert!(
-            hook_session
+            hook_runtime
                 .diagnostics()
                 .iter()
                 .any(|entry| entry.code == "context_compaction_fused")
@@ -1665,20 +1699,20 @@ mod tests {
             .await
             .expect("success should reset failure fuse");
 
-        assert_eq!(hook_session.compaction_failure_count(), 0);
+        assert_eq!(hook_runtime.compaction_failure_count(), 0);
     }
 
     #[tokio::test]
     async fn transform_context_deduplicates_static_companion_injection_trace() {
-        let hook_session = Arc::new(HookSessionRuntime::new(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(StaticCompanionContextProvider),
-            SessionHookSnapshot {
-                session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+            AgentFrameHookSnapshot {
+                runtime_adapter_session_id: "sess-hook".to_string(),
+                ..AgentFrameHookSnapshot::default()
             },
         ));
-        let delegate = HookRuntimeDelegate::new(hook_session.clone());
+        let delegate = HookRuntimeDelegate::new(hook_runtime.clone());
 
         let input = agentdash_spi::TransformContextInput {
             context: AgentContext {
@@ -1702,7 +1736,7 @@ mod tests {
         assert_eq!(first.steering_messages.len(), 1);
         assert_eq!(second.steering_messages.len(), 1);
 
-        let submit_traces = hook_session
+        let submit_traces = hook_runtime
             .runtime_snapshot()
             .trace
             .into_iter()
@@ -1718,22 +1752,22 @@ mod tests {
 
     #[tokio::test]
     async fn transform_context_consumes_turn_start_notices_once() {
-        let hook_session = Arc::new(HookSessionRuntime::new(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(NoopExecutionHookProvider),
-            SessionHookSnapshot {
-                session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+            AgentFrameHookSnapshot {
+                runtime_adapter_session_id: "sess-hook".to_string(),
+                ..AgentFrameHookSnapshot::default()
             },
         ));
-        hook_session.enqueue_turn_start_notice(HookTurnStartNotice {
+        hook_runtime.enqueue_turn_start_notice(HookTurnStartNotice {
             id: "notice-1".to_string(),
             created_at_ms: 1,
             source: RuntimeEventSource::RuntimeContextUpdate,
             content: "## Capability Update\n- tool schema refreshed".to_string(),
             context_frame: None,
         });
-        let delegate = HookRuntimeDelegate::new(hook_session.clone());
+        let delegate = HookRuntimeDelegate::new(hook_runtime.clone());
         let input = agentdash_spi::TransformContextInput {
             context: AgentContext {
                 system_prompt: "test".to_string(),
@@ -1789,17 +1823,17 @@ mod tests {
 
     #[tokio::test]
     async fn transform_context_emits_hook_injection_fragments_to_audit_bus() {
-        let hook_session = Arc::new(HookSessionRuntime::new(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(StaticCompanionContextProvider),
-            SessionHookSnapshot {
-                session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+            AgentFrameHookSnapshot {
+                runtime_adapter_session_id: "sess-hook".to_string(),
+                ..AgentFrameHookSnapshot::default()
             },
         ));
         let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(100));
         let delegate = HookRuntimeDelegate::new_with_mount_root_and_audit(
-            hook_session,
+            hook_runtime,
             None,
             Some(audit_bus.clone()),
         );
@@ -1828,15 +1862,15 @@ mod tests {
 
     #[tokio::test]
     async fn after_turn_does_not_emit_inline_hook_steering_or_trace_injections() {
-        let hook_session = Arc::new(HookSessionRuntime::new(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(AfterTurnInjectionProvider),
-            SessionHookSnapshot {
-                session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+            AgentFrameHookSnapshot {
+                runtime_adapter_session_id: "sess-hook".to_string(),
+                ..AgentFrameHookSnapshot::default()
             },
         ));
-        let delegate = HookRuntimeDelegate::new(hook_session.clone());
+        let delegate = HookRuntimeDelegate::new(hook_runtime.clone());
 
         let result = delegate
             .after_turn(
@@ -1860,7 +1894,7 @@ mod tests {
             "after_turn 不应再输出通用 inline hook 注入",
         );
 
-        let trace = hook_session
+        let trace = hook_runtime
             .runtime_snapshot()
             .trace
             .into_iter()
@@ -1874,17 +1908,17 @@ mod tests {
 
     #[tokio::test]
     async fn after_turn_routes_hook_injections_through_runtime_sink() {
-        let hook_session = Arc::new(HookSessionRuntime::new(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(AfterTurnInjectionProvider),
-            SessionHookSnapshot {
-                session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+            AgentFrameHookSnapshot {
+                runtime_adapter_session_id: "sess-hook".to_string(),
+                ..AgentFrameHookSnapshot::default()
             },
         ));
         let sink = Arc::new(RecordingInjectionSink::default());
         let delegate = HookRuntimeDelegate::new_with_mount_root_audit_and_sink(
-            hook_session,
+            hook_runtime,
             None,
             None,
             Some(sink.clone()),
@@ -1921,11 +1955,11 @@ mod tests {
 
     #[test]
     fn pending_action_message_does_not_reference_specific_tools() {
-        let snapshot = SessionHookSnapshot {
-            session_id: "sess-hook".to_string(),
-            ..SessionHookSnapshot::default()
+        let snapshot = AgentFrameHookSnapshot {
+            runtime_adapter_session_id: "sess-hook".to_string(),
+            ..AgentFrameHookSnapshot::default()
         };
-        let runtime = HookSessionRuntime::new(
+        let runtime = AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(NoopExecutionHookProvider),
             snapshot.clone(),

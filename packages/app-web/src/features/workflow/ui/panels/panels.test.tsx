@@ -66,7 +66,7 @@ describe("InjectionPanel", () => {
       />,
     );
 
-    expect(markup).toContain("Session 指引");
+    expect(markup).toContain("Agent Procedure 指引");
     expect(markup).toContain("上下文挂载");
     expect(markup).toContain("完成本步任务");
     expect(markup).toContain("main/docs/spec.md");

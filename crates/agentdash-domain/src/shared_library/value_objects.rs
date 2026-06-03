@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::DomainError;
@@ -241,181 +241,24 @@ pub fn normalize_workflow_template_value(value: &mut Value) -> Result<(), Domain
     normalize_workflow_lifecycle_value(lifecycle)
 }
 
+/// 校验 lifecycle 对象使用当前格式 (`entry_activity_key` / `activities`)。
 pub fn normalize_workflow_lifecycle_value(lifecycle: &mut Value) -> Result<(), DomainError> {
     let Some(object) = lifecycle.as_object_mut() else {
         return Err(DomainError::InvalidConfig(
             "workflow_template.lifecycle 必须是对象".to_string(),
         ));
     };
-    if object.contains_key("activities") && object.contains_key("entry_activity_key") {
-        return Ok(());
+    if !object.contains_key("entry_activity_key") {
+        return Err(DomainError::InvalidConfig(
+            "workflow_template.lifecycle.entry_activity_key 不能为空".to_string(),
+        ));
     }
-
-    let entry_step_key = object
-        .remove("entry_step_key")
-        .and_then(|value| value.as_str().map(str::to_string))
-        .ok_or_else(|| {
-            DomainError::InvalidConfig(
-                "workflow_template.lifecycle.entry_step_key 不能为空".to_string(),
-            )
-        })?;
-    let steps = object
-        .remove("steps")
-        .and_then(|value| value.as_array().cloned())
-        .ok_or_else(|| {
-            DomainError::InvalidConfig("workflow_template.lifecycle.steps 必须是数组".to_string())
-        })?;
-    let edges = object
-        .remove("edges")
-        .and_then(|value| value.as_array().cloned())
-        .unwrap_or_default();
-
-    object.insert(
-        "entry_activity_key".to_string(),
-        Value::String(entry_step_key),
-    );
-    object.insert(
-        "activities".to_string(),
-        Value::Array(
-            steps
-                .into_iter()
-                .map(legacy_step_to_activity)
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-    );
-    object.insert(
-        "transitions".to_string(),
-        Value::Array(
-            edges
-                .into_iter()
-                .map(legacy_edge_to_transition)
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-    );
+    if !object.contains_key("activities") {
+        return Err(DomainError::InvalidConfig(
+            "workflow_template.lifecycle.activities 必须存在".to_string(),
+        ));
+    }
     Ok(())
-}
-
-fn legacy_step_to_activity(step: Value) -> Result<Value, DomainError> {
-    let object = step.as_object().ok_or_else(|| {
-        DomainError::InvalidConfig("workflow_template.lifecycle.steps[] 必须是对象".to_string())
-    })?;
-    let key = json_string_field(object, "key", "workflow_template.lifecycle.steps[].key")?;
-    let workflow_key = json_string_field(
-        object,
-        "workflow_key",
-        "workflow_template.lifecycle.steps[].workflow_key",
-    )?;
-    let node_type = object
-        .get("node_type")
-        .and_then(Value::as_str)
-        .unwrap_or("agent_node");
-    let output_ports = object
-        .get("output_ports")
-        .cloned()
-        .unwrap_or_else(|| Value::Array(Vec::new()));
-    let input_ports = object
-        .get("input_ports")
-        .cloned()
-        .unwrap_or_else(|| Value::Array(Vec::new()));
-    let required_ports = output_ports
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|port| port.get("key").and_then(Value::as_str))
-        .map(|key| Value::String(key.to_string()))
-        .collect::<Vec<_>>();
-
-    let mut activity = Map::new();
-    activity.insert("key".to_string(), Value::String(key));
-    activity.insert(
-        "description".to_string(),
-        object
-            .get("description")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string()
-            .into(),
-    );
-    activity.insert(
-        "executor".to_string(),
-        json!({
-            "kind": "agent",
-            "workflow_key": workflow_key,
-            "session_policy": if node_type == "phase_node" { "continue_root" } else { "spawn_child" },
-        }),
-    );
-    activity.insert("input_ports".to_string(), input_ports);
-    activity.insert("output_ports".to_string(), output_ports);
-    activity.insert(
-        "completion_policy".to_string(),
-        if required_ports.is_empty() {
-            json!({ "kind": "executor_terminal" })
-        } else {
-            json!({ "kind": "output_ports", "required_ports": required_ports })
-        },
-    );
-    Ok(Value::Object(activity))
-}
-
-fn legacy_edge_to_transition(edge: Value) -> Result<Value, DomainError> {
-    let object = edge.as_object().ok_or_else(|| {
-        DomainError::InvalidConfig("workflow_template.lifecycle.edges[] 必须是对象".to_string())
-    })?;
-    let from = json_string_field(
-        object,
-        "from_node",
-        "workflow_template.lifecycle.edges[].from_node",
-    )?;
-    let to = json_string_field(
-        object,
-        "to_node",
-        "workflow_template.lifecycle.edges[].to_node",
-    )?;
-    let kind = object
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or("artifact");
-    let artifact_bindings = if kind == "artifact" {
-        let from_port = json_string_field(
-            object,
-            "from_port",
-            "workflow_template.lifecycle.edges[].from_port",
-        )?;
-        let to_port = json_string_field(
-            object,
-            "to_port",
-            "workflow_template.lifecycle.edges[].to_port",
-        )?;
-        json!([{
-            "from_port": from_port,
-            "to_port": to_port,
-            "alias": "latest"
-        }])
-    } else {
-        Value::Array(Vec::new())
-    };
-
-    Ok(json!({
-        "from": from,
-        "to": to,
-        "kind": if kind == "artifact" { "artifact" } else { "flow" },
-        "condition": { "kind": "always" },
-        "artifact_bindings": artifact_bindings,
-    }))
-}
-
-fn json_string_field(
-    object: &Map<String, Value>,
-    field: &str,
-    field_path: &str,
-) -> Result<String, DomainError> {
-    object
-        .get(field)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| DomainError::InvalidConfig(format!("{field_path} 不能为空")))
 }
 
 fn payload_error(asset_type: &str, error: serde_json::Error) -> DomainError {
@@ -1874,7 +1717,38 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_legacy_workflow_template_lifecycle_payload() {
+    fn normalize_accepts_current_format_lifecycle_payload() {
+        let payload = json!({
+            "template": {
+                "key": "review_flow",
+                "name": "Review Flow",
+                "description": "desc",
+                "binding_kinds": ["story"],
+                "workflows": [],
+                "lifecycle": {
+                    "key": "review_flow",
+                    "name": "Review Flow",
+                    "description": "desc",
+                    "entry_activity_key": "plan",
+                    "activities": [{
+                        "key": "plan",
+                        "executor": { "kind": "agent", "procedure_key": "review_plan" },
+                        "output_ports": [{"key": "proposal", "description": "Proposal"}]
+                    }],
+                    "transitions": []
+                }
+            }
+        });
+
+        let normalized = normalize_workflow_template_payload_value(payload).expect("normalize");
+        assert_eq!(
+            normalized["template"]["lifecycle"]["entry_activity_key"],
+            "plan"
+        );
+    }
+
+    #[test]
+    fn normalize_rejects_legacy_format_lifecycle_payload() {
         let payload = json!({
             "template": {
                 "key": "review_flow",
@@ -1887,46 +1761,12 @@ mod tests {
                     "name": "Review Flow",
                     "description": "desc",
                     "entry_step_key": "plan",
-                    "steps": [{
-                        "key": "plan",
-                        "workflow_key": "review_plan",
-                        "node_type": "agent_node",
-                        "output_ports": [{"key": "proposal", "description": "Proposal"}]
-                    }, {
-                        "key": "apply",
-                        "workflow_key": "review_apply",
-                        "node_type": "phase_node",
-                        "input_ports": [{"key": "proposal", "description": "Proposal"}]
-                    }],
-                    "edges": [{
-                        "kind": "artifact",
-                        "from_node": "plan",
-                        "from_port": "proposal",
-                        "to_node": "apply",
-                        "to_port": "proposal"
-                    }]
+                    "steps": [{ "key": "plan", "procedure_key": "review_plan" }]
                 }
             }
         });
 
-        let normalized = normalize_workflow_template_payload_value(payload).expect("normalize");
-        let lifecycle = &normalized["template"]["lifecycle"];
-
-        assert_eq!(lifecycle["entry_activity_key"], "plan");
-        assert!(lifecycle.get("entry_step_key").is_none());
-        assert_eq!(lifecycle["activities"][0]["executor"]["kind"], "agent");
-        assert_eq!(
-            lifecycle["activities"][0]["completion_policy"]["kind"],
-            "output_ports"
-        );
-        assert_eq!(
-            lifecycle["activities"][1]["executor"]["session_policy"],
-            "continue_root"
-        );
-        assert_eq!(lifecycle["transitions"][0]["kind"], "artifact");
-        assert_eq!(
-            lifecycle["transitions"][0]["artifact_bindings"][0]["from_port"],
-            "proposal"
-        );
+        let result = normalize_workflow_template_payload_value(payload);
+        assert!(result.is_err());
     }
 }

@@ -657,7 +657,7 @@ impl AgentConnector for PiAgentConnector {
 
         let hook_trace_rx = context
             .turn
-            .hook_session
+            .hook_runtime
             .as_ref()
             .and_then(|hs| hs.subscribe_traces());
         agent.set_runtime_delegate(context.turn.runtime_delegate.clone());

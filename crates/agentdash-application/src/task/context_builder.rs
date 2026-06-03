@@ -39,7 +39,7 @@ pub struct BuiltTaskSessionContext {
 /// 都静默降级为 None。
 ///
 /// M5 之后，task 启动入口（start_task / continue_task）仅作为 facade，
-/// 统一走 `StoryStepActivationService::activate_story_step` → `compose_story_step`，
+/// 统一走 `StoryActivityActivationService::activate_story_activity` → `compose_story_step`，
 /// 本函数与启动链路无关，仅复用底层相同的 executor / VFS 解析逻辑以保持
 /// 上下文数据一致。
 pub async fn build_task_session_context(
@@ -47,7 +47,7 @@ pub async fn build_task_session_context(
     vfs_service: &VfsService,
     platform_config: &PlatformConfig,
     task_id: Uuid,
-    session_meta: Option<&crate::session::SessionMeta>,
+    runtime_session_id: Option<&str>,
 ) -> Option<BuiltTaskSessionContext> {
     let task = crate::task::load_task(repos.story_repo.as_ref(), task_id)
         .await
@@ -137,16 +137,15 @@ pub async fn build_task_session_context(
     };
     runtime_vfs = ensure_active_workflow_lifecycle_mount(runtime_vfs, workflow.as_ref());
 
-    let preset_name = normalize_optional_string(task.agent_binding.preset_name.clone());
+    let preset_name = normalize_optional_string(task.dispatch_preference.preset_name.clone());
     if let Some(space) = runtime_vfs.as_mut() {
-        let visible_canvas_mount_ids = session_meta
-            .map(|meta| meta.visible_canvas_mount_ids.as_slice())
-            .unwrap_or(&[]);
+        let visible_canvas_mount_ids =
+            resolve_visible_canvas_mount_ids(repos, runtime_session_id).await;
         if append_visible_canvas_mounts(
             repos.canvas_repo.as_ref(),
             task.project_id,
             space,
-            visible_canvas_mount_ids,
+            &visible_canvas_mount_ids,
         )
         .await
         .is_err()
@@ -178,37 +177,69 @@ pub async fn build_task_session_context(
     })
 }
 
-/// 通过 task 的 session binding 反查是否存在活跃 lifecycle run 投影。
+/// 通过 task 关联的 agent → frame 查找活跃 lifecycle workflow projection。
+///
+/// 链路: LifecycleSubjectAssociation(Task) → LifecycleAgent → AgentFrame
+///      → RuntimeSession trace lookup → AgentFrame → AgentAssignment → ActivityAttemptState
 ///
 /// 只读视图辅助函数；失败或缺失均返回 None，绝不抛错。
 async fn find_active_workflow_via_task_sessions(
     repos: &RepositorySet,
     task_id: Uuid,
 ) -> Option<ActiveWorkflowProjection> {
-    let links = repos
-        .lifecycle_run_link_repo
-        .list_by_subject(
-            agentdash_domain::workflow::RunLinkSubjectKind::Task,
-            task_id,
-        )
+    let subject = agentdash_domain::workflow::SubjectRef::new("task", task_id);
+    let associations = repos
+        .lifecycle_subject_association_repo
+        .list_by_subject(&subject)
         .await
         .ok()?;
 
-    for link in &links {
-        let run = repos
-            .lifecycle_run_repo
-            .get_by_id(link.run_id)
+    for assoc in associations
+        .iter()
+        .filter(|assoc| assoc.anchor_agent_id.is_some())
+    {
+        let Some(agent_id) = assoc.anchor_agent_id else {
+            continue;
+        };
+        let agent = repos
+            .lifecycle_agent_repo
+            .get(agent_id)
             .await
             .ok()
             .flatten();
-        let Some(session_id) = run.as_ref().and_then(|r| r.session_id.as_deref()) else {
+        let Some(agent) = agent else { continue };
+        let Some(_run) = repos
+            .lifecycle_run_repo
+            .get_by_id(assoc.anchor_run_id)
+            .await
+            .ok()
+            .flatten()
+        else {
+            continue;
+        };
+        if agent.current_frame_id.is_none() {
+            continue;
+        }
+        let Some(session_id) = repos
+            .execution_anchor_repo
+            .latest_for_agent(agent.id)
+            .await
+            .ok()
+            .flatten()
+            .map(|anchor| anchor.runtime_session_id)
+        else {
             continue;
         };
         if let Ok(Some(projection)) = resolve_active_workflow_projection_for_session(
-            session_id,
-            repos.workflow_definition_repo.as_ref(),
-            repos.activity_lifecycle_definition_repo.as_ref(),
+            &session_id,
+            repos.agent_procedure_repo.as_ref(),
+            repos.workflow_graph_repo.as_ref(),
+            repos.agent_frame_repo.as_ref(),
+            repos.lifecycle_agent_repo.as_ref(),
+            repos.agent_assignment_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
+            repos.execution_anchor_repo.as_ref(),
+            repos.workflow_graph_instance_repo.as_ref(),
         )
         .await
         {
@@ -216,4 +247,33 @@ async fn find_active_workflow_via_task_sessions(
         }
     }
     None
+}
+
+async fn resolve_visible_canvas_mount_ids(
+    repos: &RepositorySet,
+    runtime_session_id: Option<&str>,
+) -> Vec<String> {
+    let Some(session_id) = runtime_session_id else {
+        return Vec::new();
+    };
+    let Ok(Some(anchor)) = repos
+        .execution_anchor_repo
+        .find_by_session(session_id)
+        .await
+    else {
+        return Vec::new();
+    };
+    let Ok(Some(agent)) = repos.lifecycle_agent_repo.get(anchor.agent_id).await else {
+        return Vec::new();
+    };
+    if agent.run_id != anchor.run_id {
+        return Vec::new();
+    }
+    match repos.agent_frame_repo.get_current(agent.id).await {
+        Ok(Some(frame)) => frame.visible_canvas_mount_ids(),
+        _ => match repos.agent_frame_repo.get(anchor.launch_frame_id).await {
+            Ok(Some(frame)) => frame.visible_canvas_mount_ids(),
+            _ => Vec::new(),
+        },
+    }
 }

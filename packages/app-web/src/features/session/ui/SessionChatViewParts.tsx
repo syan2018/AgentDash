@@ -16,6 +16,7 @@ import {
 } from "../../file-reference";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
 import type { SessionDisplayItem, TokenUsageInfo } from "../model/types";
+import { isSessionComposerSendDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
 
 type ExecutorDiscoveryState = ReturnType<typeof useExecutorDiscovery>;
@@ -272,6 +273,7 @@ export function SessionChatComposer({
   isSending,
   promptTemplates,
   richInputRef,
+  sendUnavailableReason,
   showExecutorSelector,
   workspaceId,
   onAtTrigger,
@@ -295,6 +297,7 @@ export function SessionChatComposer({
   isSending: boolean;
   promptTemplates?: Array<{ id: string; label: string; content: string }>;
   richInputRef: RefObject<RichInputRef | null>;
+  sendUnavailableReason?: string;
   showExecutorSelector: boolean;
   workspaceId?: string | null;
   onAtTrigger: (query: string) => void;
@@ -303,6 +306,17 @@ export function SessionChatComposer({
   onKeyDown: (event: KeyboardEvent) => void;
   onPrimaryAction: () => void;
 }) {
+  const canSendPrompt = Boolean(customSend);
+  const inputDisabled = isSending || !canSendPrompt;
+  const sendDisabled = isSessionComposerSendDisabled({
+    hasDispatcher: canSendPrompt,
+    hasSession,
+    inputValue,
+    isActionRunning,
+    isCancelling,
+    isSending,
+  });
+
   return (
     <div className="shrink-0 border-t border-border bg-background">
       <div className="mx-auto w-full max-w-4xl px-5 py-4">
@@ -382,24 +396,20 @@ export function SessionChatComposer({
               />
               <RichInput
                 ref={richInputRef}
-                placeholder={inputPlaceholder ?? (hasSession ? "继续对话，@ 引用文件，Ctrl+Enter 发送…" : "输入 prompt，@ 引用文件，Ctrl+Enter 发送…")}
+                placeholder={inputPlaceholder ?? (canSendPrompt
+                  ? "继续对话，@ 引用文件，Ctrl+Enter 发送…"
+                  : "当前 Session 未连接到 Agent dispatcher")}
                 onChange={onInputChange}
                 onKeyDown={onKeyDown}
                 onAtTrigger={onAtTrigger}
                 onFileReferenceRemoved={(relPath) => { fileRef.removeReference(relPath); }}
-                disabled={isSending}
+                disabled={inputDisabled}
               />
             </div>
             <div className="flex flex-col gap-2 self-end">
               <button
                 type="button"
-                disabled={
-                  isSending ||
-                  isCancelling ||
-                  (hasSession && isActionRunning
-                    ? false
-                    : customSend ? false : !inputValue.trim())
-                }
+                disabled={sendDisabled}
                 onClick={onPrimaryAction}
                 className={`h-10 w-20 rounded-[12px] border text-sm font-medium transition-colors disabled:opacity-50 ${
                   hasSession && isActionRunning
@@ -413,7 +423,9 @@ export function SessionChatComposer({
           </div>
         </div>
         <p className="mt-1 text-xs text-muted-foreground/60">
-          Ctrl+Enter 快捷发送 · {workspaceId ? "@ 引用工作空间文件" : "当前会话未绑定工作空间，@ 文件引用不可用"}
+          {canSendPrompt
+            ? `Ctrl+Enter 快捷发送 · ${workspaceId ? "@ 引用工作空间文件" : "当前会话未绑定工作空间，@ 文件引用不可用"}`
+            : sendUnavailableReason ?? "当前 Session 只能查看 runtime trace，请从 Agent 入口打开可继续对话的会话。"}
         </p>
       </div>
     </div>

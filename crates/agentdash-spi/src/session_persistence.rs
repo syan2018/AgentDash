@@ -8,9 +8,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::context::capability::CompanionAgentEntry;
-use crate::{
-    AgentConfig, SessionMcpServer, ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs,
-};
+use crate::{SessionMcpServer, ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs};
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum SessionStoreError {
@@ -54,6 +52,50 @@ pub struct PendingCapabilityStateTransition {
     pub created_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentFrameTransitionRecord {
+    pub id: String,
+    pub target_frame_id: Uuid,
+    pub run_id: Uuid,
+    pub lifecycle_key: String,
+    pub phase_node: String,
+    pub capability_keys: BTreeSet<String>,
+    pub transition: RuntimeCapabilityTransition,
+    pub created_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_turn_id: Option<String>,
+}
+
+impl AgentFrameTransitionRecord {
+    pub fn from_pending(target_frame_id: Uuid, pending: PendingCapabilityStateTransition) -> Self {
+        Self {
+            id: pending.id,
+            target_frame_id,
+            run_id: pending.run_id,
+            lifecycle_key: pending.lifecycle_key,
+            phase_node: pending.phase_node,
+            capability_keys: pending.capability_keys,
+            transition: pending.transition,
+            created_at_ms: pending.created_at,
+            source_turn_id: pending.source_turn_id,
+        }
+    }
+
+    pub fn to_pending_capability_state_transition(&self) -> PendingCapabilityStateTransition {
+        PendingCapabilityStateTransition {
+            id: self.id.clone(),
+            run_id: self.run_id,
+            lifecycle_key: self.lifecycle_key.clone(),
+            phase_node: self.phase_node.clone(),
+            capability_keys: self.capability_keys.clone(),
+            transition: self.transition.clone(),
+            created_at: self.created_at_ms,
+            source_turn_id: self.source_turn_id.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -228,34 +270,6 @@ pub enum TitleSource {
     User,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionBootstrapState {
-    #[default]
-    Plain,
-    Pending,
-    Bootstrapped,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompanionSessionContext {
-    pub dispatch_id: String,
-    pub parent_session_id: String,
-    pub parent_turn_id: String,
-    pub companion_label: String,
-    pub slice_mode: String,
-    pub adoption_mode: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_type: Option<String>,
-    #[serde(default)]
-    pub inherited_fragment_labels: Vec<String>,
-    #[serde(default)]
-    pub inherited_constraint_keys: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_name: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
@@ -263,31 +277,18 @@ pub struct SessionMeta {
     pub title: String,
     #[serde(default)]
     pub title_source: TitleSource,
-    /// 所属 project（session 创建时确定，不可变）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(default)]
     pub last_event_seq: u64,
     #[serde(default)]
-    pub last_execution_status: ExecutionStatus,
+    pub last_delivery_status: ExecutionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_turn_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_terminal_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_config: Option<AgentConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub companion_context: Option<CompanionSessionContext>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tab_layout: Option<serde_json::Value>,
-    #[serde(default)]
-    pub visible_canvas_mount_ids: Vec<String>,
-    #[serde(default)]
-    pub bootstrap_state: SessionBootstrapState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -355,15 +356,47 @@ impl TryFrom<&str> for RuntimeCommandStatus {
 pub struct RuntimeCommandRecord {
     pub id: Uuid,
     pub session_id: String,
-    pub transition_id: String,
+    pub frame_transition_id: String,
     pub phase_node: String,
     pub status: RuntimeCommandStatus,
-    pub transition: PendingCapabilityStateTransition,
+    pub delivery: RuntimeDeliveryCommand,
+    pub frame_transition: AgentFrameTransitionRecord,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub applied_at_ms: Option<i64>,
     pub failed_at_ms: Option<i64>,
     pub last_error: Option<String>,
+}
+
+impl RuntimeCommandRecord {
+    pub fn pending_capability_state_transition(&self) -> PendingCapabilityStateTransition {
+        self.frame_transition
+            .to_pending_capability_state_transition()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeDeliveryCommandKind {
+    PendingRuntimeContext,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeDeliveryCommand {
+    pub kind: RuntimeDeliveryCommandKind,
+    pub frame_transition_id: String,
+    pub target_frame_id: Uuid,
+}
+
+impl RuntimeDeliveryCommand {
+    pub fn pending_runtime_context(transition: &AgentFrameTransitionRecord) -> Self {
+        Self {
+            kind: RuntimeDeliveryCommandKind::PendingRuntimeContext,
+            frame_transition_id: transition.id.clone(),
+            target_frame_id: transition.target_frame_id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -777,10 +810,11 @@ pub trait SessionTerminalEffectStore: Send + Sync {
 
 #[async_trait]
 pub trait SessionRuntimeCommandStore: Send + Sync {
-    async fn upsert_runtime_command_request(
+    async fn upsert_runtime_delivery_command(
         &self,
-        session_id: &str,
-        transition: PendingCapabilityStateTransition,
+        delivery_runtime_session_id: &str,
+        delivery: RuntimeDeliveryCommand,
+        frame_transition: AgentFrameTransitionRecord,
     ) -> SessionStoreResult<RuntimeCommandRecord>;
     async fn list_requested_runtime_commands(
         &self,

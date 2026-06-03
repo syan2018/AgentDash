@@ -4,20 +4,17 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use agentdash_domain::project::Project;
-use agentdash_domain::routine::{Routine, RoutineExecution, SessionStrategy};
+use agentdash_domain::routine::{Routine, RoutineDispatchRefs, RoutineExecution};
+use agentdash_domain::workflow::SubjectExecutionDispatchResult;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::AgentConnector;
 
 use crate::ApplicationError;
-use crate::context::SharedContextAuditBus;
 use crate::repository_set::RepositorySet;
-use crate::session::types::UserPromptInput;
-use crate::session::{
-    LaunchCommand, RoutineLaunchSource, SessionCoreService, SessionLaunchService,
-};
-use crate::vfs::VfsService;
+use crate::workflow::{LifecycleDispatchService, WorkflowApplicationError};
 use crate::workspace::BackendAvailability;
 
+use super::dispatch::build_routine_execution_intent_with_reuse;
+use super::reuse_resolver::LifecycleAgentReuseResolver;
 use super::template::render_prompt_template;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,21 +34,18 @@ impl RoutineAdmissionError {
     }
 }
 
-/// Routine 执行器 — 统一处理三种触发源的 session 创建 / prompt 发送。
+/// Routine 执行器 — 统一处理三种触发源的 dispatch。
 ///
 /// 执行流程：
 /// 1. 从 Routine 表加载 Routine 定义
 /// 2. 渲染 prompt 模板（Tera 插值）
 /// 3. 解析绑定的 Project Agent 配置
-/// 4. 根据 SessionStrategy 创建/复用 session
-/// 5. 构造 owner-aware prompt request 并发送
-/// 6. 记录 RoutineExecution
+/// 4. 构造 ExecutionIntent（DispatchStrategy → dispatch policy 映射）
+/// 5. 调用 LifecycleDispatchService::dispatch() 创建 run/agent/frame
+/// 6. 记录 RoutineExecution dispatch refs
 pub struct RoutineExecutor {
     repos: RepositorySet,
-    session_core: SessionCoreService,
-    session_launch: SessionLaunchService,
     availability: Arc<dyn BackendAvailability>,
-    audit_bus: Option<SharedContextAuditBus>,
 }
 
 struct RoutineAgentContext {
@@ -59,28 +53,11 @@ struct RoutineAgentContext {
 }
 
 impl RoutineExecutor {
-    pub fn new(
-        repos: RepositorySet,
-        session_core: SessionCoreService,
-        session_launch: SessionLaunchService,
-        _vfs_service: Arc<VfsService>,
-        _connector: Arc<dyn AgentConnector>,
-        _platform_config: crate::platform_config::SharedPlatformConfig,
-        availability: Arc<dyn BackendAvailability>,
-    ) -> Self {
+    pub fn new(repos: RepositorySet, availability: Arc<dyn BackendAvailability>) -> Self {
         Self {
             repos,
-            session_core,
-            session_launch,
             availability,
-            audit_bus: None,
         }
-    }
-
-    /// 配置上下文审计总线（可选）。
-    pub fn with_audit_bus(mut self, bus: SharedContextAuditBus) -> Self {
-        self.audit_bus = Some(bus);
-        self
     }
 
     /// 定时触发入口 — 由 CronScheduler 调用
@@ -209,7 +186,7 @@ impl RoutineExecutor {
         }
 
         match self
-            .execute_with_session(&routine, &rendered, &mut execution)
+            .execute_with_dispatch(&routine, &rendered, &mut execution)
             .await
         {
             Ok(()) => {
@@ -223,7 +200,7 @@ impl RoutineExecutor {
                 let exec_id = execution.id;
                 if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
                 {
-                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（执行完成）落库失败");
+                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（dispatch 完成）落库失败");
                 }
                 Ok(exec_id)
             }
@@ -231,53 +208,62 @@ impl RoutineExecutor {
                 execution.mark_failed(err.to_string());
                 if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
                 {
-                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（执行失败）落库失败");
+                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（dispatch 失败）落库失败");
                 }
                 Err(err)
             }
         }
     }
 
-    async fn execute_with_session(
+    /// 通过 LifecycleDispatchService 执行 dispatch。
+    async fn execute_with_dispatch(
         &self,
         routine: &Routine,
         prompt: &str,
         execution: &mut RoutineExecution,
     ) -> Result<(), ApplicationError> {
-        let session_id = self
-            .resolve_session_id(routine, execution)
-            .await
-            .map_err(|err| {
-                ApplicationError::Internal(format!("解析 Routine session 失败: {err}"))
-            })?;
-        let command = LaunchCommand::routine_executor_input(
-            UserPromptInput::from_text(prompt),
-            Some(agentdash_spi::platform::auth::AuthIdentity::system_routine(
-                routine.id,
-            )),
-            RoutineLaunchSource {
-                routine_id: routine.id,
-                execution_id: execution.id,
-                trigger_source: execution.trigger_source.clone(),
-                entity_key: execution.entity_key.clone(),
-            },
+        let reuse_resolution = LifecycleAgentReuseResolver::from_repositories(&self.repos)
+            .resolve(routine, execution)
+            .await?;
+        execution.entity_key = reuse_resolution.entity_key.clone();
+
+        let intent = build_routine_execution_intent_with_reuse(
+            routine,
+            execution,
+            reuse_resolution.target.as_ref(),
         );
 
-        execution.mark_running(&session_id, prompt.to_string());
-        if let Err(update_err) = self.repos.routine_execution_repo.update(execution).await {
-            tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（标记 running）落库失败");
-        }
+        let dispatch_service = LifecycleDispatchService::new(
+            self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.workflow_graph_repo.as_ref(),
+            self.repos.workflow_graph_instance_repo.as_ref(),
+            self.repos.lifecycle_agent_repo.as_ref(),
+            self.repos.agent_frame_repo.as_ref(),
+            self.repos.agent_assignment_repo.as_ref(),
+            self.repos.lifecycle_subject_association_repo.as_ref(),
+            self.repos.lifecycle_gate_repo.as_ref(),
+            self.repos.agent_lineage_repo.as_ref(),
+        )
+        .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
+        .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
 
-        let _turn_id = self
-            .session_launch
-            .launch_command(&session_id, command)
+        let result: SubjectExecutionDispatchResult = dispatch_service
+            .execute_subject(&intent)
             .await
-            .map_err(|error| ApplicationError::Internal(format!("发送 prompt 失败: {error}")))?;
+            .map_err(map_routine_dispatch_error)?;
 
-        // NOTE: mark_completed 追踪的是「prompt 已成功派发到 session」，
-        // 而非「Agent 已执行完毕」。完整的 Agent 完成追踪需要 session turn 完成回调，
-        // 当前阶段以 dispatch 级别审计为主，后续按需扩展。
-        execution.mark_completed();
+        let refs = RoutineDispatchRefs::new(result.runtime_refs.clone());
+
+        execution.mark_dispatched(refs, prompt.to_string());
+
+        tracing::info!(
+            target: "routine",
+            execution_id = %execution.id,
+            run_id = %result.runtime_refs.run_ref,
+            agent_id = %result.runtime_refs.agent_ref,
+            frame_id = %result.runtime_refs.frame_ref,
+            "Routine dispatch 成功"
+        );
 
         Ok(())
     }
@@ -314,109 +300,6 @@ impl RoutineExecutor {
             .map_err(|error| ApplicationError::InvalidConfig(error.to_string()))?;
 
         Ok(RoutineAgentContext { workspace })
-    }
-
-    async fn resolve_session_id(
-        &self,
-        routine: &Routine,
-        execution: &mut RoutineExecution,
-    ) -> Result<String, ApplicationError> {
-        match &routine.session_strategy {
-            SessionStrategy::Fresh => {
-                let title = format!("Routine: {}", routine.name);
-                let label = format!("routine:{}:execution:{}", routine.id, execution.id);
-                self.create_project_owned_session(routine.project_id, &title, &label)
-                    .await
-            }
-            SessionStrategy::Reuse => {
-                let label = project_agent_session_label(routine.project_agent_id);
-                self.find_or_create_project_agent_session(
-                    routine.project_id,
-                    routine.project_agent_id,
-                    &label,
-                )
-                .await
-            }
-            SessionStrategy::PerEntity { entity_key_path } => {
-                let entity_key = execution
-                    .trigger_payload
-                    .as_ref()
-                    .and_then(|payload| resolve_json_path(payload, entity_key_path.as_str()))
-                    .map(json_value_to_key_string);
-
-                if let Some(ref key) = entity_key {
-                    execution.entity_key = Some(key.clone());
-                }
-
-                if let Some(ref key) = entity_key
-                    && let Some(existing) = self
-                        .repos
-                        .routine_execution_repo
-                        .find_latest_by_entity_key(routine.id, key)
-                        .await
-                        .map_err(ApplicationError::from)?
-                    && let Some(session_id) = existing.session_id
-                    && self
-                        .session_core
-                        .get_session_meta(&session_id)
-                        .await
-                        .map_err(|error| {
-                            ApplicationError::Internal(format!("读取 session meta 失败: {error}"))
-                        })?
-                        .is_some()
-                {
-                    return Ok(session_id);
-                }
-
-                let suffix = entity_key.as_deref().unwrap_or("unknown");
-                let title = format!("Routine: {} [{}]", routine.name, suffix);
-                let label = format!("routine:{}:entity:{}", routine.id, suffix);
-                self.create_project_owned_session(routine.project_id, &title, &label)
-                    .await
-            }
-        }
-    }
-
-    async fn create_project_owned_session(
-        &self,
-        _project_id: Uuid,
-        title: &str,
-        _label: &str,
-    ) -> Result<String, ApplicationError> {
-        let meta = self
-            .session_core
-            .create_session(title)
-            .await
-            .map_err(|error| ApplicationError::Internal(format!("创建 session 失败: {error}")))?;
-        self.session_core
-            .mark_owner_bootstrap_pending(&meta.id)
-            .await
-            .map_err(|error| {
-                ApplicationError::Internal(format!("标记 owner bootstrap 失败: {error}"))
-            })?;
-        Ok(meta.id)
-    }
-
-    async fn find_or_create_project_agent_session(
-        &self,
-        _project_id: Uuid,
-        _project_agent_id: Uuid,
-        _label: &str,
-    ) -> Result<String, ApplicationError> {
-        let meta = self
-            .session_core
-            .create_session("")
-            .await
-            .map_err(|error| {
-                ApplicationError::Internal(format!("创建 Project Agent session 失败: {error}"))
-            })?;
-        self.session_core
-            .mark_owner_bootstrap_pending(&meta.id)
-            .await
-            .map_err(|error| {
-                ApplicationError::Internal(format!("标记 Project Agent bootstrap 失败: {error}"))
-            })?;
-        Ok(meta.id)
     }
 }
 
@@ -484,27 +367,21 @@ async fn check_workspace_dispatch_admission(
     )))
 }
 
-fn project_agent_session_label(project_agent_id: Uuid) -> String {
-    format!("project_agent:{}", project_agent_id)
-}
-
-fn json_value_to_key_string(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(value) => value.trim().to_string(),
-        _ => value.to_string(),
+fn map_routine_dispatch_error(error: WorkflowApplicationError) -> ApplicationError {
+    match error {
+        WorkflowApplicationError::BadRequest(message) => {
+            ApplicationError::BadRequest(format!("Routine dispatch 失败: {message}"))
+        }
+        WorkflowApplicationError::NotFound(message) => {
+            ApplicationError::NotFound(format!("Routine dispatch 失败: {message}"))
+        }
+        WorkflowApplicationError::Conflict(message) => {
+            ApplicationError::Conflict(format!("Routine dispatch 失败: {message}"))
+        }
+        WorkflowApplicationError::Internal(message) => {
+            ApplicationError::Internal(format!("Routine dispatch 失败: {message}"))
+        }
     }
-}
-
-/// 从 JSON value 中按点分路径取值（如 `"pull_request.number"`）
-fn resolve_json_path<'a>(
-    value: &'a serde_json::Value,
-    path: &str,
-) -> Option<&'a serde_json::Value> {
-    let mut current = value;
-    for segment in path.split('.') {
-        current = current.get(segment)?;
-    }
-    Some(current)
 }
 
 #[cfg(test)]
@@ -514,7 +391,6 @@ mod tests {
         WorkspaceBinding, WorkspaceIdentityKind, WorkspaceResolutionPolicy,
     };
     use async_trait::async_trait;
-    use serde_json::json;
 
     struct MockAvailability {
         online_backend_ids: Vec<String>,
@@ -551,20 +427,6 @@ mod tests {
             "/workspace".to_string(),
             serde_json::json!({ "binding_labels": {} }),
         )
-    }
-
-    #[test]
-    fn test_resolve_json_path() {
-        let data = json!({"a": {"b": {"c": 42}}});
-        assert_eq!(resolve_json_path(&data, "a.b.c"), Some(&json!(42)));
-        assert_eq!(resolve_json_path(&data, "a.b"), Some(&json!({"c": 42})));
-        assert_eq!(resolve_json_path(&data, "x.y"), None);
-    }
-
-    #[test]
-    fn json_value_to_key_string_prefers_raw_string() {
-        assert_eq!(json_value_to_key_string(&json!(" PR-123 ")), "PR-123");
-        assert_eq!(json_value_to_key_string(&json!(42)), "42");
     }
 
     #[tokio::test]

@@ -1,3 +1,13 @@
+/**
+ * SessionPage — 会话交互主工作台。
+ *
+ * 用户认知中 "lifecycle agent = 一个会话"。此页面是用户点击会话后的主视图，
+ * 提供 Chat + Workspace Panel 双面板布局、标题编辑、上下文导航等完整交互。
+ *
+ * 底层数据通过 lifecycle frame 投影驱动（`useSessionRuntimeState`），
+ * 不直接暴露 lifecycle 技术概念给用户。
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resizable-panels";
@@ -5,23 +15,25 @@ import type { BackboneEvent } from "../generated/backbone-protocol";
 import { SessionChatView } from "../features/session";
 import { extractPlatformEventData } from "../features/session/model/platformEvent";
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
-import { LifecycleSessionView } from "../features/workflow/lifecycle-session-view";
 import {
   WorkspacePanel,
   type WorkspacePanelHandle,
   type WorkspaceRuntimeData,
 } from "../features/workspace-panel";
 import { useSessionRuntimeState } from "../features/workspace-panel/model/useSessionRuntimeState";
-import { fetchSessionMeta } from "../services/session";
+import { sendLifecycleAgentMessageByRuntimeSession } from "../services/lifecycle";
+import type { ExecutorConfig } from "../services/executor";
+import type { JsonValue } from "../generated/common-contracts";
+import { updateSessionTitle } from "../services/session";
+import { useLifecycleStore } from "../stores/lifecycleStore";
 import { useProjectStore } from "../stores/projectStore";
-import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
-import { useWorkflowStore } from "../stores/workflowStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
 import type {
-  ProjectSessionAgentContext,
+  RuntimeTraceAgentContext,
   SessionNavigationState,
-  SessionRunContext,
+  SessionRuntimeControlView,
+  SubjectRunContext,
   Story,
   StoryNavigationState,
 } from "../types";
@@ -37,14 +49,15 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const location = useLocation();
   const selectProject = useProjectStore((state) => state.selectProject);
   const projects = useProjectStore((state) => state.projects);
+  const fetchAndIngestLifecycleRun = useLifecycleStore((state) => state.fetchAndIngestLifecycleRun);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
-  const { createNew, setActiveSessionId, reload: reloadSessions, updateTitle, patchSessionLocally } = useSessionHistoryStore();
-  const runsBySessionId = useWorkflowStore((state) => state.runsBySessionId);
-  const fetchRunsBySession = useWorkflowStore((state) => state.fetchRunsBySession);
   const hookRuntimeRefreshTimerRef = useRef<number | null>(null);
 
-  const [sessionTitle, setSessionTitle] = useState<string>("");
+  const [sessionTitleOverride, setSessionTitleOverride] = useState<{
+    sessionId: string;
+    title: string;
+  } | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editingTitleValue, setEditingTitleValue] = useState("");
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -54,7 +67,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     story: Story | null;
   } | null>(null);
   const [activeCanvasId, setActiveCanvasId] = useState<string | null>(null);
-  const [sessionViewMode, setSessionViewMode] = useState<"chat" | "lifecycle">("chat");
 
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
@@ -80,46 +92,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     () => (location.state as SessionNavigationState | null) ?? null,
     [location.state],
   );
-  const taskContextFromRoute = routeState?.task_context ?? null;
-  const projectAgentContext = (routeState?.project_agent ?? null) as ProjectSessionAgentContext | null;
-  const returnTarget = routeState?.return_to ?? null;
+  const traceAgentContext = (routeState?.trace_agent ?? null) as RuntimeTraceAgentContext | null;
   const currentSessionId = propSessionId ?? null;
-
-  // ─── session ID 同步 ──────────────────────────────────
-
-  useEffect(() => {
-    setActiveSessionId(propSessionId ?? null);
-  }, [propSessionId, setActiveSessionId]);
-
-  useEffect(() => {
-    if (!currentSessionId) return;
-    void fetchRunsBySession(currentSessionId);
-  }, [currentSessionId, fetchRunsBySession]);
-
-  useEffect(() => {
-    if (!currentSessionId) return;
-    const timer = window.setInterval(() => {
-      void fetchRunsBySession(currentSessionId);
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [currentSessionId, fetchRunsBySession]);
-
-  // ─── 加载初始标题 ──────────────────────────────────────
-
-  useEffect(() => {
-    if (!propSessionId) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const meta = await fetchSessionMeta(propSessionId);
-        if (!cancelled) setSessionTitle(meta.title);
-      } catch { /* 加载失败保留空标题 */ }
-    })();
-    return () => {
-      cancelled = true;
-      setSessionTitle("");
-    };
-  }, [propSessionId]);
 
   useEffect(() => {
     return () => {
@@ -158,19 +132,33 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [currentSessionId, refreshSessionRuntimeHook]);
 
   const activeSessionContext = sessionRuntimeState.context;
-  const activeHookRuntime = sessionRuntimeState.hook_runtime?.session_id === currentSessionId
+  const runtimeControl: SessionRuntimeControlView | null = sessionRuntimeState.control;
+  const sessionTitle =
+    sessionTitleOverride?.sessionId === currentSessionId
+      ? sessionTitleOverride.title
+      : runtimeControl?.session_meta.title ?? "";
+  const activeHookRuntime = sessionRuntimeState.hook_runtime?.runtime_adapter_session_id === currentSessionId
     ? sessionRuntimeState.hook_runtime
     : null;
-  const taskAgentBinding = taskContextFromRoute?.agent_binding
-    ?? activeSessionContext?.agent_binding
-    ?? null;
   const sessionWorkspaceId = activeSessionContext?.workspace_id ?? null;
   const sessionRuntimeSurface = activeSessionContext?.runtime_surface ?? null;
-  const sessionContextSnapshot = activeSessionContext?.context_snapshot ?? null;
-  const sessionCapabilities = activeSessionContext?.session_capabilities ?? null;
-  const taskExecutorSummary = sessionContextSnapshot?.executor ?? null;
+  const sessionContextSnapshot = null;
+  const sessionCapabilities = null;
+  const taskExecutorSummary = null;
 
-  const runContext: SessionRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
+  const runContext: SubjectRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
+  const sessionLifecycleRun = runtimeControl?.run ?? null;
+  const sessionLifecycleRunId = runtimeControl?.run?.run_ref.run_id ?? null;
+  const sessionLifecycleAgentId = runtimeControl?.agent?.agent_ref.agent_id ?? null;
+  const sessionLifecycleFrameId = runtimeControl?.frame_runtime?.frame_ref.frame_id ?? null;
+  const sessionLifecycleDetailTarget = useMemo(() => {
+    if (!sessionLifecycleRunId || !sessionLifecycleAgentId) return null;
+    return {
+      runId: sessionLifecycleRunId,
+      agentId: sessionLifecycleAgentId,
+      frameId: sessionLifecycleFrameId,
+    };
+  }, [sessionLifecycleAgentId, sessionLifecycleFrameId, sessionLifecycleRunId]);
 
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
   const storiesByProjectId = useStoryStore((s) => s.storiesByProjectId);
@@ -201,7 +189,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     }
     return null;
   }, [loadedOwnerStory, ownerStoryId, storiesByProjectId]);
-  const ownerProjectId = runContext?.project_id ?? ownerStory?.project_id ?? null;
+  const ownerProjectId = sessionLifecycleRun?.project_id
+    ?? runContext?.project_id
+    ?? ownerStory?.project_id
+    ?? null;
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null
     : null;
@@ -209,13 +200,13 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     ? (ownerProject?.name?.trim() || runContext.project_id)
     : "";
   const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
+
   useEffect(() => {
     if (!ownerProjectId) return;
     void fetchWorkspaces(ownerProjectId);
   }, [fetchWorkspaces, ownerProjectId]);
 
   const effectiveReturnTarget = useMemo(() => {
-    if (returnTarget) return returnTarget;
     if (!runContext) return null;
     if (runContext.scope === "project") {
       return { owner_type: "project" as const, project_id: runContext.project_id };
@@ -227,14 +218,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       return { owner_type: "task" as const, story_id: runContext.story_id, task_id: runContext.task_id };
     }
     return null;
-  }, [returnTarget, runContext]);
+  }, [runContext]);
 
   // ─── 页面级回调 ───────────────────────────────────────
 
-  const executorHint = taskAgentBinding?.agent_type
-    ?? projectAgentContext?.executor_hint
-    ?? taskExecutorSummary?.executor
-    ?? null;
+  const executorHint = traceAgentContext?.executor_hint ?? null;
   const chatWorkspaceId =
     sessionWorkspaceId
     ?? ownerStory?.default_workspace_id
@@ -255,24 +243,65 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     };
   }, [chatWorkspaceId, ownerProjectId, workspacesByProjectId]);
 
-  const handleCreateSession = useCallback(async (title: string) => {
-    if (!ownerProjectId) {
-      throw new Error("创建会话需要先选择 Project");
-    }
-    const meta = await createNew(ownerProjectId, title);
-    return meta.id;
-  }, [createNew, ownerProjectId]);
-
   const handleSessionIdChange = useCallback((id: string) => {
-    setActiveSessionId(id);
     navigate(`/session/${id}`, { replace: true });
-  }, [navigate, setActiveSessionId]);
+  }, [navigate]);
 
   const handleMessageSent = useCallback(() => {
-    void reloadSessions();
     if (!currentSessionId) return;
     scheduleHookRuntimeRefresh("message_sent", true);
-  }, [currentSessionId, reloadSessions, scheduleHookRuntimeRefresh]);
+  }, [currentSessionId, scheduleHookRuntimeRefresh]);
+
+  const sessionSendReady = useMemo(() => {
+    return Boolean(currentSessionId && runtimeControl?.can_send);
+  }, [currentSessionId, runtimeControl?.can_send]);
+
+  const sendUnavailableReason = useMemo(() => {
+    if (!currentSessionId) return "当前没有可发送的 Session。";
+    if (sessionRuntimeState.status === "loading" || sessionRuntimeState.status === "refreshing") {
+      return "正在解析当前 Session 的 Agent dispatcher…";
+    }
+    if (sessionRuntimeState.error) return sessionRuntimeState.error;
+    if (!sessionSendReady) return runtimeControl?.send_unavailable_reason ?? "当前 Session 不可发送。";
+    return undefined;
+  }, [
+    currentSessionId,
+    runtimeControl?.send_unavailable_reason,
+    sessionRuntimeState.error,
+    sessionRuntimeState.status,
+    sessionSendReady,
+  ]);
+
+  const handleAgentSessionSend = useCallback(async (
+    sessionId: string | null,
+    prompt: string,
+    executorConfig?: ExecutorConfig,
+  ) => {
+    if (!sessionId || sessionId !== currentSessionId) {
+      throw new Error("当前 Session 尚未就绪，无法发送消息。");
+    }
+    if (!sessionSendReady) {
+      throw new Error(sendUnavailableReason ?? "当前 Session 未连接到 Agent dispatcher。");
+    }
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      throw new Error("请输入要发送的消息。");
+    }
+    const response = await sendLifecycleAgentMessageByRuntimeSession(sessionId, {
+      prompt_blocks: [{ type: "text", text: trimmed }],
+      executor_config: executorConfig as unknown as JsonValue | undefined,
+    });
+    void fetchAndIngestLifecycleRun(response.run_ref.run_id);
+    void refreshSessionRuntimeContext().catch(() => {});
+    scheduleHookRuntimeRefresh("agent_message_sent", true);
+  }, [
+    currentSessionId,
+    fetchAndIngestLifecycleRun,
+    refreshSessionRuntimeContext,
+    scheduleHookRuntimeRefresh,
+    sendUnavailableReason,
+    sessionSendReady,
+  ]);
 
   const handleTurnEnd = useCallback(() => {
     scheduleHookRuntimeRefresh("turn_end", true);
@@ -298,16 +327,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       case "session_meta_updated": {
         const data = extractPlatformEventData(_event);
         const newTitle = typeof data?.title === "string" ? (data.title as string).trim() : "";
-        const newTitleSource = typeof data?.title_source === "string" ? data.title_source as string : undefined;
         if (newTitle && currentSessionId) {
-          setSessionTitle(newTitle);
-          patchSessionLocally(currentSessionId, {
-            title: newTitle,
-            title_source:
-              newTitleSource === "auto" || newTitleSource === "source" || newTitleSource === "user"
-                ? newTitleSource
-                : undefined,
-          });
+          setSessionTitleOverride({ sessionId: currentSessionId, title: newTitle });
         }
         break;
       }
@@ -327,12 +348,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       default:
         break;
     }
-  }, [scheduleHookRuntimeRefresh, currentSessionId, patchSessionLocally, refreshSessionRuntimeContext, expandWorkspacePanel]);
-
-  const handleNewSession = useCallback(() => {
-    setActiveSessionId(null);
-    navigate("/session", { replace: true });
-  }, [navigate, setActiveSessionId]);
+  }, [currentSessionId, scheduleHookRuntimeRefresh, refreshSessionRuntimeContext, expandWorkspacePanel]);
 
   const handleBackToOwner = useCallback(() => {
     if (!effectiveReturnTarget) return;
@@ -354,6 +370,17 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     try { await navigator.clipboard.writeText(currentSessionId); } catch { /* noop */ }
   }, [currentSessionId]);
 
+  const handleOpenRunDetail = useCallback(() => {
+    if (!sessionLifecycleDetailTarget) return;
+    navigate(`/run/${sessionLifecycleDetailTarget.runId}`, {
+      state: {
+        agent_id: sessionLifecycleDetailTarget.agentId,
+        frame_id: sessionLifecycleDetailTarget.frameId,
+        runtime_session_id: currentSessionId,
+      },
+    });
+  }, [currentSessionId, navigate, sessionLifecycleDetailTarget]);
+
   const handleStartEditTitle = useCallback(() => {
     setEditingTitleValue(sessionTitle);
     setIsEditingTitle(true);
@@ -364,11 +391,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     setIsEditingTitle(false);
     const trimmed = editingTitleValue.trim();
     if (!trimmed || !currentSessionId || trimmed === sessionTitle) return;
-    setSessionTitle(trimmed);
+    setSessionTitleOverride({ sessionId: currentSessionId, title: trimmed });
     try {
-      await updateTitle(currentSessionId, trimmed);
-    } catch { /* store 内已记录 error */ }
-  }, [currentSessionId, editingTitleValue, sessionTitle, updateTitle]);
+      await updateSessionTitle(currentSessionId, trimmed);
+    } catch { /* API 调用失败静默处理 */ }
+  }, [currentSessionId, editingTitleValue, sessionTitle]);
 
   const backButtonLabel = effectiveReturnTarget?.owner_type === "project"
     ? "返回项目"
@@ -376,13 +403,16 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       ? "返回任务"
       : "返回 Story";
   const hasSession = currentSessionId !== null;
-  const lifecycleRuns = useMemo(
-    () => (currentSessionId ? runsBySessionId[currentSessionId] ?? [] : []),
-    [currentSessionId, runsBySessionId],
-  );
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
     projectId: ownerProjectId,
     sessionId: currentSessionId,
+    runtimeSessionId: currentSessionId,
+    sessionMeta: runtimeControl?.session_meta ?? null,
+    controlAnchor: runtimeControl?.anchor ?? null,
+    lifecycleRun: runtimeControl?.run ?? null,
+    lifecycleAgent: runtimeControl?.agent ?? null,
+    frameRuntime: runtimeControl?.frame_runtime ?? null,
+    subjectAssociations: runtimeControl?.subject_associations ?? [],
     runtimeStatus: sessionRuntimeState.status,
     runtimeError: sessionRuntimeState.error,
     extensionRuntime,
@@ -394,11 +424,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     workspaceBackend,
     hookRuntime: activeHookRuntime,
     sessionCapabilities,
-    workflowRuns: lifecycleRuns,
     activeCanvasId,
   }), [
     ownerProjectId,
     currentSessionId,
+    runtimeControl,
     sessionRuntimeState.status,
     sessionRuntimeState.error,
     extensionRuntime,
@@ -410,23 +440,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     workspaceBackend,
     activeHookRuntime,
     sessionCapabilities,
-    lifecycleRuns,
     activeCanvasId,
   ]);
-  const hasLifecycleGraph = useMemo(
-    () =>
-      lifecycleRuns.some((run) =>
-        (run.activity_state?.attempts.some((attempt) =>
-          attempt.executor_run?.kind === "agent_session"
-            ? Boolean(attempt.executor_run.session_id)
-            : false,
-        ) ?? false)
-        || (run.active_node_keys?.length ?? 0) > 0
-      ),
-    [lifecycleRuns],
-  );
-  const canShowLifecycleView = hasSession && hasLifecycleGraph;
-  const showLifecycleView = canShowLifecycleView && sessionViewMode === "lifecycle";
 
   // ─── owner 信息条（作为 inputPrefix 传入 ChatView）
 
@@ -445,11 +460,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       <span>
         已绑定：{runContextDisplayName}
       </span>
-      {runContext.scope === "project" && sessionContextSnapshot?.owner_context.owner_level === "project" && sessionContextSnapshot.owner_context.agent_display_name && (
-        <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[11px] text-foreground/80">
-          Agent · {sessionContextSnapshot.owner_context.agent_display_name}
-        </span>
-      )}
       {effectiveReturnTarget && (
         <button
           type="button"
@@ -468,7 +478,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   ) : null;
 
   // ─── 路由 state 驱动自动展开右栏 ───────────────────────
-  // 通过 requestAnimationFrame 延迟到 paint 后调用，避免 effect 内同步 setState
   useEffect(() => {
     if (!routeState?.open_workspace_panel) return;
     const raf = requestAnimationFrame(() => {
@@ -481,11 +490,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* 页面 Header */}
       <header className="flex shrink-0 items-center justify-between border-b border-border bg-background px-5 py-3.5">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="inline-flex rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            CHAT
+            SESSION
           </span>
           {hasSession && isEditingTitle ? (
             <input
@@ -515,6 +523,16 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
               {backButtonLabel}
             </button>
           )}
+          {sessionLifecycleDetailTarget && (
+            <button
+              type="button"
+              onClick={handleOpenRunDetail}
+              className="rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              title="查看当前 Session 的运行详情"
+            >
+              运行详情
+            </button>
+          )}
           {hasSession && (
             <>
               <span className="hidden rounded-[8px] border border-border bg-secondary px-2.5 py-1 text-xs font-mono text-muted-foreground lg:inline">
@@ -525,36 +543,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
               </button>
             </>
           )}
-          {canShowLifecycleView && (
-            <div className="hidden items-center gap-1 rounded-[8px] border border-border bg-secondary/40 p-0.5 md:flex">
-              <button
-                type="button"
-                onClick={() => setSessionViewMode("chat")}
-                className={`rounded-[8px] px-2.5 py-1 text-xs transition-colors ${
-                  sessionViewMode === "chat"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                聊天
-              </button>
-              <button
-                type="button"
-                onClick={() => setSessionViewMode("lifecycle")}
-                className={`rounded-[8px] px-2.5 py-1 text-xs transition-colors ${
-                  sessionViewMode === "lifecycle"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                Lifecycle
-              </button>
-            </div>
-          )}
-          <button type="button" onClick={handleNewSession} className="rounded-[8px] border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/80">
-            新会话
-          </button>
-          {/* 工作空间面板展开/收起 */}
           <button
             type="button"
             onClick={toggleWorkspacePanel}
@@ -569,36 +557,29 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         </div>
       </header>
 
-      {/* 中栏 + 右栏：可拖拽双面板 */}
       <Group orientation="horizontal" className="flex-1 overflow-hidden">
-        {/* 中栏：聊天 / Lifecycle 视图 */}
         <Panel minSize="30%">
           <div className="h-full overflow-hidden">
-            {showLifecycleView && currentSessionId ? (
-              <LifecycleSessionView sessionId={currentSessionId} />
-            ) : (
-              <SessionChatView
-                sessionId={currentSessionId}
-                workspaceId={chatWorkspaceId}
-                onCreateSession={handleCreateSession}
-                onSessionIdChange={handleSessionIdChange}
-                onMessageSent={handleMessageSent}
-                onTurnEnd={handleTurnEnd}
-                onSystemEvent={handleSystemEvent}
-                executorHint={executorHint}
-                agentDefaults={taskExecutorSummary}
-                inputPrefix={ownerBindingBar}
-              />
-            )}
+            <SessionChatView
+              sessionId={currentSessionId}
+              workspaceId={chatWorkspaceId}
+              onSessionIdChange={handleSessionIdChange}
+              onMessageSent={handleMessageSent}
+              onTurnEnd={handleTurnEnd}
+              onSystemEvent={handleSystemEvent}
+              executorHint={executorHint}
+              agentDefaults={taskExecutorSummary}
+              customSend={sessionSendReady ? handleAgentSessionSend : undefined}
+              inputPrefix={ownerBindingBar}
+              sendUnavailableReason={sendUnavailableReason}
+            />
           </div>
         </Panel>
 
-        {/* 拖拽手柄 */}
         <Separator className="group relative w-1.5 shrink-0 bg-border/30 transition-colors hover:bg-primary/30 active:bg-primary/50 data-[separator]:cursor-col-resize">
           <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 rounded-[8px] bg-border transition-colors group-hover:bg-primary/50 group-active:bg-primary" />
         </Separator>
 
-        {/* 右栏：工作空间面板（默认折叠） */}
         <Panel
           panelRef={rightPanelRef}
           defaultSize="0%"

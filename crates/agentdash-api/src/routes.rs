@@ -1,8 +1,8 @@
-pub mod acp_sessions;
 pub mod auth_routes;
 pub mod backend_access;
 pub mod backends;
 pub mod canvases;
+pub mod companion_gates;
 pub mod discovered_options;
 pub mod discovery;
 pub mod extension_package_artifacts;
@@ -10,22 +10,23 @@ pub mod extension_runtime;
 pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
+pub mod lifecycle_agents;
+pub mod lifecycle_views;
 pub mod llm_providers;
 pub mod mcp_presets;
 pub mod me;
 pub mod permission_grants;
 pub mod project_agents;
 pub mod project_extensions;
-pub mod project_sessions;
 pub mod project_vfs_mounts;
 pub mod projects;
 pub mod routines;
+pub mod sessions;
 pub mod settings;
 pub mod shared_library;
 pub mod skill_assets;
 pub mod stories;
 pub mod story_runs;
-pub mod story_sessions;
 pub mod task_execution;
 pub mod terminals;
 pub mod vfs;
@@ -49,8 +50,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         project_repo: state.repos.project_repo.clone(),
         story_repo: state.repos.story_repo.clone(),
         workspace_repo: state.repos.workspace_repo.clone(),
-        workflow_definition_repo: state.repos.workflow_definition_repo.clone(),
-        activity_lifecycle_definition_repo: state.repos.activity_lifecycle_definition_repo.clone(),
+        agent_procedure_repo: state.repos.agent_procedure_repo.clone(),
+        workflow_graph_repo: state.repos.workflow_graph_repo.clone(),
         state_change_repo: state.repos.state_change_repo.clone(),
     });
     let mcp = McpRouterBuilder::new(mcp_services)
@@ -70,16 +71,17 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(llm_providers::router())
         .merge(project_agents::router())
         .merge(routines::router())
-        .merge(project_sessions::router())
         .merge(canvases::router())
+        .merge(companion_gates::router())
         .merge(mcp_presets::router())
         .merge(skill_assets::router())
         .merge(workspaces::router())
         .merge(backend_access::router())
         .merge(stories::router())
         .merge(story_runs::router())
-        .merge(story_sessions::router())
         .merge(task_execution::router())
+        .merge(lifecycle_agents::router())
+        .merge(lifecycle_views::router())
         .merge(workflows::router())
         .merge(backends::router())
         .merge(settings::router())
@@ -87,7 +89,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(extension_runtime::router())
         .merge(project_extensions::router())
         .merge(extension_package_artifacts::router())
-        .merge(acp_sessions::router())
+        .merge(sessions::router())
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
         .merge(vfs::router())
         .merge(vfs_surfaces::router())

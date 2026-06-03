@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/06-01-session-lifecycle-control-plane-refactor/prd.md", "reason": "验证本任务范围与验收标准是否保持精炼。"}
+{"file": ".trellis/tasks/06-01-session-lifecycle-control-plane-refactor/design.md", "reason": "验证存量结构清单、ownership 与迁移决策是否覆盖核心旧结构。"}
+{"file": ".trellis/tasks/06-01-session-lifecycle-control-plane-refactor/implement.md", "reason": "验证后续实现拆分是否避免本任务膨胀成全量重构。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "检查 Session demotion 决策是否与当前 session spec 冲突。"}
+{"file": ".trellis/spec/backend/workflow/lifecycle-run-link.md", "reason": "检查 LifecycleRunLink 演化方向是否完整覆盖 run / agent subject association。"}
+{"file": ".trellis/spec/backend/story-task-runtime.md", "reason": "检查 Task / Story 运行事实迁移是否避免保留 runtime ownership。"}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "检查前端 activity-state 观察契约是否不再依赖 session-first run index。"}

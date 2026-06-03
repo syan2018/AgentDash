@@ -1,15 +1,20 @@
 use std::sync::Arc;
 
 use agentdash_application::story::{
-    AgentBindingInput, CreateStoryInput, StoryMutationInput, TaskMutationInput,
-    apply_task_mutation, build_agent_binding, build_task, create_story_record, delete_story_record,
-    list_project_stories, update_story_record,
+    CreateStoryInput, StoryLifecycleLaunchCommand, StoryLifecycleLaunchResult,
+    StoryLifecycleLaunchService, StoryMutationInput, TaskDispatchPreferenceInput,
+    TaskMutationInput, apply_task_mutation, build_dispatch_preference, build_task,
+    create_story_record, delete_story_record, list_project_stories, update_story_record,
 };
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use uuid::Uuid;
 
 use agentdash_contracts::core::DeletedIdResponse;
+use agentdash_contracts::workflow::{
+    AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto, RuntimeSessionRefDto,
+    StoryLaunchResult, SubjectRefDto,
+};
 use agentdash_domain::story::ChangeKind;
 
 use crate::app_state::AppState;
@@ -54,6 +59,7 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
                 .put(update_story)
                 .delete(delete_story),
         )
+        .route("/stories/{id}/launch", axum::routing::post(launch_story))
         .route(
             "/stories/{id}/tasks",
             axum::routing::get(list_tasks).post(create_task),
@@ -230,6 +236,31 @@ pub async fn delete_story(
     Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
+pub async fn launch_story(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<StoryLaunchResult>, ApiError> {
+    let story_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
+    load_story_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        story_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let service = StoryLifecycleLaunchService {
+        repos: state.repos.clone(),
+    };
+    let result = service
+        .launch_story(StoryLifecycleLaunchCommand { story_id })
+        .await?;
+
+    Ok(Json(story_launch_result_to_dto(result)))
+}
+
 pub async fn list_tasks(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -301,16 +332,18 @@ pub async fn create_task(
         _ => None,
     };
 
-    let mut agent_binding = build_agent_binding(req.agent_binding.map(|value| AgentBindingInput {
-        agent_type: value.agent_type,
-        agent_pid: value.agent_pid,
-        preset_name: value.preset_name,
-        prompt_template: value.prompt_template,
-        initial_context: value.initial_context,
-        context_sources: value.context_sources,
+    let mut dispatch_preference = build_dispatch_preference(req.dispatch_preference.map(|value| {
+        TaskDispatchPreferenceInput {
+            agent_type: value.agent_type,
+            agent_pid: value.agent_pid,
+            preset_name: value.preset_name,
+            prompt_template: value.prompt_template,
+            initial_context: value.initial_context,
+            context_sources: value.context_sources,
+        }
     }));
 
-    if let Some(preset_name) = agent_binding.preset_name.clone() {
+    if let Some(preset_name) = dispatch_preference.preset_name.clone() {
         let preset = project
             .config
             .agent_presets
@@ -318,16 +351,16 @@ pub async fn create_task(
             .find(|p| p.name == preset_name)
             .ok_or_else(|| ApiError::BadRequest(format!("Project 中不存在预设: {preset_name}")))?;
 
-        if agent_binding.agent_type.is_none() {
-            agent_binding.agent_type = Some(preset.agent_type.clone());
+        if dispatch_preference.agent_type.is_none() {
+            dispatch_preference.agent_type = Some(preset.agent_type.clone());
         }
     }
 
-    if agent_binding.agent_type.is_none() {
-        agent_binding.agent_type = project.config.default_agent_type.clone();
+    if dispatch_preference.agent_type.is_none() {
+        dispatch_preference.agent_type = project.config.default_agent_type.clone();
     }
 
-    if agent_binding.agent_type.is_none() && agent_binding.preset_name.is_none() {
+    if dispatch_preference.agent_type.is_none() && dispatch_preference.preset_name.is_none() {
         return Err(ApiError::UnprocessableEntity(
             "请指定 Agent 类型或预设，或在 Project 配置中设置 default_agent_type".into(),
         ));
@@ -339,8 +372,7 @@ pub async fn create_task(
         title.to_string(),
         req.description.unwrap_or_default(),
         workspace_id,
-        normalize_optional_string(req.lifecycle_step_key),
-        agent_binding,
+        dispatch_preference,
     );
 
     // M1-b：task create 走 Story aggregate 命令路径；Postgres 实现在同一事务内
@@ -425,12 +457,8 @@ pub async fn update_task(
         None
     };
 
-    let lifecycle_step_key = req
-        .lifecycle_step_key
-        .map(|raw| normalize_optional_string(Some(raw)));
-
-    let agent_binding = req.agent_binding.map(|value| {
-        build_agent_binding(Some(AgentBindingInput {
+    let dispatch_preference = req.dispatch_preference.map(|value| {
+        build_dispatch_preference(Some(TaskDispatchPreferenceInput {
             agent_type: value.agent_type,
             agent_pid: value.agent_pid,
             preset_name: value.preset_name,
@@ -445,8 +473,7 @@ pub async fn update_task(
             title,
             description: req.description,
             workspace_id,
-            lifecycle_step_key,
-            agent_binding,
+            dispatch_preference,
         },
     );
 
@@ -460,8 +487,7 @@ pub async fn update_task(
         *view.title = task.title.clone();
         *view.description = task.description.clone();
         *view.workspace_id = task.workspace_id;
-        *view.lifecycle_step_key = task.lifecycle_step_key.clone();
-        *view.agent_binding = task.agent_binding.clone();
+        *view.dispatch_preference = task.dispatch_preference.clone();
     });
     if updated_spec.is_none() {
         return Err(ApiError::NotFound(format!(
@@ -512,15 +538,33 @@ pub async fn delete_task(
     Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
-fn normalize_optional_string(value: Option<String>) -> Option<String> {
-    value.and_then(|raw| {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
+fn story_launch_result_to_dto(result: StoryLifecycleLaunchResult) -> StoryLaunchResult {
+    StoryLaunchResult {
+        created: true,
+        story_id: result.story_id.to_string(),
+        project_agent_id: result.project_agent_id.to_string(),
+        run_ref: LifecycleRunRefDto {
+            run_id: result.runtime_refs.run_ref.to_string(),
+        },
+        agent_ref: LifecycleAgentRefDto {
+            run_id: result.runtime_refs.run_ref.to_string(),
+            agent_id: result.runtime_refs.agent_ref.to_string(),
+        },
+        frame_ref: AgentFrameRefDto {
+            agent_id: result.runtime_refs.agent_ref.to_string(),
+            frame_id: result.runtime_refs.frame_ref.to_string(),
+            revision: None,
+        },
+        delivery_runtime_ref: result.delivery_runtime_ref.map(|runtime_session_id| {
+            RuntimeSessionRefDto {
+                runtime_session_id: runtime_session_id.to_string(),
+            }
+        }),
+        subject_ref: SubjectRefDto {
+            kind: result.subject_ref.kind,
+            id: result.subject_ref.id.to_string(),
+        },
+    }
 }
 
 async fn append_required_story_change(

@@ -30,13 +30,13 @@ use uuid::Uuid;
 
 pub use crate::connector::SetDelta;
 
-/// Session 的 run-derived 业务上下文（由 LifecycleRunLink 投影得出）。
+/// Session 的 run-derived 业务上下文。
 ///
-/// 替代旧的 `HookOwnerSummary`（基于 SessionBinding 反查）。
-/// 通过 `LifecycleRun.session_id -> run -> links -> subjects` 路径获取。
+/// Hook runtime 只消费由 LifecycleSubjectAssociation、LifecycleAgent 与
+/// AgentFrame 投影出的业务上下文，RuntimeSession id 仅作为 trace key。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct SessionRunContext {
+pub struct SubjectRunContext {
     pub project_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub story_id: Option<Uuid>,
@@ -80,10 +80,11 @@ pub struct HookDiagnosticEntry {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub struct SessionHookSnapshot {
-    pub session_id: String,
+pub struct AgentFrameHookSnapshot {
+    #[serde(alias = "session_id")]
+    pub runtime_adapter_session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_context: Option<SessionRunContext>,
+    pub run_context: Option<SubjectRunContext>,
     /// 溯源标签集（如 `["builtin:runtime_trace", "workflow:trellis_dev_task:implement"]`）
     #[serde(default)]
     pub sources: Vec<String>,
@@ -121,8 +122,12 @@ pub struct SessionSnapshotMetadata {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ActiveWorkflowMeta {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lifecycle_id: Option<Uuid>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "lifecycle_id"
+    )]
+    pub workflow_graph_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -132,13 +137,13 @@ pub struct ActiveWorkflowMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_status: Option<LifecycleRunStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step_key: Option<String>,
+    pub activity_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step_title: Option<String>,
+    pub activity_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition_policy: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow_key: Option<String>,
+    pub procedure_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_workflow_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -146,11 +151,11 @@ pub struct ActiveWorkflowMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_contract: Option<EffectiveSessionContract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step_status: Option<String>,
+    pub activity_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_type: Option<String>,
 
-    /// 当前 node 的 output port key 列表（来自 WorkflowContract）
+    /// 当前 node 的 output port key 列表（来自 AgentProcedureContract）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_port_keys: Option<Vec<String>>,
     /// 当前 lifecycle run 中已写入的 port output key 列表
@@ -163,10 +168,11 @@ pub struct ActiveWorkflowMeta {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub struct HookSessionRuntimeSnapshot {
-    pub session_id: String,
+pub struct AgentFrameRuntimeSnapshot {
+    #[serde(alias = "session_id")]
+    pub runtime_adapter_session_id: String,
     pub revision: u64,
-    pub snapshot: SessionHookSnapshot,
+    pub snapshot: AgentFrameHookSnapshot,
     #[serde(default)]
     pub diagnostics: Vec<HookDiagnosticEntry>,
     #[serde(default)]
@@ -458,25 +464,29 @@ impl HookPendingAction {
     }
 }
 
-/// Hook Session 运行时的接口 — 用于 executor/connector 层通过 trait object 访问。
-/// 具体实现（`HookSessionRuntime`）位于 application 层。
+/// Hook 运行时的接口 — 用于 executor/connector 层通过 trait object 访问。
+/// 具体实现（`AgentFrameHookRuntime`）位于 application 层。
 #[async_trait]
-pub trait HookSessionRuntimeAccess: Send + Sync + std::fmt::Debug {
+pub trait HookRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn session_id(&self) -> &str;
-    fn snapshot(&self) -> SessionHookSnapshot;
+    fn control_target(&self) -> HookControlTarget;
+    fn snapshot(&self) -> AgentFrameHookSnapshot;
     fn diagnostics(&self) -> Vec<HookDiagnosticEntry>;
     fn revision(&self) -> u64;
     fn trace(&self) -> Vec<HookTraceEntry>;
     fn pending_actions(&self) -> Vec<HookPendingAction>;
-    fn runtime_snapshot(&self) -> HookSessionRuntimeSnapshot;
+    fn runtime_snapshot(&self) -> AgentFrameRuntimeSnapshot;
 
-    async fn refresh(
+    async fn refresh_from_provenance(
         &self,
-        query: SessionHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, HookError>;
-    async fn evaluate(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError>;
+        query: HookRuntimeRefreshQuery,
+    ) -> Result<AgentFrameHookSnapshot, HookError>;
+    async fn evaluate_from_provenance(
+        &self,
+        query: HookRuntimeEvaluationQuery,
+    ) -> Result<HookResolution, HookError>;
 
-    fn replace_snapshot(&self, snapshot: SessionHookSnapshot);
+    fn replace_snapshot(&self, snapshot: AgentFrameHookSnapshot);
     fn append_diagnostics_vec(&self, entries: Vec<HookDiagnosticEntry>);
     fn append_trace(&self, trace: HookTraceEntry);
     fn next_trace_sequence(&self) -> u64;
@@ -531,24 +541,103 @@ pub trait HookSessionRuntimeAccess: Send + Sync + std::fmt::Debug {
     }
 }
 
-pub type SharedHookSessionRuntime = Arc<dyn HookSessionRuntimeAccess>;
+pub type SharedHookRuntime = Arc<dyn HookRuntimeAccess>;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct SessionHookSnapshotQuery {
-    pub session_id: String,
-    #[serde(default)]
-    pub turn_id: Option<String>,
+pub struct HookControlTarget {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub frame_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignment_id: Option<Uuid>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct SessionHookRefreshQuery {
-    pub session_id: String,
-    #[serde(default)]
+pub struct RuntimeAdapterProvenance {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
+    pub source: String,
+}
+
+impl RuntimeAdapterProvenance {
+    pub fn runtime_session(
+        runtime_session_id: impl Into<String>,
+        turn_id: Option<String>,
+        source: impl Into<String>,
+    ) -> Self {
+        Self {
+            runtime_session_id: Some(runtime_session_id.into()),
+            turn_id,
+            source: source.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentFrameHookSnapshotQuery {
+    pub target: HookControlTarget,
+    pub provenance: RuntimeAdapterProvenance,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentFrameHookRefreshQuery {
+    pub target: HookControlTarget,
+    pub provenance: RuntimeAdapterProvenance,
     #[serde(default)]
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentFrameHookEvaluationQuery {
+    pub target: HookControlTarget,
+    pub provenance: RuntimeAdapterProvenance,
+    pub trigger: HookTrigger,
+    #[serde(default)]
+    pub tool_name: Option<String>,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub subagent_type: Option<String>,
+    #[serde(default)]
+    pub snapshot: Option<AgentFrameHookSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_stats: Option<ContextTokenStats>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookRuntimeRefreshQuery {
+    pub provenance: RuntimeAdapterProvenance,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookRuntimeEvaluationQuery {
+    pub provenance: RuntimeAdapterProvenance,
+    pub trigger: HookTrigger,
+    #[serde(default)]
+    pub tool_name: Option<String>,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub subagent_type: Option<String>,
+    #[serde(default)]
+    pub snapshot: Option<AgentFrameHookSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_stats: Option<ContextTokenStats>,
 }
 
 /// Hook trace 触发点：只用于 Agent 核心生命周期的可见追踪。
@@ -653,7 +742,7 @@ pub struct HookEvaluationQuery {
     #[serde(default)]
     pub subagent_type: Option<String>,
     #[serde(default)]
-    pub snapshot: Option<SessionHookSnapshot>,
+    pub snapshot: Option<AgentFrameHookSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
     /// 实时 token 统计（由 runtime 自动注入）
@@ -681,13 +770,13 @@ pub struct HookResolution {
     pub approval_request: Option<HookApprovalRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_reason: Option<String>,
-    /// Step advancement signal. When set, `HookSessionRuntime::evaluate`
+    /// Step advancement signal. When set, `AgentFrameHookRuntime::evaluate`
     /// delegates to `provider.advance_workflow_step()` in a post-evaluate
     /// step and updates `completion.advanced` accordingly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_advance: Option<HookStepAdvanceRequest>,
     /// Execution log entries collected during this evaluation cycle.
-    /// Flushed to `LifecycleRun.execution_log` by `HookSessionRuntime`
+    /// Flushed to `LifecycleRun.execution_log` by `AgentFrameHookRuntime`
     /// post-evaluate, via `provider.append_execution_log()`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_execution_log: Vec<PendingExecutionLogEntry>,
@@ -726,7 +815,7 @@ pub struct HookEffect {
 }
 
 /// Agent loop 的实时 token 统计。
-/// 由 HookSessionRuntime 维护，自动注入到每次 hook 评估的 query 中。
+/// 由 AgentFrameHookRuntime 维护，自动注入到每次 hook 评估的 query 中。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct ContextTokenStats {
@@ -790,13 +879,13 @@ pub struct HookCompletionStatus {
 
 /// Request payload for the post-evaluate step advancement bridge.
 /// Produced by `evaluate_hook` when completion conditions are met, consumed by
-/// `HookSessionRuntime::evaluate` which delegates to
+/// `AgentFrameHookRuntime::evaluate` which delegates to
 /// `ExecutionHookProvider::advance_workflow_step`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct HookStepAdvanceRequest {
     pub run_id: String,
-    pub step_key: String,
+    pub activity_key: String,
     pub completion_mode: String,
     pub summary: Option<String>,
     pub record_artifacts: Vec<serde_json::Value>,
@@ -837,7 +926,7 @@ pub struct HookTraceEntry {
 #[serde(rename_all = "snake_case")]
 pub struct PendingExecutionLogEntry {
     pub run_id: String,
-    pub step_key: String,
+    pub activity_key: String,
     pub event_kind: String,
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -852,19 +941,30 @@ pub enum HookError {
 
 #[async_trait]
 pub trait ExecutionHookProvider: Send + Sync {
-    async fn load_session_snapshot(
+    async fn resolve_runtime_hook_target(
         &self,
-        query: SessionHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, HookError>;
+        runtime_session_id: &str,
+    ) -> Result<Option<HookControlTarget>, HookError> {
+        let _ = runtime_session_id;
+        Ok(None)
+    }
 
-    async fn refresh_session_snapshot(
+    async fn load_frame_snapshot(
         &self,
-        query: SessionHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, HookError>;
+        query: AgentFrameHookSnapshotQuery,
+    ) -> Result<AgentFrameHookSnapshot, HookError>;
 
-    async fn evaluate_hook(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError>;
+    async fn refresh_frame_snapshot(
+        &self,
+        query: AgentFrameHookRefreshQuery,
+    ) -> Result<AgentFrameHookSnapshot, HookError>;
 
-    /// Execute the actual step advancement. Called by `HookSessionRuntime`
+    async fn evaluate_frame_hook(
+        &self,
+        query: AgentFrameHookEvaluationQuery,
+    ) -> Result<HookResolution, HookError>;
+
+    /// Execute the actual step advancement. Called by `AgentFrameHookRuntime`
     /// post-evaluate when the resolution carries a `pending_advance` signal.
     async fn advance_workflow_step(
         &self,
@@ -875,7 +975,7 @@ pub trait ExecutionHookProvider: Send + Sync {
     }
 
     /// Batch-flush execution log entries to `LifecycleRun.execution_log`.
-    /// Called by `HookSessionRuntime` post-evaluate when the resolution
+    /// Called by `AgentFrameHookRuntime` post-evaluate when the resolution
     /// carries non-empty `pending_execution_log`.
     async fn append_execution_log(
         &self,
@@ -891,29 +991,30 @@ pub struct NoopExecutionHookProvider;
 
 #[async_trait]
 impl ExecutionHookProvider for NoopExecutionHookProvider {
-    async fn load_session_snapshot(
+    async fn load_frame_snapshot(
         &self,
-        query: SessionHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, HookError> {
-        Ok(SessionHookSnapshot {
-            session_id: query.session_id,
-            ..SessionHookSnapshot::default()
+        query: AgentFrameHookSnapshotQuery,
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
+        Ok(AgentFrameHookSnapshot {
+            runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+            ..AgentFrameHookSnapshot::default()
         })
     }
 
-    async fn refresh_session_snapshot(
+    async fn refresh_frame_snapshot(
         &self,
-        query: SessionHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, HookError> {
-        Ok(SessionHookSnapshot {
-            session_id: query.session_id,
-            ..SessionHookSnapshot::default()
+        query: AgentFrameHookRefreshQuery,
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
+        self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+            target: query.target,
+            provenance: query.provenance,
         })
+        .await
     }
 
-    async fn evaluate_hook(
+    async fn evaluate_frame_hook(
         &self,
-        _query: HookEvaluationQuery,
+        _query: AgentFrameHookEvaluationQuery,
     ) -> Result<HookResolution, HookError> {
         Ok(HookResolution::default())
     }
@@ -925,7 +1026,7 @@ mod run_context_tests {
 
     #[test]
     fn session_run_context_serde_roundtrip() {
-        let ctx = SessionRunContext {
+        let ctx = SubjectRunContext {
             project_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap(),
             story_id: Some(Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap()),
             task_id: Some(Uuid::parse_str("44444444-4444-4444-4444-444444444444").unwrap()),
@@ -934,13 +1035,13 @@ mod run_context_tests {
             scope: CapabilityScope::Task,
         };
         let json = serde_json::to_string(&ctx).unwrap();
-        let decoded: SessionRunContext = serde_json::from_str(&json).unwrap();
+        let decoded: SubjectRunContext = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, ctx);
     }
 
     #[test]
     fn session_run_context_scope_serializes_as_snake_case() {
-        let ctx = SessionRunContext {
+        let ctx = SubjectRunContext {
             project_id: Uuid::nil(),
             scope: CapabilityScope::Story,
             ..Default::default()
@@ -951,7 +1052,7 @@ mod run_context_tests {
 
     #[test]
     fn session_hook_snapshot_default_has_no_run_context() {
-        let snapshot = SessionHookSnapshot::default();
+        let snapshot = AgentFrameHookSnapshot::default();
         assert!(snapshot.run_context.is_none());
     }
 }

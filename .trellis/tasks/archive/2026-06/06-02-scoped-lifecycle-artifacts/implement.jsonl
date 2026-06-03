@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "Artifact contract and Activity output policy"}
+{"file": ".trellis/spec/backend/workflow/lifecycle-edge.md", "reason": "Artifact edge and binding semantics"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Lifecycle VFS mount injection path"}

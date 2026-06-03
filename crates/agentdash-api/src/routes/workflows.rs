@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use axum::{
     Json,
@@ -13,27 +10,25 @@ use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
     ActivityEvent, ActivityLifecycleCatalogService, ActivityLifecycleRunService,
     AgentActivityExecutorLauncher, AgentActivityLaunchContext, AgentActivityRuntimePort,
-    StartActivityLifecycleRunCommand,
+    LifecycleDispatchService,
 };
 use agentdash_contracts::workflow::{
-    DeleteActivityLifecycleDefinitionResponse, DeleteHookPresetResponse,
-    DeleteWorkflowDefinitionResponse, HookPresetResponse, HookPresetsResponse,
-    RegisterHookPresetResponse, ValidateHookScriptResponse,
+    DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
+    HookPresetResponse, HookPresetsResponse, RegisterHookPresetResponse,
+    ValidateHookScriptResponse,
 };
 use agentdash_domain::workflow::{
-    ActivityExecutorSpec, ActivityLifecycleDefinition, LifecycleRun, ValidationIssue,
-    ValidationSeverity, WorkflowDefinition, WorkflowDefinitionSource,
-    normalize_workflow_binding_kinds, workflow_binding_kinds_cover,
+    ActivityExecutorSpec, AgentProcedure, DefinitionSource, ExecutionSource, LifecycleRun,
+    LifecycleRunStartIntent, ValidationIssue, ValidationSeverity, WorkflowGraph, WorkflowGraphRef,
 };
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    CreateActivityLifecycleDefinitionRequest, CreateWorkflowDefinitionRequest, ListWorkflowsQuery,
+    CreateAgentProcedureRequest, CreateWorkflowGraphRequest, ListWorkflowsQuery,
     RegisterPresetRequest, StartWorkflowRunRequest, SubmitHumanDecisionRequest, ToolCatalogQuery,
-    UpdateActivityLifecycleDefinitionRequest, UpdateWorkflowDefinitionRequest,
-    ValidateActivityLifecycleDefinitionRequest, ValidateScriptRequest,
-    ValidateWorkflowDefinitionRequest, WorkflowValidationResponse,
+    UpdateAgentProcedureRequest, UpdateWorkflowGraphRequest, ValidateAgentProcedureRequest,
+    ValidateScriptRequest, ValidateWorkflowGraphRequest, WorkflowValidationResponse,
 };
 use crate::rpc::ApiError;
 use agentdash_application::session::context::normalize_string;
@@ -42,7 +37,7 @@ pub async fn list_workflows(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Query(query): Query<ListWorkflowsQuery>,
-) -> Result<Json<Vec<WorkflowDefinition>>, ApiError> {
+) -> Result<Json<Vec<AgentProcedure>>, ApiError> {
     let project_id = parse_project_id_query(query.project_id.as_deref())?;
     load_project_with_permission(
         state.as_ref(),
@@ -51,46 +46,43 @@ pub async fn list_workflows(
         ProjectPermission::View,
     )
     .await?;
-    let mut definitions = state
+    let definitions = state
         .repos
-        .workflow_definition_repo
+        .agent_procedure_repo
         .list_by_project(project_id)
         .await?;
-    if let Some(binding_kind) = query.binding_kind {
-        definitions.retain(|definition| definition.binding_kinds.contains(&binding_kind));
-    }
     Ok(Json(definitions))
 }
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
     axum::Router::new()
         .route(
-            "/workflow-definitions",
-            axum::routing::get(list_workflows).post(create_workflow_definition),
+            "/agent-procedures",
+            axum::routing::get(list_workflows).post(create_agent_procedure),
         )
         .route(
-            "/activity-lifecycle-definitions",
-            axum::routing::get(list_activity_lifecycles).post(create_activity_lifecycle_definition),
+            "/workflow-graphs",
+            axum::routing::get(list_activity_lifecycles).post(create_workflow_graph),
         )
         .route(
-            "/workflow-definitions/validate",
-            axum::routing::post(validate_workflow_definition),
+            "/agent-procedures/validate",
+            axum::routing::post(validate_agent_procedure),
         )
         .route(
-            "/activity-lifecycle-definitions/validate",
-            axum::routing::post(validate_activity_lifecycle_definition),
+            "/workflow-graphs/validate",
+            axum::routing::post(validate_workflow_graph),
         )
         .route(
-            "/workflow-definitions/{id}",
-            axum::routing::get(get_workflow_definition)
-                .put(update_workflow_definition)
-                .delete(delete_workflow_definition),
+            "/agent-procedures/{id}",
+            axum::routing::get(get_agent_procedure)
+                .put(update_agent_procedure)
+                .delete(delete_agent_procedure),
         )
         .route(
-            "/activity-lifecycle-definitions/{id}",
-            axum::routing::get(get_activity_lifecycle_definition)
-                .put(update_activity_lifecycle_definition)
-                .delete(delete_activity_lifecycle_definition),
+            "/workflow-graphs/{id}",
+            axum::routing::get(get_workflow_graph)
+                .put(update_workflow_graph)
+                .delete(delete_workflow_graph),
         )
         .route("/tool-catalog", axum::routing::get(query_tool_catalog))
         .route("/hook-presets", axum::routing::get(list_hook_presets))
@@ -112,11 +104,7 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::get(get_lifecycle_run),
         )
         .route(
-            "/lifecycle-runs/by-session/{session_id}",
-            axum::routing::get(list_lifecycle_runs_by_session),
-        )
-        .route(
-            "/lifecycle-runs/{id}/activities/{activity_key}/attempts/{attempt}/human-decision",
+            "/lifecycle-runs/{run_id}/graph-instances/{graph_instance_id}/activities/{activity_key}/attempts/{attempt}/human-decision",
             axum::routing::post(submit_human_decision),
         )
 }
@@ -125,7 +113,7 @@ pub async fn list_activity_lifecycles(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Query(query): Query<ListWorkflowsQuery>,
-) -> Result<Json<Vec<ActivityLifecycleDefinition>>, ApiError> {
+) -> Result<Json<Vec<WorkflowGraph>>, ApiError> {
     let project_id = parse_project_id_query(query.project_id.as_deref())?;
     load_project_with_permission(
         state.as_ref(),
@@ -134,22 +122,19 @@ pub async fn list_activity_lifecycles(
         ProjectPermission::View,
     )
     .await?;
-    let mut definitions = state
+    let definitions = state
         .repos
-        .activity_lifecycle_definition_repo
+        .workflow_graph_repo
         .list_by_project(project_id)
         .await?;
-    if let Some(binding_kind) = query.binding_kind {
-        definitions.retain(|definition| definition.binding_kinds.contains(&binding_kind));
-    }
     Ok(Json(definitions))
 }
 
-pub async fn create_activity_lifecycle_definition(
+pub async fn create_workflow_graph(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Json(req): Json<CreateActivityLifecycleDefinitionRequest>,
-) -> Result<Json<ActivityLifecycleDefinition>, ApiError> {
+    Json(req): Json<CreateWorkflowGraphRequest>,
+) -> Result<Json<WorkflowGraph>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
     load_project_with_permission(
         state.as_ref(),
@@ -158,40 +143,37 @@ pub async fn create_activity_lifecycle_definition(
         ProjectPermission::Edit,
     )
     .await?;
-    let definition = ActivityLifecycleDefinition::new(
+    let definition = WorkflowGraph::new(
         project_id,
         req.key,
         req.name,
         req.description,
-        req.binding_kinds,
-        WorkflowDefinitionSource::UserAuthored,
+        DefinitionSource::UserAuthored,
         req.entry_activity_key,
         req.activities,
         req.transitions,
     )
     .map_err(ApiError::BadRequest)?;
     let service = ActivityLifecycleCatalogService::new(
-        state.repos.workflow_definition_repo.as_ref(),
-        state.repos.activity_lifecycle_definition_repo.as_ref(),
+        state.repos.agent_procedure_repo.as_ref(),
+        state.repos.workflow_graph_repo.as_ref(),
     );
-    let saved = service
-        .upsert_activity_lifecycle_definition(definition)
-        .await?;
+    let saved = service.upsert_workflow_graph(definition).await?;
     Ok(Json(saved))
 }
 
-pub async fn get_activity_lifecycle_definition(
+pub async fn get_workflow_graph(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<ActivityLifecycleDefinition>, ApiError> {
+) -> Result<Json<WorkflowGraph>, ApiError> {
     let id = parse_uuid(&id, "activity_lifecycle_id")?;
     let definition = state
         .repos
-        .activity_lifecycle_definition_repo
+        .workflow_graph_repo
         .get_by_id(id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("activity_lifecycle_definition 不存在: {id}")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("workflow_graph 不存在: {id}")))?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -202,19 +184,19 @@ pub async fn get_activity_lifecycle_definition(
     Ok(Json(definition))
 }
 
-pub async fn update_activity_lifecycle_definition(
+pub async fn update_workflow_graph(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-    Json(req): Json<UpdateActivityLifecycleDefinitionRequest>,
-) -> Result<Json<ActivityLifecycleDefinition>, ApiError> {
+    Json(req): Json<UpdateWorkflowGraphRequest>,
+) -> Result<Json<WorkflowGraph>, ApiError> {
     let id = parse_uuid(&id, "activity_lifecycle_id")?;
     let mut definition = state
         .repos
-        .activity_lifecycle_definition_repo
+        .workflow_graph_repo
         .get_by_id(id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("activity_lifecycle_definition 不存在: {id}")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("workflow_graph 不存在: {id}")))?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -228,10 +210,6 @@ pub async fn update_activity_lifecycle_definition(
     if let Some(description) = req.description {
         definition.description = description;
     }
-    if let Some(binding_kinds) = req.binding_kinds {
-        definition.binding_kinds =
-            normalize_workflow_binding_kinds(binding_kinds).map_err(ApiError::BadRequest)?;
-    }
     if let Some(entry_activity_key) = req.entry_activity_key {
         definition.entry_activity_key = entry_activity_key;
     }
@@ -242,19 +220,17 @@ pub async fn update_activity_lifecycle_definition(
         definition.transitions = transitions;
     }
     let service = ActivityLifecycleCatalogService::new(
-        state.repos.workflow_definition_repo.as_ref(),
-        state.repos.activity_lifecycle_definition_repo.as_ref(),
+        state.repos.agent_procedure_repo.as_ref(),
+        state.repos.workflow_graph_repo.as_ref(),
     );
-    let saved = service
-        .upsert_activity_lifecycle_definition(definition)
-        .await?;
+    let saved = service.upsert_workflow_graph(definition).await?;
     Ok(Json(saved))
 }
 
-pub async fn validate_activity_lifecycle_definition(
+pub async fn validate_workflow_graph(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Json(req): Json<ValidateActivityLifecycleDefinitionRequest>,
+    Json(req): Json<ValidateWorkflowGraphRequest>,
 ) -> Result<Json<WorkflowValidationResponse>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
     load_project_with_permission(
@@ -264,25 +240,22 @@ pub async fn validate_activity_lifecycle_definition(
         ProjectPermission::View,
     )
     .await?;
-    match ActivityLifecycleDefinition::new(
+    match WorkflowGraph::new(
         project_id,
         req.key,
         req.name,
         req.description,
-        req.binding_kinds,
-        WorkflowDefinitionSource::UserAuthored,
+        DefinitionSource::UserAuthored,
         req.entry_activity_key,
         req.activities,
         req.transitions,
     ) {
         Ok(definition) => {
             let service = ActivityLifecycleCatalogService::new(
-                state.repos.workflow_definition_repo.as_ref(),
-                state.repos.activity_lifecycle_definition_repo.as_ref(),
+                state.repos.agent_procedure_repo.as_ref(),
+                state.repos.workflow_graph_repo.as_ref(),
             );
-            let issues = service
-                .validate_activity_lifecycle_definition(&definition)
-                .await?;
+            let issues = service.validate_workflow_graph(&definition).await?;
             Ok(Json(WorkflowValidationResponse {
                 valid: !issues
                     .iter()
@@ -301,18 +274,18 @@ pub async fn validate_activity_lifecycle_definition(
     }
 }
 
-pub async fn delete_activity_lifecycle_definition(
+pub async fn delete_workflow_graph(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<DeleteActivityLifecycleDefinitionResponse>, ApiError> {
+) -> Result<Json<DeleteWorkflowGraphResponse>, ApiError> {
     let id = parse_uuid(&id, "activity_lifecycle_id")?;
     let definition = state
         .repos
-        .activity_lifecycle_definition_repo
+        .workflow_graph_repo
         .get_by_id(id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("activity_lifecycle_definition 不存在: {id}")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("workflow_graph 不存在: {id}")))?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -320,14 +293,8 @@ pub async fn delete_activity_lifecycle_definition(
         ProjectPermission::Edit,
     )
     .await?;
-    state
-        .repos
-        .activity_lifecycle_definition_repo
-        .delete(id)
-        .await?;
-    Ok(Json(DeleteActivityLifecycleDefinitionResponse {
-        deleted: true,
-    }))
+    state.repos.workflow_graph_repo.delete(id).await?;
+    Ok(Json(DeleteWorkflowGraphResponse { deleted: true }))
 }
 
 pub async fn start_lifecycle_run(
@@ -343,25 +310,46 @@ pub async fn start_lifecycle_run(
         ProjectPermission::Edit,
     )
     .await?;
-    let service = ActivityLifecycleRunService::new(
-        state.repos.activity_lifecycle_definition_repo.as_ref(),
+    let workflow_graph_ref = workflow_graph_ref_from_start_request(project_id, &req)?;
+    let dispatch_service = LifecycleDispatchService::new(
         state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.activity_execution_claim_repo.as_ref(),
-    );
-    let run = service
-        .start_run(StartActivityLifecycleRunCommand {
+        state.repos.workflow_graph_repo.as_ref(),
+        state.repos.workflow_graph_instance_repo.as_ref(),
+        state.repos.lifecycle_agent_repo.as_ref(),
+        state.repos.agent_frame_repo.as_ref(),
+        state.repos.agent_assignment_repo.as_ref(),
+        state.repos.lifecycle_subject_association_repo.as_ref(),
+        state.repos.lifecycle_gate_repo.as_ref(),
+        state.repos.agent_lineage_repo.as_ref(),
+    )
+    .with_anchor_repo(state.repos.execution_anchor_repo.as_ref())
+    .with_runtime_session_creator(state.repos.runtime_session_creator.as_ref());
+    let dispatch_result = dispatch_service
+        .start_lifecycle_run(&LifecycleRunStartIntent {
             project_id,
-            lifecycle_id: parse_optional_uuid(req.lifecycle_id.as_deref(), "lifecycle_id")?,
-            lifecycle_key: req.lifecycle_key.and_then(normalize_string),
-            session_id: req.session_id,
+            source: ExecutionSource::Api,
+            workflow_graph_ref,
         })
         .await?;
+    let service = ActivityLifecycleRunService::new(
+        state.repos.workflow_graph_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.workflow_graph_instance_repo.as_ref(),
+        state.repos.activity_execution_claim_repo.as_ref(),
+    );
+    let run = state
+        .repos
+        .lifecycle_run_repo
+        .get_by_id(dispatch_result.run_ref)
+        .await?
+        .ok_or_else(|| {
+            ApiError::Internal(format!(
+                "Lifecycle dispatch 未持久化 run {}",
+                dispatch_result.run_ref
+            ))
+        })?;
     let launcher = AgentActivityExecutorLauncher::new(
-        AgentActivityLaunchContext {
-            project_id: run.project_id,
-            lifecycle_key: String::new(),
-            root_session_id: run.session_id.clone().unwrap_or_default(),
-        },
+        AgentActivityLaunchContext::detached(run.project_id, String::new()),
         AgentActivityRuntimePort::new(
             state.services.session_core.clone(),
             state.services.session_launch.clone(),
@@ -374,7 +362,9 @@ pub async fn start_lifecycle_run(
             state.config.platform_config.clone(),
         ),
     );
-    service.launch_ready_attempts(run.id, &launcher).await?;
+    service
+        .launch_ready_attempts(dispatch_result.graph_instance_ref, &launcher)
+        .await?;
 
     let latest_run = state
         .repos
@@ -402,39 +392,14 @@ pub async fn get_lifecycle_run(
     Ok(Json(run))
 }
 
-/// 按 session_id 查询关联的 lifecycle runs。
-pub async fn list_lifecycle_runs_by_session(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-) -> Result<Json<Vec<LifecycleRun>>, ApiError> {
-    let runs = state
-        .repos
-        .lifecycle_run_repo
-        .list_by_session(&session_id)
-        .await?;
-    let mut checked_projects = HashSet::new();
-    for run in &runs {
-        if checked_projects.insert(run.project_id) {
-            load_project_with_permission(
-                state.as_ref(),
-                &current_user,
-                run.project_id,
-                ProjectPermission::View,
-            )
-            .await?;
-        }
-    }
-    Ok(Json(runs))
-}
-
 pub async fn submit_human_decision(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path((run_id, activity_key, attempt)): Path<(String, String, u32)>,
+    Path((run_id, graph_instance_id, activity_key, attempt)): Path<(String, String, String, u32)>,
     Json(req): Json<SubmitHumanDecisionRequest>,
 ) -> Result<Json<LifecycleRun>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
+    let graph_instance_id = parse_uuid(&graph_instance_id, "graph_instance_id")?;
     let existing_run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
         state.as_ref(),
@@ -443,14 +408,25 @@ pub async fn submit_human_decision(
         ProjectPermission::Edit,
     )
     .await?;
+    state
+        .repos
+        .workflow_graph_instance_repo
+        .get_by_run_and_id(run_id, graph_instance_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "workflow_graph_instance 不存在: {graph_instance_id}"
+            ))
+        })?;
     let service = ActivityLifecycleRunService::new(
-        state.repos.activity_lifecycle_definition_repo.as_ref(),
+        state.repos.workflow_graph_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.workflow_graph_instance_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
     );
-    let run = service
+    let update = service
         .apply_event(
-            run_id,
+            graph_instance_id,
             ActivityEvent::HumanDecisionSubmitted {
                 activity_key,
                 attempt,
@@ -460,12 +436,9 @@ pub async fn submit_human_decision(
             },
         )
         .await?;
+    let run = update.run;
     let launcher = AgentActivityExecutorLauncher::new(
-        AgentActivityLaunchContext {
-            project_id: run.project_id,
-            lifecycle_key: String::new(),
-            root_session_id: run.session_id.clone().unwrap_or_default(),
-        },
+        AgentActivityLaunchContext::detached(run.project_id, String::new()),
         AgentActivityRuntimePort::new(
             state.services.session_core.clone(),
             state.services.session_launch.clone(),
@@ -478,7 +451,9 @@ pub async fn submit_human_decision(
             state.config.platform_config.clone(),
         ),
     );
-    service.launch_ready_attempts(run.id, &launcher).await?;
+    service
+        .launch_ready_attempts(update.graph_instance.id, &launcher)
+        .await?;
     let latest_run = state
         .repos
         .lifecycle_run_repo
@@ -488,11 +463,11 @@ pub async fn submit_human_decision(
     Ok(Json(latest_run))
 }
 
-pub async fn create_workflow_definition(
+pub async fn create_agent_procedure(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Json(req): Json<CreateWorkflowDefinitionRequest>,
-) -> Result<Json<WorkflowDefinition>, ApiError> {
+    Json(req): Json<CreateAgentProcedureRequest>,
+) -> Result<Json<AgentProcedure>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
     load_project_with_permission(
         state.as_ref(),
@@ -501,32 +476,31 @@ pub async fn create_workflow_definition(
         ProjectPermission::Edit,
     )
     .await?;
-    let definition = WorkflowDefinition::new(
+    let definition = AgentProcedure::new(
         project_id,
         req.key,
         req.name,
         req.description,
-        req.binding_kinds,
-        WorkflowDefinitionSource::UserAuthored,
+        DefinitionSource::UserAuthored,
         req.contract,
     )
     .map_err(ApiError::BadRequest)?;
-    let saved = upsert_workflow_definition(state.as_ref(), definition).await?;
+    let saved = upsert_agent_procedure(state.as_ref(), definition).await?;
     Ok(Json(saved))
 }
 
-pub async fn get_workflow_definition(
+pub async fn get_agent_procedure(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<WorkflowDefinition>, ApiError> {
+) -> Result<Json<AgentProcedure>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
     let definition = state
         .repos
-        .workflow_definition_repo
+        .agent_procedure_repo
         .get_by_id(id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("workflow_definition 不存在: {id}")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("agent_procedure 不存在: {id}")))?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -537,19 +511,19 @@ pub async fn get_workflow_definition(
     Ok(Json(definition))
 }
 
-pub async fn update_workflow_definition(
+pub async fn update_agent_procedure(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-    Json(req): Json<UpdateWorkflowDefinitionRequest>,
-) -> Result<Json<WorkflowDefinition>, ApiError> {
+    Json(req): Json<UpdateAgentProcedureRequest>,
+) -> Result<Json<AgentProcedure>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
     let mut definition = state
         .repos
-        .workflow_definition_repo
+        .agent_procedure_repo
         .get_by_id(id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("workflow_definition 不存在: {id}")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("agent_procedure 不存在: {id}")))?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -562,10 +536,6 @@ pub async fn update_workflow_definition(
     }
     if let Some(description) = req.description {
         definition.description = description;
-    }
-    if let Some(binding_kinds) = req.binding_kinds {
-        definition.binding_kinds =
-            normalize_workflow_binding_kinds(binding_kinds).map_err(ApiError::BadRequest)?;
     }
     if let Some(contract) = req.contract {
         definition.contract = contract;
@@ -585,14 +555,14 @@ pub async fn update_workflow_definition(
                 .join("; ")
         )));
     }
-    let saved = upsert_workflow_definition(state.as_ref(), definition).await?;
+    let saved = upsert_agent_procedure(state.as_ref(), definition).await?;
     Ok(Json(saved))
 }
 
-pub async fn validate_workflow_definition(
+pub async fn validate_agent_procedure(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Json(req): Json<ValidateWorkflowDefinitionRequest>,
+    Json(req): Json<ValidateAgentProcedureRequest>,
 ) -> Result<Json<WorkflowValidationResponse>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
     load_project_with_permission(
@@ -602,21 +572,17 @@ pub async fn validate_workflow_definition(
         ProjectPermission::View,
     )
     .await?;
-    match WorkflowDefinition::new(
+    match AgentProcedure::new(
         project_id,
         req.key,
         req.name,
         req.description,
-        req.binding_kinds,
-        WorkflowDefinitionSource::UserAuthored,
+        DefinitionSource::UserAuthored,
         req.contract,
     ) {
         Ok(definition) => {
             let mut issues = definition.validate_full();
-            issues.extend(
-                validate_activity_lifecycle_references_for_workflow(state.as_ref(), &definition)
-                    .await?,
-            );
+            issues.extend(validate_workflow_graph_references(state.as_ref(), &definition).await?);
             Ok(Json(WorkflowValidationResponse {
                 valid: !issues
                     .iter()
@@ -635,18 +601,18 @@ pub async fn validate_workflow_definition(
     }
 }
 
-pub async fn delete_workflow_definition(
+pub async fn delete_agent_procedure(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<DeleteWorkflowDefinitionResponse>, ApiError> {
+) -> Result<Json<DeleteAgentProcedureResponse>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
     let definition = state
         .repos
-        .workflow_definition_repo
+        .agent_procedure_repo
         .get_by_id(id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("workflow_definition 不存在: {id}")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("agent_procedure 不存在: {id}")))?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -654,21 +620,21 @@ pub async fn delete_workflow_definition(
         ProjectPermission::Edit,
     )
     .await?;
-    let workflow_key = definition.key.clone();
+    let procedure_key = definition.key.clone();
     let referencing_activities: Vec<String> = state
         .repos
-        .activity_lifecycle_definition_repo
+        .workflow_graph_repo
         .list_by_project(definition.project_id)
         .await?
         .into_iter()
         .flat_map(|lifecycle| {
             let lifecycle_key = lifecycle.key.clone();
-            let workflow_key = workflow_key.clone();
+            let procedure_key = procedure_key.clone();
             lifecycle
                 .activities
                 .into_iter()
                 .filter_map(move |activity| match activity.executor {
-                    ActivityExecutorSpec::Agent(agent) if agent.workflow_key == workflow_key => {
+                    ActivityExecutorSpec::Agent(agent) if agent.procedure_key == procedure_key => {
                         Some(format!("{lifecycle_key}.{}", activity.key))
                     }
                     _ => None,
@@ -678,12 +644,12 @@ pub async fn delete_workflow_definition(
     if !referencing_activities.is_empty() {
         return Err(ApiError::BadRequest(format!(
             "workflow `{}` 仍被 Activity Lifecycle 引用，不能删除：{}",
-            workflow_key,
+            procedure_key,
             referencing_activities.join("、")
         )));
     }
-    state.repos.workflow_definition_repo.delete(id).await?;
-    Ok(Json(DeleteWorkflowDefinitionResponse { deleted: true }))
+    state.repos.agent_procedure_repo.delete(id).await?;
+    Ok(Json(DeleteAgentProcedureResponse { deleted: true }))
 }
 
 async fn load_lifecycle_run(state: &Arc<AppState>, run_id: Uuid) -> Result<LifecycleRun, ApiError> {
@@ -695,11 +661,11 @@ async fn load_lifecycle_run(state: &Arc<AppState>, run_id: Uuid) -> Result<Lifec
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))
 }
 
-async fn upsert_workflow_definition(
+async fn upsert_agent_procedure(
     state: &AppState,
-    definition: WorkflowDefinition,
-) -> Result<WorkflowDefinition, ApiError> {
-    let issues = validate_activity_lifecycle_references_for_workflow(state, &definition).await?;
+    definition: AgentProcedure,
+) -> Result<AgentProcedure, ApiError> {
+    let issues = validate_workflow_graph_references(state, &definition).await?;
     let errors = issues
         .iter()
         .filter(|item| item.severity == ValidationSeverity::Error)
@@ -717,7 +683,7 @@ async fn upsert_workflow_definition(
 
     if let Some(existing) = state
         .repos
-        .workflow_definition_repo
+        .agent_procedure_repo
         .get_by_project_and_key(definition.project_id, &definition.key)
         .await?
     {
@@ -726,64 +692,19 @@ async fn upsert_workflow_definition(
         updated.version = existing.version + 1;
         updated.created_at = existing.created_at;
         updated.updated_at = chrono::Utc::now();
-        state
-            .repos
-            .workflow_definition_repo
-            .update(&updated)
-            .await?;
+        state.repos.agent_procedure_repo.update(&updated).await?;
         return Ok(updated);
     }
 
-    state
-        .repos
-        .workflow_definition_repo
-        .create(&definition)
-        .await?;
+    state.repos.agent_procedure_repo.create(&definition).await?;
     Ok(definition)
 }
 
-async fn validate_activity_lifecycle_references_for_workflow(
-    state: &AppState,
-    definition: &WorkflowDefinition,
+async fn validate_workflow_graph_references(
+    _state: &AppState,
+    _definition: &AgentProcedure,
 ) -> Result<Vec<ValidationIssue>, ApiError> {
-    let lifecycles = state
-        .repos
-        .activity_lifecycle_definition_repo
-        .list_by_project(definition.project_id)
-        .await?;
-    let issues = lifecycles
-        .into_iter()
-        .filter_map(|lifecycle| {
-            let referencing_activities = lifecycle
-                .activities
-                .iter()
-                .filter_map(|activity| match &activity.executor {
-                    ActivityExecutorSpec::Agent(agent) if agent.workflow_key == definition.key => {
-                        Some(activity.key.as_str())
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            if referencing_activities.is_empty()
-                || workflow_binding_kinds_cover(&lifecycle.binding_kinds, &definition.binding_kinds)
-            {
-                None
-            } else {
-                Some(ValidationIssue::error(
-                    "activity_workflow_binding_kind_mismatch",
-                    format!(
-                        "workflow `{}` 的 binding_kinds={:?} 未覆盖引用它的 activity lifecycle `{}` {:?}",
-                        definition.key,
-                        definition.binding_kinds,
-                        lifecycle.key,
-                        lifecycle.binding_kinds
-                    ),
-                    format!("activity_lifecycles.{}", referencing_activities.join(",")),
-                ))
-            }
-        })
-        .collect::<Vec<_>>();
-    Ok(issues)
+    Ok(Vec::new())
 }
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
@@ -816,6 +737,24 @@ fn parse_optional_uuid(raw: Option<&str>, field: &str) -> Result<Option<Uuid>, A
     }) {
         Some(value) => parse_uuid(value, field).map(Some),
         None => Ok(None),
+    }
+}
+
+fn workflow_graph_ref_from_start_request(
+    project_id: Uuid,
+    req: &StartWorkflowRunRequest,
+) -> Result<WorkflowGraphRef, ApiError> {
+    let lifecycle_id = parse_optional_uuid(req.lifecycle_id.as_deref(), "lifecycle_id")?;
+    let lifecycle_key = req.lifecycle_key.clone().and_then(normalize_string);
+    match (lifecycle_id, lifecycle_key) {
+        (Some(_), Some(_)) => Err(ApiError::BadRequest(
+            "lifecycle_id 与 lifecycle_key 只能提供一个".to_string(),
+        )),
+        (None, None) => Err(ApiError::BadRequest(
+            "必须提供 lifecycle_id 或 lifecycle_key".to_string(),
+        )),
+        (Some(id), None) => Ok(WorkflowGraphRef::ById(id)),
+        (None, Some(key)) => Ok(WorkflowGraphRef::ByKey { project_id, key }),
     }
 }
 
@@ -922,86 +861,4 @@ pub async fn query_tool_catalog(
         .collect();
     let catalog = agentdash_application::capability::query_tool_catalog(&keys);
     Json(catalog)
-}
-
-// -- Run Links --
-
-use agentdash_contracts::workflow::{AttachRunLinkRequest, LifecycleRunLinkDto, RunLinksResponse};
-use agentdash_domain::workflow::{LifecycleRunLink, RunLinkRole, RunLinkSubjectKind};
-
-fn link_to_dto(link: &LifecycleRunLink) -> LifecycleRunLinkDto {
-    LifecycleRunLinkDto {
-        id: link.id.to_string(),
-        run_id: link.run_id.to_string(),
-        subject_kind: link.subject_kind.as_str().to_string(),
-        subject_id: link.subject_id.to_string(),
-        role: link.role.as_str().to_string(),
-        metadata: link.metadata.clone(),
-        created_at: link.created_at.to_rfc3339(),
-    }
-}
-
-/// GET /lifecycle-runs/{run_id}/links
-pub async fn list_run_links(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(run_id): Path<String>,
-) -> Result<Json<RunLinksResponse>, ApiError> {
-    let run_uuid = parse_uuid(&run_id, "run_id")?;
-    let run = load_lifecycle_run(&state, run_uuid).await?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        run.project_id,
-        ProjectPermission::View,
-    )
-    .await?;
-
-    let links = state
-        .repos
-        .lifecycle_run_link_repo
-        .list_by_run(run_uuid)
-        .await?;
-
-    Ok(Json(RunLinksResponse {
-        run_id,
-        links: links.iter().map(link_to_dto).collect(),
-    }))
-}
-
-/// POST /lifecycle-runs/{run_id}/links
-pub async fn attach_run_link(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(run_id): Path<String>,
-    Json(req): Json<AttachRunLinkRequest>,
-) -> Result<Json<LifecycleRunLinkDto>, ApiError> {
-    let run_uuid = parse_uuid(&run_id, "run_id")?;
-    let run = load_lifecycle_run(&state, run_uuid).await?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        run.project_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-
-    let subject_kind = RunLinkSubjectKind::parse(&req.subject_kind).ok_or_else(|| {
-        ApiError::BadRequest(format!("Invalid subject_kind: {}", req.subject_kind))
-    })?;
-    let subject_id: Uuid = req
-        .subject_id
-        .parse()
-        .map_err(|_| ApiError::BadRequest(format!("Invalid subject_id: {}", req.subject_id)))?;
-    let role = RunLinkRole::parse(&req.role)
-        .ok_or_else(|| ApiError::BadRequest(format!("Invalid role: {}", req.role)))?;
-
-    let mut link = LifecycleRunLink::new(run_uuid, subject_kind, subject_id, role);
-    if let Some(metadata) = req.metadata {
-        link = link.with_metadata(metadata);
-    }
-
-    state.repos.lifecycle_run_link_repo.create(&link).await?;
-
-    Ok(Json(link_to_dto(&link)))
 }

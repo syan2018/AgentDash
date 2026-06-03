@@ -2,6 +2,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::workflow::{
+    AgentAssignmentRefDto, AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto,
+    RuntimeSessionRefDto, SubjectRefDto,
+};
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingLevel {
@@ -34,19 +39,6 @@ pub struct ProjectAgentExecutor {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ProjectAgentSession {
-    pub binding_id: String,
-    pub session_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub session_title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    #[ts(type = "number")]
-    pub last_activity: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ProjectAgentSummary {
     pub key: String,
     pub display_name: String,
@@ -56,17 +48,24 @@ pub struct ProjectAgentSummary {
     #[ts(optional)]
     pub preset_name: Option<String>,
     pub source: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub session: Option<ProjectAgentSession>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct OpenProjectAgentSessionResult {
+pub struct ProjectAgentLaunchResult {
     pub created: bool,
-    pub session_id: String,
-    pub binding_id: String,
     pub agent: ProjectAgentSummary,
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: LifecycleAgentRefDto,
+    pub frame_ref: AgentFrameRefDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub assignment_ref: Option<AgentAssignmentRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub subject_ref: Option<SubjectRefDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -97,9 +96,6 @@ pub struct CreateProjectAgentRequest {
     #[ts(optional)]
     pub default_lifecycle_key: Option<String>,
     #[serde(default)]
-    #[ts(optional)]
-    pub default_workflow_key: Option<String>,
-    #[serde(default)]
     pub is_default_for_story: bool,
     #[serde(default)]
     pub is_default_for_task: bool,
@@ -119,9 +115,6 @@ pub struct UpdateProjectAgentRequest {
     #[serde(default)]
     #[ts(optional)]
     pub default_lifecycle_key: Option<String>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub default_workflow_key: Option<String>,
     #[serde(default)]
     #[ts(optional)]
     pub is_default_for_story: Option<bool>,

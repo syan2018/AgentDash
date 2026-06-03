@@ -1,5 +1,4 @@
 use crate::backend_execution_placement::ExecutionPlacementPlan;
-use crate::session::construction::SessionConstructionPlan;
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::launch::{
     ConnectorStarter, LaunchCommand, LaunchCommandOutcome, LaunchPlanner, LaunchPlannerInput,
@@ -7,6 +6,9 @@ use crate::session::launch::{
 };
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::*;
+use crate::workflow::AgentFrameBuilder;
+use crate::workflow::resolve_current_frame_for_runtime_session;
+use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 use agentdash_spi::ConnectorError;
 
 pub(in crate::session) struct SessionLaunchOrchestrator {
@@ -81,17 +83,21 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
-        let construction = match provider
-            .build_construction(SessionConstructionProviderInput {
+        let agent_needs_bootstrap_early =
+            Self::resolve_agent_needs_bootstrap(&self.deps, &sid).await;
+        let runtime_trace_state = RuntimeTraceLaunchState::from(&session_meta);
+        let launch_envelope = match provider
+            .build_frame_construction(SessionConstructionProviderInput {
                 session_id: sid.clone(),
                 command: command.clone(),
-                session_meta: session_meta.clone(),
+                runtime_trace_state: runtime_trace_state.clone(),
                 had_existing_runtime,
                 requested_runtime_commands: requested_runtime_commands.clone(),
+                agent_needs_bootstrap: agent_needs_bootstrap_early,
             })
             .await
         {
-            Ok(construction) => construction,
+            Ok(envelope) => envelope,
             Err(error) => {
                 self.deps
                     .turn_supervisor
@@ -100,9 +106,8 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
-        let context_sources = construction
-            .context
-            .bundle
+        let context_sources = launch_envelope
+            .context_bundle
             .as_ref()
             .map(|bundle| {
                 bundle
@@ -120,7 +125,7 @@ impl SessionLaunchOrchestrator {
         };
         let context_sources = facts.context_sources.clone();
         let turn_id = self
-            .launch_with_construction(session_id, &command, construction, facts)
+            .launch_with_envelope(session_id, &command, launch_envelope, facts)
             .await?;
         Ok(LaunchCommandOutcome {
             turn_id,
@@ -129,15 +134,15 @@ impl SessionLaunchOrchestrator {
     }
 
     #[cfg(test)]
-    pub(crate) async fn launch_with_construction_for_test(
+    pub(crate) async fn launch_with_envelope_for_test(
         &self,
         session_id: &str,
-        construction: SessionConstructionPlan,
+        envelope: FrameLaunchEnvelope,
     ) -> Result<String, ConnectorError> {
         let user_input = UserPromptInput {
-            prompt_blocks: construction.prompt.prompt_blocks.clone(),
-            env: construction.prompt.environment_variables.clone(),
-            executor_config: construction.execution_profile.executor_config.clone(),
+            prompt_blocks: envelope.intent.prompt_blocks.clone(),
+            env: envelope.intent.environment_variables.clone(),
+            executor_config: Some(envelope.executor_config.clone()),
             backend_selection: None,
         };
         let command = LaunchCommand::http_prompt_input(user_input, None);
@@ -166,8 +171,7 @@ impl SessionLaunchOrchestrator {
             .list_requested_runtime_commands(&sid)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
-        let construction =
-            Self::finalize_construction_for_test(construction, &requested_runtime_commands);
+        let envelope = Self::finalize_envelope_for_test(envelope, &requested_runtime_commands);
         let facts = LaunchRuntimeFacts {
             turn_id,
             had_existing_runtime,
@@ -175,28 +179,24 @@ impl SessionLaunchOrchestrator {
             requested_runtime_commands,
             context_sources: Vec::new(),
         };
-        self.launch_with_construction(session_id, &command, construction, facts)
+        self.launch_with_envelope(session_id, &command, envelope, facts)
             .await
     }
 
     #[cfg(test)]
-    fn finalize_construction_for_test(
-        mut construction: SessionConstructionPlan,
+    fn finalize_envelope_for_test(
+        mut envelope: FrameLaunchEnvelope,
         requested_runtime_commands: &[crate::session::runtime_commands::RuntimeCommandRecord],
-    ) -> SessionConstructionPlan {
-        let mut base_capability_state = construction
-            .projections
-            .capability_state
-            .clone()
-            .unwrap_or_default();
-        if let Some(vfs) = construction.surface.vfs.clone() {
-            base_capability_state.vfs.active = Some(vfs);
-        }
-        base_capability_state.tool.mcp_servers = construction.projections.mcp_servers.clone();
+    ) -> FrameLaunchEnvelope {
+        use crate::workflow::runtime_launch::LaunchResolutionTrace;
+
+        let mut base_capability_state = envelope.capability_state.clone();
+        base_capability_state.vfs.active = Some(envelope.vfs.clone());
+        base_capability_state.tool.mcp_servers = envelope.mcp_servers.clone();
 
         let requested_transitions = requested_runtime_commands
             .iter()
-            .map(|command| command.transition.clone())
+            .map(|command| command.pending_capability_state_transition())
             .collect::<Vec<_>>();
         let replay = if requested_transitions.is_empty() {
             None
@@ -211,46 +211,46 @@ impl SessionLaunchOrchestrator {
             .as_ref()
             .map(|replay| replay.capability_state.clone())
             .unwrap_or_else(|| base_capability_state.clone());
-        if let Some(base_vfs) = construction.surface.vfs.clone() {
-            let effective_vfs = replay
-                .as_ref()
-                .and_then(|replay| replay.effective_vfs.clone())
-                .unwrap_or(base_vfs);
-            construction.workspace.working_directory = effective_vfs
-                .default_mount()
-                .map(|mount| std::path::PathBuf::from(mount.root_ref.trim()))
-                .filter(|path| !path.as_os_str().is_empty())
-                .or(construction.workspace.working_directory);
-            final_capability_state.vfs.active = Some(effective_vfs);
-            construction.projections.capability_state = Some(final_capability_state.clone());
-            construction.sync_vfs_projection_from_capability();
+        let effective_vfs = replay
+            .as_ref()
+            .and_then(|replay| replay.effective_vfs.clone())
+            .unwrap_or_else(|| envelope.vfs.clone());
+        if let Some(mount) = effective_vfs.default_mount() {
+            let wd = std::path::PathBuf::from(mount.root_ref.trim());
+            if !wd.as_os_str().is_empty() {
+                envelope.working_directory = wd;
+            }
         }
+        final_capability_state.vfs.active = Some(effective_vfs.clone());
+        envelope.vfs = effective_vfs;
+
         let effective_mcp_servers = replay
             .as_ref()
             .and_then(|replay| replay.effective_mcp_servers.clone())
-            .unwrap_or_else(|| construction.projections.mcp_servers.clone());
-        construction.projections.mcp_servers = effective_mcp_servers.clone();
+            .unwrap_or_else(|| envelope.mcp_servers.clone());
+        envelope.mcp_servers = effective_mcp_servers.clone();
         final_capability_state.tool.mcp_servers = effective_mcp_servers;
-        construction.projections.capability_state = Some(final_capability_state);
-        construction.resolution.runtime_base_capability_state = Some(base_capability_state);
+        envelope.capability_state = final_capability_state;
+        envelope.base_capability_state = Some(base_capability_state);
         if requested_runtime_commands.is_empty() {
-            construction.resolution.pending_overlay_applied = false;
+            envelope.resolution_trace.pending_overlay_applied = false;
         } else {
-            construction.resolution.vfs_source = Some("test.pending_runtime_command".to_string());
-            construction.resolution.mcp_source = Some("test.pending_runtime_command".to_string());
-            construction.resolution.capability_source =
-                Some("test.pending_runtime_command".to_string());
-            construction.resolution.pending_overlay_applied = true;
+            envelope.resolution_trace = LaunchResolutionTrace {
+                vfs_source: Some("test.pending_runtime_command".to_string()),
+                mcp_source: Some("test.pending_runtime_command".to_string()),
+                capability_source: Some("test.pending_runtime_command".to_string()),
+                pending_overlay_applied: true,
+            };
         }
-        construction
+        envelope
     }
 
-    /// 已完成 construction plan 准备后的内部 stage runner。生产入口只能从 `launch` 进入。
-    async fn launch_with_construction(
+    /// 已完成 frame construction 后的内部 stage runner。生产入口只能从 `launch` 进入。
+    async fn launch_with_envelope(
         &self,
         session_id: &str,
         command: &LaunchCommand,
-        construction: SessionConstructionPlan,
+        launch_envelope: FrameLaunchEnvelope,
         facts: LaunchRuntimeFacts,
     ) -> Result<String, ConnectorError> {
         let LaunchRuntimeFacts {
@@ -263,15 +263,17 @@ impl SessionLaunchOrchestrator {
         let deps = &self.deps;
         let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
+        let agent_needs_bootstrap = Self::resolve_agent_needs_bootstrap(deps, session_id).await;
         let launch_plan = match LaunchPlanner::new(deps.planning())
             .plan(LaunchPlannerInput {
                 session_id,
                 turn_id: &turn_id,
                 command,
                 had_existing_runtime,
-                session_meta: &session_meta,
+                runtime_trace_state: RuntimeTraceLaunchState::from(&session_meta),
                 requested_runtime_commands,
-                construction,
+                launch_envelope,
+                agent_needs_bootstrap,
             })
             .await
         {
@@ -281,6 +283,68 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
+        // === 初始 capability state 写入 AgentFrame revision + current_frame_id 同步 ===
+        if let (Some(frame_repo), Some(anchor_repo), Some(agent_repo)) = (
+            deps.agent_frame_repo.as_ref(),
+            deps.execution_anchor_repo.as_ref(),
+            deps.lifecycle_agent_repo.as_ref(),
+        ) {
+            let initial_cap_state = &launch_plan.context.turn.capability_state;
+            match resolve_current_frame_for_runtime_session(
+                session_id,
+                anchor_repo.as_ref(),
+                agent_repo.as_ref(),
+                frame_repo.as_ref(),
+            )
+            .await
+            {
+                Ok(Some((_anchor, _agent, current_frame))) => {
+                    let mut builder = AgentFrameBuilder::new(current_frame.agent_id)
+                        .with_capability_state(initial_cap_state)
+                        .with_created_by("session_launch", Some(session_id.to_string()));
+                    if let Some(ctx) = current_frame.context_slice_json {
+                        builder = builder.with_context(ctx);
+                    }
+                    if let Some(profile) = current_frame.execution_profile_json {
+                        builder = builder.with_execution_profile_raw(profile);
+                    }
+                    match builder.build(frame_repo.as_ref()).await {
+                        Ok(frame) => {
+                            tracing::debug!(
+                                session_id,
+                                agent_id = %frame.agent_id,
+                                revision = frame.revision,
+                                "初始 capability state 已写入 AgentFrame"
+                            );
+                            // enforce current_frame_id invariant:
+                            // build() 成功后同步 LifecycleAgent.current_frame_id
+                            if let Some(ref agent_repo) = deps.lifecycle_agent_repo {
+                                if let Ok(Some(mut agent)) = agent_repo.get(frame.agent_id).await {
+                                    agent.set_current_frame(frame.id);
+                                    if let Err(e) = agent_repo.update(&agent).await {
+                                        tracing::warn!(
+                                            session_id,
+                                            "同步 current_frame_id 失败: {e}"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                session_id,
+                                "初始 AgentFrame revision 写入失败: {error}"
+                            );
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(session_id, "查找 session 关联的 AgentFrame 失败: {error}");
+                }
+            }
+        }
+
         let backend_execution = launch_plan.backend_execution.clone();
         let prepared = match TurnPreparer::new(deps.preparation())
             .prepare(TurnPreparationInput {
@@ -320,11 +384,73 @@ impl SessionLaunchOrchestrator {
         let committed = TurnCommitter::new(deps.commit())
             .commit(accepted, &mut session_meta, now)
             .await?;
+
+        if committed.accepted.prepared.is_owner_bootstrap {
+            Self::mark_agent_bootstrapped(deps, session_id).await;
+        }
+
         let attached = StreamIngestionAttacher::new(deps.ingestion())
             .attach(committed)
             .await;
 
         Ok(attached.turn_id)
+    }
+
+    /// 通过 runtime session → AgentFrame → LifecycleAgent 链路解析 bootstrap 状态。
+    /// 若任一环节缺失（repo 未注入或数据不存在），回退为 false（不需要 bootstrap）。
+    async fn resolve_agent_needs_bootstrap(deps: &SessionLaunchDeps, session_id: &str) -> bool {
+        let Some(frame_repo) = deps.agent_frame_repo.as_ref() else {
+            return false;
+        };
+        let Some(anchor_repo) = deps.execution_anchor_repo.as_ref() else {
+            return false;
+        };
+        let Some(agent_repo) = deps.lifecycle_agent_repo.as_ref() else {
+            return false;
+        };
+        match resolve_current_frame_for_runtime_session(
+            session_id,
+            anchor_repo.as_ref(),
+            agent_repo.as_ref(),
+            frame_repo.as_ref(),
+        )
+        .await
+        {
+            Ok(Some((_anchor, agent, _frame))) => agent.needs_bootstrap(),
+            _ => false,
+        }
+    }
+
+    /// Bootstrap 完成后标记 LifecycleAgent.bootstrap_status = "bootstrapped"。
+    async fn mark_agent_bootstrapped(deps: &SessionLaunchDeps, session_id: &str) {
+        let Some(frame_repo) = deps.agent_frame_repo.as_ref() else {
+            return;
+        };
+        let Some(anchor_repo) = deps.execution_anchor_repo.as_ref() else {
+            return;
+        };
+        let Some(agent_repo) = deps.lifecycle_agent_repo.as_ref() else {
+            return;
+        };
+        let mut agent = match resolve_current_frame_for_runtime_session(
+            session_id,
+            anchor_repo.as_ref(),
+            agent_repo.as_ref(),
+            frame_repo.as_ref(),
+        )
+        .await
+        {
+            Ok(Some((_anchor, agent, _frame))) => agent,
+            _ => return,
+        };
+        agent.mark_bootstrapped();
+        if let Err(error) = agent_repo.update(&agent).await {
+            tracing::warn!(
+                session_id,
+                agent_id = %agent.id,
+                "标记 agent bootstrapped 失败: {error}"
+            );
+        }
     }
 }
 

@@ -3,9 +3,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::context_source::ContextSourceRef;
+use crate::workflow::ActivityAttemptStatus;
 
 /// Task 状态枚举
-/// 生命周期: Pending → Assigned → Running → AwaitingVerification → Completed/Failed
+/// 生命周期: Pending → Assigned → Running → AwaitingVerification → Completed/Failed/Cancelled
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
@@ -15,6 +16,7 @@ pub enum TaskStatus {
     AwaitingVerification,
     Completed,
     Failed,
+    Cancelled,
 }
 
 impl std::str::FromStr for TaskStatus {
@@ -28,25 +30,60 @@ impl std::str::FromStr for TaskStatus {
             "awaiting_verification" => Ok(Self::AwaitingVerification),
             "completed" => Ok(Self::Completed),
             "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
             other => Err(format!("Unknown task status: {other}")),
         }
     }
 }
 
-/// 结构化 Agent 绑定信息
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskExecutionProjection {
+    pub status: TaskStatus,
+}
+
+impl TaskExecutionProjection {
+    /// 将 workflow attempt 状态翻译成 Task 自己的 execution projection。
+    ///
+    /// `Completed` 会先进入 `AwaitingVerification`，因为 Task 的业务完成态仍由
+    /// hook / verification 决策；`Cancelled` 独立于 `Failed`，表示执行被停止。
+    pub fn from_attempt_status(attempt_status: ActivityAttemptStatus) -> Self {
+        let status = match attempt_status {
+            ActivityAttemptStatus::Pending => TaskStatus::Pending,
+            ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => TaskStatus::Assigned,
+            ActivityAttemptStatus::Running => TaskStatus::Running,
+            ActivityAttemptStatus::Completed => TaskStatus::AwaitingVerification,
+            ActivityAttemptStatus::Failed => TaskStatus::Failed,
+            ActivityAttemptStatus::Cancelled => TaskStatus::Cancelled,
+        };
+        Self { status }
+    }
+}
+
+/// Task authoring preference for agent execution — a **static declaration**, not runtime truth.
+///
+/// Captures the user's intent for which agent type, preset, prompt template,
+/// and initial context to use when executing a Task.
+///
+/// At dispatch time, the resolver consumes these preferences to build `AgentConfig`
+/// for `SubjectExecutionIntent`. Once dispatch completes, runtime truth lives in
+/// `LifecycleAgent → AgentFrame`.
+///
+/// **Boundary**: belongs to the Task *spec* layer (user-editable fields), not runtime state.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AgentBinding {
-    /// Agent 类型（如 "claude-code", "codex", "gemini"）
+pub struct TaskDispatchPreference {
+    /// Preferred agent type identifier (e.g. "claude-code", "codex", "gemini").
+    /// Consumed by `resolve_task_agent_config` at dispatch time.
     pub agent_type: Option<String>,
-    /// Agent 进程标识
+    /// Agent process identifier (informational / external tracking).
     pub agent_pid: Option<String>,
-    /// 使用的预设名称（对应 ProjectConfig.agent_presets）
+    /// Named preset reference (resolved against `ProjectConfig.agent_presets`).
+    /// When set, the preset's `agent_type` and extended config override the bare `agent_type` field.
     pub preset_name: Option<String>,
-    /// 提示词模板（支持占位符渲染）
+    /// Prompt template with placeholder support (rendered before agent launch).
     pub prompt_template: Option<String>,
-    /// 初始上下文（拼接在提示词前）
+    /// Initial context prepended to the prompt.
     pub initial_context: Option<String>,
-    /// 声明式 Task 特定上下文来源
+    /// Declarative context source references specific to this Task.
     #[serde(default)]
     pub context_sources: Vec<ContextSourceRef>,
 }

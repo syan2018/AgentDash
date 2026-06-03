@@ -4,7 +4,7 @@
 //! - [`facade`]：测试入口与少量 session 内部 helper。
 //! - [`factory`]：构造与注入（`new_with_hooks_and_persistence` + `with_*` / `set_*`）。
 //! - [`tool_builder`]：runtime tool + 直连/relay MCP 工具发现 + `replace_current_capability_state`。
-//! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_session_runtime` /
+//! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_runtime` /
 //!   `collect_runtime_context_update_injections` / `schedule_hook_auto_resume`。
 //! - [`runtime_context_transition`]：workflow phase/runtime context transition 的 live
 //!   apply、pending 入队与 next-turn 应用。
@@ -14,12 +14,12 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use super::companion_wait::CompanionWaitRegistry;
 use super::construction_provider::SharedSessionConstructionProvider;
 use super::persistence::{SessionPersistence, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_supervisor::TurnSupervisor;
 use crate::context::SharedContextAuditBus;
+use agentdash_domain::workflow::{AgentFrameRepository, RuntimeSessionExecutionAnchorRepository};
 use agentdash_spi::AgentConnector;
 use agentdash_spi::hooks::ExecutionHookProvider;
 
@@ -49,7 +49,6 @@ pub struct SessionRuntimeInner {
     pub(super) persistence: Arc<dyn SessionPersistence>,
     pub(crate) vfs_service: Option<Arc<crate::vfs::VfsService>>,
     pub(super) extra_skill_dirs: Vec<PathBuf>,
-    pub companion_wait_registry: CompanionWaitRegistry,
     pub(super) terminal_callback:
         Arc<tokio::sync::RwLock<Option<super::post_turn_handler::DynSessionTerminalCallback>>>,
     pub(super) hook_effect_handler_registry: Arc<
@@ -77,4 +76,15 @@ pub struct SessionRuntimeInner {
         Option<Arc<dyn agentdash_application_ports::backend_transport::RelayPromptTransport>>,
     pub(super) backend_execution_lease_repo:
         Option<Arc<dyn agentdash_domain::backend::BackendExecutionLeaseRepository>>,
+    /// AgentFrame revision 持久化仓储。
+    /// 当 capability state 变更时通过 AgentFrameBuilder 写入新 revision，
+    /// 使 AgentFrame 成为 capability surface 的唯一权威事实源。
+    pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
+    pub(super) execution_anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
+    /// LifecycleAgent 仓储 — launch path 需要查询 agent bootstrap 状态。
+    pub(super) lifecycle_agent_repo:
+        Option<Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>>,
+    /// LifecycleGate 仓储，用于 companion_wait durable 等待。
+    pub(super) lifecycle_gate_repo:
+        Option<Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>>,
 }

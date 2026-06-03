@@ -6,16 +6,15 @@ use agentdash_api::{ApiServerOptions, ApiServerReady};
 use agentdash_local::local_backend_config::McpLocalServerEntry;
 use agentdash_local::{
     LocalLogEvent, LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot, McpProbeResult,
-    StopReason, browse_directory, load_or_create_machine_identity, probe_mcp_server,
+    StopReason, browse_directory, load_or_create_machine_identity, local_mcp_servers_path,
+    local_runtime_profile_path, probe_mcp_server,
 };
 use agentdash_relay::BrowseDirectoryEntry;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, RunEvent, State};
+use tauri::{Manager, RunEvent, State};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing_subscriber::EnvFilter;
 
-const DESKTOP_PROFILE_FILE: &str = "desktop-runtime-profile.json";
-const DESKTOP_MCP_SERVERS_FILE: &str = "local-mcp-servers.json";
 const DESKTOP_API_PORT: u16 = 3001;
 const DESKTOP_API_MODE_ENV: &str = "AGENTDASH_DESKTOP_API_MODE";
 const DESKTOP_API_ORIGIN_ENV: &str = "AGENTDASH_DESKTOP_API_ORIGIN";
@@ -146,8 +145,8 @@ impl From<LocalRuntimeProfile> for RuntimeStartRequest {
 }
 
 #[tauri::command]
-async fn profile_load(app: AppHandle) -> Result<Option<LocalRuntimeProfile>, String> {
-    let path = profile_path(&app)?;
+async fn profile_load() -> Result<Option<LocalRuntimeProfile>, String> {
+    let path = profile_path()?;
     if !path.exists() {
         return Ok(None);
     }
@@ -158,11 +157,8 @@ async fn profile_load(app: AppHandle) -> Result<Option<LocalRuntimeProfile>, Str
 }
 
 #[tauri::command]
-async fn profile_save(
-    app: AppHandle,
-    profile: LocalRuntimeProfile,
-) -> Result<LocalRuntimeProfile, String> {
-    let path = profile_path(&app)?;
+async fn profile_save(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile, String> {
+    let path = profile_path()?;
     let profile = normalize_profile(profile)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -173,8 +169,8 @@ async fn profile_save(
 }
 
 #[tauri::command]
-async fn profile_delete(app: AppHandle) -> Result<(), String> {
-    let path = profile_path(&app)?;
+async fn profile_delete() -> Result<(), String> {
+    let path = profile_path()?;
     if !path.exists() {
         return Ok(());
     }
@@ -218,10 +214,9 @@ async fn runtime_snapshot(
 
 #[tauri::command]
 async fn mcp_servers_load(
-    app: AppHandle,
     state: State<'_, DesktopState>,
 ) -> Result<Vec<McpLocalServerEntry>, String> {
-    let path = mcp_servers_path(&app)?;
+    let path = mcp_servers_path()?;
     state
         .runtime
         .record_log(
@@ -240,11 +235,10 @@ async fn mcp_servers_load(
 
 #[tauri::command]
 async fn mcp_servers_save(
-    app: AppHandle,
     state: State<'_, DesktopState>,
     servers: Vec<McpLocalServerEntry>,
 ) -> Result<(), String> {
-    let path = mcp_servers_path(&app)?;
+    let path = mcp_servers_path()?;
     state
         .runtime
         .record_log(
@@ -368,8 +362,8 @@ struct EnsureLocalRuntimeResponse {
     capability_slot: String,
 }
 
-async fn auto_start_profile(app: AppHandle, state: DesktopState) {
-    let profile = match profile_load(app.clone()).await {
+async fn auto_start_profile(state: DesktopState) {
+    let profile = match profile_load().await {
         Ok(Some(profile)) if profile.auto_start => profile,
         Ok(_) => return,
         Err(error) => {
@@ -692,10 +686,9 @@ fn main() {
                 }
                 DesktopApiMode::Sidecar => start_desktop_api_sidecar(state, api_config),
             }
-            let app_handle = app.handle().clone();
             let state = app.state::<DesktopState>().inner().clone();
             tauri::async_runtime::spawn(async move {
-                auto_start_profile(app_handle, state).await;
+                auto_start_profile(state).await;
             });
             Ok(())
         })
@@ -1086,16 +1079,10 @@ fn normalize_origin(value: String) -> String {
     }
 }
 
-fn profile_path(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_config_dir()
-        .map(|dir| dir.join(DESKTOP_PROFILE_FILE))
-        .map_err(|error| format!("无法定位桌面端配置目录: {error}"))
+fn profile_path() -> Result<PathBuf, String> {
+    local_runtime_profile_path().map_err(|error| error.to_string())
 }
 
-fn mcp_servers_path(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_config_dir()
-        .map(|dir| dir.join(DESKTOP_MCP_SERVERS_FILE))
-        .map_err(|error| format!("无法定位桌面端配置目录: {error}"))
+fn mcp_servers_path() -> Result<PathBuf, String> {
+    local_mcp_servers_path().map_err(|error| error.to_string())
 }

@@ -1,8 +1,8 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use agentdash_domain::common::AgentConfig;
-use agentdash_domain::task::AgentBinding;
+use agentdash_domain::task::TaskDispatchPreference;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
     AuthIdentity, CapabilityState, DiscoveredGuideline, SessionBaselineCapabilities,
@@ -17,7 +17,7 @@ use super::post_turn_handler::TerminalHookEffectBinding;
 use super::types::UserPromptInput;
 use crate::extension_runtime::ExtensionRuntimeProjection;
 
-/// Session 的 owner 信息（替代已删除的 SessionBinding 表达）。
+/// 测试 fixture：RuntimeSession trace 的创建来源信息。
 #[derive(Debug, Clone)]
 pub struct ResolvedSessionOwner {
     pub owner_type: CapabilityScope,
@@ -63,8 +63,9 @@ impl ResolvedSessionOwner {
 }
 use crate::vfs::ResolvedVfsSurface;
 
+/// 测试 fixture：旧 construction plan 的完整投影形态。
 #[derive(Debug, Clone)]
-pub struct SessionConstructionPlan {
+pub struct RuntimeContextInspectionPlan {
     pub session_id: String,
     pub owner: ResolvedSessionOwner,
     pub session: SessionIdentityPlan,
@@ -158,7 +159,7 @@ pub struct ConstructionResolutionPlan {
 #[derive(Debug, Clone, Default)]
 pub struct SessionConstructionContextProjection {
     pub workspace_id: Option<Uuid>,
-    pub agent_binding: Option<AgentBinding>,
+    pub dispatch_preference: Option<TaskDispatchPreference>,
     pub vfs: Option<Vfs>,
     pub runtime_surface: Option<ResolvedVfsSurface>,
     pub context_snapshot: Option<SessionContextSnapshot>,
@@ -176,7 +177,7 @@ pub struct SessionConstructionTraceEntry {
     pub source: String,
 }
 
-impl SessionConstructionPlan {
+impl RuntimeContextInspectionPlan {
     pub fn new(
         session_id: impl Into<String>,
         owner: ResolvedSessionOwner,
@@ -282,93 +283,21 @@ impl SessionConstructionPlan {
             self.context_projection.vfs = Some(vfs);
         }
     }
-
-    pub fn validate_for_launch(&self) -> Result<(), String> {
-        if self.workspace.working_directory.is_none() {
-            return Err(
-                "SessionConstructionPlan.workspace.working_directory 必须在 launch 前解析"
-                    .to_string(),
-            );
-        }
-        if self.execution_profile.executor_config.is_none() {
-            return Err(
-                "SessionConstructionPlan.execution_profile.executor_config 必须在 launch 前解析"
-                    .to_string(),
-            );
-        }
-        let Some(vfs) = self.surface.vfs.as_ref() else {
-            return Err("SessionConstructionPlan.surface.vfs 必须在 launch 前解析".to_string());
-        };
-        let Some(capability_state) = self.projections.capability_state.as_ref() else {
-            return Err(
-                "SessionConstructionPlan.projections.capability_state 必须在 launch 前解析"
-                    .to_string(),
-            );
-        };
-        if capability_state.vfs.active.as_ref() != Some(vfs) {
-            return Err(
-                "SessionConstructionPlan capability_state.vfs.active 必须等于 surface.vfs"
-                    .to_string(),
-            );
-        }
-        if capability_state.tool.mcp_servers != self.projections.mcp_servers {
-            return Err(
-                "SessionConstructionPlan capability_state.tool.mcp_servers 必须等于 projections.mcp_servers"
-                    .to_string(),
-            );
-        }
-        if let Some(session_capabilities) = self.projections.session_capabilities.as_ref()
-            && capability_state.skill.skills != session_capabilities.skills
-        {
-            return Err(
-                "SessionConstructionPlan capability_state.skill.skills 必须等于 projections.session_capabilities.skills"
-                    .to_string(),
-            );
-        }
-        if let Some(runtime_surface) = self.surface.runtime_surface.as_ref() {
-            let vfs_mount_ids = vfs
-                .mounts
-                .iter()
-                .map(|mount| mount.id.as_str())
-                .collect::<BTreeSet<_>>();
-            let surface_mount_ids = runtime_surface
-                .mounts
-                .iter()
-                .map(|mount| mount.id.as_str())
-                .collect::<BTreeSet<_>>();
-            if vfs_mount_ids != surface_mount_ids {
-                return Err(
-                    "SessionConstructionPlan runtime_surface.mounts 必须来自 surface.vfs"
-                        .to_string(),
-                );
-            }
-            if runtime_surface.default_mount_id != vfs.default_mount_id {
-                return Err(
-                    "SessionConstructionPlan runtime_surface.default_mount_id 必须等于 surface.vfs.default_mount_id"
-                        .to_string(),
-                );
-            }
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_spi::Vfs;
-
     use super::*;
 
     #[test]
-    fn construction_plan_carries_owner_and_projection_trace() {
+    fn runtime_context_plan_carries_owner_and_projection_trace() {
         let owner = ResolvedSessionOwner::task(Uuid::new_v4());
         let projection = SessionConstructionContextProjection {
             workspace_id: Some(Uuid::new_v4()),
             ..Default::default()
         };
 
-        let plan = SessionConstructionPlan::new("sess-construction", owner, projection);
+        let plan = RuntimeContextInspectionPlan::new("sess-construction", owner, projection);
 
         assert_eq!(plan.session_id, "sess-construction");
         assert_eq!(plan.owner.owner_type, CapabilityScope::Task);
@@ -378,12 +307,12 @@ mod tests {
     }
 
     #[test]
-    fn launch_construction_plan_keeps_full_context_bundle() {
+    fn runtime_context_plan_keeps_full_context_bundle() {
         let owner = ResolvedSessionOwner::project(Uuid::new_v4());
         let bundle = SessionContextBundle::new(Uuid::new_v4(), "owner_bootstrap");
         let bundle_id = bundle.bundle_id;
 
-        let mut plan = SessionConstructionPlan::new(
+        let mut plan = RuntimeContextInspectionPlan::new(
             "sess-launch-construction",
             owner,
             SessionConstructionContextProjection::default(),
@@ -396,106 +325,5 @@ mod tests {
             Some(bundle_id)
         );
         assert_eq!(plan.context.bundle_id, Some(bundle_id));
-    }
-
-    #[test]
-    fn validate_for_launch_requires_final_execution_facts() {
-        let owner = ResolvedSessionOwner::project(Uuid::new_v4());
-        let plan = SessionConstructionPlan::new(
-            "sess-invalid-construction",
-            owner,
-            SessionConstructionContextProjection::default(),
-        );
-
-        assert!(
-            plan.validate_for_launch()
-                .expect_err("partial construction must be rejected")
-                .contains("working_directory")
-        );
-    }
-
-    #[test]
-    fn validate_for_launch_rejects_capability_surface_drift() {
-        let owner = ResolvedSessionOwner::project(Uuid::new_v4());
-        let vfs = Vfs {
-            mounts: vec![Mount {
-                id: "workspace".to_string(),
-                provider: "relay_fs".to_string(),
-                backend_id: "backend".to_string(),
-                root_ref: "/workspace".to_string(),
-                capabilities: vec![MountCapability::Read, MountCapability::List],
-                default_write: false,
-                display_name: "Workspace".to_string(),
-                metadata: serde_json::Value::Null,
-            }],
-            default_mount_id: Some("workspace".to_string()),
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        };
-        let mut plan = SessionConstructionPlan::new(
-            "sess-drift-construction",
-            owner,
-            SessionConstructionContextProjection::default(),
-        );
-        plan.workspace.working_directory = Some(PathBuf::from("/workspace"));
-        plan.execution_profile.executor_config = Some(AgentConfig::new("PI_AGENT"));
-        plan.surface.vfs = Some(vfs);
-        plan.projections.capability_state = Some(CapabilityState::default());
-
-        assert!(
-            plan.validate_for_launch()
-                .expect_err("capability/vfs drift must be rejected")
-                .contains("capability_state.vfs.active")
-        );
-    }
-
-    #[test]
-    fn validate_for_launch_rejects_skill_projection_drift() {
-        let owner = ResolvedSessionOwner::project(Uuid::new_v4());
-        let vfs = Vfs {
-            mounts: vec![Mount {
-                id: "workspace".to_string(),
-                provider: "relay_fs".to_string(),
-                backend_id: "backend".to_string(),
-                root_ref: "/workspace".to_string(),
-                capabilities: vec![MountCapability::Read, MountCapability::List],
-                default_write: false,
-                display_name: "Workspace".to_string(),
-                metadata: serde_json::Value::Null,
-            }],
-            default_mount_id: Some("workspace".to_string()),
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        };
-        let mut capability_state = CapabilityState::default();
-        capability_state.vfs.active = Some(vfs.clone());
-        capability_state
-            .skill
-            .skills
-            .push(agentdash_spi::SkillEntry {
-                name: "drift".to_string(),
-                description: "drift".to_string(),
-                file_path: "workspace://skills/drift/SKILL.md".to_string(),
-                disable_model_invocation: false,
-            });
-        let mut plan = SessionConstructionPlan::new(
-            "sess-skill-drift",
-            owner,
-            SessionConstructionContextProjection::default(),
-        );
-        plan.workspace.working_directory = Some(PathBuf::from("/workspace"));
-        plan.execution_profile.executor_config = Some(AgentConfig::new("PI_AGENT"));
-        plan.surface.vfs = Some(vfs);
-        plan.projections.capability_state = Some(capability_state);
-        plan.projections.session_capabilities =
-            Some(agentdash_spi::SessionBaselineCapabilities::default());
-
-        assert!(
-            plan.validate_for_launch()
-                .expect_err("skill projection drift must be rejected")
-                .contains("capability_state.skill.skills")
-        );
     }
 }

@@ -1,44 +1,69 @@
 //! `SessionConstructionProvider` 的 API 层实现。
 //!
-//! 把原始 prompt 输入代入与 HTTP 主通道同一条 `build_session_construction_for_launch`
-//! 路径，使 session auto-resume 与用户手动 prompt 完全对齐。
-//!
-//! 为什么放这里：construction 逻辑依赖 `Arc<AppState>`（repos、services、platform_config），
-//! 这些都是 API 层构造的；把 trait impl 也放在 API 层最自然，也不必把依赖下沉到
-//! application crate。
+//! 自 Phase 3B 重构后，所有 compose 逻辑已下沉至 application 层的
+//! `FrameConstructionService`，此文件仅保留：
+//! 1. `AppStateSessionConstructionProvider` — 实现 trait 的薄委托层
+//! 2. test-only 的 API error encode/decode 辅助（供集成测试使用）
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agentdash_application::session::construction::SessionConstructionPlan;
 use agentdash_application::session::{
     SessionConstructionProvider, SessionConstructionProviderInput,
 };
+use agentdash_application::workflow::frame_construction::FrameConstructionService;
+use agentdash_application::workflow::runtime_launch::FrameLaunchEnvelope;
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
+#[cfg(test)]
 use crate::rpc::ApiError;
-use crate::session_construction::build_session_construction_for_launch;
 
-/// 使用 `Arc<AppState>` 的主通道 construction provider。在 AppState 初始化完成后注入
-/// session runtime builder。
+/// 使用 `Arc<AppState>` 的主通道 construction provider。
+///
+/// 内部持有 `FrameConstructionService`（application 层），将所有 compose 路由
+/// 和 frame 持久化委托给该 service，自身不再包含任何业务分支。
 pub struct AppStateSessionConstructionProvider {
-    state: Arc<AppState>,
+    service: FrameConstructionService,
 }
 
 impl AppStateSessionConstructionProvider {
     pub fn new(state: Arc<AppState>) -> Self {
-        Self { state }
+        let service = FrameConstructionService::new(
+            state.repos.clone(),
+            state.services.vfs_service.clone(),
+            state.services.backend_registry.clone(),
+            state.config.platform_config.clone(),
+            state.services.audit_bus.clone(),
+            Arc::new(state.services.session_capability.clone()),
+            state.services.connector.clone(),
+        );
+        Self { service }
     }
 }
 
+#[async_trait]
+impl SessionConstructionProvider for AppStateSessionConstructionProvider {
+    async fn build_frame_construction(
+        &self,
+        input: SessionConstructionProviderInput,
+    ) -> Result<FrameLaunchEnvelope, ConnectorError> {
+        self.service.construct_launch_envelope(input).await
+    }
+}
+
+// ─── Test-only API error tunneling ───
+
+#[cfg(test)]
 const CONSTRUCTION_API_ERROR_PREFIX: &str = "__construction_api_error__:";
 
+#[cfg(test)]
 fn encode_api_error(kind: &str, message: String) -> String {
     format!("{CONSTRUCTION_API_ERROR_PREFIX}{kind}:{message}")
 }
 
+#[cfg(test)]
 pub(crate) fn decode_construction_runtime_error(message: &str) -> Option<ApiError> {
     let payload = message.strip_prefix(CONSTRUCTION_API_ERROR_PREFIX)?;
     let (kind, detail) = payload.split_once(':')?;
@@ -54,50 +79,6 @@ pub(crate) fn decode_construction_runtime_error(message: &str) -> Option<ApiErro
             Some(ApiError::Internal(String::from("内部 session 构建错误")))
         }
         _ => None,
-    }
-}
-
-fn api_error_to_connector(error: ApiError) -> ConnectorError {
-    match error {
-        ApiError::BadRequest(msg) => ConnectorError::InvalidConfig(msg),
-        ApiError::Unauthorized(msg) => {
-            ConnectorError::Runtime(encode_api_error("unauthorized", msg))
-        }
-        ApiError::Forbidden(msg) => ConnectorError::Runtime(encode_api_error("forbidden", msg)),
-        ApiError::NotFound(msg) => ConnectorError::Runtime(encode_api_error("not_found", msg)),
-        ApiError::Conflict(msg) => ConnectorError::Runtime(encode_api_error("conflict", msg)),
-        ApiError::UnprocessableEntity(msg) => {
-            ConnectorError::Runtime(encode_api_error("unprocessable_entity", msg))
-        }
-        ApiError::ServiceUnavailable(msg) => {
-            ConnectorError::Runtime(encode_api_error("service_unavailable", msg))
-        }
-        ApiError::Internal(msg) => ConnectorError::Runtime(encode_api_error("internal", msg)),
-    }
-}
-
-#[async_trait]
-impl SessionConstructionProvider for AppStateSessionConstructionProvider {
-    async fn build_construction(
-        &self,
-        input: SessionConstructionProviderInput,
-    ) -> Result<SessionConstructionPlan, ConnectorError> {
-        let session_id = input.session_id.clone();
-        let command = input.command.clone();
-        build_session_construction_for_launch(
-            &self.state,
-            &session_id,
-            command.user_input(),
-            command.task_hint(),
-            command.companion_hint(),
-            command.local_relay_mcp_declarations().to_vec(),
-            command
-                .local_relay_workspace_root()
-                .map(std::path::PathBuf::from),
-            input,
-        )
-        .await
-        .map_err(api_error_to_connector)
     }
 }
 

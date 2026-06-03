@@ -6,7 +6,7 @@ use super::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct WorkflowContract {
+pub struct AgentProcedureContract {
     #[serde(default)]
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]
@@ -36,7 +36,7 @@ pub struct EffectiveSessionContract {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_step_key: Option<String>,
+    pub active_activity_key: Option<String>,
     #[serde(default)]
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]

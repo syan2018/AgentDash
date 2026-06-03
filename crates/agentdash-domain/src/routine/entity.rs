@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::workflow::AgentRuntimeRefs;
+
 /// Routine — 一等领域实体，项目级别的 Agent 触发规则
 ///
 /// 将「什么时候启动 Agent 干活」提升为独立的领域概念，
@@ -17,8 +19,8 @@ pub struct Routine {
     pub project_agent_id: Uuid,
     /// 触发器配置（按类型存储不同字段）
     pub trigger_config: RoutineTriggerConfig,
-    /// Session 生命周期策略
-    pub session_strategy: SessionStrategy,
+    /// Dispatch 生命周期策略
+    pub dispatch_strategy: DispatchStrategy,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -33,7 +35,7 @@ impl Routine {
         prompt_template: impl Into<String>,
         project_agent_id: Uuid,
         trigger_config: RoutineTriggerConfig,
-        session_strategy: SessionStrategy,
+        dispatch_strategy: DispatchStrategy,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -43,7 +45,7 @@ impl Routine {
             prompt_template: prompt_template.into(),
             project_agent_id,
             trigger_config,
-            session_strategy,
+            dispatch_strategy,
             enabled: true,
             created_at: now,
             updated_at: now,
@@ -79,20 +81,48 @@ pub enum RoutineTriggerConfig {
     },
 }
 
-/// Session 生命周期策略
+/// Dispatch 生命周期策略
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
-pub enum SessionStrategy {
-    /// 每次触发新建独立 session
+pub enum DispatchStrategy {
+    /// 每次触发新建独立 dispatch 目标
     #[default]
     Fresh,
-    /// 复用 Project Agent 现有 session（follow-up prompt）
+    /// 复用 Project Agent 现有 dispatch 目标
     Reuse,
-    /// 按外部实体分配 session（如 per-PR、per-Issue）
+    /// 按外部实体分配 dispatch 目标（如 per-PR、per-Issue）
     PerEntity {
         /// payload 中用于提取 entity key 的 JSON path
         entity_key_path: String,
     },
+}
+
+/// Dispatch 结果引用——记录 LifecycleRun / LifecycleAgent / AgentFrame 的稳定锚点。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutineDispatchRefs {
+    pub runtime_refs: AgentRuntimeRefs,
+}
+
+impl RoutineDispatchRefs {
+    pub fn new(runtime_refs: AgentRuntimeRefs) -> Self {
+        Self { runtime_refs }
+    }
+
+    pub fn run_id(&self) -> Uuid {
+        self.runtime_refs.run_ref
+    }
+
+    pub fn agent_id(&self) -> Uuid {
+        self.runtime_refs.agent_ref
+    }
+
+    pub fn frame_id(&self) -> Uuid {
+        self.runtime_refs.frame_ref
+    }
+
+    pub fn assignment_id(&self) -> Option<Uuid> {
+        self.runtime_refs.assignment_ref()
+    }
 }
 
 /// 每次触发产生的执行记录
@@ -106,15 +136,16 @@ pub struct RoutineExecution {
     pub trigger_payload: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_prompt: Option<String>,
+    /// Dispatch 目标锚点——dispatch 成功后记录 run/agent/frame refs
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
+    pub dispatch_refs: Option<RoutineDispatchRefs>,
     pub status: RoutineExecutionStatus,
     pub started_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// PerEntity session affinity key
+    /// PerEntity dispatch affinity key
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_key: Option<String>,
 }
@@ -127,7 +158,7 @@ impl RoutineExecution {
             trigger_source: trigger_source.into(),
             trigger_payload: None,
             resolved_prompt: None,
-            session_id: None,
+            dispatch_refs: None,
             status: RoutineExecutionStatus::Pending,
             started_at: Utc::now(),
             completed_at: None,
@@ -136,15 +167,12 @@ impl RoutineExecution {
         }
     }
 
-    pub fn mark_running(&mut self, session_id: impl Into<String>, resolved_prompt: String) {
-        self.session_id = Some(session_id.into());
+    /// Intent 已提交至 LifecycleDispatchService，记录 dispatch 锚点。
+    /// `Dispatched` 表示"已成功派发到控制面"，真正 terminal 从 LifecycleRun/Agent projection 派生。
+    pub fn mark_dispatched(&mut self, refs: RoutineDispatchRefs, resolved_prompt: String) {
+        self.dispatch_refs = Some(refs);
         self.resolved_prompt = Some(resolved_prompt);
-        self.status = RoutineExecutionStatus::Running;
-    }
-
-    pub fn mark_completed(&mut self) {
-        self.status = RoutineExecutionStatus::Completed;
-        self.completed_at = Some(Utc::now());
+        self.status = RoutineExecutionStatus::Dispatched;
     }
 
     pub fn mark_failed(&mut self, error: impl Into<String>) {
@@ -165,8 +193,9 @@ impl RoutineExecution {
 pub enum RoutineExecutionStatus {
     #[default]
     Pending,
-    Running,
-    Completed,
+    /// Intent 已成功提交到 LifecycleDispatchService，Agent 正在执行。
+    /// 真正的 terminal status 从 LifecycleRun / LifecycleAgent projection 派生。
+    Dispatched,
     Failed,
     /// Agent 仍在运行时跳过重入
     Skipped,

@@ -7,13 +7,13 @@ import {
   HookRuntimeSurfaceCard,
   HookRuntimeTraceCard,
 } from "../features/session-context";
-import type { HookSessionRuntimeInfo } from "../types";
+import type { AgentFrameHookRuntimeInfo } from "../types";
 
-const hookRuntime: HookSessionRuntimeInfo = {
-  session_id: "sess-hook-test",
+const hookRuntime: AgentFrameHookRuntimeInfo = {
+  runtime_adapter_session_id: "sess-hook-test",
   revision: 7,
   snapshot: {
-    session_id: "sess-hook-test",
+    runtime_adapter_session_id: "sess-hook-test",
     sources: [
       "builtin:global",
       "workflow:demo_lifecycle:check",
@@ -45,15 +45,15 @@ const hookRuntime: HookSessionRuntimeInfo = {
     diagnostics: [],
     metadata: {
       active_workflow: {
-        lifecycle_id: "lc-1",
+        workflow_graph_id: "lc-1",
         lifecycle_key: "demo_lifecycle",
         lifecycle_name: "Demo Lifecycle / Task",
         run_id: "run-1",
         run_status: "running",
-        step_key: "check",
-        step_title: "Check",
+        activity_key: "check",
+        activity_title: "Check",
         primary_workflow_id: "wf-1",
-        workflow_key: "demo_lifecycle_check",
+        procedure_key: "demo_lifecycle_check",
         primary_workflow_name: "Demo Task / Check",
       },
     },
@@ -148,7 +148,7 @@ describe("SessionPage hook runtime cards", () => {
     expect(html).toContain("Demo Lifecycle / Task / Check");
     expect(html).toContain("builtin:global");
     expect(html).toContain("workflow:demo_lifecycle:check");
-    expect(html).toContain("step: check");
+    expect(html).toContain("activity: check");
     expect(html).toContain("workflow: demo_lifecycle_check");
   });
 

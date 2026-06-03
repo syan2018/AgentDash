@@ -1,6 +1,6 @@
 import type { CapabilityDirective } from "./workflow";
 import type {
-  AgentBinding as CoreAgentBinding,
+  TaskDispatchPreference as CoreTaskDispatchPreference,
   AgentPreset as CoreAgentPreset,
   Artifact as CoreArtifact,
   BackendResponse,
@@ -21,16 +21,15 @@ import type {
   ProjectVfsMountResponse,
 } from "../generated/vfs-contracts";
 import type {
-  OpenProjectAgentSessionResult as GeneratedOpenProjectAgentSessionResult,
   ProjectAgent as GeneratedProjectAgent,
   ProjectAgentExecutor as GeneratedProjectAgentExecutor,
-  ProjectAgentSession as GeneratedProjectAgentSession,
+  ProjectAgentLaunchResult as GeneratedProjectAgentLaunchResult,
   ProjectAgentSummary as GeneratedProjectAgentSummary,
 } from "../generated/project-agent-contracts";
 
 // ─── Generated Core Contracts ─────────────────────────
 
-export type AgentBinding = CoreAgentBinding & {
+export type TaskDispatchPreference = CoreTaskDispatchPreference & {
   thinking_level: ThinkingLevel | null;
 };
 export type AgentPreset = CoreAgentPreset;
@@ -42,7 +41,7 @@ export type ProjectConfig = CoreProjectConfig;
 export type ProjectSubjectGrant = ProjectSubjectGrantResponse;
 export type Story = StoryResponse;
 export type StoryContext = StoryResponse["context"];
-export type Task = Omit<TaskResponse, "agent_binding"> & { agent_binding: AgentBinding };
+export type Task = Omit<TaskResponse, "dispatch_preference"> & { dispatch_preference: TaskDispatchPreference };
 export type Workspace = WorkspaceResponse;
 export type WorkspaceBinding = WorkspaceBindingResponse;
 export type {
@@ -263,25 +262,16 @@ export type ProjectAgentExecutor = Omit<
   permission_policy?: string | null;
 };
 
-export type ProjectAgentSession = Omit<
-  GeneratedProjectAgentSession,
-  "session_title" | "last_activity"
-> & {
-  session_title: string | null;
-  last_activity: number | null;
-};
-
 export type ProjectAgentSummary = Omit<
   GeneratedProjectAgentSummary,
-  "executor" | "preset_name" | "session"
+  "executor" | "preset_name"
 > & {
   executor: ProjectAgentExecutor;
   preset_name?: string | null;
-  session?: ProjectAgentSession | null;
 };
 
-export type OpenProjectAgentSessionResult = Omit<
-  GeneratedOpenProjectAgentSessionResult,
+export type ProjectAgentLaunchResult = Omit<
+  GeneratedProjectAgentLaunchResult,
   "agent"
 > & {
   agent: ProjectAgentSummary;
@@ -361,7 +351,7 @@ export interface InventoryRefreshResult {
 // ─── Routine ─────────────────────────────────────────────
 
 export type RoutineTriggerType = "scheduled" | "webhook" | "plugin";
-export type RoutineSessionMode = "fresh" | "reuse" | "per_entity";
+export type RoutineDispatchMode = "fresh" | "reuse" | "per_entity";
 export type RoutineExecutionStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
 export interface RoutineTriggerConfig {
@@ -377,8 +367,8 @@ export interface RoutineTriggerConfig {
   provider_config?: Record<string, unknown>;
 }
 
-export interface RoutineSessionStrategy {
-  mode: RoutineSessionMode;
+export interface RoutineDispatchStrategy {
+  mode: RoutineDispatchMode;
   entity_key_path?: string;
 }
 
@@ -389,7 +379,7 @@ export interface Routine {
   prompt_template: string;
   project_agent_id: string;
   trigger_config: RoutineTriggerConfig;
-  session_strategy: RoutineSessionStrategy;
+  dispatch_strategy: RoutineDispatchStrategy;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -406,7 +396,7 @@ export interface RoutineExecution {
   trigger_source: string;
   trigger_payload: Record<string, unknown> | null;
   resolved_prompt: string | null;
-  session_id: string | null;
+  runtime_refs?: AgentRuntimeRefs | null;
   status: RoutineExecutionStatus;
   started_at: string;
   completed_at: string | null;
@@ -414,14 +404,22 @@ export interface RoutineExecution {
   entity_key: string | null;
 }
 
+export interface ActivityBindingRefs {
+  graph_instance_ref: string;
+  assignment_ref?: string | null;
+}
+
+export interface AgentRuntimeRefs {
+  run_ref: string;
+  agent_ref: string;
+  frame_ref: string;
+  activity_binding?: ActivityBindingRefs | null;
+}
+
 export interface RegenerateTokenResponse {
   endpoint_id: string;
   webhook_token: string;
 }
-
-// ─── Story Runs (LifecycleRunLink-based) ─────────────────
-
-export type { StoryRunsResponse, StoryRunOverviewDto, LifecycleRunLinkDto, RunLinksResponse, AttachRunLinkRequest } from "../generated/workflow-contracts";
 
 // ─── Re-exports from domain-split files ──────────────────
 
@@ -434,3 +432,4 @@ export * from "./skill-asset";
 export * from "./extension-runtime";
 export * from "./shared-library";
 export * from "./acp";
+export * from "./lifecycle-views";

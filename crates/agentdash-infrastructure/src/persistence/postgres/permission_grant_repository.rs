@@ -27,15 +27,17 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
     async fn create(&self, grant: &PermissionGrant) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO permission_grants \
-             (id, run_id, session_id, source_turn_id, source_tool_call_id, \
+             (id, run_id, effect_frame_id, source_runtime_session_id, \
+              source_turn_id, source_tool_call_id, \
               requested_paths, reason, grant_scope, expires_at, \
               scope_escalation_intent, status, policy_decision, approved_by, \
               created_at, updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
         )
         .bind(grant.id.to_string())
         .bind(grant.run_id.to_string())
-        .bind(&grant.session_id)
+        .bind(grant.effect_frame_id.map(|id| id.to_string()))
+        .bind(&grant.source_runtime_session_id)
         .bind(&grant.source_turn_id)
         .bind(&grant.source_tool_call_id)
         .bind(serde_json::to_value(&grant.requested_paths).map_err(DomainError::Serialization)?)
@@ -111,16 +113,16 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
         row.map(TryInto::try_into).transpose()
     }
 
-    async fn list_active_by_session(
+    async fn list_active_by_frame(
         &self,
-        session_id: &str,
+        effect_frame_id: Uuid,
     ) -> Result<Vec<PermissionGrant>, DomainError> {
         sqlx::query_as::<_, GrantRow>(
             "SELECT * FROM permission_grants \
-             WHERE session_id = $1 AND status IN ('applied', 'scope_escalated') \
+             WHERE effect_frame_id = $1 AND status IN ('applied', 'scope_escalated') \
              ORDER BY created_at DESC",
         )
-        .bind(session_id)
+        .bind(effect_frame_id.to_string())
         .fetch_all(&self.pool)
         .await
         .map_err(db_err)?
@@ -146,18 +148,18 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
 
     async fn find_active_escalation_grant(
         &self,
-        session_id: &str,
+        effect_frame_id: Uuid,
         target_subject_kind: &str,
     ) -> Result<Option<PermissionGrant>, DomainError> {
         let row = sqlx::query_as::<_, GrantRow>(
             "SELECT * FROM permission_grants \
-             WHERE session_id = $1 \
+             WHERE effect_frame_id = $1 \
                AND status = 'applied' \
                AND scope_escalation_intent IS NOT NULL \
                AND scope_escalation_intent LIKE $2 \
              ORDER BY created_at DESC LIMIT 1",
         )
-        .bind(session_id)
+        .bind(effect_frame_id.to_string())
         .bind(format!(
             "%\"target_subject_kind\":\"{target_subject_kind}\"%"
         ))
@@ -186,7 +188,8 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
 struct GrantRow {
     id: String,
     run_id: String,
-    session_id: String,
+    effect_frame_id: Option<String>,
+    source_runtime_session_id: String,
     source_turn_id: Option<String>,
     source_tool_call_id: Option<String>,
     requested_paths: serde_json::Value,
@@ -207,6 +210,11 @@ impl TryFrom<GrantRow> for PermissionGrant {
     fn try_from(row: GrantRow) -> Result<Self, Self::Error> {
         let id = parse_uuid(&row.id, "id")?;
         let run_id = parse_uuid(&row.run_id, "run_id")?;
+        let effect_frame_id = row
+            .effect_frame_id
+            .as_deref()
+            .map(|s| parse_uuid(s, "effect_frame_id"))
+            .transpose()?;
         let requested_paths: Vec<ToolCapabilityPath> = serde_json::from_value(row.requested_paths)
             .map_err(|e| DomainError::InvalidConfig(format!("{TABLE}.requested_paths: {e}")))?;
         let grant_scope = GrantScope::parse(&row.grant_scope).ok_or_else(|| {
@@ -234,7 +242,8 @@ impl TryFrom<GrantRow> for PermissionGrant {
         Ok(PermissionGrant {
             id,
             run_id,
-            session_id: row.session_id,
+            effect_frame_id,
+            source_runtime_session_id: row.source_runtime_session_id,
             source_turn_id: row.source_turn_id,
             source_tool_call_id: row.source_tool_call_id,
             requested_paths,

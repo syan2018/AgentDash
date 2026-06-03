@@ -6,6 +6,7 @@
  */
 
 import { useState } from "react";
+import type { JsonValue } from "../../generated/common-contracts";
 import type { PermissionGrant } from "../../types/permission";
 import { isGrantPendingAction, isGrantActive } from "../../types/permission";
 import {
@@ -73,9 +74,9 @@ export function PermissionGrantCard({ grant, onUpdated }: PermissionGrantCardPro
             </li>
           ))}
         </ul>
-        {localGrant.scope_escalation_intent && (
+        {scopeEscalationTarget(localGrant.scope_escalation_intent) && (
           <p className="permission-grant-card__escalation">
-            Scope 升级目标: {localGrant.scope_escalation_intent.target_subject_kind}
+            Scope 升级目标: {scopeEscalationTarget(localGrant.scope_escalation_intent)}
           </p>
         )}
       </div>
@@ -113,6 +114,14 @@ export function PermissionGrantCard({ grant, onUpdated }: PermissionGrantCardPro
       </div>
     </div>
   );
+}
+
+function scopeEscalationTarget(value: JsonValue | undefined): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const target = value.target_subject_kind;
+  return typeof target === "string" && target.trim() ? target : null;
 }
 
 function statusLabel(status: string): string {

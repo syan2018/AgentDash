@@ -1,5 +1,6 @@
 use uuid::Uuid;
 
+use agentdash_domain::workflow::{AgentRuntimeRefs, SubjectExecutionRef};
 use agentdash_domain::{common::AgentConfig, task::TaskStatus};
 
 #[derive(Debug, thiserror::Error)]
@@ -32,30 +33,40 @@ pub struct TaskExecutionCommand {
     pub identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
 }
 
+/// Task execution dispatch 结果。
+///
+/// session_id 不再作为业务主键，改为 lifecycle 控制面锚点引用。
 #[derive(Debug, Clone)]
 pub struct TaskExecutionResult {
     pub task_id: Uuid,
-    /// AgentDash 内部 execution session id（Task child session）。
-    pub session_id: String,
-    pub turn_id: String,
+    pub runtime_refs: AgentRuntimeRefs,
+    pub subject_execution_ref: SubjectExecutionRef,
+    pub delivery_runtime_ref: Option<Uuid>,
     pub status: TaskStatus,
-    pub context_sources: Vec<String>,
 }
 
+/// Task cancel dispatch 结果。
+///
+/// cancel 的命令目标是 SubjectExecution / Assignment；runtime session 只作为
+/// delivery/provenance ref 返回。
 #[derive(Debug, Clone)]
-pub struct SessionOverview {
-    pub title: String,
-    pub updated_at: i64,
+pub struct TaskExecutionCancelResult {
+    pub task: agentdash_domain::task::Task,
+    pub runtime_refs: AgentRuntimeRefs,
+    pub subject_execution_ref: SubjectExecutionRef,
+    pub runtime_delivery_ref: Option<String>,
 }
 
+/// Task 执行视图（替代原 TaskSessionResult）。
+///
+/// 所有字段从 lifecycle facts 投影得到，附带 source refs。
 #[derive(Debug, Clone)]
-pub struct TaskSessionResult {
+pub struct TaskExecutionView {
     pub task_id: Uuid,
-    /// AgentDash 内部 execution session id（通过 SessionBinding 解析）。
-    pub session_id: Option<String>,
+    pub execution_status: Option<String>,
+    pub agent_ref: Option<Uuid>,
+    pub run_ref: Option<Uuid>,
+    pub frame_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Option<Uuid>,
     pub task_status: TaskStatus,
-    pub session_execution_status: Option<String>,
-    pub agent_binding: agentdash_domain::task::AgentBinding,
-    pub session_title: Option<String>,
-    pub last_activity: Option<i64>,
 }

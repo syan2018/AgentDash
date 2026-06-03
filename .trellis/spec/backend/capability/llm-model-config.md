@@ -123,9 +123,9 @@ agent.pi.system_prompt       # PiAgent 系统提示词
 ## 数据流
 
 ```
-前端 ExecutorSelector → { executor, model_id, thinking_level }
-  → POST /sessions/{id}/prompt
-  → 后端按 model_id 选择 provider bridge
+SessionPage / Agent 入口 → LifecycleAgent message command { prompt_blocks, executor_config }
+  → AgentFrame / LifecycleAgent 解析 delivery RuntimeSession
+  → Runtime delivery pipeline 按 model_id 选择 provider bridge
   → agent.set_thinking_level(thinking_level)
   → AgentLoop → LLM API
 ```
@@ -146,8 +146,8 @@ connector 边界显式投影到 Agent bridge。
   existing Agent 的消息历史、当前工具列表和已应用的 identity prompt 带入新 Agent。
 - `thinking_level` 不要求重建 Agent；每轮 prompt 前调用 `agent.set_thinking_level(...)`
   即可生效。
-- `SessionMeta.executor_config` 只记录会话生效配置；真正发往 LLM 的模型由 connector
-  runtime bridge 决定，测试需要覆盖 connector bridge 选择而不只检查 meta。
+- `AgentFrame.execution_profile` 记录当前生效配置；真正发往 LLM 的模型由 connector
+  runtime bridge 决定，测试需要覆盖 connector bridge 选择而不只检查 runtime trace。
 
 ---
 

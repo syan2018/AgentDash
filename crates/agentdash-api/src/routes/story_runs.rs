@@ -6,14 +6,11 @@ use axum::{
 };
 use uuid::Uuid;
 
+use agentdash_application::workflow::lifecycle_run_view_builder;
 use agentdash_contracts::workflow::{
-    LifecycleRunLinkDto, LifecycleRunStatus as ContractLifecycleRunStatus, StoryRunOverviewDto,
-    StoryRunsResponse,
+    LifecycleRunStatus as ContractLifecycleRunStatus, SubjectExecutionView,
 };
-use agentdash_domain::workflow::{
-    LifecycleRunLink, LifecycleRunStatus as DomainLifecycleRunStatus, RunLinkRole,
-    RunLinkSubjectKind,
-};
+use agentdash_domain::workflow::SubjectRef;
 
 use crate::{
     app_state::AppState,
@@ -30,42 +27,16 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         )
 }
 
-fn link_to_dto(link: &LifecycleRunLink) -> LifecycleRunLinkDto {
-    LifecycleRunLinkDto {
-        id: link.id.to_string(),
-        run_id: link.run_id.to_string(),
-        subject_kind: link.subject_kind.as_str().to_string(),
-        subject_id: link.subject_id.to_string(),
-        role: link.role.as_str().to_string(),
-        metadata: link.metadata.clone(),
-        created_at: link.created_at.to_rfc3339(),
-    }
-}
-
-fn status_to_dto(status: DomainLifecycleRunStatus) -> ContractLifecycleRunStatus {
-    match status {
-        DomainLifecycleRunStatus::Draft => ContractLifecycleRunStatus::Draft,
-        DomainLifecycleRunStatus::Ready => ContractLifecycleRunStatus::Ready,
-        DomainLifecycleRunStatus::Running => ContractLifecycleRunStatus::Running,
-        DomainLifecycleRunStatus::Blocked => ContractLifecycleRunStatus::Blocked,
-        DomainLifecycleRunStatus::Completed => ContractLifecycleRunStatus::Completed,
-        DomainLifecycleRunStatus::Failed => ContractLifecycleRunStatus::Failed,
-        DomainLifecycleRunStatus::Cancelled => ContractLifecycleRunStatus::Cancelled,
-    }
-}
-
 /// GET /stories/{story_id}/runs
 ///
-/// 返回与 Story 关联的所有 LifecycleRun（通过 LifecycleRunLink 查询）。
+/// 返回 Story 对应的 SubjectExecutionView。旧 StoryRunOverview/run-link shape
+/// 已从 public contract 删除；这里保留 route 入口，响应体切换为目标投影。
 pub async fn list_story_runs(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(story_id): Path<String>,
-) -> Result<Json<StoryRunsResponse>, ApiError> {
-    let story_uuid: Uuid = story_id
-        .parse()
-        .map_err(|_| ApiError::BadRequest(format!("无效的 story_id: {story_id}")))?;
-
+) -> Result<Json<SubjectExecutionView>, ApiError> {
+    let story_uuid = parse_story_id(&story_id)?;
     load_story_and_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -74,64 +45,21 @@ pub async fn list_story_runs(
     )
     .await?;
 
-    let links = state
-        .repos
-        .lifecycle_run_link_repo
-        .list_by_subject(RunLinkSubjectKind::Story, story_uuid)
-        .await?;
-
-    if links.is_empty() {
-        return Ok(Json(StoryRunsResponse {
-            story_id,
-            runs: Vec::new(),
-        }));
-    }
-
-    let run_ids: Vec<Uuid> = links.iter().map(|l| l.run_id).collect();
-    let runs = state.repos.lifecycle_run_repo.list_by_ids(&run_ids).await?;
-
-    let mut run_overviews: Vec<StoryRunOverviewDto> = runs
-        .iter()
-        .map(|run| {
-            let run_links: Vec<LifecycleRunLinkDto> = links
-                .iter()
-                .filter(|l| l.run_id == run.id)
-                .map(link_to_dto)
-                .collect();
-
-            StoryRunOverviewDto {
-                id: run.id.to_string(),
-                lifecycle_id: run.lifecycle_id.to_string(),
-                status: status_to_dto(run.status),
-                session_id: run.session_id.clone(),
-                created_at: run.created_at.to_rfc3339(),
-                updated_at: run.updated_at.to_rfc3339(),
-                last_activity_at: run.last_activity_at.to_rfc3339(),
-                links: run_links,
-            }
-        })
-        .collect();
-
-    run_overviews.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-
-    Ok(Json(StoryRunsResponse {
-        story_id,
-        runs: run_overviews,
-    }))
+    let subject = SubjectRef::new("story", story_uuid);
+    let view =
+        lifecycle_run_view_builder::build_subject_execution_view(&state.repos, subject).await?;
+    Ok(Json(view))
 }
 
 /// GET /stories/{story_id}/runs/active
 ///
-/// 返回 Story 当前活跃的 LifecycleRun（如果有）。
+/// 返回 Story 当前活跃执行投影；无 active run 时返回 null。
 pub async fn get_active_story_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(story_id): Path<String>,
-) -> Result<Json<Option<StoryRunOverviewDto>>, ApiError> {
-    let story_uuid: Uuid = story_id
-        .parse()
-        .map_err(|_| ApiError::BadRequest(format!("无效的 story_id: {story_id}")))?;
-
+) -> Result<Json<Option<SubjectExecutionView>>, ApiError> {
+    let story_uuid = parse_story_id(&story_id)?;
     load_story_and_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -140,41 +68,25 @@ pub async fn get_active_story_run(
     )
     .await?;
 
-    let links = state
-        .repos
-        .lifecycle_run_link_repo
-        .list_by_subject_and_role(RunLinkSubjectKind::Story, story_uuid, RunLinkRole::Subject)
-        .await?;
+    let subject = SubjectRef::new("story", story_uuid);
+    let view =
+        lifecycle_run_view_builder::build_subject_execution_view(&state.repos, subject).await?;
+    let has_active_run = view.runs.iter().any(|run| {
+        matches!(
+            run.status,
+            ContractLifecycleRunStatus::Ready | ContractLifecycleRunStatus::Running
+        )
+    });
 
-    if links.is_empty() {
-        return Ok(Json(None));
+    if has_active_run {
+        Ok(Json(Some(view)))
+    } else {
+        Ok(Json(None))
     }
+}
 
-    let run_ids: Vec<Uuid> = links.iter().map(|l| l.run_id).collect();
-    let runs = state.repos.lifecycle_run_repo.list_by_ids(&run_ids).await?;
-
-    let active_run = runs.iter().find(|r| {
-        r.status == DomainLifecycleRunStatus::Running || r.status == DomainLifecycleRunStatus::Ready
-    });
-
-    let result = active_run.map(|run| {
-        let run_links: Vec<LifecycleRunLinkDto> = links
-            .iter()
-            .filter(|l| l.run_id == run.id)
-            .map(link_to_dto)
-            .collect();
-
-        StoryRunOverviewDto {
-            id: run.id.to_string(),
-            lifecycle_id: run.lifecycle_id.to_string(),
-            status: status_to_dto(run.status),
-            session_id: run.session_id.clone(),
-            created_at: run.created_at.to_rfc3339(),
-            updated_at: run.updated_at.to_rfc3339(),
-            last_activity_at: run.last_activity_at.to_rfc3339(),
-            links: run_links,
-        }
-    });
-
-    Ok(Json(result))
+fn parse_story_id(story_id: &str) -> Result<Uuid, ApiError> {
+    story_id
+        .parse()
+        .map_err(|_| ApiError::BadRequest(format!("无效的 story_id: {story_id}")))
 }

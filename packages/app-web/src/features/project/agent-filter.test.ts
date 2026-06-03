@@ -18,7 +18,6 @@ function makeAgent(overrides: Partial<ProjectAgentSummary> = {}): ProjectAgentSu
     },
     preset_name: "backend",
     source: "preset",
-    session: null,
     ...overrides,
   };
 }

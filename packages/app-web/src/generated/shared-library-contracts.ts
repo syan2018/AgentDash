@@ -21,7 +21,7 @@ export type LibraryExtensionPackageArtifactDto = { id: string, package_name: str
 
 export type ListLibraryAssetsQuery = { asset_type?: string, scope?: string, owner_id?: string, include_deprecated: boolean, };
 
-export type ProjectAssetSourceStatusDto = { project_agents: Array<ProjectAssetSourceStatusItemDto>, mcp_presets: Array<ProjectAssetSourceStatusItemDto>, skill_assets: Array<ProjectAssetSourceStatusItemDto>, vfs_mounts: Array<ProjectAssetSourceStatusItemDto>, workflow_definitions: Array<ProjectAssetSourceStatusItemDto>, activity_lifecycle_definitions: Array<ProjectAssetSourceStatusItemDto>, extension_installations: Array<ProjectAssetSourceStatusItemDto>, };
+export type ProjectAssetSourceStatusDto = { project_agents: Array<ProjectAssetSourceStatusItemDto>, mcp_presets: Array<ProjectAssetSourceStatusItemDto>, skill_assets: Array<ProjectAssetSourceStatusItemDto>, vfs_mounts: Array<ProjectAssetSourceStatusItemDto>, agent_procedures: Array<ProjectAssetSourceStatusItemDto>, workflow_graphs: Array<ProjectAssetSourceStatusItemDto>, extension_installations: Array<ProjectAssetSourceStatusItemDto>, };
 
 export type ProjectAssetSourceStatusItemDto = { asset_kind: string, project_asset_id: string, project_asset_key: string, installed_source: InstalledAssetSourceDto, source_status: SharedLibrarySourceStatus, current_source_version?: string, current_source_digest?: string, };
 

@@ -2,7 +2,7 @@
 //!
 //! 数据来源：
 //! 1. ProjectAgent.config.auto_grantable_capabilities — Agent 角色声明的可自动获批范围
-//! 2. WorkflowContract.requestable_capabilities — Lifecycle 定义声明的运行时可申请范围
+//! 2. AgentProcedureContract.requestable_capabilities — Lifecycle 定义声明的运行时可申请范围
 //! 3. 合并策略：两者取交集 → 自动批准；不在交集内 → 需要用户审批
 
 use agentdash_domain::permission::{PolicyDecision, PolicyOutcome};
@@ -85,7 +85,7 @@ impl PermissionPolicyService {
             .unwrap_or_default()
     }
 
-    /// 从 WorkflowContract JSON 中提取 requestable_capabilities。
+    /// 从 AgentProcedureContract JSON 中提取 requestable_capabilities。
     pub fn extract_lifecycle_requestable(contract: &serde_json::Value) -> Vec<ToolCapabilityPath> {
         contract
             .get("requestable_capabilities")

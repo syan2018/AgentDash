@@ -99,7 +99,7 @@ pub struct StoryMcpServer {
 
 ### 原则
 
-Session 执行状态必须持久化在 `SessionMeta.last_execution_status`，不允许靠扫 JSONL 历史或读内存 map 推断。
+Session 执行状态必须持久化在 `SessionMeta.last_delivery_status`，不允许靠扫 JSONL 历史或读内存 map 推断。
 
 ```rust
 // ❌ 扫 JSONL 历史推断状态
@@ -109,13 +109,13 @@ let history = store.read_all(session_id).await?;
 let running = sessions.lock().await.get(id).map(|r| r.running);
 
 // ✅ 每次 turn 开始/结束时写入 meta
-session_meta.last_execution_status = "running".to_string();
+session_meta.last_delivery_status = "running".to_string();
 store.write_meta(&session_meta).await?;
 ```
 
 ### SessionMeta 写回约束
 
-- `last_event_seq`、`last_execution_status`、`last_turn_id`、`last_terminal_message` 是事件投影字段，只能单调前进
+- `last_event_seq`、`last_delivery_status`、`last_turn_id`、`last_terminal_message` 是事件投影字段，只能单调前进
 - `save_session_meta()` 更新普通元信息时，底层必须按"合并"语义处理，保证投影字段不回退
 
 ### 冷启动 continuation
@@ -126,7 +126,7 @@ store.write_meta(&session_meta).await?;
 
 ### 合法值
 
-`last_execution_status` 只有五个合法值：`idle` / `running` / `completed` / `failed` / `interrupted`。
+`last_delivery_status` 只有五个合法值：`idle` / `running` / `completed` / `failed` / `interrupted`。
 
 ---
 

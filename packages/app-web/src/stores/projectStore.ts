@@ -1,10 +1,8 @@
 import { create } from 'zustand';
 import type {
   ContextContainerDefinition,
-  OpenProjectAgentSessionResult,
   ProjectAgent,
-  ProjectAgentSession,
-  ProjectSessionInfo,
+  ProjectAgentLaunchResult,
   ProjectRole,
   ProjectSubjectGrant,
   ProjectAgentSummary,
@@ -29,7 +27,6 @@ interface ProjectState {
     agent_type: string;
     config?: Record<string, unknown>;
     default_lifecycle_key?: string;
-    default_workflow_key?: string;
     is_default_for_story?: boolean;
     is_default_for_task?: boolean;
   }) => Promise<ProjectAgent | null>;
@@ -38,7 +35,6 @@ interface ProjectState {
     agent_type?: string;
     config?: Record<string, unknown>;
     default_lifecycle_key?: string;
-    default_workflow_key?: string;
     is_default_for_story?: boolean;
     is_default_for_task?: boolean;
     knowledge_enabled?: boolean;
@@ -69,10 +65,7 @@ interface ProjectState {
   revokeProjectGroup: (projectId: string, groupId: string) => Promise<boolean>;
   cloneProject: (projectId: string, payload?: { name?: string; description?: string }) => Promise<Project | null>;
   fetchProjectAgents: (projectId: string) => Promise<ProjectAgentSummary[]>;
-  openProjectAgentSession: (projectId: string, agentKey: string) => Promise<OpenProjectAgentSessionResult | null>;
-  forceNewProjectAgentSession: (projectId: string, agentKey: string) => Promise<OpenProjectAgentSessionResult | null>;
-  fetchProjectAgentSessions: (projectId: string, agentKey: string) => Promise<ProjectAgentSession[]>;
-  fetchProjectSessionInfo: (projectId: string, bindingId: string) => Promise<ProjectSessionInfo | null>;
+  launchProjectAgent: (projectId: string, agentKey: string) => Promise<ProjectAgentLaunchResult | null>;
   selectProject: (id: string | null) => void;
   deleteProject: (id: string) => Promise<boolean>;
 }
@@ -370,9 +363,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  openProjectAgentSession: async (projectId, agentKey) => {
+  launchProjectAgent: async (projectId, agentKey) => {
     try {
-      const result = await projectService.openProjectAgentSession(projectId, agentKey);
+      const result = await projectService.launchProjectAgent(projectId, agentKey);
       set((state) => ({
         agentsByProjectId: {
           ...state.agentsByProjectId,
@@ -381,41 +374,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         error: null,
       }));
       return result;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  forceNewProjectAgentSession: async (projectId, agentKey) => {
-    try {
-      const result = await projectService.forceNewProjectAgentSession(projectId, agentKey);
-      set((state) => ({
-        agentsByProjectId: {
-          ...state.agentsByProjectId,
-          [projectId]: upsertAgentSummary(state.agentsByProjectId[projectId] ?? [], result.agent),
-        },
-        error: null,
-      }));
-      return result;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  fetchProjectAgentSessions: async (projectId, agentKey) => {
-    try {
-      return await projectService.fetchProjectAgentSessions(projectId, agentKey);
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return [];
-    }
-  },
-
-  fetchProjectSessionInfo: async (projectId, bindingId) => {
-    try {
-      return await projectService.fetchProjectSessionInfo(projectId, bindingId);
     } catch (e) {
       set({ error: (e as Error).message });
       return null;

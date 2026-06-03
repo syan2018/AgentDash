@@ -16,9 +16,7 @@ use agentdash_domain::shared_library::{
     LibraryAssetSource, LibraryAssetType, McpServerTemplatePayload, SkillTemplateFilePayload,
     SkillTemplatePayload, VfsMountTemplatePayload,
 };
-use agentdash_domain::workflow::{
-    ActivityExecutorSpec, ActivityLifecycleDefinition, WorkflowDefinition,
-};
+use agentdash_domain::workflow::{ActivityExecutorSpec, AgentProcedure, WorkflowGraph};
 
 use crate::repository_set::RepositorySet;
 use crate::shared_library::seed_digest;
@@ -457,16 +455,16 @@ async fn publish_workflow_payload(
     input: &PublishLibraryAssetInput,
 ) -> Result<serde_json::Value, PublishLibraryAssetError> {
     let lifecycle = repos
-        .activity_lifecycle_definition_repo
+        .workflow_graph_repo
         .get_by_id(input.project_asset_id)
         .await?
         .ok_or_else(|| DomainError::NotFound {
-            entity: "activity_lifecycle_definition",
+            entity: "workflow_graph",
             id: input.project_asset_id.to_string(),
         })?;
     if lifecycle.project_id != input.project_id {
         return Err(PublishLibraryAssetError::BadRequest(
-            "ActivityLifecycleDefinition 不属于当前 Project".to_string(),
+            "WorkflowGraph 不属于当前 Project".to_string(),
         ));
     }
     let workflows = collect_lifecycle_workflows(repos, &lifecycle).await?;
@@ -479,21 +477,21 @@ async fn publish_workflow_payload(
 
 async fn collect_lifecycle_workflows(
     repos: &RepositorySet,
-    lifecycle: &ActivityLifecycleDefinition,
-) -> Result<Vec<WorkflowDefinition>, PublishLibraryAssetError> {
-    let workflow_keys = lifecycle
+    lifecycle: &WorkflowGraph,
+) -> Result<Vec<AgentProcedure>, PublishLibraryAssetError> {
+    let procedure_keys = lifecycle
         .activities
         .iter()
         .filter_map(|activity| match &activity.executor {
-            ActivityExecutorSpec::Agent(agent) => Some(agent.workflow_key.clone()),
+            ActivityExecutorSpec::Agent(agent) => Some(agent.procedure_key.clone()),
             _ => None,
         })
         .collect::<BTreeSet<_>>();
 
     let mut workflows = Vec::new();
-    for key in workflow_keys {
+    for key in procedure_keys {
         let workflow = repos
-            .workflow_definition_repo
+            .agent_procedure_repo
             .get_by_project_and_key(lifecycle.project_id, &key)
             .await?
             .ok_or_else(|| {
@@ -507,24 +505,23 @@ async fn collect_lifecycle_workflows(
 }
 
 fn workflow_template_bundle(
-    lifecycle: &ActivityLifecycleDefinition,
-    workflows: Vec<WorkflowDefinition>,
+    lifecycle: &WorkflowGraph,
+    procedures: Vec<AgentProcedure>,
 ) -> BuiltinWorkflowTemplateBundle {
     BuiltinWorkflowTemplateBundle {
         key: lifecycle.key.clone(),
         name: lifecycle.name.clone(),
         description: lifecycle.description.clone(),
-        binding_kinds: lifecycle.binding_kinds.clone(),
-        workflows: workflows
+        workflows: procedures
             .into_iter()
-            .map(|workflow| BuiltinWorkflowTemplate {
-                key: workflow.key,
-                name: workflow.name,
-                description: workflow.description,
-                contract: workflow.contract,
+            .map(|p| BuiltinWorkflowTemplate {
+                key: p.key,
+                name: p.name,
+                description: p.description,
+                contract: p.contract,
             })
             .collect(),
-        lifecycle: BuiltinLifecycleTemplate {
+        graph: BuiltinLifecycleTemplate {
             key: lifecycle.key.clone(),
             name: lifecycle.name.clone(),
             description: lifecycle.description.clone(),

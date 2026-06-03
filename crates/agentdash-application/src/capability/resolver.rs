@@ -65,15 +65,15 @@ pub struct ContextContributions {
     pub companion: Option<CompanionContribution>,
 }
 
-/// 增强型能力解析上下文 — 包含 session owner 与 run link 两条解析路径。
+/// 增强型能力解析上下文 — 包含 session owner 与 subject association 两条解析路径。
 ///
 /// `owner_ctx` 为传统 Session-based visibility 路径（保留兼容）；
-/// `run_context` 为新的 LifecycleRunLink-based 路径（后续 AgentPermission 在此扩展）。
+/// `run_context` 为新的 LifecycleSubjectAssociation-based 路径（后续 AgentPermission 在此扩展）。
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityContext {
-    /// Run 关联的 subject kinds（由 LifecycleRunLink 投影）。
-    /// 例如 run 关联 Story → 此处含 `RunLinkSubjectKind::Story`。
-    pub run_subject_kinds: Vec<agentdash_domain::workflow::RunLinkSubjectKind>,
+    /// Run 关联的 subject kinds（由 LifecycleSubjectAssociation 投影）。
+    /// 例如 run 关联 Story → 此处含 `story`。
+    pub run_subject_kinds: Vec<String>,
     /// Permission Grant 授予的 capability keys（由 active grants 解析）。
     /// 任何出现在此集合中的 well-known key 视为已授权可见，绕过静态规则。
     pub granted_capability_keys: BTreeSet<String>,
@@ -88,7 +88,7 @@ pub struct CapabilityResolverInput {
     pub contributions: Vec<ContextContributions>,
     /// MCP server 候选数据源。
     pub mcp_candidates: McpCandidates,
-    /// LifecycleRunLink-based 解析上下文（可选，新路径）。
+    /// LifecycleSubjectAssociation-based 解析上下文（可选，新路径）。
     #[allow(dead_code)]
     pub capability_context: Option<CapabilityContext>,
 }
@@ -182,12 +182,17 @@ fn merge_companion_candidates(contributions: &[ContextContributions]) -> Vec<Com
 }
 
 /// Resolver 输出 = CapabilityState（唯一运行态能力容器）。
+///
+/// Resolver 产出的 state 应通过 `AgentFrameBuilder::with_capability_state` 写入
+/// AgentFrame revision，成为 capability surface 的唯一权威存储。
+/// 运行时读取应从 frame 投影（`project_capability_state_from_frame`）。
 pub type CapabilityResolverOutput = CapabilityState;
 
 /// 统一工具能力解析器。
 ///
 /// 无状态、纯函数式 — session 上下文通过 `CapabilityResolverInput` 传入，
 /// 基础设施配置通过 `&PlatformConfig` 传入。
+/// 输出应写入 AgentFrame revision 后再被 session 消费。
 pub struct CapabilityResolver;
 
 impl CapabilityResolver {

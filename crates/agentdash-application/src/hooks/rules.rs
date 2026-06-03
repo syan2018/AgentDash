@@ -1,6 +1,9 @@
 use agentdash_domain::workflow::WorkflowHookRuleSpec;
+#[cfg(test)]
+use agentdash_spi::HookEvaluationQuery;
 use agentdash_spi::{
-    HookDiagnosticEntry, HookEvaluationQuery, HookResolution, HookTrigger, SessionHookSnapshot,
+    AgentFrameHookEvaluationQuery, AgentFrameHookSnapshot, HookControlTarget, HookDiagnosticEntry,
+    HookResolution, HookTrigger, RuntimeAdapterProvenance,
 };
 
 use super::presets::domain_trigger_to_spi;
@@ -13,8 +16,60 @@ mod global_rules;
 mod owner_defaults;
 
 pub(crate) struct HookEvaluationContext<'a> {
-    pub(crate) snapshot: &'a SessionHookSnapshot,
-    pub(crate) query: &'a HookEvaluationQuery,
+    pub(crate) snapshot: &'a AgentFrameHookSnapshot,
+    pub(crate) query: &'a HookRuleEvaluationQuery,
+}
+
+pub(crate) struct HookRuleEvaluationQuery {
+    pub(crate) target: Option<HookControlTarget>,
+    pub(crate) provenance: RuntimeAdapterProvenance,
+    pub(crate) trigger: HookTrigger,
+    pub(crate) tool_name: Option<String>,
+    pub(crate) tool_call_id: Option<String>,
+    pub(crate) subagent_type: Option<String>,
+    pub(crate) payload: Option<serde_json::Value>,
+    pub(crate) token_stats: Option<agentdash_spi::ContextTokenStats>,
+}
+
+impl HookRuleEvaluationQuery {
+    pub(crate) fn from_frame_query(query: AgentFrameHookEvaluationQuery) -> Self {
+        Self {
+            target: Some(query.target),
+            provenance: query.provenance,
+            trigger: query.trigger,
+            tool_name: query.tool_name,
+            tool_call_id: query.tool_call_id,
+            subagent_type: query.subagent_type,
+            payload: query.payload,
+            token_stats: query.token_stats,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_session_query(query: HookEvaluationQuery) -> Self {
+        Self {
+            target: None,
+            provenance: RuntimeAdapterProvenance::runtime_session(
+                query.session_id,
+                query.turn_id,
+                "session_hook_evaluation_adapter",
+            ),
+            trigger: query.trigger,
+            tool_name: query.tool_name,
+            tool_call_id: query.tool_call_id,
+            subagent_type: query.subagent_type,
+            payload: query.payload,
+            token_stats: query.token_stats,
+        }
+    }
+
+    pub(crate) fn runtime_session_id(&self) -> Option<&str> {
+        self.provenance.runtime_session_id.as_deref()
+    }
+
+    pub(crate) fn turn_id(&self) -> Option<&str> {
+        self.provenance.turn_id.as_deref()
+    }
 }
 
 pub(super) struct NormalizedHookRule {
@@ -143,7 +198,7 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_infrastructure::RhaiHookScriptEvaluator;
-    use agentdash_spi::{HookInjection, HookTrigger, SessionHookSnapshot};
+    use agentdash_spi::{AgentFrameHookSnapshot, HookInjection, HookTrigger};
 
     use super::super::presets::builtin_preset_scripts;
     use super::super::test_fixtures::*;
@@ -158,7 +213,7 @@ mod tests {
         let snapshot = snapshot_with_workflow("implement", "session_ended");
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::BeforeTool,
             turn_id: None,
             tool_name: Some("shell_exec".to_string()),
@@ -174,6 +229,7 @@ mod tests {
             })),
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -212,7 +268,7 @@ mod tests {
             snapshot_with_workflow_ports("check", "checklist_passed", &["report", "summary"], &[]);
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::BeforeStop,
             turn_id: None,
             tool_name: None,
@@ -222,6 +278,7 @@ mod tests {
             payload: None,
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -254,7 +311,7 @@ mod tests {
         );
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::BeforeStop,
             turn_id: None,
             tool_name: None,
@@ -264,6 +321,7 @@ mod tests {
             payload: None,
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -296,7 +354,7 @@ mod tests {
         );
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::BeforeStop,
             turn_id: None,
             tool_name: None,
@@ -306,6 +364,7 @@ mod tests {
             payload: None,
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -325,7 +384,7 @@ mod tests {
         let snapshot = snapshot_with_workflow("check", "checklist_passed");
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::AfterTurn,
             turn_id: None,
             tool_name: None,
@@ -341,6 +400,7 @@ mod tests {
             })),
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -361,7 +421,7 @@ mod tests {
         let snapshot = snapshot_with_supervised_policy();
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::BeforeTool,
             turn_id: Some("turn-approval-1".to_string()),
             tool_name: Some("shell_exec".to_string()),
@@ -376,6 +436,7 @@ mod tests {
             })),
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -406,10 +467,10 @@ mod tests {
         use agentdash_domain::workflow::{
             EffectiveSessionContract, WorkflowHookRuleSpec, WorkflowHookTrigger,
         };
-        let snapshot = SessionHookSnapshot {
-            session_id: "sess-test".to_string(),
+        let snapshot = AgentFrameHookSnapshot {
+            runtime_adapter_session_id: "sess-test".to_string(),
             sources: vec!["workflow:trellis_dev_task:check".to_string()],
-            run_context: Some(agentdash_spi::hooks::SessionRunContext {
+            run_context: Some(agentdash_spi::hooks::SubjectRunContext {
                 scope: agentdash_spi::CapabilityScope::Story,
                 project_id: uuid::Uuid::new_v4(),
                 story_id: Some(uuid::Uuid::new_v4()),
@@ -447,11 +508,11 @@ mod tests {
                 }),
                 ..Default::default()
             }),
-            ..SessionHookSnapshot::default()
+            ..AgentFrameHookSnapshot::default()
         };
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::BeforeSubagentDispatch,
             turn_id: None,
             tool_name: None,
@@ -463,6 +524,7 @@ mod tests {
             })),
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -506,7 +568,7 @@ mod tests {
         }
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::CompanionResult,
             turn_id: Some("turn-parent-1".to_string()),
             tool_name: None,
@@ -522,6 +584,7 @@ mod tests {
             })),
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(

@@ -6,7 +6,6 @@ use agentdash_spi::{AgentConnector, McpRelayProvider};
 
 use super::branching::SessionBranchingService;
 use super::capability_service::SessionCapabilityService;
-use super::companion_wait::CompanionWaitRegistry;
 use super::construction_provider::SharedSessionConstructionProvider;
 use super::control::SessionControlService;
 use super::core::SessionCoreService;
@@ -70,6 +69,22 @@ impl SessionRuntimeBuilder {
         self
     }
 
+    pub fn with_agent_frame_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::AgentFrameRepository>,
+    ) -> Self {
+        self.inner = self.inner.with_agent_frame_repo(repo);
+        self
+    }
+
+    pub fn with_execution_anchor_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::RuntimeSessionExecutionAnchorRepository>,
+    ) -> Self {
+        self.inner = self.inner.with_execution_anchor_repo(repo);
+        self
+    }
+
     pub fn with_system_prompt_config(
         mut self,
         base_system_prompt: String,
@@ -121,8 +136,20 @@ impl SessionRuntimeBuilder {
         self.inner.title_service()
     }
 
-    pub fn companion_wait_registry(&self) -> CompanionWaitRegistry {
-        self.inner.companion_wait_registry.clone()
+    pub fn with_lifecycle_gate_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>,
+    ) -> Self {
+        self.inner = self.inner.with_lifecycle_gate_repo(repo);
+        self
+    }
+
+    pub fn with_lifecycle_agent_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>,
+    ) -> Self {
+        self.inner = self.inner.with_lifecycle_agent_repo(repo);
+        self
     }
 
     pub async fn set_terminal_callback(

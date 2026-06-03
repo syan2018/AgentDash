@@ -16,21 +16,25 @@ use super::provider_skill_asset::{
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
 use crate::runtime::{Mount, RuntimeFileEntry};
 use crate::session::SessionPersistence;
+use crate::workflow::execution_log::ActivityAttemptArtifactScope;
 use crate::workflow::lifecycle::journey::{
     LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, attempt_session_id,
     current_step, current_step_session_id, filter_session_items, find_step,
     group_events_into_turn_summaries, item_file_name, run_overview, session_summary_archives,
-    step_session_id, step_states_from_run, to_json_pretty,
+    step_session_id, step_states_from_graph_instance, to_json_pretty,
 };
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::skill_asset::SkillAssetRepository;
-use agentdash_domain::workflow::{LifecycleRun, LifecycleRunRepository};
+use agentdash_domain::workflow::{
+    LifecycleRun, LifecycleRunRepository, WorkflowGraphInstance, WorkflowGraphInstanceRepository,
+};
 use async_trait::async_trait;
 use tracing::info;
 use uuid::Uuid;
 
 pub struct LifecycleMountProvider {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
     skill_asset_repo: Arc<dyn SkillAssetRepository>,
     journey: LifecycleJourneyProjection,
 }
@@ -38,12 +42,14 @@ pub struct LifecycleMountProvider {
 impl LifecycleMountProvider {
     pub fn new(
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         skill_asset_repo: Arc<dyn SkillAssetRepository>,
         session_persistence: Arc<dyn SessionPersistence>,
     ) -> Self {
         Self {
             lifecycle_run_repo,
+            workflow_graph_instance_repo,
             skill_asset_repo,
             journey: LifecycleJourneyProjection::new(inline_file_repo, session_persistence),
         }
@@ -77,19 +83,86 @@ fn parse_run_id_from_metadata(mount: &Mount) -> Result<Uuid, MountError> {
         .map_err(|error| MountError::OperationFailed(format!("run_id 无效: {error}")))
 }
 
-fn resolve_session_id_for_runs(_mount: &Mount, active_run: &LifecycleRun) -> Option<String> {
-    active_run.session_id.clone()
+fn parse_graph_instance_id_from_metadata(mount: &Mount) -> Result<Uuid, MountError> {
+    let graph_instance_id_str = mount
+        .metadata
+        .get("graph_instance_id")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| {
+            MountError::OperationFailed("mount metadata 缺少 graph_instance_id".to_string())
+        })?;
+    Uuid::parse_str(graph_instance_id_str)
+        .map_err(|error| MountError::OperationFailed(format!("graph_instance_id 无效: {error}")))
 }
 
-async fn load_active_run(
-    repo: &Arc<dyn LifecycleRunRepository>,
-    mount: &Mount,
-) -> Result<LifecycleRun, MountError> {
+fn resolve_lifecycle_id_for_runs(active_run: &LifecycleRun) -> Result<Uuid, MountError> {
+    active_run.root_graph_id.ok_or_else(|| {
+        MountError::OperationFailed(format!(
+            "lifecycle run {} 不属于 workflow graph topology",
+            active_run.id
+        ))
+    })
+}
+
+fn activity_scope_from_mount(mount: &Mount) -> Result<ActivityAttemptArtifactScope, MountError> {
     let run_id = parse_run_id_from_metadata(mount)?;
-    repo.get_by_id(run_id)
+    let graph_instance_id = parse_graph_instance_id_from_metadata(mount)?;
+    let activity_key = mount
+        .metadata
+        .get("activity_key")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| MountError::OperationFailed("mount metadata 缺少 activity_key".to_string()))?
+        .to_string();
+    let attempt = mount
+        .metadata
+        .get("attempt")
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| MountError::OperationFailed("mount metadata 缺少 attempt".to_string()))?;
+    Ok(ActivityAttemptArtifactScope {
+        run_id,
+        graph_instance_id,
+        activity_key,
+        attempt,
+    })
+}
+
+struct LifecycleMountContext {
+    run: LifecycleRun,
+    graph_instance: WorkflowGraphInstance,
+    graph_instances: Vec<WorkflowGraphInstance>,
+}
+
+async fn load_active_context(
+    run_repo: &Arc<dyn LifecycleRunRepository>,
+    graph_instance_repo: &Arc<dyn WorkflowGraphInstanceRepository>,
+    mount: &Mount,
+) -> Result<LifecycleMountContext, MountError> {
+    let run_id = parse_run_id_from_metadata(mount)?;
+    let graph_instance_id = parse_graph_instance_id_from_metadata(mount)?;
+    let run = run_repo
+        .get_by_id(run_id)
         .await
         .map_err(map_domain_err)?
-        .ok_or_else(|| MountError::NotFound(format!("lifecycle run 不存在: {run_id}")))
+        .ok_or_else(|| MountError::NotFound(format!("lifecycle run 不存在: {run_id}")))?;
+    let graph_instance = graph_instance_repo
+        .get_by_run_and_id(run_id, graph_instance_id)
+        .await
+        .map_err(map_domain_err)?
+        .ok_or_else(|| {
+            MountError::NotFound(format!(
+                "workflow graph instance 不存在: {graph_instance_id}"
+            ))
+        })?;
+    let graph_instances = graph_instance_repo
+        .list_by_run(run_id)
+        .await
+        .map_err(map_domain_err)?;
+    Ok(LifecycleMountContext {
+        run,
+        graph_instance,
+        graph_instances,
+    })
 }
 
 fn segments_from_path(path: &str) -> Vec<&str> {
@@ -188,89 +261,103 @@ impl MountProvider for LifecycleMountProvider {
 
         let content = match segs.as_slice() {
             ["artifacts"] | ["active", "artifacts"] => {
-                let run_id = parse_run_id_from_metadata(mount)?;
+                let scope = activity_scope_from_mount(mount)?;
                 let map = self
                     .journey
-                    .list_port_outputs(run_id)
+                    .list_scoped_port_outputs(&scope)
                     .await
                     .map_err(map_journey_err)?;
                 to_json_pretty(&map).map_err(map_journey_err)?
             }
             ["artifacts", port_key] | ["active", "artifacts", port_key] => {
-                let run_id = parse_run_id_from_metadata(mount)?;
+                let artifact_ref = activity_scope_from_mount(mount)?.port_ref(*port_key);
                 self.journey
-                    .read_port_output(run_id, port_key)
+                    .read_scoped_port_output(&artifact_ref)
                     .await
                     .map_err(map_journey_err)?
             }
             _ => {
-                let active = load_active_run(&self.lifecycle_run_repo, mount).await?;
+                let active = load_active_context(
+                    &self.lifecycle_run_repo,
+                    &self.workflow_graph_instance_repo,
+                    mount,
+                )
+                .await?;
                 let run_id = parse_run_id_from_metadata(mount)?;
                 match segs.as_slice() {
                     [] | ["active"] => {
-                        to_json_pretty(&run_overview(&active)).map_err(map_journey_err)?
+                        to_json_pretty(&run_overview(&active.run, &active.graph_instances))
+                            .map_err(map_journey_err)?
                     }
                     ["active", "steps"] => {
-                        to_json_pretty(&step_states_from_run(&active)).map_err(map_journey_err)?
+                        let steps = step_states_from_graph_instance(&active.graph_instance)
+                            .map_err(map_journey_err)?;
+                        to_json_pretty(&steps).map_err(map_journey_err)?
                     }
                     ["active", "steps", key] => {
-                        let step = find_step(&active, key).map_err(map_journey_err)?;
+                        let step =
+                            find_step(&active.graph_instance, key).map_err(map_journey_err)?;
                         to_json_pretty(&step).map_err(map_journey_err)?
                     }
                     ["active", "log"] => {
-                        to_json_pretty(&active.execution_log).map_err(map_journey_err)?
+                        to_json_pretty(&active.run.execution_log).map_err(map_journey_err)?
                     }
                     ["state"] => {
-                        let step = current_step(&active).map_err(map_journey_err)?;
+                        let step = current_step(&active.graph_instance).map_err(map_journey_err)?;
                         to_json_pretty(&step).map_err(map_journey_err)?
                     }
                     ["session", "summary"] => {
-                        let step = current_step(&active).map_err(map_journey_err)?;
+                        let step = current_step(&active.graph_instance).map_err(map_journey_err)?;
                         self.journey
                             .read_node_summary(run_id, &step)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["session", "conclusions"] => {
-                        let step = current_step(&active).map_err(map_journey_err)?;
+                        let step = current_step(&active.graph_instance).map_err(map_journey_err)?;
                         self.journey
                             .read_node_conclusions(run_id, &step.activity_key)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["session", rest @ ..] => {
-                        let (_, session_id) =
-                            current_step_session_id(&active).map_err(map_journey_err)?;
+                        let (_, session_id) = current_step_session_id(&active.graph_instance)
+                            .map_err(map_journey_err)?;
                         self.journey
                             .read_session_projection(&session_id, rest)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["records"] => {
-                        let step = current_step(&active).map_err(map_journey_err)?;
+                        let step = current_step(&active.graph_instance).map_err(map_journey_err)?;
                         self.journey
                             .read_records_map(run_id, &step.activity_key)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["records", rest @ ..] => {
-                        let step = current_step(&active).map_err(map_journey_err)?;
+                        let step = current_step(&active.graph_instance).map_err(map_journey_err)?;
                         self.journey
                             .read_record(run_id, &step.activity_key, rest)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["runs"] => {
-                        let runs =
-                            if let Some(session_id) = resolve_session_id_for_runs(mount, &active) {
-                                self.lifecycle_run_repo
-                                    .list_by_session(&session_id)
-                                    .await
-                                    .map_err(map_domain_err)?
-                            } else {
-                                Vec::new()
-                            };
-                        let summaries = runs.iter().map(run_overview).collect::<Vec<_>>();
+                        let lifecycle_id = resolve_lifecycle_id_for_runs(&active.run)?;
+                        let runs = self
+                            .lifecycle_run_repo
+                            .list_by_root_graph(lifecycle_id)
+                            .await
+                            .map_err(map_domain_err)?;
+                        let mut summaries = Vec::new();
+                        for run in &runs {
+                            let graph_instances = self
+                                .workflow_graph_instance_repo
+                                .list_by_run(run.id)
+                                .await
+                                .map_err(map_domain_err)?;
+                            summaries.push(run_overview(run, &graph_instances));
+                        }
                         to_json_pretty(&summaries).map_err(map_journey_err)?
                     }
                     ["runs", id_str] => {
@@ -283,42 +370,51 @@ impl MountProvider for LifecycleMountProvider {
                             .await
                             .map_err(map_domain_err)?
                             .ok_or_else(|| MountError::NotFound(format!("run 不存在: {run_id}")))?;
-                        to_json_pretty(&run_overview(&run)).map_err(map_journey_err)?
+                        let graph_instances = self
+                            .workflow_graph_instance_repo
+                            .list_by_run(run.id)
+                            .await
+                            .map_err(map_domain_err)?;
+                        to_json_pretty(&run_overview(&run, &graph_instances))
+                            .map_err(map_journey_err)?
                     }
                     ["nodes", key, "state"] => {
-                        let step = find_step(&active, key).map_err(map_journey_err)?;
+                        let step =
+                            find_step(&active.graph_instance, key).map_err(map_journey_err)?;
                         to_json_pretty(&step).map_err(map_journey_err)?
                     }
                     ["nodes", key, "records"] => {
-                        find_step(&active, key).map_err(map_journey_err)?;
+                        find_step(&active.graph_instance, key).map_err(map_journey_err)?;
                         self.journey
                             .read_records_map(run_id, key)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["nodes", key, "records", rest @ ..] => {
-                        find_step(&active, key).map_err(map_journey_err)?;
+                        find_step(&active.graph_instance, key).map_err(map_journey_err)?;
                         self.journey
                             .read_record(run_id, key, rest)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["nodes", key, "session", "summary"] => {
-                        let step = find_step(&active, key).map_err(map_journey_err)?;
+                        let step =
+                            find_step(&active.graph_instance, key).map_err(map_journey_err)?;
                         self.journey
                             .read_node_summary(run_id, &step)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["nodes", key, "session", "conclusions"] => {
-                        find_step(&active, key).map_err(map_journey_err)?;
+                        find_step(&active.graph_instance, key).map_err(map_journey_err)?;
                         self.journey
                             .read_node_conclusions(run_id, key)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["nodes", key, "session", rest @ ..] => {
-                        let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                        let session_id = step_session_id(&active.graph_instance, key)
+                            .map_err(map_journey_err)?;
                         self.journey
                             .read_session_projection(&session_id, rest)
                             .await
@@ -368,22 +464,31 @@ impl MountProvider for LifecycleMountProvider {
                     )));
                 }
 
-                let run_id = parse_run_id_from_metadata(mount)?;
+                let artifact_ref = activity_scope_from_mount(mount)?.port_ref(*port_key);
                 self.journey
-                    .write_port_output(run_id, port_key, content)
+                    .write_scoped_port_output(&artifact_ref, content)
                     .await
                     .map_err(map_journey_err)?;
                 info!(
-                    run_id = %run_id,
+                    run_id = %artifact_ref.run_id,
+                    graph_instance_id = %artifact_ref.graph_instance_id,
+                    activity_key = %artifact_ref.activity_key,
+                    attempt = artifact_ref.attempt,
                     port_key = %port_key,
+                    scoped_path = %artifact_ref.inline_path(),
                     content_len = content.len(),
-                    "lifecycle VFS: wrote port output"
+                    "lifecycle VFS: wrote scoped port output"
                 );
                 Ok(())
             }
             ["records", rest @ ..] => {
-                let active = load_active_run(&self.lifecycle_run_repo, mount).await?;
-                let step = current_step(&active).map_err(map_journey_err)?;
+                let active = load_active_context(
+                    &self.lifecycle_run_repo,
+                    &self.workflow_graph_instance_repo,
+                    mount,
+                )
+                .await?;
+                let step = current_step(&active.graph_instance).map_err(map_journey_err)?;
                 let run_id = parse_run_id_from_metadata(mount)?;
                 let name = self
                     .journey
@@ -392,7 +497,7 @@ impl MountProvider for LifecycleMountProvider {
                     .map_err(map_journey_err)?;
                 info!(
                     run_id = %run_id,
-                    step_key = %step.activity_key,
+                    activity_key = %step.activity_key,
                     record = %name,
                     content_len = content.len(),
                     "lifecycle VFS: wrote journey record"
@@ -400,8 +505,13 @@ impl MountProvider for LifecycleMountProvider {
                 Ok(())
             }
             ["nodes", key, "records", rest @ ..] => {
-                let active = load_active_run(&self.lifecycle_run_repo, mount).await?;
-                find_step(&active, key).map_err(map_journey_err)?;
+                let active = load_active_context(
+                    &self.lifecycle_run_repo,
+                    &self.workflow_graph_instance_repo,
+                    mount,
+                )
+                .await?;
+                find_step(&active.graph_instance, key).map_err(map_journey_err)?;
                 let run_id = parse_run_id_from_metadata(mount)?;
                 let name = self
                     .journey
@@ -410,7 +520,7 @@ impl MountProvider for LifecycleMountProvider {
                     .map_err(map_journey_err)?;
                 info!(
                     run_id = %run_id,
-                    step_key = %key,
+                    activity_key = %key,
                     record = %name,
                     content_len = content.len(),
                     "lifecycle VFS: wrote explicit node journey record"
@@ -438,27 +548,33 @@ impl MountProvider for LifecycleMountProvider {
                 .await;
         }
 
-        let active = load_active_run(&self.lifecycle_run_repo, mount).await?;
+        let active = load_active_context(
+            &self.lifecycle_run_repo,
+            &self.workflow_graph_instance_repo,
+            mount,
+        )
+        .await?;
 
         let entries = match segs.as_slice() {
             [] => lifecycle_root_entries(lifecycle_mount_has_skills(mount)),
             ["active"] => lifecycle_active_entries(
-                serde_json::to_string(&active.execution_log)
+                serde_json::to_string(&active.run.execution_log)
                     .map(|content| content.len() as u64)
                     .unwrap_or(0),
             ),
-            ["active", "steps"] => step_states_from_run(&active)
-                .iter()
+            ["active", "steps"] => step_states_from_graph_instance(&active.graph_instance)
+                .map_err(map_journey_err)?
+                .into_iter()
                 .map(|step| {
                     RuntimeFileEntry::file(format!("active/steps/{}", step.activity_key))
                         .as_virtual()
                 })
                 .collect(),
             ["artifacts"] | ["active", "artifacts"] => {
-                let run_id = parse_run_id_from_metadata(mount)?;
+                let scope = activity_scope_from_mount(mount)?;
                 let files = self
                     .journey
-                    .list_port_outputs(run_id)
+                    .list_scoped_port_outputs(&scope)
                     .await
                     .map_err(map_journey_err)?;
                 let display_root = if matches!(segs.as_slice(), ["active", "artifacts"]) {
@@ -469,7 +585,7 @@ impl MountProvider for LifecycleMountProvider {
                 list_projected_entries(files, display_root, display_root, options)
             }
             ["session"] => {
-                if current_step_session_id(&active).is_ok() {
+                if current_step_session_id(&active.graph_instance).is_ok() {
                     vec![
                         RuntimeFileEntry::file("session/meta").as_virtual(),
                         RuntimeFileEntry::file("session/summary").as_virtual(),
@@ -490,7 +606,8 @@ impl MountProvider for LifecycleMountProvider {
                 }
             }
             ["session", "items"] => {
-                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
+                let (_, session_id) =
+                    current_step_session_id(&active.graph_instance).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id,
@@ -500,7 +617,8 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["session", "messages"] => {
-                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
+                let (_, session_id) =
+                    current_step_session_id(&active.graph_instance).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id,
@@ -510,7 +628,8 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["session", "tools"] => {
-                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
+                let (_, session_id) =
+                    current_step_session_id(&active.graph_instance).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id,
@@ -520,7 +639,8 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["session", "writes"] => {
-                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
+                let (_, session_id) =
+                    current_step_session_id(&active.graph_instance).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id,
@@ -530,12 +650,14 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["session", "summaries"] => {
-                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
+                let (_, session_id) =
+                    current_step_session_id(&active.graph_instance).map_err(map_journey_err)?;
                 list_session_summary_entries(&self.journey, &session_id, "session/summaries")
                     .await?
             }
             ["session", "turns"] => {
-                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
+                let (_, session_id) =
+                    current_step_session_id(&active.graph_instance).map_err(map_journey_err)?;
                 let events = self
                     .journey
                     .session_events(&session_id)
@@ -550,7 +672,8 @@ impl MountProvider for LifecycleMountProvider {
                     .collect()
             }
             ["session", "turns", turn_id] => {
-                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
+                let (_, session_id) =
+                    current_step_session_id(&active.graph_instance).map_err(map_journey_err)?;
                 let events = self
                     .journey
                     .session_events(&session_id)
@@ -569,7 +692,7 @@ impl MountProvider for LifecycleMountProvider {
                 }
             }
             ["records"] => {
-                let step = current_step(&active).map_err(map_journey_err)?;
+                let step = current_step(&active.graph_instance).map_err(map_journey_err)?;
                 let run_id = parse_run_id_from_metadata(mount)?;
                 let files = self
                     .journey
@@ -579,7 +702,7 @@ impl MountProvider for LifecycleMountProvider {
                 list_projected_entries(files, "records", "records", options)
             }
             ["records", rest @ ..] => {
-                let step = current_step(&active).map_err(map_journey_err)?;
+                let step = current_step(&active.graph_instance).map_err(map_journey_err)?;
                 let run_id = parse_run_id_from_metadata(mount)?;
                 let files = self
                     .journey
@@ -589,17 +712,17 @@ impl MountProvider for LifecycleMountProvider {
                 let display_base = format!("records/{}", rest.join("/"));
                 list_projected_entries(files, "records", &display_base, options)
             }
-            ["nodes"] => step_states_from_run(&active)
-                .iter()
+            ["nodes"] => step_states_from_graph_instance(&active.graph_instance)
+                .map_err(map_journey_err)?
+                .into_iter()
                 .map(|step| {
                     RuntimeFileEntry::dir(format!("nodes/{}", step.activity_key)).as_virtual()
                 })
                 .collect(),
             ["nodes", key] => {
-                if let Some(step) = step_states_from_run(&active)
-                    .iter()
-                    .find(|step| step.activity_key == *key)
-                {
+                let states = step_states_from_graph_instance(&active.graph_instance)
+                    .map_err(map_journey_err)?;
+                if let Some(step) = states.iter().find(|step| step.activity_key == *key) {
                     let mut entries =
                         vec![RuntimeFileEntry::file(format!("nodes/{key}/state")).as_virtual()];
                     if attempt_session_id(step).is_some() {
@@ -614,7 +737,8 @@ impl MountProvider for LifecycleMountProvider {
                 }
             }
             ["nodes", key, "session"] => {
-                let states = step_states_from_run(&active);
+                let states = step_states_from_graph_instance(&active.graph_instance)
+                    .map_err(map_journey_err)?;
                 let step = states.iter().find(|step| step.activity_key == *key);
                 if step.and_then(attempt_session_id).is_none() {
                     Vec::new()
@@ -638,7 +762,8 @@ impl MountProvider for LifecycleMountProvider {
                 }
             }
             ["nodes", key, "session", "items"] => {
-                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                let session_id =
+                    step_session_id(&active.graph_instance, key).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id,
@@ -648,7 +773,8 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["nodes", key, "session", "messages"] => {
-                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                let session_id =
+                    step_session_id(&active.graph_instance, key).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id,
@@ -658,7 +784,8 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["nodes", key, "session", "tools"] => {
-                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                let session_id =
+                    step_session_id(&active.graph_instance, key).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id,
@@ -668,7 +795,8 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["nodes", key, "session", "writes"] => {
-                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                let session_id =
+                    step_session_id(&active.graph_instance, key).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id,
@@ -678,7 +806,8 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["nodes", key, "session", "summaries"] => {
-                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                let session_id =
+                    step_session_id(&active.graph_instance, key).map_err(map_journey_err)?;
                 list_session_summary_entries(
                     &self.journey,
                     &session_id,
@@ -687,7 +816,8 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["nodes", key, "session", "turns"] => {
-                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                let session_id =
+                    step_session_id(&active.graph_instance, key).map_err(map_journey_err)?;
                 let events = self
                     .journey
                     .session_events(&session_id)
@@ -702,7 +832,8 @@ impl MountProvider for LifecycleMountProvider {
                     .collect()
             }
             ["nodes", key, "session", "turns", turn_id] => {
-                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                let session_id =
+                    step_session_id(&active.graph_instance, key).map_err(map_journey_err)?;
                 let events = self
                     .journey
                     .session_events(&session_id)
@@ -723,7 +854,7 @@ impl MountProvider for LifecycleMountProvider {
                 }
             }
             ["nodes", key, "records"] => {
-                find_step(&active, key).map_err(map_journey_err)?;
+                find_step(&active.graph_instance, key).map_err(map_journey_err)?;
                 let run_id = parse_run_id_from_metadata(mount)?;
                 let files = self
                     .journey
@@ -734,7 +865,7 @@ impl MountProvider for LifecycleMountProvider {
                 list_projected_entries(files, &display_root, &display_root, options)
             }
             ["nodes", key, "records", rest @ ..] => {
-                find_step(&active, key).map_err(map_journey_err)?;
+                find_step(&active.graph_instance, key).map_err(map_journey_err)?;
                 let run_id = parse_run_id_from_metadata(mount)?;
                 let files = self
                     .journey
@@ -746,14 +877,12 @@ impl MountProvider for LifecycleMountProvider {
                 list_projected_entries(files, &display_root, &display_base, options)
             }
             ["runs"] => {
-                let runs = if let Some(session_id) = resolve_session_id_for_runs(mount, &active) {
-                    self.lifecycle_run_repo
-                        .list_by_session(&session_id)
-                        .await
-                        .map_err(map_domain_err)?
-                } else {
-                    Vec::new()
-                };
+                let lifecycle_id = resolve_lifecycle_id_for_runs(&active.run)?;
+                let runs = self
+                    .lifecycle_run_repo
+                    .list_by_root_graph(lifecycle_id)
+                    .await
+                    .map_err(map_domain_err)?;
                 runs.iter()
                     .map(|run| RuntimeFileEntry::file(format!("runs/{}", run.id)).as_virtual())
                     .collect()
@@ -807,8 +936,8 @@ impl MountProvider for LifecycleMountProvider {
 mod tests {
     use super::*;
     use crate::session::{
-        ExecutionStatus, MemorySessionPersistence, SessionBootstrapState, SessionEventStore,
-        SessionMeta, SessionMetaStore, SessionProjectionStore, TitleSource,
+        ExecutionStatus, MemorySessionPersistence, SessionEventStore, SessionMeta,
+        SessionMetaStore, SessionProjectionStore, TitleSource,
     };
     use agentdash_agent_protocol::codex_app_server_protocol as codex;
     use agentdash_agent_protocol::{
@@ -820,7 +949,7 @@ mod tests {
     use agentdash_domain::skill_asset::{SkillAsset, SkillAssetRepository};
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityLifecycleRunState, ActivityRunStatus,
-        ExecutorRunRef,
+        ExecutorRunRef, WorkflowGraphInstance,
     };
     use agentdash_spi::{
         NewCompactionProjectionCommit, SESSION_PROJECTION_KIND_MODEL_CONTEXT,
@@ -877,30 +1006,16 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_lifecycle(
+        async fn list_by_root_graph(
             &self,
-            lifecycle_id: Uuid,
+            root_graph_id: Uuid,
         ) -> Result<Vec<LifecycleRun>, DomainError> {
             Ok(self
                 .runs
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|run| run.lifecycle_id == lifecycle_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_session(
-            &self,
-            session_id: &str,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|run| run.session_id.as_deref() == Some(session_id))
+                .filter(|run| run.root_graph_id == Some(root_graph_id))
                 .cloned()
                 .collect())
         }
@@ -915,6 +1030,65 @@ mod tests {
 
         async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
             self.runs.lock().unwrap().retain(|run| run.id != id);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct InMemoryWorkflowGraphInstanceRepo {
+        instances: Mutex<Vec<WorkflowGraphInstance>>,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkflowGraphInstanceRepository for InMemoryWorkflowGraphInstanceRepo {
+        async fn create(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError> {
+            self.instances.lock().unwrap().push(instance.clone());
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<WorkflowGraphInstance>, DomainError> {
+            Ok(self
+                .instances
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|instance| instance.id == id)
+                .cloned())
+        }
+
+        async fn get_by_run_and_id(
+            &self,
+            run_id: Uuid,
+            id: Uuid,
+        ) -> Result<Option<WorkflowGraphInstance>, DomainError> {
+            Ok(self
+                .instances
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|instance| instance.run_id == run_id && instance.id == id)
+                .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<WorkflowGraphInstance>, DomainError> {
+            Ok(self
+                .instances
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|instance| instance.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError> {
+            let mut guard = self.instances.lock().unwrap();
+            if let Some(existing) = guard.iter_mut().find(|item| item.id == instance.id) {
+                *existing = instance.clone();
+            }
             Ok(())
         }
     }
@@ -1108,7 +1282,7 @@ mod tests {
             activity_key: key.to_string(),
             attempt: 1,
             status: ActivityAttemptStatus::Running,
-            executor_run: Some(ExecutorRunRef::AgentSession {
+            executor_run: Some(ExecutorRunRef::RuntimeSession {
                 session_id: session_id.to_string(),
             }),
             started_at: Some(Utc::now()),
@@ -1122,19 +1296,13 @@ mod tests {
             id: session_id.to_string(),
             title: "Lifecycle node".to_string(),
             title_source: TitleSource::Auto,
-            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
-            executor_config: None,
             executor_session_id: None,
-            companion_context: None,
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         }
     }
 
@@ -1196,24 +1364,32 @@ mod tests {
 
     async fn fixture() -> (LifecycleMountProvider, Mount, MemorySessionPersistence) {
         let run_repo = Arc::new(InMemoryLifecycleRunRepo::default());
+        let graph_instance_repo = Arc::new(InMemoryWorkflowGraphInstanceRepo::default());
         let inline_repo = Arc::new(InMemoryInlineFileRepo::default());
         let persistence = MemorySessionPersistence::default();
         let session_id = "sess-node";
 
+        let mut run = LifecycleRun::new_control(Uuid::new_v4(), Uuid::new_v4());
+        let root_graph_id = run.root_graph_id.expect("workflow graph fixture run");
+        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, root_graph_id);
         let activity_state = ActivityLifecycleRunState {
+            graph_instance_id: graph_instance.id,
             status: ActivityRunStatus::Running,
             attempts: vec![running_attempt("analyze", session_id)],
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let run = LifecycleRun::new_activity(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Some("sess-root".to_string()),
-            activity_state,
-        )
-        .expect("run");
+        graph_instance
+            .replace_activity_state(activity_state)
+            .expect("graph instance state");
+        if let Some(state) = graph_instance.activity_state.as_ref() {
+            run.sync_graph_instance_activity_projections([(graph_instance.id, state)]);
+        }
         run_repo.create(&run).await.expect("store run");
+        graph_instance_repo
+            .create(&graph_instance)
+            .await
+            .expect("store graph instance");
 
         persistence
             .create_session(&test_meta(session_id))
@@ -1374,13 +1550,17 @@ mod tests {
             .await
             .expect("commit compaction");
 
-        let mount = crate::vfs::build_lifecycle_mount_with_ports(
+        let mount = crate::vfs::build_lifecycle_mount_with_activity_scope(
             run.id,
+            graph_instance.id,
             "test-lifecycle",
             &["report".into()],
+            Some("analyze"),
+            Some(1),
         );
         let provider = LifecycleMountProvider::new(
             run_repo,
+            graph_instance_repo,
             inline_repo.clone(),
             Arc::new(EmptySkillAssetRepo),
             Arc::new(persistence.clone()),

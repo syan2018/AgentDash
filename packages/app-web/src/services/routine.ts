@@ -11,7 +11,7 @@ export interface CreateRoutinePayload {
   prompt_template: string;
   project_agent_id: string;
   trigger_config: Record<string, unknown>;
-  session_strategy?: Record<string, unknown>;
+  dispatch_strategy?: Record<string, unknown>;
 }
 
 export type UpdateRoutinePayload = Record<string, unknown>;

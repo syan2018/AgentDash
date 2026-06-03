@@ -74,10 +74,6 @@ pub struct CreateTaskParams {
     pub description: String,
     #[schemars(description = "关联的 Workspace UUID（可选）")]
     pub workspace_id: Option<String>,
-    #[schemars(
-        description = "绑定的 lifecycle step key（可选；未提供时启动 Task 会自动绑定当前可执行 step）"
-    )]
-    pub lifecycle_step_key: Option<String>,
     #[schemars(description = "Agent 类型提示（如 claude-code / codex）")]
     pub agent_type: Option<String>,
     #[schemars(description = "初始上下文（拼接在提示词前的额外信息）")]
@@ -97,7 +93,6 @@ pub struct TaskInput {
     pub title: String,
     pub description: String,
     pub workspace_id: Option<String>,
-    pub lifecycle_step_key: Option<String>,
     pub agent_type: Option<String>,
     pub initial_context: Option<String>,
     pub context_sources: Option<Vec<ContextSourceRefInput>>,
@@ -221,17 +216,6 @@ impl StoryMcpServer {
             .filter(|item| !item.is_empty())
             .collect()
     }
-}
-
-fn normalize_optional_string(value: Option<String>) -> Option<String> {
-    value.and_then(|raw| {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
 }
 
 fn parse_domain_input<T: DeserializeOwned>(
@@ -401,7 +385,7 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<CreateTaskParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use agentdash_domain::task::{AgentBinding, Task};
+        use agentdash_domain::task::{Task, TaskDispatchPreference};
 
         self.require_project(McpProjectPermission::Edit).await?;
         let workspace_id = params
@@ -420,8 +404,7 @@ impl StoryMcpServer {
             params.description,
         );
         task.workspace_id = workspace_id;
-        task.lifecycle_step_key = normalize_optional_string(params.lifecycle_step_key);
-        task.agent_binding = AgentBinding {
+        task.dispatch_preference = TaskDispatchPreference {
             agent_type: params.agent_type,
             initial_context: params.initial_context,
             context_sources: params
@@ -459,7 +442,7 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<BatchCreateTasksParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use agentdash_domain::task::{AgentBinding, Task};
+        use agentdash_domain::task::{Task, TaskDispatchPreference};
 
         self.require_project(McpProjectPermission::Edit).await?;
         let mut created_ids = Vec::new();
@@ -482,8 +465,7 @@ impl StoryMcpServer {
                 input.description.clone(),
             );
             task.workspace_id = workspace_id;
-            task.lifecycle_step_key = normalize_optional_string(input.lifecycle_step_key.clone());
-            task.agent_binding = AgentBinding {
+            task.dispatch_preference = TaskDispatchPreference {
                 agent_type: input.agent_type.clone(),
                 initial_context: input.initial_context.clone(),
                 context_sources: input
@@ -533,8 +515,7 @@ impl StoryMcpServer {
                     "description": t.description,
                     "status": t.status(),
                     "workspace_id": t.workspace_id.map(|w| w.to_string()),
-                    "lifecycle_step_key": t.lifecycle_step_key,
-                    "agent_type": t.agent_binding.agent_type,
+                    "agent_type": t.dispatch_preference.agent_type,
                 })
             })
             .collect();

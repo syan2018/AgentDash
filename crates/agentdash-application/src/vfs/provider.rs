@@ -90,6 +90,9 @@ impl MountProviderRegistryBuilder {
     pub fn with_builtins(
         mut self,
         lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
+        workflow_graph_instance_repo: Arc<
+            dyn agentdash_domain::workflow::WorkflowGraphInstanceRepository,
+        >,
         canvas_repo: Arc<dyn agentdash_domain::canvas::CanvasRepository>,
         inline_file_repo: Arc<dyn agentdash_domain::inline_file::InlineFileRepository>,
         routine_execution_repo: Arc<dyn agentdash_domain::routine::RoutineExecutionRepository>,
@@ -102,6 +105,7 @@ impl MountProviderRegistryBuilder {
         self.registry.register(Arc::new(
             super::provider_lifecycle::LifecycleMountProvider::new(
                 lifecycle_run_repo,
+                workflow_graph_instance_repo,
                 inline_file_repo.clone(),
                 skill_asset_repo.clone(),
                 session_persistence,

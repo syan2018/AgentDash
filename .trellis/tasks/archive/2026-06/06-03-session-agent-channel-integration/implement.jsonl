@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Session is user-facing shell; frontend does not create business fact source."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "RuntimeSession is trace, LifecycleRun/Agent/Frame are lifecycle runtime projection keys."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "LifecycleAgent, AgentFrame, RuntimeSessionExecutionAnchor invariants for command routing."}
+{"file": ".trellis/spec/backend/workflow/lifecycle-run-link.md", "reason": "RuntimeSession to AgentFrame/LifecycleAgent association lookup contract."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Session prompt launch is runtime delivery behind AgentFrame control-plane ownership; stale public prompt paths must be corrected."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "DTO generation and frontend/backend contract drift rules if API surface changes."}

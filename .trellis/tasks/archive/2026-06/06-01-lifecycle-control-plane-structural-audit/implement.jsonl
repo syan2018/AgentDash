@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-structural-audit/raw-exposed-issues-checklist.md", "reason": "原始暴露问题清单，后续实现必须逐项对照。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-structural-audit/structural-analysis.md", "reason": "逐项结构性分析与封装方案。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-structural-audit/design.md", "reason": "目标架构边界与核心不变量。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-structural-audit/implement.md", "reason": "后续彻底修复顺序。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/refactor-plan.md", "reason": "原 lifecycle 控制面目标阶段规划。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/abstraction-boundary-and-coupling-review.md", "reason": "抽象边界与过度耦合判断标准。"}

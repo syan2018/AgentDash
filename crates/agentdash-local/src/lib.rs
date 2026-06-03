@@ -17,6 +17,7 @@ mod workspace_probe;
 mod ws_client;
 
 pub mod runtime;
+pub mod runtime_paths;
 
 pub use extensions::{
     ExtensionArtifactCacheEntry, ExtensionArtifactCacheError, ExtensionArtifactDownloadRequest,
@@ -33,3 +34,7 @@ pub use runtime::{
 };
 
 pub use machine_identity::{LocalMachineIdentity, load_or_create_machine_identity};
+pub use runtime_paths::{
+    local_mcp_servers_path, local_runtime_config_dir, local_runtime_data_dir,
+    local_runtime_profile_path, machine_identity_path,
+};

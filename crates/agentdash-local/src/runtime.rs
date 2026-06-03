@@ -17,6 +17,7 @@ use tokio::sync::{Mutex, watch};
 use crate::LocalExtensionHostManager;
 use crate::local_backend_config::{self, McpLocalServerEntry};
 use crate::mcp_client_manager::McpClientManager;
+use crate::runtime_paths::local_runtime_data_dir;
 use crate::tool_executor::ToolExecutor;
 use crate::ws_client;
 
@@ -542,44 +543,6 @@ fn api_base_url_from_cloud_url(cloud_url: &str) -> anyhow::Result<String> {
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("cloud_url 缺少 host: {cloud_url}"))?;
     Ok(format!("{scheme}://{authority}"))
-}
-
-fn local_runtime_data_dir() -> anyhow::Result<PathBuf> {
-    if cfg!(windows) {
-        if let Some(value) = non_empty_env("APPDATA").or_else(|| non_empty_env("LOCALAPPDATA")) {
-            return Ok(PathBuf::from(value).join("AgentDash").join("local-runtime"));
-        }
-    }
-
-    if cfg!(target_os = "macos") {
-        if let Some(home) = non_empty_env("HOME") {
-            return Ok(PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("AgentDash")
-                .join("local-runtime"));
-        }
-    }
-
-    if let Some(value) = non_empty_env("XDG_DATA_HOME") {
-        return Ok(PathBuf::from(value).join("agentdash").join("local-runtime"));
-    }
-    if let Some(home) = non_empty_env("HOME") {
-        return Ok(PathBuf::from(home)
-            .join(".local")
-            .join("share")
-            .join("agentdash")
-            .join("local-runtime"));
-    }
-
-    anyhow::bail!("无法定位本机 runtime 数据目录")
-}
-
-fn non_empty_env(name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 fn redact_log_message(message: &str) -> String {

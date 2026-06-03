@@ -143,7 +143,7 @@ fn apply_turn_start_meta(
     title_hint: &str,
 ) {
     meta.updated_at = now;
-    meta.last_execution_status = ExecutionStatus::Running;
+    meta.last_delivery_status = ExecutionStatus::Running;
     meta.last_turn_id = Some(turn_id.to_string());
     meta.last_terminal_message = None;
     meta.executor_config = Some(executor_config.clone());

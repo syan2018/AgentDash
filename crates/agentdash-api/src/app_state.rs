@@ -266,6 +266,7 @@ impl AppState {
                 repos.lifecycle_agent_repo.clone(),
                 repos.agent_frame_repo.clone(),
                 repos.agent_assignment_repo.clone(),
+                repos.execution_anchor_repo.clone(),
             ),
         );
 

@@ -17,8 +17,8 @@ use agentdash_domain::task::TaskStatus;
 use agentdash_domain::workflow::{
     ActivityExecutionClaimRepository, AgentAssignmentRepository, AgentFrameRepository,
     LifecycleAgentRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    RuntimeSessionSelectionPolicy, SubjectRef, WorkflowGraphInstanceRepository,
-    WorkflowGraphRepository,
+    RuntimeSessionExecutionAnchorRepository, RuntimeSessionSelectionPolicy, SubjectRef,
+    WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
 
 use crate::session::SessionRuntimeService;
@@ -39,6 +39,7 @@ pub struct TerminalCancelCoordinator {
     agent_repo: Arc<dyn LifecycleAgentRepository>,
     frame_repo: Arc<dyn AgentFrameRepository>,
     assignment_repo: Arc<dyn AgentAssignmentRepository>,
+    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
 }
 
 impl TerminalCancelCoordinator {
@@ -53,6 +54,7 @@ impl TerminalCancelCoordinator {
         agent_repo: Arc<dyn LifecycleAgentRepository>,
         frame_repo: Arc<dyn AgentFrameRepository>,
         assignment_repo: Arc<dyn AgentAssignmentRepository>,
+        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     ) -> Self {
         Self {
             session_runtime,
@@ -65,6 +67,7 @@ impl TerminalCancelCoordinator {
             agent_repo,
             frame_repo,
             assignment_repo,
+            execution_anchor_repo,
         }
     }
 
@@ -181,6 +184,7 @@ impl TerminalCancelCoordinator {
             self.agent_repo.as_ref(),
             self.frame_repo.as_ref(),
             self.assignment_repo.as_ref(),
+            self.execution_anchor_repo.as_ref(),
         );
         match service
             .prepare_runtime_cancel_delivery(

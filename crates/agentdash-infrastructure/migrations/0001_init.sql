@@ -662,7 +662,7 @@ CREATE TABLE sessions (
     created_at bigint NOT NULL,
     updated_at bigint NOT NULL,
     last_event_seq bigint DEFAULT 0 NOT NULL,
-    last_execution_status text DEFAULT 'idle'::text NOT NULL,
+    last_delivery_status text DEFAULT 'idle'::text NOT NULL,
     last_turn_id text,
     last_terminal_message text,
     executor_config_json text,

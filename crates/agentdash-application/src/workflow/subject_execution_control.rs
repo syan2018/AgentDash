@@ -4,8 +4,9 @@ use agentdash_domain::workflow::{
     ActivityBindingRefs, ActivityExecutionClaimRepository, ActivityExecutionClaimStatus,
     AgentAssignment, AgentAssignmentRepository, AgentFrame, AgentFrameRepository, LifecycleAgent,
     LifecycleAgentRepository, LifecycleRunRepository, LifecycleSubjectAssociation,
-    LifecycleSubjectAssociationRepository, RuntimeControlRefs, RuntimeSessionSelectionPolicy,
-    SubjectRef, WorkflowGraphInstanceRepository, WorkflowGraphRepository,
+    LifecycleSubjectAssociationRepository, RuntimeControlRefs,
+    RuntimeSessionExecutionAnchorRepository, RuntimeSessionSelectionPolicy, SubjectRef,
+    WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
 
 use super::{ActivityEvent, ActivityLifecycleRunService, WorkflowApplicationError};
@@ -50,6 +51,7 @@ pub struct SubjectExecutionControlService<'a> {
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
     agent_assignment_repo: &'a dyn AgentAssignmentRepository,
+    execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
 }
 
 impl<'a> SubjectExecutionControlService<'a> {
@@ -63,6 +65,7 @@ impl<'a> SubjectExecutionControlService<'a> {
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         agent_frame_repo: &'a dyn AgentFrameRepository,
         agent_assignment_repo: &'a dyn AgentAssignmentRepository,
+        execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
     ) -> Self {
         Self {
             workflow_graph_repo,
@@ -73,6 +76,7 @@ impl<'a> SubjectExecutionControlService<'a> {
             lifecycle_agent_repo,
             agent_frame_repo,
             agent_assignment_repo,
+            execution_anchor_repo,
         }
     }
 
@@ -87,11 +91,13 @@ impl<'a> SubjectExecutionControlService<'a> {
         self.abandon_claim(&target).await?;
         self.release_assignment(&target).await?;
 
-        let runtime_delivery = self.runtime_delivery_command(
-            &target,
-            command.runtime_selection_policy,
-            command.reason.clone(),
-        );
+        let runtime_delivery = self
+            .runtime_delivery_command(
+                &target,
+                command.runtime_selection_policy,
+                command.reason.clone(),
+            )
+            .await?;
 
         Ok(SubjectExecutionCancelResult {
             subject_ref: command.subject_ref,
@@ -116,7 +122,7 @@ impl<'a> SubjectExecutionControlService<'a> {
         reason: Option<String>,
     ) -> Result<Option<RuntimeCancelDeliveryCommand>, WorkflowApplicationError> {
         let target = self.resolve_cancel_target(subject_ref).await?;
-        Ok(self.runtime_delivery_command(&target, policy, reason))
+        self.runtime_delivery_command(&target, policy, reason).await
     }
 
     async fn resolve_cancel_target(
@@ -316,20 +322,40 @@ impl<'a> SubjectExecutionControlService<'a> {
         Ok(())
     }
 
-    fn runtime_delivery_command(
+    async fn runtime_delivery_command(
         &self,
         target: &SubjectExecutionCancelTarget,
         policy: RuntimeSessionSelectionPolicy,
         reason: Option<String>,
-    ) -> Option<RuntimeCancelDeliveryCommand> {
-        target
-            .delivery_frame
-            .select_runtime_session_id(policy)
-            .map(|runtime_session_id| RuntimeCancelDeliveryCommand {
+    ) -> Result<Option<RuntimeCancelDeliveryCommand>, WorkflowApplicationError> {
+        let runtime_session_id = match policy {
+            RuntimeSessionSelectionPolicy::Specific { runtime_session_id } => self
+                .execution_anchor_repo
+                .find_by_session(&runtime_session_id)
+                .await?
+                .filter(|anchor| anchor.agent_id == target.agent.id)
+                .map(|anchor| anchor.runtime_session_id),
+            RuntimeSessionSelectionPolicy::LaunchPrimary => self
+                .execution_anchor_repo
+                .list_by_agent(target.agent.id)
+                .await?
+                .into_iter()
+                .min_by_key(|anchor| anchor.created_at)
+                .map(|anchor| anchor.runtime_session_id),
+            RuntimeSessionSelectionPolicy::LatestAttached => self
+                .execution_anchor_repo
+                .latest_for_agent(target.agent.id)
+                .await?
+                .map(|anchor| anchor.runtime_session_id),
+        };
+
+        Ok(
+            runtime_session_id.map(|runtime_session_id| RuntimeCancelDeliveryCommand {
                 runtime_session_id,
                 runtime_refs: runtime_refs_for_target(target),
                 reason,
-            })
+            }),
+        )
     }
 }
 
@@ -362,8 +388,8 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
         ActivityExecutionClaim, ActivityExecutorSpec, ActivityLifecycleRunState,
-        AgentActivityExecutorSpec, DefinitionSource, ExecutorRunRef, LifecycleRun, WorkflowGraph,
-        WorkflowGraphInstance,
+        AgentActivityExecutorSpec, DefinitionSource, ExecutorRunRef, LifecycleRun,
+        RuntimeSessionExecutionAnchor, WorkflowGraph, WorkflowGraphInstance,
     };
 
     use super::*;
@@ -759,7 +785,7 @@ mod tests {
             Ok(())
         }
 
-        async fn find_by_runtime_session(
+        async fn find_frame_by_runtime_ref_projection(
             &self,
             runtime_session_id: &str,
         ) -> Result<Option<AgentFrame>, DomainError> {
@@ -863,6 +889,120 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct AnchorRepo {
+        anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
+    }
+
+    impl AnchorRepo {
+        fn insert(&self, anchor: RuntimeSessionExecutionAnchor) {
+            self.anchors.lock().unwrap().push(anchor);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeSessionExecutionAnchorRepository for AnchorRepo {
+        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+            let mut anchors = self.anchors.lock().unwrap();
+            if let Some(existing) = anchors
+                .iter_mut()
+                .find(|existing| existing.runtime_session_id == anchor.runtime_session_id)
+            {
+                *existing = anchor.clone();
+            } else {
+                anchors.push(anchor.clone());
+            }
+            Ok(())
+        }
+
+        async fn update_assignment(
+            &self,
+            runtime_session_id: &str,
+            assignment_id: Uuid,
+            attempt: i32,
+        ) -> Result<(), DomainError> {
+            if let Some(anchor) = self
+                .anchors
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|anchor| anchor.runtime_session_id == runtime_session_id)
+            {
+                anchor.fill_assignment(assignment_id, attempt);
+            }
+            Ok(())
+        }
+
+        async fn find_by_session(
+            &self,
+            runtime_session_id: &str,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|anchor| anchor.runtime_session_id == runtime_session_id)
+                .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| anchor.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_project_session_ids(
+            &self,
+            runtime_session_ids: &[String],
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| runtime_session_ids.contains(&anchor.runtime_session_id))
+                .cloned()
+                .collect())
+        }
+
+        async fn latest_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .max_by_key(|anchor| anchor.updated_at)
+                .cloned())
+        }
+    }
+
     fn graph(project_id: Uuid) -> WorkflowGraph {
         WorkflowGraph::new(
             project_id,
@@ -929,6 +1069,7 @@ mod tests {
         let agent_repo = AgentRepo::default();
         let frame_repo = FrameRepo::default();
         let assignment_repo = AssignmentRepo::default();
+        let anchor_repo = AnchorRepo::default();
 
         let mut run = LifecycleRun::new_control(project_id, graph.id);
         let mut graph_instance = WorkflowGraphInstance::new_root(run.id, graph.id);
@@ -964,6 +1105,22 @@ mod tests {
             .create(&assignment)
             .await
             .expect("assignment");
+        anchor_repo.insert(RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-1",
+            run.id,
+            frame.id,
+            agent.id,
+            Some(graph_instance.id),
+            Some("main".to_string()),
+        ));
+        anchor_repo.insert(RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-2",
+            run.id,
+            frame.id,
+            agent.id,
+            Some(graph_instance.id),
+            Some("main".to_string()),
+        ));
         association_repo
             .create(&LifecycleSubjectAssociation::new_agent_scoped(
                 run.id,
@@ -991,6 +1148,7 @@ mod tests {
             &agent_repo,
             &frame_repo,
             &assignment_repo,
+            &anchor_repo,
         );
         let result = service
             .cancel_subject_execution(CancelSubjectExecutionCommand {
@@ -1053,6 +1211,7 @@ mod tests {
         let agent_repo = AgentRepo::default();
         let frame_repo = FrameRepo::default();
         let assignment_repo = AssignmentRepo::default();
+        let anchor_repo = AnchorRepo::default();
 
         let run = LifecycleRun::new_graphless(project_id);
         run_repo.create(&run).await.expect("run");
@@ -1063,6 +1222,14 @@ mod tests {
         agent.set_current_frame(frame.id);
         agent_repo.create(&agent).await.expect("agent");
         frame_repo.create(&frame).await.expect("frame");
+        anchor_repo.insert(RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-graphless-1",
+            run.id,
+            frame.id,
+            agent.id,
+            None,
+            None,
+        ));
         association_repo
             .create(&LifecycleSubjectAssociation::new_agent_scoped(
                 run.id,
@@ -1083,6 +1250,7 @@ mod tests {
             &agent_repo,
             &frame_repo,
             &assignment_repo,
+            &anchor_repo,
         );
         let result = service
             .cancel_subject_execution(CancelSubjectExecutionCommand {
@@ -1124,6 +1292,7 @@ mod tests {
         let agent_repo = AgentRepo::default();
         let frame_repo = FrameRepo::default();
         let assignment_repo = AssignmentRepo::default();
+        let anchor_repo = AnchorRepo::default();
 
         let run = LifecycleRun::new_control(project_id, graph.id);
         let mut agent = LifecycleAgent::new_root(run.id, project_id, "task_agent");
@@ -1146,6 +1315,7 @@ mod tests {
             &agent_repo,
             &frame_repo,
             &assignment_repo,
+            &anchor_repo,
         );
         let err = service
             .resolve_associated_agent(&association)

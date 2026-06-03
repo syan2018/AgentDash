@@ -410,7 +410,7 @@ mod tests {
             Ok(())
         }
 
-        async fn find_by_runtime_session(
+        async fn find_frame_by_runtime_ref_projection(
             &self,
             runtime_session_id: &str,
         ) -> Result<Option<AgentFrame>, DomainError> {
@@ -468,6 +468,62 @@ mod tests {
                 .unwrap()
                 .iter()
                 .find(|anchor| anchor.runtime_session_id == runtime_session_id)
+                .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| anchor.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_project_session_ids(
+            &self,
+            runtime_session_ids: &[String],
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| runtime_session_ids.contains(&anchor.runtime_session_id))
+                .cloned()
+                .collect())
+        }
+
+        async fn latest_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .max_by_key(|anchor| anchor.updated_at)
                 .cloned())
         }
     }

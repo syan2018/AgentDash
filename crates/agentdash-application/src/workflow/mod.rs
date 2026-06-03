@@ -94,7 +94,7 @@ pub(crate) use session_association::select_assignment_for_frame;
 pub use session_association::{
     LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,
     build_lifecycle_node_label, lifecycle_activity_parts_from_label,
-    resolve_activity_session_association,
+    resolve_activity_session_association, resolve_current_frame_for_runtime_session,
 };
 pub use session_run_context_resolver::{SubjectRunContextResolver, build_subject_run_context};
 pub use subject_execution_control::{

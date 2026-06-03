@@ -117,7 +117,7 @@ impl SessionRuntimeService {
     pub async fn recover_interrupted_sessions(&self) -> io::Result<()> {
         let sessions = self.stores.meta.list_sessions().await?;
         for meta in sessions {
-            if meta.last_execution_status != super::types::ExecutionStatus::Running {
+            if meta.last_delivery_status != super::types::ExecutionStatus::Running {
                 continue;
             }
             tracing::warn!(

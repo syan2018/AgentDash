@@ -102,7 +102,7 @@ impl LifecycleJourneyProjection {
                 let meta_json = serde_json::json!({
                     "session_id": session_id,
                     "title": meta.title,
-                    "status": meta.last_execution_status,
+                    "status": meta.last_delivery_status,
                     "last_event_seq": meta.last_event_seq,
                     "created_at": meta.created_at,
                     "updated_at": meta.updated_at,

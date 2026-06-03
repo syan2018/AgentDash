@@ -330,7 +330,7 @@ pub(crate) fn meta_to_execution_state(
 ) -> super::persistence::SessionStoreResult<SessionExecutionState> {
     use super::persistence::SessionStoreError;
     use super::types::ExecutionStatus;
-    match meta.last_execution_status {
+    match meta.last_delivery_status {
         ExecutionStatus::Idle => Ok(SessionExecutionState::Idle),
         ExecutionStatus::Completed => Ok(SessionExecutionState::Completed {
             turn_id: meta.last_turn_id.clone().ok_or_else(|| {

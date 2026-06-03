@@ -77,6 +77,14 @@ impl SessionRuntimeBuilder {
         self
     }
 
+    pub fn with_execution_anchor_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::RuntimeSessionExecutionAnchorRepository>,
+    ) -> Self {
+        self.inner = self.inner.with_execution_anchor_repo(repo);
+        self
+    }
+
     pub fn with_system_prompt_config(
         mut self,
         base_system_prompt: String,

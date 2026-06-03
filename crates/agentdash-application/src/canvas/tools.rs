@@ -851,7 +851,7 @@ mod tests {
             Ok(())
         }
 
-        async fn find_by_runtime_session(
+        async fn find_frame_by_runtime_ref_projection(
             &self,
             runtime_session_id: &str,
         ) -> Result<Option<AgentFrame>, DomainError> {
@@ -1029,7 +1029,7 @@ mod tests {
         {
             let frame = self
                 .frame_repo
-                .find_by_runtime_session(runtime_session_id)
+                .find_frame_by_runtime_ref_projection(runtime_session_id)
                 .await
                 .map_err(|e| agentdash_spi::hooks::HookError::Runtime(e.to_string()))?;
             Ok(frame.map(|f| agentdash_spi::hooks::HookControlTarget {
@@ -1342,7 +1342,7 @@ mod tests {
             .expect("present_canvas 应成功");
 
         let updated_frame = frame_repo
-            .find_by_runtime_session(&session.id)
+            .find_frame_by_runtime_ref_projection(&session.id)
             .await
             .expect("frame 查询应成功")
             .expect("frame 应存在");

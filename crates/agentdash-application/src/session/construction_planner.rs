@@ -33,6 +33,7 @@ use crate::{
     },
     workflow::{
         ensure_active_workflow_lifecycle_mount, resolve_active_workflow_projection_for_session,
+        resolve_current_frame_for_runtime_session,
     },
 };
 #[cfg(test)]
@@ -615,12 +616,15 @@ async fn resolve_visible_canvas_mount_ids_from_frame(
     repos: &RepositorySet,
     runtime_session_id: &str,
 ) -> Vec<String> {
-    match repos
-        .agent_frame_repo
-        .find_by_runtime_session(runtime_session_id)
-        .await
+    match resolve_current_frame_for_runtime_session(
+        runtime_session_id,
+        repos.execution_anchor_repo.as_ref(),
+        repos.lifecycle_agent_repo.as_ref(),
+        repos.agent_frame_repo.as_ref(),
+    )
+    .await
     {
-        Ok(Some(frame)) => frame.visible_canvas_mount_ids(),
+        Ok(Some((_anchor, _agent, frame))) => frame.visible_canvas_mount_ids(),
         _ => Vec::new(),
     }
 }

@@ -233,7 +233,7 @@ fn lifecycle_agent_to_view_with_delivery(
         current_frame_id: agent.current_frame_id.map(|id| id.to_string()),
         delivery_runtime_ref: delivery_runtime_session_id
             .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
-        last_execution_status: None,
+        last_delivery_status: None,
         created_at: agent.created_at.to_rfc3339(),
         updated_at: agent.updated_at.to_rfc3339(),
     }

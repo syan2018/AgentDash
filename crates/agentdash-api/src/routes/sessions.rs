@@ -19,7 +19,7 @@ use crate::routes::lifecycle_views::{
 };
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::session::{
-    SessionExecutionState, SessionForkRequest, SessionMeta,
+    ExecutionStatus, SessionExecutionState, SessionForkRequest, SessionMeta,
     SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
 };
 use agentdash_application::workflow::lifecycle_run_view_builder;
@@ -239,9 +239,21 @@ pub async fn get_session_runtime_control(
         })
         .cloned()
         .collect::<Vec<_>>();
-    let can_send = frame_runtime.is_some() && !is_terminal_agent_status(&agent.status);
+    let delivery_running = meta.last_delivery_status == ExecutionStatus::Running
+        || matches!(
+            state
+                .services
+                .session_core
+                .inspect_session_execution_state(&runtime_session_id)
+                .await?,
+            SessionExecutionState::Running { .. }
+        );
+    let can_send =
+        frame_runtime.is_some() && !is_terminal_agent_status(&agent.status) && !delivery_running;
     let send_unavailable_reason = if can_send {
         None
+    } else if delivery_running {
+        Some("当前 Session 正在执行中，不能并发发送消息。".to_string())
     } else if is_terminal_agent_status(&agent.status) {
         Some("当前 Agent 已结束，不能继续发送消息。".to_string())
     } else {
@@ -447,7 +459,7 @@ async fn project_session_entry(
         return Ok(ProjectSessionListEntry {
             runtime_session_id: meta.id.clone(),
             title: session_list_title(meta),
-            delivery_status: serialized_string(&meta.last_execution_status),
+            delivery_status: serialized_string(&meta.last_delivery_status),
             run_status: None,
             run_ref: None,
             agent_ref: None,
@@ -485,7 +497,7 @@ async fn project_session_entry(
     Ok(ProjectSessionListEntry {
         runtime_session_id: meta.id.clone(),
         title: session_list_title(meta),
-        delivery_status: serialized_string(&meta.last_execution_status),
+        delivery_status: serialized_string(&meta.last_delivery_status),
         run_status: Some(lifecycle_run_status_to_contract(run.status)),
         run_ref: Some(LifecycleRunRefDto {
             run_id: run.id.to_string(),
@@ -514,7 +526,7 @@ fn session_shell_dto(meta: &SessionMeta) -> SessionShellDto {
         updated_at: meta.updated_at,
         last_event_seq: meta.last_event_seq,
         last_turn_id: meta.last_turn_id.clone(),
-        last_delivery_status: serialized_string(&meta.last_execution_status),
+        last_delivery_status: serialized_string(&meta.last_delivery_status),
         tab_layout: meta.tab_layout.clone(),
     }
 }
@@ -626,8 +638,8 @@ pub async fn list_session_events(
 mod tests {
     use super::*;
     use agentdash_application::session::{
-        ExecutionStatus, SessionPromptLifecycle, SessionRepositoryRehydrateMode, TitleSource,
-        resolve_session_prompt_lifecycle,
+        ExecutionStatus, RuntimeTraceLaunchState, SessionPromptLifecycle,
+        SessionRepositoryRehydrateMode, TitleSource, resolve_session_prompt_lifecycle,
     };
 
     fn test_meta(id: &str, event_seq: u64, executor_session_id: Option<&str>) -> SessionMeta {
@@ -639,7 +651,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: event_seq,
-            last_execution_status: if event_seq > 0 {
+            last_delivery_status: if event_seq > 0 {
                 ExecutionStatus::Completed
             } else {
                 ExecutionStatus::Idle
@@ -656,11 +668,15 @@ mod tests {
         }
     }
 
+    fn trace_state(meta: &SessionMeta) -> RuntimeTraceLaunchState {
+        RuntimeTraceLaunchState::from(meta)
+    }
+
     #[test]
     fn session_prompt_lifecycle_kind_marks_pending_as_owner_bootstrap() {
         let meta = test_meta("sess-1", 0, None);
         assert_eq!(
-            resolve_session_prompt_lifecycle(&meta, false, false, true),
+            resolve_session_prompt_lifecycle(&trace_state(&meta), false, false, true),
             SessionPromptLifecycle::OwnerBootstrap
         );
     }
@@ -669,13 +685,13 @@ mod tests {
     fn session_prompt_lifecycle_kind_requires_repository_rehydrate_after_cold_restart() {
         let meta = test_meta("sess-2", 12, None);
         assert_eq!(
-            resolve_session_prompt_lifecycle(&meta, false, false, false),
+            resolve_session_prompt_lifecycle(&trace_state(&meta), false, false, false),
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::SystemContext,
             )
         );
         assert_eq!(
-            resolve_session_prompt_lifecycle(&meta, true, false, false),
+            resolve_session_prompt_lifecycle(&trace_state(&meta), true, false, false),
             SessionPromptLifecycle::Plain
         );
     }
@@ -684,7 +700,7 @@ mod tests {
     fn session_prompt_lifecycle_prefers_executor_follow_up_when_available() {
         let meta = test_meta("sess-3", 5, Some("exec-1"));
         assert_eq!(
-            resolve_session_prompt_lifecycle(&meta, false, true, false),
+            resolve_session_prompt_lifecycle(&trace_state(&meta), false, true, false),
             SessionPromptLifecycle::Plain
         );
     }
@@ -693,7 +709,7 @@ mod tests {
     fn session_prompt_lifecycle_uses_executor_state_restore_when_supported() {
         let meta = test_meta("sess-4", 7, None);
         assert_eq!(
-            resolve_session_prompt_lifecycle(&meta, false, true, false),
+            resolve_session_prompt_lifecycle(&trace_state(&meta), false, true, false),
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::ExecutorState,
             )

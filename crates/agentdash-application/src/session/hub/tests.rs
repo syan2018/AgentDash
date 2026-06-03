@@ -145,7 +145,7 @@ impl AgentFrameRepository for MemoryAgentFrameRepository {
         Ok(())
     }
 
-    async fn find_by_runtime_session(
+    async fn find_frame_by_runtime_ref_projection(
         &self,
         runtime_session_id: &str,
     ) -> Result<Option<AgentFrame>, DomainError> {
@@ -1653,7 +1653,7 @@ impl ExecutionHookProvider for RecordingHookProvider {
             return Ok(None);
         };
         let frame = repo
-            .find_by_runtime_session(runtime_session_id)
+            .find_frame_by_runtime_ref_projection(runtime_session_id)
             .await
             .map_err(|e| agentdash_spi::hooks::HookError::Runtime(e.to_string()))?;
         Ok(frame.map(|f| HookControlTarget {

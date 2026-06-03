@@ -97,7 +97,7 @@ delivery_runtime_ref?: RuntimeSessionRefDto,
 /**
  * agent 最新 execution status（如 running / completed / idle）。
  */
-last_execution_status?: string, created_at: string, updated_at: string, };
+last_delivery_status?: string, created_at: string, updated_at: string, };
 
 export type LifecycleExecutionEntry = { timestamp: string, activity_key: string, event_kind: LifecycleExecutionEventKind, summary: string, detail?: JsonValue, };
 

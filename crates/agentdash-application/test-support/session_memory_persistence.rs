@@ -965,7 +965,7 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     current.last_event_seq = current.last_event_seq.max(incoming.last_event_seq);
 
     if incoming_event_seq >= current_event_seq {
-        current.last_execution_status = incoming.last_execution_status;
+        current.last_delivery_status = incoming.last_delivery_status;
         current.last_turn_id = incoming.last_turn_id.clone();
         current.last_terminal_message = incoming.last_terminal_message.clone();
     }
@@ -985,14 +985,14 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
 
     match &envelope.event {
         BackboneEvent::TurnStarted(_) => {
-            meta.last_execution_status = ExecutionStatus::Running;
+            meta.last_delivery_status = ExecutionStatus::Running;
             meta.last_terminal_message = None;
         }
         BackboneEvent::TurnCompleted(_) => {
-            meta.last_execution_status = ExecutionStatus::Completed;
+            meta.last_delivery_status = ExecutionStatus::Completed;
         }
         BackboneEvent::Error(_) => {
-            meta.last_execution_status = ExecutionStatus::Failed;
+            meta.last_delivery_status = ExecutionStatus::Failed;
         }
         BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
             executor_session_id,
@@ -1005,7 +1005,7 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
             {
                 meta.last_turn_id = Some(turn_id);
                 meta.last_terminal_message = message;
-                meta.last_execution_status = terminal_kind.into();
+                meta.last_delivery_status = terminal_kind.into();
             } else if key == "executor_session_bound" {
                 if let Some(esid) = value.as_str() {
                     meta.executor_session_id = Some(esid.to_string());
@@ -1063,7 +1063,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,
@@ -1105,7 +1105,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,
@@ -1124,7 +1124,7 @@ mod tests {
             .expect("应能读取 meta")
             .expect("session 应存在");
         stale.updated_at = 10;
-        stale.last_execution_status = ExecutionStatus::Running;
+        stale.last_delivery_status = ExecutionStatus::Running;
         stale.last_turn_id = Some("t-old".to_string());
         stale.executor_session_id = Some("exec-1".to_string());
         stale.tab_layout = Some(serde_json::json!({
@@ -1172,7 +1172,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,
@@ -1241,7 +1241,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,

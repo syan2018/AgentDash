@@ -1,4 +1,4 @@
-﻿use std::io;
+use std::io;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
@@ -481,7 +481,7 @@ mod tests {
                 created_at: 1,
                 updated_at: 1,
                 last_event_seq: 0,
-                last_execution_status: ExecutionStatus::Idle,
+                last_delivery_status: ExecutionStatus::Idle,
                 last_turn_id: None,
                 last_terminal_message: None,
                 executor_config: None,

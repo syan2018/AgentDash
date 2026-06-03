@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentLineageRepository, LifecycleGate, LifecycleGateRepository,
+    AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository, LifecycleGate,
+    LifecycleGateRepository, RuntimeSessionExecutionAnchorRepository,
     RuntimeSessionSelectionPolicy,
 };
 use async_trait::async_trait;
@@ -11,6 +12,7 @@ use super::{
     PayloadTypeRegistry, build_companion_event_notification,
     build_companion_human_response_notification, payload_types,
 };
+use crate::workflow::resolve_current_frame_for_runtime_session;
 use crate::{ApplicationError, session::SessionEventingService};
 
 const COMPANION_PARENT_REQUEST_GATE_KIND: &str = "companion_parent_request";
@@ -190,6 +192,8 @@ impl CompanionGateNotificationDelivery for SessionEventingCompanionGateDelivery 
 pub struct CompanionGateControlService {
     gate_repo: Arc<dyn LifecycleGateRepository>,
     frame_repo: Arc<dyn AgentFrameRepository>,
+    agent_repo: Arc<dyn LifecycleAgentRepository>,
+    anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     lineage_repo: Arc<dyn AgentLineageRepository>,
     delivery: Arc<dyn CompanionGateNotificationDelivery>,
 }
@@ -198,12 +202,16 @@ impl CompanionGateControlService {
     pub fn new(
         gate_repo: Arc<dyn LifecycleGateRepository>,
         frame_repo: Arc<dyn AgentFrameRepository>,
+        agent_repo: Arc<dyn LifecycleAgentRepository>,
+        anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
         lineage_repo: Arc<dyn AgentLineageRepository>,
         delivery: Arc<dyn CompanionGateNotificationDelivery>,
     ) -> Self {
         Self {
             gate_repo,
             frame_repo,
+            agent_repo,
+            anchor_repo,
             lineage_repo,
             delivery,
         }
@@ -212,12 +220,16 @@ impl CompanionGateControlService {
     pub fn with_session_eventing(
         gate_repo: Arc<dyn LifecycleGateRepository>,
         frame_repo: Arc<dyn AgentFrameRepository>,
+        agent_repo: Arc<dyn LifecycleAgentRepository>,
+        anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
         lineage_repo: Arc<dyn AgentLineageRepository>,
         eventing: SessionEventingService,
     ) -> Self {
         Self::new(
             gate_repo,
             frame_repo,
+            agent_repo,
+            anchor_repo,
             lineage_repo,
             Arc::new(SessionEventingCompanionGateDelivery::new(eventing)),
         )
@@ -300,12 +312,15 @@ impl CompanionGateControlService {
             return Err(ApplicationError::BadRequest(error));
         }
 
-        let child_frame = match self
-            .frame_repo
-            .find_by_runtime_session(&command.child_runtime_session_id)
-            .await?
+        let child_frame = match resolve_current_frame_for_runtime_session(
+            &command.child_runtime_session_id,
+            self.anchor_repo.as_ref(),
+            self.agent_repo.as_ref(),
+            self.frame_repo.as_ref(),
+        )
+        .await?
         {
-            Some(frame) => frame,
+            Some((_anchor, _agent, frame)) => frame,
             None => return Ok(None),
         };
         let lineage = match self.lineage_repo.find_parent(child_frame.agent_id).await? {
@@ -357,16 +372,19 @@ impl CompanionGateControlService {
         self.gate_repo.update(&gate).await?;
 
         let parent_delivery_runtime_session_id = self
-            .frame_repo
-            .get_current(parent_agent_id)
-            .await?
-            .and_then(|frame| {
-                frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached)
-            });
-        let child_delivery_runtime_session_id =
-            child_frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::Specific {
-                runtime_session_id: child_runtime_session_id,
-            });
+            .select_delivery_runtime_session_id(
+                parent_agent_id,
+                RuntimeSessionSelectionPolicy::LatestAttached,
+            )
+            .await?;
+        let child_delivery_runtime_session_id = self
+            .select_delivery_runtime_session_id(
+                child_frame.agent_id,
+                RuntimeSessionSelectionPolicy::Specific {
+                    runtime_session_id: child_runtime_session_id,
+                },
+            )
+            .await?;
 
         if let Some(session_id) = parent_delivery_runtime_session_id.clone() {
             let notification = CompanionGateEventNotification {
@@ -418,23 +436,30 @@ impl CompanionGateControlService {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| ApplicationError::BadRequest("payload.prompt 不能为空".to_string()))?;
 
-        let child_frame = self
-            .frame_repo
-            .find_by_runtime_session(&command.child_runtime_session_id)
+        let (_anchor, _agent, child_frame) = resolve_current_frame_for_runtime_session(
+            &command.child_runtime_session_id,
+            self.anchor_repo.as_ref(),
+            self.agent_repo.as_ref(),
+            self.frame_repo.as_ref(),
+        )
+        .await?
+        .ok_or_else(|| {
+            ApplicationError::Conflict(
+                "当前 runtime session 没有关联的 AgentFrame，无法向 parent 提审".to_string(),
+            )
+        })?;
+        let child_delivery_runtime_session_id = self
+            .select_delivery_runtime_session_id(
+                child_frame.agent_id,
+                RuntimeSessionSelectionPolicy::Specific {
+                    runtime_session_id: command.child_runtime_session_id.clone(),
+                },
+            )
             .await?
             .ok_or_else(|| {
-                ApplicationError::Conflict(
-                    "当前 runtime session 没有关联的 AgentFrame，无法向 parent 提审".to_string(),
-                )
-            })?;
-        let child_delivery_runtime_session_id = child_frame
-            .select_runtime_session_id(RuntimeSessionSelectionPolicy::Specific {
-                runtime_session_id: command.child_runtime_session_id.clone(),
-            })
-            .ok_or_else(|| {
                 ApplicationError::Conflict(format!(
-                    "child frame {} 不包含 runtime session {}",
-                    child_frame.id, command.child_runtime_session_id
+                    "child agent {} 没有关联 runtime session {} 的 anchor",
+                    child_frame.agent_id, command.child_runtime_session_id
                 ))
             })?;
         let lineage = self
@@ -456,10 +481,16 @@ impl CompanionGateControlService {
             .ok_or_else(|| {
                 ApplicationError::Conflict("parent agent 没有活跃的 frame".to_string())
             })?;
-        let parent_delivery_runtime_session_id = parent_frame
-            .select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached)
+        let parent_delivery_runtime_session_id = self
+            .select_delivery_runtime_session_id(
+                parent_agent_id,
+                RuntimeSessionSelectionPolicy::LatestAttached,
+            )
+            .await?
             .ok_or_else(|| {
-                ApplicationError::Conflict("parent frame 没有关联的 runtime session".to_string())
+                ApplicationError::Conflict(
+                    "parent agent 没有关联的 runtime session anchor".to_string(),
+                )
             })?;
 
         let companion_label = format!("child:{}", child_frame.agent_id);
@@ -544,16 +575,19 @@ impl CompanionGateControlService {
             return Ok(None);
         }
 
-        let parent_frame = self
-            .frame_repo
-            .find_by_runtime_session(&command.parent_runtime_session_id)
-            .await?
-            .ok_or_else(|| {
-                ApplicationError::Conflict(format!(
-                    "runtime session {} 没有关联的 parent AgentFrame",
-                    command.parent_runtime_session_id
-                ))
-            })?;
+        let (_anchor, _agent, parent_frame) = resolve_current_frame_for_runtime_session(
+            &command.parent_runtime_session_id,
+            self.anchor_repo.as_ref(),
+            self.agent_repo.as_ref(),
+            self.frame_repo.as_ref(),
+        )
+        .await?
+        .ok_or_else(|| {
+            ApplicationError::Conflict(format!(
+                "runtime session {} 没有关联的 parent AgentFrame",
+                command.parent_runtime_session_id
+            ))
+        })?;
         if gate.agent_id != Some(parent_frame.agent_id) || gate.frame_id != Some(parent_frame.id) {
             return Err(ApplicationError::Conflict(format!(
                 "parent request gate {} 不属于当前 parent frame {}",
@@ -566,14 +600,18 @@ impl CompanionGateControlService {
                 gate.id
             )));
         }
-        let parent_delivery_runtime_session_id = parent_frame
-            .select_runtime_session_id(RuntimeSessionSelectionPolicy::Specific {
-                runtime_session_id: command.parent_runtime_session_id.clone(),
-            })
+        let parent_delivery_runtime_session_id = self
+            .select_delivery_runtime_session_id(
+                parent_frame.agent_id,
+                RuntimeSessionSelectionPolicy::Specific {
+                    runtime_session_id: command.parent_runtime_session_id.clone(),
+                },
+            )
+            .await?
             .ok_or_else(|| {
                 ApplicationError::Conflict(format!(
-                    "parent frame {} 不包含 runtime session {}",
-                    parent_frame.id, command.parent_runtime_session_id
+                    "parent agent {} 没有关联 runtime session {} 的 anchor",
+                    parent_frame.agent_id, command.parent_runtime_session_id
                 ))
             })?;
 
@@ -648,7 +686,39 @@ impl CompanionGateControlService {
             )));
         }
 
-        Ok(frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached))
+        self.select_delivery_runtime_session_id(
+            frame.agent_id,
+            RuntimeSessionSelectionPolicy::LatestAttached,
+        )
+        .await
+    }
+
+    async fn select_delivery_runtime_session_id(
+        &self,
+        agent_id: Uuid,
+        policy: RuntimeSessionSelectionPolicy,
+    ) -> Result<Option<String>, ApplicationError> {
+        let runtime_session_id = match policy {
+            RuntimeSessionSelectionPolicy::Specific { runtime_session_id } => self
+                .anchor_repo
+                .find_by_session(&runtime_session_id)
+                .await?
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .map(|anchor| anchor.runtime_session_id),
+            RuntimeSessionSelectionPolicy::LaunchPrimary => self
+                .anchor_repo
+                .list_by_agent(agent_id)
+                .await?
+                .into_iter()
+                .min_by_key(|anchor| anchor.created_at)
+                .map(|anchor| anchor.runtime_session_id),
+            RuntimeSessionSelectionPolicy::LatestAttached => self
+                .anchor_repo
+                .latest_for_agent(agent_id)
+                .await?
+                .map(|anchor| anchor.runtime_session_id),
+        };
+        Ok(runtime_session_id)
     }
 }
 
@@ -675,7 +745,7 @@ mod tests {
 
     use agentdash_domain::{
         DomainError,
-        workflow::{AgentFrame, AgentLineage, LifecycleGate},
+        workflow::{AgentFrame, AgentLineage, LifecycleAgent, RuntimeSessionExecutionAnchor},
     };
 
     use super::*;
@@ -764,7 +834,7 @@ mod tests {
             Ok(())
         }
 
-        async fn find_by_runtime_session(
+        async fn find_frame_by_runtime_ref_projection(
             &self,
             runtime_session_id: &str,
         ) -> Result<Option<AgentFrame>, DomainError> {
@@ -832,6 +902,197 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct MemoryAgentRepo {
+        agents: Mutex<HashMap<Uuid, LifecycleAgent>>,
+    }
+
+    impl MemoryAgentRepo {
+        fn from_frame_repo(frame_repo: &MemoryFrameRepo, run_id: Uuid, project_id: Uuid) -> Self {
+            let mut agents = HashMap::new();
+            for frame in frame_repo.frames.lock().unwrap().values() {
+                let mut agent = LifecycleAgent::new_root(run_id, project_id, "test");
+                agent.id = frame.agent_id;
+                agent.status = "running".to_string();
+                agent.set_current_frame(frame.id);
+                agents.insert(agent.id, agent);
+            }
+            Self {
+                agents: Mutex::new(agents),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LifecycleAgentRepository for MemoryAgentRepo {
+        async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
+            self.agents.lock().unwrap().insert(agent.id, agent.clone());
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
+            Ok(self.agents.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
+            Ok(self
+                .agents
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|agent| agent.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
+            self.agents.lock().unwrap().insert(agent.id, agent.clone());
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryAnchorRepo {
+        anchors: Mutex<HashMap<String, RuntimeSessionExecutionAnchor>>,
+    }
+
+    impl MemoryAnchorRepo {
+        fn from_frame_repo(frame_repo: &MemoryFrameRepo, run_id: Uuid) -> Self {
+            let mut anchors = HashMap::new();
+            for frame in frame_repo.frames.lock().unwrap().values() {
+                for runtime_session_id in frame.runtime_session_ids() {
+                    let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+                        runtime_session_id.clone(),
+                        run_id,
+                        frame.id,
+                        frame.agent_id,
+                        frame.graph_instance_id,
+                        frame.activity_key.clone(),
+                    );
+                    anchors.insert(runtime_session_id, anchor);
+                }
+            }
+            Self {
+                anchors: Mutex::new(anchors),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RuntimeSessionExecutionAnchorRepository for MemoryAnchorRepo {
+        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+            self.anchors
+                .lock()
+                .unwrap()
+                .insert(anchor.runtime_session_id.clone(), anchor.clone());
+            Ok(())
+        }
+
+        async fn update_assignment(
+            &self,
+            runtime_session_id: &str,
+            assignment_id: Uuid,
+            attempt: i32,
+        ) -> Result<(), DomainError> {
+            if let Some(anchor) = self.anchors.lock().unwrap().get_mut(runtime_session_id) {
+                anchor.fill_assignment(assignment_id, attempt);
+            }
+            Ok(())
+        }
+
+        async fn find_by_session(
+            &self,
+            runtime_session_id: &str,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .get(runtime_session_id)
+                .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|anchor| anchor.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_project_session_ids(
+            &self,
+            runtime_session_ids: &[String],
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            let anchors = self.anchors.lock().unwrap();
+            Ok(runtime_session_ids
+                .iter()
+                .filter_map(|id| anchors.get(id).cloned())
+                .collect())
+        }
+
+        async fn latest_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .max_by_key(|anchor| anchor.updated_at)
+                .cloned())
+        }
+    }
+
+    fn service_for_test(
+        gate_repo: Arc<MemoryGateRepo>,
+        frame_repo: Arc<MemoryFrameRepo>,
+        lineage_repo: Arc<MemoryLineageRepo>,
+        delivery: Arc<CapturingDelivery>,
+        run_id: Uuid,
+    ) -> CompanionGateControlService {
+        let project_id = Uuid::new_v4();
+        let agent_repo = Arc::new(MemoryAgentRepo::from_frame_repo(
+            frame_repo.as_ref(),
+            run_id,
+            project_id,
+        ));
+        let anchor_repo = Arc::new(MemoryAnchorRepo::from_frame_repo(
+            frame_repo.as_ref(),
+            run_id,
+        ));
+        CompanionGateControlService::new(
+            gate_repo,
+            frame_repo,
+            agent_repo,
+            anchor_repo,
+            lineage_repo,
+            delivery,
+        )
+    }
+
+    #[derive(Default)]
     struct CapturingDelivery {
         response_notifications: Mutex<Vec<CompanionGateResponseNotification>>,
         event_notifications: Mutex<Vec<CompanionGateEventNotification>>,
@@ -861,13 +1122,14 @@ mod tests {
 
     #[tokio::test]
     async fn respond_resolves_gate_and_delivers_by_frame_runtime_ref() {
+        let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
         let mut frame = AgentFrame::new_revision(agent_id, 1, "test");
         frame.runtime_session_refs_json =
             AgentFrame::runtime_session_refs_json(["session-old", "session-latest"]);
         let frame_id = frame.id;
         let gate = LifecycleGate::open(
-            Uuid::new_v4(),
+            run_id,
             Some(agent_id),
             Some(frame_id),
             "companion_wait",
@@ -885,11 +1147,12 @@ mod tests {
         frame_repo.create(&frame).await.expect("seed frame");
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let service = CompanionGateControlService::new(
+        let service = service_for_test(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
+            run_id,
         );
 
         let result = service
@@ -930,11 +1193,12 @@ mod tests {
 
     #[tokio::test]
     async fn respond_rejects_already_closed_gate() {
+        let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
         let mut frame = AgentFrame::new_revision(agent_id, 1, "test");
         frame.runtime_session_refs_json = AgentFrame::runtime_session_refs_json(["session-1"]);
         let mut gate = LifecycleGate::open(
-            Uuid::new_v4(),
+            run_id,
             Some(agent_id),
             Some(frame.id),
             "companion_wait",
@@ -949,8 +1213,13 @@ mod tests {
         frame_repo.create(&frame).await.expect("seed frame");
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let service =
-            CompanionGateControlService::new(gate_repo, frame_repo, lineage_repo, delivery.clone());
+        let service = service_for_test(
+            gate_repo,
+            frame_repo,
+            lineage_repo,
+            delivery.clone(),
+            run_id,
+        );
 
         let error = service
             .respond(RespondCompanionGateCommand {
@@ -1012,11 +1281,12 @@ mod tests {
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let service = CompanionGateControlService::new(
+        let service = service_for_test(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
+            run_id,
         );
 
         let result = service
@@ -1123,11 +1393,12 @@ mod tests {
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let service = CompanionGateControlService::new(
+        let service = service_for_test(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
+            run_id,
         );
 
         let result = service
@@ -1218,11 +1489,12 @@ mod tests {
             .expect("seed parent frame");
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let service = CompanionGateControlService::new(
+        let service = service_for_test(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
+            run_id,
         );
 
         let result = service
@@ -1310,8 +1582,13 @@ mod tests {
             .expect("seed other frame");
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let service =
-            CompanionGateControlService::new(gate_repo, frame_repo, lineage_repo, delivery.clone());
+        let service = service_for_test(
+            gate_repo,
+            frame_repo,
+            lineage_repo,
+            delivery.clone(),
+            run_id,
+        );
 
         let error = service
             .resolve_parent_request(ResolveCompanionParentRequestCommand {

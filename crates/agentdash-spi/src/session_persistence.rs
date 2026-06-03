@@ -287,7 +287,7 @@ pub struct SessionMeta {
     #[serde(default)]
     pub last_event_seq: u64,
     #[serde(default)]
-    pub last_execution_status: ExecutionStatus,
+    pub last_delivery_status: ExecutionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_turn_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -52,9 +52,9 @@ where
             row.get::<i64, _>("last_event_seq"),
             "sessions.last_event_seq",
         )?,
-        last_execution_status: parse_execution_status(
-            row.get::<String, _>("last_execution_status"),
-            "sessions.last_execution_status",
+        last_delivery_status: parse_execution_status(
+            row.get::<String, _>("last_delivery_status"),
+            "sessions.last_delivery_status",
         )?,
         last_turn_id: row.get::<Option<String>, _>("last_turn_id"),
         last_terminal_message: row.get::<Option<String>, _>("last_terminal_message"),
@@ -688,7 +688,7 @@ pub(crate) fn sqlx_to_session_store_error(error: sqlx::Error) -> SessionStoreErr
 
 /// 从 envelope 推导出需要回写到 `sessions` 行的投影字段。
 pub(crate) struct SessionProjection {
-    pub last_execution_status: Option<String>,
+    pub last_delivery_status: Option<String>,
     pub turn_id: Option<String>,
     pub last_terminal_message: Option<String>,
     pub clear_terminal_message: bool,
@@ -703,7 +703,7 @@ pub(crate) fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionPr
     let tool_call_id = envelope_tool_call_id(envelope);
 
     let mut projection = SessionProjection {
-        last_execution_status: None,
+        last_delivery_status: None,
         turn_id,
         last_terminal_message: None,
         clear_terminal_message: false,
@@ -714,7 +714,7 @@ pub(crate) fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionPr
 
     match &envelope.event {
         BackboneEvent::TurnStarted(_) => {
-            projection.last_execution_status = Some("running".to_string());
+            projection.last_delivery_status = Some("running".to_string());
             projection.clear_terminal_message = true;
         }
         BackboneEvent::TurnCompleted(n) => {
@@ -728,11 +728,11 @@ pub(crate) fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionPr
                 }
                 _ => "completed",
             };
-            projection.last_execution_status = Some(status.to_string());
+            projection.last_delivery_status = Some(status.to_string());
             projection.last_terminal_message = n.turn.error.as_ref().map(|e| e.message.clone());
         }
         BackboneEvent::Error(e) => {
-            projection.last_execution_status = Some("failed".to_string());
+            projection.last_delivery_status = Some("failed".to_string());
             projection.last_terminal_message = Some(e.error.message.clone());
         }
         BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
@@ -750,7 +750,7 @@ pub(crate) fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionPr
                     "turn_interrupted" => "interrupted",
                     _ => "completed",
                 };
-                projection.last_execution_status = Some(status.to_string());
+                projection.last_delivery_status = Some(status.to_string());
             }
             projection.last_terminal_message = value
                 .get("message")

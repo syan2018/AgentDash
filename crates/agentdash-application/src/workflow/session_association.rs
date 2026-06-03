@@ -1,5 +1,5 @@
 use agentdash_domain::workflow::{
-    AgentAssignment, AgentAssignmentRepository, AgentFrame, AgentFrameRepository,
+    AgentAssignment, AgentAssignmentRepository, AgentFrame, AgentFrameRepository, LifecycleAgent,
     LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchor,
     RuntimeSessionExecutionAnchorRepository,
 };
@@ -27,6 +27,36 @@ pub struct ActivityRuntimeAssociation {
     pub run: LifecycleRun,
     pub assignment: AgentAssignment,
     pub attempt: u32,
+}
+
+pub type RuntimeSessionCurrentFrame = (RuntimeSessionExecutionAnchor, LifecycleAgent, AgentFrame);
+
+pub async fn resolve_current_frame_for_runtime_session(
+    runtime_session_id: &str,
+    anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+    agent_repo: &dyn LifecycleAgentRepository,
+    frame_repo: &dyn AgentFrameRepository,
+) -> Result<Option<RuntimeSessionCurrentFrame>, agentdash_domain::DomainError> {
+    let Some(anchor) = anchor_repo.find_by_session(runtime_session_id).await? else {
+        return Ok(None);
+    };
+    let Some(agent) = agent_repo.get(anchor.agent_id).await? else {
+        return Ok(None);
+    };
+    if agent.run_id != anchor.run_id {
+        return Ok(None);
+    }
+    let frame = match frame_repo.get_current(agent.id).await? {
+        Some(frame) => frame,
+        None => match frame_repo.get(anchor.launch_frame_id).await? {
+            Some(frame) => frame,
+            None => return Ok(None),
+        },
+    };
+    if frame.agent_id != agent.id {
+        return Ok(None);
+    }
+    Ok(Some((anchor, agent, frame)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -410,7 +440,7 @@ mod tests {
             Ok(())
         }
 
-        async fn find_by_runtime_session(
+        async fn find_frame_by_runtime_ref_projection(
             &self,
             runtime_session_id: &str,
         ) -> Result<Option<AgentFrame>, DomainError> {
@@ -577,6 +607,52 @@ mod tests {
             runtime_session_id: &str,
         ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
             Ok(self.anchors.get(runtime_session_id).cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .values()
+                .filter(|anchor| anchor.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .values()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_project_session_ids(
+            &self,
+            runtime_session_ids: &[String],
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(runtime_session_ids
+                .iter()
+                .filter_map(|id| self.anchors.get(id).cloned())
+                .collect())
+        }
+
+        async fn latest_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .values()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .max_by_key(|anchor| anchor.updated_at)
+                .cloned())
         }
     }
 

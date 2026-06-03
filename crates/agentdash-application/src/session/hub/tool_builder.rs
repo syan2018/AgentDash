@@ -13,7 +13,6 @@
 //! 不在本 PR 改接口层级。
 
 use agentdash_agent_types::DynAgentTool;
-use agentdash_domain::workflow::RuntimeSessionSelectionPolicy;
 use agentdash_executor::mcp::DiscoveredMcpTool;
 use agentdash_spi::{ConnectorError, ExecutionContext, SessionMcpServer};
 use uuid::Uuid;
@@ -21,6 +20,7 @@ use uuid::Uuid;
 use super::SessionRuntimeInner;
 use crate::session::types::{AgentFrameRuntimeTarget, CapabilityState};
 use crate::workflow::AgentFrameBuilder;
+use crate::workflow::resolve_current_frame_for_runtime_session;
 
 impl SessionRuntimeInner {
     /// 读取 session 当前 turn 生效的 MCP server 列表（由 prompt pipeline 维护）。
@@ -82,19 +82,33 @@ impl SessionRuntimeInner {
                 "session `{session_id}` 无 AgentFrame repository，无法解析 runtime surface target"
             ))
         })?;
-        let frame = frame_repo
-            .find_by_runtime_session(session_id)
-            .await
-            .map_err(|error| {
-                ConnectorError::Runtime(format!(
-                    "查找 session `{session_id}` 关联的 AgentFrame 失败: {error}"
-                ))
-            })?
-            .ok_or_else(|| {
-                ConnectorError::Runtime(format!(
-                    "session `{session_id}` 未关联 AgentFrame，无法解析 runtime surface target"
-                ))
-            })?;
+        let anchor_repo = self.execution_anchor_repo.as_ref().ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 无 RuntimeSessionExecutionAnchor repository，无法解析 runtime surface target"
+            ))
+        })?;
+        let agent_repo = self.lifecycle_agent_repo.as_ref().ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 无 LifecycleAgent repository，无法解析 runtime surface target"
+            ))
+        })?;
+        let (_anchor, _agent, frame) = resolve_current_frame_for_runtime_session(
+            session_id,
+            anchor_repo.as_ref(),
+            agent_repo.as_ref(),
+            frame_repo.as_ref(),
+        )
+        .await
+        .map_err(|error| {
+            ConnectorError::Runtime(format!(
+                "通过 anchor 查找 session `{session_id}` 当前 AgentFrame 失败: {error}"
+            ))
+        })?
+        .ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 未关联 AgentFrame，无法解析 runtime surface target"
+            ))
+        })?;
         Ok(frame.id)
     }
 
@@ -115,6 +129,11 @@ impl SessionRuntimeInner {
                 "session `{session_id}` 无 AgentFrame repository，无法热更新能力状态"
             ))
         })?;
+        let anchor_repo = self.execution_anchor_repo.as_ref().ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 无 RuntimeSessionExecutionAnchor repository，无法热更新能力状态"
+            ))
+        })?;
         let target_frame = frame_repo
             .get(target.frame_id)
             .await
@@ -130,14 +149,18 @@ impl SessionRuntimeInner {
                     target.frame_id
                 ))
             })?;
-        let selected_session =
-            target_frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::Specific {
-                runtime_session_id: target.delivery_runtime_session_id.clone(),
-            });
-        if selected_session.is_none() {
+        let delivery_anchor = anchor_repo
+            .find_by_session(&target.delivery_runtime_session_id)
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!(
+                    "查找 delivery RuntimeSession `{session_id}` anchor 失败，无法热更新能力状态: {error}"
+                ))
+            })?;
+        if !delivery_anchor.is_some_and(|anchor| anchor.agent_id == target_frame.agent_id) {
             return Err(ConnectorError::Runtime(format!(
-                "AgentFrame `{}` 未绑定 delivery RuntimeSession `{session_id}`，拒绝热更新能力状态",
-                target.frame_id
+                "Agent `{}` 未绑定 delivery RuntimeSession `{session_id}` 的 anchor，拒绝热更新能力状态",
+                target_frame.agent_id
             )));
         }
         let current_frame = frame_repo

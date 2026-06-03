@@ -7,6 +7,7 @@ use crate::session::launch::{
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::*;
 use crate::workflow::AgentFrameBuilder;
+use crate::workflow::resolve_current_frame_for_runtime_session;
 use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 use agentdash_spi::ConnectorError;
 
@@ -283,10 +284,21 @@ impl SessionLaunchOrchestrator {
             }
         };
         // === 初始 capability state 写入 AgentFrame revision + current_frame_id 同步 ===
-        if let Some(ref frame_repo) = deps.agent_frame_repo {
+        if let (Some(frame_repo), Some(anchor_repo), Some(agent_repo)) = (
+            deps.agent_frame_repo.as_ref(),
+            deps.execution_anchor_repo.as_ref(),
+            deps.lifecycle_agent_repo.as_ref(),
+        ) {
             let initial_cap_state = &launch_plan.context.turn.capability_state;
-            match frame_repo.find_by_runtime_session(session_id).await {
-                Ok(Some(current_frame)) => {
+            match resolve_current_frame_for_runtime_session(
+                session_id,
+                anchor_repo.as_ref(),
+                agent_repo.as_ref(),
+                frame_repo.as_ref(),
+            )
+            .await
+            {
+                Ok(Some((_anchor, _agent, current_frame))) => {
                     let mut builder = AgentFrameBuilder::new(current_frame.agent_id)
                         .with_capability_state(initial_cap_state)
                         .with_created_by("session_launch", Some(session_id.to_string()));
@@ -390,15 +402,21 @@ impl SessionLaunchOrchestrator {
         let Some(frame_repo) = deps.agent_frame_repo.as_ref() else {
             return false;
         };
+        let Some(anchor_repo) = deps.execution_anchor_repo.as_ref() else {
+            return false;
+        };
         let Some(agent_repo) = deps.lifecycle_agent_repo.as_ref() else {
             return false;
         };
-        let frame = match frame_repo.find_by_runtime_session(session_id).await {
-            Ok(Some(f)) => f,
-            _ => return false,
-        };
-        match agent_repo.get(frame.agent_id).await {
-            Ok(Some(agent)) => agent.needs_bootstrap(),
+        match resolve_current_frame_for_runtime_session(
+            session_id,
+            anchor_repo.as_ref(),
+            agent_repo.as_ref(),
+            frame_repo.as_ref(),
+        )
+        .await
+        {
+            Ok(Some((_anchor, agent, _frame))) => agent.needs_bootstrap(),
             _ => false,
         }
     }
@@ -408,15 +426,21 @@ impl SessionLaunchOrchestrator {
         let Some(frame_repo) = deps.agent_frame_repo.as_ref() else {
             return;
         };
+        let Some(anchor_repo) = deps.execution_anchor_repo.as_ref() else {
+            return;
+        };
         let Some(agent_repo) = deps.lifecycle_agent_repo.as_ref() else {
             return;
         };
-        let frame = match frame_repo.find_by_runtime_session(session_id).await {
-            Ok(Some(f)) => f,
-            _ => return,
-        };
-        let mut agent = match agent_repo.get(frame.agent_id).await {
-            Ok(Some(a)) => a,
+        let mut agent = match resolve_current_frame_for_runtime_session(
+            session_id,
+            anchor_repo.as_ref(),
+            agent_repo.as_ref(),
+            frame_repo.as_ref(),
+        )
+        .await
+        {
+            Ok(Some((_anchor, agent, _frame))) => agent,
             _ => return,
         };
         agent.mark_bootstrapped();

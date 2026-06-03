@@ -92,7 +92,7 @@ VFS、MCP、capability、context、identity 由 construction 重新投影。
 
 ## Terminal Effects
 
-`turn_terminal` event 先持久化，`SessionMeta.last_execution_status` 由事件投影更新。
+`turn_terminal` event 先持久化，`SessionMeta.last_delivery_status` 由事件投影更新。
 终态后的业务副作用写入 terminal effect outbox，再由 dispatcher 执行。
 
 Outbox effect 类型：

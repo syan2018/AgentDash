@@ -25,7 +25,6 @@ use crate::workflow::{
     resolve_active_workflow_projection_for_session,
 };
 use agentdash_domain::common::Vfs;
-use agentdash_domain::workflow::RuntimeSessionSelectionPolicy;
 
 #[derive(Debug)]
 pub struct BuiltTaskSessionContext {
@@ -218,18 +217,16 @@ async fn find_active_workflow_via_task_sessions(
         else {
             continue;
         };
-        let frame = match agent.current_frame_id {
-            Some(_) => repos
-                .agent_frame_repo
-                .get_current(agent.id)
-                .await
-                .ok()
-                .flatten(),
-            None => None,
-        };
-        let Some(frame) = frame else { continue };
-        let Some(session_id) =
-            frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached)
+        if agent.current_frame_id.is_none() {
+            continue;
+        }
+        let Some(session_id) = repos
+            .execution_anchor_repo
+            .latest_for_agent(agent.id)
+            .await
+            .ok()
+            .flatten()
+            .map(|anchor| anchor.runtime_session_id)
         else {
             continue;
         };

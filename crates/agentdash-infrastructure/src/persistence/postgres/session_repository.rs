@@ -164,7 +164,7 @@ impl SessionMetaStore for PostgresSessionRepository {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
+                id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_delivery_status,
                 last_turn_id, last_terminal_message, executor_config_json,
                 executor_session_id, tab_layout_json
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
@@ -177,7 +177,7 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
-        .bind(meta.last_execution_status.to_string())
+        .bind(meta.last_delivery_status.to_string())
         .bind(&meta.last_turn_id)
         .bind(&meta.last_terminal_message)
         .bind(executor_config_json)
@@ -192,7 +192,7 @@ impl SessionMetaStore for PostgresSessionRepository {
     async fn get_session_meta(&self, session_id: &str) -> SessionStoreResult<Option<SessionMeta>> {
         let row = sqlx::query(
             r#"
-            SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
+            SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_delivery_status,
                    last_turn_id, last_terminal_message, executor_config_json,
                    executor_session_id, tab_layout_json
             FROM sessions
@@ -209,7 +209,7 @@ impl SessionMetaStore for PostgresSessionRepository {
     async fn list_sessions(&self) -> SessionStoreResult<Vec<SessionMeta>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
+            SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_delivery_status,
                    last_turn_id, last_terminal_message, executor_config_json,
                    executor_session_id, tab_layout_json
             FROM sessions
@@ -230,7 +230,7 @@ impl SessionMetaStore for PostgresSessionRepository {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
+                id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_delivery_status,
                 last_turn_id, last_terminal_message, executor_config_json,
                 executor_session_id, tab_layout_json
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
@@ -241,10 +241,10 @@ impl SessionMetaStore for PostgresSessionRepository {
                 created_at = excluded.created_at,
                 updated_at = GREATEST(sessions.updated_at, excluded.updated_at),
                 last_event_seq = GREATEST(sessions.last_event_seq, excluded.last_event_seq),
-                last_execution_status = CASE
+                last_delivery_status = CASE
                     WHEN excluded.last_event_seq >= sessions.last_event_seq
-                        THEN excluded.last_execution_status
-                    ELSE sessions.last_execution_status
+                        THEN excluded.last_delivery_status
+                    ELSE sessions.last_delivery_status
                 END,
                 last_turn_id = CASE
                     WHEN excluded.last_event_seq >= sessions.last_event_seq
@@ -268,7 +268,7 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
-        .bind(meta.last_execution_status.to_string())
+        .bind(meta.last_delivery_status.to_string())
         .bind(&meta.last_turn_id)
         .bind(&meta.last_terminal_message)
         .bind(executor_config_json)
@@ -404,7 +404,7 @@ impl SessionEventStore for PostgresSessionRepository {
             UPDATE sessions
             SET
                 updated_at = $1,
-                last_execution_status = COALESCE($2, last_execution_status),
+                last_delivery_status = COALESCE($2, last_delivery_status),
                 last_turn_id = COALESCE($3, last_turn_id),
                 last_terminal_message = CASE
                     WHEN $4 THEN NULL
@@ -416,7 +416,7 @@ impl SessionEventStore for PostgresSessionRepository {
             "#,
         )
         .bind(committed_at_ms)
-        .bind(&projection.last_execution_status)
+        .bind(&projection.last_delivery_status)
         .bind(&projection.turn_id)
         .bind(projection.clear_terminal_message)
         .bind(&projection.last_terminal_message)
@@ -1097,7 +1097,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
             UPDATE sessions
             SET
                 updated_at = $1,
-                last_execution_status = COALESCE($2, last_execution_status),
+                last_delivery_status = COALESCE($2, last_delivery_status),
                 last_turn_id = COALESCE($3, last_turn_id),
                 last_terminal_message = CASE
                     WHEN $4 THEN NULL
@@ -1109,7 +1109,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
             "#,
         )
         .bind(committed_at_ms)
-        .bind(&projection.last_execution_status)
+        .bind(&projection.last_delivery_status)
         .bind(&projection.turn_id)
         .bind(projection.clear_terminal_message)
         .bind(&projection.last_terminal_message)
@@ -1657,7 +1657,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,
@@ -1807,7 +1807,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,
@@ -1872,7 +1872,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,
@@ -1888,7 +1888,7 @@ mod tests {
             .expect("应能读取 session meta")
             .expect("session 应存在");
         stale.updated_at = 10;
-        stale.last_execution_status = ExecutionStatus::Running;
+        stale.last_delivery_status = ExecutionStatus::Running;
         stale.last_turn_id = Some("t-old".to_string());
         stale.executor_session_id = Some("exec-1".to_string());
         stale.tab_layout = Some(serde_json::json!({
@@ -1912,7 +1912,7 @@ mod tests {
             .expect("session 应存在");
 
         assert_eq!(merged.last_event_seq, 1);
-        assert_eq!(merged.last_execution_status, ExecutionStatus::Completed);
+        assert_eq!(merged.last_delivery_status, ExecutionStatus::Completed);
         assert_eq!(merged.last_turn_id.as_deref(), Some("t-new"));
         assert_eq!(merged.last_terminal_message.as_deref(), Some("done"));
         assert_eq!(merged.executor_session_id.as_deref(), Some("exec-1"));

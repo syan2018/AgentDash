@@ -325,6 +325,7 @@ impl StoryActivityActivationService {
             self.repos.lifecycle_agent_repo.as_ref(),
             self.repos.agent_frame_repo.as_ref(),
             self.repos.agent_assignment_repo.as_ref(),
+            self.repos.execution_anchor_repo.as_ref(),
         )
     }
 }

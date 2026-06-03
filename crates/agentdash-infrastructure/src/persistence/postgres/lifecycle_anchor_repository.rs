@@ -508,7 +508,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         Ok(())
     }
 
-    async fn find_by_runtime_session(
+    async fn find_frame_by_runtime_ref_projection(
         &self,
         runtime_session_id: &str,
     ) -> Result<Option<AgentFrame>, DomainError> {

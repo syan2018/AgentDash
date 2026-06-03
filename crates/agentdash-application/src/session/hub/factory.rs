@@ -111,6 +111,7 @@ impl SessionRuntimeInner {
             backend_execution_transport: None,
             backend_execution_lease_repo: None,
             agent_frame_repo: None,
+            execution_anchor_repo: None,
             lifecycle_agent_repo: None,
             lifecycle_gate_repo: None,
         }
@@ -167,6 +168,14 @@ impl SessionRuntimeInner {
         repo: Arc<dyn agentdash_domain::workflow::AgentFrameRepository>,
     ) -> Self {
         self.agent_frame_repo = Some(repo);
+        self
+    }
+
+    pub fn with_execution_anchor_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::RuntimeSessionExecutionAnchorRepository>,
+    ) -> Self {
+        self.execution_anchor_repo = Some(repo);
         self
     }
 

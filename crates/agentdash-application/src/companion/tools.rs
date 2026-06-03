@@ -34,6 +34,7 @@ use super::{
 use crate::session::AgentFrameRuntimeTarget;
 use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::workflow::dispatch_service::LifecycleDispatchService;
+use crate::workflow::resolve_current_frame_for_runtime_session;
 
 pub use agentdash_spi::CompanionSliceMode;
 
@@ -137,18 +138,18 @@ impl CompanionRequestTool {
         let Some(session_id) = &self.current_session_id else {
             return;
         };
-        if let Ok(Some(frame)) = self
-            .repos
-            .agent_frame_repo
-            .find_by_runtime_session(session_id)
-            .await
+        if let Ok(Some((_anchor, agent, frame))) = resolve_current_frame_for_runtime_session(
+            session_id,
+            self.repos.execution_anchor_repo.as_ref(),
+            self.repos.lifecycle_agent_repo.as_ref(),
+            self.repos.agent_frame_repo.as_ref(),
+        )
+        .await
         {
             self.current_frame_id = Some(frame.id);
-            self.current_agent_id = Some(frame.agent_id);
-            if let Ok(Some(agent)) = self.repos.lifecycle_agent_repo.get(frame.agent_id).await {
-                self.current_run_id = Some(agent.run_id);
-                self.project_id = Some(agent.project_id);
-            }
+            self.current_agent_id = Some(agent.id);
+            self.current_run_id = Some(agent.run_id);
+            self.project_id = Some(agent.project_id);
         }
     }
 }
@@ -617,6 +618,8 @@ impl CompanionRequestTool {
         let gate_control = CompanionGateControlService::new(
             self.repos.lifecycle_gate_repo.clone(),
             self.repos.agent_frame_repo.clone(),
+            self.repos.lifecycle_agent_repo.clone(),
+            self.repos.execution_anchor_repo.clone(),
             self.repos.agent_lineage_repo.clone(),
             delivery,
         );
@@ -1153,13 +1156,15 @@ impl CompanionRespondTool {
         &self,
         current_session_id: &str,
     ) -> Result<Option<String>, AgentToolError> {
-        let child_frame = match self
-            .repos
-            .agent_frame_repo
-            .find_by_runtime_session(current_session_id)
-            .await
+        let child_frame = match resolve_current_frame_for_runtime_session(
+            current_session_id,
+            self.repos.execution_anchor_repo.as_ref(),
+            self.repos.lifecycle_agent_repo.as_ref(),
+            self.repos.agent_frame_repo.as_ref(),
+        )
+        .await
         {
-            Ok(Some(frame)) => frame,
+            Ok(Some((_anchor, _agent, frame))) => frame,
             _ => return Ok(None),
         };
         let gates = self
@@ -1190,6 +1195,8 @@ impl CompanionRespondTool {
         let service = CompanionGateControlService::new(
             self.repos.lifecycle_gate_repo.clone(),
             self.repos.agent_frame_repo.clone(),
+            self.repos.lifecycle_agent_repo.clone(),
+            self.repos.execution_anchor_repo.clone(),
             self.repos.agent_lineage_repo.clone(),
             delivery,
         );
@@ -1337,6 +1344,8 @@ impl CompanionRespondTool {
         let service = CompanionGateControlService::new(
             self.repos.lifecycle_gate_repo.clone(),
             self.repos.agent_frame_repo.clone(),
+            self.repos.lifecycle_agent_repo.clone(),
+            self.repos.execution_anchor_repo.clone(),
             self.repos.agent_lineage_repo.clone(),
             delivery,
         );

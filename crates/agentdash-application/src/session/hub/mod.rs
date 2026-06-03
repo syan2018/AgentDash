@@ -19,7 +19,7 @@ use super::persistence::{SessionPersistence, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_supervisor::TurnSupervisor;
 use crate::context::SharedContextAuditBus;
-use agentdash_domain::workflow::AgentFrameRepository;
+use agentdash_domain::workflow::{AgentFrameRepository, RuntimeSessionExecutionAnchorRepository};
 use agentdash_spi::AgentConnector;
 use agentdash_spi::hooks::ExecutionHookProvider;
 
@@ -80,6 +80,7 @@ pub struct SessionRuntimeInner {
     /// 当 capability state 变更时通过 AgentFrameBuilder 写入新 revision，
     /// 使 AgentFrame 成为 capability surface 的唯一权威事实源。
     pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
+    pub(super) execution_anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
     /// LifecycleAgent 仓储 — launch path 需要查询 agent bootstrap 状态。
     pub(super) lifecycle_agent_repo:
         Option<Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>>,

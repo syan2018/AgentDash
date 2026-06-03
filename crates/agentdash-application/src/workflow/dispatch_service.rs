@@ -68,7 +68,7 @@ impl RuntimeSessionCreator for SessionPersistenceRuntimeSessionCreator {
             created_at: now,
             updated_at: now,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,
@@ -1255,7 +1255,7 @@ mod tests {
             frame.attach_runtime_session_ref(runtime_session_id);
             Ok(())
         }
-        async fn find_by_runtime_session(
+        async fn find_frame_by_runtime_ref_projection(
             &self,
             _runtime_session_id: &str,
         ) -> Result<Option<AgentFrame>, DomainError> {
@@ -1521,6 +1521,62 @@ mod tests {
                 .unwrap()
                 .iter()
                 .find(|item| item.runtime_session_id == runtime_session_id)
+                .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|item| item.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|item| item.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_project_session_ids(
+            &self,
+            runtime_session_ids: &[String],
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|item| runtime_session_ids.contains(&item.runtime_session_id))
+                .cloned()
+                .collect())
+        }
+
+        async fn latest_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|item| item.agent_id == agent_id)
+                .max_by_key(|item| item.updated_at)
                 .cloned())
         }
     }

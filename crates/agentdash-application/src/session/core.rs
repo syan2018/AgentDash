@@ -31,7 +31,7 @@ impl SessionCoreService {
         let sessions = self.stores.meta.list_sessions().await?;
         Ok(sessions
             .into_iter()
-            .filter(|meta| meta.last_execution_status == ExecutionStatus::Running)
+            .filter(|meta| meta.last_delivery_status == ExecutionStatus::Running)
             .collect())
     }
 
@@ -58,7 +58,7 @@ impl SessionCoreService {
             created_at: now,
             updated_at: now,
             last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
+            last_delivery_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,

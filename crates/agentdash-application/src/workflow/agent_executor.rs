@@ -2,7 +2,7 @@ use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaim, ActivityExecutorSpec,
     ActivityPortValue, AgentAssignment, AgentFrame, AgentProcedureRef, AgentReusePolicy,
     ExecutionSource, ExecutorRunRef, FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
-    LifecycleAgent, RuntimeSessionSelectionPolicy, WorkflowGraph,
+    LifecycleAgent, WorkflowGraph,
 };
 use agentdash_spi::CapabilityScope;
 use std::sync::Arc;
@@ -240,15 +240,16 @@ impl AgentActivityRuntimePort {
             .await
             .map_err(|error| format!("加载 ContinueRoot target frame 失败: {error}"))?
             .ok_or_else(|| format!("ContinueRoot target frame 不存在: {}", target.frame_id))?;
-        if frame
-            .select_runtime_session_id(RuntimeSessionSelectionPolicy::Specific {
-                runtime_session_id: target.delivery_runtime_session_id.clone(),
-            })
-            .is_none()
-        {
+        let delivery_anchor = self
+            .repos
+            .execution_anchor_repo
+            .find_by_session(&target.delivery_runtime_session_id)
+            .await
+            .map_err(|error| format!("加载 ContinueRoot delivery anchor 失败: {error}"))?;
+        if !delivery_anchor.is_some_and(|anchor| anchor.agent_id == frame.agent_id) {
             return Err(format!(
-                "ContinueRoot target frame {} 未绑定 delivery RuntimeSession {}",
-                target.frame_id, target.delivery_runtime_session_id
+                "ContinueRoot target agent {} 未绑定 delivery RuntimeSession {} 的 anchor",
+                frame.agent_id, target.delivery_runtime_session_id
             ));
         }
 

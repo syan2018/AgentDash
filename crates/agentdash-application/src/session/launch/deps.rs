@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_domain::backend::BackendExecutionLeaseRepository;
-use agentdash_domain::workflow::{AgentFrameRepository, LifecycleAgentRepository};
+use agentdash_domain::workflow::{
+    AgentFrameRepository, LifecycleAgentRepository, RuntimeSessionExecutionAnchorRepository,
+};
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::{AgentConnector, McpRelayProvider};
 
@@ -40,6 +42,7 @@ pub(in crate::session) struct SessionLaunchDeps {
     pub(super) backend_execution_transport: Option<Arc<dyn RelayPromptTransport>>,
     pub(super) backend_execution_lease_repo: Option<Arc<dyn BackendExecutionLeaseRepository>>,
     pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
+    pub(super) execution_anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
     pub(super) lifecycle_agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
     eventing: SessionEventingService,
     core: SessionCoreService,
@@ -65,6 +68,7 @@ impl SessionLaunchDeps {
             backend_execution_transport: inner.backend_execution_transport.clone(),
             backend_execution_lease_repo: inner.backend_execution_lease_repo.clone(),
             agent_frame_repo: inner.agent_frame_repo.clone(),
+            execution_anchor_repo: inner.execution_anchor_repo.clone(),
             lifecycle_agent_repo: inner.lifecycle_agent_repo.clone(),
             eventing: inner.eventing_service(),
             core: inner.core_service(),

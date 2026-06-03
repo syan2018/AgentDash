@@ -782,7 +782,7 @@ pub struct LifecycleAgentView {
     /// agent 最新 execution status（如 running / completed / idle）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub last_execution_status: Option<String>,
+    pub last_delivery_status: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

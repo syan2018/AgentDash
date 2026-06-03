@@ -22,8 +22,8 @@ use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
     ActivityLifecycleRunState, AgentAssignment, ExecutorRunRef as DomainExecutorRunRef,
     LifecycleAgent, LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind, LifecycleRun,
-    LifecycleRunStatus as DomainLifecycleRunStatus, LifecycleSubjectAssociation, SubjectRef,
-    WorkflowGraphInstance,
+    LifecycleRunStatus as DomainLifecycleRunStatus, LifecycleSubjectAssociation,
+    RuntimeSessionSelectionPolicy, SubjectRef, WorkflowGraphInstance,
 };
 
 use crate::repository_set::RepositorySet;
@@ -69,7 +69,7 @@ pub async fn build_lifecycle_run_view_with_preloaded(
 
     Ok(assemble_lifecycle_run_view(
         run,
-        agents.iter().map(lifecycle_agent_to_view).collect(),
+        lifecycle_agent_views(repos, &agents).await?,
         subject_associations
             .iter()
             .map(association_to_dto)
@@ -218,6 +218,13 @@ pub fn association_to_dto(
 }
 
 pub fn lifecycle_agent_to_view(agent: &LifecycleAgent) -> LifecycleAgentView {
+    lifecycle_agent_to_view_with_delivery(agent, None)
+}
+
+fn lifecycle_agent_to_view_with_delivery(
+    agent: &LifecycleAgent,
+    delivery_runtime_session_id: Option<String>,
+) -> LifecycleAgentView {
     LifecycleAgentView {
         agent_ref: LifecycleAgentRefDto {
             run_id: agent.run_id.to_string(),
@@ -229,11 +236,51 @@ pub fn lifecycle_agent_to_view(agent: &LifecycleAgent) -> LifecycleAgentView {
         project_agent_id: agent.project_agent_id.map(|id| id.to_string()),
         status: agent.status.clone(),
         current_frame_id: agent.current_frame_id.map(|id| id.to_string()),
-        delivery_runtime_ref: None,
+        delivery_runtime_ref: delivery_runtime_session_id
+            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
         last_execution_status: None,
         created_at: agent.created_at.to_rfc3339(),
         updated_at: agent.updated_at.to_rfc3339(),
     }
+}
+
+async fn lifecycle_agent_views(
+    repos: &RepositorySet,
+    agents: &[LifecycleAgent],
+) -> Result<Vec<LifecycleAgentView>, DomainError> {
+    let mut views = Vec::with_capacity(agents.len());
+    for agent in agents {
+        let delivery_runtime_session_id =
+            resolve_agent_delivery_runtime_session_id(repos, agent).await?;
+        views.push(lifecycle_agent_to_view_with_delivery(
+            agent,
+            delivery_runtime_session_id,
+        ));
+    }
+    Ok(views)
+}
+
+async fn resolve_agent_delivery_runtime_session_id(
+    repos: &RepositorySet,
+    agent: &LifecycleAgent,
+) -> Result<Option<String>, DomainError> {
+    if let Some(frame_id) = agent.current_frame_id {
+        if let Some(frame) = repos.agent_frame_repo.get(frame_id).await? {
+            if let Some(session_id) =
+                frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::LaunchPrimary)
+            {
+                return Ok(Some(session_id));
+            }
+        }
+    }
+
+    Ok(repos
+        .agent_frame_repo
+        .get_current(agent.id)
+        .await?
+        .and_then(|frame| {
+            frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::LaunchPrimary)
+        }))
 }
 
 // ── Internal pure helpers ──────────────────────────────────────

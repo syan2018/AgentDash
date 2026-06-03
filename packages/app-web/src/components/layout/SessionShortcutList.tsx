@@ -10,6 +10,7 @@ import { useLocation, useMatch, useNavigate } from "react-router-dom";
 import { StatusDot, type StatusDotTone } from "@agentdash/ui";
 import { useLifecycleStore } from "../../stores/lifecycleStore";
 import type { SessionExecutionStatusValue } from "../../services/session";
+import type { LifecycleAgentView } from "../../types";
 
 /** 基于 session 执行状态的视觉映射 */
 const EXECUTION_STATUS_TONE: Record<SessionExecutionStatusValue, StatusDotTone> = {
@@ -32,7 +33,13 @@ function executionStatusTone(status: SessionExecutionStatusValue): StatusDotTone
   return EXECUTION_STATUS_TONE[status] ?? "muted";
 }
 
-function formatUpdatedAt(value: string): string {
+function updatedAtTimestamp(value: string | number): number {
+  if (typeof value === "number") return value;
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function formatUpdatedAt(value: string | number): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return new Intl.DateTimeFormat("zh-CN", {
@@ -47,12 +54,19 @@ interface SessionShortcutEntry {
   runtimeSessionId: string;
   sessionTitle: string;
   executionStatus: SessionExecutionStatusValue;
-  agentRole: string;
-  updatedAt: string;
+  updatedAt: string | number;
 }
 
 interface LifecycleShortcutListProps {
   projectId: string | null;
+}
+
+function selectPrimarySessionAgent(runAgents: LifecycleAgentView[]): LifecycleAgentView | null {
+  return runAgents.find((agent) => agent.agent_role === "primary" && agent.delivery_runtime_ref)
+    ?? runAgents.find((agent) => agent.delivery_runtime_ref)
+    ?? runAgents.find((agent) => agent.agent_role === "primary")
+    ?? runAgents[0]
+    ?? null;
 }
 
 export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
@@ -86,23 +100,25 @@ export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
         (a) => a.agent_ref.run_id === lifecycleRun.run_ref.run_id,
       );
 
-      const primaryAgent = runAgents[0];
+      const primaryAgent = selectPrimarySessionAgent(runAgents);
+      if (!primaryAgent?.delivery_runtime_ref) continue;
+
       const deliveryRuntimeSessionId =
-        primaryAgent?.delivery_runtime_ref?.runtime_session_id ?? null;
-      if (!deliveryRuntimeSessionId) continue;
+        primaryAgent.delivery_runtime_ref.runtime_session_id;
 
       const meta = sessionMetas.get(deliveryRuntimeSessionId);
 
       entries.push({
         runtimeSessionId: deliveryRuntimeSessionId,
-        sessionTitle: meta?.title?.trim() || primaryAgent?.agent_role || primaryAgent?.agent_kind || "会话",
-        executionStatus: meta?.lastExecutionStatus ?? "idle",
-        agentRole: primaryAgent?.agent_role || primaryAgent?.agent_kind || "",
-        updatedAt: primaryAgent?.updated_at ?? lifecycleRun.last_activity_at,
+        sessionTitle: meta?.title?.trim() || "会话加载中…",
+        executionStatus: (meta?.lastExecutionStatus
+          ?? primaryAgent.last_execution_status
+          ?? "idle") as SessionExecutionStatusValue,
+        updatedAt: meta?.updatedAt ?? primaryAgent.updated_at ?? lifecycleRun.last_activity_at,
       });
     }
 
-    entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    entries.sort((a, b) => updatedAtTimestamp(b.updatedAt) - updatedAtTimestamp(a.updatedAt));
     return entries;
   }, [projectId, lifecycleRuns, agents, sessionMetas]);
 
@@ -160,11 +176,6 @@ export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
                     {formatUpdatedAt(entry.updatedAt)}
                   </span>
                 </div>
-                {entry.agentRole && entry.sessionTitle !== entry.agentRole && (
-                  <p className="ml-3.5 truncate text-[11px] leading-[1.35] text-muted-foreground">
-                    {entry.agentRole}
-                  </p>
-                )}
               </button>
             );
           })}

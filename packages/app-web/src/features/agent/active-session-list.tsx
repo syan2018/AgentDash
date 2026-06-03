@@ -2,7 +2,7 @@
  * ActiveSessionList — 以 session title 为主展示的活跃会话列表。
  *
  * 底层数据由 lifecycle run → agent → runtime_session_ref 驱动，
- * 但用户视角是 "会话列表"：标题、状态、agent 角色、subject 归属。
+ * 但用户视角是 "会话列表"：标题、状态、subject 归属。
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -41,6 +41,12 @@ function StatusDot({ status }: { status: SessionExecutionStatusValue }) {
   );
 }
 
+function updatedAtTimestamp(value: string | number | null | undefined): number | null {
+  if (value == null) return null;
+  const timestamp = typeof value === "number" ? value : new Date(value).getTime();
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
 // ─── SessionRow：两行式会话行 ────────────────────────────
 
 interface SessionRowProps {
@@ -48,6 +54,7 @@ interface SessionRowProps {
   agent: LifecycleAgentView;
   sessionTitle: string | null;
   executionStatus: SessionExecutionStatusValue;
+  updatedAt: number | null;
   isSelected: boolean;
   onSelect: () => void;
   /** sub-agent 行缩进 */
@@ -88,6 +95,7 @@ function SessionRow({
   agent,
   sessionTitle,
   executionStatus,
+  updatedAt,
   isSelected,
   onSelect,
   indent,
@@ -97,8 +105,8 @@ function SessionRow({
 }: SessionRowProps) {
   const subjectLabel = resolveSubjectDisplayLabel(lifecycleRun);
 
-  const title = sessionTitle?.trim() || agent.agent_role || agent.agent_kind || "会话";
-  const updatedAt = agent.updated_at ? new Date(agent.updated_at).getTime() : null;
+  const title = sessionTitle?.trim()
+    || (agent.delivery_runtime_ref ? "会话加载中…" : agent.agent_kind || "会话");
 
   return (
     <button
@@ -137,20 +145,15 @@ function SessionRow({
         {indent && (
           <span className="text-[10px] text-muted-foreground/50">子 Agent</span>
         )}
-        {(sessionTitle || indent) && (agent.agent_role || agent.agent_kind) && (
+        {indent && (agent.agent_role || agent.agent_kind) && (
           <span className="truncate text-[10px] text-muted-foreground">
             {agent.agent_role || agent.agent_kind}
           </span>
         )}
         {subjectLabel && !indent && (
-          <>
-            {sessionTitle && (agent.agent_role || agent.agent_kind) && (
-              <span className="text-[10px] text-muted-foreground/40">·</span>
-            )}
-            <span className="truncate text-[10px] text-muted-foreground/60">
-              {subjectLabel}
-            </span>
-          </>
+          <span className="truncate text-[10px] text-muted-foreground/60">
+            {subjectLabel}
+          </span>
         )}
         <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/60">
           {executionStatusLabel[executionStatus] ?? executionStatus}
@@ -275,6 +278,14 @@ const STATUS_TAB_OPTIONS: Array<{ value: StatusFilterGroup; label: string }> = [
   { value: "ended", label: "已结束" },
 ];
 
+function selectPrimarySessionAgent(runAgents: LifecycleAgentView[]): LifecycleAgentView | null {
+  return runAgents.find((agent) => agent.agent_role === "primary" && agent.delivery_runtime_ref)
+    ?? runAgents.find((agent) => agent.delivery_runtime_ref)
+    ?? runAgents.find((agent) => agent.agent_role === "primary")
+    ?? runAgents[0]
+    ?? null;
+}
+
 interface ActiveSessionListProps {
   projectId: string;
   isLoading: boolean;
@@ -307,6 +318,7 @@ export function ActiveSessionList({
     sessionTitle: string | null;
     deliveryRuntimeSessionId: string | null;
     executionStatus: SessionExecutionStatusValue;
+    updatedAt: number | null;
   }
 
   const lifecycleRunEntries = useMemo(() => {
@@ -319,9 +331,14 @@ export function ActiveSessionList({
       );
       if (runAgents.length === 0) continue;
 
-      const [primary, ...subs] = runAgents;
+      const primary = selectPrimarySessionAgent(runAgents);
+      if (!primary) continue;
+      const subs = runAgents.filter(
+        (agent) => agent.agent_ref.agent_id !== primary.agent_ref.agent_id,
+      );
       const deliveryRuntimeSessionId =
-        primary?.delivery_runtime_ref?.runtime_session_id ?? null;
+        primary.delivery_runtime_ref?.runtime_session_id ?? null;
+      if (!deliveryRuntimeSessionId) continue;
       const meta = deliveryRuntimeSessionId
         ? sessionMetas.get(deliveryRuntimeSessionId) ?? null
         : null;
@@ -332,11 +349,16 @@ export function ActiveSessionList({
         subAgents: subs,
         sessionTitle: meta?.title ?? null,
         deliveryRuntimeSessionId,
-        executionStatus: primary?.last_execution_status as SessionExecutionStatusValue ?? meta?.lastExecutionStatus ?? "idle",
+        executionStatus: (meta?.lastExecutionStatus
+          ?? primary.last_execution_status
+          ?? "idle") as SessionExecutionStatusValue,
+        updatedAt: updatedAtTimestamp(meta?.updatedAt)
+          ?? updatedAtTimestamp(primary.updated_at)
+          ?? updatedAtTimestamp(lifecycleRun.last_activity_at),
       });
     }
 
-    return entries;
+    return entries.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   }, [lifecycleRuns, agents, sessionMetas, projectId]);
 
   /** 展开为 SessionEntry 供分组/筛选使用 */
@@ -347,6 +369,7 @@ export function ActiveSessionList({
       sessionTitle: re.sessionTitle,
       deliveryRuntimeSessionId: re.deliveryRuntimeSessionId,
       executionStatus: re.executionStatus,
+      updatedAt: re.updatedAt,
     }));
   }, [lifecycleRunEntries]);
 
@@ -380,9 +403,8 @@ export function ActiveSessionList({
       const lower = keyword.toLowerCase();
       list = list.filter((e) => {
         const title = e.sessionTitle?.toLowerCase() ?? "";
-        const role = (e.agent.agent_role || e.agent.agent_kind).toLowerCase();
         const subjectDisplayLabel = resolveSubjectDisplayLabel(e.lifecycleRun)?.toLowerCase() ?? "";
-        return title.includes(lower) || role.includes(lower) || subjectDisplayLabel.includes(lower);
+        return title.includes(lower) || subjectDisplayLabel.includes(lower);
       });
     }
 
@@ -481,6 +503,7 @@ export function ActiveSessionList({
                           agent={entry.agent}
                           sessionTitle={entry.sessionTitle}
                           executionStatus={entry.executionStatus}
+                          updatedAt={entry.updatedAt}
                           isSelected={selectedAgentId === entry.agent.agent_ref.agent_id}
                           onSelect={() => onSelectAgent(lifecycleRunId, entry.agent.agent_ref.agent_id)}
                           subAgentCount={subs.length}
@@ -494,6 +517,7 @@ export function ActiveSessionList({
                             agent={sub}
                             sessionTitle={null}
                             executionStatus={entry.executionStatus}
+                            updatedAt={entry.updatedAt}
                             isSelected={selectedAgentId === sub.agent_ref.agent_id}
                             onSelect={() => onSelectAgent(lifecycleRunId, sub.agent_ref.agent_id)}
                             indent
@@ -520,6 +544,7 @@ export function ActiveSessionList({
                     agent={entry.agent}
                     sessionTitle={entry.sessionTitle}
                     executionStatus={entry.executionStatus}
+                    updatedAt={entry.updatedAt}
                     isSelected={selectedAgentId === entry.agent.agent_ref.agent_id}
                     onSelect={() => onSelectAgent(lifecycleRunId, entry.agent.agent_ref.agent_id)}
                     subAgentCount={subs.length}
@@ -533,6 +558,7 @@ export function ActiveSessionList({
                       agent={sub}
                       sessionTitle={null}
                       executionStatus={entry.executionStatus}
+                      updatedAt={entry.updatedAt}
                       isSelected={selectedAgentId === sub.agent_ref.agent_id}
                       onSelect={() => onSelectAgent(lifecycleRunId, sub.agent_ref.agent_id)}
                       indent

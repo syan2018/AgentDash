@@ -236,12 +236,11 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   },
 
   hydrateSessionMetas: async (sessionIds) => {
-    const existing = get().sessionMetas;
-    const missing = sessionIds.filter((id) => !existing.has(id));
-    if (missing.length === 0) return;
+    const uniqueIds = Array.from(new Set(sessionIds));
+    if (uniqueIds.length === 0) return;
 
     const results = await Promise.allSettled(
-      missing.map((id) => fetchSessionMeta(id)),
+      uniqueIds.map((id) => fetchSessionMeta(id)),
     );
     const nextMetas = new Map(get().sessionMetas);
     for (const result of results) {

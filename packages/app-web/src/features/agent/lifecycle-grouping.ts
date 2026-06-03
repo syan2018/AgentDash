@@ -16,6 +16,7 @@ export interface SessionEntry {
   sessionTitle: string | null;
   deliveryRuntimeSessionId: string | null;
   executionStatus: SessionExecutionStatusValue;
+  updatedAt: number | null;
 }
 
 export type SessionGroupKind = "story" | "task" | "project";

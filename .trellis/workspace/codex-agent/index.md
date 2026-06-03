@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 1
-- **Last Active**: 2026-05-30
+- **Total Sessions**: 2
+- **Last Active**: 2026-06-04
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~47 | Active |
+| `journal-1.md` | ~81 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 2 | 2026-06-04 | Agent 页 Draft 会话启动 | `4748e234`, `368f1f86` | `main` |
 | 1 | 2026-05-30 | Agent Permission System 全链路实现 | `9a168a05`, `fcb014b5`, `fe2960e1`, `3beccee3`, `ca0819d2`, `d7d197fd`, `66afa4c3`, `b3a31ab0` | `codex/story-session-lifecycle-decoupling` |
 <!-- @@@/auto:session-history -->
 

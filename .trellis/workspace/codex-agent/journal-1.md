@@ -45,3 +45,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Agent 页 Draft 会话启动
+
+**Date**: 2026-06-04
+**Task**: Agent 页 Draft 会话启动
+**Branch**: `main`
+
+### Summary
+
+完成 Agent 页 Draft 会话启动：先进入未持久化 Draft，首条消息 materialize runtime/lifecycle 并投递；同步 migration 约束、失败清理和前端路由。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4748e234` | (see git log) |
+| `368f1f86` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

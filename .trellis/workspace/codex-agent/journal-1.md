@@ -79,3 +79,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Session 控制动作模型修复
+
+**Date**: 2026-06-04
+**Task**: Session 控制动作模型修复
+**Branch**: `codex/session-runtime-control-actions`
+
+### Summary
+
+完成 Session runtime-control action set、steering endpoint、relay/codex/PiAgent steering 接线、前端输入区 action model 与运行态交互验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3bbcc968` | (see git log) |
+| `cd365a1c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

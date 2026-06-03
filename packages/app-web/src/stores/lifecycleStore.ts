@@ -1,8 +1,8 @@
 /**
  * Lifecycle 归一化 Store
  *
- * 以 run / graph_instance / subject / agent / frame 为索引主键，
- * 完整替代原有 runsBySessionId 的 session-first 索引模式。
+ * 以 lifecycle_run / graph_instance / subject / agent / frame 为索引主键，
+ * 完整替代原有 session-first 索引模式。
  *
  * SubjectExecution 使用 `subject_kind:subject_id` 复合 key 索引。
  */
@@ -30,7 +30,7 @@ import { fetchSessionMeta, type SessionMeta } from "../services/session";
 // ─── State Shape ─────────────────────────────────────────
 
 interface LifecycleState {
-  runs: Map<string, LifecycleRunView>;
+  lifecycleRuns: Map<string, LifecycleRunView>;
   graphInstances: Map<string, WorkflowGraphInstanceView>;
   agents: Map<string, LifecycleAgentView>;
   frames: Map<string, AgentFrameRuntimeView>;
@@ -43,7 +43,7 @@ interface LifecycleState {
   error: string | null;
 
   // ── write actions ──
-  setRun: (run: LifecycleRunView) => void;
+  setLifecycleRun: (lifecycleRun: LifecycleRunView) => void;
   setGraphInstance: (instance: WorkflowGraphInstanceView) => void;
   setAgent: (agent: LifecycleAgentView) => void;
   setFrame: (frame: AgentFrameRuntimeView) => void;
@@ -54,10 +54,10 @@ interface LifecycleState {
   setError: (error: string | null) => void;
 
   // ── bulk import（从 LifecycleRunView 展开子实体） ──
-  ingestRun: (run: LifecycleRunView) => void;
+  ingestLifecycleRun: (lifecycleRun: LifecycleRunView) => void;
 
   // ── API actions ──
-  fetchAndIngestRun: (runId: string) => Promise<LifecycleRunView | null>;
+  fetchAndIngestLifecycleRun: (lifecycleRunId: string) => Promise<LifecycleRunView | null>;
   fetchProjectActiveAgents: (projectId: string) => Promise<void>;
   fetchSubjectExecution: (subjectKind: string, subjectId: string) => Promise<SubjectExecutionView | null>;
   fetchFrame: (frameId: string) => Promise<AgentFrameRuntimeView | null>;
@@ -66,18 +66,18 @@ interface LifecycleState {
   hydrateSessionMetas: (sessionIds: string[]) => Promise<void>;
 
   // ── derived views ──
-  /** 按 subject association 聚合：返回指定 subject 关联的所有 run */
-  runsBySubject: (subjectKind: string, subjectId: string) => LifecycleRunView[];
-  /** 返回指定 run 下的所有 agent */
-  agentsByRun: (runId: string) => LifecycleAgentView[];
-  /** 返回指定 run 当前 agent/frame delivery runtime session id */
-  deliveryRuntimeSessionId: (runId: string) => string | null;
+  /** 按 subject association 聚合：返回指定 subject 关联的所有 LifecycleRun */
+  lifecycleRunsBySubject: (subjectKind: string, subjectId: string) => LifecycleRunView[];
+  /** 返回指定 LifecycleRun 下的所有 agent */
+  agentsByLifecycleRun: (lifecycleRunId: string) => LifecycleAgentView[];
+  /** 返回指定 LifecycleRun 当前 agent/frame delivery runtime session id */
+  deliveryRuntimeSessionIdForLifecycleRun: (lifecycleRunId: string) => string | null;
 }
 
 // ─── Store ───────────────────────────────────────────────
 
 export const useLifecycleStore = create<LifecycleState>((set, get) => ({
-  runs: new Map(),
+  lifecycleRuns: new Map(),
   graphInstances: new Map(),
   agents: new Map(),
   frames: new Map(),
@@ -87,11 +87,11 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   isLoading: false,
   error: null,
 
-  setRun: (run) =>
+  setLifecycleRun: (lifecycleRun) =>
     set((s) => {
-      const next = new Map(s.runs);
-      next.set(run.run_ref.run_id, run);
-      return { runs: next };
+      const next = new Map(s.lifecycleRuns);
+      next.set(lifecycleRun.run_ref.run_id, lifecycleRun);
+      return { lifecycleRuns: next };
     }),
 
   setGraphInstance: (instance) =>
@@ -140,23 +140,23 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error }),
 
-  ingestRun: (run) =>
+  ingestLifecycleRun: (lifecycleRun) =>
     set((s) => {
-      const nextRuns = new Map(s.runs);
-      nextRuns.set(run.run_ref.run_id, run);
+      const nextLifecycleRuns = new Map(s.lifecycleRuns);
+      nextLifecycleRuns.set(lifecycleRun.run_ref.run_id, lifecycleRun);
 
       const nextGraphInstances = new Map(s.graphInstances);
-      for (const gi of run.workflow_graph_instances) {
+      for (const gi of lifecycleRun.workflow_graph_instances) {
         nextGraphInstances.set(gi.id, gi);
       }
 
       const nextAgents = new Map(s.agents);
-      for (const agent of run.agents) {
+      for (const agent of lifecycleRun.agents) {
         nextAgents.set(agent.agent_ref.agent_id, agent);
       }
 
       return {
-        runs: nextRuns,
+        lifecycleRuns: nextLifecycleRuns,
         graphInstances: nextGraphInstances,
         agents: nextAgents,
       };
@@ -164,13 +164,13 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
 
   // ── API actions ──
 
-  fetchAndIngestRun: async (runId) => {
+  fetchAndIngestLifecycleRun: async (lifecycleRunId) => {
     set({ isLoading: true, error: null });
     try {
-      const run = await fetchLifecycleRun(runId);
-      get().ingestRun(run);
+      const lifecycleRun = await fetchLifecycleRun(lifecycleRunId);
+      get().ingestLifecycleRun(lifecycleRun);
       set({ isLoading: false });
-      return run;
+      return lifecycleRun;
     } catch (e) {
       set({ error: (e as Error).message, isLoading: false });
       return null;
@@ -181,8 +181,8 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const view = await fetchProjectActiveAgents(projectId);
-      for (const run of view.runs) {
-        get().ingestRun(run);
+      for (const lifecycleRun of view.runs) {
+        get().ingestLifecycleRun(lifecycleRun);
       }
       set({ isLoading: false });
 
@@ -203,8 +203,8 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
     try {
       const view = await fetchSubjectExecution(subjectKind, subjectId);
       get().setSubjectExecution(view);
-      for (const run of view.runs) {
-        get().ingestRun(run);
+      for (const lifecycleRun of view.runs) {
+        get().ingestLifecycleRun(lifecycleRun);
       }
       return view;
     } catch (e) {
@@ -254,28 +254,28 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
 
   // ── derived views ──
 
-  runsBySubject: (subjectKind, subjectId) => {
+  lifecycleRunsBySubject: (subjectKind, subjectId) => {
     const result: LifecycleRunView[] = [];
-    for (const run of get().runs.values()) {
-      const hasSubject = run.subject_associations.some(
+    for (const lifecycleRun of get().lifecycleRuns.values()) {
+      const hasSubject = lifecycleRun.subject_associations.some(
         (sa) => sa.subject_ref.kind === subjectKind && sa.subject_ref.id === subjectId,
       );
-      if (hasSubject) result.push(run);
+      if (hasSubject) result.push(lifecycleRun);
     }
     return result;
   },
 
-  agentsByRun: (runId) => {
+  agentsByLifecycleRun: (lifecycleRunId) => {
     const result: LifecycleAgentView[] = [];
     for (const agent of get().agents.values()) {
-      if (agent.agent_ref.run_id === runId) result.push(agent);
+      if (agent.agent_ref.run_id === lifecycleRunId) result.push(agent);
     }
     return result;
   },
 
-  deliveryRuntimeSessionId: (runId) => {
+  deliveryRuntimeSessionIdForLifecycleRun: (lifecycleRunId) => {
     for (const agent of get().agents.values()) {
-      if (agent.agent_ref.run_id === runId && agent.delivery_runtime_ref) {
+      if (agent.agent_ref.run_id === lifecycleRunId && agent.delivery_runtime_ref) {
         return agent.delivery_runtime_ref.runtime_session_id;
       }
     }

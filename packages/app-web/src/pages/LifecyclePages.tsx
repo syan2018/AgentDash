@@ -38,38 +38,38 @@ function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
-function RunSummary({ run }: { run: LifecycleRunView }) {
+function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
   const navigate = useNavigate();
   return (
     <div className="space-y-4">
       <Section title="Run">
         <div className="flex flex-wrap gap-2 text-xs">
           <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 font-mono text-muted-foreground">
-            {run.run_ref.run_id}
+            {lifecycleRun.run_ref.run_id}
           </span>
           <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 text-muted-foreground">
-            {run.status}
+            {lifecycleRun.status}
           </span>
           <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 text-muted-foreground">
-            graph instances {run.workflow_graph_instances.length}
+            graph instances {lifecycleRun.workflow_graph_instances.length}
           </span>
           <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 text-muted-foreground">
-            agent {run.agents.length}
+            agent {lifecycleRun.agents.length}
           </span>
         </div>
       </Section>
 
       <Section title="Agents">
-        {run.agents.length === 0 ? (
+        {lifecycleRun.agents.length === 0 ? (
           <EmptyHint message="暂无 agent" />
         ) : (
           <div className="space-y-2">
-            {run.agents.map((agent) => (
+            {lifecycleRun.agents.map((agent) => (
               <button
                 key={agent.agent_ref.agent_id}
                 type="button"
                 onClick={() => navigate(`/agent/${agent.agent_ref.agent_id}`, {
-                  state: { run_id: run.run_ref.run_id, frame_id: agent.current_frame_id ?? null },
+                  state: { run_id: lifecycleRun.run_ref.run_id, frame_id: agent.current_frame_id ?? null },
                 })}
                 className="flex w-full items-center justify-between gap-3 rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-left hover:bg-secondary/40"
               >
@@ -86,11 +86,11 @@ function RunSummary({ run }: { run: LifecycleRunView }) {
       </Section>
 
       <Section title="Runtime Traces">
-        {run.runtime_trace_refs.length === 0 ? (
+        {lifecycleRun.runtime_trace_refs.length === 0 ? (
           <EmptyHint message="暂无 runtime trace" />
         ) : (
           <div className="flex flex-wrap gap-2">
-            {run.runtime_trace_refs.map((ref) => (
+            {lifecycleRun.runtime_trace_refs.map((ref) => (
               <button
                 key={ref.runtime_session_id}
                 type="button"
@@ -227,21 +227,22 @@ function AgentSummary({
 }
 
 export function LifecycleRunPage() {
-  const { runId = "" } = useParams<{ runId: string }>();
-  const fetchAndIngestRun = useLifecycleStore((s) => s.fetchAndIngestRun);
-  const run = useLifecycleStore((s) => s.runs.get(runId) ?? null);
+  const { runId: routeRunId = "" } = useParams<{ runId: string }>();
+  const lifecycleRunId = routeRunId;
+  const fetchAndIngestLifecycleRun = useLifecycleStore((s) => s.fetchAndIngestLifecycleRun);
+  const lifecycleRun = useLifecycleStore((s) => s.lifecycleRuns.get(lifecycleRunId) ?? null);
   const error = useLifecycleStore((s) => s.error);
 
   useEffect(() => {
-    if (runId) void fetchAndIngestRun(runId);
-  }, [fetchAndIngestRun, runId]);
+    if (lifecycleRunId) void fetchAndIngestLifecycleRun(lifecycleRunId);
+  }, [fetchAndIngestLifecycleRun, lifecycleRunId]);
 
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-5xl space-y-4">
         <h1 className="text-lg font-semibold text-foreground">Lifecycle Run</h1>
         {error && <p className="text-sm text-destructive">{error}</p>}
-        {run ? <RunSummary run={run} /> : <EmptyHint message="正在加载 run view" />}
+        {lifecycleRun ? <RunSummary lifecycleRun={lifecycleRun} /> : <EmptyHint message="正在加载 run view" />}
       </div>
     </div>
   );
@@ -276,7 +277,7 @@ export function LifecycleAgentPage() {
   const { agentId = "" } = useParams<{ agentId: string }>();
   const location = useLocation();
   const routeState = isAgentRouteState(location.state) ? location.state : {};
-  const fetchAndIngestRun = useLifecycleStore((s) => s.fetchAndIngestRun);
+  const fetchAndIngestLifecycleRun = useLifecycleStore((s) => s.fetchAndIngestLifecycleRun);
   const fetchFrame = useLifecycleStore((s) => s.fetchFrame);
   const agent = useLifecycleStore((s) => s.agents.get(agentId) ?? null);
   const frameId = routeState.frame_id ?? agent?.current_frame_id ?? null;
@@ -284,8 +285,8 @@ export function LifecycleAgentPage() {
   const error = useLifecycleStore((s) => s.error);
 
   useEffect(() => {
-    if (routeState.run_id) void fetchAndIngestRun(routeState.run_id);
-  }, [fetchAndIngestRun, routeState.run_id]);
+    if (routeState.run_id) void fetchAndIngestLifecycleRun(routeState.run_id);
+  }, [fetchAndIngestLifecycleRun, routeState.run_id]);
 
   useEffect(() => {
     if (frameId) void fetchFrame(frameId);

@@ -1,7 +1,7 @@
 /**
  * ActivityInspector —— 选中 lifecycle activity 节点时右侧栏的编辑面板。
  *
- * 受控组件：接收 activity + 对应 workflowDraft + 一组细粒度 callback；不直接调
+ * 受控组件：接收 activity + 对应 AgentProcedure draft + 一组细粒度 callback；不直接调
  * workflowStore（shell 在装配时把 store actions 包装传入）。
  *
  * 结构（双 tab 信息架构）：
@@ -33,7 +33,7 @@ import type {
   WorkflowInjectionSpec,
   WorkflowTargetKind,
 } from "../../../types";
-import type { WorkflowEditorDraft } from "../../../stores/workflowStore";
+import type { AgentProcedureDraft } from "../../../stores/workflowStore";
 import {
   ExecutorSection,
   Header,
@@ -47,7 +47,7 @@ import {
 
 export interface ActivityInspectorProps {
   activity: ActivityDefinition;
-  workflowDraft: WorkflowEditorDraft;
+  procedureDraft: AgentProcedureDraft;
   isEntry: boolean;
   availableProcedures: AgentProcedure[];
   hookPresets: HookRulePreset[];
@@ -56,7 +56,7 @@ export interface ActivityInspectorProps {
 
   // 细粒度回调（与 workflowStore actions 对应）
   onActivityChange: (patch: Partial<ActivityDefinition>) => void;
-  onWorkflowChange: (patch: Partial<WorkflowEditorDraft>) => void;
+  onProcedureDraftChange: (patch: Partial<AgentProcedureDraft>) => void;
   onSetExecutor: (
     executor: ActivityExecutorSpec,
   ) => { reset: boolean; previous: ActivityCompletionPolicy } | null;
@@ -75,14 +75,14 @@ type InspectorTab = "activity" | "contract";
 export function ActivityInspector(props: ActivityInspectorProps) {
   const {
     activity,
-    workflowDraft,
+    procedureDraft,
     isEntry,
     availableProcedures,
     hookPresets,
     targetKinds,
     projectId,
     onActivityChange,
-    onWorkflowChange,
+    onProcedureDraftChange,
     onSetExecutor,
     onSetCompletionPolicy,
     onSetIterationPolicy,
@@ -98,90 +98,90 @@ export function ActivityInspector(props: ActivityInspectorProps) {
   const activeTab: InspectorTab = isAgent ? tab : "activity";
   const [resetNotice, setResetNotice] = useState<string | null>(null);
 
-  // ─── §4 Workflow Contract 同步 helpers（沿用 step-inspector 双层 ports 同步） ───
+  // ─── §4 AgentProcedure Contract 同步 helpers（沿用 step-inspector 双层 ports 同步） ───
   const updateInjection = useCallback(
     (patch: Partial<WorkflowInjectionSpec>) => {
-      onWorkflowChange({
+      onProcedureDraftChange({
         contract: {
-          ...workflowDraft.contract,
-          injection: { ...workflowDraft.contract.injection, ...patch },
+          ...procedureDraft.contract,
+          injection: { ...procedureDraft.contract.injection, ...patch },
         },
       });
     },
-    [workflowDraft, onWorkflowChange],
+    [procedureDraft, onProcedureDraftChange],
   );
 
   const handleBindingChange = useCallback(
     (idx: number, patch: Partial<WorkflowContextBinding>) => {
-      const next = workflowDraft.contract.injection.context_bindings.map((b, i) =>
+      const next = procedureDraft.contract.injection.context_bindings.map((b, i) =>
         i === idx ? { ...b, ...patch } : b,
       );
       updateInjection({ context_bindings: next });
     },
-    [workflowDraft, updateInjection],
+    [procedureDraft, updateInjection],
   );
 
   const handleBindingAdd = useCallback(() => {
     const next: WorkflowContextBinding[] = [
-      ...workflowDraft.contract.injection.context_bindings,
+      ...procedureDraft.contract.injection.context_bindings,
       { locator: "", reason: "", required: true, title: undefined },
     ];
     updateInjection({ context_bindings: next });
-  }, [workflowDraft, updateInjection]);
+  }, [procedureDraft, updateInjection]);
 
   const handleBindingRemove = useCallback(
     (idx: number) => {
-      const next = workflowDraft.contract.injection.context_bindings.filter((_, i) => i !== idx);
+      const next = procedureDraft.contract.injection.context_bindings.filter((_, i) => i !== idx);
       updateInjection({ context_bindings: next });
     },
-    [workflowDraft, updateInjection],
+    [procedureDraft, updateInjection],
   );
 
   const handleAddHookRule = useCallback(
     (rule: WorkflowHookRuleSpec) => {
-      if (workflowDraft.contract.hook_rules.some((r) => r.key === rule.key)) return;
-      onWorkflowChange({
+      if (procedureDraft.contract.hook_rules.some((r) => r.key === rule.key)) return;
+      onProcedureDraftChange({
         contract: {
-          ...workflowDraft.contract,
-          hook_rules: [...workflowDraft.contract.hook_rules, rule],
+          ...procedureDraft.contract,
+          hook_rules: [...procedureDraft.contract.hook_rules, rule],
         },
       });
     },
-    [workflowDraft, onWorkflowChange],
+    [procedureDraft, onProcedureDraftChange],
   );
 
   const handleToggleHookRule = useCallback(
     (key: string) => {
-      const next = workflowDraft.contract.hook_rules.map((r) =>
+      const next = procedureDraft.contract.hook_rules.map((r) =>
         r.key === key ? { ...r, enabled: !r.enabled } : r,
       );
-      onWorkflowChange({
-        contract: { ...workflowDraft.contract, hook_rules: next },
+      onProcedureDraftChange({
+        contract: { ...procedureDraft.contract, hook_rules: next },
       });
     },
-    [workflowDraft, onWorkflowChange],
+    [procedureDraft, onProcedureDraftChange],
   );
 
   const handleRemoveHookRule = useCallback(
     (key: string) => {
-      const next = workflowDraft.contract.hook_rules.filter((r) => r.key !== key);
-      onWorkflowChange({
-        contract: { ...workflowDraft.contract, hook_rules: next },
+      const next = procedureDraft.contract.hook_rules.filter((r) => r.key !== key);
+      onProcedureDraftChange({
+        contract: { ...procedureDraft.contract, hook_rules: next },
       });
     },
-    [workflowDraft, onWorkflowChange],
+    [procedureDraft, onProcedureDraftChange],
   );
 
   const handleDirectivesChange = useCallback(
     (next: CapabilityDirective[]) => {
-      onWorkflowChange({
+      onProcedureDraftChange({
         contract: {
-          ...workflowDraft.contract,
-          capability_config: { ...workflowDraft.contract.capability_config, tool_directives: next },
+          ...procedureDraft.contract,
+          capability_config: { ...procedureDraft.contract.capability_config, tool_directives: next },
         },
       });
     },
-    [workflowDraft, onWorkflowChange],
+    [procedureDraft, onProcedureDraftChange],
   );
 
   // Port 双层同步：contract → activity 自动合并（保留 step-extra）
@@ -190,26 +190,26 @@ export function ActivityInspector(props: ActivityInspectorProps) {
 
   const handleContractOutputPortsChange = useCallback(
     (nextContractPorts: OutputPortDefinition[]) => {
-      const oldContractPorts = workflowDraft.contract.output_ports ?? [];
-      onWorkflowChange({
-        contract: { ...workflowDraft.contract, output_ports: nextContractPorts },
+      const oldContractPorts = procedureDraft.contract.output_ports ?? [];
+      onProcedureDraftChange({
+        contract: { ...procedureDraft.contract, output_ports: nextContractPorts },
       });
       const merged = mergeContractIntoStep(oldContractPorts, nextContractPorts, propsActivityOutputPorts);
       onActivityChange({ output_ports: merged });
     },
-    [workflowDraft, onWorkflowChange, propsActivityOutputPorts, onActivityChange],
+    [procedureDraft, onProcedureDraftChange, propsActivityOutputPorts, onActivityChange],
   );
 
   const handleContractInputPortsChange = useCallback(
     (nextContractPorts: InputPortDefinition[]) => {
-      const oldContractPorts = workflowDraft.contract.input_ports ?? [];
-      onWorkflowChange({
-        contract: { ...workflowDraft.contract, input_ports: nextContractPorts },
+      const oldContractPorts = procedureDraft.contract.input_ports ?? [];
+      onProcedureDraftChange({
+        contract: { ...procedureDraft.contract, input_ports: nextContractPorts },
       });
       const merged = mergeContractIntoStep(oldContractPorts, nextContractPorts, propsActivityInputPorts);
       onActivityChange({ input_ports: merged });
     },
-    [workflowDraft, onWorkflowChange, propsActivityInputPorts, onActivityChange],
+    [procedureDraft, onProcedureDraftChange, propsActivityInputPorts, onActivityChange],
   );
 
   // ─── Executor 切换：调 store action 拿 reset 反馈，触发 toast ───
@@ -270,7 +270,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
 
             <ExecutorSection
               activity={activity}
-              workflowDraft={workflowDraft}
+              procedureDraft={procedureDraft}
               availableProcedures={availableProcedures}
               isEntry={isEntry}
               onExecutorChange={handleExecutorChange}
@@ -279,10 +279,10 @@ export function ActivityInspector(props: ActivityInspectorProps) {
             <PortsAndPolicySection
               activity={activity}
               contractOutputKeys={
-                new Set((workflowDraft.contract.output_ports ?? []).map((p) => p.key))
+                new Set((procedureDraft.contract.output_ports ?? []).map((p) => p.key))
               }
               contractInputKeys={
-                new Set((workflowDraft.contract.input_ports ?? []).map((p) => p.key))
+                new Set((procedureDraft.contract.input_ports ?? []).map((p) => p.key))
               }
               onActivityChange={onActivityChange}
               onSetCompletionPolicy={onSetCompletionPolicy}
@@ -291,7 +291,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
         ) : (
           <div className="p-4">
             <AgentProcedureContractTabContent
-              workflowDraft={workflowDraft}
+              procedureDraft={procedureDraft}
               hookPresets={hookPresets}
               targetKinds={targetKinds}
               projectId={projectId}

@@ -48,7 +48,7 @@ export function LifecycleEditorShell({
   onSaved,
 }: LifecycleEditorShellProps) {
   const draft = useWorkflowStore((s) => s.lifecycleEditor.draft);
-  const workflowDraftsByActivityKey = useWorkflowStore((s) => s.lifecycleEditor.workflowDraftsByActivityKey);
+  const procedureDraftsByActivityKey = useWorkflowStore((s) => s.lifecycleEditor.procedureDraftsByActivityKey);
   const selection = useWorkflowStore((s) => s.lifecycleEditor.selection);
   const validation = useWorkflowStore((s) => s.lifecycleEditor.validation);
   const isSaving = useWorkflowStore((s) => s.lifecycleEditor.isSaving);
@@ -68,7 +68,7 @@ export function LifecycleEditorShell({
   const selectLifecycleTransition = useWorkflowStore((s) => s.selectLifecycleTransition);
   const updateLifecycleEditorDraft = useWorkflowStore((s) => s.updateLifecycleEditorDraft);
   const updateLifecycleEditorActivity = useWorkflowStore((s) => s.updateLifecycleEditorActivity);
-  const updateActivityWorkflowDraft = useWorkflowStore((s) => s.updateActivityWorkflowDraft);
+  const updateActivityProcedureDraft = useWorkflowStore((s) => s.updateActivityProcedureDraft);
   const addLifecycleEditorActivity = useWorkflowStore((s) => s.addLifecycleEditorActivity);
   const removeLifecycleEditorActivity = useWorkflowStore((s) => s.removeLifecycleEditorActivity);
   const setActivityExecutor = useWorkflowStore((s) => s.setActivityExecutor);
@@ -216,13 +216,13 @@ export function LifecycleEditorShell({
           <SidebarRouter
             selection={selection}
             draft={draft}
-            workflowDraftsByActivityKey={workflowDraftsByActivityKey}
+            procedureDraftsByActivityKey={procedureDraftsByActivityKey}
             availableProcedures={availableProcedures}
             hookPresets={hookPresets}
             isNew={isNew}
             onLifecycleChange={updateLifecycleEditorDraft}
             onActivityChange={updateLifecycleEditorActivity}
-            onWorkflowChange={updateActivityWorkflowDraft}
+            onProcedureDraftChange={updateActivityProcedureDraft}
             onSetActivityExecutor={setActivityExecutor}
             onSetActivityCompletionPolicy={setActivityCompletionPolicy}
             onSetActivityIterationPolicy={setActivityIterationPolicy}
@@ -301,17 +301,17 @@ function TopBar({
 interface SidebarRouterProps {
   selection: LifecycleSelection | null;
   draft: NonNullable<ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["draft"]>;
-  workflowDraftsByActivityKey: ReturnType<
+  procedureDraftsByActivityKey: ReturnType<
     typeof useWorkflowStore.getState
-  >["lifecycleEditor"]["workflowDraftsByActivityKey"];
+  >["lifecycleEditor"]["procedureDraftsByActivityKey"];
   availableProcedures: ReturnType<typeof useWorkflowStore.getState>["definitions"];
   hookPresets: ReturnType<typeof useWorkflowStore.getState>["hookPresets"];
   isNew: boolean;
   onLifecycleChange: (patch: Partial<SidebarRouterProps["draft"]>) => void;
   onActivityChange: (activityKey: string, patch: Partial<ActivityDefinition>) => void;
-  onWorkflowChange: (
+  onProcedureDraftChange: (
     activityKey: string,
-    patch: Partial<SidebarRouterProps["workflowDraftsByActivityKey"][string]>,
+    patch: Partial<SidebarRouterProps["procedureDraftsByActivityKey"][string]>,
   ) => void;
   onSetActivityExecutor: ReturnType<typeof useWorkflowStore.getState>["setActivityExecutor"];
   onSetActivityCompletionPolicy: ReturnType<
@@ -336,13 +336,13 @@ function SidebarRouter(props: SidebarRouterProps) {
   const {
     selection,
     draft,
-    workflowDraftsByActivityKey,
+    procedureDraftsByActivityKey,
     availableProcedures,
     hookPresets,
     isNew,
     onLifecycleChange,
     onActivityChange,
-    onWorkflowChange,
+    onProcedureDraftChange,
     onSetActivityExecutor,
     onSetActivityCompletionPolicy,
     onSetActivityIterationPolicy,
@@ -361,21 +361,21 @@ function SidebarRouter(props: SidebarRouterProps) {
   // selection.kind === "activity" 路由
   if (selection?.kind === "activity") {
     const activity = draft.activities.find((a) => a.key === selection.activityKey);
-    const wfDraft = workflowDraftsByActivityKey[selection.activityKey];
-    if (!activity || !wfDraft) {
+    const procedureDraft = procedureDraftsByActivityKey[selection.activityKey];
+    if (!activity || !procedureDraft) {
       return <SidebarPlaceholder text="找不到选中的 activity，请重新选择" />;
     }
     return (
       <ActivityInspector
         activity={activity}
-        workflowDraft={wfDraft}
+        procedureDraft={procedureDraft}
         isEntry={activity.key === draft.entry_activity_key}
         availableProcedures={availableProcedures}
         hookPresets={hookPresets}
         targetKinds={draft.target_kinds}
         projectId={draft.project_id}
         onActivityChange={(patch) => onActivityChange(activity.key, patch)}
-        onWorkflowChange={(patch) => onWorkflowChange(activity.key, patch)}
+        onProcedureDraftChange={(patch) => onProcedureDraftChange(activity.key, patch)}
         onSetExecutor={(executor) => onSetActivityExecutor(activity.key, executor)}
         onSetCompletionPolicy={(policy) => onSetActivityCompletionPolicy(activity.key, policy)}
         onSetIterationPolicy={(patch) => onSetActivityIterationPolicy(activity.key, patch)}

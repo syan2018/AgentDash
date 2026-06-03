@@ -44,7 +44,7 @@ function StatusDot({ status }: { status: SessionExecutionStatusValue }) {
 // ─── SessionRow：两行式会话行 ────────────────────────────
 
 interface SessionRowProps {
-  run: LifecycleRunView;
+  lifecycleRun: LifecycleRunView;
   agent: LifecycleAgentView;
   sessionTitle: string | null;
   executionStatus: SessionExecutionStatusValue;
@@ -63,9 +63,9 @@ interface SessionRowProps {
  * 从 storyStore 中解析 subject 的可读标签。
  * 只显示能找到标题的 subject，绝不 fallback 到 GUID。
  */
-function resolveSubjectDisplayLabel(run: LifecycleRunView): string | null {
-  if (run.subject_associations.length === 0) return null;
-  const sa = run.subject_associations[0];
+function resolveSubjectDisplayLabel(lifecycleRun: LifecycleRunView): string | null {
+  if (lifecycleRun.subject_associations.length === 0) return null;
+  const sa = lifecycleRun.subject_associations[0];
   const { kind, id } = sa.subject_ref;
   const state = useStoryStore.getState();
 
@@ -84,7 +84,7 @@ function resolveSubjectDisplayLabel(run: LifecycleRunView): string | null {
 }
 
 function SessionRow({
-  run,
+  lifecycleRun,
   agent,
   sessionTitle,
   executionStatus,
@@ -95,7 +95,7 @@ function SessionRow({
   subAgentsExpanded = false,
   onToggleSubAgents,
 }: SessionRowProps) {
-  const subjectLabel = resolveSubjectDisplayLabel(run);
+  const subjectLabel = resolveSubjectDisplayLabel(lifecycleRun);
 
   const title = sessionTitle?.trim() || agent.agent_role || agent.agent_kind || "会话";
   const updatedAt = agent.updated_at ? new Date(agent.updated_at).getTime() : null;
@@ -279,7 +279,7 @@ interface ActiveSessionListProps {
   projectId: string;
   isLoading: boolean;
   selectedAgentId: string | null;
-  onSelectAgent: (runId: string, agentId: string) => void;
+  onSelectAgent: (lifecycleRunId: string, agentId: string) => void;
 }
 
 export function ActiveSessionList({
@@ -288,7 +288,7 @@ export function ActiveSessionList({
   selectedAgentId,
   onSelectAgent,
 }: ActiveSessionListProps) {
-  const runs = useLifecycleStore((s) => s.runs);
+  const lifecycleRuns = useLifecycleStore((s) => s.lifecycleRuns);
   const agents = useLifecycleStore((s) => s.agents);
   const sessionMetas = useLifecycleStore((s) => s.sessionMetas);
   const fetchProjectActiveAgents = useLifecycleStore((s) => s.fetchProjectActiveAgents);
@@ -299,9 +299,9 @@ export function ActiveSessionList({
     fetchProjectActiveAgents(projectId);
   }, [projectId, fetchProjectActiveAgents]);
 
-  /** 按 run 聚合 agent：主 agent + sub-agents */
-  interface RunEntry {
-    run: LifecycleRunView;
+  /** 按 LifecycleRun 聚合 agent：主 agent + sub-agents */
+  interface LifecycleRunEntry {
+    lifecycleRun: LifecycleRunView;
     primaryAgent: LifecycleAgentView;
     subAgents: LifecycleAgentView[];
     sessionTitle: string | null;
@@ -309,13 +309,13 @@ export function ActiveSessionList({
     executionStatus: SessionExecutionStatusValue;
   }
 
-  const runEntries = useMemo(() => {
-    const entries: RunEntry[] = [];
+  const lifecycleRunEntries = useMemo(() => {
+    const entries: LifecycleRunEntry[] = [];
 
-    for (const run of runs.values()) {
-      if (run.project_id !== projectId) continue;
+    for (const lifecycleRun of lifecycleRuns.values()) {
+      if (lifecycleRun.project_id !== projectId) continue;
       const runAgents = Array.from(agents.values()).filter(
-        (a) => a.agent_ref.run_id === run.run_ref.run_id,
+        (a) => a.agent_ref.run_id === lifecycleRun.run_ref.run_id,
       );
       if (runAgents.length === 0) continue;
 
@@ -327,7 +327,7 @@ export function ActiveSessionList({
         : null;
 
       entries.push({
-        run,
+        lifecycleRun,
         primaryAgent: primary,
         subAgents: subs,
         sessionTitle: meta?.title ?? null,
@@ -337,34 +337,34 @@ export function ActiveSessionList({
     }
 
     return entries;
-  }, [runs, agents, sessionMetas, projectId]);
+  }, [lifecycleRuns, agents, sessionMetas, projectId]);
 
   /** 展开为 SessionEntry 供分组/筛选使用 */
   const sessionEntries: SessionEntry[] = useMemo(() => {
-    return runEntries.map((re) => ({
-      run: re.run,
+    return lifecycleRunEntries.map((re) => ({
+      lifecycleRun: re.lifecycleRun,
       agent: re.primaryAgent,
       sessionTitle: re.sessionTitle,
       deliveryRuntimeSessionId: re.deliveryRuntimeSessionId,
       executionStatus: re.executionStatus,
     }));
-  }, [runEntries]);
+  }, [lifecycleRunEntries]);
 
-  /** run_id → RunEntry 索引，用于渲染时取 sub-agents */
-  const runEntryMap = useMemo(() => {
-    const map = new Map<string, RunEntry>();
-    for (const re of runEntries) {
-      map.set(re.run.run_ref.run_id, re);
+  /** lifecycle run id → LifecycleRunEntry 索引，用于渲染时取 sub-agents */
+  const lifecycleRunEntryMap = useMemo(() => {
+    const map = new Map<string, LifecycleRunEntry>();
+    for (const re of lifecycleRunEntries) {
+      map.set(re.lifecycleRun.run_ref.run_id, re);
     }
     return map;
-  }, [runEntries]);
+  }, [lifecycleRunEntries]);
 
   const [expandedSubAgents, setExpandedSubAgents] = useState<Set<string>>(new Set());
-  const toggleSubAgents = (runId: string) => {
+  const toggleSubAgents = (lifecycleRunId: string) => {
     setExpandedSubAgents((prev) => {
       const next = new Set(prev);
-      if (next.has(runId)) next.delete(runId);
-      else next.add(runId);
+      if (next.has(lifecycleRunId)) next.delete(lifecycleRunId);
+      else next.add(lifecycleRunId);
       return next;
     });
   };
@@ -381,7 +381,7 @@ export function ActiveSessionList({
       list = list.filter((e) => {
         const title = e.sessionTitle?.toLowerCase() ?? "";
         const role = (e.agent.agent_role || e.agent.agent_kind).toLowerCase();
-        const subjectDisplayLabel = resolveSubjectDisplayLabel(e.run)?.toLowerCase() ?? "";
+        const subjectDisplayLabel = resolveSubjectDisplayLabel(e.lifecycleRun)?.toLowerCase() ?? "";
         return title.includes(lower) || role.includes(lower) || subjectDisplayLabel.includes(lower);
       });
     }
@@ -470,32 +470,32 @@ export function ActiveSessionList({
               {!collapsedGroups.has(group.subjectId) && (
                 <div className="space-y-0.5 p-1">
                   {group.entries.map((entry) => {
-                    const re = runEntryMap.get(entry.run.run_ref.run_id);
+                    const re = lifecycleRunEntryMap.get(entry.lifecycleRun.run_ref.run_id);
                     const subs = re?.subAgents ?? [];
-                    const runId = entry.run.run_ref.run_id;
-                    const expanded = expandedSubAgents.has(runId);
+                    const lifecycleRunId = entry.lifecycleRun.run_ref.run_id;
+                    const expanded = expandedSubAgents.has(lifecycleRunId);
                     return (
                       <div key={entry.agent.agent_ref.agent_id}>
                         <SessionRow
-                          run={entry.run}
+                          lifecycleRun={entry.lifecycleRun}
                           agent={entry.agent}
                           sessionTitle={entry.sessionTitle}
                           executionStatus={entry.executionStatus}
                           isSelected={selectedAgentId === entry.agent.agent_ref.agent_id}
-                          onSelect={() => onSelectAgent(runId, entry.agent.agent_ref.agent_id)}
+                          onSelect={() => onSelectAgent(lifecycleRunId, entry.agent.agent_ref.agent_id)}
                           subAgentCount={subs.length}
                           subAgentsExpanded={expanded}
-                          onToggleSubAgents={() => toggleSubAgents(runId)}
+                          onToggleSubAgents={() => toggleSubAgents(lifecycleRunId)}
                         />
                         {expanded && subs.map((sub) => (
                           <SessionRow
                             key={sub.agent_ref.agent_id}
-                            run={entry.run}
+                            lifecycleRun={entry.lifecycleRun}
                             agent={sub}
                             sessionTitle={null}
                             executionStatus={entry.executionStatus}
                             isSelected={selectedAgentId === sub.agent_ref.agent_id}
-                            onSelect={() => onSelectAgent(runId, sub.agent_ref.agent_id)}
+                            onSelect={() => onSelectAgent(lifecycleRunId, sub.agent_ref.agent_id)}
                             indent
                           />
                         ))}
@@ -509,32 +509,32 @@ export function ActiveSessionList({
         ) : (
           <div className="space-y-0.5 p-1">
             {filteredEntries.map((entry) => {
-              const re = runEntryMap.get(entry.run.run_ref.run_id);
+              const re = lifecycleRunEntryMap.get(entry.lifecycleRun.run_ref.run_id);
               const subs = re?.subAgents ?? [];
-              const runId = entry.run.run_ref.run_id;
-              const expanded = expandedSubAgents.has(runId);
+              const lifecycleRunId = entry.lifecycleRun.run_ref.run_id;
+              const expanded = expandedSubAgents.has(lifecycleRunId);
               return (
                 <div key={entry.agent.agent_ref.agent_id}>
                   <SessionRow
-                    run={entry.run}
+                    lifecycleRun={entry.lifecycleRun}
                     agent={entry.agent}
                     sessionTitle={entry.sessionTitle}
                     executionStatus={entry.executionStatus}
                     isSelected={selectedAgentId === entry.agent.agent_ref.agent_id}
-                    onSelect={() => onSelectAgent(runId, entry.agent.agent_ref.agent_id)}
+                    onSelect={() => onSelectAgent(lifecycleRunId, entry.agent.agent_ref.agent_id)}
                     subAgentCount={subs.length}
                     subAgentsExpanded={expanded}
-                    onToggleSubAgents={() => toggleSubAgents(runId)}
+                    onToggleSubAgents={() => toggleSubAgents(lifecycleRunId)}
                   />
                   {expanded && subs.map((sub) => (
                     <SessionRow
                       key={sub.agent_ref.agent_id}
-                      run={entry.run}
+                      lifecycleRun={entry.lifecycleRun}
                       agent={sub}
                       sessionTitle={null}
                       executionStatus={entry.executionStatus}
                       isSelected={selectedAgentId === sub.agent_ref.agent_id}
-                      onSelect={() => onSelectAgent(runId, sub.agent_ref.agent_id)}
+                      onSelect={() => onSelectAgent(lifecycleRunId, sub.agent_ref.agent_id)}
                       indent
                     />
                   ))}

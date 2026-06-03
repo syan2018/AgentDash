@@ -22,7 +22,7 @@ export function AgentTabView() {
     isLoading: projectLoading,
     error: projectError,
   } = useProjectStore();
-  const fetchAndIngestRun = useLifecycleStore((s) => s.fetchAndIngestRun);
+  const fetchAndIngestLifecycleRun = useLifecycleStore((s) => s.fetchAndIngestLifecycleRun);
   const fetchFrame = useLifecycleStore((s) => s.fetchFrame);
   const lifecycleLoading = useLifecycleStore((s) => s.isLoading);
 
@@ -60,7 +60,7 @@ export function AgentTabView() {
       if (!result) return;
 
       await Promise.allSettled([
-        fetchAndIngestRun(result.run_ref.run_id),
+        fetchAndIngestLifecycleRun(result.run_ref.run_id),
         fetchFrame(result.frame_ref.frame_id),
       ]);
       setSelectedAgent({
@@ -73,11 +73,11 @@ export function AgentTabView() {
         navigate(`/session/${runtimeSessionId}`);
       }
     },
-    [currentProjectId, fetchAndIngestRun, fetchFrame, launchProjectAgent, navigate],
+    [currentProjectId, fetchAndIngestLifecycleRun, fetchFrame, launchProjectAgent, navigate],
   );
 
   const handleSelectAgent = useCallback(
-    (runId: string, agentId: string) => {
+    (lifecycleRunId: string, agentId: string) => {
       if (!currentProjectId) return;
       setSelectedAgent({ projectId: currentProjectId, agentId });
 
@@ -85,7 +85,7 @@ export function AgentTabView() {
       const agent = store.agents.get(agentId);
       const sessionId =
         agent?.delivery_runtime_ref?.runtime_session_id
-        ?? store.deliveryRuntimeSessionId(runId);
+        ?? store.deliveryRuntimeSessionIdForLifecycleRun(lifecycleRunId);
       if (sessionId) {
         navigate(`/session/${sessionId}`);
       }

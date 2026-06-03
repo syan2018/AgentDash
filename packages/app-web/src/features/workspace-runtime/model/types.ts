@@ -40,6 +40,6 @@ export interface WorkspaceRuntimeData {
   workspaceBackend: WorkspaceBackendTarget | null;
   hookRuntime: AgentFrameHookRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
-  workflowRuns: LifecycleRunView[];
+  lifecycleRuns: LifecycleRunView[];
   activeCanvasId: string | null;
 }

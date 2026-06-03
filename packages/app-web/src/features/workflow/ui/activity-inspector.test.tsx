@@ -2,7 +2,7 @@
  * ActivityInspector happy-path 渲染测试。
  *
  * 用 renderToStaticMarkup 校验三段（Identity / Executor / Ports & Policy）+
- * Workflow Contract 折叠区均出现，覆盖 4 种 executor.kind 与 5 种
+ * AgentProcedure Contract 折叠区均出现，覆盖 4 种 executor.kind 与 5 种
  * completion_policy.kind 的字段渲染入口。
  */
 
@@ -10,7 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec } from "../../../types";
-import { createActivityWorkflowDraft } from "../../../stores/workflowStore";
+import { createActivityProcedureDraft } from "../../../stores/workflowStore";
 import { ActivityInspector } from "./activity-inspector";
 
 function makeActivity(
@@ -35,18 +35,18 @@ function makeActivity(
 }
 
 function renderInspector(activity: ActivityDefinition) {
-  const draft = createActivityWorkflowDraft("p1", "demo", activity.key, ["story"]);
+  const draft = createActivityProcedureDraft("p1", "demo", activity.key, ["story"]);
   return renderToStaticMarkup(
     <ActivityInspector
       activity={activity}
-      workflowDraft={draft}
+      procedureDraft={draft}
       isEntry={false}
       availableProcedures={[]}
       hookPresets={[]}
       targetKinds={["story"]}
       projectId="p1"
       onActivityChange={() => undefined}
-      onWorkflowChange={() => undefined}
+      onProcedureDraftChange={() => undefined}
       onSetExecutor={() => null}
       onSetCompletionPolicy={() => undefined}
       onSetIterationPolicy={() => undefined}
@@ -98,7 +98,7 @@ describe("ActivityInspector", () => {
     expect(markup).toContain("Working Directory");
     // Function api_request 表单字段不应出现
     expect(markup).not.toContain("URL Template");
-    // Workflow Contract 段（Agent only）也不应出现
+    // AgentProcedure Contract 段（Agent only）也不应出现
     expect(markup).not.toContain("资产标准接口");
   });
 

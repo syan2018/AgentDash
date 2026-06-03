@@ -129,7 +129,7 @@ function mapWorkflowContextBinding(raw: Record<string, unknown>): WorkflowContex
 function mapWorkflowInjectionSpec(raw: unknown): WorkflowInjectionSpec {
   const value = asRecord(raw);
   if (!value) {
-    throw new Error("workflow contract 缺少 injection");
+    throw new Error("AgentProcedure contract 缺少 injection");
   }
   return {
     guidance: optUndef(value.guidance),
@@ -230,7 +230,7 @@ function mapWorkflowCapabilityConfig(raw: unknown): WorkflowCapabilityConfig {
 function mapAgentProcedureContract(raw: unknown): AgentProcedureContract {
   const value = asRecord(raw);
   if (!value) {
-    throw new Error("workflow contract 缺失或不是对象");
+    throw new Error("AgentProcedure contract 缺失或不是对象");
   }
   return {
     injection: mapWorkflowInjectionSpec(value.injection),

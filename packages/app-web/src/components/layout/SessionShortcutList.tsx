@@ -49,7 +49,6 @@ interface SessionShortcutEntry {
   executionStatus: SessionExecutionStatusValue;
   agentRole: string;
   updatedAt: string;
-  runId: string;
 }
 
 interface LifecycleShortcutListProps {
@@ -60,7 +59,7 @@ export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const sessionRouteMatch = useMatch("/session/:sessionId");
-  const runs = useLifecycleStore((s) => s.runs);
+  const lifecycleRuns = useLifecycleStore((s) => s.lifecycleRuns);
   const agents = useLifecycleStore((s) => s.agents);
   const sessionMetas = useLifecycleStore((s) => s.sessionMetas);
   const fetchProjectActiveAgents = useLifecycleStore((s) => s.fetchProjectActiveAgents);
@@ -80,11 +79,11 @@ export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
 
     const entries: SessionShortcutEntry[] = [];
 
-    for (const run of runs.values()) {
-      if (run.project_id !== projectId) continue;
+    for (const lifecycleRun of lifecycleRuns.values()) {
+      if (lifecycleRun.project_id !== projectId) continue;
 
       const runAgents = Array.from(agents.values()).filter(
-        (a) => a.agent_ref.run_id === run.run_ref.run_id,
+        (a) => a.agent_ref.run_id === lifecycleRun.run_ref.run_id,
       );
 
       const primaryAgent = runAgents[0];
@@ -99,14 +98,13 @@ export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
         sessionTitle: meta?.title?.trim() || primaryAgent?.agent_role || primaryAgent?.agent_kind || "会话",
         executionStatus: meta?.lastExecutionStatus ?? "idle",
         agentRole: primaryAgent?.agent_role || primaryAgent?.agent_kind || "",
-        updatedAt: primaryAgent?.updated_at ?? run.last_activity_at,
-        runId: run.run_ref.run_id,
+        updatedAt: primaryAgent?.updated_at ?? lifecycleRun.last_activity_at,
       });
     }
 
     entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     return entries;
-  }, [projectId, runs, agents, sessionMetas]);
+  }, [projectId, lifecycleRuns, agents, sessionMetas]);
 
   const activeSessionId = sessionRouteMatch?.params.sessionId ?? null;
 

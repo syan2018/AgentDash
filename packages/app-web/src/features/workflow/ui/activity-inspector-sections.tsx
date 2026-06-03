@@ -17,7 +17,7 @@ import type {
   WorkflowInjectionSpec,
   WorkflowTargetKind,
 } from "../../../types";
-import type { WorkflowEditorDraft } from "../../../stores/workflowStore";
+import type { AgentProcedureDraft } from "../../../stores/workflowStore";
 import {
   CapabilityPanel,
   HookRulesPanel,
@@ -248,13 +248,13 @@ export function IdentitySection({
 
 export function ExecutorSection({
   activity,
-  workflowDraft,
+  procedureDraft,
   availableProcedures,
   isEntry,
   onExecutorChange,
 }: {
   activity: ActivityDefinition;
-  workflowDraft: WorkflowEditorDraft;
+  procedureDraft: AgentProcedureDraft;
   availableProcedures: AgentProcedure[];
   isEntry: boolean;
   onExecutorChange: (next: ActivityExecutorSpec) => void;
@@ -264,7 +264,7 @@ export function ExecutorSection({
     if (kind === "agent") {
       onExecutorChange({
         kind: "agent",
-        procedure_key: workflowDraft.key,
+        procedure_key: procedureDraft.key,
         agent_reuse_policy: "create_activity_agent",
         runtime_session_policy: "create_new",
       });
@@ -305,7 +305,7 @@ export function ExecutorSection({
       {activity.executor.kind === "agent" && (
         <AgentExecutorForm
           executor={activity.executor}
-          procedureKeyHint={workflowDraft.key}
+          procedureKeyHint={procedureDraft.key}
           availableProcedures={availableProcedures}
           onChange={onExecutorChange}
         />
@@ -925,7 +925,7 @@ function ActivityInputPortsList({
 // ─── Contract tab 内容 ─────────────────────────────────
 
 export function AgentProcedureContractTabContent({
-  workflowDraft,
+  procedureDraft,
   hookPresets,
   targetKinds,
   projectId,
@@ -940,7 +940,7 @@ export function AgentProcedureContractTabContent({
   onContractOutputPortsChange,
   onContractInputPortsChange,
 }: {
-  workflowDraft: WorkflowEditorDraft;
+  procedureDraft: AgentProcedureDraft;
   hookPresets: HookRulePreset[];
   targetKinds: WorkflowTargetKind[];
   projectId: string;
@@ -960,11 +960,11 @@ export function AgentProcedureContractTabContent({
       <div className="rounded-[8px] border border-dashed border-border bg-secondary/15 px-3 py-2">
         <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Procedure Key</p>
         <p className="mt-0.5 truncate font-mono text-xs text-foreground">
-          {workflowDraft.key || "(未命名)"}
+          {procedureDraft.key || "(未命名)"}
         </p>
       </div>
       <InjectionPanel
-        injection={workflowDraft.contract.injection}
+        injection={procedureDraft.contract.injection}
         compact
         onGuidanceChange={(guidance) => onUpdateInjection({ guidance: guidance ?? undefined })}
         onBindingChange={onBindingChange}
@@ -974,12 +974,12 @@ export function AgentProcedureContractTabContent({
       <CapabilityPanel
         projectId={projectId}
         targetKinds={targetKinds}
-        directives={workflowDraft.contract.capability_config.tool_directives}
+        directives={procedureDraft.contract.capability_config.tool_directives}
         compact
         onDirectivesChange={onDirectivesChange}
       />
       <HookRulesPanel
-        hookRules={workflowDraft.contract.hook_rules}
+        hookRules={procedureDraft.contract.hook_rules}
         presets={hookPresets}
         compact
         onAdd={onAddHookRule}
@@ -987,8 +987,8 @@ export function AgentProcedureContractTabContent({
         onRemove={onRemoveHookRule}
       />
       <PortsPanel
-        outputPorts={workflowDraft.contract.output_ports ?? []}
-        inputPorts={workflowDraft.contract.input_ports ?? []}
+        outputPorts={procedureDraft.contract.output_ports ?? []}
+        inputPorts={procedureDraft.contract.input_ports ?? []}
         compact
         onOutputChange={onContractOutputPortsChange}
         onInputChange={onContractInputPortsChange}

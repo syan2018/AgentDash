@@ -15,7 +15,7 @@ function ContextTabContent() {
       runtimeSurface={data.runtimeSurface}
       hookRuntime={data.hookRuntime}
       sessionCapabilities={data.sessionCapabilities}
-      workflowRuns={data.workflowRuns}
+      lifecycleRuns={data.lifecycleRuns}
     />
   );
 }

@@ -11,7 +11,7 @@ import type { SessionExecutionStatusValue } from "../../services/session";
 import { findStoryById, useStoryStore } from "../../stores/storyStore";
 
 export interface SessionEntry {
-  run: LifecycleRunView;
+  lifecycleRun: LifecycleRunView;
   agent: LifecycleAgentView;
   sessionTitle: string | null;
   deliveryRuntimeSessionId: string | null;
@@ -65,7 +65,7 @@ export function groupSessionsBySubject(entries: SessionEntry[]): SessionGroup[] 
   const projectEntries: SessionEntry[] = [];
 
   for (const entry of entries) {
-    const subjects = entry.run.subject_associations;
+    const subjects = entry.lifecycleRun.subject_associations;
     if (subjects.length === 0) {
       projectEntries.push(entry);
       continue;

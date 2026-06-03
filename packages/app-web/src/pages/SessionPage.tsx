@@ -342,7 +342,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     workspaceBackend,
     hookRuntime: activeHookRuntime,
     sessionCapabilities,
-    workflowRuns: [],
+    lifecycleRuns: [],
     activeCanvasId,
   }), [
     ownerProjectId,

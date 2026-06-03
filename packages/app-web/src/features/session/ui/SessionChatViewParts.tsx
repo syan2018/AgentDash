@@ -16,8 +16,9 @@ import {
 } from "../../file-reference";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
 import type { SessionDisplayItem, TokenUsageInfo } from "../model/types";
-import { isSessionComposerSendDisabled } from "./SessionChatComposerState";
+import { isSessionComposerPrimaryDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
+import type { SessionChatControlState } from "./SessionChatViewTypes";
 
 type ExecutorDiscoveryState = ReturnType<typeof useExecutorDiscovery>;
 type ExecutorConfigState = ReturnType<typeof useExecutorConfig>;
@@ -258,69 +259,69 @@ export function SessionChatStream({
 }
 
 export function SessionChatComposer({
-  customSend,
+  controlState,
   discovery,
   discovered,
   execConfig,
   fileRef,
   hasSession,
-  idleSendLabel,
-  inputPlaceholder,
   inputPrefix,
   inputValue,
-  isActionRunning,
   isCancelling,
   isSending,
   promptTemplates,
   richInputRef,
-  sendUnavailableReason,
   showExecutorSelector,
   workspaceId,
   onAtTrigger,
   onFileSelected,
   onInputChange,
   onKeyDown,
+  onCancelAction,
   onPrimaryAction,
 }: {
-  customSend?: unknown;
+  controlState: SessionChatControlState;
   discovery: ExecutorDiscoveryState;
   discovered: ExecutorDiscoveredState;
   execConfig: ExecutorConfigState;
   fileRef: FileReferenceState;
   hasSession: boolean;
-  idleSendLabel: string;
-  inputPlaceholder?: string;
   inputPrefix?: ReactNode;
   inputValue: string;
-  isActionRunning: boolean;
   isCancelling: boolean;
   isSending: boolean;
   promptTemplates?: Array<{ id: string; label: string; content: string }>;
   richInputRef: RefObject<RichInputRef | null>;
-  sendUnavailableReason?: string;
   showExecutorSelector: boolean;
   workspaceId?: string | null;
   onAtTrigger: (query: string) => void;
   onFileSelected: (file: FileEntry) => void;
   onInputChange: (value: string) => void;
   onKeyDown: (event: KeyboardEvent) => void;
+  onCancelAction: () => void;
   onPrimaryAction: () => void;
 }) {
-  const canSendPrompt = Boolean(customSend);
-  const inputDisabled = isSending || !canSendPrompt;
-  const sendDisabled = isSessionComposerSendDisabled({
-    hasDispatcher: canSendPrompt,
-    hasSession,
+  const { primaryAction, cancelAction } = controlState;
+  const inputDisabled = isSending || !primaryAction.enabled;
+  const sendDisabled = isSessionComposerPrimaryDisabled({
+    primaryActionEnabled: primaryAction.enabled,
+    requirePromptText: primaryAction.kind !== "none",
     inputValue,
-    isActionRunning,
     isCancelling,
     isSending,
   });
+  const cancelDisabled = isCancelling || !cancelAction.enabled;
+  const actionReason = primaryAction.enabled
+    ? undefined
+    : primaryAction.unavailableReason ?? controlState.helperText;
+  const helperText = primaryAction.enabled
+    ? controlState.helperText ?? `Ctrl+Enter 快捷提交 · ${workspaceId ? "@ 引用工作空间文件" : "当前会话未绑定工作空间，@ 文件引用不可用"}`
+    : actionReason ?? "当前 Session 只能查看 runtime trace。";
 
   return (
     <div className="shrink-0 border-t border-border bg-background">
       <div className="mx-auto w-full max-w-4xl px-5 py-4">
-        {!hasSession && !customSend && promptTemplates && promptTemplates.length > 0 && (
+        {!hasSession && !primaryAction.enabled && promptTemplates && promptTemplates.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {promptTemplates.map((tpl) => (
               <button
@@ -396,9 +397,7 @@ export function SessionChatComposer({
               />
               <RichInput
                 ref={richInputRef}
-                placeholder={inputPlaceholder ?? (canSendPrompt
-                  ? "继续对话，@ 引用文件，Ctrl+Enter 发送…"
-                  : "当前 Session 未连接到 Agent dispatcher")}
+                placeholder={primaryAction.placeholder}
                 onChange={onInputChange}
                 onKeyDown={onKeyDown}
                 onAtTrigger={onAtTrigger}
@@ -406,26 +405,37 @@ export function SessionChatComposer({
                 disabled={inputDisabled}
               />
             </div>
-            <div className="flex flex-col gap-2 self-end">
+            <div className="flex shrink-0 flex-col gap-2 self-end">
               <button
                 type="button"
                 disabled={sendDisabled}
                 onClick={onPrimaryAction}
                 className={`h-10 w-20 rounded-[12px] border text-sm font-medium transition-colors disabled:opacity-50 ${
-                  hasSession && isActionRunning
-                    ? "border-border bg-background text-foreground hover:bg-secondary"
-                    : "border-primary bg-primary text-primary-foreground hover:opacity-95"
+                  primaryAction.kind === "steer"
+                    ? "border-primary bg-primary text-primary-foreground hover:opacity-95"
+                    : primaryAction.enabled
+                      ? "border-primary bg-primary text-primary-foreground hover:opacity-95"
+                      : "border-border bg-background text-muted-foreground"
                 }`}
               >
-                {isSending ? "…" : isCancelling ? "取消中…" : hasSession && isActionRunning ? "取消" : idleSendLabel}
+                {isSending ? "..." : primaryAction.label}
               </button>
+              {cancelAction.enabled && (
+                <button
+                  type="button"
+                  disabled={cancelDisabled}
+                  onClick={onCancelAction}
+                  className="h-9 w-20 rounded-[12px] border border-border bg-background text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
+                  title={cancelAction.unavailableReason}
+                >
+                  {isCancelling ? "取消中" : cancelAction.label}
+                </button>
+              )}
             </div>
           </div>
         </div>
         <p className="mt-1 text-xs text-muted-foreground/60">
-          {canSendPrompt
-            ? `Ctrl+Enter 快捷发送 · ${workspaceId ? "@ 引用工作空间文件" : "当前会话未绑定工作空间，@ 文件引用不可用"}`
-            : sendUnavailableReason ?? "当前 Session 只能查看 runtime trace，请从 Agent 入口打开可继续对话的会话。"}
+          {helperText}
         </p>
       </div>
     </div>

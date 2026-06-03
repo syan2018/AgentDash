@@ -11,6 +11,27 @@ export interface PromptTemplate {
   content: string;
 }
 
+export type SessionChatPrimaryActionKind = "start_draft" | "send_next" | "steer" | "none";
+
+export interface SessionChatActionState {
+  enabled: boolean;
+  label: string;
+  unavailableReason?: string;
+}
+
+export interface SessionChatPrimaryActionState extends SessionChatActionState {
+  kind: SessionChatPrimaryActionKind;
+  placeholder: string;
+}
+
+export interface SessionChatControlState {
+  mode: "draft" | "runtime";
+  controlPlaneStatus: string;
+  primaryAction: SessionChatPrimaryActionState;
+  cancelAction: SessionChatActionState;
+  helperText?: string;
+}
+
 export interface SessionChatViewProps {
   /** 当前会话 ID，null 表示尚未创建 */
   sessionId: string | null;
@@ -49,21 +70,16 @@ export interface SessionChatViewProps {
   /** 隐藏执行器选择器（当外部已确定执行器时，如 Task 场景） */
   showExecutorSelector?: boolean;
 
-  // ─── 自定义发送流程 ──────────────────────────────────
+  // ─── 控制动作 ────────────────────────────────────────
 
-  /**
-   * 全接管发送流程。
-   * prompt 可为空（如 Task 无额外指令直接执行）。
-   * 返回后 SessionChatView 自动清空输入。
-   */
-  customSend?: (
+  controlState: SessionChatControlState;
+
+  onPrimaryAction: (
+    action: SessionChatPrimaryActionKind,
     sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
   ) => Promise<void>;
-
-  /** 未提供 Agent dispatcher 时展示的不可发送原因。 */
-  sendUnavailableReason?: string;
 
   // ─── 布局插槽 ────────────────────────────────────────
 
@@ -81,12 +97,6 @@ export interface SessionChatViewProps {
 
   /** 无 session 时显示的 prompt 模板按钮 */
   promptTemplates?: PromptTemplate[];
-
-  /** 输入框占位符 */
-  inputPlaceholder?: string;
-
-  /** 自定义主按钮文本（非运行状态时），默认 "发送" */
-  idleSendLabel?: string;
 
   /** 初始输入值（仅首次挂载时填充） */
   initialInputValue?: string;

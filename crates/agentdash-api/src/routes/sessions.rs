@@ -32,8 +32,9 @@ use agentdash_contracts::session::{
 };
 use agentdash_contracts::workflow::{
     LifecycleAgentRefDto, LifecycleRunRefDto, ProjectSessionListEntry, ProjectSessionListView,
-    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, SessionRuntimeControlView,
-    SessionShellDto, SubjectRefDto,
+    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, SessionRuntimeActionAvailabilityView,
+    SessionRuntimeActionSetView, SessionRuntimeControlPlaneStatus,
+    SessionRuntimeControlPlaneView, SessionRuntimeControlView, SessionShellDto, SubjectRefDto,
 };
 use agentdash_domain::workflow::{LifecycleRun, RuntimeSessionExecutionAnchor};
 
@@ -165,9 +166,24 @@ pub async fn get_session_runtime_control(
         .find_by_session(&runtime_session_id)
         .await?
     else {
-        return Err(ApiError::BadRequest(format!(
-            "runtime session 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
-        )));
+        return Ok(Json(SessionRuntimeControlView {
+            runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
+            session_meta: session_shell_dto(&meta),
+            control_plane: SessionRuntimeControlPlaneView {
+                status: SessionRuntimeControlPlaneStatus::UnboundTrace,
+                reason: Some("当前 Session 只有 runtime trace，没有绑定 Agent 控制面。".to_string()),
+            },
+            anchor: None,
+            run: None,
+            agent: None,
+            frame_runtime: None,
+            subject_associations: Vec::new(),
+            actions: SessionRuntimeActionSetView {
+                send_next: disabled_action("当前 Session 没有绑定 Agent 控制面，不能继续发送消息。"),
+                steer: disabled_action("当前 Session 没有绑定 Agent 控制面，不能运行中 steer。"),
+                cancel: disabled_action("当前 Session 没有正在执行的 turn。"),
+            },
+        }));
     };
 
     let run = load_lifecycle_run_for_session(state.as_ref(), anchor.run_id).await?;
@@ -191,7 +207,12 @@ pub async fn get_session_runtime_control(
             "runtime session anchor agent 与 run 不一致: {runtime_session_id}"
         )));
     }
-    let frame = state.repos.agent_frame_repo.get_current(agent.id).await?;
+    let frame = state
+        .repos
+        .agent_frame_repo
+        .get_current(agent.id)
+        .await?
+        .or(state.repos.agent_frame_repo.get(anchor.launch_frame_id).await?);
     let frame_runtime = match frame {
         Some(frame) => {
             let runtime_refs = runtime_refs_for_agent(state.as_ref(), agent.id).await?;
@@ -215,38 +236,103 @@ pub async fn get_session_runtime_control(
         })
         .cloned()
         .collect::<Vec<_>>();
+    let execution_state = state
+        .services
+        .session_core
+        .inspect_session_execution_state(&runtime_session_id)
+        .await?;
     let delivery_running = meta.last_delivery_status == ExecutionStatus::Running
         || matches!(
-            state
-                .services
-                .session_core
-                .inspect_session_execution_state(&runtime_session_id)
-                .await?,
+            execution_state,
             SessionExecutionState::Running { .. }
         );
-    let can_send =
-        frame_runtime.is_some() && !is_terminal_agent_status(&agent.status) && !delivery_running;
-    let send_unavailable_reason = if can_send {
-        None
-    } else if delivery_running {
-        Some("当前 Session 正在执行中，不能并发发送消息。".to_string())
-    } else if is_terminal_agent_status(&agent.status) {
-        Some("当前 Agent 已结束，不能继续发送消息。".to_string())
+    let terminal_agent = is_terminal_agent_status(&agent.status);
+    let has_frame = frame_runtime.is_some();
+    let supports_steering = if delivery_running {
+        state
+            .services
+            .session_control
+            .supports_session_steering(&runtime_session_id)
+            .await
     } else {
-        Some("当前 Agent 没有可投递的 runtime frame。".to_string())
+        false
+    };
+    let control_plane = if terminal_agent {
+        SessionRuntimeControlPlaneView {
+            status: SessionRuntimeControlPlaneStatus::Terminal,
+            reason: Some("当前 Agent 已结束。".to_string()),
+        }
+    } else if !has_frame {
+        SessionRuntimeControlPlaneView {
+            status: SessionRuntimeControlPlaneStatus::FrameMissing,
+            reason: Some("当前 Agent 没有可投递的 runtime frame。".to_string()),
+        }
+    } else if delivery_running {
+        SessionRuntimeControlPlaneView {
+            status: SessionRuntimeControlPlaneStatus::AnchoredRunning,
+            reason: Some("当前 Session 正在执行中。".to_string()),
+        }
+    } else {
+        SessionRuntimeControlPlaneView {
+            status: SessionRuntimeControlPlaneStatus::AnchoredIdle,
+            reason: None,
+        }
+    };
+    let send_next = if has_frame && !terminal_agent && !delivery_running {
+        enabled_action()
+    } else if delivery_running {
+        disabled_action("当前 Session 正在执行中，不能并发发送下一轮消息。")
+    } else if terminal_agent {
+        disabled_action("当前 Agent 已结束，不能继续发送消息。")
+    } else {
+        disabled_action("当前 Agent 没有可投递的 runtime frame。")
+    };
+    let steer = if has_frame && !terminal_agent && delivery_running && supports_steering {
+        enabled_action()
+    } else if !delivery_running {
+        disabled_action("当前 Session 未在执行中，不需要运行中 steer。")
+    } else if !supports_steering {
+        disabled_action("当前执行器不支持对该运行中 Session steer。")
+    } else if terminal_agent {
+        disabled_action("当前 Agent 已结束，不能运行中 steer。")
+    } else {
+        disabled_action("当前 Agent 没有可投递的 runtime frame。")
+    };
+    let cancel = if delivery_running {
+        enabled_action()
+    } else {
+        disabled_action("当前 Session 没有正在执行的 turn。")
     };
 
     Ok(Json(SessionRuntimeControlView {
         runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
         session_meta: session_shell_dto(&meta),
+        control_plane,
         anchor: Some(anchor_dto(&anchor)),
         run: Some(run_view),
         agent: agent_view,
         frame_runtime,
         subject_associations,
-        can_send,
-        send_unavailable_reason,
+        actions: SessionRuntimeActionSetView {
+            send_next,
+            steer,
+            cancel,
+        },
     }))
+}
+
+fn enabled_action() -> SessionRuntimeActionAvailabilityView {
+    SessionRuntimeActionAvailabilityView {
+        enabled: true,
+        unavailable_reason: None,
+    }
+}
+
+fn disabled_action(reason: impl Into<String>) -> SessionRuntimeActionAvailabilityView {
+    SessionRuntimeActionAvailabilityView {
+        enabled: false,
+        unavailable_reason: Some(reason.into()),
+    }
 }
 
 pub async fn get_project_sessions(

@@ -2,7 +2,13 @@
  * 会话 UI 组件
  */
 
-export { SessionChatView, type SessionChatViewProps, type PromptTemplate } from "./SessionChatView";
+export {
+  SessionChatView,
+  type PromptTemplate,
+  type SessionChatControlState,
+  type SessionChatPrimaryActionKind,
+  type SessionChatViewProps,
+} from "./SessionChatView";
 export { SessionList, type SessionListProps } from "./SessionList";
 export { SessionEntry, type SessionEntryProps } from "./SessionEntry";
 export {

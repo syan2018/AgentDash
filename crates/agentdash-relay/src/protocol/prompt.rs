@@ -53,6 +53,15 @@ pub struct AgentConfigRelay {
 pub struct CommandCancelPayload {
     pub session_id: String,
 }
+
+// ── command.steer ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandSteerPayload {
+    pub session_id: String,
+    pub prompt_blocks: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponsePromptPayload {
     pub turn_id: String,
@@ -61,5 +70,10 @@ pub struct ResponsePromptPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseCancelPayload {
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseSteerPayload {
     pub status: String,
 }

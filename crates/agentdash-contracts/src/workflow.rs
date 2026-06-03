@@ -678,6 +678,33 @@ pub struct LifecycleAgentMessageResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct LifecycleAgentSteeringRequest {
+    #[ts(type = "Array<JsonValue>")]
+    pub prompt_blocks: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeSessionCommandStateDto {
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleAgentSteeringResponse {
+    pub runtime_session_id: String,
+    pub accepted: bool,
+    pub state: RuntimeSessionCommandStateDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct AgentAssignmentRefDto {
     pub assignment_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -888,11 +915,48 @@ pub struct RuntimeSessionTraceView {
     pub turns: Vec<Value>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionRuntimeControlPlaneStatus {
+    UnboundTrace,
+    AnchoredIdle,
+    AnchoredRunning,
+    Terminal,
+    FrameMissing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionRuntimeControlPlaneView {
+    pub status: SessionRuntimeControlPlaneStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionRuntimeActionAvailabilityView {
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionRuntimeActionSetView {
+    pub send_next: SessionRuntimeActionAvailabilityView,
+    pub steer: SessionRuntimeActionAvailabilityView,
+    pub cancel: SessionRuntimeActionAvailabilityView,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionRuntimeControlView {
     pub runtime_session_ref: RuntimeSessionRefDto,
     pub session_meta: SessionShellDto,
+    pub control_plane: SessionRuntimeControlPlaneView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub anchor: Option<RuntimeSessionExecutionAnchorDto>,
@@ -907,10 +971,7 @@ pub struct SessionRuntimeControlView {
     pub frame_runtime: Option<AgentFrameRuntimeView>,
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
-    pub can_send: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub send_unavailable_reason: Option<String>,
+    pub actions: SessionRuntimeActionSetView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

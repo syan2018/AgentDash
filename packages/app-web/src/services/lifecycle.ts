@@ -17,6 +17,8 @@ import type {
 import type {
   LifecycleAgentMessageRequest,
   LifecycleAgentMessageResponse,
+  LifecycleAgentSteeringRequest,
+  LifecycleAgentSteeringResponse,
 } from "../generated/workflow-contracts";
 
 export async function fetchLifecycleRun(runId: string): Promise<LifecycleRunView> {
@@ -68,6 +70,16 @@ export async function sendLifecycleAgentMessageByRuntimeSession(
 ): Promise<LifecycleAgentMessageResponse> {
   return api.post<LifecycleAgentMessageResponse>(
     `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/messages`,
+    request,
+  );
+}
+
+export async function sendLifecycleAgentSteeringMessageByRuntimeSession(
+  runtimeSessionId: string,
+  request: LifecycleAgentSteeringRequest,
+): Promise<LifecycleAgentSteeringResponse> {
+  return api.post<LifecycleAgentSteeringResponse>(
+    `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/steering-messages`,
     request,
   );
 }

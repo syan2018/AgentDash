@@ -40,6 +40,7 @@ pub enum ConnectorType {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ConnectorCapabilities {
     pub supports_cancel: bool,
+    pub supports_steering: bool,
     pub supports_discovery: bool,
     pub supports_variants: bool,
     pub supports_model_override: bool,
@@ -723,6 +724,10 @@ pub trait AgentConnector: Send + Sync {
         false
     }
 
+    async fn supports_session_steering(&self, session_id: &str) -> bool {
+        self.capabilities().supports_steering && self.has_live_session(session_id).await
+    }
+
     async fn prompt(
         &self,
         session_id: &str,
@@ -732,6 +737,20 @@ pub trait AgentConnector: Send + Sync {
     ) -> Result<ExecutionStream, ConnectorError>;
 
     async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError>;
+
+    /// 向正在运行的 session 注入用户 steer 消息。
+    ///
+    /// 与 `prompt` 不同，这里不创建新 turn，也不重新进入 launch/claim 流程。
+    async fn steer_session(
+        &self,
+        session_id: &str,
+        _prompt_blocks: Vec<ContentBlock>,
+    ) -> Result<(), ConnectorError> {
+        Err(ConnectorError::Runtime(format!(
+            "connector `{}` 不支持 session `{session_id}` 的 steering",
+            self.connector_id()
+        )))
+    }
 
     async fn approve_tool_call(
         &self,

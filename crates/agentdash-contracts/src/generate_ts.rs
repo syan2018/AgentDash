@@ -102,13 +102,17 @@ use agentdash_contracts::workflow::{
     AgentFrameRuntimeView, AgentProcedureContract, DefinitionSource, DeleteAgentProcedureResponse,
     DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
     HookPresetResponse, HookPresetsResponse, LifecycleAgentMessageRequest,
-    LifecycleAgentMessageResponse, LifecycleAgentRefDto, LifecycleAgentView,
-    LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology,
-    LifecycleRunView, LifecycleSubjectAssociationDto, ProjectActiveAgentsView,
-    ProjectSessionListEntry, ProjectSessionListView, RegisterHookPresetResponse,
+    LifecycleAgentMessageResponse, LifecycleAgentRefDto, LifecycleAgentSteeringRequest,
+    LifecycleAgentSteeringResponse, LifecycleAgentView, LifecycleExecutionEntry,
+    LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView,
+    LifecycleSubjectAssociationDto, ProjectActiveAgentsView, ProjectSessionListEntry,
+    ProjectSessionListView, RegisterHookPresetResponse, RuntimeSessionCommandStateDto,
     RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, RuntimeSessionTraceView,
-    SessionRuntimeControlView, SessionShellDto, StoryLaunchResult, SubjectExecutionView,
-    SubjectRefDto, ValidateHookScriptResponse, ValidationIssue, WorkflowGraphInstanceView,
+    SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
+    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
+    SessionShellDto,
+    StoryLaunchResult, SubjectExecutionView, SubjectRefDto, ValidateHookScriptResponse,
+    ValidationIssue, WorkflowGraphInstanceView,
 };
 use ts_rs::TS;
 
@@ -298,6 +302,9 @@ fn main() {
             export_all::<RuntimeSessionExecutionAnchorDto>(dir);
             export_all::<LifecycleAgentMessageRequest>(dir);
             export_all::<LifecycleAgentMessageResponse>(dir);
+            export_all::<LifecycleAgentSteeringRequest>(dir);
+            export_all::<RuntimeSessionCommandStateDto>(dir);
+            export_all::<LifecycleAgentSteeringResponse>(dir);
             export_all::<AgentAssignmentRefDto>(dir);
             export_all::<StoryLaunchResult>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
@@ -311,6 +318,10 @@ fn main() {
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
             export_all::<RuntimeSessionTraceView>(dir);
+            export_all::<SessionRuntimeControlPlaneStatus>(dir);
+            export_all::<SessionRuntimeControlPlaneView>(dir);
+            export_all::<SessionRuntimeActionAvailabilityView>(dir);
+            export_all::<SessionRuntimeActionSetView>(dir);
             export_all::<SessionRuntimeControlView>(dir);
             export_all::<ProjectSessionListEntry>(dir);
             export_all::<ProjectSessionListView>(dir);

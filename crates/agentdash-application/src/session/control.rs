@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_agent_protocol::ContentBlock;
 use agentdash_spi::ConnectorError;
 
 #[derive(Clone)]
@@ -20,6 +21,18 @@ impl SessionControlService {
         self.connector
             .push_session_notification(session_id, message)
             .await
+    }
+
+    pub async fn steer_session(
+        &self,
+        session_id: &str,
+        prompt_blocks: Vec<ContentBlock>,
+    ) -> Result<(), ConnectorError> {
+        self.connector.steer_session(session_id, prompt_blocks).await
+    }
+
+    pub async fn supports_session_steering(&self, session_id: &str) -> bool {
+        self.connector.supports_session_steering(session_id).await
     }
 
     pub async fn approve_tool_call(

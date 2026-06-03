@@ -219,6 +219,54 @@ impl CommandHandler {
         }
     }
 
+    pub(super) async fn handle_steer(
+        &self,
+        id: String,
+        payload: CommandSteerPayload,
+    ) -> RelayMessage {
+        let session_runtime = match &self.session_runtime {
+            Some(session_runtime) => session_runtime,
+            None => {
+                return RelayMessage::ResponseSteer {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error("Session runtime 未初始化")),
+                };
+            }
+        };
+
+        let prompt_blocks = match parse_prompt_blocks(payload.prompt_blocks) {
+            Ok(blocks) => blocks,
+            Err(error) => {
+                return RelayMessage::ResponseSteer {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(error)),
+                };
+            }
+        };
+
+        tracing::info!(session_id = %payload.session_id, "收到 command.steer");
+        match session_runtime
+            .control
+            .steer_session(&payload.session_id, prompt_blocks)
+            .await
+        {
+            Ok(()) => RelayMessage::ResponseSteer {
+                id,
+                payload: Some(ResponseSteerPayload {
+                    status: "accepted".to_string(),
+                }),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseSteer {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(e.to_string())),
+            },
+        }
+    }
+
     pub(super) async fn handle_discover(&self, id: String) -> RelayMessage {
         let executors = self.list_executors();
         RelayMessage::ResponseDiscover {
@@ -244,6 +292,25 @@ impl CommandHandler {
             ),
         }
     }
+}
+
+fn parse_prompt_blocks(
+    value: serde_json::Value,
+) -> Result<Vec<agentdash_agent_protocol::ContentBlock>, String> {
+    let values = match value {
+        serde_json::Value::Array(values) => values,
+        other => vec![other],
+    };
+    if values.is_empty() {
+        return Err("command.steer prompt_blocks 不能为空".to_string());
+    }
+    values
+        .into_iter()
+        .map(|value| {
+            serde_json::from_value::<agentdash_agent_protocol::ContentBlock>(value)
+                .map_err(|error| format!("command.steer prompt_blocks 非法: {error}"))
+        })
+        .collect()
 }
 
 async fn claim_session_forwarder(

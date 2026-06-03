@@ -340,6 +340,7 @@ dependencies = [
 name = "agentdash-local"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
  "agentdash-application",
  "agentdash-domain",
  "agentdash-executor",

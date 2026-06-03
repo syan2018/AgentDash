@@ -64,7 +64,7 @@ use crate::vfs::{
 };
 use agentdash_application_ports::backend_transport::{
     BackendTransport, DirectoryBrowseInfo, GitRepoInfo, RelayPromptRequest, RelayPromptTransport,
-    RelaySessionRoute, RelaySessionRouteInfo, RemoteExecutorInfo, TransportError,
+    RelaySessionRoute, RelaySessionRouteInfo, RelaySteerRequest, RemoteExecutorInfo, TransportError,
     WorkspaceProbeInfo,
 };
 
@@ -820,6 +820,14 @@ impl RelayPromptTransport for PlacementTransport {
         &self,
         _backend_id: &str,
         _session_id: &str,
+    ) -> Result<(), TransportError> {
+        Ok(())
+    }
+
+    async fn relay_steer(
+        &self,
+        _backend_id: &str,
+        _payload: RelaySteerRequest,
     ) -> Result<(), TransportError> {
         Ok(())
     }

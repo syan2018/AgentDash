@@ -11,6 +11,7 @@ use futures::stream::BoxStream;
 use tokio::sync::mpsc;
 
 use agentdash_domain::backend::{BackendExecutionLeaseRepository, BackendExecutionTerminalKind};
+use agentdash_agent_protocol::ContentBlock;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::{
     AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
@@ -19,7 +20,7 @@ use agentdash_spi::connector::{
 
 use agentdash_application_ports::backend_transport::{
     RelayExecutorConfig, RelayPromptRequest, RelayPromptTransport, RelaySessionEvent,
-    RelaySessionRoute, RelayTerminalKind,
+    RelaySessionRoute, RelaySteerRequest, RelayTerminalKind,
 };
 use agentdash_domain::workspace::WorkspaceIdentityKind;
 
@@ -53,6 +54,7 @@ impl AgentConnector for RelayAgentConnector {
     fn capabilities(&self) -> ConnectorCapabilities {
         ConnectorCapabilities {
             supports_cancel: true,
+            supports_steering: true,
             supports_discovery: false,
             supports_variants: true,
             supports_model_override: true,
@@ -268,6 +270,36 @@ impl AgentConnector for RelayAgentConnector {
         Ok(())
     }
 
+    async fn steer_session(
+        &self,
+        session_id: &str,
+        prompt_blocks: Vec<ContentBlock>,
+    ) -> Result<(), ConnectorError> {
+        if !self.transport.has_session_sink(session_id) {
+            return Err(ConnectorError::Runtime(format!(
+                "session `{session_id}` 不由 relay connector 管理"
+            )));
+        }
+
+        let route = self.transport.session_route(session_id).ok_or_else(|| {
+            ConnectorError::Runtime(format!("session `{session_id}` 缺少 relay backend route"))
+        })?;
+        let prompt_blocks = serde_json::to_value(prompt_blocks).map_err(|error| {
+            ConnectorError::Runtime(format!("序列化 steer prompt_blocks 失败: {error}"))
+        })?;
+        self.transport
+            .relay_steer(
+                &route.backend_id,
+                RelaySteerRequest {
+                    session_id: session_id.to_string(),
+                    prompt_blocks,
+                },
+            )
+            .await
+            .map_err(|error| ConnectorError::Runtime(format!("relay steer 失败: {error}")))?;
+        Ok(())
+    }
+
     async fn approve_tool_call(
         &self,
         _session_id: &str,
@@ -372,6 +404,7 @@ mod tests {
     #[derive(Default)]
     struct CaptureTransport {
         payload: Mutex<Option<RelayPromptRequest>>,
+        steers: StdMutex<Vec<(String, RelaySteerRequest)>>,
         sinks: StdMutex<HashMap<String, RelaySessionRoute>>,
         executors:
             StdMutex<Vec<agentdash_application_ports::backend_transport::RemoteExecutorInfo>>,
@@ -477,6 +510,18 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((backend_id.to_string(), session_id.to_string()));
+            Ok(())
+        }
+
+        async fn relay_steer(
+            &self,
+            backend_id: &str,
+            payload: RelaySteerRequest,
+        ) -> Result<(), agentdash_application_ports::backend_transport::TransportError> {
+            self.steers
+                .lock()
+                .unwrap()
+                .push((backend_id.to_string(), payload));
             Ok(())
         }
 
@@ -975,6 +1020,58 @@ mod tests {
         );
         assert_eq!(releases[0].reason.as_deref(), Some("cancelled"));
         assert!(!transport.has_session_sink("session-cancel"));
+        drop(stream);
+    }
+
+    #[tokio::test]
+    async fn steer_uses_session_route_without_releasing_live_sink() {
+        let transport = Arc::new(CaptureTransport::default());
+        register_executor(&transport, "backend-route", "REMOTE_EXECUTOR");
+        let lease_repo = Arc::new(MemoryLeaseRepository::default());
+        let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());
+        let root = tempfile::tempdir().expect("workspace");
+        let mut context = relay_context(root.path(), "turn-steer");
+        context.session.vfs.as_mut().unwrap().mounts[0].backend_id = "backend-route".to_string();
+        context
+            .session
+            .backend_execution
+            .as_mut()
+            .unwrap()
+            .backend_id = "backend-route".to_string();
+
+        let stream = connector
+            .prompt(
+                "session-steer",
+                None,
+                &PromptPayload::Text("hello".to_string()),
+                context,
+            )
+            .await
+            .expect("relay prompt should succeed");
+
+        connector
+            .steer_session(
+                "session-steer",
+                vec![serde_json::from_value(serde_json::json!({
+                    "type": "text",
+                    "text": "adjust"
+                }))
+                .expect("valid block")],
+            )
+            .await
+            .expect("relay steer should succeed");
+
+        let steers = transport.steers.lock().unwrap();
+        assert_eq!(steers.len(), 1);
+        assert_eq!(steers[0].0, "backend-route");
+        assert_eq!(steers[0].1.session_id, "session-steer");
+        assert_eq!(
+            steers[0].1.prompt_blocks,
+            serde_json::json!([{ "type": "text", "text": "adjust" }])
+        );
+        assert!(transport.cancelled.lock().unwrap().is_empty());
+        assert!(lease_repo.releases.lock().unwrap().is_empty());
+        assert!(transport.has_session_sink("session-steer"));
         drop(stream);
     }
 }

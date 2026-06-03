@@ -59,6 +59,22 @@
 - `lifecycleStore` 只缓存后端 lifecycle view，不作为 command input；写命令应从 SubjectRef、run/graph/agent/frame refs 或明确的 API intent 发起。
 - Session UI 可以消费 `RuntimeSessionTraceView` 与 frame runtime projection，但不能从 session title、session 存在性或 trace 内容推导 Task / Story / Lifecycle 状态。
 
+## Session 控制动作状态
+
+Session 输入区的可执行状态来自后端 `SessionRuntimeControlView.actions`。页面层把 draft
+启动态或 runtime-control action set 翻译成 `SessionChatControlState`，聊天组件只渲染当前
+`primaryAction` 与独立 `cancelAction`。
+
+`start_draft`、`send_next`、`steer`、`cancel` 是不同用户意图：draft 首条消息 materialize
+runtime/lifecycle，idle `send_next` 启动下一轮 prompt，running `steer` 注入当前 turn，running
+`cancel` 中断当前 turn。用 action model 承载这些意图的原因是前端不能从 stream 连接、session
+是否存在、或“下一轮不可发送”推导 lifecycle 控制面状态；后端 runtime-control 已经合并 anchor、
+agent/frame、execution state 与 connector live-session capability，才是输入区展示和命令分派的事实源。
+
+SessionChatView 的职责是执行传入 action，不持有业务分派规则。Ctrl+Enter 触发当前
+primary action；cancel 作为独立按钮展示。这样 anchored running 可以同时显示运行中 steer 和取消，
+anchored idle 显示下一轮发送，只读 trace 展示后端 reason。
+
 ---
 
 ## Projection Store 写后刷新

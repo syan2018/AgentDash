@@ -44,7 +44,12 @@ import type { SessionChatViewProps } from "./SessionChatViewTypes";
 
 // eslint-disable-next-line react-refresh/only-export-components
 export { collectNewSystemEvents, computeProjectionRefreshKey } from "./SessionChatViewModel";
-export type { PromptTemplate, SessionChatViewProps } from "./SessionChatViewTypes";
+export type {
+  PromptTemplate,
+  SessionChatControlState,
+  SessionChatPrimaryActionKind,
+  SessionChatViewProps,
+} from "./SessionChatViewTypes";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
@@ -61,16 +66,14 @@ export function SessionChatView({
   executorHint,
   agentDefaults,
   showExecutorSelector = true,
-  customSend,
+  controlState,
+  onPrimaryAction,
   headerSlot,
   inputPrefix,
   streamPrefixContent,
   showStatusBar = true,
   promptTemplates,
-  inputPlaceholder,
-  idleSendLabel = "发送",
   initialInputValue,
-  sendUnavailableReason,
 }: SessionChatViewProps) {
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -363,18 +366,21 @@ export function SessionChatView({
     shouldScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
   }, []);
 
-  // ─── 发送 / 取消 ─────────────────────────────────────
+  // ─── 控制动作 ───────────────────────────────────────
 
-  const customSendRef = useRef(customSend);
-  useEffect(() => { customSendRef.current = customSend; }, [customSend]);
+  const primaryActionRef = useRef(onPrimaryAction);
+  useEffect(() => { primaryActionRef.current = onPrimaryAction; }, [onPrimaryAction]);
 
-  const handleSend = useCallback(async () => {
+  const handlePrimarySubmit = useCallback(async () => {
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
 
-    if (!customSendRef.current) return;
-    // customSend 模式允许空 prompt（如 Task 直接执行）
+    if (!controlState.primaryAction.enabled || controlState.primaryAction.kind === "none") return;
     if (isSending) return;
+    if (!trimmed) {
+      setSendError("请输入要发送的消息。");
+      return;
+    }
 
     setSendError(null);
     setOptimisticRunning(true);
@@ -382,8 +388,12 @@ export function SessionChatView({
     setIsSending(true);
 
     try {
-      // customSend 全接管：session 创建 + 消息发送一体处理
-      await customSendRef.current(sessionId, trimmed, executorConfig);
+      await primaryActionRef.current(
+        controlState.primaryAction.kind,
+        sessionId,
+        trimmed,
+        executorConfig,
+      );
 
       execConfig.recordUsage();
       clearInput();
@@ -396,9 +406,20 @@ export function SessionChatView({
     } finally {
       setIsSending(false);
     }
-  }, [isSending, sessionId, executorConfig, execConfig, onMessageSent, clearInput, refreshExecutionState]);
+  }, [
+    clearInput,
+    controlState.primaryAction.enabled,
+    controlState.primaryAction.kind,
+    execConfig,
+    executorConfig,
+    isSending,
+    onMessageSent,
+    refreshExecutionState,
+    sessionId,
+  ]);
 
   const handleCancel = useCallback(async () => {
+    if (!controlState.cancelAction.enabled) return;
     if (!hasSession || !sessionId) return;
     if (cancelInFlightRef.current) return;
     cancelInFlightRef.current = true;
@@ -422,16 +443,7 @@ export function SessionChatView({
       cancelInFlightRef.current = false;
       setIsCancelling(false);
     }
-  }, [hasSession, refreshExecutionState, sendCancel, sessionId]);
-
-  const handlePrimaryAction = useCallback(async () => {
-    if (cancelInFlightRef.current) return;
-    if (hasSession && isActionRunning) {
-      await handleCancel();
-      return;
-    }
-    await handleSend();
-  }, [handleCancel, handleSend, hasSession, isActionRunning]);
+  }, [controlState.cancelAction.enabled, hasSession, refreshExecutionState, sendCancel, sessionId]);
 
   // ─── 文件引用 & 键盘 ─────────────────────────────────
 
@@ -443,9 +455,9 @@ export function SessionChatView({
         if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) { e.preventDefault(); fileRef.confirmSelection(); return; }
         if (e.key === "Escape") { e.preventDefault(); fileRef.closePicker(); return; }
       }
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void handleSend(); }
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void handlePrimarySubmit(); }
     },
-    [fileRef, handleSend],
+    [fileRef, handlePrimarySubmit],
   );
 
   const handleAtTrigger = useCallback((query: string) => {
@@ -538,29 +550,26 @@ export function SessionChatView({
 
       {/* 输入区 */}
       <SessionChatComposer
-        customSend={customSend}
+        controlState={controlState}
         discovery={discovery}
         discovered={discovered}
         execConfig={execConfig}
         fileRef={fileRef}
         hasSession={hasSession}
-        idleSendLabel={idleSendLabel}
-        inputPlaceholder={inputPlaceholder}
         inputPrefix={inputPrefix}
         inputValue={inputValue}
-        isActionRunning={isActionRunning}
         isCancelling={isCancelling}
         isSending={isSending}
         promptTemplates={promptTemplates}
         richInputRef={richInputRef}
-        sendUnavailableReason={sendUnavailableReason}
         showExecutorSelector={showExecutorSelector}
         workspaceId={workspaceId}
         onAtTrigger={handleAtTrigger}
         onFileSelected={handleFileSelected}
         onInputChange={setInputValue}
         onKeyDown={handleKeyDown}
-        onPrimaryAction={() => { void handlePrimaryAction(); }}
+        onCancelAction={() => { void handleCancel(); }}
+        onPrimaryAction={() => { void handlePrimarySubmit(); }}
       />
     </div>
   );

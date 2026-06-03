@@ -77,6 +77,13 @@ pub enum RelayMessage {
         payload: CommandCancelPayload,
     },
 
+    /// 向运行中的第三方 Agent 注入 steer 消息
+    #[serde(rename = "command.steer")]
+    CommandSteer {
+        id: String,
+        payload: CommandSteerPayload,
+    },
+
     /// 查询本机第三方能力
     #[serde(rename = "command.discover")]
     CommandDiscover { id: String, payload: EmptyPayload },
@@ -195,6 +202,15 @@ pub enum RelayMessage {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<ResponseCancelPayload>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.steer")]
+    ResponseSteer {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ResponseSteerPayload>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -551,6 +567,7 @@ impl RelayMessage {
             | Self::Pong { id, .. }
             | Self::CommandPrompt { id, .. }
             | Self::CommandCancel { id, .. }
+            | Self::CommandSteer { id, .. }
             | Self::CommandDiscover { id, .. }
             | Self::CommandDiscoverOptions { id, .. }
             | Self::CommandWorkspaceDetect { id, .. }
@@ -568,6 +585,7 @@ impl RelayMessage {
             | Self::CommandToolSearch { id, .. }
             | Self::ResponsePrompt { id, .. }
             | Self::ResponseCancel { id, .. }
+            | Self::ResponseSteer { id, .. }
             | Self::ResponseDiscover { id, .. }
             | Self::ResponseWorkspaceDetect { id, .. }
             | Self::ResponseWorkspaceDetectGit { id, .. }

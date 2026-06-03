@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo};
+use agentdash_agent_protocol::{BackboneEnvelope, ContentBlock, SourceInfo};
 use futures::stream::BoxStream;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
@@ -27,6 +27,7 @@ use agentdash_spi::hooks::{ContextFrame, ContextFrameSection};
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     DiscoveryContext, ExecutionContext, ExecutionStream, PromptPayload,
+    content_block_to_text,
 };
 
 // ─── PiAgentConnector ───────────────────────────────────────────
@@ -391,6 +392,7 @@ impl AgentConnector for PiAgentConnector {
     fn capabilities(&self) -> ConnectorCapabilities {
         ConnectorCapabilities {
             supports_cancel: true,
+            supports_steering: true,
             supports_discovery: true,
             supports_variants: false,
             supports_model_override: true,
@@ -879,6 +881,37 @@ impl AgentConnector for PiAgentConnector {
         runtime.agent.steer(AgentMessage::user(message)).await;
         Ok(())
     }
+
+    async fn steer_session(
+        &self,
+        session_id: &str,
+        prompt_blocks: Vec<ContentBlock>,
+    ) -> Result<(), ConnectorError> {
+        let message = prompt_blocks_to_user_text(&prompt_blocks)?;
+        let agents = self.agents.lock().await;
+        let runtime = agents.get(session_id).ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 当前没有活跃的 Pi Agent，无法运行中 steer"
+            ))
+        })?;
+        runtime.agent.steer(AgentMessage::user(message)).await;
+        Ok(())
+    }
+}
+
+fn prompt_blocks_to_user_text(blocks: &[ContentBlock]) -> Result<String, ConnectorError> {
+    let text = blocks
+        .iter()
+        .filter_map(content_block_to_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(ConnectorError::InvalidConfig(
+            "steer prompt_blocks 不能为空".to_string(),
+        ));
+    }
+    Ok(trimmed.to_string())
 }
 
 fn extract_identity_prompt(frames: &[ContextFrame]) -> Option<String> {

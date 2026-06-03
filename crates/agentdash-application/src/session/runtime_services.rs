@@ -4,6 +4,7 @@ use agentdash_spi::AgentConnector;
 use agentdash_spi::hooks::ExecutionHookProvider;
 
 use super::branching::SessionBranchingService;
+use super::control::SessionControlService;
 use super::core::SessionCoreService;
 use super::eventing::SessionEventingService;
 use super::hub::SessionRuntimeInner;
@@ -18,6 +19,7 @@ pub struct SessionRuntimeServices {
     pub eventing: SessionEventingService,
     pub runtime: SessionRuntimeService,
     pub launch: SessionLaunchService,
+    pub control: SessionControlService,
 }
 
 impl SessionRuntimeServices {
@@ -41,6 +43,7 @@ impl SessionRuntimeServices {
             eventing: inner.eventing_service(),
             runtime: inner.runtime_service(),
             launch: inner.launch_service(),
+            control: inner.control_service(),
         }
     }
 }

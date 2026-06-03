@@ -1,0 +1,9 @@
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"定义 BackboneEnvelope / BackboneEvent、PlatformEvent 与前端消费链路，是新增用户输入协议事件的主契约。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"约束 Rust 协议类型到 TypeScript generated 文件的生成与 drift check。"}
+{"file":".trellis/spec/backend/session/streaming-protocol.md","reason":"约束 session NDJSON event envelope 与前端恢复游标。"}
+{"file":".trellis/spec/backend/session/context-compaction-projection.md","reason":"约束 session_events 到模型上下文 projection 的事实来源。"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"约束 useSessionStream / useSessionFeed 的事件聚合与 hard boundary 语义。"}
+{"file":"references/codex/codex-rs/app-server-protocol/src/protocol/v2/turn.rs","reason":"Codex turn/steer 参数、expected_turn_id 与 UserInput 协议形态。"}
+{"file":"references/codex/codex-rs/app-server-protocol/src/protocol/v2/item.rs","reason":"Codex ThreadItem::UserMessage 的 content: Vec<UserInput> 形态。"}
+{"file":"references/codex/codex-rs/app-server-protocol/src/protocol/thread_history.rs","reason":"Codex 使用显式 turn boundary 表达 mid-turn steering 的历史重建语义。"}
+{"file":"references/codex/codex-rs/app-server/src/request_processors/turn_processor.rs","reason":"Codex turn/steer 服务端校验 active turn、expected turn mismatch 与 non-steerable turn 的错误语义。"}

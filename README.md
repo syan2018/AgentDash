@@ -2,16 +2,9 @@
 
 ![AgentDash 运行时控制平面](docs/assets/readme-runtime-map.svg)
 
-**AgentDash 是面向 AI Agent 运行过程的空间化控制平面。**
+**AgentDash 是面向 AI Agent 工作生命过程的 Lifecycle 控制面。**
 
-它不是“把很多 Agent 放进一个列表”的看板，而是把 Agent 的工作过程放进一套可寻址、可观察、可恢复的运行空间里。
-
-```text
-VFS 空间决定 Agent 在哪里读写。
-Agent Connector 把云端 Agent Runtime 接到不同执行边界。
-Relay 信道让工具调用安全抵达本机。
-Lifecycle 空间把多步骤工作变成端口、产物和事件。
-```
+它不是“把很多 Agent 放进一个列表”的看板，也不是把会话记录包装成项目管理工具。AgentDash 把业务对象、运行拓扑、运行空间和事件证据收敛成可寻址、可观察、可恢复的控制面。
 
 ## 运行时形态
 
@@ -23,7 +16,7 @@ flowchart LR
     Relay["Relay 信道<br/>工具调用与本机能力"]
     Local["本机 Runtime<br/>文件、Shell、MCP"]
     VFS["运行时 VFS<br/>Mount 与 Provider"]
-    Life["Lifecycle 空间<br/>Activity、端口、产物"]
+    Life["Lifecycle 控制面<br/>运行状态与证据"]
     Stream["Backbone 事件流<br/>可观察的运行事实"]
 
     User --> Cloud
@@ -44,13 +37,14 @@ flowchart LR
 
 | 普通 Agent Runner | AgentDash |
 | --- | --- |
-| 在某个目录里启动 CLI | 每轮执行前构建运行空间 |
-| 把文件当成本机路径 | 通过 VFS mount 暴露资源 |
-| 把日志当作副产物流出 | 把 Backbone event 持久化为运行事实 |
-| 靠约定串联步骤 | 通过端口和产物推进 lifecycle 状态 |
-| 云端和本机边界含混 | 云端持有状态真相，本机负责实际执行 |
+| 从会话或日志倒推业务归属 | 业务入口先进入 Lifecycle 控制面 |
+| 把 session 当成任务状态真相 | 控制面记录状态，事件流提供证据 |
+| 每次启动临时拼 prompt / tools | 运行前生成稳定的上下文和能力投影 |
+| 靠列表顺序串联步骤 | 复杂 SOP 展开成显式 Activity graph |
+| 本机路径和工具直接暴露给 Agent | 通过 VFS、MCP 和 capability projection 进入运行空间 |
+| 云端和本机边界含混 | 云端持有控制面事实，本机负责物理执行 |
 
-`Project` 和 `Story` 是有用的产品入口，但不是核心假设。真正稳定的中心是 **云端 Agent Runtime + Agent Connector + VFS + Relay + Lifecycle + 事件流**。
+`Project`、`Story`、`Task`、`Routine` 都是有用的业务入口，但它们不拥有 runtime truth。真正稳定的中心是 **Lifecycle 控制面、运行 surface、Connector 投递和事件流**。
 
 ## VFS 空间
 
@@ -79,7 +73,7 @@ flowchart TB
 
 ## Agent Connector
 
-AgentDash 的核心执行主体是云端 Agent Runtime。Connector 层负责把同一份 `ExecutionContext` 投影到不同执行边界，而不是让产品主线绑定到某一种 Agent 进程形态。
+AgentDash 的核心执行主体是云端 Agent Runtime。Connector 层负责把运行 surface 和 launch projection 生成的 `ExecutionContext` 投影到不同执行边界，而不是让产品主线绑定到某一种 Agent 进程形态。
 
 ```mermaid
 flowchart LR
@@ -130,44 +124,34 @@ sequenceDiagram
     C-->>A: Backbone event persisted
 ```
 
-## Lifecycle 空间
+## Lifecycle 控制面
 
-Lifecycle 不是任务清单，而是一张带有显式数据流的可执行 activity graph。
+Lifecycle 不是任务清单，也不等同于单条聊天会话。它记录一次工作生命过程：谁发起、运行到哪里、当前 Agent 使用哪份能力和上下文、哪些事件构成执行证据。
+
+普通 Agent 会话不需要强行制造工作流图；复杂 SOP 可以展开为显式 Activity graph。两者都回到同一套控制面，因此 Dashboard、API、取消、恢复、审计和业务投影不需要从 session 标题或日志内容倒推归属。
+
+查询视图和真实 Agent 启动来自同一份控制面事实。启动期可以生成 `ExecutionContext` 等投递投影，但它们服务本次执行，不替代 Lifecycle 对业务归属、运行状态和事件证据的表达。
 
 ```mermaid
 flowchart LR
-    A["plan<br/>Agent activity"]
-    B["collect<br/>Function activity"]
-    C["apply<br/>Agent activity"]
-    D["review<br/>Human activity"]
+    Subject["业务入口<br/>Project / Story / Task / Routine"]
+    Control["Lifecycle 控制面<br/>Run / Agent / Activity"]
+    Surface["运行 surface<br/>能力、上下文、VFS、MCP"]
+    Runtime["Agent / Function / Human 执行"]
+    Evidence["事件、产物、状态投影"]
 
-    A -- "artifact: design_report" --> C
-    B -- "artifact: runtime_snapshot" --> C
-    C -- "flow" --> D
-
-    subgraph Runtime_Projection["lifecycle_vfs 投影"]
-        Ports["输入 / 输出端口"]
-        Artifacts["产物"]
-        Records["尝试记录"]
-        State["Activity 状态"]
-    end
-
-    A --> Ports
-    B --> Artifacts
-    C --> Records
-    D --> State
+    Subject --> Control --> Surface --> Runtime --> Evidence --> Control
 ```
-
-所有推进都以事件形式进入 `LifecycleEngine`。Agent、Function、Human activity 都不直接改写运行状态。
 
 ## 产品界面
 
 | 界面 | 展示内容 |
 | --- | --- |
-| Agent 工作台 | 云端 Agent Runtime、Live session、执行状态、运行时事件流 |
-| Assets | Lifecycle 模板、VFS mount、Skill、MCP preset、Canvas 资产 |
-| Lifecycle 编辑器 | Activity graph、端口、Transition、运行状态 |
-| VFS 浏览器 | 本机、云端、资产、Lifecycle 空间中的挂载资源 |
+| Agent 工作台 | Agent run、Live session、执行状态、运行时事件流 |
+| Project / Story / Task 视图 | 面向项目下 Agent 事务的管理入口 |
+| Assets | Workflow、Agent procedure、VFS mount、Skill、MCP preset、Canvas 资产 |
+| Lifecycle 编辑器 | Activity graph、端口、edge 和运行状态 |
+| VFS 浏览器 | 本机、云端、资产、Lifecycle 控制面中的挂载资源 |
 | 本机 Runtime 设置 | 机器身份、可访问目录、Relay 健康状态、本机能力 |
 
 ## 其它能力
@@ -177,29 +161,11 @@ flowchart LR
 | 能力 | 用途 |
 | --- | --- |
 | Shared Library / Marketplace | 管理可复用的 Agent、Workflow、Skill 等资产来源 |
-| MCP Preset | 为 Session / Agent Runtime 组织外部工具入口 |
+| MCP Preset | 为 Agent runtime surface 组织外部工具入口 |
 | Canvas | 承载可运行的前端资产和可视化结果 |
 | Routine | 用定时、Webhook 或插件事件触发运行过程 |
 | Hook Runtime | 在执行边界注入约束、上下文、完成判定和后续动作 |
 | Desktop Shell | 通过 Tauri 托管 Dashboard 与本机 Runtime 管理面 |
-
-## 运行主链
-
-```mermaid
-flowchart LR
-    Command["LaunchCommand"]
-    Plan["SessionConstructionPlan"]
-    Exec["LaunchExecution"]
-    Context["ExecutionContext"]
-    Connector["Agent Connector"]
-    Runtime["Agent / Function Runtime"]
-    Events["BackboneEnvelope"]
-    UI["Dashboard"]
-
-    Command --> Plan --> Exec --> Context --> Connector --> Runtime --> Events --> UI
-```
-
-查询视图和真实 Agent 启动应来自同一份 construction facts。
 
 ## 代码地图
 
@@ -254,6 +220,10 @@ pnpm run frontend:test
 
 - [VFS 访问契约](.trellis/spec/backend/vfs/vfs-access.md)
 - [VFS 本机物化](.trellis/spec/backend/vfs/vfs-materialization.md)
+- [项目总览](.trellis/spec/project-overview.md)
+- [Workflow Architecture](.trellis/spec/backend/workflow/architecture.md)
+- [Lifecycle Subject Association](.trellis/spec/backend/workflow/lifecycle-run-link.md)
+- [Execution Context Frames](.trellis/spec/backend/session/execution-context-frames.md)
 - [Session 启动主链](.trellis/spec/backend/session/session-startup-pipeline.md)
 - [Activity Lifecycle](.trellis/spec/backend/workflow/activity-lifecycle.md)
 - [Lifecycle Edge 契约](.trellis/spec/backend/workflow/lifecycle-edge.md)

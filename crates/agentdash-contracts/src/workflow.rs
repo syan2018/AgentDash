@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -679,8 +680,7 @@ pub struct LifecycleAgentMessageResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct LifecycleAgentSteeringRequest {
-    #[ts(type = "Array<JsonValue>")]
-    pub prompt_blocks: Vec<Value>,
+    pub input: Vec<codex::UserInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

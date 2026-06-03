@@ -6,6 +6,7 @@ use crate::backbone::approval::ApprovalRequest;
 use crate::backbone::item::{ItemCompletedNotification, ItemStartedNotification};
 use crate::backbone::platform::PlatformEvent;
 use crate::backbone::usage::ThreadTokenUsageUpdatedNotification;
+use crate::backbone::user_input::UserInputSubmittedNotification;
 
 /// 平台内部事件流转的统一类型。
 ///
@@ -35,6 +36,9 @@ pub enum BackboneEvent {
     TurnStarted(codex::TurnStartedNotification),
     TurnCompleted(codex::TurnCompletedNotification),
     TurnDiffUpdated(codex::TurnDiffUpdatedNotification),
+
+    // ── 用户输入（Codex UserInput + AgentDash submission 标注）──
+    UserInputSubmitted(UserInputSubmittedNotification),
 
     // ── Plan ──
     TurnPlanUpdated(codex::TurnPlanUpdatedNotification),

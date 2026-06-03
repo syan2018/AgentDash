@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_agent_protocol::{BackboneEnvelope, ContentBlock, SourceInfo};
+use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo, codex_user_input_to_text};
 use futures::stream::BoxStream;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
@@ -23,11 +23,11 @@ use super::bridges::provider_registry::{
     ProviderUnavailableReason, build_effective_profile_catalog_from_db,
 };
 use crate::hook_events::build_hook_trace_envelope;
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_spi::hooks::{ContextFrame, ContextFrameSection};
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     DiscoveryContext, ExecutionContext, ExecutionStream, PromptPayload,
-    content_block_to_text,
 };
 
 // ─── PiAgentConnector ───────────────────────────────────────────
@@ -885,9 +885,11 @@ impl AgentConnector for PiAgentConnector {
     async fn steer_session(
         &self,
         session_id: &str,
-        prompt_blocks: Vec<ContentBlock>,
+        _expected_turn_id: &str,
+        input: Vec<codex::UserInput>,
     ) -> Result<(), ConnectorError> {
-        let message = prompt_blocks_to_user_text(&prompt_blocks)?;
+        let message = codex_user_input_to_text(&input)
+            .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?;
         let agents = self.agents.lock().await;
         let runtime = agents.get(session_id).ok_or_else(|| {
             ConnectorError::Runtime(format!(
@@ -897,21 +899,6 @@ impl AgentConnector for PiAgentConnector {
         runtime.agent.steer(AgentMessage::user(message)).await;
         Ok(())
     }
-}
-
-fn prompt_blocks_to_user_text(blocks: &[ContentBlock]) -> Result<String, ConnectorError> {
-    let text = blocks
-        .iter()
-        .filter_map(content_block_to_text)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Err(ConnectorError::InvalidConfig(
-            "steer prompt_blocks 不能为空".to_string(),
-        ));
-    }
-    Ok(trimmed.to_string())
 }
 
 fn extract_identity_prompt(frames: &[ContextFrame]) -> Option<String> {

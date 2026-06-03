@@ -1,6 +1,6 @@
-use agentdash_agent_protocol::ContentBlock;
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, UserInputSubmissionKind,
+    UserInputSubmittedNotification, codex_app_server_protocol as codex,
 };
 use agentdash_spi::{CapabilityState, ContextFragment, ExecutionSessionFrame};
 use tokio::sync::broadcast;
@@ -11,31 +11,29 @@ use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookRuntime};
 use super::persistence::PersistedSessionEvent;
 use super::types::{SessionExecutionState, SessionMeta};
 
-pub(super) fn build_user_message_envelopes(
+pub(super) fn build_user_input_submitted_envelope(
     session_id: &str,
     source: &SourceInfo,
     turn_id: &str,
-    user_blocks: &[ContentBlock],
-) -> Vec<BackboneEnvelope> {
-    user_blocks
-        .iter()
-        .enumerate()
-        .map(|(index, block)| {
-            let value = serde_json::to_value(block).unwrap_or(serde_json::Value::Null);
-            BackboneEnvelope::new(
-                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                    key: "user_message_chunk".to_string(),
-                    value,
-                }),
-                session_id,
-                source.clone(),
-            )
-            .with_trace(TraceInfo {
-                turn_id: Some(turn_id.to_string()),
-                entry_index: Some(index as u32),
-            })
-        })
-        .collect()
+    item_id: &str,
+    submission_kind: UserInputSubmissionKind,
+    input: Vec<codex::UserInput>,
+) -> BackboneEnvelope {
+    BackboneEnvelope::new(
+        BackboneEvent::UserInputSubmitted(UserInputSubmittedNotification::new(
+            session_id,
+            turn_id,
+            item_id,
+            submission_kind,
+            input,
+        )),
+        session_id,
+        source.clone(),
+    )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: Some(0),
+    })
 }
 
 pub(super) fn build_turn_started_envelope(

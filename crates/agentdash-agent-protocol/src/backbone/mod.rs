@@ -5,3 +5,4 @@ pub mod item;
 pub mod platform;
 pub mod thread_item;
 pub mod usage;
+pub mod user_input;

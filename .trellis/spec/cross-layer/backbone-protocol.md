@@ -37,6 +37,7 @@ pub enum BackboneEvent {
     TurnStarted(codex::TurnStartedNotification),
     TurnCompleted(codex::TurnCompletedNotification),
     TurnDiffUpdated(codex::TurnDiffUpdatedNotification),
+    UserInputSubmitted(UserInputSubmittedNotification),
     TurnPlanUpdated(codex::TurnPlanUpdatedNotification),
     PlanDelta(codex::PlanDeltaNotification),
     TokenUsageUpdated(ThreadTokenUsageUpdatedNotification),
@@ -49,6 +50,14 @@ pub enum BackboneEvent {
 ```
 
 序列化采用 `#[serde(tag = "type", content = "payload", rename_all = "snake_case")]`。
+
+## User Input Facts
+
+用户提交到 session 的输入使用 `BackboneEvent::UserInputSubmitted` 表达。payload 携带 Codex app-server protocol 的 `Vec<UserInput>`、`turn_id`、稳定 `item_id` 与 AgentDash 的 `submission_kind`（`prompt` / `steer`）。
+
+这个事件是普通 prompt 与运行中 steer 的共同事实来源，原因是 Codex thread history 通过显式 turn boundary 和同 turn 内多个 user message 表达 mid-turn steering。AgentDash 在 Backbone 层保留同样的 `UserInput` 形态，projection、NDJSON、前端 feed 和 recall surface 才能用同一个 item 坐标区分“开启 turn 的输入”和“运行中 steer 输入”。
+
+ACP 或其他外部 adapter 进入主链路时需要先转换为 `UserInputSubmitted`。`PlatformEvent` 只承载 Codex 原生协议没有覆盖的平台能力；用户输入属于 turn/thread 语义，不属于 platform metadata。
 
 ## Token Usage Semantics
 

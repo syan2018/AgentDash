@@ -1,10 +1,11 @@
+use agentdash_agent_protocol::content_blocks_to_codex_user_input;
 use agentdash_spi::ConnectorError;
 
 use super::connector_start::ConnectorAcceptedTurn;
 use super::deps::TurnCommitDeps;
 use crate::session::hub_support::{
     TurnTerminalKind, build_turn_started_envelope, build_turn_terminal_envelope,
-    build_user_message_envelopes,
+    build_user_input_submitted_envelope,
 };
 use crate::session::persistence::SessionRuntimeCommandStore;
 use crate::session::types::{ExecutionStatus, ResolvedPromptPayload, SessionMeta, TitleSource};
@@ -110,13 +111,15 @@ impl TurnCommitter {
         turn_id: &str,
         resolved_payload: &ResolvedPromptPayload,
     ) {
-        let user_envelopes = build_user_message_envelopes(
-            session_id,
-            source,
-            turn_id,
-            &resolved_payload.user_blocks,
-        );
-        for envelope in user_envelopes {
+        if let Ok(input) = content_blocks_to_codex_user_input(&resolved_payload.user_blocks) {
+            let envelope = build_user_input_submitted_envelope(
+                session_id,
+                source,
+                turn_id,
+                &format!("{turn_id}:user-input:0"),
+                agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                input,
+            );
             let _ = self
                 .deps
                 .eventing

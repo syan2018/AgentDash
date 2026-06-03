@@ -3,14 +3,11 @@ use std::collections::{HashMap, HashSet};
 use base64::Engine;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
-use agentdash_agent_protocol::{
-    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent, ContentBlock, PlatformEvent,
-};
+use agentdash_agent_protocol::{AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent};
 use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     StopReason, ToolCallInfo,
 };
-use agentdash_spi::content_block_to_text;
 use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, RuntimeEventSource};
 
 use super::persistence::PersistedSessionEvent;
@@ -244,23 +241,25 @@ fn build_raw_projected_transcript_from_iter<'a>(
 
     for event in events {
         match &event.notification.event {
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
-                if key == "user_message_chunk" =>
-            {
-                if let Ok(block) = serde_json::from_value::<ContentBlock>(value.clone()) {
-                    if let Some(part) = content_block_to_message_part(&block) {
-                        let key = restored_user_key(event);
-                        let state =
-                            user_messages
-                                .entry(key)
-                                .or_insert_with(|| RestoredUserMessageState {
-                                    order: event.event_seq,
-                                    turn_id: event.turn_id.clone(),
-                                    entry_index: event.entry_index,
-                                    content: Vec::new(),
-                                });
-                        state.content.push(part);
-                    }
+            BackboneEvent::UserInputSubmitted(input) => {
+                let key = format!("user:item:{}", input.item_id);
+                let state = user_messages
+                    .entry(key)
+                    .or_insert_with(|| RestoredUserMessageState {
+                        order: event.event_seq,
+                        turn_id: event
+                            .turn_id
+                            .clone()
+                            .or_else(|| Some(input.turn_id.clone())),
+                        entry_index: event.entry_index,
+                        content: Vec::new(),
+                    });
+                for part in input
+                    .content
+                    .iter()
+                    .filter_map(codex_user_input_to_message_part)
+                {
+                    state.content.push(part);
                 }
             }
             BackboneEvent::AgentMessageDelta(delta) => {
@@ -423,14 +422,6 @@ fn build_raw_projected_transcript_from_iter<'a>(
 
 // ─── Private helpers ────────────────────────────────────────
 
-fn restored_user_key(event: &PersistedSessionEvent) -> String {
-    event
-        .turn_id
-        .as_deref()
-        .map(|turn_id| format!("user:turn:{turn_id}"))
-        .unwrap_or_else(|| format!("user:event:{}", event.event_seq))
-}
-
 fn restored_assistant_key(event: &PersistedSessionEvent, message_id: Option<&str>) -> String {
     if let (Some(turn_id), Some(entry_index)) = (event.turn_id.as_deref(), event.entry_index) {
         return format!("assistant:turn:{turn_id}:{entry_index}");
@@ -447,6 +438,39 @@ fn restored_assistant_key(event: &PersistedSessionEvent, message_id: Option<&str
         return format!("assistant:tool:{tool_call_id}");
     }
     format!("assistant:event:{}", event.event_seq)
+}
+
+fn codex_user_input_to_message_part(
+    input: &agentdash_agent_protocol::codex_app_server_protocol::UserInput,
+) -> Option<ContentPart> {
+    match input {
+        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text { text, .. } => {
+            let text = text.trim();
+            if text.is_empty() {
+                None
+            } else {
+                Some(ContentPart::text(text))
+            }
+        }
+        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Image { url, .. } => {
+            Some(ContentPart::text(format!("[引用图片: {url}]")))
+        }
+        agentdash_agent_protocol::codex_app_server_protocol::UserInput::LocalImage {
+            path, ..
+        } => Some(ContentPart::text(format!(
+            "[引用本地图片: {}]",
+            path.display()
+        ))),
+        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Skill { name, path } => {
+            Some(ContentPart::text(format!(
+                "[引用 Skill: {name} ({})]",
+                path.display()
+            )))
+        }
+        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Mention { name, path } => {
+            Some(ContentPart::text(format!("[引用: {name} ({path})]")))
+        }
+    }
 }
 
 fn upsert_restored_tool_call(
@@ -617,43 +641,6 @@ fn make_message_ref(turn_id: Option<&str>, entry_index: Option<u32>, event_seq: 
             .map(ToString::to_string)
             .unwrap_or_else(|| format!("_seq:{event_seq}")),
         entry_index: entry_index.unwrap_or(0),
-    }
-}
-
-fn content_block_to_message_part(block: &ContentBlock) -> Option<ContentPart> {
-    match block {
-        ContentBlock::Image(image) => Some(ContentPart::Image {
-            mime_type: image.mime_type.clone(),
-            data: image.data.clone(),
-        }),
-        _ => content_block_to_rendered_text(block).map(ContentPart::text),
-    }
-}
-
-fn content_block_to_rendered_text(block: &ContentBlock) -> Option<String> {
-    if is_owner_context_resource_block(block) {
-        return None;
-    }
-
-    content_block_to_text(block)
-        .map(|text| text.trim().to_string())
-        .filter(|text| !text.is_empty())
-}
-
-fn is_owner_context_resource_block(block: &ContentBlock) -> bool {
-    match block {
-        ContentBlock::Resource(resource) => match &resource.resource {
-            agentdash_agent_protocol::EmbeddedResourceResource::TextResourceContents(
-                text_resource,
-            ) => {
-                let uri = text_resource.uri.as_str();
-                uri.starts_with("agentdash://project-context/")
-                    || uri.starts_with("agentdash://story-context/")
-                    || uri.starts_with("agentdash://task-context/")
-            }
-            _ => false,
-        },
-        _ => false,
     }
 }
 

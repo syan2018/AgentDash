@@ -91,7 +91,7 @@ pub use construction_provider::{
 };
 pub use context::ExecutorResolution;
 pub use context_projector::ContextProjector;
-pub use control::SessionControlService;
+pub use control::{SessionControlService, SessionTurnSteerCommand};
 pub use core::SessionCoreService;
 pub use effects_service::SessionEffectsService;
 pub use eventing::SessionEventingService;

@@ -1,4 +1,4 @@
-use agentdash_agent_protocol::ContentBlock;
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
@@ -6,13 +6,16 @@ use agentdash_domain::workflow::{
     RuntimeSessionExecutionAnchorRepository,
 };
 
-use crate::session::{SessionControlService, SessionCoreService, SessionExecutionState};
+use crate::session::{
+    SessionControlService, SessionCoreService, SessionEventingService, SessionExecutionState,
+    SessionTurnSteerCommand,
+};
 use crate::workflow::WorkflowApplicationError;
 
 #[derive(Debug, Clone)]
 pub struct LifecycleAgentSteeringCommand {
     pub delivery_runtime_session_id: String,
-    pub prompt_blocks: Vec<serde_json::Value>,
+    pub input: Vec<codex::UserInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +34,7 @@ pub struct LifecycleAgentSteeringService<'a> {
     execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
     session_core: SessionCoreService,
     session_control: SessionControlService,
+    session_eventing: SessionEventingService,
 }
 
 impl<'a> LifecycleAgentSteeringService<'a> {
@@ -41,6 +45,7 @@ impl<'a> LifecycleAgentSteeringService<'a> {
         execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
         session_core: SessionCoreService,
         session_control: SessionControlService,
+        session_eventing: SessionEventingService,
     ) -> Self {
         Self {
             lifecycle_run_repo,
@@ -49,6 +54,7 @@ impl<'a> LifecycleAgentSteeringService<'a> {
             execution_anchor_repo,
             session_core,
             session_control,
+            session_eventing,
         }
     }
 
@@ -61,9 +67,9 @@ impl<'a> LifecycleAgentSteeringService<'a> {
                 "delivery runtime session id 不能为空".to_string(),
             ));
         }
-        if command.prompt_blocks.is_empty() {
+        if command.input.is_empty() {
             return Err(WorkflowApplicationError::BadRequest(
-                "prompt_blocks 不能为空".to_string(),
+                "input 不能为空".to_string(),
             ));
         }
 
@@ -155,13 +161,31 @@ impl<'a> LifecycleAgentSteeringService<'a> {
                 "当前执行器不支持对该运行中 Session steer".to_string(),
             ));
         }
-        let prompt_blocks = parse_prompt_blocks(command.prompt_blocks)?;
+        let input = command.input.clone();
         self.session_control
-            .steer_session(&command.delivery_runtime_session_id, prompt_blocks)
+            .steer_session(SessionTurnSteerCommand {
+                session_id: command.delivery_runtime_session_id.clone(),
+                expected_turn_id: active_turn_id.clone(),
+                input: input.clone(),
+            })
             .await
             .map_err(|error| {
                 WorkflowApplicationError::Internal(format!(
                     "LifecycleAgent steer 投递失败: {error}"
+                ))
+            })?;
+        self.session_eventing
+            .emit_user_input_submitted(
+                &command.delivery_runtime_session_id,
+                &active_turn_id,
+                &format!("{}:steer:{}", active_turn_id, Uuid::new_v4()),
+                agentdash_agent_protocol::UserInputSubmissionKind::Steer,
+                input,
+            )
+            .await
+            .map_err(|error| {
+                WorkflowApplicationError::Internal(format!(
+                    "LifecycleAgent steer 事件写入失败: {error}"
                 ))
             })?;
 
@@ -173,19 +197,6 @@ impl<'a> LifecycleAgentSteeringService<'a> {
             active_turn_id,
         })
     }
-}
-
-fn parse_prompt_blocks(
-    values: Vec<serde_json::Value>,
-) -> Result<Vec<ContentBlock>, WorkflowApplicationError> {
-    values
-        .into_iter()
-        .map(|value| {
-            serde_json::from_value::<ContentBlock>(value).map_err(|error| {
-                WorkflowApplicationError::BadRequest(format!("prompt_blocks 非法: {error}"))
-            })
-        })
-        .collect()
 }
 
 fn is_terminal_agent_status(status: &str) -> bool {

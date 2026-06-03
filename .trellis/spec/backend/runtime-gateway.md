@@ -60,6 +60,22 @@ Session Action baseline：`mcp.list_tools`、`mcp.call_tool`
 
 ---
 
+## Session Turn Control
+
+Session 输入控制面按 Codex app-server protocol 建模：
+
+```text
+browser generated DTO Vec<UserInput>
+  -> lifecycle steering service resolves active turn
+  -> SessionTurnSteerCommand { session_id, expected_turn_id, input }
+  -> relay/local connector payload
+  -> Codex turn/steer 或 native connector 内部映射
+```
+
+`expected_turn_id` 是控制命令的一部分，原因是运行中 steer 必须绑定到浏览器看到的 active turn；relay、本机 handler 和 connector 只能透传或校验该前置条件，不能在下游重新猜测。Steer 成功投递后，应用层写入 `UserInputSubmitted(submission_kind = steer)`，让时间线、projection 和 lifecycle recall 共享同一个事实。
+
+---
+
 ## Setup Action
 
 Setup Action baseline：`mcp.probe_transport`、`workspace.detect`、`workspace.detect_git`、`workspace.browse_directory`

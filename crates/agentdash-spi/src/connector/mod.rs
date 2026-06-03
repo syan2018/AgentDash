@@ -5,7 +5,9 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_protocol::{ContentBlock, EmbeddedResourceResource};
+use agentdash_agent_protocol::{
+    ContentBlock, EmbeddedResourceResource, codex_app_server_protocol as codex,
+};
 use agentdash_agent_types::{AgentMessage, MessageRef};
 use agentdash_domain::backend::BackendExecutionSelectionMode;
 use agentdash_domain::common::{AgentConfig, Vfs};
@@ -744,7 +746,8 @@ pub trait AgentConnector: Send + Sync {
     async fn steer_session(
         &self,
         session_id: &str,
-        _prompt_blocks: Vec<ContentBlock>,
+        _expected_turn_id: &str,
+        _input: Vec<codex::UserInput>,
     ) -> Result<(), ConnectorError> {
         Err(ConnectorError::Runtime(format!(
             "connector `{}` 不支持 session `{session_id}` 的 steering",

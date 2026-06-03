@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 use crate::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
     PlatformEvent, ThreadTokenUsage, ThreadTokenUsageUpdatedNotification,
+    UserInputSubmittedNotification, codex_user_input_to_text, content_block_to_codex_user_input,
 };
 
 const AGENTDASH_NS: &str = "agentdash";
@@ -83,6 +84,28 @@ pub fn envelope_to_session_notification(
             Some(SessionNotification::new(
                 session_id,
                 SessionUpdate::UsageUpdate(update),
+            ))
+        }
+        BackboneEvent::UserInputSubmitted(input) => {
+            let text = codex_user_input_to_text(&input.content)
+                .unwrap_or_else(|_| serde_json::to_string(&input.content).unwrap_or_default());
+            if text.trim().is_empty() {
+                return None;
+            }
+            let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
+                .message_id(Some(input.item_id.clone()))
+                .meta(build_acp_meta_with_event(
+                    envelope,
+                    "user_input_submitted",
+                    Some(input.item_id.clone()),
+                    Some(json!({
+                        "submissionKind": input.submission_kind,
+                        "content": input.content,
+                    })),
+                ));
+            Some(SessionNotification::new(
+                session_id,
+                SessionUpdate::UserMessageChunk(chunk),
             ))
         }
         BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
@@ -387,11 +410,41 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
             }
         }
         SessionUpdate::UserMessageChunk(chunk) => {
-            let value = serde_json::to_value(&chunk.content).unwrap_or_default();
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "user_message_chunk".to_string(),
-                value,
-            })
+            let event_obj = agentdash_meta.and_then(|v| v.get("event"));
+            let item_id = event_obj
+                .and_then(|e| e.get("message"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .or_else(|| chunk.message_id.clone())
+                .unwrap_or_else(|| {
+                    format!(
+                        "{}:user-input:{}",
+                        trace.turn_id.as_deref().unwrap_or("unknown"),
+                        trace.entry_index.unwrap_or_default()
+                    )
+                });
+            let submission_kind = event_obj
+                .and_then(|e| e.get("data"))
+                .and_then(|data| data.get("submissionKind"))
+                .cloned()
+                .and_then(|raw| serde_json::from_value(raw).ok())
+                .unwrap_or(crate::UserInputSubmissionKind::Prompt);
+            let mut input = content_block_to_codex_user_input(&chunk.content)
+                .into_iter()
+                .collect::<Vec<_>>();
+            if input.is_empty() {
+                input.push(codex::UserInput::Text {
+                    text: serde_json::to_string(&chunk.content).unwrap_or_default(),
+                    text_elements: Vec::new(),
+                });
+            }
+            BackboneEvent::UserInputSubmitted(UserInputSubmittedNotification::new(
+                session_id.to_string(),
+                trace.turn_id.clone().unwrap_or_default(),
+                item_id,
+                submission_kind,
+                input,
+            ))
         }
         _ => {
             let value = serde_json::to_value(&notification.update).unwrap_or_default();
@@ -417,6 +470,38 @@ fn build_acp_meta(envelope: &BackboneEnvelope) -> Option<agent_client_protocol::
             "turnId": envelope.trace.turn_id,
             "entryIndex": envelope.trace.entry_index,
         }
+    });
+    let mut meta = agent_client_protocol::Meta::new();
+    meta.insert(AGENTDASH_NS.to_string(), agentdash_value);
+    Some(meta)
+}
+
+fn build_acp_meta_with_event(
+    envelope: &BackboneEnvelope,
+    event_type: &str,
+    message: Option<String>,
+    data: Option<Value>,
+) -> Option<agent_client_protocol::Meta> {
+    let mut event_map = Map::new();
+    event_map.insert("type".to_string(), Value::String(event_type.to_string()));
+    if let Some(message) = message {
+        event_map.insert("message".to_string(), Value::String(message));
+    }
+    if let Some(data) = data {
+        event_map.insert("data".to_string(), data);
+    }
+    let agentdash_value = json!({
+        "v": AGENTDASH_META_VERSION,
+        "source": {
+            "connectorId": envelope.source.connector_id,
+            "connectorType": envelope.source.connector_type,
+            "executorId": envelope.source.executor_id,
+        },
+        "trace": {
+            "turnId": envelope.trace.turn_id,
+            "entryIndex": envelope.trace.entry_index,
+        },
+        "event": Value::Object(event_map),
     });
     let mut meta = agent_client_protocol::Meta::new();
     meta.insert(AGENTDASH_NS.to_string(), agentdash_value);
@@ -505,6 +590,7 @@ fn envelope_event_type_label(event: &BackboneEvent) -> &'static str {
         BackboneEvent::TurnStarted(_) => "turn_started",
         BackboneEvent::TurnCompleted(_) => "turn_completed",
         BackboneEvent::TurnDiffUpdated(_) => "turn_diff_updated",
+        BackboneEvent::UserInputSubmitted(_) => "user_input_submitted",
         BackboneEvent::TurnPlanUpdated(_) => "turn_plan_updated",
         BackboneEvent::PlanDelta(_) => "plan_delta",
         BackboneEvent::TokenUsageUpdated(_) => "token_usage_updated",

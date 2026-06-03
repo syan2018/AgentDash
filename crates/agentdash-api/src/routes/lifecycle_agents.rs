@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use agentdash_application::workflow::{
     LifecycleAgentMessageCommand, LifecycleAgentMessageService, LifecycleAgentSteeringCommand,
-    LifecycleAgentSteeringService,
-    SessionLaunchLifecycleAgentMessageDeliveryPort,
+    LifecycleAgentSteeringService, SessionLaunchLifecycleAgentMessageDeliveryPort,
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, LifecycleAgentMessageRequest, LifecycleAgentMessageResponse,
@@ -136,8 +135,8 @@ pub async fn steer_lifecycle_agent_message(
     Path(runtime_session_id): Path<String>,
     Json(req): Json<LifecycleAgentSteeringRequest>,
 ) -> Result<Json<LifecycleAgentSteeringResponse>, ApiError> {
-    if req.prompt_blocks.is_empty() {
-        return Err(ApiError::BadRequest("prompt_blocks 不能为空".to_string()));
+    if req.input.is_empty() {
+        return Err(ApiError::BadRequest("input 不能为空".to_string()));
     }
 
     let anchor = state
@@ -173,11 +172,12 @@ pub async fn steer_lifecycle_agent_message(
         state.repos.execution_anchor_repo.as_ref(),
         state.services.session_core.clone(),
         state.services.session_control.clone(),
+        state.services.session_eventing.clone(),
     );
     let dispatch = service
         .steer(LifecycleAgentSteeringCommand {
             delivery_runtime_session_id: runtime_session_id.clone(),
-            prompt_blocks: req.prompt_blocks,
+            input: req.input,
         })
         .await
         .map_err(ApiError::from)?;
@@ -198,11 +198,13 @@ fn runtime_command_state_dto(
     execution_state: agentdash_application::session::SessionExecutionState,
 ) -> RuntimeSessionCommandStateDto {
     match execution_state {
-        agentdash_application::session::SessionExecutionState::Idle => RuntimeSessionCommandStateDto {
-            status: "idle".to_string(),
-            turn_id: None,
-            message: None,
-        },
+        agentdash_application::session::SessionExecutionState::Idle => {
+            RuntimeSessionCommandStateDto {
+                status: "idle".to_string(),
+                turn_id: None,
+                message: None,
+            }
+        }
         agentdash_application::session::SessionExecutionState::Running { turn_id } => {
             RuntimeSessionCommandStateDto {
                 status: "running".to_string(),

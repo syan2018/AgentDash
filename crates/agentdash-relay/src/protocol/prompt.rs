@@ -1,5 +1,6 @@
 ﻿use std::collections::HashMap;
 
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -59,7 +60,8 @@ pub struct CommandCancelPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandSteerPayload {
     pub session_id: String,
-    pub prompt_blocks: serde_json::Value,
+    pub input: Vec<codex::UserInput>,
+    pub expected_turn_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -55,6 +55,8 @@ export type ArtifactBinding = { from_activity?: string, from_port: string, to_po
 
 export type BashExecExecutorSpec = { command: string, args?: Array<string>, working_directory?: string, };
 
+export type ByteRange = { start: number, end: number, };
+
 export type CapabilityConfig = { tool_directives?: Array<ToolCapabilityDirective>, mount_directives?: Array<unknown>, };
 
 export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
@@ -83,6 +85,8 @@ export type HumanActivityExecutorSpec = { "type": "approval" } & HumanApprovalEx
 
 export type HumanApprovalExecutorSpec = { form_schema_key: string, title?: string, };
 
+export type ImageDetail = "high" | "original";
+
 export type InputPortDefinition = { key: string, description: string, context_strategy: ContextStrategy, context_template?: string, standalone_fulfillment: StandaloneFulfillment, };
 
 export type LifecycleAgentMessageRequest = { prompt_blocks: Array<JsonValue>, executor_config?: JsonValue, };
@@ -91,7 +95,7 @@ export type LifecycleAgentMessageResponse = { runtime_session_id: string, turn_i
 
 export type LifecycleAgentRefDto = { run_id: string, agent_id: string, };
 
-export type LifecycleAgentSteeringRequest = { prompt_blocks: Array<JsonValue>, };
+export type LifecycleAgentSteeringRequest = { input: Array<UserInput>, };
 
 export type LifecycleAgentSteeringResponse = { runtime_session_id: string, accepted: boolean, state: RuntimeSessionCommandStateDto, };
 
@@ -159,11 +163,27 @@ export type SubjectExecutionView = { subject_ref: SubjectRefDto, associations: A
 
 export type SubjectRefDto = { kind: string, id: string, };
 
+export type TextElement = {
+/**
+ * Byte range in the parent `text` buffer that this element occupies.
+ */
+byteRange: ByteRange,
+/**
+ * Optional human-readable placeholder for the element, displayed in the UI.
+ */
+placeholder: string | null, };
+
 export type ToolCapabilityDirective = { "add": ToolCapabilityPath } | { "remove": ToolCapabilityPath };
 
 export type ToolCapabilityPath = string;
 
 export type TransitionCondition = { "kind": "always" } | { "kind": "artifact_field_equals", activity: string, port: string, path: string, value: JsonValue, } | { "kind": "human_decision_equals", activity: string, decision_port: string, value: string, } | { "kind": "agent_signal_equals", activity: string, signal_key: string, value: JsonValue, };
+
+export type UserInput = { "type": "text", text: string,
+/**
+ * UI-defined spans within `text` used to render or persist special elements.
+ */
+text_elements: Array<TextElement>, } | { "type": "image", detail?: ImageDetail, url: string, } | { "type": "localImage", detail?: ImageDetail, path: string, } | { "type": "skill", name: string, path: string, } | { "type": "mention", name: string, path: string, };
 
 export type ValidateHookScriptResponse = { valid: boolean, errors?: Array<string>, };
 

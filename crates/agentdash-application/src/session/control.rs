@@ -1,11 +1,18 @@
 use std::sync::Arc;
 
-use agentdash_agent_protocol::ContentBlock;
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_spi::ConnectorError;
 
 #[derive(Clone)]
 pub struct SessionControlService {
     connector: Arc<dyn agentdash_spi::AgentConnector>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionTurnSteerCommand {
+    pub session_id: String,
+    pub expected_turn_id: String,
+    pub input: Vec<codex::UserInput>,
 }
 
 impl SessionControlService {
@@ -25,10 +32,15 @@ impl SessionControlService {
 
     pub async fn steer_session(
         &self,
-        session_id: &str,
-        prompt_blocks: Vec<ContentBlock>,
+        command: SessionTurnSteerCommand,
     ) -> Result<(), ConnectorError> {
-        self.connector.steer_session(session_id, prompt_blocks).await
+        self.connector
+            .steer_session(
+                &command.session_id,
+                &command.expected_turn_id,
+                command.input,
+            )
+            .await
     }
 
     pub async fn supports_session_steering(&self, session_id: &str) -> bool {

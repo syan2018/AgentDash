@@ -7,7 +7,6 @@
  * - item_started / item_completed → ToolCallCardShell + toolCardRegistry (AgentDashThreadItem)
  * - turn_plan_updated → SessionPlanCard
  * - platform:
- *   - user_message_chunk → SessionMessageCard (user)
  *   - executor_session_bound / hook_trace / task_* / companion_* 等 → 系统事件卡片
  * - approval_request → 审批卡片
  * - error → 错误卡片
@@ -21,9 +20,8 @@ import {
   isAggregatedContextFrameGroup,
   isAggregatedThinkingGroup,
   isDisplayEntry,
-  extractTextFromContentBlock,
+  extractTextFromUserInputs,
   getThreadItemStatus,
-  parseContentBlock,
 } from "../model/types";
 import { resolveKind, KIND_REGISTRY, type ThreadItemKind } from "../model/threadItemKind";
 import type {
@@ -39,11 +37,6 @@ import { ToolCallCardShell } from "./ToolCallCardShell";
 import { renderToolCallCard } from "./toolCardRegistry";
 import { SessionMessageCard } from "./SessionMessageCard";
 import { SessionPlanCard } from "./SessionPlanCard";
-import { ContentBlockCard } from "./ContentBlockCard";
-import { SessionTaskContextCard } from "./SessionTaskContextCard";
-import { isAgentDashTaskContextBlock } from "./SessionTaskContextGuard";
-import { SessionOwnerContextCard } from "./SessionOwnerContextCard";
-import { SessionCapabilityCard, isSessionCapabilitiesBlock } from "./SessionCapabilityCard";
 import { SessionTaskEventCard } from "./SessionTaskEventCard";
 import { isTaskEventUpdate } from "./SessionTaskEventGuard";
 import { SessionSystemEventCard } from "./SessionSystemEventCard";
@@ -155,47 +148,19 @@ export function SingleEntry({
       );
     }
 
+    case "user_input_submitted": {
+      const isSteer = event.payload.submissionKind === "steer";
+      return (
+        <SessionMessageCard
+          type="user"
+          content={accumulatedText ?? extractTextFromUserInputs(event.payload.content)}
+          badgeOverride={isSteer ? "ST" : undefined}
+          labelOverride={isSteer ? "Steer" : undefined}
+        />
+      );
+    }
+
     case "platform": {
-      const platform = event.payload;
-
-      if (platform.kind === "session_meta_update" && platform.data.key === "user_message_chunk") {
-        const block = parseContentBlock(platform.data.value);
-
-        if (block) {
-          if (block.type === "resource" || block.type === "resource_link") {
-            if (block.type === "resource") {
-              if (isAgentDashTaskContextBlock(block)) {
-                return <SessionTaskContextCard block={block} />;
-              }
-
-              const uri = block.resource.uri;
-              if (
-                uri.startsWith("agentdash://project-context/") ||
-                uri.startsWith("agentdash://story-context/")
-              ) {
-                return <SessionOwnerContextCard block={block} />;
-              }
-
-              if (isSessionCapabilitiesBlock(block)) {
-                return <SessionCapabilityCard block={block} />;
-              }
-            }
-            return <ContentBlockCard block={block} variant="compact" />;
-          }
-
-          if (block.type === "image" || block.type === "audio") {
-            return <ContentBlockCard block={block} variant="compact" />;
-          }
-        }
-
-        return (
-          <SessionMessageCard
-            type="user"
-            content={accumulatedText ?? extractTextFromContentBlock(block)}
-          />
-        );
-      }
-
       if (isTaskEventUpdate(event)) {
         return <SessionTaskEventCard event={event} />;
       }

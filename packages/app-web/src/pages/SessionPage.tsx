@@ -463,7 +463,7 @@ export function SessionPage({
     }
     if (action === "steer") {
       await sendLifecycleAgentSteeringMessageByRuntimeSession(sessionId, {
-        prompt_blocks: [{ type: "text", text: trimmed }],
+        input: [{ type: "text", text: trimmed, text_elements: [] }],
       });
       void refreshSessionRuntimeContext().catch(() => {});
       scheduleHookRuntimeRefresh("agent_message_steered", true);

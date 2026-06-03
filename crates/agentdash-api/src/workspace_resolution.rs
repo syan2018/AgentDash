@@ -8,8 +8,7 @@ use agentdash_application::workspace::{WorkspaceDetectionError, WorkspaceResolut
 use agentdash_application_ports::backend_transport::{
     BackendTransport, DirectoryBrowseInfo, DirectoryEntryInfo, GitRepoInfo, P4WorkspaceInfo,
     RelayPromptRequest, RelayPromptTransport, RelaySessionRoute, RelaySessionRouteInfo,
-    RelaySteerRequest,
-    RemoteExecutorInfo, TransportError, WorkspaceProbeInfo,
+    RelaySteerRequest, RemoteExecutorInfo, TransportError, WorkspaceProbeInfo,
 };
 use agentdash_domain::workspace::Workspace;
 use agentdash_relay::{
@@ -261,7 +260,8 @@ impl RelayPromptTransport for BackendRegistry {
             id: RelayMessage::new_id("steer"),
             payload: CommandSteerPayload {
                 session_id: payload.session_id,
-                prompt_blocks: payload.prompt_blocks,
+                input: payload.input,
+                expected_turn_id: payload.expected_turn_id,
             },
         };
         let resp =

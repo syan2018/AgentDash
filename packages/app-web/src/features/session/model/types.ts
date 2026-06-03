@@ -56,6 +56,7 @@ import type {
   BackboneEvent,
   AgentDashThreadItem,
   PlatformEvent,
+  UserInput,
   ThreadTokenUsage,
   TokenUsageBreakdown,
   NormalizedContextUsage,
@@ -222,6 +223,29 @@ export function extractTextFromContentBlock(content: ContentBlock | null | undef
     case "audio":
       return content.mimeType ? `🔊 音频内容 (${content.mimeType})` : "🔊 音频内容";
   }
+}
+
+export function extractTextFromUserInput(input: UserInput): string {
+  switch (input.type) {
+    case "text":
+      return input.text;
+    case "image":
+      return `引用图片: ${input.url}`;
+    case "localImage":
+      return `引用本地图片: ${input.path}`;
+    case "skill":
+      return `引用 Skill: ${input.name}`;
+    case "mention":
+      return `引用: ${input.name}`;
+  }
+}
+
+export function extractTextFromUserInputs(input: readonly UserInput[]): string {
+  return input
+    .map(extractTextFromUserInput)
+    .map((text) => text.trim())
+    .filter((text) => text.length > 0)
+    .join("\n");
 }
 
 // ==================== 前端扩展类型 ====================

@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use tokio::sync::mpsc;
 
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_domain::backend::{BackendExecutionLeaseRepository, BackendExecutionTerminalKind};
-use agentdash_agent_protocol::ContentBlock;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::{
     AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
@@ -273,7 +273,8 @@ impl AgentConnector for RelayAgentConnector {
     async fn steer_session(
         &self,
         session_id: &str,
-        prompt_blocks: Vec<ContentBlock>,
+        expected_turn_id: &str,
+        input: Vec<codex::UserInput>,
     ) -> Result<(), ConnectorError> {
         if !self.transport.has_session_sink(session_id) {
             return Err(ConnectorError::Runtime(format!(
@@ -284,15 +285,13 @@ impl AgentConnector for RelayAgentConnector {
         let route = self.transport.session_route(session_id).ok_or_else(|| {
             ConnectorError::Runtime(format!("session `{session_id}` 缺少 relay backend route"))
         })?;
-        let prompt_blocks = serde_json::to_value(prompt_blocks).map_err(|error| {
-            ConnectorError::Runtime(format!("序列化 steer prompt_blocks 失败: {error}"))
-        })?;
         self.transport
             .relay_steer(
                 &route.backend_id,
                 RelaySteerRequest {
                     session_id: session_id.to_string(),
-                    prompt_blocks,
+                    input,
+                    expected_turn_id: expected_turn_id.to_string(),
                 },
             )
             .await
@@ -1052,11 +1051,13 @@ mod tests {
         connector
             .steer_session(
                 "session-steer",
-                vec![serde_json::from_value(serde_json::json!({
-                    "type": "text",
-                    "text": "adjust"
-                }))
-                .expect("valid block")],
+                "turn-steer",
+                vec![
+                    agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text {
+                        text: "adjust".to_string(),
+                        text_elements: Vec::new(),
+                    },
+                ],
             )
             .await
             .expect("relay steer should succeed");
@@ -1065,9 +1066,15 @@ mod tests {
         assert_eq!(steers.len(), 1);
         assert_eq!(steers[0].0, "backend-route");
         assert_eq!(steers[0].1.session_id, "session-steer");
+        assert_eq!(steers[0].1.expected_turn_id, "turn-steer");
         assert_eq!(
-            steers[0].1.prompt_blocks,
-            serde_json::json!([{ "type": "text", "text": "adjust" }])
+            steers[0].1.input,
+            vec![
+                agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text {
+                    text: "adjust".to_string(),
+                    text_elements: Vec::new(),
+                }
+            ]
         );
         assert!(transport.cancelled.lock().unwrap().is_empty());
         assert!(lease_repo.releases.lock().unwrap().is_empty());

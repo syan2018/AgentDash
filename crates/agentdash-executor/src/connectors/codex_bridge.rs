@@ -9,13 +9,12 @@ use std::{
 };
 
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, ContentBlock, ItemCompletedNotification, ItemStartedNotification,
+    BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
     PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionContext, ExecutionStream, PromptPayload,
-    content_block_to_text,
 };
 use codex_app_server_protocol::{
     AskForApproval, ClientInfo, ClientNotification, ClientRequest, GetAccountParams,
@@ -184,26 +183,6 @@ fn build_prompt_text(
         ));
     }
     Ok(prompt_text)
-}
-
-fn prompt_blocks_to_codex_user_input(
-    blocks: &[ContentBlock],
-) -> Result<Vec<UserInput>, ConnectorError> {
-    let text = blocks
-        .iter()
-        .filter_map(content_block_to_text)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let text = text.trim();
-    if text.is_empty() {
-        return Err(ConnectorError::InvalidConfig(
-            "steer prompt_blocks 解析后为空".to_string(),
-        ));
-    }
-    Ok(vec![UserInput::Text {
-        text: text.to_string(),
-        text_elements: vec![],
-    }])
 }
 
 fn executable_available(name: &str) -> bool {
@@ -474,10 +453,9 @@ async fn handle_server_notification(
         }
         "turn/started" => {
             if let Some(params) = notification.params
-                && let Ok(p) =
-                    serde_json::from_value::<codex_app_server_protocol::TurnStartedNotification>(
-                        params,
-                    )
+                && let Ok(p) = serde_json::from_value::<
+                    codex_app_server_protocol::TurnStartedNotification,
+                >(params)
             {
                 *active_turn_id.lock().await = Some(p.turn.id.clone());
                 let _ = tx.send(Ok(wrap(BackboneEvent::TurnStarted(p)))).await;
@@ -485,10 +463,9 @@ async fn handle_server_notification(
         }
         "turn/completed" => {
             if let Some(params) = notification.params
-                && let Ok(p) =
-                    serde_json::from_value::<codex_app_server_protocol::TurnCompletedNotification>(
-                        params,
-                    )
+                && let Ok(p) = serde_json::from_value::<
+                    codex_app_server_protocol::TurnCompletedNotification,
+                >(params)
             {
                 let completed_turn_id = p.turn.id.clone();
                 let mut active = active_turn_id.lock().await;
@@ -989,7 +966,8 @@ impl AgentConnector for CodexBridgeConnector {
     async fn steer_session(
         &self,
         session_id: &str,
-        prompt_blocks: Vec<ContentBlock>,
+        expected_turn_id: &str,
+        input: Vec<UserInput>,
     ) -> Result<(), ConnectorError> {
         let session = self
             .live_sessions
@@ -1002,26 +980,24 @@ impl AgentConnector for CodexBridgeConnector {
                     "session `{session_id}` 当前没有活跃的 Codex app-server，无法运行中 steer"
                 ))
             })?;
-        let thread_id = session
-            .thread_id
-            .lock()
-            .await
-            .clone()
-            .ok_or_else(|| ConnectorError::Runtime("Codex thread 尚未就绪，无法 steer".to_string()))?;
-        let expected_turn_id = session
-            .active_turn_id
-            .lock()
-            .await
-            .clone()
-            .ok_or_else(|| ConnectorError::Runtime("Codex 当前没有 active turn，无法 steer".to_string()))?;
-        let input = prompt_blocks_to_codex_user_input(&prompt_blocks)?;
+        let thread_id = session.thread_id.lock().await.clone().ok_or_else(|| {
+            ConnectorError::Runtime("Codex thread 尚未就绪，无法 steer".to_string())
+        })?;
+        let active_turn_id = session.active_turn_id.lock().await.clone().ok_or_else(|| {
+            ConnectorError::Runtime("Codex 当前没有 active turn，无法 steer".to_string())
+        })?;
+        if active_turn_id != expected_turn_id {
+            return Err(ConnectorError::Runtime(format!(
+                "Codex active turn 不匹配: expected={expected_turn_id}, actual={active_turn_id}"
+            )));
+        }
         let request = ClientRequest::TurnSteer {
             request_id: next_request_id(&session.request_counter),
             params: TurnSteerParams {
                 thread_id,
                 input,
                 responsesapi_client_metadata: None,
-                expected_turn_id,
+                expected_turn_id: expected_turn_id.to_string(),
             },
         };
         let response: TurnSteerResponse =

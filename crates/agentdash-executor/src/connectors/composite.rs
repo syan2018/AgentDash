@@ -120,7 +120,8 @@ mod tests {
         async fn steer_session(
             &self,
             _session_id: &str,
-            _prompt_blocks: Vec<agentdash_agent_protocol::ContentBlock>,
+            _expected_turn_id: &str,
+            _input: Vec<agentdash_agent_protocol::codex_app_server_protocol::UserInput>,
         ) -> Result<(), ConnectorError> {
             self.steer_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
@@ -218,11 +219,13 @@ mod tests {
         composite
             .steer_session(
                 "session-1",
-                vec![serde_json::from_value(serde_json::json!({
-                    "type": "text",
-                    "text": "steer"
-                }))
-                .expect("valid block")],
+                "turn-1",
+                vec![
+                    agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text {
+                        text: "steer".to_string(),
+                        text_elements: Vec::new(),
+                    },
+                ],
             )
             .await
             .expect("live child should receive steer");
@@ -479,11 +482,14 @@ impl AgentConnector for CompositeConnector {
     async fn steer_session(
         &self,
         session_id: &str,
-        prompt_blocks: Vec<agentdash_agent_protocol::ContentBlock>,
+        expected_turn_id: &str,
+        input: Vec<agentdash_agent_protocol::codex_app_server_protocol::UserInput>,
     ) -> Result<(), ConnectorError> {
         for connector in &self.connectors {
             if connector.has_live_session(session_id).await {
-                return connector.steer_session(session_id, prompt_blocks).await;
+                return connector
+                    .steer_session(session_id, expected_turn_id, input.clone())
+                    .await;
             }
         }
 

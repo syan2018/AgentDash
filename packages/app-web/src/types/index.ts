@@ -396,7 +396,7 @@ export interface RoutineExecution {
   trigger_source: string;
   trigger_payload: Record<string, unknown> | null;
   resolved_prompt: string | null;
-  dispatch_refs?: RoutineDispatchRefs | null;
+  runtime_refs?: AgentRuntimeRefs | null;
   status: RoutineExecutionStatus;
   started_at: string;
   completed_at: string | null;
@@ -404,10 +404,16 @@ export interface RoutineExecution {
   entity_key: string | null;
 }
 
-export interface RoutineDispatchRefs {
-  run_id: string;
-  agent_id: string;
-  frame_id: string;
+export interface ActivityBindingRefs {
+  graph_instance_ref: string;
+  assignment_ref?: string | null;
+}
+
+export interface AgentRuntimeRefs {
+  run_ref: string;
+  agent_ref: string;
+  frame_ref: string;
+  activity_binding?: ActivityBindingRefs | null;
 }
 
 export interface RegenerateTokenResponse {

@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use agentdash_domain::workflow::SubjectExecutionRef;
+use agentdash_domain::workflow::{AgentRuntimeRefs, SubjectExecutionRef};
 use agentdash_domain::{common::AgentConfig, task::TaskStatus};
 
 #[derive(Debug, thiserror::Error)]
@@ -39,10 +39,7 @@ pub struct TaskExecutionCommand {
 #[derive(Debug, Clone)]
 pub struct TaskExecutionResult {
     pub task_id: Uuid,
-    pub run_ref: Uuid,
-    pub agent_ref: Uuid,
-    pub frame_ref: Uuid,
-    pub assignment_ref: Option<Uuid>,
+    pub runtime_refs: AgentRuntimeRefs,
     pub subject_execution_ref: SubjectExecutionRef,
     pub delivery_runtime_ref: Option<Uuid>,
     pub status: TaskStatus,
@@ -55,11 +52,7 @@ pub struct TaskExecutionResult {
 #[derive(Debug, Clone)]
 pub struct TaskExecutionCancelResult {
     pub task: agentdash_domain::task::Task,
-    pub run_ref: Uuid,
-    pub graph_instance_ref: Option<Uuid>,
-    pub agent_ref: Uuid,
-    pub frame_ref: Uuid,
-    pub assignment_ref: Option<Uuid>,
+    pub runtime_refs: AgentRuntimeRefs,
     pub subject_execution_ref: SubjectExecutionRef,
     pub runtime_delivery_ref: Option<String>,
 }

@@ -252,21 +252,16 @@ impl RoutineExecutor {
             .await
             .map_err(map_routine_dispatch_error)?;
 
-        let refs = RoutineDispatchRefs {
-            run_id: result.run_ref,
-            agent_id: result.agent_ref,
-            frame_id: result.frame_ref,
-            assignment_id: result.assignment_ref,
-        };
+        let refs = RoutineDispatchRefs::new(result.runtime_refs.clone());
 
         execution.mark_dispatched(refs, prompt.to_string());
 
         tracing::info!(
             target: "routine",
             execution_id = %execution.id,
-            run_id = %result.run_ref,
-            agent_id = %result.agent_ref,
-            frame_id = %result.frame_ref,
+            run_id = %result.runtime_refs.run_ref,
+            agent_id = %result.runtime_refs.agent_ref,
+            frame_id = %result.runtime_refs.frame_ref,
             "Routine dispatch 成功"
         );
 

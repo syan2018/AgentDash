@@ -1,11 +1,11 @@
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityExecutionClaimRepository, ActivityExecutionClaimStatus, AgentAssignment,
-    AgentAssignmentRepository, AgentFrame, AgentFrameRepository, LifecycleAgent,
+    ActivityBindingRefs, ActivityExecutionClaimRepository, ActivityExecutionClaimStatus,
+    AgentAssignment, AgentAssignmentRepository, AgentFrame, AgentFrameRepository, LifecycleAgent,
     LifecycleAgentRepository, LifecycleRunRepository, LifecycleSubjectAssociation,
-    LifecycleSubjectAssociationRepository, RuntimeSessionSelectionPolicy, SubjectRef,
-    WorkflowGraphInstanceRepository, WorkflowGraphRepository,
+    LifecycleSubjectAssociationRepository, RuntimeControlRefs, RuntimeSessionSelectionPolicy,
+    SubjectRef, WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
 
 use super::{ActivityEvent, ActivityLifecycleRunService, WorkflowApplicationError};
@@ -20,11 +20,7 @@ pub struct CancelSubjectExecutionCommand {
 #[derive(Debug, Clone)]
 pub struct RuntimeCancelDeliveryCommand {
     pub runtime_session_id: String,
-    pub run_ref: Uuid,
-    pub graph_instance_ref: Option<Uuid>,
-    pub agent_ref: Uuid,
-    pub frame_ref: Uuid,
-    pub assignment_ref: Option<Uuid>,
+    pub runtime_refs: RuntimeControlRefs,
     pub reason: Option<String>,
 }
 
@@ -32,11 +28,7 @@ pub struct RuntimeCancelDeliveryCommand {
 pub struct SubjectExecutionCancelResult {
     pub subject_ref: SubjectRef,
     pub association_ref: Uuid,
-    pub run_ref: Uuid,
-    pub graph_instance_ref: Option<Uuid>,
-    pub agent_ref: Uuid,
-    pub frame_ref: Uuid,
-    pub assignment_ref: Option<Uuid>,
+    pub runtime_refs: RuntimeControlRefs,
     pub activity_key: Option<String>,
     pub attempt: Option<i32>,
     pub runtime_delivery: Option<RuntimeCancelDeliveryCommand>,
@@ -104,14 +96,7 @@ impl<'a> SubjectExecutionControlService<'a> {
         Ok(SubjectExecutionCancelResult {
             subject_ref: command.subject_ref,
             association_ref: target.association.id,
-            run_ref: target.agent.run_id,
-            graph_instance_ref: target
-                .assignment
-                .as_ref()
-                .map(|assignment| assignment.graph_instance_id),
-            agent_ref: target.agent.id,
-            frame_ref: target.delivery_frame.id,
-            assignment_ref: target.assignment.as_ref().map(|assignment| assignment.id),
+            runtime_refs: runtime_refs_for_target(&target),
             activity_key: target
                 .assignment
                 .as_ref()
@@ -342,17 +327,21 @@ impl<'a> SubjectExecutionControlService<'a> {
             .select_runtime_session_id(policy)
             .map(|runtime_session_id| RuntimeCancelDeliveryCommand {
                 runtime_session_id,
-                run_ref: target.agent.run_id,
-                graph_instance_ref: target
-                    .assignment
-                    .as_ref()
-                    .map(|assignment| assignment.graph_instance_id),
-                agent_ref: target.agent.id,
-                frame_ref: target.delivery_frame.id,
-                assignment_ref: target.assignment.as_ref().map(|assignment| assignment.id),
+                runtime_refs: runtime_refs_for_target(target),
                 reason,
             })
     }
+}
+
+fn runtime_refs_for_target(target: &SubjectExecutionCancelTarget) -> RuntimeControlRefs {
+    RuntimeControlRefs::new(
+        target.agent.run_id,
+        target.agent.id,
+        target.delivery_frame.id,
+        target.assignment.as_ref().map(|assignment| {
+            ActivityBindingRefs::new(assignment.graph_instance_id, Some(assignment.id))
+        }),
+    )
 }
 
 fn select_subject_association(
@@ -1013,7 +1002,7 @@ mod tests {
             .expect("cancel");
 
         assert_eq!(result.subject_ref, subject);
-        assert_eq!(result.assignment_ref, Some(assignment.id));
+        assert_eq!(result.runtime_refs.assignment_ref(), Some(assignment.id));
         assert_eq!(
             result
                 .runtime_delivery
@@ -1105,17 +1094,17 @@ mod tests {
             .expect("cancel");
 
         assert_eq!(result.subject_ref, subject);
-        assert_eq!(result.run_ref, run.id);
-        assert_eq!(result.agent_ref, agent.id);
-        assert_eq!(result.frame_ref, frame.id);
-        assert_eq!(result.graph_instance_ref, None);
-        assert_eq!(result.assignment_ref, None);
+        assert_eq!(result.runtime_refs.run_ref, run.id);
+        assert_eq!(result.runtime_refs.agent_ref, agent.id);
+        assert_eq!(result.runtime_refs.frame_ref, frame.id);
+        assert_eq!(result.runtime_refs.graph_instance_ref(), None);
+        assert_eq!(result.runtime_refs.assignment_ref(), None);
         assert_eq!(result.activity_key, None);
         assert_eq!(result.attempt, None);
         let command = result.runtime_delivery.expect("runtime delivery");
         assert_eq!(command.runtime_session_id, "runtime-graphless-1");
-        assert_eq!(command.graph_instance_ref, None);
-        assert_eq!(command.assignment_ref, None);
+        assert_eq!(command.runtime_refs.graph_instance_ref(), None);
+        assert_eq!(command.runtime_refs.assignment_ref(), None);
         assert!(assignment_repo.assignments.lock().unwrap().is_empty());
         assert!(claim_repo.claims.lock().unwrap().is_empty());
     }

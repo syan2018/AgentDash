@@ -140,10 +140,7 @@ impl StoryActivityActivationService {
 
         Ok(TaskExecutionResult {
             task_id: task.id,
-            run_ref: result.run_ref,
-            agent_ref: result.agent_ref,
-            frame_ref: result.frame_ref,
-            assignment_ref: result.assignment_ref,
+            runtime_refs: result.runtime_refs,
             subject_execution_ref: result.subject_execution_ref,
             delivery_runtime_ref: result.delivery_runtime_ref,
             status: task.status().clone(),
@@ -182,10 +179,7 @@ impl StoryActivityActivationService {
 
         Ok(TaskExecutionResult {
             task_id: task.id,
-            run_ref: result.run_ref,
-            agent_ref: result.agent_ref,
-            frame_ref: result.frame_ref,
-            assignment_ref: result.assignment_ref,
+            runtime_refs: result.runtime_refs,
             subject_execution_ref: result.subject_execution_ref,
             delivery_runtime_ref: result.delivery_runtime_ref,
             status: task.status().clone(),
@@ -218,11 +212,7 @@ impl StoryActivityActivationService {
             ActivityAttemptStatus::Cancelled,
             "task_cancel_requested",
             serde_json::json!({
-                "run_ref": cancel_result.run_ref,
-                "graph_instance_ref": cancel_result.graph_instance_ref,
-                "agent_ref": cancel_result.agent_ref,
-                "frame_ref": cancel_result.frame_ref,
-                "assignment_ref": cancel_result.assignment_ref,
+                "runtime_refs": cancel_result.runtime_refs,
                 "activity_key": cancel_result.activity_key,
                 "attempt": cancel_result.attempt,
                 "runtime_delivery_ref": cancel_result
@@ -236,11 +226,7 @@ impl StoryActivityActivationService {
 
         Ok(TaskExecutionCancelResult {
             task: projected_task,
-            run_ref: cancel_result.run_ref,
-            graph_instance_ref: cancel_result.graph_instance_ref,
-            agent_ref: cancel_result.agent_ref,
-            frame_ref: cancel_result.frame_ref,
-            assignment_ref: cancel_result.assignment_ref,
+            runtime_refs: cancel_result.runtime_refs,
             subject_execution_ref: agentdash_domain::workflow::SubjectExecutionRef {
                 subject_ref,
                 association_id: cancel_result.association_ref,

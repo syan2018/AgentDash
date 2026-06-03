@@ -16,11 +16,12 @@ pub use agent_assignment::AgentAssignment;
 pub use agent_frame::{AgentFrame, RUNTIME_SESSION_REF_KIND, RuntimeSessionSelectionPolicy};
 pub use agent_lineage::AgentLineage;
 pub use dispatch::{
-    AgentLaunchDispatchResult, AgentLaunchIntent, AgentPolicy, AgentProcedureRef, CapabilityPolicy,
-    ContextPolicy, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, GatePolicy,
-    InteractionDispatchIntent, InteractionGateOpenedDispatchResult,
-    LifecycleRunStartDispatchResult, LifecycleRunStartIntent, RunPolicy, RuntimePolicy,
-    SubjectExecutionDispatchResult, SubjectExecutionIntent, SubjectExecutionRef, WorkflowGraphRef,
+    ActivityBindingRefs, AgentLaunchDispatchResult, AgentLaunchIntent, AgentPolicy,
+    AgentProcedureRef, AgentRuntimeRefs, CapabilityPolicy, ContextPolicy, ExecutionDispatchResult,
+    ExecutionIntent, ExecutionSource, GatePolicy, InteractionDispatchIntent,
+    InteractionGateOpenedDispatchResult, LifecycleRunStartDispatchResult, LifecycleRunStartIntent,
+    RunPolicy, RuntimeControlRefs, RuntimePolicy, SubjectExecutionDispatchResult,
+    SubjectExecutionIntent, SubjectExecutionRef, WorkflowGraphRef,
 };
 pub use entity::{
     ActiveActivityRef, ActivityExecutionClaim, AgentProcedure, LifecycleRun, LifecycleRunTopology,

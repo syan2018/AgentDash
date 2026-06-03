@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::workflow::AgentRuntimeRefs;
+
 /// Routine — 一等领域实体，项目级别的 Agent 触发规则
 ///
 /// 将「什么时候启动 Agent 干活」提升为独立的领域概念，
@@ -98,11 +100,29 @@ pub enum DispatchStrategy {
 /// Dispatch 结果引用——记录 LifecycleRun / LifecycleAgent / AgentFrame 的稳定锚点。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RoutineDispatchRefs {
-    pub run_id: Uuid,
-    pub agent_id: Uuid,
-    pub frame_id: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assignment_id: Option<Uuid>,
+    pub runtime_refs: AgentRuntimeRefs,
+}
+
+impl RoutineDispatchRefs {
+    pub fn new(runtime_refs: AgentRuntimeRefs) -> Self {
+        Self { runtime_refs }
+    }
+
+    pub fn run_id(&self) -> Uuid {
+        self.runtime_refs.run_ref
+    }
+
+    pub fn agent_id(&self) -> Uuid {
+        self.runtime_refs.agent_ref
+    }
+
+    pub fn frame_id(&self) -> Uuid {
+        self.runtime_refs.frame_ref
+    }
+
+    pub fn assignment_id(&self) -> Option<Uuid> {
+        self.runtime_refs.assignment_ref()
+    }
 }
 
 /// 每次触发产生的执行记录

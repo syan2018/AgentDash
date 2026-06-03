@@ -187,7 +187,7 @@ pub async fn launch_project_agent(
     if let Some(mut lifecycle_agent) = state
         .repos
         .lifecycle_agent_repo
-        .get(dispatch_result.agent_ref)
+        .get(dispatch_result.runtime_refs.agent_ref)
         .await
         .map_err(ApiError::from)?
     {
@@ -206,15 +206,15 @@ pub async fn launch_project_agent(
         created: true,
         agent: summary,
         run_ref: LifecycleRunRefDto {
-            run_id: dispatch_result.run_ref.to_string(),
+            run_id: dispatch_result.runtime_refs.run_ref.to_string(),
         },
         agent_ref: LifecycleAgentRefDto {
-            run_id: dispatch_result.run_ref.to_string(),
-            agent_id: dispatch_result.agent_ref.to_string(),
+            run_id: dispatch_result.runtime_refs.run_ref.to_string(),
+            agent_id: dispatch_result.runtime_refs.agent_ref.to_string(),
         },
         frame_ref: AgentFrameRefDto {
-            agent_id: dispatch_result.agent_ref.to_string(),
-            frame_id: dispatch_result.frame_ref.to_string(),
+            agent_id: dispatch_result.runtime_refs.agent_ref.to_string(),
+            frame_id: dispatch_result.runtime_refs.frame_ref.to_string(),
             revision: None,
         },
         delivery_runtime_ref: dispatch_result

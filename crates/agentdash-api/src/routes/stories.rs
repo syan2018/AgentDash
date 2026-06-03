@@ -544,15 +544,15 @@ fn story_launch_result_to_dto(result: StoryLifecycleLaunchResult) -> StoryLaunch
         story_id: result.story_id.to_string(),
         project_agent_id: result.project_agent_id.to_string(),
         run_ref: LifecycleRunRefDto {
-            run_id: result.run_ref.to_string(),
+            run_id: result.runtime_refs.run_ref.to_string(),
         },
         agent_ref: LifecycleAgentRefDto {
-            run_id: result.run_ref.to_string(),
-            agent_id: result.agent_ref.to_string(),
+            run_id: result.runtime_refs.run_ref.to_string(),
+            agent_id: result.runtime_refs.agent_ref.to_string(),
         },
         frame_ref: AgentFrameRefDto {
-            agent_id: result.agent_ref.to_string(),
-            frame_id: result.frame_ref.to_string(),
+            agent_id: result.runtime_refs.agent_ref.to_string(),
+            frame_id: result.runtime_refs.frame_ref.to_string(),
             revision: None,
         },
         delivery_runtime_ref: result.delivery_runtime_ref.map(|runtime_session_id| {

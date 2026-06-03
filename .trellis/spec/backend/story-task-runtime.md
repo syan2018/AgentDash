@@ -123,6 +123,7 @@ runtime_session_id → RuntimeSessionExecutionAnchor
 
 - `start_task` / `continue_task` / `cancel_task` 等 facade 名字保留。
 - 内部统一提交 `ExecutionIntent(subject_ref=SubjectRef(kind=Task, id=task_id), ...)`。
+- Task / Routine execution response 返回 `AgentRuntimeRefs` envelope；run / agent / frame 是通用控制面，graph instance / assignment 只通过可选 Activity binding 暴露。
 - **不允许**为新场景再开 Task-specific session 装配分支；Task runtime 进入统一 lifecycle dispatch 路径。
 - Subject / agent / run-oriented API 是 Story / Task 业务查询的主路径；session route 只提供 RuntimeTrace。
 

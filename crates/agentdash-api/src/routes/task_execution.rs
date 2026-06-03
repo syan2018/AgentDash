@@ -46,10 +46,7 @@ pub async fn start_task(
 
     Ok(Json(StartTaskResponse {
         task_id: result.task_id,
-        run_ref: result.run_ref,
-        agent_ref: result.agent_ref,
-        frame_ref: result.frame_ref,
-        assignment_ref: result.assignment_ref,
+        runtime_refs: result.runtime_refs,
         subject_execution_ref: result.subject_execution_ref.association_id,
         delivery_runtime_ref: result.delivery_runtime_ref,
         status: result.status,
@@ -96,10 +93,7 @@ pub async fn continue_task(
 
     Ok(Json(ContinueTaskResponse {
         task_id: result.task_id,
-        run_ref: result.run_ref,
-        agent_ref: result.agent_ref,
-        frame_ref: result.frame_ref,
-        assignment_ref: result.assignment_ref,
+        runtime_refs: result.runtime_refs,
         subject_execution_ref: result.subject_execution_ref.association_id,
         delivery_runtime_ref: result.delivery_runtime_ref,
         status: result.status,
@@ -127,11 +121,7 @@ pub async fn cancel_task(
         .map_err(ApiError::from)?;
     Ok(Json(CancelTaskResponse {
         task: crate::dto::TaskResponse::from(result.task),
-        run_ref: result.run_ref,
-        graph_instance_ref: result.graph_instance_ref,
-        agent_ref: result.agent_ref,
-        frame_ref: result.frame_ref,
-        assignment_ref: result.assignment_ref,
+        runtime_refs: result.runtime_refs,
         subject_execution_ref: result.subject_execution_ref.association_id,
         runtime_delivery_ref: result.runtime_delivery_ref,
     }))

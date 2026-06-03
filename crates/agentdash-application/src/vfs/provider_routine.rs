@@ -693,12 +693,17 @@ mod tests {
             trigger_source: "webhook".to_string(),
             trigger_payload: Some(json!({ "pull_request": { "number": 42 } })),
             resolved_prompt: Some("review PR 42".to_string()),
-            dispatch_refs: Some(RoutineDispatchRefs {
-                run_id: Uuid::new_v4(),
-                agent_id: Uuid::new_v4(),
-                frame_id: Uuid::new_v4(),
-                assignment_id: Some(Uuid::new_v4()),
-            }),
+            dispatch_refs: Some(RoutineDispatchRefs::new(
+                agentdash_domain::workflow::AgentRuntimeRefs::new(
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                    Some(agentdash_domain::workflow::ActivityBindingRefs::new(
+                        Uuid::new_v4(),
+                        Some(Uuid::new_v4()),
+                    )),
+                ),
+            )),
             status: RoutineExecutionStatus::Dispatched,
             started_at: Utc::now(),
             completed_at: None,

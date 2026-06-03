@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    AgentAssignment, AgentFrame, AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage,
-    AgentPolicy, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, GatePolicy,
-    InteractionDispatchIntent, InteractionGateOpenedDispatchResult, LifecycleAgent, LifecycleGate,
-    LifecycleRun, LifecycleRunStartDispatchResult, LifecycleRunStartIntent,
-    LifecycleSubjectAssociation, RunPolicy, RuntimePolicy, RuntimeSessionExecutionAnchor,
-    SubjectExecutionDispatchResult, SubjectExecutionIntent, SubjectExecutionRef, SubjectRef,
-    WorkflowGraph, WorkflowGraphInstance, WorkflowGraphRef,
+    ActivityBindingRefs, AgentAssignment, AgentFrame, AgentLaunchDispatchResult, AgentLaunchIntent,
+    AgentLineage, AgentPolicy, AgentRuntimeRefs, ExecutionDispatchResult, ExecutionIntent,
+    ExecutionSource, GatePolicy, InteractionDispatchIntent, InteractionGateOpenedDispatchResult,
+    LifecycleAgent, LifecycleGate, LifecycleRun, LifecycleRunStartDispatchResult,
+    LifecycleRunStartIntent, LifecycleSubjectAssociation, RunPolicy, RuntimePolicy,
+    RuntimeSessionExecutionAnchor, SubjectExecutionDispatchResult, SubjectExecutionIntent,
+    SubjectExecutionRef, SubjectRef, WorkflowGraph, WorkflowGraphInstance, WorkflowGraphRef,
 };
 use agentdash_domain::workflow::{
     AgentAssignmentRepository, AgentFrameRepository, AgentLineageRepository,
@@ -138,6 +138,22 @@ struct DispatchFacts {
     subject_execution_ref: Option<SubjectExecutionRef>,
 }
 
+impl DispatchFacts {
+    fn runtime_refs(&self) -> AgentRuntimeRefs {
+        AgentRuntimeRefs::new(
+            self.run.id,
+            self.agent.id,
+            self.frame.id,
+            self.graph_instance.as_ref().map(|instance| {
+                ActivityBindingRefs::new(
+                    instance.id,
+                    self.assignment.as_ref().map(|assignment| assignment.id),
+                )
+            }),
+        )
+    }
+}
+
 impl From<&AgentLaunchIntent> for DispatchPlan {
     fn from(intent: &AgentLaunchIntent) -> Self {
         Self {
@@ -263,10 +279,7 @@ impl<'a> LifecycleDispatchService<'a> {
     ) -> Result<AgentLaunchDispatchResult, WorkflowApplicationError> {
         let facts = self.dispatch_common(DispatchPlan::from(intent)).await?;
         Ok(AgentLaunchDispatchResult {
-            run_ref: facts.run.id,
-            graph_instance_ref: facts.graph_instance.as_ref().map(|instance| instance.id),
-            agent_ref: facts.agent.id,
-            frame_ref: facts.frame.id,
+            runtime_refs: facts.runtime_refs(),
             delivery_runtime_ref: facts.runtime_session_ref,
         })
     }
@@ -276,17 +289,14 @@ impl<'a> LifecycleDispatchService<'a> {
         intent: &SubjectExecutionIntent,
     ) -> Result<SubjectExecutionDispatchResult, WorkflowApplicationError> {
         let facts = self.dispatch_common(DispatchPlan::from(intent)).await?;
+        let runtime_refs = facts.runtime_refs();
         let subject_execution_ref = facts.subject_execution_ref.ok_or_else(|| {
             WorkflowApplicationError::Internal(
                 "SubjectExecutionIntent 未创建 subject_execution_ref".to_string(),
             )
         })?;
         Ok(SubjectExecutionDispatchResult {
-            run_ref: facts.run.id,
-            graph_instance_ref: facts.graph_instance.as_ref().map(|instance| instance.id),
-            agent_ref: facts.agent.id,
-            frame_ref: facts.frame.id,
-            assignment_ref: facts.assignment.as_ref().map(|assignment| assignment.id),
+            runtime_refs,
             subject_execution_ref,
             delivery_runtime_ref: facts.runtime_session_ref,
         })
@@ -303,11 +313,7 @@ impl<'a> LifecycleDispatchService<'a> {
             )
         })?;
         Ok(InteractionGateOpenedDispatchResult {
-            run_ref: facts.run.id,
-            graph_instance_ref: facts.graph_instance.as_ref().map(|instance| instance.id),
-            agent_ref: facts.agent.id,
-            frame_ref: facts.frame.id,
-            assignment_ref: facts.assignment.as_ref().map(|assignment| assignment.id),
+            runtime_refs: facts.runtime_refs(),
             gate_ref,
             delivery_runtime_ref: facts.runtime_session_ref,
         })
@@ -1688,7 +1694,7 @@ mod tests {
         assert_eq!(runs[0].root_graph_id, None);
         let instances = gi_repo.items.lock().unwrap().clone();
         assert!(instances.is_empty());
-        assert_eq!(result.graph_instance_ref, None);
+        assert_eq!(result.runtime_refs.graph_instance_ref(), None);
         assert_eq!(agent_repo.items.lock().unwrap().len(), 1);
         let frames = frame_repo.items.lock().unwrap().clone();
         assert_eq!(frames.len(), 1);
@@ -1737,8 +1743,11 @@ mod tests {
         assert_eq!(associations.len(), 1);
         assert_eq!(associations[0].subject_kind, "story");
         assert_eq!(associations[0].subject_id, story_id);
-        assert_eq!(associations[0].anchor_run_id, result.run_ref);
-        assert_eq!(associations[0].anchor_agent_id, Some(result.agent_ref));
+        assert_eq!(associations[0].anchor_run_id, result.runtime_refs.run_ref);
+        assert_eq!(
+            associations[0].anchor_agent_id,
+            Some(result.runtime_refs.agent_ref)
+        );
         assert!(associations[0].is_agent_scoped());
         assert!(assignment_repo.items.lock().unwrap().is_empty());
         assert!(result.delivery_runtime_ref.is_some());
@@ -1789,18 +1798,24 @@ mod tests {
             .expect("entry attempt");
         assert_eq!(entry_attempt.attempt, 1);
         let frames = frame_repo.items.lock().unwrap().clone();
-        assert_eq!(frames[0].graph_instance_id, result.graph_instance_ref);
+        assert_eq!(
+            frames[0].graph_instance_id,
+            result.runtime_refs.graph_instance_ref()
+        );
         assert_eq!(
             frames[0].activity_key.as_deref(),
             Some(workflow_graph.entry_activity_key.as_str())
         );
         let assignments = assignment_repo.items.lock().unwrap().clone();
         assert_eq!(assignments.len(), 1);
-        assert_eq!(result.assignment_ref, Some(assignments[0].id));
-        assert_eq!(assignments[0].frame_id, result.frame_ref);
+        assert_eq!(
+            result.runtime_refs.assignment_ref(),
+            Some(assignments[0].id)
+        );
+        assert_eq!(assignments[0].frame_id, result.runtime_refs.frame_ref);
         assert_eq!(
             Some(assignments[0].graph_instance_id),
-            result.graph_instance_ref
+            result.runtime_refs.graph_instance_ref()
         );
         assert_eq!(
             assignments[0].activity_key,
@@ -1859,7 +1874,10 @@ mod tests {
                 .as_ref()
                 .expect("activity state")
                 .graph_instance_id,
-            result.graph_instance_ref.expect("graph instance ref")
+            result
+                .runtime_refs
+                .graph_instance_ref()
+                .expect("graph instance ref")
         );
         assert!(assignment_repo.items.lock().unwrap().is_empty());
     }
@@ -2024,7 +2042,10 @@ mod tests {
 
         let result = service.execute_subject(&intent).await.expect("dispatch");
 
-        assert_eq!(result.graph_instance_ref, Some(existing_instance.id));
+        assert_eq!(
+            result.runtime_refs.graph_instance_ref(),
+            Some(existing_instance.id)
+        );
         let frames = frame_repo.items.lock().unwrap().clone();
         let assignments = assignment_repo.items.lock().unwrap().clone();
         assert_eq!(frames[0].activity_key.as_deref(), Some("custom_main"));
@@ -2079,13 +2100,16 @@ mod tests {
 
         let result = service.execute_subject(&intent).await.expect("dispatch");
 
-        assert_eq!(result.agent_ref, target_agent.id);
+        assert_eq!(result.runtime_refs.agent_ref, target_agent.id);
         let agents = agent_repo.items.lock().unwrap().clone();
         let updated_target = agents
             .iter()
             .find(|agent| agent.id == target_agent.id)
             .expect("target agent");
-        assert_eq!(updated_target.current_frame_id, Some(result.frame_ref));
+        assert_eq!(
+            updated_target.current_frame_id,
+            Some(result.runtime_refs.frame_ref)
+        );
         let first = agents
             .iter()
             .find(|agent| agent.id == first_agent.id)
@@ -2238,7 +2262,7 @@ mod tests {
 
         // 没有新建 run
         assert_eq!(run_repo.items.lock().unwrap().len(), 1);
-        assert_eq!(result.run_ref, existing_run.id);
+        assert_eq!(result.runtime_refs.run_ref, existing_run.id);
         // 新建了一个 graph instance（role=task_execution for ParentAgent）
         let instances = gi_repo.items.lock().unwrap().clone();
         assert_eq!(instances.len(), 1);
@@ -2317,10 +2341,13 @@ mod tests {
         );
         let assignments = assignment_repo.items.lock().unwrap().clone();
         assert_eq!(assignments.len(), 1);
-        assert_eq!(Some(assignments[0].id), result.assignment_ref);
+        assert_eq!(
+            Some(assignments[0].id),
+            result.runtime_refs.assignment_ref()
+        );
         assert_eq!(
             Some(assignments[0].graph_instance_id),
-            result.graph_instance_ref
+            result.runtime_refs.graph_instance_ref()
         );
     }
 
@@ -2361,7 +2388,7 @@ mod tests {
         let lineages = lineage_repo.items.lock().unwrap().clone();
         assert_eq!(lineages.len(), 1);
         assert_eq!(lineages[0].parent_agent_id, Some(parent_agent_id));
-        assert_eq!(lineages[0].child_agent_id, result.agent_ref);
+        assert_eq!(lineages[0].child_agent_id, result.runtime_refs.agent_ref);
         assert_eq!(lineages[0].relation_kind, "spawn");
     }
 }

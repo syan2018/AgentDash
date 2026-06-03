@@ -87,8 +87,8 @@ impl TerminalCancelCoordinator {
             tracing::warn!(
                 task_id = %task_id,
                 session_id = %command.runtime_session_id,
-                frame_ref = %command.frame_ref,
-                assignment_ref = ?command.assignment_ref,
+                frame_ref = %command.runtime_refs.frame_ref,
+                assignment_ref = ?command.runtime_refs.assignment_ref(),
                 error = %err,
                 "终态取消协调器：Task 进入终态后取消关联 session 失败"
             );
@@ -96,8 +96,8 @@ impl TerminalCancelCoordinator {
             tracing::info!(
                 task_id = %task_id,
                 session_id = %command.runtime_session_id,
-                frame_ref = %command.frame_ref,
-                assignment_ref = ?command.assignment_ref,
+                frame_ref = %command.runtime_refs.frame_ref,
+                assignment_ref = ?command.runtime_refs.assignment_ref(),
                 new_status = ?new_status,
                 "终态取消协调器：Task 进入终态，已取消关联 session"
             );
@@ -146,8 +146,8 @@ impl TerminalCancelCoordinator {
                 tracing::warn!(
                     task_id = %task.id,
                     session_id = %command.runtime_session_id,
-                    frame_ref = %command.frame_ref,
-                    assignment_ref = ?command.assignment_ref,
+                    frame_ref = %command.runtime_refs.frame_ref,
+                    assignment_ref = ?command.runtime_refs.assignment_ref(),
                     error = %err,
                     "终态取消协调器：Story 终态级联取消 session 失败"
                 );

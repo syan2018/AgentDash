@@ -140,76 +140,81 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
         candidate: &RoutineExecution,
         refs: &RoutineDispatchRefs,
     ) -> Result<RoutineDispatchReuseTarget, ApplicationError> {
+        let run_id = refs.run_id();
+        let agent_id = refs.agent_id();
+        let frame_id = refs.frame_id();
+        let assignment_id = refs.assignment_id();
+
         let run = self
             .lifecycle_run_repo
-            .get_by_id(refs.run_id)
+            .get_by_id(run_id)
             .await
             .map_err(ApplicationError::from)?
             .ok_or_else(|| {
                 ApplicationError::Conflict(format!(
                     "RoutineExecution {} 记录的 LifecycleRun {} 不存在",
-                    candidate.id, refs.run_id
+                    candidate.id, run_id
                 ))
             })?;
         if run.project_id != routine.project_id {
             return Err(ApplicationError::Conflict(format!(
                 "RoutineExecution {} 记录的 LifecycleRun {} 不属于 Routine project {}",
-                candidate.id, refs.run_id, routine.project_id
+                candidate.id, run_id, routine.project_id
             )));
         }
 
         let agent = self
             .lifecycle_agent_repo
-            .get(refs.agent_id)
+            .get(agent_id)
             .await
             .map_err(ApplicationError::from)?
             .ok_or_else(|| {
                 ApplicationError::Conflict(format!(
                     "RoutineExecution {} 记录的 LifecycleAgent {} 不存在",
-                    candidate.id, refs.agent_id
+                    candidate.id, agent_id
                 ))
             })?;
-        if agent.run_id != refs.run_id {
+        if agent.run_id != run_id {
             return Err(ApplicationError::Conflict(format!(
                 "RoutineExecution {} 记录的 LifecycleAgent {} 不属于 LifecycleRun {}",
-                candidate.id, refs.agent_id, refs.run_id
+                candidate.id, agent_id, run_id
             )));
         }
         if agent.project_id != routine.project_id {
             return Err(ApplicationError::Conflict(format!(
                 "RoutineExecution {} 记录的 LifecycleAgent {} 不属于 Routine project {}",
-                candidate.id, refs.agent_id, routine.project_id
+                candidate.id, agent_id, routine.project_id
             )));
         }
         if agent.status != "active" {
             return Err(ApplicationError::Conflict(format!(
                 "RoutineExecution {} 记录的 LifecycleAgent {} 当前不是 active",
-                candidate.id, refs.agent_id
+                candidate.id, agent_id
             )));
         }
 
         let frame = self
             .agent_frame_repo
-            .get(refs.frame_id)
+            .get(frame_id)
             .await
             .map_err(ApplicationError::from)?
             .ok_or_else(|| {
                 ApplicationError::Conflict(format!(
                     "RoutineExecution {} 记录的 AgentFrame {} 不存在",
-                    candidate.id, refs.frame_id
+                    candidate.id, frame_id
                 ))
             })?;
-        if frame.agent_id != refs.agent_id {
+        if frame.agent_id != agent_id {
             return Err(ApplicationError::Conflict(format!(
                 "RoutineExecution {} 记录的 AgentFrame {} 不属于 LifecycleAgent {}",
-                candidate.id, refs.frame_id, refs.agent_id
+                candidate.id, frame_id, agent_id
             )));
         }
 
-        if let Some(assignment_id) = refs.assignment_id {
+        if let Some(assignment_id) = assignment_id {
             let assignment = self
                 .agent_assignment_repo
-                .list_by_run(refs.run_id)
+                .list_by_run(run_id)
                 .await
                 .map_err(ApplicationError::from)?
                 .into_iter()
@@ -220,7 +225,7 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
                         candidate.id, assignment_id
                     ))
                 })?;
-            if assignment.agent_id != refs.agent_id || assignment.frame_id != refs.frame_id {
+            if assignment.agent_id != agent_id || assignment.frame_id != frame_id {
                 return Err(ApplicationError::Conflict(format!(
                     "RoutineExecution {} 记录的 AgentAssignment {} 与 agent/frame anchor 不一致",
                     candidate.id, assignment_id
@@ -236,24 +241,24 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
             .map_err(ApplicationError::from)?
             .into_iter()
             .any(|association| {
-                association.anchor_run_id == refs.run_id
+                association.anchor_run_id == run_id
                     && match association.anchor_agent_id {
-                        Some(agent_id) => agent_id == refs.agent_id,
+                        Some(anchor_agent_id) => anchor_agent_id == agent_id,
                         None => true,
                     }
             });
         if !has_subject_association {
             return Err(ApplicationError::Conflict(format!(
                 "RoutineExecution {} 缺少指向 LifecycleRun {} 的 subject association",
-                candidate.id, refs.run_id
+                candidate.id, run_id
             )));
         }
 
         Ok(RoutineDispatchReuseTarget {
-            run_id: refs.run_id,
-            agent_id: refs.agent_id,
-            frame_id: refs.frame_id,
-            assignment_id: refs.assignment_id,
+            run_id,
+            agent_id,
+            frame_id,
+            assignment_id,
         })
     }
 }
@@ -770,12 +775,17 @@ mod tests {
             let mut execution = RoutineExecution::new(routine.id, "webhook");
             execution.status = RoutineExecutionStatus::Dispatched;
             execution.entity_key = entity_key.map(str::to_string);
-            execution.dispatch_refs = Some(RoutineDispatchRefs {
-                run_id: run.id,
-                agent_id: agent.id,
-                frame_id: frame.id,
-                assignment_id: Some(assignment.id),
-            });
+            execution.dispatch_refs = Some(RoutineDispatchRefs::new(
+                agentdash_domain::workflow::AgentRuntimeRefs::new(
+                    run.id,
+                    agent.id,
+                    frame.id,
+                    Some(agentdash_domain::workflow::ActivityBindingRefs::new(
+                        assignment.graph_instance_id,
+                        Some(assignment.id),
+                    )),
+                ),
+            ));
             let association = LifecycleSubjectAssociation::new_run_scoped(
                 run.id,
                 &SubjectRef::new(ROUTINE_EXECUTION_SUBJECT_KIND, execution.id),

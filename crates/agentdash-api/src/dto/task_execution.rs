@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use agentdash_contracts::core::TaskResponse;
 use agentdash_domain::task::TaskStatus;
+use agentdash_domain::workflow::AgentRuntimeRefs;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct StartTaskRequest {
@@ -16,11 +17,7 @@ pub struct StartTaskRequest {
 #[derive(Debug, Serialize)]
 pub struct StartTaskResponse {
     pub task_id: Uuid,
-    pub run_ref: Uuid,
-    pub agent_ref: Uuid,
-    pub frame_ref: Uuid,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assignment_ref: Option<Uuid>,
+    pub runtime_refs: AgentRuntimeRefs,
     pub subject_execution_ref: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivery_runtime_ref: Option<Uuid>,
@@ -39,11 +36,7 @@ pub struct ContinueTaskRequest {
 #[derive(Debug, Serialize)]
 pub struct ContinueTaskResponse {
     pub task_id: Uuid,
-    pub run_ref: Uuid,
-    pub agent_ref: Uuid,
-    pub frame_ref: Uuid,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assignment_ref: Option<Uuid>,
+    pub runtime_refs: AgentRuntimeRefs,
     pub subject_execution_ref: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivery_runtime_ref: Option<Uuid>,
@@ -54,13 +47,7 @@ pub struct ContinueTaskResponse {
 #[derive(Debug, Serialize)]
 pub struct CancelTaskResponse {
     pub task: TaskResponse,
-    pub run_ref: Uuid,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub graph_instance_ref: Option<Uuid>,
-    pub agent_ref: Uuid,
-    pub frame_ref: Uuid,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assignment_ref: Option<Uuid>,
+    pub runtime_refs: AgentRuntimeRefs,
     pub subject_execution_ref: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_delivery_ref: Option<String>,

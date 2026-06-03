@@ -6,6 +6,7 @@ use agentdash_domain::routine::{
     Routine, RoutineDispatchRefs, RoutineExecution, RoutineExecutionRepository,
     RoutineExecutionStatus, RoutineRepository,
 };
+use agentdash_domain::workflow::AgentRuntimeRefs;
 
 // ────────────────────────────── Routine ──────────────────────────────
 
@@ -224,16 +225,13 @@ impl TryFrom<ExecutionRow> for RoutineExecution {
             row.dispatch_frame_id,
             row.dispatch_assignment_id,
         ) {
-            (Some(run_id), Some(agent_id), Some(frame_id), assignment_id) => {
-                Some(RoutineDispatchRefs {
-                    run_id: parse_uuid(&run_id, "routine_executions.dispatch_run_id")?,
-                    agent_id: parse_uuid(&agent_id, "routine_executions.dispatch_agent_id")?,
-                    frame_id: parse_uuid(&frame_id, "routine_executions.dispatch_frame_id")?,
-                    assignment_id: assignment_id
-                        .as_deref()
-                        .map(|value| parse_uuid(value, "routine_executions.dispatch_assignment_id"))
-                        .transpose()?,
-                })
+            (Some(run_id), Some(agent_id), Some(frame_id), _assignment_id) => {
+                Some(RoutineDispatchRefs::new(AgentRuntimeRefs::new(
+                    parse_uuid(&run_id, "routine_executions.dispatch_run_id")?,
+                    parse_uuid(&agent_id, "routine_executions.dispatch_agent_id")?,
+                    parse_uuid(&frame_id, "routine_executions.dispatch_frame_id")?,
+                    None,
+                )))
             }
             _ => None,
         };
@@ -275,14 +273,14 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(&execution.trigger_source)
         .bind(trigger_payload_json)
         .bind(&execution.resolved_prompt)
-        .bind(execution.dispatch_refs.as_ref().map(|r| r.run_id.to_string()))
-        .bind(execution.dispatch_refs.as_ref().map(|r| r.agent_id.to_string()))
-        .bind(execution.dispatch_refs.as_ref().map(|r| r.frame_id.to_string()))
+        .bind(execution.dispatch_refs.as_ref().map(|r| r.run_id().to_string()))
+        .bind(execution.dispatch_refs.as_ref().map(|r| r.agent_id().to_string()))
+        .bind(execution.dispatch_refs.as_ref().map(|r| r.frame_id().to_string()))
         .bind(
             execution
                 .dispatch_refs
                 .as_ref()
-                .and_then(|r| r.assignment_id.map(|assignment_id| assignment_id.to_string())),
+                .and_then(|r| r.assignment_id().map(|assignment_id| assignment_id.to_string())),
         )
         .bind(status_to_str(execution.status))
         .bind(execution.started_at)
@@ -321,14 +319,14 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(execution.id.to_string())
         .bind(trigger_payload_json)
         .bind(&execution.resolved_prompt)
-        .bind(execution.dispatch_refs.as_ref().map(|r| r.run_id.to_string()))
-        .bind(execution.dispatch_refs.as_ref().map(|r| r.agent_id.to_string()))
-        .bind(execution.dispatch_refs.as_ref().map(|r| r.frame_id.to_string()))
+        .bind(execution.dispatch_refs.as_ref().map(|r| r.run_id().to_string()))
+        .bind(execution.dispatch_refs.as_ref().map(|r| r.agent_id().to_string()))
+        .bind(execution.dispatch_refs.as_ref().map(|r| r.frame_id().to_string()))
         .bind(
             execution
                 .dispatch_refs
                 .as_ref()
-                .and_then(|r| r.assignment_id.map(|assignment_id| assignment_id.to_string())),
+                .and_then(|r| r.assignment_id().map(|assignment_id| assignment_id.to_string())),
         )
         .bind(status_to_str(execution.status))
         .bind(execution.completed_at)

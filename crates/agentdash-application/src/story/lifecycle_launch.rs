@@ -3,8 +3,8 @@ use uuid::Uuid;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::story::Story;
 use agentdash_domain::workflow::{
-    AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource,
-    RuntimePolicy, SubjectRef, WorkflowGraphRef,
+    AgentLaunchIntent, AgentPolicy, AgentRuntimeRefs, CapabilityPolicy, ContextPolicy,
+    ExecutionSource, RuntimePolicy, SubjectRef, WorkflowGraphRef,
 };
 
 use crate::ApplicationError;
@@ -20,10 +20,7 @@ pub struct StoryLifecycleLaunchCommand {
 pub struct StoryLifecycleLaunchResult {
     pub story_id: Uuid,
     pub project_agent_id: Uuid,
-    pub run_ref: Uuid,
-    pub graph_instance_ref: Option<Uuid>,
-    pub agent_ref: Uuid,
-    pub frame_ref: Uuid,
+    pub runtime_refs: AgentRuntimeRefs,
     pub delivery_runtime_ref: Option<Uuid>,
     pub subject_ref: SubjectRef,
 }
@@ -70,7 +67,7 @@ impl StoryLifecycleLaunchService {
         if let Some(mut lifecycle_agent) = self
             .repos
             .lifecycle_agent_repo
-            .get(dispatch_result.agent_ref)
+            .get(dispatch_result.runtime_refs.agent_ref)
             .await?
         {
             lifecycle_agent.project_agent_id = Some(project_agent.id);
@@ -83,10 +80,7 @@ impl StoryLifecycleLaunchService {
         Ok(StoryLifecycleLaunchResult {
             story_id: story.id,
             project_agent_id: project_agent.id,
-            run_ref: dispatch_result.run_ref,
-            graph_instance_ref: dispatch_result.graph_instance_ref,
-            agent_ref: dispatch_result.agent_ref,
-            frame_ref: dispatch_result.frame_ref,
+            runtime_refs: dispatch_result.runtime_refs,
             delivery_runtime_ref: dispatch_result.delivery_runtime_ref,
             subject_ref: intent
                 .subject_ref

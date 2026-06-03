@@ -185,13 +185,74 @@ pub enum ExecutionIntent {
 
 // ─── Result ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentLaunchDispatchResult {
-    pub run_ref: Uuid,
+/// Activity-only runtime binding refs.
+///
+/// Graphless agent runtime does not create a graph instance or assignment, so the
+/// binding exists only when a dispatch entered an explicit WorkflowGraph path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivityBindingRefs {
+    pub graph_instance_ref: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub graph_instance_ref: Option<Uuid>,
+    pub assignment_ref: Option<Uuid>,
+}
+
+impl ActivityBindingRefs {
+    pub fn new(graph_instance_ref: Uuid, assignment_ref: Option<Uuid>) -> Self {
+        Self {
+            graph_instance_ref,
+            assignment_ref,
+        }
+    }
+}
+
+/// Common agent runtime/control refs shared by launch, subject execution and
+/// cancel delivery surfaces.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentRuntimeRefs {
+    pub run_ref: Uuid,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_binding: Option<ActivityBindingRefs>,
+}
+
+impl AgentRuntimeRefs {
+    pub fn new(
+        run_ref: Uuid,
+        agent_ref: Uuid,
+        frame_ref: Uuid,
+        activity_binding: Option<ActivityBindingRefs>,
+    ) -> Self {
+        Self {
+            run_ref,
+            agent_ref,
+            frame_ref,
+            activity_binding,
+        }
+    }
+
+    pub fn graph_instance_ref(&self) -> Option<Uuid> {
+        self.activity_binding
+            .as_ref()
+            .map(|binding| binding.graph_instance_ref)
+    }
+
+    pub fn assignment_ref(&self) -> Option<Uuid> {
+        self.activity_binding
+            .as_ref()
+            .and_then(|binding| binding.assignment_ref)
+    }
+
+    pub fn activity_binding(&self) -> Option<&ActivityBindingRefs> {
+        self.activity_binding.as_ref()
+    }
+}
+
+pub type RuntimeControlRefs = AgentRuntimeRefs;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentLaunchDispatchResult {
+    pub runtime_refs: AgentRuntimeRefs,
     /// 投递目标 runtime session（合并原 runtime_session_ref + trace_ref）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery_runtime_ref: Option<Uuid>,
@@ -199,13 +260,7 @@ pub struct AgentLaunchDispatchResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubjectExecutionDispatchResult {
-    pub run_ref: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub graph_instance_ref: Option<Uuid>,
-    pub agent_ref: Uuid,
-    pub frame_ref: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assignment_ref: Option<Uuid>,
+    pub runtime_refs: AgentRuntimeRefs,
     pub subject_execution_ref: SubjectExecutionRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery_runtime_ref: Option<Uuid>,
@@ -219,13 +274,7 @@ pub struct LifecycleRunStartDispatchResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InteractionGateOpenedDispatchResult {
-    pub run_ref: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub graph_instance_ref: Option<Uuid>,
-    pub agent_ref: Uuid,
-    pub frame_ref: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assignment_ref: Option<Uuid>,
+    pub runtime_refs: AgentRuntimeRefs,
     pub gate_ref: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery_runtime_ref: Option<Uuid>,
@@ -278,11 +327,15 @@ mod tests {
     fn subject_execution_result_serializes_required_assignment_ref() {
         let assignment_ref = Uuid::new_v4();
         let result = ExecutionDispatchResult::SubjectExecution(SubjectExecutionDispatchResult {
-            run_ref: Uuid::new_v4(),
-            graph_instance_ref: Some(Uuid::new_v4()),
-            agent_ref: Uuid::new_v4(),
-            frame_ref: Uuid::new_v4(),
-            assignment_ref: Some(assignment_ref),
+            runtime_refs: AgentRuntimeRefs::new(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Some(ActivityBindingRefs::new(
+                    Uuid::new_v4(),
+                    Some(assignment_ref),
+                )),
+            ),
             subject_execution_ref: SubjectExecutionRef {
                 subject_ref: SubjectRef::new("task", Uuid::new_v4()),
                 association_id: Uuid::new_v4(),

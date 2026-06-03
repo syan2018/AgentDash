@@ -416,9 +416,9 @@ impl CompanionRequestTool {
                     .await
                     .map_err(|e| AgentToolError::ExecutionFailed(format!("dispatch 失败: {e}")))?;
                 CompanionDispatchOutcome {
-                    run_ref: result.run_ref,
-                    agent_ref: result.agent_ref,
-                    frame_ref: result.frame_ref,
+                    run_ref: result.runtime_refs.run_ref,
+                    agent_ref: result.runtime_refs.agent_ref,
+                    frame_ref: result.runtime_refs.frame_ref,
                     gate_ref: Some(result.gate_ref),
                 }
             } else {
@@ -440,9 +440,9 @@ impl CompanionRequestTool {
                     .await
                     .map_err(|e| AgentToolError::ExecutionFailed(format!("dispatch 失败: {e}")))?;
                 CompanionDispatchOutcome {
-                    run_ref: result.run_ref,
-                    agent_ref: result.agent_ref,
-                    frame_ref: result.frame_ref,
+                    run_ref: result.runtime_refs.run_ref,
+                    agent_ref: result.runtime_refs.agent_ref,
+                    frame_ref: result.runtime_refs.frame_ref,
                     gate_ref: None,
                 }
             }

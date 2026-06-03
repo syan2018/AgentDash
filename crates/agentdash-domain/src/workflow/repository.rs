@@ -211,4 +211,32 @@ pub trait RuntimeSessionExecutionAnchorRepository: Send + Sync {
         &self,
         runtime_session_id: &str,
     ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError>;
+    /// 按 run 查询该控制面账本关联的 runtime sessions。
+    async fn list_by_run(
+        &self,
+        _run_id: Uuid,
+    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+        Ok(Vec::new())
+    }
+    /// 按 agent 查询该 agent 关联的 runtime sessions。
+    async fn list_by_agent(
+        &self,
+        _agent_id: Uuid,
+    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+        Ok(Vec::new())
+    }
+    /// 批量按 runtime_session_id 查询 anchors。
+    async fn list_by_project_session_ids(
+        &self,
+        _runtime_session_ids: &[String],
+    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+        Ok(Vec::new())
+    }
+    /// 查询 agent 最新 delivery anchor。
+    async fn latest_for_agent(
+        &self,
+        _agent_id: Uuid,
+    ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+        Ok(None)
+    }
 }

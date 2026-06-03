@@ -27,7 +27,6 @@ interface ProjectState {
     agent_type: string;
     config?: Record<string, unknown>;
     default_lifecycle_key?: string;
-    default_procedure_key?: string;
     is_default_for_story?: boolean;
     is_default_for_task?: boolean;
   }) => Promise<ProjectAgent | null>;
@@ -36,7 +35,6 @@ interface ProjectState {
     agent_type?: string;
     config?: Record<string, unknown>;
     default_lifecycle_key?: string;
-    default_procedure_key?: string;
     is_default_for_story?: boolean;
     is_default_for_task?: boolean;
     knowledge_enabled?: boolean;

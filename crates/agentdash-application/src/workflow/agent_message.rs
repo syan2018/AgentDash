@@ -328,7 +328,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|run| run.root_graph_id == root_graph_id)
+                .filter(|run| run.root_graph_id == Some(root_graph_id))
                 .cloned()
                 .collect())
         }

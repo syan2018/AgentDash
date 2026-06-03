@@ -7,7 +7,7 @@ export type AgentAssignmentRefDto = { assignment_id: string, run_id?: string, ag
 
 export type AgentFrameRefDto = { agent_id: string, frame_id: string, revision?: number, };
 
-export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, default_procedure_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, };
+export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, };
 
 export type LifecycleAgentRefDto = { run_id: string, agent_id: string, };
 
@@ -27,4 +27,4 @@ export type SubjectRefDto = { kind: string, id: string, };
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-export type UpdateProjectAgentRequest = { name?: string, agent_type?: string, config?: JsonValue, default_lifecycle_key?: string, default_procedure_key?: string, is_default_for_story?: boolean, is_default_for_task?: boolean, knowledge_enabled?: boolean, };
+export type UpdateProjectAgentRequest = { name?: string, agent_type?: string, config?: JsonValue, default_lifecycle_key?: string, is_default_for_story?: boolean, is_default_for_task?: boolean, knowledge_enabled?: boolean, };

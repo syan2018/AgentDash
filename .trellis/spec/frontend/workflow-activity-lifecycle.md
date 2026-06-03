@@ -1,12 +1,12 @@
 # WorkflowGraph / LifecycleRun Frontend Contract
 
-前端运行观察的目标模型是 `LifecycleRunView -> WorkflowGraphInstanceView -> ActivityState / ActivityAttemptState`，并通过 `LifecycleAgentView`、`AgentFrameRuntimeView`、`SubjectExecutionView` 进入 runtime trace。前端不以 RuntimeSession id 或单 graph id 作为 lifecycle 主索引。
+前端运行观察的目标模型以 `LifecycleRunView`、`LifecycleAgentView`、`AgentFrameRuntimeView` 与 `SubjectExecutionView` 为主；`WorkflowGraphInstanceView -> ActivityState / ActivityAttemptState` 只在 `topology="workflow_graph"` 的显式 Activity runtime 中出现。前端不以 RuntimeSession id 或单 graph id 作为 lifecycle 主索引。
 
 ## Invariants
 
 - 前端读写 `WorkflowGraph` definition；当前 `ActivityLifecycleDefinition` 是迁移来源。
 - 用户层 Workflow 资产入口以 `WorkflowGraph` definition 为主；Agent Activity 关联的 `AgentProcedure` 提供单个 Activity contract，可作为编辑器配套 draft 维护。
-- Run view 必须支持同一个 `LifecycleRun` 下多个 `WorkflowGraphInstance`。
+- Run view 必须支持同一个 `LifecycleRun` 下 0..N 个 `WorkflowGraphInstance`。
 - Frontend store normalize by run、graph instance、subject、agent、frame。
 - `/session/:id` 是 `RuntimeTraceView`，不是业务 runtime root。
 - Read view 不能作为 command input；write command 使用 `ExecutionIntent`、`SubjectRef`、run/graph/agent/frame refs。
@@ -63,6 +63,8 @@ Definition request/response fields:
 ```ts
 type LifecycleRunView = {
   id: string
+  topology: "graphless" | "workflow_graph"
+  root_graph_id?: string | null
   status: LifecycleRunStatus
   workflow_graph_instances: WorkflowGraphInstanceView[]
   agents: LifecycleAgentView[]
@@ -70,6 +72,8 @@ type LifecycleRunView = {
   runtime_trace_refs: RuntimeSessionRef[]
 }
 ```
+
+`topology="graphless"` runs represent ordinary Agent runtime control-plane state and may have `root_graph_id=null` with `workflow_graph_instances=[]`. Activity timeline UI is entered from `topology="workflow_graph"` runs and their graph instances.
 
 `WorkflowGraphInstanceView.activity_state.attempts[]` contains `graph_instance_id`、`activity_key`、`attempt`、`status`、`assignment_ref?`、`executor_run?`。
 
@@ -82,7 +86,7 @@ type LifecycleRunView = {
 - agents indexed by `agent_id` and frames by `frame_id`。
 - Runtime trace store indexed by `runtime_session_id` only for debug / trace drill-down。
 
-Lifecycle primary state is indexed by run / graph instance / subject / agent / frame.
+Lifecycle primary state is indexed by run / graph instance / subject / agent / frame. Graphless runs still normalize run / subject / agent / frame state even when no graph instance exists.
 
 ## Mapper Boundary
 

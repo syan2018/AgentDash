@@ -119,7 +119,7 @@ struct DispatchPlan {
     subject_ref: Option<SubjectRef>,
     parent_run_id: Option<Uuid>,
     parent_agent_id: Option<Uuid>,
-    workflow_graph_ref: WorkflowGraphRef,
+    workflow_graph_ref: Option<WorkflowGraphRef>,
     run_policy: RunPolicy,
     agent_policy: AgentPolicy,
     runtime_policy: RuntimePolicy,
@@ -129,7 +129,7 @@ struct DispatchPlan {
 
 struct DispatchFacts {
     run: LifecycleRun,
-    graph_instance: WorkflowGraphInstance,
+    graph_instance: Option<WorkflowGraphInstance>,
     agent: LifecycleAgent,
     frame: AgentFrame,
     runtime_session_ref: Option<Uuid>,
@@ -264,7 +264,7 @@ impl<'a> LifecycleDispatchService<'a> {
         let facts = self.dispatch_common(DispatchPlan::from(intent)).await?;
         Ok(AgentLaunchDispatchResult {
             run_ref: facts.run.id,
-            graph_instance_ref: facts.graph_instance.id,
+            graph_instance_ref: facts.graph_instance.as_ref().map(|instance| instance.id),
             agent_ref: facts.agent.id,
             frame_ref: facts.frame.id,
             delivery_runtime_ref: facts.runtime_session_ref,
@@ -276,11 +276,6 @@ impl<'a> LifecycleDispatchService<'a> {
         intent: &SubjectExecutionIntent,
     ) -> Result<SubjectExecutionDispatchResult, WorkflowApplicationError> {
         let facts = self.dispatch_common(DispatchPlan::from(intent)).await?;
-        let assignment = facts.assignment.ok_or_else(|| {
-            WorkflowApplicationError::Internal(
-                "SubjectExecutionIntent 未创建 AgentAssignment".to_string(),
-            )
-        })?;
         let subject_execution_ref = facts.subject_execution_ref.ok_or_else(|| {
             WorkflowApplicationError::Internal(
                 "SubjectExecutionIntent 未创建 subject_execution_ref".to_string(),
@@ -288,10 +283,10 @@ impl<'a> LifecycleDispatchService<'a> {
         })?;
         Ok(SubjectExecutionDispatchResult {
             run_ref: facts.run.id,
-            graph_instance_ref: facts.graph_instance.id,
+            graph_instance_ref: facts.graph_instance.as_ref().map(|instance| instance.id),
             agent_ref: facts.agent.id,
             frame_ref: facts.frame.id,
-            assignment_ref: assignment.id,
+            assignment_ref: facts.assignment.as_ref().map(|assignment| assignment.id),
             subject_execution_ref,
             delivery_runtime_ref: facts.runtime_session_ref,
         })
@@ -302,11 +297,6 @@ impl<'a> LifecycleDispatchService<'a> {
         intent: &InteractionDispatchIntent,
     ) -> Result<InteractionGateOpenedDispatchResult, WorkflowApplicationError> {
         let facts = self.dispatch_common(DispatchPlan::from(intent)).await?;
-        let assignment = facts.assignment.ok_or_else(|| {
-            WorkflowApplicationError::Internal(
-                "InteractionDispatchIntent 未创建 AgentAssignment".to_string(),
-            )
-        })?;
         let gate_ref = facts.gate_ref.ok_or_else(|| {
             WorkflowApplicationError::Internal(
                 "InteractionDispatchIntent 未创建 LifecycleGate".to_string(),
@@ -314,10 +304,10 @@ impl<'a> LifecycleDispatchService<'a> {
         })?;
         Ok(InteractionGateOpenedDispatchResult {
             run_ref: facts.run.id,
-            graph_instance_ref: facts.graph_instance.id,
+            graph_instance_ref: facts.graph_instance.as_ref().map(|instance| instance.id),
             agent_ref: facts.agent.id,
             frame_ref: facts.frame.id,
-            assignment_ref: assignment.id,
+            assignment_ref: facts.assignment.as_ref().map(|assignment| assignment.id),
             gate_ref,
             delivery_runtime_ref: facts.runtime_session_ref,
         })
@@ -360,8 +350,16 @@ impl<'a> LifecycleDispatchService<'a> {
         &self,
         plan: DispatchPlan,
     ) -> Result<DispatchFacts, WorkflowApplicationError> {
+        if plan.workflow_graph_ref.is_none() {
+            return self.dispatch_graphless(plan).await;
+        }
+
+        let workflow_graph_ref = plan
+            .workflow_graph_ref
+            .as_ref()
+            .expect("checked workflow graph ref");
         let workflow_graph = WorkflowGraphResolver::new(self.workflow_graph_repo)
-            .resolve(plan.project_id, &plan.workflow_graph_ref)
+            .resolve(plan.project_id, workflow_graph_ref)
             .await?
             .graph;
         let mut run = self.resolve_or_create_run(&plan, &workflow_graph).await?;
@@ -466,11 +464,85 @@ impl<'a> LifecycleDispatchService<'a> {
 
         Ok(DispatchFacts {
             run,
-            graph_instance,
+            graph_instance: Some(graph_instance),
             agent,
             frame,
             runtime_session_ref,
             assignment,
+            gate_ref,
+            subject_execution_ref,
+        })
+    }
+
+    async fn dispatch_graphless(
+        &self,
+        plan: DispatchPlan,
+    ) -> Result<DispatchFacts, WorkflowApplicationError> {
+        let run = self.resolve_or_create_graphless_run(&plan).await?;
+        let agent = self.resolve_or_create_agent(&run, &plan).await?;
+        let association = if let Some(subject_ref) = &plan.subject_ref {
+            Some(
+                self.create_subject_association(run.id, agent.id, subject_ref, &plan.source)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let runtime_session_ref = self
+            .resolve_or_create_runtime_session(&plan, &run, &agent)
+            .await?;
+        let frame = self
+            .create_graphless_initial_frame(&agent, runtime_session_ref)
+            .await?;
+        let mut agent = agent;
+        agent.set_current_frame(frame.id);
+        self.agent_repo.update(&agent).await?;
+
+        if let Some(parent_agent_id) = plan.parent_agent_id {
+            let lineage = AgentLineage::new(
+                run.id,
+                Some(parent_agent_id),
+                agent.id,
+                lineage_relation_kind(&plan.agent_policy),
+                Some(frame.id),
+                None,
+            );
+            self.lineage_repo.create(&lineage).await?;
+        }
+
+        let gate_ref = if let Some(gate_policy) = &plan.gate_policy {
+            Some(self.create_gate(&run, &agent, &frame, gate_policy).await?)
+        } else {
+            None
+        };
+
+        if let (Some(anchor_repo), Some(session_id)) = (self.anchor_repo, runtime_session_ref) {
+            let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+                session_id.to_string(),
+                run.id,
+                frame.id,
+                agent.id,
+                None,
+                None,
+            );
+            anchor_repo.upsert(&anchor).await?;
+        }
+
+        let subject_execution_ref = association.as_ref().map(|assoc| SubjectExecutionRef {
+            subject_ref: plan
+                .subject_ref
+                .clone()
+                .expect("association requires subject"),
+            association_id: assoc.id,
+        });
+
+        Ok(DispatchFacts {
+            run,
+            graph_instance: None,
+            agent,
+            frame,
+            runtime_session_ref,
+            assignment: None,
             gate_ref,
             subject_execution_ref,
         })
@@ -500,6 +572,31 @@ impl<'a> LifecycleDispatchService<'a> {
             // 创建新 run
             _ => {
                 let run = create_lifecycle_run(plan.project_id, workflow_graph.id);
+                self.run_repo.create(&run).await?;
+                Ok(run)
+            }
+        }
+    }
+
+    async fn resolve_or_create_graphless_run(
+        &self,
+        plan: &DispatchPlan,
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
+        match (&plan.run_policy, plan.parent_run_id) {
+            (RunPolicy::ReuseExisting | RunPolicy::AppendGraph, Some(run_id)) => {
+                let run = self.run_repo.get_by_id(run_id).await?.ok_or_else(|| {
+                    WorkflowApplicationError::BadRequest(format!("parent_run_id {run_id} 不存在"))
+                })?;
+                Ok(run)
+            }
+            (RunPolicy::ReuseExisting, None) => Err(WorkflowApplicationError::BadRequest(
+                "RunPolicy::ReuseExisting 需要 parent_run_id".to_string(),
+            )),
+            (RunPolicy::AppendGraph, None) => Err(WorkflowApplicationError::BadRequest(
+                "RunPolicy::AppendGraph 需要 parent_run_id".to_string(),
+            )),
+            _ => {
+                let run = LifecycleRun::new_graphless(plan.project_id);
                 self.run_repo.create(&run).await?;
                 Ok(run)
             }
@@ -674,6 +771,19 @@ impl<'a> LifecycleDispatchService<'a> {
         Ok(frame)
     }
 
+    async fn create_graphless_initial_frame(
+        &self,
+        agent: &LifecycleAgent,
+        runtime_session_ref: Option<Uuid>,
+    ) -> Result<AgentFrame, WorkflowApplicationError> {
+        let mut builder = AgentFrameBuilder::new(agent.id).with_created_by("dispatch", None);
+        if let Some(session_id) = runtime_session_ref {
+            builder = builder.with_runtime_session(session_id.to_string());
+        }
+        let frame = builder.build(self.frame_repo).await?;
+        Ok(frame)
+    }
+
     async fn resolve_or_create_entry_assignment(
         &self,
         run: &LifecycleRun,
@@ -812,7 +922,8 @@ fn create_lifecycle_run(project_id: Uuid, root_graph_id: Uuid) -> LifecycleRun {
     LifecycleRun {
         id: Uuid::new_v4(),
         project_id,
-        root_graph_id,
+        topology: agentdash_domain::workflow::LifecycleRunTopology::WorkflowGraph,
+        root_graph_id: Some(root_graph_id),
         status: agentdash_domain::workflow::LifecycleRunStatus::Ready,
         active_node_keys: Vec::new(),
         execution_log: Vec::new(),
@@ -876,8 +987,11 @@ mod tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::*;
 
-    use super::super::freeform::FREEFORM_LIFECYCLE_KEY;
     use super::*;
+
+    const TEST_WORKFLOW_GRAPH_KEY: &str = "test.workflow_graph";
+    const TEST_AGENT_PROCEDURE_KEY: &str = "test.agent_procedure";
+    const TEST_ACTIVITY_KEY: &str = "main";
 
     // ─── In-Memory Repositories ──────────────────────────────────────────
 
@@ -1433,10 +1547,10 @@ mod tests {
         .with_runtime_session_creator(runtime_session_creator)
     }
 
-    fn freeform_graph_ref(project_id: Uuid) -> WorkflowGraphRef {
+    fn test_workflow_graph_ref(project_id: Uuid) -> WorkflowGraphRef {
         WorkflowGraphRef::ByKey {
             project_id,
-            key: FREEFORM_LIFECYCLE_KEY.to_string(),
+            key: TEST_WORKFLOW_GRAPH_KEY.to_string(),
         }
     }
 
@@ -1447,7 +1561,7 @@ mod tests {
             subject_ref: Some(SubjectRef::new("project", project_id)),
             parent_run_id: None,
             parent_agent_id: None,
-            workflow_graph_ref: freeform_graph_ref(project_id),
+            workflow_graph_ref: None,
             agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
@@ -1464,7 +1578,7 @@ mod tests {
             subject_ref: Some(SubjectRef::new("story", story_id)),
             parent_run_id: None,
             parent_agent_id: None,
-            workflow_graph_ref: freeform_graph_ref(project_id),
+            workflow_graph_ref: None,
             agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
@@ -1481,7 +1595,7 @@ mod tests {
             subject_ref: SubjectRef::new("task", task_id),
             parent_run_id: None,
             parent_agent_id: None,
-            workflow_graph_ref: freeform_graph_ref(project_id),
+            workflow_graph_ref: None,
             agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
@@ -1491,9 +1605,12 @@ mod tests {
         }
     }
 
-    fn seed_freeform_graph(repo: &InMemoryWorkflowGraphRepo, project_id: Uuid) -> WorkflowGraph {
+    fn seed_test_workflow_graph(
+        repo: &InMemoryWorkflowGraphRepo,
+        project_id: Uuid,
+    ) -> WorkflowGraph {
         let graph =
-            super::super::freeform::build_freeform_lifecycle(project_id).expect("freeform graph");
+            build_test_workflow_graph(project_id, TEST_WORKFLOW_GRAPH_KEY, TEST_ACTIVITY_KEY);
         repo.items.lock().unwrap().push(graph.clone());
         graph
     }
@@ -1504,15 +1621,34 @@ mod tests {
         key: &str,
         activity_key: &str,
     ) -> WorkflowGraph {
-        let mut graph =
-            super::super::freeform::build_freeform_lifecycle(project_id).expect("custom graph");
-        graph.id = Uuid::new_v4();
-        graph.key = key.to_string();
-        graph.name = key.to_string();
-        graph.entry_activity_key = activity_key.to_string();
-        graph.activities[0].key = activity_key.to_string();
+        let graph = build_test_workflow_graph(project_id, key, activity_key);
         repo.items.lock().unwrap().push(graph.clone());
         graph
+    }
+
+    fn build_test_workflow_graph(project_id: Uuid, key: &str, activity_key: &str) -> WorkflowGraph {
+        WorkflowGraph::new(
+            project_id,
+            key,
+            key,
+            "test workflow graph",
+            DefinitionSource::UserAuthored,
+            activity_key,
+            vec![ActivityDefinition {
+                key: activity_key.to_string(),
+                description: "test activity".to_string(),
+                executor: ActivityExecutorSpec::Agent(
+                    AgentActivityExecutorSpec::continue_current_agent(TEST_AGENT_PROCEDURE_KEY),
+                ),
+                input_ports: Vec::new(),
+                output_ports: Vec::new(),
+                completion_policy: ActivityCompletionPolicy::OpenEnded,
+                iteration_policy: ActivityIterationPolicy::default(),
+                join_policy: ActivityJoinPolicy::All,
+            }],
+            Vec::new(),
+        )
+        .expect("test workflow graph")
     }
 
     // ─── Tests ───────────────────────────────────────────────────────────
@@ -1530,7 +1666,6 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        let workflow_graph = seed_freeform_graph(&workflow_repo, project_id);
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1549,19 +1684,11 @@ mod tests {
 
         let runs = run_repo.items.lock().unwrap().clone();
         assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].root_graph_id, workflow_graph.id);
+        assert_eq!(runs[0].topology, LifecycleRunTopology::Graphless);
+        assert_eq!(runs[0].root_graph_id, None);
         let instances = gi_repo.items.lock().unwrap().clone();
-        assert_eq!(instances.len(), 1);
-        assert!(instances[0].is_root());
-        assert_eq!(instances[0].graph_id, workflow_graph.id);
-        assert_eq!(
-            instances[0]
-                .activity_state
-                .as_ref()
-                .expect("activity state")
-                .graph_instance_id,
-            result.graph_instance_ref
-        );
+        assert!(instances.is_empty());
+        assert_eq!(result.graph_instance_ref, None);
         assert_eq!(agent_repo.items.lock().unwrap().len(), 1);
         let frames = frame_repo.items.lock().unwrap().clone();
         assert_eq!(frames.len(), 1);
@@ -1588,7 +1715,6 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        seed_freeform_graph(&workflow_repo, project_id);
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1632,7 +1758,7 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        let workflow_graph = seed_freeform_graph(&workflow_repo, project_id);
+        let workflow_graph = seed_test_workflow_graph(&workflow_repo, project_id);
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1646,7 +1772,8 @@ mod tests {
             &runtime_session_creator,
         );
 
-        let intent = new_task_execution_intent(project_id, task_id);
+        let mut intent = new_task_execution_intent(project_id, task_id);
+        intent.workflow_graph_ref = Some(test_workflow_graph_ref(project_id));
         let result = service.execute_subject(&intent).await.expect("dispatch");
 
         let instances = gi_repo.items.lock().unwrap().clone();
@@ -1662,16 +1789,19 @@ mod tests {
             .expect("entry attempt");
         assert_eq!(entry_attempt.attempt, 1);
         let frames = frame_repo.items.lock().unwrap().clone();
-        assert_eq!(frames[0].graph_instance_id, Some(result.graph_instance_ref));
+        assert_eq!(frames[0].graph_instance_id, result.graph_instance_ref);
         assert_eq!(
             frames[0].activity_key.as_deref(),
             Some(workflow_graph.entry_activity_key.as_str())
         );
         let assignments = assignment_repo.items.lock().unwrap().clone();
         assert_eq!(assignments.len(), 1);
-        assert_eq!(result.assignment_ref, assignments[0].id);
+        assert_eq!(result.assignment_ref, Some(assignments[0].id));
         assert_eq!(assignments[0].frame_id, result.frame_ref);
-        assert_eq!(assignments[0].graph_instance_id, result.graph_instance_ref);
+        assert_eq!(
+            Some(assignments[0].graph_instance_id),
+            result.graph_instance_ref
+        );
         assert_eq!(
             assignments[0].activity_key,
             workflow_graph.entry_activity_key
@@ -1697,7 +1827,7 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        let workflow_graph = seed_freeform_graph(&workflow_repo, project_id);
+        let workflow_graph = seed_test_workflow_graph(&workflow_repo, project_id);
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1712,16 +1842,16 @@ mod tests {
         );
 
         let mut intent = new_project_agent_intent(project_id);
-        intent.workflow_graph_ref = WorkflowGraphRef::ByKey {
+        intent.workflow_graph_ref = Some(WorkflowGraphRef::ByKey {
             project_id,
-            key: FREEFORM_LIFECYCLE_KEY.to_string(),
-        };
+            key: TEST_WORKFLOW_GRAPH_KEY.to_string(),
+        });
 
         let result = service.launch_agent(&intent).await.expect("dispatch");
 
         let runs = run_repo.items.lock().unwrap().clone();
         let instances = gi_repo.items.lock().unwrap().clone();
-        assert_eq!(runs[0].root_graph_id, workflow_graph.id);
+        assert_eq!(runs[0].root_graph_id, Some(workflow_graph.id));
         assert_eq!(instances[0].graph_id, workflow_graph.id);
         assert_eq!(
             instances[0]
@@ -1729,7 +1859,7 @@ mod tests {
                 .as_ref()
                 .expect("activity state")
                 .graph_instance_id,
-            result.graph_instance_ref
+            result.graph_instance_ref.expect("graph instance ref")
         );
         assert!(assignment_repo.items.lock().unwrap().is_empty());
     }
@@ -1747,7 +1877,7 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        let workflow_graph = seed_freeform_graph(&workflow_repo, project_id);
+        let workflow_graph = seed_test_workflow_graph(&workflow_repo, project_id);
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1765,7 +1895,7 @@ mod tests {
             .start_lifecycle_run(&LifecycleRunStartIntent {
                 project_id,
                 source: ExecutionSource::Api,
-                workflow_graph_ref: freeform_graph_ref(project_id),
+                workflow_graph_ref: test_workflow_graph_ref(project_id),
             })
             .await
             .expect("start lifecycle run");
@@ -1824,10 +1954,10 @@ mod tests {
         );
 
         let mut intent = new_project_agent_intent(project_id);
-        intent.workflow_graph_ref = WorkflowGraphRef::ByKey {
+        intent.workflow_graph_ref = Some(WorkflowGraphRef::ByKey {
             project_id,
             key: "missing.lifecycle".to_string(),
-        };
+        });
 
         let err = service
             .launch_agent(&intent)
@@ -1854,7 +1984,7 @@ mod tests {
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         let anchor_repo = InMemoryExecutionAnchorRepo::default();
-        seed_freeform_graph(&workflow_repo, project_id);
+        seed_test_workflow_graph(&workflow_repo, project_id);
         let custom_graph = seed_custom_graph(
             &workflow_repo,
             project_id,
@@ -1885,16 +2015,16 @@ mod tests {
 
         let mut intent = new_task_execution_intent(project_id, Uuid::new_v4());
         intent.parent_run_id = Some(existing_run.id);
-        intent.workflow_graph_ref = WorkflowGraphRef::ByKey {
+        intent.workflow_graph_ref = Some(WorkflowGraphRef::ByKey {
             project_id,
             key: "custom.lifecycle".to_string(),
-        };
+        });
         intent.run_policy = RunPolicy::ReuseExisting;
         intent.agent_policy = AgentPolicy::Create;
 
         let result = service.execute_subject(&intent).await.expect("dispatch");
 
-        assert_eq!(result.graph_instance_ref, existing_instance.id);
+        assert_eq!(result.graph_instance_ref, Some(existing_instance.id));
         let frames = frame_repo.items.lock().unwrap().clone();
         let assignments = assignment_repo.items.lock().unwrap().clone();
         assert_eq!(frames[0].activity_key.as_deref(), Some("custom_main"));
@@ -1919,7 +2049,7 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        let workflow_graph = seed_freeform_graph(&workflow_repo, project_id);
+        let workflow_graph = seed_test_workflow_graph(&workflow_repo, project_id);
         let existing_run = create_lifecycle_run(project_id, workflow_graph.id);
         let existing_instance = WorkflowGraphInstance::new_root(existing_run.id, workflow_graph.id);
         let first_agent = LifecycleAgent::new_root(existing_run.id, project_id, "routine");
@@ -1976,7 +2106,7 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        seed_freeform_graph(&workflow_repo, project_id);
+        seed_test_workflow_graph(&workflow_repo, project_id);
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -2018,7 +2148,7 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        seed_freeform_graph(&workflow_repo, project_id);
+        seed_test_workflow_graph(&workflow_repo, project_id);
         let custom_graph = seed_custom_graph(
             &workflow_repo,
             project_id,
@@ -2044,10 +2174,10 @@ mod tests {
 
         let mut intent = new_project_agent_intent(project_id);
         intent.parent_run_id = Some(existing_run.id);
-        intent.workflow_graph_ref = WorkflowGraphRef::ByKey {
+        intent.workflow_graph_ref = Some(WorkflowGraphRef::ByKey {
             project_id,
-            key: FREEFORM_LIFECYCLE_KEY.to_string(),
-        };
+            key: TEST_WORKFLOW_GRAPH_KEY.to_string(),
+        });
         intent.run_policy = RunPolicy::ReuseExisting;
 
         let err = service
@@ -2072,7 +2202,7 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        let workflow_graph = seed_freeform_graph(&workflow_repo, project_id);
+        let workflow_graph = seed_test_workflow_graph(&workflow_repo, project_id);
         let existing_run = create_lifecycle_run(project_id, workflow_graph.id);
         run_repo.items.lock().unwrap().push(existing_run.clone());
 
@@ -2095,7 +2225,7 @@ mod tests {
             subject_ref: None,
             parent_run_id: Some(existing_run.id),
             parent_agent_id: None,
-            workflow_graph_ref: freeform_graph_ref(project_id),
+            workflow_graph_ref: Some(test_workflow_graph_ref(project_id)),
             agent_procedure_ref: None,
             run_policy: RunPolicy::AppendGraph,
             agent_policy: AgentPolicy::Create,
@@ -2137,7 +2267,7 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        let workflow_graph = seed_freeform_graph(&workflow_repo, project_id);
+        let workflow_graph = seed_test_workflow_graph(&workflow_repo, project_id);
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -2158,7 +2288,7 @@ mod tests {
             source: ExecutionSource::ParentAgent,
             parent_run_id: existing_run.id,
             parent_agent_id: Uuid::new_v4(),
-            workflow_graph_ref: freeform_graph_ref(project_id),
+            workflow_graph_ref: Some(test_workflow_graph_ref(project_id)),
             agent_procedure_ref: None,
             context_policy: ContextPolicy::Slice,
             capability_policy: CapabilityPolicy::InheritedSlice,
@@ -2187,8 +2317,11 @@ mod tests {
         );
         let assignments = assignment_repo.items.lock().unwrap().clone();
         assert_eq!(assignments.len(), 1);
-        assert_eq!(assignments[0].id, result.assignment_ref);
-        assert_eq!(assignments[0].graph_instance_id, result.graph_instance_ref);
+        assert_eq!(Some(assignments[0].id), result.assignment_ref);
+        assert_eq!(
+            Some(assignments[0].graph_instance_id),
+            result.graph_instance_ref
+        );
     }
 
     #[tokio::test]
@@ -2204,7 +2337,7 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        seed_freeform_graph(&workflow_repo, project_id);
+        seed_test_workflow_graph(&workflow_repo, project_id);
         let service = make_service(
             &run_repo,
             &workflow_repo,

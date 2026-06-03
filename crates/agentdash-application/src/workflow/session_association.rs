@@ -583,7 +583,7 @@ mod tests {
             Ok(self
                 .runs
                 .values()
-                .filter(|run| run.root_graph_id == root_graph_id)
+                .filter(|run| run.root_graph_id == Some(root_graph_id))
                 .cloned()
                 .collect())
         }

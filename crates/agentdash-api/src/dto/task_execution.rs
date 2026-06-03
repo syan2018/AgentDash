@@ -19,7 +19,8 @@ pub struct StartTaskResponse {
     pub run_ref: Uuid,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
-    pub assignment_ref: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assignment_ref: Option<Uuid>,
     pub subject_execution_ref: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivery_runtime_ref: Option<Uuid>,
@@ -41,7 +42,8 @@ pub struct ContinueTaskResponse {
     pub run_ref: Uuid,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
-    pub assignment_ref: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assignment_ref: Option<Uuid>,
     pub subject_execution_ref: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivery_runtime_ref: Option<Uuid>,
@@ -53,10 +55,12 @@ pub struct ContinueTaskResponse {
 pub struct CancelTaskResponse {
     pub task: TaskResponse,
     pub run_ref: Uuid,
-    pub graph_instance_ref: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_instance_ref: Option<Uuid>,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
-    pub assignment_ref: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assignment_ref: Option<Uuid>,
     pub subject_execution_ref: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_delivery_ref: Option<String>,

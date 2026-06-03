@@ -9,7 +9,6 @@ use agentdash_domain::workflow::{
 
 use crate::ApplicationError;
 use crate::repository_set::RepositorySet;
-use crate::workflow::freeform::FREEFORM_LIFECYCLE_KEY;
 use crate::workflow::{LifecycleDispatchService, WorkflowApplicationError};
 
 #[derive(Debug, Clone)]
@@ -22,7 +21,7 @@ pub struct StoryLifecycleLaunchResult {
     pub story_id: Uuid,
     pub project_agent_id: Uuid,
     pub run_ref: Uuid,
-    pub graph_instance_ref: Uuid,
+    pub graph_instance_ref: Option<Uuid>,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
     pub delivery_runtime_ref: Option<Uuid>,
@@ -100,13 +99,15 @@ pub fn build_story_root_launch_intent(
     story: &Story,
     project_agent: &ProjectAgent,
 ) -> AgentLaunchIntent {
-    let lifecycle_key = project_agent
+    let workflow_graph_ref = project_agent
         .default_lifecycle_key
         .as_deref()
         .map(str::trim)
         .filter(|key| !key.is_empty())
-        .unwrap_or(FREEFORM_LIFECYCLE_KEY)
-        .to_string();
+        .map(|key| WorkflowGraphRef::ByKey {
+            project_id: story.project_id,
+            key: key.to_string(),
+        });
 
     AgentLaunchIntent {
         project_id: story.project_id,
@@ -114,10 +115,7 @@ pub fn build_story_root_launch_intent(
         subject_ref: Some(SubjectRef::new("story", story.id)),
         parent_run_id: None,
         parent_agent_id: None,
-        workflow_graph_ref: WorkflowGraphRef::ByKey {
-            project_id: story.project_id,
-            key: lifecycle_key,
-        },
+        workflow_graph_ref,
         agent_procedure_ref: None,
         run_policy: agentdash_domain::workflow::RunPolicy::CreateLinkedRun,
         agent_policy: AgentPolicy::Create,
@@ -180,15 +178,12 @@ mod tests {
         assert_eq!(intent.runtime_policy, RuntimePolicy::CreateRuntimeSession);
         assert!(matches!(
             intent.workflow_graph_ref,
-            WorkflowGraphRef::ByKey { key, .. } if key == "story.lifecycle"
+            Some(WorkflowGraphRef::ByKey { key, .. }) if key == "story.lifecycle"
         ));
 
         story.id = Uuid::new_v4();
         project_agent.default_lifecycle_key = None;
-        let freeform_intent = build_story_root_launch_intent(&story, &project_agent);
-        assert!(matches!(
-            freeform_intent.workflow_graph_ref,
-            WorkflowGraphRef::ByKey { key, .. } if key == FREEFORM_LIFECYCLE_KEY
-        ));
+        let graphless_intent = build_story_root_launch_intent(&story, &project_agent);
+        assert!(graphless_intent.workflow_graph_ref.is_none());
     }
 }

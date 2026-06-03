@@ -149,17 +149,16 @@ Payload contract:
 - frame transition 语义是 intent，不是 full `CapabilityState` projection
 - 写入 delivery outbox 前必须通过 `CapabilityDimensionRegistry::validate_transition`，并校验 delivery target 与 frame transition target 一致
 
-## Freeform RuntimeSession Dispatch
+## Graphless RuntimeSession Dispatch
 
-普通自由会话也进入 LifecycleRun 过程归属模型，避免 RuntimeSession 与 workflow 过程形成两套事实源。
+普通 Agent 会话进入 `LifecycleRun(topology=graphless)` 过程归属模型，避免 RuntimeSession 与 lifecycle 控制面形成两套事实源。
 
 Contract:
 
 - `POST /sessions` 创建 project-scoped 业务会话，必须先校验调用者对 `project_id` 有 `Edit` 权限。
-- 新入口必须提交 `ExecutionIntent(subject_ref=Project, run_policy=append_graph/create_linked_run, agent_policy=create/reuse, runtime_policy=create_runtime_session)`，由 dispatch 创建或复用 `LifecycleRun`、`WorkflowGraphInstance`、`LifecycleAgent`、`AgentFrame` 和 `RuntimeSession`。
-- Project 归属写入 `LifecycleSubjectAssociation`，runtime refs 写入 `AgentFrame`。
-- freeform lifecycle 是 root `WorkflowGraphInstance`：`main_conversation` 使用 `Agent + ContinueRoot` 与 `ActivityCompletionPolicy::OpenEnded`。
-- `OpenEnded` 表示普通 prompt terminal 不会自动完成 activity。
+- 新入口提交 graphless `ExecutionIntent(subject_ref=Project, agent_policy=create/reuse, runtime_policy=create_runtime_session)`，由 dispatch 创建或复用 `LifecycleRun`、`LifecycleAgent`、`AgentFrame`、`RuntimeSession` 和 `RuntimeSessionExecutionAnchor`。
+- Project 归属写入 `LifecycleSubjectAssociation`，runtime refs 写入 `AgentFrame`，runtime trace 反查优先使用 `RuntimeSessionExecutionAnchor`。
+- 显式 Activity workflow launch 才创建 `WorkflowGraphInstance` 与 `AgentAssignment`。
 
 ## Ready Gate
 

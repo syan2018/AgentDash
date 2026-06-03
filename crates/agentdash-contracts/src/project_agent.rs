@@ -96,9 +96,6 @@ pub struct CreateProjectAgentRequest {
     #[ts(optional)]
     pub default_lifecycle_key: Option<String>,
     #[serde(default)]
-    #[ts(optional)]
-    pub default_procedure_key: Option<String>,
-    #[serde(default)]
     pub is_default_for_story: bool,
     #[serde(default)]
     pub is_default_for_task: bool,
@@ -118,9 +115,6 @@ pub struct UpdateProjectAgentRequest {
     #[serde(default)]
     #[ts(optional)]
     pub default_lifecycle_key: Option<String>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub default_procedure_key: Option<String>,
     #[serde(default)]
     #[ts(optional)]
     pub is_default_for_story: Option<bool>,

@@ -11,7 +11,6 @@ use agentdash_domain::workspace::{Workspace, WorkspaceRepository};
 
 use crate::ApplicationError;
 use crate::repository_set::RepositorySet;
-use crate::workflow::{FreeformLifecycleService, WorkflowApplicationError};
 
 #[derive(Debug, Clone, Default)]
 pub struct ProjectMutationInput {
@@ -68,7 +67,6 @@ pub async fn create_project_record(
         .create(&project)
         .await
         .map_err(ApplicationError::from)?;
-    ensure_project_freeform_lifecycle(repos, project.id).await?;
     sync_project_inline_files(repos, &project).await?;
     Ok(project)
 }
@@ -162,7 +160,6 @@ pub async fn clone_project_record(
         .create(&cloned_project)
         .await
         .map_err(ApplicationError::from)?;
-    ensure_project_freeform_lifecycle(repos, cloned_project.id).await?;
     Ok(cloned_project)
 }
 
@@ -295,30 +292,6 @@ async fn sync_project_inline_files(
     )
     .await
     .map_err(ApplicationError::Internal)
-}
-
-async fn ensure_project_freeform_lifecycle(
-    repos: &RepositorySet,
-    project_id: Uuid,
-) -> Result<(), ApplicationError> {
-    let service = FreeformLifecycleService::new(
-        repos.agent_procedure_repo.as_ref(),
-        repos.workflow_graph_repo.as_ref(),
-    );
-    service
-        .ensure_definition(project_id)
-        .await
-        .map(|_| ())
-        .map_err(map_workflow_error)
-}
-
-fn map_workflow_error(error: WorkflowApplicationError) -> ApplicationError {
-    match error {
-        WorkflowApplicationError::BadRequest(message) => ApplicationError::BadRequest(message),
-        WorkflowApplicationError::NotFound(message) => ApplicationError::NotFound(message),
-        WorkflowApplicationError::Conflict(message) => ApplicationError::Conflict(message),
-        WorkflowApplicationError::Internal(message) => ApplicationError::Internal(message),
-    }
 }
 
 #[cfg(test)]

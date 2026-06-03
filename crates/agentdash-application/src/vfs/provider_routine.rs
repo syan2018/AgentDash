@@ -687,7 +687,7 @@ mod tests {
     fn fixture() -> (RoutineMountProvider, Mount, MountOperationContext) {
         let routine_id = Uuid::new_v4();
         let execution_id = Uuid::new_v4();
-        let mut execution = RoutineExecution {
+        let execution = RoutineExecution {
             id: execution_id,
             routine_id,
             trigger_source: "webhook".to_string(),
@@ -697,7 +697,7 @@ mod tests {
                 run_id: Uuid::new_v4(),
                 agent_id: Uuid::new_v4(),
                 frame_id: Uuid::new_v4(),
-                assignment_id: Uuid::new_v4(),
+                assignment_id: Some(Uuid::new_v4()),
             }),
             status: RoutineExecutionStatus::Dispatched,
             started_at: Utc::now(),

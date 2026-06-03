@@ -233,8 +233,6 @@ impl AppState {
                 lifecycle_subject_association_repo: repos
                     .lifecycle_subject_association_repo
                     .clone(),
-                agent_procedure_repo: repos.agent_procedure_repo.clone(),
-                workflow_graph_repo: repos.workflow_graph_repo.clone(),
                 workflow_graph_instance_repo: repos.workflow_graph_instance_repo.clone(),
                 lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
             };

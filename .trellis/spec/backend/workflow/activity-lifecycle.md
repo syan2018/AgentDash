@@ -1,13 +1,14 @@
 # WorkflowGraph Activity Backend Contract
 
-Activity lifecycle 的目标模型是 `WorkflowGraph -> WorkflowGraphInstance -> ActivityState / ActivityAttemptState`。当前代码中的 `ActivityLifecycleDefinition` 是 `WorkflowGraph` 的迁移来源；当前 `ActivityLifecycleRunState` 会迁入 run 内各 `WorkflowGraphInstance` 的 activity state namespace。
+Activity lifecycle 的目标模型是 `LifecycleRun(topology=workflow_graph) -> WorkflowGraph -> WorkflowGraphInstance -> ActivityState / ActivityAttemptState`。当前代码中的 `ActivityLifecycleDefinition` 是 `WorkflowGraph` 的迁移来源；当前 `ActivityLifecycleRunState` 会迁入 run 内各 `WorkflowGraphInstance` 的 activity state namespace。`topology=graphless` 的普通 Agent runtime 不进入本契约，它只通过 run / agent / frame / runtime session anchor 与 subject association 表达控制面。
 
 模块不变量见 [Workflow Architecture](./architecture.md)。
 
 ## Core Runtime Contract
 
 - `WorkflowGraph` 是可执行 Activity graph definition，包含 activities、transitions、ports、artifact bindings 与 executor slots。
-- `LifecycleRun` 是 tracked life process / control ledger，不是单个 graph 的 run；同一个 `LifecycleRun` 可以包含多个 `WorkflowGraphInstance`。
+- `LifecycleRun` 是 tracked life process / control ledger，不是单个 graph 的 run；`topology=workflow_graph` 的同一个 `LifecycleRun` 可以包含多个 `WorkflowGraphInstance`。
+- `LifecycleRun.root_graph_id` 只在 `topology=workflow_graph` 中存在；`topology=graphless` 的 run 不创建 `WorkflowGraphInstance`、Activity state、claim 或 `AgentAssignment`。
 - root graph 只是 `WorkflowGraphInstance(role=root)`；当前 `LifecycleRun.lifecycle_id` 只是 root graph backfill 来源。
 - Activity runtime identity 必须以 `graph_instance_id + activity_key` 为 namespace。
 - Attempt / claim / assignment key 必须包含 `graph_instance_id + activity_key + attempt`。
@@ -58,6 +59,7 @@ WorkflowGraphInstance
 Rules:
 
 - `(run_id, role=root)` 在一个 run 内只能有一个。
+- `WorkflowGraphInstance` 只属于 `topology=workflow_graph` 的 run。
 - `role=task_execution`、`role=companion_review`、`role=routine_phase` 等只是同一 run 内 graph instance 的用途，不自动创建 child run。
 - Child / linked `LifecycleRun` 只表达独立 lifecycle、context channel、control boundary、navigation boundary 或 long-lived projection boundary。
 

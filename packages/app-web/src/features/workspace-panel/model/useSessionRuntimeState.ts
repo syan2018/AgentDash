@@ -102,7 +102,7 @@ export function useSessionRuntimeState({
       });
     } catch (error: unknown) {
       if (!canCommit()) return;
-      // 404 表示 session 没有关联 AgentFrame（freeform session），视为正常空状态
+      // 404 表示 session 没有关联 AgentFrame，视为正常空状态
       const is404 = error instanceof Error && error.message.includes("404");
       setState({
         session_id: sid,

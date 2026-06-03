@@ -742,12 +742,22 @@ pub struct LifecycleAgentView {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleRunTopology {
+    Graphless,
+    WorkflowGraph,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct LifecycleRunView {
     pub run_ref: LifecycleRunRefDto,
     pub project_id: String,
-    pub root_graph_id: String,
+    pub topology: LifecycleRunTopology,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub root_graph_id: Option<String>,
     pub status: LifecycleRunStatus,
     #[serde(default)]
     pub workflow_graph_instances: Vec<WorkflowGraphInstanceView>,

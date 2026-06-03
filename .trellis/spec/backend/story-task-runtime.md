@@ -8,7 +8,7 @@
 
 - **Story** 是 aggregate root，表达一条持久化的业务工作单元。Story 不绑定 `RuntimeSession`。
 - **Task** 是 Story aggregate 下的 child entity，保存在 `stories.tasks` JSONB 列。无独立 repository、无独立表；Task 本体不拥有 runtime truth。
-- **LifecycleRun** 是被追踪的执行生命过程 / control ledger，可以包含多个 `WorkflowGraphInstance`。
+- **LifecycleRun** 是被追踪的执行生命过程 / control ledger。普通 Agent runtime 使用 `topology=graphless`，显式 Activity 工作流使用 `topology=workflow_graph` 并可以包含多个 `WorkflowGraphInstance`。
 - **LifecycleSubjectAssociation** 是关联层实体，用 `(anchor_run_id, anchor_agent_id?, subject_kind, subject_id, role)` 显式表达 whole-run 或 agent-scoped subject 关系。
 - **RuntimeSession** 是 runtime trace 容器：承载 event log、debug replay、agent 交互轨迹。不承载 ownership、permission scope 或 lifecycle progress truth。
 
@@ -26,15 +26,15 @@
 ### Task
 
 - **Durable spec**：id / story_id / workspace_id / title / description / authoring preference / dispatch policy。
-- **投影字段**：status / artifacts / current agent / latest attempt，由 `SubjectRef(kind=Task)`、`LifecycleSubjectAssociation`、`AgentAssignment`、`ActivityAttemptState` 与 lifecycle artifacts 派生，外部不可直接写为 runtime truth。
+- **投影字段**：status / artifacts / current agent / latest attempt，由 `SubjectRef(kind=Task)`、`LifecycleSubjectAssociation`、`LifecycleAgent`、`AgentFrame` 与 lifecycle artifacts 派生；显式 Activity 工作流再通过 `AgentAssignment` 与 `ActivityAttemptState` 补充 attempt 投影，外部不可直接写为 runtime truth。
 - **禁止**新增 runtime 字段：`executor_session_id`、`runtime_session_id`、`activity_key`、`attempt`、`execution_mode` 等属于 lifecycle / assignment / projection 层。
-- Task execution 通过 `SubjectRef(kind=Task, id=task_id)` 进入 `ExecutionIntent`；默认在同一 `LifecycleRun` 内追加或复用 `WorkflowGraphInstance` / `LifecycleAgent`，只有独立 lifecycle/context/control/navigation/projection 边界成立时才创建 linked run。
+- Task execution 通过 `SubjectRef(kind=Task, id=task_id)` 进入 `ExecutionIntent`；默认使用 graphless run / `LifecycleAgent` / `AgentFrame` 控制面，显式 Activity 工作流才在同一 `LifecycleRun` 内追加或复用 `WorkflowGraphInstance`。
 
 ### LifecycleRun
 
 - 不拥有 `RuntimeSession`；旧 `LifecycleRun.session_id` 是迁移来源，目标上迁入 root `LifecycleAgent` / `AgentFrame.runtime_session_refs` 后删除。
 - 业务归属通过 `LifecycleSubjectAssociation` 表达。
-- 运行态按 `WorkflowGraphInstance` 分 namespace；activity state、claim、assignment、attempt key 必须包含 `graph_instance_id`。
+- `topology=graphless` 的运行态由 run / agent / frame / runtime session anchor 与 subject association 表达。`topology=workflow_graph` 的运行态按 `WorkflowGraphInstance` 分 namespace；activity state、claim、assignment、attempt key 必须包含 `graph_instance_id`。
 - 推进规则见 [workflow/lifecycle-edge.md](./workflow/lifecycle-edge.md)。
 
 ### LifecycleSubjectAssociation
@@ -50,7 +50,7 @@
 
 - `SessionMeta` 持有 `project_id`（创建时确定，用于按项目查询 runtime trace 列表）。
 - `RuntimeSession` 不通过任何 binding 表与业务实体关联。
-- 业务上下文反查只能走 trace 链路：`runtime_session_id → AgentFrame → LifecycleAgent → LifecycleRun → LifecycleSubjectAssociation`。
+- 业务上下文反查只能走 trace 链路：`runtime_session_id → RuntimeSessionExecutionAnchor → AgentFrame / LifecycleAgent / LifecycleRun → LifecycleSubjectAssociation`。
 - capability / permission scope 由 `AgentFrame`、`PermissionGrant` 与 association 推导，不由 session owner 推导。
 
 ---
@@ -60,7 +60,7 @@
 | 关系 | 基数 | 绑定方式 |
 |------|------|----------|
 | Story ↔ LifecycleRun | 1:N | `LifecycleSubjectAssociation(anchor_run_id, subject_kind=Story, role=Subject)` |
-| LifecycleRun ↔ WorkflowGraphInstance | 1:N | `WorkflowGraphInstance(run_id, graph_id, role)` |
+| LifecycleRun ↔ WorkflowGraphInstance | 0:N | `WorkflowGraphInstance(run_id, graph_id, role)`；仅 `topology=workflow_graph` |
 | LifecycleRun ↔ LifecycleAgent | 1:N | `LifecycleAgent(run_id)` |
 | LifecycleAgent ↔ AgentFrame | 1:N | `AgentFrame(agent_id, revision)` |
 | Story ↔ Task | 1:N | Story aggregate 持有 `Vec<Task>` |
@@ -97,7 +97,8 @@ API 端点：`GET /stories/{story_id}/runs/active`。
 task_id → SubjectRef(kind=Task, id=task_id)
         → lifecycle_subject_association_repo.list_by_subject(Task, task_id)
         → anchor agent / run
-        → agent assignments / attempts / artifacts
+        → LifecycleAgent.current_frame / runtime anchors / artifacts
+        → workflow_graph topology 时再进入 agent assignments / attempts
         → SubjectExecutionView.task_projection
 ```
 
@@ -110,9 +111,8 @@ project_id → SessionMeta query by project_id
 ### 查找 RuntimeSession 的业务上下文（trace 反查）
 
 ```text
-runtime_session_id → agent_frame_repo.find_by_runtime_session(runtime_session_id)
-                   → LifecycleAgent
-                   → LifecycleRun
+runtime_session_id → RuntimeSessionExecutionAnchor
+                   → launch_frame_id / agent_id / run_id
                    → lifecycle_subject_association_repo.list_by_anchor(run/agent)
                    → derive trace projection
 ```

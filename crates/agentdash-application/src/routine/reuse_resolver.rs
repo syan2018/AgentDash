@@ -17,7 +17,7 @@ pub struct RoutineDispatchReuseTarget {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub frame_id: Uuid,
-    pub assignment_id: Uuid,
+    pub assignment_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,24 +206,26 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
             )));
         }
 
-        let assignment = self
-            .agent_assignment_repo
-            .list_by_run(refs.run_id)
-            .await
-            .map_err(ApplicationError::from)?
-            .into_iter()
-            .find(|assignment| assignment.id == refs.assignment_id)
-            .ok_or_else(|| {
-                ApplicationError::Conflict(format!(
-                    "RoutineExecution {} 记录的 AgentAssignment {} 不存在",
-                    candidate.id, refs.assignment_id
-                ))
-            })?;
-        if assignment.agent_id != refs.agent_id || assignment.frame_id != refs.frame_id {
-            return Err(ApplicationError::Conflict(format!(
-                "RoutineExecution {} 记录的 AgentAssignment {} 与 agent/frame anchor 不一致",
-                candidate.id, refs.assignment_id
-            )));
+        if let Some(assignment_id) = refs.assignment_id {
+            let assignment = self
+                .agent_assignment_repo
+                .list_by_run(refs.run_id)
+                .await
+                .map_err(ApplicationError::from)?
+                .into_iter()
+                .find(|assignment| assignment.id == assignment_id)
+                .ok_or_else(|| {
+                    ApplicationError::Conflict(format!(
+                        "RoutineExecution {} 记录的 AgentAssignment {} 不存在",
+                        candidate.id, assignment_id
+                    ))
+                })?;
+            if assignment.agent_id != refs.agent_id || assignment.frame_id != refs.frame_id {
+                return Err(ApplicationError::Conflict(format!(
+                    "RoutineExecution {} 记录的 AgentAssignment {} 与 agent/frame anchor 不一致",
+                    candidate.id, assignment_id
+                )));
+            }
         }
 
         let subject = SubjectRef::new(ROUTINE_EXECUTION_SUBJECT_KIND, candidate.id);
@@ -442,7 +444,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|run| run.root_graph_id == root_graph_id)
+                .filter(|run| run.root_graph_id == Some(root_graph_id))
                 .cloned()
                 .collect())
         }
@@ -772,7 +774,7 @@ mod tests {
                 run_id: run.id,
                 agent_id: agent.id,
                 frame_id: frame.id,
-                assignment_id: assignment.id,
+                assignment_id: Some(assignment.id),
             });
             let association = LifecycleSubjectAssociation::new_run_scoped(
                 run.id,
@@ -804,7 +806,7 @@ mod tests {
                 run_id: run.id,
                 agent_id: agent.id,
                 frame_id: frame.id,
-                assignment_id: assignment.id,
+                assignment_id: Some(assignment.id),
             }
         }
     }
@@ -828,7 +830,8 @@ mod tests {
         LifecycleRun {
             id: Uuid::new_v4(),
             project_id,
-            root_graph_id: Uuid::new_v4(),
+            topology: agentdash_domain::workflow::LifecycleRunTopology::WorkflowGraph,
+            root_graph_id: Some(Uuid::new_v4()),
             status: LifecycleRunStatus::Ready,
             active_node_keys: Vec::new(),
             execution_log: Vec::new(),

@@ -42,7 +42,7 @@ pub struct TaskExecutionResult {
     pub run_ref: Uuid,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
-    pub assignment_ref: Uuid,
+    pub assignment_ref: Option<Uuid>,
     pub subject_execution_ref: SubjectExecutionRef,
     pub delivery_runtime_ref: Option<Uuid>,
     pub status: TaskStatus,
@@ -56,10 +56,10 @@ pub struct TaskExecutionResult {
 pub struct TaskExecutionCancelResult {
     pub task: agentdash_domain::task::Task,
     pub run_ref: Uuid,
-    pub graph_instance_ref: Uuid,
+    pub graph_instance_ref: Option<Uuid>,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
-    pub assignment_ref: Uuid,
+    pub assignment_ref: Option<Uuid>,
     pub subject_execution_ref: SubjectExecutionRef,
     pub runtime_delivery_ref: Option<String>,
 }

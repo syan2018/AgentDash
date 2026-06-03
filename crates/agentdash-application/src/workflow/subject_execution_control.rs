@@ -21,10 +21,10 @@ pub struct CancelSubjectExecutionCommand {
 pub struct RuntimeCancelDeliveryCommand {
     pub runtime_session_id: String,
     pub run_ref: Uuid,
-    pub graph_instance_ref: Uuid,
+    pub graph_instance_ref: Option<Uuid>,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
-    pub assignment_ref: Uuid,
+    pub assignment_ref: Option<Uuid>,
     pub reason: Option<String>,
 }
 
@@ -33,19 +33,19 @@ pub struct SubjectExecutionCancelResult {
     pub subject_ref: SubjectRef,
     pub association_ref: Uuid,
     pub run_ref: Uuid,
-    pub graph_instance_ref: Uuid,
+    pub graph_instance_ref: Option<Uuid>,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
-    pub assignment_ref: Uuid,
-    pub activity_key: String,
-    pub attempt: i32,
+    pub assignment_ref: Option<Uuid>,
+    pub activity_key: Option<String>,
+    pub attempt: Option<i32>,
     pub runtime_delivery: Option<RuntimeCancelDeliveryCommand>,
 }
 
 struct SubjectExecutionCancelTarget {
     association: LifecycleSubjectAssociation,
     agent: LifecycleAgent,
-    assignment: AgentAssignment,
+    assignment: Option<AgentAssignment>,
     delivery_frame: AgentFrame,
 }
 
@@ -104,13 +104,22 @@ impl<'a> SubjectExecutionControlService<'a> {
         Ok(SubjectExecutionCancelResult {
             subject_ref: command.subject_ref,
             association_ref: target.association.id,
-            run_ref: target.assignment.run_id,
-            graph_instance_ref: target.assignment.graph_instance_id,
+            run_ref: target.agent.run_id,
+            graph_instance_ref: target
+                .assignment
+                .as_ref()
+                .map(|assignment| assignment.graph_instance_id),
             agent_ref: target.agent.id,
             frame_ref: target.delivery_frame.id,
-            assignment_ref: target.assignment.id,
-            activity_key: target.assignment.activity_key,
-            attempt: target.assignment.attempt,
+            assignment_ref: target.assignment.as_ref().map(|assignment| assignment.id),
+            activity_key: target
+                .assignment
+                .as_ref()
+                .map(|assignment| assignment.activity_key.clone()),
+            attempt: target
+                .assignment
+                .as_ref()
+                .map(|assignment| assignment.attempt),
             runtime_delivery,
         })
     }
@@ -144,7 +153,9 @@ impl<'a> SubjectExecutionControlService<'a> {
         let assignment = self
             .resolve_active_assignment(&association, agent.id)
             .await?;
-        let delivery_frame = self.resolve_delivery_frame(&agent, &assignment).await?;
+        let delivery_frame = self
+            .resolve_delivery_frame(&agent, assignment.as_ref())
+            .await?;
 
         Ok(SubjectExecutionCancelTarget {
             association,
@@ -201,26 +212,21 @@ impl<'a> SubjectExecutionControlService<'a> {
         &self,
         association: &LifecycleSubjectAssociation,
         agent_id: Uuid,
-    ) -> Result<AgentAssignment, WorkflowApplicationError> {
-        self.agent_assignment_repo
+    ) -> Result<Option<AgentAssignment>, WorkflowApplicationError> {
+        Ok(self
+            .agent_assignment_repo
             .list_by_run(association.anchor_run_id)
             .await?
             .into_iter()
             .filter(|assignment| assignment.agent_id == agent_id)
             .filter(|assignment| assignment.lease_status == "active")
-            .max_by_key(|assignment| assignment.assigned_at)
-            .ok_or_else(|| {
-                WorkflowApplicationError::Conflict(format!(
-                    "subject execution {}:{} 没有 active assignment",
-                    association.subject_kind, association.subject_id
-                ))
-            })
+            .max_by_key(|assignment| assignment.assigned_at))
     }
 
     async fn resolve_delivery_frame(
         &self,
         agent: &LifecycleAgent,
-        assignment: &AgentAssignment,
+        assignment: Option<&AgentAssignment>,
     ) -> Result<AgentFrame, WorkflowApplicationError> {
         let frame_id = agent.current_frame_id.ok_or_else(|| {
             WorkflowApplicationError::Conflict(format!(
@@ -237,8 +243,9 @@ impl<'a> SubjectExecutionControlService<'a> {
                 frame.id, agent.id
             )));
         }
-        if frame.graph_instance_id != Some(assignment.graph_instance_id)
-            || frame.activity_key.as_deref() != Some(assignment.activity_key.as_str())
+        if let Some(assignment) = assignment
+            && (frame.graph_instance_id != Some(assignment.graph_instance_id)
+                || frame.activity_key.as_deref() != Some(assignment.activity_key.as_str()))
         {
             return Err(WorkflowApplicationError::Conflict(format!(
                 "agent frame {} 与 assignment {} 的 activity scope 不一致",
@@ -253,10 +260,13 @@ impl<'a> SubjectExecutionControlService<'a> {
         target: &SubjectExecutionCancelTarget,
         reason: Option<String>,
     ) -> Result<(), WorkflowApplicationError> {
-        let attempt = u32::try_from(target.assignment.attempt).map_err(|_| {
+        let Some(assignment) = target.assignment.as_ref() else {
+            return Ok(());
+        };
+        let attempt = u32::try_from(assignment.attempt).map_err(|_| {
             WorkflowApplicationError::Conflict(format!(
                 "assignment {} 的 attempt 非法: {}",
-                target.assignment.id, target.assignment.attempt
+                assignment.id, assignment.attempt
             ))
         })?;
         let activity_service = ActivityLifecycleRunService::new(
@@ -267,9 +277,9 @@ impl<'a> SubjectExecutionControlService<'a> {
         );
         activity_service
             .apply_event(
-                target.assignment.graph_instance_id,
+                assignment.graph_instance_id,
                 ActivityEvent::ActivityCancelled {
-                    activity_key: target.assignment.activity_key.clone(),
+                    activity_key: assignment.activity_key.clone(),
                     attempt,
                     reason,
                 },
@@ -282,12 +292,15 @@ impl<'a> SubjectExecutionControlService<'a> {
         &self,
         target: &SubjectExecutionCancelTarget,
     ) -> Result<(), WorkflowApplicationError> {
+        let Some(assignment) = target.assignment.as_ref() else {
+            return Ok(());
+        };
         let idempotency_key = format!(
             "{}:{}:{}:{}",
-            target.assignment.run_id,
-            target.assignment.graph_instance_id,
-            target.assignment.activity_key,
-            target.assignment.attempt
+            assignment.run_id,
+            assignment.graph_instance_id,
+            assignment.activity_key,
+            assignment.attempt
         );
         let Some(mut claim) = self
             .claim_repo
@@ -309,7 +322,10 @@ impl<'a> SubjectExecutionControlService<'a> {
         &self,
         target: &SubjectExecutionCancelTarget,
     ) -> Result<(), WorkflowApplicationError> {
-        let mut assignment = target.assignment.clone();
+        let Some(assignment) = target.assignment.as_ref() else {
+            return Ok(());
+        };
+        let mut assignment = assignment.clone();
         assignment.release();
         self.agent_assignment_repo.update(&assignment).await?;
         Ok(())
@@ -326,11 +342,14 @@ impl<'a> SubjectExecutionControlService<'a> {
             .select_runtime_session_id(policy)
             .map(|runtime_session_id| RuntimeCancelDeliveryCommand {
                 runtime_session_id,
-                run_ref: target.assignment.run_id,
-                graph_instance_ref: target.assignment.graph_instance_id,
+                run_ref: target.agent.run_id,
+                graph_instance_ref: target
+                    .assignment
+                    .as_ref()
+                    .map(|assignment| assignment.graph_instance_id),
                 agent_ref: target.agent.id,
                 frame_ref: target.delivery_frame.id,
-                assignment_ref: target.assignment.id,
+                assignment_ref: target.assignment.as_ref().map(|assignment| assignment.id),
                 reason,
             })
     }
@@ -460,7 +479,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|run| run.root_graph_id == root_graph_id)
+                .filter(|run| run.root_graph_id == Some(root_graph_id))
                 .cloned()
                 .collect())
         }
@@ -858,8 +877,8 @@ mod tests {
     fn graph(project_id: Uuid) -> WorkflowGraph {
         WorkflowGraph::new(
             project_id,
-            "task.freeform",
-            "Task Freeform",
+            "task.lifecycle",
+            "Task Lifecycle",
             "",
             DefinitionSource::UserAuthored,
             "main",
@@ -994,7 +1013,7 @@ mod tests {
             .expect("cancel");
 
         assert_eq!(result.subject_ref, subject);
-        assert_eq!(result.assignment_ref, assignment.id);
+        assert_eq!(result.assignment_ref, Some(assignment.id));
         assert_eq!(
             result
                 .runtime_delivery
@@ -1029,6 +1048,76 @@ mod tests {
             .expect("assignment");
         assert_eq!(assignment.lease_status, "released");
         assert!(assignment.released_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn cancel_graphless_subject_execution_delivers_runtime_without_assignment() {
+        let project_id = Uuid::new_v4();
+        let subject = SubjectRef::new("task", Uuid::new_v4());
+        let graph_repo = GraphRepo {
+            graph: graph(project_id),
+        };
+        let run_repo = RunRepo::default();
+        let graph_instance_repo = GraphInstanceRepo::default();
+        let claim_repo = ClaimRepo::default();
+        let association_repo = SubjectAssociationRepo::default();
+        let agent_repo = AgentRepo::default();
+        let frame_repo = FrameRepo::default();
+        let assignment_repo = AssignmentRepo::default();
+
+        let run = LifecycleRun::new_graphless(project_id);
+        run_repo.create(&run).await.expect("run");
+        let mut agent = LifecycleAgent::new_root(run.id, project_id, "task_agent");
+        let mut frame = AgentFrame::new_revision(agent.id, 1, "test");
+        frame.runtime_session_refs_json =
+            AgentFrame::runtime_session_refs_json(["runtime-graphless-1"]);
+        agent.set_current_frame(frame.id);
+        agent_repo.create(&agent).await.expect("agent");
+        frame_repo.create(&frame).await.expect("frame");
+        association_repo
+            .create(&LifecycleSubjectAssociation::new_agent_scoped(
+                run.id,
+                agent.id,
+                &subject,
+                "task_execution",
+                None,
+            ))
+            .await
+            .expect("association");
+
+        let service = SubjectExecutionControlService::new(
+            &graph_repo,
+            &run_repo,
+            &graph_instance_repo,
+            &claim_repo,
+            &association_repo,
+            &agent_repo,
+            &frame_repo,
+            &assignment_repo,
+        );
+        let result = service
+            .cancel_subject_execution(CancelSubjectExecutionCommand {
+                subject_ref: subject.clone(),
+                runtime_selection_policy: RuntimeSessionSelectionPolicy::LatestAttached,
+                reason: Some("user cancel".to_string()),
+            })
+            .await
+            .expect("cancel");
+
+        assert_eq!(result.subject_ref, subject);
+        assert_eq!(result.run_ref, run.id);
+        assert_eq!(result.agent_ref, agent.id);
+        assert_eq!(result.frame_ref, frame.id);
+        assert_eq!(result.graph_instance_ref, None);
+        assert_eq!(result.assignment_ref, None);
+        assert_eq!(result.activity_key, None);
+        assert_eq!(result.attempt, None);
+        let command = result.runtime_delivery.expect("runtime delivery");
+        assert_eq!(command.runtime_session_id, "runtime-graphless-1");
+        assert_eq!(command.graph_instance_ref, None);
+        assert_eq!(command.assignment_ref, None);
+        assert!(assignment_repo.assignments.lock().unwrap().is_empty());
+        assert!(claim_repo.claims.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

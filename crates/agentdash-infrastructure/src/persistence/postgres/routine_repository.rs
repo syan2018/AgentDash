@@ -224,15 +224,15 @@ impl TryFrom<ExecutionRow> for RoutineExecution {
             row.dispatch_frame_id,
             row.dispatch_assignment_id,
         ) {
-            (Some(run_id), Some(agent_id), Some(frame_id), Some(assignment_id)) => {
+            (Some(run_id), Some(agent_id), Some(frame_id), assignment_id) => {
                 Some(RoutineDispatchRefs {
                     run_id: parse_uuid(&run_id, "routine_executions.dispatch_run_id")?,
                     agent_id: parse_uuid(&agent_id, "routine_executions.dispatch_agent_id")?,
                     frame_id: parse_uuid(&frame_id, "routine_executions.dispatch_frame_id")?,
-                    assignment_id: parse_uuid(
-                        &assignment_id,
-                        "routine_executions.dispatch_assignment_id",
-                    )?,
+                    assignment_id: assignment_id
+                        .as_deref()
+                        .map(|value| parse_uuid(value, "routine_executions.dispatch_assignment_id"))
+                        .transpose()?,
                 })
             }
             _ => None,
@@ -282,7 +282,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
             execution
                 .dispatch_refs
                 .as_ref()
-                .map(|r| r.assignment_id.to_string()),
+                .and_then(|r| r.assignment_id.map(|assignment_id| assignment_id.to_string())),
         )
         .bind(status_to_str(execution.status))
         .bind(execution.started_at)
@@ -328,7 +328,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
             execution
                 .dispatch_refs
                 .as_ref()
-                .map(|r| r.assignment_id.to_string()),
+                .and_then(|r| r.assignment_id.map(|assignment_id| assignment_id.to_string())),
         )
         .bind(status_to_str(execution.status))
         .bind(execution.completed_at)

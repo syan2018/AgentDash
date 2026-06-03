@@ -190,12 +190,21 @@ pub struct ActiveActivityRef {
     pub status: super::value_objects::ActivityAttemptStatus,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleRunTopology {
+    Graphless,
+    WorkflowGraph,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleRun {
     pub id: Uuid,
     pub project_id: Uuid,
-    /// 此 run 关联的 root WorkflowGraph ID。
-    pub root_graph_id: Uuid,
+    pub topology: LifecycleRunTopology,
+    /// 此 run 关联的 root WorkflowGraph ID；graphless run 不拥有 WorkflowGraph。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_graph_id: Option<Uuid>,
     pub status: LifecycleRunStatus,
     /// Read-model-only：从 `WorkflowGraphInstance.activity_state` 派生的活跃 activity 集合。
     /// 业务逻辑应使用 `active_activity_refs()` 而非直接读取此字段。
@@ -236,7 +245,24 @@ impl LifecycleRun {
         Self {
             id: Uuid::new_v4(),
             project_id,
-            root_graph_id,
+            topology: LifecycleRunTopology::WorkflowGraph,
+            root_graph_id: Some(root_graph_id),
+            status: LifecycleRunStatus::Ready,
+            active_node_keys: Vec::new(),
+            execution_log: Vec::new(),
+            created_at: now,
+            updated_at: now,
+            last_activity_at: now,
+        }
+    }
+
+    pub fn new_graphless(project_id: Uuid) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            project_id,
+            topology: LifecycleRunTopology::Graphless,
+            root_graph_id: None,
             status: LifecycleRunStatus::Ready,
             active_node_keys: Vec::new(),
             execution_log: Vec::new(),

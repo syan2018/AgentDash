@@ -1,10 +1,8 @@
 use agentdash_domain::routine::{DispatchStrategy, Routine, RoutineExecution};
 use agentdash_domain::workflow::{
     AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, RunPolicy, RuntimePolicy,
-    SubjectExecutionIntent, SubjectRef, WorkflowGraphRef,
+    SubjectExecutionIntent, SubjectRef,
 };
-
-use crate::workflow::freeform::FREEFORM_LIFECYCLE_KEY;
 
 use super::reuse_resolver::RoutineDispatchReuseTarget;
 
@@ -39,10 +37,7 @@ pub fn build_routine_execution_intent(
         subject_ref: SubjectRef::new("routine_execution", execution.id),
         parent_run_id: None,
         parent_agent_id: None,
-        workflow_graph_ref: WorkflowGraphRef::ByKey {
-            project_id: routine.project_id,
-            key: FREEFORM_LIFECYCLE_KEY.to_string(),
-        },
+        workflow_graph_ref: None,
         agent_procedure_ref: None,
         run_policy,
         agent_policy,
@@ -129,7 +124,7 @@ mod tests {
             run_id,
             agent_id,
             frame_id: Uuid::new_v4(),
-            assignment_id: Uuid::new_v4(),
+            assignment_id: None,
         };
         let intent = build_routine_execution_intent_with_reuse(&routine, &execution, Some(&target));
 

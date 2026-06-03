@@ -14,7 +14,8 @@ use agentdash_contracts::workflow::{
     ExecutorRunRef as ContractExecutorRunRef, LifecycleAgentRefDto, LifecycleAgentView,
     LifecycleExecutionEntry as ContractLifecycleExecutionEntry,
     LifecycleExecutionEventKind as ContractLifecycleExecutionEventKind, LifecycleRunRefDto,
-    LifecycleRunStatus as ContractLifecycleRunStatus, LifecycleRunView,
+    LifecycleRunStatus as ContractLifecycleRunStatus,
+    LifecycleRunTopology as ContractLifecycleRunTopology, LifecycleRunView,
     LifecycleSubjectAssociationDto, ProjectActiveAgentsView, RuntimeSessionRefDto,
     SubjectExecutionView, SubjectRefDto, WorkflowGraphInstanceView,
 };
@@ -22,7 +23,8 @@ use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
     ActivityLifecycleRunState, AgentAssignment, ExecutorRunRef as DomainExecutorRunRef,
     LifecycleAgent, LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind, LifecycleRun,
-    LifecycleRunStatus as DomainLifecycleRunStatus, LifecycleSubjectAssociation,
+    LifecycleRunStatus as DomainLifecycleRunStatus,
+    LifecycleRunTopology as DomainLifecycleRunTopology, LifecycleSubjectAssociation,
     RuntimeSessionSelectionPolicy, SubjectRef, WorkflowGraphInstance,
 };
 
@@ -297,6 +299,13 @@ fn status_to_dto(status: DomainLifecycleRunStatus) -> ContractLifecycleRunStatus
     }
 }
 
+fn topology_to_dto(topology: DomainLifecycleRunTopology) -> ContractLifecycleRunTopology {
+    match topology {
+        DomainLifecycleRunTopology::Graphless => ContractLifecycleRunTopology::Graphless,
+        DomainLifecycleRunTopology::WorkflowGraph => ContractLifecycleRunTopology::WorkflowGraph,
+    }
+}
+
 fn executor_run_ref_to_dto(er: &DomainExecutorRunRef) -> ContractExecutorRunRef {
     match er {
         DomainExecutorRunRef::RuntimeSession { session_id } => {
@@ -327,7 +336,8 @@ fn assemble_lifecycle_run_view(
             run_id: run.id.to_string(),
         },
         project_id: run.project_id.to_string(),
-        root_graph_id: run.root_graph_id.to_string(),
+        topology: topology_to_dto(run.topology),
+        root_graph_id: run.root_graph_id.map(|id| id.to_string()),
         status: status_to_dto(run.status),
         workflow_graph_instances,
         agents,

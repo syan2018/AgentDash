@@ -5,14 +5,12 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource,
     RunPolicy, RuntimePolicy, RuntimeSessionSelectionPolicy, SubjectExecutionIntent, SubjectRef,
-    WorkflowGraphRef,
 };
 
 use crate::repository_set::RepositorySet;
 use crate::task::lock::TaskLockMap;
 use crate::workflow::WorkflowApplicationError;
 use crate::workflow::dispatch_service::LifecycleDispatchService;
-use crate::workflow::freeform::FREEFORM_LIFECYCLE_KEY;
 use crate::workflow::{
     CancelSubjectExecutionCommand, RuntimeCancelDeliveryCommand, SubjectExecutionControlService,
 };
@@ -129,10 +127,7 @@ impl StoryActivityActivationService {
             subject_ref: SubjectRef::new("task", task.id),
             parent_run_id: None,
             parent_agent_id: None,
-            workflow_graph_ref: WorkflowGraphRef::ByKey {
-                project_id: task.project_id,
-                key: FREEFORM_LIFECYCLE_KEY.to_string(),
-            },
+            workflow_graph_ref: None,
             agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
@@ -174,10 +169,7 @@ impl StoryActivityActivationService {
             subject_ref: SubjectRef::new("task", task.id),
             parent_run_id: Some(refs.run_id),
             parent_agent_id: Some(refs.agent_id),
-            workflow_graph_ref: WorkflowGraphRef::ByKey {
-                project_id: task.project_id,
-                key: FREEFORM_LIFECYCLE_KEY.to_string(),
-            },
+            workflow_graph_ref: None,
             agent_procedure_ref: None,
             run_policy: RunPolicy::ReuseExisting,
             agent_policy: AgentPolicy::Resume,

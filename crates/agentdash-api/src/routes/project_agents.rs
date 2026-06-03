@@ -113,7 +113,7 @@ pub async fn launch_project_agent(
     CurrentUser(current_user): CurrentUser,
     Path((project_id, agent_key)): Path<(String, String)>,
 ) -> Result<Json<ProjectAgentLaunchResult>, ApiError> {
-    use agentdash_application::workflow::{FREEFORM_LIFECYCLE_KEY, LifecycleDispatchService};
+    use agentdash_application::workflow::LifecycleDispatchService;
     use agentdash_domain::workflow::{
         AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource,
         RunPolicy, RuntimePolicy, SubjectRef, WorkflowGraphRef,
@@ -140,14 +140,15 @@ pub async fn launch_project_agent(
         .await
         .map_err(ApiError::Internal)?;
 
-    // 解析 workflow graph ref（ProjectAgent 未配置时显式使用 freeform graph）
-    let workflow_graph_ref = WorkflowGraphRef::ByKey {
-        project_id: project.id,
-        key: project_agent
-            .default_lifecycle_key
-            .clone()
-            .unwrap_or_else(|| FREEFORM_LIFECYCLE_KEY.to_string()),
-    };
+    let workflow_graph_ref = project_agent
+        .default_lifecycle_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(|key| WorkflowGraphRef::ByKey {
+            project_id: project.id,
+            key: key.to_string(),
+        });
 
     // 构造 AgentLaunchIntent 并通过 dispatch service 创建 lifecycle 实体
     let intent = AgentLaunchIntent {
@@ -360,13 +361,9 @@ pub async fn create_project_agent(
         )));
     }
 
-    let lifecycle_key = resolve_lifecycle_key_for_project_agent(
-        &state,
-        project_id,
-        req.default_lifecycle_key,
-        req.default_procedure_key,
-    )
-    .await?;
+    let lifecycle_key =
+        resolve_lifecycle_key_for_project_agent(&state, project_id, req.default_lifecycle_key)
+            .await?;
 
     let mut agent = ProjectAgent::new(project_id, name, agent_type);
     if let Some(config) = req.config {
@@ -428,12 +425,11 @@ pub async fn update_project_agent(
     if let Some(config) = req.config {
         agent.config = config;
     }
-    if req.default_lifecycle_key.is_some() || req.default_procedure_key.is_some() {
+    if let Some(default_lifecycle_key) = req.default_lifecycle_key {
         agent.default_lifecycle_key = resolve_lifecycle_key_for_project_agent(
             &state,
             project_id,
-            req.default_lifecycle_key,
-            req.default_procedure_key,
+            Some(default_lifecycle_key),
         )
         .await?;
     }
@@ -506,15 +502,10 @@ pub async fn delete_project_agent(
     Ok(Json(DeletedFlagResponse { deleted: true }))
 }
 
-/// 统一处理 lifecycle_key / procedure_key 的解析
-///
-/// 如果用户指定了 `default_procedure_key`（单个 workflow），
-/// 自动创建一个单步 lifecycle 包装它。
 async fn resolve_lifecycle_key_for_project_agent(
     state: &Arc<AppState>,
     project_id: Uuid,
     lifecycle_key: Option<String>,
-    procedure_key: Option<String>,
 ) -> Result<Option<String>, ApiError> {
     if let Some(lk) = lifecycle_key {
         let trimmed = lk.trim().to_string();
@@ -529,71 +520,6 @@ async fn resolve_lifecycle_key_for_project_agent(
             .map_err(ApiError::from)?
             .ok_or_else(|| ApiError::NotFound(format!("Lifecycle `{trimmed}` 不存在")))?;
         return Ok(Some(trimmed));
-    }
-
-    if let Some(wk) = procedure_key {
-        let wk = wk.trim().to_string();
-        if wk.is_empty() {
-            return Ok(None);
-        }
-
-        let _procedure = state
-            .repos
-            .agent_procedure_repo
-            .get_by_project_and_key(project_id, &wk)
-            .await
-            .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NotFound(format!("Workflow `{wk}` 不存在")))?;
-
-        let auto_key = format!("auto:{wk}");
-
-        let existing = state
-            .repos
-            .workflow_graph_repo
-            .get_by_project_and_key(project_id, &auto_key)
-            .await
-            .map_err(ApiError::from)?;
-
-        if existing.is_none() {
-            use agentdash_domain::workflow::{
-                ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-                AgentActivityExecutorSpec, DefinitionSource, WorkflowGraph,
-            };
-            let lifecycle = WorkflowGraph {
-                id: Uuid::new_v4(),
-                project_id,
-                key: auto_key.clone(),
-                name: format!("Auto: {wk}"),
-                description: format!("自动创建：包装单个 workflow `{wk}`"),
-                source: DefinitionSource::UserAuthored,
-                installed_source: None,
-                version: 1,
-                activities: vec![ActivityDefinition {
-                    key: "main".to_string(),
-                    description: String::new(),
-                    executor: ActivityExecutorSpec::Agent(
-                        AgentActivityExecutorSpec::continue_current_agent(wk),
-                    ),
-                    output_ports: vec![],
-                    input_ports: vec![],
-                    completion_policy: ActivityCompletionPolicy::OpenEnded,
-                    iteration_policy: Default::default(),
-                    join_policy: Default::default(),
-                }],
-                transitions: vec![],
-                entry_activity_key: "main".to_string(),
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            };
-            state
-                .repos
-                .workflow_graph_repo
-                .create(&lifecycle)
-                .await
-                .map_err(ApiError::from)?;
-        }
-
-        return Ok(Some(auto_key));
     }
 
     Ok(None)

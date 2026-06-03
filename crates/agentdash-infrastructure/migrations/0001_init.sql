@@ -283,7 +283,8 @@ CREATE TABLE lifecycle_gates (
 CREATE TABLE lifecycle_runs (
     id text NOT NULL,
     project_id text NOT NULL,
-    root_graph_id text CONSTRAINT lifecycle_runs_root_graph_id_not_null NOT NULL,
+    topology text NOT NULL,
+    root_graph_id text,
     status text NOT NULL,
     execution_log text DEFAULT '[]'::text NOT NULL,
     created_at timestamp with time zone NOT NULL,
@@ -888,6 +889,12 @@ ALTER TABLE ONLY lifecycle_gates
 
 ALTER TABLE ONLY lifecycle_runs
     ADD CONSTRAINT lifecycle_runs_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY lifecycle_runs
+    ADD CONSTRAINT lifecycle_runs_topology_root_graph_check CHECK (
+        (topology = 'graphless' AND root_graph_id IS NULL)
+        OR (topology = 'workflow_graph' AND root_graph_id IS NOT NULL)
+    );
 
 ALTER TABLE ONLY lifecycle_subject_associations
     ADD CONSTRAINT lifecycle_subject_associations_pkey PRIMARY KEY (id);

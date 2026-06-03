@@ -53,12 +53,10 @@ function CreateAgentDialog({
   const { createProjectAgent, fetchProjectAgents } = useProjectStore();
   const { agentTypeOptions, isDiscoveryLoading } = useAgentTypeOptions();
   const lifecycles = useWorkflowStore((s) => s.lifecycleDefinitions);
-  const definitions = useWorkflowStore((s) => s.definitions);
 
   const [form, setForm] = useState<PresetFormState>(() => presetToForm({ name: "", agent_type: "PI_AGENT", config: {} }));
   const [selectedLifecycleKey, setSelectedLifecycleKey] = useState("");
-  const [selectedProcedureKey, setSelectedProcedureKey] = useState("");
-  const [bindMode, setBindMode] = useState<"lifecycle" | "workflow" | "none">("none");
+  const [bindMode, setBindMode] = useState<"lifecycle" | "none">("none");
   const [isSaving, setIsSaving] = useState(false);
 
   const patchForm = (patch: Partial<PresetFormState>) => setForm((prev) => ({ ...prev, ...patch }));
@@ -77,8 +75,6 @@ function CreateAgentDialog({
       };
       if (bindMode === "lifecycle" && selectedLifecycleKey) {
         projectAgentPayload.default_lifecycle_key = selectedLifecycleKey;
-      } else if (bindMode === "workflow" && selectedProcedureKey) {
-        projectAgentPayload.default_procedure_key = selectedProcedureKey;
       }
       await createProjectAgent(projectId, projectAgentPayload);
       await fetchProjectAgents(projectId);
@@ -90,7 +86,6 @@ function CreateAgentDialog({
 
   // status 字段自 migration 0013 起已废弃，后端不再维护；直接透传全部定义。
   const activeLifecycles = lifecycles;
-  const activeWorkflows = definitions;
 
   return (
     <>
@@ -119,7 +114,7 @@ function CreateAgentDialog({
             <div className="border-t border-border/50 pt-3">
               <label className="text-xs font-medium text-muted-foreground">默认工作流绑定</label>
               <div className="mt-1 flex gap-1 rounded-[8px] border border-border bg-secondary/35 p-0.5">
-                {(["none", "lifecycle", "workflow"] as const).map((mode) => (
+                {(["none", "lifecycle"] as const).map((mode) => (
                   <button
                     key={mode}
                     type="button"
@@ -130,7 +125,7 @@ function CreateAgentDialog({
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    {mode === "none" ? "无" : mode === "lifecycle" ? "Lifecycle" : "Workflow"}
+                    {mode === "none" ? "无" : "Lifecycle"}
                   </button>
                 ))}
               </div>
@@ -144,19 +139,6 @@ function CreateAgentDialog({
                   <option value="">选择 Lifecycle…</option>
                   {activeLifecycles.map((l) => (
                     <option key={l.key} value={l.key}>{l.name} ({l.key})</option>
-                  ))}
-                </select>
-              )}
-
-              {bindMode === "workflow" && (
-                <select
-                  value={selectedProcedureKey}
-                  onChange={(e) => setSelectedProcedureKey(e.target.value)}
-                  className="mt-2 w-full rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
-                >
-                  <option value="">选择 Workflow…</option>
-                  {activeWorkflows.map((w) => (
-                    <option key={w.key} value={w.key}>{w.name} ({w.key})</option>
                   ))}
                 </select>
               )}

@@ -481,7 +481,7 @@ impl LifecycleJourneyProjection {
 pub struct LifecycleRunOverview<'a> {
     id: Uuid,
     project_id: Uuid,
-    root_graph_id: Uuid,
+    root_graph_id: Option<Uuid>,
     status: &'a LifecycleRunStatus,
     current_activity_key: Option<String>,
     step_count: usize,

@@ -111,8 +111,13 @@ fn scoped_port_output_path(mount: &Mount, port_key: &str) -> Result<String, Moun
     }
 }
 
-fn resolve_lifecycle_id_for_runs(active_run: &LifecycleRun) -> Uuid {
-    active_run.root_graph_id
+fn resolve_lifecycle_id_for_runs(active_run: &LifecycleRun) -> Result<Uuid, MountError> {
+    active_run.root_graph_id.ok_or_else(|| {
+        MountError::OperationFailed(format!(
+            "lifecycle run {} 不属于 workflow graph topology",
+            active_run.id
+        ))
+    })
 }
 
 struct LifecycleMountContext {
@@ -340,7 +345,7 @@ impl MountProvider for LifecycleMountProvider {
                             .map_err(map_journey_err)?
                     }
                     ["runs"] => {
-                        let lifecycle_id = resolve_lifecycle_id_for_runs(&active.run);
+                        let lifecycle_id = resolve_lifecycle_id_for_runs(&active.run)?;
                         let runs = self
                             .lifecycle_run_repo
                             .list_by_root_graph(lifecycle_id)
@@ -872,7 +877,7 @@ impl MountProvider for LifecycleMountProvider {
                 list_projected_entries(files, &display_root, &display_base, options)
             }
             ["runs"] => {
-                let lifecycle_id = resolve_lifecycle_id_for_runs(&active.run);
+                let lifecycle_id = resolve_lifecycle_id_for_runs(&active.run)?;
                 let runs = self
                     .lifecycle_run_repo
                     .list_by_root_graph(lifecycle_id)
@@ -1010,7 +1015,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|run| run.root_graph_id == root_graph_id)
+                .filter(|run| run.root_graph_id == Some(root_graph_id))
                 .cloned()
                 .collect())
         }
@@ -1369,7 +1374,8 @@ mod tests {
         let session_id = "sess-node";
 
         let mut run = LifecycleRun::new_control(Uuid::new_v4(), Uuid::new_v4());
-        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, run.root_graph_id);
+        let root_graph_id = run.root_graph_id.expect("workflow graph fixture run");
+        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, root_graph_id);
         let activity_state = ActivityLifecycleRunState {
             graph_instance_id: graph_instance.id,
             status: ActivityRunStatus::Running,

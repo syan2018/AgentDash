@@ -116,7 +116,8 @@ pub struct AgentLaunchIntent {
     pub parent_run_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_agent_id: Option<Uuid>,
-    pub workflow_graph_ref: WorkflowGraphRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_graph_ref: Option<WorkflowGraphRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_procedure_ref: Option<AgentProcedureRef>,
     pub run_policy: RunPolicy,
@@ -136,7 +137,8 @@ pub struct SubjectExecutionIntent {
     pub parent_run_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_agent_id: Option<Uuid>,
-    pub workflow_graph_ref: WorkflowGraphRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_graph_ref: Option<WorkflowGraphRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_procedure_ref: Option<AgentProcedureRef>,
     pub run_policy: RunPolicy,
@@ -161,7 +163,8 @@ pub struct InteractionDispatchIntent {
     pub source: ExecutionSource,
     pub parent_run_id: Uuid,
     pub parent_agent_id: Uuid,
-    pub workflow_graph_ref: WorkflowGraphRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_graph_ref: Option<WorkflowGraphRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_procedure_ref: Option<AgentProcedureRef>,
     pub context_policy: ContextPolicy,
@@ -185,7 +188,8 @@ pub enum ExecutionIntent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentLaunchDispatchResult {
     pub run_ref: Uuid,
-    pub graph_instance_ref: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_instance_ref: Option<Uuid>,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
     /// 投递目标 runtime session（合并原 runtime_session_ref + trace_ref）。
@@ -196,10 +200,12 @@ pub struct AgentLaunchDispatchResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubjectExecutionDispatchResult {
     pub run_ref: Uuid,
-    pub graph_instance_ref: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_instance_ref: Option<Uuid>,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
-    pub assignment_ref: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignment_ref: Option<Uuid>,
     pub subject_execution_ref: SubjectExecutionRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery_runtime_ref: Option<Uuid>,
@@ -214,10 +220,12 @@ pub struct LifecycleRunStartDispatchResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InteractionGateOpenedDispatchResult {
     pub run_ref: Uuid,
-    pub graph_instance_ref: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_instance_ref: Option<Uuid>,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
-    pub assignment_ref: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignment_ref: Option<Uuid>,
     pub gate_ref: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery_runtime_ref: Option<Uuid>,
@@ -245,10 +253,7 @@ mod tests {
             subject_ref: SubjectRef::new("project", Uuid::new_v4()),
             parent_run_id: None,
             parent_agent_id: None,
-            workflow_graph_ref: WorkflowGraphRef::ByKey {
-                project_id: Uuid::new_v4(),
-                key: "builtin.freeform_session".to_string(),
-            },
+            workflow_graph_ref: None,
             agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
@@ -274,10 +279,10 @@ mod tests {
         let assignment_ref = Uuid::new_v4();
         let result = ExecutionDispatchResult::SubjectExecution(SubjectExecutionDispatchResult {
             run_ref: Uuid::new_v4(),
-            graph_instance_ref: Uuid::new_v4(),
+            graph_instance_ref: Some(Uuid::new_v4()),
             agent_ref: Uuid::new_v4(),
             frame_ref: Uuid::new_v4(),
-            assignment_ref,
+            assignment_ref: Some(assignment_ref),
             subject_execution_ref: SubjectExecutionRef {
                 subject_ref: SubjectRef::new("task", Uuid::new_v4()),
                 association_id: Uuid::new_v4(),

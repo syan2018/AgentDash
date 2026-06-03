@@ -13,7 +13,6 @@ pub mod frame_builder;
 pub mod frame_construction;
 pub mod frame_hook_runtime;
 pub mod frame_surface;
-pub mod freeform;
 pub mod graph_resolver;
 pub mod lifecycle;
 pub mod lifecycle_gate_service;
@@ -69,11 +68,6 @@ pub use frame_builder::AgentFrameBuilder;
 pub use frame_construction::FrameConstructionService;
 pub use frame_hook_runtime::AgentFrameHookRuntime;
 pub use frame_surface::{AgentFrameSurfaceExt, FrameContextBundleSummary};
-pub use freeform::{
-    FREEFORM_ACTIVITY_KEY, FREEFORM_AGENT_PROCEDURE_KEY, FREEFORM_LIFECYCLE_KEY,
-    FREEFORM_SESSION_LABEL, FreeformLifecycleService, build_freeform_lifecycle,
-    build_freeform_workflow,
-};
 pub use graph_resolver::{ResolvedWorkflowGraph, WorkflowGraphResolver};
 pub use lifecycle::mount::{
     append_active_workflow_lifecycle_mount, ensure_active_workflow_lifecycle_mount,

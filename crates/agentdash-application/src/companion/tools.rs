@@ -7,7 +7,7 @@ use agentdash_agent_protocol::{
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::workflow::{
     AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, GatePolicy,
-    InteractionDispatchIntent, RunPolicy, RuntimePolicy, WorkflowGraphRef,
+    InteractionDispatchIntent, RunPolicy, RuntimePolicy,
 };
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
@@ -34,7 +34,6 @@ use super::{
 use crate::session::AgentFrameRuntimeTarget;
 use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::workflow::dispatch_service::LifecycleDispatchService;
-use crate::workflow::freeform::FREEFORM_LIFECYCLE_KEY;
 
 pub use agentdash_spi::CompanionSliceMode;
 
@@ -372,10 +371,6 @@ impl CompanionRequestTool {
             CompanionAdoptionMode::Suggestion => "companion_wait",
         };
 
-        let workflow_graph_ref = WorkflowGraphRef::ByKey {
-            project_id,
-            key: FREEFORM_LIFECYCLE_KEY.to_string(),
-        };
         let context_policy = match slice_mode {
             CompanionSliceMode::Full => ContextPolicy::Inherit,
             _ => ContextPolicy::Slice,
@@ -401,7 +396,7 @@ impl CompanionRequestTool {
                         source: ExecutionSource::ParentAgent,
                         parent_run_id,
                         parent_agent_id,
-                        workflow_graph_ref,
+                        workflow_graph_ref: None,
                         agent_procedure_ref: None,
                         context_policy,
                         capability_policy: CapabilityPolicy::InheritedSlice,
@@ -434,7 +429,7 @@ impl CompanionRequestTool {
                         subject_ref: None,
                         parent_run_id: Some(parent_run_id),
                         parent_agent_id: Some(parent_agent_id),
-                        workflow_graph_ref,
+                        workflow_graph_ref: None,
                         agent_procedure_ref: None,
                         run_policy: RunPolicy::AppendGraph,
                         agent_policy: AgentPolicy::SpawnChild,

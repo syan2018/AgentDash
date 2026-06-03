@@ -5,7 +5,7 @@ use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::workflow::{
     ActivityExecutionClaim, ActivityExecutionClaimRepository, ActivityExecutionClaimStatus,
     AgentProcedure, AgentProcedureRepository, ExecutorRunRef, LifecycleRun, LifecycleRunRepository,
-    WorkflowGraph, WorkflowGraphRepository, WorkflowTemplateInstallBundle,
+    LifecycleRunTopology, WorkflowGraph, WorkflowGraphRepository, WorkflowTemplateInstallBundle,
     WorkflowTemplateInstallRepository, WorkflowTemplateInstallResult,
 };
 
@@ -34,8 +34,8 @@ impl PostgresWorkflowRepository {
 
 const WF_COLS: &str = "id,project_id,key,name,description,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const WG_COLS: &str = "id,project_id,key,name,description,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,root_graph_id,status,active_node_keys,execution_log,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,root_graph_id,status,active_node_keys,execution_log,created_at,updated_at,last_activity_at";
+const RUN_COLS: &str = "id,project_id,topology,root_graph_id,status,active_node_keys,execution_log,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,topology,root_graph_id,status,active_node_keys,execution_log,created_at,updated_at,last_activity_at";
 const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,graph_instance_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
 
 #[async_trait::async_trait]
@@ -522,11 +522,12 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
-        .bind(run.root_graph_id.to_string())
+        .bind(topology_to_db(run.topology))
+        .bind(run.root_graph_id.map(|id| id.to_string()))
         .bind(serde_json::to_string(&run.status)?)
         .bind(serde_json::to_string(&run.active_node_keys)?)
         .bind(serde_json::to_string(&run.execution_log)?)
@@ -610,8 +611,10 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,root_graph_id=$2,status=$3,active_node_keys=$4,execution_log=$5,updated_at=$6,last_activity_at=$7 WHERE id=$8")
-            .bind(run.project_id.to_string()).bind(run.root_graph_id.to_string())
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,topology=$2,root_graph_id=$3,status=$4,active_node_keys=$5,execution_log=$6,updated_at=$7,last_activity_at=$8 WHERE id=$9")
+            .bind(run.project_id.to_string())
+            .bind(topology_to_db(run.topology))
+            .bind(run.root_graph_id.map(|id| id.to_string()))
             .bind(serde_json::to_string(&run.status)?)
             .bind(serde_json::to_string(&run.active_node_keys)?)
             .bind(serde_json::to_string(&run.execution_log)?)
@@ -750,7 +753,8 @@ impl TryFrom<WorkflowGraphRow> for WorkflowGraph {
 struct LifecycleRunRow {
     id: String,
     project_id: String,
-    root_graph_id: String,
+    topology: String,
+    root_graph_id: Option<String>,
     status: String,
     active_node_keys: String,
     execution_log: String,
@@ -765,7 +769,12 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
         Ok(LifecycleRun {
             id: parse_uuid(&row.id, "lifecycle_run")?,
             project_id: parse_uuid(&row.project_id, "project")?,
-            root_graph_id: parse_uuid(&row.root_graph_id, "root_graph")?,
+            topology: parse_topology(&row.topology)?,
+            root_graph_id: row
+                .root_graph_id
+                .as_deref()
+                .map(|id| parse_uuid(id, "root_graph"))
+                .transpose()?,
             status: serde_json::from_str(&row.status)?,
             active_node_keys: parse_json_column(
                 &row.active_node_keys,
@@ -840,6 +849,23 @@ fn parse_uuid(raw: &str, entity: &'static str) -> Result<uuid::Uuid, DomainError
         entity,
         id: raw.to_string(),
     })
+}
+
+fn topology_to_db(topology: LifecycleRunTopology) -> &'static str {
+    match topology {
+        LifecycleRunTopology::Graphless => "graphless",
+        LifecycleRunTopology::WorkflowGraph => "workflow_graph",
+    }
+}
+
+fn parse_topology(raw: &str) -> Result<LifecycleRunTopology, DomainError> {
+    match raw {
+        "graphless" => Ok(LifecycleRunTopology::Graphless),
+        "workflow_graph" => Ok(LifecycleRunTopology::WorkflowGraph),
+        other => Err(DomainError::InvalidConfig(format!(
+            "lifecycle_runs.topology 无效: {other}"
+        ))),
+    }
 }
 
 fn parse_json_column<T: serde::de::DeserializeOwned>(

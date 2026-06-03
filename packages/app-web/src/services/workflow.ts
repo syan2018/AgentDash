@@ -48,6 +48,7 @@ const WORKFLOW_TARGET_KINDS = new Set<string>(["project", "story"]);
 const WORKFLOW_RUN_STATUSES = new Set<string>([
   "draft", "ready", "running", "blocked", "completed", "failed", "cancelled",
 ]);
+const WORKFLOW_RUN_TOPOLOGIES = new Set<string>(["graphless", "workflow_graph"]);
 const WORKFLOW_DEF_SOURCES = new Set<string>(["builtin_seed", "user_authored", "cloned"]);
 const WORKFLOW_HOOK_TRIGGERS = new Set<string>([
   "user_prompt_submit",
@@ -468,7 +469,12 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
   return {
     id: requireStringField(raw, "id"),
     project_id: requireStringField(raw, "project_id"),
-    root_graph_id: requireStringField(raw, "root_graph_id"),
+    topology: normalizeEnum<WorkflowRun["topology"]>(
+      raw.topology,
+      WORKFLOW_RUN_TOPOLOGIES,
+      "workflow run topology",
+    ),
+    root_graph_id: optStringField(raw, "root_graph_id") || undefined,
     status: normalizeEnum<WorkflowRunStatus>(raw.status, WORKFLOW_RUN_STATUSES, "workflow run status"),
     execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),
     created_at: requireStringField(raw, "created_at"),

@@ -55,7 +55,7 @@ launch stages 重新生成。
 
 ```rust
 pub struct ExecutionTurnFrame {
-    pub hook_session: Option<Arc<dyn HookSessionRuntimeAccess>>,
+    pub hook_runtime: Option<Arc<dyn HookRuntimeAccess>>,
     pub capability_state: CapabilityState,
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
     pub restored_session_state: Option<RestoredSessionState>,

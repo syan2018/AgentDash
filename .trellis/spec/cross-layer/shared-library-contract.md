@@ -124,7 +124,7 @@ DTO 层 `crates/agentdash-api/src/dto/shared_library.rs` 直接透传 `serde_jso
     "name": "string",
     "description": "string",
     "binding_kinds": ["WorkflowBindingKind"],
-    "workflows": [{ "key": "...", "name": "...", "description": "...", "contract": "WorkflowContract" }],
+    "workflows": [{ "key": "...", "name": "...", "description": "...", "contract": "AgentProcedureContract" }],
     "lifecycle": {
       "key": "string",
       "name": "string",

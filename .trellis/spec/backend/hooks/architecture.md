@@ -22,8 +22,8 @@ Hook 子系统把 workflow / project / story / task / session 等来源的策略
 global builtin / workflow / task / story / project / session
         -> ExecutionHookProvider
         -> HookContributionSet merge
-        -> SessionHookSnapshot + HookResolution
-        -> HookSessionRuntime
+        -> AgentFrameHookSnapshot + HookResolution
+        -> AgentFrameHookRuntime
         -> AgentRuntimeDelegate
 ```
 
@@ -38,4 +38,3 @@ global builtin / workflow / task / story / project / session
 
 - [Execution Hook Runtime](./execution-hook-runtime.md)
 - [Hook Script Engine](./hook-script-engine.md)
-

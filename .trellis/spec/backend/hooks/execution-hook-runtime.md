@@ -12,9 +12,9 @@ global builtin / workflow / task / story / project / session
         ↓
 ExecutionHookProvider（解析 contribution source）
         ↓
-HookContributionSet merge -> SessionHookSnapshot + HookResolution
+HookContributionSet merge -> AgentFrameHookSnapshot + HookResolution
         ↓
-HookSessionRuntime（executor 持有，缓存 snapshot/diagnostics/revision）
+AgentFrameHookRuntime（executor 持有，缓存 snapshot/diagnostics/revision）
         ↓
 AgentRuntimeDelegate（agent loop 边界同步消费）
 ```
@@ -24,7 +24,7 @@ AgentRuntimeDelegate（agent loop 边界同步消费）
 | Crate | 职责 | 不允许 |
 |-------|------|--------|
 | `agentdash-agent` | 只依赖 `AgentRuntimeDelegate`，在 loop 边界 await | 查询 workflow/task/story/project/repo |
-| `agentdash-executor` | 持有 `HookSessionRuntime`，缓存 snapshot，适配为 delegate | 直接实现业务解析逻辑 |
+| `agentdash-executor` | 持有 `AgentFrameHookRuntime`，缓存 snapshot，适配为 delegate | 直接实现业务解析逻辑 |
 | `agentdash-application::hooks` | 实现 `ExecutionHookProvider`，从业务对象解析 Hook 信息 | — |
 | `agentdash-api` | HTTP surface `/api/sessions/{id}/hook-runtime` | 持有 hook 解析逻辑 |
 
@@ -153,7 +153,7 @@ runtime session / turn 只表达 delivery trace、audit source 与 adapter prove
 - dispatch 前后显式调用 `BeforeSubagentDispatch` / `AfterSubagentDispatch`
 - 子 agent 继承的 context/constraints 由 dispatch resolution 生成，按 `slice_mode` 过滤
 - 回流结果以 `companion_result` runtime event 进入 hook rule；需要后续处置时写入
-  `HookSessionRuntime.pending_actions`，统一由 runtime delegate 在
+  `AgentFrameHookRuntime.pending_actions`，统一由 runtime delegate 在
   `TransformContext(UserPromptSubmit)` TurnStart 边界消费。
 
 ### Hook Event Stream

@@ -24,7 +24,7 @@
 
 ### 结构化错误
 
-使用 `thiserror::Error` 枚举，错误变体必须携带足够上下文（如 `step_key`、`lifecycle_id`）。
+使用 `thiserror::Error` 枚举，错误变体必须携带足够上下文（如 `activity_key`、`lifecycle_id`）。
 
 ---
 
@@ -56,4 +56,3 @@
 - Workflow 校验错误使用专用枚举（如 `WorkflowValidationError`），不用裸字符串
 - 错误变体必须携带足够上下文供上层做日志/展示/重试决策
 - 见 [error-handling.md](./error-handling.md) 获取完整的分层错误体系
-

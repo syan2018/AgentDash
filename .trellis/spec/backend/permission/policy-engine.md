@@ -10,7 +10,7 @@
 
 - Agent 提交 capability grant request 后，必须经 policy engine 评估才能进入 approval 流程
 - Scope escalation 在 action 实际成功后由 coordinator 验证 intent 并创建关联层
-- 涉及跨模块数据流：`ProjectAgent.config` + `WorkflowContract` → `PolicyDecision` → grant state transition
+- 涉及跨模块数据流：`ProjectAgent.config` + `AgentProcedureContract` → `PolicyDecision` → grant state transition
 
 ### 2. Signatures
 
@@ -76,7 +76,7 @@ pub struct EscalationResult {
 |-----------|--------|------|-------------|
 | requested_paths | companion_request payload | `Vec<ToolCapabilityPath>` | Non-empty（empty → Rejected） |
 | agent_auto_grantable | `ProjectAgent.config.auto_grantable_capabilities` | `Vec<ToolCapabilityPath>` | From JSON array of strings |
-| lifecycle_requestable | `WorkflowContract.requestable_capabilities` | `Vec<ToolCapabilityPath>` | From JSON array of strings |
+| lifecycle_requestable | `AgentProcedureContract.requestable_capabilities` | `Vec<ToolCapabilityPath>` | From JSON array of strings |
 
 #### Policy Evaluation Output
 

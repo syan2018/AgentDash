@@ -322,8 +322,8 @@ export function SessionChatComposer({
   const inputDisabled = isSending || !primaryAction.enabled;
 
   const hasContent = Boolean(inputValue.trim()) || imageAttachments.length > 0;
-  // 展开条件：文本换行 OR 有附件 OR 有文件引用
-  const isExpanded = inputValue.includes("\n") || imageAttachments.length > 0 || fileRef.references.length > 0;
+  // 展开条件：有效多行（trim 后仍含换行） OR 有附件 OR 有文件引用
+  const isExpanded = inputValue.trim().includes("\n") || imageAttachments.length > 0 || fileRef.references.length > 0;
   const sendDisabled = isSessionComposerPrimaryDisabled({
     primaryActionEnabled: primaryAction.enabled,
     requirePromptText: false,

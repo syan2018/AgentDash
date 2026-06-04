@@ -553,10 +553,9 @@ export function SessionChatView({
   );
 
   const handleAtTrigger = useCallback((query: string) => {
-    if (fileRef.canAddMore && fileRef.hasWorkspaceContext) {
-      richInputRef.current?.saveSelection();
-      fileRef.openPicker(query);
-    }
+    if (!fileRef.canAddMore) return;
+    richInputRef.current?.saveSelection();
+    fileRef.openPicker(query);
   }, [fileRef]);
 
   const handleFileSelected = useCallback((file: FileEntry) => {

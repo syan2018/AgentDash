@@ -1,9 +1,7 @@
 /**
- * 「+」菜单按钮
+ * 「+」菜单按钮 — Composer 底部工具栏入口
  *
- * 会话 Composer 左侧通用快捷操作入口。
- * MVP: 「添加文件/图片」 → 拉起系统文件选择器。
- * 文件 → 走 @ 文件引用 (Mention)；图片 → 走 useImageAttachments 管线。
+ * MVP: 「添加文件/图片」→ 拉起系统文件选择器。
  */
 
 import { useCallback, useRef, useState, useEffect } from "react";
@@ -46,7 +44,6 @@ export function ComposerPlusMenu({ disabled, onSelectFiles }: ComposerPlusMenuPr
       if (files && files.length > 0) {
         onSelectFiles(files);
       }
-      // 重置 input 以允许重复选择同一文件
       e.target.value = "";
     },
     [onSelectFiles],
@@ -59,7 +56,7 @@ export function ComposerPlusMenu({ disabled, onSelectFiles }: ComposerPlusMenuPr
         type="button"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-border text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-40"
+        className="flex h-8 w-8 items-center justify-center rounded-[50%] text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground disabled:opacity-30"
         title="添加附件"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -70,12 +67,12 @@ export function ComposerPlusMenu({ disabled, onSelectFiles }: ComposerPlusMenuPr
       {open && (
         <div
           ref={menuRef}
-          className="absolute bottom-full left-0 z-50 mb-2 w-[180px] rounded-[12px] border border-border bg-popover p-1 shadow-lg"
+          className="absolute bottom-full left-0 z-50 mb-2 w-44 rounded-[12px] border border-border/60 bg-popover p-1 shadow-lg"
         >
           <button
             type="button"
             onClick={handleFileClick}
-            className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-xs text-foreground transition-colors hover:bg-secondary"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-foreground transition-colors hover:bg-muted"
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0 text-muted-foreground">
               <path d="M14 10V13C14 13.5523 13.5523 14 13 14H3C2.44772 14 2 13.5523 2 13V10M11 5L8 2M8 2L5 5M8 2V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />

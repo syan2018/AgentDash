@@ -640,18 +640,17 @@ export function SessionChatView({
         onScroll={handleScroll}
       />
 
-      {/* 排队消息列表 */}
-      {pendingMessages && pendingMessages.length > 0 && (
-        <PendingMessageList
-          messages={pendingMessages}
-          canSteer={Boolean(controlState.secondaryAction?.enabled)}
-          onPromote={onPromotePending ?? (() => {})}
-          onDelete={onDeletePending ?? (() => {})}
-        />
-      )}
-
-      {/* 输入区 */}
+      {/* 排队消息 + 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
+        {pendingMessages && pendingMessages.length > 0 && (
+          <PendingMessageList
+            messages={pendingMessages}
+            canSteer={Boolean(controlState.secondaryAction?.enabled)}
+            onPromote={onPromotePending ?? (() => {})}
+            onDelete={onDeletePending ?? (() => {})}
+          />
+        )}
+
         <SessionChatComposer
           controlState={controlState}
           discovery={discovery}

@@ -350,8 +350,8 @@ export function SessionChatComposer({
     : actionReason ?? "当前 Session 只能查看 runtime trace。";
 
   return (
-    <div className="shrink-0 border-t border-border bg-background">
-      <div className="mx-auto w-full max-w-4xl px-5 py-3">
+    <div className="shrink-0 pb-4 pt-2">
+      <div className="mx-auto w-full max-w-4xl px-5">
         {/* Prompt 模板（无 session + draft 模式） */}
         {!hasSession && !primaryAction.enabled && promptTemplates && promptTemplates.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
@@ -360,7 +360,7 @@ export function SessionChatComposer({
                 key={tpl.id}
                 type="button"
                 onClick={() => richInputRef.current?.setValue(tpl.content)}
-                className="rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                className="rounded-lg px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 {tpl.label}
               </button>
@@ -370,10 +370,10 @@ export function SessionChatComposer({
 
         {inputPrefix}
 
-        {/* 一体化 Composer 容器 */}
-        <div className="relative rounded-[12px] border border-border bg-secondary/50">
+        {/* Composer 容器 — 柔和圆角背景，无显式 border */}
+        <div className="relative rounded-[12px] bg-muted/50 transition-colors focus-within:bg-muted/70">
           {/* 文件引用药丸 */}
-          <div className="px-3 pt-3">
+          <div className="px-3.5 pt-2.5">
             <FileReferenceTags
               references={fileRef.references}
               onRemove={(relPath) => {
@@ -386,7 +386,7 @@ export function SessionChatComposer({
           </div>
 
           {/* 文本输入区 */}
-          <div className="relative px-3">
+          <div className="relative px-3.5">
             <FilePickerPopup
               open={fileRef.pickerOpen}
               query={fileRef.pickerQuery}
@@ -416,7 +416,7 @@ export function SessionChatComposer({
           </div>
 
           {/* 图片预览区 */}
-          <div className="px-3">
+          <div className="px-3.5">
             <ImageAttachmentPreview
               attachments={imageAttachments}
               onRemove={onRemoveImage}
@@ -425,36 +425,33 @@ export function SessionChatComposer({
 
           {/* 图片错误提示 */}
           {imageError && (
-            <div className="mx-3 mb-2 rounded-[8px] bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+            <div className="mx-3.5 mb-2 rounded-lg bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
               {imageError}
             </div>
           )}
 
-          {/* 底部工具栏 */}
-          <div className="flex items-center justify-between border-t border-border/40 px-2 py-1.5">
-            <div className="flex items-center gap-1">
-              {/* 「+」菜单 */}
-              <ComposerPlusMenu
-                disabled={inputDisabled}
-                onSelectFiles={onPlusMenuFiles}
+          {/* 底部工具栏 — 无分隔线 */}
+          <div className="flex items-center gap-1 px-2 py-1.5">
+            <ComposerPlusMenu
+              disabled={inputDisabled}
+              onSelectFiles={onPlusMenuFiles}
+            />
+
+            {showExecutorSelector && (
+              <InlineModelSelector
+                execConfig={execConfig}
+                discoveredOptions={discovered.options}
+                isDiscoveredLoading={isDiscoveredLoading}
+                executorName={executorName}
+                readonly={isSteerReadonly}
+                onReset={execConfig.reset}
+                onRefetch={discovery.refetch}
+                onReconnect={discovered.reconnect}
               />
+            )}
 
-              {/* 内联模型选择器（FR5: steer 态只读） */}
-              {showExecutorSelector && (
-                <InlineModelSelector
-                  execConfig={execConfig}
-                  discoveredOptions={discovered.options}
-                  isDiscoveredLoading={isDiscoveredLoading}
-                  executorName={executorName}
-                  readonly={isSteerReadonly}
-                  onReset={execConfig.reset}
-                  onRefetch={discovery.refetch}
-                  onReconnect={discovered.reconnect}
-                />
-              )}
-            </div>
+            <div className="flex-1" />
 
-            {/* Morphing 发送按钮 */}
             <ComposerSendButton
               isRunning={isActionRunning}
               hasInput={hasContent}
@@ -471,7 +468,8 @@ export function SessionChatComposer({
           </div>
         </div>
 
-        <p className="mt-1 text-xs text-muted-foreground/60">
+        {/* Helper text — 极简 */}
+        <p className="mt-1.5 px-1 text-[11px] text-muted-foreground/40">
           {helperText}
         </p>
       </div>

@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { PendingMessageView } from "../../../generated/workflow-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
+import type { ImageAttachment } from "./composer/useImageAttachments";
 
 export interface PromptTemplate {
   id: string;
@@ -11,7 +13,7 @@ export interface PromptTemplate {
   content: string;
 }
 
-export type SessionChatPrimaryActionKind = "start_draft" | "send_next" | "steer" | "none";
+export type SessionChatPrimaryActionKind = "start_draft" | "send_next" | "steer" | "enqueue" | "none";
 
 export interface SessionChatActionState {
   enabled: boolean;
@@ -29,6 +31,8 @@ export interface SessionChatControlState {
   controlPlaneStatus: string;
   primaryAction: SessionChatPrimaryActionState;
   cancelAction: SessionChatActionState;
+  /** running 态可用的辅助动作（如 steer 可用时键盘/按钮分流） */
+  secondaryAction?: SessionChatPrimaryActionState;
   helperText?: string;
 }
 
@@ -79,7 +83,17 @@ export interface SessionChatViewProps {
     sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
+    imageAttachments?: ImageAttachment[],
   ) => Promise<void>;
+
+  // ─── Pending Queue ─────────────────────────────────
+
+  /** 排队中的消息列表（来自 runtimeControl.pending_messages） */
+  pendingMessages?: PendingMessageView[];
+  /** 引导排队消息（promote to steer） */
+  onPromotePending?: (messageId: string) => void;
+  /** 删除排队消息 */
+  onDeletePending?: (messageId: string) => void;
 
   // ─── 布局插槽 ────────────────────────────────────────
 

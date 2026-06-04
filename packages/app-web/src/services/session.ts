@@ -131,6 +131,9 @@ export async function cancelSession(id: string): Promise<void> {
   await api.post<void>(`/sessions/${encodeURIComponent(id)}/cancel`, {});
 }
 
+// ─── Pending Message Queue ───────────────────────────
+
+
 // ─── Tab 布局持久化 ──────────────────────────────────
 
 function isSessionTabLayout(value: unknown): value is SessionTabLayout {

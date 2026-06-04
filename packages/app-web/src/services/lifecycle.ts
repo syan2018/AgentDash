@@ -15,10 +15,13 @@ import type {
   SubjectExecutionView,
 } from "../types";
 import type {
+  EnqueuePendingMessageRequest,
+  EnqueuePendingMessageResponse,
   LifecycleAgentMessageRequest,
   LifecycleAgentMessageResponse,
   LifecycleAgentSteeringRequest,
   LifecycleAgentSteeringResponse,
+  PendingMessageView,
 } from "../generated/workflow-contracts";
 
 export async function fetchLifecycleRun(runId: string): Promise<LifecycleRunView> {
@@ -81,5 +84,42 @@ export async function sendLifecycleAgentSteeringMessageByRuntimeSession(
   return api.post<LifecycleAgentSteeringResponse>(
     `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/steering-messages`,
     request,
+  );
+}
+
+export async function listPendingMessages(
+  runtimeSessionId: string,
+): Promise<PendingMessageView[]> {
+  return api.get<PendingMessageView[]>(
+    `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/pending-messages`,
+  );
+}
+
+export async function enqueuePendingMessage(
+  runtimeSessionId: string,
+  body: EnqueuePendingMessageRequest,
+): Promise<EnqueuePendingMessageResponse> {
+  return api.post<EnqueuePendingMessageResponse>(
+    `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/pending-messages`,
+    body,
+  );
+}
+
+export async function deletePendingMessage(
+  runtimeSessionId: string,
+  messageId: string,
+): Promise<void> {
+  await api.delete<void>(
+    `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/pending-messages/${encodeURIComponent(messageId)}`,
+  );
+}
+
+export async function promotePendingMessage(
+  runtimeSessionId: string,
+  messageId: string,
+): Promise<void> {
+  await api.post<void>(
+    `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/pending-messages/${encodeURIComponent(messageId)}/promote`,
+    {},
   );
 }

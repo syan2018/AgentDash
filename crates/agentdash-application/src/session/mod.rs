@@ -37,6 +37,7 @@ pub mod launch;
 mod memory_persistence;
 pub(crate) mod path_policy;
 mod pending_action_context_frame;
+pub mod pending_queue;
 pub mod persistence;
 pub mod plan;
 pub mod post_turn_handler;
@@ -124,6 +125,7 @@ pub use runtime_services::SessionRuntimeServices;
 pub use terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
 };
+pub use pending_queue::{PendingMessage, PendingMessagePreview, PendingQueueService, QueuePauseReason};
 pub use title_service::SessionTitleService;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{

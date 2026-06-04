@@ -41,6 +41,8 @@ import {
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
 import type { SessionChatViewProps } from "./SessionChatViewTypes";
+import { useImageAttachments } from "./composer/useImageAttachments";
+import { PendingMessageList } from "./composer/PendingMessageRow";
 
 // eslint-disable-next-line react-refresh/only-export-components
 export { collectNewSystemEvents, computeProjectionRefreshKey } from "./SessionChatViewModel";
@@ -68,6 +70,9 @@ export function SessionChatView({
   showExecutorSelector = true,
   controlState,
   onPrimaryAction,
+  pendingMessages,
+  onPromotePending,
+  onDeletePending,
   headerSlot,
   inputPrefix,
   streamPrefixContent,
@@ -95,11 +100,13 @@ export function SessionChatView({
   const cancelInFlightRef = useRef(false);
 
   const fileRef = useFileReference(workspaceId);
+  const imageAttach = useImageAttachments();
 
   const clearInput = useCallback(() => {
     richInputRef.current?.setValue("");
     setInputValue("");
-  }, []);
+    imageAttach.clearAll();
+  }, [imageAttach]);
 
   // 首次挂载时填充初始值
   useEffect(() => {
@@ -371,33 +378,48 @@ export function SessionChatView({
   const primaryActionRef = useRef(onPrimaryAction);
   useEffect(() => { primaryActionRef.current = onPrimaryAction; }, [onPrimaryAction]);
 
-  const handlePrimarySubmit = useCallback(async () => {
+  /**
+   * 通用提交，actionOverride 可指定动作类型（用于键盘分流 steer 等场景）
+   */
+  const handleSubmit = useCallback(async (actionOverride?: "steer" | "enqueue") => {
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
+    const images = imageAttach.attachments;
 
-    if (!controlState.primaryAction.enabled || controlState.primaryAction.kind === "none") return;
+    // 确定要执行的动作
+    const targetAction = actionOverride ?? controlState.primaryAction.kind;
+    const isValidPrimary = controlState.primaryAction.enabled && targetAction === controlState.primaryAction.kind;
+    const isValidSecondary = controlState.secondaryAction?.enabled && targetAction === controlState.secondaryAction?.kind;
+    if (!isValidPrimary && !isValidSecondary) return;
+    if (targetAction === "none") return;
     if (isSending) return;
-    if (!trimmed) {
+    if (!trimmed && images.length === 0) {
       setSendError("请输入要发送的消息。");
       return;
     }
 
     setSendError(null);
-    setOptimisticRunning(true);
-    optimisticRunningUntilRef.current = Date.now() + 2500;
+    // enqueue 不触发 optimistic running（排队不会立即执行）
+    if (targetAction !== "enqueue") {
+      setOptimisticRunning(true);
+      optimisticRunningUntilRef.current = Date.now() + 2500;
+    }
     setIsSending(true);
 
     try {
       await primaryActionRef.current(
-        controlState.primaryAction.kind,
+        targetAction,
         sessionId,
         trimmed,
         executorConfig,
+        images.length > 0 ? images : undefined,
       );
 
       execConfig.recordUsage();
       clearInput();
-      void refreshExecutionState().catch(() => {});
+      if (targetAction !== "enqueue") {
+        void refreshExecutionState().catch(() => {});
+      }
       onMessageSent?.();
     } catch (e) {
       optimisticRunningUntilRef.current = 0;
@@ -410,13 +432,18 @@ export function SessionChatView({
     clearInput,
     controlState.primaryAction.enabled,
     controlState.primaryAction.kind,
+    controlState.secondaryAction?.enabled,
+    controlState.secondaryAction?.kind,
     execConfig,
     executorConfig,
+    imageAttach.attachments,
     isSending,
     onMessageSent,
     refreshExecutionState,
     sessionId,
   ]);
+
+  const handlePrimarySubmit = useCallback(async () => handleSubmit(), [handleSubmit]);
 
   const handleCancel = useCallback(async () => {
     if (!controlState.cancelAction.enabled) return;
@@ -455,9 +482,74 @@ export function SessionChatView({
         if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) { e.preventDefault(); fileRef.confirmSelection(); return; }
         if (e.key === "Escape") { e.preventDefault(); fileRef.closePicker(); return; }
       }
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void handlePrimarySubmit(); }
+
+      if (e.key !== "Enter") return;
+      if (e.shiftKey) return; // Shift+Enter = 换行
+
+      e.preventDefault();
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        controlState.primaryAction.kind === "enqueue" &&
+        controlState.secondaryAction?.enabled
+      ) {
+        // Running+enqueue 态 Ctrl/Cmd+Enter → steer（辅助动作）
+        void handleSubmit("steer");
+      } else {
+        // 裸 Enter / Ctrl+Enter（非 steer 场景）→ 主动作
+        void handlePrimarySubmit();
+      }
     },
-    [fileRef, handlePrimarySubmit],
+    [controlState.primaryAction.kind, controlState.secondaryAction?.enabled, fileRef, handlePrimarySubmit, handleSubmit],
+  );
+
+  // 图片粘贴（Ctrl+V 含图片时拦截）
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      if (e.clipboardData.files.length > 0) {
+        const hasImage = Array.from(e.clipboardData.files).some((f) => f.type.startsWith("image/"));
+        if (hasImage) {
+          e.preventDefault();
+          imageAttach.addFromClipboard(e.clipboardData.items);
+        }
+      }
+    },
+    [imageAttach],
+  );
+
+  // 图片拖拽
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      if (e.dataTransfer.files.length > 0) {
+        const hasImage = Array.from(e.dataTransfer.files).some((f) => f.type.startsWith("image/"));
+        if (hasImage) {
+          e.preventDefault();
+          imageAttach.addFromDrop(e.dataTransfer);
+        }
+      }
+    },
+    [imageAttach],
+  );
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+  }, []);
+
+  // 「+」菜单选择文件：图片走附件管线，其他文件走 @ 引用
+  const handlePlusMenuFiles = useCallback(
+    (files: FileList) => {
+      const imageFiles: File[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        if (f && f.type.startsWith("image/")) {
+          imageFiles.push(f);
+        }
+      }
+      if (imageFiles.length > 0) {
+        imageAttach.addFromFiles(imageFiles);
+      }
+      // 非图片文件可通过 @ 引用添加（后续扩展）
+    },
+    [imageAttach],
   );
 
   const handleAtTrigger = useCallback((query: string) => {
@@ -548,29 +640,47 @@ export function SessionChatView({
         onScroll={handleScroll}
       />
 
+      {/* 排队消息列表 */}
+      {pendingMessages && pendingMessages.length > 0 && (
+        <PendingMessageList
+          messages={pendingMessages}
+          canSteer={Boolean(controlState.secondaryAction?.enabled)}
+          onPromote={onPromotePending ?? (() => {})}
+          onDelete={onDeletePending ?? (() => {})}
+        />
+      )}
+
       {/* 输入区 */}
-      <SessionChatComposer
-        controlState={controlState}
-        discovery={discovery}
-        discovered={discovered}
-        execConfig={execConfig}
-        fileRef={fileRef}
-        hasSession={hasSession}
-        inputPrefix={inputPrefix}
-        inputValue={inputValue}
-        isCancelling={isCancelling}
-        isSending={isSending}
-        promptTemplates={promptTemplates}
-        richInputRef={richInputRef}
-        showExecutorSelector={showExecutorSelector}
-        workspaceId={workspaceId}
-        onAtTrigger={handleAtTrigger}
-        onFileSelected={handleFileSelected}
-        onInputChange={setInputValue}
-        onKeyDown={handleKeyDown}
-        onCancelAction={() => { void handleCancel(); }}
-        onPrimaryAction={() => { void handlePrimarySubmit(); }}
-      />
+      <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
+        <SessionChatComposer
+          controlState={controlState}
+          discovery={discovery}
+          discovered={discovered}
+          execConfig={execConfig}
+          fileRef={fileRef}
+          hasSession={hasSession}
+          inputPrefix={inputPrefix}
+          inputValue={inputValue}
+          imageAttachments={imageAttach.attachments}
+          imageError={imageAttach.error}
+          isActionRunning={isActionRunning}
+          isCancelling={isCancelling}
+          isSending={isSending}
+          promptTemplates={promptTemplates}
+          richInputRef={richInputRef}
+          showExecutorSelector={showExecutorSelector}
+          workspaceId={workspaceId}
+          onAtTrigger={handleAtTrigger}
+          onFileSelected={handleFileSelected}
+          onInputChange={setInputValue}
+          onKeyDown={handleKeyDown}
+          onCancelAction={() => { void handleCancel(); }}
+          onPrimaryAction={() => { void handlePrimarySubmit(); }}
+          onSteerAction={() => { void handleSubmit("steer"); }}
+          onPlusMenuFiles={handlePlusMenuFiles}
+          onRemoveImage={imageAttach.removeAttachment}
+        />
+      </div>
     </div>
   );
 }

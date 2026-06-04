@@ -6,7 +6,7 @@ import type {
   useExecutorDiscoveredOptions,
   useExecutorDiscovery,
 } from "../../executor-selector";
-import { ExecutorSelector } from "../../executor-selector";
+import { InlineModelSelector } from "../../executor-selector";
 import type { FileEntry } from "../../../services/filePicker";
 import {
   FilePickerPopup,
@@ -19,6 +19,10 @@ import type { SessionDisplayItem, TokenUsageInfo } from "../model/types";
 import { isSessionComposerPrimaryDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
 import type { SessionChatControlState } from "./SessionChatViewTypes";
+import type { ImageAttachment } from "./composer/useImageAttachments";
+import { ImageAttachmentPreview } from "./composer/ImageAttachmentPreview";
+import { ComposerSendButton } from "./composer/ComposerSendButton";
+import { ComposerPlusMenu } from "./composer/ComposerPlusMenu";
 
 type ExecutorDiscoveryState = ReturnType<typeof useExecutorDiscovery>;
 type ExecutorConfigState = ReturnType<typeof useExecutorConfig>;
@@ -267,6 +271,9 @@ export function SessionChatComposer({
   hasSession,
   inputPrefix,
   inputValue,
+  imageAttachments,
+  imageError,
+  isActionRunning,
   isCancelling,
   isSending,
   promptTemplates,
@@ -279,6 +286,9 @@ export function SessionChatComposer({
   onKeyDown,
   onCancelAction,
   onPrimaryAction,
+  onSteerAction,
+  onPlusMenuFiles,
+  onRemoveImage,
 }: {
   controlState: SessionChatControlState;
   discovery: ExecutorDiscoveryState;
@@ -288,6 +298,9 @@ export function SessionChatComposer({
   hasSession: boolean;
   inputPrefix?: ReactNode;
   inputValue: string;
+  imageAttachments: ImageAttachment[];
+  imageError: string | null;
+  isActionRunning: boolean;
   isCancelling: boolean;
   isSending: boolean;
   promptTemplates?: Array<{ id: string; label: string; content: string }>;
@@ -300,27 +313,46 @@ export function SessionChatComposer({
   onKeyDown: (event: KeyboardEvent) => void;
   onCancelAction: () => void;
   onPrimaryAction: () => void;
+  onSteerAction?: () => void;
+  onPlusMenuFiles: (files: FileList) => void;
+  onRemoveImage: (id: string) => void;
 }) {
-  const { primaryAction, cancelAction } = controlState;
+  const { primaryAction, cancelAction, secondaryAction } = controlState;
+  const isEnqueueMode = primaryAction.kind === "enqueue";
   const inputDisabled = isSending || !primaryAction.enabled;
+
+  const hasContent = Boolean(inputValue.trim()) || imageAttachments.length > 0;
   const sendDisabled = isSessionComposerPrimaryDisabled({
     primaryActionEnabled: primaryAction.enabled,
-    requirePromptText: primaryAction.kind !== "none",
-    inputValue,
+    requirePromptText: false,
+    inputValue: hasContent ? "has_content" : "",
     isCancelling,
     isSending,
   });
   const cancelDisabled = isCancelling || !cancelAction.enabled;
+
+  const executorName = discovery.executors.find((e) => e.id === execConfig.executor)?.name;
+  const isDiscoveredLoading = Boolean(execConfig.executor.trim()) &&
+    (!discovered.isInitialized || (discovered.options?.loading_models ?? false));
+
+  // Steer 态模型选择器只读（FR5）
+  const isSteerReadonly = isEnqueueMode;
+
   const actionReason = primaryAction.enabled
     ? undefined
     : primaryAction.unavailableReason ?? controlState.helperText;
   const helperText = primaryAction.enabled
-    ? controlState.helperText ?? `Ctrl+Enter 快捷提交 · ${workspaceId ? "@ 引用工作空间文件" : "当前会话未绑定工作空间，@ 文件引用不可用"}`
+    ? controlState.helperText ?? (
+        isEnqueueMode
+          ? `Enter 排队${secondaryAction?.enabled ? " · Ctrl+Enter steer" : ""} · ${workspaceId ? "@ 引用文件" : "@ 文件引用不可用"}`
+          : `Ctrl+Enter 提交 · ${workspaceId ? "@ 引用文件" : "@ 文件引用不可用"}`
+      )
     : actionReason ?? "当前 Session 只能查看 runtime trace。";
 
   return (
     <div className="shrink-0 border-t border-border bg-background">
-      <div className="mx-auto w-full max-w-4xl px-5 py-4">
+      <div className="mx-auto w-full max-w-4xl px-5 py-3">
+        {/* Prompt 模板（无 session + draft 模式） */}
         {!hasSession && !primaryAction.enabled && promptTemplates && promptTemplates.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {promptTemplates.map((tpl) => (
@@ -338,102 +370,107 @@ export function SessionChatComposer({
 
         {inputPrefix}
 
-        {showExecutorSelector && (
-          <ExecutorSelector
-            executors={discovery.executors}
-            isLoading={discovery.isLoading}
-            error={discovery.error}
-            discoveredOptions={discovered.options}
-            discoveredError={discovered.error}
-            isDiscoveredLoading={
-              Boolean(execConfig.executor.trim()) &&
-              (!discovered.isInitialized || (discovered.options?.loading_models ?? false))
-            }
-            onDiscoveredReconnect={discovered.reconnect}
-            executor={execConfig.executor}
-            providerId={execConfig.providerId}
-            modelId={execConfig.modelId}
-            thinkingLevel={execConfig.thinkingLevel}
-            permissionPolicy={execConfig.permissionPolicy}
-            onExecutorChange={execConfig.setExecutor}
-            onProviderIdChange={execConfig.setProviderId}
-            onModelIdChange={execConfig.setModelId}
-            onThinkingLevelChange={execConfig.setThinkingLevel}
-            onPermissionPolicyChange={execConfig.setPermissionPolicy}
-            onReset={execConfig.reset}
-            onRefetch={discovery.refetch}
-          />
-        )}
+        {/* 一体化 Composer 容器 */}
+        <div className="relative rounded-[12px] border border-border bg-secondary/50">
+          {/* 文件引用药丸 */}
+          <div className="px-3 pt-3">
+            <FileReferenceTags
+              references={fileRef.references}
+              onRemove={(relPath) => {
+                fileRef.removeReference(relPath);
+                const cur = richInputRef.current?.getValue() ?? "";
+                const next = removeReferenceMarkers(cur, relPath);
+                richInputRef.current?.setValue(next);
+              }}
+            />
+          </div>
 
-        <div className={`relative rounded-[14px] border border-border bg-secondary/60 p-3${showExecutorSelector ? " mt-3" : ""}`}>
-          <FileReferenceTags
-            references={fileRef.references}
-            onRemove={(relPath) => {
-              fileRef.removeReference(relPath);
-              const cur = richInputRef.current?.getValue() ?? "";
-              const next = removeReferenceMarkers(cur, relPath);
-              richInputRef.current?.setValue(next);
-            }}
-          />
+          {/* 文本输入区 */}
+          <div className="relative px-3">
+            <FilePickerPopup
+              open={fileRef.pickerOpen}
+              query={fileRef.pickerQuery}
+              files={fileRef.pickerFiles}
+              loading={fileRef.pickerLoading}
+              error={fileRef.pickerError}
+              selectedIndex={fileRef.selectedIndex}
+              onQueryChange={fileRef.updateQuery}
+              onSelect={onFileSelected}
+              onClose={fileRef.closePicker}
+              onMoveSelection={fileRef.moveSelection}
+              onConfirmSelection={() => {
+                const selectedFile = fileRef.pickerFiles[fileRef.selectedIndex];
+                if (!selectedFile) return;
+                onFileSelected(selectedFile);
+              }}
+            />
+            <RichInput
+              ref={richInputRef}
+              placeholder={primaryAction.placeholder ?? "Send follow-up"}
+              onChange={onInputChange}
+              onKeyDown={onKeyDown}
+              onAtTrigger={onAtTrigger}
+              onFileReferenceRemoved={(relPath) => { fileRef.removeReference(relPath); }}
+              disabled={inputDisabled}
+            />
+          </div>
 
-          <div className="relative flex gap-3">
-            <div className="relative flex-1">
-              <FilePickerPopup
-                open={fileRef.pickerOpen}
-                query={fileRef.pickerQuery}
-                files={fileRef.pickerFiles}
-                loading={fileRef.pickerLoading}
-                error={fileRef.pickerError}
-                selectedIndex={fileRef.selectedIndex}
-                onQueryChange={fileRef.updateQuery}
-                onSelect={onFileSelected}
-                onClose={fileRef.closePicker}
-                onMoveSelection={fileRef.moveSelection}
-                onConfirmSelection={() => {
-                  const selectedFile = fileRef.pickerFiles[fileRef.selectedIndex];
-                  if (!selectedFile) return;
-                  onFileSelected(selectedFile);
-                }}
-              />
-              <RichInput
-                ref={richInputRef}
-                placeholder={primaryAction.placeholder}
-                onChange={onInputChange}
-                onKeyDown={onKeyDown}
-                onAtTrigger={onAtTrigger}
-                onFileReferenceRemoved={(relPath) => { fileRef.removeReference(relPath); }}
-                disabled={inputDisabled}
-              />
+          {/* 图片预览区 */}
+          <div className="px-3">
+            <ImageAttachmentPreview
+              attachments={imageAttachments}
+              onRemove={onRemoveImage}
+            />
+          </div>
+
+          {/* 图片错误提示 */}
+          {imageError && (
+            <div className="mx-3 mb-2 rounded-[8px] bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+              {imageError}
             </div>
-            <div className="flex shrink-0 flex-col gap-2 self-end">
-              <button
-                type="button"
-                disabled={sendDisabled}
-                onClick={onPrimaryAction}
-                className={`h-10 w-20 rounded-[12px] border text-sm font-medium transition-colors disabled:opacity-50 ${
-                  primaryAction.kind === "steer"
-                    ? "border-primary bg-primary text-primary-foreground hover:opacity-95"
-                    : primaryAction.enabled
-                      ? "border-primary bg-primary text-primary-foreground hover:opacity-95"
-                      : "border-border bg-background text-muted-foreground"
-                }`}
-              >
-                {isSending ? "..." : primaryAction.label}
-              </button>
-              {cancelAction.enabled && (
-                <button
-                  type="button"
-                  disabled={cancelDisabled}
-                  onClick={onCancelAction}
-                  className="h-9 w-20 rounded-[12px] border border-border bg-background text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
-                  title={cancelAction.unavailableReason}
-                >
-                  {isCancelling ? "取消中" : cancelAction.label}
-                </button>
+          )}
+
+          {/* 底部工具栏 */}
+          <div className="flex items-center justify-between border-t border-border/40 px-2 py-1.5">
+            <div className="flex items-center gap-1">
+              {/* 「+」菜单 */}
+              <ComposerPlusMenu
+                disabled={inputDisabled}
+                onSelectFiles={onPlusMenuFiles}
+              />
+
+              {/* 内联模型选择器（FR5: steer 态只读） */}
+              {showExecutorSelector && (
+                <InlineModelSelector
+                  execConfig={execConfig}
+                  discoveredOptions={discovered.options}
+                  isDiscoveredLoading={isDiscoveredLoading}
+                  executorName={executorName}
+                  readonly={isSteerReadonly}
+                  onReset={execConfig.reset}
+                  onRefetch={discovery.refetch}
+                  onReconnect={discovered.reconnect}
+                />
               )}
             </div>
+
+            {/* Morphing 发送按钮 */}
+            <ComposerSendButton
+              isRunning={isActionRunning}
+              hasInput={hasContent}
+              isSending={isSending}
+              isCancelling={isCancelling}
+              sendDisabled={sendDisabled}
+              cancelDisabled={cancelDisabled}
+              primaryKind={primaryAction.kind}
+              canSteer={Boolean(secondaryAction?.enabled)}
+              onSend={onPrimaryAction}
+              onSteer={onSteerAction}
+              onCancel={onCancelAction}
+            />
           </div>
         </div>
+
         <p className="mt-1 text-xs text-muted-foreground/60">
           {helperText}
         </p>

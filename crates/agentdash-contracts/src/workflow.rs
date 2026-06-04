@@ -947,6 +947,7 @@ pub struct SessionRuntimeActionAvailabilityView {
 #[serde(rename_all = "snake_case")]
 pub struct SessionRuntimeActionSetView {
     pub send_next: SessionRuntimeActionAvailabilityView,
+    pub enqueue: SessionRuntimeActionAvailabilityView,
     pub steer: SessionRuntimeActionAvailabilityView,
     pub cancel: SessionRuntimeActionAvailabilityView,
 }
@@ -972,6 +973,32 @@ pub struct SessionRuntimeControlView {
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
     pub actions: SessionRuntimeActionSetView,
+    #[serde(default)]
+    pub pending_messages: Vec<PendingMessageView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct PendingMessageView {
+    pub id: String,
+    pub preview: String,
+    pub has_images: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct EnqueuePendingMessageRequest {
+    pub input: Vec<codex::UserInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub executor_config: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct EnqueuePendingMessageResponse {
+    pub message: PendingMessageView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

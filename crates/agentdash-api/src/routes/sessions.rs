@@ -31,10 +31,12 @@ use agentdash_contracts::session::{
     SessionNdjsonEnvelope, SessionProjectionRollbackResponse, SessionProjectionViewResponse,
 };
 use agentdash_contracts::workflow::{
-    LifecycleAgentRefDto, LifecycleRunRefDto, ProjectSessionListEntry, ProjectSessionListView,
-    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, SessionRuntimeActionAvailabilityView,
-    SessionRuntimeActionSetView, SessionRuntimeControlPlaneStatus,
-    SessionRuntimeControlPlaneView, SessionRuntimeControlView, SessionShellDto, SubjectRefDto,
+    LifecycleAgentRefDto,
+    LifecycleRunRefDto, PendingMessageView, ProjectSessionListEntry, ProjectSessionListView,
+    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
+    SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
+    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
+    SessionShellDto, SubjectRefDto,
 };
 use agentdash_domain::workflow::{LifecycleRun, RuntimeSessionExecutionAnchor};
 
@@ -180,9 +182,11 @@ pub async fn get_session_runtime_control(
             subject_associations: Vec::new(),
             actions: SessionRuntimeActionSetView {
                 send_next: disabled_action("当前 Session 没有绑定 Agent 控制面，不能继续发送消息。"),
+                enqueue: disabled_action("当前 Session 没有绑定 Agent 控制面。"),
                 steer: disabled_action("当前 Session 没有绑定 Agent 控制面，不能运行中 steer。"),
                 cancel: disabled_action("当前 Session 没有正在执行的 turn。"),
             },
+            pending_messages: Vec::new(),
         }));
     };
 
@@ -303,6 +307,31 @@ pub async fn get_session_runtime_control(
     } else {
         disabled_action("当前 Session 没有正在执行的 turn。")
     };
+    // enqueue: running 且有 frame 且未终止时可排队
+    let enqueue = if has_frame && !terminal_agent && delivery_running {
+        enabled_action()
+    } else if !delivery_running {
+        disabled_action("当前 Session 未在执行中，直接发送即可。")
+    } else if terminal_agent {
+        disabled_action("当前 Agent 已结束。")
+    } else {
+        disabled_action("当前 Agent 没有可投递的 runtime frame。")
+    };
+
+    let pending_previews = state
+        .services
+        .pending_queue
+        .list(&runtime_session_id)
+        .await;
+    let pending_messages: Vec<PendingMessageView> = pending_previews
+        .into_iter()
+        .map(|p| PendingMessageView {
+            id: p.id,
+            preview: p.preview,
+            has_images: p.has_images,
+            created_at: p.created_at.to_rfc3339(),
+        })
+        .collect();
 
     Ok(Json(SessionRuntimeControlView {
         runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
@@ -315,9 +344,11 @@ pub async fn get_session_runtime_control(
         subject_associations,
         actions: SessionRuntimeActionSetView {
             send_next,
+            enqueue,
             steer,
             cancel,
         },
+        pending_messages,
     }))
 }
 
@@ -1270,3 +1301,6 @@ pub async fn get_session_context_audit(
 
     Ok(Json(dtos))
 }
+
+// ─── Pending Message Queue ──────────────────────────────
+

@@ -1,5 +1,10 @@
-use std::{collections::BTreeMap, env, fs, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env, fs,
+    path::{Path, PathBuf},
+};
 
+use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_contracts::companion::{CompanionGateRespondRequest, CompanionGateRespondResponse};
 use agentdash_contracts::core::{
     AgentPreset, Artifact, ArtifactType, BackendCapabilitiesResponse,
@@ -110,7 +115,7 @@ use agentdash_contracts::workflow::{
     RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, RuntimeSessionTraceView,
     SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
     SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
-    SessionShellDto,
+    SessionShellDto, PendingMessageView, EnqueuePendingMessageRequest, EnqueuePendingMessageResponse,
     StoryLaunchResult, SubjectExecutionView, SubjectRefDto, ValidateHookScriptResponse,
     ValidationIssue, WorkflowGraphInstanceView,
 };
@@ -123,220 +128,217 @@ fn main() {
 
     write_common_json_value(&generated_dir.join("common-contracts.ts"), check);
 
-    write_domain(
-        &generated_dir.join("core-contracts.ts"),
-        &[],
-        check,
-        |dir| {
-            export_all::<VfsCapabilityDto>(dir);
-            export_all::<ContextContainerFile>(dir);
-            export_all::<ContextContainerProvider>(dir);
-            export_all::<ContextContainerDefinition>(dir);
-            export_all::<SchedulingConfig>(dir);
-            export_all::<AgentPreset>(dir);
-            export_all::<ProjectConfig>(dir);
-            export_all::<ProjectVisibility>(dir);
-            export_all::<ProjectRole>(dir);
-            export_all::<ProjectSubjectType>(dir);
-            export_all::<ProjectAccessSummaryResponse>(dir);
-            export_all::<ProjectResponse>(dir);
-            export_all::<ProjectSubjectGrantResponse>(dir);
-            export_all::<DeletedProjectSubjectGrantResponse>(dir);
-            export_all::<RevokeProjectGrantResponse>(dir);
-            export_all::<ProjectDetailResponse>(dir);
-            export_all::<WorkspaceIdentityKind>(dir);
-            export_all::<WorkspaceBindingStatus>(dir);
-            export_all::<WorkspaceResolutionPolicy>(dir);
-            export_all::<WorkspaceStatus>(dir);
-            export_all::<WorkspaceBindingResponse>(dir);
-            export_all::<WorkspaceResponse>(dir);
-            export_all::<ContextSourceKind>(dir);
-            export_all::<ContextSlot>(dir);
-            export_all::<ContextDelivery>(dir);
-            export_all::<ContextSourceRef>(dir);
-            export_all::<DeletedIdResponse>(dir);
-            export_all::<DeletedFlagResponse>(dir);
-            export_all::<UpdatedIdResponse>(dir);
-            export_all::<RevokedIdResponse>(dir);
-            export_all::<PendingExecutionResponse>(dir);
-            export_all::<BackendType>(dir);
-            export_all::<BackendVisibility>(dir);
-            export_all::<BackendShareScopeKind>(dir);
-            export_all::<RuntimeHealthStatus>(dir);
-            export_all::<BackendRuntimeHealthResponse>(dir);
-            export_all::<BackendExecutorCapabilityResponse>(dir);
-            export_all::<BackendMcpServerCapabilityResponse>(dir);
-            export_all::<BackendCapabilitiesResponse>(dir);
-            export_all::<BackendResponse>(dir);
-            export_all::<BackendWithStatusResponse>(dir);
-            export_all::<SessionRequiredContextBlock>(dir);
-            export_all::<SessionComposition>(dir);
-            export_all::<StoryContext>(dir);
-            export_all::<StoryStatus>(dir);
-            export_all::<StoryPriority>(dir);
-            export_all::<StoryType>(dir);
-            export_all::<StoryResponse>(dir);
-            export_all::<TaskStatus>(dir);
-            export_all::<ArtifactType>(dir);
-            export_all::<Artifact>(dir);
-            export_all::<TaskDispatchPreference>(dir);
-            export_all::<TaskResponse>(dir);
-        },
-    );
+    // Upstream registry: type_name -> import source (e.g. "./backbone-protocol").
+    // Each domain strips types already claimed upstream and emits `import type` instead.
+    let mut upstream: BTreeMap<String, String> = BTreeMap::new();
 
-    write_domain(
-        &generated_dir.join("mcp-preset-contracts.ts"),
-        &[],
-        check,
-        |dir| {
-            export_all::<McpPresetResponse>(dir);
-            export_all::<CreateMcpPresetRequest>(dir);
-            export_all::<UpdateMcpPresetRequest>(dir);
-            export_all::<CloneMcpPresetRequest>(dir);
-            export_all::<ListMcpPresetQuery>(dir);
-            export_all::<ProbeMcpPresetResponse>(dir);
-            export_all::<DeleteMcpPresetResponse>(dir);
-        },
-    );
+    // --- backbone-protocol.ts (canonical source for codex/agent-protocol types) ---
+    emit_domain(&generated_dir, "backbone-protocol.ts", &mut upstream, check, |dir| {
+        export_all::<BackboneEnvelope>(dir);
+    });
 
-    write_domain(
-        &generated_dir.join("companion-contracts.ts"),
-        &[],
-        check,
-        |dir| {
-            export_all::<CompanionGateRespondRequest>(dir);
-            export_all::<CompanionGateRespondResponse>(dir);
-        },
-    );
+    // --- project-agent-contracts.ts (canonical source for agent-construct Ref DTOs) ---
+    emit_domain(&generated_dir, "project-agent-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<ProjectAgent>(dir);
+        export_all::<ProjectAgentExecutor>(dir);
+        export_all::<ProjectAgentSummary>(dir);
+        export_all::<ProjectAgentLaunchResult>(dir);
+        export_all::<CreateProjectAgentSessionRequest>(dir);
+        export_all::<ProjectAgentSessionStartResult>(dir);
+        export_all::<CreateProjectAgentRequest>(dir);
+        export_all::<UpdateProjectAgentRequest>(dir);
+    });
 
-    write_domain(
-        &generated_dir.join("session-contracts.ts"),
-        &["import type { BackboneEnvelope } from \"./backbone-protocol\";"],
-        check,
-        |dir| {
-            export_all::<SessionEventResponse>(dir);
-            export_all::<SessionEventsPageResponse>(dir);
-            export_all::<SessionNdjsonEnvelope>(dir);
-            export_all::<SessionCommandStateResponse>(dir);
-            export_all::<DeleteSessionResponse>(dir);
-            export_all::<CancelSessionResponse>(dir);
-            export_all::<ApproveToolCallResponse>(dir);
-            export_all::<RejectToolCallResponse>(dir);
-            export_all::<SessionProjectionSourceRangeResponse>(dir);
-            export_all::<SessionProjectionMessageRefResponse>(dir);
-            export_all::<SessionProjectionSegmentProvenanceResponse>(dir);
-            export_all::<SessionProjectionSegmentViewResponse>(dir);
-            export_all::<SessionProjectionViewResponse>(dir);
-            export_all::<SessionLineageRelationKindDto>(dir);
-            export_all::<SessionLineageStatusDto>(dir);
-            export_all::<SessionMessageRefDto>(dir);
-            export_all::<CreateSessionForkRequest>(dir);
-            export_all::<RollbackSessionProjectionRequest>(dir);
-            export_all::<SessionLineageRecordResponse>(dir);
-            export_all::<SessionForkChildSessionResponse>(dir);
-            export_all::<SessionForkResponse>(dir);
-            export_all::<SessionLineageViewResponse>(dir);
-            export_all::<SessionProjectionRollbackResponse>(dir);
-        },
-    );
+    // --- core-contracts.ts ---
+    emit_domain(&generated_dir, "core-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<VfsCapabilityDto>(dir);
+        export_all::<ContextContainerFile>(dir);
+        export_all::<ContextContainerProvider>(dir);
+        export_all::<ContextContainerDefinition>(dir);
+        export_all::<SchedulingConfig>(dir);
+        export_all::<AgentPreset>(dir);
+        export_all::<ProjectConfig>(dir);
+        export_all::<ProjectVisibility>(dir);
+        export_all::<ProjectRole>(dir);
+        export_all::<ProjectSubjectType>(dir);
+        export_all::<ProjectAccessSummaryResponse>(dir);
+        export_all::<ProjectResponse>(dir);
+        export_all::<ProjectSubjectGrantResponse>(dir);
+        export_all::<DeletedProjectSubjectGrantResponse>(dir);
+        export_all::<RevokeProjectGrantResponse>(dir);
+        export_all::<ProjectDetailResponse>(dir);
+        export_all::<WorkspaceIdentityKind>(dir);
+        export_all::<WorkspaceBindingStatus>(dir);
+        export_all::<WorkspaceResolutionPolicy>(dir);
+        export_all::<WorkspaceStatus>(dir);
+        export_all::<WorkspaceBindingResponse>(dir);
+        export_all::<WorkspaceResponse>(dir);
+        export_all::<ContextSourceKind>(dir);
+        export_all::<ContextSlot>(dir);
+        export_all::<ContextDelivery>(dir);
+        export_all::<ContextSourceRef>(dir);
+        export_all::<DeletedIdResponse>(dir);
+        export_all::<DeletedFlagResponse>(dir);
+        export_all::<UpdatedIdResponse>(dir);
+        export_all::<RevokedIdResponse>(dir);
+        export_all::<PendingExecutionResponse>(dir);
+        export_all::<BackendType>(dir);
+        export_all::<BackendVisibility>(dir);
+        export_all::<BackendShareScopeKind>(dir);
+        export_all::<RuntimeHealthStatus>(dir);
+        export_all::<BackendRuntimeHealthResponse>(dir);
+        export_all::<BackendExecutorCapabilityResponse>(dir);
+        export_all::<BackendMcpServerCapabilityResponse>(dir);
+        export_all::<BackendCapabilitiesResponse>(dir);
+        export_all::<BackendResponse>(dir);
+        export_all::<BackendWithStatusResponse>(dir);
+        export_all::<SessionRequiredContextBlock>(dir);
+        export_all::<SessionComposition>(dir);
+        export_all::<StoryContext>(dir);
+        export_all::<StoryStatus>(dir);
+        export_all::<StoryPriority>(dir);
+        export_all::<StoryType>(dir);
+        export_all::<StoryResponse>(dir);
+        export_all::<TaskStatus>(dir);
+        export_all::<ArtifactType>(dir);
+        export_all::<Artifact>(dir);
+        export_all::<TaskDispatchPreference>(dir);
+        export_all::<TaskResponse>(dir);
+    });
 
-    write_domain(
-        &generated_dir.join("llm-provider-contracts.ts"),
-        &[],
-        check,
-        |dir| {
-            export_all::<LlmProviderProtocol>(dir);
-            export_all::<LlmCredentialModeDto>(dir);
-            export_all::<LlmCredentialSourceDto>(dir);
-            export_all::<LlmCredentialVerificationStatusDto>(dir);
-            export_all::<LlmProviderAdminDto>(dir);
-            export_all::<EffectiveLlmModelProfileDto>(dir);
-            export_all::<EffectiveLlmProviderDto>(dir);
-            export_all::<CreateLlmProviderRequest>(dir);
-            export_all::<UpdateLlmProviderRequest>(dir);
-            export_all::<ReorderLlmProvidersRequest>(dir);
-            export_all::<ReorderLlmProvidersResponse>(dir);
-            export_all::<DeleteLlmProviderResponse>(dir);
-            export_all::<ProbeLlmProviderModelsRequest>(dir);
-            export_all::<ProbeLlmProviderModelDto>(dir);
-            export_all::<UpsertLlmProviderUserCredentialRequest>(dir);
-            export_all::<DeleteLlmProviderUserCredentialResponse>(dir);
-            export_all::<CodexOAuthFlowStatusDto>(dir);
-            export_all::<StartCodexOAuthResponse>(dir);
-            export_all::<CodexOAuthStatusResponse>(dir);
-        },
-    );
+    // --- mcp-preset-contracts.ts ---
+    emit_domain(&generated_dir, "mcp-preset-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<McpPresetResponse>(dir);
+        export_all::<CreateMcpPresetRequest>(dir);
+        export_all::<UpdateMcpPresetRequest>(dir);
+        export_all::<CloneMcpPresetRequest>(dir);
+        export_all::<ListMcpPresetQuery>(dir);
+        export_all::<ProbeMcpPresetResponse>(dir);
+        export_all::<DeleteMcpPresetResponse>(dir);
+    });
 
-    write_domain(
-        &generated_dir.join("permission-contracts.ts"),
-        &[],
-        check,
-        |dir| {
-            export_all::<PermissionGrantScopeDto>(dir);
-            export_all::<PermissionGrantStatusDto>(dir);
-            export_all::<ListPermissionGrantsQuery>(dir);
-            export_all::<PermissionGrantResponse>(dir);
-        },
-    );
+    // --- companion-contracts.ts ---
+    emit_domain(&generated_dir, "companion-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<CompanionGateRespondRequest>(dir);
+        export_all::<CompanionGateRespondResponse>(dir);
+    });
 
-    write_domain(
-        &generated_dir.join("workflow-contracts.ts"),
-        &[],
-        check,
-        |dir| {
-            export_all::<AgentProcedureContract>(dir);
-            export_all::<ActivityDefinition>(dir);
-            export_all::<ActivityTransition>(dir);
-            export_all::<ActivityLifecycleRunState>(dir);
-            export_all::<LifecycleExecutionEntry>(dir);
-            export_all::<LifecycleRunStatus>(dir);
-            export_all::<LifecycleRunTopology>(dir);
-            export_all::<EffectiveSessionContract>(dir);
-            export_all::<ValidationIssue>(dir);
-            export_all::<SubjectRefDto>(dir);
-            export_all::<LifecycleRunRefDto>(dir);
-            export_all::<LifecycleAgentRefDto>(dir);
-            export_all::<AgentFrameRefDto>(dir);
-            export_all::<RuntimeSessionRefDto>(dir);
-            export_all::<SessionShellDto>(dir);
-            export_all::<RuntimeSessionExecutionAnchorDto>(dir);
-            export_all::<LifecycleAgentMessageRequest>(dir);
-            export_all::<LifecycleAgentMessageResponse>(dir);
-            export_all::<LifecycleAgentSteeringRequest>(dir);
-            export_all::<RuntimeSessionCommandStateDto>(dir);
-            export_all::<LifecycleAgentSteeringResponse>(dir);
-            export_all::<AgentAssignmentRefDto>(dir);
-            export_all::<StoryLaunchResult>(dir);
-            export_all::<LifecycleSubjectAssociationDto>(dir);
-            export_all::<ActiveActivityRefDto>(dir);
-            export_all::<ActivityAttemptView>(dir);
-            export_all::<ActivityStateView>(dir);
-            export_all::<WorkflowGraphInstanceView>(dir);
-            export_all::<LifecycleRunView>(dir);
-            export_all::<LifecycleAgentView>(dir);
-            export_all::<AgentFrameRuntimeView>(dir);
-            export_all::<SubjectExecutionView>(dir);
-            export_all::<ProjectActiveAgentsView>(dir);
-            export_all::<RuntimeSessionTraceView>(dir);
-            export_all::<SessionRuntimeControlPlaneStatus>(dir);
-            export_all::<SessionRuntimeControlPlaneView>(dir);
-            export_all::<SessionRuntimeActionAvailabilityView>(dir);
-            export_all::<SessionRuntimeActionSetView>(dir);
-            export_all::<SessionRuntimeControlView>(dir);
-            export_all::<ProjectSessionListEntry>(dir);
-            export_all::<ProjectSessionListView>(dir);
-            export_all::<DefinitionSource>(dir);
-            export_all::<DeleteWorkflowGraphResponse>(dir);
-            export_all::<DeleteAgentProcedureResponse>(dir);
-            export_all::<HookPresetResponse>(dir);
-            export_all::<HookPresetsResponse>(dir);
-            export_all::<ValidateHookScriptResponse>(dir);
-            export_all::<RegisterHookPresetResponse>(dir);
-            export_all::<DeleteHookPresetResponse>(dir);
-        },
-    );
+    // --- session-contracts.ts ---
+    emit_domain(&generated_dir, "session-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<SessionEventResponse>(dir);
+        export_all::<SessionEventsPageResponse>(dir);
+        export_all::<SessionNdjsonEnvelope>(dir);
+        export_all::<SessionCommandStateResponse>(dir);
+        export_all::<DeleteSessionResponse>(dir);
+        export_all::<CancelSessionResponse>(dir);
+        export_all::<ApproveToolCallResponse>(dir);
+        export_all::<RejectToolCallResponse>(dir);
+        export_all::<SessionProjectionSourceRangeResponse>(dir);
+        export_all::<SessionProjectionMessageRefResponse>(dir);
+        export_all::<SessionProjectionSegmentProvenanceResponse>(dir);
+        export_all::<SessionProjectionSegmentViewResponse>(dir);
+        export_all::<SessionProjectionViewResponse>(dir);
+        export_all::<SessionLineageRelationKindDto>(dir);
+        export_all::<SessionLineageStatusDto>(dir);
+        export_all::<SessionMessageRefDto>(dir);
+        export_all::<CreateSessionForkRequest>(dir);
+        export_all::<RollbackSessionProjectionRequest>(dir);
+        export_all::<SessionLineageRecordResponse>(dir);
+        export_all::<SessionForkChildSessionResponse>(dir);
+        export_all::<SessionForkResponse>(dir);
+        export_all::<SessionLineageViewResponse>(dir);
+        export_all::<SessionProjectionRollbackResponse>(dir);
+    });
 
-    write_domain(&generated_dir.join("vfs-contracts.ts"), &[], check, |dir| {
+    // --- llm-provider-contracts.ts ---
+    emit_domain(&generated_dir, "llm-provider-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<LlmProviderProtocol>(dir);
+        export_all::<LlmCredentialModeDto>(dir);
+        export_all::<LlmCredentialSourceDto>(dir);
+        export_all::<LlmCredentialVerificationStatusDto>(dir);
+        export_all::<LlmProviderAdminDto>(dir);
+        export_all::<EffectiveLlmModelProfileDto>(dir);
+        export_all::<EffectiveLlmProviderDto>(dir);
+        export_all::<CreateLlmProviderRequest>(dir);
+        export_all::<UpdateLlmProviderRequest>(dir);
+        export_all::<ReorderLlmProvidersRequest>(dir);
+        export_all::<ReorderLlmProvidersResponse>(dir);
+        export_all::<DeleteLlmProviderResponse>(dir);
+        export_all::<ProbeLlmProviderModelsRequest>(dir);
+        export_all::<ProbeLlmProviderModelDto>(dir);
+        export_all::<UpsertLlmProviderUserCredentialRequest>(dir);
+        export_all::<DeleteLlmProviderUserCredentialResponse>(dir);
+        export_all::<CodexOAuthFlowStatusDto>(dir);
+        export_all::<StartCodexOAuthResponse>(dir);
+        export_all::<CodexOAuthStatusResponse>(dir);
+    });
+
+    // --- permission-contracts.ts ---
+    emit_domain(&generated_dir, "permission-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<PermissionGrantScopeDto>(dir);
+        export_all::<PermissionGrantStatusDto>(dir);
+        export_all::<ListPermissionGrantsQuery>(dir);
+        export_all::<PermissionGrantResponse>(dir);
+    });
+
+    // --- workflow-contracts.ts ---
+    emit_domain(&generated_dir, "workflow-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<AgentProcedureContract>(dir);
+        export_all::<ActivityDefinition>(dir);
+        export_all::<ActivityTransition>(dir);
+        export_all::<ActivityLifecycleRunState>(dir);
+        export_all::<LifecycleExecutionEntry>(dir);
+        export_all::<LifecycleRunStatus>(dir);
+        export_all::<LifecycleRunTopology>(dir);
+        export_all::<EffectiveSessionContract>(dir);
+        export_all::<ValidationIssue>(dir);
+        export_all::<SubjectRefDto>(dir);
+        export_all::<LifecycleRunRefDto>(dir);
+        export_all::<LifecycleAgentRefDto>(dir);
+        export_all::<AgentFrameRefDto>(dir);
+        export_all::<RuntimeSessionRefDto>(dir);
+        export_all::<SessionShellDto>(dir);
+        export_all::<RuntimeSessionExecutionAnchorDto>(dir);
+        export_all::<LifecycleAgentMessageRequest>(dir);
+        export_all::<LifecycleAgentMessageResponse>(dir);
+        export_all::<LifecycleAgentSteeringRequest>(dir);
+        export_all::<RuntimeSessionCommandStateDto>(dir);
+        export_all::<LifecycleAgentSteeringResponse>(dir);
+        export_all::<AgentAssignmentRefDto>(dir);
+        export_all::<StoryLaunchResult>(dir);
+        export_all::<LifecycleSubjectAssociationDto>(dir);
+        export_all::<ActiveActivityRefDto>(dir);
+        export_all::<ActivityAttemptView>(dir);
+        export_all::<ActivityStateView>(dir);
+        export_all::<WorkflowGraphInstanceView>(dir);
+        export_all::<LifecycleRunView>(dir);
+        export_all::<LifecycleAgentView>(dir);
+        export_all::<AgentFrameRuntimeView>(dir);
+        export_all::<SubjectExecutionView>(dir);
+        export_all::<ProjectActiveAgentsView>(dir);
+        export_all::<RuntimeSessionTraceView>(dir);
+        export_all::<SessionRuntimeControlPlaneStatus>(dir);
+        export_all::<SessionRuntimeControlPlaneView>(dir);
+        export_all::<SessionRuntimeActionAvailabilityView>(dir);
+        export_all::<SessionRuntimeActionSetView>(dir);
+        export_all::<SessionRuntimeControlView>(dir);
+        export_all::<PendingMessageView>(dir);
+        export_all::<EnqueuePendingMessageRequest>(dir);
+        export_all::<EnqueuePendingMessageResponse>(dir);
+        export_all::<ProjectSessionListEntry>(dir);
+        export_all::<ProjectSessionListView>(dir);
+        export_all::<DefinitionSource>(dir);
+        export_all::<DeleteWorkflowGraphResponse>(dir);
+        export_all::<DeleteAgentProcedureResponse>(dir);
+        export_all::<HookPresetResponse>(dir);
+        export_all::<HookPresetsResponse>(dir);
+        export_all::<ValidateHookScriptResponse>(dir);
+        export_all::<RegisterHookPresetResponse>(dir);
+        export_all::<DeleteHookPresetResponse>(dir);
+    });
+
+    // --- vfs-contracts.ts ---
+    emit_domain(&generated_dir, "vfs-contracts.ts", &mut upstream, check, |dir| {
         export_all::<ListVfssResponse>(dir);
         export_all::<ListEntriesResponse>(dir);
         export_all::<ConfigurableProviderInfo>(dir);
@@ -365,125 +367,107 @@ fn main() {
         export_all::<DeleteProjectVfsMountResponse>(dir);
     });
 
-    write_domain(
-        &generated_dir.join("extension-runtime-contracts.ts"),
-        &[],
-        check,
-        |dir| {
-            export_all::<ExtensionRuntimeActionKindResponse>(dir);
-            export_all::<ExtensionFlagTypeResponse>(dir);
-            export_all::<ExtensionPermissionAccessResponse>(dir);
-            export_all::<ExtensionProcessPermissionAccessResponse>(dir);
-            export_all::<ExtensionBundleKindResponse>(dir);
-            export_all::<ExtensionCommandHandlerResponse>(dir);
-            export_all::<ExtensionMessageRendererDeclarationResponse>(dir);
-            export_all::<ExtensionWorkspaceTabRendererResponse>(dir);
-            export_all::<ExtensionPermissionDeclarationResponse>(dir);
-            export_all::<ExtensionInstalledAssetSourceResponse>(dir);
-            export_all::<ExtensionPackageArtifactRefResponse>(dir);
-            export_all::<ExtensionInstallationProjectionResponse>(dir);
-            export_all::<ExtensionCommandProjectionResponse>(dir);
-            export_all::<ExtensionFlagProjectionResponse>(dir);
-            export_all::<ExtensionMessageRendererProjectionResponse>(dir);
-            export_all::<ExtensionRuntimeActionProjectionResponse>(dir);
-            export_all::<ExtensionProtocolChannelMethodProjectionResponse>(dir);
-            export_all::<ExtensionProtocolChannelProjectionResponse>(dir);
-            export_all::<ExtensionDependencyDeclarationResponse>(dir);
-            export_all::<ExtensionDependencyProjectionResponse>(dir);
-            export_all::<ExtensionWorkspaceTabProjectionResponse>(dir);
-            export_all::<ExtensionPermissionProjectionResponse>(dir);
-            export_all::<ExtensionBundleProjectionResponse>(dir);
-            export_all::<ExtensionRuntimeProjectionResponse>(dir);
-            export_all::<ExtensionRuntimeInvokeActionRequest>(dir);
-            export_all::<ExtensionRuntimeInvokeChannelRequest>(dir);
-            export_all::<ExtensionRuntimeTraceResponse>(dir);
-            export_all::<ExtensionRuntimeInvocationOutputResponse>(dir);
-            export_all::<ExtensionRuntimeInvokeActionResponse>(dir);
-            export_all::<ExtensionRuntimeInvokeChannelResponse>(dir);
-            export_all::<UninstallExtensionInstallationResponse>(dir);
-        },
-    );
+    // --- extension-runtime-contracts.ts ---
+    emit_domain(&generated_dir, "extension-runtime-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<ExtensionRuntimeActionKindResponse>(dir);
+        export_all::<ExtensionFlagTypeResponse>(dir);
+        export_all::<ExtensionPermissionAccessResponse>(dir);
+        export_all::<ExtensionProcessPermissionAccessResponse>(dir);
+        export_all::<ExtensionBundleKindResponse>(dir);
+        export_all::<ExtensionCommandHandlerResponse>(dir);
+        export_all::<ExtensionMessageRendererDeclarationResponse>(dir);
+        export_all::<ExtensionWorkspaceTabRendererResponse>(dir);
+        export_all::<ExtensionPermissionDeclarationResponse>(dir);
+        export_all::<ExtensionInstalledAssetSourceResponse>(dir);
+        export_all::<ExtensionPackageArtifactRefResponse>(dir);
+        export_all::<ExtensionInstallationProjectionResponse>(dir);
+        export_all::<ExtensionCommandProjectionResponse>(dir);
+        export_all::<ExtensionFlagProjectionResponse>(dir);
+        export_all::<ExtensionMessageRendererProjectionResponse>(dir);
+        export_all::<ExtensionRuntimeActionProjectionResponse>(dir);
+        export_all::<ExtensionProtocolChannelMethodProjectionResponse>(dir);
+        export_all::<ExtensionProtocolChannelProjectionResponse>(dir);
+        export_all::<ExtensionDependencyDeclarationResponse>(dir);
+        export_all::<ExtensionDependencyProjectionResponse>(dir);
+        export_all::<ExtensionWorkspaceTabProjectionResponse>(dir);
+        export_all::<ExtensionPermissionProjectionResponse>(dir);
+        export_all::<ExtensionBundleProjectionResponse>(dir);
+        export_all::<ExtensionRuntimeProjectionResponse>(dir);
+        export_all::<ExtensionRuntimeInvokeActionRequest>(dir);
+        export_all::<ExtensionRuntimeInvokeChannelRequest>(dir);
+        export_all::<ExtensionRuntimeTraceResponse>(dir);
+        export_all::<ExtensionRuntimeInvocationOutputResponse>(dir);
+        export_all::<ExtensionRuntimeInvokeActionResponse>(dir);
+        export_all::<ExtensionRuntimeInvokeChannelResponse>(dir);
+        export_all::<UninstallExtensionInstallationResponse>(dir);
+    });
 
-    write_domain(
-        &generated_dir.join("extension-management-contracts.ts"),
-        &[],
-        check,
-        |dir| {
-            export_all::<ProjectExtensionPackageModeResponse>(dir);
-            export_all::<ProjectExtensionInstalledSourceResponse>(dir);
-            export_all::<ProjectExtensionPackageArtifactRefResponse>(dir);
-            export_all::<ProjectExtensionCapabilitySummaryResponse>(dir);
-            export_all::<ProjectExtensionManagementItemResponse>(dir);
-            export_all::<ProjectExtensionManagementListResponse>(dir);
-        },
-    );
+    // --- extension-management-contracts.ts ---
+    emit_domain(&generated_dir, "extension-management-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<ProjectExtensionPackageModeResponse>(dir);
+        export_all::<ProjectExtensionInstalledSourceResponse>(dir);
+        export_all::<ProjectExtensionPackageArtifactRefResponse>(dir);
+        export_all::<ProjectExtensionCapabilitySummaryResponse>(dir);
+        export_all::<ProjectExtensionManagementItemResponse>(dir);
+        export_all::<ProjectExtensionManagementListResponse>(dir);
+    });
 
-    write_domain(
-        &generated_dir.join("extension-package-contracts.ts"),
-        &[],
-        check,
-        |dir| {
-            export_all::<ExtensionPackageArtifactResponse>(dir);
-            export_all::<InstallExtensionPackageArtifactRequest>(dir);
-            export_all::<ExtensionPackageInstallationResponse>(dir);
-            export_all::<ImportExtensionPackageResponse>(dir);
-        },
-    );
+    // --- extension-package-contracts.ts ---
+    emit_domain(&generated_dir, "extension-package-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<ExtensionPackageArtifactResponse>(dir);
+        export_all::<InstallExtensionPackageArtifactRequest>(dir);
+        export_all::<ExtensionPackageInstallationResponse>(dir);
+        export_all::<ImportExtensionPackageResponse>(dir);
+    });
 
-    write_domain(
-        &generated_dir.join("shared-library-contracts.ts"),
-        &[],
-        check,
-        |dir| {
-            export_all::<InstalledAssetSourceDto>(dir);
-            export_all::<LibraryExtensionPackageArtifactDto>(dir);
-            export_all::<LibraryAssetDto>(dir);
-            export_all::<ListLibraryAssetsQuery>(dir);
-            export_all::<SeedBuiltinLibraryAssetsRequest>(dir);
-            export_all::<InstallLibraryAssetRequest>(dir);
-            export_all::<InstallLibraryAssetResponse>(dir);
-            export_all::<PublishLibraryAssetRequest>(dir);
-            export_all::<ProjectAssetSourceStatusDto>(dir);
-        },
-    );
+    // --- shared-library-contracts.ts ---
+    emit_domain(&generated_dir, "shared-library-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<InstalledAssetSourceDto>(dir);
+        export_all::<LibraryExtensionPackageArtifactDto>(dir);
+        export_all::<LibraryAssetDto>(dir);
+        export_all::<ListLibraryAssetsQuery>(dir);
+        export_all::<SeedBuiltinLibraryAssetsRequest>(dir);
+        export_all::<InstallLibraryAssetRequest>(dir);
+        export_all::<InstallLibraryAssetResponse>(dir);
+        export_all::<PublishLibraryAssetRequest>(dir);
+        export_all::<ProjectAssetSourceStatusDto>(dir);
+    });
 
-    write_domain(
-        &generated_dir.join("project-agent-contracts.ts"),
-        &[],
-        check,
-        |dir| {
-            export_all::<ProjectAgent>(dir);
-            export_all::<ProjectAgentExecutor>(dir);
-            export_all::<ProjectAgentSummary>(dir);
-            export_all::<ProjectAgentLaunchResult>(dir);
-            export_all::<CreateProjectAgentSessionRequest>(dir);
-            export_all::<ProjectAgentSessionStartResult>(dir);
-            export_all::<CreateProjectAgentRequest>(dir);
-            export_all::<UpdateProjectAgentRequest>(dir);
-        },
-    );
-
-    write_domain(
-        &generated_dir.join("settings-contracts.ts"),
-        &[],
-        check,
-        |dir| {
-            export_all::<SettingsScopeKind>(dir);
-            export_all::<SettingsScopeQuery>(dir);
-            export_all::<SettingResponse>(dir);
-            export_all::<SettingUpdate>(dir);
-            export_all::<UpdateSettingsRequest>(dir);
-            export_all::<UpdateSettingsResponse>(dir);
-        },
-    );
+    // --- settings-contracts.ts ---
+    emit_domain(&generated_dir, "settings-contracts.ts", &mut upstream, check, |dir| {
+        export_all::<SettingsScopeKind>(dir);
+        export_all::<SettingsScopeQuery>(dir);
+        export_all::<SettingResponse>(dir);
+        export_all::<SettingUpdate>(dir);
+        export_all::<UpdateSettingsRequest>(dir);
+        export_all::<UpdateSettingsResponse>(dir);
+    });
 }
 
-fn write_domain(
-    out: &std::path::Path,
-    imports: &[&str],
+/// Emit a single domain file, register its exported types into the upstream registry.
+fn emit_domain(
+    dir: &Path,
+    filename: &str,
+    upstream: &mut BTreeMap<String, String>,
     check: bool,
-    export: impl FnOnce(&std::path::Path),
+    export: impl FnOnce(&Path),
 ) {
+    let types = write_domain_dedup(&dir.join(filename), upstream, check, export);
+    let source = format!("./{}", filename.strip_suffix(".ts").unwrap());
+    for name in types {
+        upstream.insert(name, source.clone());
+    }
+}
+
+/// Write a domain file, stripping types already claimed by upstream domains
+/// and replacing them with `import type` lines. Returns the set of type names
+/// that this domain actually exported (i.e. NOT stripped).
+fn write_domain_dedup(
+    out: &Path,
+    upstream: &BTreeMap<String, String>,
+    check: bool,
+    export: impl FnOnce(&Path),
+) -> BTreeSet<String> {
     fs::create_dir_all(out.parent().expect("generated dir")).expect("create generated dir");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
@@ -493,6 +477,41 @@ fn write_domain(
     collect_ts_files(tmp_dir.path(), &mut declarations);
     let uses_json_value = declarations.remove("JsonValue").is_some();
 
+    // Strip types already defined upstream (remove from declarations).
+    let mut stripped: Vec<(String, String)> = Vec::new();
+    for (type_name, source) in upstream.iter() {
+        if declarations.remove(type_name).is_some() {
+            stripped.push((type_name.clone(), source.clone()));
+        }
+    }
+
+    // Only import types that the *remaining* declarations actually reference.
+    // This avoids importing transitive sub-types that were generated by ts_rs
+    // but aren't directly used (e.g. TextElement inside UserInput).
+    let remaining_text: String = declarations.values().cloned().collect::<Vec<_>>().join("\n");
+    let mut dedup_imports: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    for (type_name, source) in &stripped {
+        if text_references_type(&remaining_text, type_name) {
+            dedup_imports
+                .entry(source.clone())
+                .or_default()
+                .push(type_name.clone());
+        }
+    }
+    // Also catch types NOT in declarations but referenced (cross-crate phantom deps)
+    for (type_name, source) in upstream.iter() {
+        if stripped.iter().any(|(n, _)| n == type_name) {
+            continue;
+        }
+        if text_references_type(&remaining_text, type_name) {
+            dedup_imports
+                .entry(source.clone())
+                .or_default()
+                .push(type_name.clone());
+        }
+    }
+
     let mut lines = Vec::new();
     lines.push(
         "// This file is generated by `cargo run -p agentdash-contracts --bin generate_contracts_ts`."
@@ -501,15 +520,21 @@ fn write_domain(
     lines.push("// Do not edit manually.".to_string());
     lines.push(String::new());
 
+    let mut has_imports = false;
     if uses_json_value {
         lines.push("import type { JsonValue } from \"./common-contracts\";".to_string());
+        has_imports = true;
     }
-    for import in imports {
-        lines.push((*import).to_string());
+    for (source, names) in &dedup_imports {
+        let joined = names.join(", ");
+        lines.push(format!("import type {{ {joined} }} from \"{source}\";"));
+        has_imports = true;
     }
-    if uses_json_value || !imports.is_empty() {
+    if has_imports {
         lines.push(String::new());
     }
+
+    let written: BTreeSet<String> = declarations.keys().cloned().collect();
 
     for decl in declarations.values() {
         lines.push(decl.clone());
@@ -522,7 +547,7 @@ fn write_domain(
         match fs::read_to_string(out) {
             Ok(existing) if existing == output => {
                 eprintln!("{} is up to date", out.display());
-                return;
+                return written;
             }
             Ok(_) => {
                 eprintln!(
@@ -539,8 +564,9 @@ fn write_domain(
     }
 
     fs::write(out, output).expect("write generated TS");
+    eprintln!("Wrote {} ({} types)", out.display(), written.len());
 
-    eprintln!("Wrote {} ({} types)", out.display(), declarations.len());
+    written
 }
 
 fn write_common_json_value(out: &std::path::Path, check: bool) {
@@ -582,6 +608,12 @@ fn write_common_json_value(out: &std::path::Path, check: bool) {
 
 fn export_all<T: TS + 'static>(dir: &std::path::Path) {
     T::export_all_to(dir).expect("export TS type");
+}
+
+/// Word-boundary check: does `text` contain `name` as a standalone identifier?
+fn text_references_type(text: &str, name: &str) -> bool {
+    text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .any(|word| word == name)
 }
 
 fn collect_ts_files(dir: &std::path::Path, out: &mut BTreeMap<String, String>) {

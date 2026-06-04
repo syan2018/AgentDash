@@ -1,6 +1,6 @@
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, UserInputSubmissionKind,
-    UserInputSubmittedNotification, codex_app_server_protocol as codex,
+    UserInputBlock, UserInputSubmittedNotification,
 };
 use agentdash_spi::{CapabilityState, ContextFragment, ExecutionSessionFrame};
 use tokio::sync::broadcast;
@@ -17,7 +17,7 @@ pub(super) fn build_user_input_submitted_envelope(
     turn_id: &str,
     item_id: &str,
     submission_kind: UserInputSubmissionKind,
-    input: Vec<codex::UserInput>,
+    input: Vec<UserInputBlock>,
 ) -> BackboneEnvelope {
     BackboneEnvelope::new(
         BackboneEvent::UserInputSubmitted(UserInputSubmittedNotification::new(

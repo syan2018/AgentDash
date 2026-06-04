@@ -483,7 +483,7 @@ impl AgentConnector for CompositeConnector {
         &self,
         session_id: &str,
         expected_turn_id: &str,
-        input: Vec<agentdash_agent_protocol::codex_app_server_protocol::UserInput>,
+        input: Vec<agentdash_agent_protocol::UserInputBlock>,
     ) -> Result<(), ConnectorError> {
         for connector in &self.connectors {
             if connector.has_live_session(session_id).await {

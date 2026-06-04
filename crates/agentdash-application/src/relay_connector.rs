@@ -280,7 +280,7 @@ impl AgentConnector for RelayAgentConnector {
         &self,
         session_id: &str,
         expected_turn_id: &str,
-        input: Vec<codex::UserInput>,
+        input: Vec<agentdash_agent_protocol::UserInputBlock>,
     ) -> Result<(), ConnectorError> {
         if !self.transport.has_session_sink(session_id) {
             return Err(ConnectorError::Runtime(format!(

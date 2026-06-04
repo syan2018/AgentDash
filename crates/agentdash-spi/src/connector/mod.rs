@@ -5,7 +5,6 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_types::{AgentMessage, MessageRef};
 use agentdash_domain::backend::BackendExecutionSelectionMode;
 use agentdash_domain::common::{AgentConfig, Vfs};
@@ -533,6 +532,8 @@ impl PromptPayload {
 
 #[cfg(test)]
 mod tests {
+    use agentdash_agent_protocol::codex_app_server_protocol as codex;
+
     use super::*;
 
     #[test]
@@ -718,7 +719,7 @@ pub trait AgentConnector: Send + Sync {
         &self,
         session_id: &str,
         _expected_turn_id: &str,
-        _input: Vec<codex::UserInput>,
+        _input: Vec<agentdash_agent_protocol::UserInputBlock>,
     ) -> Result<(), ConnectorError> {
         Err(ConnectorError::Runtime(format!(
             "connector `{}` 不支持 session `{session_id}` 的 steering",

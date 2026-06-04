@@ -1,4 +1,4 @@
-use agentdash_agent_protocol::codex_app_server_protocol as codex;
+use agentdash_agent_protocol::UserInputBlock;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
@@ -15,7 +15,7 @@ use crate::workflow::WorkflowApplicationError;
 #[derive(Debug, Clone)]
 pub struct LifecycleAgentSteeringCommand {
     pub delivery_runtime_session_id: String,
-    pub input: Vec<codex::UserInput>,
+    pub input: Vec<UserInputBlock>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

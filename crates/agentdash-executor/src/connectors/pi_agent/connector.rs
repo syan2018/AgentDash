@@ -23,7 +23,6 @@ use super::bridges::provider_registry::{
     ProviderUnavailableReason, build_effective_profile_catalog_from_db,
 };
 use crate::hook_events::build_hook_trace_envelope;
-use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_spi::hooks::{ContextFrame, ContextFrameSection};
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
@@ -887,7 +886,7 @@ impl AgentConnector for PiAgentConnector {
         &self,
         session_id: &str,
         _expected_turn_id: &str,
-        input: Vec<codex::UserInput>,
+        input: Vec<agentdash_agent_protocol::UserInputBlock>,
     ) -> Result<(), ConnectorError> {
         // 统一映射：结构化 UserInput -> ContentPart（图片直达 ContentPart::Image，不再拍平）。
         let parts = user_input_blocks_to_content_parts(&input);

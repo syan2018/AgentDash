@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_protocol::codex_app_server_protocol as codex;
+use agentdash_agent_protocol::UserInputBlock;
 use agentdash_spi::ConnectorError;
 
 #[derive(Clone)]
@@ -12,7 +12,7 @@ pub struct SessionControlService {
 pub struct SessionTurnSteerCommand {
     pub session_id: String,
     pub expected_turn_id: String,
-    pub input: Vec<codex::UserInput>,
+    pub input: Vec<UserInputBlock>,
 }
 
 impl SessionControlService {

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use agentdash_agent_protocol::{BackboneEnvelope, codex_app_server_protocol as codex};
+use agentdash_agent_protocol::{BackboneEnvelope, UserInputBlock};
 use agentdash_domain::workspace::WorkspaceIdentityKind;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
@@ -124,7 +124,7 @@ pub struct RelayPromptRequest {
 #[derive(Debug, Clone)]
 pub struct RelaySteerRequest {
     pub session_id: String,
-    pub input: Vec<codex::UserInput>,
+    pub input: Vec<UserInputBlock>,
     pub expected_turn_id: String,
 }
 

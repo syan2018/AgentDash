@@ -412,26 +412,20 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(
     }));
 
     return (
-      <div
-        className={`relative rounded-[12px] border border-border bg-background transition-all ${
-          isFocused ? "border-primary/30 ring-1 ring-ring/40" : ""
-        } ${disabled ? "opacity-50" : ""}`}
-      >
-        {/* Placeholder */}
+      <div className={`relative ${disabled ? "opacity-50" : ""}`}>
+        {/* Placeholder — 与 contentEditable 同层级，绝对定位 */}
         {isEmpty && !isFocused && (
-          <div className="pointer-events-none absolute left-4 top-3 text-sm text-muted-foreground">
+          <div className="pointer-events-none absolute inset-0 flex items-center text-sm text-muted-foreground">
             {placeholder}
           </div>
         )}
 
-        {/* Content Editable */}
+        {/* Content Editable — 完全透明，无 border/bg/ring */}
         <div
           ref={(node) => {
             contentRef.current = node;
             if (!node) return;
             if (didInitRef.current) return;
-            // Initialize innerHTML once. After that, treat as an uncontrolled contentEditable
-            // and mutate via user input / imperative methods. Avoid re-render wiping DOM.
             didInitRef.current = true;
             const html = parseContentToHtml(initialValue);
             node.innerHTML = html;
@@ -448,7 +442,6 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(
           onClick={handleClick}
           onFocus={() => {
             setIsFocused(true);
-            // 恢复之前保存的 selection
             if (savedRangeRef.current) {
               const selection = window.getSelection();
               if (selection) {
@@ -459,13 +452,12 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(
           }}
           onBlur={() => {
             setIsFocused(false);
-            // 保存当前的 selection
             const selection = window.getSelection();
             if (selection && selection.rangeCount > 0) {
               savedRangeRef.current = selection.getRangeAt(0).cloneRange();
             }
           }}
-          className="min-h-[88px] w-full px-4 py-3 text-sm leading-7 outline-none"
+          className="w-full text-sm leading-relaxed outline-none [&:empty]:min-h-[1.5em]"
           style={{ whiteSpace: "pre-wrap" }}
         />
       </div>

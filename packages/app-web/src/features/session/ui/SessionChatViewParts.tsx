@@ -360,7 +360,7 @@ export function SessionChatComposer({
                 key={tpl.id}
                 type="button"
                 onClick={() => richInputRef.current?.setValue(tpl.content)}
-                className="rounded-lg px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="rounded-[8px] px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 {tpl.label}
               </button>
@@ -370,74 +370,92 @@ export function SessionChatComposer({
 
         {inputPrefix}
 
-        {/* Composer 容器 — 柔和圆角背景，无显式 border */}
-        <div className="relative rounded-[12px] bg-muted/50 transition-colors focus-within:bg-muted/70">
-          {/* 文件引用药丸 */}
-          <div className="px-3.5 pt-2.5">
-            <FileReferenceTags
-              references={fileRef.references}
-              onRemove={(relPath) => {
-                fileRef.removeReference(relPath);
-                const cur = richInputRef.current?.getValue() ?? "";
-                const next = removeReferenceMarkers(cur, relPath);
-                richInputRef.current?.setValue(next);
-              }}
-            />
-          </div>
+        {/*
+         * Composer — flex-wrap 实现空态单行 / 有内容双行
+         *
+         * 空态: [+] [placeholder(flex-1)] [model] — 单行
+         * 有内容: [文本+附件(w-full)] 换行 [+][gap][model][send] — 双行
+         *
+         * RichInput 始终只渲染一个实例，通过 CSS order + w-full/flex-1 切换布局，
+         * 避免 unmount 导致焦点丢失。
+         */}
+        <div className="relative flex flex-wrap items-end gap-x-1 rounded-[12px] bg-muted/40 px-2 py-1.5 transition-colors focus-within:bg-muted/60">
+          {/* ① RichInput 区域 — 唯一实例 */}
+          <div className={
+            hasContent
+              ? "w-full px-2 pb-1 pt-1.5"
+              : "order-2 min-w-0 flex-1 px-1"
+          }>
+            {hasContent && (
+              <FileReferenceTags
+                references={fileRef.references}
+                onRemove={(relPath) => {
+                  fileRef.removeReference(relPath);
+                  const cur = richInputRef.current?.getValue() ?? "";
+                  const next = removeReferenceMarkers(cur, relPath);
+                  richInputRef.current?.setValue(next);
+                }}
+              />
+            )}
 
-          {/* 文本输入区 */}
-          <div className="relative px-3.5">
-            <FilePickerPopup
-              open={fileRef.pickerOpen}
-              query={fileRef.pickerQuery}
-              files={fileRef.pickerFiles}
-              loading={fileRef.pickerLoading}
-              error={fileRef.pickerError}
-              selectedIndex={fileRef.selectedIndex}
-              onQueryChange={fileRef.updateQuery}
-              onSelect={onFileSelected}
-              onClose={fileRef.closePicker}
-              onMoveSelection={fileRef.moveSelection}
-              onConfirmSelection={() => {
-                const selectedFile = fileRef.pickerFiles[fileRef.selectedIndex];
-                if (!selectedFile) return;
-                onFileSelected(selectedFile);
-              }}
-            />
-            <RichInput
-              ref={richInputRef}
-              placeholder={primaryAction.placeholder ?? "Send follow-up"}
-              onChange={onInputChange}
-              onKeyDown={onKeyDown}
-              onAtTrigger={onAtTrigger}
-              onFileReferenceRemoved={(relPath) => { fileRef.removeReference(relPath); }}
-              disabled={inputDisabled}
-            />
-          </div>
-
-          {/* 图片预览区 */}
-          <div className="px-3.5">
-            <ImageAttachmentPreview
-              attachments={imageAttachments}
-              onRemove={onRemoveImage}
-            />
-          </div>
-
-          {/* 图片错误提示 */}
-          {imageError && (
-            <div className="mx-3.5 mb-2 rounded-lg bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
-              {imageError}
+            <div className="relative">
+              <FilePickerPopup
+                open={fileRef.pickerOpen}
+                query={fileRef.pickerQuery}
+                files={fileRef.pickerFiles}
+                loading={fileRef.pickerLoading}
+                error={fileRef.pickerError}
+                selectedIndex={fileRef.selectedIndex}
+                onQueryChange={fileRef.updateQuery}
+                onSelect={onFileSelected}
+                onClose={fileRef.closePicker}
+                onMoveSelection={fileRef.moveSelection}
+                onConfirmSelection={() => {
+                  const selectedFile = fileRef.pickerFiles[fileRef.selectedIndex];
+                  if (!selectedFile) return;
+                  onFileSelected(selectedFile);
+                }}
+              />
+              <RichInput
+                ref={richInputRef}
+                placeholder={primaryAction.placeholder ?? "Send follow-up"}
+                onChange={onInputChange}
+                onKeyDown={onKeyDown}
+                onAtTrigger={onAtTrigger}
+                onFileReferenceRemoved={(relPath) => { fileRef.removeReference(relPath); }}
+                disabled={inputDisabled}
+              />
             </div>
-          )}
 
-          {/* 底部工具栏 — 无分隔线 */}
-          <div className="flex items-center gap-1 px-2 py-1.5">
+            {hasContent && (
+              <>
+                <ImageAttachmentPreview
+                  attachments={imageAttachments}
+                  onRemove={onRemoveImage}
+                />
+                {imageError && (
+                  <div className="mt-1 rounded-[8px] bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+                    {imageError}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* ② + 菜单 */}
+          <div className={hasContent ? "order-2" : "order-1"}>
             <ComposerPlusMenu
               disabled={inputDisabled}
               onSelectFiles={onPlusMenuFiles}
             />
+          </div>
 
-            {showExecutorSelector && (
+          {/* ③ 弹性间隔（有内容时把 model/send 推到右侧） */}
+          {hasContent && <div className="order-3 flex-1" />}
+
+          {/* ④ 模型选择器 */}
+          {showExecutorSelector && (
+            <div className={hasContent ? "order-4" : "order-3"}>
               <InlineModelSelector
                 execConfig={execConfig}
                 discoveredOptions={discovered.options}
@@ -448,10 +466,11 @@ export function SessionChatComposer({
                 onRefetch={discovery.refetch}
                 onReconnect={discovered.reconnect}
               />
-            )}
+            </div>
+          )}
 
-            <div className="flex-1" />
-
+          {/* ⑤ 发送按钮 */}
+          <div className={hasContent ? "order-5" : "order-4"}>
             <ComposerSendButton
               isRunning={isActionRunning}
               hasInput={hasContent}
@@ -468,7 +487,6 @@ export function SessionChatComposer({
           </div>
         </div>
 
-        {/* Helper text — 极简 */}
         <p className="mt-1.5 px-1 text-[11px] text-muted-foreground/40">
           {helperText}
         </p>

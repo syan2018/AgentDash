@@ -122,7 +122,7 @@ pub struct ContextPlan {
 
 #[derive(Debug, Clone, Default)]
 pub struct ConstructionPromptPlan {
-    pub prompt_blocks: Option<Vec<serde_json::Value>>,
+    pub input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
     pub environment_variables: HashMap<String, String>,
 }
 
@@ -243,7 +243,7 @@ impl RuntimeContextInspectionPlan {
             owner,
             SessionConstructionContextProjection::default(),
         );
-        plan.prompt.prompt_blocks = user_input.prompt_blocks.clone();
+        plan.prompt.input = user_input.input.clone();
         plan.prompt.environment_variables = user_input.env.clone();
         plan.execution_profile.executor_config = user_input.executor_config.clone();
         plan

@@ -39,8 +39,8 @@ pub async fn send_lifecycle_agent_message(
     Path(runtime_session_id): Path<String>,
     Json(req): Json<LifecycleAgentMessageRequest>,
 ) -> Result<Json<LifecycleAgentMessageResponse>, ApiError> {
-    if req.prompt_blocks.is_empty() {
-        return Err(ApiError::BadRequest("prompt_blocks 不能为空".to_string()));
+    if req.input.is_empty() {
+        return Err(ApiError::BadRequest("input 不能为空".to_string()));
     }
 
     let anchor = state
@@ -104,7 +104,7 @@ pub async fn send_lifecycle_agent_message(
     let dispatch = service
         .dispatch_user_message(LifecycleAgentMessageCommand {
             delivery_runtime_session_id: runtime_session_id.clone(),
-            prompt_blocks: req.prompt_blocks,
+            input: req.input,
             executor_config,
             identity: Some(current_user.clone()),
         })

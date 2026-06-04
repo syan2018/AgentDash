@@ -89,7 +89,11 @@ export type ImageDetail = "high" | "original";
 
 export type InputPortDefinition = { key: string, description: string, context_strategy: ContextStrategy, context_template?: string, standalone_fulfillment: StandaloneFulfillment, };
 
-export type LifecycleAgentMessageRequest = { prompt_blocks: Array<JsonValue>, executor_config?: JsonValue, };
+export type LifecycleAgentMessageRequest = {
+/**
+ * canonical 用户输入，与 steer（`LifecycleAgentSteeringRequest.input`）同形。
+ */
+input: Array<UserInput>, executor_config?: JsonValue, };
 
 export type LifecycleAgentMessageResponse = { runtime_session_id: string, turn_id: string, run_ref: LifecycleRunRefDto, agent_ref: LifecycleAgentRefDto, frame_ref: AgentFrameRefDto, };
 

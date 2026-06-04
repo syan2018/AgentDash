@@ -1,3 +1,18 @@
+//! # 退场状态（child-1 S6 结论）
+//!
+//! 本模块的 ContentBlock <-> codex `UserInput` round-trip（`envelope_to_session_notification`
+//! / `session_notification_to_envelope`）**已无任何 live 调用方**，且本目录**未在
+//! `lib.rs` 通过 `mod compat` 声明**，因此当前并未编译进 crate —— 等同已退场。
+//!
+//! canonical 用户输入路径收口后（child-1 S5/S6）：
+//! - 投递路径走 `user_input_blocks_to_content_parts`（图片直达 `ContentPart::Image`）；
+//! - 文本/trace 摘要走唯一的 `codex_user_input_to_text`；
+//! - relay 边界 ContentBlock 转换集中在 `relay_connector::user_input_blocks_to_relay_content_blocks`
+//!   （forward）与本机接收侧的 `content_blocks_to_codex_user_input`（reverse）。
+//!
+//! 结论：本文件可随其自身 P0.4 TODO 直接删除（已是 dead module）；保留与否不影响主链路。
+//! 本 child 不强制删除目录，仅在此标注退场结论。
+
 use agent_client_protocol::{
     ContentBlock, ContentChunk, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
     TextContent, ToolCallStatus, UsageUpdate,

@@ -26,7 +26,7 @@ describe("lifecycle message service", () => {
 
   it("sends user messages through the LifecycleAgent command endpoint", async () => {
     await sendLifecycleAgentMessageByRuntimeSession("runtime/1", {
-      prompt_blocks: [{ type: "text", text: "hello" }],
+      input: [{ type: "text", text: "hello", text_elements: [] }],
       executor_config: {
         executor: "PI_AGENT",
         model_id: "gpt-test",
@@ -37,7 +37,7 @@ describe("lifecycle message service", () => {
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/lifecycle-agents/by-runtime-session/runtime%2F1/messages",
       {
-        prompt_blocks: [{ type: "text", text: "hello" }],
+        input: [{ type: "text", text: "hello", text_elements: [] }],
         executor_config: {
           executor: "PI_AGENT",
           model_id: "gpt-test",

@@ -119,15 +119,14 @@ impl CommandHandler {
             }
         }
 
+        // relay 边界仍按 ACP ContentBlock JSON 与云端互通；本机接收侧在此一次性把
+        // ContentBlock 转换为 canonical `Vec<UserInputBlock>`（relay→canonical 单实现）。
+        let input = payload
+            .prompt_blocks
+            .and_then(relay_prompt_blocks_to_user_input);
         let command = LaunchCommand::local_relay_prompt_input(
             UserPromptInput {
-                prompt_blocks: payload.prompt_blocks.map(|v| {
-                    if let serde_json::Value::Array(arr) = v {
-                        arr
-                    } else {
-                        vec![v]
-                    }
-                }),
+                input,
                 env: payload.env,
                 executor_config,
                 backend_selection: None,
@@ -287,6 +286,27 @@ impl CommandHandler {
             ),
         }
     }
+}
+
+/// relay 边界：把云端透传的 ACP ContentBlock JSON 转换为 canonical `Vec<UserInputBlock>`。
+///
+/// 远程后端互通保留 ACP ContentBlock wire 形态；本机接收侧在此一次性收敛到 canonical
+/// 用户输入。非数组/空/无可用内容时返回 `None`，交由下游 `resolve_prompt_payload` 报错。
+fn relay_prompt_blocks_to_user_input(
+    value: serde_json::Value,
+) -> Option<Vec<agentdash_agent_protocol::UserInputBlock>> {
+    let array = match value {
+        serde_json::Value::Array(arr) => arr,
+        other => vec![other],
+    };
+    let blocks = array
+        .into_iter()
+        .filter_map(|item| serde_json::from_value::<agentdash_agent_protocol::ContentBlock>(item).ok())
+        .collect::<Vec<_>>();
+    if blocks.is_empty() {
+        return None;
+    }
+    agentdash_agent_protocol::content_blocks_to_codex_user_input(&blocks).ok()
 }
 
 async fn claim_session_forwarder(

@@ -39,8 +39,8 @@ pub use connector::{
     ExecutionStream, ExecutionTurnFrame, McpEnvVar, McpHttpHeader, McpTransportConfig,
     NamedEntityDelta, PromptPayload, RestoredSessionState, SessionMcpServer, SetDelta,
     SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension, VfsDimension,
-    VfsSurfaceDelta, compute_capability_state_delta, content_block_to_text,
-    partition_session_mcp_servers, workspace_path_from_context,
+    VfsSurfaceDelta, compute_capability_state_delta, partition_session_mcp_servers,
+    workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────

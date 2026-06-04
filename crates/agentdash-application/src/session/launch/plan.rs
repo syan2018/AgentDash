@@ -451,7 +451,7 @@ mod tests {
                 activity_key: None,
             },
             intent: FrameLaunchIntent {
-                prompt_blocks: None,
+                input: None,
                 environment_variables: HashMap::new(),
                 identity: None,
                 terminal_hook_effect_binding: None,

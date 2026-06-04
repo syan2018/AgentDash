@@ -7,9 +7,17 @@ export type AgentAssignmentRefDto = { assignment_id: string, run_id?: string, ag
 
 export type AgentFrameRefDto = { agent_id: string, frame_id: string, revision?: number, };
 
+export type ByteRange = { start: number, end: number, };
+
 export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, };
 
-export type CreateProjectAgentSessionRequest = { prompt_blocks: Array<JsonValue>, executor_config?: JsonValue, };
+export type CreateProjectAgentSessionRequest = {
+/**
+ * canonical 用户输入，与 steer / lifecycle message 同形。
+ */
+input: Array<UserInput>, executor_config?: JsonValue, };
+
+export type ImageDetail = "high" | "original";
 
 export type LifecycleAgentRefDto = { run_id: string, agent_id: string, };
 
@@ -29,6 +37,22 @@ export type RuntimeSessionRefDto = { runtime_session_id: string, };
 
 export type SubjectRefDto = { kind: string, id: string, };
 
+export type TextElement = {
+/**
+ * Byte range in the parent `text` buffer that this element occupies.
+ */
+byteRange: ByteRange,
+/**
+ * Optional human-readable placeholder for the element, displayed in the UI.
+ */
+placeholder: string | null, };
+
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 export type UpdateProjectAgentRequest = { name?: string, agent_type?: string, config?: JsonValue, default_lifecycle_key?: string, is_default_for_story?: boolean, is_default_for_task?: boolean, knowledge_enabled?: boolean, };
+
+export type UserInput = { "type": "text", text: string,
+/**
+ * UI-defined spans within `text` used to render or persist special elements.
+ */
+text_elements: Array<TextElement>, } | { "type": "image", detail?: ImageDetail, url: string, } | { "type": "localImage", detail?: ImageDetail, path: string, } | { "type": "skill", name: string, path: string, } | { "type": "mention", name: string, path: string, };

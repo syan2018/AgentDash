@@ -25,7 +25,7 @@ use crate::workflow::{
 pub struct ProjectAgentSessionStartCommand {
     pub project_id: Uuid,
     pub project_agent_id: Uuid,
-    pub prompt_blocks: Vec<serde_json::Value>,
+    pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
     pub executor_config: Option<AgentConfig>,
     pub identity: Option<AuthIdentity>,
 }
@@ -136,9 +136,9 @@ impl<'a> ProjectAgentSessionStartService<'a> {
     where
         D: LifecycleAgentMessageDeliveryPort,
     {
-        if command.prompt_blocks.is_empty() {
+        if command.input.is_empty() {
             return Err(WorkflowApplicationError::BadRequest(
-                "prompt_blocks 不能为空".to_string(),
+                "input 不能为空".to_string(),
             ));
         }
 
@@ -229,7 +229,7 @@ impl<'a> ProjectAgentSessionStartService<'a> {
         let message_dispatch = match message_service
             .dispatch_user_message(LifecycleAgentMessageCommand {
                 delivery_runtime_session_id: runtime_session_id.clone(),
-                prompt_blocks: command.prompt_blocks,
+                input: command.input,
                 executor_config: command.executor_config,
                 identity: command.identity,
             })
@@ -983,7 +983,7 @@ mod tests {
                 ProjectAgentSessionStartCommand {
                     project_id,
                     project_agent_id: project_agent.id,
-                    prompt_blocks: vec![serde_json::json!({"type": "text", "text": "hello"})],
+                    input: agentdash_agent_protocol::text_user_input_blocks("hello"),
                     executor_config: None,
                     identity: None,
                 },

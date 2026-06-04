@@ -39,8 +39,8 @@ pub(crate) fn apply_session_assembly(
     mut plan: RuntimeContextInspectionPlan,
     prepared: SessionAssemblyBuilder,
 ) -> RuntimeContextInspectionPlan {
-    if let Some(blocks) = prepared.prompt_blocks {
-        plan.prompt.prompt_blocks = Some(blocks);
+    if let Some(blocks) = prepared.input {
+        plan.prompt.input = Some(blocks);
     }
     if let Some(cfg) = prepared.executor_config {
         plan.execution_profile.executor_config = Some(cfg);
@@ -98,7 +98,7 @@ pub(super) struct SessionAssemblyBuilder {
     pub(super) context_bundle: Option<SessionContextBundle>,
 
     // ── Prompt 层 ──
-    pub(super) prompt_blocks: Option<Vec<serde_json::Value>>,
+    pub(super) input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
     pub(super) executor_config: Option<AgentConfig>,
 
     // ── 元信息层 ──
@@ -219,9 +219,12 @@ impl SessionAssemblyBuilder {
         self
     }
 
-    /// 设置 prompt blocks。
-    pub(super) fn with_prompt_blocks(mut self, blocks: Vec<serde_json::Value>) -> Self {
-        self.prompt_blocks = Some(blocks);
+    /// 设置 canonical 用户输入。
+    pub(super) fn with_input(
+        mut self,
+        input: Vec<agentdash_agent_protocol::UserInputBlock>,
+    ) -> Self {
+        self.input = Some(input);
         self
     }
 
@@ -251,12 +254,12 @@ impl SessionAssemblyBuilder {
 
     /// 一次性吸收 `UserPromptInput` 的所有字段。
     ///
-    /// 等价于依次调用 `with_prompt_blocks` / `with_executor_config` / `with_env`；
+    /// 等价于依次调用 `with_input` / `with_executor_config` / `with_env`；
     /// 便于 entry 把"用户原始输入"集中交给 builder，compose 阶段如需要再
     /// 通过独立 `with_*` 方法覆盖个别字段（compose 产出优先）。
     pub(super) fn with_user_input(mut self, input: UserPromptInput) -> Self {
-        if let Some(blocks) = input.prompt_blocks {
-            self.prompt_blocks = Some(blocks);
+        if let Some(blocks) = input.input {
+            self.input = Some(blocks);
         }
         if let Some(cfg) = input.executor_config {
             self.executor_config = Some(cfg);
@@ -288,10 +291,7 @@ impl SessionAssemblyBuilder {
         let slice = build_companion_execution_slice(parent_vfs, parent_mcp_servers, mode);
         let flow_caps = CapabilityResolver::resolve_companion_caps(mode);
 
-        let prompt_blocks = vec![serde_json::json!({
-            "type": "text",
-            "text": dispatch_prompt,
-        })];
+        let input = agentdash_agent_protocol::text_user_input_blocks(dispatch_prompt);
 
         let sliced_bundle =
             parent_context_bundle.map(|bundle| slice_companion_bundle(bundle, mode));
@@ -301,7 +301,7 @@ impl SessionAssemblyBuilder {
             capability_state: Some(flow_caps),
             mcp_servers: slice.mcp_servers,
             context_bundle: sliced_bundle,
-            prompt_blocks: Some(prompt_blocks),
+            input: Some(input),
             executor_config: Some(executor_config),
             workspace_defaults: None,
             // 保留调用方已注入的 env 不被 companion slice 清空
@@ -325,10 +325,9 @@ impl SessionAssemblyBuilder {
         self.vfs = Some(surface.vfs);
         self.capability_state = Some(surface.capability_state);
         self.mcp_servers = surface.mcp_servers;
-        self.prompt_blocks = Some(vec![serde_json::json!({
-            "type": "text",
-            "text": "请执行当前 lifecycle 节点。",
-        })]);
+        self.input = Some(agentdash_agent_protocol::text_user_input_blocks(
+            "请执行当前 lifecycle 节点。",
+        ));
         self.executor_config = inherited_executor_config;
         self
     }
@@ -396,7 +395,7 @@ pub(super) fn project_assembly_to_frame(
         });
     let extras = AssemblyLaunchExtras {
         context_bundle: prepared.context_bundle,
-        prompt_blocks: prepared.prompt_blocks,
+        input: prepared.input,
         executor_config: prepared.executor_config,
         mcp_servers: prepared.mcp_servers,
         vfs: prepared.vfs,
@@ -413,7 +412,7 @@ pub(super) fn project_assembly_to_frame(
 /// 这些数据不写入 AgentFrame，而是传递给 FrameLaunchEnvelope 或 launch pipeline。
 pub struct AssemblyLaunchExtras {
     pub context_bundle: Option<SessionContextBundle>,
-    pub prompt_blocks: Option<Vec<serde_json::Value>>,
+    pub input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
     pub executor_config: Option<AgentConfig>,
     pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     pub vfs: Option<Vfs>,

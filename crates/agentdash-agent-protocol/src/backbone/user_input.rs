@@ -56,6 +56,22 @@ pub fn user_input_text(input: &codex::UserInput) -> Option<&str> {
     }
 }
 
+/// 构造一个纯文本 canonical 用户输入块。
+///
+/// 生产者天然只有文本时（系统触发 prompt、orchestrator 续跑、companion dispatch 等）
+/// 用此构造器产出 `Vec<UserInputBlock>`，避免再手写 ACP ContentBlock JSON。
+pub fn text_user_input_block(text: impl Into<String>) -> UserInputBlock {
+    codex::UserInput::Text {
+        text: text.into(),
+        text_elements: Vec::new(),
+    }
+}
+
+/// 把一段文本封装为单元素的 canonical 用户输入向量。
+pub fn text_user_input_blocks(text: impl Into<String>) -> Vec<UserInputBlock> {
+    vec![text_user_input_block(text)]
+}
+
 /// 全项目**唯一**的 `UserInputBlock -> Vec<ContentPart>` 映射。
 ///
 /// 这是 canonical 用户输入（`UserInputBlock`）进入模型层（`ContentPart`）的单一边界，
@@ -236,6 +252,10 @@ pub fn content_block_to_codex_user_input(block: &ContentBlock) -> Option<codex::
     }
 }
 
+/// **唯一**的"用户输入 -> 文本摘要"投影，**仅供标题提示 / trace 摘要**，不是投递路径。
+///
+/// 投递路径请用 `user_input_blocks_to_content_parts`（图片结构化直达 `ContentPart::Image`）。
+/// 这里把图片/skill/mention 退化为文本仅为生成可读摘要，调用方不得用其结果投递模型。
 pub fn codex_user_input_to_text(
     input: &[codex::UserInput],
 ) -> Result<String, UserInputConversionError> {

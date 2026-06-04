@@ -1141,4 +1141,71 @@ mod tests {
         assert!(transport.has_session_sink("session-steer"));
         drop(stream);
     }
+
+    /// relay 边界往返：canonical -> relay ContentBlock JSON（forward，本 crate）
+    /// -> canonical（reverse，本机接收侧通过 `content_blocks_to_codex_user_input`）。
+    /// 文本与 data URL 图片保真往返；非 data URL / mention 等降级为文本占位（不回归）。
+    #[test]
+    fn relay_content_block_round_trip_preserves_text_and_data_url_image() {
+        let original = vec![
+            codex::UserInput::Text {
+                text: "请分析这张图".to_string(),
+                text_elements: Vec::new(),
+            },
+            codex::UserInput::Image {
+                detail: None,
+                url: "data:image/png;base64,AAAA".to_string(),
+            },
+        ];
+
+        // forward：canonical -> relay ContentBlock JSON
+        let forward = user_input_blocks_to_relay_content_blocks(&original);
+        let blocks = forward.as_array().expect("relay content blocks is array");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["text"], "请分析这张图");
+        assert_eq!(blocks[1]["type"], "image");
+        assert_eq!(blocks[1]["mimeType"], "image/png");
+        assert_eq!(blocks[1]["data"], "AAAA");
+
+        // reverse：relay ContentBlock JSON -> canonical（与本机接收侧同一实现）
+        let parsed_blocks = blocks
+            .iter()
+            .map(|item| {
+                serde_json::from_value::<agentdash_agent_protocol::ContentBlock>(item.clone())
+                    .expect("valid ACP content block")
+            })
+            .collect::<Vec<_>>();
+        let round_tripped =
+            agentdash_agent_protocol::content_blocks_to_codex_user_input(&parsed_blocks)
+                .expect("reverse conversion");
+        assert_eq!(round_tripped.len(), 2);
+        assert!(matches!(
+            &round_tripped[0],
+            codex::UserInput::Text { text, .. } if text == "请分析这张图"
+        ));
+        // 图片保真：data URL 经 ContentBlock(image) 还原为 Image{data URL}。
+        assert!(matches!(
+            &round_tripped[1],
+            codex::UserInput::Image { url, .. }
+                if url == "data:image/png;base64,AAAA"
+        ));
+    }
+
+    #[test]
+    fn relay_content_block_degrades_non_data_url_image_to_text() {
+        let original = vec![codex::UserInput::Image {
+            detail: None,
+            url: "https://example.com/cat.png".to_string(),
+        }];
+        let forward = user_input_blocks_to_relay_content_blocks(&original);
+        let blocks = forward.as_array().expect("array");
+        assert_eq!(blocks[0]["type"], "text");
+        assert!(
+            blocks[0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("https://example.com/cat.png")
+        );
+    }
 }

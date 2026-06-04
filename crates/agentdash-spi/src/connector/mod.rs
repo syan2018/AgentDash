@@ -5,9 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_protocol::{
-    ContentBlock, EmbeddedResourceResource, codex_app_server_protocol as codex,
-};
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_types::{AgentMessage, MessageRef};
 use agentdash_domain::backend::BackendExecutionSelectionMode;
 use agentdash_domain::common::{AgentConfig, Vfs};
@@ -504,44 +502,6 @@ pub enum PromptPayload {
     Input(Vec<agentdash_agent_protocol::UserInputBlock>),
 }
 
-pub fn content_block_to_text(block: &ContentBlock) -> Option<String> {
-    match block {
-        ContentBlock::Text(text) => {
-            if text.text.trim().is_empty() {
-                None
-            } else {
-                Some(text.text.clone())
-            }
-        }
-        ContentBlock::Resource(resource) => match &resource.resource {
-            EmbeddedResourceResource::TextResourceContents(text_res) => Some(format!(
-                "\n<file path=\"{}\">\n{}\n</file>",
-                text_res.uri, text_res.text
-            )),
-            EmbeddedResourceResource::BlobResourceContents(blob_res) => Some(format!(
-                "[引用二进制资源: {}; mimeType={}]",
-                blob_res.uri,
-                blob_res.mime_type.as_deref().unwrap_or("unknown")
-            )),
-            _ => Some("[引用资源: 未知类型]".to_string()),
-        },
-        ContentBlock::ResourceLink(link) => {
-            Some(format!("[引用文件: {} ({})]", link.name, link.uri))
-        }
-        ContentBlock::Image(image) => Some(format!(
-            "[引用图片: mimeType={}, base64Bytes={}]",
-            image.mime_type,
-            image.data.len()
-        )),
-        ContentBlock::Audio(audio) => Some(format!(
-            "[引用音频: mimeType={}, base64Bytes={}]",
-            audio.mime_type,
-            audio.data.len()
-        )),
-        _ => Some("[引用内容块: 未知类型]".to_string()),
-    }
-}
-
 impl PromptPayload {
     /// 投递路径：把 canonical 输入映射为模型层 `ContentPart`（图片直达 `ContentPart::Image`）。
     /// 连接器统一消费此方法，不再各自拍平。
@@ -574,11 +534,6 @@ impl PromptPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    fn parse_block(value: serde_json::Value) -> ContentBlock {
-        serde_json::from_value::<ContentBlock>(value).expect("valid ACP content block")
-    }
 
     #[test]
     fn prompt_payload_input_to_content_parts_keeps_image_structured() {
@@ -613,17 +568,6 @@ mod tests {
     fn prompt_payload_text_to_content_parts() {
         let parts = PromptPayload::Text("  hi  ".to_string()).to_content_parts();
         assert_eq!(parts, vec![agentdash_agent_types::ContentPart::text("hi")]);
-    }
-
-    #[test]
-    fn content_block_to_text_still_available_for_summary() {
-        let block = parse_block(json!({
-            "type": "resource_link",
-            "name": "src/lib.rs",
-            "uri": "file:///workspace/src/lib.rs"
-        }));
-        let text = content_block_to_text(&block).expect("resource link summary");
-        assert!(text.contains("[引用文件: src/lib.rs (file:///workspace/src/lib.rs)]"));
     }
 
     #[test]

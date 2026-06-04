@@ -140,7 +140,7 @@ impl SessionLaunchOrchestrator {
         envelope: FrameLaunchEnvelope,
     ) -> Result<String, ConnectorError> {
         let user_input = UserPromptInput {
-            prompt_blocks: envelope.intent.prompt_blocks.clone(),
+            input: envelope.intent.input.clone(),
             env: envelope.intent.environment_variables.clone(),
             executor_config: Some(envelope.executor_config.clone()),
             backend_selection: None,

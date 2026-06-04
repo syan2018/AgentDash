@@ -1,3 +1,4 @@
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
@@ -70,7 +71,8 @@ pub struct ProjectAgentLaunchResult {
 
 #[derive(Debug, Clone, Deserialize, TS)]
 pub struct CreateProjectAgentSessionRequest {
-    pub prompt_blocks: Vec<Value>,
+    /// canonical 用户输入，与 steer / lifecycle message 同形。
+    pub input: Vec<codex::UserInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub executor_config: Option<Value>,

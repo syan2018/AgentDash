@@ -63,12 +63,12 @@ impl<'a> LaunchPlanner<'a> {
         let typed_vfs = input.launch_envelope.vfs.clone();
         let _mcp_servers = input.launch_envelope.mcp_servers.clone();
         let environment_variables = input.launch_envelope.intent.environment_variables.clone();
-        let prompt_blocks = input.launch_envelope.intent.prompt_blocks.clone();
+        let input_blocks = input.launch_envelope.intent.input.clone();
         let base_capability_override = input.launch_envelope.base_capability_state.clone();
 
         let mut prompt_input = command.user_input().clone();
-        if let Some(blocks) = prompt_blocks.clone() {
-            prompt_input.prompt_blocks = Some(blocks);
+        if let Some(blocks) = input_blocks.clone() {
+            prompt_input.input = Some(blocks);
         }
         if let Some(config) = Some(executor_config.clone()) {
             prompt_input.executor_config = Some(config);

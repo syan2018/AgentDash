@@ -427,7 +427,7 @@ export function SessionPage({
         throw new Error(chatControlState.primaryAction.unavailableReason ?? "当前 Draft 尚未就绪。");
       }
       const response = await createProjectAgentRuntimeSession(draftProjectIdValue, draftProjectAgentKey, {
-        prompt_blocks: [{ type: "text", text: trimmed }],
+        input: [{ type: "text", text: trimmed, text_elements: [] }],
         executor_config: executorConfig as unknown as JsonValue | undefined,
       });
       if (!response) {
@@ -453,7 +453,7 @@ export function SessionPage({
     }
     if (action === "send_next") {
       const response = await sendLifecycleAgentMessageByRuntimeSession(sessionId, {
-        prompt_blocks: [{ type: "text", text: trimmed }],
+        input: [{ type: "text", text: trimmed, text_elements: [] }],
         executor_config: executorConfig as unknown as JsonValue | undefined,
       });
       void fetchAndIngestLifecycleRun(response.run_ref.run_id);

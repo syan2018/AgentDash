@@ -77,7 +77,7 @@ impl FrameRuntimeSurface {
 /// 不含任何 frame surface 数据。
 #[derive(Debug, Clone, Default)]
 pub struct FrameLaunchIntent {
-    pub prompt_blocks: Option<Vec<serde_json::Value>>,
+    pub input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
     pub environment_variables: HashMap<String, String>,
     pub identity: Option<AuthIdentity>,
     pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,

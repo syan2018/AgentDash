@@ -660,8 +660,8 @@ pub struct RuntimeSessionExecutionAnchorDto {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct LifecycleAgentMessageRequest {
-    #[ts(type = "Array<JsonValue>")]
-    pub prompt_blocks: Vec<Value>,
+    /// canonical 用户输入，与 steer（`LifecycleAgentSteeringRequest.input`）同形。
+    pub input: Vec<codex::UserInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
     pub executor_config: Option<Value>,

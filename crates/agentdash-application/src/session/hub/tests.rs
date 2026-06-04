@@ -2004,7 +2004,6 @@ fn resolve_prompt_payload_from_text_block() {
         .resolve_prompt_payload()
         .expect("resolve should succeed");
     assert_eq!(payload.text_prompt, "hello world");
-    assert_eq!(payload.user_blocks.len(), 1);
     // canonical 输入：投递路径已收敛为 PromptPayload::Input。
     assert!(matches!(payload.prompt_payload, PromptPayload::Input(_)));
     assert_eq!(payload.input.len(), 1);
@@ -2012,22 +2011,26 @@ fn resolve_prompt_payload_from_text_block() {
         payload.input[0],
         agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text { .. }
     ));
-
-    let serialized =
-        serde_json::to_value(&payload.user_blocks[0]).expect("serialize content block");
-    assert_eq!(
-        serialized.get("type").and_then(|v| v.as_str()),
-        Some("text")
-    );
 }
 
 #[test]
-fn resolve_prompt_payload_supports_multiple_block_types() {
+fn resolve_prompt_payload_supports_multiple_input_types() {
+    // 入参已是 canonical Vec<UserInputBlock>（与 steer 同形）；
+    // ContentBlock -> canonical 的转换在 relay 边界单实现，单测在 protocol crate。
     let input = UserPromptInput {
-        prompt_blocks: Some(vec![
-            json!({ "type": "text", "text": "请分析 @src/main.ts" }),
-            json!({ "type": "resource_link", "uri": "file:///workspace/src/main.ts", "name": "src/main.ts" }),
-            json!({ "type": "image", "mimeType": "image/png", "data": "AAAA" }),
+        input: Some(vec![
+            codex::UserInput::Text {
+                text: "请分析 @src/main.ts".to_string(),
+                text_elements: Vec::new(),
+            },
+            codex::UserInput::Mention {
+                name: "src/main.ts".to_string(),
+                path: "file:///workspace/src/main.ts".to_string(),
+            },
+            codex::UserInput::Image {
+                detail: None,
+                url: "data:image/png;base64,AAAA".to_string(),
+            },
         ]),
         env: std::collections::HashMap::new(),
         executor_config: None,
@@ -2037,7 +2040,6 @@ fn resolve_prompt_payload_supports_multiple_block_types() {
     let payload = input
         .resolve_prompt_payload()
         .expect("resolve should succeed");
-    assert_eq!(payload.user_blocks.len(), 3);
     // canonical 输入：投递路径已收敛为 PromptPayload::Input；图片结构化保留为 Image 变体。
     assert!(matches!(payload.prompt_payload, PromptPayload::Input(_)));
     assert_eq!(payload.input.len(), 3);
@@ -2045,13 +2047,8 @@ fn resolve_prompt_payload_supports_multiple_block_types() {
         item,
         agentdash_agent_protocol::codex_app_server_protocol::UserInput::Image { .. }
     )));
-    // text_prompt 仅作摘要：文本与文件引用保留为文本；图片以 data URL 形式出现在摘要中。
+    // text_prompt 仅作摘要：文本与 mention 名保留为文本；图片以 data URL 形式出现在摘要中。
     assert!(payload.text_prompt.contains("请分析 @src/main.ts"));
-    assert!(
-        payload
-            .text_prompt
-            .contains("[引用文件: src/main.ts (file:///workspace/src/main.ts)]")
-    );
     assert!(payload.text_prompt.contains("data:image/png;base64,AAAA"));
 }
 
@@ -3335,11 +3332,10 @@ async fn schedule_hook_auto_resume_routes_through_provider() {
             let text = input
                 .command
                 .user_input()
-                .prompt_blocks
+                .input
                 .as_ref()
                 .and_then(|blocks| blocks.first())
-                .and_then(|block| block.get("text"))
-                .and_then(|v| v.as_str())
+                .and_then(agentdash_agent_protocol::user_input_text)
                 .map(ToString::to_string);
             *self.captured_prompt.lock().await = text;
             self.captured_mcp_len.store(

@@ -14,7 +14,7 @@ use crate::workflow::WorkflowApplicationError;
 #[derive(Debug, Clone)]
 pub struct LifecycleAgentMessageCommand {
     pub delivery_runtime_session_id: String,
-    pub prompt_blocks: Vec<serde_json::Value>,
+    pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
     pub executor_config: Option<AgentConfig>,
     pub identity: Option<AuthIdentity>,
 }
@@ -32,7 +32,7 @@ pub struct LifecycleAgentMessageDispatch {
 #[derive(Debug, Clone)]
 pub struct LifecycleAgentMessageDelivery {
     pub delivery_runtime_session_id: String,
-    pub prompt_blocks: Vec<serde_json::Value>,
+    pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
     pub executor_config: Option<AgentConfig>,
     pub identity: Option<AuthIdentity>,
 }
@@ -63,7 +63,7 @@ impl LifecycleAgentMessageDeliveryPort for SessionLaunchLifecycleAgentMessageDel
         delivery: LifecycleAgentMessageDelivery,
     ) -> Result<String, WorkflowApplicationError> {
         let user_input = UserPromptInput {
-            prompt_blocks: Some(delivery.prompt_blocks),
+            input: Some(delivery.input),
             env: Default::default(),
             executor_config: delivery.executor_config,
             backend_selection: None,
@@ -121,9 +121,9 @@ where
                 "delivery runtime session id 不能为空".to_string(),
             ));
         }
-        if command.prompt_blocks.is_empty() {
+        if command.input.is_empty() {
             return Err(WorkflowApplicationError::BadRequest(
-                "prompt_blocks 不能为空".to_string(),
+                "input 不能为空".to_string(),
             ));
         }
 
@@ -135,7 +135,7 @@ where
             .delivery
             .deliver_user_message(LifecycleAgentMessageDelivery {
                 delivery_runtime_session_id: command.delivery_runtime_session_id.clone(),
-                prompt_blocks: command.prompt_blocks,
+                input: command.input,
                 executor_config: command.executor_config,
                 identity: command.identity,
             })
@@ -576,7 +576,7 @@ mod tests {
         let result = service
             .dispatch_user_message(LifecycleAgentMessageCommand {
                 delivery_runtime_session_id: "runtime-1".to_string(),
-                prompt_blocks: vec![serde_json::json!({"type": "text", "text": "hello"})],
+                input: agentdash_agent_protocol::text_user_input_blocks("hello"),
                 executor_config: None,
                 identity: None,
             })
@@ -610,7 +610,7 @@ mod tests {
         let error = service
             .dispatch_user_message(LifecycleAgentMessageCommand {
                 delivery_runtime_session_id: "missing".to_string(),
-                prompt_blocks: vec![serde_json::json!({"type": "text", "text": "hello"})],
+                input: agentdash_agent_protocol::text_user_input_blocks("hello"),
                 executor_config: None,
                 identity: None,
             })

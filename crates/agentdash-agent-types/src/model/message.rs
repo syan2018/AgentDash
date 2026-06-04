@@ -127,6 +127,17 @@ impl AgentMessage {
         }
     }
 
+    /// 由结构化内容片段构造 user 消息。
+    ///
+    /// 用于让 canonical 用户输入（含多模态图片）经唯一映射结构化直达模型，
+    /// 而不是先拍平成单条文本。
+    pub fn user_parts(content: Vec<ContentPart>) -> Self {
+        Self::User {
+            content,
+            timestamp: Some(now_millis()),
+        }
+    }
+
     pub fn assistant(text: impl Into<String>) -> Self {
         Self::Assistant {
             content: vec![ContentPart::text(text)],

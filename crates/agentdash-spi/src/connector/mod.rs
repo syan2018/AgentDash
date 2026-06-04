@@ -499,7 +499,9 @@ pub fn partition_session_mcp_servers(
 #[derive(Debug, Clone)]
 pub enum PromptPayload {
     Text(String),
-    Blocks(Vec<ContentBlock>),
+    /// canonical 用户输入：贯穿 API -> 应用 -> 连接器 -> AgentMessage 的结构化输入单元。
+    /// 取代旧 `Blocks(Vec<ContentBlock>)`，让图片等多模态内容结构化直达模型而不拍平。
+    Input(Vec<agentdash_agent_protocol::UserInputBlock>),
 }
 
 pub fn content_block_to_text(block: &ContentBlock) -> Option<String> {
@@ -541,14 +543,30 @@ pub fn content_block_to_text(block: &ContentBlock) -> Option<String> {
 }
 
 impl PromptPayload {
+    /// 投递路径：把 canonical 输入映射为模型层 `ContentPart`（图片直达 `ContentPart::Image`）。
+    /// 连接器统一消费此方法，不再各自拍平。
+    pub fn to_content_parts(&self) -> Vec<agentdash_agent_types::ContentPart> {
+        match self {
+            Self::Text(text) => {
+                let text = text.trim();
+                if text.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![agentdash_agent_types::ContentPart::text(text)]
+                }
+            }
+            Self::Input(input) => {
+                agentdash_agent_protocol::user_input_blocks_to_content_parts(input)
+            }
+        }
+    }
+
+    /// 文本摘要：仅供标题提示 / trace 元信息，**不是**投递路径。
     pub fn to_fallback_text(&self) -> String {
         match self {
             Self::Text(text) => text.clone(),
-            Self::Blocks(blocks) => blocks
-                .iter()
-                .filter_map(content_block_to_text)
-                .collect::<Vec<_>>()
-                .join("\n"),
+            Self::Input(input) => agentdash_agent_protocol::codex_user_input_to_text(input)
+                .unwrap_or_default(),
         }
     }
 }
@@ -563,40 +581,49 @@ mod tests {
     }
 
     #[test]
-    fn prompt_payload_blocks_to_fallback_text() {
-        let blocks = vec![
-            parse_block(json!({ "type": "text", "text": "请分析这个实现" })),
-            parse_block(json!({
-                "type": "resource",
-                "resource": {
-                    "uri": "file:///workspace/src/main.rs",
-                    "mimeType": "text/rust",
-                    "text": "fn main() {}"
-                }
-            })),
-            parse_block(json!({
-                "type": "resource_link",
-                "name": "src/lib.rs",
-                "uri": "file:///workspace/src/lib.rs"
-            })),
-            parse_block(json!({
-                "type": "image",
-                "mimeType": "image/png",
-                "data": "AAAA"
-            })),
-            parse_block(json!({
-                "type": "audio",
-                "mimeType": "audio/wav",
-                "data": "BBBB"
-            })),
+    fn prompt_payload_input_to_content_parts_keeps_image_structured() {
+        // 投递路径：canonical 输入经唯一映射，图片真出 ContentPart::Image，不再拍平成占位文本。
+        let input = vec![
+            codex::UserInput::Text {
+                text: "请分析这张图".to_string(),
+                text_elements: Vec::new(),
+            },
+            codex::UserInput::Image {
+                detail: None,
+                url: "data:image/png;base64,AAAA".to_string(),
+            },
         ];
+        let parts = PromptPayload::Input(input).to_content_parts();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(
+            parts[0],
+            agentdash_agent_types::ContentPart::text("请分析这张图")
+        );
+        assert!(matches!(
+            parts[1],
+            agentdash_agent_types::ContentPart::Image { .. }
+        ));
+        assert_eq!(
+            parts[1],
+            agentdash_agent_types::ContentPart::image("image/png", "AAAA")
+        );
+    }
 
-        let text = PromptPayload::Blocks(blocks).to_fallback_text();
-        assert!(text.contains("请分析这个实现"));
-        assert!(text.contains("<file path=\"file:///workspace/src/main.rs\">"));
+    #[test]
+    fn prompt_payload_text_to_content_parts() {
+        let parts = PromptPayload::Text("  hi  ".to_string()).to_content_parts();
+        assert_eq!(parts, vec![agentdash_agent_types::ContentPart::text("hi")]);
+    }
+
+    #[test]
+    fn content_block_to_text_still_available_for_summary() {
+        let block = parse_block(json!({
+            "type": "resource_link",
+            "name": "src/lib.rs",
+            "uri": "file:///workspace/src/lib.rs"
+        }));
+        let text = content_block_to_text(&block).expect("resource link summary");
         assert!(text.contains("[引用文件: src/lib.rs (file:///workspace/src/lib.rs)]"));
-        assert!(text.contains("[引用图片: mimeType=image/png"));
-        assert!(text.contains("[引用音频: mimeType=audio/wav"));
     }
 
     #[test]

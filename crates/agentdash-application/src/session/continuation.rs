@@ -3,7 +3,9 @@ use std::collections::{HashMap, HashSet};
 use base64::Engine;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
-use agentdash_agent_protocol::{AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent};
+use agentdash_agent_protocol::{
+    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent, user_input_blocks_to_content_parts,
+};
 use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     StopReason, ToolCallInfo,
@@ -254,11 +256,7 @@ fn build_raw_projected_transcript_from_iter<'a>(
                         entry_index: event.entry_index,
                         content: Vec::new(),
                     });
-                for part in input
-                    .content
-                    .iter()
-                    .filter_map(codex_user_input_to_message_part)
-                {
+                for part in user_input_blocks_to_content_parts(&input.content) {
                     state.content.push(part);
                 }
             }
@@ -438,39 +436,6 @@ fn restored_assistant_key(event: &PersistedSessionEvent, message_id: Option<&str
         return format!("assistant:tool:{tool_call_id}");
     }
     format!("assistant:event:{}", event.event_seq)
-}
-
-fn codex_user_input_to_message_part(
-    input: &agentdash_agent_protocol::codex_app_server_protocol::UserInput,
-) -> Option<ContentPart> {
-    match input {
-        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text { text, .. } => {
-            let text = text.trim();
-            if text.is_empty() {
-                None
-            } else {
-                Some(ContentPart::text(text))
-            }
-        }
-        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Image { url, .. } => {
-            Some(ContentPart::text(format!("[引用图片: {url}]")))
-        }
-        agentdash_agent_protocol::codex_app_server_protocol::UserInput::LocalImage {
-            path, ..
-        } => Some(ContentPart::text(format!(
-            "[引用本地图片: {}]",
-            path.display()
-        ))),
-        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Skill { name, path } => {
-            Some(ContentPart::text(format!(
-                "[引用 Skill: {name} ({})]",
-                path.display()
-            )))
-        }
-        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Mention { name, path } => {
-            Some(ContentPart::text(format!("[引用: {name} ({path})]")))
-        }
-    }
 }
 
 fn upsert_restored_tool_call(

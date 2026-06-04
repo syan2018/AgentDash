@@ -2355,3 +2355,39 @@ async fn update_session_tools_replaces_all_tools() {
         .collect();
     assert_eq!(agent_names, vec!["new_tool".to_string()]);
 }
+
+/// S3 回归：连接器投递路径（`prompt` / `steer_session`）构造 user 消息时，
+/// 带 data URL 图片的 canonical 输入必须经唯一映射结构化直达 `ContentPart::Image`，
+/// 不再被拍平成占位文本。此处直接断言连接器实际使用的转换组合。
+#[test]
+fn connector_delivery_maps_image_input_to_content_part_image() {
+    let input = vec![
+        codex::UserInput::Text {
+            text: "看这张图".to_string(),
+            text_elements: Vec::new(),
+        },
+        codex::UserInput::Image {
+            detail: None,
+            url: "data:image/png;base64,iVBORw0KGgo".to_string(),
+        },
+    ];
+
+    // steer_session 路径：user_input_blocks_to_content_parts(&input) -> AgentMessage::user_parts。
+    let parts = user_input_blocks_to_content_parts(&input);
+    let message = AgentMessage::user_parts(parts);
+    let AgentMessage::User { content, .. } = message else {
+        panic!("expected user message");
+    };
+    assert_eq!(content.len(), 2);
+    assert_eq!(content[0], ContentPart::text("看这张图"));
+    assert_eq!(
+        content[1],
+        ContentPart::image("image/png", "iVBORw0KGgo"),
+        "图片必须结构化直达 ContentPart::Image，而非占位文本"
+    );
+    assert!(matches!(content[1], ContentPart::Image { .. }));
+
+    // prompt 路径：PromptPayload::Input.to_content_parts() 等价产出同一结构化结果。
+    let prompt_parts = PromptPayload::Input(input).to_content_parts();
+    assert!(matches!(prompt_parts[1], ContentPart::Image { .. }));
+}

@@ -107,9 +107,15 @@ impl AgentConnector for RelayAgentConnector {
         let backend_id = backend_execution.backend_id.clone();
         let lease_id = backend_execution.lease_id;
 
+        // relay 边界仍按 ACP ContentBlock JSON 与远程后端互通（远程 resolve_prompt_payload
+        // 仍按 ContentBlock 反序列化）。canonical 输入在此投影为 ContentBlock 形态。
+        // 注意：结构化图片透传到 relay（ContentBlock Image{mimeType,data}）属于 S6 relay 收敛范围；
+        // 本批先保证文本链路不回归，非文本输入降级为文本占位 ContentBlock。
         let prompt_blocks = match prompt {
             PromptPayload::Text(text) => Some(serde_json::json!([{"type": "text", "text": text}])),
-            PromptPayload::Blocks(blocks) => serde_json::to_value(blocks).ok(),
+            PromptPayload::Input(input) => {
+                Some(user_input_blocks_to_relay_content_blocks(input))
+            }
         };
 
         let executor_config = context.session.executor_config.clone();
@@ -380,6 +386,60 @@ fn workspace_identity_payload_from_mount(
     mount: &agentdash_domain::common::Mount,
 ) -> Option<serde_json::Value> {
     mount.metadata.get("workspace_identity_payload").cloned()
+}
+
+/// 把 canonical 用户输入投影为 relay 远程后端可识别的 ACP ContentBlock JSON。
+///
+/// 远程后端的 `resolve_prompt_payload` 仍按 ACP ContentBlock 反序列化（前端/relay 入参形态
+/// 由 S5/S6 统一），因此 relay 边界把 `UserInputBlock` 映射回 ContentBlock JSON：
+/// - `Text` -> ACP text block（保留文本链路不回归）；
+/// - `Image{url=data URL}` -> ACP image block（结构化透传，mimeType+data）；
+/// - 其余（远程 url / LocalImage / Skill / Mention）-> 文本占位 block（与本批前行为一致，
+///   结构化透传留给 S6 relay 收敛）。
+fn user_input_blocks_to_relay_content_blocks(
+    input: &[agentdash_agent_protocol::UserInputBlock],
+) -> serde_json::Value {
+    let blocks: Vec<serde_json::Value> = input
+        .iter()
+        .map(|item| match item {
+            codex::UserInput::Text { text, .. } => {
+                serde_json::json!({ "type": "text", "text": text })
+            }
+            codex::UserInput::Image { url, .. } => {
+                match parse_relay_data_url(url) {
+                    Some((mime_type, data)) => serde_json::json!({
+                        "type": "image",
+                        "mimeType": mime_type,
+                        "data": data,
+                    }),
+                    None => serde_json::json!({ "type": "text", "text": format!("[引用图片: {url}]") }),
+                }
+            }
+            codex::UserInput::LocalImage { path, .. } => {
+                serde_json::json!({ "type": "text", "text": format!("[引用本地图片: {}]", path.display()) })
+            }
+            codex::UserInput::Skill { name, path } => {
+                serde_json::json!({ "type": "text", "text": format!("[引用 Skill: {name} ({})]", path.display()) })
+            }
+            codex::UserInput::Mention { name, path } => {
+                serde_json::json!({ "type": "text", "text": format!("[引用: {name} ({path})]") })
+            }
+        })
+        .collect();
+    serde_json::Value::Array(blocks)
+}
+
+/// 解析 `data:<mime>;base64,<data>`，返回 `(mime_type, base64_data)`；非 base64 data URL 返回 `None`。
+fn parse_relay_data_url(url: &str) -> Option<(String, String)> {
+    let rest = url.strip_prefix("data:")?;
+    let (meta, data) = rest.split_once(',')?;
+    let mut meta_parts = meta.split(';');
+    let mime_type = meta_parts.next().unwrap_or("").trim();
+    let is_base64 = meta_parts.any(|part| part.trim().eq_ignore_ascii_case("base64"));
+    if mime_type.is_empty() || !is_base64 {
+        return None;
+    }
+    Some((mime_type.to_string(), data.to_string()))
 }
 
 #[cfg(test)]

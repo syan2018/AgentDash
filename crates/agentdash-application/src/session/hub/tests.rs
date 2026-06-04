@@ -2005,7 +2005,13 @@ fn resolve_prompt_payload_from_text_block() {
         .expect("resolve should succeed");
     assert_eq!(payload.text_prompt, "hello world");
     assert_eq!(payload.user_blocks.len(), 1);
-    assert!(matches!(payload.prompt_payload, PromptPayload::Blocks(_)));
+    // canonical 输入：投递路径已收敛为 PromptPayload::Input。
+    assert!(matches!(payload.prompt_payload, PromptPayload::Input(_)));
+    assert_eq!(payload.input.len(), 1);
+    assert!(matches!(
+        payload.input[0],
+        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text { .. }
+    ));
 
     let serialized =
         serde_json::to_value(&payload.user_blocks[0]).expect("serialize content block");
@@ -2032,18 +2038,21 @@ fn resolve_prompt_payload_supports_multiple_block_types() {
         .resolve_prompt_payload()
         .expect("resolve should succeed");
     assert_eq!(payload.user_blocks.len(), 3);
-    assert!(matches!(payload.prompt_payload, PromptPayload::Blocks(_)));
+    // canonical 输入：投递路径已收敛为 PromptPayload::Input；图片结构化保留为 Image 变体。
+    assert!(matches!(payload.prompt_payload, PromptPayload::Input(_)));
+    assert_eq!(payload.input.len(), 3);
+    assert!(payload.input.iter().any(|item| matches!(
+        item,
+        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Image { .. }
+    )));
+    // text_prompt 仅作摘要：文本与文件引用保留为文本；图片以 data URL 形式出现在摘要中。
     assert!(payload.text_prompt.contains("请分析 @src/main.ts"));
     assert!(
         payload
             .text_prompt
             .contains("[引用文件: src/main.ts (file:///workspace/src/main.ts)]")
     );
-    assert!(
-        payload
-            .text_prompt
-            .contains("[引用图片: mimeType=image/png")
-    );
+    assert!(payload.text_prompt.contains("data:image/png;base64,AAAA"));
 }
 
 #[test]

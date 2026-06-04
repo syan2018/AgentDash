@@ -169,13 +169,20 @@ pub fn resolve_session_prompt_lifecycle(
 pub struct ResolvedPromptPayload {
     pub text_prompt: String,
     pub prompt_payload: PromptPayload,
+    /// 注入会话流时保留的原始 ACP ContentBlock（relay 边界 / 远程互通仍消费此形态，S6 再收敛）。
     pub user_blocks: Vec<ContentBlock>,
+    /// canonical 用户输入：贯穿投递与持久化的单一形态。
+    pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
 }
 
 impl UserPromptInput {
     /// 解析出有效的 prompt payload。
     /// - `text_prompt`：仅用于标题提示 / trace 元信息的文本摘要
-    /// - `user_blocks`：注入会话流时保留的原始 ACP ContentBlock
+    /// - `user_blocks`：注入会话流时保留的原始 ACP ContentBlock（relay/远程边界用）
+    /// - `input`：canonical 用户输入（`Vec<UserInputBlock>`），投递与持久化的单一形态
+    ///
+    /// 入参仍按 ACP ContentBlock JSON 反序列化（前端发送形态未变，由 S5 统一），
+    /// 在此边界一次性转换为 canonical `Vec<UserInputBlock>`。
     pub fn resolve_prompt_payload(&self) -> Result<ResolvedPromptPayload, String> {
         let blocks = self
             .prompt_blocks
@@ -190,7 +197,10 @@ impl UserPromptInput {
                 .map_err(|e| format!("promptBlocks[{index}] 不是有效 ACP ContentBlock: {e}"))?;
             user_blocks.push(parsed);
         }
-        let prompt_payload = PromptPayload::Blocks(user_blocks.clone());
+        // ContentBlock -> canonical UserInputBlock（relay 边界单实现，S6 再收敛）。
+        let input = agentdash_agent_protocol::content_blocks_to_codex_user_input(&user_blocks)
+            .map_err(|e| format!("promptBlocks 中没有有效内容: {e}"))?;
+        let prompt_payload = PromptPayload::Input(input.clone());
         let text_prompt = prompt_payload.to_fallback_text();
         if text_prompt.trim().is_empty() {
             return Err("promptBlocks 中没有有效内容".to_string());
@@ -199,6 +209,7 @@ impl UserPromptInput {
             text_prompt,
             prompt_payload,
             user_blocks,
+            input,
         })
     }
 

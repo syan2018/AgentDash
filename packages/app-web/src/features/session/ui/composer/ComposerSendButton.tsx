@@ -1,11 +1,10 @@
 /**
- * Morphing 发送/停止按钮
+ * Morphing 发送/停止按钮 — 常驻显示
  *
  * 状态机:
- * - 无内容 + 非 running → 隐藏（不渲染任何按钮）
- * - 有内容 + idle/enqueue → 深色圆形发送按钮
+ * - running + 无内容 → stop 按钮
  * - running + 有内容 + enqueue → 排队按钮 + 可选 steer
- * - running + 无内容 → 深色圆形 stop 按钮
+ * - 其它 → 发送按钮（无内容时 disabled 半透明）
  */
 
 interface ComposerSendButtonProps {
@@ -82,10 +81,7 @@ export function ComposerSendButton({
     );
   }
 
-  // 无内容 + 非 running → 不显示发送按钮
-  if (!hasInput && !isRunning) return null;
-
-  // 有内容 → 发送
+  // 默认：发送按钮常驻（无内容时 disabled 半透明）
   return (
     <button
       type="button"

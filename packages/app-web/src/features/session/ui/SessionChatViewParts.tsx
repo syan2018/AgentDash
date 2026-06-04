@@ -322,6 +322,8 @@ export function SessionChatComposer({
   const inputDisabled = isSending || !primaryAction.enabled;
 
   const hasContent = Boolean(inputValue.trim()) || imageAttachments.length > 0;
+  // 展开条件：文本换行 OR 有附件 OR 有文件引用
+  const isExpanded = inputValue.includes("\n") || imageAttachments.length > 0 || fileRef.references.length > 0;
   const sendDisabled = isSessionComposerPrimaryDisabled({
     primaryActionEnabled: primaryAction.enabled,
     requirePromptText: false,
@@ -371,33 +373,44 @@ export function SessionChatComposer({
         {inputPrefix}
 
         {/*
-         * Composer — flex-wrap 实现空态单行 / 有内容双行
+         * Composer — flex-wrap + order 单实例布局
          *
-         * 空态: [+] [placeholder(flex-1)] [model] — 单行
-         * 有内容: [文本+附件(w-full)] 换行 [+][gap][model][send] — 双行
+         * 非展开: [+] [input(flex-1)] [model] [send] — 单行，items-center 居中
+         * 展开:   [图片+引用+input(w-full)] 换行 [+][gap][model][send]
          *
-         * RichInput 始终只渲染一个实例，通过 CSS order + w-full/flex-1 切换布局，
-         * 避免 unmount 导致焦点丢失。
+         * 展开条件: 文本换行 || 有附件 || 有文件引用
          */}
-        <div className="relative flex flex-wrap items-end gap-x-1 rounded-[12px] bg-muted/40 px-2 py-1.5 transition-colors focus-within:bg-muted/60">
-          {/* ① RichInput 区域 — 唯一实例 */}
+        <div className="relative flex flex-wrap items-center gap-x-1 rounded-[12px] bg-muted/40 px-2 py-1.5 transition-colors focus-within:bg-muted/60">
+          {/* ① RichInput 区域 — 唯一实例，展开时 w-full 独占行 */}
           <div className={
-            hasContent
+            isExpanded
               ? "w-full px-2 pb-1 pt-1.5"
               : "order-2 min-w-0 flex-1 px-1"
           }>
-            {hasContent && (
-              <FileReferenceTags
-                references={fileRef.references}
-                onRemove={(relPath) => {
-                  fileRef.removeReference(relPath);
-                  const cur = richInputRef.current?.getValue() ?? "";
-                  const next = removeReferenceMarkers(cur, relPath);
-                  richInputRef.current?.setValue(next);
-                }}
-              />
+            {/* 图片预览 — 在输入框上方 */}
+            <ImageAttachmentPreview
+              attachments={imageAttachments}
+              onRemove={onRemoveImage}
+            />
+
+            {imageError && (
+              <div className="mb-1 rounded-[8px] bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+                {imageError}
+              </div>
             )}
 
+            {/* 文件引用药丸 — 有引用就显示 */}
+            <FileReferenceTags
+              references={fileRef.references}
+              onRemove={(relPath) => {
+                fileRef.removeReference(relPath);
+                const cur = richInputRef.current?.getValue() ?? "";
+                const next = removeReferenceMarkers(cur, relPath);
+                richInputRef.current?.setValue(next);
+              }}
+            />
+
+            {/* 文本输入 + @ 文件选择弹窗 */}
             <div className="relative">
               <FilePickerPopup
                 open={fileRef.pickerOpen}
@@ -426,36 +439,22 @@ export function SessionChatComposer({
                 disabled={inputDisabled}
               />
             </div>
-
-            {hasContent && (
-              <>
-                <ImageAttachmentPreview
-                  attachments={imageAttachments}
-                  onRemove={onRemoveImage}
-                />
-                {imageError && (
-                  <div className="mt-1 rounded-[8px] bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
-                    {imageError}
-                  </div>
-                )}
-              </>
-            )}
           </div>
 
           {/* ② + 菜单 */}
-          <div className={hasContent ? "order-2" : "order-1"}>
+          <div className={isExpanded ? "order-2" : "order-1"}>
             <ComposerPlusMenu
               disabled={inputDisabled}
               onSelectFiles={onPlusMenuFiles}
             />
           </div>
 
-          {/* ③ 弹性间隔（有内容时把 model/send 推到右侧） */}
-          {hasContent && <div className="order-3 flex-1" />}
+          {/* ③ 弹性间隔（展开时推右） */}
+          {isExpanded && <div className="order-3 flex-1" />}
 
           {/* ④ 模型选择器 */}
           {showExecutorSelector && (
-            <div className={hasContent ? "order-4" : "order-3"}>
+            <div className={isExpanded ? "order-4" : "order-3"}>
               <InlineModelSelector
                 execConfig={execConfig}
                 discoveredOptions={discovered.options}
@@ -469,8 +468,8 @@ export function SessionChatComposer({
             </div>
           )}
 
-          {/* ⑤ 发送按钮 */}
-          <div className={hasContent ? "order-5" : "order-4"}>
+          {/* ⑤ 发送/状态按钮 — 常驻 */}
+          <div className={isExpanded ? "order-5" : "order-4"}>
             <ComposerSendButton
               isRunning={isActionRunning}
               hasInput={hasContent}

@@ -55,6 +55,22 @@ pub struct MarketplaceSourceDescriptor {
 
 SPI 放在轻量 crate，Integration API 只 re-export trait，不透出 `reqwest`、`sqlx`、`rmcp` 等运行时依赖。
 
+分页合同放在 provider trait 的输入/输出里，原因是企业分发服务通常已经有自己的搜索索引，平台不应要求 provider 一次返回完整目录。
+
+```rust
+pub struct MarketplaceAssetQuery {
+    pub asset_type: Option<LibraryAssetType>,
+    pub query: Option<String>,
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
+}
+
+pub struct MarketplaceAssetPage {
+    pub items: Vec<MarketplaceAssetListing>,
+    pub next_cursor: Option<String>,
+}
+```
+
 ```rust
 #[async_trait]
 pub trait MarketplaceSourceProvider: Send + Sync {
@@ -87,6 +103,8 @@ fn marketplace_source_providers(&self) -> Vec<Arc<dyn MarketplaceSourceProvider>
 
 宿主启动时收集 source provider，`source_key` 冲突 fail-fast。来源集合跟随企业版源码和部署发布节奏变化，由 Host Integration 装配面统一治理。
 
+首期 provider 只允许声明 `LibraryAssetType::SkillTemplate` 与 `LibraryAssetType::McpServerTemplate`。合同保持通用分页形态，但资产类型进入 import 阶段后必须落到对应 typed validator。
+
 ### Enterprise Marketplace Listing
 
 Listing 是跨来源的统一候选视图，只承载发现和预览需要的信息。
@@ -111,8 +129,10 @@ pub struct MarketplaceAssetListing {
 `external_id` 只在 source 内唯一。导入到 Shared Library 后，建议 `source_ref` 使用：
 
 ```text
-market:{source_key}:{external_id}
+market:{source_key}:{asset_type}:{external_id}
 ```
+
+`version` 是远端发布版本，必须非空；`digest` 是远端内容摘要，provider 能提供时必须透出。导入时平台把远端 identity、version、digest 固化到本地 `LibraryAsset`，显式刷新时再通过 provider listing/detail 比较，用于 Marketplace 的可更新提示。
 
 ### MarketplaceFetchedAsset
 
@@ -125,7 +145,7 @@ pub enum MarketplaceFetchedAsset {
 }
 ```
 
-首期只实现 Skill / MCP；枚举保留扩展点给 Capability Pack。
+首期只实现 Skill / MCP。新的外部市场资产类型必须先拥有 Shared Library typed payload、安装语义和前端展示合同，再接入同一 source/list/detail/import 管线。
 
 ## 3. Skill 来源设计
 
@@ -140,12 +160,16 @@ pub enum MarketplaceFetchedAsset {
 1. Catalog provider 负责 list/search/detail，返回 listing 和可拉取定位。
 2. Fetch/import 负责拿到 `SKILL.md` 和附属文件，转换为 `skill_template` LibraryAsset。
 
+现有 GitHub / ClawHub / skills.sh 单 URL 导入已经具备 fetch、文件数量/大小限制、内容定型和 `SKILL.md` 校验能力，但它当前在 Project 级 route 直接创建 `SkillAsset`。外部来源基线落地后，这条用户入口应改为单项远端来源导入：URL 解析和 fetch 继续走 `RemoteSkillSource`，写入动作改为生成 `LibraryAssetPayload::SkillTemplate`，随后通过 Shared Library install 入口创建 Project SkillAsset。原因是 URL import 和 catalog import 都是外部来源写入，统一到 LibraryAsset 能复用版本、digest、source-status、审计和 Marketplace 展示。
+
 建议首期 payload：
 
 ```rust
 pub struct SkillMarketplacePayload {
     pub source_url: String,
     pub files: Option<Vec<RemoteSkillFile>>,
+    pub version: String,
+    pub digest: Option<String>,
 }
 ```
 
@@ -155,6 +179,23 @@ pub struct SkillMarketplacePayload {
 - provider 若直接返回 files，仍复用 application 层 content typing 与 `validate_skill_files`。
 - 文件数量、单文件大小、总大小、根目录 `SKILL.md` 继续由后端统一约束。
 - 导入到 Shared Library 时生成 `LibraryAssetPayload::SkillTemplate`，安装到 Project 时走现有 Skill install 语义。
+- `LibraryAsset.version` 使用远端 version，`payload_digest` 仍由平台 canonical payload 计算；远端 digest 可作为 source metadata 参与刷新比对。
+
+建议抽出 `SkillTemplateImportService` 或等价 application helper，输入为 `RemoteSkillFetch` / `Vec<RemoteSkillFile>` / listing metadata，输出为：
+
+```rust
+pub struct MaterializedSkillTemplate {
+    pub key: String,
+    pub display_name: String,
+    pub description: String,
+    pub version: String,
+    pub source_ref: String,
+    pub payload: SkillTemplatePayload,
+    pub remote_digest: Option<String>,
+}
+```
+
+Catalog import 与 URL import 都调用该 helper，Project 级 `SkillAssetService::import_remote` 只保留文件定型/校验等可复用能力，或被新的 LibraryAsset import use case 取代。
 
 ## 4. MCP 来源设计
 
@@ -194,11 +235,13 @@ pub enum McpTransportTemplate {
 
 导入与安装规则：
 
-- 导入 Shared Library 阶段只保存模板、参数 schema、能力摘要。
+- 导入 Shared Library 阶段只保存模板、参数 schema、能力摘要和远端 version/digest。
 - 安装到 Project 时用户填写参数，后端生成 Project MCP Preset。
 - 需要 credential/header/env 的值必须来自用户当前安装输入或用户级 connection，不进入公共 LibraryAsset payload。
 - 后端继续使用现有 MCP safety mapper，拒绝本机路径、localhost/private network URL 等不适合市场分发的连接材料。
 - 安装后可调用现有 probe 返回工具发现结果。
+
+现有 `mcp_server_template` payload 是具体 `McpTransportConfig`。外部 MCP child 必须把 payload 扩展为可表达模板变量的 typed schema，并同步扩展 install API 的参数输入；不能在导入阶段把待填参数伪造成空 credential/header/env 或本机绑定配置。
 
 ## 5. API 设计
 
@@ -209,6 +252,7 @@ GET  /api/marketplace/sources
 GET  /api/marketplace/external-assets?source_key=&asset_type=&query=&cursor=
 GET  /api/marketplace/external-assets/{source_key}/{external_id}
 POST /api/marketplace/external-assets/import
+POST /api/marketplace/external-assets/refresh
 ```
 
 `import` 请求：
@@ -222,7 +266,9 @@ POST /api/marketplace/external-assets/import
 }
 ```
 
-返回 `LibraryAssetDto`。前端可随后调用现有 `installLibraryAsset(projectId, ...)`；产品体验上可以封装为“导入并安装”。
+返回 `LibraryAssetDto`。前端可随后调用 Shared Library install 入口；MCP 模板安装需要在同一入口提交参数输入。产品体验上可以封装为“导入并安装”。
+
+`refresh` 用于按 `source_ref` 或 source query 显式检查远端版本。它只更新 Marketplace 可更新提示或本地 LibraryAsset 的可见版本候选，不修改 Project 资源。
 
 ## 6. 前端体验
 
@@ -231,7 +277,7 @@ Marketplace 页面建议增加来源视图：
 ```text
 浏览：公共资源库 / 外部来源
 来源：全部 / 官方 Skill 市场 / 企业 MCP Registry / ...
-类型：全部 / Agent / MCP / Workflow / Skill / VFS Mount / Extension
+类型：全部 / MCP / Skill
 ```
 
 外部来源卡片：
@@ -246,8 +292,10 @@ Marketplace 页面建议增加来源视图：
 2. 前端请求 detail。
 3. 用户确认参数或安装选项。
 4. 前端调用 import API 得到 `LibraryAssetDto`。
-5. 前端调用现有 install API。
+5. 前端调用 Shared Library install 入口；MCP 模板携带用户参数输入。
 6. Marketplace 刷新 Shared Library list 和 source-status。
+
+现有 Skill 创建弹窗中的 URL Import 可继续作为用户入口，但提交后应走“URL -> import LibraryAsset -> install Project SkillAsset”的组合流程。导入成功后的反馈以 Project SkillAsset 安装结果为准，同时本地 Marketplace 能看到对应 `remote_imported` 的 `skill_template`。
 
 ## 7. 数据与迁移
 
@@ -260,6 +308,8 @@ Marketplace 页面建议增加来源视图：
 
 若需要缓存或离线浏览，再增加 `marketplace_source_cache` 表，字段至少包含 `source_key`、`external_id`、`asset_type`、`listing_payload`、`fetched_at`、`expires_at`、`digest`。该表只缓存发现信息，不参与运行事实。
 
+Skill URL Import 收束后，Project `skill_assets` 的外源身份应通过既有 `installed_source` 字段表达。`SkillAsset.source` 保持 Project 资产自身来源语义，例如用户创建或 builtin seed；远端 URL、provider、version、digest 归属到 `LibraryAsset.source_ref`、`LibraryAsset.version`、`LibraryAsset.payload_digest` 与 `InstalledAssetSource`。相应数据库迁移应让 `skill_assets.source`、`remote_source_url`、`remote_imported_at`、`remote_digest` 与新的归属关系一致，原因是外源版本和审计事实已经由 Shared Library 统一承载。
+
 ## 8. 权限与信任
 
 - Source registry 属于 system/admin scope。
@@ -268,15 +318,11 @@ Marketplace 页面建议增加来源视图：
 - 安装到 Project 继续要求 Project edit 权限。
 - Integration provider 属于受信宿主扩展；其返回内容仍按 data asset validator 校验。
 
-## 9. 与 Capability Pack 的关系
+## 9. 资产类型边界
 
-Capability Pack 后续可以作为新的 `LibraryAssetType` 接入同一管线：
+外部市场来源的通用性停在 source/list/detail/import、分页和远端版本发现这一层。进入导入后必须按资产类型走 typed payload 和安装语义。
 
-```text
-External listing -> CapabilityPack payload -> typed validator -> LibraryAsset -> AgentTemplate refs -> AgentFrame projection
-```
-
-首期把 source/listing/import 设计成 asset-type 可扩展，避免 Skill/MCP 特化 API 名称。
+首期只覆盖 Skill 与 MCP，因为二者都能从外部目录读取候选内容，并标准化落成平台内部 `skill_template` / `mcp_server_template`。其他资产类型需要在自身模板、权限、安装和运行事实源稳定后单独设计。
 
 ## 10. Child Task 建议
 

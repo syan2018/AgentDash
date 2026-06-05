@@ -1,7 +1,7 @@
 use std::{io, sync::Arc};
 
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, UserInputBlock,
     codex_app_server_protocol as codex,
 };
 use agentdash_agent_types::MessageRef;
@@ -249,6 +249,25 @@ impl SessionEventingService {
             entry_index: None,
         });
 
+        self.persist_notification(session_id, envelope).await
+    }
+
+    pub(crate) async fn emit_user_input_submitted(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        item_id: &str,
+        submission_kind: agentdash_agent_protocol::UserInputSubmissionKind,
+        input: Vec<UserInputBlock>,
+    ) -> io::Result<PersistedSessionEvent> {
+        let envelope = super::hub_support::build_user_input_submitted_envelope(
+            session_id,
+            &self.connector_source(None),
+            turn_id,
+            item_id,
+            submission_kind,
+            input,
+        );
         self.persist_notification(session_id, envelope).await
     }
 

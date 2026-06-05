@@ -2,6 +2,8 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
+import type { UserInput } from "./backbone-protocol";
+import type { AgentAssignmentRefDto, AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto } from "./project-agent-contracts";
 
 export type ActiveActivityRefDto = { run_id: string, graph_instance_id: string, activity_key: string, attempt: number, status: string, };
 
@@ -37,10 +39,6 @@ export type ActivityTransitionKind = "flow" | "artifact";
 
 export type AgentActivityExecutorSpec = { procedure_key: string, agent_reuse_policy: AgentReusePolicy, runtime_session_policy: RuntimeSessionPolicy, };
 
-export type AgentAssignmentRefDto = { assignment_id: string, run_id?: string, agent_id?: string, frame_id?: string, };
-
-export type AgentFrameRefDto = { agent_id: string, frame_id: string, revision?: number, };
-
 export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, procedure_id?: string, graph_instance_id?: string, activity_key?: string, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, };
 
 export type AgentProcedureContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, capability_config?: CapabilityConfig, output_ports?: Array<OutputPortDefinition>, input_ports?: Array<InputPortDefinition>, };
@@ -69,6 +67,10 @@ export type DeleteWorkflowGraphResponse = { deleted: boolean, };
 
 export type EffectiveSessionContract = { lifecycle_key?: string, active_activity_key?: string, injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, };
 
+export type EnqueuePendingMessageRequest = { input: Array<UserInput>, executor_config?: JsonValue, };
+
+export type EnqueuePendingMessageResponse = { message: PendingMessageView, };
+
 export type ExecutorRunRef = { "kind": "runtime_session", session_id: string, } | { "kind": "function_run", run_id: string, } | { "kind": "human_decision", decision_id: string, };
 
 export type FunctionActivityExecutorSpec = { "type": "api_request" } & ApiRequestExecutorSpec | { "type": "bash_exec" } & BashExecExecutorSpec;
@@ -85,11 +87,17 @@ export type HumanApprovalExecutorSpec = { form_schema_key: string, title?: strin
 
 export type InputPortDefinition = { key: string, description: string, context_strategy: ContextStrategy, context_template?: string, standalone_fulfillment: StandaloneFulfillment, };
 
-export type LifecycleAgentMessageRequest = { prompt_blocks: Array<JsonValue>, executor_config?: JsonValue, };
+export type LifecycleAgentMessageRequest = {
+/**
+ * canonical 用户输入，与 steer（`LifecycleAgentSteeringRequest.input`）同形。
+ */
+input: Array<UserInput>, executor_config?: JsonValue, };
 
 export type LifecycleAgentMessageResponse = { runtime_session_id: string, turn_id: string, run_ref: LifecycleRunRefDto, agent_ref: LifecycleAgentRefDto, frame_ref: AgentFrameRefDto, };
 
-export type LifecycleAgentRefDto = { run_id: string, agent_id: string, };
+export type LifecycleAgentSteeringRequest = { input: Array<UserInput>, };
+
+export type LifecycleAgentSteeringResponse = { runtime_session_id: string, accepted: boolean, state: RuntimeSessionCommandStateDto, };
 
 export type LifecycleAgentView = { agent_ref: LifecycleAgentRefDto, project_id: string, agent_kind: string, agent_role: string, project_agent_id?: string, status: string, current_frame_id?: string,
 /**
@@ -105,8 +113,6 @@ export type LifecycleExecutionEntry = { timestamp: string, activity_key: string,
 
 export type LifecycleExecutionEventKind = "activity_activated" | "activity_completed" | "constraint_blocked" | "completion_evaluated" | "artifact_appended" | "context_injected";
 
-export type LifecycleRunRefDto = { run_id: string, };
-
 export type LifecycleRunStatus = "draft" | "ready" | "running" | "blocked" | "completed" | "failed" | "cancelled";
 
 export type LifecycleRunTopology = "graphless" | "workflow_graph";
@@ -117,6 +123,8 @@ export type LifecycleSubjectAssociationDto = { id: string, anchor_run_id: string
 
 export type OutputPortDefinition = { key: string, description: string, gate_strategy: GateStrategy, gate_params?: JsonValue, };
 
+export type PendingMessageView = { id: string, preview: string, has_images: boolean, created_at: string, };
+
 export type ProjectActiveAgentsView = { project_id: string, runs: Array<LifecycleRunView>, agents: Array<LifecycleAgentView>, };
 
 export type ProjectSessionListEntry = { runtime_session_id: string, title: string, delivery_status: string, run_status?: LifecycleRunStatus, run_ref?: LifecycleRunRefDto, agent_ref?: LifecycleAgentRefDto, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, updated_at: string, };
@@ -125,15 +133,23 @@ export type ProjectSessionListView = { project_id: string, sessions: Array<Proje
 
 export type RegisterHookPresetResponse = { registered: boolean, key: string, };
 
+export type RuntimeSessionCommandStateDto = { status: string, turn_id?: string, message?: string, };
+
 export type RuntimeSessionExecutionAnchorDto = { runtime_session_id: string, run_id: string, agent_id: string, launch_frame_id: string, assignment_id?: string, graph_instance_id?: string, activity_key?: string, attempt?: number, created_by_kind: string, created_at: string, updated_at: string, };
 
 export type RuntimeSessionPolicy = "create_new" | "deliver_to_current_trace";
 
-export type RuntimeSessionRefDto = { runtime_session_id: string, };
-
 export type RuntimeSessionTraceView = { runtime_session_ref: RuntimeSessionRefDto, frame_ref?: AgentFrameRefDto, events: Array<JsonValue>, turns: Array<JsonValue>, };
 
-export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: LifecycleAgentView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, can_send: boolean, send_unavailable_reason?: string, };
+export type SessionRuntimeActionAvailabilityView = { enabled: boolean, unavailable_reason?: string, };
+
+export type SessionRuntimeActionSetView = { send_next: SessionRuntimeActionAvailabilityView, enqueue: SessionRuntimeActionAvailabilityView, steer: SessionRuntimeActionAvailabilityView, cancel: SessionRuntimeActionAvailabilityView, };
+
+export type SessionRuntimeControlPlaneStatus = "unbound_trace" | "anchored_idle" | "anchored_running" | "terminal" | "frame_missing";
+
+export type SessionRuntimeControlPlaneView = { status: SessionRuntimeControlPlaneStatus, reason?: string, };
+
+export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, control_plane: SessionRuntimeControlPlaneView, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: LifecycleAgentView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: SessionRuntimeActionSetView, pending_messages: Array<PendingMessageView>, };
 
 export type SessionShellDto = { id: string, title: string, title_source: string, created_at: bigint, updated_at: bigint, last_event_seq: bigint, last_turn_id?: string, last_delivery_status: string, };
 
@@ -142,8 +158,6 @@ export type StandaloneFulfillment = "required" | { "optional": { default_value?:
 export type StoryLaunchResult = { created: boolean, story_id: string, project_agent_id: string, run_ref: LifecycleRunRefDto, agent_ref: LifecycleAgentRefDto, frame_ref: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_ref: SubjectRefDto, };
 
 export type SubjectExecutionView = { subject_ref: SubjectRefDto, associations: Array<LifecycleSubjectAssociationDto>, runs: Array<LifecycleRunView>, current_agent?: LifecycleAgentView, latest_attempt?: ActivityAttemptView, artifacts: JsonValue, };
-
-export type SubjectRefDto = { kind: string, id: string, };
 
 export type ToolCapabilityDirective = { "add": ToolCapabilityPath } | { "remove": ToolCapabilityPath };
 

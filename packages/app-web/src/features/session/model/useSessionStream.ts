@@ -17,7 +17,7 @@ import type {
   SessionEventEnvelope,
   TokenUsageInfo,
 } from "./types";
-import { extractTokenUsageFromEvent, parseContentBlock } from "./types";
+import { extractTextFromUserInputs, extractTokenUsageFromEvent } from "./types";
 import { createSessionStreamTransport, type SessionStreamTransport } from "./streamTransport";
 import { useTerminalStore } from "./useTerminalStore";
 import type { TerminalProcessState } from "../../../types/terminal";
@@ -142,13 +142,8 @@ function buildEntryId(event: SessionEventEnvelope, bbEvent: BackboneEvent): stri
     }
   }
 
-  if (bbEvent.type === "platform") {
-    const platform = bbEvent.payload;
-    if (platform.kind === "session_meta_update" && platform.data.key === "user_message_chunk") {
-      if (turnId && entryIndex != null) {
-        return `user:${turnId}:${entryIndex}`;
-      }
-    }
+  if (bbEvent.type === "user_input_submitted") {
+    return `user-input:${bbEvent.payload.turnId}:${bbEvent.payload.itemId}`;
   }
 
   return `event:${event.event_seq}`;
@@ -292,6 +287,20 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     return [...prev, { ...makeDisplayEntry(event, bbEvent), isPendingApproval: true }];
   }
 
+  // ── user_input_submitted — 已被后端接收的用户输入事实 ──
+  if (bbEvent.type === "user_input_submitted") {
+    const entryId = buildEntryId(event, bbEvent);
+    const text = extractTextFromUserInputs(bbEvent.payload.content);
+    for (let i = prev.length - 1; i >= 0; i -= 1) {
+      if (prev[i]!.id === entryId) {
+        const next = [...prev];
+        next[i] = { ...prev[i]!, eventSeq: event.event_seq, event: bbEvent, accumulatedText: text };
+        return next;
+      }
+    }
+    return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: text }];
+  }
+
   // ── error — 错误条目 ──
   if (bbEvent.type === "error") {
     return [...prev, makeDisplayEntry(event, bbEvent)];
@@ -309,42 +318,6 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
 
     if (platform.kind === "session_meta_update") {
       const key = platform.data.key;
-
-      // 用户消息：累积文本
-      if (key === "user_message_chunk") {
-        const entryId = buildEntryId(event, bbEvent);
-        const value = platform.data.value;
-        const parsedBlock = parseContentBlock(value);
-        const chunkText =
-          typeof value === "string"
-            ? value
-            : parsedBlock?.type === "text"
-              ? parsedBlock.text
-              : null;
-
-        // 仅 text block 走增量拼接；resource/resource_link 等结构化块保持原事件给 UI 专用卡片渲染。
-        if (chunkText != null) {
-          for (let i = prev.length - 1; i >= 0; i -= 1) {
-            if (prev[i]!.id === entryId) {
-              const existing = prev[i]!;
-              const accumulated = (existing.accumulatedText ?? "") + chunkText;
-              const next = [...prev];
-              next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: accumulated };
-              return next;
-            }
-          }
-          return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: chunkText }];
-        }
-
-        for (let i = prev.length - 1; i >= 0; i -= 1) {
-          if (prev[i]!.id === entryId) {
-            const next = [...prev];
-            next[i] = { ...prev[i]!, eventSeq: event.event_seq, event: bbEvent };
-            return next;
-          }
-        }
-        return [...prev, makeDisplayEntry(event, bbEvent)];
-      }
 
       // session_meta_updated — 静默
       if (key === "session_meta_updated" || key === "acp_passthrough") {

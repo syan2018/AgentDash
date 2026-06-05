@@ -6,9 +6,8 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
-    PlatformEvent, SourceInfo, TraceInfo,
+    PlatformEvent, SourceInfo, TraceInfo, UserInputSubmissionKind,
 };
-use agentdash_agent_protocol::{ContentBlock, TextContent};
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{
     BackendExecutionLease, BackendExecutionLeaseRepository, BackendExecutionSelectionMode,
@@ -40,7 +39,8 @@ use super::super::MemorySessionPersistence;
 use super::super::construction::{ConstructionResolutionPlan, RuntimeContextInspectionPlan};
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
-    TurnExecution, TurnState, build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
+    TurnExecution, TurnState, build_user_input_submitted_envelope,
+    parse_turn_terminal_event_from_envelope,
 };
 use super::super::local_workspace_vfs;
 use super::super::types::{
@@ -64,8 +64,8 @@ use crate::vfs::{
 };
 use agentdash_application_ports::backend_transport::{
     BackendTransport, DirectoryBrowseInfo, GitRepoInfo, RelayPromptRequest, RelayPromptTransport,
-    RelaySessionRoute, RelaySessionRouteInfo, RemoteExecutorInfo, TransportError,
-    WorkspaceProbeInfo,
+    RelaySessionRoute, RelaySessionRouteInfo, RelaySteerRequest, RemoteExecutorInfo,
+    TransportError, WorkspaceProbeInfo,
 };
 
 fn test_hub(
@@ -820,6 +820,14 @@ impl RelayPromptTransport for PlacementTransport {
         &self,
         _backend_id: &str,
         _session_id: &str,
+    ) -> Result<(), TransportError> {
+        Ok(())
+    }
+
+    async fn relay_steer(
+        &self,
+        _backend_id: &str,
+        _payload: RelaySteerRequest,
     ) -> Result<(), TransportError> {
         Ok(())
     }
@@ -1996,24 +2004,33 @@ fn resolve_prompt_payload_from_text_block() {
         .resolve_prompt_payload()
         .expect("resolve should succeed");
     assert_eq!(payload.text_prompt, "hello world");
-    assert_eq!(payload.user_blocks.len(), 1);
-    assert!(matches!(payload.prompt_payload, PromptPayload::Blocks(_)));
-
-    let serialized =
-        serde_json::to_value(&payload.user_blocks[0]).expect("serialize content block");
-    assert_eq!(
-        serialized.get("type").and_then(|v| v.as_str()),
-        Some("text")
-    );
+    // canonical 输入：投递路径已收敛为 PromptPayload::Input。
+    assert!(matches!(payload.prompt_payload, PromptPayload::Input(_)));
+    assert_eq!(payload.input.len(), 1);
+    assert!(matches!(
+        payload.input[0],
+        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text { .. }
+    ));
 }
 
 #[test]
-fn resolve_prompt_payload_supports_multiple_block_types() {
+fn resolve_prompt_payload_supports_multiple_input_types() {
+    // 入参已是 canonical Vec<UserInputBlock>（与 steer 同形）；
+    // ContentBlock -> canonical 的转换在 relay 边界单实现，单测在 protocol crate。
     let input = UserPromptInput {
-        prompt_blocks: Some(vec![
-            json!({ "type": "text", "text": "请分析 @src/main.ts" }),
-            json!({ "type": "resource_link", "uri": "file:///workspace/src/main.ts", "name": "src/main.ts" }),
-            json!({ "type": "image", "mimeType": "image/png", "data": "AAAA" }),
+        input: Some(vec![
+            codex::UserInput::Text {
+                text: "请分析 @src/main.ts".to_string(),
+                text_elements: Vec::new(),
+            },
+            codex::UserInput::Mention {
+                name: "src/main.ts".to_string(),
+                path: "file:///workspace/src/main.ts".to_string(),
+            },
+            codex::UserInput::Image {
+                detail: None,
+                url: "data:image/png;base64,AAAA".to_string(),
+            },
         ]),
         env: std::collections::HashMap::new(),
         executor_config: None,
@@ -2023,49 +2040,45 @@ fn resolve_prompt_payload_supports_multiple_block_types() {
     let payload = input
         .resolve_prompt_payload()
         .expect("resolve should succeed");
-    assert_eq!(payload.user_blocks.len(), 3);
-    assert!(matches!(payload.prompt_payload, PromptPayload::Blocks(_)));
+    // canonical 输入：投递路径已收敛为 PromptPayload::Input；图片结构化保留为 Image 变体。
+    assert!(matches!(payload.prompt_payload, PromptPayload::Input(_)));
+    assert_eq!(payload.input.len(), 3);
+    assert!(payload.input.iter().any(|item| matches!(
+        item,
+        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Image { .. }
+    )));
+    // text_prompt 仅作摘要：文本与 mention 名保留为文本；图片以 data URL 形式出现在摘要中。
     assert!(payload.text_prompt.contains("请分析 @src/main.ts"));
-    assert!(
-        payload
-            .text_prompt
-            .contains("[引用文件: src/main.ts (file:///workspace/src/main.ts)]")
-    );
-    assert!(
-        payload
-            .text_prompt
-            .contains("[引用图片: mimeType=image/png")
-    );
+    assert!(payload.text_prompt.contains("data:image/png;base64,AAAA"));
 }
 
 #[test]
-fn build_user_notifications_preserves_block_types_and_index() {
-    let blocks = vec![
-        serde_json::from_value::<ContentBlock>(json!({
-            "type": "text",
-            "text": "hello"
-        }))
-        .expect("text block"),
-        serde_json::from_value::<ContentBlock>(json!({
-            "type": "resource_link",
-            "uri": "file:///workspace/src/main.ts",
-            "name": "src/main.ts"
-        }))
-        .expect("resource_link block"),
-    ];
-
+fn build_user_input_submitted_preserves_turn_and_content() {
     let source = SourceInfo {
         connector_id: "unit-test".to_string(),
         connector_type: "local_executor".to_string(),
         executor_id: Some("CLAUDE_CODE".to_string()),
     };
 
-    let envelopes = build_user_message_envelopes("sess-test", &source, "t100", &blocks);
-    assert_eq!(envelopes.len(), 2);
+    let envelope = build_user_input_submitted_envelope(
+        "sess-test",
+        &source,
+        "t100",
+        "t100:user-input:0",
+        UserInputSubmissionKind::Prompt,
+        vec![codex::UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }],
+    );
 
-    assert_eq!(envelopes[0].trace.turn_id.as_deref(), Some("t100"));
-    assert_eq!(envelopes[0].trace.entry_index, Some(0));
-    assert_eq!(envelopes[1].trace.entry_index, Some(1));
+    assert_eq!(envelope.trace.turn_id.as_deref(), Some("t100"));
+    assert_eq!(envelope.trace.entry_index, Some(0));
+    let BackboneEvent::UserInputSubmitted(payload) = envelope.event else {
+        panic!("expected user_input_submitted event");
+    };
+    assert_eq!(payload.item_id, "t100:user-input:0");
+    assert_eq!(payload.submission_kind, UserInputSubmissionKind::Prompt);
 }
 
 /// Trait extension for BackboneEvent to check platform event keys.
@@ -2194,23 +2207,22 @@ async fn continuation_context_frame_strips_owner_resource_blocks() {
         connector_type: "unit".to_string(),
         executor_id: None,
     };
-    let user_blocks = vec![
-        serde_json::from_value::<ContentBlock>(serde_json::json!({
-            "type": "resource",
-            "resource": {
-                "uri": "agentdash://project-context/project-1",
-                "mimeType": "text/markdown",
-                "text": "## Project\nhidden"
-            }
-        }))
-        .expect("resource block"),
-        ContentBlock::Text(TextContent::new("继续分析 session 生命周期")),
-    ];
-    for envelope in build_user_message_envelopes(&session.id, &source, "t-1", &user_blocks) {
-        hub.inject_notification(&session.id, envelope)
-            .await
-            .expect("inject user notification");
-    }
+    hub.inject_notification(
+        &session.id,
+        build_user_input_submitted_envelope(
+            &session.id,
+            &source,
+            "t-1",
+            "t-1:user-input:0",
+            UserInputSubmissionKind::Prompt,
+            vec![codex::UserInput::Text {
+                text: "继续分析 session 生命周期".to_string(),
+                text_elements: Vec::new(),
+            }],
+        ),
+    )
+    .await
+    .expect("inject user notification");
 
     hub.inject_notification(
         &session.id,
@@ -2264,23 +2276,22 @@ async fn build_projected_transcript_reconstructs_tool_history_without_owner_bloc
         connector_type: "unit".to_string(),
         executor_id: None,
     };
-    let user_blocks = vec![
-        serde_json::from_value::<ContentBlock>(serde_json::json!({
-            "type": "resource",
-            "resource": {
-                "uri": "agentdash://project-context/project-1",
-                "mimeType": "text/markdown",
-                "text": "## Project\nhidden"
-            }
-        }))
-        .expect("resource block"),
-        ContentBlock::Text(TextContent::new("继续分析 session 生命周期")),
-    ];
-    for envelope in build_user_message_envelopes(&session.id, &source, "t-1", &user_blocks) {
-        hub.inject_notification(&session.id, envelope)
-            .await
-            .expect("inject user notification");
-    }
+    hub.inject_notification(
+        &session.id,
+        build_user_input_submitted_envelope(
+            &session.id,
+            &source,
+            "t-1",
+            "t-1:user-input:0",
+            UserInputSubmissionKind::Prompt,
+            vec![codex::UserInput::Text {
+                text: "继续分析 session 生命周期".to_string(),
+                text_elements: Vec::new(),
+            }],
+        ),
+    )
+    .await
+    .expect("inject user notification");
 
     hub.inject_notification(
         &session.id,
@@ -2419,14 +2430,16 @@ fn inject_user_message_envelope(
         connector_type: "unit".to_string(),
         executor_id: None,
     };
-    BackboneEnvelope::new(
-        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-            key: "user_message_chunk".to_string(),
-            value: serde_json::to_value(ContentBlock::Text(TextContent::new(text)))
-                .unwrap_or_default(),
-        }),
+    build_user_input_submitted_envelope(
         session_id,
-        source,
+        &source,
+        turn_id,
+        &format!("{turn_id}:user-input:{entry_index}"),
+        UserInputSubmissionKind::Prompt,
+        vec![codex::UserInput::Text {
+            text: text.to_string(),
+            text_elements: Vec::new(),
+        }],
     )
     .with_trace(TraceInfo {
         turn_id: Some(turn_id.to_string()),
@@ -2909,8 +2922,7 @@ async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
         !history.iter().any(|event| {
             matches!(
                 &event.notification.event,
-                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, .. })
-                    if key == "user_message_chunk"
+                BackboneEvent::UserInputSubmitted(_)
             )
         }),
         "connector 未接受前不应提交 user message"
@@ -3320,11 +3332,10 @@ async fn schedule_hook_auto_resume_routes_through_provider() {
             let text = input
                 .command
                 .user_input()
-                .prompt_blocks
+                .input
                 .as_ref()
                 .and_then(|blocks| blocks.first())
-                .and_then(|block| block.get("text"))
-                .and_then(|v| v.as_str())
+                .and_then(agentdash_agent_protocol::user_input_text)
                 .map(ToString::to_string);
             *self.captured_prompt.lock().await = text;
             self.captured_mcp_len.store(

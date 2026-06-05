@@ -17,9 +17,9 @@ use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::runtime_gateway::{RuntimeGateway, RuntimeSessionMcpAccess};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
-    SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
-    SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
-    SessionRuntimeService, SessionTitleService,
+    PendingQueueService, SessionBranchingService, SessionCapabilityService,
+    SessionControlService, SessionCoreService, SessionEffectsService, SessionEventingService,
+    SessionHookService, SessionLaunchService, SessionRuntimeService, SessionTitleService,
 };
 use agentdash_application::task::service::StoryActivityActivationService;
 use agentdash_application::task_lock::TaskLockMap;
@@ -47,6 +47,7 @@ pub struct ServiceSet {
     pub session_capability: SessionCapabilityService,
     pub session_effects: SessionEffectsService,
     pub session_title: SessionTitleService,
+    pub pending_queue: PendingQueueService,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
     pub connector: Arc<dyn AgentConnector>,
     /// 统一 VFS 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
@@ -297,6 +298,7 @@ impl AppState {
                 session_capability,
                 session_effects,
                 session_title,
+                pending_queue: PendingQueueService::new(),
                 connector,
                 vfs_service,
                 vfs_mutation_dispatcher,

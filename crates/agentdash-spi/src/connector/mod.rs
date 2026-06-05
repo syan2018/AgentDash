@@ -5,7 +5,6 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_protocol::{ContentBlock, EmbeddedResourceResource};
 use agentdash_agent_types::{AgentMessage, MessageRef};
 use agentdash_domain::backend::BackendExecutionSelectionMode;
 use agentdash_domain::common::{AgentConfig, Vfs};
@@ -40,6 +39,7 @@ pub enum ConnectorType {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ConnectorCapabilities {
     pub supports_cancel: bool,
+    pub supports_steering: bool,
     pub supports_discovery: bool,
     pub supports_variants: bool,
     pub supports_model_override: bool,
@@ -496,104 +496,79 @@ pub fn partition_session_mcp_servers(
 #[derive(Debug, Clone)]
 pub enum PromptPayload {
     Text(String),
-    Blocks(Vec<ContentBlock>),
-}
-
-pub fn content_block_to_text(block: &ContentBlock) -> Option<String> {
-    match block {
-        ContentBlock::Text(text) => {
-            if text.text.trim().is_empty() {
-                None
-            } else {
-                Some(text.text.clone())
-            }
-        }
-        ContentBlock::Resource(resource) => match &resource.resource {
-            EmbeddedResourceResource::TextResourceContents(text_res) => Some(format!(
-                "\n<file path=\"{}\">\n{}\n</file>",
-                text_res.uri, text_res.text
-            )),
-            EmbeddedResourceResource::BlobResourceContents(blob_res) => Some(format!(
-                "[引用二进制资源: {}; mimeType={}]",
-                blob_res.uri,
-                blob_res.mime_type.as_deref().unwrap_or("unknown")
-            )),
-            _ => Some("[引用资源: 未知类型]".to_string()),
-        },
-        ContentBlock::ResourceLink(link) => {
-            Some(format!("[引用文件: {} ({})]", link.name, link.uri))
-        }
-        ContentBlock::Image(image) => Some(format!(
-            "[引用图片: mimeType={}, base64Bytes={}]",
-            image.mime_type,
-            image.data.len()
-        )),
-        ContentBlock::Audio(audio) => Some(format!(
-            "[引用音频: mimeType={}, base64Bytes={}]",
-            audio.mime_type,
-            audio.data.len()
-        )),
-        _ => Some("[引用内容块: 未知类型]".to_string()),
-    }
+    /// canonical 用户输入：贯穿 API -> 应用 -> 连接器 -> AgentMessage 的结构化输入单元。
+    /// 取代旧 `Blocks(Vec<ContentBlock>)`，让图片等多模态内容结构化直达模型而不拍平。
+    Input(Vec<agentdash_agent_protocol::UserInputBlock>),
 }
 
 impl PromptPayload {
+    /// 投递路径：把 canonical 输入映射为模型层 `ContentPart`（图片直达 `ContentPart::Image`）。
+    /// 连接器统一消费此方法，不再各自拍平。
+    pub fn to_content_parts(&self) -> Vec<agentdash_agent_types::ContentPart> {
+        match self {
+            Self::Text(text) => {
+                let text = text.trim();
+                if text.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![agentdash_agent_types::ContentPart::text(text)]
+                }
+            }
+            Self::Input(input) => {
+                agentdash_agent_protocol::user_input_blocks_to_content_parts(input)
+            }
+        }
+    }
+
+    /// 文本摘要：仅供标题提示 / trace 元信息，**不是**投递路径。
     pub fn to_fallback_text(&self) -> String {
         match self {
             Self::Text(text) => text.clone(),
-            Self::Blocks(blocks) => blocks
-                .iter()
-                .filter_map(content_block_to_text)
-                .collect::<Vec<_>>()
-                .join("\n"),
+            Self::Input(input) => agentdash_agent_protocol::codex_user_input_to_text(input)
+                .unwrap_or_default(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
+    use agentdash_agent_protocol::codex_app_server_protocol as codex;
 
-    fn parse_block(value: serde_json::Value) -> ContentBlock {
-        serde_json::from_value::<ContentBlock>(value).expect("valid ACP content block")
+    use super::*;
+
+    #[test]
+    fn prompt_payload_input_to_content_parts_keeps_image_structured() {
+        // 投递路径：canonical 输入经唯一映射，图片真出 ContentPart::Image，不再拍平成占位文本。
+        let input = vec![
+            codex::UserInput::Text {
+                text: "请分析这张图".to_string(),
+                text_elements: Vec::new(),
+            },
+            codex::UserInput::Image {
+                detail: None,
+                url: "data:image/png;base64,AAAA".to_string(),
+            },
+        ];
+        let parts = PromptPayload::Input(input).to_content_parts();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(
+            parts[0],
+            agentdash_agent_types::ContentPart::text("请分析这张图")
+        );
+        assert!(matches!(
+            parts[1],
+            agentdash_agent_types::ContentPart::Image { .. }
+        ));
+        assert_eq!(
+            parts[1],
+            agentdash_agent_types::ContentPart::image("image/png", "AAAA")
+        );
     }
 
     #[test]
-    fn prompt_payload_blocks_to_fallback_text() {
-        let blocks = vec![
-            parse_block(json!({ "type": "text", "text": "请分析这个实现" })),
-            parse_block(json!({
-                "type": "resource",
-                "resource": {
-                    "uri": "file:///workspace/src/main.rs",
-                    "mimeType": "text/rust",
-                    "text": "fn main() {}"
-                }
-            })),
-            parse_block(json!({
-                "type": "resource_link",
-                "name": "src/lib.rs",
-                "uri": "file:///workspace/src/lib.rs"
-            })),
-            parse_block(json!({
-                "type": "image",
-                "mimeType": "image/png",
-                "data": "AAAA"
-            })),
-            parse_block(json!({
-                "type": "audio",
-                "mimeType": "audio/wav",
-                "data": "BBBB"
-            })),
-        ];
-
-        let text = PromptPayload::Blocks(blocks).to_fallback_text();
-        assert!(text.contains("请分析这个实现"));
-        assert!(text.contains("<file path=\"file:///workspace/src/main.rs\">"));
-        assert!(text.contains("[引用文件: src/lib.rs (file:///workspace/src/lib.rs)]"));
-        assert!(text.contains("[引用图片: mimeType=image/png"));
-        assert!(text.contains("[引用音频: mimeType=audio/wav"));
+    fn prompt_payload_text_to_content_parts() {
+        let parts = PromptPayload::Text("  hi  ".to_string()).to_content_parts();
+        assert_eq!(parts, vec![agentdash_agent_types::ContentPart::text("hi")]);
     }
 
     #[test]
@@ -723,6 +698,10 @@ pub trait AgentConnector: Send + Sync {
         false
     }
 
+    async fn supports_session_steering(&self, session_id: &str) -> bool {
+        self.capabilities().supports_steering && self.has_live_session(session_id).await
+    }
+
     async fn prompt(
         &self,
         session_id: &str,
@@ -732,6 +711,21 @@ pub trait AgentConnector: Send + Sync {
     ) -> Result<ExecutionStream, ConnectorError>;
 
     async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError>;
+
+    /// 向正在运行的 session 注入用户 steer 消息。
+    ///
+    /// 与 `prompt` 不同，这里不创建新 turn，也不重新进入 launch/claim 流程。
+    async fn steer_session(
+        &self,
+        session_id: &str,
+        _expected_turn_id: &str,
+        _input: Vec<agentdash_agent_protocol::UserInputBlock>,
+    ) -> Result<(), ConnectorError> {
+        Err(ConnectorError::Runtime(format!(
+            "connector `{}` 不支持 session `{session_id}` 的 steering",
+            self.connector_id()
+        )))
+    }
 
     async fn approve_tool_call(
         &self,

@@ -128,6 +128,9 @@ impl CommandHandler {
             RelayMessage::CommandCancel { id, payload } => {
                 vec![self.handle_cancel(id, payload).await]
             }
+            RelayMessage::CommandSteer { id, payload } => {
+                vec![self.handle_steer(id, payload).await]
+            }
             RelayMessage::CommandDiscover { id, .. } => {
                 vec![self.handle_discover(id).await]
             }

@@ -14,6 +14,12 @@ pub use backbone::usage::{
     ContextUsageSource, NormalizedContextUsage, ThreadTokenUsage,
     ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown,
 };
+pub use backbone::user_input::{
+    UserInputBlock, UserInputConversionError, UserInputSubmissionKind,
+    UserInputSubmittedNotification, codex_user_input_to_text, content_block_to_codex_user_input,
+    content_blocks_to_codex_user_input, text_user_input_block, text_user_input_blocks,
+    user_input_blocks_to_content_parts, user_input_text,
+};
 
 pub use codex_app_server_protocol;
 

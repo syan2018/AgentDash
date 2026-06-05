@@ -115,12 +115,13 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "agentdash-agent-types",
+ "base64 0.22.1",
  "chrono",
  "codex-app-server-protocol",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.18",
+ "tracing",
  "ts-rs",
 ]
 
@@ -340,6 +341,7 @@ dependencies = [
 name = "agentdash-local"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
  "agentdash-application",
  "agentdash-domain",
  "agentdash-executor",
@@ -430,6 +432,7 @@ dependencies = [
 name = "agentdash-relay"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
  "chrono",
  "serde",
  "serde_json",

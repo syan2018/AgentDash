@@ -21,10 +21,15 @@ import {
   type WorkspaceRuntimeData,
 } from "../features/workspace-panel";
 import { useSessionRuntimeState } from "../features/workspace-panel/model/useSessionRuntimeState";
-import { sendLifecycleAgentMessageByRuntimeSession } from "../services/lifecycle";
+import {
+  sendLifecycleAgentMessageByRuntimeSession,
+  sendLifecycleAgentSteeringMessageByRuntimeSession,
+} from "../services/lifecycle";
 import type { ExecutorConfig } from "../services/executor";
 import type { JsonValue } from "../generated/common-contracts";
+import type { UserInput } from "../generated/backbone-protocol";
 import { updateSessionTitle } from "../services/session";
+import { enqueuePendingMessage, deletePendingMessage, promotePendingMessage } from "../services/lifecycle";
 import { useLifecycleStore } from "../stores/lifecycleStore";
 import { useProjectStore } from "../stores/projectStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
@@ -38,6 +43,11 @@ import type {
   Story,
   StoryNavigationState,
 } from "../types";
+import type {
+  SessionChatControlState,
+  SessionChatPrimaryActionKind,
+} from "../features/session";
+import type { ImageAttachment } from "../features/session/ui/composer/useImageAttachments";
 
 // ─── SessionPage ────────────────────────────────────────
 
@@ -45,6 +55,26 @@ interface SessionPageProps {
   sessionId?: string;
   draftProjectId?: string;
   draftProjectAgentId?: string;
+}
+
+function readonlyChatControlState(reason: string): SessionChatControlState {
+  return {
+    mode: "runtime",
+    controlPlaneStatus: "unavailable",
+    primaryAction: {
+      kind: "none",
+      enabled: false,
+      label: "发送",
+      placeholder: "当前 Session 只能查看 runtime trace。",
+      unavailableReason: reason,
+    },
+    cancelAction: {
+      enabled: false,
+      label: "取消",
+      unavailableReason: "当前 Session 没有正在执行的 turn。",
+    },
+    helperText: reason,
+  };
 }
 
 export function SessionPage({
@@ -288,64 +318,160 @@ export function SessionPage({
     scheduleHookRuntimeRefresh("message_sent", true);
   }, [currentSessionId, scheduleHookRuntimeRefresh]);
 
-  const sessionSendReady = useMemo(() => {
+  const chatControlState = useMemo<SessionChatControlState>(() => {
     if (isProjectAgentDraft) {
-      return Boolean(draftProjectIdValue && draftProjectAgentKey && draftProjectAgent);
+      const enabled = Boolean(draftProjectIdValue && draftProjectAgentKey && draftProjectAgent);
+      const unavailableReason = !draftProjectIdValue || !draftProjectAgentKey
+        ? "Draft 会话缺少 ProjectAgent 参数。"
+        : !draftProjectAgent
+          ? "正在加载 ProjectAgent 配置。"
+          : undefined;
+      return {
+        mode: "draft",
+        controlPlaneStatus: "draft",
+        primaryAction: {
+          kind: "start_draft",
+          enabled,
+          label: "开始",
+          placeholder: "输入首条消息，Ctrl+Enter 开始…",
+          unavailableReason,
+        },
+        cancelAction: {
+          enabled: false,
+          label: "取消",
+          unavailableReason: "Draft 会话尚未启动。",
+        },
+        helperText: enabled ? undefined : unavailableReason,
+      };
     }
-    return Boolean(currentSessionId && runtimeControl?.can_send);
-  }, [
-    currentSessionId,
-    draftProjectAgent,
-    draftProjectAgentKey,
-    draftProjectIdValue,
-    isProjectAgentDraft,
-    runtimeControl?.can_send,
-  ]);
 
-  const sendUnavailableReason = useMemo(() => {
-    if (isProjectAgentDraft) {
-      if (!draftProjectIdValue || !draftProjectAgentKey) {
-        return "Draft 会话缺少 ProjectAgent 参数。";
-      }
-      if (!draftProjectAgent) {
-        return "正在加载 ProjectAgent 配置。";
-      }
-      return undefined;
+    if (!currentSessionId) {
+      return readonlyChatControlState("当前没有可控制的 Session。");
     }
-    if (!currentSessionId) return "当前没有可发送的 Session。";
-    if (sessionRuntimeState.status === "loading" || sessionRuntimeState.status === "refreshing") {
-      return "正在解析当前 Session 的 Agent dispatcher…";
+    if (
+      sessionRuntimeState.status === "loading" ||
+      (sessionRuntimeState.status === "refreshing" && !runtimeControl)
+    ) {
+      return readonlyChatControlState("正在解析当前 Session 的控制面。");
     }
-    if (sessionRuntimeState.error) return sessionRuntimeState.error;
-    if (!sessionSendReady) return runtimeControl?.send_unavailable_reason ?? "当前 Session 不可发送。";
-    return undefined;
+    if (sessionRuntimeState.error) {
+      return readonlyChatControlState(sessionRuntimeState.error);
+    }
+    if (!runtimeControl) {
+      return readonlyChatControlState("当前 Session 控制面尚未返回。");
+    }
+
+    const actions = runtimeControl.actions;
+    const isRunning = runtimeControl.control_plane.status === "anchored_running";
+
+    // Running 态：主动作=enqueue（排队），辅助动作=steer
+    if (isRunning && actions.enqueue.enabled) {
+      const steerSecondary: SessionChatControlState["secondaryAction"] = actions.steer.enabled
+        ? {
+            kind: "steer" as const,
+            enabled: true,
+            label: "Steer",
+            placeholder: "Ctrl+Enter 立即注入 steer 指令…",
+            unavailableReason: undefined,
+          }
+        : undefined;
+
+      return {
+        mode: "runtime",
+        controlPlaneStatus: runtimeControl.control_plane.status,
+        primaryAction: {
+          kind: "enqueue" as const,
+          enabled: true,
+          label: "排队",
+          placeholder: steerSecondary
+            ? "Enter 排队，Ctrl+Enter steer，@ 引用文件…"
+            : "Enter 排队发送，@ 引用文件…",
+          unavailableReason: undefined,
+        },
+        secondaryAction: steerSecondary,
+        cancelAction: {
+          enabled: actions.cancel.enabled,
+          label: "取消",
+          unavailableReason: actions.cancel.unavailable_reason,
+        },
+        helperText: runtimeControl.control_plane.reason ?? undefined,
+      };
+    }
+
+    // Idle 态或非 running 态
+    const primary = actions.send_next.enabled
+      ? {
+          kind: "send_next" as const,
+          enabled: true,
+          label: "发送",
+          placeholder: "继续对话，@ 引用文件，Ctrl+Enter 发送…",
+          unavailableReason: undefined,
+        }
+      : {
+          kind: "none" as const,
+          enabled: false,
+          label: "发送",
+          placeholder: isRunning
+            ? "当前 Session 正在执行，等待可用或取消。"
+            : "当前 Session 只能查看 runtime trace。",
+          unavailableReason: isRunning
+            ? actions.steer.unavailable_reason ?? runtimeControl.control_plane.reason
+            : actions.send_next.unavailable_reason ?? runtimeControl.control_plane.reason,
+        };
+
+    return {
+      mode: "runtime",
+      controlPlaneStatus: runtimeControl.control_plane.status,
+      primaryAction: primary,
+      cancelAction: {
+        enabled: actions.cancel.enabled,
+        label: "取消",
+        unavailableReason: actions.cancel.unavailable_reason,
+      },
+      helperText: primary.enabled
+        ? runtimeControl.control_plane.reason ?? undefined
+        : primary.unavailableReason,
+    };
   }, [
     currentSessionId,
     draftProjectAgent,
     draftProjectAgentKey,
     draftProjectIdValue,
     isProjectAgentDraft,
-    runtimeControl?.send_unavailable_reason,
+    runtimeControl,
     sessionRuntimeState.error,
     sessionRuntimeState.status,
-    sessionSendReady,
   ]);
 
-  const handleAgentSessionSend = useCallback(async (
+  const handleAgentSessionPrimaryAction = useCallback(async (
+    action: SessionChatPrimaryActionKind,
     sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
+    imageAttachments?: ImageAttachment[],
   ) => {
     const trimmed = prompt.trim();
-    if (!trimmed) {
+    const hasImages = (imageAttachments?.length ?? 0) > 0;
+    if (!trimmed && !hasImages) {
       throw new Error("请输入要发送的消息。");
     }
-    if (isProjectAgentDraft) {
+
+    const inputBlocks: UserInput[] = [];
+    if (trimmed) {
+      inputBlocks.push({ type: "text" as const, text: trimmed, text_elements: [] });
+    }
+    if (imageAttachments) {
+      for (const img of imageAttachments) {
+        inputBlocks.push({ type: "image" as const, url: img.dataUrl });
+      }
+    }
+
+    if (action === "start_draft") {
       if (!draftProjectIdValue || !draftProjectAgentKey || !draftProjectAgent) {
-        throw new Error(sendUnavailableReason ?? "当前 Draft 尚未就绪。");
+        throw new Error(chatControlState.primaryAction.unavailableReason ?? "当前 Draft 尚未就绪。");
       }
       const response = await createProjectAgentRuntimeSession(draftProjectIdValue, draftProjectAgentKey, {
-        prompt_blocks: [{ type: "text", text: trimmed }],
+        input: inputBlocks,
         executor_config: executorConfig as unknown as JsonValue | undefined,
       });
       if (!response) {
@@ -364,32 +490,71 @@ export function SessionPage({
       return;
     }
     if (!sessionId || sessionId !== currentSessionId) {
-      throw new Error("当前 Session 尚未就绪，无法发送消息。");
+      throw new Error("当前 Session 尚未就绪，无法执行控制动作。");
     }
-    if (!sessionSendReady) {
-      throw new Error(sendUnavailableReason ?? "当前 Session 未连接到 Agent dispatcher。");
+
+    // enqueue 和 steer 在 running 态可同时可用（主/辅动作），需分别校验
+    const { primaryAction: csPrimary, secondaryAction: csSecondary } = chatControlState;
+    const isPrimaryMatch = csPrimary.enabled && action === csPrimary.kind;
+    const isSecondaryMatch = csSecondary?.enabled && action === csSecondary.kind;
+    if (!isPrimaryMatch && !isSecondaryMatch) {
+      throw new Error(csPrimary.unavailableReason ?? "当前 Session 不可执行该控制动作。");
     }
-    const response = await sendLifecycleAgentMessageByRuntimeSession(sessionId, {
-      prompt_blocks: [{ type: "text", text: trimmed }],
-      executor_config: executorConfig as unknown as JsonValue | undefined,
-    });
-    void fetchAndIngestLifecycleRun(response.run_ref.run_id);
-    void refreshSessionRuntimeContext().catch(() => {});
-    scheduleHookRuntimeRefresh("agent_message_sent", true);
+
+    if (action === "send_next") {
+      const response = await sendLifecycleAgentMessageByRuntimeSession(sessionId, {
+        input: inputBlocks,
+        executor_config: executorConfig as unknown as JsonValue | undefined,
+      });
+      void fetchAndIngestLifecycleRun(response.run_ref.run_id);
+      void refreshSessionRuntimeContext().catch(() => {});
+      scheduleHookRuntimeRefresh("agent_message_sent", true);
+      return;
+    }
+    if (action === "steer") {
+      await sendLifecycleAgentSteeringMessageByRuntimeSession(sessionId, {
+        input: inputBlocks,
+      });
+      void refreshSessionRuntimeContext().catch(() => {});
+      scheduleHookRuntimeRefresh("agent_message_steered", true);
+      return;
+    }
+    if (action === "enqueue") {
+      await enqueuePendingMessage(sessionId, {
+        input: inputBlocks,
+        executor_config: executorConfig as unknown as JsonValue | undefined,
+      });
+      void refreshSessionRuntimeContext().catch(() => {});
+      scheduleHookRuntimeRefresh("pending_message_enqueued", true);
+      return;
+    }
+    throw new Error(csPrimary.unavailableReason ?? "当前 Session 不可执行该控制动作。");
   }, [
+    chatControlState,
     createProjectAgentRuntimeSession,
     currentSessionId,
     draftProjectAgent,
     draftProjectAgentKey,
     draftProjectIdValue,
     fetchAndIngestLifecycleRun,
-    isProjectAgentDraft,
     navigate,
     refreshSessionRuntimeContext,
     scheduleHookRuntimeRefresh,
-    sendUnavailableReason,
-    sessionSendReady,
   ]);
+
+  const handlePromotePending = useCallback(async (messageId: string) => {
+    if (!currentSessionId) return;
+    await promotePendingMessage(currentSessionId, messageId);
+    void refreshSessionRuntimeContext().catch(() => {});
+    scheduleHookRuntimeRefresh("pending_message_promoted", true);
+  }, [currentSessionId, refreshSessionRuntimeContext, scheduleHookRuntimeRefresh]);
+
+  const handleDeletePending = useCallback(async (messageId: string) => {
+    if (!currentSessionId) return;
+    await deletePendingMessage(currentSessionId, messageId);
+    void refreshSessionRuntimeContext().catch(() => {});
+    scheduleHookRuntimeRefresh("pending_message_deleted", true);
+  }, [currentSessionId, refreshSessionRuntimeContext, scheduleHookRuntimeRefresh]);
 
   const handleTurnEnd = useCallback(() => {
     scheduleHookRuntimeRefresh("turn_end", true);
@@ -670,11 +835,12 @@ export function SessionPage({
               onSystemEvent={handleSystemEvent}
               executorHint={executorHint}
               agentDefaults={draftProjectAgent?.executor ?? taskExecutorSummary}
-              customSend={sessionSendReady ? handleAgentSessionSend : undefined}
+              controlState={chatControlState}
+              onPrimaryAction={handleAgentSessionPrimaryAction}
+              pendingMessages={runtimeControl?.pending_messages}
+              onPromotePending={(id) => { void handlePromotePending(id); }}
+              onDeletePending={(id) => { void handleDeletePending(id); }}
               inputPrefix={ownerBindingBar ?? draftBindingBar}
-              sendUnavailableReason={sendUnavailableReason}
-              inputPlaceholder={isProjectAgentDraft ? "输入首条消息，Ctrl+Enter 发送…" : undefined}
-              idleSendLabel={isProjectAgentDraft ? "开始" : "发送"}
             />
           </div>
         </Panel>

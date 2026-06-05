@@ -15,6 +15,8 @@ export interface SessionMessageCardProps {
   isStreaming?: boolean;
   collapsible?: boolean;
   defaultCollapsed?: boolean;
+  badgeOverride?: string;
+  labelOverride?: string;
 }
 
 function renderTextWithFilePills(text: string): ReactNode[] {
@@ -59,6 +61,8 @@ export const SessionMessageCard = memo(function SessionMessageCard({
   isStreaming,
   collapsible = false,
   defaultCollapsed = false,
+  badgeOverride,
+  labelOverride,
 }: SessionMessageCardProps) {
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
   const config = MESSAGE_CONFIG[type];
@@ -94,8 +98,8 @@ export const SessionMessageCard = memo(function SessionMessageCard({
   return (
     <div className={`flex gap-3 ${config.containerClass}`}>
       <div className="flex w-11 shrink-0 flex-col items-start pt-0.5">
-        <span className={config.avatarClass}>{config.badge}</span>
-        <span className={config.labelClass}>{config.label}</span>
+        <span className={config.avatarClass}>{badgeOverride ?? config.badge}</span>
+        <span className={config.labelClass}>{labelOverride ?? config.label}</span>
       </div>
 
       <div className="min-w-0 flex-1">

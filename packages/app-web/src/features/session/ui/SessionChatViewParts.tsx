@@ -6,7 +6,7 @@ import type {
   useExecutorDiscoveredOptions,
   useExecutorDiscovery,
 } from "../../executor-selector";
-import { ExecutorSelector } from "../../executor-selector";
+import { InlineModelSelector } from "../../executor-selector";
 import type { FileEntry } from "../../../services/filePicker";
 import {
   FilePickerPopup,
@@ -16,8 +16,13 @@ import {
 } from "../../file-reference";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
 import type { SessionDisplayItem, TokenUsageInfo } from "../model/types";
-import { isSessionComposerSendDisabled } from "./SessionChatComposerState";
+import { isSessionComposerPrimaryDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
+import type { SessionChatControlState } from "./SessionChatViewTypes";
+import type { ImageAttachment } from "./composer/useImageAttachments";
+import { ImageAttachmentPreview } from "./composer/ImageAttachmentPreview";
+import { ComposerSendButton } from "./composer/ComposerSendButton";
+import { ComposerPlusMenu } from "./composer/ComposerPlusMenu";
 
 type ExecutorDiscoveryState = ReturnType<typeof useExecutorDiscovery>;
 type ExecutorConfigState = ReturnType<typeof useExecutorConfig>;
@@ -258,76 +263,106 @@ export function SessionChatStream({
 }
 
 export function SessionChatComposer({
-  customSend,
+  controlState,
   discovery,
   discovered,
   execConfig,
   fileRef,
   hasSession,
-  idleSendLabel,
-  inputPlaceholder,
   inputPrefix,
   inputValue,
+  imageAttachments,
+  imageError,
   isActionRunning,
   isCancelling,
   isSending,
   promptTemplates,
   richInputRef,
-  sendUnavailableReason,
   showExecutorSelector,
   workspaceId,
   onAtTrigger,
   onFileSelected,
   onInputChange,
   onKeyDown,
+  onCancelAction,
   onPrimaryAction,
+  onSteerAction,
+  onPlusMenuFiles,
+  onRemoveImage,
 }: {
-  customSend?: unknown;
+  controlState: SessionChatControlState;
   discovery: ExecutorDiscoveryState;
   discovered: ExecutorDiscoveredState;
   execConfig: ExecutorConfigState;
   fileRef: FileReferenceState;
   hasSession: boolean;
-  idleSendLabel: string;
-  inputPlaceholder?: string;
   inputPrefix?: ReactNode;
   inputValue: string;
+  imageAttachments: ImageAttachment[];
+  imageError: string | null;
   isActionRunning: boolean;
   isCancelling: boolean;
   isSending: boolean;
   promptTemplates?: Array<{ id: string; label: string; content: string }>;
   richInputRef: RefObject<RichInputRef | null>;
-  sendUnavailableReason?: string;
   showExecutorSelector: boolean;
   workspaceId?: string | null;
   onAtTrigger: (query: string) => void;
   onFileSelected: (file: FileEntry) => void;
   onInputChange: (value: string) => void;
   onKeyDown: (event: KeyboardEvent) => void;
+  onCancelAction: () => void;
   onPrimaryAction: () => void;
+  onSteerAction?: () => void;
+  onPlusMenuFiles: (files: FileList) => void;
+  onRemoveImage: (id: string) => void;
 }) {
-  const canSendPrompt = Boolean(customSend);
-  const inputDisabled = isSending || !canSendPrompt;
-  const sendDisabled = isSessionComposerSendDisabled({
-    hasDispatcher: canSendPrompt,
-    hasSession,
-    inputValue,
-    isActionRunning,
+  const { primaryAction, cancelAction, secondaryAction } = controlState;
+  const isEnqueueMode = primaryAction.kind === "enqueue";
+  const inputDisabled = isSending || !primaryAction.enabled;
+
+  const hasContent = Boolean(inputValue.trim()) || imageAttachments.length > 0;
+  // 展开条件：有效多行（trim 后仍含换行） OR 有附件 OR 有文件引用
+  const isExpanded = inputValue.trim().includes("\n") || imageAttachments.length > 0 || fileRef.references.length > 0;
+  const sendDisabled = isSessionComposerPrimaryDisabled({
+    primaryActionEnabled: primaryAction.enabled,
+    requirePromptText: false,
+    inputValue: hasContent ? "has_content" : "",
     isCancelling,
     isSending,
   });
+  const cancelDisabled = isCancelling || !cancelAction.enabled;
+
+  const executorName = discovery.executors.find((e) => e.id === execConfig.executor)?.name;
+  const isDiscoveredLoading = Boolean(execConfig.executor.trim()) &&
+    (!discovered.isInitialized || (discovered.options?.loading_models ?? false));
+
+  // Steer 态模型选择器只读（FR5）
+  const isSteerReadonly = isEnqueueMode;
+
+  const actionReason = primaryAction.enabled
+    ? undefined
+    : primaryAction.unavailableReason ?? controlState.helperText;
+  const helperText = primaryAction.enabled
+    ? controlState.helperText ?? (
+        isEnqueueMode
+          ? `Enter 排队${secondaryAction?.enabled ? " · Ctrl+Enter steer" : ""} · ${workspaceId ? "@ 引用文件" : "@ 文件引用不可用"}`
+          : `Ctrl+Enter 提交 · ${workspaceId ? "@ 引用文件" : "@ 文件引用不可用"}`
+      )
+    : actionReason ?? "当前 Session 只能查看 runtime trace。";
 
   return (
-    <div className="shrink-0 border-t border-border bg-background">
-      <div className="mx-auto w-full max-w-4xl px-5 py-4">
-        {!hasSession && !customSend && promptTemplates && promptTemplates.length > 0 && (
+    <div className="shrink-0 pb-4 pt-2">
+      <div className="mx-auto w-full max-w-4xl px-5">
+        {/* Prompt 模板（无 session + draft 模式） */}
+        {!hasSession && !primaryAction.enabled && promptTemplates && promptTemplates.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {promptTemplates.map((tpl) => (
               <button
                 key={tpl.id}
                 type="button"
                 onClick={() => richInputRef.current?.setValue(tpl.content)}
-                className="rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                className="rounded-[8px] px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 {tpl.label}
               </button>
@@ -337,46 +372,46 @@ export function SessionChatComposer({
 
         {inputPrefix}
 
-        {showExecutorSelector && (
-          <ExecutorSelector
-            executors={discovery.executors}
-            isLoading={discovery.isLoading}
-            error={discovery.error}
-            discoveredOptions={discovered.options}
-            discoveredError={discovered.error}
-            isDiscoveredLoading={
-              Boolean(execConfig.executor.trim()) &&
-              (!discovered.isInitialized || (discovered.options?.loading_models ?? false))
-            }
-            onDiscoveredReconnect={discovered.reconnect}
-            executor={execConfig.executor}
-            providerId={execConfig.providerId}
-            modelId={execConfig.modelId}
-            thinkingLevel={execConfig.thinkingLevel}
-            permissionPolicy={execConfig.permissionPolicy}
-            onExecutorChange={execConfig.setExecutor}
-            onProviderIdChange={execConfig.setProviderId}
-            onModelIdChange={execConfig.setModelId}
-            onThinkingLevelChange={execConfig.setThinkingLevel}
-            onPermissionPolicyChange={execConfig.setPermissionPolicy}
-            onReset={execConfig.reset}
-            onRefetch={discovery.refetch}
-          />
-        )}
+        {/*
+         * Composer — flex-wrap + order 单实例布局
+         *
+         * 非展开: [+] [input(flex-1)] [model] [send] — 单行，items-center 居中
+         * 展开:   [图片+引用+input(w-full)] 换行 [+][gap][model][send]
+         *
+         * 展开条件: 文本换行 || 有附件 || 有文件引用
+         */}
+        <div className="relative flex flex-wrap items-center gap-x-1 rounded-[12px] bg-muted/40 px-2 py-1.5 transition-colors focus-within:bg-muted/60">
+          {/* ① RichInput 区域 — 唯一实例，展开时 w-full 独占行 */}
+          <div className={
+            isExpanded
+              ? "w-full px-2 pb-1 pt-1.5"
+              : "order-2 min-w-0 flex-1 px-1"
+          }>
+            {/* 图片预览 — 在输入框上方 */}
+            <ImageAttachmentPreview
+              attachments={imageAttachments}
+              onRemove={onRemoveImage}
+            />
 
-        <div className={`relative rounded-[14px] border border-border bg-secondary/60 p-3${showExecutorSelector ? " mt-3" : ""}`}>
-          <FileReferenceTags
-            references={fileRef.references}
-            onRemove={(relPath) => {
-              fileRef.removeReference(relPath);
-              const cur = richInputRef.current?.getValue() ?? "";
-              const next = removeReferenceMarkers(cur, relPath);
-              richInputRef.current?.setValue(next);
-            }}
-          />
+            {imageError && (
+              <div className="mb-1 rounded-[8px] bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+                {imageError}
+              </div>
+            )}
 
-          <div className="relative flex gap-3">
-            <div className="relative flex-1">
+            {/* 文件引用药丸 — 有引用就显示 */}
+            <FileReferenceTags
+              references={fileRef.references}
+              onRemove={(relPath) => {
+                fileRef.removeReference(relPath);
+                const cur = richInputRef.current?.getValue() ?? "";
+                const next = removeReferenceMarkers(cur, relPath);
+                richInputRef.current?.setValue(next);
+              }}
+            />
+
+            {/* 文本输入 + @ 文件选择弹窗 */}
+            <div className="relative">
               <FilePickerPopup
                 open={fileRef.pickerOpen}
                 query={fileRef.pickerQuery}
@@ -396,9 +431,7 @@ export function SessionChatComposer({
               />
               <RichInput
                 ref={richInputRef}
-                placeholder={inputPlaceholder ?? (canSendPrompt
-                  ? "继续对话，@ 引用文件，Ctrl+Enter 发送…"
-                  : "当前 Session 未连接到 Agent dispatcher")}
+                placeholder={primaryAction.placeholder ?? "Send follow-up"}
                 onChange={onInputChange}
                 onKeyDown={onKeyDown}
                 onAtTrigger={onAtTrigger}
@@ -406,26 +439,55 @@ export function SessionChatComposer({
                 disabled={inputDisabled}
               />
             </div>
-            <div className="flex flex-col gap-2 self-end">
-              <button
-                type="button"
-                disabled={sendDisabled}
-                onClick={onPrimaryAction}
-                className={`h-10 w-20 rounded-[12px] border text-sm font-medium transition-colors disabled:opacity-50 ${
-                  hasSession && isActionRunning
-                    ? "border-border bg-background text-foreground hover:bg-secondary"
-                    : "border-primary bg-primary text-primary-foreground hover:opacity-95"
-                }`}
-              >
-                {isSending ? "…" : isCancelling ? "取消中…" : hasSession && isActionRunning ? "取消" : idleSendLabel}
-              </button>
+          </div>
+
+          {/* ② + 菜单 */}
+          <div className={isExpanded ? "order-2" : "order-1"}>
+            <ComposerPlusMenu
+              disabled={inputDisabled}
+              onSelectFiles={onPlusMenuFiles}
+            />
+          </div>
+
+          {/* ③ 弹性间隔（展开时推右） */}
+          {isExpanded && <div className="order-3 flex-1" />}
+
+          {/* ④ 模型选择器 */}
+          {showExecutorSelector && (
+            <div className={isExpanded ? "order-4" : "order-3"}>
+              <InlineModelSelector
+                execConfig={execConfig}
+                discoveredOptions={discovered.options}
+                isDiscoveredLoading={isDiscoveredLoading}
+                executorName={executorName}
+                readonly={isSteerReadonly}
+                onReset={execConfig.reset}
+                onRefetch={discovery.refetch}
+                onReconnect={discovered.reconnect}
+              />
             </div>
+          )}
+
+          {/* ⑤ 发送/状态按钮 — 常驻 */}
+          <div className={isExpanded ? "order-5" : "order-4"}>
+            <ComposerSendButton
+              isRunning={isActionRunning}
+              hasInput={hasContent}
+              isSending={isSending}
+              isCancelling={isCancelling}
+              sendDisabled={sendDisabled}
+              cancelDisabled={cancelDisabled}
+              primaryKind={primaryAction.kind}
+              canSteer={Boolean(secondaryAction?.enabled)}
+              onSend={onPrimaryAction}
+              onSteer={onSteerAction}
+              onCancel={onCancelAction}
+            />
           </div>
         </div>
-        <p className="mt-1 text-xs text-muted-foreground/60">
-          {canSendPrompt
-            ? `Ctrl+Enter 快捷发送 · ${workspaceId ? "@ 引用工作空间文件" : "当前会话未绑定工作空间，@ 文件引用不可用"}`
-            : sendUnavailableReason ?? "当前 Session 只能查看 runtime trace，请从 Agent 入口打开可继续对话的会话。"}
+
+        <p className="mt-1.5 px-1 text-[11px] text-muted-foreground/40">
+          {helperText}
         </p>
       </div>
     </div>

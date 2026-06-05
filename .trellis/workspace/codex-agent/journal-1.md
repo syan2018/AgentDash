@@ -79,3 +79,70 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Session 控制动作模型修复
+
+**Date**: 2026-06-04
+**Task**: Session 控制动作模型修复
+**Branch**: `codex/session-runtime-control-actions`
+
+### Summary
+
+完成 Session runtime-control action set、steering endpoint、relay/codex/PiAgent steering 接线、前端输入区 action model 与运行态交互验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3bbcc968` | (see git log) |
+| `cd365a1c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 4: 接通 Codex 协议化 Steer 控制面
+
+**Date**: 2026-06-04
+**Task**: 接通 Codex 协议化 Steer 控制面
+**Branch**: `codex/session-runtime-control-actions`
+
+### Summary
+
+将运行中 steer 与普通 prompt 统一为 Codex UserInputSubmitted 事件；控制面改为 UserInput + expected_turn_id；同步前端展示、投影、relay/local/connector 链路和规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9fa958b5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

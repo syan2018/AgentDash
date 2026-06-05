@@ -205,7 +205,7 @@ impl TurnPreparer {
                             trigger: HookTrigger::SessionStart,
                             payload: Some(serde_json::json!({
                                 "text_prompt": resolved_payload.text_prompt,
-                                "user_block_count": resolved_payload.user_blocks.len(),
+                                "user_block_count": resolved_payload.input.len(),
                                 "tool_capabilities": {
                                     "current": initial_caps.iter().collect::<Vec<_>>(),
                                 },

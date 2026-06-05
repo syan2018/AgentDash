@@ -21,7 +21,8 @@ use codex_app_server_protocol::{
     GetAccountResponse, InitializeCapabilities, InitializeParams, InitializeResponse,
     JSONRPCMessage, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse, RequestId, SandboxMode,
     Thread, ThreadForkParams, ThreadForkResponse, ThreadNameUpdatedNotification, ThreadStartParams,
-    ThreadStartResponse, TurnStartParams, TurnStartResponse, UserInput,
+    ThreadStartResponse, TurnStartParams, TurnStartResponse, TurnSteerParams, TurnSteerResponse,
+    UserInput,
 };
 use futures::stream::BoxStream;
 use serde::de::DeserializeOwned;
@@ -50,6 +51,16 @@ fn is_codex_executor(executor: &str) -> bool {
 type PendingResponseMap =
     Arc<Mutex<HashMap<RequestId, oneshot::Sender<Result<Value, ConnectorError>>>>>;
 
+#[derive(Clone)]
+struct CodexLiveSession {
+    cancel_token: CancellationToken,
+    out_tx: mpsc::Sender<Value>,
+    pending: PendingResponseMap,
+    request_counter: Arc<AtomicI64>,
+    thread_id: Arc<Mutex<Option<String>>>,
+    active_turn_id: Arc<Mutex<Option<String>>>,
+}
+
 /// 包裹返回给消费者的事件流：当消费者提前丢弃 stream 时，
 /// 触发 `cancel_token`，使 writer/stdout/stderr 三个循环退出、
 /// waiter 杀掉子进程，避免遗留孤儿 `npx codex app-server`。
@@ -76,7 +87,7 @@ impl<S: futures::Stream + Unpin> futures::Stream for CancelOnDropStream<S> {
 }
 
 pub struct CodexBridgeConnector {
-    cancel_by_session: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    live_sessions: Arc<Mutex<HashMap<String, CodexLiveSession>>>,
 }
 
 impl CodexBridgeConnector {
@@ -84,7 +95,7 @@ impl CodexBridgeConnector {
     /// 后续替换底层 SDK/运行时时，仅需继续演进该模块。
     pub fn new() -> Self {
         Self {
-            cancel_by_session: Arc::new(Mutex::new(HashMap::new())),
+            live_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -363,6 +374,7 @@ async fn handle_server_notification(
     tx: &mpsc::Sender<Result<BackboneEnvelope, ConnectorError>>,
     source: &SourceInfo,
     turn_id: &str,
+    active_turn_id: &Arc<Mutex<Option<String>>>,
 ) {
     let wrap = |event: BackboneEvent| make_envelope(event, session_id, source, turn_id);
 
@@ -441,15 +453,26 @@ async fn handle_server_notification(
         }
         "turn/started" => {
             if let Some(params) = notification.params
-                && let Ok(p) = serde_json::from_value(params)
+                && let Ok(p) = serde_json::from_value::<
+                    codex_app_server_protocol::TurnStartedNotification,
+                >(params)
             {
+                *active_turn_id.lock().await = Some(p.turn.id.clone());
                 let _ = tx.send(Ok(wrap(BackboneEvent::TurnStarted(p)))).await;
             }
         }
         "turn/completed" => {
             if let Some(params) = notification.params
-                && let Ok(p) = serde_json::from_value(params)
+                && let Ok(p) = serde_json::from_value::<
+                    codex_app_server_protocol::TurnCompletedNotification,
+                >(params)
             {
+                let completed_turn_id = p.turn.id.clone();
+                let mut active = active_turn_id.lock().await;
+                if active.as_deref() == Some(completed_turn_id.as_str()) {
+                    *active = None;
+                }
+                drop(active);
                 let _ = tx.send(Ok(wrap(BackboneEvent::TurnCompleted(p)))).await;
             }
         }
@@ -563,6 +586,7 @@ impl AgentConnector for CodexBridgeConnector {
     fn capabilities(&self) -> ConnectorCapabilities {
         ConnectorCapabilities {
             supports_cancel: true,
+            supports_steering: true,
             supports_discovery: true,
             supports_variants: false,
             supports_model_override: true,
@@ -598,7 +622,7 @@ impl AgentConnector for CodexBridgeConnector {
     }
 
     async fn has_live_session(&self, session_id: &str) -> bool {
-        self.cancel_by_session.lock().await.contains_key(session_id)
+        self.live_sessions.lock().await.contains_key(session_id)
     }
 
     async fn prompt(
@@ -643,15 +667,23 @@ impl AgentConnector for CodexBridgeConnector {
         })?;
 
         let cancel_token = CancellationToken::new();
-        self.cancel_by_session
-            .lock()
-            .await
-            .insert(session_id.to_string(), cancel_token.clone());
-
         let (tx, rx) = mpsc::channel::<Result<BackboneEnvelope, ConnectorError>>(256);
         let (out_tx, mut out_rx) = mpsc::channel::<Value>(256);
         let pending: PendingResponseMap = Arc::new(Mutex::new(HashMap::new()));
         let request_counter = Arc::new(AtomicI64::new(1));
+        let live_thread_id = Arc::new(Mutex::new(None));
+        let live_active_turn_id = Arc::new(Mutex::new(None));
+        self.live_sessions.lock().await.insert(
+            session_id.to_string(),
+            CodexLiveSession {
+                cancel_token: cancel_token.clone(),
+                out_tx: out_tx.clone(),
+                pending: pending.clone(),
+                request_counter: request_counter.clone(),
+                thread_id: live_thread_id.clone(),
+                active_turn_id: live_active_turn_id.clone(),
+            },
+        );
 
         let writer_tx = tx.clone();
         let writer_cancel = cancel_token.clone();
@@ -706,6 +738,7 @@ impl AgentConnector for CodexBridgeConnector {
         let read_turn_id = turn_id.clone();
         let read_session_id = stream_session_id.clone();
         let read_cancel = cancel_token.clone();
+        let read_active_turn_id = live_active_turn_id.clone();
         tokio::spawn(async move {
             let mut stdout_lines = BufReader::new(stdout).lines();
             loop {
@@ -759,6 +792,7 @@ impl AgentConnector for CodexBridgeConnector {
                             &read_tx,
                             &read_source,
                             &read_turn_id,
+                            &read_active_turn_id,
                         )
                         .await;
                     }
@@ -794,7 +828,7 @@ impl AgentConnector for CodexBridgeConnector {
             }
         });
 
-        let cancel_map = self.cancel_by_session.clone();
+        let live_sessions = self.live_sessions.clone();
         let session_id_owned = session_id.to_string();
         let wait_cancel = cancel_token.clone();
         tokio::spawn(async move {
@@ -805,7 +839,7 @@ impl AgentConnector for CodexBridgeConnector {
                 }
                 _ = child.wait() => {}
             }
-            cancel_map.lock().await.remove(&session_id_owned);
+            live_sessions.lock().await.remove(&session_id_owned);
         });
 
         let handshake_result = async {
@@ -876,6 +910,7 @@ impl AgentConnector for CodexBridgeConnector {
                     );
                     (response.thread.id, source_title_envelope)
                 };
+            *live_thread_id.lock().await = Some(thread_id.clone());
 
             let _ = tx
                 .send(Ok(make_envelope(
@@ -902,15 +937,16 @@ impl AgentConnector for CodexBridgeConnector {
                     ..Default::default()
                 },
             };
-            let _: TurnStartResponse =
+            let turn_start: TurnStartResponse =
                 send_rpc_request(&out_tx, &pending, turn_start_request).await?;
+            *live_active_turn_id.lock().await = Some(turn_start.turn.id);
             Ok::<(), ConnectorError>(())
         }
         .await;
 
         if let Err(err) = handshake_result {
             cancel_token.cancel();
-            self.cancel_by_session.lock().await.remove(session_id);
+            self.live_sessions.lock().await.remove(session_id);
             return Err(err);
         }
 
@@ -921,9 +957,52 @@ impl AgentConnector for CodexBridgeConnector {
     }
 
     async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
-        if let Some(token) = self.cancel_by_session.lock().await.get(session_id).cloned() {
-            token.cancel();
+        if let Some(session) = self.live_sessions.lock().await.get(session_id).cloned() {
+            session.cancel_token.cancel();
         }
+        Ok(())
+    }
+
+    async fn steer_session(
+        &self,
+        session_id: &str,
+        expected_turn_id: &str,
+        input: Vec<UserInput>,
+    ) -> Result<(), ConnectorError> {
+        let session = self
+            .live_sessions
+            .lock()
+            .await
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| {
+                ConnectorError::Runtime(format!(
+                    "session `{session_id}` 当前没有活跃的 Codex app-server，无法运行中 steer"
+                ))
+            })?;
+        let thread_id = session.thread_id.lock().await.clone().ok_or_else(|| {
+            ConnectorError::Runtime("Codex thread 尚未就绪，无法 steer".to_string())
+        })?;
+        let active_turn_id = session.active_turn_id.lock().await.clone().ok_or_else(|| {
+            ConnectorError::Runtime("Codex 当前没有 active turn，无法 steer".to_string())
+        })?;
+        if active_turn_id != expected_turn_id {
+            return Err(ConnectorError::Runtime(format!(
+                "Codex active turn 不匹配: expected={expected_turn_id}, actual={active_turn_id}"
+            )));
+        }
+        let request = ClientRequest::TurnSteer {
+            request_id: next_request_id(&session.request_counter),
+            params: TurnSteerParams {
+                thread_id,
+                input,
+                responsesapi_client_metadata: None,
+                expected_turn_id: expected_turn_id.to_string(),
+            },
+        };
+        let response: TurnSteerResponse =
+            send_rpc_request(&session.out_tx, &session.pending, request).await?;
+        *session.active_turn_id.lock().await = Some(response.turn_id);
         Ok(())
     }
 
@@ -961,6 +1040,7 @@ mod tests {
             connector_type: "local_executor".to_string(),
             executor_id: Some("CODEX".to_string()),
         };
+        let active_turn_id = Arc::new(Mutex::new(None));
 
         handle_server_notification(
             JSONRPCNotification {
@@ -974,6 +1054,7 @@ mod tests {
             &tx,
             &source,
             "turn-1",
+            &active_turn_id,
         )
         .await;
 
@@ -1006,6 +1087,7 @@ mod tests {
             connector_type: "local_executor".to_string(),
             executor_id: Some("CODEX".to_string()),
         };
+        let active_turn_id = Arc::new(Mutex::new(None));
 
         handle_server_notification(
             JSONRPCNotification {
@@ -1019,6 +1101,7 @@ mod tests {
             &tx,
             &source,
             "turn-1",
+            &active_turn_id,
         )
         .await;
 

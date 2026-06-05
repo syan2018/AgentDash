@@ -281,8 +281,8 @@ pub struct AgentLevelMcp {
 pub struct OwnerBootstrapSpec<'a> {
     pub owner: OwnerScope<'a>,
     pub executor_config: AgentConfig,
-    /// user 层 prompt blocks(外部传入或 Routine 模板)。
-    pub user_prompt_blocks: Vec<serde_json::Value>,
+    /// user 层 canonical 用户输入(外部传入或 Routine 模板)。
+    pub user_input: Vec<agentdash_agent_protocol::UserInputBlock>,
     pub agent_mcp: AgentLevelMcp,
     /// Agent preset 中声明的能力指令，作为 agent 来源 contribution 输入 resolver。
     pub agent_tool_directives: Vec<ToolCapabilityDirective>,
@@ -727,9 +727,9 @@ impl<'a> SessionRequestAssembler<'a> {
             .build_owner_context_bundle(&spec, vfs.as_ref(), &session_mcp_servers)
             .await?;
         let audit_lifecycle = owner_audit_lifecycle(&spec.lifecycle);
-        let (prompt_blocks, effective_bundle) = match spec.lifecycle {
+        let (user_input, effective_bundle) = match spec.lifecycle {
             OwnerPromptLifecycle::OwnerBootstrap => {
-                (spec.user_prompt_blocks.clone(), Some(context_bundle))
+                (spec.user_input.clone(), Some(context_bundle))
             }
             OwnerPromptLifecycle::RepositoryRehydrate {
                 ref prebuilt_continuation_bundle,
@@ -742,9 +742,9 @@ impl<'a> SessionRequestAssembler<'a> {
                         None
                     }
                 });
-                (spec.user_prompt_blocks.clone(), chosen_bundle)
+                (spec.user_input.clone(), chosen_bundle)
             }
-            OwnerPromptLifecycle::Plain => (spec.user_prompt_blocks.clone(), None),
+            OwnerPromptLifecycle::Plain => (spec.user_input.clone(), None),
         };
         if let (Some(bundle), Some(trigger)) = (
             effective_bundle.as_ref(),
@@ -759,7 +759,7 @@ impl<'a> SessionRequestAssembler<'a> {
         };
 
         let mut builder = SessionAssemblyBuilder::new()
-            .with_prompt_blocks(prompt_blocks)
+            .with_input(user_input)
             .with_executor_config(spec.executor_config.clone())
             .with_mcp_servers(session_mcp_servers)
             .with_resolved_capabilities(cap_output)
@@ -1076,9 +1076,9 @@ impl<'a> SessionRequestAssembler<'a> {
             spec.audit_session_key.as_deref(),
             AuditTrigger::ComposerRebuild,
         );
-        let prompt_blocks = build_story_step_trigger_prompt_blocks(task_phase);
+        let user_input = build_story_step_trigger_input(task_phase);
         let mut builder = SessionAssemblyBuilder::new()
-            .with_prompt_blocks(prompt_blocks)
+            .with_input(user_input)
             .with_mcp_servers(session_mcp_servers)
             .with_resolved_capabilities(capability_state)
             .with_context_bundle(context_bundle)
@@ -1496,15 +1496,14 @@ pub(in crate::session) fn compose_companion(spec: CompanionSpec<'_>) -> SessionA
         .build()
 }
 
-fn build_story_step_trigger_prompt_blocks(phase: TaskExecutionPhase) -> Vec<serde_json::Value> {
+fn build_story_step_trigger_input(
+    phase: TaskExecutionPhase,
+) -> Vec<agentdash_agent_protocol::UserInputBlock> {
     let text = match phase {
         TaskExecutionPhase::Start => "请开始执行当前任务。",
         TaskExecutionPhase::Continue => "请继续推进当前任务。",
     };
-    vec![serde_json::json!({
-        "type": "text",
-        "text": text,
-    })]
+    agentdash_agent_protocol::text_user_input_blocks(text)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1690,17 +1689,14 @@ pub(in crate::session) async fn compose_companion_with_workflow(
         }
     }
 
-    let prompt_blocks = vec![serde_json::json!({
-        "type": "text",
-        "text": comp.dispatch_prompt,
-    })];
+    let user_input = agentdash_agent_protocol::text_user_input_blocks(comp.dispatch_prompt.clone());
 
     Ok(SessionAssemblyBuilder::new()
         .with_vfs(slice.vfs.unwrap_or_default())
         .apply_lifecycle_activation(&activation, Some(comp.companion_executor_config.clone()))
         .append_mcp_servers(slice.mcp_servers.into_iter())
         .with_optional_context_bundle(merged_bundle)
-        .with_prompt_blocks(prompt_blocks)
+        .with_input(user_input)
         .build())
 }
 
@@ -1906,10 +1902,10 @@ mod tests {
     #[test]
     fn story_step_trigger_prompt_does_not_embed_owner_context() {
         for phase in [TaskExecutionPhase::Start, TaskExecutionPhase::Continue] {
-            let blocks = build_story_step_trigger_prompt_blocks(phase);
+            let blocks = build_story_step_trigger_input(phase);
             let text = blocks
                 .iter()
-                .filter_map(|block| block.get("text").and_then(serde_json::Value::as_str))
+                .filter_map(agentdash_agent_protocol::user_input_text)
                 .collect::<Vec<_>>()
                 .join("\n");
 
@@ -2298,23 +2294,20 @@ mod tests {
         #[test]
         fn prompt_blocks_prepared_overrides_base() {
             let mut base = base_plan();
-            base.prompt.prompt_blocks =
-                Some(vec![serde_json::json!({ "type": "text", "text": "base" })]);
+            base.prompt.input = Some(agentdash_agent_protocol::text_user_input_blocks("base"));
             let prepared = SessionAssemblyBuilder {
-                prompt_blocks: Some(vec![
-                    serde_json::json!({ "type": "text", "text": "compose" }),
-                ]),
+                input: Some(agentdash_agent_protocol::text_user_input_blocks("compose")),
                 ..Default::default()
             };
 
             let result = apply_session_assembly(base, prepared);
             let texts: Vec<&str> = result
                 .prompt
-                .prompt_blocks
+                .input
                 .as_ref()
                 .unwrap()
                 .iter()
-                .filter_map(|b| b.get("text").and_then(serde_json::Value::as_str))
+                .filter_map(agentdash_agent_protocol::user_input_text)
                 .collect();
             assert_eq!(texts, vec!["compose"]);
         }
@@ -2322,18 +2315,17 @@ mod tests {
         #[test]
         fn prompt_blocks_prepared_none_preserves_base() {
             let mut base = base_plan();
-            base.prompt.prompt_blocks =
-                Some(vec![serde_json::json!({ "type": "text", "text": "base" })]);
+            base.prompt.input = Some(agentdash_agent_protocol::text_user_input_blocks("base"));
             let prepared = SessionAssemblyBuilder::default();
 
             let result = apply_session_assembly(base, prepared);
             let texts: Vec<&str> = result
                 .prompt
-                .prompt_blocks
+                .input
                 .as_ref()
                 .unwrap()
                 .iter()
-                .filter_map(|b| b.get("text").and_then(serde_json::Value::as_str))
+                .filter_map(agentdash_agent_protocol::user_input_text)
                 .collect();
             assert_eq!(texts, vec!["base"]);
         }
@@ -2433,15 +2425,15 @@ mod tests {
             env.insert("PATH".to_string(), "/usr/bin".to_string());
 
             let input = UserPromptInput {
-                prompt_blocks: Some(vec![serde_json::json!({ "type": "text", "text": "hi" })]),
+                input: Some(agentdash_agent_protocol::text_user_input_blocks("hi")),
                 env,
                 executor_config: None,
                 backend_selection: None,
             };
             let prepared = SessionAssemblyBuilder::new().with_user_input(input).build();
             assert!(
-                prepared.prompt_blocks.is_some(),
-                "with_user_input 应把 prompt_blocks 写入 builder"
+                prepared.input.is_some(),
+                "with_user_input 应把 input 写入 builder"
             );
             assert_eq!(
                 prepared.env.get("PATH").map(String::as_str),

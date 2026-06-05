@@ -1419,6 +1419,7 @@ pub(super) fn backbone_event_type_name(event: &BackboneEvent) -> &'static str {
         BackboneEvent::TurnStarted(_) => "turn_started",
         BackboneEvent::TurnCompleted(_) => "turn_completed",
         BackboneEvent::TurnDiffUpdated(_) => "turn_diff_updated",
+        BackboneEvent::UserInputSubmitted(_) => "user_input_submitted",
         BackboneEvent::TurnPlanUpdated(_) => "turn_plan_updated",
         BackboneEvent::PlanDelta(_) => "plan_delta",
         BackboneEvent::TokenUsageUpdated(_) => "token_usage_updated",

@@ -1,0 +1,30 @@
+{
+  "id": "session-composer-redesign-image-input",
+  "name": "session-composer-redesign-image-input",
+  "title": "Session 输入框重构与图片输入",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-06-04",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/session-runtime-control-actions",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-04-userinput-canonical-path",
+    "06-04-composer-image-redesign",
+    "06-04-dual-mode-append-messaging"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

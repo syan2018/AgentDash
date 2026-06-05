@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent};
-use agentdash_spi::content_block_to_text;
 use agentdash_spi::{
     PersistedSessionEvent, SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord,
     SessionCompactionStatus, SessionPersistence,
@@ -151,28 +150,24 @@ pub fn session_item_projections(events: &[PersistedSessionEvent]) -> Vec<Session
 
     for event in events {
         match &event.notification.event {
+            BackboneEvent::UserInputSubmitted(input) => {
+                let item_id = input.item_id.clone();
+                let builder = builders
+                    .entry(item_id.clone())
+                    .or_insert_with(|| SessionItemBuilder::new(item_id, "user_message"));
+                builder.apply_event(event);
+                builder.role = Some("user");
+                builder.raw_value = serde_json::to_value(input).ok();
+                for content in &input.content {
+                    if let Some(text) = codex_user_input_preview(content) {
+                        builder.text.push_str(&text);
+                    }
+                }
+            }
             BackboneEvent::Platform(
                 agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value },
             ) => {
-                if key == "user_message_chunk" {
-                    let item_id = user_item_id(event);
-                    let builder = builders
-                        .entry(item_id.clone())
-                        .or_insert_with(|| SessionItemBuilder::new(item_id, "user_message"));
-                    builder.apply_event(event);
-                    builder.role = Some("user");
-                    builder.raw_blocks.push(value.clone());
-                    if let Ok(block) = serde_json::from_value::<
-                        agentdash_agent_protocol::ContentBlock,
-                    >(value.clone())
-                    {
-                        if let Some(text) = content_block_to_text(&block) {
-                            builder.text.push_str(&text);
-                        }
-                    } else {
-                        builder.text.push_str(&json_preview(value));
-                    }
-                } else if key == "context_compacted" {
+                if key == "context_compacted" {
                     let item_id = value
                         .get("lifecycle_item_id")
                         .and_then(Value::as_str)
@@ -255,6 +250,17 @@ pub fn session_item_projections(events: &[PersistedSessionEvent]) -> Vec<Session
         );
     }
     projections
+}
+
+fn codex_user_input_preview(
+    input: &agentdash_agent_protocol::codex_app_server_protocol::UserInput,
+) -> Option<String> {
+    match input {
+        agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text { text, .. } => {
+            Some(text.clone())
+        }
+        other => serde_json::to_string(other).ok(),
+    }
 }
 
 pub fn filter_session_items(
@@ -480,14 +486,6 @@ fn apply_thread_item_event(
     if builder.text.is_empty() {
         builder.text = thread_item_preview(item);
     }
-}
-
-fn user_item_id(event: &PersistedSessionEvent) -> String {
-    event
-        .turn_id
-        .as_deref()
-        .map(|turn_id| format!("user:{turn_id}"))
-        .unwrap_or_else(|| format!("user:event:{}", event.event_seq))
 }
 
 fn is_context_compaction_item(item: &AgentDashThreadItem) -> bool {

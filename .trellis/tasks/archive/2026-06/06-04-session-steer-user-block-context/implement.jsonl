@@ -1,0 +1,14 @@
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"定义 BackboneEnvelope / BackboneEvent、PlatformEvent 与前端消费链路，是新增用户输入协议事件的主契约。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"约束 Rust 协议类型到 TypeScript generated 文件的生成与 drift check。"}
+{"file":".trellis/spec/backend/session/streaming-protocol.md","reason":"约束 session NDJSON event envelope 与前端恢复游标。"}
+{"file":".trellis/spec/backend/session/context-compaction-projection.md","reason":"约束 session_events 到模型上下文 projection 的事实来源。"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"约束 useSessionStream / useSessionFeed 的事件聚合与 hard boundary 语义。"}
+{"file":"references/codex/codex-rs/app-server-protocol/src/protocol/v2/turn.rs","reason":"Codex turn/steer 参数、expected_turn_id 与 UserInput 协议形态。"}
+{"file":"references/codex/codex-rs/app-server-protocol/src/protocol/common.rs","reason":"Codex app-server request method 名称，包括 turn/start、turn/steer、turn/interrupt 等控制面入口。"}
+{"file":"references/codex/codex-rs/app-server-protocol/src/protocol/v2/item.rs","reason":"Codex ThreadItem::UserMessage 的 content: Vec<UserInput> 形态。"}
+{"file":"references/codex/codex-rs/app-server-protocol/src/protocol/thread_history.rs","reason":"Codex 使用显式 turn boundary 表达 mid-turn steering 的历史重建语义。"}
+{"file":"references/codex/codex-rs/app-server/src/request_processors/turn_processor.rs","reason":"Codex turn/steer 服务端校验 active turn、expected turn mismatch 与 non-steerable turn 的错误语义。"}
+{"file":"crates/agentdash-contracts/src/workflow.rs","reason":"SessionRuntimeControlView 与 actions 是前端控制态的 generated DTO 来源。"}
+{"file":"crates/agentdash-relay/src/protocol/prompt.rs","reason":"relay command.prompt / command.steer 当前 payload shape，需要收敛到 Codex-aligned control command。"}
+{"file":"crates/agentdash-application/src/session/control.rs","reason":"SessionControlService 是 application 到 connector 的 runtime control 分发边界。"}
+{"file":"crates/agentdash-local/src/handlers/prompt.rs","reason":"本机 relay handler 当前解析 prompt/steer payload，是 cloud/local 控制面一致性检查点。"}

@@ -187,7 +187,7 @@ fn envelope_from_construction(construction: RuntimeContextInspectionPlan) -> Fra
             activity_key: None,
         },
         intent: FrameLaunchIntent {
-            prompt_blocks: construction.prompt.prompt_blocks,
+            input: construction.prompt.input,
             environment_variables: construction.prompt.environment_variables,
             identity: None,
             terminal_hook_effect_binding: None,

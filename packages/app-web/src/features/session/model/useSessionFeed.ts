@@ -105,14 +105,6 @@ function isEffectivelyEmptyTextEntry(entry: SessionDisplayEntry): boolean {
   return text.trim().length === 0;
 }
 
-function isUserMessageChunk(event: BackboneEvent): boolean {
-  return (
-    event.type === "platform" &&
-    event.payload.kind === "session_meta_update" &&
-    event.payload.data.key === "user_message_chunk"
-  );
-}
-
 function isToolEntryTerminal(entry: SessionDisplayEntry): boolean {
   const item = extractThreadItem(entry.event);
   if (!item) return true;
@@ -141,6 +133,7 @@ function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
 
   if (
     event.type === "turn_plan_updated" ||
+    event.type === "user_input_submitted" ||
     event.type === "approval_request" ||
     event.type === "error"
   ) {
@@ -158,8 +151,6 @@ function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
   }
 
   if (event.type === "platform") {
-    // user_message_chunk → 真正的"用户/agent 可见产出"，硬边界
-    if (isUserMessageChunk(event)) return "hard_boundary";
     // context_frame → 侧轨身份/能力切换，不应打散 tool burst
     if (isContextFrameEvent(event)) return "soft_boundary";
     // 其他可渲染系统/任务事件 → 硬边界（hook trace、companion、capability change 等）

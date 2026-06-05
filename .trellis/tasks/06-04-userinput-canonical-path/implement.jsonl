@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/shared/index.md", "reason": "共享编码规范"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端开发指南"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端代码质量要求"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "后端整体架构边界（crate 分层）"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "session 层架构：prompt/steer 投递归属与边界"}
+{"file": ".trellis/spec/backend/session/pi-agent-streaming.md", "reason": "pi_agent 连接器投递/流式背景（prompt/steer 改造点上下文）"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Backbone 协议：UserInputSubmitted 等用户输入事件"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "前后端契约 + TS 生成约定（API 入参改形后重生成）"}
+{"file": ".trellis/tasks/06-04-session-composer-redesign-image-input/research/userinput-canonical-path-audit.md", "reason": "核心审计：3 路 flatten + ContentPart::Image 缺口 + 待删 flattener 清单 + canonical 目标"}
+{"file": ".trellis/tasks/06-04-session-composer-redesign-image-input/research/send-steer-protocol-and-dual-mode-gap.md", "reason": "message/steer 协议分裂现状与三原语"}
+{"file": ".trellis/tasks/06-04-session-composer-redesign-image-input/design.md", "reason": "parent 跨 child 架构：canonical 用户输入路径目标形态与契约"}

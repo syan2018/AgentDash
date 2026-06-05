@@ -1,14 +1,39 @@
 import type { ReactNode } from "react";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { PendingMessageView } from "../../../generated/workflow-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
+import type { ImageAttachment } from "./composer/useImageAttachments";
 
 export interface PromptTemplate {
   id: string;
   label: string;
   content: string;
+}
+
+export type SessionChatPrimaryActionKind = "start_draft" | "send_next" | "steer" | "enqueue" | "none";
+
+export interface SessionChatActionState {
+  enabled: boolean;
+  label: string;
+  unavailableReason?: string;
+}
+
+export interface SessionChatPrimaryActionState extends SessionChatActionState {
+  kind: SessionChatPrimaryActionKind;
+  placeholder: string;
+}
+
+export interface SessionChatControlState {
+  mode: "draft" | "runtime";
+  controlPlaneStatus: string;
+  primaryAction: SessionChatPrimaryActionState;
+  cancelAction: SessionChatActionState;
+  /** running 态可用的辅助动作（如 steer 可用时键盘/按钮分流） */
+  secondaryAction?: SessionChatPrimaryActionState;
+  helperText?: string;
 }
 
 export interface SessionChatViewProps {
@@ -49,21 +74,26 @@ export interface SessionChatViewProps {
   /** 隐藏执行器选择器（当外部已确定执行器时，如 Task 场景） */
   showExecutorSelector?: boolean;
 
-  // ─── 自定义发送流程 ──────────────────────────────────
+  // ─── 控制动作 ────────────────────────────────────────
 
-  /**
-   * 全接管发送流程。
-   * prompt 可为空（如 Task 无额外指令直接执行）。
-   * 返回后 SessionChatView 自动清空输入。
-   */
-  customSend?: (
+  controlState: SessionChatControlState;
+
+  onPrimaryAction: (
+    action: SessionChatPrimaryActionKind,
     sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
+    imageAttachments?: ImageAttachment[],
   ) => Promise<void>;
 
-  /** 未提供 Agent dispatcher 时展示的不可发送原因。 */
-  sendUnavailableReason?: string;
+  // ─── Pending Queue ─────────────────────────────────
+
+  /** 排队中的消息列表（来自 runtimeControl.pending_messages） */
+  pendingMessages?: PendingMessageView[];
+  /** 引导排队消息（promote to steer） */
+  onPromotePending?: (messageId: string) => void;
+  /** 删除排队消息 */
+  onDeletePending?: (messageId: string) => void;
 
   // ─── 布局插槽 ────────────────────────────────────────
 
@@ -81,12 +111,6 @@ export interface SessionChatViewProps {
 
   /** 无 session 时显示的 prompt 模板按钮 */
   promptTemplates?: PromptTemplate[];
-
-  /** 输入框占位符 */
-  inputPlaceholder?: string;
-
-  /** 自定义主按钮文本（非运行状态时），默认 "发送" */
-  idleSendLabel?: string;
 
   /** 初始输入值（仅首次挂载时填充） */
   initialInputValue?: string;

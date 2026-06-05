@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use agentdash_agent_protocol::ContentBlock;
+use agentdash_agent_protocol::UserInputBlock;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -18,11 +18,14 @@ pub use agentdash_spi::session_persistence::{
 
 /// 纯用户输入 — HTTP 反序列化的目标。
 /// 不包含任何后端注入字段。
+///
+/// `input` 是 canonical 用户输入（`Vec<UserInputBlock>`），贯穿
+/// API -> 应用 -> 连接器 -> AgentMessage，与 steer 同形；图片等多模态结构化携带，不再拍平。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserPromptInput {
     #[serde(default)]
-    pub prompt_blocks: Option<Vec<serde_json::Value>>,
+    pub input: Option<Vec<UserInputBlock>>,
     #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
@@ -169,46 +172,40 @@ pub fn resolve_session_prompt_lifecycle(
 pub struct ResolvedPromptPayload {
     pub text_prompt: String,
     pub prompt_payload: PromptPayload,
-    pub user_blocks: Vec<ContentBlock>,
+    /// canonical 用户输入：贯穿投递与持久化的单一形态。
+    pub input: Vec<UserInputBlock>,
 }
 
 impl UserPromptInput {
     /// 解析出有效的 prompt payload。
     /// - `text_prompt`：仅用于标题提示 / trace 元信息的文本摘要
-    /// - `user_blocks`：注入会话流时保留的原始 ACP ContentBlock
+    /// - `input`：canonical 用户输入（`Vec<UserInputBlock>`），投递与持久化的单一形态
+    ///
+    /// 入参已是 canonical `Vec<UserInputBlock>`（与 steer 同形），不再经 ACP ContentBlock 反序列化。
     pub fn resolve_prompt_payload(&self) -> Result<ResolvedPromptPayload, String> {
-        let blocks = self
-            .prompt_blocks
+        let input = self
+            .input
             .as_ref()
-            .ok_or_else(|| "必须提供 promptBlocks".to_string())?;
-        if blocks.is_empty() {
-            return Err("promptBlocks 不能为空数组".to_string());
+            .ok_or_else(|| "必须提供 input".to_string())?;
+        if input.is_empty() {
+            return Err("input 不能为空数组".to_string());
         }
-        let mut user_blocks = Vec::with_capacity(blocks.len());
-        for (index, block) in blocks.iter().enumerate() {
-            let parsed = serde_json::from_value::<ContentBlock>(block.clone())
-                .map_err(|e| format!("promptBlocks[{index}] 不是有效 ACP ContentBlock: {e}"))?;
-            user_blocks.push(parsed);
-        }
-        let prompt_payload = PromptPayload::Blocks(user_blocks.clone());
+        let prompt_payload = PromptPayload::Input(input.clone());
         let text_prompt = prompt_payload.to_fallback_text();
         if text_prompt.trim().is_empty() {
-            return Err("promptBlocks 中没有有效内容".to_string());
+            return Err("input 中没有有效内容".to_string());
         }
         Ok(ResolvedPromptPayload {
             text_prompt,
             prompt_payload,
-            user_blocks,
+            input: input.clone(),
         })
     }
 
     pub fn from_text(text: impl AsRef<str>) -> Self {
         let trimmed = text.as_ref().trim();
         Self {
-            prompt_blocks: Some(vec![serde_json::json!({
-                "type": "text",
-                "text": trimmed,
-            })]),
+            input: Some(agentdash_agent_protocol::text_user_input_blocks(trimmed)),
             env: HashMap::new(),
             executor_config: None,
             backend_selection: None,

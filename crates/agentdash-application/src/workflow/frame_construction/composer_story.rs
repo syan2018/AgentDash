@@ -17,7 +17,7 @@ use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
 use super::{
     FrameConstructionService, connector_internal, frame_builder_from_existing,
-    merge_user_executor_config, owner_prompt_lifecycle, required_prompt_blocks,
+    merge_user_executor_config, owner_prompt_lifecycle, required_user_input,
 };
 
 pub(super) async fn compose(
@@ -40,7 +40,7 @@ pub(super) async fn compose(
         &agent_context.executor_config,
     );
     let lifecycle = owner_prompt_lifecycle(svc.prompt_lifecycle(Some(&executor_config), input));
-    let user_prompt_blocks = required_prompt_blocks(input.command.user_input())?;
+    let user_input = required_user_input(input.command.user_input())?;
     let builder =
         frame_builder_from_existing(frame, input.session_id.as_str(), input.session_id.as_str())?;
     agent.project_agent_id = Some(project_agent.id);
@@ -56,7 +56,7 @@ pub(super) async fn compose(
                     workspace: workspace.as_ref(),
                 },
                 executor_config,
-                user_prompt_blocks,
+                user_input,
                 agent_mcp: AgentLevelMcp {
                     preset_mcp_servers: agent_context.preset_mcp_servers.clone(),
                 },

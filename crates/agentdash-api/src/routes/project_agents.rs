@@ -272,7 +272,7 @@ pub async fn create_project_agent_session(
             ProjectAgentSessionStartCommand {
                 project_id,
                 project_agent_id,
-                prompt_blocks: req.prompt_blocks,
+                input: req.input,
                 executor_config,
                 identity: Some(current_user.clone()),
             },

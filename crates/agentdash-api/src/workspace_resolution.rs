@@ -8,12 +8,12 @@ use agentdash_application::workspace::{WorkspaceDetectionError, WorkspaceResolut
 use agentdash_application_ports::backend_transport::{
     BackendTransport, DirectoryBrowseInfo, DirectoryEntryInfo, GitRepoInfo, P4WorkspaceInfo,
     RelayPromptRequest, RelayPromptTransport, RelaySessionRoute, RelaySessionRouteInfo,
-    RemoteExecutorInfo, TransportError, WorkspaceProbeInfo,
+    RelaySteerRequest, RemoteExecutorInfo, TransportError, WorkspaceProbeInfo,
 };
 use agentdash_domain::workspace::Workspace;
 use agentdash_relay::{
     AgentConfigRelay, CommandBrowseDirectoryPayload, CommandCancelPayload, CommandPromptPayload,
-    CommandWorkspaceDetectPayload, RelayMessage, ResponsePromptPayload,
+    CommandSteerPayload, CommandWorkspaceDetectPayload, RelayMessage, ResponsePromptPayload,
 };
 use async_trait::async_trait;
 
@@ -248,6 +248,44 @@ impl RelayPromptTransport for BackendRegistry {
                 err.message
             ))),
             _ => Ok(()),
+        }
+    }
+
+    async fn relay_steer(
+        &self,
+        backend_id: &str,
+        payload: RelaySteerRequest,
+    ) -> Result<(), TransportError> {
+        let cmd = RelayMessage::CommandSteer {
+            id: RelayMessage::new_id("steer"),
+            payload: CommandSteerPayload {
+                session_id: payload.session_id,
+                input: payload.input,
+                expected_turn_id: payload.expected_turn_id,
+            },
+        };
+        let resp =
+            self.send_command(backend_id, cmd).await.map_err(
+                |e| match map_backend_command_error(e) {
+                    TransportError::OperationFailed(message) => {
+                        TransportError::OperationFailed(format!("relay steer 失败: {message}"))
+                    }
+                    other => other,
+                },
+            )?;
+
+        match resp {
+            RelayMessage::ResponseSteer { error: None, .. } => Ok(()),
+            RelayMessage::ResponseSteer {
+                error: Some(err), ..
+            } => Err(TransportError::OperationFailed(format!(
+                "远程 steer 失败: {}",
+                err.message
+            ))),
+            other => Err(TransportError::OperationFailed(format!(
+                "远程后端返回意外响应: {}",
+                other.id()
+            ))),
         }
     }
 

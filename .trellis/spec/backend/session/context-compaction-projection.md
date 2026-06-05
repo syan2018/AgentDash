@@ -6,7 +6,7 @@
 
 ## Durable Shape
 
-`session_events` 保存真实发生过的事实：用户输入、assistant 输出、工具生命周期、compact lifecycle、failure diagnostic 和 ContextFrame。compact 不改写历史事件，只提交新的模型上下文 projection。
+`session_events` 保存真实发生过的事实：`UserInputSubmitted` 用户输入、assistant 输出、工具生命周期、compact lifecycle、failure diagnostic 和 ContextFrame。compact 不改写历史事件，只提交新的模型上下文 projection。
 
 成功结构性 compact 使用三类持久化对象表达可恢复状态：
 
@@ -67,6 +67,8 @@ session_projection_heads(model_context)
 ```
 
 没有 active projection head 时，ContextProjector 从 `session_events` 构建完整 transcript projection。
+
+用户输入投影以 `UserInputSubmitted.item_id` 作为 message key，并按事件顺序生成模型可见 user message。`submission_kind=prompt` 和 `submission_kind=steer` 可以落在同一个 turn 内但必须保留不同 item id，原因是 resume、fork、rollback 和后续 compact 都需要复原 Codex thread history 的真实 user message 边界。
 
 `AgentContextEnvelope` 内的每条 `AgentInputMessage` 必须携带 provenance：
 

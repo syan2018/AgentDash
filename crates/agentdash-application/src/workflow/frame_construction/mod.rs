@@ -272,13 +272,13 @@ pub(crate) fn merge_user_executor_config(
     }
 }
 
-pub(crate) fn required_prompt_blocks(
+pub(crate) fn required_user_input(
     input: &UserPromptInput,
-) -> Result<Vec<serde_json::Value>, ConnectorError> {
+) -> Result<Vec<agentdash_agent_protocol::UserInputBlock>, ConnectorError> {
     input
-        .prompt_blocks
+        .input
         .clone()
-        .ok_or_else(|| ConnectorError::InvalidConfig("必须提供 promptBlocks".to_string()))
+        .ok_or_else(|| ConnectorError::InvalidConfig("必须提供 input".to_string()))
 }
 
 pub(crate) fn frame_builder_from_existing(
@@ -325,12 +325,12 @@ pub(crate) fn build_envelope_from_frame(
         executor_config = Some(config);
     }
 
-    let mut prompt_blocks = command.user_input().prompt_blocks.clone();
+    let mut input = command.user_input().input.clone();
     let mut environment_variables = command.user_input().env.clone();
 
     if let Some(extras) = extras {
-        if extras.prompt_blocks.is_some() {
-            prompt_blocks = extras.prompt_blocks;
+        if extras.input.is_some() {
+            input = extras.input;
         }
         if !extras.environment_variables.is_empty() {
             environment_variables = extras.environment_variables;
@@ -381,7 +381,7 @@ pub(crate) fn build_envelope_from_frame(
     Ok(FrameLaunchEnvelope {
         surface,
         intent: FrameLaunchIntent {
-            prompt_blocks,
+            input,
             environment_variables,
             identity: command.identity(),
             terminal_hook_effect_binding: hook_binding,

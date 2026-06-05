@@ -26,6 +26,17 @@ impl ContentPart {
         Self::Text { text: text.into() }
     }
 
+    /// 构造图片内容片段。
+    ///
+    /// `mime_type` 为图片 MIME（如 `image/png`），`data` 为 base64 编码的图片字节，
+    /// 让多模态图片输入结构化直达模型，而不是被拍平成占位文本。
+    pub fn image(mime_type: impl Into<String>, data: impl Into<String>) -> Self {
+        Self::Image {
+            mime_type: mime_type.into(),
+            data: data.into(),
+        }
+    }
+
     pub fn reasoning(
         text: impl Into<String>,
         id: Option<String>,

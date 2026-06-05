@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use agentdash_agent_protocol::BackboneEnvelope;
+use agentdash_agent_protocol::{BackboneEnvelope, UserInputBlock};
 use agentdash_domain::workspace::WorkspaceIdentityKind;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
@@ -68,6 +68,13 @@ pub trait RelayPromptTransport: BackendTransport {
     /// 取消远程会话。
     async fn relay_cancel(&self, backend_id: &str, session_id: &str) -> Result<(), TransportError>;
 
+    /// 向远程运行中的 session 注入 steer 消息。
+    async fn relay_steer(
+        &self,
+        backend_id: &str,
+        payload: RelaySteerRequest,
+    ) -> Result<(), TransportError>;
+
     /// 列出所有在线后端上报的执行器快照。
     fn list_online_executors(&self) -> Vec<RemoteExecutorInfo>;
 
@@ -111,6 +118,14 @@ pub struct RelayPromptRequest {
     /// Relay/remote agent 的 MCP 建联由远端第三方 agent 自行处理；
     /// cloud 侧不区分 direct / relay，也不在 relay connector 内私有缓存。
     pub mcp_servers: Vec<serde_json::Value>,
+}
+
+/// relay steer 命令 payload — 只影响已有运行中 session，不创建新 turn。
+#[derive(Debug, Clone)]
+pub struct RelaySteerRequest {
+    pub session_id: String,
+    pub input: Vec<UserInputBlock>,
+    pub expected_turn_id: String,
 }
 
 /// relay 执行器配置 — 对齐远程后端需要的最小字段集。

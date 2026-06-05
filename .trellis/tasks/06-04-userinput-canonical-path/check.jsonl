@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/shared/index.md", "reason": "共享编码规范（检查基线）"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量门槛：lint/类型/测试要求"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端检查约定"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "契约一致性：TS 重生成与前端入参对齐校验"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "校验改造未破坏 session 投递边界"}
+{"file": ".trellis/tasks/06-04-session-composer-redesign-image-input/research/userinput-canonical-path-audit.md", "reason": "据审计逐项核对：flatten 是否真消除、ContentPart::Image 是否真直达、冗余转换是否清理"}

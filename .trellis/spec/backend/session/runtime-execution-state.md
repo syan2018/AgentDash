@@ -90,6 +90,32 @@ LaunchCommand -> SessionConstructionPlan -> LaunchPlan
 follow-up 来源只表达 resume intent、parent/session 引用和 source policy。owner、
 VFS、MCP、capability、context、identity 由 construction 重新投影。
 
+## Runtime Control Actions
+
+Session 页面控制面由 `GET /sessions/{id}/runtime-control` 返回的 action set 表达。
+`control_plane.status` 描述 RuntimeSessionExecutionAnchor、LifecycleAgent、AgentFrame 与
+当前 turn 的组合状态；`actions.send_next`、`actions.steer`、`actions.cancel` 分别描述
+下一轮 prompt、运行中用户 steer、运行中取消这三个命令是否可执行。
+
+这些 action 来自 runtime meta、execution state、anchor、agent/frame 和 connector live
+session 能力的联合投影，原因是 session trace、lifecycle 控制面、active turn 与 connector
+live session 是不同事实源。`send_next` 只代表 idle 时可启动下一轮消息；`steer` 只代表
+当前 live executor session 可以接收运行中用户输入；`cancel` 只代表当前运行可中断。前端消费
+action set 后可以准确展示只读 trace、anchored idle、anchored running、terminal 和 frame
+missing，而不会把“正在执行不能发下一轮”误读为“控制面缺失”。
+
+运行中 steer 使用独立 endpoint：
+
+```text
+POST /lifecycle-agents/by-runtime-session/{runtime_session_id}/steering-messages
+```
+
+该入口解析 RuntimeSessionExecutionAnchor，校验 run / agent / frame 一致，要求 session
+处于 running 且 connector 对该 live session 支持 steering，然后调用 `SessionControlService`
+的 `steer_session`。这样运行中用户输入保持 prompt block 语义，并沿 connector / relay /
+executor 控制路径注入当前 turn；下一轮用户消息仍沿 `LifecycleAgentMessageService` 进入
+session launch / prompt claim 主数据流。
+
 ## Terminal Effects
 
 `turn_terminal` event 先持久化，`SessionMeta.last_delivery_status` 由事件投影更新。

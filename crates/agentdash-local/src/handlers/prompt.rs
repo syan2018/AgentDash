@@ -3,7 +3,9 @@
 use agentdash_relay::*;
 use tokio::sync::mpsc;
 
-use agentdash_application::session::{LaunchCommand, SessionRuntimeServices, UserPromptInput};
+use agentdash_application::session::{
+    LaunchCommand, SessionRuntimeServices, SessionTurnSteerCommand, UserPromptInput,
+};
 
 use super::CommandHandler;
 use super::relay_mcp_servers::parse_relay_mcp_servers;
@@ -117,15 +119,14 @@ impl CommandHandler {
             }
         }
 
+        // relay 边界仍按 ACP ContentBlock JSON 与云端互通；本机接收侧在此一次性把
+        // ContentBlock 转换为 canonical `Vec<UserInputBlock>`（relay→canonical 单实现）。
+        let input = payload
+            .prompt_blocks
+            .and_then(relay_prompt_blocks_to_user_input);
         let command = LaunchCommand::local_relay_prompt_input(
             UserPromptInput {
-                prompt_blocks: payload.prompt_blocks.map(|v| {
-                    if let serde_json::Value::Array(arr) = v {
-                        arr
-                    } else {
-                        vec![v]
-                    }
-                }),
+                input,
                 env: payload.env,
                 executor_config,
                 backend_selection: None,
@@ -219,6 +220,47 @@ impl CommandHandler {
         }
     }
 
+    pub(super) async fn handle_steer(
+        &self,
+        id: String,
+        payload: CommandSteerPayload,
+    ) -> RelayMessage {
+        let session_runtime = match &self.session_runtime {
+            Some(session_runtime) => session_runtime,
+            None => {
+                return RelayMessage::ResponseSteer {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error("Session runtime 未初始化")),
+                };
+            }
+        };
+
+        tracing::info!(session_id = %payload.session_id, "收到 command.steer");
+        match session_runtime
+            .control
+            .steer_session(SessionTurnSteerCommand {
+                session_id: payload.session_id.clone(),
+                expected_turn_id: payload.expected_turn_id.clone(),
+                input: payload.input,
+            })
+            .await
+        {
+            Ok(()) => RelayMessage::ResponseSteer {
+                id,
+                payload: Some(ResponseSteerPayload {
+                    status: "accepted".to_string(),
+                }),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseSteer {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(e.to_string())),
+            },
+        }
+    }
+
     pub(super) async fn handle_discover(&self, id: String) -> RelayMessage {
         let executors = self.list_executors();
         RelayMessage::ResponseDiscover {
@@ -244,6 +286,27 @@ impl CommandHandler {
             ),
         }
     }
+}
+
+/// relay 边界：把云端透传的 ACP ContentBlock JSON 转换为 canonical `Vec<UserInputBlock>`。
+///
+/// 远程后端互通保留 ACP ContentBlock wire 形态；本机接收侧在此一次性收敛到 canonical
+/// 用户输入。非数组/空/无可用内容时返回 `None`，交由下游 `resolve_prompt_payload` 报错。
+fn relay_prompt_blocks_to_user_input(
+    value: serde_json::Value,
+) -> Option<Vec<agentdash_agent_protocol::UserInputBlock>> {
+    let array = match value {
+        serde_json::Value::Array(arr) => arr,
+        other => vec![other],
+    };
+    let blocks = array
+        .into_iter()
+        .filter_map(|item| serde_json::from_value::<agentdash_agent_protocol::ContentBlock>(item).ok())
+        .collect::<Vec<_>>();
+    if blocks.is_empty() {
+        return None;
+    }
+    agentdash_agent_protocol::content_blocks_to_codex_user_input(&blocks).ok()
 }
 
 async fn claim_session_forwarder(

@@ -2,6 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
+import type { UserInput } from "./backbone-protocol";
 
 export type AgentAssignmentRefDto = { assignment_id: string, run_id?: string, agent_id?: string, frame_id?: string, };
 
@@ -9,7 +10,11 @@ export type AgentFrameRefDto = { agent_id: string, frame_id: string, revision?: 
 
 export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, };
 
-export type CreateProjectAgentSessionRequest = { prompt_blocks: Array<JsonValue>, executor_config?: JsonValue, };
+export type CreateProjectAgentSessionRequest = {
+/**
+ * canonical 用户输入，与 steer / lifecycle message 同形。
+ */
+input: Array<UserInput>, executor_config?: JsonValue, };
 
 export type LifecycleAgentRefDto = { run_id: string, agent_id: string, };
 

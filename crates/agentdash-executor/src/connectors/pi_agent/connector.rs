@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo};
+use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo, user_input_blocks_to_content_parts};
 use futures::stream::BoxStream;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
@@ -391,6 +391,7 @@ impl AgentConnector for PiAgentConnector {
     fn capabilities(&self) -> ConnectorCapabilities {
         ConnectorCapabilities {
             supports_cancel: true,
+            supports_steering: true,
             supports_discovery: true,
             supports_variants: false,
             supports_model_override: true,
@@ -563,9 +564,10 @@ impl AgentConnector for PiAgentConnector {
         prompt: &PromptPayload,
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
-        let prompt_text = prompt.to_fallback_text();
-        let prompt_text = prompt_text.trim().to_string();
-        if prompt_text.is_empty() {
+        // 统一映射：结构化 UserInput -> ContentPart（图片直达 ContentPart::Image，不再拍平成文本）。
+        // `to_fallback_text` 保留仅供标题/trace 摘要，不再作为投递路径。
+        let prompt_parts = prompt.to_content_parts();
+        if prompt_parts.is_empty() {
             return Err(ConnectorError::InvalidConfig("prompt 内容为空".to_string()));
         }
         let restored_state = context.turn.restored_session_state.as_ref().cloned();
@@ -667,7 +669,7 @@ impl AgentConnector for PiAgentConnector {
         }
 
         let (event_rx, join_handle) = agent
-            .prompt(AgentMessage::user(&prompt_text))
+            .prompt(AgentMessage::user_parts(prompt_parts))
             .map_err(|error| ConnectorError::Runtime(format!("Pi Agent 启动失败: {error}")))?;
 
         let session_id_owned = session_id.to_string();
@@ -877,6 +879,29 @@ impl AgentConnector for PiAgentConnector {
             ))
         })?;
         runtime.agent.steer(AgentMessage::user(message)).await;
+        Ok(())
+    }
+
+    async fn steer_session(
+        &self,
+        session_id: &str,
+        _expected_turn_id: &str,
+        input: Vec<agentdash_agent_protocol::UserInputBlock>,
+    ) -> Result<(), ConnectorError> {
+        // 统一映射：结构化 UserInput -> ContentPart（图片直达 ContentPart::Image，不再拍平）。
+        let parts = user_input_blocks_to_content_parts(&input);
+        if parts.is_empty() {
+            return Err(ConnectorError::InvalidConfig(
+                "steer 输入中没有可投递内容".to_string(),
+            ));
+        }
+        let agents = self.agents.lock().await;
+        let runtime = agents.get(session_id).ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 当前没有活跃的 Pi Agent，无法运行中 steer"
+            ))
+        })?;
+        runtime.agent.steer(AgentMessage::user_parts(parts)).await;
         Ok(())
     }
 }

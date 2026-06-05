@@ -7,10 +7,6 @@ edition.workspace = true
 [lib]
 path = "src/lib.rs"
 
-[[bin]]
-name = "generate_backbone_protocol_ts"
-path = "src/generate_ts.rs"
-
 [dependencies]
 codex-app-server-protocol = { workspace = true }
 agentdash-agent-types = { workspace = true }
@@ -20,4 +16,5 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 ts-rs = { workspace = true }
 thiserror = { workspace = true }
-tempfile = "3"
+base64 = "0.22"
+tracing = { workspace = true }

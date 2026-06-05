@@ -770,7 +770,10 @@ fn compaction_valid_for_head(compaction: &SessionCompactionRecord, head_event_se
 mod tests {
     use std::sync::Arc;
 
-    use agentdash_agent_protocol::{ContentBlock, TextContent, TraceInfo};
+    use agentdash_agent_protocol::{
+        TraceInfo, UserInputSubmissionKind, UserInputSubmittedNotification,
+        codex_app_server_protocol as codex,
+    };
 
     use super::*;
     use crate::session::memory_persistence::MemorySessionPersistence;
@@ -798,11 +801,16 @@ mod tests {
 
     fn user_message(session_id: &str, turn_id: &str, index: u32, text: &str) -> BackboneEnvelope {
         BackboneEnvelope::new(
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "user_message_chunk".to_string(),
-                value: serde_json::to_value(ContentBlock::Text(TextContent::new(text)))
-                    .expect("content block should serialize"),
-            }),
+            BackboneEvent::UserInputSubmitted(UserInputSubmittedNotification::new(
+                session_id,
+                turn_id,
+                format!("{turn_id}:user:{index}"),
+                UserInputSubmissionKind::Prompt,
+                vec![codex::UserInput::Text {
+                    text: text.to_string(),
+                    text_elements: Vec::new(),
+                }],
+            )),
             session_id,
             platform_source(),
         )

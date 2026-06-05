@@ -3,7 +3,7 @@ import type { JsonValue } from "../../../generated/common-contracts";
 import type { BackboneEvent, Turn } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "../model/types";
 import { computeProjectionRefreshKey } from "./SessionChatView";
-import { isSessionComposerSendDisabled } from "./SessionChatComposerState";
+import { isSessionComposerPrimaryDisabled } from "./SessionChatComposerState";
 
 const completedTurn: Turn = {
   id: "turn-1",
@@ -115,35 +115,32 @@ describe("computeProjectionRefreshKey", () => {
   });
 });
 
-describe("isSessionComposerSendDisabled", () => {
-  it("没有 Agent dispatcher 时即使有输入也不可发送", () => {
-    expect(isSessionComposerSendDisabled({
-      hasDispatcher: false,
-      hasSession: true,
+describe("isSessionComposerPrimaryDisabled", () => {
+  it("primary action 不可用时即使有输入也不可提交", () => {
+    expect(isSessionComposerPrimaryDisabled({
+      primaryActionEnabled: false,
+      requirePromptText: true,
       inputValue: "hello",
-      isActionRunning: false,
       isCancelling: false,
       isSending: false,
     })).toBe(true);
   });
 
-  it("没有 Agent dispatcher 时仍允许取消正在运行的 turn", () => {
-    expect(isSessionComposerSendDisabled({
-      hasDispatcher: false,
-      hasSession: true,
+  it("primary action 可用但需要输入时空文本不可提交", () => {
+    expect(isSessionComposerPrimaryDisabled({
+      primaryActionEnabled: true,
+      requirePromptText: true,
       inputValue: "",
-      isActionRunning: true,
       isCancelling: false,
       isSending: false,
-    })).toBe(false);
+    })).toBe(true);
   });
 
-  it("有 Agent dispatcher 时由父级发送入口接管提交", () => {
-    expect(isSessionComposerSendDisabled({
-      hasDispatcher: true,
-      hasSession: true,
+  it("primary action 可用且有输入时允许提交", () => {
+    expect(isSessionComposerPrimaryDisabled({
+      primaryActionEnabled: true,
+      requirePromptText: true,
       inputValue: "hello",
-      isActionRunning: false,
       isCancelling: false,
       isSending: false,
     })).toBe(false);

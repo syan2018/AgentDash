@@ -29,8 +29,10 @@ mod tests {
     #[derive(Default)]
     struct StubConnector {
         live_session: Option<String>,
+        supports_steering: bool,
         update_calls: Arc<AtomicUsize>,
         notification_calls: Arc<AtomicUsize>,
+        steer_calls: Arc<AtomicUsize>,
     }
 
     #[async_trait::async_trait]
@@ -44,7 +46,10 @@ mod tests {
         }
 
         fn capabilities(&self) -> ConnectorCapabilities {
-            ConnectorCapabilities::default()
+            ConnectorCapabilities {
+                supports_steering: self.supports_steering,
+                ..Default::default()
+            }
         }
 
         fn list_executors(&self) -> Vec<AgentInfo> {
@@ -111,6 +116,16 @@ mod tests {
             self.notification_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
+
+        async fn steer_session(
+            &self,
+            _session_id: &str,
+            _expected_turn_id: &str,
+            _input: Vec<agentdash_agent_protocol::codex_app_server_protocol::UserInput>,
+        ) -> Result<(), ConnectorError> {
+            self.steer_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
     }
 
     #[tokio::test]
@@ -122,11 +137,13 @@ mod tests {
                 live_session: Some("other".to_string()),
                 update_calls: skipped_calls.clone(),
                 notification_calls: Arc::new(AtomicUsize::new(0)),
+                ..Default::default()
             }),
             Arc::new(StubConnector {
                 live_session: Some("session-1".to_string()),
                 update_calls: routed_calls.clone(),
                 notification_calls: Arc::new(AtomicUsize::new(0)),
+                ..Default::default()
             }),
         ]);
 
@@ -160,11 +177,13 @@ mod tests {
                 live_session: Some("other".to_string()),
                 update_calls: Arc::new(AtomicUsize::new(0)),
                 notification_calls: skipped_calls.clone(),
+                ..Default::default()
             }),
             Arc::new(StubConnector {
                 live_session: Some("session-1".to_string()),
                 update_calls: Arc::new(AtomicUsize::new(0)),
                 notification_calls: routed_calls.clone(),
+                ..Default::default()
             }),
         ]);
 
@@ -172,6 +191,44 @@ mod tests {
             .push_session_notification("session-1", "phase changed".to_string())
             .await
             .expect("live child should receive notification");
+
+        assert_eq!(skipped_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(routed_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn steer_session_routes_to_live_steering_child() {
+        let skipped_calls = Arc::new(AtomicUsize::new(0));
+        let routed_calls = Arc::new(AtomicUsize::new(0));
+        let composite = CompositeConnector::new(vec![
+            Arc::new(StubConnector {
+                live_session: Some("other".to_string()),
+                supports_steering: true,
+                steer_calls: skipped_calls.clone(),
+                ..Default::default()
+            }),
+            Arc::new(StubConnector {
+                live_session: Some("session-1".to_string()),
+                supports_steering: true,
+                steer_calls: routed_calls.clone(),
+                ..Default::default()
+            }),
+        ]);
+
+        assert!(composite.supports_session_steering("session-1").await);
+        composite
+            .steer_session(
+                "session-1",
+                "turn-1",
+                vec![
+                    agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text {
+                        text: "steer".to_string(),
+                        text_elements: Vec::new(),
+                    },
+                ],
+            )
+            .await
+            .expect("live child should receive steer");
 
         assert_eq!(skipped_calls.load(Ordering::SeqCst), 0);
         assert_eq!(routed_calls.load(Ordering::SeqCst), 1);
@@ -241,6 +298,7 @@ impl AgentConnector for CompositeConnector {
         for c in &self.connectors {
             let sub = c.capabilities();
             caps.supports_cancel = caps.supports_cancel || sub.supports_cancel;
+            caps.supports_steering = caps.supports_steering || sub.supports_steering;
             caps.supports_discovery = caps.supports_discovery || sub.supports_discovery;
             caps.supports_variants = caps.supports_variants || sub.supports_variants;
             caps.supports_model_override =
@@ -299,6 +357,16 @@ impl AgentConnector for CompositeConnector {
         for connector in &self.connectors {
             if connector.has_live_session(session_id).await {
                 return true;
+            }
+        }
+        false
+    }
+
+    async fn supports_session_steering(&self, session_id: &str) -> bool {
+        for connector in &self.connectors {
+            if connector.has_live_session(session_id).await {
+                return connector.capabilities().supports_steering
+                    && connector.supports_session_steering(session_id).await;
             }
         }
         false
@@ -408,6 +476,25 @@ impl AgentConnector for CompositeConnector {
 
         Err(ConnectorError::Runtime(format!(
             "当前没有持有 session `{session_id}` 的连接器，无法推送 steering notification"
+        )))
+    }
+
+    async fn steer_session(
+        &self,
+        session_id: &str,
+        expected_turn_id: &str,
+        input: Vec<agentdash_agent_protocol::UserInputBlock>,
+    ) -> Result<(), ConnectorError> {
+        for connector in &self.connectors {
+            if connector.has_live_session(session_id).await {
+                return connector
+                    .steer_session(session_id, expected_turn_id, input.clone())
+                    .await;
+            }
+        }
+
+        Err(ConnectorError::Runtime(format!(
+            "当前没有持有 session `{session_id}` 的连接器，无法运行中 steer"
         )))
     }
 }

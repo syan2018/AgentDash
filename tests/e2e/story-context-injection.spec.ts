@@ -276,9 +276,21 @@ async function pollSubjectTrace(
 function unwrapNotification(record: Record<string, unknown>): Record<string, unknown> | null {
   const candidate = (record.notification ?? record) as Record<string, unknown>;
   if (!candidate || typeof candidate !== "object") return null;
-  if (typeof candidate.sessionId !== "string") return null;
-  if (!candidate.update || typeof candidate.update !== "object") return null;
+  if (typeof candidate.session_id !== "string") return null;
+  if (!candidate.event || typeof candidate.event !== "object") return null;
   return candidate;
+}
+
+function userInputTexts(notification: Record<string, unknown>): string[] {
+  const event = notification.event as Record<string, unknown> | undefined;
+  if (!event || event.type !== "user_input_submitted") return [];
+  const payload = event.payload as Record<string, unknown> | undefined;
+  const content = payload?.content;
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .map((item) => item.text as string);
 }
 
 async function collectSessionNotifications(sessionId: string, limit = 24): Promise<Record<string, unknown>[]> {
@@ -429,28 +441,13 @@ test("Task dispatch runtime trace 会注入 Story 上下文资源", async ({ req
     .toBeGreaterThan(0);
 
   const notifications = await collectSessionNotifications(sessionId, 20);
-  const resourceBlock = notifications.find((item) => {
-    const update = item.update as Record<string, unknown>;
-    if (update.sessionUpdate !== "user_message_chunk") return false;
-    const content = update.content as Record<string, unknown> | undefined;
-    if (!content || content.type !== "resource") return false;
-    const resource = content.resource as Record<string, unknown> | undefined;
-    return resource?.uri === `agentdash://story-context/${story.id}`;
-  });
-  expect(resourceBlock).toBeTruthy();
-
-  const instructionBlock = notifications.find((item) => {
-    const update = item.update as Record<string, unknown>;
-    if (update.sessionUpdate !== "user_message_chunk") return false;
-    const content = update.content as Record<string, unknown> | undefined;
-    return content?.type === "text" && String(content.text ?? "").includes("Story");
-  });
-  expect(instructionBlock).toBeTruthy();
-
-  const resource = ((resourceBlock!.update as Record<string, unknown>).content as Record<string, unknown>).resource as Record<string, unknown>;
-  expect(String(resource.text ?? "")).toContain(`title: ${story.title}`);
-  expect(String(resource.text ?? "")).toContain("文件: frontend/src/pages/StoryPage.tsx");
-  expect(String(resource.text ?? "")).toContain("1 |");
+  const texts = notifications.flatMap(userInputTexts);
+  const joinedTexts = texts.join("\n");
+  expect(joinedTexts).toContain(`agentdash://story-context/${story.id}`);
+  expect(joinedTexts).toContain("Story");
+  expect(joinedTexts).toContain(`title: ${story.title}`);
+  expect(joinedTexts).toContain("文件: frontend/src/pages/StoryPage.tsx");
+  expect(joinedTexts).toContain("1 |");
 });
 
 test("Task runtime trace 可识别 owner 并返回最新 Task 抽屉", async ({ page, request }) => {

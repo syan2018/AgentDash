@@ -1,8 +1,11 @@
-use std::env;
+use std::{env, sync::Arc};
 
 use agentdash_integration_api::{
     AgentDashIntegration, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
-    IntegrationLibraryAssetSeed, LibraryAssetType,
+    IntegrationLibraryAssetSeed, LibraryAssetType, MarketplaceAssetDetail, MarketplaceAssetPage,
+    MarketplaceAssetQuery, MarketplaceFetchedAsset, MarketplaceSourceDescriptor,
+    MarketplaceSourceError, MarketplaceSourceProvider, MarketplaceSourceProviderKind,
+    MarketplaceSourceTrustLevel,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -91,6 +94,63 @@ impl AgentDashIntegration for ConnectorCatalogIntegration {
                 "asset_refs": []
             }),
         }]
+    }
+
+    fn marketplace_source_providers(&self) -> Vec<Arc<dyn MarketplaceSourceProvider>> {
+        vec![Arc::new(BuiltinEmptyMarketplaceSource)]
+    }
+}
+
+struct BuiltinEmptyMarketplaceSource;
+
+#[async_trait]
+impl MarketplaceSourceProvider for BuiltinEmptyMarketplaceSource {
+    fn descriptor(&self) -> MarketplaceSourceDescriptor {
+        MarketplaceSourceDescriptor {
+            source_key: "builtin.empty_marketplace".to_string(),
+            display_name: "Builtin Empty Marketplace".to_string(),
+            description: Some(
+                "First-party contract fixture for Skill and MCP marketplace source registration."
+                    .to_string(),
+            ),
+            provider_kind: MarketplaceSourceProviderKind::Builtin,
+            supported_asset_types: vec![
+                LibraryAssetType::SkillTemplate,
+                LibraryAssetType::McpServerTemplate,
+            ],
+            trust_level: MarketplaceSourceTrustLevel::Curated,
+            enabled: true,
+        }
+    }
+
+    async fn list_assets(
+        &self,
+        _query: MarketplaceAssetQuery,
+    ) -> Result<MarketplaceAssetPage, MarketplaceSourceError> {
+        Ok(MarketplaceAssetPage {
+            items: vec![],
+            next_cursor: None,
+        })
+    }
+
+    async fn get_asset_detail(
+        &self,
+        external_id: &str,
+    ) -> Result<MarketplaceAssetDetail, MarketplaceSourceError> {
+        Err(MarketplaceSourceError::NotFound {
+            source_key: self.descriptor().source_key,
+            external_id: external_id.to_string(),
+        })
+    }
+
+    async fn fetch_asset_payload(
+        &self,
+        external_id: &str,
+    ) -> Result<MarketplaceFetchedAsset, MarketplaceSourceError> {
+        Err(MarketplaceSourceError::NotFound {
+            source_key: self.descriptor().source_key,
+            external_id: external_id.to_string(),
+        })
     }
 }
 
@@ -234,6 +294,24 @@ mod tests {
         assert_eq!(seeds.len(), 1);
         assert_eq!(seeds[0].asset_type, LibraryAssetType::ExtensionTemplate);
         assert_eq!(seeds[0].key, "builtin-session-notes");
+    }
+
+    #[test]
+    fn connector_catalog_declares_empty_marketplace_source() {
+        let integration = ConnectorCatalogIntegration;
+        let providers = integration.marketplace_source_providers();
+
+        assert_eq!(providers.len(), 1);
+        let descriptor = providers[0].descriptor();
+        assert_eq!(descriptor.source_key, "builtin.empty_marketplace");
+        assert_eq!(
+            descriptor.supported_asset_types,
+            vec![
+                LibraryAssetType::SkillTemplate,
+                LibraryAssetType::McpServerTemplate
+            ]
+        );
+        assert!(descriptor.enabled);
     }
 
     #[test]

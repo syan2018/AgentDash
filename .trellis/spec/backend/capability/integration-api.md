@@ -68,6 +68,90 @@
 - 宿主在启动 seed 阶段校验 version/digest 不变量：payload digest 变化时 asset version 必须提升，asset version 提升时 payload digest 也必须变化。
 - 该入口继承 native integration 的重启边界：管理员安装/更新 integration 后重启服务，用户再从 Marketplace 显式安装到 Project。
 
+## Marketplace Source Providers
+
+### 1. Scope / Trigger
+
+`AgentDashIntegration::marketplace_source_providers()` 是 native integration 向 Marketplace 贡献外部目录来源的启动期入口。该入口只声明发现能力，原因是企业 Skill / MCP 分发服务需要跟随企业版源码发布节奏装配和回滚，而 Marketplace / Shared Library 仍保持平台内统一的导入、安装、版本和审计事实。
+
+### 2. Signatures
+
+```rust
+fn marketplace_source_providers(&self) -> Vec<Arc<dyn MarketplaceSourceProvider>> {
+    vec![]
+}
+
+#[async_trait]
+pub trait MarketplaceSourceProvider: Send + Sync {
+    fn descriptor(&self) -> MarketplaceSourceDescriptor;
+    async fn list_assets(&self, query: MarketplaceAssetQuery)
+        -> Result<MarketplaceAssetPage, MarketplaceSourceError>;
+    async fn get_asset_detail(&self, external_id: &str)
+        -> Result<MarketplaceAssetDetail, MarketplaceSourceError>;
+    async fn fetch_asset_payload(&self, external_id: &str)
+        -> Result<MarketplaceFetchedAsset, MarketplaceSourceError>;
+}
+```
+
+`MarketplaceAssetQuery` 的分页字段为 `cursor`、`limit`，返回页使用 `next_cursor`。分页能力在 SPI 层固定，原因是企业目录通常已有自己的搜索索引，宿主不能要求 provider 一次返回完整目录。
+
+### 3. Contracts
+
+`MarketplaceSourceDescriptor` 必须提供：
+
+- `source_key`：全局唯一来源键。
+- `display_name` / `description`：UI 展示文本。
+- `provider_kind`：`integration` 或 `builtin`。
+- `supported_asset_types`：首期只允许 `skill_template` 与 `mcp_server_template`。
+- `trust_level`：`curated` / `organization` / `public_index`。
+- `enabled`：来源当前是否启用。
+
+`MarketplaceAssetListing` 必须携带 `source_key`、`external_id`、`asset_type`、`key`、`display_name`、`version`，并可携带 `digest`、`updated_at`、`tags`、`author` 与安装需求摘要。`version` 和可选 `digest` 属于远端来源身份的一部分，后续 import / refresh 用它们判断上游是否有新版本；Project 运行事实仍由安装后的 Project Asset 持有。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| `source_key` 为空 | `collect_integration_registration` 返回 `InvalidMarketplaceSourceDescriptor` |
+| `source_key` 重复 | `collect_integration_registration` 返回 `DuplicateMarketplaceSourceKey`，错误包含 first owner 与 second owner |
+| `supported_asset_types` 为空 | `InvalidMarketplaceSourceDescriptor` |
+| `supported_asset_types` 包含非 Skill/MCP 类型 | `InvalidMarketplaceSourceDescriptor` |
+| provider 请求参数不合法 | provider 返回 `MarketplaceSourceError::BadRequest` |
+| 外部 asset 不存在 | provider 返回 `MarketplaceSourceError::NotFound { source_key, external_id }` |
+| 来源暂不可用 | provider 返回 `MarketplaceSourceError::Unavailable` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：企业 integration 注册 `corp-skill-hub`，支持 `skill_template`，宿主启动收集成功，后续 API 从 registry 读取来源。
+- Base：first-party empty marketplace source 返回空 page，用于证明 contract 可实现且不会改变 Project 运行事实。
+- Bad：两个 integration 同时声明 `corp-skill-hub`，宿主启动失败并指出两个 owner。
+
+### 6. Tests Required
+
+- `collect_integration_registration` 成功收集 marketplace source provider。
+- 重复 `source_key` 触发 `DuplicateMarketplaceSourceKey`。
+- 空 `source_key`、空 `supported_asset_types`、非 Skill/MCP 类型触发 descriptor 错误。
+- first-party integration 至少有一个示例 source，避免企业仓成为第一个 contract 消费者。
+- contract crates 编译不需要 HTTP client、database、web framework 或 MCP runtime。
+
+### 7. Ownership Pair
+
+#### Provider-owned
+
+```rust
+// 外部目录发现、分页、详情和拉取候选 payload
+provider.list_assets(MarketplaceAssetQuery { cursor, limit, .. }).await
+```
+
+#### Platform-owned
+
+```rust
+// 导入、安装、版本状态和 Project 运行事实
+External listing -> typed import -> LibraryAsset -> Shared Library install -> Project Asset
+```
+
+这样分层的原因是企业服务协议差异应收束在 provider，平台内资产版本、digest、source-status 和运行事实必须继续由 Shared Library / Project Asset 统一维护。
+
 ---
 
 ## 双仓版本管理

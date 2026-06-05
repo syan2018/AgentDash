@@ -31,6 +31,7 @@ use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_executor::AgentConnector;
 use agentdash_integration_api::AgentDashIntegration;
 use agentdash_integration_api::AuthMode;
+use agentdash_integration_api::MarketplaceSourceProvider;
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -56,6 +57,8 @@ pub struct ServiceSet {
     pub vfs_mutation_dispatcher: Arc<VfsMutationDispatcher>,
     /// Host Integration 额外 skill 目录 — construction 阶段统一 discovery 后进入 session capabilities。
     pub extra_skill_dirs: Vec<std::path::PathBuf>,
+    /// Host Integration Marketplace Source providers — 后续 external marketplace API 统一从这里读取来源。
+    pub marketplace_source_providers: Vec<Arc<dyn MarketplaceSourceProvider>>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
     pub backend_registry: Arc<BackendRegistry>,
     /// Backend runtime 在线/离线/能力变化事件 — 供全局事件流驱动前端刷新
@@ -304,6 +307,7 @@ impl AppState {
                 vfs_service,
                 vfs_mutation_dispatcher,
                 extra_skill_dirs,
+                marketplace_source_providers: integration_registration.marketplace_source_providers,
                 backend_registry,
                 backend_runtime_events,
                 shell_output_registry,

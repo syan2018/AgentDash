@@ -87,6 +87,12 @@ pub use hooks::{
 
 pub use platform::auth::{AuthGroup, AuthIdentity, AuthMode};
 pub use platform::function_runner::{ApiRequestOutcome, BashExecOutcome, FunctionRunner};
+pub use platform::marketplace_source::{
+    MarketplaceAssetDetail, MarketplaceAssetListing, MarketplaceAssetPage, MarketplaceAssetQuery,
+    MarketplaceFetchedAsset, MarketplaceFetchedAssetPayload, MarketplaceInstallRequirement,
+    MarketplaceInstallRequirementKind, MarketplaceSourceDescriptor, MarketplaceSourceError,
+    MarketplaceSourceProvider, MarketplaceSourceProviderKind, MarketplaceSourceTrustLevel,
+};
 pub use platform::mcp_injection::{McpInjectionConfig, ToolScope};
 pub use platform::mcp_probe::{McpProbeTransport, McpProbedTool};
 pub use platform::mcp_relay::{

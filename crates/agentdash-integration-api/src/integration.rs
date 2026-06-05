@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_spi::AgentConnector;
+use agentdash_spi::MarketplaceSourceProvider;
 use agentdash_spi::RoutineTriggerProvider;
 use agentdash_spi::platform::mount::MountProvider;
 use agentdash_spi::{SourceResolver, VfsDiscoveryProvider};
@@ -100,6 +101,14 @@ pub trait AgentDashIntegration: Send + Sync {
     ///
     /// 宿主会在运行时启动阶段完成 `provider_key` 冲突检测。
     fn routine_trigger_providers(&self) -> Vec<Arc<dyn RoutineTriggerProvider>> {
+        vec![]
+    }
+
+    /// 注册外部 Marketplace Source provider。
+    ///
+    /// 宿主启动时统一收集并校验 `source_key` 与支持的 Shared Library 资产类型。
+    /// Provider 只负责外部目录发现、分页、详情和拉取候选 payload，不直接写数据库。
+    fn marketplace_source_providers(&self) -> Vec<Arc<dyn MarketplaceSourceProvider>> {
         vec![]
     }
 

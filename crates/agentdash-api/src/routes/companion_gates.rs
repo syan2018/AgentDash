@@ -66,7 +66,7 @@ pub async fn respond_companion_gate(
 
 async fn ensure_companion_gate_permission(
     state: &AppState,
-    user: &agentdash_plugin_api::AuthIdentity,
+    user: &agentdash_integration_api::AuthIdentity,
     gate_id: Uuid,
     permission: ProjectPermission,
 ) -> Result<(), ApiError> {

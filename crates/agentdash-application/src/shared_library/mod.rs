@@ -15,5 +15,5 @@ pub use publish::{
 };
 pub use seed::builtin_library_seeds;
 pub use service::{
-    PluginEmbeddedLibraryAssetSeed, SeedBuiltinLibraryAssetsInput, SharedLibraryService,
+    IntegrationEmbeddedLibraryAssetSeed, SeedBuiltinLibraryAssetsInput, SharedLibraryService,
 };

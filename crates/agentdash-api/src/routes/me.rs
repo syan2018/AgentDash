@@ -1,6 +1,6 @@
 use axum::Json;
 
-use agentdash_plugin_api::AuthIdentity;
+use agentdash_integration_api::AuthIdentity;
 
 use crate::auth::CurrentUser;
 use crate::rpc::ApiError;

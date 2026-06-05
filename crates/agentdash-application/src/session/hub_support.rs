@@ -1,6 +1,6 @@
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, UserInputSubmissionKind,
-    UserInputBlock, UserInputSubmittedNotification,
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, UserInputBlock,
+    UserInputSubmissionKind, UserInputSubmittedNotification,
 };
 use agentdash_spi::{CapabilityState, ContextFragment, ExecutionSessionFrame};
 use tokio::sync::broadcast;

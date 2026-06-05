@@ -27,7 +27,7 @@ Capability 子系统统一描述 session 能力声明、runtime transition、工
 | Guidelines | 从 VFS / project facts 派生 |
 | Extension runtime | installed extension declaration projection |
 
-Plugin API 当前按 Stable / Experimental / Internal 分层，企业仓只能追加插件，不能维护独立宿主装配逻辑。
+Host Integration API 当前按 Stable / Experimental / Internal 分层，企业仓只能追加集成，不能维护独立宿主装配逻辑。
 
 ## Local Decisions
 
@@ -126,5 +126,5 @@ fn default_visible_capabilities(owner_ctx, merged, granted_keys) {
 - [Tool Capability Pipeline](./tool-capability-pipeline.md)
 - [Capability Dimension Pipeline](./capability-dimension-pipeline.md)
 - [LLM Model Config](./llm-model-config.md)
-- [Plugin API](./plugin-api.md)
+- [Host Integration API](./integration-api.md)
 - [Permission System](../permission/architecture.md)

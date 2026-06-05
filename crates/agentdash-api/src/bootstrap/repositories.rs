@@ -6,7 +6,9 @@ use sqlx::PgPool;
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::SessionPersistence;
-use agentdash_application::shared_library::{PluginEmbeddedLibraryAssetSeed, SharedLibraryService};
+use agentdash_application::shared_library::{
+    IntegrationEmbeddedLibraryAssetSeed, SharedLibraryService,
+};
 use agentdash_application::workflow::SessionPersistenceRuntimeSessionCreator;
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentAssignmentRepository,
@@ -35,7 +37,7 @@ pub(crate) struct RepositoryBootstrapOutput {
 
 pub(crate) async fn build_repositories(
     pool: PgPool,
-    plugin_library_asset_seeds: Vec<PluginEmbeddedLibraryAssetSeed>,
+    integration_library_asset_seeds: Vec<IntegrationEmbeddedLibraryAssetSeed>,
 ) -> Result<RepositoryBootstrapOutput> {
     agentdash_infrastructure::migration::assert_postgres_schema_ready(&pool)
         .await
@@ -169,17 +171,17 @@ pub(crate) async fn build_repositories(
         permission_grant_repo: permission_grant_repo.clone(),
     };
 
-    let plugin_asset_count = plugin_library_asset_seeds.len();
-    if plugin_asset_count > 0 {
+    let integration_asset_count = integration_library_asset_seeds.len();
+    if integration_asset_count > 0 {
         let service = SharedLibraryService::new(shared_library_repo.as_ref());
         let seeded = service
-            .seed_plugin_embedded_assets(plugin_library_asset_seeds)
+            .seed_integration_embedded_assets(integration_library_asset_seeds)
             .await
-            .map_err(|e| anyhow::anyhow!("plugin embedded library assets 初始化失败: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("integration embedded library assets 初始化失败: {e}"))?;
         tracing::info!(
-            declared = plugin_asset_count,
+            declared = integration_asset_count,
             seeded = seeded.len(),
-            "已同步 plugin embedded Shared Library assets"
+            "已同步 integration embedded Shared Library assets"
         );
     }
 

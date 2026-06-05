@@ -15,7 +15,7 @@ use agentdash_contracts::core::{
     ProjectSubjectType as ContractProjectSubjectType, RevokeProjectGrantResponse,
 };
 use agentdash_domain::project::{Project, ProjectRole, ProjectSubjectGrant, ProjectSubjectType};
-use agentdash_plugin_api::AuthIdentity;
+use agentdash_integration_api::AuthIdentity;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, require_project_permission};

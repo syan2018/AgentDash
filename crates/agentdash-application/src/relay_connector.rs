@@ -113,9 +113,7 @@ impl AgentConnector for RelayAgentConnector {
         // 本批先保证文本链路不回归，非文本输入降级为文本占位 ContentBlock。
         let prompt_blocks = match prompt {
             PromptPayload::Text(text) => Some(serde_json::json!([{"type": "text", "text": text}])),
-            PromptPayload::Input(input) => {
-                Some(user_input_blocks_to_relay_content_blocks(input))
-            }
+            PromptPayload::Input(input) => Some(user_input_blocks_to_relay_content_blocks(input)),
         };
 
         let executor_config = context.session.executor_config.clone();

@@ -1,8 +1,8 @@
 use std::env;
 
-use agentdash_plugin_api::{
-    AgentDashPlugin, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
-    LibraryAssetType, PluginLibraryAssetSeed,
+use agentdash_integration_api::{
+    AgentDashIntegration, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
+    IntegrationLibraryAssetSeed, LibraryAssetType,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -15,12 +15,12 @@ const PERSONAL_EMAIL_ENV: &str = "AGENTDASH_PERSONAL_EMAIL";
 const PERSONAL_GROUPS_ENV: &str = "AGENTDASH_PERSONAL_GROUPS";
 const PERSONAL_IS_ADMIN_ENV: &str = "AGENTDASH_PERSONAL_IS_ADMIN";
 
-/// 开源版默认个人模式认证插件。
+/// 开源版默认个人模式认证集成。
 ///
-/// 该插件让个人模式也走统一 `AuthProvider` 契约，避免在宿主里保留“绕过用户系统”的特殊路径。
-pub struct PersonalAuthPlugin;
+/// 该集成让个人模式也走统一 `AuthProvider` 契约，避免在宿主里保留“绕过用户系统”的特殊路径。
+pub struct PersonalAuthIntegration;
 
-impl AgentDashPlugin for PersonalAuthPlugin {
+impl AgentDashIntegration for PersonalAuthIntegration {
     fn name(&self) -> &str {
         "builtin.personal_auth"
     }
@@ -34,25 +34,25 @@ impl AgentDashPlugin for PersonalAuthPlugin {
     }
 }
 
-/// 开源版默认连接器目录插件骨架 —— **当前为非功能占位**。
+/// 开源版默认连接器目录集成骨架 —— **当前为非功能占位**。
 ///
-/// 不变量/现状声明：本插件**不**装配或暴露任何可用连接器。内置连接器目前仍由宿主直接
-/// 构建（见宿主装配代码），与本插件无关。它存在的唯一作用是：
-/// 1. 在 first-party plugin 目录里占住一个位置，使「连接器最终应走插件装配模型」这一意图可见；
-/// 2. 通过 [`library_asset_seeds`](AgentDashPlugin::library_asset_seeds) 提供一个示例
-///    extension asset seed，给后续真正的连接器插件化提供可参照样例。
+/// 不变量/现状声明：本集成**不**装配或暴露任何可用连接器。内置连接器目前仍由宿主直接
+/// 构建（见宿主装配代码），与本集成无关。它存在的唯一作用是：
+/// 1. 在 first-party integration 目录里占住一个位置，使「连接器最终应走 Host Integration 装配模型」这一意图可见；
+/// 2. 通过 [`library_asset_seeds`](AgentDashIntegration::library_asset_seeds) 提供一个示例
+///    extension asset seed，给后续真正的连接器集成化提供可参照样例。
 ///
-/// 因此当前**不要**依赖本插件来获得任何连接器能力；后续若要迁移内置连接器到插件装配模型，
+/// 因此当前**不要**依赖本集成来获得任何连接器能力；后续若要迁移内置连接器到 Host Integration 装配模型，
 /// 应在此处补全装配逻辑并同步移除「占位」声明。
-pub struct ConnectorCatalogPlugin;
+pub struct ConnectorCatalogIntegration;
 
-impl AgentDashPlugin for ConnectorCatalogPlugin {
+impl AgentDashIntegration for ConnectorCatalogIntegration {
     fn name(&self) -> &str {
         "builtin.connector_catalog"
     }
 
-    fn library_asset_seeds(&self) -> Vec<PluginLibraryAssetSeed> {
-        vec![PluginLibraryAssetSeed {
+    fn library_asset_seeds(&self) -> Vec<IntegrationLibraryAssetSeed> {
+        vec![IntegrationLibraryAssetSeed {
             asset_type: LibraryAssetType::ExtensionTemplate,
             key: "builtin-session-notes".to_string(),
             display_name: "Session Notes Extension".to_string(),
@@ -94,10 +94,10 @@ impl AgentDashPlugin for ConnectorCatalogPlugin {
     }
 }
 
-pub fn builtin_plugins() -> Vec<Box<dyn AgentDashPlugin>> {
+pub fn builtin_integrations() -> Vec<Box<dyn AgentDashIntegration>> {
     vec![
-        Box::new(PersonalAuthPlugin),
-        Box::new(ConnectorCatalogPlugin),
+        Box::new(PersonalAuthIntegration),
+        Box::new(ConnectorCatalogIntegration),
     ]
 }
 
@@ -138,7 +138,7 @@ impl AuthProvider for BuiltinPersonalAuthProvider {
     async fn authenticate(
         &self,
         _req: &AuthRequest,
-    ) -> Result<AuthIdentity, agentdash_plugin_api::AuthError> {
+    ) -> Result<AuthIdentity, agentdash_integration_api::AuthError> {
         Ok(self.identity.clone())
     }
 
@@ -147,8 +147,8 @@ impl AuthProvider for BuiltinPersonalAuthProvider {
         identity: &AuthIdentity,
         _resource: &str,
         _action: &str,
-    ) -> Result<bool, agentdash_plugin_api::AuthError> {
-        // 不变量（Personal 模式）：本插件不做 Provider 级（claim/provider 粗粒度）授权裁决。
+    ) -> Result<bool, agentdash_integration_api::AuthError> {
+        // 不变量（Personal 模式）：本集成不做 Provider 级（claim/provider 粗粒度）授权裁决。
         //
         // 个人模式只有一个固定本地用户（见 `BuiltinPersonalAuthProvider::from_env`），不存在
         // 企业 SSO/代理头那种「该身份不属于有效组织」之类的粗粒度入口限制需要在这里拦截。
@@ -211,10 +211,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exposes_builtin_plugin_skeletons() {
-        let names = builtin_plugins()
+    fn exposes_builtin_integration_skeletons() {
+        let names = builtin_integrations()
             .into_iter()
-            .map(|plugin| plugin.name().to_string())
+            .map(|integration| integration.name().to_string())
             .collect::<Vec<_>>();
 
         assert_eq!(
@@ -228,8 +228,8 @@ mod tests {
 
     #[test]
     fn connector_catalog_declares_extension_asset_seed() {
-        let plugin = ConnectorCatalogPlugin;
-        let seeds = plugin.library_asset_seeds();
+        let integration = ConnectorCatalogIntegration;
+        let seeds = integration.library_asset_seeds();
 
         assert_eq!(seeds.len(), 1);
         assert_eq!(seeds[0].asset_type, LibraryAssetType::ExtensionTemplate);
@@ -237,13 +237,14 @@ mod tests {
     }
 
     #[test]
-    fn first_party_plugin_library_asset_seeds_are_versioned_and_valid() {
-        for plugin in builtin_plugins() {
-            for seed in plugin.library_asset_seeds() {
-                seed.validate().expect("first-party plugin seed validates");
+    fn first_party_integration_library_asset_seeds_are_versioned_and_valid() {
+        for integration in builtin_integrations() {
+            for seed in integration.library_asset_seeds() {
+                seed.validate()
+                    .expect("first-party integration seed validates");
                 assert!(
                     is_semver_core(&seed.version),
-                    "first-party plugin asset `{}` version must be major.minor.patch",
+                    "first-party integration asset `{}` version must be major.minor.patch",
                     seed.key
                 );
             }

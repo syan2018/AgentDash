@@ -183,7 +183,7 @@ pub fn contract_asset_source(
         LibraryAssetSource::Builtin => Contract::Builtin,
         LibraryAssetSource::UserAuthored => Contract::UserAuthored,
         LibraryAssetSource::RemoteImported => Contract::RemoteImported,
-        LibraryAssetSource::PluginEmbedded => Contract::PluginEmbedded,
+        LibraryAssetSource::IntegrationEmbedded => Contract::IntegrationEmbedded,
     }
 }
 

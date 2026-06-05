@@ -103,6 +103,9 @@ pub use hub_support::TurnTerminalKind;
 pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, SessionLaunchService};
 #[cfg(test)]
 pub use memory_persistence::MemorySessionPersistence;
+pub use pending_queue::{
+    PendingMessage, PendingMessagePreview, PendingQueueService, QueuePauseReason,
+};
 pub use persistence::{
     PersistedSessionEvent, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
     SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
@@ -125,7 +128,6 @@ pub use runtime_services::SessionRuntimeServices;
 pub use terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
 };
-pub use pending_queue::{PendingMessage, PendingMessagePreview, PendingQueueService, QueuePauseReason};
 pub use title_service::SessionTitleService;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{

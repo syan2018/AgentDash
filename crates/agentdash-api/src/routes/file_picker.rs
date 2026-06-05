@@ -228,7 +228,7 @@ async fn relay_list_files(
     _backend_id: &str,
     workspace: &agentdash_domain::workspace::Workspace,
     pattern: &str,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
 ) -> Result<Json<ListFilesResponse>, ApiError> {
     let session = state
         .services
@@ -279,7 +279,7 @@ async fn relay_read_file(
     _backend_id: &str,
     workspace: &agentdash_domain::workspace::Workspace,
     rel_path: &str,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
 ) -> Result<Json<ReadFileResponse>, ApiError> {
     let session = state
         .services
@@ -316,7 +316,7 @@ async fn relay_batch_read_files(
     _backend_id: &str,
     workspace: &agentdash_domain::workspace::Workspace,
     paths: &[String],
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
 ) -> Result<Json<BatchReadFilesResponse>, ApiError> {
     let session = state
         .services

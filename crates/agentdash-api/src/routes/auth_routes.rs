@@ -5,7 +5,7 @@ use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
 
-use agentdash_plugin_api::{
+use agentdash_integration_api::{
     AuthCallbackRequest, AuthStartRequest, AuthStartResponse, LoginCredentials, LoginMetadata,
     LoginResponse,
 };

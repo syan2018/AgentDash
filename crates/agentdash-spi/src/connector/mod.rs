@@ -524,8 +524,9 @@ impl PromptPayload {
     pub fn to_fallback_text(&self) -> String {
         match self {
             Self::Text(text) => text.clone(),
-            Self::Input(input) => agentdash_agent_protocol::codex_user_input_to_text(input)
-                .unwrap_or_default(),
+            Self::Input(input) => {
+                agentdash_agent_protocol::codex_user_input_to_text(input).unwrap_or_default()
+            }
         }
     }
 }

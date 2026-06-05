@@ -6,7 +6,7 @@
 
 ## 1. 总体判断
 
-两份 review 的核心判断高度一致：AgentDash 已经形成了 Agent Runtime 控制平面的主干，关键抽象包括 Session、ExecutionContext、VFS Mount、Relay、BackboneEnvelope、Lifecycle/Workflow、Plugin API 和前端工作台。当前阶段的主要工作不是继续增加概念，而是把已经出现的边界收紧，让后续 runtime、workflow、local/cloud hybrid、plugin marketplace 的功能增长有稳定承载面。
+两份 review 的核心判断高度一致：AgentDash 已经形成了 Agent Runtime 控制平面的主干，关键抽象包括 Session、ExecutionContext、VFS Mount、Relay、BackboneEnvelope、Lifecycle/Workflow、Host Integration API 和前端工作台。当前阶段的主要工作不是继续增加概念，而是把已经出现的边界收紧，让后续 runtime、workflow、local/cloud hybrid、plugin marketplace 的功能增长有稳定承载面。
 
 共同指向的问题是：系统进入了架构收敛期，复杂度集中在组合根、Session 拉起链路、Relay 时序、VFS/Workflow 大模块、前后端契约和 infrastructure/application 分层边界。优先级最高的重构应当先解决运行时正确性和依赖图可理解性，再做大规模模块拆分。
 
@@ -60,15 +60,15 @@
 
 第一份 review 更偏运行时链路和具体 bug 风险，尤其关注 Relay、Session pipeline、`list_executors` sync/async mismatch、local forwarder、protocol 拆分。
 
-第二份 review 更偏全局工程治理和模块边界，强调 `AppState`、migrations/schema 来源、Plugin API host wiring、repository DDL、route composition、前端 contract 生成。
+第二份 review 更偏全局工程治理和模块边界，强调 `AppState`、migrations/schema 来源、Host Integration API host wiring、repository DDL、route composition、前端 contract 生成。
 
 ### 3.2 对 P0 的排序不同
 
 第一份 review 的 P0 更偏“事件不丢、断连快失败、forwarder 不重复、加关键测试”。它把 `AppState` 拆分列为高优先级架构瓶颈，但不是第一个运行时 bug。
 
-第二份 review 的 P0 更偏“工程地基与组合根”：AppState god object、schema 来源重复、Plugin API 暴露多于 host 接入。它把 migrations-only 和 PluginHost 收敛提得更靠前。
+第二份 review 的 P0 更偏“工程地基与组合根”：AppState god object、schema 来源重复、Host Integration API 暴露多于 host 接入。它把 migrations-only 和 IntegrationHost 收敛提得更靠前。
 
-综合判断：下一轮最小闭环应先处理 Relay 三个 correctness 点，然后进入 AppState/bootstrap 拆分。schema 来源与 Plugin API 收敛需要先和当前 spec 基线对齐，因为它们牵涉数据库/插件长期契约。
+综合判断：下一轮最小闭环应先处理 Relay 三个 correctness 点，然后进入 AppState/bootstrap 拆分。schema 来源与 Host Integration API 收敛需要先和当前 spec 基线对齐，因为它们牵涉数据库/插件长期契约。
 
 ### 3.3 对数据库策略的建议力度不同
 
@@ -129,7 +129,7 @@ RuntimeGatewayKernel
 
 验收重点：
 
-- `AppState::new_with_plugins` 只表达构造顺序和组合结果。
+- `AppState::new_with_integrations` 只表达构造顺序和组合结果。
 - 每个 kernel 的输入/输出结构清晰，能单独单测关键 wiring。
 - 延迟注入点有名字和原因，后续能被 staged builder 或显式 init graph 替换。
 
@@ -251,7 +251,7 @@ composition roots:
 
 ### 第二阶段：Bootstrap 拆分
 
-先拆 `AppState::new_with_plugins` 内部结构，不改变 HTTP API 和 service 行为：
+先拆 `AppState::new_with_integrations` 内部结构，不改变 HTTP API 和 service 行为：
 
 1. 提取 repository/plugin/vfs/relay/session/auth/routine/background bootstrap 模块；
 2. 建立 `ServiceSet` 或 kernel output 结构；
@@ -293,7 +293,7 @@ composition roots:
 | 任务 | 目标 | 优先级 |
 | --- | --- | --- |
 | Relay 时序正确性修复 | 解决 sink 注册、pending 清理、local forwarder 去重并补测试 | P0 |
-| AppState Bootstrap 拆分 | 将 `new_with_plugins` 拆为 kernel/bootstrap 模块 | P1 |
+| AppState Bootstrap 拆分 | 将 `new_with_integrations` 拆为 kernel/bootstrap 模块 | P1 |
 | Session LaunchPlan 阶段化 | 统一 session launch 入口与阶段结果 | P1 |
 | Database Schema 事实源决策 | 明确 migrations、repository initialize、SQLite 初始化策略 | P1 |
 | Persistence Ports 下沉 | 降低 infrastructure 对 application 的依赖 | P2 |

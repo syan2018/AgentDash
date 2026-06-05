@@ -728,9 +728,7 @@ impl<'a> SessionRequestAssembler<'a> {
             .await?;
         let audit_lifecycle = owner_audit_lifecycle(&spec.lifecycle);
         let (user_input, effective_bundle) = match spec.lifecycle {
-            OwnerPromptLifecycle::OwnerBootstrap => {
-                (spec.user_input.clone(), Some(context_bundle))
-            }
+            OwnerPromptLifecycle::OwnerBootstrap => (spec.user_input.clone(), Some(context_bundle)),
             OwnerPromptLifecycle::RepositoryRehydrate {
                 ref prebuilt_continuation_bundle,
                 include_owner_bundle,

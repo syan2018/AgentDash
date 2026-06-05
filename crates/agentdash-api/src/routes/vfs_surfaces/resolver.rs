@@ -22,7 +22,7 @@ use crate::{
 
 pub(crate) async fn resolve_surface_from_source(
     state: &Arc<AppState>,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
     source: &ResolvedVfsSurfaceSource,
 ) -> Result<ResolvedVfsSurface, ApiError> {
     let (surface, _vfs) =
@@ -32,7 +32,7 @@ pub(crate) async fn resolve_surface_from_source(
 
 pub(crate) async fn resolve_surface_bundle(
     state: &Arc<AppState>,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
     source: &ResolvedVfsSurfaceSource,
     permission: ProjectPermission,
 ) -> Result<(ResolvedVfsSurface, Vfs), ApiError> {

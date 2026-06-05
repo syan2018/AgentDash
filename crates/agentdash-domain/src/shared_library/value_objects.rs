@@ -89,7 +89,7 @@ pub enum LibraryAssetSource {
     Builtin,
     UserAuthored,
     RemoteImported,
-    PluginEmbedded,
+    IntegrationEmbedded,
 }
 
 impl LibraryAssetSource {
@@ -98,7 +98,7 @@ impl LibraryAssetSource {
             Self::Builtin => "builtin",
             Self::UserAuthored => "user_authored",
             Self::RemoteImported => "remote_imported",
-            Self::PluginEmbedded => "plugin_embedded",
+            Self::IntegrationEmbedded => "integration_embedded",
         }
     }
 
@@ -107,7 +107,7 @@ impl LibraryAssetSource {
             "builtin" => Ok(Self::Builtin),
             "user_authored" => Ok(Self::UserAuthored),
             "remote_imported" => Ok(Self::RemoteImported),
-            "plugin_embedded" => Ok(Self::PluginEmbedded),
+            "integration_embedded" => Ok(Self::IntegrationEmbedded),
             other => Err(DomainError::InvalidConfig(format!(
                 "library_assets.source 非法: {other}"
             ))),
@@ -1294,7 +1294,7 @@ pub struct BuiltinSeed {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct PluginLibraryAssetSeed {
+pub struct IntegrationLibraryAssetSeed {
     pub asset_type: LibraryAssetType,
     pub key: String,
     pub display_name: String,
@@ -1304,7 +1304,7 @@ pub struct PluginLibraryAssetSeed {
     pub payload: Value,
 }
 
-impl PluginLibraryAssetSeed {
+impl IntegrationLibraryAssetSeed {
     pub fn validate(&self) -> Result<(), DomainError> {
         LibraryAssetPayload::validate(self.asset_type, &self.payload)
     }

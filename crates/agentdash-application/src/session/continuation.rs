@@ -4,7 +4,8 @@ use base64::Engine;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
-    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent, user_input_blocks_to_content_parts,
+    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent,
+    user_input_blocks_to_content_parts,
 };
 use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,

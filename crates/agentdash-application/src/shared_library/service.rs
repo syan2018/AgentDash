@@ -2,8 +2,8 @@ use uuid::Uuid;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::shared_library::{
-    LibraryAsset, LibraryAssetListFilter, LibraryAssetRepository, LibraryAssetScope,
-    LibraryAssetSource, LibraryAssetType, PluginLibraryAssetSeed,
+    IntegrationLibraryAssetSeed, LibraryAsset, LibraryAssetListFilter, LibraryAssetRepository,
+    LibraryAssetScope, LibraryAssetSource, LibraryAssetType,
 };
 
 use super::{builtin_library_seeds, seed_digest};
@@ -15,9 +15,9 @@ pub struct SeedBuiltinLibraryAssetsInput {
 }
 
 #[derive(Debug, Clone)]
-pub struct PluginEmbeddedLibraryAssetSeed {
-    pub plugin_name: String,
-    pub seed: PluginLibraryAssetSeed,
+pub struct IntegrationEmbeddedLibraryAssetSeed {
+    pub integration_name: String,
+    pub seed: IntegrationLibraryAssetSeed,
 }
 
 pub struct SharedLibraryService<'a> {
@@ -104,18 +104,18 @@ impl<'a> SharedLibraryService<'a> {
         Ok(seeded)
     }
 
-    pub async fn seed_plugin_embedded_assets(
+    pub async fn seed_integration_embedded_assets(
         &self,
-        seeds: Vec<PluginEmbeddedLibraryAssetSeed>,
+        seeds: Vec<IntegrationEmbeddedLibraryAssetSeed>,
     ) -> Result<Vec<LibraryAsset>, DomainError> {
         let mut seen = std::collections::HashMap::<(LibraryAssetType, String), String>::new();
         for item in &seeds {
             let key = (item.seed.asset_type, item.seed.key.clone());
-            if let Some(first_plugin) = seen.insert(key, item.plugin_name.clone()) {
+            if let Some(first_integration) = seen.insert(key, item.integration_name.clone()) {
                 return Err(DomainError::InvalidConfig(format!(
-                    "plugin embedded LibraryAsset 重复: `{}` 与 `{}` 声明了相同的 {}:{}",
-                    first_plugin,
-                    item.plugin_name,
+                    "integration embedded LibraryAsset 重复: `{}` 与 `{}` 声明了相同的 {}:{}",
+                    first_integration,
+                    item.integration_name,
                     item.seed.asset_type.as_str(),
                     item.seed.key
                 )));
@@ -126,8 +126,8 @@ impl<'a> SharedLibraryService<'a> {
         for item in seeds {
             item.seed.validate()?;
             let source_ref = format!(
-                "plugin:{}:{}:{}",
-                item.plugin_name,
+                "integration:{}:{}:{}",
+                item.integration_name,
                 item.seed.asset_type.as_str(),
                 item.seed.key
             );
@@ -140,7 +140,7 @@ impl<'a> SharedLibraryService<'a> {
                 item.seed.display_name.clone(),
                 item.seed.description.clone(),
                 item.seed.version.clone(),
-                LibraryAssetSource::PluginEmbedded,
+                LibraryAssetSource::IntegrationEmbedded,
                 Some(source_ref.clone()),
                 payload_digest,
                 item.seed.payload.clone(),
@@ -153,7 +153,7 @@ impl<'a> SharedLibraryService<'a> {
                 .await?
             {
                 Some(existing)
-                    if existing.source == LibraryAssetSource::PluginEmbedded
+                    if existing.source == LibraryAssetSource::IntegrationEmbedded
                         && existing.source_ref.as_deref() == Some(source_ref.as_str()) =>
                 {
                     validate_seed_asset_progression(&existing, &asset, &source_ref)?;
@@ -166,7 +166,7 @@ impl<'a> SharedLibraryService<'a> {
                 }
                 Some(existing) => {
                     return Err(DomainError::InvalidConfig(format!(
-                        "plugin embedded LibraryAsset identity 冲突: {}:{} 已由 {:?} {:?} 占用",
+                        "integration embedded LibraryAsset identity 冲突: {}:{} 已由 {:?} {:?} 占用",
                         existing.asset_type.as_str(),
                         existing.key,
                         existing.source,
@@ -420,14 +420,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plugin_embedded_seeds_can_register_marketplace_builtin_asset_types() {
+    async fn integration_embedded_seeds_can_register_marketplace_builtin_asset_types() {
         let repo = InMemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
 
         let seeded = service
-            .seed_plugin_embedded_assets(vec![PluginEmbeddedLibraryAssetSeed {
-                plugin_name: "corp.catalog".to_string(),
-                seed: PluginLibraryAssetSeed {
+            .seed_integration_embedded_assets(vec![IntegrationEmbeddedLibraryAssetSeed {
+                integration_name: "corp.catalog".to_string(),
+                seed: IntegrationLibraryAssetSeed {
                     asset_type: LibraryAssetType::McpServerTemplate,
                     key: "corp-search".to_string(),
                     display_name: "Corp Search".to_string(),
@@ -444,27 +444,27 @@ mod tests {
                 },
             }])
             .await
-            .expect("plugin seed should be accepted");
+            .expect("integration seed should be accepted");
 
         assert_eq!(seeded.len(), 1);
         let asset = &seeded[0];
         assert_eq!(asset.asset_type, LibraryAssetType::McpServerTemplate);
         assert_eq!(asset.scope, LibraryAssetScope::System);
-        assert_eq!(asset.source, LibraryAssetSource::PluginEmbedded);
+        assert_eq!(asset.source, LibraryAssetSource::IntegrationEmbedded);
         assert_eq!(
             asset.source_ref.as_deref(),
-            Some("plugin:corp.catalog:mcp_server_template:corp-search")
+            Some("integration:corp.catalog:mcp_server_template:corp-search")
         );
         assert!(asset.payload_digest.starts_with("sha256:"));
     }
 
     #[tokio::test]
-    async fn plugin_embedded_seed_rejects_payload_change_without_version_bump() {
+    async fn integration_embedded_seed_rejects_payload_change_without_version_bump() {
         let repo = InMemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
-        let base_seed = PluginEmbeddedLibraryAssetSeed {
-            plugin_name: "corp.catalog".to_string(),
-            seed: PluginLibraryAssetSeed {
+        let base_seed = IntegrationEmbeddedLibraryAssetSeed {
+            integration_name: "corp.catalog".to_string(),
+            seed: IntegrationLibraryAssetSeed {
                 asset_type: LibraryAssetType::McpServerTemplate,
                 key: "corp-search".to_string(),
                 display_name: "Corp Search".to_string(),
@@ -482,7 +482,7 @@ mod tests {
         };
 
         service
-            .seed_plugin_embedded_assets(vec![base_seed.clone()])
+            .seed_integration_embedded_assets(vec![base_seed.clone()])
             .await
             .expect("initial seed");
 
@@ -497,7 +497,7 @@ mod tests {
         });
 
         let error = service
-            .seed_plugin_embedded_assets(vec![changed_seed])
+            .seed_integration_embedded_assets(vec![changed_seed])
             .await
             .expect_err("payload change without version bump must fail");
 
@@ -507,7 +507,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plugin_embedded_seed_repairs_digest_when_payload_and_version_are_unchanged() {
+    async fn integration_embedded_seed_repairs_digest_when_payload_and_version_are_unchanged() {
         let repo = InMemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
         let payload = json!({
@@ -526,8 +526,8 @@ mod tests {
             "Corp Search",
             None,
             "0.2.0",
-            LibraryAssetSource::PluginEmbedded,
-            Some("plugin:corp.catalog:mcp_server_template:corp-search".to_string()),
+            LibraryAssetSource::IntegrationEmbedded,
+            Some("integration:corp.catalog:mcp_server_template:corp-search".to_string()),
             "sha256:stale",
             payload.clone(),
         )
@@ -535,9 +535,9 @@ mod tests {
         repo.create(&existing).await.expect("insert existing");
 
         let seeded = service
-            .seed_plugin_embedded_assets(vec![PluginEmbeddedLibraryAssetSeed {
-                plugin_name: "corp.catalog".to_string(),
-                seed: PluginLibraryAssetSeed {
+            .seed_integration_embedded_assets(vec![IntegrationEmbeddedLibraryAssetSeed {
+                integration_name: "corp.catalog".to_string(),
+                seed: IntegrationLibraryAssetSeed {
                     asset_type: LibraryAssetType::McpServerTemplate,
                     key: "corp-search".to_string(),
                     display_name: "Corp Search".to_string(),
@@ -554,12 +554,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plugin_embedded_seed_rejects_version_bump_without_payload_change() {
+    async fn integration_embedded_seed_rejects_version_bump_without_payload_change() {
         let repo = InMemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
-        let base_seed = PluginEmbeddedLibraryAssetSeed {
-            plugin_name: "corp.catalog".to_string(),
-            seed: PluginLibraryAssetSeed {
+        let base_seed = IntegrationEmbeddedLibraryAssetSeed {
+            integration_name: "corp.catalog".to_string(),
+            seed: IntegrationLibraryAssetSeed {
                 asset_type: LibraryAssetType::ExtensionTemplate,
                 key: "corp-extension".to_string(),
                 display_name: "Corp Extension".to_string(),
@@ -583,7 +583,7 @@ mod tests {
         };
 
         service
-            .seed_plugin_embedded_assets(vec![base_seed.clone()])
+            .seed_integration_embedded_assets(vec![base_seed.clone()])
             .await
             .expect("initial seed");
 
@@ -591,7 +591,7 @@ mod tests {
         changed_seed.seed.version = "0.2.1".to_string();
 
         let error = service
-            .seed_plugin_embedded_assets(vec![changed_seed])
+            .seed_integration_embedded_assets(vec![changed_seed])
             .await
             .expect_err("version bump without payload change must fail");
 
@@ -601,12 +601,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plugin_embedded_seed_accepts_payload_change_with_version_bump() {
+    async fn integration_embedded_seed_accepts_payload_change_with_version_bump() {
         let repo = InMemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
-        let base_seed = PluginEmbeddedLibraryAssetSeed {
-            plugin_name: "corp.catalog".to_string(),
-            seed: PluginLibraryAssetSeed {
+        let base_seed = IntegrationEmbeddedLibraryAssetSeed {
+            integration_name: "corp.catalog".to_string(),
+            seed: IntegrationLibraryAssetSeed {
                 asset_type: LibraryAssetType::McpServerTemplate,
                 key: "corp-search".to_string(),
                 display_name: "Corp Search".to_string(),
@@ -624,7 +624,7 @@ mod tests {
         };
 
         let first = service
-            .seed_plugin_embedded_assets(vec![base_seed.clone()])
+            .seed_integration_embedded_assets(vec![base_seed.clone()])
             .await
             .expect("initial seed");
 
@@ -640,7 +640,7 @@ mod tests {
         });
 
         let second = service
-            .seed_plugin_embedded_assets(vec![changed_seed])
+            .seed_integration_embedded_assets(vec![changed_seed])
             .await
             .expect("payload change with version bump should update");
 
@@ -650,14 +650,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plugin_embedded_seed_rejects_non_semver_version() {
+    async fn integration_embedded_seed_rejects_non_semver_version() {
         let repo = InMemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
 
         let error = service
-            .seed_plugin_embedded_assets(vec![PluginEmbeddedLibraryAssetSeed {
-                plugin_name: "corp.catalog".to_string(),
-                seed: PluginLibraryAssetSeed {
+            .seed_integration_embedded_assets(vec![IntegrationEmbeddedLibraryAssetSeed {
+                integration_name: "corp.catalog".to_string(),
+                seed: IntegrationLibraryAssetSeed {
                     asset_type: LibraryAssetType::McpServerTemplate,
                     key: "corp-search".to_string(),
                     display_name: "Corp Search".to_string(),

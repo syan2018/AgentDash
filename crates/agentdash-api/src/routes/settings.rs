@@ -9,7 +9,7 @@ use agentdash_contracts::settings::{
     UpdateSettingsResponse,
 };
 use agentdash_domain::settings::{SettingScope, SettingScopeKind as DomainSettingScopeKind};
-use agentdash_plugin_api::{AuthIdentity, AuthMode};
+use agentdash_integration_api::{AuthIdentity, AuthMode};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
@@ -206,7 +206,7 @@ fn require_system_settings_access(current_user: &AuthIdentity) -> Result<(), Api
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_plugin_api::{AuthGroup, AuthMode};
+    use agentdash_integration_api::{AuthGroup, AuthMode};
 
     fn user(auth_mode: AuthMode, is_admin: bool) -> AuthIdentity {
         AuthIdentity {

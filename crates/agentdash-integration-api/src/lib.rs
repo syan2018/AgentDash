@@ -1,13 +1,13 @@
-//! AgentDash 插件 SPI
+//! AgentDash Host Integration SPI
 //!
-//! 本 crate 是开源核心仓库与企业私有扩展仓库之间的**唯一契约面**。
+//! 本 crate 是开源核心仓库与企业私有集成仓库之间的**唯一契约面**。
 //! 只包含 trait 定义、类型声明和错误枚举，零业务实现。
 //!
 //! # 设计原则
 //!
 //! - 零运行时依赖（不引入 tokio/axum/sqlx）
 //! - 不重新定义已有 trait，直接 re-export 已有抽象
-//! - 企业扩展仓库只需依赖本 crate
+//! - 企业集成仓库只需依赖本 crate
 //!
 //! # 扩展点总览
 //!
@@ -21,7 +21,7 @@
 
 pub mod auth;
 pub mod external;
-pub mod plugin;
+pub mod integration;
 
 // 复用已有 trait，不重新定义
 pub use agentdash_domain::context_source::ContextSourceKind;
@@ -37,9 +37,11 @@ pub use external::{
     ExternalServiceClient, ListOptions, ProviderCapabilities, ProviderError, ResourceContent,
     ResourceEntry, ResourceStat, SearchHit, SearchScope,
 };
-pub use plugin::{AgentDashPlugin, LibraryAssetType, PluginError, PluginLibraryAssetSeed};
+pub use integration::{
+    AgentDashIntegration, IntegrationError, IntegrationLibraryAssetSeed, LibraryAssetType,
+};
 
-/// Mount I/O SPI — 供插件实现文件系统级操作。
+/// Mount I/O SPI — 供 Host Integration 实现文件系统级操作。
 ///
-/// 用法：`use agentdash_plugin_api::mount::{MountProvider, ReadResult, ...};`
+/// 用法：`use agentdash_integration_api::mount::{MountProvider, ReadResult, ...};`
 pub use agentdash_spi::platform::mount;

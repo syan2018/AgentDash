@@ -39,7 +39,7 @@ use agentdash_contracts::extension_runtime::{
     UninstallExtensionInstallationResponse,
 };
 use agentdash_domain::DomainError;
-use agentdash_plugin_api::AuthIdentity;
+use agentdash_integration_api::AuthIdentity;
 use agentdash_spi::Vfs;
 
 #[derive(Debug, Deserialize)]

@@ -1,0 +1,11 @@
+[package]
+name = "agentdash-first-party-integrations"
+description = "AgentDash 开源 first-party host integration 骨架集合"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-integration-api = { workspace = true }
+async-trait = "0.1"
+serde_json = { workspace = true }

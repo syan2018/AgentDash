@@ -150,10 +150,10 @@ dependencies = [
  "agentdash-contracts",
  "agentdash-domain",
  "agentdash-executor",
- "agentdash-first-party-plugins",
+ "agentdash-first-party-integrations",
  "agentdash-infrastructure",
+ "agentdash-integration-api",
  "agentdash-mcp",
- "agentdash-plugin-api",
  "agentdash-relay",
  "agentdash-spi",
  "anyhow",
@@ -302,10 +302,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentdash-first-party-plugins"
+name = "agentdash-first-party-integrations"
 version = "0.1.0"
 dependencies = [
- "agentdash-plugin-api",
+ "agentdash-integration-api",
  "async-trait",
  "serde_json",
 ]
@@ -334,6 +334,19 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "agentdash-integration-api"
+version = "0.1.0"
+dependencies = [
+ "agentdash-domain",
+ "agentdash-spi",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -412,19 +425,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "agentdash-plugin-api"
-version = "0.1.0"
-dependencies = [
- "agentdash-domain",
- "agentdash-spi",
- "async-trait",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
  "uuid",
 ]
 

@@ -2,9 +2,9 @@
 //!
 //! `AuthIdentity` / `AuthMode` / `AuthGroup` 是纯数据结构，仅依赖 serde，
 //! 定义在 SPI 层以便 `MountOperationContext`、`ExecutionContext` 等跨层契约
-//! 能直接引用操作者身份，无需再从 plugin-api 拉取。
+//! 能直接引用操作者身份，无需再从 integration-api 拉取。
 //!
-//! `AuthProvider` trait 等行为契约仍留在 `agentdash-plugin-api`。
+//! `AuthProvider` trait 等行为契约仍留在 `agentdash-integration-api`。
 
 use std::str::FromStr;
 

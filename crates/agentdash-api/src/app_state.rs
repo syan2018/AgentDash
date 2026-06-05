@@ -4,7 +4,7 @@ use anyhow::Result;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 
-use crate::plugins::{builtin_plugins, collect_plugin_registration};
+use crate::integrations::{builtin_integrations, collect_integration_registration};
 use crate::relay::registry::BackendRegistry;
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
@@ -17,9 +17,9 @@ use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::runtime_gateway::{RuntimeGateway, RuntimeSessionMcpAccess};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
-    PendingQueueService, SessionBranchingService, SessionCapabilityService,
-    SessionControlService, SessionCoreService, SessionEffectsService, SessionEventingService,
-    SessionHookService, SessionLaunchService, SessionRuntimeService, SessionTitleService,
+    PendingQueueService, SessionBranchingService, SessionCapabilityService, SessionControlService,
+    SessionCoreService, SessionEffectsService, SessionEventingService, SessionHookService,
+    SessionLaunchService, SessionRuntimeService, SessionTitleService,
 };
 use agentdash_application::task::service::StoryActivityActivationService;
 use agentdash_application::task_lock::TaskLockMap;
@@ -29,8 +29,8 @@ use agentdash_domain::llm_provider::LlmSecretCodec;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_executor::AgentConnector;
-use agentdash_plugin_api::AgentDashPlugin;
-use agentdash_plugin_api::AuthMode;
+use agentdash_integration_api::AgentDashIntegration;
+use agentdash_integration_api::AuthMode;
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -54,7 +54,7 @@ pub struct ServiceSet {
     pub vfs_service: Arc<VfsService>,
     /// VFS 写入分发器 — 统一 surface/tool mutation 与 inline_fs storage 坐标解析。
     pub vfs_mutation_dispatcher: Arc<VfsMutationDispatcher>,
-    /// 插件额外 skill 目录 — construction 阶段统一 discovery 后进入 session capabilities。
+    /// Host Integration 额外 skill 目录 — construction 阶段统一 discovery 后进入 session capabilities。
     pub extra_skill_dirs: Vec<std::path::PathBuf>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
     pub backend_registry: Arc<BackendRegistry>,
@@ -79,7 +79,7 @@ pub struct ServiceSet {
         Arc<agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator>,
     /// Cron 调度器句柄 — 配置变更时调用 `notify_config_changed()` 触发热重载
     pub cron_scheduler: CronSchedulerHandle,
-    /// Routine 执行器 — 统一处理定时/Webhook/插件触发
+    /// Routine 执行器 — 统一处理定时/Webhook/Host Integration 触发
     pub routine_executor: Option<Arc<RoutineExecutor>>,
     /// Session 上下文审计总线 — Bundle / Fragment 产出与消费的可观测轨迹
     pub audit_bus: SharedContextAuditBus,
@@ -110,28 +110,28 @@ pub struct AppState {
     pub services: ServiceSet,
     pub config: AppConfig,
     pub secrets: SecretSet,
-    /// 认证/授权提供者（由插件注入，None 表示无认证）
-    pub auth_provider: Option<Arc<dyn agentdash_plugin_api::AuthProvider>>,
+    /// 认证/授权提供者（由 Host Integration 注入，None 表示无认证）
+    pub auth_provider: Option<Arc<dyn agentdash_integration_api::AuthProvider>>,
 }
 
 impl AppState {
     pub async fn new(pool: PgPool) -> Result<Arc<Self>> {
-        Self::new_with_plugins(pool, builtin_plugins()).await
+        Self::new_with_integrations(pool, builtin_integrations()).await
     }
 
-    /// 携带插件列表构建 AppState
+    /// 携带 Host Integration 列表构建 AppState
     ///
     /// 返回 `Arc<Self>` 以支持内部 `DeferredTurnDispatcher` 的延迟绑定。
-    pub async fn new_with_plugins(
+    pub async fn new_with_integrations(
         pool: PgPool,
-        plugins: Vec<Box<dyn AgentDashPlugin>>,
+        integrations: Vec<Box<dyn AgentDashIntegration>>,
     ) -> Result<Arc<Self>> {
-        let plugin_registration = collect_plugin_registration(plugins)
-            .map_err(|err| anyhow::anyhow!("插件注册失败: {err}"))?;
+        let integration_registration = collect_integration_registration(integrations)
+            .map_err(|err| anyhow::anyhow!("Host Integration 注册失败: {err}"))?;
 
         let repository_bootstrap = crate::bootstrap::repositories::build_repositories(
             pool,
-            plugin_registration.library_asset_seeds.clone(),
+            integration_registration.library_asset_seeds.clone(),
         )
         .await?;
         let repos = repository_bootstrap.repos;
@@ -165,7 +165,7 @@ impl AppState {
             backend_registry.clone(),
             shell_output_registry.clone(),
             platform_config.clone(),
-            plugin_registration.mount_providers,
+            integration_registration.mount_providers,
         );
         let mount_provider_registry = vfs_bootstrap.mount_provider_registry;
         let vfs_service = vfs_bootstrap.vfs_service;
@@ -184,8 +184,8 @@ impl AppState {
                 runtime_tool_provider,
                 mcp_relay_provider,
                 platform_config: platform_config.clone(),
-                plugin_connectors: plugin_registration.connectors,
-                extra_skill_dirs: plugin_registration.extra_skill_dirs,
+                integration_connectors: integration_registration.connectors,
+                extra_skill_dirs: integration_registration.extra_skill_dirs,
                 llm_provider_secret: llm_provider_secret.clone(),
             },
         )
@@ -249,11 +249,12 @@ impl AppState {
 
         let auth_mode = crate::bootstrap::auth::validate_auth_provider_registered(
             crate::bootstrap::auth::resolve_configured_auth_mode()?,
-            plugin_registration.auth_provider.is_some(),
+            integration_registration.auth_provider.is_some(),
         )?;
 
-        let vfs_registry =
-            crate::bootstrap::vfs::build_vfs_discovery_registry(plugin_registration.vfs_providers);
+        let vfs_registry = crate::bootstrap::vfs::build_vfs_discovery_registry(
+            integration_registration.vfs_providers,
+        );
 
         let terminal_cancel_coordinator = Arc::new(
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
@@ -326,7 +327,7 @@ impl AppState {
             secrets: SecretSet {
                 llm_provider_secret,
             },
-            auth_provider: plugin_registration.auth_provider,
+            auth_provider: integration_registration.auth_provider,
         };
 
         let mut state = Arc::new(state);

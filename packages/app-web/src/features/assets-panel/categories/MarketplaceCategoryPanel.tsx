@@ -582,7 +582,7 @@ function sourceStatusPriority(status: SharedLibrarySourceStatus): number {
 }
 
 function sourceLabel(source: LibraryAssetDto["source"]): string {
-  if (source === "plugin_embedded") return "Plugin";
+  if (source === "integration_embedded") return "Integration";
   if (source === "user_authored") return "User";
   if (source === "remote_imported") return "Remote";
   return "Builtin";

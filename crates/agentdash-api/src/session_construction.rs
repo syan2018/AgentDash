@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agentdash_application::workflow::frame_surface::AgentFrameSurfaceExt;
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_plugin_api::AuthIdentity;
+use agentdash_integration_api::AuthIdentity;
 use agentdash_spi::Vfs;
 
 use crate::app_state::AppState;

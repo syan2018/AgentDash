@@ -301,7 +301,9 @@ fn relay_prompt_blocks_to_user_input(
     };
     let blocks = array
         .into_iter()
-        .filter_map(|item| serde_json::from_value::<agentdash_agent_protocol::ContentBlock>(item).ok())
+        .filter_map(|item| {
+            serde_json::from_value::<agentdash_agent_protocol::ContentBlock>(item).ok()
+        })
         .collect::<Vec<_>>();
     if blocks.is_empty() {
         return None;

@@ -70,7 +70,7 @@ Project 内运行资源使用 Project 前缀或既有项目资源名：
 - `current_source_version`
 - `current_source_digest`
 
-`source_status` 只表达用户可操作状态。builtin / plugin_embedded asset 的 payload digest 与 version 维护错误由后端 seed/startup fail-fast 拦截，不扩展为前端 enum。
+`source_status` 只表达用户可操作状态。builtin / integration_embedded asset 的 payload digest 与 version 维护错误由后端 seed/startup fail-fast 拦截，不扩展为前端 enum。
 
 ## Payload Contract
 

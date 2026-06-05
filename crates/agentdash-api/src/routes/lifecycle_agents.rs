@@ -210,7 +210,7 @@ pub async fn steer_lifecycle_agent_message(
 /// Resolve runtime_session_id → anchor → run → project permission check.
 async fn ensure_runtime_session_permission(
     state: &AppState,
-    user: &agentdash_plugin_api::AuthIdentity,
+    user: &agentdash_integration_api::AuthIdentity,
     runtime_session_id: &str,
 ) -> Result<(), ApiError> {
     let anchor = state

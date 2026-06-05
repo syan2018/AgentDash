@@ -22,8 +22,8 @@ agentdash-infrastructure = { workspace = true }
 agentdash-executor = { workspace = true, features = ["pi-agent"] }
 agentdash-mcp = { workspace = true }
 agentdash-relay = { workspace = true }
-agentdash-plugin-api = { workspace = true }
-agentdash-first-party-plugins = { workspace = true }
+agentdash-integration-api = { workspace = true }
+agentdash-first-party-integrations = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }

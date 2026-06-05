@@ -17,7 +17,7 @@
 7. **关键事实更正（查证后）**：真正的打包/分发层早已存在 = **Shared Library**；"Extension"只是其六种 asset type 之一，并非打包伞。详见 §3。
 8. **决定性轴：绑定作用域（binding scope）。** Extension 不挂 agent 上下文 → 天然 Project 级全局（VS Code 式工作台 UI 扩展，codex 无对应物）；能力包挂 agent 上下文 → 天然 Agent 级（codex plugin 的真正对应物）。二者作用域不同、扩展表面不同，**不能合并为一个名字**（否决"只用 Extension 一个词"的方向）。
 9. **三概念按作用域定名（见 §4）**：Integration(宿主) / Extension(Project) / Capability Pack 能力包(Agent)；"Plugin" 退役。
-10. **第一层 Plugin → Integration 已确认**（用户拍板）。
+10. **第一层 Plugin → Integration 已确认并落地**（用户拍板后直接迁移）。
 
 ## 2. 目标分层模型（收束后）
 
@@ -27,7 +27,7 @@
         ▲                                              ▲
         │ 原生贡献(受信/编译期)                          │ 数据贡献(零信任/可安装)
    [第一层] Host Provider                          [第二层] Shared Library Asset
-   (现 AgentDashPlugin)                            (现 Shared Library + Extension)
+   (现 AgentDashIntegration)                            (现 Shared Library + Extension)
         └──────────────── 轴 B · provenance/scope ───────────────┘
               (现 LibraryAssetScope: Builtin/System/Org/User)
 ```
@@ -39,7 +39,7 @@
 ## 3. 命名错位诊断（本轮核心产出）
 
 代码实测，两层命名：
-- 第一层（native/编译期/受信）→ **Plugin**：`agentdash-plugin-api`、`agentdash-first-party-plugins`、`AgentDashPlugin`。
+- 第一层（native/编译期/受信）→ **Integration**：`agentdash-integration-api`、`agentdash-first-party-integrations`、`AgentDashIntegration`。
 - 第二层（data/可安装/零信任）→ **Extension**：`extension_runtime/_management/_package`、`ExtensionTemplatePayload`、`project_extensions`、`extension_package_artifacts`。
 - 真正的打包/分发伞 → **Shared Library**：`LibraryAssetType{Agent,McpServer,Workflow,Skill,VfsMount,Extension}Template` + `LibraryAssetScope{Builtin,System,Org,User}`。
 
@@ -56,7 +56,7 @@
 | 能力原语 skill/mcp/hook/app | skill/mcp/workflow/connector/vfs（散在各注册表） | 不变，canonical 原语 + provenance 戳 |
 | plugin（可安装数据包） | 部分 = Extension(窄)；缺"异构捆绑包" | 第二层"可安装包"=广义 Library bundle |
 | marketplace（分发/生命周期） | **Shared Library**（已存在！） | 保留 Shared Library 作分发伞 |
-| codex 的 crate 本体（不叫 plugin） | **AgentDashPlugin**（误叫 plugin） | 第一层正名，去掉 "plugin" |
+| codex 的 crate 本体（不叫 plugin） | **AgentDashIntegration**（已由误叫 plugin 的第一层正名） | 第一层继续保持 Integration |
 
 ## 4. 命名收束（按绑定作用域，已基本对齐）
 
@@ -64,13 +64,13 @@
 
 | 概念 | 作用域 | 定义 | 现载体 |
 |---|---|---|---|
-| **Integration** | 宿主/部署 | 受信原生能力提供者（Auth/mount/connector/vfs）；编译期；upstream 接缝 | 现 `AgentDashPlugin`（待改名） |
+| **Integration** | 宿主/部署 | 受信原生能力提供者（Auth/mount/connector/vfs）；编译期；upstream 接缝 | 现 `AgentDashIntegration` |
 | **Extension** | Project 全局 | 数据驱动、可安装；扩展工作台 UI 面（命令/渲染器/tab/channel/runtime action）；不挂 agent 上下文 | 现 `ExtensionTemplatePayload` 等（语义收窄确认，名保留） |
 | **Capability Pack / 能力包** | 单个 Agent | 数据驱动、可安装；捆绑 agent 能力原语（skill/mcp/workflow）+ interface + permissions + provenance；= codex plugin 对应物 | **新增**（复用 Shared Library 分发） |
 
 - **"Plugin" 退役**：第一层让出该词后不再复用，避免与 Extension 再造近义混用。
 - **Shared Library 留作分发/归属伞**（= marketplace 角色），Extension 与 Capability Pack 均为其 asset type。
-- **第一层改名 `Integration`**（用户确认）；符号级改名可分阶段（先 spec/文档对齐语义，再改 crate/类型名）。
+- **第一层改名 `Integration`**（用户确认）；符号级改名已直接落地到 crate / 类型 / 日志。
 
 ## 4b. 能力包的承载与绑定（Q4/Q5 已定）
 
@@ -95,7 +95,7 @@
 
 实现期建议起一个 parent，下挂以下可独立验收的 child；按风险面/依赖排序：
 
-1. **命名与语义对齐（先文档后符号）**：在 .trellis/spec 固化四词 taxonomy；第一层 `AgentDashPlugin`→`Integration` 符号级改名（crate/类型/日志）。低风险、解锁后续表述。无运行时行为变化。
+1. **命名与语义对齐（已落地）**：在 .trellis/spec 固化四词 taxonomy；第一层 Host Integration 符号级改名（crate/类型/日志）已完成。低风险、解锁后续表述。无运行时行为变化。
    - 验收：spec 落地；符号改名后全绿编译；无残留 "Plugin" 指代第一层。
 2. **provenance 维度落地**：给原语实例（skill/mcp/workflow 注册）加 `provenance{source_kind,source_id,version}`；冲突裁决按 source rank（builtin>integration>mount>pack，pack 不得覆盖 builtin）。
    - 验收：同名跨源有确定性裁决 + 单测；可按 source 查询/分组。
@@ -105,7 +105,7 @@
    - 验收：装/卸/升级后原语集合与归因正确；幂等。
 5. **AgentTemplate 引用能力包**：`AgentTemplateConfig` 增 `capability_pack_refs`（与 mcp_slots 同构）；session 级覆盖。
    - 验收：agent 解析时能力包展开为 effective 能力；session 覆盖生效。
-6. **第一层扩展点闭环**：把 `source_resolvers`/`external_service_clients`/`routine_trigger_providers` 等实验点真接入宿主链路，或显式标注未支持；确立 SPI/plugin-api 的 semver 约束。
+6. **第一层扩展点闭环**：把 `source_resolvers`/`external_service_clients`/`routine_trigger_providers` 等实验点真接入宿主链路，或显式标注未支持；确立 SPI/integration-api 的 semver 约束。
    - 验收：私有集成 crate 能纯靠接口完成既定能力，无需 patch core；接口稿评审。
 
 跨 child 依赖：2 依赖 1 的语义定稿；3/4 依赖 2；5 依赖 3/4；6 相对独立可并行。依赖写进各 child artifact，不靠树位置隐含。

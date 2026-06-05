@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "06-06-marketplace-source-spi-registry"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

@@ -146,3 +146,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Marketplace 后端 MVP 收束
+
+**Date**: 2026-06-06
+**Task**: Marketplace 后端 MVP 收束
+**Branch**: `codex/marketplace-intergration`
+
+### Summary
+
+规划并实现外部市场后端 MVP 收束：MCP 外源模板导入、参数化安装、Shared Library install/source-status 合同、first-party fixture source 与规格同步。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b6c27b3f` | (see git log) |
+| `abac9f16` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

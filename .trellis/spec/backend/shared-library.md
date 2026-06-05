@@ -104,3 +104,74 @@ Contract:
 - fetched payload 必须通过 `LibraryAsset::new` 与 `LibraryAssetPayload` typed validator。
 - 同一 `asset_type + scope + owner_id + key` 下，同一 `remote_imported` source_ref 可幂等更新；其它来源占用同一身份时返回冲突。
 - refresh 读取 provider detail 与本地 `remote_imported` LibraryAsset 做 version/digest 比较，不写入 Project 资源。
+
+## Scenario: Skill URL Import Convergence
+
+### 1. Scope / Trigger
+
+`POST /api/projects/{project_id}/skill-assets/import` 是 Project 级 URL Import 入口，但远端来源版本、digest 与审计事实属于 Shared Library。该入口必须把 URL 定位到的 Skill 先物化为 `skill_template` LibraryAsset，再安装为 Project SkillAsset，原因是 catalog import 与 URL import 都是外部来源写入。
+
+### 2. Signatures
+
+HTTP 入口保持：
+
+```text
+POST /api/projects/{project_id}/skill-assets/import
+{ "url": "<github | clawhub | skills.sh url>" }
+```
+
+Application 入口：
+
+```rust
+pub async fn import_remote_skill_url_to_project(
+    repos: &RepositorySet,
+    input: ImportRemoteSkillAssetInput,
+    source: &dyn RemoteSkillSource,
+) -> Result<SkillAsset, SkillAssetApplicationError>;
+```
+
+Materializer 入口：
+
+```rust
+pub fn materialize_remote_skill_template(
+    input: RemoteSkillTemplateInput,
+) -> Result<MaterializedSkillTemplate, SkillAssetApplicationError>;
+```
+
+### 3. Contracts
+
+- `RemoteSkillSource::fetch(url)` 负责 GitHub / ClawHub / skills.sh 解析、文件数量限制、单文件限制和总大小限制。
+- materializer 负责 content typing、根目录 `SKILL.md` metadata 解析、`validate_skill_files` 和 `SkillTemplatePayload` 生成。
+- URL import 的 `source_ref` 使用 `market:skill-url:{source_kind}:{sha256(normalized_url)}`。
+- `LibraryAsset` 写入 `asset_type=skill_template`、`scope=user`、`source=remote_imported`、`owner_id=current_user`。
+- 写入 `LibraryAsset` 前必须确认 Project 中同 key 与同 `source_ref` 都可覆盖，原因是 Project 冲突不应留下新的 `remote_imported` Shared Library 资产。
+- Project SkillAsset 通过 `install_library_asset_to_project(..., overwrite=true)` 创建或更新，并写入 `InstalledAssetSource`。
+- Project SkillAsset 的 `source` 保持 Project 本地来源语义；远端来源事实由 `LibraryAsset.source_ref` 与 `InstalledAssetSource` 表达。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| URL 为空、格式非法或 host 不支持 | `BadRequest` |
+| 根目录缺少 `SKILL.md` | `BadRequest` |
+| `SKILL.md` metadata 非法 | `BadRequest` |
+| fetched 文件不能转成 `SkillTemplatePayload` | `BadRequest` |
+| 同 Project 中同 key 已由其它来源或用户资产占用 | `Conflict` |
+| 同 Project 中同 `source_ref` 已安装到不同 key | `Conflict` |
+| 同 user scope 的 LibraryAsset identity 被其它来源占用 | `Conflict` |
+| remote provider 内部失败 | `Internal` |
+
+### 5. Behavior Cases
+
+- 首次导入：GitHub URL fetch 成功，materializer 生成 `skill_template`，Shared Library 写入 `remote_imported`，install 创建带 `InstalledAssetSource` 的 Project SkillAsset。
+- 同源更新：同一 URL 再次导入，source_ref 相同，LibraryAsset 保留 id 并更新 payload/version/digest，Project SkillAsset 以同 installed source 覆盖。
+- 冲突保护：Project 已有同 key 的手写 SkillAsset，或同 `source_ref` 已安装到不同 key 时，导入返回冲突，Shared Library 不写入新的 remote_imported asset。
+
+### 6. Tests Required
+
+- materializer 输出稳定 `source_ref`、`SkillTemplatePayload` 和 digest-derived version。
+- 缺少 `SKILL.md`、二进制 payload 或非法 files 返回 `BadRequest`。
+- 同 key 非同 source 的 Project SkillAsset 触发 `Conflict`。
+- 同 `source_ref` 但 Project key 不一致触发 `Conflict`。
+- 同 source_ref 的重复导入更新同一个 `remote_imported` LibraryAsset。
+- route 编译测试保持 `{ url } -> SkillAssetResponse` wire 形态。

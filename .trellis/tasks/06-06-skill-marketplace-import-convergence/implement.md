@@ -62,8 +62,8 @@ pnpm run frontend:check
 
 ## 交付检查
 
-- [ ] URL Import 写入 Shared Library `skill_template`。
-- [ ] URL Import 安装 Project SkillAsset 并写入 `InstalledAssetSource`。
-- [ ] 现有 fetch / file validation 能力保留。
-- [ ] 测试覆盖成功、非法文件、重复导入和 source identity。
-- [ ] 未修改 MCP install、Marketplace 外部来源 UI、Skill 手写创建/上传入口。
+- [x] URL Import 写入 Shared Library `skill_template`。
+- [x] URL Import 安装 Project SkillAsset 并写入 `InstalledAssetSource`。
+- [x] 现有 fetch / file validation 能力保留。
+- [x] 测试覆盖成功、非法文件、重复导入和 source identity。
+- [x] 未修改 MCP install、Marketplace 外部来源 UI、Skill 手写创建/上传入口。

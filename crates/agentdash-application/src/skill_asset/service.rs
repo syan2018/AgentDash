@@ -2,16 +2,25 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::common::StoredFileContent;
 use agentdash_domain::embedded_skill::EmbeddedSkillBundle;
+use agentdash_domain::shared_library::{
+    LibraryAsset, LibraryAssetRepository, LibraryAssetScope, LibraryAssetSource, LibraryAssetType,
+    SkillTemplateFilePayload, SkillTemplatePayload,
+};
 use agentdash_domain::skill_asset::{
     SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository,
 };
 use agentdash_spi::{
-    RemoteSkillFile, RemoteSkillFileBody, RemoteSkillKind, RemoteSkillSource,
+    RemoteSkillFetch, RemoteSkillFile, RemoteSkillFileBody, RemoteSkillKind, RemoteSkillSource,
     RemoteSkillSourceError,
 };
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::repository_set::RepositorySet;
+use crate::shared_library::{
+    InstallLibraryAssetInput, InstallLibraryAssetOutput, install_library_asset_to_project,
+    seed_digest,
+};
 use crate::skill::parse_skill_file;
 
 use super::definition::{
@@ -66,7 +75,26 @@ pub struct UpdateSkillAssetInput {
 #[derive(Debug, Clone)]
 pub struct ImportRemoteSkillAssetInput {
     pub project_id: Uuid,
+    pub owner_id: String,
     pub url: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoteSkillTemplateInput {
+    pub source_kind: RemoteSkillKind,
+    pub normalized_url: String,
+    pub files: Vec<RemoteSkillFile>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MaterializedSkillTemplate {
+    pub key: String,
+    pub display_name: String,
+    pub description: Option<String>,
+    pub version: String,
+    pub source_ref: String,
+    pub remote_digest: String,
+    pub payload: SkillTemplatePayload,
 }
 
 pub struct SkillAssetService<'a, R: ?Sized> {
@@ -282,37 +310,6 @@ where
         Ok(results)
     }
 
-    pub async fn import_remote(
-        &self,
-        input: ImportRemoteSkillAssetInput,
-        source: &dyn RemoteSkillSource,
-    ) -> Result<SkillAsset, SkillAssetApplicationError> {
-        let fetched = source
-            .fetch(&input.url)
-            .await
-            .map_err(map_remote_skill_source_error)?;
-
-        let source_type = match fetched.kind {
-            RemoteSkillKind::Github => RemoteSourceType::Github,
-            RemoteSkillKind::Clawhub => RemoteSourceType::Clawhub,
-            RemoteSkillKind::SkillsSh => RemoteSourceType::SkillsSh,
-        };
-
-        let files = fetched
-            .files
-            .into_iter()
-            .map(remote_skill_file_to_input)
-            .collect::<Result<Vec<_>, _>>()?;
-
-        self.create_from_remote_files_typed(
-            input.project_id,
-            source_type,
-            fetched.normalized_url,
-            files,
-        )
-        .await
-    }
-
     async fn create_from_builtin_template(
         &self,
         project_id: Uuid,
@@ -330,71 +327,6 @@ where
             description,
             disable_model_invocation,
         );
-        asset.files = files
-            .into_iter()
-            .map(|mut file| {
-                file.skill_asset_id = asset.id;
-                file
-            })
-            .collect();
-        self.repo.create(&asset).await?;
-        Ok(asset)
-    }
-
-    async fn create_from_remote_files_typed(
-        &self,
-        project_id: Uuid,
-        source_type: RemoteSourceType,
-        source_url: String,
-        input_files: Vec<SkillAssetFileInput>,
-    ) -> Result<SkillAsset, SkillAssetApplicationError> {
-        let skill_md = input_files
-            .iter()
-            .find(|file| file.path == "SKILL.md")
-            .ok_or_else(|| {
-                SkillAssetApplicationError::BadRequest("远端 Skill 缺少根目录 SKILL.md".to_string())
-            })?;
-        let meta = parse_skill_metadata(skill_md_text(&skill_md.content)?)?;
-        self.ensure_key_available(project_id, &meta.name, None)
-            .await?;
-        let files = build_files(Uuid::nil(), input_files)?;
-        validate_skill_files(
-            &meta.name,
-            &meta.description,
-            meta.disable_model_invocation,
-            &files,
-        )?;
-
-        let digest = digest_skill_files(&files);
-        let mut asset = match source_type {
-            RemoteSourceType::Github => SkillAsset::new_github_import(
-                project_id,
-                meta.name.clone(),
-                meta.name,
-                meta.description,
-                meta.disable_model_invocation,
-                source_url,
-                digest,
-            ),
-            RemoteSourceType::Clawhub => SkillAsset::new_clawhub_import(
-                project_id,
-                meta.name.clone(),
-                meta.name,
-                meta.description,
-                meta.disable_model_invocation,
-                source_url,
-                digest,
-            ),
-            RemoteSourceType::SkillsSh => SkillAsset::new_skills_sh_import(
-                project_id,
-                meta.name.clone(),
-                meta.name,
-                meta.description,
-                meta.disable_model_invocation,
-                source_url,
-                digest,
-            ),
-        };
         asset.files = files
             .into_iter()
             .map(|mut file| {
@@ -425,11 +357,289 @@ where
 
 // ─── Remote import ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RemoteSourceType {
-    Github,
-    Clawhub,
-    SkillsSh,
+pub async fn import_remote_skill_url_to_project(
+    repos: &RepositorySet,
+    input: ImportRemoteSkillAssetInput,
+    source: &dyn RemoteSkillSource,
+) -> Result<SkillAsset, SkillAssetApplicationError> {
+    let owner_id = normalize_remote_import_owner_id(&input.owner_id)?;
+    let fetched = source
+        .fetch(&input.url)
+        .await
+        .map_err(map_remote_skill_source_error)?;
+    let materialized = materialize_remote_skill_template(remote_template_input(fetched))?;
+    ensure_remote_import_target_available(
+        repos.skill_asset_repo.as_ref(),
+        input.project_id,
+        &materialized.key,
+        &materialized.source_ref,
+    )
+    .await?;
+    let library_asset = upsert_remote_imported_skill_template(
+        repos.shared_library_repo.as_ref(),
+        owner_id,
+        materialized,
+    )
+    .await?;
+
+    let output = install_library_asset_to_project(
+        repos,
+        InstallLibraryAssetInput {
+            project_id: input.project_id,
+            library_asset_id: library_asset.id,
+            target_key: None,
+            overwrite: true,
+        },
+    )
+    .await
+    .map_err(map_shared_library_domain_error)?;
+
+    let InstallLibraryAssetOutput::SkillAsset { id } = output else {
+        return Err(SkillAssetApplicationError::Internal(
+            "skill_template 安装结果不是 SkillAsset".to_string(),
+        ));
+    };
+    repos
+        .skill_asset_repo
+        .get(id)
+        .await
+        .map_err(map_shared_library_domain_error)?
+        .ok_or_else(|| SkillAssetApplicationError::NotFound(format!("skill_asset 不存在: {id}")))
+}
+
+pub fn materialize_remote_skill_template(
+    input: RemoteSkillTemplateInput,
+) -> Result<MaterializedSkillTemplate, SkillAssetApplicationError> {
+    let normalized_url = input.normalized_url.trim();
+    if normalized_url.is_empty() {
+        return Err(SkillAssetApplicationError::BadRequest(
+            "远端 Skill normalized_url 不能为空".to_string(),
+        ));
+    }
+
+    let source_ref = remote_skill_url_source_ref(input.source_kind, normalized_url);
+    let input_files = input
+        .files
+        .into_iter()
+        .map(remote_skill_file_to_input)
+        .collect::<Result<Vec<_>, _>>()?;
+    let skill_md = input_files
+        .iter()
+        .find(|file| file.path == "SKILL.md")
+        .ok_or_else(|| {
+            SkillAssetApplicationError::BadRequest("远端 Skill 缺少根目录 SKILL.md".to_string())
+        })?;
+    let meta = parse_skill_metadata(skill_md_text(&skill_md.content)?)?;
+    let files = build_files(Uuid::nil(), input_files)?;
+    validate_skill_files(
+        &meta.name,
+        &meta.description,
+        meta.disable_model_invocation,
+        &files,
+    )?;
+
+    let remote_digest = digest_skill_files(&files);
+    let payload_files = files
+        .into_iter()
+        .map(|file| {
+            let content = file
+                .text_content()
+                .map(ToString::to_string)
+                .ok_or_else(|| {
+                    SkillAssetApplicationError::BadRequest(format!(
+                        "SkillTemplate 暂不支持二进制文件: {}",
+                        file.path
+                    ))
+                })?;
+            Ok(SkillTemplateFilePayload {
+                path: file.path,
+                content,
+                kind: file.kind,
+            })
+        })
+        .collect::<Result<Vec<_>, SkillAssetApplicationError>>()?;
+
+    Ok(MaterializedSkillTemplate {
+        key: meta.name.clone(),
+        display_name: meta.name,
+        description: Some(meta.description),
+        version: remote_digest.clone(),
+        source_ref,
+        remote_digest,
+        payload: SkillTemplatePayload {
+            files: payload_files,
+            disable_model_invocation: meta.disable_model_invocation,
+        },
+    })
+}
+
+pub fn remote_skill_url_source_ref(kind: RemoteSkillKind, normalized_url: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(normalized_url.trim().as_bytes());
+    format!(
+        "market:skill-url:{}:{:x}",
+        remote_skill_kind_key(kind),
+        hasher.finalize()
+    )
+}
+
+async fn upsert_remote_imported_skill_template(
+    repo: &dyn LibraryAssetRepository,
+    owner_id: String,
+    materialized: MaterializedSkillTemplate,
+) -> Result<LibraryAsset, SkillAssetApplicationError> {
+    let payload = serde_json::to_value(&materialized.payload)
+        .map_err(|error| SkillAssetApplicationError::BadRequest(error.to_string()))?;
+    let payload_digest = seed_digest(&payload).map_err(map_shared_library_domain_error)?;
+    let asset = LibraryAsset::new(
+        LibraryAssetType::SkillTemplate,
+        LibraryAssetScope::User,
+        Some(owner_id.clone()),
+        materialized.key.clone(),
+        materialized.display_name,
+        materialized.description,
+        materialized.version,
+        LibraryAssetSource::RemoteImported,
+        Some(materialized.source_ref.clone()),
+        payload_digest,
+        payload,
+    )
+    .map_err(map_shared_library_domain_error)?;
+
+    let existing = repo
+        .find_by_identity(
+            asset.asset_type,
+            asset.scope,
+            Some(owner_id.as_str()),
+            &asset.key,
+        )
+        .await
+        .map_err(map_shared_library_domain_error)?;
+
+    match existing {
+        Some(existing)
+            if existing.source == LibraryAssetSource::RemoteImported
+                && existing.source_ref.as_deref() == Some(materialized.source_ref.as_str()) =>
+        {
+            let mut updated = asset;
+            updated.id = existing.id;
+            updated.created_at = existing.created_at;
+            updated.updated_at = chrono::Utc::now();
+            repo.update(&updated)
+                .await
+                .map_err(map_shared_library_domain_error)?;
+            Ok(updated)
+        }
+        Some(existing) => Err(SkillAssetApplicationError::Conflict(format!(
+            "LibraryAsset identity 已被其它来源占用: {}:{} source={:?} source_ref={:?}",
+            existing.asset_type.as_str(),
+            existing.key,
+            existing.source,
+            existing.source_ref
+        ))),
+        None => {
+            repo.create(&asset)
+                .await
+                .map_err(map_shared_library_domain_error)?;
+            Ok(asset)
+        }
+    }
+}
+
+fn remote_template_input(fetched: RemoteSkillFetch) -> RemoteSkillTemplateInput {
+    RemoteSkillTemplateInput {
+        source_kind: fetched.kind,
+        normalized_url: fetched.normalized_url,
+        files: fetched.files,
+    }
+}
+
+fn remote_skill_kind_key(kind: RemoteSkillKind) -> &'static str {
+    match kind {
+        RemoteSkillKind::Github => "github",
+        RemoteSkillKind::Clawhub => "clawhub",
+        RemoteSkillKind::SkillsSh => "skills_sh",
+    }
+}
+
+fn normalize_remote_import_owner_id(owner_id: &str) -> Result<String, SkillAssetApplicationError> {
+    let owner_id = owner_id.trim();
+    if owner_id.is_empty() {
+        return Err(SkillAssetApplicationError::BadRequest(
+            "远端 Skill 导入 owner_id 不能为空".to_string(),
+        ));
+    }
+    Ok(owner_id.to_string())
+}
+
+fn map_shared_library_domain_error(
+    error: agentdash_domain::DomainError,
+) -> SkillAssetApplicationError {
+    match error {
+        agentdash_domain::DomainError::NotFound { .. } => {
+            SkillAssetApplicationError::NotFound(error.to_string())
+        }
+        agentdash_domain::DomainError::Conflict { .. }
+        | agentdash_domain::DomainError::InvalidTransition { .. } => {
+            SkillAssetApplicationError::Conflict(error.to_string())
+        }
+        agentdash_domain::DomainError::Forbidden { .. } => {
+            SkillAssetApplicationError::BadRequest(error.to_string())
+        }
+        agentdash_domain::DomainError::InvalidConfig(message) => {
+            SkillAssetApplicationError::BadRequest(message)
+        }
+        agentdash_domain::DomainError::Serialization(error) => {
+            SkillAssetApplicationError::BadRequest(error.to_string())
+        }
+        agentdash_domain::DomainError::Database { .. } => {
+            SkillAssetApplicationError::Internal("内部数据库错误".to_string())
+        }
+    }
+}
+
+async fn ensure_remote_import_target_available(
+    repo: &dyn SkillAssetRepository,
+    project_id: Uuid,
+    key: &str,
+    source_ref: &str,
+) -> Result<(), SkillAssetApplicationError> {
+    if let Some(existing) = repo
+        .list_by_project(project_id)
+        .await
+        .map_err(map_shared_library_domain_error)?
+        .into_iter()
+        .find(|asset| {
+            asset
+                .installed_source
+                .as_ref()
+                .is_some_and(|source| source.source_ref == source_ref)
+                && asset.key != key
+        })
+    {
+        return Err(SkillAssetApplicationError::Conflict(format!(
+            "远端 Skill source_ref `{source_ref}` 已安装为 key `{}`",
+            existing.key
+        )));
+    }
+
+    let Some(existing) = repo
+        .get_by_project_and_key(project_id, key)
+        .await
+        .map_err(map_shared_library_domain_error)?
+    else {
+        return Ok(());
+    };
+    let same_installed_source = existing
+        .installed_source
+        .as_ref()
+        .is_some_and(|source| source.source_ref == source_ref);
+    if same_installed_source {
+        return Ok(());
+    }
+    Err(SkillAssetApplicationError::Conflict(format!(
+        "skill_asset key 已存在: {key}"
+    )))
 }
 
 /// 将 SPI 层的 [`RemoteSkillSourceError`] 映射到应用层错误。
@@ -944,6 +1154,109 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct InMemoryLibraryAssetRepo {
+        assets: Mutex<Vec<LibraryAsset>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LibraryAssetRepository for InMemoryLibraryAssetRepo {
+        async fn create(&self, asset: &LibraryAsset) -> Result<(), DomainError> {
+            asset.typed_payload()?;
+            self.assets.lock().unwrap().push(asset.clone());
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<LibraryAsset>, DomainError> {
+            Ok(self
+                .assets
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|asset| asset.id == id)
+                .cloned())
+        }
+
+        async fn find_by_identity(
+            &self,
+            asset_type: LibraryAssetType,
+            scope: LibraryAssetScope,
+            owner_id: Option<&str>,
+            key: &str,
+        ) -> Result<Option<LibraryAsset>, DomainError> {
+            Ok(self
+                .assets
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|asset| {
+                    asset.asset_type == asset_type
+                        && asset.scope == scope
+                        && asset.owner_id.as_deref() == owner_id
+                        && asset.key == key
+                })
+                .cloned())
+        }
+
+        async fn list(
+            &self,
+            filter: agentdash_domain::shared_library::LibraryAssetListFilter,
+        ) -> Result<Vec<LibraryAsset>, DomainError> {
+            Ok(self
+                .assets
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|asset| {
+                    filter
+                        .asset_type
+                        .is_none_or(|asset_type| asset.asset_type == asset_type)
+                        && filter.scope.is_none_or(|scope| asset.scope == scope)
+                        && filter
+                            .owner_id
+                            .as_deref()
+                            .is_none_or(|owner_id| asset.owner_id.as_deref() == Some(owner_id))
+                        && (filter.include_deprecated || !asset.deprecated)
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, asset: &LibraryAsset) -> Result<(), DomainError> {
+            asset.typed_payload()?;
+            let mut guard = self.assets.lock().unwrap();
+            let existing = guard
+                .iter_mut()
+                .find(|existing| existing.id == asset.id)
+                .ok_or_else(|| DomainError::NotFound {
+                    entity: "library_asset",
+                    id: asset.id.to_string(),
+                })?;
+            *existing = asset.clone();
+            Ok(())
+        }
+
+        async fn upsert(&self, asset: &LibraryAsset) -> Result<LibraryAsset, DomainError> {
+            if let Some(existing) = self
+                .find_by_identity(
+                    asset.asset_type,
+                    asset.scope,
+                    asset.owner_id.as_deref(),
+                    &asset.key,
+                )
+                .await?
+            {
+                let mut updated = asset.clone();
+                updated.id = existing.id;
+                updated.created_at = existing.created_at;
+                self.update(&updated).await?;
+                return Ok(updated);
+            }
+            self.create(asset).await?;
+            Ok(asset.clone())
+        }
+    }
+
     fn skill_file(key: &str, description: &str) -> SkillAssetFileInput {
         SkillAssetFileInput::text(
             "SKILL.md",
@@ -1081,32 +1394,180 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn remote_files_create_github_skill_asset_with_digest() {
-        let repo = InMemorySkillAssetRepo::default();
-        let service = SkillAssetService::new(&repo);
-        let project_id = Uuid::new_v4();
-        let created = service
-            .create_from_remote_files_typed(
-                project_id,
-                RemoteSourceType::Github,
-                "https://github.com/acme/skills/tree/main/writer".to_string(),
-                vec![
-                    skill_file("writer", "写作辅助"),
-                    SkillAssetFileInput::text("references/style.md", "保持简洁"),
-                ],
-            )
-            .await
-            .expect("remote import should create asset");
+    #[test]
+    fn remote_files_materialize_skill_template_with_stable_source_ref() {
+        let normalized_url = "https://github.com/acme/skills/tree/main/writer";
+        let materialized = materialize_remote_skill_template(RemoteSkillTemplateInput {
+            source_kind: RemoteSkillKind::Github,
+            normalized_url: normalized_url.to_string(),
+            files: vec![
+                RemoteSkillFile {
+                    path: "SKILL.md".to_string(),
+                    body: RemoteSkillFileBody::Text(
+                        "---\nname: writer\ndescription: \"写作辅助\"\n---\n# Body\n".to_string(),
+                    ),
+                },
+                RemoteSkillFile {
+                    path: "references/style.md".to_string(),
+                    body: RemoteSkillFileBody::Text("保持简洁".to_string()),
+                },
+            ],
+        })
+        .expect("materialize");
 
-        assert_eq!(created.key, "writer");
-        assert_eq!(created.files.len(), 2);
-        match created.source {
-            agentdash_domain::skill_asset::SkillAssetSource::Github { url, digest, .. } => {
-                assert_eq!(url, "https://github.com/acme/skills/tree/main/writer");
-                assert!(digest.starts_with("sha256:"));
-            }
-            other => panic!("unexpected source: {other:?}"),
-        }
+        assert_eq!(materialized.key, "writer");
+        assert_eq!(materialized.display_name, "writer");
+        assert_eq!(materialized.description.as_deref(), Some("写作辅助"));
+        assert!(materialized.remote_digest.starts_with("sha256:"));
+        assert_eq!(materialized.version, materialized.remote_digest);
+        assert_eq!(
+            materialized.source_ref,
+            remote_skill_url_source_ref(RemoteSkillKind::Github, normalized_url)
+        );
+        assert!(
+            materialized
+                .source_ref
+                .starts_with("market:skill-url:github:")
+        );
+        assert_eq!(materialized.payload.files.len(), 2);
+        assert!(!materialized.payload.disable_model_invocation);
+    }
+
+    #[test]
+    fn remote_materializer_rejects_missing_skill_md_and_binary_payload() {
+        let missing = materialize_remote_skill_template(RemoteSkillTemplateInput {
+            source_kind: RemoteSkillKind::Clawhub,
+            normalized_url: "https://clawhub.ai/skills/writer".to_string(),
+            files: vec![RemoteSkillFile {
+                path: "references/style.md".to_string(),
+                body: RemoteSkillFileBody::Text("保持简洁".to_string()),
+            }],
+        });
+        assert!(matches!(
+            missing,
+            Err(SkillAssetApplicationError::BadRequest(_))
+        ));
+
+        let binary = materialize_remote_skill_template(RemoteSkillTemplateInput {
+            source_kind: RemoteSkillKind::SkillsSh,
+            normalized_url: "https://skills.sh/writer".to_string(),
+            files: vec![
+                RemoteSkillFile {
+                    path: "SKILL.md".to_string(),
+                    body: RemoteSkillFileBody::Text(
+                        "---\nname: writer\ndescription: \"写作辅助\"\n---\n# Body\n".to_string(),
+                    ),
+                },
+                RemoteSkillFile {
+                    path: "assets/logo.png".to_string(),
+                    body: RemoteSkillFileBody::Bytes(vec![0, 1, 2, 3]),
+                },
+            ],
+        });
+        assert!(matches!(
+            binary,
+            Err(SkillAssetApplicationError::BadRequest(message))
+                if message.contains("二进制文件")
+        ));
+    }
+
+    #[tokio::test]
+    async fn remote_import_target_guard_only_allows_same_installed_source() {
+        let repo = InMemorySkillAssetRepo::default();
+        let project_id = Uuid::new_v4();
+
+        let user_skill = SkillAsset::new_user(project_id, "writer", "writer", "写作辅助", false);
+        repo.create(&user_skill).await.expect("create user skill");
+        let conflict = ensure_remote_import_target_available(
+            &repo,
+            project_id,
+            "writer",
+            "market:skill-url:github:abc",
+        )
+        .await;
+        assert!(matches!(
+            conflict,
+            Err(SkillAssetApplicationError::Conflict(_))
+        ));
+
+        let source_ref = "market:skill-url:github:def";
+        let mut installed =
+            SkillAsset::new_user(project_id, "research", "research", "调研辅助", false);
+        installed.installed_source =
+            Some(agentdash_domain::shared_library::InstalledAssetSource::new(
+                Uuid::new_v4(),
+                source_ref,
+                "sha256:version",
+                "sha256:digest",
+            ));
+        repo.create(&installed)
+            .await
+            .expect("create installed skill");
+
+        ensure_remote_import_target_available(&repo, project_id, "research", source_ref)
+            .await
+            .expect("same source can overwrite");
+        let other_source = ensure_remote_import_target_available(
+            &repo,
+            project_id,
+            "research",
+            "market:skill-url:github:other",
+        )
+        .await;
+        assert!(matches!(
+            other_source,
+            Err(SkillAssetApplicationError::Conflict(_))
+        ));
+
+        let same_source_different_key =
+            ensure_remote_import_target_available(&repo, project_id, "renamed", source_ref).await;
+        assert!(matches!(
+            same_source_different_key,
+            Err(SkillAssetApplicationError::Conflict(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn remote_import_upserts_remote_imported_library_asset() {
+        let repo = InMemoryLibraryAssetRepo::default();
+        let first = materialize_remote_skill_template(RemoteSkillTemplateInput {
+            source_kind: RemoteSkillKind::Github,
+            normalized_url: "https://github.com/acme/skills/tree/main/writer".to_string(),
+            files: vec![RemoteSkillFile {
+                path: "SKILL.md".to_string(),
+                body: RemoteSkillFileBody::Text(
+                    "---\nname: writer\ndescription: \"写作辅助\"\n---\n# Body\n".to_string(),
+                ),
+            }],
+        })
+        .expect("first materialize");
+        let source_ref = first.source_ref.clone();
+        let first_asset = upsert_remote_imported_skill_template(&repo, "user-1".to_string(), first)
+            .await
+            .expect("first upsert");
+
+        let second = materialize_remote_skill_template(RemoteSkillTemplateInput {
+            source_kind: RemoteSkillKind::Github,
+            normalized_url: "https://github.com/acme/skills/tree/main/writer".to_string(),
+            files: vec![RemoteSkillFile {
+                path: "SKILL.md".to_string(),
+                body: RemoteSkillFileBody::Text(
+                    "---\nname: writer\ndescription: \"更新后的描述\"\n---\n# Body\n".to_string(),
+                ),
+            }],
+        })
+        .expect("second materialize");
+        let second_asset =
+            upsert_remote_imported_skill_template(&repo, "user-1".to_string(), second)
+                .await
+                .expect("second upsert");
+
+        assert_eq!(second_asset.id, first_asset.id);
+        assert_eq!(second_asset.source, LibraryAssetSource::RemoteImported);
+        assert_eq!(
+            second_asset.source_ref.as_deref(),
+            Some(source_ref.as_str())
+        );
+        assert_ne!(second_asset.payload_digest, first_asset.payload_digest);
     }
 }

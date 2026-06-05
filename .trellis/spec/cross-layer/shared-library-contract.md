@@ -231,6 +231,8 @@ External Marketplace refresh:
 - `status` 使用 `up_to_date` / `update_available` / `source_missing` / `not_imported`。
 - refresh 只比较外部 listing 与本地 `remote_imported` LibraryAsset，Project 资源仍通过 Shared Library install / source-status 语义更新。
 
+Skill URL Import 是单项外部来源定位。`POST /api/projects/{project_id}/skill-assets/import` 保持 `{ url }` 入参和 Project `SkillAsset` 响应，但后端写入语义与外部来源一致：先创建或更新 `LibraryAsset(asset_type=skill_template, source=remote_imported)`，再安装到 Project 并写入 `InstalledAssetSource`。因此前端判断远端导入来源时应优先使用 `installed_source`，Project `SkillAsset.source` 不承载 GitHub / ClawHub / skills.sh 的版本事实。
+
 Marketplace install:
 
 1. 用户选择 `LibraryAsset`。

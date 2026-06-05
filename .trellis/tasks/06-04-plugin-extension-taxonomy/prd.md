@@ -63,21 +63,44 @@
 
 ## 目标与用户价值
 
-（待第二层范围澄清后定稿）初步：产出一份可被后续重构引用的 **canonical taxonomy + 命名收口 + 边界与 gap 取舍**决策文档，消除"插件/扩展"跨层歧义，并给出两层各自的演进底座。
+产出一份可被后续重构反复引用的 **canonical taxonomy + 命名收口 + 边界/gap 取舍** 决策文档，消除"插件/扩展"跨层歧义。**本任务只产出决策，不实现、不归档**；实现另起 parent + children。
+
+收束后的语言（按绑定作用域）：
+- **Integration**（宿主/部署，受信原生，编译期，upstream 接缝）
+- **Extension**（Project 全局，数据驱动，扩展工作台 UI 面，不挂 agent 上下文）
+- **Capability Pack / 能力包**（单 Agent，数据驱动，引用清单式捆绑 skill/mcp/workflow + interface + permissions，= codex plugin 对应物）
+- **Shared Library** = 分发/归属伞（marketplace 角色）；"Plugin" 一词退役。
 
 ## 需求
 
-（待澄清后填写）
+- R1 命名收口：确立上述四词定义与边界，"Plugin" 退役；第一层 `AgentDashPlugin` 语义改名为 Integration（符号级改名可分阶段）。
+- R2 组织模型：采用 provenance 正交维度（模型 1），原语保持 canonical 注册表，包通过来源戳实现冲突/归因/卸载。
+- R3 能力包：定义为新 `LibraryAssetType::CapabilityPack`，引用清单式（不内嵌），主挂 Agent 定义、session 覆盖。
+- R4 分发信任：Curate 优先；路径/manifest 校验从第一天加；git 源/沙箱/签名留后续阶段。
+- R5 一体两面：明确 package（分发面，export/install）与 provenance（运行时面）为同一身份两投影。
+- R6 gap 与 rollout：沉淀结构性缺口清单 + 建议的 child 拆分与落地次序（路线草图，不在本任务执行）。
 
 ## 验收标准
 
-（待澄清后填写 — 须可测试/可检验）
+- [ ] design.md 含完整四词 taxonomy + 与 codex 三层、与现有 7 概念的映射表。
+- [ ] 命名错位诊断（Plugin/Extension/Shared Library 三者错位）有据可查、结论明确。
+- [ ] Q2–Q7 全部决策落档，每条含理由与被否选项的代价。
+- [ ] 结构性缺口清单 + 建议 child 拆分/rollout 次序成文。
+- [ ] 用户过目确认终稿。
+- [ ] 任务**不归档、不进入实现**；实现由后续 parent 承接。
 
 ## 不在范围内
 
 - 动态加载 / 热插拔第一层原生能力（已明确否决）。
+- 任意 git 源 / 运行时沙箱 / 签名 / 远程同步（留后续阶段）。
+- 任何代码改动、符号级改名、child 任务创建（实现期事项）。
 
 ## 阻塞规划的开放问题
 
 - Q1: 产出形态——纯概念收束文档 vs. 延伸实现规划（**待用户拍**，倾向先出决策文档）。
-- Q2（进行中）: 第二层"拓展插件"是否应成为统一打包单元、也能捆绑 skill/mcp/hook 原语；还是维持"交互/UI 扩展"面、原语各走其路。
+- Q2（已定）: 采用"模型 1 · provenance 正交"组织原语与包；原语保持 canonical，包是来源维度。存储分发形态选 (c) 混合（轻包 DB / 重包文件 bundle）。详见 design.md §2、§1.6。
+- Q3（已定）: 命名按**绑定作用域**三分——**Integration**(宿主) / **Extension**(Project 全局 UI) / **Capability Pack 能力包**(Agent 级能力)；"Plugin" 退役；Shared Library 作分发伞。第一层 Plugin→Integration 已确认。详见 design.md §4。
+- Q4（已定）: 能力包主挂 **Agent 定义/模板**（持久装备），session 级做覆盖。详见 design.md §4b。
+- Q5（已定）: 方案 **A**——新增 `LibraryAssetType::CapabilityPack`，为"引用清单"manifest（引用 skill/mcp/workflow asset + interface + permissions），不内嵌。详见 design.md §4b。
+- Q6（已定）: **(a) Curate 优先,分阶段**。信任来自人工 curation + 现有 permission 声明;路径/manifest 校验第一天就加;git 源/远程同步/运行时沙箱/签名留后续阶段。
+- Q7（已定）: 收为**决策文档**；本任务**不归档、不进入实现**，留在原地持有 canonical taxonomy；实现另起 parent + children。

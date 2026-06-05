@@ -4,6 +4,10 @@
 {"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/target-model-sketch.md","reason":"检查命名、仓储和 API 草案是否与 design/implement 一致。"}
 {"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/current-code-context.md","reason":"检查实现是否根据当前代码事实闭合，不凭记忆改动。"}
 {"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-workflow-behavior-coverage.md","reason":"检查架构变更是否仍能覆盖核心 workflow 行为。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/follow-up-module-roadmap.md","reason":"检查后续模块顺序、依赖和验证闭包是否与最新讨论一致。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/orchestration-domain-contract-plan.md","reason":"检查领域合同、migration、repository roundtrip 和第一阶段边界是否闭合。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/workflow-graph-compiler-plan.md","reason":"检查 compiler 是否完整保留 graph 公开语义并提供 pathful diagnostics。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/common-runtime-convergence-plan.md","reason":"检查 common runtime 迁移是否保持单一事实源、terminal 幂等和 projection 闭合。"}
 {"file":".trellis/spec/backend/workflow/architecture.md","reason":"检查 workflow/lifecycle spec 是否随目标模型更新。"}
 {"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"检查 Activity executor、FunctionRun、graph instance 迁移语义。"}
 {"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"检查 session command API 与 steering/control 文档同步。"}

@@ -18,7 +18,7 @@
 - 新增 discussion journal，保存本次讨论中的判断变化与用户补充的架构原则。
 - 在 research 中补充关键事实来源复核索引，说明后续应该去哪些 spec、源码、migration 和外部资料复核结论。
 - 补充正式实现前的 `design.md` 与 `implement.md`，把 API 命名、目标 runtime 模型、迁移阶段、验证命令和风险文件写清楚。
-- 保持当前任务在 planning 状态，工作范围限定为任务文档与实现前计划。
+- 当前任务已在用户确认后进入 `in_progress`，本轮除已完成的 session-scoped API 机械迁移外，后续工作继续以任务文档、模块预研和实现前计划为主。
 
 ## Acceptance Criteria
 
@@ -31,7 +31,9 @@
 - [x] 新增目标模型草案，展示当前模型、目标模型、命名和仓储边界。
 - [x] 新增 Claude Workflow 行为覆盖矩阵，用两份参考资料检验目标架构是否真实承载。
 - [x] 补充 `design.md` 与 `implement.md`，整理正式实现前的设计和实施拆解。
-- [ ] 经过用户 review 后再启动实现流程。
+- [x] 经过用户 review 后启动第一批机械迁移。
+- [x] 完成 session-scoped AgentRun command API 机械迁移，并提交为独立变更。
+- [ ] 后续模块实现继续按子任务 review 后启动。
 
 ## Document Index
 
@@ -45,11 +47,15 @@
 | `implement.md` | 实施拆解：建议子任务、第一批范围、风险文件和验证命令。 |
 | `research/claude-workflow-behavior-coverage.md` | Claude Workflow 核心行为覆盖矩阵，用作架构压力测试。 |
 | `research/current-code-context.md` | 当前代码事实地图，用于后续设计/实现前快速恢复源码上下文。 |
+| `research/follow-up-module-roadmap.md` | 后续模块路线汇总：domain contract、graph compiler、common runtime、trace anchor 与 dynamic script compiler 的启动顺序。 |
+| `research/orchestration-domain-contract-plan.md` | `LifecycleRun.context` / `orchestrations[]` / `view_projection` 领域合同、migration 与 repository roundtrip 预研。 |
+| `research/workflow-graph-compiler-plan.md` | `WorkflowGraph -> OrchestrationPlanSnapshot` compiler 映射、diagnostics、fixtures 与风险预研。 |
+| `research/common-runtime-convergence-plan.md` | common orchestration runtime、snapshot/journal、scheduler、terminal resolver、view projection 与仓储收敛预研。 |
 | `research/README.md` | research 子目录索引，说明外部资料副本与研究产物来源。 |
 | `research/claude-dynamic-workflows-official-doc-zh-cn.md` | 用户贴入的 Claude 官方 Dynamic Workflows 文档副本。 |
 | `research/claude-dynamic-workflows-article-zhihu-simpread.md` | 用户贴入的中文调研文章副本。 |
-| `implement.jsonl` / `check.jsonl` | Trellis manifest 文件，当前为空，保留给后续实现/检查阶段。 |
-| `task.json` | Trellis task 元数据，当前 status 为 `planning`。 |
+| `implement.jsonl` / `check.jsonl` | Trellis manifest 文件，列出实现/检查子代理压缩后需要恢复的任务文档、研究文档与 spec。 |
+| `task.json` | Trellis task 元数据，当前 status 为 `in_progress`。 |
 
 ## Current Gate
 
@@ -64,3 +70,4 @@
 - 评估当前代码时必须谨慎：Lifecycle / WorkflowGraph 相关实现来自快速重构阶段，只能作为现状事实与迁移来源，不应被默认视为最终目标架构。
 - runtime session 入口的 AgentRun command API 目标命名采用 `/sessions/{runtime_session_id}/messages`、`/sessions/{runtime_session_id}/steering`、`/sessions/{runtime_session_id}/pending-messages`；显式 AgentRun 资源管理语境再使用 `/lifecycles/{lifecycle_run_id}/agent-runs`。
 - 正式实现入口以 `design.md` 和 `implement.md` 为准；`research.md` 与 `target-model-sketch.md` 记录形成这些方案的研究依据和概念模型。
+- 后续模块启动前优先读取 `research/follow-up-module-roadmap.md`，再分别进入 domain contract、compiler、common runtime 三份模块预研文档，避免在压缩后丢失研究上下文。

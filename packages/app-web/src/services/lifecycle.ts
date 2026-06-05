@@ -24,6 +24,10 @@ import type {
   PendingMessageView,
 } from "../generated/workflow-contracts";
 
+function sessionCommandPath(runtimeSessionId: string, route: string): string {
+  return `/sessions/${encodeURIComponent(runtimeSessionId)}${route}`;
+}
+
 export async function fetchLifecycleRun(runId: string): Promise<LifecycleRunView> {
   return api.get<LifecycleRunView>(`/lifecycle-runs/${encodeURIComponent(runId)}/view`);
 }
@@ -72,7 +76,7 @@ export async function sendLifecycleAgentMessageByRuntimeSession(
   request: LifecycleAgentMessageRequest,
 ): Promise<LifecycleAgentMessageResponse> {
   return api.post<LifecycleAgentMessageResponse>(
-    `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/messages`,
+    sessionCommandPath(runtimeSessionId, "/messages"),
     request,
   );
 }
@@ -82,7 +86,7 @@ export async function sendLifecycleAgentSteeringMessageByRuntimeSession(
   request: LifecycleAgentSteeringRequest,
 ): Promise<LifecycleAgentSteeringResponse> {
   return api.post<LifecycleAgentSteeringResponse>(
-    `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/steering-messages`,
+    sessionCommandPath(runtimeSessionId, "/steering"),
     request,
   );
 }
@@ -91,7 +95,7 @@ export async function listPendingMessages(
   runtimeSessionId: string,
 ): Promise<PendingMessageView[]> {
   return api.get<PendingMessageView[]>(
-    `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/pending-messages`,
+    sessionCommandPath(runtimeSessionId, "/pending-messages"),
   );
 }
 
@@ -100,7 +104,7 @@ export async function enqueuePendingMessage(
   body: EnqueuePendingMessageRequest,
 ): Promise<EnqueuePendingMessageResponse> {
   return api.post<EnqueuePendingMessageResponse>(
-    `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/pending-messages`,
+    sessionCommandPath(runtimeSessionId, "/pending-messages"),
     body,
   );
 }
@@ -110,7 +114,10 @@ export async function deletePendingMessage(
   messageId: string,
 ): Promise<void> {
   await api.delete<void>(
-    `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/pending-messages/${encodeURIComponent(messageId)}`,
+    sessionCommandPath(
+      runtimeSessionId,
+      `/pending-messages/${encodeURIComponent(messageId)}`,
+    ),
   );
 }
 
@@ -119,7 +126,10 @@ export async function promotePendingMessage(
   messageId: string,
 ): Promise<void> {
   await api.post<void>(
-    `/lifecycle-agents/by-runtime-session/${encodeURIComponent(runtimeSessionId)}/pending-messages/${encodeURIComponent(messageId)}/promote`,
+    sessionCommandPath(
+      runtimeSessionId,
+      `/pending-messages/${encodeURIComponent(messageId)}/promote`,
+    ),
     {},
   );
 }

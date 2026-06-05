@@ -1,25 +1,27 @@
 export type {
+  AgentAssignmentRefDto,
+  AgentFrameRefDto,
+  LifecycleAgentRefDto,
+  LifecycleRunRefDto,
+  RuntimeSessionRefDto,
+  SubjectRefDto,
+} from "../generated/project-agent-contracts";
+export type {
   ActiveActivityRefDto,
   ActivityAttemptView,
   ActivityStateView,
-  AgentAssignmentRefDto,
-  AgentFrameRefDto,
   AgentFrameRuntimeView,
-  LifecycleAgentRefDto,
   LifecycleAgentView,
-  LifecycleRunRefDto,
   LifecycleRunView,
   LifecycleSubjectAssociationDto,
   ProjectActiveAgentsView,
   ProjectSessionListEntry,
   ProjectSessionListView,
   RuntimeSessionExecutionAnchorDto,
-  RuntimeSessionRefDto,
   RuntimeSessionTraceView,
   SessionRuntimeControlView,
   SessionShellDto,
   SubjectExecutionView,
-  SubjectRefDto,
   WorkflowGraphInstanceView,
 } from "../generated/workflow-contracts";
 

@@ -25,28 +25,28 @@ use crate::{
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route(
-            "/lifecycle-agents/by-runtime-session/{runtime_session_id}/messages",
-            axum::routing::post(send_lifecycle_agent_message),
+            "/sessions/{runtime_session_id}/messages",
+            axum::routing::post(send_session_message),
         )
         .route(
-            "/lifecycle-agents/by-runtime-session/{runtime_session_id}/steering-messages",
-            axum::routing::post(steer_lifecycle_agent_message),
+            "/sessions/{runtime_session_id}/steering",
+            axum::routing::post(steer_session),
         )
         .route(
-            "/lifecycle-agents/by-runtime-session/{runtime_session_id}/pending-messages",
+            "/sessions/{runtime_session_id}/pending-messages",
             axum::routing::get(list_pending_messages).post(enqueue_pending_message),
         )
         .route(
-            "/lifecycle-agents/by-runtime-session/{runtime_session_id}/pending-messages/{msg_id}",
+            "/sessions/{runtime_session_id}/pending-messages/{message_id}",
             axum::routing::delete(delete_pending_message),
         )
         .route(
-            "/lifecycle-agents/by-runtime-session/{runtime_session_id}/pending-messages/{msg_id}/promote",
+            "/sessions/{runtime_session_id}/pending-messages/{message_id}/promote",
             axum::routing::post(promote_pending_message),
         )
 }
 
-pub async fn send_lifecycle_agent_message(
+pub async fn send_session_message(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(runtime_session_id): Path<String>,
@@ -142,7 +142,7 @@ pub async fn send_lifecycle_agent_message(
     }))
 }
 
-pub async fn steer_lifecycle_agent_message(
+pub async fn steer_session(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(runtime_session_id): Path<String>,
@@ -290,18 +290,18 @@ async fn enqueue_pending_message(
 async fn delete_pending_message(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path((runtime_session_id, msg_id)): Path<(String, String)>,
+    Path((runtime_session_id, message_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_runtime_session_permission(&state, &current_user, &runtime_session_id).await?;
     let deleted = state
         .services
         .pending_queue
-        .delete(&runtime_session_id, &msg_id)
+        .delete(&runtime_session_id, &message_id)
         .await;
     if !deleted {
         return Err(ApiError::NotFound(format!(
             "pending message {} 不存在",
-            msg_id
+            message_id
         )));
     }
     Ok(Json(serde_json::json!({ "deleted": true })))
@@ -310,15 +310,15 @@ async fn delete_pending_message(
 async fn promote_pending_message(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path((runtime_session_id, msg_id)): Path<(String, String)>,
+    Path((runtime_session_id, message_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_runtime_session_permission(&state, &current_user, &runtime_session_id).await?;
     let msg = state
         .services
         .pending_queue
-        .take(&runtime_session_id, &msg_id)
+        .take(&runtime_session_id, &message_id)
         .await
-        .ok_or_else(|| ApiError::NotFound(format!("pending message {} 不存在", msg_id)))?;
+        .ok_or_else(|| ApiError::NotFound(format!("pending message {} 不存在", message_id)))?;
 
     let service = LifecycleAgentSteeringService::new(
         state.repos.lifecycle_run_repo.as_ref(),

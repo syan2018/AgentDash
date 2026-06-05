@@ -44,6 +44,20 @@ fetchAgentFrameRuntime(frameId): Promise<AgentFrameRuntimeView>
 fetchRuntimeTrace(runtimeSessionId): Promise<RuntimeSessionTraceView>
 ```
 
+Session command APIs use runtime session as the delivery/control entrypoint:
+
+```ts
+sendLifecycleAgentMessageByRuntimeSession(runtimeSessionId, request)
+sendLifecycleAgentSteeringMessageByRuntimeSession(runtimeSessionId, request)
+listPendingMessages(runtimeSessionId)
+enqueuePendingMessage(runtimeSessionId, request)
+deletePendingMessage(runtimeSessionId, messageId)
+promotePendingMessage(runtimeSessionId, messageId)
+```
+
+These calls target `/sessions/{runtimeSessionId}/...`; run / agent / frame refs are resolved
+by backend anchors and should not be encoded into the frontend route.
+
 ## Definition Contract
 
 Definition request/response fields:
@@ -96,6 +110,11 @@ Lifecycle primary state is indexed by run / graph instance / subject / agent / f
 - Validation endpoint returns `issues[]`; editor stores `WorkflowValidationResult` and blocks save on error severity。
 - Human decision submit API error keeps current run visible and lets caller reload through store polling。
 - Nullable `session_id` from legacy DTO must not become a required business key.
+- `packages/app-web/src/types/lifecycle-views.ts` is a facade over generated contracts. Ref DTOs
+  shared with ProjectAgent, such as `LifecycleRunRefDto`、`LifecycleAgentRefDto`、
+  `AgentFrameRefDto`、`RuntimeSessionRefDto`、`SubjectRefDto` and
+  `AgentAssignmentRefDto`, are re-exported from `project-agent-contracts`; lifecycle view DTOs
+  remain re-exported from `workflow-contracts`.
 
 ## Editor Model
 

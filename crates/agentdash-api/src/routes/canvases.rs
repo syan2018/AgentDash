@@ -304,7 +304,7 @@ fn build_canvas_runtime_bridge_surface(
 
 async fn load_canvas_with_permission(
     state: &AppState,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
     raw_canvas_id: &str,
     permission: ProjectPermission,
 ) -> Result<agentdash_domain::canvas::Canvas, ApiError> {
@@ -335,7 +335,7 @@ fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -
 
 async fn resolve_canvas_runtime_vfs(
     state: &Arc<AppState>,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
     session_id: Option<&str>,
 ) -> Result<Option<agentdash_spi::Vfs>, ApiError> {
     let Some(session_id) = session_id else {

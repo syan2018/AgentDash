@@ -764,8 +764,8 @@ function CompactList({
 
 function sourceLabel(source: LibraryAssetDto["source"]): string {
   switch (source) {
-    case "plugin_embedded":
-      return "Plugin";
+    case "integration_embedded":
+      return "Integration";
     case "user_authored":
       return "User";
     case "remote_imported":

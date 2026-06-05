@@ -304,7 +304,7 @@ pub async fn upload_skill_assets(
 
 async fn load_asset_with_project(
     state: &AppState,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
     path: &SkillAssetItemPath,
     permission: ProjectPermission,
 ) -> Result<(Uuid, SkillAsset), ApiError> {

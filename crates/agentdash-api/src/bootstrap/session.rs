@@ -33,7 +33,7 @@ pub(crate) struct SessionBootstrapInput {
     pub runtime_tool_provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider>,
     pub mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider>,
     pub platform_config: SharedPlatformConfig,
-    pub plugin_connectors: Vec<Arc<dyn AgentConnector>>,
+    pub integration_connectors: Vec<Arc<dyn AgentConnector>>,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub llm_provider_secret: Arc<dyn LlmSecretCodec>,
 }
@@ -67,7 +67,7 @@ pub(crate) async fn build_session_runtime(
         runtime_tool_provider,
         mcp_relay_provider,
         platform_config,
-        plugin_connectors,
+        integration_connectors,
         extra_skill_dirs,
         llm_provider_secret,
     } = input;
@@ -100,8 +100,8 @@ pub(crate) async fn build_session_runtime(
         ),
     ));
 
-    sub_connectors.extend(plugin_connectors);
-    crate::plugins::validate_connector_executor_ids(&sub_connectors)
+    sub_connectors.extend(integration_connectors);
+    crate::integrations::validate_connector_executor_ids(&sub_connectors)
         .map_err(|err| anyhow::anyhow!("连接器注册失败: {err}"))?;
 
     let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));

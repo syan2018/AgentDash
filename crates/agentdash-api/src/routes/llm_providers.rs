@@ -37,7 +37,7 @@ use crate::{
     oauth_flow::{self, LocalOAuthProviderConfig},
     rpc::ApiError,
 };
-use agentdash_plugin_api::AuthMode;
+use agentdash_integration_api::AuthMode;
 
 const CODEX_OAUTH_CALLBACK_HOST: &str = "127.0.0.1";
 const CODEX_OAUTH_CALLBACK_PORT: u16 = 1455;
@@ -118,7 +118,7 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
 // ─── Access control ───
 
 fn require_system_access(
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
 ) -> Result<(), ApiError> {
     if current_user.is_admin || current_user.auth_mode == AuthMode::Personal {
         return Ok(());
@@ -849,7 +849,7 @@ fn admin_provider_dto(
 async fn effective_provider_dto_for_provider(
     provider: LlmProvider,
     state: &AppState,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
 ) -> Result<EffectiveLlmProviderDto, ApiError> {
     let profile = build_effective_provider_profile(
         provider,

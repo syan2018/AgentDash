@@ -30,7 +30,7 @@ pub(crate) fn build_vfs_kernel(
     backend_registry: Arc<BackendRegistry>,
     shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
     platform_config: SharedPlatformConfig,
-    plugin_mount_providers: Vec<Arc<dyn MountProvider>>,
+    integration_mount_providers: Vec<Arc<dyn MountProvider>>,
 ) -> VfsBootstrapOutput {
     let mut mount_registry_builder = MountProviderRegistryBuilder::new()
         .with_builtins(
@@ -46,8 +46,11 @@ pub(crate) fn build_vfs_kernel(
             backend_registry.clone(),
         )));
 
-    for provider in plugin_mount_providers {
-        tracing::info!("注册插件 MountProvider: {}", provider.provider_id());
+    for provider in integration_mount_providers {
+        tracing::info!(
+            "注册 Host Integration MountProvider: {}",
+            provider.provider_id()
+        );
         mount_registry_builder = mount_registry_builder.register(provider);
     }
 
@@ -107,10 +110,10 @@ pub(crate) fn build_vfs_kernel(
 }
 
 pub(crate) fn build_vfs_discovery_registry(
-    plugin_vfs_providers: Vec<Box<dyn VfsDiscoveryProvider>>,
+    integration_vfs_providers: Vec<Box<dyn VfsDiscoveryProvider>>,
 ) -> VfsDiscoveryRegistry {
     let mut vfs_registry = builtin_vfs_registry();
-    for provider in plugin_vfs_providers {
+    for provider in integration_vfs_providers {
         vfs_registry.register(provider);
     }
     vfs_registry

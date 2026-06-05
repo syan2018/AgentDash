@@ -15,8 +15,8 @@
 
 | 概念 | 位置 | 注册方式 | 所属层 |
 |---|---|---|---|
-| AgentDashPlugin | crates/agentdash-plugin-api/src/plugin.rs | 原生 Rust trait，编译期 bootstrap 汇总 | 宿主能力注入（受信） |
-| Connector / Executor | crates/agentdash-spi/src/connector/mod.rs | list_executors()，内置或经 plugin | 能力原语 |
+| AgentDashIntegration | crates/agentdash-integration-api/src/integration.rs | 原生 Rust trait，编译期 bootstrap 汇总 | 宿主能力注入（受信） |
+| Connector / Executor | crates/agentdash-spi/src/connector/mod.rs | list_executors()，内置或经 integration | 能力原语 |
 | Executor/LLM Bridge | agentdash-executor/.../bridges | DB llm_providers 表 | 能力原语（硬编码 bridge） |
 | Workflow / Activity | crates/agentdash-contracts/src/workflow.rs | 领域实体，静态编排，不可插 | 编排 |
 | Skill | crates/agentdash-spi/src/platform/skill.rs | VFS mount + extra_skill_dirs() | 能力原语 |
@@ -24,7 +24,7 @@
 | Extension Package | crates/agentdash-application/src/extension_runtime.rs | manifest(JSON) + library_asset_seeds + DB 安装 | 数据驱动包 |
 
 核心歧义：
-- `AgentDashPlugin` = **编译期原生宿主扩展**（注册 connector/auth/mount/vfs/skill-dir/library-seed），其 trait 注释自承多数扩展点"仍处实验阶段，未接入稳定宿主链路"。
+- `AgentDashIntegration` = **编译期原生宿主扩展**（注册 connector/auth/mount/vfs/skill-dir/library-seed），其 trait 注释自承多数扩展点"仍处实验阶段，未接入稳定宿主链路"。
 - `Extension Package` = **数据驱动可安装包**（commands/flags/renderers/tabs），才是真正对应 codex `plugin` 的层。
 - 二者共用"插件/扩展"一词，是首要待掰开的歧义。
 
@@ -33,7 +33,7 @@
 2. 缺 marketplace / 分发 / 版本生命周期（现为编译期 seed + DB 安装记录）。
 3. 缺内容声明式（非原生）的生命周期 hook 面（现 hook_rules/workflow 为静态编排）。
 4. 缺统一能力归因 + 跨原语冲突解决（仅 connector 有 DuplicateExecutorId）。
-5. 缺展示元数据作为一等公民（原生 plugin 无 interface，对 UI 不可见）。
+5. 缺展示元数据作为一等公民（原生 integration 无 interface，对 UI 不可见）。
 6. 缺 native(受信编译期) vs. content(数据驱动) 两层的明确分界与信任模型。
 7. 缺可安装包的路径安全/manifest 校验（codex 强制 ./ 相对、拒绝 ..）。
 
@@ -46,7 +46,7 @@
 - 作者：核心团队 / 部署接入部门；信任来自**部署方权威**。
 - 形态：**编译期绑定，明确不做动态加载**。
 - 接口的真正价值：**让第三方仓用 upstream 方式跟主干，不必硬 fork**——下游维护依赖开源核心的私有集成 crate，只碰标准化扩展接口，永不 patch core。
-- 当前载体：`AgentDashPlugin` trait（`builtin_plugins()` 静态装配）已是此接缝。
+- 当前载体：`AgentDashIntegration` trait（`builtin_integrations()` 静态装配）已是此接缝。
 - 质量标准（= 可 upstream 目标的实现）：
   - 接口**完整**：私有 crate 能纯靠接口完成 Auth/mount/connector 等，不伸手进 core。
   - **闭环实验扩展点**：`source_resolvers` / `external_service_clients` / `routine_trigger_providers` 等"声明了却未接入宿主链路"的点必须真接通，否则下游被迫 patch core → 被逼 fork。
@@ -73,7 +73,7 @@
 
 ## 需求
 
-- R1 命名收口：确立上述四词定义与边界，"Plugin" 退役；第一层 `AgentDashPlugin` 语义改名为 Integration（符号级改名可分阶段）。
+- R1 命名收口：确立上述四词定义与边界，"Plugin" 退役；第一层 `AgentDashIntegration` 语义改名为 Integration（符号级改名已落地）。
 - R2 组织模型：采用 provenance 正交维度（模型 1），原语保持 canonical 注册表，包通过来源戳实现冲突/归因/卸载。
 - R3 能力包：定义为新 `LibraryAssetType::CapabilityPack`，引用清单式（不内嵌），主挂 Agent 定义、session 覆盖。
 - R4 分发信任：Curate 优先；路径/manifest 校验从第一天加；git 源/沙箱/签名留后续阶段。
@@ -99,7 +99,7 @@
 
 - Q1: 产出形态——纯概念收束文档 vs. 延伸实现规划（**待用户拍**，倾向先出决策文档）。
 - Q2（已定）: 采用"模型 1 · provenance 正交"组织原语与包；原语保持 canonical，包是来源维度。存储分发形态选 (c) 混合（轻包 DB / 重包文件 bundle）。详见 design.md §2、§1.6。
-- Q3（已定）: 命名按**绑定作用域**三分——**Integration**(宿主) / **Extension**(Project 全局 UI) / **Capability Pack 能力包**(Agent 级能力)；"Plugin" 退役；Shared Library 作分发伞。第一层 Plugin→Integration 已确认。详见 design.md §4。
+- Q3（已定）: 命名按**绑定作用域**三分——**Integration**(宿主) / **Extension**(Project 全局 UI) / **Capability Pack 能力包**(Agent 级能力)；"Plugin" 退役；Shared Library 作分发伞。第一层 Plugin→Integration 已确认并完成符号迁移。详见 design.md §4。
 - Q4（已定）: 能力包主挂 **Agent 定义/模板**（持久装备），session 级做覆盖。详见 design.md §4b。
 - Q5（已定）: 方案 **A**——新增 `LibraryAssetType::CapabilityPack`，为"引用清单"manifest（引用 skill/mcp/workflow asset + interface + permissions），不内嵌。详见 design.md §4b。
 - Q6（已定）: **(a) Curate 优先,分阶段**。信任来自人工 curation + 现有 permission 声明;路径/manifest 校验第一天就加;git 源/远程同步/运行时沙箱/签名留后续阶段。

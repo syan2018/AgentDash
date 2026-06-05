@@ -13,7 +13,7 @@ export type LibraryAssetDto = { id: string, asset_type: LibraryAssetType, scope:
 
 export type LibraryAssetScope = "builtin" | "system" | "org" | "user";
 
-export type LibraryAssetSource = "builtin" | "user_authored" | "remote_imported" | "plugin_embedded";
+export type LibraryAssetSource = "builtin" | "user_authored" | "remote_imported" | "integration_embedded";
 
 export type LibraryAssetType = "agent_template" | "mcp_server_template" | "workflow_template" | "skill_template" | "vfs_mount_template" | "extension_template";
 

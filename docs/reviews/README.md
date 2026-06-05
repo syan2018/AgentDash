@@ -23,7 +23,7 @@
 | [frontend-backend-contract-generation-strategy.md](./2026-05-23-architecture-review-round/frontend-backend-contract-generation-strategy.md) | 前后端协议生成标准化方案、候选方案取舍与 DTO 迁移顺序 |
 | [module-boundary-split-plan.md](./2026-05-23-architecture-review-round/module-boundary-split-plan.md) | Workflow、VFS、Relay protocol、Agent loop 的分批拆分顺序 |
 | [runtime-control-plane-review.md](./2026-05-23-architecture-review-round/runtime-control-plane-review.md) | 偏 Runtime 控制平面、Session pipeline、Relay 时序和 crate 分层 |
-| [platform-boundary-governance-review.md](./2026-05-23-architecture-review-round/platform-boundary-governance-review.md) | 偏平台边界、工程治理、AppState、schema、Plugin API 和前端契约 |
+| [platform-boundary-governance-review.md](./2026-05-23-architecture-review-round/platform-boundary-governance-review.md) | 偏平台边界、工程治理、AppState、schema、Host Integration API 和前端契约 |
 
 [2026-05-26-compaction-session-branching-review](./2026-05-26-compaction-session-branching-review/) 是 compaction 与 session branching 后续收敛的入口：
 

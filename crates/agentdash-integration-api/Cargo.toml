@@ -1,6 +1,6 @@
 [package]
-name = "agentdash-plugin-api"
-description = "AgentDash 插件 SPI — 开源核心与企业扩展的唯一契约面，只含 trait 与类型定义"
+name = "agentdash-integration-api"
+description = "AgentDash Host Integration SPI — 开源核心与企业集成的唯一契约面，只含 trait 与类型定义"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

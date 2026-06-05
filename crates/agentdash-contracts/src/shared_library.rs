@@ -28,7 +28,7 @@ pub enum LibraryAssetSource {
     Builtin,
     UserAuthored,
     RemoteImported,
-    PluginEmbedded,
+    IntegrationEmbedded,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]

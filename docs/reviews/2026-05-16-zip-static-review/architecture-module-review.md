@@ -62,8 +62,8 @@ AgentDash 已经形成了较清晰的“大方向”：Domain / Application / In
 - `agentdash-infrastructure`
 - `agentdash-spi`
 - `agentdash-executor`
-- `agentdash-first-party-plugins`
-- `agentdash-plugin-api`
+- `agentdash-first-party-integrations`
+- `agentdash-integration-api`
 - `agentdash-api`
 - `agentdash-mcp`
 - `agentdash-agent-types`

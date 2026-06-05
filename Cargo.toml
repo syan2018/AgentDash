@@ -7,8 +7,8 @@ members = [
     "crates/agentdash-infrastructure",
     "crates/agentdash-spi",
     "crates/agentdash-executor",
-    "crates/agentdash-first-party-plugins",
-    "crates/agentdash-plugin-api",
+    "crates/agentdash-first-party-integrations",
+    "crates/agentdash-integration-api",
     "crates/agentdash-contracts",
     "crates/agentdash-api",
 
@@ -73,14 +73,14 @@ agentdash-application = { path = "crates/agentdash-application" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
 agentdash-spi = { path = "crates/agentdash-spi" }
 agentdash-executor = { path = "crates/agentdash-executor", default-features = false }
-agentdash-first-party-plugins = { path = "crates/agentdash-first-party-plugins" }
+agentdash-first-party-integrations = { path = "crates/agentdash-first-party-integrations" }
 
 agentdash-mcp = { path = "crates/agentdash-mcp" }
 agentdash-agent-types = { path = "crates/agentdash-agent-types" }
 agentdash-agent = { path = "crates/agentdash-agent" }
 agentdash-relay = { path = "crates/agentdash-relay" }
 agentdash-local = { path = "crates/agentdash-local" }
-agentdash-plugin-api = { path = "crates/agentdash-plugin-api" }
+agentdash-integration-api = { path = "crates/agentdash-integration-api" }
 agentdash-contracts = { path = "crates/agentdash-contracts" }
 
 # Codex App Server Protocol

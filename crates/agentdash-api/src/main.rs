@@ -9,5 +9,5 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    agentdash_api::run_server(agentdash_api::builtin_plugins()).await
+    agentdash_api::run_server(agentdash_api::builtin_integrations()).await
 }

@@ -1407,7 +1407,7 @@ mod tests {
     fn installed_source() -> InstalledAssetSource {
         InstalledAssetSource::new(
             Uuid::new_v4(),
-            "plugin:test:extension_template:local-hello",
+            "integration:test:extension_template:local-hello",
             "0.1.0",
             "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         )

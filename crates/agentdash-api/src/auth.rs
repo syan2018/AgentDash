@@ -12,7 +12,7 @@ use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
 use agentdash_domain::workspace::Workspace;
-use agentdash_plugin_api::{AuthError, AuthIdentity, AuthRequest};
+use agentdash_integration_api::{AuthError, AuthIdentity, AuthRequest};
 use axum::extract::{FromRef, FromRequestParts, Request, State};
 use axum::http::{HeaderMap, request::Parts};
 use axum::middleware::Next;
@@ -223,7 +223,7 @@ pub(crate) fn map_auth_error(err: AuthError) -> ApiError {
 }
 
 async fn authorize_authenticated_request(
-    provider: &dyn agentdash_plugin_api::AuthProvider,
+    provider: &dyn agentdash_integration_api::AuthProvider,
     identity: &AuthIdentity,
     request: &AuthRequest,
 ) -> Result<(), ApiError> {
@@ -418,7 +418,7 @@ pub async fn persist_identity_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_plugin_api::{AuthError, AuthProvider};
+    use agentdash_integration_api::{AuthError, AuthProvider};
     use agentdash_spi::platform::auth::AuthMode;
 
     struct StaticAuthorizeProvider {

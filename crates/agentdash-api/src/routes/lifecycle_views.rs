@@ -177,7 +177,7 @@ pub async fn get_project_active_agents(
 
 async fn authorize_subject_execution_view(
     state: &Arc<AppState>,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
     subject: &SubjectRef,
     view: &SubjectExecutionView,
 ) -> Result<(), ApiError> {
@@ -246,7 +246,7 @@ async fn load_lifecycle_run(state: &AppState, run_id: Uuid) -> Result<LifecycleR
 
 async fn authorize_runtime_session_shell(
     state: &AppState,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
     runtime_session_id: &str,
 ) -> Result<Uuid, ApiError> {
     let _meta = state

@@ -296,7 +296,7 @@ pub async fn probe_mcp_transport_handler(
 /// 载入并校验：preset 存在 + 属于路径中的 project + 当前用户具备所需权限。
 async fn load_preset_with_project(
     state: &AppState,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
     path: &McpPresetItemPath,
     permission: ProjectPermission,
 ) -> Result<(Uuid, McpPreset), ApiError> {

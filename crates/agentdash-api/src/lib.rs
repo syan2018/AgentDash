@@ -2,9 +2,9 @@ pub mod app_state;
 pub mod auth;
 pub mod bootstrap;
 pub mod dto;
+pub mod integrations;
 pub mod mount_providers;
 pub mod oauth_flow;
-pub mod plugins;
 pub mod relay;
 pub mod routes;
 pub mod rpc;
@@ -22,10 +22,10 @@ use anyhow::Result;
 use axum::Router;
 use tokio::net::TcpListener;
 
-use agentdash_plugin_api::AgentDashPlugin;
+use agentdash_integration_api::AgentDashIntegration;
 
 use app_state::AppState;
-pub use plugins::builtin_plugins;
+pub use integrations::builtin_integrations;
 
 const DEFAULT_POSTGRES_MAX_CONNECTIONS: u32 = 20;
 
@@ -89,24 +89,24 @@ impl ApiServer {
 
 /// 启动 AgentDash API 服务
 ///
-/// 接受插件列表，在 DI 组装完成后启动 HTTP 服务。
-/// 开源版通常传入 `builtin_plugins()`；企业版在此基础上追加私有插件。
-pub async fn run_server(plugins: Vec<Box<dyn AgentDashPlugin>>) -> Result<()> {
-    run_server_with_options(plugins, ApiServerOptions::from_env()?).await
+/// 接受 Host Integration 列表，在 DI 组装完成后启动 HTTP 服务。
+/// 开源版通常传入 `builtin_integrations()`；企业版在此基础上追加私有集成。
+pub async fn run_server(integrations: Vec<Box<dyn AgentDashIntegration>>) -> Result<()> {
+    run_server_with_options(integrations, ApiServerOptions::from_env()?).await
 }
 
 pub async fn run_server_with_options(
-    plugins: Vec<Box<dyn AgentDashPlugin>>,
+    integrations: Vec<Box<dyn AgentDashIntegration>>,
     options: ApiServerOptions,
 ) -> Result<()> {
-    let server = build_server(plugins, options).await?;
+    let server = build_server(integrations, options).await?;
     let ready = server.ready().clone();
     tracing::info!("AgentDash API 服务启动: {}", ready.origin);
     server.serve().await
 }
 
 pub async fn build_server(
-    plugins: Vec<Box<dyn AgentDashPlugin>>,
+    integrations: Vec<Box<dyn AgentDashIntegration>>,
     options: ApiServerOptions,
 ) -> Result<ApiServer> {
     let db_runtime = agentdash_infrastructure::postgres_runtime::PostgresRuntime::resolve(
@@ -122,7 +122,7 @@ pub async fn build_server(
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let state = AppState::new_with_plugins(db_runtime.pool.clone(), plugins).await?;
+    let state = AppState::new_with_integrations(db_runtime.pool.clone(), integrations).await?;
 
     let app = routes::create_router(state);
 

@@ -17,7 +17,7 @@ app-web
 ```
 
 代码里已经有不少好的架构苗头：
-`agentdash-agent-protocol` 独立承载事件协议并生成 TS 类型；`agentdash-domain` 试图沉淀纯领域模型；`agentdash-application` 里有 Session、VFS、Workflow 等应用服务；`agentdash-plugin-api` 抽象插件扩展点；前端也按 features/pages/stores/services 做了基本划分。
+`agentdash-agent-protocol` 独立承载事件协议并生成 TS 类型；`agentdash-domain` 试图沉淀纯领域模型；`agentdash-application` 里有 Session、VFS、Workflow 等应用服务；`agentdash-integration-api` 抽象插件扩展点；前端也按 features/pages/stores/services 做了基本划分。
 
 但当前最大的问题不是“缺功能”，而是**架构边界正在被组合复杂度侵蚀**。几个模块已经开始变成事实上的“大泥球入口”：`agentdash-api::app_state`、`agentdash-application::session`、`workflow/value_objects.rs`、前端若干 store/page 文件。继续往上堆功能会让修改成本越来越高，尤其是 Session Runtime、VFS、Workflow、Plugin、Auth、Stream 这几条线会互相缠住。
 
@@ -76,7 +76,7 @@ CI workflow
 | `agentdash-agent-protocol`        | Backbone 事件协议、TS 类型生成                            | 比较健康，建议扩展到更多 API/DTO 类型                      |
 | `agentdash-agent-types`           | Agent 相关基础类型                                     | 可以承接更多 agent-facing 配置，减少 agent 对 domain 的依赖 |
 | `agentdash-spi`                   | 服务提供接口、运行时抽象                                     | 是插件/运行时边界的关键层，值得继续收敛                         |
-| `agentdash-plugin-api`            | 插件扩展点                                            | 扩展点设计偏多，但部分没有真正接入 host                       |
+| `agentdash-integration-api`            | 插件扩展点                                            | 扩展点设计偏多，但部分没有真正接入 host                       |
 | `agentdash-agent`                 | Cloud Agent Runtime / agent loop                 | 核心能力清楚，但 `agent_loop.rs` 过大                  |
 | `agentdash-executor`              | Agent Connector / 执行适配器                          | 与 runtime、domain、spi 都有关，是 runtime 桥接层       |
 | `agentdash-application`           | Session、VFS、Workflow、Task、Hooks、Capability 等应用服务 | 目前是最大复杂度中心，需要拆出稳定边界                          |
@@ -94,7 +94,7 @@ CI workflow
 
 ### P0：`agentdash-api/src/app_state.rs` 已经变成系统级 God Object
 
-`AppState::new_with_plugins` 现在承担了太多职责：
+`AppState::new_with_integrations` 现在承担了太多职责：
 
 ```text
 收集插件
@@ -192,7 +192,7 @@ repository 只负责数据访问，不负责改库
 
 ### P0：插件 API 暴露的能力多于实际 host 接入能力
 
-`agentdash-plugin-api` 定义了不少 extension points，例如：
+`agentdash-integration-api` 定义了不少 extension points，例如：
 
 ```text
 vfs_providers
@@ -216,7 +216,7 @@ on_shutdown
 
 ```text
 方案 A：删掉暂未接入的 extension points
-方案 B：补齐 PluginHost，让每个 extension point 都有明确注册、生命周期、shutdown 语义
+方案 B：补齐 IntegrationHost，让每个 extension point 都有明确注册、生命周期、shutdown 语义
 ```
 
 我更建议当前阶段采用方案 A + 小步补齐。pre-research 阶段 API 不需要为了未来可能性提前暴露太多接口。
@@ -796,7 +796,7 @@ server-set HttpOnly Secure SameSite cookie
 ```text
 补齐 pnpm-workspace.yaml / lockfiles / scripts / CI
 
-把 AppState::new_with_plugins 拆成 bootstrap 子模块
+把 AppState::new_with_integrations 拆成 bootstrap 子模块
 
 把 routes.rs 拆成 domain routers
 
@@ -804,7 +804,7 @@ server-set HttpOnly Secure SameSite cookie
 
 清理 RoutineExecutor 未使用构造参数
 
-清理 plugin-api 中未接入的 extension points
+清理 integration-api 中未接入的 extension points
 
 加 architecture tests：
   - bootstrap/application 不允许 import routes
@@ -922,14 +922,14 @@ agentdash-application
 按收益/风险排序，我建议先做这些：
 
 1. **补齐工作区文件和锁文件**：`pnpm-workspace.yaml`、`Cargo.lock`、`pnpm-lock.yaml`、缺失 scripts。
-2. **拆 `AppState::new_with_plugins`**：先拆成 repositories/plugins/vfs/session/auth/background workers。
+2. **拆 `AppState::new_with_integrations`**：先拆成 repositories/plugins/vfs/session/auth/background workers。
 3. **统一 schema 来源**：repository 不再运行 DDL，只跑 migrations。
 4. **拆 routes composition**：每个业务域一个 router builder。
 5. **移动 bootstrap 中对 routes helper 的依赖**：避免 bootstrap/use-case 反向依赖 HTTP route。
 6. **拆 `workflow/value_objects.rs`**：按 contract/lifecycle/activity/run_state/validation 拆。
 7. **拆 `vfs/tools/fs.rs`**：read/write/list/search/patch 分离，统一 capability check。
 8. **拆前端 `workflowStore.ts` / `useSessionStream.ts`**：API、normalizer、reducer、hook 分离。
-9. **清理 plugin-api 未接入扩展点**：要么删，要么完整接入 PluginHost。
+9. **清理 integration-api 未接入扩展点**：要么删，要么完整接入 IntegrationHost。
 10. **扩展 TS 类型生成**：从 Backbone protocol 扩展到 Workflow/Session/VFS DTO。
 
 ---
@@ -945,7 +945,7 @@ agentdash-application
                     └─────────┬──────────┘
                               │
 ┌────────────────────┐ ┌──────▼───────┐ ┌────────────────────┐
-│ agentdash-domain   │ │ agentdash-spi │ │ agentdash-plugin-api│
+│ agentdash-domain   │ │ agentdash-spi │ │ agentdash-integration-api│
 │ pure domain model  │ │ ports/traits  │ │ extension contracts │
 └─────────┬──────────┘ └──────┬───────┘ └─────────┬──────────┘
           │                   │                   │
@@ -994,7 +994,7 @@ Session 是 runtime 聚合，不是所有业务逻辑的收纳箱
 VFS 是能力安全边界，不只是文件工具集合
 Workflow 是领域模型，不应该塞在一个 value_objects 巨型文件里
 API 是 transport，不应该承担系统 wiring 和业务编排
-Plugin API 暴露什么，就必须 host 真正支持什么
+Host Integration API 暴露什么，就必须 host 真正支持什么
 DB schema 只能有一个事实来源
 前后端 DTO 应该生成，而不是靠手写 normalizer 对齐
 ```

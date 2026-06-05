@@ -31,9 +31,8 @@ use agentdash_contracts::session::{
     SessionNdjsonEnvelope, SessionProjectionRollbackResponse, SessionProjectionViewResponse,
 };
 use agentdash_contracts::workflow::{
-    LifecycleAgentRefDto,
-    LifecycleRunRefDto, PendingMessageView, ProjectSessionListEntry, ProjectSessionListView,
-    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
+    LifecycleAgentRefDto, LifecycleRunRefDto, PendingMessageView, ProjectSessionListEntry,
+    ProjectSessionListView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
     SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
     SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
     SessionShellDto, SubjectRefDto,
@@ -49,7 +48,7 @@ use crate::dto::{
 /// Session trace 权限检查通过 RuntimeSessionExecutionAnchor 进入 LifecycleRun project。
 pub async fn ensure_session_permission(
     state: &AppState,
-    user: &agentdash_plugin_api::AuthIdentity,
+    user: &agentdash_integration_api::AuthIdentity,
     session_id: &str,
     permission: ProjectPermission,
 ) -> Result<(), ApiError> {
@@ -173,7 +172,9 @@ pub async fn get_session_runtime_control(
             session_meta: session_shell_dto(&meta),
             control_plane: SessionRuntimeControlPlaneView {
                 status: SessionRuntimeControlPlaneStatus::UnboundTrace,
-                reason: Some("当前 Session 只有 runtime trace，没有绑定 Agent 控制面。".to_string()),
+                reason: Some(
+                    "当前 Session 只有 runtime trace，没有绑定 Agent 控制面。".to_string(),
+                ),
             },
             anchor: None,
             run: None,
@@ -181,7 +182,9 @@ pub async fn get_session_runtime_control(
             frame_runtime: None,
             subject_associations: Vec::new(),
             actions: SessionRuntimeActionSetView {
-                send_next: disabled_action("当前 Session 没有绑定 Agent 控制面，不能继续发送消息。"),
+                send_next: disabled_action(
+                    "当前 Session 没有绑定 Agent 控制面，不能继续发送消息。",
+                ),
                 enqueue: disabled_action("当前 Session 没有绑定 Agent 控制面。"),
                 steer: disabled_action("当前 Session 没有绑定 Agent 控制面，不能运行中 steer。"),
                 cancel: disabled_action("当前 Session 没有正在执行的 turn。"),
@@ -216,7 +219,11 @@ pub async fn get_session_runtime_control(
         .agent_frame_repo
         .get_current(agent.id)
         .await?
-        .or(state.repos.agent_frame_repo.get(anchor.launch_frame_id).await?);
+        .or(state
+            .repos
+            .agent_frame_repo
+            .get(anchor.launch_frame_id)
+            .await?);
     let frame_runtime = match frame {
         Some(frame) => {
             let runtime_refs = runtime_refs_for_agent(state.as_ref(), agent.id).await?;
@@ -246,10 +253,7 @@ pub async fn get_session_runtime_control(
         .inspect_session_execution_state(&runtime_session_id)
         .await?;
     let delivery_running = meta.last_delivery_status == ExecutionStatus::Running
-        || matches!(
-            execution_state,
-            SessionExecutionState::Running { .. }
-        );
+        || matches!(execution_state, SessionExecutionState::Running { .. });
     let terminal_agent = is_terminal_agent_status(&agent.status);
     let has_frame = frame_runtime.is_some();
     let supports_steering = if delivery_running {
@@ -318,11 +322,7 @@ pub async fn get_session_runtime_control(
         disabled_action("当前 Agent 没有可投递的 runtime frame。")
     };
 
-    let pending_previews = state
-        .services
-        .pending_queue
-        .list(&runtime_session_id)
-        .await;
+    let pending_previews = state.services.pending_queue.list(&runtime_session_id).await;
     let pending_messages: Vec<PendingMessageView> = pending_previews
         .into_iter()
         .map(|p| PendingMessageView {
@@ -1303,4 +1303,3 @@ pub async fn get_session_context_audit(
 }
 
 // ─── Pending Message Queue ──────────────────────────────
-

@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use agentdash_plugin_api::AuthMode;
+use agentdash_integration_api::AuthMode;
 
 pub(crate) fn resolve_configured_auth_mode() -> Result<AuthMode> {
     match std::env::var("AGENTDASH_AUTH_MODE") {

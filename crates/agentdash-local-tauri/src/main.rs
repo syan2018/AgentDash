@@ -741,7 +741,7 @@ fn start_desktop_api(state: DesktopState) {
 async fn run_desktop_api(state: DesktopState) {
     state.api.mark_starting(DESKTOP_API_PORT).await;
     let options = ApiServerOptions::desktop_localhost(DESKTOP_API_PORT);
-    match agentdash_api::build_server(agentdash_api::builtin_plugins(), options).await {
+    match agentdash_api::build_server(agentdash_api::builtin_integrations(), options).await {
         Ok(server) => {
             let ready = server.ready().clone();
             state.api.mark_running(&ready).await;

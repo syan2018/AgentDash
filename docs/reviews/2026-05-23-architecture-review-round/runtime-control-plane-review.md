@@ -43,12 +43,12 @@ UI / Persistence / Lifecycle
 | `agentdash-application`                                  | Session runtime、VFS、Lifecycle、Workflow、Routine、Hook、Capability、Runtime Gateway | 当前是最大业务中枢，也是复杂度最高的地方。                                    |
 | `agentdash-executor`                                     | AgentConnector 实现、CompositeConnector、Pi Agent connector 等                      | 执行适配层，但目前和 `application` 互相缠得有点深。                        |
 | `agentdash-agent`                                        | 真正的 agent loop、tool execution、streaming、delegate                               | agent runtime 核心，`agent_loop.rs` 偏大。                     |
-| `agentdash-api`                                          | Axum API、AppState 组装、Relay WebSocket、routes、DTO                                | 当前承担了 composition root，`AppState::new_with_plugins` 非常重。 |
+| `agentdash-api`                                          | Axum API、AppState 组装、Relay WebSocket、routes、DTO                                | 当前承担了 composition root，`AppState::new_with_integrations` 非常重。 |
 | `agentdash-infrastructure`                               | Postgres/SQLite repository 实现、migrations                                       | 目前依赖了 `agentdash-application`，这是一个明显的分层倒挂点。              |
 | `agentdash-local`                                        | 本机 runtime、relay client、tool executor、MCP、workspace/shell/file 工具              | 是本机 host + runtime adapter + relay adapter 的混合体。         |
 | `agentdash-local-tauri`                                  | Tauri 桌面封装                                                                     | 更像桌面入口层。                                                 |
 | `agentdash-mcp`                                          | MCP preset / runtime 相关能力                                                      | 和 application、local、relay 都有交集。                          |
-| `agentdash-plugin-api` / `agentdash-first-party-plugins` | 插件接口和一方插件                                                                      | 插件方向已经存在，但平台边界还可以继续收敛。                                   |
+| `agentdash-integration-api` / `agentdash-first-party-integrations` | 插件接口和一方插件                                                                      | 插件方向已经存在，但平台边界还可以继续收敛。                                   |
 
 ### 前端 package 结构
 
@@ -241,9 +241,9 @@ Session View State / Activity View State / Timeline / Audit
 
 ## 4. 主要风险与问题
 
-### 4.1 `AppState::new_with_plugins` 已经变成超级 composition root
+### 4.1 `AppState::new_with_integrations` 已经变成超级 composition root
 
-`crates/agentdash-api/src/app_state.rs` 里 `AppState::new_with_plugins` 做了太多事情：
+`crates/agentdash-api/src/app_state.rs` 里 `AppState::new_with_integrations` 做了太多事情：
 
 ```text
 repository 初始化
@@ -723,7 +723,7 @@ SkillAsset
 
 ### P1：把 AppState 拆成几个 kernel
 
-当前 `AppState` 太像“上帝对象”。可以先不改外部 API，只把 `new_with_plugins` 内部拆掉。
+当前 `AppState` 太像“上帝对象”。可以先不改外部 API，只把 `new_with_integrations` 内部拆掉。
 
 目标结构可以是：
 
@@ -856,7 +856,7 @@ composition roots: agentdash-api / agentdash-local / agentdash-local-tauri
 adapters:
   agentdash-infrastructure
   agentdash-executor
-  agentdash-first-party-plugins
+  agentdash-first-party-integrations
 ```
 
 注意这里不是说所有 crate 都只能单向。对于 composition root，例如 `agentdash-api`，它可以依赖全部东西。但 `infrastructure` 这种 adapter 最好不要依赖 application orchestration 层。
@@ -985,7 +985,7 @@ activity-inspector.tsx
   - 加 relay/local/session 关键测试
 
 第二阶段：拆启动装配
-  - AppState::new_with_plugins 拆成 Kernel bootstrap
+  - AppState::new_with_integrations 拆成 Kernel bootstrap
   - ServiceSet 拆成 SessionServices / VfsServices / RelayServices 等
   - RepositorySet 拆小依赖集，但保留总容器
 
@@ -1017,7 +1017,7 @@ activity-inspector.tsx
 2. **修 `BackendRegistry::unregister` 的 pending no-op**
    当前断连后的命令可能白等 timeout，这会让 UI 和 runtime 表现很奇怪。
 
-3. **把 `AppState::new_with_plugins` 拆成 kernel bootstrap**
+3. **把 `AppState::new_with_integrations` 拆成 kernel bootstrap**
    这不是 bug，但它是后续所有架构演进的瓶颈。先拆装配，不动业务行为，风险最低。
 
 整体来看，这个仓库已经不是“缺抽象”，而是抽象很多、系统正在长大。下一步最关键的不是再加新概念，而是把几个核心边界固定住：**Session 构造边界、Runtime 执行边界、Relay 事件边界、VFS provider 边界、Application/Infrastructure 分层边界**。这些边界一旦收稳，后面做 lifecycle workflow、多 backend、本地/云端混合、plugin marketplace 都会顺很多。

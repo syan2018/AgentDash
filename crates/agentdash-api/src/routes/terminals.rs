@@ -237,7 +237,7 @@ struct TerminalLaunchTarget {
 
 async fn load_terminal_for_user(
     state: &Arc<AppState>,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
     terminal_id: &str,
 ) -> Result<TerminalState, ApiError> {
     let term_state = state
@@ -257,7 +257,7 @@ async fn load_terminal_for_user(
 
 async fn resolve_terminal_launch_target(
     state: &Arc<AppState>,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
     session_id: &str,
 ) -> Result<TerminalLaunchTarget, ApiError> {
     ensure_session_permission(

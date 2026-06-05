@@ -150,7 +150,7 @@ pub async fn list_address_entries(
 
 async fn load_workspace(
     state: &Arc<AppState>,
-    current_user: &agentdash_plugin_api::AuthIdentity,
+    current_user: &agentdash_integration_api::AuthIdentity,
     workspace_id: &Option<String>,
     permission: ProjectPermission,
 ) -> Result<agentdash_domain::workspace::Workspace, ApiError> {

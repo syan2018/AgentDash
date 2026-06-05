@@ -175,9 +175,7 @@ impl PendingQueueService {
     /// 队列是否处于暂停状态
     pub async fn is_paused(&self, runtime_session_id: &str) -> Option<QueuePauseReason> {
         let queues = self.queues.read().await;
-        queues
-            .get(runtime_session_id)
-            .and_then(|q| q.paused)
+        queues.get(runtime_session_id).and_then(|q| q.paused)
     }
 
     /// 获取队列长度
@@ -210,8 +208,10 @@ mod tests {
     #[tokio::test]
     async fn enqueue_and_list() {
         let svc = PendingQueueService::new();
-        svc.enqueue("s1", text_user_input_blocks("hello"), None).await;
-        svc.enqueue("s1", text_user_input_blocks("world"), None).await;
+        svc.enqueue("s1", text_user_input_blocks("hello"), None)
+            .await;
+        svc.enqueue("s1", text_user_input_blocks("world"), None)
+            .await;
         let list = svc.list("s1").await;
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].preview, "hello");
@@ -221,10 +221,16 @@ mod tests {
     #[tokio::test]
     async fn dequeue_front_takes_first() {
         let svc = PendingQueueService::new();
-        svc.enqueue("s1", text_user_input_blocks("first"), None).await;
-        svc.enqueue("s1", text_user_input_blocks("second"), None).await;
+        svc.enqueue("s1", text_user_input_blocks("first"), None)
+            .await;
+        svc.enqueue("s1", text_user_input_blocks("second"), None)
+            .await;
         let msg = svc.dequeue_front("s1").await.unwrap();
-        assert!(msg.input.iter().any(|b| matches!(b, UserInputBlock::Text { text, .. } if text == "first")));
+        assert!(
+            msg.input
+                .iter()
+                .any(|b| matches!(b, UserInputBlock::Text { text, .. } if text == "first"))
+        );
         assert_eq!(svc.len("s1").await, 1);
     }
 

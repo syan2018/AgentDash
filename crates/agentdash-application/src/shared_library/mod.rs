@@ -13,8 +13,8 @@ pub use external_marketplace::{
     import_external_marketplace_asset, refresh_external_marketplace_asset,
 };
 pub use install::{
-    InstallLibraryAssetInput, InstallLibraryAssetOutput, ProjectAssetSourceStatus,
-    ProjectAssetSourceStatusItem, install_library_asset_to_project,
+    InstallLibraryAssetInput, InstallLibraryAssetOptions, InstallLibraryAssetOutput,
+    ProjectAssetSourceStatus, ProjectAssetSourceStatusItem, install_library_asset_to_project,
     list_project_asset_source_status,
 };
 pub use publish::{

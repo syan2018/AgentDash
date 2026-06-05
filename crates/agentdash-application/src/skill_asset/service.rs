@@ -389,6 +389,7 @@ pub async fn import_remote_skill_url_to_project(
             library_asset_id: library_asset.id,
             target_key: None,
             overwrite: true,
+            install_options: None,
         },
     )
     .await

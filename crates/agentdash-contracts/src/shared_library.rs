@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::mcp_preset::McpRoutePolicy;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LibraryAssetType {
@@ -122,6 +124,35 @@ pub struct InstallLibraryAssetRequest {
     pub target_key: Option<String>,
     #[serde(default)]
     pub overwrite: bool,
+    #[serde(default)]
+    #[ts(optional)]
+    pub install_options: Option<InstallLibraryAssetOptions>,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(tag = "asset_type", rename_all = "snake_case")]
+pub enum InstallLibraryAssetOptions {
+    McpServerTemplate { parameters: Value },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpTransportTemplateDto {
+    Http { url_template: String },
+    Sse { url_template: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct McpServerTemplatePayloadDto {
+    pub transport_template: McpTransportTemplateDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub route_policy: Option<McpRoutePolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub parameter_schema: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]

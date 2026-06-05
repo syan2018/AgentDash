@@ -659,9 +659,9 @@ mod tests {
             version: version.to_string(),
             digest: Some("remote-digest".to_string()),
             payload: json!({
-                "transport": {
+                "transport_template": {
                     "type": "http",
-                    "url": url
+                    "url_template": url
                 },
                 "route_policy": "direct",
                 "capabilities": ["search"]

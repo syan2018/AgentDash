@@ -2,10 +2,10 @@ use std::{env, sync::Arc};
 
 use agentdash_integration_api::{
     AgentDashIntegration, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
-    IntegrationLibraryAssetSeed, LibraryAssetType, MarketplaceAssetDetail, MarketplaceAssetPage,
-    MarketplaceAssetQuery, MarketplaceFetchedAsset, MarketplaceSourceDescriptor,
-    MarketplaceSourceError, MarketplaceSourceProvider, MarketplaceSourceProviderKind,
-    MarketplaceSourceTrustLevel,
+    IntegrationLibraryAssetSeed, LibraryAssetType, MarketplaceAssetDetail, MarketplaceAssetListing,
+    MarketplaceAssetPage, MarketplaceAssetQuery, MarketplaceFetchedAsset,
+    MarketplaceFetchedAssetPayload, MarketplaceSourceDescriptor, MarketplaceSourceError,
+    MarketplaceSourceProvider, MarketplaceSourceProviderKind, MarketplaceSourceTrustLevel,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -97,27 +97,29 @@ impl AgentDashIntegration for ConnectorCatalogIntegration {
     }
 
     fn marketplace_source_providers(&self) -> Vec<Arc<dyn MarketplaceSourceProvider>> {
-        vec![Arc::new(BuiltinEmptyMarketplaceSource)]
+        vec![Arc::new(DevMarketplaceFixtureSource)]
     }
 }
 
-struct BuiltinEmptyMarketplaceSource;
+struct DevMarketplaceFixtureSource;
+
+const FIXTURE_MARKETPLACE_SOURCE_KEY: &str = "agentdash.dev.marketplace";
+const FIXTURE_MCP_EXTERNAL_ID: &str = "workspace-http-mcp";
+const FIXTURE_MCP_DIGEST: &str =
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 
 #[async_trait]
-impl MarketplaceSourceProvider for BuiltinEmptyMarketplaceSource {
+impl MarketplaceSourceProvider for DevMarketplaceFixtureSource {
     fn descriptor(&self) -> MarketplaceSourceDescriptor {
         MarketplaceSourceDescriptor {
-            source_key: "builtin.empty_marketplace".to_string(),
-            display_name: "Builtin Empty Marketplace".to_string(),
+            source_key: FIXTURE_MARKETPLACE_SOURCE_KEY.to_string(),
+            display_name: "AgentDash Dev Marketplace".to_string(),
             description: Some(
-                "First-party contract fixture for Skill and MCP marketplace source registration."
+                "First-party contract fixture for external MCP marketplace import validation."
                     .to_string(),
             ),
             provider_kind: MarketplaceSourceProviderKind::Builtin,
-            supported_asset_types: vec![
-                LibraryAssetType::SkillTemplate,
-                LibraryAssetType::McpServerTemplate,
-            ],
+            supported_asset_types: vec![LibraryAssetType::McpServerTemplate],
             trust_level: MarketplaceSourceTrustLevel::Curated,
             enabled: true,
         }
@@ -125,10 +127,35 @@ impl MarketplaceSourceProvider for BuiltinEmptyMarketplaceSource {
 
     async fn list_assets(
         &self,
-        _query: MarketplaceAssetQuery,
+        query: MarketplaceAssetQuery,
     ) -> Result<MarketplaceAssetPage, MarketplaceSourceError> {
+        if query
+            .asset_type
+            .is_some_and(|asset_type| asset_type != LibraryAssetType::McpServerTemplate)
+            || query.cursor.is_some()
+        {
+            return Ok(MarketplaceAssetPage {
+                items: vec![],
+                next_cursor: None,
+            });
+        }
+        let listing = fixture_mcp_listing();
+        let matches_query = query
+            .query
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none_or(|query| {
+                let query = query.to_ascii_lowercase();
+                listing.key.to_ascii_lowercase().contains(&query)
+                    || listing.display_name.to_ascii_lowercase().contains(&query)
+            });
+        let mut items = if matches_query { vec![listing] } else { vec![] };
+        if let Some(limit) = query.limit {
+            items.truncate(limit as usize);
+        }
         Ok(MarketplaceAssetPage {
-            items: vec![],
+            items,
             next_cursor: None,
         })
     }
@@ -137,9 +164,19 @@ impl MarketplaceSourceProvider for BuiltinEmptyMarketplaceSource {
         &self,
         external_id: &str,
     ) -> Result<MarketplaceAssetDetail, MarketplaceSourceError> {
-        Err(MarketplaceSourceError::NotFound {
-            source_key: self.descriptor().source_key,
-            external_id: external_id.to_string(),
+        if external_id != FIXTURE_MCP_EXTERNAL_ID {
+            return Err(MarketplaceSourceError::NotFound {
+                source_key: self.descriptor().source_key,
+                external_id: external_id.to_string(),
+            });
+        }
+        Ok(MarketplaceAssetDetail {
+            listing: fixture_mcp_listing(),
+            detail_markdown: Some(
+                "Development fixture for HTTP MCP template import and install.".to_string(),
+            ),
+            homepage_url: Some("https://mcp.example.com".to_string()),
+            repository_url: None,
         })
     }
 
@@ -147,10 +184,59 @@ impl MarketplaceSourceProvider for BuiltinEmptyMarketplaceSource {
         &self,
         external_id: &str,
     ) -> Result<MarketplaceFetchedAsset, MarketplaceSourceError> {
-        Err(MarketplaceSourceError::NotFound {
-            source_key: self.descriptor().source_key,
-            external_id: external_id.to_string(),
-        })
+        if external_id != FIXTURE_MCP_EXTERNAL_ID {
+            return Err(MarketplaceSourceError::NotFound {
+                source_key: self.descriptor().source_key,
+                external_id: external_id.to_string(),
+            });
+        }
+        Ok(MarketplaceFetchedAsset::McpServerTemplate(
+            MarketplaceFetchedAssetPayload {
+                source_key: FIXTURE_MARKETPLACE_SOURCE_KEY.to_string(),
+                external_id: FIXTURE_MCP_EXTERNAL_ID.to_string(),
+                key: "workspace-http-mcp".to_string(),
+                display_name: "Workspace HTTP MCP".to_string(),
+                description: Some("HTTP MCP template with workspace slug parameter.".to_string()),
+                version: "0.1.0".to_string(),
+                digest: Some(FIXTURE_MCP_DIGEST.to_string()),
+                payload: json!({
+                    "transport_template": {
+                        "type": "http",
+                        "url_template": "https://mcp.example.com/${workspace}/mcp"
+                    },
+                    "route_policy": "direct",
+                    "parameter_schema": {
+                        "type": "object",
+                        "required": ["workspace"],
+                        "properties": {
+                            "workspace": {
+                                "type": "string",
+                                "description": "Workspace slug"
+                            }
+                        },
+                        "additionalProperties": false
+                    },
+                    "capabilities": ["search", "read"]
+                }),
+            },
+        ))
+    }
+}
+
+fn fixture_mcp_listing() -> MarketplaceAssetListing {
+    MarketplaceAssetListing {
+        source_key: FIXTURE_MARKETPLACE_SOURCE_KEY.to_string(),
+        external_id: FIXTURE_MCP_EXTERNAL_ID.to_string(),
+        asset_type: LibraryAssetType::McpServerTemplate,
+        key: "workspace-http-mcp".to_string(),
+        display_name: "Workspace HTTP MCP".to_string(),
+        description: Some("HTTP MCP template with workspace slug parameter.".to_string()),
+        version: "0.1.0".to_string(),
+        tags: vec!["mcp".to_string(), "fixture".to_string()],
+        author: Some("AgentDash".to_string()),
+        digest: Some(FIXTURE_MCP_DIGEST.to_string()),
+        updated_at: None,
+        install_requirements: vec![],
     }
 }
 
@@ -297,19 +383,16 @@ mod tests {
     }
 
     #[test]
-    fn connector_catalog_declares_empty_marketplace_source() {
+    fn connector_catalog_declares_fixture_marketplace_source() {
         let integration = ConnectorCatalogIntegration;
         let providers = integration.marketplace_source_providers();
 
         assert_eq!(providers.len(), 1);
         let descriptor = providers[0].descriptor();
-        assert_eq!(descriptor.source_key, "builtin.empty_marketplace");
+        assert_eq!(descriptor.source_key, FIXTURE_MARKETPLACE_SOURCE_KEY);
         assert_eq!(
             descriptor.supported_asset_types,
-            vec![
-                LibraryAssetType::SkillTemplate,
-                LibraryAssetType::McpServerTemplate
-            ]
+            vec![LibraryAssetType::McpServerTemplate]
         );
         assert!(descriptor.enabled);
     }

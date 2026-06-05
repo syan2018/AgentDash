@@ -7,7 +7,6 @@ use agentdash_domain::shared_library::{
 };
 use agentdash_domain::skill_asset::SkillAssetFileKind;
 
-use crate::mcp_preset::list_builtin_mcp_preset_templates;
 use crate::skill_asset::list_builtin_skill_asset_templates;
 use crate::workflow::list_builtin_workflow_templates;
 
@@ -22,16 +21,6 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::AgentTemplate,
         key: "pi_agent_general",
-        version: "1.0.0",
-    },
-    BuiltinAssetVersion {
-        asset_type: LibraryAssetType::McpServerTemplate,
-        key: "filesystem",
-        version: "1.0.0",
-    },
-    BuiltinAssetVersion {
-        asset_type: LibraryAssetType::McpServerTemplate,
-        key: "fetch",
         version: "1.0.0",
     },
     BuiltinAssetVersion {
@@ -117,31 +106,7 @@ fn agent_template_seed() -> Result<BuiltinSeed, DomainError> {
 }
 
 fn mcp_server_template_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
-    let templates = list_builtin_mcp_preset_templates()
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
-    templates
-        .into_iter()
-        .map(|template| {
-            let asset_type = LibraryAssetType::McpServerTemplate;
-            let payload = json!({
-                "transport": template.transport,
-                "route_policy": template.route_policy,
-                "capabilities": []
-            });
-            let version = builtin_asset_version(asset_type, &template.key)?.to_string();
-            let source_ref = builtin_source_ref(asset_type, &template.key);
-            Ok(BuiltinSeed {
-                asset_type,
-                key: template.key,
-                display_name: template.display_name,
-                description: template.description,
-                version,
-                source_ref,
-                payload_digest: seed_digest(&payload)?,
-                payload,
-            })
-        })
-        .collect()
+    Ok(vec![])
 }
 
 fn workflow_template_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
@@ -241,7 +206,6 @@ mod tests {
             .collect::<HashSet<_>>();
 
         assert!(types.contains(&LibraryAssetType::AgentTemplate));
-        assert!(types.contains(&LibraryAssetType::McpServerTemplate));
         assert!(types.contains(&LibraryAssetType::WorkflowTemplate));
         assert!(types.contains(&LibraryAssetType::SkillTemplate));
         for seed in seeds {

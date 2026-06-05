@@ -108,6 +108,8 @@ pub trait MarketplaceSourceProvider: Send + Sync {
 
 `MarketplaceAssetListing` 必须携带 `source_key`、`external_id`、`asset_type`、`key`、`display_name`、`version`，并可携带 `digest`、`updated_at`、`tags`、`author` 与安装需求摘要。`version` 和可选 `digest` 属于远端来源身份的一部分，后续 import / refresh 用它们判断上游是否有新版本；Project 运行事实仍由安装后的 Project Asset 持有。
 
+`mcp_server_template` 的 fetched payload 必须表达为 HTTP/SSE `transport_template`、`parameter_schema` 与公开 `capabilities`。Provider 不传递 header/env/credential 值、本机路径或 stdio 进程模板，原因是 native integration 只贡献目录发现，用户连接输入必须在 Shared Library install 阶段解析成 Project MCP Preset。
+
 ### 4. Validation & Error Matrix
 
 | 条件 | 行为 |
@@ -123,7 +125,7 @@ pub trait MarketplaceSourceProvider: Send + Sync {
 ### 5. Good / Base / Bad Cases
 
 - Good：企业 integration 注册 `corp-skill-hub`，支持 `skill_template`，宿主启动收集成功，后续 API 从 registry 读取来源。
-- Base：first-party empty marketplace source 返回空 page，用于证明 contract 可实现且不会改变 Project 运行事实。
+- Base：first-party fixture marketplace source 提供一个 HTTP MCP template，用于证明 source/list/detail/fetch/import 合同可实现且不会改变 Project 运行事实。
 - Bad：两个 integration 同时声明 `corp-skill-hub`，宿主启动失败并指出两个 owner。
 
 ### 6. Tests Required

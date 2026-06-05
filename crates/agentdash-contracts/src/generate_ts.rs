@@ -95,8 +95,9 @@ use agentdash_contracts::settings::{
     UpdateSettingsResponse,
 };
 use agentdash_contracts::shared_library::{
-    InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
-    LibraryAssetDto, LibraryExtensionPackageArtifactDto, ListLibraryAssetsQuery,
+    InstallLibraryAssetOptions, InstallLibraryAssetRequest, InstallLibraryAssetResponse,
+    InstalledAssetSourceDto, LibraryAssetDto, LibraryExtensionPackageArtifactDto,
+    ListLibraryAssetsQuery, McpServerTemplatePayloadDto, McpTransportTemplateDto,
     ProjectAssetSourceStatusDto, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
 };
 use agentdash_contracts::vfs::{
@@ -518,8 +519,11 @@ fn main() {
             export_all::<LibraryAssetDto>(dir);
             export_all::<ListLibraryAssetsQuery>(dir);
             export_all::<SeedBuiltinLibraryAssetsRequest>(dir);
+            export_all::<InstallLibraryAssetOptions>(dir);
             export_all::<InstallLibraryAssetRequest>(dir);
             export_all::<InstallLibraryAssetResponse>(dir);
+            export_all::<McpTransportTemplateDto>(dir);
+            export_all::<McpServerTemplatePayloadDto>(dir);
             export_all::<PublishLibraryAssetRequest>(dir);
             export_all::<ProjectAssetSourceStatusDto>(dir);
         },

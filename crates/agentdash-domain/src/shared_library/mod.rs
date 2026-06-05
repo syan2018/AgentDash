@@ -19,10 +19,10 @@ pub use value_objects::{
     ExtensionWorkspaceTabDefinition, ExtensionWorkspaceTabRendererDeclaration,
     InlineMountFilePayload, InstalledAssetSource, IntegrationLibraryAssetSeed, LibraryAssetPayload,
     LibraryAssetScope, LibraryAssetSource, LibraryAssetType, McpServerTemplatePayload,
-    ProjectAgentConfigOverride, SharedLibrarySourceStatus, SkillTemplateFilePayload,
-    SkillTemplatePayload, VfsMountTemplatePayload, WorkflowTemplatePayload,
-    normalize_workflow_lifecycle_value, normalize_workflow_template_payload_value,
-    normalize_workflow_template_value,
+    McpTransportTemplate, ProjectAgentConfigOverride, SharedLibrarySourceStatus,
+    SkillTemplateFilePayload, SkillTemplatePayload, VfsMountTemplatePayload,
+    WorkflowTemplatePayload, normalize_workflow_lifecycle_value,
+    normalize_workflow_template_payload_value, normalize_workflow_template_value,
 };
 
 pub fn seed_digest(payload: &serde_json::Value) -> Result<String, crate::DomainError> {

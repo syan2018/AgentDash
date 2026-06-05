@@ -107,12 +107,17 @@ DTO 层 `crates/agentdash-api/src/dto/shared_library.rs` 直接透传 `serde_jso
 
 ```jsonc
 {
-  "transport": "McpTransportConfig",
+  "transport_template": {
+    "type": "http | sse",
+    "url_template": "https://mcp.example.com/${workspace}/mcp"
+  },
   "route_policy": "auto | relay | direct?",
   "parameter_schema": "JSONSchema?",
   "capabilities": ["string"]
 }
 ```
+
+`mcp_server_template` 是公共模板，不是 Project 运行连接。模板只支持 HTTP/SSE URL template 与 `${parameter_key}` 占位符；`parameter_schema` 声明安装参数。安装时前端通过 `InstallLibraryAssetRequest.install_options = { asset_type: "mcp_server_template", parameters: {...} }` 提交参数，后端解析成 Project `McpTransportConfig` 并写入 Project MCP Preset 与 `InstalledAssetSource`。公共 payload 不保存 header/env/credential 值、本机路径、localhost 或私网 URL，原因是这些连接材料只属于用户安装上下文。
 
 ### `workflow_template`
 
@@ -237,7 +242,7 @@ Marketplace install:
 
 1. 用户选择 `LibraryAsset`。
 2. 前端调用 install API。
-3. 后端按 `asset_type` 创建对应 Project 资源。
+3. 后端按 `asset_type` 创建对应 Project 资源；MCP 模板安装时由 `install_options.mcp_server_template.parameters` 解析最终 HTTP/SSE transport。
 4. Project 资源记录 `InstalledAssetSource`。
 5. Project 运行时只读取 Project 资源。
 

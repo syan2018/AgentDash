@@ -727,7 +727,7 @@ mod tests {
             .map(|provider| provider.descriptor().source_key)
             .collect::<Vec<_>>();
 
-        assert!(source_keys.contains(&"builtin.empty_marketplace".to_string()));
+        assert!(source_keys.contains(&"agentdash.dev.marketplace".to_string()));
     }
 
     #[test]

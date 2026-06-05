@@ -2,8 +2,11 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
+import type { McpRoutePolicy } from "./mcp-preset-contracts";
 
-export type InstallLibraryAssetRequest = { library_asset_id: string, target_key?: string, overwrite: boolean, };
+export type InstallLibraryAssetOptions = { "asset_type": "mcp_server_template", parameters: JsonValue, };
+
+export type InstallLibraryAssetRequest = { library_asset_id: string, target_key?: string, overwrite: boolean, install_options?: InstallLibraryAssetOptions, };
 
 export type InstallLibraryAssetResponse = { "asset_kind": "project_agent", project_agent_id: string, } | { "asset_kind": "mcp_preset", id: string, } | { "asset_kind": "workflow_template", workflow_ids: Array<string>, lifecycle_id: string, } | { "asset_kind": "skill_asset", id: string, } | { "asset_kind": "vfs_mount", id: string, mount_id: string, } | { "asset_kind": "extension_installation", id: string, };
 
@@ -20,6 +23,10 @@ export type LibraryAssetType = "agent_template" | "mcp_server_template" | "workf
 export type LibraryExtensionPackageArtifactDto = { id: string, package_name: string, package_version: string, asset_version: string, source_version: string, archive_digest: string, manifest_digest: string, byte_size: bigint, created_at: string, };
 
 export type ListLibraryAssetsQuery = { asset_type?: string, scope?: string, owner_id?: string, include_deprecated: boolean, };
+
+export type McpServerTemplatePayloadDto = { transport_template: McpTransportTemplateDto, route_policy?: McpRoutePolicy, parameter_schema?: JsonValue, capabilities?: Array<string>, };
+
+export type McpTransportTemplateDto = { "type": "http", url_template: string, } | { "type": "sse", url_template: string, };
 
 export type ProjectAssetSourceStatusDto = { project_agents: Array<ProjectAssetSourceStatusItemDto>, mcp_presets: Array<ProjectAssetSourceStatusItemDto>, skill_assets: Array<ProjectAssetSourceStatusItemDto>, vfs_mounts: Array<ProjectAssetSourceStatusItemDto>, agent_procedures: Array<ProjectAssetSourceStatusItemDto>, workflow_graphs: Array<ProjectAssetSourceStatusItemDto>, extension_installations: Array<ProjectAssetSourceStatusItemDto>, };
 

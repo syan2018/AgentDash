@@ -10,11 +10,11 @@ use agentdash_domain::extension_package::{
     ExtensionPackageArtifact, ExtensionPackageArtifactOwner,
 };
 use agentdash_domain::inline_file::InlineFileOwnerKind;
-use agentdash_domain::mcp_preset::{McpEnvVar, McpHttpHeader, McpTransportConfig};
+use agentdash_domain::mcp_preset::{McpHttpHeader, McpTransportConfig};
 use agentdash_domain::shared_library::{
     AgentTemplateConfig, InlineMountFilePayload, LibraryAsset, LibraryAssetScope,
-    LibraryAssetSource, LibraryAssetType, McpServerTemplatePayload, SkillTemplateFilePayload,
-    SkillTemplatePayload, VfsMountTemplatePayload,
+    LibraryAssetSource, LibraryAssetType, McpServerTemplatePayload, McpTransportTemplate,
+    SkillTemplateFilePayload, SkillTemplatePayload, VfsMountTemplatePayload,
 };
 use agentdash_domain::workflow::{ActivityExecutorSpec, AgentProcedure, WorkflowGraph};
 
@@ -399,9 +399,9 @@ async fn publish_mcp_payload(
             "MCP Preset 不属于当前 Project".to_string(),
         ));
     }
-    let transport = sanitize_mcp_transport(&preset.transport)?;
+    let transport_template = mcp_transport_template_for_publish(&preset.transport)?;
     let payload = McpServerTemplatePayload {
-        transport,
+        transport_template,
         route_policy: Some(preset.route_policy),
         parameter_schema: None,
         capabilities: vec![],
@@ -532,42 +532,29 @@ fn workflow_template_bundle(
     }
 }
 
-fn sanitize_mcp_transport(
+fn mcp_transport_template_for_publish(
     transport: &McpTransportConfig,
-) -> Result<McpTransportConfig, PublishLibraryAssetError> {
+) -> Result<McpTransportTemplate, PublishLibraryAssetError> {
     match transport {
         McpTransportConfig::Http { url, headers } => {
             reject_secret_like_value("transport.url", url)?;
             reject_local_url("transport.url", url)?;
             reject_headers(headers)?;
-            Ok(McpTransportConfig::Http {
-                url: url.clone(),
-                headers: vec![],
+            Ok(McpTransportTemplate::Http {
+                url_template: url.clone(),
             })
         }
         McpTransportConfig::Sse { url, headers } => {
             reject_secret_like_value("transport.url", url)?;
             reject_local_url("transport.url", url)?;
             reject_headers(headers)?;
-            Ok(McpTransportConfig::Sse {
-                url: url.clone(),
-                headers: vec![],
+            Ok(McpTransportTemplate::Sse {
+                url_template: url.clone(),
             })
         }
-        McpTransportConfig::Stdio { command, args, env } => {
-            reject_secret_like_value("transport.command", command)?;
-            reject_local_path_like_value("transport.command", command)?;
-            for (index, arg) in args.iter().enumerate() {
-                reject_secret_like_value(&format!("transport.args[{index}]"), arg)?;
-                reject_local_path_like_value(&format!("transport.args[{index}]"), arg)?;
-            }
-            reject_env(env)?;
-            Ok(McpTransportConfig::Stdio {
-                command: command.clone(),
-                args: args.clone(),
-                env: vec![],
-            })
-        }
+        McpTransportConfig::Stdio { .. } => Err(PublishLibraryAssetError::BadRequest(
+            "stdio MCP Preset 不能发布为公共 mcp_server_template".to_string(),
+        )),
     }
 }
 
@@ -582,20 +569,6 @@ fn reject_headers(headers: &[McpHttpHeader]) -> Result<(), PublishLibraryAssetEr
         .join(", ");
     Err(PublishLibraryAssetError::BadRequest(format!(
         "MCP header 属于连接材料，不能发布到公共模板: {names}"
-    )))
-}
-
-fn reject_env(env: &[McpEnvVar]) -> Result<(), PublishLibraryAssetError> {
-    if env.is_empty() {
-        return Ok(());
-    }
-    let names = env
-        .iter()
-        .map(|item| item.name.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    Err(PublishLibraryAssetError::BadRequest(format!(
-        "MCP env 属于连接材料，不能发布到公共模板: {names}"
     )))
 }
 
@@ -652,31 +625,6 @@ fn reject_local_url(field: &str, value: &str) -> Result<(), PublishLibraryAssetE
     Ok(())
 }
 
-fn reject_local_path_like_value(field: &str, value: &str) -> Result<(), PublishLibraryAssetError> {
-    let trimmed = value.trim();
-    let lower = trimmed.to_ascii_lowercase();
-    let looks_like_windows_drive = trimmed.len() >= 3
-        && trimmed.as_bytes()[1] == b':'
-        && trimmed.as_bytes()[0].is_ascii_alphabetic()
-        && matches!(trimmed.as_bytes()[2], b'\\' | b'/');
-    let looks_like_path = looks_like_windows_drive
-        || trimmed.starts_with("~/")
-        || trimmed.starts_with("~\\")
-        || trimmed.starts_with("./")
-        || trimmed.starts_with(".\\")
-        || trimmed.starts_with("../")
-        || trimmed.starts_with("..\\")
-        || trimmed.starts_with('/')
-        || trimmed.starts_with('\\')
-        || lower.starts_with("file://");
-    if looks_like_path {
-        return Err(PublishLibraryAssetError::BadRequest(format!(
-            "{field} 看起来是本机路径，不能发布到公共模板"
-        )));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use agentdash_domain::extension_package::{
@@ -722,23 +670,26 @@ mod tests {
             }],
         };
 
-        let error = sanitize_mcp_transport(&transport).expect_err("headers rejected");
+        let error = mcp_transport_template_for_publish(&transport).expect_err("headers rejected");
 
         assert!(matches!(error, PublishLibraryAssetError::BadRequest(_)));
         assert!(error.to_string().contains("header"));
     }
 
     #[test]
-    fn mcp_publish_rejects_secret_like_args() {
+    fn mcp_publish_rejects_stdio_transport() {
         let transport = McpTransportConfig::Stdio {
             command: "npx".to_string(),
-            args: vec!["--token=abc".to_string()],
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-fetch".to_string(),
+            ],
             env: vec![],
         };
 
-        let error = sanitize_mcp_transport(&transport).expect_err("secret rejected");
+        let error = mcp_transport_template_for_publish(&transport).expect_err("stdio rejected");
 
-        assert!(error.to_string().contains("credential"));
+        assert!(error.to_string().contains("stdio"));
     }
 
     #[test]
@@ -748,22 +699,9 @@ mod tests {
             headers: vec![],
         };
 
-        let error = sanitize_mcp_transport(&transport).expect_err("local url rejected");
+        let error = mcp_transport_template_for_publish(&transport).expect_err("local url rejected");
 
         assert!(error.to_string().contains("私有网络"));
-    }
-
-    #[test]
-    fn mcp_publish_rejects_local_paths() {
-        let transport = McpTransportConfig::Stdio {
-            command: "node".to_string(),
-            args: vec!["C:\\Users\\me\\server.js".to_string()],
-            env: vec![],
-        };
-
-        let error = sanitize_mcp_transport(&transport).expect_err("local path rejected");
-
-        assert!(error.to_string().contains("本机路径"));
     }
 
     #[test]

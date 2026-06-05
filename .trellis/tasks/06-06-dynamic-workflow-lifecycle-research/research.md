@@ -103,38 +103,17 @@ Dynamic workflow script
 
 行为覆盖矩阵见 `research/claude-workflow-behavior-coverage.md`。该矩阵是后续 design 的架构压力测试：如果某类核心 workflow 语义只能通过新增平行 runtime 支持，或无法映射到 Lifecycle / Orchestration / typed execution identity / trace surface，就说明目标架构还不妥善。这里的 typed execution identity 至少包括 `AgentRun` 与 `FunctionRun`，后续也可以扩展出本机 bridge / extension action 的 effect invocation 引用。
 
-## 候选分阶段路线
+## 路线收敛
 
-### Phase 0：概念收敛
+早期路线已经收敛到 `design.md` 与 `implement.md`：
 
-- 明确产品命名：例如 Script Workflow、Dynamic Workflow、Orchestration Script。
-- 明确 `WorkflowGraph`、dynamic script 与 common runtime IR 的关系：图和脚本都是定义态输入，runtime scripted rule plan 才是执行态输入。
-- 更新 backend/frontend workflow spec，先定义目标模型、非目标和仓储收敛方向。
+- 第一批：session-scoped API 命名迁移、AgentRun 外露语义收敛、最小 Orchestration domain contract 与 migration。
+- 第二批：`WorkflowGraph -> OrchestrationPlanSnapshot` compiler，证明静态 graph 能落入 common runtime IR。
+- 第三批：common orchestration runtime 承载静态 graph，生成兼容 projection，并收敛旧过程仓储职责。
+- 第四批：动态 script artifact / reusable script definition / script compiler，输出同一 `OrchestrationPlanSnapshot`。
+- 后续 UI 与治理：progress tree、pause/resume/stop/restart、token/cost、权限提示、保存为 Project/Shared Library asset。
 
-### Phase 1：静态 graph 编译器雏形
-
-- 先从现有 `WorkflowGraph` 编译到 runtime scripted rule plan，证明静态 graph 可以脱离当前分散过程仓储直接进入统一 runtime 规则。
-- 编译结果包含 activity activation rule、transition condition、artifact binding、attempt policy、executor slot 和 output contract。
-- 不急于接入动态脚本，先确认 IR 能覆盖现有 graph runtime。
-
-### Phase 2：runtime snapshot / journal
-
-- 引入持久化状态交换快照与 journal，把 phase、ready queue、agent call、cache、artifact exchange 和 resume cursor 放进统一 runtime store。
-- `LifecycleRun.execution_log` 只保留摘要事件，不承载完整过程状态。
-- 审查 `ActivityExecutionClaim`、`WorkflowGraphInstance.activity_state`、`AgentAssignment` 的职责是否可以降为 projection / index / lease，而非分散真相源。
-
-### Phase 3：动态脚本定义态
-
-- 支持 `meta`、`phase()`、`log()`、`agent()`、`parallel()`、`pipeline()` 的受限脚本输入，并编译到同一份 runtime scripted rule plan。若脚本需要本机/system bridge 能力，应显式生成 function/local effect/extension action 节点，由平台权限与审计面执行，而不是让脚本 runtime 自行访问宿主。
-- `agent()` 复用现有 Lifecycle graphless agent launch 和 runtime session anchor，或在需要 Activity 绑定时生成统一 runtime node binding。
-- 支持 schema 校验、失败重试、并发上限、agent 总数上限和预算。
-
-### Phase 4：UI 与治理
-
-- 新增 unified workflow run progress tree，同时展示由 graph 编译来的静态节点和由 script 动态展开的 agent call。
-- 支持 pause/resume/stop/restart agent。
-- 接入 token/cost 统计、权限提示、工具 allowlist 展示。
-- 支持将成功脚本保存为 Project asset 或 Shared Library asset。
+本文件保留研究结论和路线形成原因；具体合同、阶段边界、风险文件和验证命令以 `design.md` / `implement.md` 为准。
 
 ## 需要后续决策的问题
 

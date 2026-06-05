@@ -264,15 +264,11 @@ sequenceDiagram
 
 ## 迁移策略草案
 
-1. 先定义 `LifecycleRun.context`、`LifecycleRun.orchestrations[]`、`OrchestrationInstance`、`OrchestrationPlanSnapshot` 与 `StateExchangeSnapshot` 的最小 JSON contract。领域命名不带 `_jsonb` 后缀；物理列名和列类型留给 migration 设计决定。
-2. 写 `WorkflowGraph -> OrchestrationPlanSnapshot` 编译器，覆盖当前 Activity executor、transition condition、artifact binding、attempt policy。
-3. 将现有 `FunctionActivityExecutorSpec::ApiRequest` / `BashExec` 编译为 common runtime 的 function/effect node，保留 `ExecutorRunRef::FunctionRun` 的非 Agent 执行语义，并补齐权限、workspace root、结果引用和审计落点。
-4. 用 `OrchestrationInstance` + journal/snapshot runtime 跑静态 graph，先生成兼容 `LifecycleRunView` / `WorkflowGraphInstanceView` projection。
-5. 将 `WorkflowGraphInstance.activity_state` 降级为兼容 projection 或迁移来源，并并入 `lifecycle_runs.orchestrations[]` 的目标 aggregate。
-6. 将 `ActivityExecutionClaim` 泛化成 `DispatchLease` 概念，但先以内嵌 dispatch state 实现；只有调度并发证明需要时再拆 lease 表。
-7. 将 `LifecycleAgent` 目标命名改为 `AgentRun`；将 `AgentAssignment` 泛化成 `AgentInvocation` / `RuntimeNodeBinding` 概念，默认归入 orchestration node state；只保留必要的 `RuntimeTraceAnchor` 反向索引。
-8. 将 API / DTO / frontend store 的 `lifecycle-agents` / `LifecycleAgent*` 外露命名迁移到 `run` / `AgentRun*`，并保留 `Lifecycle` 作为顶层容器名。
-9. 最后引入 `WorkflowScriptDefinition` / `RunScriptArtifact` 与 script compiler。
+正式制作方案已移到 `design.md` 与 `implement.md`。本模型层只保留三条迁移原则：
+
+- 先定义 common runtime contract，再让静态 `WorkflowGraph` 和动态 script 都编译到 `OrchestrationPlanSnapshot`。
+- 先证明静态 graph 能通过 `OrchestrationInstance` + journal/snapshot runtime 执行，再引入动态 script compiler。
+- 现有 `WorkflowGraphInstance.activity_state`、`ActivityExecutionClaim`、`AgentAssignment` 作为迁移来源、projection、lease 或 trace index 重新定位，不作为新 runtime 的第二事实源。
 
 ## 仍需确认的问题
 
@@ -291,20 +287,26 @@ AgentRun / AgentFrame / RuntimeTraceAnchor       -> execution identity and trace
 
 ### API 命名草案
 
-当前 `/lifecycle-agents/by-runtime-session/{runtime_session_id}/messages` 这类端点把内部旧名暴露到了 API。目标上，AgentRun 相关 command API 可以收敛为更自然的 `run` noun：
+当前 `/lifecycle-agents/by-runtime-session/{runtime_session_id}/messages` 这类端点同时暴露了内部旧名和反查机制。目标上，前端拿到的是 runtime session id，用户动作也是“对当前会话发送/排队/steer 输入”；后端内部再通过 `RuntimeTraceAnchor` 解析到 `LifecycleRun` / `AgentRun` / `AgentFrame`。因此 session-scoped command API 更自然：
 
 ```text
-POST /runs/by-runtime-session/{runtime_session_id}/messages
-POST /runs/by-runtime-session/{runtime_session_id}/steering-messages
-GET  /runs/by-runtime-session/{runtime_session_id}/pending-messages
-POST /runs/by-runtime-session/{runtime_session_id}/pending-messages/{message_id}/promote
+POST   /sessions/{runtime_session_id}/messages
+POST   /sessions/{runtime_session_id}/steering
+GET    /sessions/{runtime_session_id}/pending-messages
+POST   /sessions/{runtime_session_id}/pending-messages
+DELETE /sessions/{runtime_session_id}/pending-messages/{message_id}
+POST   /sessions/{runtime_session_id}/pending-messages/{message_id}/promote
 ```
 
-如果后续担心和 `LifecycleRun` 的 run noun 冲突，更稳妥的外部 API 是在 Lifecycle 作用域内使用 `runs`：
+这里选择直接使用 `/sessions/{runtime_session_id}` 作为 command 入口。`run` 中间层会让路径看起来像在选择某个 `AgentRun` 或 `LifecycleRun` 资源，而这些 command 的入口事实是 runtime session；它们是否更新 `AgentRun`、pending queue、session event 或 runtime command outbox 是 application service 的内部职责，URL 层聚焦用户实际操作的 session delivery/control surface。
+
+如果需要显式管理 Lifecycle 内 AgentRun 资源，而不是通过 session 投递 command，可以在 Lifecycle 作用域内使用 `agent-runs`：
 
 ```text
-GET  /lifecycles/{lifecycle_run_id}/runs
-GET  /lifecycles/{lifecycle_run_id}/runs/{agent_run_id}
+GET /lifecycles/{lifecycle_run_id}/agent-runs
+GET /lifecycles/{lifecycle_run_id}/agent-runs/{agent_run_id}
 ```
 
-运行时反查类 command 由于入口是 `runtime_session_id`，可以保留 `/runs/by-runtime-session/...` 作为 convenience route；它解析到的是当前 runtime session 对应的 `AgentRun`。
+命名原则是：session delivery/control commands 挂在 `/sessions/{id}` 下；Lifecycle aggregate 和 AgentRun 资源管理挂在 `/lifecycles/{id}` 下；`RuntimeTraceAnchor` 作为解析机制留在 application service 内部。
+
+具体改动顺序、风险文件和验证命令见 `implement.md` 的 `agent-run-api-naming` 任务。

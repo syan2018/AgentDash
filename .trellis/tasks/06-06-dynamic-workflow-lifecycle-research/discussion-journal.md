@@ -52,13 +52,13 @@ Dynamic script
 
 用户进一步精确分层：`Lifecycle` 是全部上下文容器，`Orchestration` 是内部状态容器。随后又指出目标模型必须体现一个 Lifecycle 内可以有多个 orchestration 实例同时运行，并质疑 `_jsonb` 是否只是前文惯性。已修正为：`LifecycleRun.orchestrations[]` 是内部状态实例集合，单个元素叫 `OrchestrationInstance`；plan activation、node tree、dispatch lease、journal/cache/resume 放入对应 instance；subject、主 Agent、AgentRun、AgentFrame、权限、trace 归属仍属于 Lifecycle context。`_jsonb` 不作为领域命名规范，只保留为物理列类型可能性。
 
-后续如果进入正式设计，建议新增 `design.md`，先写三张表：
+后续正式设计已经沉淀为 `design.md` 与 `implement.md`。这两份文档应保持三类信息清晰：
 
 1. Definition input：`WorkflowGraph`、dynamic script、AgentProcedure 的职责边界。
 2. Runtime IR：rule、phase、node、agent call、artifact exchange、join、retry、budget、resume cursor 的最小表达。
 3. Repository convergence matrix：现有仓储中哪些保留为事实源，哪些降级为 projection / index / lease，哪些可以合并到 runtime snapshot / journal。
 
-在这三张表清晰之前，不建议进入代码实现。
+在这三类信息经过 review 前，任务保持 planning 状态。
 
 ## 2026-06-06：覆盖基准与本机执行边界修正
 
@@ -67,3 +67,20 @@ Dynamic script
 用户还指出“脚本本身不能直接访问文件系统或 shell”不能机械套用到 AgentDash。当前项目 workflow 已经支持走系统桥接的本机执行：`FunctionActivityExecutorSpec::BashExec`、`FunctionRunner`、`shell_execute` / `shell_exec`、relay shell exec、extension `process.execute` 都是现有事实。因此更合适的目标边界是：script runtime 不拥有未建模 raw host access；本机执行、API request、extension action 等必须作为受控 function/local effect node 或 effect invocation 进入 permission、workspace root、audit、trace、journal，而不是被排除在 workflow runtime 之外，也不是伪装成 AgentRun。
 
 由此目标模型需要从“AgentRun 承接所有副作用”修正为 typed execution identity：`agent()` 落到 `AgentRun`，function / bash / API / extension action 落到 `FunctionRun` 或更通用的 `RuntimeEffectInvocation`，两者都归属于 `LifecycleRun` 内的某个 `OrchestrationInstance` 与 `RuntimeNodeState`。
+
+## 2026-06-06：Session-scoped command API 命名
+
+用户指出 `/runs/by-runtime-session/{runtime_session_id}/...` 仍然偏长，且 `/run` 这一层语义不够明确。重新复核当前 `lifecycle_agents.rs` 与前端 `lifecycle.ts` 后，确认这些端点的入口事实是 runtime session：API 先用 `runtime_session_id` 找 `RuntimeSessionExecutionAnchor`，再解析到 `LifecycleRun` / `LifecycleAgent` / `AgentFrame` 执行权限检查与消息投递。
+
+因此目标命名调整为 session-scoped command API：
+
+```text
+POST   /sessions/{runtime_session_id}/messages
+POST   /sessions/{runtime_session_id}/steering
+GET    /sessions/{runtime_session_id}/pending-messages
+POST   /sessions/{runtime_session_id}/pending-messages
+DELETE /sessions/{runtime_session_id}/pending-messages/{message_id}
+POST   /sessions/{runtime_session_id}/pending-messages/{message_id}/promote
+```
+
+`/sessions/{runtime_session_id}` 最清楚地表达了用户对当前 runtime session 的 delivery/control command。AgentRun / LifecycleRun 的写入归属属于 application service 内部解析结果；若后续需要显式管理 Lifecycle 内 AgentRun 资源，使用 `/lifecycles/{lifecycle_run_id}/agent-runs`。

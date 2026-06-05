@@ -4,7 +4,7 @@
 
 沉淀 Claude Code Dynamic Workflows 对 AgentDash Lifecycle Activity / WorkflowGraph 模块的启发与差距判断，并把 research 目录下两份 Claude Code Workflow 资料作为核心行为覆盖与扩展性压力测试，反向检验 AgentDash 的 Lifecycle / Orchestration 目标架构是否真实具备可扩展性。
 
-本任务只保存 research 结论和产品/架构问题，不进入实现。
+本任务只保存 research、目标设计和实施计划文档，不进入代码实现。
 
 ## Requirements
 
@@ -12,12 +12,13 @@
 - 明确本任务的评估目标是覆盖 research 目录下两份 Claude Code Workflow 参考资料描述的核心 workflow 语义，并验证后续扩展能自然落入目标架构；不要求一比一复刻 Claude Code 的命令、路径、UI、限制数值或产品权限选择。
 - 建立行为覆盖矩阵：逐项确认 Claude Workflow 的脚本生成、运行前审批、隔离运行时、原语、schema retry、并发/总量限制、pause/resume/stop/restart、cache/journal、权限边界、进度树、成本统计、保存为命令等行为如何落入 AgentDash 目标架构，并明确 AgentRun、FunctionRun、本机 bridge/effect invocation 等不同执行身份的承载方式。
 - 对照 AgentDash 当前 WorkflowGraph / LifecycleRun / Activity runtime 模型，说明已有能力、缺口和不能直接复用的边界。
-- 给出推荐学习方向：不要把现有 WorkflowGraph 强行改成脚本语言，而应考虑将静态 graph 与动态脚本统一编译到同一套 runtime scripted rule plan 与持久化状态交换快照。
+- 给出推荐学习方向：将静态 graph 与动态脚本统一编译到同一套 runtime scripted rule plan 与持久化状态交换快照。
 - 记录过程仓储可能过重、runtime state 过度分散的风险，并把后续收敛方向写入 research。
 - 明确后续正式设计前必须回答的产品问题，尤其是脚本资产归属、运行态持久化、权限继承、可恢复边界、成本控制和 UI 审批体验。
 - 新增 discussion journal，保存本次讨论中的判断变化与用户补充的架构原则。
 - 在 research 中补充关键事实来源复核索引，说明后续应该去哪些 spec、源码、migration 和外部资料复核结论。
-- 保持当前任务只读研究性质，不修改代码、不做迁移、不启动 dev runtime。
+- 补充正式实现前的 `design.md` 与 `implement.md`，把 API 命名、目标 runtime 模型、迁移阶段、验证命令和风险文件写清楚。
+- 保持当前任务在 planning 状态，工作范围限定为任务文档与实现前计划。
 
 ## Acceptance Criteria
 
@@ -29,14 +30,31 @@
 - [x] Research 文档包含关键事实来源复核索引。
 - [x] 新增目标模型草案，展示当前模型、目标模型、命名和仓储边界。
 - [x] 新增 Claude Workflow 行为覆盖矩阵，用两份参考资料检验目标架构是否真实承载。
-- [ ] 若后续进入实现，应先补充 `design.md` 与 `implement.md`，并经过任务启动流程。
+- [x] 补充 `design.md` 与 `implement.md`，整理正式实现前的设计和实施拆解。
+- [ ] 经过用户 review 后再启动实现流程。
 
-## Notes
+## Document Index
+
+| 文档 | 职责 |
+| --- | --- |
+| `prd.md` | 任务入口、验收标准、文档索引和当前 planning gate。 |
+| `research.md` | 研究结论总览：Claude Workflow 关键启发、AgentDash 当前差距、目标方向和事实来源索引。 |
+| `discussion-journal.md` | 按时间记录用户修正与共识变化，保留为什么收敛到当前模型的上下文。 |
+| `target-model-sketch.md` | 概念模型草案：Lifecycle / Orchestration / AgentRun / FunctionRun 命名、关系图和仓储边界。 |
+| `design.md` | 正式实现前的设计稿：核心合同、API 命名、数据流、分阶段制作方案和迁移策略。 |
+| `implement.md` | 实施拆解：建议子任务、第一批范围、风险文件和验证命令。 |
+| `research/claude-workflow-behavior-coverage.md` | Claude Workflow 核心行为覆盖矩阵，用作架构压力测试。 |
+| `research/current-code-context.md` | 当前代码事实地图，用于后续设计/实现前快速恢复源码上下文。 |
+| `research/README.md` | research 子目录索引，说明外部资料副本与研究产物来源。 |
+| `research/claude-dynamic-workflows-official-doc-zh-cn.md` | 用户贴入的 Claude 官方 Dynamic Workflows 文档副本。 |
+| `research/claude-dynamic-workflows-article-zhihu-simpread.md` | 用户贴入的中文调研文章副本。 |
+| `implement.jsonl` / `check.jsonl` | Trellis manifest 文件，当前为空，保留给后续实现/检查阶段。 |
+| `task.json` | Trellis task 元数据，当前 status 为 `planning`。 |
+
+## Current Gate
 
 - 旧任务目录中的历史 branching 设计不作为本任务依据。
-- 详细研究记录见 `research.md`；讨论脉络见 `discussion-journal.md`。
 - Claude Workflow 行为覆盖矩阵见 `research/claude-workflow-behavior-coverage.md`。后续正式设计必须覆盖核心语义，而不是复制 Claude Code 的全部产品表象；无法落入 `LifecycleRun` / `OrchestrationInstance`，或无法通过 `AgentRun` / `FunctionRun` / 受控本机 effect invocation / `RuntimeTraceAnchor` 等执行与 trace surface 表达的行为，都应视为目标架构缺口。
-- 目标模型草案见 `target-model-sketch.md`，其中建议用 `OrchestrationInstance` 替代 `WorkflowGraphInstance` 的目标语义；`PlanActivation` 是 instance 内部的 plan binding / activation 状态。
 - `Lifecycle` 是项目核心定义，不应重命名；目标是强化它作为主 Agent 完整上下文容器的职责，并把所有相关 AgentRun 管理在该容器内。
 - `Orchestration` 是 Lifecycle 内部状态容器，不与 Lifecycle 平级；同一个 Lifecycle 可以有 0..N 个 `OrchestrationInstance` 同时运行，plan snapshot、node tree、journal、dispatch、cache/resume 都应归入对应 instance。
 - 目标模型中的领域职责不等于物理表清单；仓储应按 owning aggregate、读取粒度、写入并发和生命周期拆分，默认优先用 `LifecycleRun.context` / `LifecycleRun.orchestrations[]` 内聚过程状态。
@@ -44,3 +62,5 @@
 - 用户贴入的两份 Dynamic Workflows 原文已复制到 `research/` 子目录，后续优先复核任务内副本。
 - 当前代码事实地图见 `research/current-code-context.md`，用于后续正式设计前快速恢复 Lifecycle / WorkflowGraph / ProjectAgent / MCP / persistence 上下文。
 - 评估当前代码时必须谨慎：Lifecycle / WorkflowGraph 相关实现来自快速重构阶段，只能作为现状事实与迁移来源，不应被默认视为最终目标架构。
+- runtime session 入口的 AgentRun command API 目标命名采用 `/sessions/{runtime_session_id}/messages`、`/sessions/{runtime_session_id}/steering`、`/sessions/{runtime_session_id}/pending-messages`；显式 AgentRun 资源管理语境再使用 `/lifecycles/{lifecycle_run_id}/agent-runs`。
+- 正式实现入口以 `design.md` 和 `implement.md` 为准；`research.md` 与 `target-model-sketch.md` 记录形成这些方案的研究依据和概念模型。

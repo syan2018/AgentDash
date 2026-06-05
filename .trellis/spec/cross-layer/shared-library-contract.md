@@ -217,6 +217,20 @@ source_missing > update_available > up_to_date
 
 ## Install Semantics
 
+External Marketplace source:
+
+1. 前端通过 `GET /api/marketplace/sources` 读取可展示来源与其支持的资产类型。
+2. 前端通过 `GET /api/marketplace/external-assets` 按 `source_key`、`asset_type`、`query`、`cursor`、`limit` 分页读取外部候选；跨来源列表只表达发现结果，cursor 分页绑定单一 source。
+3. 前端通过 `GET /api/marketplace/external-assets/{source_key}/{external_id}` 读取外部详情，详情仍属于 provider 视角的候选资产。
+4. 前端通过 `POST /api/marketplace/external-assets/import` 提交来源身份、外部资产身份和资产类型；后端从 provider 拉取 payload，生成 `LibraryAsset(source = remote_imported)`。
+5. 外部来源 `source_ref` 使用 `market:{source_key}:{asset_type}:{external_id}`；`payload_digest` 使用平台 canonical JSON 规则计算，远端 `digest` 只作为远端版本提示。
+
+External Marketplace refresh:
+
+- `POST /api/marketplace/external-assets/refresh` 返回 `remote_version`、`remote_digest`、`local_version`、`local_digest` 和 `status`。
+- `status` 使用 `up_to_date` / `update_available` / `source_missing` / `not_imported`。
+- refresh 只比较外部 listing 与本地 `remote_imported` LibraryAsset，Project 资源仍通过 Shared Library install / source-status 语义更新。
+
 Marketplace install:
 
 1. 用户选择 `LibraryAsset`。

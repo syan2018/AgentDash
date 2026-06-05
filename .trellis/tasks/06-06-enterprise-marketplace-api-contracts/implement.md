@@ -50,8 +50,8 @@ pnpm --filter @agentdash/app-web typecheck
 
 ## 交付检查
 
-- [ ] Routes 可从 first-party empty source 返回 source list。
-- [ ] Contract TS 文件生成。
-- [ ] import use case 有 payload validator 测试。
-- [ ] refresh 不写 Project 资源。
-- [ ] 未修改 Skill URL Import、MCP install 参数和前端 Marketplace UI。
+- [x] Routes 可从 first-party empty source 返回 source list。
+- [x] Contract TS 文件生成。
+- [x] import use case 有 payload validator 测试。
+- [x] refresh 不写 Project 资源。
+- [x] 未修改 Skill URL Import、MCP install 参数和前端 Marketplace UI。

@@ -48,6 +48,15 @@ use agentdash_contracts::extension_runtime::{
     ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
     UninstallExtensionInstallationResponse,
 };
+use agentdash_contracts::external_marketplace::{
+    ExternalMarketplaceAssetDetailDto, ExternalMarketplaceAssetListingDto,
+    ExternalMarketplaceAssetPageDto, ExternalMarketplaceInstallRequirementDto,
+    ExternalMarketplaceRefreshStatus, ImportExternalMarketplaceAssetRequest,
+    ImportExternalMarketplaceAssetResponse, ListExternalMarketplaceAssetsQuery,
+    MarketplaceInstallRequirementKindDto, MarketplaceSourceDto, MarketplaceSourceProviderKindDto,
+    MarketplaceSourceTrustLevelDto, RefreshExternalMarketplaceAssetRequest,
+    RefreshExternalMarketplaceAssetResponse,
+};
 use agentdash_contracts::llm_provider::{
     CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
     DeleteLlmProviderResponse, DeleteLlmProviderUserCredentialResponse,
@@ -516,6 +525,30 @@ fn main() {
         },
     );
 
+    // --- external-marketplace-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "external-marketplace-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<MarketplaceSourceProviderKindDto>(dir);
+            export_all::<MarketplaceSourceTrustLevelDto>(dir);
+            export_all::<MarketplaceSourceDto>(dir);
+            export_all::<ListExternalMarketplaceAssetsQuery>(dir);
+            export_all::<MarketplaceInstallRequirementKindDto>(dir);
+            export_all::<ExternalMarketplaceInstallRequirementDto>(dir);
+            export_all::<ExternalMarketplaceAssetListingDto>(dir);
+            export_all::<ExternalMarketplaceAssetPageDto>(dir);
+            export_all::<ExternalMarketplaceAssetDetailDto>(dir);
+            export_all::<ImportExternalMarketplaceAssetRequest>(dir);
+            export_all::<ImportExternalMarketplaceAssetResponse>(dir);
+            export_all::<RefreshExternalMarketplaceAssetRequest>(dir);
+            export_all::<ExternalMarketplaceRefreshStatus>(dir);
+            export_all::<RefreshExternalMarketplaceAssetResponse>(dir);
+        },
+    );
+
     // --- settings-contracts.ts ---
     emit_domain(
         &generated_dir,
@@ -564,7 +597,7 @@ fn write_domain_dedup(
 
     let mut declarations = BTreeMap::new();
     collect_ts_files(tmp_dir.path(), &mut declarations);
-    let uses_json_value = declarations.remove("JsonValue").is_some();
+    declarations.remove("JsonValue");
 
     // Strip types already defined upstream (remove from declarations).
     let mut stripped: Vec<(String, String)> = Vec::new();
@@ -614,7 +647,7 @@ fn write_domain_dedup(
     lines.push(String::new());
 
     let mut has_imports = false;
-    if uses_json_value {
+    if text_references_type(&remaining_text, "JsonValue") {
         lines.push("import type { JsonValue } from \"./common-contracts\";".to_string());
         has_imports = true;
     }

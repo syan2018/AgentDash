@@ -178,6 +178,17 @@ impl From<agentdash_application::shared_library::PublishLibraryAssetError> for A
     }
 }
 
+impl From<agentdash_application::shared_library::ExternalMarketplaceLibraryError> for ApiError {
+    fn from(err: agentdash_application::shared_library::ExternalMarketplaceLibraryError) -> Self {
+        use agentdash_application::shared_library::ExternalMarketplaceLibraryError as E;
+        match err {
+            E::BadRequest(message) => ApiError::BadRequest(message),
+            E::Conflict(message) => ApiError::Conflict(message),
+            E::Domain(error) => ApiError::from(error),
+        }
+    }
+}
+
 impl From<agentdash_application::runtime_gateway::RuntimeInvocationError> for ApiError {
     fn from(err: agentdash_application::runtime_gateway::RuntimeInvocationError) -> Self {
         use agentdash_application::runtime_gateway::{

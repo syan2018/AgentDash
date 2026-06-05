@@ -90,3 +90,17 @@ Contract:
 - 同一 `asset_type + scope + key` 被不同 integration 或不同 source 占用时启动期 fail-fast。
 - 同一 integration 的同一 seed 可幂等更新，保留原 `LibraryAsset.id` 与 `created_at`。
 - integration seed 的 `version` 是资产版本，不等同于 integration 包版本。
+
+## External Marketplace Import
+
+外部 Marketplace provider 只提供发现、详情和 fetched payload。后端导入入口负责把 fetched payload 收束成平台内 `LibraryAsset`，原因是版本、digest、scope、owner 与后续 Project install 必须继续由 Shared Library 统一维护。
+
+Contract:
+
+- import mode `upsert_library_asset` 写入 `LibraryAsset(source=remote_imported)`。
+- `source_ref` 使用 `market:{source_key}:{asset_type}:{external_id}`。
+- `payload_digest` 由 canonical JSON sha256 规则自动计算，远端 digest 只保留为 refresh 比较输入。
+- fetched asset 的 `source_key`、`external_id`、`asset_type` 必须与请求一致。
+- fetched payload 必须通过 `LibraryAsset::new` 与 `LibraryAssetPayload` typed validator。
+- 同一 `asset_type + scope + owner_id + key` 下，同一 `remote_imported` source_ref 可幂等更新；其它来源占用同一身份时返回冲突。
+- refresh 读取 provider detail 与本地 `remote_imported` LibraryAsset 做 version/digest 比较，不写入 Project 资源。

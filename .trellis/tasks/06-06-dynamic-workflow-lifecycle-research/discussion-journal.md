@@ -35,11 +35,22 @@ Dynamic script
 
 - `WorkflowGraph` 不应直接变成脚本，但应可以编译到脚本化 runtime rule。
 - 静态 workflow 与动态 workflow 不应各自拥有状态机、scheduler、journal 和 UI。
-- `LifecycleRun` / `LifecycleAgent` / `AgentFrame` / `RuntimeSessionExecutionAnchor` 仍是执行身份、权限、归属和 trace 反查的控制面骨架。
+- `LifecycleRun` 是完整上下文容器；`LifecycleAgent` 的目标命名应收敛为 `AgentRun`；`AgentFrame` / `RuntimeSessionExecutionAnchor` 仍是执行身份、surface revision 和 trace 反查的控制面骨架。
 - `WorkflowGraphInstance.activity_state`、`ActivityExecutionClaim`、`AgentAssignment`、`LifecycleRun.execution_log`、session events 等需要后续重新审查职责，区分事实源、索引、lease 和 projection。
 - 新能力必须从持久化状态交换快照和 journal 开始设计，否则只会在现有分散状态上再叠一层动态 workflow。
+- 当前实现是快速重构后的过渡形态。后续评估应把代码当作“现有事实与迁移约束”，而不是把现有仓储拆分、状态权威性或命名边界视作最终答案。
 
 ## 下一步建议
+
+本轮已补充 `research/current-code-context.md`，把当前 Lifecycle / WorkflowGraph / ProjectAgent / MCP / persistence 代码链路按事实索引保存。后续讨论实现时，应先以这份上下文恢复现状，再判断哪些结构是可保留的控制面骨架，哪些只是快速重构阶段的过渡状态容器。
+
+用户进一步确认“先做静态 WorkflowGraph -> common runtime IR/snapshot 的迁移设计”是合适的，并指出 `WorkflowGraphInstance` 在新概念下过于强调 Graph。已新增 `target-model-sketch.md`，建议目标运行时从 `GraphInstance` 转向 `OrchestrationInstance` / `PlanActivation` / `RuntimeNodeState` / `OrchestrationJournal`：`WorkflowGraph` 和 dynamic script 都是 definition input，编译后的 `OrchestrationPlanSnapshot` 才是 internal orchestration runtime 输入。
+
+用户继续修正仓储方向：上一版目标模型把逻辑职责列成多组 store，容易继续制造过度拆分。新的仓储原则是按 owning aggregate、读取粒度、写入并发和生命周期拆分；`OrchestrationInstance`、`PlanActivation`、node tree、agent invocation、dispatch state、artifact refs、progress projection 等默认归入 `lifecycle_runs` 的结构化 aggregate。只有无界 append journal、runtime session 反向索引、独立资产生命周期或被实际并发/查询压力证明的边界，才拆物理表。
+
+用户继续明确命名边界：`Lifecycle` 是项目核心定义，不能重命名。它是把主 Agent 以及派生/协作 AgentRun 管进同一个共同生命周期容器的方案，核心仍面向主 Agent。已修正 `target-model-sketch.md`，撤回 `OrchestrationRun` / `RunAgent` 建议，保留 `LifecycleRun` 作为顶层容器，将 `LifecycleAgent` 的目标命名收敛为 `AgentRun`，并仅在 Lifecycle 内部引入 `OrchestrationInstance`、`OrchestrationPlanSnapshot`、`PlanActivation`、`RuntimeNodeState` 等状态概念。
+
+用户进一步精确分层：`Lifecycle` 是全部上下文容器，`Orchestration` 是内部状态容器。随后又指出目标模型必须体现一个 Lifecycle 内可以有多个 orchestration 实例同时运行，并质疑 `_jsonb` 是否只是前文惯性。已修正为：`LifecycleRun.orchestrations[]` 是内部状态实例集合，单个元素叫 `OrchestrationInstance`；plan activation、node tree、dispatch lease、journal/cache/resume 放入对应 instance；subject、主 Agent、AgentRun、AgentFrame、权限、trace 归属仍属于 Lifecycle context。`_jsonb` 不作为领域命名规范，只保留为物理列类型可能性。
 
 后续如果进入正式设计，建议新增 `design.md`，先写三张表：
 
@@ -48,3 +59,11 @@ Dynamic script
 3. Repository convergence matrix：现有仓储中哪些保留为事实源，哪些降级为 projection / index / lease，哪些可以合并到 runtime snapshot / journal。
 
 在这三张表清晰之前，不建议进入代码实现。
+
+## 2026-06-06：覆盖基准与本机执行边界修正
+
+用户进一步修正了本轮行为覆盖基准：AgentDash 不是要一比一复刻 Claude Code Dynamic Workflows，而是用两份资料约束目标架构是否足够清晰、可扩展、经得起复杂 workflow 压测。覆盖重点应放在脚本化编排、隔离运行时、typed execution、journal/cache/snapshot、权限/预算/观察这些核心语义，以及后续同类扩展是否能自然落入模型；Claude 的命令名、目录名、UI 细节、默认并发数和具体产品权限选择不应成为硬目标。
+
+用户还指出“脚本本身不能直接访问文件系统或 shell”不能机械套用到 AgentDash。当前项目 workflow 已经支持走系统桥接的本机执行：`FunctionActivityExecutorSpec::BashExec`、`FunctionRunner`、`shell_execute` / `shell_exec`、relay shell exec、extension `process.execute` 都是现有事实。因此更合适的目标边界是：script runtime 不拥有未建模 raw host access；本机执行、API request、extension action 等必须作为受控 function/local effect node 或 effect invocation 进入 permission、workspace root、audit、trace、journal，而不是被排除在 workflow runtime 之外，也不是伪装成 AgentRun。
+
+由此目标模型需要从“AgentRun 承接所有副作用”修正为 typed execution identity：`agent()` 落到 `AgentRun`，function / bash / API / extension action 落到 `FunctionRun` 或更通用的 `RuntimeEffectInvocation`，两者都归属于 `LifecycleRun` 内的某个 `OrchestrationInstance` 与 `RuntimeNodeState`。

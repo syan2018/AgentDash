@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "06-06-marketplace-source-spi-registry"
+    "06-06-marketplace-source-spi-registry",
+    "06-06-enterprise-marketplace-api-contracts"
   ],
   "parent": null,
   "relatedFiles": [],

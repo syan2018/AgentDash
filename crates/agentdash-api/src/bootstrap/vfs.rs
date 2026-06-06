@@ -35,7 +35,6 @@ pub(crate) fn build_vfs_kernel(
     let mut mount_registry_builder = MountProviderRegistryBuilder::new()
         .with_builtins(
             repos.lifecycle_run_repo.clone(),
-            repos.workflow_graph_instance_repo.clone(),
             repos.canvas_repo.clone(),
             repos.inline_file_repo.clone(),
             repos.routine_execution_repo.clone(),

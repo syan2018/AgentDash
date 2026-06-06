@@ -1,10 +1,10 @@
-//! 启动期 Task view 投影器 — 从 WorkflowGraphInstance activity state 反投影到 `Story.tasks[i].status`。
+//! 启动期 Task view 投影器 — 从 LifecycleRun orchestration runtime state 反投影到 `Story.tasks[i].status`。
 //!
-//! **方向**：WorkflowGraphInstance 真相源 → Task view（只读投影），属于 projection 方向。
+//! **方向**：LifecycleRun 真相源 → Task view（只读投影），属于 projection 方向。
 //! 对应运行期反向（业务终态 → session cancel）的 command 通道见
 //! [`crate::reconcile::terminal_cancel`]。
 //!
-//! 真相源 = WorkflowGraphInstance.activity_state；Task view 仅为只读投影。
+//! 真相源 = LifecycleRun.orchestrations；Task view 仅为只读投影。
 //!
 //! 投影匹配策略（B5a）：
 //! 通过 `LifecycleSubjectAssociation(subject_kind=task, subject_id=task_id)`
@@ -12,7 +12,7 @@
 //!
 //! 1. 遍历所有 project 的 active LifecycleRun
 //! 2. 通过 `LifecycleSubjectAssociation` 找到 task_id → run 的映射
-//! 3. 对每个关联的 task，从 run 下 graph instances 的 activity_state 取最新 attempt 状态投影到 task view
+//! 3. 对每个关联的 task，从 run 下 orchestration node_tree 取最新 runtime node 状态投影到 task view
 //! 4. 对于仍处于 `Running` 但没有任何活跃 run 覆盖的孤儿 task，fallback 置为 `Failed`
 
 use std::collections::HashSet;
@@ -26,8 +26,8 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
 use agentdash_domain::task::{Task, TaskStatus};
 use agentdash_domain::workflow::{
-    ActivityAttemptState, LifecycleRunRepository, LifecycleRunStatus,
-    LifecycleSubjectAssociationRepository, WorkflowGraphInstance, WorkflowGraphInstanceRepository,
+    ActivityAttemptStatus, LifecycleRun, LifecycleRunRepository, LifecycleRunStatus,
+    LifecycleSubjectAssociationRepository, RuntimeNodeState, RuntimeNodeStatus,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -40,8 +40,8 @@ pub enum TaskViewProjectionError {
 
 /// 将一个明确的 ActivityAttempt 状态投影到 Task view。
 ///
-/// 入口用于 runtime command 已经推进 WorkflowGraphInstance 后的同步投影；Task
-/// status 仍然只消费 lifecycle attempt 状态，不成为 cancel/start/continue 的事实源。
+/// 入口用于 runtime command 已经推进 orchestration node 后的同步投影；Task
+/// status 仍然只消费 lifecycle runtime node 状态，不成为 cancel/start/continue 的事实源。
 pub async fn project_task_view_from_attempt_status(
     repos: &RepositorySet,
     task_id: Uuid,
@@ -96,14 +96,13 @@ pub async fn project_task_view_from_attempt_status(
 /// 方向：LifecycleRun/step state → Story.tasks 只读 view。
 ///
 /// 投影链路：
-/// `LifecycleSubjectAssociation(kind=task)` → run → `WorkflowGraphInstance.activity_state` → `Story::apply_task_projection`
+/// `LifecycleSubjectAssociation(kind=task)` → run → `LifecycleRun.orchestrations[].node_tree` → `Story::apply_task_projection`
 pub async fn project_task_views_on_boot(
     project_repo: &Arc<dyn ProjectRepository>,
     state_change_repo: &Arc<dyn StateChangeRepository>,
     story_repo: &Arc<dyn StoryRepository>,
     association_repo: &Arc<dyn LifecycleSubjectAssociationRepository>,
     lifecycle_run_repo: &Arc<dyn LifecycleRunRepository>,
-    workflow_graph_instance_repo: &Arc<dyn WorkflowGraphInstanceRepository>,
 ) -> Result<(), TaskViewProjectionError> {
     let projects = project_repo.list_all().await?;
     let mut projected_count: usize = 0;
@@ -132,18 +131,16 @@ pub async fn project_task_views_on_boot(
                 continue;
             }
 
-            let graph_instances = workflow_graph_instance_repo.list_by_run(run.id).await?;
-            let attempts = lifecycle_task_projection_states(&graph_instances);
-            if attempts.is_empty() {
+            let statuses = lifecycle_task_projection_statuses(run);
+            if statuses.is_empty() {
                 continue;
             }
 
-            // 取最新 attempt 状态（最后一条 attempt 作为当前投影源）
-            let latest_attempt = attempts.last().cloned();
+            let latest_status = statuses.last().copied();
 
             for assoc in &task_associations {
                 let task_id = assoc.subject_id;
-                let Some(ref attempt) = latest_attempt else {
+                let Some(status) = latest_status else {
                     continue;
                 };
 
@@ -159,7 +156,7 @@ pub async fn project_task_views_on_boot(
 
                 let previous_status = story.find_task(task_id).map(|t| t.status().clone());
                 let changed = story
-                    .apply_task_projection(task_id, attempt.status)
+                    .apply_task_projection(task_id, status)
                     .unwrap_or(false);
                 covered_tasks.insert(task_id);
 
@@ -178,7 +175,7 @@ pub async fn project_task_views_on_boot(
                     "story_id": story_id,
                     "run_id": run.id,
                     "association_id": assoc.id,
-                    "attempt_status": attempt.status,
+                    "runtime_node_status": status,
                     "from": previous_status,
                     "to": next_status,
                 });
@@ -293,14 +290,40 @@ fn is_run_active(status: LifecycleRunStatus) -> bool {
     )
 }
 
-fn lifecycle_task_projection_states(
-    graph_instances: &[WorkflowGraphInstance],
-) -> Vec<ActivityAttemptState> {
-    graph_instances
-        .iter()
-        .filter_map(|instance| instance.activity_state.as_ref())
-        .flat_map(|state| state.attempts.iter().cloned())
-        .collect()
+fn lifecycle_task_projection_statuses(run: &LifecycleRun) -> Vec<ActivityAttemptStatus> {
+    let mut statuses = Vec::new();
+    for orchestration in &run.orchestrations {
+        collect_node_projection_statuses(&orchestration.node_tree, &mut statuses);
+    }
+    statuses
+}
+
+fn collect_node_projection_statuses(
+    nodes: &[RuntimeNodeState],
+    statuses: &mut Vec<ActivityAttemptStatus>,
+) {
+    for node in nodes {
+        if let Some(status) = task_projection_status_from_node(node.status) {
+            statuses.push(status);
+        }
+        collect_node_projection_statuses(&node.children, statuses);
+    }
+}
+
+fn task_projection_status_from_node(status: RuntimeNodeStatus) -> Option<ActivityAttemptStatus> {
+    match status {
+        RuntimeNodeStatus::Pending => None,
+        RuntimeNodeStatus::Ready => Some(ActivityAttemptStatus::Ready),
+        RuntimeNodeStatus::Claiming => Some(ActivityAttemptStatus::Claiming),
+        RuntimeNodeStatus::Running | RuntimeNodeStatus::Blocked => {
+            Some(ActivityAttemptStatus::Running)
+        }
+        RuntimeNodeStatus::Completed => Some(ActivityAttemptStatus::Completed),
+        RuntimeNodeStatus::Failed => Some(ActivityAttemptStatus::Failed),
+        RuntimeNodeStatus::Cancelled | RuntimeNodeStatus::Skipped => {
+            Some(ActivityAttemptStatus::Cancelled)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -317,10 +340,10 @@ mod tests {
     use agentdash_domain::story::{StateChange, Story};
     use agentdash_domain::task::Task;
     use agentdash_domain::workflow::{
-        ActivityAttemptState, ActivityAttemptStatus, ActivityLifecycleRunState, ActivityRunStatus,
-        LifecycleRun, LifecycleSubjectAssociation, SubjectRef, WorkflowGraphInstance,
-        WorkflowGraphInstanceRepository,
+        LifecycleSubjectAssociation, OrchestrationInstance, OrchestrationPlanSnapshot,
+        OrchestrationSourceRef, PlanNode, PlanNodeKind, RuntimeNodeState, SubjectRef,
     };
+    use chrono::Utc;
 
     // ── In-memory test doubles ──────────────────────────────────
 
@@ -541,64 +564,6 @@ mod tests {
         }
     }
 
-    struct InMemoryWorkflowGraphInstanceRepo {
-        instances: Mutex<Vec<WorkflowGraphInstance>>,
-    }
-
-    #[async_trait]
-    impl WorkflowGraphInstanceRepository for InMemoryWorkflowGraphInstanceRepo {
-        async fn create(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError> {
-            self.instances.lock().unwrap().push(instance.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<WorkflowGraphInstance>, DomainError> {
-            Ok(self
-                .instances
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|instance| instance.id == id)
-                .cloned())
-        }
-
-        async fn get_by_run_and_id(
-            &self,
-            run_id: Uuid,
-            id: Uuid,
-        ) -> Result<Option<WorkflowGraphInstance>, DomainError> {
-            Ok(self
-                .instances
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|instance| instance.run_id == run_id && instance.id == id)
-                .cloned())
-        }
-
-        async fn list_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<WorkflowGraphInstance>, DomainError> {
-            Ok(self
-                .instances
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|instance| instance.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError> {
-            let mut guard = self.instances.lock().unwrap();
-            if let Some(existing) = guard.iter_mut().find(|item| item.id == instance.id) {
-                *existing = instance.clone();
-            }
-            Ok(())
-        }
-    }
-
     struct InMemorySubjectAssociationRepo {
         associations: Mutex<Vec<LifecycleSubjectAssociation>>,
     }
@@ -650,32 +615,69 @@ mod tests {
         _session_id: &str,
         activity_key: &str,
         target: ActivityAttemptStatus,
-    ) -> (LifecycleRun, WorkflowGraphInstance) {
+    ) -> LifecycleRun {
         let mut run = LifecycleRun::new_control(project_id, root_graph_id);
         run.status = LifecycleRunStatus::Running;
-        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, root_graph_id);
-        let state = ActivityLifecycleRunState {
-            graph_instance_id: graph_instance.id,
-            status: ActivityRunStatus::Running,
-            attempts: vec![ActivityAttemptState {
-                activity_key: activity_key.to_string(),
-                attempt: 1,
-                status: target,
-                executor_run: None,
-                started_at: None,
-                completed_at: None,
-                summary: None,
-            }],
-            outputs: Vec::new(),
-            inputs: Vec::new(),
+
+        let source_ref = OrchestrationSourceRef::WorkflowGraph {
+            graph_id: root_graph_id,
+            graph_version: Some(1),
         };
-        graph_instance
-            .replace_activity_state(state)
-            .expect("graph instance state");
-        if let Some(state) = graph_instance.activity_state.as_ref() {
-            run.sync_graph_instance_activity_projections([(graph_instance.id, state)]);
-        }
-        (run, graph_instance)
+        let plan_snapshot = OrchestrationPlanSnapshot {
+            plan_digest: format!("sha256:test-{activity_key}"),
+            plan_version: 1,
+            source_ref: source_ref.clone(),
+            nodes: vec![PlanNode {
+                node_id: activity_key.to_string(),
+                node_path: activity_key.to_string(),
+                parent_node_id: None,
+                kind: PlanNodeKind::AgentCall,
+                label: None,
+                executor: None,
+                input_ports: Vec::new(),
+                output_ports: Vec::new(),
+                completion_policy: None,
+                iteration_policy: None,
+                join_policy: None,
+                result_contract: None,
+                metadata: None,
+            }],
+            entry_node_ids: vec![activity_key.to_string()],
+            activation_rules: Vec::new(),
+            state_exchange_rules: Vec::new(),
+            limits: Default::default(),
+            metadata: None,
+            created_at: Utc::now(),
+        };
+        let mut orchestration = OrchestrationInstance::new("root", source_ref, plan_snapshot);
+        orchestration.status = agentdash_domain::workflow::OrchestrationStatus::Running;
+        orchestration.node_tree = vec![RuntimeNodeState {
+            node_id: activity_key.to_string(),
+            node_path: activity_key.to_string(),
+            kind: PlanNodeKind::AgentCall,
+            status: match target {
+                ActivityAttemptStatus::Pending => RuntimeNodeStatus::Pending,
+                ActivityAttemptStatus::Ready => RuntimeNodeStatus::Ready,
+                ActivityAttemptStatus::Claiming => RuntimeNodeStatus::Claiming,
+                ActivityAttemptStatus::Running => RuntimeNodeStatus::Running,
+                ActivityAttemptStatus::Completed => RuntimeNodeStatus::Completed,
+                ActivityAttemptStatus::Failed => RuntimeNodeStatus::Failed,
+                ActivityAttemptStatus::Cancelled => RuntimeNodeStatus::Cancelled,
+            },
+            attempt: 1,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            executor_run_ref: None,
+            children: Vec::new(),
+            phase_path: Vec::new(),
+            started_at: None,
+            completed_at: None,
+            error: None,
+            trace_refs: Vec::new(),
+            cache: None,
+        }];
+        run.add_orchestration(orchestration);
+        run
     }
 
     fn association_for_task(run_id: Uuid, task_id: Uuid) -> LifecycleSubjectAssociation {
@@ -700,7 +702,7 @@ mod tests {
         story.add_task(task);
 
         let lifecycle_id = Uuid::new_v4();
-        let (run, graph_instance) = make_run_with_activity_status(
+        let run = make_run_with_activity_status(
             project_id,
             lifecycle_id,
             "sess-boot-running",
@@ -726,10 +728,6 @@ mod tests {
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
             });
-        let workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository> =
-            Arc::new(InMemoryWorkflowGraphInstanceRepo {
-                instances: Mutex::new(vec![graph_instance]),
-            });
 
         project_task_views_on_boot(
             &project_repo,
@@ -737,7 +735,6 @@ mod tests {
             &story_repo,
             &association_repo,
             &lifecycle_run_repo,
-            &workflow_graph_instance_repo,
         )
         .await
         .expect("reconcile ok");
@@ -762,7 +759,7 @@ mod tests {
         story.force_set_task_status(task_id, TaskStatus::Running);
 
         let lifecycle_id = Uuid::new_v4();
-        let (run, graph_instance) = make_run_with_activity_status(
+        let run = make_run_with_activity_status(
             project_id,
             lifecycle_id,
             "sess-boot-completed",
@@ -788,10 +785,6 @@ mod tests {
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
             });
-        let workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository> =
-            Arc::new(InMemoryWorkflowGraphInstanceRepo {
-                instances: Mutex::new(vec![graph_instance]),
-            });
 
         project_task_views_on_boot(
             &project_repo,
@@ -799,7 +792,6 @@ mod tests {
             &story_repo,
             &association_repo,
             &lifecycle_run_repo,
-            &workflow_graph_instance_repo,
         )
         .await
         .expect("reconcile ok");
@@ -823,7 +815,7 @@ mod tests {
         story.force_set_task_status(task_id, TaskStatus::Running);
 
         let lifecycle_id = Uuid::new_v4();
-        let (run, graph_instance) = make_run_with_activity_status(
+        let run = make_run_with_activity_status(
             project_id,
             lifecycle_id,
             "sess-boot-cancelled",
@@ -849,10 +841,6 @@ mod tests {
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
             });
-        let workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository> =
-            Arc::new(InMemoryWorkflowGraphInstanceRepo {
-                instances: Mutex::new(vec![graph_instance]),
-            });
 
         project_task_views_on_boot(
             &project_repo,
@@ -860,7 +848,6 @@ mod tests {
             &story_repo,
             &association_repo,
             &lifecycle_run_repo,
-            &workflow_graph_instance_repo,
         )
         .await
         .expect("reconcile ok");
@@ -900,18 +887,12 @@ mod tests {
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![]),
             });
-        let workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository> =
-            Arc::new(InMemoryWorkflowGraphInstanceRepo {
-                instances: Mutex::new(vec![]),
-            });
-
         project_task_views_on_boot(
             &project_repo,
             &state_change_repo,
             &story_repo,
             &association_repo,
             &lifecycle_run_repo,
-            &workflow_graph_instance_repo,
         )
         .await
         .expect("reconcile ok");
@@ -935,7 +916,7 @@ mod tests {
         story.add_task(task);
 
         let lifecycle_id = Uuid::new_v4();
-        let (mut run, graph_instance) = make_run_with_activity_status(
+        let mut run = make_run_with_activity_status(
             project_id,
             lifecycle_id,
             "sess-boot-inactive",
@@ -962,10 +943,6 @@ mod tests {
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
             });
-        let workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository> =
-            Arc::new(InMemoryWorkflowGraphInstanceRepo {
-                instances: Mutex::new(vec![graph_instance]),
-            });
 
         project_task_views_on_boot(
             &project_repo,
@@ -973,7 +950,6 @@ mod tests {
             &story_repo,
             &association_repo,
             &lifecycle_run_repo,
-            &workflow_graph_instance_repo,
         )
         .await
         .expect("reconcile ok");
@@ -997,7 +973,7 @@ mod tests {
         story.add_task(task);
 
         let lifecycle_id = Uuid::new_v4();
-        let (run, graph_instance) = make_run_with_activity_status(
+        let run = make_run_with_activity_status(
             project_id,
             lifecycle_id,
             "sess-boot-no-assoc",
@@ -1022,10 +998,6 @@ mod tests {
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
             });
-        let workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository> =
-            Arc::new(InMemoryWorkflowGraphInstanceRepo {
-                instances: Mutex::new(vec![graph_instance]),
-            });
 
         project_task_views_on_boot(
             &project_repo,
@@ -1033,7 +1005,6 @@ mod tests {
             &story_repo,
             &association_repo,
             &lifecycle_run_repo,
-            &workflow_graph_instance_repo,
         )
         .await
         .expect("reconcile ok");

@@ -7,7 +7,6 @@ use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::{LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit};
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
 use crate::workflow::runtime_launch::FrameLaunchEnvelope;
-use crate::workflow::select_assignment_for_frame;
 
 use super::{FrameConstructionService, connector_internal, frame_builder_from_existing};
 
@@ -22,30 +21,16 @@ pub(super) async fn compose(
     let graph_instance_id = frame.graph_instance_id.ok_or_else(|| {
         ConnectorError::InvalidConfig(format!("AgentFrame {} 缺少 graph_instance_id", frame.id))
     })?;
-    let graph_instance = svc
-        .repos
-        .workflow_graph_instance_repo
-        .get_by_run_and_id(run.id, graph_instance_id)
-        .await
-        .map_err(connector_internal)?
-        .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!(
-                "WorkflowGraphInstance {graph_instance_id} 不属于 run {}",
-                run.id
-            ))
-        })?;
+    let graph_id = run.root_graph_id.ok_or_else(|| {
+        ConnectorError::InvalidConfig(format!("LifecycleRun {} 缺少 root_graph_id", run.id))
+    })?;
     let lifecycle = svc
         .repos
         .workflow_graph_repo
-        .get_by_id(graph_instance.graph_id)
+        .get_by_id(graph_id)
         .await
         .map_err(connector_internal)?
-        .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!(
-                "WorkflowGraph {} 不存在",
-                graph_instance.graph_id
-            ))
-        })?;
+        .ok_or_else(|| ConnectorError::InvalidConfig(format!("WorkflowGraph {graph_id} 不存在")))?;
     let activity_key = frame.activity_key.clone().ok_or_else(|| {
         ConnectorError::InvalidConfig(format!("AgentFrame {} 缺少 activity_key", frame.id))
     })?;
@@ -73,21 +58,14 @@ pub(super) async fn compose(
         .executor_config
         .clone()
         .or_else(|| frame.typed_execution_profile());
-    let assignment = select_assignment_for_frame(svc.repos.agent_assignment_repo.as_ref(), frame)
+    let attempt = svc
+        .repos
+        .execution_anchor_repo
+        .find_by_session(input.session_id.as_str())
         .await
-        .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?
-        .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!(
-                "AgentFrame {} 缺少 activity assignment，无法 scoped compose lifecycle activity",
-                frame.id
-            ))
-        })?;
-    let attempt = u32::try_from(assignment.attempt).map_err(|_| {
-        ConnectorError::InvalidConfig(format!(
-            "AgentAssignment {} attempt 无效: {}",
-            assignment.id, assignment.attempt
-        ))
-    })?;
+        .map_err(connector_internal)?
+        .and_then(|anchor| anchor.node_attempt)
+        .unwrap_or(1);
     let builder =
         frame_builder_from_existing(frame, input.session_id.as_str(), command.reason_tag())?;
     let (builder, extras) = compose_lifecycle_node_to_frame_with_audit(

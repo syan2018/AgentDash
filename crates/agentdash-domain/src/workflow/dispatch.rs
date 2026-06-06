@@ -185,22 +185,23 @@ pub enum ExecutionIntent {
 
 // ─── Result ──────────────────────────────────────────────────────────────────
 
-/// Activity-only runtime binding refs.
+/// Orchestration runtime binding refs.
 ///
-/// Graphless agent runtime does not create a graph instance or assignment, so the
-/// binding exists only when a dispatch entered an explicit WorkflowGraph path.
+/// This is the target runtime coordinate for workflow-backed dispatch. It is
+/// scoped by lifecycle run, then by orchestration instance and runtime node.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ActivityBindingRefs {
-    pub graph_instance_ref: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assignment_ref: Option<Uuid>,
+pub struct OrchestrationBindingRefs {
+    pub orchestration_ref: Uuid,
+    pub node_path: String,
+    pub attempt: u32,
 }
 
-impl ActivityBindingRefs {
-    pub fn new(graph_instance_ref: Uuid, assignment_ref: Option<Uuid>) -> Self {
+impl OrchestrationBindingRefs {
+    pub fn new(orchestration_ref: Uuid, node_path: impl Into<String>, attempt: u32) -> Self {
         Self {
-            graph_instance_ref,
-            assignment_ref,
+            orchestration_ref,
+            node_path: node_path.into(),
+            attempt,
         }
     }
 }
@@ -213,7 +214,7 @@ pub struct AgentRuntimeRefs {
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub activity_binding: Option<ActivityBindingRefs>,
+    pub orchestration_binding: Option<OrchestrationBindingRefs>,
 }
 
 impl AgentRuntimeRefs {
@@ -221,30 +222,32 @@ impl AgentRuntimeRefs {
         run_ref: Uuid,
         agent_ref: Uuid,
         frame_ref: Uuid,
-        activity_binding: Option<ActivityBindingRefs>,
+        orchestration_binding: Option<OrchestrationBindingRefs>,
     ) -> Self {
         Self {
             run_ref,
             agent_ref,
             frame_ref,
-            activity_binding,
+            orchestration_binding,
         }
     }
 
-    pub fn graph_instance_ref(&self) -> Option<Uuid> {
-        self.activity_binding
+    pub fn orchestration_ref(&self) -> Option<Uuid> {
+        self.orchestration_binding
             .as_ref()
-            .map(|binding| binding.graph_instance_ref)
+            .map(|binding| binding.orchestration_ref)
     }
 
-    pub fn assignment_ref(&self) -> Option<Uuid> {
-        self.activity_binding
+    pub fn node_path(&self) -> Option<&str> {
+        self.orchestration_binding
             .as_ref()
-            .and_then(|binding| binding.assignment_ref)
+            .map(|binding| binding.node_path.as_str())
     }
 
-    pub fn activity_binding(&self) -> Option<&ActivityBindingRefs> {
-        self.activity_binding.as_ref()
+    pub fn node_attempt(&self) -> Option<u32> {
+        self.orchestration_binding
+            .as_ref()
+            .map(|binding| binding.attempt)
     }
 }
 
@@ -269,7 +272,7 @@ pub struct SubjectExecutionDispatchResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleRunStartDispatchResult {
     pub run_ref: Uuid,
-    pub graph_instance_ref: Uuid,
+    pub orchestration_ref: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -324,16 +327,17 @@ mod tests {
     }
 
     #[test]
-    fn subject_execution_result_serializes_required_assignment_ref() {
-        let assignment_ref = Uuid::new_v4();
+    fn subject_execution_result_serializes_orchestration_binding() {
+        let orchestration_ref = Uuid::new_v4();
         let result = ExecutionDispatchResult::SubjectExecution(SubjectExecutionDispatchResult {
             runtime_refs: AgentRuntimeRefs::new(
                 Uuid::new_v4(),
                 Uuid::new_v4(),
                 Uuid::new_v4(),
-                Some(ActivityBindingRefs::new(
-                    Uuid::new_v4(),
-                    Some(assignment_ref),
+                Some(OrchestrationBindingRefs::new(
+                    orchestration_ref,
+                    "agent.main",
+                    1,
                 )),
             ),
             subject_execution_ref: SubjectExecutionRef {
@@ -344,8 +348,9 @@ mod tests {
         });
         let json = serde_json::to_string(&result).expect("serialize");
         assert!(!json.contains("runtime_session_ref"));
-        assert!(json.contains(&assignment_ref.to_string()));
-        assert!(json.contains("assignment_ref"));
+        assert!(json.contains(&orchestration_ref.to_string()));
+        assert!(json.contains("orchestration_ref"));
+        assert!(json.contains("node_path"));
         assert!(json.contains("subject_execution"));
     }
 }

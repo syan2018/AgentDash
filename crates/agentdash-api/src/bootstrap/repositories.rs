@@ -11,8 +11,8 @@ use agentdash_application::shared_library::{
 };
 use agentdash_application::workflow::SessionPersistenceRuntimeSessionCreator;
 use agentdash_infrastructure::{
-    FilesystemExtensionPackageArtifactStorage, PostgresAgentAssignmentRepository,
-    PostgresAgentFrameRepository, PostgresAgentLineageRepository, PostgresAuthSessionRepository,
+    FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
+    PostgresAgentLineageRepository, PostgresAuthSessionRepository,
     PostgresBackendExecutionLeaseRepository, PostgresBackendRepository, PostgresCanvasRepository,
     PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
     PostgresLifecycleAgentRepository, PostgresLifecycleGateRepository,
@@ -23,8 +23,7 @@ use agentdash_infrastructure::{
     PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
     PostgresSessionRepository, PostgresSettingsRepository, PostgresSharedLibraryRepository,
     PostgresSkillAssetRepository, PostgresStateChangeRepository, PostgresStoryRepository,
-    PostgresUserDirectoryRepository, PostgresWorkflowGraphInstanceRepository,
-    PostgresWorkflowRepository, PostgresWorkspaceRepository,
+    PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
@@ -109,11 +108,8 @@ pub(crate) async fn build_repositories(
     let skill_asset_repo = Arc::new(PostgresSkillAssetRepository::new(pool.clone()));
 
     let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool.clone()));
-    let workflow_graph_instance_repo =
-        Arc::new(PostgresWorkflowGraphInstanceRepository::new(pool.clone()));
     let lifecycle_agent_repo = Arc::new(PostgresLifecycleAgentRepository::new(pool.clone()));
     let agent_frame_repo = Arc::new(PostgresAgentFrameRepository::new(pool.clone()));
-    let agent_assignment_repo = Arc::new(PostgresAgentAssignmentRepository::new(pool.clone()));
     let lifecycle_subject_association_repo = Arc::new(
         PostgresLifecycleSubjectAssociationRepository::new(pool.clone()),
     );
@@ -154,12 +150,9 @@ pub(crate) async fn build_repositories(
         agent_procedure_repo: workflow_repo.clone(),
         workflow_template_install_repo: workflow_repo.clone(),
         workflow_graph_repo: workflow_repo.clone(),
-        activity_execution_claim_repo: workflow_repo.clone(),
         lifecycle_run_repo: workflow_repo.clone(),
-        workflow_graph_instance_repo: workflow_graph_instance_repo.clone(),
         lifecycle_agent_repo: lifecycle_agent_repo.clone(),
         agent_frame_repo: agent_frame_repo.clone(),
-        agent_assignment_repo: agent_assignment_repo.clone(),
         lifecycle_subject_association_repo: lifecycle_subject_association_repo.clone(),
         lifecycle_gate_repo: lifecycle_gate_repo.clone(),
         agent_lineage_repo: agent_lineage_repo.clone(),

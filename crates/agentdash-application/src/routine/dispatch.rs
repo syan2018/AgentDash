@@ -124,7 +124,8 @@ mod tests {
             run_id,
             agent_id,
             frame_id: Uuid::new_v4(),
-            assignment_id: None,
+            orchestration_id: None,
+            node_path: None,
         };
         let intent = build_routine_execution_intent_with_reuse(&routine, &execution, Some(&target));
 

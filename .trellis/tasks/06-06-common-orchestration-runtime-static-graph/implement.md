@@ -4,6 +4,20 @@
 
 已进入实现阶段。本任务依赖 `workflow-graph-compiler` 的 plan 输出稳定；后续实现应围绕唯一 runtime path 收敛，而不是继续加固旧 Activity engine 或 `WorkflowGraphInstance` 中间身份。
 
+当前实现进展：
+
+- 静态 `WorkflowGraph` dispatch / lifecycle start 已先编译为 `OrchestrationPlanSnapshot`，并直接写入 `LifecycleRun.orchestrations[]`。
+- 主 runtime 坐标已切到 `orchestration_id + node_path + attempt`；`RuntimeSessionExecutionAnchor` 持久化该坐标，session terminal / subject cancel / complete node 通过 anchor 回到 runtime node。
+- `RepositorySet`、API bootstrap、PostgreSQL repository implementation 已停止构造和注入 `WorkflowGraphInstanceRepository`、`AgentAssignmentRepository`、`ActivityExecutionClaimRepository`。
+- 新增 migration `0004_orchestration_runtime_convergence.sql` 将 anchor / routine dispatch schema 切到 orchestration node 坐标，并 drop 旧 activity claim / assignment / workflow instance 表。
+- dispatch、subject cancel、boot task projection 测试已经改为断言 `LifecycleRun.orchestrations[]`，不再通过旧 graph instance / assignment mock 证明行为。
+
+后续剩余面：
+
+- legacy `activity_run` / `scheduler` / `agent_executor` 模块仍保留旧 Activity engine 类型，当前没有被新 dispatch 主路径引用。下一步应决定是直接删除 module tree，还是把其中仍有价值的 Agent session launch 片段抽回 orchestration executor adapter。
+- lifecycle VFS mount / session assembly 仍有 `graph_instance_id` 形态的 read surface。它们不应重新读取旧仓储，但需要以 orchestration projection 重新定义 lifecycle mount metadata。
+- contracts 中的 graph-compatible DTO 仍保留旧字段；短期可以作为 projection 兼容 view，但 command path 不能再消费这些字段。
+
 ## 上下文顺序
 
 实现代理必须读取：

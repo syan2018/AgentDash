@@ -66,7 +66,7 @@ pub(crate) async fn build_session_runtime(
         session_services_handle,
         runtime_tool_provider,
         mcp_relay_provider,
-        platform_config,
+        platform_config: _platform_config,
         integration_connectors,
         extra_skill_dirs,
         llm_provider_secret,
@@ -112,10 +112,8 @@ pub(crate) async fn build_session_runtime(
         repos.workflow_graph_repo.clone(),
         repos.agent_frame_repo.clone(),
         repos.lifecycle_agent_repo.clone(),
-        repos.agent_assignment_repo.clone(),
         repos.lifecycle_run_repo.clone(),
         repos.execution_anchor_repo.clone(),
-        repos.workflow_graph_instance_repo.clone(),
         repos.lifecycle_subject_association_repo.clone(),
         repos.inline_file_repo.clone(),
         |preset_scripts| {
@@ -156,13 +154,7 @@ pub(crate) async fn build_session_runtime(
     let session_title = session_runtime_builder.title_service();
 
     let orchestrator = Arc::new(agentdash_application::workflow::LifecycleOrchestrator::new(
-        session_core.clone(),
-        session_launch.clone(),
-        session_hooks.clone(),
-        session_capability.clone(),
         repos,
-        platform_config,
-        Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new()),
     ));
     session_runtime_builder
         .set_terminal_callback(orchestrator)

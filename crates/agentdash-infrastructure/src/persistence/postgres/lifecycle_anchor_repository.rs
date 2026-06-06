@@ -1,11 +1,9 @@
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
-    ActivityLifecycleRunState, AgentAssignment, AgentAssignmentRepository, AgentFrame,
-    AgentFrameRepository, AgentLineage, AgentLineageRepository, LifecycleAgent,
+    AgentFrame, AgentFrameRepository, AgentLineage, AgentLineageRepository, LifecycleAgent,
     LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, LifecycleSubjectAssociation,
     LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchor,
-    RuntimeSessionExecutionAnchorRepository, SubjectRef, WorkflowGraphInstance,
-    WorkflowGraphInstanceRepository,
+    RuntimeSessionExecutionAnchorRepository, SubjectRef,
 };
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -22,145 +20,6 @@ fn opt_uuid(s: Option<&String>, ctx: &str) -> Result<Option<Uuid>, DomainError> 
     match s {
         Some(val) => Ok(Some(parse_uuid(val, ctx)?)),
         None => Ok(None),
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// WorkflowGraphInstanceRepository
-// ═══════════════════════════════════════════════════════════════════════════════
-
-pub struct PostgresWorkflowGraphInstanceRepository {
-    pool: PgPool,
-}
-
-impl PostgresWorkflowGraphInstanceRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
-    }
-}
-
-#[derive(sqlx::FromRow)]
-struct GraphInstanceRow {
-    id: String,
-    run_id: String,
-    graph_id: String,
-    role: String,
-    status: String,
-    activity_state_json: Option<String>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-}
-
-impl TryFrom<GraphInstanceRow> for WorkflowGraphInstance {
-    type Error = DomainError;
-    fn try_from(row: GraphInstanceRow) -> Result<Self, Self::Error> {
-        Ok(WorkflowGraphInstance {
-            id: parse_uuid(&row.id, "lifecycle_workflow_instances.id")?,
-            run_id: parse_uuid(&row.run_id, "lifecycle_workflow_instances.run_id")?,
-            graph_id: parse_uuid(&row.graph_id, "lifecycle_workflow_instances.graph_id")?,
-            role: row.role,
-            status: row.status,
-            activity_state: row
-                .activity_state_json
-                .map(|s| serde_json::from_str::<ActivityLifecycleRunState>(&s))
-                .transpose()
-                .map_err(|e| DomainError::InvalidConfig(format!("activity_state_json: {e}")))?,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl WorkflowGraphInstanceRepository for PostgresWorkflowGraphInstanceRepository {
-    async fn create(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError> {
-        let activity_state = instance
-            .activity_state
-            .as_ref()
-            .map(|v| serde_json::to_string(v))
-            .transpose()
-            .map_err(|e| DomainError::InvalidConfig(format!("activity_state_json: {e}")))?;
-        sqlx::query(
-            r#"INSERT INTO lifecycle_workflow_instances
-                (id, run_id, graph_id, role, status, activity_state_json, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"#,
-        )
-        .bind(instance.id.to_string())
-        .bind(instance.run_id.to_string())
-        .bind(instance.graph_id.to_string())
-        .bind(&instance.role)
-        .bind(&instance.status)
-        .bind(activity_state)
-        .bind(instance.created_at)
-        .bind(instance.updated_at)
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        Ok(())
-    }
-
-    async fn get(&self, id: Uuid) -> Result<Option<WorkflowGraphInstance>, DomainError> {
-        sqlx::query_as::<_, GraphInstanceRow>(
-            "SELECT id,run_id,graph_id,role,status,activity_state_json,created_at,updated_at FROM lifecycle_workflow_instances WHERE id=$1",
-        )
-        .bind(id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
-    }
-
-    async fn get_by_run_and_id(
-        &self,
-        run_id: Uuid,
-        id: Uuid,
-    ) -> Result<Option<WorkflowGraphInstance>, DomainError> {
-        sqlx::query_as::<_, GraphInstanceRow>(
-            "SELECT id,run_id,graph_id,role,status,activity_state_json,created_at,updated_at FROM lifecycle_workflow_instances WHERE run_id=$1 AND id=$2",
-        )
-        .bind(run_id.to_string())
-        .bind(id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
-    }
-
-    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<WorkflowGraphInstance>, DomainError> {
-        sqlx::query_as::<_, GraphInstanceRow>(
-            "SELECT id,run_id,graph_id,role,status,activity_state_json,created_at,updated_at FROM lifecycle_workflow_instances WHERE run_id=$1 ORDER BY created_at",
-        )
-        .bind(run_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-
-    async fn update(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError> {
-        let activity_state = instance
-            .activity_state
-            .as_ref()
-            .map(|v| serde_json::to_string(v))
-            .transpose()
-            .map_err(|e| DomainError::InvalidConfig(format!("activity_state_json: {e}")))?;
-        sqlx::query(
-            r#"UPDATE lifecycle_workflow_instances
-               SET status=$1, activity_state_json=$2, updated_at=$3
-               WHERE id=$4"#,
-        )
-        .bind(&instance.status)
-        .bind(activity_state)
-        .bind(instance.updated_at)
-        .bind(instance.id.to_string())
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        Ok(())
     }
 }
 
@@ -474,155 +333,6 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         sqlx::query("UPDATE agent_frames SET visible_canvas_mount_ids_json=$1 WHERE id=$2")
             .bind(opt_json_str(&frame.visible_canvas_mount_ids_json)?)
             .bind(frame_id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(db_err)?;
-        Ok(())
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// AgentAssignmentRepository
-// ═══════════════════════════════════════════════════════════════════════════════
-
-pub struct PostgresAgentAssignmentRepository {
-    pool: PgPool,
-}
-
-impl PostgresAgentAssignmentRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
-    }
-}
-
-#[derive(sqlx::FromRow)]
-struct AssignmentRow {
-    id: String,
-    run_id: String,
-    graph_instance_id: String,
-    activity_key: String,
-    attempt: i32,
-    agent_id: String,
-    frame_id: String,
-    lease_status: String,
-    assigned_at: DateTime<Utc>,
-    released_at: Option<DateTime<Utc>>,
-}
-
-impl TryFrom<AssignmentRow> for AgentAssignment {
-    type Error = DomainError;
-    fn try_from(row: AssignmentRow) -> Result<Self, Self::Error> {
-        Ok(AgentAssignment {
-            id: parse_uuid(&row.id, "agent_assignments.id")?,
-            run_id: parse_uuid(&row.run_id, "agent_assignments.run_id")?,
-            graph_instance_id: parse_uuid(
-                &row.graph_instance_id,
-                "agent_assignments.graph_instance_id",
-            )?,
-            activity_key: row.activity_key,
-            attempt: row.attempt,
-            agent_id: parse_uuid(&row.agent_id, "agent_assignments.agent_id")?,
-            frame_id: parse_uuid(&row.frame_id, "agent_assignments.frame_id")?,
-            lease_status: row.lease_status,
-            assigned_at: row.assigned_at,
-            released_at: row.released_at,
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl AgentAssignmentRepository for PostgresAgentAssignmentRepository {
-    async fn create(&self, a: &AgentAssignment) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"INSERT INTO agent_assignments
-                (id, run_id, graph_instance_id, activity_key, attempt, agent_id, frame_id, lease_status, assigned_at, released_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
-        )
-        .bind(a.id.to_string())
-        .bind(a.run_id.to_string())
-        .bind(a.graph_instance_id.to_string())
-        .bind(&a.activity_key)
-        .bind(a.attempt)
-        .bind(a.agent_id.to_string())
-        .bind(a.frame_id.to_string())
-        .bind(&a.lease_status)
-        .bind(a.assigned_at)
-        .bind(a.released_at)
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        Ok(())
-    }
-
-    async fn get(&self, assignment_id: Uuid) -> Result<Option<AgentAssignment>, DomainError> {
-        sqlx::query_as::<_, AssignmentRow>(
-            r#"SELECT id,run_id,graph_instance_id,activity_key,attempt,agent_id,frame_id,lease_status,assigned_at,released_at
-               FROM agent_assignments WHERE id=$1"#,
-        )
-        .bind(assignment_id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
-    }
-
-    async fn find_for_attempt(
-        &self,
-        graph_instance_id: Uuid,
-        activity_key: &str,
-        attempt: i32,
-    ) -> Result<Option<AgentAssignment>, DomainError> {
-        sqlx::query_as::<_, AssignmentRow>(
-            r#"SELECT id,run_id,graph_instance_id,activity_key,attempt,agent_id,frame_id,lease_status,assigned_at,released_at
-               FROM agent_assignments WHERE graph_instance_id=$1 AND activity_key=$2 AND attempt=$3"#,
-        )
-        .bind(graph_instance_id.to_string())
-        .bind(activity_key)
-        .bind(attempt)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
-    }
-
-    async fn find_active_for_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Vec<AgentAssignment>, DomainError> {
-        sqlx::query_as::<_, AssignmentRow>(
-            r#"SELECT id,run_id,graph_instance_id,activity_key,attempt,agent_id,frame_id,lease_status,assigned_at,released_at
-               FROM agent_assignments WHERE agent_id=$1 AND lease_status='active' ORDER BY assigned_at DESC"#,
-        )
-        .bind(agent_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-
-    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentAssignment>, DomainError> {
-        sqlx::query_as::<_, AssignmentRow>(
-            r#"SELECT id,run_id,graph_instance_id,activity_key,attempt,agent_id,frame_id,lease_status,assigned_at,released_at
-               FROM agent_assignments WHERE run_id=$1 ORDER BY assigned_at"#,
-        )
-        .bind(run_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-
-    async fn update(&self, a: &AgentAssignment) -> Result<(), DomainError> {
-        sqlx::query("UPDATE agent_assignments SET lease_status=$1, released_at=$2 WHERE id=$3")
-            .bind(&a.lease_status)
-            .bind(a.released_at)
-            .bind(a.id.to_string())
             .execute(&self.pool)
             .await
             .map_err(db_err)?;
@@ -1029,10 +739,9 @@ struct AnchorRow {
     run_id: String,
     launch_frame_id: String,
     agent_id: String,
-    assignment_id: Option<String>,
-    graph_instance_id: Option<String>,
-    activity_key: Option<String>,
-    attempt: Option<i32>,
+    orchestration_id: Option<String>,
+    node_path: Option<String>,
+    node_attempt: Option<i32>,
     created_by_kind: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -1046,10 +755,9 @@ impl TryFrom<AnchorRow> for RuntimeSessionExecutionAnchor {
             run_id: parse_uuid(&row.run_id, "rsea.run_id")?,
             launch_frame_id: parse_uuid(&row.launch_frame_id, "rsea.launch_frame_id")?,
             agent_id: parse_uuid(&row.agent_id, "rsea.agent_id")?,
-            assignment_id: opt_uuid(row.assignment_id.as_ref(), "rsea.assignment_id")?,
-            graph_instance_id: opt_uuid(row.graph_instance_id.as_ref(), "rsea.graph_instance_id")?,
-            activity_key: row.activity_key,
-            attempt: row.attempt,
+            orchestration_id: opt_uuid(row.orchestration_id.as_ref(), "rsea.orchestration_id")?,
+            node_path: row.node_path,
+            node_attempt: row.node_attempt.map(|attempt| attempt as u32),
             created_by_kind: row.created_by_kind,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -1063,50 +771,28 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
         sqlx::query(
             r#"INSERT INTO runtime_session_execution_anchors
                 (runtime_session_id, run_id, launch_frame_id, agent_id,
-                 assignment_id, graph_instance_id, activity_key, attempt,
+                 orchestration_id, node_path, node_attempt,
                  created_by_kind, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
                ON CONFLICT (runtime_session_id) DO UPDATE SET
                  run_id = EXCLUDED.run_id,
                  launch_frame_id = EXCLUDED.launch_frame_id,
                  agent_id = EXCLUDED.agent_id,
-                 assignment_id = COALESCE(EXCLUDED.assignment_id, runtime_session_execution_anchors.assignment_id),
-                 graph_instance_id = COALESCE(EXCLUDED.graph_instance_id, runtime_session_execution_anchors.graph_instance_id),
-                 activity_key = COALESCE(EXCLUDED.activity_key, runtime_session_execution_anchors.activity_key),
-                 attempt = COALESCE(EXCLUDED.attempt, runtime_session_execution_anchors.attempt),
+                 orchestration_id = COALESCE(EXCLUDED.orchestration_id, runtime_session_execution_anchors.orchestration_id),
+                 node_path = COALESCE(EXCLUDED.node_path, runtime_session_execution_anchors.node_path),
+                 node_attempt = COALESCE(EXCLUDED.node_attempt, runtime_session_execution_anchors.node_attempt),
                  updated_at = EXCLUDED.updated_at"#,
         )
         .bind(&a.runtime_session_id)
         .bind(a.run_id.to_string())
         .bind(a.launch_frame_id.to_string())
         .bind(a.agent_id.to_string())
-        .bind(a.assignment_id.map(|id| id.to_string()))
-        .bind(a.graph_instance_id.map(|id| id.to_string()))
-        .bind(&a.activity_key)
-        .bind(a.attempt)
+        .bind(a.orchestration_id.map(|id| id.to_string()))
+        .bind(&a.node_path)
+        .bind(a.node_attempt.map(|attempt| attempt as i32))
         .bind(&a.created_by_kind)
         .bind(a.created_at)
         .bind(a.updated_at)
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        Ok(())
-    }
-
-    async fn update_assignment(
-        &self,
-        runtime_session_id: &str,
-        assignment_id: Uuid,
-        attempt: i32,
-    ) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"UPDATE runtime_session_execution_anchors
-               SET assignment_id = $2, attempt = $3, updated_at = now()
-               WHERE runtime_session_id = $1"#,
-        )
-        .bind(runtime_session_id)
-        .bind(assignment_id.to_string())
-        .bind(attempt)
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
@@ -1131,7 +817,7 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
     ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
         sqlx::query_as::<_, AnchorRow>(
             r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
-                      assignment_id, graph_instance_id, activity_key, attempt,
+                      orchestration_id, node_path, node_attempt,
                       created_by_kind, created_at, updated_at
                FROM runtime_session_execution_anchors
                WHERE runtime_session_id = $1"#,
@@ -1150,7 +836,7 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
     ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
         sqlx::query_as::<_, AnchorRow>(
             r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
-                      assignment_id, graph_instance_id, activity_key, attempt,
+                      orchestration_id, node_path, node_attempt,
                       created_by_kind, created_at, updated_at
                FROM runtime_session_execution_anchors
                WHERE run_id = $1
@@ -1171,7 +857,7 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
     ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
         sqlx::query_as::<_, AnchorRow>(
             r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
-                      assignment_id, graph_instance_id, activity_key, attempt,
+                      orchestration_id, node_path, node_attempt,
                       created_by_kind, created_at, updated_at
                FROM runtime_session_execution_anchors
                WHERE agent_id = $1
@@ -1195,7 +881,7 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
         }
         sqlx::query_as::<_, AnchorRow>(
             r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
-                      assignment_id, graph_instance_id, activity_key, attempt,
+                      orchestration_id, node_path, node_attempt,
                       created_by_kind, created_at, updated_at
                FROM runtime_session_execution_anchors
                WHERE runtime_session_id = ANY($1)
@@ -1216,7 +902,7 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
     ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
         sqlx::query_as::<_, AnchorRow>(
             r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
-                      assignment_id, graph_instance_id, activity_key, attempt,
+                      orchestration_id, node_path, node_attempt,
                       created_by_kind, created_at, updated_at
                FROM runtime_session_execution_anchors
                WHERE agent_id = $1

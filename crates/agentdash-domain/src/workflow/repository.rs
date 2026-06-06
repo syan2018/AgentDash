@@ -186,15 +186,8 @@ pub trait AgentLineageRepository: Send + Sync {
 /// RuntimeSession → 控制面锚点的 repository。
 #[async_trait::async_trait]
 pub trait RuntimeSessionExecutionAnchorRepository: Send + Sync {
-    /// 第一段写入或更新（runtime_session + frame 创建后，assignment 可能尚未创建）。
+    /// 写入或更新 runtime_session 到 lifecycle / agent / frame / orchestration node 的锚点。
     async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError>;
-    /// 第二段补写：assignment 创建后回填 assignment_id + attempt。
-    async fn update_assignment(
-        &self,
-        runtime_session_id: &str,
-        assignment_id: Uuid,
-        attempt: i32,
-    ) -> Result<(), DomainError>;
     /// 按 runtime_session_id 删除锚点。
     async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError>;
     /// 按 runtime_session_id 查找锚点。

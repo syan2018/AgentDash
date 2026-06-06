@@ -44,6 +44,7 @@ pub struct RoutineLaunchSource {
 pub struct CompanionLaunchWorkflowSource {
     pub run: LifecycleRun,
     pub graph_instance_id: Uuid,
+    pub attempt: u32,
     pub lifecycle: WorkflowGraph,
     pub activity: ActivityDefinition,
     pub workflow: Option<AgentProcedure>,

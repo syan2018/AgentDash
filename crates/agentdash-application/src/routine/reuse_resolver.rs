@@ -2,8 +2,8 @@ use uuid::Uuid;
 
 use agentdash_domain::routine::{DispatchStrategy, Routine, RoutineDispatchRefs, RoutineExecution};
 use agentdash_domain::workflow::{
-    AgentAssignmentRepository, AgentFrameRepository, LifecycleAgentRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository, SubjectRef,
+    AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
+    LifecycleSubjectAssociationRepository, SubjectRef,
 };
 
 use crate::ApplicationError;
@@ -17,7 +17,8 @@ pub struct RoutineDispatchReuseTarget {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub frame_id: Uuid,
-    pub assignment_id: Option<Uuid>,
+    pub orchestration_id: Option<Uuid>,
+    pub node_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +32,6 @@ pub struct LifecycleAgentReuseResolver<'a> {
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
-    agent_assignment_repo: &'a dyn AgentAssignmentRepository,
     association_repo: &'a dyn LifecycleSubjectAssociationRepository,
 }
 
@@ -42,7 +42,6 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
             lifecycle_run_repo: repos.lifecycle_run_repo.as_ref(),
             lifecycle_agent_repo: repos.lifecycle_agent_repo.as_ref(),
             agent_frame_repo: repos.agent_frame_repo.as_ref(),
-            agent_assignment_repo: repos.agent_assignment_repo.as_ref(),
             association_repo: repos.lifecycle_subject_association_repo.as_ref(),
         }
     }
@@ -52,7 +51,6 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
         lifecycle_run_repo: &'a dyn LifecycleRunRepository,
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         agent_frame_repo: &'a dyn AgentFrameRepository,
-        agent_assignment_repo: &'a dyn AgentAssignmentRepository,
         association_repo: &'a dyn LifecycleSubjectAssociationRepository,
     ) -> Self {
         Self {
@@ -60,7 +58,6 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
             lifecycle_run_repo,
             lifecycle_agent_repo,
             agent_frame_repo,
-            agent_assignment_repo,
             association_repo,
         }
     }
@@ -143,7 +140,8 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
         let run_id = refs.run_id();
         let agent_id = refs.agent_id();
         let frame_id = refs.frame_id();
-        let assignment_id = refs.assignment_id();
+        let orchestration_id = refs.orchestration_id();
+        let node_path = refs.node_path().map(str::to_string);
 
         let run = self
             .lifecycle_run_repo
@@ -211,24 +209,27 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
             )));
         }
 
-        if let Some(assignment_id) = assignment_id {
-            let assignment = self
-                .agent_assignment_repo
-                .list_by_run(run_id)
-                .await
-                .map_err(ApplicationError::from)?
-                .into_iter()
-                .find(|assignment| assignment.id == assignment_id)
-                .ok_or_else(|| {
-                    ApplicationError::Conflict(format!(
-                        "RoutineExecution {} 记录的 AgentAssignment {} 不存在",
-                        candidate.id, assignment_id
-                    ))
-                })?;
-            if assignment.agent_id != agent_id || assignment.frame_id != frame_id {
+        if let Some(orchestration_id) = orchestration_id {
+            let orchestration = run.orchestration_by_id(orchestration_id).ok_or_else(|| {
+                ApplicationError::Conflict(format!(
+                    "RoutineExecution {} 记录的 OrchestrationInstance {} 不存在",
+                    candidate.id, orchestration_id
+                ))
+            })?;
+            let Some(node_path) = node_path.as_deref() else {
                 return Err(ApplicationError::Conflict(format!(
-                    "RoutineExecution {} 记录的 AgentAssignment {} 与 agent/frame anchor 不一致",
-                    candidate.id, assignment_id
+                    "RoutineExecution {} 记录了 orchestration 但缺少 node_path",
+                    candidate.id
+                )));
+            };
+            if !orchestration
+                .node_tree
+                .iter()
+                .any(|node| node.node_path == node_path)
+            {
+                return Err(ApplicationError::Conflict(format!(
+                    "RoutineExecution {} 记录的 orchestration node {} 不存在",
+                    candidate.id, node_path
                 )));
             }
         }
@@ -258,7 +259,8 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
             run_id,
             agent_id,
             frame_id,
-            assignment_id,
+            orchestration_id,
+            node_path,
         })
     }
 }
@@ -321,8 +323,11 @@ mod tests {
         RoutineExecutionRepository, RoutineExecutionStatus, RoutineTriggerConfig,
     };
     use agentdash_domain::workflow::{
-        AgentAssignment, AgentFrame, LifecycleAgent, LifecycleRun, LifecycleSubjectAssociation,
+        AgentFrame, LifecycleAgent, LifecycleRun, LifecycleSubjectAssociation,
+        OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNode,
+        PlanNodeKind, RuntimeNodeState, RuntimeNodeStatus,
     };
+    use chrono::Utc;
 
     #[derive(Default)]
     struct InMemoryRoutineExecutionRepo {
@@ -562,81 +567,6 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryAssignmentRepo {
-        items: Mutex<Vec<AgentAssignment>>,
-    }
-
-    #[async_trait]
-    impl AgentAssignmentRepository for InMemoryAssignmentRepo {
-        async fn create(&self, assignment: &AgentAssignment) -> Result<(), DomainError> {
-            self.items.lock().unwrap().push(assignment.clone());
-            Ok(())
-        }
-
-        async fn get(&self, assignment_id: Uuid) -> Result<Option<AgentAssignment>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|assignment| assignment.id == assignment_id)
-                .cloned())
-        }
-
-        async fn find_for_attempt(
-            &self,
-            graph_instance_id: Uuid,
-            activity_key: &str,
-            attempt: i32,
-        ) -> Result<Option<AgentAssignment>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|assignment| {
-                    assignment.graph_instance_id == graph_instance_id
-                        && assignment.activity_key == activity_key
-                        && assignment.attempt == attempt
-                })
-                .cloned())
-        }
-
-        async fn find_active_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Vec<AgentAssignment>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|a| a.agent_id == agent_id && a.lease_status == "active")
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentAssignment>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|assignment| assignment.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, assignment: &AgentAssignment) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(existing) = items.iter_mut().find(|item| item.id == assignment.id) {
-                *existing = assignment.clone();
-            }
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
     struct InMemoryAssociationRepo {
         items: Mutex<Vec<LifecycleSubjectAssociation>>,
     }
@@ -695,7 +625,6 @@ mod tests {
         run_repo: InMemoryRunRepo,
         agent_repo: InMemoryAgentRepo,
         frame_repo: InMemoryFrameRepo,
-        assignment_repo: InMemoryAssignmentRepo,
         association_repo: InMemoryAssociationRepo,
     }
 
@@ -706,7 +635,6 @@ mod tests {
                 run_repo: InMemoryRunRepo::default(),
                 agent_repo: InMemoryAgentRepo::default(),
                 frame_repo: InMemoryFrameRepo::default(),
-                assignment_repo: InMemoryAssignmentRepo::default(),
                 association_repo: InMemoryAssociationRepo::default(),
             }
         }
@@ -717,7 +645,6 @@ mod tests {
                 &self.run_repo,
                 &self.agent_repo,
                 &self.frame_repo,
-                &self.assignment_repo,
                 &self.association_repo,
             )
         }
@@ -727,20 +654,30 @@ mod tests {
             routine: &Routine,
             entity_key: Option<&str>,
         ) -> RoutineDispatchReuseTarget {
-            let run = test_run(routine.project_id);
+            let mut run = test_run(routine.project_id);
             let mut agent = LifecycleAgent::new_root(run.id, routine.project_id, "routine");
-            let mut frame = AgentFrame::new_revision(agent.id, 1, "test");
-            frame.graph_instance_id = Some(Uuid::new_v4());
-            frame.activity_key = Some("main".to_string());
+            let frame = AgentFrame::new_revision(agent.id, 1, "test");
             agent.set_current_frame(frame.id);
-            let assignment = AgentAssignment::new(
-                run.id,
-                frame.graph_instance_id.expect("graph instance"),
-                "main",
-                1,
-                agent.id,
-                frame.id,
-            );
+            let mut orchestration = test_orchestration("routine.main");
+            let orchestration_id = orchestration.orchestration_id;
+            orchestration.node_tree.push(RuntimeNodeState {
+                node_id: "routine_main".to_string(),
+                node_path: "routine.main".to_string(),
+                kind: PlanNodeKind::AgentCall,
+                status: RuntimeNodeStatus::Running,
+                attempt: 1,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+                executor_run_ref: None,
+                children: Vec::new(),
+                phase_path: Vec::new(),
+                started_at: Some(Utc::now()),
+                completed_at: None,
+                error: None,
+                trace_refs: Vec::new(),
+                cache: None,
+            });
+            assert!(run.add_orchestration(orchestration));
             let mut execution = RoutineExecution::new(routine.id, "webhook");
             execution.status = RoutineExecutionStatus::Dispatched;
             execution.entity_key = entity_key.map(str::to_string);
@@ -749,9 +686,10 @@ mod tests {
                     run.id,
                     agent.id,
                     frame.id,
-                    Some(agentdash_domain::workflow::ActivityBindingRefs::new(
-                        assignment.graph_instance_id,
-                        Some(assignment.id),
+                    Some(agentdash_domain::workflow::OrchestrationBindingRefs::new(
+                        orchestration_id,
+                        "routine.main",
+                        1,
                     )),
                 ),
             ));
@@ -765,11 +703,6 @@ mod tests {
             self.run_repo.items.lock().unwrap().push(run.clone());
             self.agent_repo.items.lock().unwrap().push(agent.clone());
             self.frame_repo.items.lock().unwrap().push(frame.clone());
-            self.assignment_repo
-                .items
-                .lock()
-                .unwrap()
-                .push(assignment.clone());
             self.association_repo
                 .items
                 .lock()
@@ -785,7 +718,8 @@ mod tests {
                 run_id: run.id,
                 agent_id: agent.id,
                 frame_id: frame.id,
-                assignment_id: Some(assignment.id),
+                orchestration_id: Some(orchestration_id),
+                node_path: Some("routine.main".to_string()),
             }
         }
     }
@@ -806,6 +740,40 @@ mod tests {
 
     fn test_run(project_id: Uuid) -> LifecycleRun {
         LifecycleRun::new_control(project_id, Uuid::new_v4())
+    }
+
+    fn test_orchestration(node_path: &str) -> OrchestrationInstance {
+        let source_ref = OrchestrationSourceRef::Inline {
+            source_digest: "sha256:test".to_string(),
+        };
+        let now = Utc::now();
+        let plan_snapshot = OrchestrationPlanSnapshot {
+            plan_digest: "sha256:test-plan".to_string(),
+            plan_version: 1,
+            source_ref: source_ref.clone(),
+            nodes: vec![PlanNode {
+                node_id: "routine_main".to_string(),
+                node_path: node_path.to_string(),
+                parent_node_id: None,
+                kind: PlanNodeKind::AgentCall,
+                label: None,
+                executor: None,
+                input_ports: Vec::new(),
+                output_ports: Vec::new(),
+                completion_policy: None,
+                iteration_policy: None,
+                join_policy: None,
+                result_contract: None,
+                metadata: None,
+            }],
+            entry_node_ids: vec!["routine_main".to_string()],
+            activation_rules: Vec::new(),
+            state_exchange_rules: Vec::new(),
+            limits: Default::default(),
+            metadata: None,
+            created_at: now,
+        };
+        OrchestrationInstance::new("routine", source_ref, plan_snapshot)
     }
 
     #[test]

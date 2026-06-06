@@ -642,16 +642,13 @@ pub struct RuntimeSessionExecutionAnchorDto {
     pub launch_frame_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub assignment_id: Option<String>,
+    pub orchestration_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub graph_instance_id: Option<String>,
+    pub node_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub activity_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub attempt: Option<i32>,
+    pub node_attempt: Option<u32>,
     pub created_by_kind: String,
     pub created_at: String,
     pub updated_at: String,

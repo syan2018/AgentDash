@@ -2,8 +2,6 @@ use agentdash_domain::common::error::DomainError;
 use sqlx::PgPool;
 
 const REQUIRED_POSTGRES_TABLES: &[&str] = &[
-    "activity_execution_claims",
-    "agent_assignments",
     "agent_frame_transitions",
     "agent_frames",
     "agent_lineages",
@@ -23,7 +21,6 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "lifecycle_gates",
     "lifecycle_runs",
     "lifecycle_subject_associations",
-    "lifecycle_workflow_instances",
     "library_assets",
     "llm_providers",
     "llm_provider_user_credentials",

@@ -6,7 +6,7 @@ use agentdash_domain::routine::{
     Routine, RoutineDispatchRefs, RoutineExecution, RoutineExecutionRepository,
     RoutineExecutionStatus, RoutineRepository,
 };
-use agentdash_domain::workflow::AgentRuntimeRefs;
+use agentdash_domain::workflow::{AgentRuntimeRefs, OrchestrationBindingRefs};
 
 // ────────────────────────────── Routine ──────────────────────────────
 
@@ -207,7 +207,8 @@ struct ExecutionRow {
     dispatch_run_id: Option<String>,
     dispatch_agent_id: Option<String>,
     dispatch_frame_id: Option<String>,
-    dispatch_assignment_id: Option<String>,
+    dispatch_orchestration_id: Option<String>,
+    dispatch_node_path: Option<String>,
     status: String,
     started_at: chrono::DateTime<chrono::Utc>,
     completed_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -223,14 +224,28 @@ impl TryFrom<ExecutionRow> for RoutineExecution {
             row.dispatch_run_id,
             row.dispatch_agent_id,
             row.dispatch_frame_id,
-            row.dispatch_assignment_id,
+            row.dispatch_orchestration_id,
+            row.dispatch_node_path,
         ) {
-            (Some(run_id), Some(agent_id), Some(frame_id), _assignment_id) => {
+            (Some(run_id), Some(agent_id), Some(frame_id), orchestration_id, node_path) => {
+                let orchestration_binding = match (orchestration_id, node_path) {
+                    (Some(orchestration_id), Some(node_path)) => {
+                        Some(OrchestrationBindingRefs::new(
+                            parse_uuid(
+                                &orchestration_id,
+                                "routine_executions.dispatch_orchestration_id",
+                            )?,
+                            node_path,
+                            1,
+                        ))
+                    }
+                    _ => None,
+                };
                 Some(RoutineDispatchRefs::new(AgentRuntimeRefs::new(
                     parse_uuid(&run_id, "routine_executions.dispatch_run_id")?,
                     parse_uuid(&agent_id, "routine_executions.dispatch_agent_id")?,
                     parse_uuid(&frame_id, "routine_executions.dispatch_frame_id")?,
-                    None,
+                    orchestration_binding,
                 )))
             }
             _ => None,
@@ -265,8 +280,8 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
             .transpose()?;
 
         sqlx::query(
-            "INSERT INTO routine_executions (id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_assignment_id, status, started_at, completed_at, error, entity_key)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+            "INSERT INTO routine_executions (id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, status, started_at, completed_at, error, entity_key)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
         )
         .bind(execution.id.to_string())
         .bind(execution.routine_id.to_string())
@@ -276,11 +291,15 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(execution.dispatch_refs.as_ref().map(|r| r.run_id().to_string()))
         .bind(execution.dispatch_refs.as_ref().map(|r| r.agent_id().to_string()))
         .bind(execution.dispatch_refs.as_ref().map(|r| r.frame_id().to_string()))
+        .bind(execution.dispatch_refs.as_ref().and_then(|r| {
+            r.orchestration_id()
+                .map(|orchestration_id| orchestration_id.to_string())
+        }))
         .bind(
             execution
                 .dispatch_refs
                 .as_ref()
-                .and_then(|r| r.assignment_id().map(|assignment_id| assignment_id.to_string())),
+                .and_then(|r| r.node_path().map(str::to_string)),
         )
         .bind(status_to_str(execution.status))
         .bind(execution.started_at)
@@ -295,7 +314,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
 
     async fn get_by_id(&self, id: Uuid) -> Result<Option<RoutineExecution>, DomainError> {
         let row: Option<ExecutionRow> = sqlx::query_as(
-            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_assignment_id, status, started_at, completed_at, error, entity_key
+            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, status, started_at, completed_at, error, entity_key
              FROM routine_executions WHERE id = $1",
         )
         .bind(id.to_string())
@@ -313,7 +332,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
             .transpose()?;
 
         sqlx::query(
-            "UPDATE routine_executions SET trigger_payload=$2, resolved_prompt=$3, dispatch_run_id=$4, dispatch_agent_id=$5, dispatch_frame_id=$6, dispatch_assignment_id=$7, status=$8, completed_at=$9, error=$10, entity_key=$11
+            "UPDATE routine_executions SET trigger_payload=$2, resolved_prompt=$3, dispatch_run_id=$4, dispatch_agent_id=$5, dispatch_frame_id=$6, dispatch_orchestration_id=$7, dispatch_node_path=$8, status=$9, completed_at=$10, error=$11, entity_key=$12
              WHERE id=$1",
         )
         .bind(execution.id.to_string())
@@ -322,11 +341,15 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(execution.dispatch_refs.as_ref().map(|r| r.run_id().to_string()))
         .bind(execution.dispatch_refs.as_ref().map(|r| r.agent_id().to_string()))
         .bind(execution.dispatch_refs.as_ref().map(|r| r.frame_id().to_string()))
+        .bind(execution.dispatch_refs.as_ref().and_then(|r| {
+            r.orchestration_id()
+                .map(|orchestration_id| orchestration_id.to_string())
+        }))
         .bind(
             execution
                 .dispatch_refs
                 .as_ref()
-                .and_then(|r| r.assignment_id().map(|assignment_id| assignment_id.to_string())),
+                .and_then(|r| r.node_path().map(str::to_string)),
         )
         .bind(status_to_str(execution.status))
         .bind(execution.completed_at)
@@ -345,7 +368,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         offset: u32,
     ) -> Result<Vec<RoutineExecution>, DomainError> {
         let rows: Vec<ExecutionRow> = sqlx::query_as(
-            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_assignment_id, status, started_at, completed_at, error, entity_key
+            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, status, started_at, completed_at, error, entity_key
              FROM routine_executions WHERE routine_id = $1 ORDER BY started_at DESC LIMIT $2 OFFSET $3",
         )
         .bind(routine_id.to_string())
@@ -363,7 +386,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         entity_key: &str,
     ) -> Result<Option<RoutineExecution>, DomainError> {
         let row: Option<ExecutionRow> = sqlx::query_as(
-            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_assignment_id, status, started_at, completed_at, error, entity_key
+            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, status, started_at, completed_at, error, entity_key
              FROM routine_executions WHERE routine_id = $1 AND entity_key = $2 ORDER BY started_at DESC LIMIT 1",
         )
         .bind(routine_id.to_string())

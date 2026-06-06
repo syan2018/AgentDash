@@ -7,11 +7,7 @@ use axum::{
 use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
-use agentdash_application::workflow::{
-    ActivityEvent, ActivityLifecycleCatalogService, ActivityLifecycleRunService,
-    AgentActivityExecutorLauncher, AgentActivityLaunchContext, AgentActivityRuntimePort,
-    LifecycleDispatchService,
-};
+use agentdash_application::workflow::{ActivityLifecycleCatalogService, LifecycleDispatchService};
 use agentdash_contracts::workflow::{
     DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
     HookPresetResponse, HookPresetsResponse, RegisterHookPresetResponse,
@@ -314,10 +310,8 @@ pub async fn start_lifecycle_run(
     let dispatch_service = LifecycleDispatchService::new(
         state.repos.lifecycle_run_repo.as_ref(),
         state.repos.workflow_graph_repo.as_ref(),
-        state.repos.workflow_graph_instance_repo.as_ref(),
         state.repos.lifecycle_agent_repo.as_ref(),
         state.repos.agent_frame_repo.as_ref(),
-        state.repos.agent_assignment_repo.as_ref(),
         state.repos.lifecycle_subject_association_repo.as_ref(),
         state.repos.lifecycle_gate_repo.as_ref(),
         state.repos.agent_lineage_repo.as_ref(),
@@ -331,12 +325,6 @@ pub async fn start_lifecycle_run(
             workflow_graph_ref,
         })
         .await?;
-    let service = ActivityLifecycleRunService::new(
-        state.repos.workflow_graph_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.workflow_graph_instance_repo.as_ref(),
-        state.repos.activity_execution_claim_repo.as_ref(),
-    );
     let run = state
         .repos
         .lifecycle_run_repo
@@ -348,24 +336,6 @@ pub async fn start_lifecycle_run(
                 dispatch_result.run_ref
             ))
         })?;
-    let launcher = AgentActivityExecutorLauncher::new(
-        AgentActivityLaunchContext::detached(run.project_id, String::new()),
-        AgentActivityRuntimePort::new(
-            state.services.session_core.clone(),
-            state.services.session_launch.clone(),
-            state.repos.clone(),
-            Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new()),
-        )
-        .with_runtime_context(
-            state.services.session_hooks.clone(),
-            state.services.session_capability.clone(),
-            state.config.platform_config.clone(),
-        ),
-    );
-    service
-        .launch_ready_attempts(dispatch_result.graph_instance_ref, &launcher)
-        .await?;
-
     let latest_run = state
         .repos
         .lifecycle_run_repo
@@ -395,11 +365,15 @@ pub async fn get_lifecycle_run(
 pub async fn submit_human_decision(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path((run_id, graph_instance_id, activity_key, attempt)): Path<(String, String, String, u32)>,
-    Json(req): Json<SubmitHumanDecisionRequest>,
+    Path((run_id, _graph_instance_id, _activity_key, _attempt)): Path<(
+        String,
+        String,
+        String,
+        u32,
+    )>,
+    Json(_req): Json<SubmitHumanDecisionRequest>,
 ) -> Result<Json<LifecycleRun>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
-    let graph_instance_id = parse_uuid(&graph_instance_id, "graph_instance_id")?;
     let existing_run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
         state.as_ref(),
@@ -408,59 +382,9 @@ pub async fn submit_human_decision(
         ProjectPermission::Edit,
     )
     .await?;
-    state
-        .repos
-        .workflow_graph_instance_repo
-        .get_by_run_and_id(run_id, graph_instance_id)
-        .await?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "workflow_graph_instance 不存在: {graph_instance_id}"
-            ))
-        })?;
-    let service = ActivityLifecycleRunService::new(
-        state.repos.workflow_graph_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.workflow_graph_instance_repo.as_ref(),
-        state.repos.activity_execution_claim_repo.as_ref(),
-    );
-    let update = service
-        .apply_event(
-            graph_instance_id,
-            ActivityEvent::HumanDecisionSubmitted {
-                activity_key,
-                attempt,
-                decision_port: req.decision_port,
-                decision: req.decision,
-                summary: req.summary.and_then(normalize_string),
-            },
-        )
-        .await?;
-    let run = update.run;
-    let launcher = AgentActivityExecutorLauncher::new(
-        AgentActivityLaunchContext::detached(run.project_id, String::new()),
-        AgentActivityRuntimePort::new(
-            state.services.session_core.clone(),
-            state.services.session_launch.clone(),
-            state.repos.clone(),
-            Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new()),
-        )
-        .with_runtime_context(
-            state.services.session_hooks.clone(),
-            state.services.session_capability.clone(),
-            state.config.platform_config.clone(),
-        ),
-    );
-    service
-        .launch_ready_attempts(update.graph_instance.id, &launcher)
-        .await?;
-    let latest_run = state
-        .repos
-        .lifecycle_run_repo
-        .get_by_id(run.id)
-        .await?
-        .unwrap_or(run);
-    Ok(Json(latest_run))
+    Err(ApiError::BadRequest(
+        "human decision 入口需要迁移到 orchestration runtime node/gate 坐标".to_string(),
+    ))
 }
 
 pub async fn create_agent_procedure(

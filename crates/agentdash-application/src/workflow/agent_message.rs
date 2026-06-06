@@ -417,15 +417,6 @@ mod tests {
             Ok(())
         }
 
-        async fn update_assignment(
-            &self,
-            _runtime_session_id: &str,
-            _assignment_id: Uuid,
-            _attempt: i32,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
-
         async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
             self.items
                 .lock()
@@ -545,8 +536,6 @@ mod tests {
                 run.id,
                 frame.id,
                 agent.id,
-                None,
-                None,
             ));
         (run, agent, frame)
     }

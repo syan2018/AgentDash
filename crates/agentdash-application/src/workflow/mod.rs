@@ -106,7 +106,6 @@ pub use scheduler::{
     ActivityExecutorLaunchOutcome, ActivityExecutorLauncher, ActivityExecutorScheduler,
     ActivityExecutorStartError,
 };
-pub(crate) use session_association::select_assignment_for_frame;
 pub use session_association::{
     LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,
     build_lifecycle_node_label, lifecycle_activity_parts_from_label,

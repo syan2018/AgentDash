@@ -3,8 +3,7 @@ use sqlx::PgPool;
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::workflow::{
-    ActivityExecutionClaim, ActivityExecutionClaimRepository, ActivityExecutionClaimStatus,
-    AgentProcedure, AgentProcedureRepository, ExecutorRunRef, LifecycleContext, LifecycleRun,
+    AgentProcedure, AgentProcedureRepository, LifecycleContext, LifecycleRun,
     LifecycleRunRepository, LifecycleRunTopology, OrchestrationInstance, WorkflowGraph,
     WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
@@ -22,12 +21,7 @@ impl PostgresWorkflowRepository {
     pub async fn initialize(&self) -> Result<(), DomainError> {
         crate::migration::assert_postgres_tables_ready(
             &self.pool,
-            &[
-                "agent_procedures",
-                "workflow_graphs",
-                "lifecycle_runs",
-                "activity_execution_claims",
-            ],
+            &["agent_procedures", "workflow_graphs", "lifecycle_runs"],
         )
         .await
     }
@@ -37,7 +31,6 @@ const WF_COLS: &str = "id,project_id,key,name,description,source,version,contrac
 const WG_COLS: &str = "id,project_id,key,name,description,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const RUN_COLS: &str = "id,project_id,topology,root_graph_id,context,orchestrations,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
 const RUN_INSERT_COLS: &str = "id,project_id,topology,root_graph_id,context,orchestrations,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
-const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,graph_instance_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
 
 #[async_trait::async_trait]
 impl AgentProcedureRepository for PostgresWorkflowRepository {
@@ -423,103 +416,6 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
 }
 
 #[async_trait::async_trait]
-impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
-    async fn create_or_get(
-        &self,
-        claim: &ActivityExecutionClaim,
-    ) -> Result<ActivityExecutionClaim, DomainError> {
-        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
-            "INSERT INTO activity_execution_claims ({ACTIVITY_CLAIM_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) \
-             ON CONFLICT (idempotency_key) DO UPDATE SET updated_at = activity_execution_claims.updated_at \
-             RETURNING {ACTIVITY_CLAIM_COLS}"
-        ))
-        .bind(claim.claim_id.to_string())
-        .bind(claim.run_id.to_string())
-        .bind(claim.graph_instance_id.to_string())
-        .bind(&claim.activity_key)
-        .bind(claim.attempt as i32)
-        .bind(&claim.executor_kind)
-        .bind(claim.status.as_str())
-        .bind(&claim.idempotency_key)
-        .bind(serialize_executor_run_ref(&claim.executor_run_ref)?)
-        .bind(claim.created_at)
-        .bind(claim.updated_at)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(db_err)?
-        .try_into()
-    }
-
-    async fn get_by_idempotency_key(
-        &self,
-        idempotency_key: &str,
-    ) -> Result<Option<ActivityExecutionClaim>, DomainError> {
-        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
-            "SELECT {ACTIVITY_CLAIM_COLS} FROM activity_execution_claims WHERE idempotency_key = $1"
-        ))
-        .bind(idempotency_key)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
-    }
-
-    async fn list_active_by_run(
-        &self,
-        run_id: uuid::Uuid,
-    ) -> Result<Vec<ActivityExecutionClaim>, DomainError> {
-        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
-            "SELECT {ACTIVITY_CLAIM_COLS} FROM activity_execution_claims WHERE run_id = $1 AND status IN ('claiming','running') ORDER BY created_at ASC"
-        ))
-        .bind(run_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-
-    async fn update(&self, claim: &ActivityExecutionClaim) -> Result<(), DomainError> {
-        let result = sqlx::query(
-            "UPDATE activity_execution_claims SET status=$1,executor_run_ref=$2,updated_at=$3 WHERE claim_id=$4",
-        )
-        .bind(claim.status.as_str())
-        .bind(serialize_executor_run_ref(&claim.executor_run_ref)?)
-        .bind(claim.updated_at)
-        .bind(claim.claim_id.to_string())
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        ensure_rows_affected(
-            result.rows_affected(),
-            "activity_execution_claim",
-            &claim.claim_id,
-        )
-    }
-
-    async fn abandon_claiming_before(
-        &self,
-        cutoff: chrono::DateTime<chrono::Utc>,
-    ) -> Result<Vec<ActivityExecutionClaim>, DomainError> {
-        let now = chrono::Utc::now();
-        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
-            "UPDATE activity_execution_claims SET status='abandoned',updated_at=$1 \
-             WHERE status='claiming' AND updated_at < $2 RETURNING {ACTIVITY_CLAIM_COLS}"
-        ))
-        .bind(now)
-        .bind(cutoff)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-}
-
-#[async_trait::async_trait]
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
@@ -801,62 +697,6 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
     }
 }
 
-#[derive(sqlx::FromRow)]
-struct ActivityExecutionClaimRow {
-    claim_id: String,
-    run_id: String,
-    graph_instance_id: String,
-    activity_key: String,
-    attempt: i32,
-    executor_kind: String,
-    status: String,
-    idempotency_key: String,
-    executor_run_ref: Option<String>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-impl TryFrom<ActivityExecutionClaimRow> for ActivityExecutionClaim {
-    type Error = DomainError;
-
-    fn try_from(row: ActivityExecutionClaimRow) -> Result<Self, Self::Error> {
-        let status = row
-            .status
-            .parse::<ActivityExecutionClaimStatus>()
-            .map_err(DomainError::InvalidConfig)?;
-        let executor_run_ref = row
-            .executor_run_ref
-            .map(|raw| {
-                parse_json_column::<ExecutorRunRef>(
-                    &raw,
-                    "activity_execution_claims.executor_run_ref",
-                )
-            })
-            .transpose()?;
-        Ok(ActivityExecutionClaim {
-            run_id: parse_uuid(&row.run_id, "lifecycle_run")?,
-            graph_instance_id: parse_uuid(
-                &row.graph_instance_id,
-                "activity_execution_claim.graph_instance",
-            )?,
-            activity_key: row.activity_key,
-            attempt: u32::try_from(row.attempt).map_err(|_| {
-                DomainError::InvalidConfig(format!(
-                    "activity_execution_claims.attempt 无效: {}",
-                    row.attempt
-                ))
-            })?,
-            claim_id: parse_uuid(&row.claim_id, "activity_execution_claim")?,
-            executor_kind: row.executor_kind,
-            status,
-            idempotency_key: row.idempotency_key,
-            executor_run_ref,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        })
-    }
-}
-
 fn parse_uuid(raw: &str, entity: &'static str) -> Result<uuid::Uuid, DomainError> {
     raw.parse().map_err(|_| DomainError::NotFound {
         entity,
@@ -887,16 +727,6 @@ fn parse_json_column<T: serde::de::DeserializeOwned>(
 ) -> Result<T, DomainError> {
     serde_json::from_str(raw)
         .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
-}
-
-fn serialize_executor_run_ref(
-    executor_run_ref: &Option<ExecutorRunRef>,
-) -> Result<Option<String>, DomainError> {
-    executor_run_ref
-        .as_ref()
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(Into::into)
 }
 
 fn serialize_optional_json(
@@ -973,48 +803,6 @@ mod workflow_claim_tests {
         PlanNodeKind, RuntimeSessionPolicy, WorkflowTemplateInstallBundle,
     };
     use serde_json::json;
-
-    #[test]
-    fn workflow_claim_row_parses_executor_run_ref() {
-        let run_id = uuid::Uuid::new_v4();
-        let graph_instance_id = uuid::Uuid::new_v4();
-        let claim_id = uuid::Uuid::new_v4();
-        let now = chrono::Utc::now();
-        let row = ActivityExecutionClaimRow {
-            claim_id: claim_id.to_string(),
-            run_id: run_id.to_string(),
-            graph_instance_id: graph_instance_id.to_string(),
-            activity_key: "plan".to_string(),
-            attempt: 2,
-            executor_kind: "agent".to_string(),
-            status: "running".to_string(),
-            idempotency_key: format!("{run_id}:{graph_instance_id}:plan:2"),
-            executor_run_ref: Some(
-                serde_json::to_string(&ExecutorRunRef::RuntimeSession {
-                    session_id: "child-session".to_string(),
-                })
-                .expect("executor run json"),
-            ),
-            created_at: now,
-            updated_at: now,
-        };
-
-        let claim = ActivityExecutionClaim::try_from(row).expect("claim");
-
-        assert_eq!(claim.run_id, run_id);
-        assert_eq!(claim.graph_instance_id, graph_instance_id);
-        assert_eq!(claim.claim_id, claim_id);
-        assert_eq!(claim.activity_key, "plan");
-        assert_eq!(claim.attempt, 2);
-        assert_eq!(claim.status, ActivityExecutionClaimStatus::Running);
-        assert!(claim.status.is_active());
-        assert_eq!(
-            claim.executor_run_ref,
-            Some(ExecutorRunRef::RuntimeSession {
-                session_id: "child-session".to_string()
-            })
-        );
-    }
 
     fn lifecycle_run_row() -> LifecycleRunRow {
         let now = chrono::Utc::now();

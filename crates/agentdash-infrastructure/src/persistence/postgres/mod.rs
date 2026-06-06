@@ -147,10 +147,9 @@ pub use canvas_repository::PostgresCanvasRepository;
 pub use extension_package_artifact_repository::PostgresExtensionPackageArtifactRepository;
 pub use inline_file_repository::PostgresInlineFileRepository;
 pub use lifecycle_anchor_repository::{
-    PostgresAgentAssignmentRepository, PostgresAgentFrameRepository,
-    PostgresAgentLineageRepository, PostgresLifecycleAgentRepository,
+    PostgresAgentFrameRepository, PostgresAgentLineageRepository, PostgresLifecycleAgentRepository,
     PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
-    PostgresRuntimeSessionExecutionAnchorRepository, PostgresWorkflowGraphInstanceRepository,
+    PostgresRuntimeSessionExecutionAnchorRepository,
 };
 pub use llm_provider_repository::{
     PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,

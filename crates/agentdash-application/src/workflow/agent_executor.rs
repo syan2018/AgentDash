@@ -288,11 +288,6 @@ impl AgentActivityRuntimePort {
             frame.agent_id,
             frame.id,
         );
-        self.repos
-            .agent_assignment_repo
-            .create(&assignment)
-            .await
-            .map_err(|error| format!("创建 ContinueRoot AgentAssignment 失败: {error}"))?;
         Ok(AgentActivityAssignmentContext { assignment, frame })
     }
 }
@@ -423,11 +418,6 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             agent.id,
             frame.id,
         );
-        self.repos
-            .agent_assignment_repo
-            .create(&assignment)
-            .await
-            .map_err(|error| format!("创建 AgentAssignment 失败: {error}"))?;
         Ok(AgentActivityAssignmentContext { assignment, frame })
     }
 

@@ -59,6 +59,118 @@ Contract:
 - completion policy validation 由 orchestration runtime reducer 拥有。
 - 本机执行能力的权限、预算和系统桥接开关由 AgentRun capability / permission surface 表达。
 
+## Scenario: Semantic Executor Launcher
+
+### 1. Scope / Trigger
+
+- Trigger: application 层消费 `LifecycleRun.orchestrations[].dispatch.ready_node_ids` 并启动 semantic `PlanNode`。
+- Scope: `workflow/orchestration/executor_launcher.rs`、`LifecycleOrchestrator` terminal bridge、`complete_lifecycle_node` tool、workflow API route、`agentdash-contracts::workflow` DTO。
+
+### 2. Signatures
+
+Application:
+
+```rust
+OrchestrationExecutorLauncher::drain_ready_nodes(
+    run_id: Uuid,
+) -> Result<OrchestrationExecutorDrainResult, WorkflowApplicationError>
+
+OrchestrationExecutorLauncher::submit_human_gate_decision(
+    input: SubmitHumanGateDecisionInput,
+) -> Result<SubmitHumanGateDecisionResult, WorkflowApplicationError>
+```
+
+Runtime events:
+
+```rust
+NodeStarted { node_path, attempt, executor_run_ref, timestamp }
+NodeCompleted { node_path, attempt, outputs, timestamp }
+NodeFailed { node_path, attempt, error, timestamp }
+NodeBlocked { node_path, attempt, error, timestamp }
+```
+
+HTTP:
+
+```text
+POST /api/workflows/lifecycle-runs/{run_id}/orchestration-human-decisions
+```
+
+Request:
+
+```rust
+SubmitOrchestrationHumanDecisionRequest {
+    orchestration_id: String,
+    node_path: String,
+    attempt: u32, // default 1
+    decision: serde_json::Value,
+    resolved_by: Option<String>,
+}
+```
+
+Response:
+
+```rust
+SubmitOrchestrationHumanDecisionResponse {
+    run: LifecycleRunView,
+    gate_id: String,
+}
+```
+
+### 3. Contracts
+
+- `drain_ready_nodes` 每次从 `LifecycleRunRepository` 重新加载 aggregate，处理一个 ready node 后写回，再进入下一轮；这样所有后继激活都来自 reducer materialization 后的最新 snapshot。
+- AgentCall 正式支持 `AgentReusePolicy::CreateActivityAgent + RuntimeSessionPolicy::CreateNew`，并创建 `LifecycleAgent`、`AgentFrame`、`RuntimeSessionExecutionAnchor` 后提交 `NodeStarted(ExecutorRunRef::RuntimeSession)`。
+- Function API 与 BashExec 使用 `FunctionRunner` SPI。同步完成也必须先提交 `NodeStarted(ExecutorRunRef::FunctionRun)`，再提交 `NodeCompleted` 或 `NodeFailed`。
+- compiler 将 BashExec 映射为 `PlanNodeKind::LocalEffect + ExecutorSpec::Function(BashExec)`；执行器按 typed executor spec 调用 `run_bash`，因此 `PlanNodeKind` 表达流程语义，`ExecutorSpec` 表达副作用机制。
+- HumanGate 创建 `LifecycleGate(gate_kind=orchestration_human_gate)`，payload 必须包含 `run_id`、`orchestration_id`、`node_path`、`attempt`、`plan_node_id` 与 executor contract；runtime node 写 `ExecutorRunRef::HumanDecision`。
+- Human decision route 校验 run project edit permission，通过 `orchestration_id + node_path + attempt` 定位 running HumanGate node，resolve gate 后提交 `NodeCompleted`，再 drain 后继 ready nodes。
+- `NodeBlocked` 表达计划可识别但当前执行面尚不能真实推进的节点；orchestration status 聚合为 `Paused`，LifecycleRun status 聚合为 `Blocked`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| ready AgentCall 缺少 `ExecutorSpec::AgentProcedure` | `NodeBlocked(code=agent_executor_missing)` |
+| AgentProcedure key 不存在 | `NodeBlocked(code=agent_procedure_not_found)` |
+| AgentCall policy 不是 `CreateActivityAgent + CreateNew` | `NodeBlocked(code=agent_executor_policy_not_supported)` |
+| ready Function / BashExec 没有 `FunctionRunner` | `NodeFailed(code=function_runner_unavailable)` |
+| API request 返回非 2xx | `NodeFailed(code=api_request_status_failed)` |
+| BashExec 非 0 exit | `NodeFailed(code=bash_exec_nonzero)` |
+| `ExecutorSpec::LocalEffect(capability_key, input)` 尚无 concrete executor | `NodeFailed(code=local_effect_capability_not_supported)`，detail 携带 orchestration node coordinate |
+| ready HumanGate 缺少 Human executor | `NodeBlocked(code=human_gate_executor_missing)` |
+| decision route 指向非 Running node | `Conflict` |
+| decision route 指向非 HumanGate node | `Conflict` |
+| referenced lifecycle gate 不存在 | `NotFound` |
+| gate 已 resolved | `Conflict` |
+| node 声明多 attempt、unbounded attempt 或非 latest artifact alias | 副作用前 `NodeBlocked` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Function API node 从 Ready 进入 Running，再 Completed，`RuntimeNodeState.executor_run_ref` 与 `trace_refs` 写入 `FunctionRun`，declared output ports 进入 `state_snapshot.node_outputs`。
+- Good: HumanGate node 打开 gate 后保持 Running；用户提交 decision 后 node Completed，后继节点由同一个 drain pass 启动。
+- Base: compiler 产生的 BashExec LocalEffect 使用 `ExecutorSpec::Function(BashExec)` 执行，并按 declared output ports materialize stdout/stderr/exit code。
+- Bad: executor side effect 启动后 terminal materialization 被 completion policy 拒绝时，执行器重新加载最新 run 并写 `NodeFailed(code=terminal_materialization_failed)`。
+
+### 6. Tests Required
+
+- Unit: reducer `NodeBlocked` 将 runtime node 置为 Blocked，并将 orchestration / lifecycle status 聚合为 Paused / Blocked。
+- Integration: launcher drain 覆盖 Function `NodeStarted -> NodeCompleted`、trace ref、output port materialization 与 function context。
+- Integration: launcher drain 覆盖 LocalEffect capability 未接入时 `NodeStarted -> NodeFailed`，error detail 带 orchestration node coordinate。
+- Integration: launcher drain 覆盖 HumanGate gate payload、`ExecutorRunRef::HumanDecision` 与 ready queue 清空。
+- Integration: attempt policy blocking 发生在 executor side effect 之前。
+- Cross-layer: `pnpm run contracts:check` 与 `pnpm run frontend:check` 覆盖 decision route DTO 生成和前端服务签名。
+
+### 7. Evidence Chain
+
+```text
+LifecycleRun.orchestrations[].dispatch.ready_node_ids
+  -> OrchestrationExecutorLauncher
+  -> typed executor side effect
+  -> OrchestrationRuntimeEvent
+  -> RuntimeNodeState
+  -> LifecycleRunView / VFS / hook projection
+```
+
 ## Artifact Contract
 
 Agent executor 的 output port 内容是 lifecycle artifact 值。Runtime node completed 时只读取当前 node scope 下已声明或被 state exchange 使用的 output ports；每个 port 内容优先解析为 `serde_json::Value`，解析失败时物化为 JSON string。这样后继 artifact binding、gate evaluation 与 workflow projection 消费的是结构化值，同时允许 agent 通过 lifecycle VFS 写入普通文本产物。

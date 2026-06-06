@@ -103,6 +103,12 @@ pub enum OrchestrationRuntimeEvent {
         reason: Option<String>,
         timestamp: DateTime<Utc>,
     },
+    NodeBlocked {
+        node_path: String,
+        attempt: u32,
+        error: RuntimeNodeError,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -301,6 +307,26 @@ fn apply_orchestration_event_inner(
                 retryable: false,
                 detail: None,
             });
+            remove_ready_node(instance, &node_id);
+        }
+        OrchestrationRuntimeEvent::NodeBlocked {
+            node_path,
+            attempt,
+            error,
+            timestamp,
+        } => {
+            let Some(node) = find_runtime_node_mut(&mut instance.node_tree, &node_path, attempt)
+            else {
+                return Err(OrchestrationRuntimeError::NodeNotFound { node_path, attempt });
+            };
+            if is_terminal_status(node.status) {
+                outcome.terminal_idempotent = true;
+                return Ok(outcome);
+            }
+            let node_id = node.node_id.clone();
+            node.status = RuntimeNodeStatus::Blocked;
+            node.completed_at = Some(timestamp);
+            node.error = Some(error);
             remove_ready_node(instance, &node_id);
         }
     }
@@ -833,13 +859,12 @@ fn derive_orchestration_status(instance: &mut OrchestrationInstance) {
     } else if statuses.iter().any(|status| {
         matches!(
             status,
-            RuntimeNodeStatus::Ready
-                | RuntimeNodeStatus::Claiming
-                | RuntimeNodeStatus::Running
-                | RuntimeNodeStatus::Blocked
+            RuntimeNodeStatus::Ready | RuntimeNodeStatus::Claiming | RuntimeNodeStatus::Running
         )
     }) {
         OrchestrationStatus::Running
+    } else if statuses.contains(&RuntimeNodeStatus::Blocked) {
+        OrchestrationStatus::Paused
     } else if !statuses.is_empty()
         && statuses.iter().all(|status| {
             matches!(
@@ -880,10 +905,10 @@ fn sync_lifecycle_run_status_from_orchestrations(run: &mut LifecycleRun) {
         .collect::<Vec<_>>();
     run.status = if statuses.contains(&OrchestrationStatus::Failed) {
         LifecycleRunStatus::Failed
-    } else if statuses.contains(&OrchestrationStatus::Running) {
-        LifecycleRunStatus::Running
     } else if statuses.contains(&OrchestrationStatus::Paused) {
         LifecycleRunStatus::Blocked
+    } else if statuses.contains(&OrchestrationStatus::Running) {
+        LifecycleRunStatus::Running
     } else if statuses.contains(&OrchestrationStatus::Pending) {
         LifecycleRunStatus::Ready
     } else if statuses

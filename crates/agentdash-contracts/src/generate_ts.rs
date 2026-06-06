@@ -116,6 +116,7 @@ use agentdash_contracts::workflow::{
     SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
     SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
     SessionShellDto, StoryLaunchResult, SubjectExecutionView, SubjectRefDto,
+    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
     ValidateHookScriptResponse, ValidationIssue,
 };
 use ts_rs::TS;
@@ -361,6 +362,8 @@ fn main() {
             export_all::<ActiveRuntimeNodeRefDto>(dir);
             export_all::<OrchestrationRunView>(dir);
             export_all::<LifecycleRunView>(dir);
+            export_all::<SubmitOrchestrationHumanDecisionRequest>(dir);
+            export_all::<SubmitOrchestrationHumanDecisionResponse>(dir);
             export_all::<LifecycleAgentView>(dir);
             export_all::<AgentFrameRuntimeView>(dir);
             export_all::<SubjectExecutionView>(dir);

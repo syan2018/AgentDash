@@ -1,10 +1,15 @@
 pub mod compiler;
+pub mod executor_launcher;
 pub mod runtime;
 
 pub use compiler::{
     WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION, WorkflowGraphCompileDiagnostic,
     WorkflowGraphCompileInput, WorkflowGraphCompileMode, WorkflowGraphCompileOutput,
     WorkflowGraphCompileSourceMetadata, WorkflowGraphCompiler, compile_workflow_graph,
+};
+pub use executor_launcher::{
+    LaunchedAgentNode, OpenedHumanGate, OrchestrationExecutorDrainResult,
+    OrchestrationExecutorLauncher, SubmitHumanGateDecisionInput, SubmitHumanGateDecisionResult,
 };
 pub use runtime::{
     OrchestrationRuntimeApplyOutcome, OrchestrationRuntimeDiagnostic, OrchestrationRuntimeError,

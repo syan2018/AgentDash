@@ -395,6 +395,28 @@ pub struct ArtifactBinding {
     pub alias: ArtifactAliasPolicy,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+pub struct SubmitOrchestrationHumanDecisionRequest {
+    pub orchestration_id: String,
+    pub node_path: String,
+    #[serde(default = "default_attempt")]
+    pub attempt: u32,
+    pub decision: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resolved_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct SubmitOrchestrationHumanDecisionResponse {
+    pub run: LifecycleRunView,
+    pub gate_id: String,
+}
+
+fn default_attempt() -> u32 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutorRunRef {

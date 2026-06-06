@@ -9,9 +9,12 @@
 //!
 //! 实现 `SessionTerminalCallback`，由 `session runtime` 在 session 完全终止后自动调用。
 
+use std::sync::Arc;
+
 use agentdash_domain::workflow::{
     LifecycleRun, NodePortValue, RuntimeNodeError, RuntimeNodeStatus, WorkflowSessionTerminalState,
 };
+use agentdash_spi::FunctionRunner;
 use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -22,7 +25,8 @@ use super::session_association::resolve_activity_session_association;
 use crate::session::SessionTerminalCallback;
 use crate::workflow::execution_log::{RuntimeNodeArtifactScope, load_scoped_port_output_map};
 use crate::workflow::orchestration::{
-    OrchestrationRuntimeError, OrchestrationRuntimeEvent, apply_orchestration_event_to_run,
+    OrchestrationExecutorLauncher, OrchestrationRuntimeError, OrchestrationRuntimeEvent,
+    apply_orchestration_event_to_run,
 };
 use crate::workflow::session_terminal_summary;
 
@@ -75,11 +79,20 @@ pub struct AdvanceCurrentNodeResult {
 
 pub struct LifecycleOrchestrator {
     repos: RepositorySet,
+    function_runner: Option<Arc<dyn FunctionRunner>>,
 }
 
 impl LifecycleOrchestrator {
     pub fn new(repos: RepositorySet) -> Self {
-        Self { repos }
+        Self {
+            repos,
+            function_runner: None,
+        }
+    }
+
+    pub fn with_function_runner(mut self, function_runner: Arc<dyn FunctionRunner>) -> Self {
+        self.function_runner = Some(function_runner);
+        self
     }
 
     /// 当某个 session 进入 terminal 状态时调用。
@@ -164,10 +177,18 @@ impl LifecycleOrchestrator {
             .update(&run)
             .await
             .map_err(|error| format!("更新 LifecycleRun orchestration 失败: {error}"))?;
+        let drain_result = self.drain_ready_nodes(run.id).await?;
 
         Ok(Some(OrchestrationResult {
             run_id: run.id,
-            activated_nodes: Vec::new(),
+            activated_nodes: drain_result
+                .launched_agent_nodes
+                .into_iter()
+                .map(|node| ActivatedNode {
+                    node_key: node.node_path,
+                    runtime_session_id: node.runtime_session_id,
+                })
+                .collect(),
         }))
     }
 
@@ -256,6 +277,7 @@ impl LifecycleOrchestrator {
             .update(&updated_run)
             .await
             .map_err(|error| format!("更新 LifecycleRun orchestration 失败: {error}"))?;
+        let drain_result = self.drain_ready_nodes(updated_run.id).await?;
         self.refresh_hook_snapshot(&input.hook_runtime, &input.turn_id)
             .await?;
 
@@ -269,8 +291,22 @@ impl LifecycleOrchestrator {
             } else {
                 AdvanceCurrentNodeStatus::Completed
             },
-            orchestration_warning: None,
+            orchestration_warning: orchestration_warning_from_drain(&drain_result),
         })
+    }
+
+    async fn drain_ready_nodes(
+        &self,
+        run_id: Uuid,
+    ) -> Result<crate::workflow::OrchestrationExecutorDrainResult, String> {
+        let mut launcher = OrchestrationExecutorLauncher::new(self.repos.clone());
+        if let Some(function_runner) = &self.function_runner {
+            launcher = launcher.with_function_runner(function_runner.clone());
+        }
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     async fn refresh_hook_snapshot(
@@ -443,6 +479,18 @@ fn association_node_is_terminal(
                     | RuntimeNodeStatus::Skipped
             )
         })
+}
+
+fn orchestration_warning_from_drain(
+    result: &crate::workflow::OrchestrationExecutorDrainResult,
+) -> Option<String> {
+    if result.failed_nodes.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "后继 runtime node 启动失败: {}",
+        result.failed_nodes.join(", ")
+    ))
 }
 
 fn find_runtime_node_for_association<'a>(

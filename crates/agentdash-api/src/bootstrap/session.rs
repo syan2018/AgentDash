@@ -32,6 +32,7 @@ pub(crate) struct SessionBootstrapInput {
     pub session_services_handle: SharedSessionToolServicesHandle,
     pub runtime_tool_provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider>,
     pub mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider>,
+    pub function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
     pub platform_config: SharedPlatformConfig,
     pub integration_connectors: Vec<Arc<dyn AgentConnector>>,
     pub extra_skill_dirs: Vec<PathBuf>,
@@ -66,6 +67,7 @@ pub(crate) async fn build_session_runtime(
         session_services_handle,
         runtime_tool_provider,
         mcp_relay_provider,
+        function_runner,
         platform_config: _platform_config,
         integration_connectors,
         extra_skill_dirs,
@@ -153,9 +155,10 @@ pub(crate) async fn build_session_runtime(
     let session_effects = session_runtime_builder.effects_service();
     let session_title = session_runtime_builder.title_service();
 
-    let orchestrator = Arc::new(agentdash_application::workflow::LifecycleOrchestrator::new(
-        repos,
-    ));
+    let orchestrator = Arc::new(
+        agentdash_application::workflow::LifecycleOrchestrator::new(repos)
+            .with_function_runner(function_runner),
+    );
     session_runtime_builder
         .set_terminal_callback(orchestrator)
         .await;

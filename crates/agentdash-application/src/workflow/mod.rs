@@ -70,6 +70,10 @@ pub use lifecycle::mount::{
 };
 pub use lifecycle_gate_service::LifecycleGateService;
 pub use orchestration::{
+    OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher, SubmitHumanGateDecisionInput,
+    SubmitHumanGateDecisionResult,
+};
+pub use orchestration::{
     WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION, WorkflowGraphCompileDiagnostic,
     WorkflowGraphCompileInput, WorkflowGraphCompileMode, WorkflowGraphCompileOutput,
     WorkflowGraphCompileSourceMetadata, WorkflowGraphCompiler, compile_workflow_graph,

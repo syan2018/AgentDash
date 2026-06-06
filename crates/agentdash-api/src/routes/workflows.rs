@@ -7,10 +7,14 @@ use axum::{
 use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
-use agentdash_application::workflow::{ActivityLifecycleCatalogService, LifecycleDispatchService};
+use agentdash_application::workflow::{
+    ActivityLifecycleCatalogService, LifecycleDispatchService, OrchestrationExecutorLauncher,
+    SubmitHumanGateDecisionInput, lifecycle_run_view_builder,
+};
 use agentdash_contracts::workflow::{
     DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
     HookPresetResponse, HookPresetsResponse, RegisterHookPresetResponse,
+    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
     ValidateHookScriptResponse,
 };
 use agentdash_domain::workflow::{
@@ -98,6 +102,10 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/lifecycle-runs/{id}",
             axum::routing::get(get_lifecycle_run),
+        )
+        .route(
+            "/lifecycle-runs/{id}/orchestration-human-decisions",
+            axum::routing::post(submit_orchestration_human_decision),
         )
 }
 
@@ -332,6 +340,9 @@ pub async fn start_lifecycle_run(
                 dispatch_result.run_ref
             ))
         })?;
+    let launcher = OrchestrationExecutorLauncher::new(state.repos.clone())
+        .with_function_runner(state.services.function_runner.clone());
+    launcher.drain_ready_nodes(run.id).await?;
     let latest_run = state
         .repos
         .lifecycle_run_repo
@@ -356,6 +367,45 @@ pub async fn get_lifecycle_run(
     )
     .await?;
     Ok(Json(run))
+}
+
+pub async fn submit_orchestration_human_decision(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(run_id): Path<String>,
+    Json(req): Json<SubmitOrchestrationHumanDecisionRequest>,
+) -> Result<Json<SubmitOrchestrationHumanDecisionResponse>, ApiError> {
+    let run_id = parse_uuid(&run_id, "run_id")?;
+    let orchestration_id = parse_uuid(&req.orchestration_id, "orchestration_id")?;
+    let run = load_lifecycle_run(&state, run_id).await?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        run.project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let launcher = OrchestrationExecutorLauncher::new(state.repos.clone())
+        .with_function_runner(state.services.function_runner.clone());
+    let result = launcher
+        .submit_human_gate_decision(SubmitHumanGateDecisionInput {
+            run_id,
+            orchestration_id,
+            node_path: req.node_path,
+            attempt: req.attempt,
+            decision: req.decision,
+            resolved_by: req
+                .resolved_by
+                .unwrap_or_else(|| current_user.user_id.to_string()),
+        })
+        .await?;
+    let view =
+        lifecycle_run_view_builder::build_lifecycle_run_view(&state.repos, &result.run).await?;
+    Ok(Json(SubmitOrchestrationHumanDecisionResponse {
+        run: view,
+        gate_id: result.gate_id.to_string(),
+    }))
 }
 
 pub async fn create_agent_procedure(

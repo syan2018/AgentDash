@@ -147,6 +147,10 @@ export type StoryLaunchResult = { created: boolean, story_id: string, project_ag
 
 export type SubjectExecutionView = { subject_ref: SubjectRefDto, associations: Array<LifecycleSubjectAssociationDto>, runs: Array<LifecycleRunView>, current_agent?: LifecycleAgentView, latest_runtime_node?: RuntimeNodeView, artifacts: JsonValue, };
 
+export type SubmitOrchestrationHumanDecisionRequest = { orchestration_id: string, node_path: string, attempt: number, decision: JsonValue, resolved_by?: string, };
+
+export type SubmitOrchestrationHumanDecisionResponse = { run: LifecycleRunView, gate_id: string, };
+
 export type ToolCapabilityDirective = { "add": ToolCapabilityPath } | { "remove": ToolCapabilityPath };
 
 export type ToolCapabilityPath = string;

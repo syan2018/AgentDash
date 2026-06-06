@@ -19,13 +19,17 @@
 - `LifecycleRunView` 公开 `orchestrations[]`、`RuntimeNodeView` 与 `active_runtime_node_refs[]`；API / frontend / VFS / hook projection 从 orchestration snapshot 读取。
 - `workflow/lifecycle/journey` 的 progress helper 已改为 runtime node helper。
 - `workflow/orchestration/runtime.rs` 已完成 reducer 第一切片：NodeStarted / NodeCompleted / NodeFailed / NodeCancelled 可更新 runtime node、trace refs、state exchange、transition successor 和 terminal idempotency；`complete_lifecycle_node` / session terminal callback 已接到 reducer。
+- `workflow/orchestration/executor_launcher.rs` 已接入 semantic executor launcher：drain `LifecycleRun.orchestrations[].dispatch.ready_node_ids`，按 `PlanNodeKind` 启动 AgentCall / Function / LocalEffect / HumanGate，并只通过 runtime event 写回 node state。
+- Function API 与 BashExec/local effect 通过 `FunctionRunner` SPI 执行；同步完成也保持 `NodeStarted -> NodeCompleted/NodeFailed` 的事件顺序。
+- HumanGate 会创建 `LifecycleGate(gate_kind=orchestration_human_gate)` 并记录 `ExecutorRunRef::HumanDecision`；`POST /lifecycle-runs/{id}/orchestration-human-decisions` 负责提交 decision、完成 node 并继续 drain 后继节点。
 - `ActivityActivation` 中 phase hot-update applier 当前未被新主路径调用；后续应结合 orchestration executor adapter 决定保留为 live capability transition，还是并入统一 executor surface。
 
-后续剩余面：
+当前明确边界：
 
-- 完整 semantic executor launcher 仍需覆盖 Function / LocalEffect / HumanGate。
-- Function/local effect 的同步 terminal 仍需统一记录 started 与 terminal materialization。
-- attempt policy 与 `max_traversals` 目前只有 reducer 层 blocking diagnostic，仍需和 scheduler / retry policy 一起补齐。
+- AgentCall 当前正式支持 `CreateActivityAgent + CreateNew`；`ContinueCurrentAgent + DeliverToCurrentTrace` 需要 connector delivery surface，执行器将其 materialize 为 `Blocked` runtime node。
+- `ExecutorSpec::Function(ApiRequest/BashExec)` 是当前 Function / LocalEffect 执行面；`ExecutorSpec::LocalEffect(capability_key, input)` 先记录 started，再以带 orchestration node coordinate 的 failed node 表达未接入 capability executor。
+- attempt policy 当前支持单次 attempt；多 attempt、unbounded attempt 与非 latest artifact alias 在副作用前阻塞。
+- `max_traversals` 由 reducer 在 successor activation 时阻塞，orchestration status 聚合为 Paused，LifecycleRun status 聚合为 Blocked。
 
 ## 最终收口批次
 
@@ -62,6 +66,19 @@
 3. 更新后的 `LifecycleRun` 必须持久化，返回给上层的 `DispatchFacts.run` 也应是 node 已 `Running` 的版本。
 4. `start_lifecycle_run` 只初始化 orchestration，不创建 runtime session，因此 entry node 仍保持 `Ready`。
 5. 本切片不做 Function / LocalEffect / HumanGate launcher，不新增 lease/outbox 表，不改 frontend/API。
+
+## 当前实现切片：Semantic executor launcher
+
+本轮完成 common runtime 的副作用启动器：
+
+1. `OrchestrationExecutorLauncher::drain_ready_nodes(run_id)` 读取 `LifecycleRun.orchestrations[].dispatch.ready_node_ids`，一次只处理当前 ready queue 的第一个 runtime node，并在每次事件写回后重新加载 aggregate。
+2. `AgentCall` 读取 semantic `ExecutorSpec::AgentProcedure`：
+   - `CreateActivityAgent + CreateNew` 创建 run-scoped `LifecycleAgent`、`AgentFrame`、`RuntimeSession` 与 `RuntimeSessionExecutionAnchor`，随后提交 `NodeStarted(ExecutorRunRef::RuntimeSession)`。
+   - 需要继续当前 trace 的策略先写 `NodeBlocked`，原因是该策略需要真实 connector delivery surface 才能表示“已投递”。
+3. `Function` 与 compiler 产生的 BashExec `LocalEffect` 通过 `FunctionRunner` SPI 执行，输出映射到 declared output ports；HTTP 非 2xx、bash 非 0 exit、template/transport/process 错误都通过 `NodeFailed(RuntimeNodeError)` 写回。
+4. `HumanGate` 创建 lifecycle gate 并提交 `NodeStarted(ExecutorRunRef::HumanDecision)`；decision route 完成 gate、提交 `NodeCompleted`，再 drain 后继 ready nodes。
+5. `NodeBlocked` 是 reducer 正式事件：runtime node 进入 `Blocked`，orchestration 聚合为 `Paused`，LifecycleRun 聚合为 `Blocked`。
+6. 本批次不新增 durable lease/outbox 表；当前 drain 在单进程应用服务内串行执行，业务事实源保持 `LifecycleRun.orchestrations[]`。
 
 ## 上下文顺序
 

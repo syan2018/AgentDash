@@ -1,5 +1,9 @@
 import { api } from "../api/client";
 import { asRecord, asRecordArray, asStringArray, optStringField, requireStringField } from "../api/mappers";
+import type {
+  SubmitOrchestrationHumanDecisionRequest,
+  SubmitOrchestrationHumanDecisionResponse,
+} from "../generated/workflow-contracts";
 import { isWorkflowJsonValue } from "../types";
 import { mapInstalledAssetSource } from "./sharedLibrary";
 import type {
@@ -590,6 +594,16 @@ export async function validateWorkflowGraph(input: {
 
 export async function deleteWorkflowGraph(id: string): Promise<void> {
   await api.delete(`/workflow-graphs/${id}`);
+}
+
+export async function submitOrchestrationHumanDecision(
+  runId: string,
+  input: SubmitOrchestrationHumanDecisionRequest,
+): Promise<SubmitOrchestrationHumanDecisionResponse> {
+  return api.post<SubmitOrchestrationHumanDecisionResponse>(
+    `/lifecycle-runs/${encodeURIComponent(runId)}/orchestration-human-decisions`,
+    input,
+  );
 }
 
 export async function createAgentProcedure(input: {

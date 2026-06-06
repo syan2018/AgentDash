@@ -30,6 +30,7 @@ pub(crate) fn build_vfs_kernel(
     backend_registry: Arc<BackendRegistry>,
     shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
     platform_config: SharedPlatformConfig,
+    function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
     integration_mount_providers: Vec<Arc<dyn MountProvider>>,
 ) -> VfsBootstrapOutput {
     let mut mount_registry_builder = MountProviderRegistryBuilder::new()
@@ -86,7 +87,7 @@ pub(crate) fn build_vfs_kernel(
             session_services_handle.clone(),
             Some(inline_persister),
             platform_config,
-            Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new()),
+            function_runner,
         )
         .with_materialization_service(materialization_service.clone())
         .with_shell_output_registry(shell_output_registry),

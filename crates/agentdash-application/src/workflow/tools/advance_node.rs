@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use crate::vfs::tools::SessionToolServices;
 use crate::workflow::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeStatus, LifecycleNodeAdvanceOutcome,
     LifecycleOrchestrator,
 };
 use agentdash_spi::ExecutionContext;
+use agentdash_spi::FunctionRunner;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -19,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 pub struct CompleteLifecycleNodeTool {
     repos: crate::repository_set::RepositorySet,
     session_services: Option<SessionToolServices>,
+    function_runner: Option<Arc<dyn FunctionRunner>>,
     current_turn_id: String,
     hook_runtime: Option<agentdash_spi::hooks::SharedHookRuntime>,
 }
@@ -49,11 +53,13 @@ impl CompleteLifecycleNodeTool {
     pub fn new(
         repos: crate::repository_set::RepositorySet,
         session_services: Option<SessionToolServices>,
+        function_runner: Option<Arc<dyn FunctionRunner>>,
         context: &ExecutionContext,
     ) -> Self {
         Self {
             repos,
             session_services,
+            function_runner,
             current_turn_id: context.session.turn_id.clone(),
             hook_runtime: context.turn.hook_runtime.clone(),
         }
@@ -97,7 +103,10 @@ impl AgentTool for CompleteLifecycleNodeTool {
                 "session services 尚未就绪，无法推进 lifecycle node".to_string(),
             )
         })?;
-        let orchestrator = LifecycleOrchestrator::new(self.repos.clone());
+        let mut orchestrator = LifecycleOrchestrator::new(self.repos.clone());
+        if let Some(function_runner) = &self.function_runner {
+            orchestrator = orchestrator.with_function_runner(function_runner.clone());
+        }
         let outcome = match params.outcome {
             StepOutcome::Completed => LifecycleNodeAdvanceOutcome::Completed,
             StepOutcome::Failed => LifecycleNodeAdvanceOutcome::Failed,

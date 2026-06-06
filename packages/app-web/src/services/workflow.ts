@@ -1,6 +1,8 @@
 import { api } from "../api/client";
 import { asRecord, asRecordArray, asStringArray, optStringField, requireStringField } from "../api/mappers";
 import type {
+  PreflightWorkflowScriptRequest,
+  PreflightWorkflowScriptResponse,
   SubmitOrchestrationHumanDecisionRequest,
   SubmitOrchestrationHumanDecisionResponse,
 } from "../generated/workflow-contracts";
@@ -590,6 +592,12 @@ export async function validateWorkflowGraph(input: {
         })
       : [],
   };
+}
+
+export async function preflightWorkflowScript(
+  input: PreflightWorkflowScriptRequest,
+): Promise<PreflightWorkflowScriptResponse> {
+  return api.post<PreflightWorkflowScriptResponse>("/workflow-scripts/preflight", input);
 }
 
 export async function deleteWorkflowGraph(id: string): Promise<void> {

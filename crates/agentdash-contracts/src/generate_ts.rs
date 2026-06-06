@@ -110,14 +110,18 @@ use agentdash_contracts::workflow::{
     EnqueuePendingMessageResponse, HookPresetResponse, HookPresetsResponse,
     LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology,
     LifecycleRunView, LifecycleSubjectAssociationDto, OrchestrationInstanceView,
-    PendingMessageView, ProjectActiveAgentsView, ProjectSessionListEntry, ProjectSessionListView,
+    PendingMessageView, PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse,
+    ProjectActiveAgentsView, ProjectSessionListEntry, ProjectSessionListView,
     RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionCommandStateDto,
     RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, RuntimeSessionTraceView,
     SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
     SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
     SessionShellDto, StoryLaunchResult, SubjectExecutionView, SubjectRefDto,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
-    ValidateHookScriptResponse, ValidationIssue,
+    ValidateHookScriptResponse, ValidationIssue, WorkflowScriptApiEndpointDto,
+    WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
+    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
+    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto,
 };
 use ts_rs::TS;
 
@@ -382,6 +386,15 @@ fn main() {
             export_all::<DefinitionSource>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);
             export_all::<DeleteAgentProcedureResponse>(dir);
+            export_all::<PreflightWorkflowScriptRequest>(dir);
+            export_all::<WorkflowScriptPreflightDiagnosticDto>(dir);
+            export_all::<WorkflowScriptPlanPreviewNodeDto>(dir);
+            export_all::<WorkflowScriptPlanPreviewDto>(dir);
+            export_all::<WorkflowScriptApiEndpointDto>(dir);
+            export_all::<WorkflowScriptBashCommandDto>(dir);
+            export_all::<WorkflowScriptHumanGateCapabilityDto>(dir);
+            export_all::<WorkflowScriptCapabilitySummaryDto>(dir);
+            export_all::<PreflightWorkflowScriptResponse>(dir);
             export_all::<HookPresetResponse>(dir);
             export_all::<HookPresetsResponse>(dir);
             export_all::<ValidateHookScriptResponse>(dir);

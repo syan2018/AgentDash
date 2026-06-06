@@ -13,7 +13,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `LifecycleRun` | tracked life process / control ledger |
 | `LifecycleContext` | `LifecycleRun` 内的上下文快照，保存主 AgentRun、AgentRun refs、AgentFrame refs、权限和预算摘要 |
 | `OrchestrationInstance` | `LifecycleRun` 内部 0..N 个编排状态容器，保存 plan snapshot、runtime node state、dispatch 摘要和 state exchange snapshot；`orchestration_id` 是运行实例身份 |
-| `OrchestrationPlanSnapshot` | 静态 graph 或未来 script 编译后的不可变 runtime plan |
+| `OrchestrationPlanSnapshot` | 静态 graph、workflow script 或 run artifact 编译后的不可变 runtime plan |
 | `LifecycleRunTopology` | run 的控制面拓扑：`graphless` 表示普通 Agent runtime，`workflow_graph` 表示显式 Activity graph runtime |
 | `RuntimeNodeState` | `orchestration_id + node_path + attempt` 定位的运行节点状态 |
 | `NodeDispatchLease` | scheduler 对 runtime node 的 operational lease |
@@ -31,7 +31,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 - `LifecycleRun` 是 tracked life process / control ledger；同一 run 可以包含 0..N 个 `OrchestrationInstance`。
 - `LifecycleRun.context`、`LifecycleRun.orchestrations`、`LifecycleRun.view_projection` 是 orchestration contract 的 owning aggregate 字段；command/service 通过 aggregate 写入这些字段，repository 只做整体持久化。
 - `OrchestrationInstance.orchestration_id` 是唯一运行实例身份；definition source / asset provenance 只能作为 plan metadata 或审计信息，不参与 scheduler、terminal callback、trace anchor 的节点坐标。
-- 静态 `WorkflowGraph`、未来 script 或 run artifact 进入 runtime 前先由 application 层 compiler 生成 `OrchestrationPlanSnapshot(plan_digest=sha256:...)`；compiler blocking diagnostics 发生在 run/orchestration 创建前。
+- 静态 `WorkflowGraph`、workflow script 或 run artifact 进入 runtime 前先由 application 层 compiler 生成 `OrchestrationPlanSnapshot(plan_digest=sha256:...)`；compiler blocking diagnostics 发生在 run/orchestration 创建前。
 - Runtime node key 必须包含 `orchestration_id + node_path + attempt`，避免同一 Lifecycle 内多个 orchestration 的节点冲突。
 - durable state advancement 只能通过 orchestration runtime event / journal materialization 进入 `RuntimeNodeState`。
 - Scheduler 负责 durable claim 和 executor 启动；executor 只通过 runtime node terminal event 把结果交还给 orchestration runtime。
@@ -75,7 +75,8 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `workflow/validation.rs` | Workflow contract validation、Lifecycle DAG validation、Activity lifecycle transition/port/policy validation |
 | `agentdash-spi::workflow::script` | Workflow script evaluator port；application 只消费脚本校验与 builder document 输出，不依赖具体脚本引擎 |
 | `agentdash-infrastructure::workflow_scripts` | Rhai workflow builder adapter；只注册 workflow helper surface，并复用公共 `RhaiScriptRuntime` |
-| `agentdash-application::workflow::script` | typed workflow script builder document 与 pathful diagnostics；后续 compiler 从这里进入 plan IR |
+| `agentdash-application::workflow::script` | typed workflow script builder document、preflight service 与 pathful diagnostics |
+| `agentdash-application::workflow::orchestration::ScriptCompiler` | workflow script builder document -> `OrchestrationPlanSnapshot` compiler frontend |
 
 ## Local Decisions
 
@@ -334,8 +335,8 @@ dispatch_common creates anchor -> submits NodeStarted -> persists LifecycleRun w
 
 ### 1. Scope / Trigger
 
-- Trigger: 新增或修改 workflow script builder helper、`WorkflowScriptEvaluator` SPI、typed builder document，或把动态脚本接入 OrchestrationPlan compiler。
-- Scope: `agentdash-spi::workflow::script`、`agentdash-infrastructure::workflow_scripts`、`agentdash-application::workflow::script`、后续 `workflow/orchestration` script compiler。
+- Trigger: 新增或修改 workflow script builder helper、`WorkflowScriptEvaluator` SPI、typed builder document、preflight API，或 workflow script 到 OrchestrationPlan compiler 的映射。
+- Scope: `agentdash-spi::workflow::script`、`agentdash-infrastructure::workflow_scripts`、`agentdash-application::workflow::script`、`agentdash-application::workflow::orchestration::ScriptCompiler`、`/api/workflow-scripts/preflight`。
 
 ### 2. Signatures
 
@@ -360,6 +361,22 @@ parse_workflow_script_builder_document(
 ) -> WorkflowScriptBuilderParseOutput
 ```
 
+Application preflight:
+
+```rust
+WorkflowScriptPreflightService::preflight(
+    WorkflowScriptPreflightInput {
+        evaluator: &dyn WorkflowScriptEvaluator,
+        compiler: &dyn WorkflowScriptCompiler,
+        source_text,
+        ctx,
+        args,
+        source_ref,
+        provenance,
+    },
+) -> WorkflowScriptPreflightOutput
+```
+
 首批 builder statement:
 
 ```rust
@@ -380,8 +397,10 @@ WorkflowScriptStatement::{
 - Rhai workflow evaluator 只能返回 serializable builder document；不能启动 AgentRun、FunctionRun、LocalEffect，不能访问文件系统、shell 或网络。
 - Hook Rhai helper 与 workflow Rhai helper 分属不同 adapter；workflow evaluator 不注册 `block` / `inject` / `approve` 等 Hook helper。
 - Rhai helper 输出必须包含 `kind` discriminator；reserved fields such as `kind` / `name` / `request` / `effect` 由 helper 拥有，脚本 options 不能覆盖。
-- Application 层先把 evaluator 返回的 JSON 解析为 typed builder document，再进入后续 compiler；`serde_json::Value` 不作为长期 compiler 输入。
-- typed builder parser 负责结构合同和 source-path diagnostics；变量解析、唯一命名、capability 声明、预算/并发上限和 plan mapping 由后续 compiler/preflight 负责。
+- Application 层先把 evaluator 返回的 JSON 解析为 typed builder document，再进入 `ScriptCompiler`；`serde_json::Value` 不作为长期 compiler 输入。
+- typed builder parser 负责结构合同和 source-path diagnostics；变量解析、唯一命名、capability 声明、预算/并发上限和 plan mapping 由 `ScriptCompiler` / preflight 负责。
+- `ScriptCompiler` 输出 `OrchestrationPlanSnapshot`，并把 root args binding、log marker、capability summary 和 source provenance 放入 plan metadata，runtime activation 只消费 plan 合同。
+- `POST /api/workflow-scripts/preflight` 是审批前无副作用入口；它只返回 source digest、source ref、builder document、diagnostics、plan preview、plan snapshot 和 capability summary，不创建 `LifecycleRun` 或 `OrchestrationInstance`。
 - `RhaiWorkflowScriptEvaluator` 位于 infrastructure，原因是 Rhai engine、sandbox 与 helper 注册是具体技术 adapter；application 只依赖 SPI port 与 typed builder contract。
 
 ### 4. Validation & Error Matrix
@@ -399,7 +418,7 @@ WorkflowScriptStatement::{
 ### 5. Good/Base/Bad Cases
 
 - Good: `workflow(#{ body: [phase(\"collect\", [parallel([...])])] })` eval 后解析为 typed `WorkflowScriptBuilderDocument`。
-- Base: `agent` 的 `inputs` / `outputs` 缺省为空数组，后续 compiler 再决定是否需要 blocking diagnostic。
+- Base: `agent` 的 `inputs` / `outputs` 缺省为空数组，compiler 在需要 state exchange 或 root args binding 时再决定是否产生 blocking diagnostic。
 - Bad: Rhai helper 直接执行 HTTP、shell 或文件写入；这些副作用必须只在 common orchestration runtime executor 阶段发生。
 
 ### 6. Tests Required
@@ -408,6 +427,8 @@ WorkflowScriptStatement::{
 - Infrastructure test 覆盖 workflow evaluator eval builder document、syntax validate、Hook helper unavailable。
 - Application test 覆盖 phase / parallel / agent / pipeline / function / local_effect / human_gate 的 typed parse。
 - Application test 覆盖 pathful diagnostics，至少断言每类 primitive 的缺失字段 path。
+- Application compiler test 覆盖 phase/pipeline/parallel/function/local_effect/human_gate/state exchange/root args/materialized activation/deterministic digest。
+- API/contracts check 覆盖 preflight DTO 导出与 `cargo check -p agentdash-api`。
 - Hook test 回归，保证公共 Rhai runtime 抽取后 Hook helper surface 未变化。
 
 ### 7. Wrong vs Correct

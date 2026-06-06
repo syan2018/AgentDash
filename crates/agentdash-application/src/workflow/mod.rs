@@ -74,6 +74,10 @@ pub use orchestration::{
     SubmitHumanGateDecisionResult,
 };
 pub use orchestration::{
+    ScriptCompileDiagnostic, ScriptCompileInput, ScriptCompileOutput, ScriptCompiler,
+    WORKFLOW_SCRIPT_COMPILER_SCHEMA_VERSION, compile_workflow_script_builder_document,
+};
+pub use orchestration::{
     WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION, WorkflowGraphCompileDiagnostic,
     WorkflowGraphCompileInput, WorkflowGraphCompileMode, WorkflowGraphCompileOutput,
     WorkflowGraphCompileSourceMetadata, WorkflowGraphCompiler, compile_workflow_graph,
@@ -96,10 +100,14 @@ pub use run::select_active_run;
 pub use runtime_launch::{FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface};
 pub use script::{
     WorkflowScriptAgent, WorkflowScriptBuilderDiagnostic, WorkflowScriptBuilderDocument,
-    WorkflowScriptBuilderParseOutput, WorkflowScriptEffect, WorkflowScriptFunction,
-    WorkflowScriptHumanGate, WorkflowScriptLocalEffect, WorkflowScriptParallel,
-    WorkflowScriptPhase, WorkflowScriptPipeline, WorkflowScriptRequest, WorkflowScriptStatement,
-    parse_workflow_script_builder_document,
+    WorkflowScriptBuilderParseOutput, WorkflowScriptCompileDiagnostic, WorkflowScriptCompileInput,
+    WorkflowScriptCompileOutput, WorkflowScriptCompiler, WorkflowScriptEffect,
+    WorkflowScriptFunction, WorkflowScriptHumanGate, WorkflowScriptLocalEffect,
+    WorkflowScriptParallel, WorkflowScriptPhase, WorkflowScriptPipeline, WorkflowScriptPlanPreview,
+    WorkflowScriptPlanPreviewNode, WorkflowScriptPreflightDiagnostic, WorkflowScriptPreflightInput,
+    WorkflowScriptPreflightOutput, WorkflowScriptPreflightService, WorkflowScriptRequest,
+    WorkflowScriptStatement, extract_workflow_script_capability_summary,
+    parse_workflow_script_builder_document, preflight_workflow_script,
 };
 pub use session_association::{
     LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,

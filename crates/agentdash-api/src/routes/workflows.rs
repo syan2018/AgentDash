@@ -4,22 +4,30 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
+use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
     ActivityLifecycleCatalogService, LifecycleDispatchService, OrchestrationExecutorLauncher,
-    SubmitHumanGateDecisionInput, lifecycle_run_view_builder,
+    ScriptCompiler, SubmitHumanGateDecisionInput, WorkflowScriptPreflightInput,
+    WorkflowScriptPreflightService, lifecycle_run_view_builder,
 };
 use agentdash_contracts::workflow::{
     DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
-    HookPresetResponse, HookPresetsResponse, RegisterHookPresetResponse,
+    HookPresetResponse, HookPresetsResponse, PreflightWorkflowScriptRequest,
+    PreflightWorkflowScriptResponse, RegisterHookPresetResponse,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
-    ValidateHookScriptResponse,
+    ValidateHookScriptResponse, ValidationSeverity as ContractValidationSeverity,
+    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
+    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
+    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto,
 };
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, AgentProcedure, DefinitionSource, ExecutionSource, LifecycleRun,
-    LifecycleRunStartIntent, ValidationIssue, ValidationSeverity, WorkflowGraph, WorkflowGraphRef,
+    LifecycleRunStartIntent, OrchestrationSourceRef, ValidationIssue, ValidationSeverity,
+    WorkflowGraph, WorkflowGraphRef, WorkflowScriptCapabilitySummary, WorkflowScriptProvenance,
+    WorkflowScriptProvenanceSource, workflow_script_source_digest,
 };
 
 use crate::app_state::AppState;
@@ -71,6 +79,10 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/workflow-graphs/validate",
             axum::routing::post(validate_workflow_graph),
+        )
+        .route(
+            "/workflow-scripts/preflight",
+            axum::routing::post(preflight_workflow_script),
         )
         .route(
             "/agent-procedures/{id}",
@@ -272,6 +284,91 @@ pub async fn validate_workflow_graph(
             )],
         })),
     }
+}
+
+pub async fn preflight_workflow_script(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<PreflightWorkflowScriptRequest>,
+) -> Result<Json<PreflightWorkflowScriptResponse>, ApiError> {
+    let project_id = parse_uuid_required(&req.project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let source_digest = workflow_script_source_digest(&req.source_text);
+    let source_ref = OrchestrationSourceRef::Inline {
+        source_digest: source_digest.clone(),
+    };
+    let evaluator = agentdash_infrastructure::RhaiWorkflowScriptEvaluator::new();
+    let compiler = ScriptCompiler;
+    let mut provenance =
+        WorkflowScriptProvenance::new(WorkflowScriptProvenanceSource::UserAuthored);
+    provenance.created_by = Some(current_user.user_id.clone());
+    provenance.runtime_session_id = req.runtime_session_id.clone();
+
+    let output = WorkflowScriptPreflightService::preflight(WorkflowScriptPreflightInput {
+        evaluator: &evaluator,
+        compiler: &compiler,
+        source_text: &req.source_text,
+        ctx: workflow_script_eval_context(project_id, &current_user.user_id, req.ctx),
+        args: req.args,
+        source_ref,
+        provenance,
+    });
+
+    let valid = !output.has_blocking_diagnostics();
+    let source_ref = serde_json::to_value(&output.source_ref).map_err(|error| {
+        ApiError::Internal(format!("序列化 workflow script source_ref 失败: {error}"))
+    })?;
+    let plan_snapshot = match &output.plan_snapshot {
+        Some(plan_snapshot) => Some(serde_json::to_value(plan_snapshot).map_err(|error| {
+            ApiError::Internal(format!(
+                "序列化 workflow script plan_snapshot 失败: {error}"
+            ))
+        })?),
+        None => None,
+    };
+
+    Ok(Json(PreflightWorkflowScriptResponse {
+        valid,
+        source_digest,
+        source_ref,
+        raw_builder_document: output.raw_builder_document,
+        plan_snapshot,
+        plan_preview: output
+            .plan_preview
+            .map(|preview| WorkflowScriptPlanPreviewDto {
+                plan_digest: preview.plan_digest,
+                node_count: preview.node_count,
+                entry_node_ids: preview.entry_node_ids,
+                nodes: preview
+                    .nodes
+                    .into_iter()
+                    .map(|node| WorkflowScriptPlanPreviewNodeDto {
+                        node_id: node.node_id,
+                        node_path: node.node_path,
+                        kind: node.kind,
+                        label: node.label,
+                    })
+                    .collect(),
+            }),
+        capability_summary: workflow_script_capability_summary_dto(output.capability_summary),
+        diagnostics: output
+            .diagnostics
+            .into_iter()
+            .map(|diagnostic| WorkflowScriptPreflightDiagnosticDto {
+                code: diagnostic.code,
+                severity: contract_validation_severity(diagnostic.severity),
+                message: diagnostic.message,
+                source_path: diagnostic.source_path,
+            })
+            .collect(),
+    }))
 }
 
 pub async fn delete_workflow_graph(
@@ -669,6 +766,67 @@ fn parse_project_id_query(raw: Option<&str>) -> Result<Uuid, ApiError> {
         return Err(ApiError::BadRequest("project_id 不能为空".to_string()));
     };
     parse_uuid_required(raw, "project_id")
+}
+
+fn workflow_script_eval_context(project_id: Uuid, user_id: &str, ctx: Option<Value>) -> Value {
+    let mut object = match ctx {
+        Some(Value::Object(object)) => object,
+        Some(value) => {
+            let mut object = Map::new();
+            object.insert("input".to_string(), value);
+            object
+        }
+        None => Map::new(),
+    };
+    object
+        .entry("project_id".to_string())
+        .or_insert_with(|| json!(project_id));
+    object
+        .entry("user_id".to_string())
+        .or_insert_with(|| json!(user_id));
+    Value::Object(object)
+}
+
+fn contract_validation_severity(severity: ValidationSeverity) -> ContractValidationSeverity {
+    match severity {
+        ValidationSeverity::Error => ContractValidationSeverity::Error,
+        ValidationSeverity::Warning => ContractValidationSeverity::Warning,
+    }
+}
+
+fn workflow_script_capability_summary_dto(
+    summary: WorkflowScriptCapabilitySummary,
+) -> WorkflowScriptCapabilitySummaryDto {
+    WorkflowScriptCapabilitySummaryDto {
+        agent_procedure_keys: summary.agent_procedure_keys,
+        function_api_endpoints: summary
+            .function_api_endpoints
+            .into_iter()
+            .map(|endpoint| WorkflowScriptApiEndpointDto {
+                method: endpoint.method,
+                url: endpoint.url,
+            })
+            .collect(),
+        local_effect_capabilities: summary.local_effect_capabilities,
+        bash_commands: summary
+            .bash_commands
+            .into_iter()
+            .map(|command| WorkflowScriptBashCommandDto {
+                command: command.command,
+                args: command.args,
+                working_directory: command.working_directory,
+            })
+            .collect(),
+        human_gates: summary
+            .human_gates
+            .into_iter()
+            .map(|gate| WorkflowScriptHumanGateCapabilityDto {
+                name: gate.name,
+                form_schema: gate.form_schema,
+                decision_port: gate.decision_port,
+            })
+            .collect(),
+    }
 }
 
 fn parse_optional_uuid(raw: Option<&str>, field: &str) -> Result<Option<Uuid>, ApiError> {

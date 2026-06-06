@@ -502,6 +502,112 @@ pub struct ValidateHookScriptResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct PreflightWorkflowScriptRequest {
+    pub project_id: String,
+    pub source_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub args: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub ctx: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptPreflightDiagnosticDto {
+    pub code: String,
+    pub severity: ValidationSeverity,
+    pub message: String,
+    pub source_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptPlanPreviewNodeDto {
+    pub node_id: String,
+    pub node_path: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptPlanPreviewDto {
+    pub plan_digest: String,
+    pub node_count: usize,
+    pub entry_node_ids: Vec<String>,
+    pub nodes: Vec<WorkflowScriptPlanPreviewNodeDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptApiEndpointDto {
+    pub method: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptBashCommandDto {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub working_directory: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptHumanGateCapabilityDto {
+    pub name: String,
+    pub form_schema: String,
+    pub decision_port: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptCapabilitySummaryDto {
+    #[serde(default)]
+    pub agent_procedure_keys: Vec<String>,
+    #[serde(default)]
+    pub function_api_endpoints: Vec<WorkflowScriptApiEndpointDto>,
+    #[serde(default)]
+    pub local_effect_capabilities: Vec<String>,
+    #[serde(default)]
+    pub bash_commands: Vec<WorkflowScriptBashCommandDto>,
+    #[serde(default)]
+    pub human_gates: Vec<WorkflowScriptHumanGateCapabilityDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct PreflightWorkflowScriptResponse {
+    pub valid: bool,
+    pub source_digest: String,
+    #[ts(type = "JsonValue")]
+    pub source_ref: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub raw_builder_document: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub plan_snapshot: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plan_preview: Option<WorkflowScriptPlanPreviewDto>,
+    pub capability_summary: WorkflowScriptCapabilitySummaryDto,
+    pub diagnostics: Vec<WorkflowScriptPreflightDiagnosticDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct RegisterHookPresetResponse {
     pub registered: bool,
     pub key: String,

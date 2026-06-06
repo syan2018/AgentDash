@@ -111,6 +111,10 @@ export type OutputPortDefinition = { key: string, description: string, gate_stra
 
 export type PendingMessageView = { id: string, preview: string, has_images: boolean, created_at: string, };
 
+export type PreflightWorkflowScriptRequest = { project_id: string, source_text: string, args?: JsonValue, ctx?: JsonValue, runtime_session_id?: string, };
+
+export type PreflightWorkflowScriptResponse = { valid: boolean, source_digest: string, source_ref: JsonValue, raw_builder_document?: JsonValue, plan_snapshot?: JsonValue, plan_preview?: WorkflowScriptPlanPreviewDto, capability_summary: WorkflowScriptCapabilitySummaryDto, diagnostics: Array<WorkflowScriptPreflightDiagnosticDto>, };
+
 export type ProjectActiveAgentsView = { project_id: string, runs: Array<LifecycleRunView>, agents: Array<AgentRunView>, };
 
 export type ProjectSessionListEntry = { runtime_session_id: string, title: string, delivery_status: string, run_status?: LifecycleRunStatus, run_ref?: LifecycleRunRefDto, agent_ref?: AgentRunRefDto, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, updated_at: string, };
@@ -170,3 +174,17 @@ export type WorkflowHookRuleSpec = { key: string, trigger: WorkflowHookTrigger, 
 export type WorkflowHookTrigger = "user_prompt_submit" | "before_tool" | "after_tool" | "after_turn" | "before_stop" | "session_terminal" | "before_subagent_dispatch" | "after_subagent_dispatch" | "companion_result" | "before_compact" | "after_compact" | "before_provider_request";
 
 export type WorkflowInjectionSpec = { guidance?: string, context_bindings: Array<WorkflowContextBinding>, };
+
+export type WorkflowScriptApiEndpointDto = { method: string, url: string, };
+
+export type WorkflowScriptBashCommandDto = { command: string, args: Array<string>, working_directory?: string, };
+
+export type WorkflowScriptCapabilitySummaryDto = { agent_procedure_keys: Array<string>, function_api_endpoints: Array<WorkflowScriptApiEndpointDto>, local_effect_capabilities: Array<string>, bash_commands: Array<WorkflowScriptBashCommandDto>, human_gates: Array<WorkflowScriptHumanGateCapabilityDto>, };
+
+export type WorkflowScriptHumanGateCapabilityDto = { name: string, form_schema: string, decision_port: string, };
+
+export type WorkflowScriptPlanPreviewDto = { plan_digest: string, node_count: number, entry_node_ids: Array<string>, nodes: Array<WorkflowScriptPlanPreviewNodeDto>, };
+
+export type WorkflowScriptPlanPreviewNodeDto = { node_id: string, node_path: string, kind: string, label?: string, };
+
+export type WorkflowScriptPreflightDiagnosticDto = { code: string, severity: ValidationSeverity, message: string, source_path: string, };

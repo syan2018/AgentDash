@@ -9,6 +9,7 @@ mod mount_directive;
 mod orchestration;
 mod ports;
 mod run_state;
+mod script_asset;
 
 pub use activity_def::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
@@ -42,6 +43,13 @@ pub use ports::{
 };
 pub use run_state::{
     ExecutorRunRef, LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleRunStatus,
+};
+pub use script_asset::{
+    RunScriptArtifact, RunScriptArtifactStatus, WorkflowScriptApiEndpoint,
+    WorkflowScriptBashCommand, WorkflowScriptCapabilitySummary, WorkflowScriptDefinition,
+    WorkflowScriptDefinitionScope, WorkflowScriptDefinitionStatus,
+    WorkflowScriptHumanGateCapability, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
+    workflow_script_source_digest,
 };
 
 #[cfg(test)]

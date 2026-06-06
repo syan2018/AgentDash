@@ -58,14 +58,14 @@
 
 ## 验收标准
 
-- [ ] `prd.md`、`design.md`、`implement.md` 明确脚本资产、Rhai builder DSL、公共脚本内核、compiler、审批流、保存流和 runtime 复用边界。
-- [ ] design 证明脚本 frontend 能覆盖 `research/claude-workflow-behavior-coverage.md` 的核心行为族，并说明暂不实现或以 diagnostics 阻塞的行为。
-- [ ] design 明确 `RunScriptArtifact` 与 `WorkflowScriptDefinition` 的身份、revision、digest、provenance 和权限边界。
-- [ ] design 给出 script AST -> `OrchestrationPlanSnapshot` 的映射表。
-- [ ] design 明确 Hook Rhai 与 Workflow Rhai 共享内核但隔离业务 surface 的模块边界。
-- [ ] implement plan 给出第一批 fixtures、diagnostics、contract DTO、API route、migration、frontend preview 和验证命令。
-- [ ] context manifests 指向父任务 research、common runtime 子任务、workflow specs 和 cross-layer contract specs。
-- [ ] 任务保持 planning，直到用户评审脚本语法和资产边界。
+- [x] `prd.md`、`design.md`、`implement.md` 明确脚本资产、Rhai builder DSL、公共脚本内核、compiler、审批流、保存流和 runtime 复用边界。
+- [x] design 证明脚本 frontend 能覆盖 `research/claude-workflow-behavior-coverage.md` 的核心行为族，并说明暂不实现或以 diagnostics 阻塞的行为。
+- [x] design 明确 `RunScriptArtifact` 与 `WorkflowScriptDefinition` 的身份、revision、digest、provenance 和权限边界。
+- [x] design 给出 script AST -> `OrchestrationPlanSnapshot` 的映射表。
+- [x] design 明确 Hook Rhai 与 Workflow Rhai 共享内核但隔离业务 surface 的模块边界。
+- [x] implement 记录第一批 fixtures、diagnostics、contract DTO、API route、migration 判定、frontend service surface 和验证命令。
+- [x] context manifests 指向父任务 research、common runtime 子任务、workflow specs 和 cross-layer contract specs。
+- [x] 用户已确认以 Rhai builder DSL 作为当前实现路径，任务进入实现收口。
 
 ## 备注
 

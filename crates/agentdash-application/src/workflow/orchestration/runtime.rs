@@ -3,9 +3,9 @@ use std::collections::BTreeSet;
 use agentdash_domain::workflow::{
     ActivationRule, ActivityCompletionPolicy, ActivityJoinPolicy, DispatchState, ExecutorRunRef,
     LifecycleRun, LifecycleRunStatus, NodePortValue, OrchestrationInstance,
-    OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus, RuntimeNodeError,
-    RuntimeNodeState, RuntimeNodeStatus, RuntimeTraceRef, StateExchangeRule, StateExchangeSnapshot,
-    TransitionCondition,
+    OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus, PlanNode, PlanNodeKind,
+    RuntimeNodeError, RuntimeNodeState, RuntimeNodeStatus, RuntimeTraceRef, StateExchangeRule,
+    StateExchangeSnapshot, TransitionCondition,
 };
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
@@ -52,6 +52,8 @@ pub fn materialize_plan_activation(
             kind: node.kind,
             status: if ready_set.contains(node.node_id.as_str()) {
                 RuntimeNodeStatus::Ready
+            } else if plan_node_is_metadata_only(node) {
+                RuntimeNodeStatus::Skipped
             } else {
                 RuntimeNodeStatus::Pending
             },
@@ -60,7 +62,7 @@ pub fn materialize_plan_activation(
             outputs: Vec::new(),
             executor_run_ref: None,
             children: Vec::new(),
-            phase_path: Vec::new(),
+            phase_path: plan_node_phase_path(node),
             started_at: None,
             completed_at: None,
             error: None,
@@ -68,6 +70,7 @@ pub fn materialize_plan_activation(
             cache: None,
         })
         .collect();
+    materialize_root_input_bindings(&mut instance.node_tree, &instance.plan_snapshot);
     instance.state_snapshot = StateExchangeSnapshot::default();
     instance.status = if instance.activation.ready_node_ids.is_empty() {
         OrchestrationStatus::Pending
@@ -75,6 +78,72 @@ pub fn materialize_plan_activation(
         OrchestrationStatus::Running
     };
     instance.updated_at = chrono::Utc::now();
+}
+
+fn materialize_root_input_bindings(
+    node_tree: &mut [RuntimeNodeState],
+    plan_snapshot: &OrchestrationPlanSnapshot,
+) {
+    let Some(script_metadata) = plan_snapshot
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("script"))
+    else {
+        return;
+    };
+    let Some(args) = script_metadata.get("args").and_then(Value::as_object) else {
+        return;
+    };
+    let Some(bindings) = script_metadata
+        .get("root_input_bindings")
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+
+    for binding in bindings {
+        let Some(node_id) = binding.get("node_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(port) = binding.get("port").and_then(Value::as_str) else {
+            continue;
+        };
+        if binding.get("source").and_then(Value::as_str) != Some("args") {
+            continue;
+        }
+        let Some(value) = args.get(port).cloned() else {
+            continue;
+        };
+        if let Some(node) = node_tree.iter_mut().find(|node| node.node_id == node_id) {
+            upsert_node_port_value(&mut node.inputs, port.to_string(), value);
+        }
+    }
+}
+
+fn plan_node_is_metadata_only(node: &PlanNode) -> bool {
+    if matches!(node.kind, PlanNodeKind::Phase) {
+        return true;
+    }
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("metadata_only"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn plan_node_phase_path(node: &PlanNode) -> Vec<String> {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("phase_path"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, PartialEq)]

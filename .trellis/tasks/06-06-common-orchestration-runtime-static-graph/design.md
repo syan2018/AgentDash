@@ -72,6 +72,16 @@ runtime_session_id
 
 第一版 UI 可以继续消费 graph-compatible `LifecycleRunView.workflow_graph_instances[]` 和 `active_activity_refs[]`。这些字段从 orchestration snapshot 投影，不再从旧 `WorkflowGraphInstance.activity_state` 推进。native orchestration progress tree 可以后续新增。
 
+## VFS / Session Surface
+
+`lifecycle` 仍是面向主 AgentRun 的共同生命周期容器；`orchestration` 是 lifecycle 内部的运行态状态容器。session assembly、VFS mount 和 hook projection 不直接暴露或反查 `WorkflowGraphInstance`，而是通过 `LifecycleMountSurface` 这类窄接口传递：
+
+```text
+run_id + orchestration_id + node_path + attempt + writable_port_keys
+```
+
+这样 lifecycle VFS 的 `artifacts/*`、`records/*`、`session/*` 都从同一 runtime node 坐标解析。静态 graph 编译产物、后续 workflow script 和 run artifact 只要能落到同一 `OrchestrationPlanSnapshot`，就能复用相同 session/VFS surface。
+
 ## 仓储边界
 
 - `LifecycleRun.orchestrations[]` 是 runtime snapshot 事实源。

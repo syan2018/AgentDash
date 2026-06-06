@@ -292,11 +292,6 @@ pub(crate) fn frame_builder_from_existing(
     if let Some(procedure_id) = frame.procedure_id {
         builder = builder.with_procedure(AgentProcedureRef::ById(procedure_id));
     }
-    if let (Some(graph_instance_id), Some(activity_key)) =
-        (frame.graph_instance_id, frame.activity_key.clone())
-    {
-        builder = builder.with_graph_instance(graph_instance_id, activity_key);
-    }
     if let Some(profile) = frame.execution_profile_json.clone() {
         builder = builder.with_execution_profile_raw(profile);
     }

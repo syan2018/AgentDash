@@ -16,7 +16,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::session::{PersistedSessionEvent, SessionPersistence};
-use crate::workflow::execution_log::{ActivityAttemptArtifactScope, ActivityPortArtifactRef};
+use crate::workflow::execution_log::{RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef};
 
 pub mod session_items;
 
@@ -261,7 +261,7 @@ impl LifecycleJourneyProjection {
 
     pub async fn list_scoped_port_outputs(
         &self,
-        scope: &ActivityAttemptArtifactScope,
+        scope: &RuntimeNodeArtifactScope,
     ) -> JourneyResult<BTreeMap<String, String>> {
         let prefix = scope.path_prefix();
         let files = self
@@ -287,7 +287,7 @@ impl LifecycleJourneyProjection {
 
     pub async fn read_scoped_port_output(
         &self,
-        artifact_ref: &ActivityPortArtifactRef,
+        artifact_ref: &RuntimeNodePortArtifactRef,
     ) -> JourneyResult<String> {
         self.inline_file_repo
             .get_file(
@@ -309,7 +309,7 @@ impl LifecycleJourneyProjection {
 
     pub async fn write_scoped_port_output(
         &self,
-        artifact_ref: &ActivityPortArtifactRef,
+        artifact_ref: &RuntimeNodePortArtifactRef,
         content: &str,
     ) -> JourneyResult<()> {
         let file = InlineFile::new(

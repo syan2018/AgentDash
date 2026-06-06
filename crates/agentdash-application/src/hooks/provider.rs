@@ -207,10 +207,10 @@ impl AppExecutionHookProvider {
                     },
                     fulfilled_port_keys: {
                         let artifact_scope =
-                            crate::workflow::execution_log::ActivityAttemptArtifactScope {
+                            crate::workflow::execution_log::RuntimeNodeArtifactScope {
                                 run_id: workflow.run.id,
-                                graph_instance_id: workflow.graph_instance_id,
-                                activity_key: workflow.active_activity.key.clone(),
+                                orchestration_id: workflow.orchestration_id,
+                                node_path: workflow.node_path.clone(),
                                 attempt: workflow.active_attempt.attempt,
                             };
                         let map = crate::workflow::load_scoped_port_output_map(

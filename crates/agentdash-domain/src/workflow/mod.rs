@@ -32,10 +32,9 @@ pub use lifecycle_agent::{LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::LifecycleGate;
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 pub use repository::{
-    ActivityExecutionClaimRepository, AgentAssignmentRepository, AgentFrameRepository,
-    AgentLineageRepository, AgentProcedureRepository, LifecycleAgentRepository,
-    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    RuntimeSessionExecutionAnchorRepository, WorkflowGraphInstanceRepository,
+    AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
+    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
+    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
     WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
 };

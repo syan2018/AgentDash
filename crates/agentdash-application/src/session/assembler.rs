@@ -78,7 +78,7 @@ use crate::vfs::{
     resolve_context_bindings,
 };
 use crate::workflow::{
-    ActiveWorkflowProjection, ActivityActivationInput, ActivityAttemptArtifactScope,
+    ActiveWorkflowProjection, ActivityActivationInput, RuntimeNodeArtifactScope,
     activate_activity_with_platform, ensure_active_workflow_lifecycle_mount,
     load_scoped_port_output_map,
 };
@@ -1207,7 +1207,8 @@ impl<'a> SessionRequestAssembler<'a> {
                     dispatch_prompt: spec.companion.dispatch_prompt,
                 },
                 run: spec.run,
-                graph_instance_id: spec.graph_instance_id,
+                orchestration_id: spec.orchestration_id,
+                node_path: spec.node_path,
                 attempt: spec.attempt,
                 lifecycle: spec.lifecycle,
                 activity: spec.activity,
@@ -1284,10 +1285,10 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
         project_id: spec.run.project_id,
     };
 
-    let artifact_scope = ActivityAttemptArtifactScope {
+    let artifact_scope = RuntimeNodeArtifactScope {
         run_id: spec.run.id,
-        graph_instance_id: spec.graph_instance_id,
-        activity_key: spec.activity.key.clone(),
+        orchestration_id: spec.orchestration_id,
+        node_path: spec.node_path.to_string(),
         attempt: spec.attempt,
     };
     let port_output_map =
@@ -1300,7 +1301,8 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
             active_activity: spec.activity,
             workflow: spec.workflow,
             run_id: spec.run.id,
-            graph_instance_id: spec.graph_instance_id,
+            orchestration_id: spec.orchestration_id,
+            node_path: spec.node_path,
             attempt: spec.attempt,
             lifecycle_key: &spec.lifecycle.key,
             agent_mcp_servers: vec![],
@@ -1547,7 +1549,8 @@ pub struct StoryStepSpec<'a> {
 /// Lifecycle AgentNode compose 输入。
 pub struct LifecycleNodeSpec<'a> {
     pub run: &'a LifecycleRun,
-    pub graph_instance_id: Uuid,
+    pub orchestration_id: Uuid,
+    pub node_path: &'a str,
     pub attempt: u32,
     pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
@@ -1576,7 +1579,8 @@ pub struct CompanionParentSpec<'a> {
 pub struct CompanionParentWorkflowSpec<'a> {
     pub companion: CompanionParentSpec<'a>,
     pub run: &'a LifecycleRun,
-    pub graph_instance_id: Uuid,
+    pub orchestration_id: Uuid,
+    pub node_path: &'a str,
     pub attempt: u32,
     pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
@@ -1594,7 +1598,8 @@ pub struct CompanionWorkflowSpec<'a> {
     pub companion: CompanionSpec<'a>,
     /// 已创建的 lifecycle run。
     pub run: &'a LifecycleRun,
-    pub graph_instance_id: Uuid,
+    pub orchestration_id: Uuid,
+    pub node_path: &'a str,
     pub attempt: u32,
     pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
@@ -1621,10 +1626,10 @@ pub(in crate::session) async fn compose_companion_with_workflow(
 
     // ── 2. Workflow activity activation（产出 lifecycle mount + 能力 + MCP） ──
     let owner_ctx = CapabilityScopeCtx::Project { project_id };
-    let artifact_scope = ActivityAttemptArtifactScope {
+    let artifact_scope = RuntimeNodeArtifactScope {
         run_id: spec.run.id,
-        graph_instance_id: spec.graph_instance_id,
-        activity_key: spec.activity.key.clone(),
+        orchestration_id: spec.orchestration_id,
+        node_path: spec.node_path.to_string(),
         attempt: spec.attempt,
     };
     let port_output_map =
@@ -1637,7 +1642,8 @@ pub(in crate::session) async fn compose_companion_with_workflow(
             active_activity: spec.activity,
             workflow: spec.workflow,
             run_id: spec.run.id,
-            graph_instance_id: spec.graph_instance_id,
+            orchestration_id: spec.orchestration_id,
+            node_path: spec.node_path,
             attempt: spec.attempt,
             lifecycle_key: &spec.lifecycle.key,
             agent_mcp_servers: vec![],
@@ -1972,6 +1978,7 @@ mod tests {
         let lifecycle_mount = build_lifecycle_mount_with_ports(
             run_id,
             Uuid::new_v4(),
+            "test-node",
             "test-lifecycle",
             &["report".to_string()],
         );
@@ -2000,7 +2007,14 @@ mod tests {
     #[test]
     fn append_lifecycle_mount_creates_vfs_when_base_is_absent() {
         let prepared = SessionAssemblyBuilder::new()
-            .append_lifecycle_mount(Uuid::new_v4(), Uuid::new_v4(), "test-lifecycle", &[])
+            .append_lifecycle_mount(crate::workflow::LifecycleMountSurface {
+                run_id: Uuid::new_v4(),
+                orchestration_id: Uuid::new_v4(),
+                node_path: "test-node",
+                lifecycle_key: "test-lifecycle",
+                attempt: 1,
+                writable_port_keys: Vec::new(),
+            })
             .build();
 
         let vfs = prepared.vfs.expect("lifecycle mount should create VFS");
@@ -2116,7 +2130,8 @@ mod tests {
         .expect("workflow");
         let mount = crate::vfs::build_lifecycle_mount_with_ports(
             run.id,
-            graph_instance_id,
+            uuid::Uuid::new_v4(),
+            "implement",
             &lifecycle.key,
             &["summary".into()],
         );
@@ -2143,7 +2158,8 @@ mod tests {
 
         let spec = LifecycleNodeSpec {
             run: &run,
-            graph_instance_id,
+            orchestration_id: uuid::Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle: &lifecycle,
             activity: &activity,

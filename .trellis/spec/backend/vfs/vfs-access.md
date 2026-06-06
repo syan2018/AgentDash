@@ -155,6 +155,61 @@ root_ref = "routine://routine/{routine_id}"
 
 Routine memory 复用 InlineFile 存储，provider 由 mount metadata 中的 `routine_id`、`execution_id`、`trigger_source` 与 `entity_key` 解析当前投影和允许写入的 inline storage key。通用 VFS Browser 可通过 session runtime surface 消费该 mount；Routine 页面入口只需要跳转到同一 VFS surface。
 
+## Lifecycle Runtime Mount
+
+Lifecycle runtime mount 暴露当前 lifecycle container 内部的 orchestration node 投影。它不以 `WorkflowGraphInstance`、activity attempt 或某种资产实例作为运行身份；session assembly 通过 application 层 surface 传入以下字段：
+
+```rust
+pub struct LifecycleMountSurface<'a> {
+    pub run_id: Uuid,
+    pub orchestration_id: Uuid,
+    pub node_path: &'a str,
+    pub lifecycle_key: &'a str,
+    pub attempt: u32,
+    pub writable_port_keys: Vec<String>,
+}
+```
+
+Runtime mount contract：
+
+| 字段 | 来源 | 约束 |
+| --- | --- | --- |
+| `id` | 常量 | `lifecycle` |
+| `provider` | 常量 | `lifecycle_vfs` |
+| `root_ref` | builder | `lifecycle://run/{run_id}/orchestration/{orchestration_id}/node/{encoded_node_path}` |
+| `metadata.run_id` | `LifecycleRun.id` | UUID string |
+| `metadata.orchestration_id` | `OrchestrationInstance.orchestration_id` | UUID string |
+| `metadata.node_path` | `RuntimeNodeState.node_path` | 非空 runtime path；作为路径段落存储时按 UTF-8 percent encode |
+| `metadata.attempt` | `RuntimeNodeState.attempt` | `u32` |
+| `metadata.lifecycle_key` | lifecycle definition label | 只用于展示和 prompt，不参与 runtime identity |
+| `metadata.writable_port_keys` | plan/activity output ports | artifact 写入白名单 |
+
+Provider 解析行为：
+
+| 路径 | 行为 |
+| --- | --- |
+| `active` / `state` | 从 `LifecycleRun.orchestrations[]` 中定位 `orchestration_id + node_path + attempt` 并返回 runtime node/run 投影 |
+| `artifacts/{port_key}` | 写入或读取 `InlineFileOwnerKind::LifecycleRun / port_outputs / {orchestration_id}/{encoded_node_path}/{attempt}/{port_key}` |
+| `records/{name}` | 写入或读取当前 node 的 journey records |
+| `session/*` | 通过 `RuntimeNodeState.executor_run_ref == RuntimeSession` 读取 session event/item/tool/summary 投影 |
+| `nodes/{node_path}/*` | 读取同一 orchestration 内指定 runtime node 的 state/session/records |
+
+Validation / errors：
+
+| 条件 | 错误语义 |
+| --- | --- |
+| metadata 缺少 `run_id` / `orchestration_id` / `node_path` / `attempt` | `OperationFailed` |
+| run 或 orchestration 不存在 | `NotFound` |
+| node 不存在 | `NotFound` |
+| artifact port 不在 `writable_port_keys` | `OperationFailed` |
+| node 没有关联 runtime session 时读取 `session/*` | `NotFound` |
+
+Tests required：
+
+- mount builder test asserts `root_ref`、metadata 和 writable ports 使用 orchestration node 坐标。
+- provider test writes `artifacts/{port_key}` and asserts inline path uses `{orchestration_id}/{encoded_node_path}/{attempt}/{port_key}`.
+- frame/session assembly test asserts lifecycle node compose reads `RuntimeSessionExecutionAnchor` rather than frame graph/activity fields.
+
 ## Project VFS Mount
 
 Project VFS Mount 是 Project 级单层实体，CRUD 路由为：

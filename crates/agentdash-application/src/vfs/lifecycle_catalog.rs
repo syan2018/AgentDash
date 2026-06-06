@@ -25,12 +25,12 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "active/steps",
-        description: "各步骤执行状态，子路径为 activity_key",
+        description: "各 runtime node 执行状态，子路径为 node_path",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "active/steps/{activity_key}",
+        path: "active/steps/{node_path}",
         description: "单步骤详情（JSON）",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
@@ -174,85 +174,85 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
         virtual_entry: false,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/state",
+        path: "nodes/{node_path}/state",
         description: "Node 步骤状态（JSON）",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/session/meta",
+        path: "nodes/{node_path}/session/meta",
         description: "Node 关联 session 元信息",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/session/summary",
+        path: "nodes/{node_path}/session/summary",
         description: "Node session 摘要",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/session/conclusions",
+        path: "nodes/{node_path}/session/conclusions",
         description: "Node session 结论",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/session/events.json",
+        path: "nodes/{node_path}/session/events.json",
         description: "指定 node session 原始事件投影",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/session/items",
+        path: "nodes/{node_path}/session/items",
         description: "指定 node session 全量 item 索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/session/messages",
+        path: "nodes/{node_path}/session/messages",
         description: "指定 node session 用户与 Agent 消息索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/session/tools",
+        path: "nodes/{node_path}/session/tools",
         description: "指定 node session 工具 ThreadItem 索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/session/writes",
+        path: "nodes/{node_path}/session/writes",
         description: "指定 node session 成功写入类工具 ThreadItem 索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/session/summaries",
+        path: "nodes/{node_path}/session/summaries",
         description: "指定 node session 每轮上下文压缩摘要留档",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/session/terminal",
+        path: "nodes/{node_path}/session/terminal",
         description: "指定 node session 终端输出聚合",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/session/turns",
+        path: "nodes/{node_path}/session/turns",
         description: "Node session turn 列表",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/session/turns/{turn_id}/events.json",
+        path: "nodes/{node_path}/session/turns/{turn_id}/events.json",
         description: "指定 node 单 turn 原始事件投影",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "nodes/{activity_key}/records/{name}",
+        path: "nodes/{node_path}/records/{name}",
         description: "指定 node 的可写 journey record overlay",
         kind: LifecyclePathKind::File,
         virtual_entry: false,
@@ -322,8 +322,8 @@ mod tests {
         assert!(paths.contains(&"session/conclusions"));
         assert!(paths.contains(&"session/items"));
         assert!(paths.contains(&"session/summaries"));
-        assert!(paths.contains(&"nodes/{activity_key}/session/conclusions"));
-        assert!(paths.contains(&"nodes/{activity_key}/session/tools"));
+        assert!(paths.contains(&"nodes/{node_path}/session/conclusions"));
+        assert!(paths.contains(&"nodes/{node_path}/session/tools"));
         assert_eq!(paths.len(), LIFECYCLE_PATH_CATALOG.len());
     }
 

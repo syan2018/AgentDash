@@ -17,6 +17,7 @@ use crate::session::construction::RuntimeContextInspectionPlan;
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::UserPromptInput;
 use crate::vfs::build_lifecycle_mount_with_ports;
+use crate::workflow::LifecycleMountSurface;
 
 /// 把 `SessionAssemblyBuilder` 的累积声明合并进 construction provider handoff。
 ///
@@ -133,18 +134,13 @@ impl SessionAssemblyBuilder {
     }
 
     /// 在已有 VFS 上追加 lifecycle mount（story step activation 场景）。
-    pub(super) fn append_lifecycle_mount(
-        mut self,
-        run_id: Uuid,
-        graph_instance_id: Uuid,
-        lifecycle_key: &str,
-        writable_port_keys: &[String],
-    ) -> Self {
+    pub(super) fn append_lifecycle_mount(mut self, surface: LifecycleMountSurface<'_>) -> Self {
         let lifecycle_mount = build_lifecycle_mount_with_ports(
-            run_id,
-            graph_instance_id,
-            lifecycle_key,
-            writable_port_keys,
+            surface.run_id,
+            surface.orchestration_id,
+            surface.node_path,
+            surface.lifecycle_key,
+            &surface.writable_port_keys,
         );
         let mut overlay = Vfs::default();
         overlay.mounts.push(lifecycle_mount);

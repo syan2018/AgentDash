@@ -22,7 +22,8 @@ use super::session_association::ActivityRuntimeAssociationResolver;
 #[derive(Debug, Clone)]
 pub struct ActiveWorkflowProjection {
     pub run: LifecycleRun,
-    pub graph_instance_id: uuid::Uuid,
+    pub orchestration_id: uuid::Uuid,
+    pub node_path: String,
     pub lifecycle: WorkflowGraph,
     pub active_activity: ActivityDefinition,
     pub active_attempt: ActivityAttemptState,
@@ -193,7 +194,8 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
     let (active_procedure_key, active_node_type) = derive_node_facts(&active_activity);
     ActiveWorkflowProjection {
         run,
-        graph_instance_id: activity_state.graph_instance_id,
+        orchestration_id: uuid::Uuid::new_v4(),
+        node_path: "implement".to_string(),
         lifecycle,
         active_activity,
         active_attempt,

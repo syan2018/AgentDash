@@ -89,15 +89,23 @@ impl MountProviderRegistryBuilder {
     /// Register the application-layer built-in providers (inline_fs, lifecycle_vfs, canvas_fs).
     pub fn with_builtins(
         mut self,
-        _lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
+        lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
         canvas_repo: Arc<dyn agentdash_domain::canvas::CanvasRepository>,
         inline_file_repo: Arc<dyn agentdash_domain::inline_file::InlineFileRepository>,
         routine_execution_repo: Arc<dyn agentdash_domain::routine::RoutineExecutionRepository>,
         skill_asset_repo: Arc<dyn agentdash_domain::skill_asset::SkillAssetRepository>,
-        _session_persistence: Arc<dyn crate::session::SessionPersistence>,
+        session_persistence: Arc<dyn crate::session::SessionPersistence>,
     ) -> Self {
         self.registry.register(Arc::new(
             super::provider_inline::InlineFsMountProvider::new(inline_file_repo.clone()),
+        ));
+        self.registry.register(Arc::new(
+            super::provider_lifecycle::LifecycleMountProvider::new(
+                lifecycle_run_repo,
+                inline_file_repo.clone(),
+                skill_asset_repo.clone(),
+                session_persistence,
+            ),
         ));
         self.registry.register(Arc::new(
             super::provider_routine::RoutineMountProvider::new(

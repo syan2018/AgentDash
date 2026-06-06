@@ -5,7 +5,9 @@
 
 use agentdash_spi::Vfs;
 
-use crate::vfs::build_lifecycle_mount_with_activity_scope;
+use uuid::Uuid;
+
+use crate::vfs::build_lifecycle_mount_with_node_scope;
 use crate::workflow::projection::ActiveWorkflowProjection;
 
 fn empty_vfs() -> Vfs {
@@ -27,14 +29,37 @@ pub fn writable_port_keys_for_active_workflow(workflow: &ActiveWorkflowProjectio
         .collect()
 }
 
+pub struct LifecycleMountSurface<'a> {
+    pub run_id: Uuid,
+    pub orchestration_id: Uuid,
+    pub node_path: &'a str,
+    pub lifecycle_key: &'a str,
+    pub attempt: u32,
+    pub writable_port_keys: Vec<String>,
+}
+
+pub fn lifecycle_mount_surface_for_active_workflow(
+    workflow: &ActiveWorkflowProjection,
+) -> LifecycleMountSurface<'_> {
+    LifecycleMountSurface {
+        run_id: workflow.run.id,
+        orchestration_id: workflow.orchestration_id,
+        node_path: &workflow.node_path,
+        lifecycle_key: &workflow.lifecycle.key,
+        attempt: workflow.active_attempt.attempt,
+        writable_port_keys: writable_port_keys_for_active_workflow(workflow),
+    }
+}
+
 pub fn append_active_workflow_lifecycle_mount(vfs: &mut Vfs, workflow: &ActiveWorkflowProjection) {
-    let mount = build_lifecycle_mount_with_activity_scope(
-        workflow.run.id,
-        workflow.graph_instance_id,
-        &workflow.lifecycle.key,
-        &writable_port_keys_for_active_workflow(workflow),
-        Some(&workflow.active_activity.key),
-        Some(workflow.active_attempt.attempt),
+    let surface = lifecycle_mount_surface_for_active_workflow(workflow);
+    let mount = build_lifecycle_mount_with_node_scope(
+        surface.run_id,
+        surface.orchestration_id,
+        surface.node_path,
+        surface.lifecycle_key,
+        &surface.writable_port_keys,
+        Some(surface.attempt),
     );
 
     if let Some(existing) = vfs
@@ -132,7 +157,8 @@ mod tests {
 
         ActiveWorkflowProjection {
             run,
-            graph_instance_id: activity_state.graph_instance_id,
+            orchestration_id: uuid::Uuid::new_v4(),
+            node_path: "plan".to_string(),
             lifecycle,
             active_activity: activity,
             active_attempt,
@@ -169,8 +195,8 @@ mod tests {
         assert_eq!(
             lifecycle.root_ref,
             format!(
-                "lifecycle://run/{}/graph/{}",
-                workflow.run.id, workflow.graph_instance_id
+                "lifecycle://run/{}/orchestration/{}/node/{}",
+                workflow.run.id, workflow.orchestration_id, workflow.node_path
             )
         );
         assert!(lifecycle.capabilities.contains(&MountCapability::Write));
@@ -190,7 +216,13 @@ mod tests {
         let base = Vfs {
             mounts: vec![
                 workspace_mount(),
-                build_lifecycle_mount_with_ports(stale_run_id, Uuid::new_v4(), "stale", &[]),
+                build_lifecycle_mount_with_ports(
+                    stale_run_id,
+                    Uuid::new_v4(),
+                    "stale-node",
+                    "stale",
+                    &[],
+                ),
             ],
             default_mount_id: Some("main".to_string()),
             source_project_id: None,
@@ -210,8 +242,8 @@ mod tests {
         assert_eq!(
             lifecycle_mounts[0].root_ref,
             format!(
-                "lifecycle://run/{}/graph/{}",
-                workflow.run.id, workflow.graph_instance_id
+                "lifecycle://run/{}/orchestration/{}/node/{}",
+                workflow.run.id, workflow.orchestration_id, workflow.node_path
             )
         );
         assert_eq!(vfs.default_mount_id.as_deref(), Some("main"));

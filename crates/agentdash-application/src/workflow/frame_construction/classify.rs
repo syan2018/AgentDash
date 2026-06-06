@@ -30,8 +30,8 @@ pub(super) async fn route_and_compose(
         return super::composer_story::compose(svc, &frame, agent, run, story_id, &input).await;
     }
 
-    // 3. lifecycle node (graph_instance + activity_key 同时存在)
-    if frame.graph_instance_id.is_some() && frame.activity_key.is_some() {
+    // 3. lifecycle node (由 RuntimeSessionExecutionAnchor 的 orchestration binding 决定)
+    if has_orchestration_anchor(svc, input.session_id.as_str()).await? {
         return super::composer_lifecycle_node::compose(svc, &frame, agent, run, &input).await;
     }
 
@@ -70,6 +70,22 @@ async fn has_task_association(
     Ok(associations
         .iter()
         .any(|assoc| assoc.subject_kind == "task"))
+}
+
+async fn has_orchestration_anchor(
+    svc: &FrameConstructionService,
+    runtime_session_id: &str,
+) -> Result<bool, ConnectorError> {
+    let anchor = svc
+        .repos
+        .execution_anchor_repo
+        .find_by_session(runtime_session_id)
+        .await
+        .map_err(connector_internal)?;
+    Ok(
+        anchor
+            .is_some_and(|anchor| anchor.orchestration_id.is_some() && anchor.node_path.is_some()),
+    )
 }
 
 async fn resolve_story_association(

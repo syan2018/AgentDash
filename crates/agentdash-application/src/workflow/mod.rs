@@ -1,6 +1,4 @@
 pub(crate) mod activity_activation;
-mod activity_run;
-pub mod agent_executor;
 pub mod agent_message;
 pub mod agent_steering;
 mod catalog;
@@ -24,7 +22,6 @@ mod project_agent_session_start;
 pub mod projection;
 pub(crate) mod run;
 pub mod runtime_launch;
-pub mod scheduler;
 mod session_association;
 mod session_run_context_resolver;
 mod subject_execution_control;
@@ -34,13 +31,6 @@ pub mod tools;
 pub(crate) use activity_activation::KickoffPromptFragment;
 pub(crate) use activity_activation::{
     ActivityActivation, ActivityActivationInput, activate_activity_with_platform,
-    agent_mcp_entries_from_servers, build_capability_state_for_activation,
-};
-pub use activity_run::{ActivityGraphInstanceExecutionResult, ActivityLifecycleRunService};
-pub use agent_executor::{
-    AgentActivityAssignmentTarget, AgentActivityExecutorLauncher, AgentActivityLaunchContext,
-    AgentActivityRuntimePort, AgentActivitySessionPort, ContinueRootExecutionPolicy,
-    RuntimeSessionDeliveryPolicy,
 };
 pub use agent_message::{
     LifecycleAgentMessageCommand, LifecycleAgentMessageDelivery, LifecycleAgentMessageDeliveryPort,
@@ -68,7 +58,7 @@ pub use dispatch_service::{
 pub use engine::{ActivityEvent, LifecycleEngine, LifecycleEngineError};
 pub use error::WorkflowApplicationError;
 pub use execution_log::{
-    ActivityAttemptArtifactScope, ActivityPortArtifactRef, load_scoped_port_output_map,
+    RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef, load_scoped_port_output_map,
     materialize_activity_summary,
 };
 pub use frame_builder::AgentFrameBuilder;
@@ -77,7 +67,8 @@ pub use frame_hook_runtime::AgentFrameHookRuntime;
 pub use frame_surface::{AgentFrameSurfaceExt, FrameContextBundleSummary};
 pub use graph_resolver::{ResolvedWorkflowGraph, WorkflowGraphResolver};
 pub use lifecycle::mount::{
-    append_active_workflow_lifecycle_mount, ensure_active_workflow_lifecycle_mount,
+    LifecycleMountSurface, append_active_workflow_lifecycle_mount,
+    ensure_active_workflow_lifecycle_mount, lifecycle_mount_surface_for_active_workflow,
     writable_port_keys_for_active_workflow,
 };
 pub use lifecycle_gate_service::LifecycleGateService;
@@ -102,10 +93,6 @@ pub use projection::{
 };
 pub use run::select_active_run;
 pub use runtime_launch::{FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface};
-pub use scheduler::{
-    ActivityExecutorLaunchOutcome, ActivityExecutorLauncher, ActivityExecutorScheduler,
-    ActivityExecutorStartError,
-};
 pub use session_association::{
     LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,
     build_lifecycle_node_label, lifecycle_activity_parts_from_label,

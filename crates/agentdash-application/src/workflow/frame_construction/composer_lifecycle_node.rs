@@ -18,9 +18,52 @@ pub(super) async fn compose(
     input: &SessionConstructionProviderInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let command = &input.command;
-    let graph_instance_id = frame.graph_instance_id.ok_or_else(|| {
-        ConnectorError::InvalidConfig(format!("AgentFrame {} 缺少 graph_instance_id", frame.id))
+    let anchor = svc
+        .repos
+        .execution_anchor_repo
+        .find_by_session(input.session_id.as_str())
+        .await
+        .map_err(connector_internal)?
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(format!(
+                "RuntimeSession {} 缺少 orchestration anchor",
+                input.session_id
+            ))
+        })?;
+    let orchestration_id = anchor.orchestration_id.ok_or_else(|| {
+        ConnectorError::InvalidConfig(format!(
+            "RuntimeSession {} anchor 缺少 orchestration_id",
+            input.session_id
+        ))
     })?;
+    let node_path = anchor.node_path.clone().ok_or_else(|| {
+        ConnectorError::InvalidConfig(format!(
+            "RuntimeSession {} anchor 缺少 node_path",
+            input.session_id
+        ))
+    })?;
+    let attempt = anchor.node_attempt.unwrap_or(1);
+    let orchestration = run
+        .orchestrations
+        .iter()
+        .find(|item| item.orchestration_id == orchestration_id)
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(format!(
+                "LifecycleRun {} 中不存在 orchestration {}",
+                run.id, orchestration_id
+            ))
+        })?;
+    let plan_node = orchestration
+        .plan_snapshot
+        .nodes
+        .iter()
+        .find(|item| item.node_path == node_path)
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(format!(
+                "Orchestration {} 中不存在 node_path `{}`",
+                orchestration_id, node_path
+            ))
+        })?;
     let graph_id = run.root_graph_id.ok_or_else(|| {
         ConnectorError::InvalidConfig(format!("LifecycleRun {} 缺少 root_graph_id", run.id))
     })?;
@@ -31,17 +74,14 @@ pub(super) async fn compose(
         .await
         .map_err(connector_internal)?
         .ok_or_else(|| ConnectorError::InvalidConfig(format!("WorkflowGraph {graph_id} 不存在")))?;
-    let activity_key = frame.activity_key.clone().ok_or_else(|| {
-        ConnectorError::InvalidConfig(format!("AgentFrame {} 缺少 activity_key", frame.id))
-    })?;
     let activity = lifecycle
         .activities
         .iter()
-        .find(|item| item.key == activity_key)
+        .find(|item| item.key == plan_node.node_id || item.key == plan_node.node_path)
         .ok_or_else(|| {
             ConnectorError::InvalidConfig(format!(
-                "WorkflowGraph {} 中不存在 activity `{activity_key}`",
-                lifecycle.id
+                "WorkflowGraph {} 中不存在 orchestration node `{}` 对应的 activity",
+                lifecycle.id, plan_node.node_path
             ))
         })?;
     let workflow = match &activity.executor {
@@ -58,14 +98,6 @@ pub(super) async fn compose(
         .executor_config
         .clone()
         .or_else(|| frame.typed_execution_profile());
-    let attempt = svc
-        .repos
-        .execution_anchor_repo
-        .find_by_session(input.session_id.as_str())
-        .await
-        .map_err(connector_internal)?
-        .and_then(|anchor| anchor.node_attempt)
-        .unwrap_or(1);
     let builder =
         frame_builder_from_existing(frame, input.session_id.as_str(), command.reason_tag())?;
     let (builder, extras) = compose_lifecycle_node_to_frame_with_audit(
@@ -74,7 +106,8 @@ pub(super) async fn compose(
         svc.platform_config.as_ref(),
         LifecycleNodeSpec {
             run: &run,
-            graph_instance_id,
+            orchestration_id,
+            node_path: &node_path,
             attempt,
             lifecycle: &lifecycle,
             activity,

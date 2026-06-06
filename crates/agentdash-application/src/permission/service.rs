@@ -308,12 +308,6 @@ impl PermissionGrantService {
         if let Some(procedure_id) = current_frame.procedure_id {
             builder = builder.with_procedure(AgentProcedureRef::ById(procedure_id));
         }
-        if let (Some(graph_instance_id), Some(activity_key)) = (
-            current_frame.graph_instance_id,
-            current_frame.activity_key.clone(),
-        ) {
-            builder = builder.with_graph_instance(graph_instance_id, activity_key);
-        }
         if let Some(context) = current_frame.context_slice_json.clone() {
             builder = builder.with_context(context);
         }

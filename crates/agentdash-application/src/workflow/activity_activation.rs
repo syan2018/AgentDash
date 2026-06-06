@@ -36,7 +36,7 @@ use crate::platform_config::PlatformConfig;
 use crate::session::SessionCapabilityService;
 use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
 use crate::session::types::AgentFrameRuntimeTarget;
-use crate::vfs::build_lifecycle_mount_with_activity_scope;
+use crate::vfs::build_lifecycle_mount_with_node_scope;
 use crate::workflow::frame_builder::AgentFrameBuilder;
 
 /// 激活一个 lifecycle activity 所需的全部纯计算输入。
@@ -55,8 +55,10 @@ pub struct ActivityActivationInput<'a> {
     pub workflow: Option<&'a AgentProcedure>,
     /// lifecycle 的 run_id,用于构建 `lifecycle://<run_id>/artifacts/...` mount。
     pub run_id: Uuid,
-    /// 当前 Activity 所属 graph instance，用于把 lifecycle VFS 绑定到状态事实源。
-    pub graph_instance_id: Uuid,
+    /// 当前 Activity 所属 orchestration instance，用于把 lifecycle VFS 绑定到运行态事实源。
+    pub orchestration_id: Uuid,
+    /// 当前 Activity 在 orchestration runtime 中的稳定 node path。
+    pub node_path: &'a str,
     /// 当前 Activity attempt，用于把 lifecycle VFS artifact 写入绑定到精确 attempt。
     pub attempt: u32,
     /// lifecycle key,lifecycle mount 路径的一部分。
@@ -178,12 +180,12 @@ pub fn activate_activity_with_platform(
         .iter()
         .map(|p| p.key.clone())
         .collect();
-    let lifecycle_mount = build_lifecycle_mount_with_activity_scope(
+    let lifecycle_mount = build_lifecycle_mount_with_node_scope(
         input.run_id,
-        input.graph_instance_id,
+        input.orchestration_id,
+        input.node_path,
         input.lifecycle_key,
         &writable_port_keys,
-        Some(&input.active_activity.key),
         Some(input.attempt),
     );
     let lifecycle_vfs = Vfs {
@@ -468,7 +470,8 @@ mod tests {
             active_activity: &step,
             workflow: None,
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "trellis_dev_task",
             agent_mcp_servers: vec![],
@@ -504,7 +507,8 @@ mod tests {
             active_activity: &step,
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc_admin",
             agent_mcp_servers: vec![],
@@ -537,7 +541,8 @@ mod tests {
             active_activity: &step,
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc_phase",
             agent_mcp_servers: vec![],
@@ -576,7 +581,8 @@ mod tests {
             active_activity: &step,
             workflow: Some(&full_read_workflow),
             run_id,
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc_phase",
             agent_mcp_servers: vec![],
@@ -645,7 +651,8 @@ mod tests {
             active_activity: &step,
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc_phase",
             agent_mcp_servers: vec![],
@@ -707,7 +714,8 @@ mod tests {
             active_activity: &step,
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc",
             agent_mcp_servers: vec![],
@@ -752,7 +760,8 @@ mod tests {
             active_activity: &step,
             workflow: None,
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc",
             agent_mcp_servers: vec![],
@@ -810,7 +819,8 @@ mod tests {
             active_activity: &step,
             workflow: None,
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc",
             agent_mcp_servers: vec![],

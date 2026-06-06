@@ -780,8 +780,13 @@ pub fn normalize_inline_files(
     Ok(normalized)
 }
 
-pub fn build_lifecycle_mount(run_id: Uuid, graph_instance_id: Uuid, lifecycle_key: &str) -> Mount {
-    build_lifecycle_mount_with_ports(run_id, graph_instance_id, lifecycle_key, &[])
+pub fn build_lifecycle_mount(
+    run_id: Uuid,
+    orchestration_id: Uuid,
+    node_path: &str,
+    lifecycle_key: &str,
+) -> Mount {
+    build_lifecycle_mount_with_ports(run_id, orchestration_id, node_path, lifecycle_key, &[])
 }
 
 pub fn build_routine_mount(
@@ -831,26 +836,27 @@ pub fn build_routine_mount(
 /// `artifacts/{port_key}` 仍由 `writable_port_keys` 做路径级白名单控制。
 pub fn build_lifecycle_mount_with_ports(
     run_id: Uuid,
-    graph_instance_id: Uuid,
+    orchestration_id: Uuid,
+    node_path: &str,
     lifecycle_key: &str,
     writable_port_keys: &[String],
 ) -> Mount {
-    build_lifecycle_mount_with_activity_scope(
+    build_lifecycle_mount_with_node_scope(
         run_id,
-        graph_instance_id,
+        orchestration_id,
+        node_path,
         lifecycle_key,
         writable_port_keys,
-        None,
         None,
     )
 }
 
-pub fn build_lifecycle_mount_with_activity_scope(
+pub fn build_lifecycle_mount_with_node_scope(
     run_id: Uuid,
-    graph_instance_id: Uuid,
+    orchestration_id: Uuid,
+    node_path: &str,
     lifecycle_key: &str,
     writable_port_keys: &[String],
-    activity_key: Option<&str>,
     attempt: Option<u32>,
 ) -> Mount {
     let capabilities = vec![
@@ -862,14 +868,12 @@ pub fn build_lifecycle_mount_with_activity_scope(
 
     let mut metadata = serde_json::json!({
         "run_id": run_id.to_string(),
-        "graph_instance_id": graph_instance_id.to_string(),
+        "orchestration_id": orchestration_id.to_string(),
+        "node_path": node_path,
         "lifecycle_key": lifecycle_key,
         "writable_port_keys": writable_port_keys,
         "directory_hint": lifecycle_directory_hint()
     });
-    if let Some(activity_key) = activity_key {
-        metadata["activity_key"] = serde_json::json!(activity_key);
-    }
     if let Some(attempt) = attempt {
         metadata["attempt"] = serde_json::json!(attempt);
     }
@@ -878,7 +882,10 @@ pub fn build_lifecycle_mount_with_activity_scope(
         id: "lifecycle".to_string(),
         provider: PROVIDER_LIFECYCLE_VFS.to_string(),
         backend_id: String::new(),
-        root_ref: format!("lifecycle://run/{run_id}/graph/{graph_instance_id}"),
+        root_ref: format!(
+            "lifecycle://run/{run_id}/orchestration/{orchestration_id}/node/{}",
+            crate::workflow::execution_log::encode_node_path_segment(node_path)
+        ),
         capabilities,
         default_write: false,
         display_name: "Lifecycle 执行记录".to_string(),

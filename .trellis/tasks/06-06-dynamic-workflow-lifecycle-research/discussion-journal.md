@@ -50,7 +50,7 @@ Dynamic script
 
 用户继续明确命名边界：`Lifecycle` 是项目核心定义，不能重命名。它是把主 Agent 以及派生/协作 AgentRun 管进同一个共同生命周期容器的方案，核心仍面向主 Agent。已修正 `target-model-sketch.md`，撤回 `OrchestrationRun` / `RunAgent` 建议，保留 `LifecycleRun` 作为顶层容器，将 `LifecycleAgent` 的目标命名收敛为 `AgentRun`，并仅在 Lifecycle 内部引入 `OrchestrationInstance`、`OrchestrationPlanSnapshot`、`PlanActivation`、`RuntimeNodeState` 等状态概念。
 
-用户进一步精确分层：`Lifecycle` 是全部上下文容器，`Orchestration` 是内部状态容器。随后又指出目标模型必须体现一个 Lifecycle 内可以有多个 orchestration 实例同时运行，并质疑 `_jsonb` 是否只是前文惯性。已修正为：`LifecycleRun.orchestrations[]` 是内部状态实例集合，单个元素叫 `OrchestrationInstance`；plan activation、node tree、dispatch lease、journal/cache/resume 放入对应 instance；subject、主 Agent、AgentRun、AgentFrame、权限、trace 归属仍属于 Lifecycle context。`_jsonb` 不作为领域命名规范，只保留为物理列类型可能性。
+用户进一步精确分层：`Lifecycle` 是全部上下文容器，`Orchestration` 是内部状态容器。随后又指出目标模型必须体现一个 Lifecycle 内可以有多个 orchestration 实例同时运行，并质疑 JSON 存储后缀是否只是前文惯性。已修正为：`LifecycleRun.orchestrations[]` 是内部状态实例集合，单个元素叫 `OrchestrationInstance`；plan activation、node tree、dispatch lease、journal/cache/resume 放入对应 instance；subject、主 Agent、AgentRun、AgentFrame、权限、trace 归属仍属于 Lifecycle context。新增目标字段和新增列统一不使用 `_json` / `_jsonb` 后缀。
 
 后续正式设计已经沉淀为 `design.md` 与 `implement.md`。这两份文档应保持三类信息清晰：
 

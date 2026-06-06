@@ -1,0 +1,11 @@
+{"file":".trellis/tasks/06-06-workflow-graph-compiler/prd.md","reason":"compiler 子任务目标、范围和 review gate。"}
+{"file":".trellis/tasks/06-06-workflow-graph-compiler/design.md","reason":"compiler 边界、映射、diagnostics、fixtures 和 review 问题。"}
+{"file":".trellis/tasks/06-06-workflow-graph-compiler/implement.md","reason":"compiler 后续实施顺序、验证命令和停止条件。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/design.md","reason":"父任务目标架构，定义 graph/script 都编译到 OrchestrationPlanSnapshot。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/follow-up-module-roadmap.md","reason":"后续模块依赖顺序，确认 compiler 依赖 domain contract。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/workflow-graph-compiler-plan.md","reason":"WorkflowGraph compiler 映射、错误模型、fixtures 和风险研究。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/current-code-context.md","reason":"当前 WorkflowGraph / Activity runtime / persistence 代码事实地图。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"当前 workflow vocabulary 和 Activity runtime 不变量。"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"Activity executor、FunctionRun、人类决策和 output artifact 现状。"}
+{"file":".trellis/spec/backend/workflow/lifecycle-edge.md","reason":"edge kind、artifact implies flow 和 advancement 语义。"}
+{"file":".trellis/spec/frontend/workflow-activity-lifecycle.md","reason":"前端 graph definition 字段和 mapper strictness。"}

@@ -184,7 +184,7 @@ flowchart TD
 
 不满足这些理由的对象，应优先作为 owning aggregate 内的结构化 JSON 字段：node tree、plan activation、agent invocation、artifact refs、变量摘要、ready queue、budget summary、UI progress projection 都可以先内聚在 `LifecycleRun` aggregate 内。
 
-这里不再用 `_jsonb` 作为领域字段后缀。`_jsonb` 只应该是物理数据库列在明确采用 PostgreSQL `jsonb` 类型时的实现细节；当前项目数据库规范仍写着“复杂值对象以 JSON 文本存入 `TEXT`”，现有 schema 也主要使用 `*_json` / `*_state_json`。目标文档中的领域字段应写 `context`、`orchestrations`、`view_projection`；物理列名可按最终 migration 决定为 `context_json` / `orchestrations_json`，或在迁移到原生 `jsonb` 时使用对应列类型。
+这里不再用 `_json` / `_jsonb` 作为新目标字段后缀。当前项目数据库规范写着“复杂值对象以 JSON 文本存入 `TEXT`”，但 JSON 只是存储方式，不应该反向污染 `LifecycleRun` 的目标命名。新增目标字段和本轮新增列统一写 `context`、`orchestrations`、`view_projection`；旧 schema 中已有的 `activity_state_json` 等列只作为历史事实和迁移来源看待。
 
 ### 推荐的最小物理仓储
 

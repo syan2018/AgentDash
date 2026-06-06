@@ -1,6 +1,6 @@
 # Dynamic Workflow / Lifecycle 实施计划草案
 
-本文是 planning 阶段的实施拆解。执行前需要用户 review，并通过 Trellis task start 流程进入实现。
+本文是规划阶段的实施拆解。执行前需要用户评审，并通过 Trellis task start 流程进入实现。
 
 ## 推荐拆分
 
@@ -117,9 +117,9 @@ ExecutorRunRef extension for effect refs if needed
 ### 持久化策略
 
 1. 在 `lifecycle_runs` 增加目标 aggregate 字段：
-   - `context_json`
-   - `orchestrations_json`
-   - `view_projection_json`
+   - `context`
+   - `orchestrations`
+   - `view_projection`
    - 视需要增加 `version` / `seq`
 
 2. 这些表在第一批作为迁移来源保留：

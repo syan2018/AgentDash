@@ -1,14 +1,14 @@
-# Research: common orchestration runtime / repository convergence plan
+# 研究：Common Orchestration Runtime 与仓储收敛计划
 
-- Query: 为后续 `common-orchestration-runtime-static-graph` 规划 common runtime 与 repository convergence，复核当前 engine / scheduler / activity_run / agent_executor / lifecycle_run_view_builder / persistence 事实，并明确从 `WorkflowGraphInstance.activity_state` 迁移到 `OrchestrationInstance` runtime 的阶段、状态归属、风险和测试。
-- Scope: mixed
-- Date: 2026-06-06
+- 查询：为后续 `common-orchestration-runtime-static-graph` 规划 common runtime 与 repository convergence，复核当前 engine / scheduler / activity_run / agent_executor / lifecycle_run_view_builder / persistence 事实，并明确从 `WorkflowGraphInstance.activity_state` 迁移到 `OrchestrationInstance` runtime 的阶段、状态归属、风险和测试。
+- 范围：源码、spec 与任务文档。
+- 日期：2026-06-06
 
-## Findings
+## 结论
 
-### Files found
+### 已复核文件
 
-| Path | Description |
+| 路径 | 说明 |
 | --- | --- |
 | `.trellis/workflow.md` | Trellis 阶段与 research 落盘要求；当前请求属于 Phase 1.2 research 子代理工作。 |
 | `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/prd.md` | 任务目标与 planning gate；要求本任务只保存 research / design / plan，不进入代码实现。 |
@@ -44,7 +44,7 @@
 | `packages/app-web/src/stores/lifecycleStore.ts` | 前端 lifecycle store 当前按 run、graph instance、agent、frame、runtime trace 归一化。 |
 | `crates/agentdash-contracts/src/workflow.rs` | 当前 TS/Rust contract：`LifecycleRunView` 暴露 `workflow_graph_instances` 与 `active_activity_refs`。 |
 
-### Current runtime facts
+### 当前 Runtime 事实
 
 当前静态定义不是普通 DAG。`WorkflowGraph` 已包含 `entry_activity_key`、`activities`、`transitions`（`crates/agentdash-domain/src/workflow/entity.rs:73`），`ActivityDefinition` 已有 executor、input/output ports、completion、iteration、join policy（`crates/agentdash-domain/src/workflow/value_objects/activity_def.rs:7`），executor 覆盖 Agent / Function / Human（`crates/agentdash-domain/src/workflow/value_objects/activity_def.rs:26`），function 又覆盖 API request / bash exec（`crates/agentdash-domain/src/workflow/value_objects/activity_def.rs:95`），transition 覆盖 condition、artifact binding、max traversal（`crates/agentdash-domain/src/workflow/value_objects/activity_def.rs:186`）。因此 common runtime IR 的静态 graph 子集至少要表达 executor identity、completion、attempt、condition、artifact exchange、join/iteration。
 
@@ -70,7 +70,7 @@ Terminal callback 现在通过 session terminal effect outbox 调用 workflow or
 
 当前 persistence 已经分散运行态：`lifecycle_runs` 只含 status/execution_log（`crates/agentdash-infrastructure/migrations/0001_init.sql:282`），`lifecycle_workflow_instances` 含 `activity_state_json`（`crates/agentdash-infrastructure/migrations/0001_init.sql:305`），`activity_execution_claims` 是 durable claim/lease（`crates/agentdash-infrastructure/migrations/0001_init.sql:1`），`agent_assignments` 是 attempt -> agent/frame 绑定（`crates/agentdash-infrastructure/migrations/0001_init.sql:15`），`runtime_session_execution_anchors` 是 session 反查索引（`crates/agentdash-infrastructure/migrations/0001_init.sql:533`）。Postgres repository 也按这些表和 traits 拆开（`crates/agentdash-domain/src/workflow/repository.rs:87`、`crates/agentdash-domain/src/workflow/repository.rs:103`、`crates/agentdash-domain/src/workflow/repository.rs:137`、`crates/agentdash-domain/src/workflow/repository.rs:188`）。
 
-### State placement for convergence
+### 收敛后的状态归属
 
 | State / fact | Target placement | Reason |
 | --- | --- | --- |
@@ -94,9 +94,9 @@ Terminal callback 现在通过 session terminal effect outbox 调用 workflow or
 | Historical `AgentAssignment` | AgentInvocation projection / trace binding source, not owning runtime state | 目标 runtime node 绑定 agent/frame，assignment 可降级为投影或被 trace anchor 替代。 |
 | `LifecycleRun.execution_log` | Summary projection or human-readable audit summary | 不够表达恢复事实，不应作为 orchestration journal。 |
 
-### Transition plan from `WorkflowGraphInstance.activity_state`
+### 从 `WorkflowGraphInstance.activity_state` 迁移的阶段计划
 
-#### Phase A: Static graph runtime contract preflight
+#### Phase A：静态 graph runtime 合同预备
 
 Precondition: `OrchestrationPlanSnapshot` / `RuntimeNodeState` / `OrchestrationInstance` domain contract and `WorkflowGraph -> OrchestrationPlanSnapshot` compiler must exist. If not, do not start common runtime by editing old engine directly.
 
@@ -112,7 +112,7 @@ Exit criteria:
 - A root static graph can initialize `OrchestrationInstance(role=root)` with entry ready node.
 - Activity-specific `ActivityLifecycleRunState` is no longer needed inside the new runtime core.
 
-#### Phase B: Dual-write only as short-lived migration instrumentation
+#### Phase B：短期迁移观测才允许 dual-write
 
 Because the project is not live, avoid long compatibility layers. During one implementation slice, short-lived dual-write is acceptable only to prove parity:
 
@@ -122,7 +122,7 @@ Because the project is not live, avoid long compatibility layers. During one imp
 
 Do not allow new scheduler/terminal paths to read both old and new state with fallback logic. That would create two facts.
 
-#### Phase C: Scheduler convergence
+#### Phase C：Scheduler 收敛
 
 - Replace `ActivityExecutorScheduler` input from `ActivityLifecycleRunState` to `OrchestrationInstance` snapshot.
 - Claim ready `RuntimeNodeState` by `orchestration_id + node_path + attempt`, not `graph_instance_id + activity_key + attempt`.
@@ -130,14 +130,14 @@ Do not allow new scheduler/terminal paths to read both old and new state with fa
 - Map executor start result back to `RuntimeNodeState.executor_run_ref` and journal facts.
 - Preserve retryable start failure semantics: current engine returns retryable start failure to Ready, non-retryable to Failed (`crates/agentdash-application/src/workflow/engine.rs:178`).
 
-#### Phase D: Executor convergence
+#### Phase D：Executor 收敛
 
 - Introduce executor launch input shaped by `PlanNode.executor`, then adapt existing `AgentActivityExecutorLauncher` logic.
 - Agent nodes should still create/reuse Lifecycle agent/frame/runtime session through existing port logic, but write `AgentInvocation` under runtime node and `RuntimeTraceAnchor` with `orchestration_id/node_path`.
 - Function nodes should still execute through `FunctionRunner`, return `FunctionRun` / effect refs, and produce terminal node events immediately.
 - Human nodes should become `human_gate` node states; existing `HumanDecision` ref can be retained as executor ref.
 
-#### Phase E: Terminal / command resolver convergence
+#### Phase E：Terminal / command resolver 收敛
 
 - Replace `resolve_activity_session_association` with a runtime-node resolver:
 
@@ -152,7 +152,7 @@ runtime_session_id
 - Session terminal callback must remain outbox-driven: session terminal fact is durable before workflow callback, and callback failure must not roll back session terminal.
 - Terminal event application must be idempotent by journal seq or node terminal status; duplicate tool completion + later session terminal should not advance successors twice.
 
-#### Phase F: View / repository convergence
+#### Phase F：View / repository 收敛
 
 - Make `LifecycleRunView` builder read from `LifecycleRun.orchestrations[]` / `view_projection`.
 - Generate current `workflow_graph_instances` and `active_activity_refs` from root static graph orchestration until frontend has native orchestration tree UI.
@@ -161,9 +161,9 @@ runtime_session_id
 - Keep `runtime_session_execution_anchors` or renamed `runtime_trace_anchors` as a narrow index, adding `orchestration_id` and `node_path`.
 - Add migrations as new files per database spec; do not edit `0001_init.sql` in a normal implementation task.
 
-### Risk points
+### 风险点
 
-#### UI projection
+#### UI Projection
 
 The existing contract requires `LifecycleRunView.workflow_graph_instances[]` and `active_activity_refs[]` (`crates/agentdash-contracts/src/workflow.rs:834`), and frontend store ingests graph instances from the run view (`packages/app-web/src/stores/lifecycleStore.ts:129`). If runtime switches to orchestration snapshot without a graph-compatible projection, current UI loses active node display and graph instance indexing.
 
@@ -173,7 +173,7 @@ Mitigation:
 - Projection must be read-only; commands should use runtime node refs or session commands, not `ActivityAttemptView`.
 - Introduce native orchestration progress fields only after the old projection is stable.
 
-#### Terminal callback
+#### Terminal Callback
 
 Current callback path assumes runtime session maps to `AgentAssignment` and Activity attempt (`crates/agentdash-application/src/workflow/session_association.rs:178`). It also runs from terminal effect outbox after terminal event persistence (`crates/agentdash-application/src/session/terminal_effects.rs:158`). New runtime must preserve the outbox boundary but replace the resolver.
 
@@ -189,7 +189,7 @@ Mitigation:
 - Anchor must be written before runtime session launch is accepted.
 - Dead-letter callback should be visible in projection and retryable without replaying session terminal fact.
 
-#### Function executor / local effects
+#### Function Executor / Local Effects
 
 Function executor currently returns `FunctionRun` and immediate terminal event (`crates/agentdash-application/src/workflow/agent_executor.rs:910`), and `FunctionRunner` owns raw API/bash side effects (`crates/agentdash-spi/src/platform/function_runner.rs:36`). New runtime must not treat function node as an AgentRun-less oddity.
 
@@ -205,7 +205,7 @@ Mitigation:
 - Model function/local effect as typed `ExecutorSpec` with capability key and audit refs.
 - Store large effect payloads as refs when they exceed a small threshold; node state keeps summary/result ref.
 
-#### Cancel / pause / retry
+#### Cancel / Pause / Retry
 
 Cancel currently spans ActivityEvent, claim update, assignment release, and runtime delivery command (`crates/agentdash-application/src/workflow/subject_execution_control.rs:83`、`crates/agentdash-application/src/workflow/subject_execution_control.rs:249`). Pause/resume does not exist as orchestration command in current code; `LifecycleGateService` is durable wait/resume for gates, not whole workflow pause (`crates/agentdash-application/src/workflow/lifecycle_gate_service.rs:1`). Retry exists only as scheduler start failure semantics and attempt policy, not as user-facing node retry.
 
@@ -222,7 +222,7 @@ Mitigation:
 - Active node cancel should produce per-node cancellation intents and runtime delivery commands.
 - Retry should create a new node attempt, invalidate or explicitly reuse cache based on plan policy, and keep old trace refs.
 
-### Minimum test plan
+### 最小测试计划
 
 1. Domain snapshot roundtrip
    - `LifecycleRun` persists 0, 1, and multiple `OrchestrationInstance` entries.
@@ -257,9 +257,9 @@ Mitigation:
    - `lifecycleStore.ingestLifecycleRun` continues to normalize run/graph/agent/frame data.
    - When native orchestration progress fields are added, mapper rejects missing required fields and unknown enum values at boundary.
 
-### Source/spec review index for implement agent
+### 实现代理源码 / Spec 复核索引
 
-Implementation should re-open these before editing:
+实现前应重新打开：
 
 - `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/design.md`
 - `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/implement.md`
@@ -293,7 +293,7 @@ Implementation should re-open these before editing:
 - `packages/app-web/src/stores/lifecycleStore.ts`
 - `packages/app-web/src/services/lifecycle.ts`
 
-### Related specs
+### 相关 Specs
 
 - `.trellis/spec/backend/workflow/architecture.md`
 - `.trellis/spec/backend/workflow/activity-lifecycle.md`
@@ -305,15 +305,15 @@ Implementation should re-open these before editing:
 - `.trellis/spec/backend/database-guidelines.md`
 - `.trellis/spec/frontend/workflow-activity-lifecycle.md`
 
-### External references
+### 外部资料
 
 - `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-dynamic-workflows-official-doc-zh-cn.md` — 用户贴入的 Claude Code Dynamic Workflows 官方文档中文页文本副本。
 - `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-dynamic-workflows-article-zhihu-simpread.md` — 用户贴入的中文调研文章副本。
 - `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-workflow-behavior-coverage.md` — 基于上述两份资料抽象出的行为覆盖矩阵。
 
-No live web verification was performed. This research intentionally uses the task-local source copies as the behavior baseline.
+本研究未执行实时联网复核，刻意以任务内保存的资料副本作为行为基准。
 
-## Caveats / Not Found
+## 注意事项 / 未发现
 
 - `python ./.trellis/scripts/task.py current --source` returned no active task in this Codex session, but the user prompt explicitly provided the task path and output path; this file was written only under that requested task's `research/` directory.
 - Source search did not find implemented `OrchestrationInstance` / `OrchestrationPlanSnapshot` / `RuntimeNodeState` / `StateExchangeSnapshot` domain types in production code; those concepts currently exist in task design/research artifacts, not code.

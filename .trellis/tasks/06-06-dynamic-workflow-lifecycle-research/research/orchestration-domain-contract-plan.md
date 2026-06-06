@@ -1,10 +1,10 @@
-# Research: Orchestration domain contract / migration plan
+# 研究：Orchestration 领域合同与 migration 计划
 
-- Query: 复核当前 Lifecycle / WorkflowGraph / Activity runtime / ExecutorRunRef / repository / migration 事实，并为下一阶段 `orchestration-domain-contract` 给出最小 domain contract、持久化字段、repository 更新点、迁移来源边界、测试计划和风险索引。
-- Scope: mixed
-- Date: 2026-06-06
+- 查询：复核当前 Lifecycle / WorkflowGraph / Activity runtime / ExecutorRunRef / repository / migration 事实，并为下一阶段 `orchestration-domain-contract` 给出最小 domain contract、持久化字段、repository 更新点、迁移来源边界、测试计划和风险索引。
+- 范围：代码事实、任务文档与后端规范。
+- 日期：2026-06-06
 
-## Findings
+## 结论
 
 ### 结论摘要
 
@@ -13,9 +13,9 @@
 最小可交付闭包建议是：
 
 - 在 domain 层新增可序列化 orchestration value objects：`LifecycleContext`、`AgentRunRef`、`AgentFrameRef`、`OrchestrationInstance`、`OrchestrationSourceRef`、`OrchestrationStatus`、`OrchestrationPlanSnapshot`、`PlanNode`、`PlanNodeKind`、`ExecutorSpec`、`ActivationRule`、`RuntimeNodeState`、`RuntimeNodeStatus`、`DispatchState`、`StateExchangeSnapshot`、`OrchestrationJournalFact`。
-- 在 `LifecycleRun` aggregate 上新增字段：`context`、`orchestrations`、`view_projection`，物理列建议为 `context_json`、`orchestrations_json`、`view_projection_json`。如果本轮愿意提前铺并发控制，可再加 `orchestration_revision BIGINT NOT NULL DEFAULT 0`，但不要引入 CAS 语义半成品。
+- 在 `LifecycleRun` aggregate 上新增字段：`context`、`orchestrations`、`view_projection`，新增 PostgreSQL 列也使用同名无后缀命名。JSON 文本只是存储方式，不作为字段命名的一部分。如果本轮愿意提前铺并发控制，可再加 `orchestration_revision BIGINT NOT NULL DEFAULT 0`，但不要引入 CAS 语义半成品。
 - 更新 `LifecycleRunRepository` 的 PostgreSQL row mapping、insert/update/select，证明 `LifecycleRun` 能保存和读取 0..N 个 `OrchestrationInstance`。
-- 保留 `WorkflowGraphInstance.activity_state`、`ActivityExecutionClaim`、`AgentAssignment`、`RuntimeSessionExecutionAnchor` 作为现有 runtime 事实源/lease/index。第一阶段只把它们标定为后续迁移来源，不让 `orchestrations_json` 成为并行运行时事实源。
+- 保留 `WorkflowGraphInstance.activity_state`、`ActivityExecutionClaim`、`AgentAssignment`、`RuntimeSessionExecutionAnchor` 作为现有 runtime 事实源/lease/index。第一阶段只把它们标定为后续迁移来源，不让 `orchestrations` 成为并行运行时事实源。
 
 ### 当前事实复核
 
@@ -124,11 +124,11 @@
 
 ### 序列化边界
 
-- 领域字段不使用 `_json` / `_jsonb` 后缀；只有物理列名使用 `*_json`。
+- 领域字段和本轮新增 PostgreSQL 列都不使用 `_json` / `_jsonb` 后缀；复杂值对象以 JSON 文本存入 `TEXT` 是存储细节。
 - Rust domain 使用 `Uuid`、`DateTime<Utc>`、typed enums/value objects；PostgreSQL 存储使用 `TEXT` JSON，符合数据库规范。
 - Enums 使用 `#[serde(rename_all = "snake_case")]`；多形态 enums 使用 `#[serde(tag = "kind", rename_all = "snake_case")]`。`FunctionActivityExecutorSpec` 当前使用 `type` tag，复用时保持现有 shape。
 - `LifecycleRun.context` 可以引用 current `LifecycleAgent`/`AgentFrame`，但不内嵌完整 frame surface。
-- `OrchestrationPlanSnapshot` 是 audit snapshot，允许内嵌到 `orchestrations_json`；第一阶段不要拆 `orchestration_plan_snapshots` 表。
+- `OrchestrationPlanSnapshot` 是 audit snapshot，允许内嵌到 `orchestrations`；第一阶段不要拆 `orchestration_plan_snapshots` 表。
 - `OrchestrationJournalFact` 是可恢复事实的类型边界；第一阶段没有 append journal 表时，不要把 `LifecycleRun.execution_log` 解释为 journal。
 - `RuntimeNodeState.trace_refs` 只保存 refs，不保存 session event payload。conversation 事实仍归 `session_events`。
 
@@ -140,9 +140,9 @@
 
 ```sql
 ALTER TABLE lifecycle_runs
-    ADD COLUMN IF NOT EXISTS context_json text DEFAULT '{}'::text NOT NULL,
-    ADD COLUMN IF NOT EXISTS orchestrations_json text DEFAULT '[]'::text NOT NULL,
-    ADD COLUMN IF NOT EXISTS view_projection_json text;
+    ADD COLUMN IF NOT EXISTS context text DEFAULT '{}'::text NOT NULL,
+    ADD COLUMN IF NOT EXISTS orchestrations text DEFAULT '[]'::text NOT NULL,
+    ADD COLUMN IF NOT EXISTS view_projection text;
 ```
 
 可选但建议谨慎：
@@ -182,10 +182,10 @@ created_at
 
 `crates/agentdash-infrastructure/src/persistence/postgres/workflow_repository.rs`：
 
-- 更新 `RUN_COLS` / `RUN_INSERT_COLS`，纳入 `context_json`、`orchestrations_json`、`view_projection_json`，以及可选 `orchestration_revision`。
+- 更新 `RUN_COLS` / `RUN_INSERT_COLS`，纳入 `context`、`orchestrations`、`view_projection`，以及可选 `orchestration_revision`。
 - `LifecycleRunRepository::create` bind 新字段，使用 `serde_json::to_string`。
 - `LifecycleRunRepository::update` 更新新字段；如果加 revision，明确是直接写入还是递增，不要让 DB 和 domain 各自维护。
-- `LifecycleRunRow` 增加新列，`TryFrom<LifecycleRunRow>` 用现有 `parse_json_column` 风格解析，错误上下文写成 `lifecycle_runs.context_json` 等。
+- `LifecycleRunRow` 增加新列，`TryFrom<LifecycleRunRow>` 用现有 `parse_json_column` 风格解析，错误上下文写成 `lifecycle_runs.context` 等。
 - 增加 row parse unit test，覆盖 0..N orchestration roundtrip 和 `ExecutorRunRef` variants。
 
 `crates/agentdash-infrastructure/migrations/`：
@@ -203,7 +203,7 @@ created_at
 
 | 当前表/类型 | 第一阶段定位 | 后续迁移目标 |
 | --- | --- | --- |
-| `lifecycle_runs` | 新 contract 的 owning aggregate 物理承载点 | `context_json` / `orchestrations_json` / `view_projection_json` 成为 common runtime aggregate state。 |
+| `lifecycle_runs` | 新 contract 的 owning aggregate 物理承载点 | `context` / `orchestrations` / `view_projection` 成为 common runtime aggregate state。 |
 | `lifecycle_agents` / `LifecycleAgent` | `LifecycleContext.agent_runs` 的来源；目标命名是 AgentRun | 未来可重命名为 AgentRun 或派生 AgentRun index，但第一阶段不改表名。 |
 | `agent_frames` / `AgentFrame` | `LifecycleContext.frame_refs` 的来源 | frame surface 继续独立存储，context 只持 refs。 |
 | `workflow_graphs` / `WorkflowGraph` | `OrchestrationSourceRef::WorkflowGraph` 与未来 compiler input | 编译到 `OrchestrationPlanSnapshot`。 |
@@ -219,11 +219,11 @@ created_at
 ### 第一阶段明确不迁移的事实源
 
 - 不把 scheduler 从 `WorkflowGraphInstance.activity_state` 切到 `LifecycleRun.orchestrations[]`。
-- 不让 `orchestrations_json` 和 `activity_state_json` 同时作为可推进 runtime state。
+- 不让 `orchestrations` 和 `activity_state_json` 同时作为可推进 runtime state。
 - 不把 `ActivityExecutionClaim` rows 回填为 `DispatchState.leases` 的权威数据。
 - 不把 `AgentAssignment` rows 回填为 `AgentInvocation` 的权威数据。
 - 不把 `RuntimeSessionExecutionAnchor` 改成必须携带 orchestration/node refs。
-- 不把 `LifecycleRunView` 改为消费 `view_projection_json`。
+- 不把 `LifecycleRunView` 改为消费 `view_projection`。
 - 不新增 script asset / compiler / runtime primitive。
 - 不把 `LifecycleRun.execution_log` 当作 journal。
 
@@ -240,7 +240,7 @@ Domain unit tests：
 
 Repository / migration tests：
 
-- `LifecycleRunRow` parse unit test：`context_json` / `orchestrations_json` / `view_projection_json` 能解析；坏 JSON 返回带列名的 `DomainError`。
+- `LifecycleRunRow` parse unit test：`context` / `orchestrations` / `view_projection` 能解析；坏 JSON 返回带列名的 `DomainError`。
 - PostgreSQL integration test（沿用现有 optional `test_pg_pool` 风格）：create lifecycle run with 2 orchestrations -> get_by_id -> update -> get_by_id，确认 JSON roundtrip。
 - `pnpm run migration:guard`。
 
@@ -260,26 +260,26 @@ pnpm run contracts:check
 
 ### 风险点
 
-- 双事实源风险：如果第一阶段开始把 scheduler 写入 `orchestrations_json`，而旧 runtime 继续写 `activity_state_json`，后续 bug 会来自两个 snapshot 不一致。
+- 双事实源风险：如果第一阶段开始把 scheduler 写入 `orchestrations`，而旧 runtime 继续写 `activity_state_json`，后续 bug 会来自两个 snapshot 不一致。
 - 过早拆表风险：journal、dispatch lease、runtime node index 都有拆表理由，但现在没有 producer/consumer。先拆会把 repository 边界固化得过早。
 - Agent-only 风险：当前 function/human executor 已是一等事实；新 `PlanNode` 若只围绕 AgentRun 设计，会立刻丢失现有能力。
 - 命名落差风险：目标名 AgentRun 与当前 `LifecycleAgent` 表/类型不同。第一阶段应在 value object 中使用 AgentRun 语义，但不要半途重命名表和 repository。
 - 大 JSON 写冲突风险：`LifecycleRunRepository::update` 当前整行 update；未来 orchestration runtime 高频更新 node state 时需要 CAS、journal 或 lease 表。第一阶段不要假装已经解决并发，只记录 revision 或留待 runtime 阶段。
 - Migration 纪律风险：项目规范要求普通任务新增 migration，不能直接改 `0001_init.sql`。
-- Projection 误用风险：`view_projection_json` 只能是 read projection，不应被 command/service 当作写入输入。
+- Projection 误用风险：`view_projection` 只能是 read projection，不应被 command/service 当作写入输入。
 
-## Files Found
+## 已复核文件
 
-### Task context
+### 任务上下文
 
-- `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/prd.md` - planning gate、目标和验收标准。
+- `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/prd.md` - 规划 gate、目标和验收标准。
 - `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/design.md` - 目标 Lifecycle / Orchestration 架构、核心合同和分阶段方案。
 - `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/implement.md` - 下一阶段子任务拆分与 `orchestration-domain-contract` 候选文件。
 - `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/target-model-sketch.md` - LifecycleContext / OrchestrationInstance 目标模型草案。
 - `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/current-code-context.md` - 当前代码事实地图。
 - `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-workflow-behavior-coverage.md` - Dynamic Workflow 行为覆盖矩阵。
 
-### Specs
+### 规范
 
 - `.trellis/workflow.md` - research artifact 必须持久化，Phase 2 sub-agent 只读上下文后执行。
 - `.trellis/spec/backend/workflow/architecture.md` - 当前 Activity runtime invariants；明确现有 `WorkflowGraphInstance.activity_state` 是当前事实源。
@@ -290,7 +290,7 @@ pnpm run contracts:check
 - `.trellis/spec/backend/database-guidelines.md` - PostgreSQL migration 历史规则、复杂值对象 TEXT JSON、普通任务新增 migration。
 - `.trellis/spec/frontend/workflow-activity-lifecycle.md` - 当前前端 run view 仍以 WorkflowGraphInstance/Activity attempt projection 为主。
 
-### Source and migration
+### 源码与 migration
 
 - `crates/agentdash-domain/src/workflow/entity.rs` - `WorkflowGraph`、`ActivityExecutionClaim`、`LifecycleRun`。
 - `crates/agentdash-domain/src/workflow/workflow_graph_instance.rs` - `WorkflowGraphInstance` 和 activity state 归属校验。
@@ -314,7 +314,7 @@ pnpm run contracts:check
 - `crates/agentdash-contracts/src/workflow.rs` - 当前 generated workflow DTO 仍暴露 Activity state / WorkflowGraphInstance view。
 - `packages/app-web/src/services/lifecycle.ts` - session command API 已走 `/sessions/{runtimeSessionId}/...`。
 
-## Code Patterns
+## 代码模式
 
 - `LifecycleRun` 当前字段与构造器：`crates/agentdash-domain/src/workflow/entity.rs:203`、`crates/agentdash-domain/src/workflow/entity.rs:219`、`crates/agentdash-domain/src/workflow/entity.rs:234`。
 - `LifecycleRun` 当前状态投影与摘要日志：`crates/agentdash-domain/src/workflow/entity.rs:249`、`crates/agentdash-domain/src/workflow/entity.rs:260`。
@@ -360,12 +360,12 @@ pnpm run contracts:check
 - current generated Activity DTO / LifecycleRunView：`crates/agentdash-contracts/src/workflow.rs:411`、`crates/agentdash-contracts/src/workflow.rs:789`、`crates/agentdash-contracts/src/workflow.rs:834`。
 - frontend session command route helper：`packages/app-web/src/services/lifecycle.ts:27`。
 
-## External References
+## 外部资料
 
 - 未联网查询；外部行为参照使用任务内副本：`.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-dynamic-workflows-official-doc-zh-cn.md`、`.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-dynamic-workflows-article-zhihu-simpread.md`。
 - 本轮直接使用的外部资料归纳来自 `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-workflow-behavior-coverage.md`。
 
-## Related Specs
+## 相关 Specs
 
 - `.trellis/spec/backend/workflow/architecture.md`
 - `.trellis/spec/backend/workflow/activity-lifecycle.md`
@@ -375,12 +375,12 @@ pnpm run contracts:check
 - `.trellis/spec/backend/database-guidelines.md`
 - `.trellis/spec/frontend/workflow-activity-lifecycle.md`
 
-## Caveats / Not Found
+## 注意事项 / 未发现
 
 - `task.py current --source` 返回 no active task；本文件按用户显式给出的 `.trellis/tasks/06-06-dynamic-workflow-lifecycle-research` 路径写入，没有猜测其它目录。
 - 当前代码没有 `OrchestrationInstance` / `OrchestrationPlanSnapshot` / `RuntimeNodeState` 等目标类型实现。
 - 当前 migration 目录已有 `0001_init.sql` 与 `0002_runtime_session_anchor_fks.sql`；下一阶段普通实现应新增 `0003_*`，不应修改历史 migration。
 - 没有发现 `lifecycle_orchestration_journal_entries` 或等价 orchestration journal 表。
 - 没有发现 runtime session anchor 中的 `orchestration_id` / `runtime_node_id` / `node_path` 字段。
-- 没有发现 `LifecycleRunView` 消费 `view_projection_json` 的路径；当前前端 projection 仍来自 graph instances、activity state、assignments 和 anchors。
+- 没有发现 `LifecycleRunView` 消费 `view_projection` 的路径；当前前端 projection 仍来自 graph instances、activity state、assignments 和 anchors。
 - 本研究没有运行测试或 migration guard；这是规划文档，不是实现验证结果。

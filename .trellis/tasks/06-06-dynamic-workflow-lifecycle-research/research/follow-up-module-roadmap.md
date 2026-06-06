@@ -1,11 +1,11 @@
-# Follow-up Module Roadmap
+# 后续模块路线图
 
 本文是 Dynamic Workflow / Lifecycle 后续模块的规划汇总入口。它承接已完成的 session-scoped API 机械迁移，并把后续工作拆成可独立验证的模块研究线。
 
 ## 当前状态
 
 - 已完成 `agent-run-api-naming` 的第一步机械迁移：外露 command route 收敛到 `/sessions/{runtime_session_id}/...`。
-- 当前任务已进入 `in_progress`，但后续模块仍以 planning / research 为主，不直接实现代码。
+- 当前任务已进入 `in_progress`，但后续模块仍以规划 / research 为主，不直接实现代码。
 - `.trellis/config.yaml` 存在任务外本地变更，后续提交继续排除。
 - 目标架构仍以 `Lifecycle` 作为完整上下文容器；`Orchestration` 是 `LifecycleRun` 内部的 0..N 状态容器，用于承载编译后的 plan、runtime node tree、dispatch、journal cursor 和 state exchange snapshot。
 
@@ -49,8 +49,8 @@ agent-run-api-naming
 
 最小字段方向：
 
-- domain 字段命名使用 `context`、`orchestrations`、`view_projection`，不带 `_json` / `_jsonb` 后缀。
-- PostgreSQL 物理列建议使用 `context_json`、`orchestrations_json`、`view_projection_json`；是否增加 `orchestration_revision` 取决于本阶段是否同步维护 revision 语义。
+- domain 字段和本轮新增 PostgreSQL 列都使用 `context`、`orchestrations`、`view_projection`，不带 `_json` / `_jsonb` 后缀；JSON 文本只是存储方式。
+- 是否增加 `orchestration_revision` 取决于本阶段是否同步维护 revision 语义。
 - `OrchestrationInstance` 至少包含 `orchestration_id`、`role`、`source_ref`、`status`、`plan_snapshot`、`activation`、`node_tree`、`dispatch`、`state_snapshot`、`journal_cursor`、时间戳。
 
 验证闭包：

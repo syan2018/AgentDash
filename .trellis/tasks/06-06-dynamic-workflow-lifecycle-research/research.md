@@ -99,7 +99,7 @@ Dynamic workflow script
 
 这样可以保留 AgentDash 已经正确建立的 lifecycle / agent / frame / runtime anchor 控制面，同时引入 Claude Dynamic Workflows 的核心能力：编排代码化、运行时约束、可恢复 journal 和可审进度树。关键收敛点是：`WorkflowGraph` 不直接等于 runtime state；它应先编译成可执行规则，再与动态脚本共享同一个 runtime。
 
-目标命名与仓储草案见 `target-model-sketch.md`。该草案已修正为：`Lifecycle` 是项目核心概念，不重命名；`LifecycleRun` 是面向主 Agent 的完整上下文容器；`OrchestrationInstance` 是 Lifecycle 内部可 0..N 并发存在的状态容器，内部用 `OrchestrationPlanSnapshot`、`PlanActivation`、`RuntimeNodeState`、`OrchestrationJournal` 表达编排运行态。仓储上不建议按每个概念拆表，而是以 `lifecycle_runs` 作为主要 aggregate，辅以 append journal 和必要反向索引。领域字段不使用 `_jsonb` 后缀；物理列名和列类型留给 migration 设计决定。
+目标命名与仓储草案见 `target-model-sketch.md`。该草案已修正为：`Lifecycle` 是项目核心概念，不重命名；`LifecycleRun` 是面向主 Agent 的完整上下文容器；`OrchestrationInstance` 是 Lifecycle 内部可 0..N 并发存在的状态容器，内部用 `OrchestrationPlanSnapshot`、`PlanActivation`、`RuntimeNodeState`、`OrchestrationJournal` 表达编排运行态。仓储上不建议按每个概念拆表，而是以 `lifecycle_runs` 作为主要 aggregate，辅以 append journal 和必要反向索引。新增目标字段和新增列不使用 `_json` / `_jsonb` 后缀；JSON 文本只是存储方式。
 
 行为覆盖矩阵见 `research/claude-workflow-behavior-coverage.md`。该矩阵是后续 design 的架构压力测试：如果某类核心 workflow 语义只能通过新增平行 runtime 支持，或无法映射到 Lifecycle / Orchestration / typed execution identity / trace surface，就说明目标架构还不妥善。这里的 typed execution identity 至少包括 `AgentRun` 与 `FunctionRun`，后续也可以扩展出本机 bridge / extension action 的 effect invocation 引用。
 

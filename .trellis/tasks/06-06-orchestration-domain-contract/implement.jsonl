@@ -1,0 +1,11 @@
+{"file":".trellis/tasks/06-06-orchestration-domain-contract/prd.md","reason":"子任务目标、范围边界和验收标准。"}
+{"file":".trellis/tasks/06-06-orchestration-domain-contract/design.md","reason":"Orchestration domain contract 技术设计、aggregate 边界和非目标。"}
+{"file":".trellis/tasks/06-06-orchestration-domain-contract/implement.md","reason":"具体实施步骤、风险文件、验证命令和停止条件。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/design.md","reason":"父任务目标架构，定义 Lifecycle / Orchestration 分层和共同 runtime 地基。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/follow-up-module-roadmap.md","reason":"后续模块依赖顺序，确认本任务只做 domain contract。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/orchestration-domain-contract-plan.md","reason":"领域合同、migration、repository roundtrip 和迁移来源边界的详细研究。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/current-code-context.md","reason":"当前 Lifecycle / WorkflowGraph / persistence 代码事实地图和源码复核索引。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"当前 workflow/lifecycle 不变量，标定旧 runtime 事实源。"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"Activity runtime、executor、FunctionRun 与 graph instance 当前契约。"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"aggregate repository 边界和跨聚合事务规则。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"migration 历史规则和复杂值对象 JSON TEXT 持久化规范。"}

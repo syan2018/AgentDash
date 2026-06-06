@@ -18,7 +18,10 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "06-06-orchestration-domain-contract",
+    "06-06-workflow-graph-compiler"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

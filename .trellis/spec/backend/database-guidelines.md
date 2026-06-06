@@ -19,6 +19,7 @@
 - PostgreSQL repository 统一通过 `persistence::postgres::db_err` / `sql_err_for` 映射 SQLx 错误，保留 NotFound、Conflict、Database 三类可映射语义
 - 数据库列名和 JSON 序列化统一 `snake_case`
 - 复杂值对象以 JSON 文本存入 `TEXT`
+- 新增目标模型列不因为 JSON 文本存储而追加 `_json` / `_jsonb` 后缀；列名优先表达业务语义，例如 `lifecycle_runs.context`、`lifecycle_runs.orchestrations`、`lifecycle_runs.view_projection`
 - 时间字段使用 PostgreSQL 原生 timestamp 类型，repository 直接 bind/read `chrono::DateTime<Utc>`
 - Repository 实现模式详见 [repository-pattern.md](./repository-pattern.md)
 - API 启动在 repository 装配前运行 PostgreSQL migrations，并执行 schema readiness 检查。
@@ -139,6 +140,71 @@ feature task -> add crates/agentdash-infrastructure/migrations/0002_<change>.sql
 
 ```text
 database baseline squash task -> document approval -> edit 0001_init.sql -> rebuild dev DB -> run guard with ALLOW_MIGRATION_BASELINE_REWRITE=1
+```
+
+## Scenario: JSON Text Column Naming
+
+### 1. Scope / Trigger
+
+- Trigger: 新增 `TEXT` 列承载复杂值对象 JSON 序列化。
+- Scope: migration、repository row mapping、错误上下文和后续 spec / task 文档命名。
+
+### 2. Signatures
+
+新增目标列优先使用业务语义名：
+
+```sql
+ALTER TABLE lifecycle_runs
+    ADD COLUMN IF NOT EXISTS context text DEFAULT '{}'::text NOT NULL,
+    ADD COLUMN IF NOT EXISTS orchestrations text DEFAULT '[]'::text NOT NULL,
+    ADD COLUMN IF NOT EXISTS view_projection text;
+```
+
+Repository 仍用 JSON 序列化读写：
+
+```rust
+serde_json::to_string(&run.context)?;
+parse_json_column::<LifecycleContext>(&row.context, "lifecycle_runs.context")?;
+```
+
+### 3. Contracts
+
+- 列名表达业务合同，JSON 文本只是当前 PostgreSQL 存储方式。
+- 错误上下文使用真实列名，例如 `lifecycle_runs.orchestrations`。
+- 已存在的历史列名保持为迁移事实；新增目标列按当前命名规则落地。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 新增复杂值对象列 | 使用业务语义名和 `TEXT` 类型 |
+| repository 解析失败 | `DomainError` 包含真实 `table.column` |
+| 修改 migration 历史列名 | 只有明确 baseline squash / reset / merge 任务可以做 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `lifecycle_runs.orchestrations text DEFAULT '[]'::text NOT NULL`。
+- Base: 旧 schema 中已有 `activity_state_json`，作为历史事实保留。
+- Bad: 新目标列写成 `orchestrations_json`，会把存储方式伪装成领域概念。
+
+### 6. Tests Required
+
+- Repository row mapping 测试覆盖默认 JSON 文本和坏 JSON 错误上下文。
+- Repository roundtrip 测试覆盖 create / update / select。
+- 任意新增 migration 运行 `pnpm run migration:guard`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+ADD COLUMN orchestrations_json text DEFAULT '[]'::text NOT NULL;
+```
+
+#### Correct
+
+```sql
+ADD COLUMN orchestrations text DEFAULT '[]'::text NOT NULL;
 ```
 
 ---

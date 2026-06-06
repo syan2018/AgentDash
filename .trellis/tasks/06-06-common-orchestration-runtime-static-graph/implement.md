@@ -19,6 +19,23 @@
 - `LifecycleRunView.workflow_graph_instances[]` 等 graph-compatible DTO 仍保留旧字段；短期作为 projection 兼容 view，command path 不消费这些字段。
 - `workflow/lifecycle/journey` 仍保留若干旧 graph instance helper 供兼容 projection 参考；后续应在 native orchestration progress tree 落地后删去。
 - `ActivityActivation` 中 phase hot-update applier 当前未被新主路径调用；后续应结合 orchestration executor adapter 决定保留为 live capability transition，还是并入统一 executor surface。
+- `workflow/orchestration/runtime.rs` 已完成 reducer 第一切片：NodeStarted / NodeCompleted / NodeFailed / NodeCancelled 可更新 runtime node、trace refs、state exchange、transition successor 和 terminal idempotency；`complete_lifecycle_node` / session terminal callback 已接到 reducer。
+
+## 当前实现切片
+
+本轮先做 `runtime reducer + terminal bridge`，不同时展开 executor launcher：
+
+1. 在 `workflow/orchestration/runtime.rs` 实现 node event reducer。
+   - `NodeStarted` 写 node status、started_at、executor_run_ref、trace refs。
+   - `NodeCompleted` 写 outputs、completed_at，并 materialize state exchange。
+   - `NodeFailed` / `NodeCancelled` 写 terminal status、error/reason。
+   - terminal event 必须幂等，重复完成不能重复激活后继。
+2. `NodeCompleted` 从 `state_exchange_rules` 复制完成节点 outputs 到 successor inputs / `StateExchangeSnapshot.node_outputs`。
+3. reducer 根据 `ActivationRule::Transition` 激活 successor ready nodes，更新 `dispatch.ready_node_ids`；暂未完整支持的 condition / join / max_traversals 必须保守阻断或显式报错，不静默当成成功。
+4. `LifecycleOrchestrator` 的 terminal materialization 改为调用 reducer。`complete_lifecycle_node` 若能稳定读取 lifecycle scoped artifacts，则传入 output port values；否则本切片先保留 reducer 参数能力，下一切片补 port output collection。
+5. 本切片不做 AgentCall / Function / LocalEffect / HumanGate 启动器，不新增 lease/outbox 表，不改 frontend/API。
+
+本切片已完成。当前 reducer 支持简单 transition、condition、All/Any/First/NOfM join、state exchange materialization、duplicate terminal idempotency；`max_traversals` 暂以 blocking diagnostic 将目标 node 标记为 Blocked，后续结合 attempt/traversal policy 一并实现。
 
 ## 上下文顺序
 

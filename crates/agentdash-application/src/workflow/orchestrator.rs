@@ -1,8 +1,8 @@
 //! LifecycleOrchestrator — Orchestration runtime terminal bridge
 //!
-//! 职责：把 Activity executor 子 session 的 terminal 事件与
-//! `complete_lifecycle_node` 工具提交转换成 ActivityEvent，再交给
-//! LifecycleEngine 与 durable scheduler 统一推进。
+//! 职责：把 runtime node 子 session 的 terminal 事件与
+//! `complete_lifecycle_node` 工具提交转换成 OrchestrationRuntimeEvent，
+//! 再交给 common orchestration reducer 推进。
 //!
 //! 不维护自己的状态 — 所有状态读写都通过 LifecycleRun / session services。
 //! 不是后台进程 — 通过事件驱动（advance tool / session terminal）被调用。
@@ -10,7 +10,7 @@
 //! 实现 `SessionTerminalCallback`，由 `session runtime` 在 session 完全终止后自动调用。
 
 use agentdash_domain::workflow::{
-    LifecycleRun, RuntimeNodeError, RuntimeNodeStatus, WorkflowSessionTerminalState,
+    LifecycleRun, NodePortValue, RuntimeNodeError, RuntimeNodeStatus, WorkflowSessionTerminalState,
 };
 use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime};
 use tracing::{info, warn};
@@ -20,6 +20,10 @@ use crate::repository_set::RepositorySet;
 
 use super::session_association::resolve_activity_session_association;
 use crate::session::SessionTerminalCallback;
+use crate::workflow::execution_log::{RuntimeNodeArtifactScope, load_scoped_port_output_map};
+use crate::workflow::orchestration::{
+    OrchestrationRuntimeError, OrchestrationRuntimeEvent, apply_orchestration_event_to_run,
+};
 use crate::workflow::session_terminal_summary;
 
 #[derive(Debug)]
@@ -126,17 +130,35 @@ impl LifecycleOrchestrator {
             "Orchestrator: runtime session terminal, materializing orchestration node"
         );
 
-        let run = materialize_runtime_node_terminal(
-            association.run,
-            association.orchestration_id,
-            &association.node_path,
+        let outputs = if status == RuntimeNodeStatus::Completed
+            && !association_node_is_terminal(
+                &association.run,
+                association.orchestration_id,
+                &association.node_path,
+                association.attempt,
+            ) {
+            self.load_runtime_node_outputs(
+                association.run.id,
+                association.orchestration_id,
+                &association.node_path,
+                association.attempt,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+        let terminal_summary =
+            session_terminal_summary(workflow_terminal_state_from_str(terminal_state), None);
+        let event = runtime_terminal_event(
+            association.node_path.clone(),
             association.attempt,
             status,
-            Some(session_terminal_summary(
-                workflow_terminal_state_from_str(terminal_state),
-                None,
-            )),
-        )?;
+            outputs,
+            Some(terminal_summary),
+        );
+        let (run, _outcome) =
+            apply_orchestration_event_to_run(association.run, association.orchestration_id, event)
+                .map_err(|error| error.to_string())?;
         self.repos
             .lifecycle_run_repo
             .update(&run)
@@ -171,14 +193,64 @@ impl LifecycleOrchestrator {
         } else {
             RuntimeNodeStatus::Completed
         };
-        let updated_run = materialize_runtime_node_terminal(
-            association.run,
-            association.orchestration_id,
-            &association.node_path,
+        let outputs = if status == RuntimeNodeStatus::Completed {
+            self.load_runtime_node_outputs(
+                association.run.id,
+                association.orchestration_id,
+                &association.node_path,
+                association.attempt,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+        let event = runtime_terminal_event(
+            association.node_path.clone(),
             association.attempt,
             status,
+            outputs,
             input.summary.clone(),
-        )?;
+        );
+        let run_before = association.run.clone();
+        let updated_run = match apply_orchestration_event_to_run(
+            association.run,
+            association.orchestration_id,
+            event,
+        ) {
+            Ok((run, _outcome)) => run,
+            Err(OrchestrationRuntimeError::CompletionPolicyRejected {
+                missing_output_ports,
+                ..
+            }) if input.outcome == LifecycleNodeAdvanceOutcome::Completed => {
+                return Ok(AdvanceCurrentNodeResult {
+                    run: run_before,
+                    orchestration_id: association.orchestration_id,
+                    node_path: association.node_path,
+                    status: AdvanceCurrentNodeStatus::GateRejected {
+                        gate_collision_count: 1,
+                        missing_output_keys: missing_output_ports,
+                        terminal_failed: false,
+                    },
+                    orchestration_warning: None,
+                });
+            }
+            Err(OrchestrationRuntimeError::StateExchangeMissingOutput { from_port, .. })
+                if input.outcome == LifecycleNodeAdvanceOutcome::Completed =>
+            {
+                return Ok(AdvanceCurrentNodeResult {
+                    run: run_before,
+                    orchestration_id: association.orchestration_id,
+                    node_path: association.node_path,
+                    status: AdvanceCurrentNodeStatus::GateRejected {
+                        gate_collision_count: 1,
+                        missing_output_keys: vec![from_port],
+                        terminal_failed: false,
+                    },
+                    orchestration_warning: None,
+                });
+            }
+            Err(error) => return Err(error.to_string()),
+        };
         self.repos
             .lifecycle_run_repo
             .update(&updated_run)
@@ -242,6 +314,31 @@ impl LifecycleOrchestrator {
             .map_err(|e| format!("加载 lifecycle run 失败: {e}"))?
             .ok_or_else(|| format!("lifecycle run 不存在: {run_id}"))
     }
+
+    async fn load_runtime_node_outputs(
+        &self,
+        run_id: Uuid,
+        orchestration_id: Uuid,
+        node_path: &str,
+        attempt: u32,
+    ) -> Result<Vec<NodePortValue>, String> {
+        let scope = RuntimeNodeArtifactScope {
+            run_id,
+            orchestration_id,
+            node_path: node_path.to_string(),
+            attempt,
+        };
+        let output_map =
+            load_scoped_port_output_map(self.repos.inline_file_repo.as_ref(), &scope).await;
+        output_map
+            .into_iter()
+            .map(|(port_key, content)| {
+                let value = serde_json::from_str(&content)
+                    .unwrap_or_else(|_| serde_json::Value::String(content));
+                Ok(NodePortValue { port_key, value })
+            })
+            .collect()
+    }
 }
 
 #[async_trait::async_trait]
@@ -267,50 +364,6 @@ impl SessionTerminalCallback for LifecycleOrchestrator {
     }
 }
 
-fn materialize_runtime_node_terminal(
-    mut run: LifecycleRun,
-    orchestration_id: Uuid,
-    node_path: &str,
-    attempt: u32,
-    status: RuntimeNodeStatus,
-    summary: Option<String>,
-) -> Result<LifecycleRun, String> {
-    let orchestration = run
-        .orchestrations
-        .iter_mut()
-        .find(|orchestration| orchestration.orchestration_id == orchestration_id)
-        .ok_or_else(|| format!("orchestration 不存在: {orchestration_id}"))?;
-    let node = orchestration
-        .node_tree
-        .iter_mut()
-        .find(|node| node.node_path == node_path && node.attempt == attempt)
-        .ok_or_else(|| {
-            format!(
-                "orchestration node 不存在: orchestration_id={orchestration_id}, node_path={node_path}, attempt={attempt}"
-            )
-        })?;
-
-    if matches!(
-        node.status,
-        RuntimeNodeStatus::Completed | RuntimeNodeStatus::Failed | RuntimeNodeStatus::Cancelled
-    ) {
-        return Ok(run);
-    }
-
-    node.status = status;
-    node.completed_at = Some(chrono::Utc::now());
-    if status == RuntimeNodeStatus::Failed {
-        node.error = Some(RuntimeNodeError {
-            code: "runtime_session_terminal_failed".to_string(),
-            message: summary.unwrap_or_else(|| "runtime session failed".to_string()),
-            retryable: false,
-            detail: None,
-        });
-    }
-    orchestration.updated_at = chrono::Utc::now();
-    Ok(run)
-}
-
 fn runtime_node_terminal_status(terminal_state: &str) -> Option<RuntimeNodeStatus> {
     match terminal_state {
         "completed" | "succeeded" | "success" => Some(RuntimeNodeStatus::Completed),
@@ -326,4 +379,84 @@ fn workflow_terminal_state_from_str(terminal_state: &str) -> WorkflowSessionTerm
         "interrupted" | "cancelled" | "canceled" => WorkflowSessionTerminalState::Interrupted,
         _ => WorkflowSessionTerminalState::Failed,
     }
+}
+
+fn runtime_terminal_event(
+    node_path: String,
+    attempt: u32,
+    status: RuntimeNodeStatus,
+    outputs: Vec<NodePortValue>,
+    summary: Option<String>,
+) -> OrchestrationRuntimeEvent {
+    let timestamp = chrono::Utc::now();
+    match status {
+        RuntimeNodeStatus::Completed => OrchestrationRuntimeEvent::NodeCompleted {
+            node_path,
+            attempt,
+            outputs,
+            timestamp,
+        },
+        RuntimeNodeStatus::Cancelled => OrchestrationRuntimeEvent::NodeCancelled {
+            node_path,
+            attempt,
+            reason: summary,
+            timestamp,
+        },
+        RuntimeNodeStatus::Failed => OrchestrationRuntimeEvent::NodeFailed {
+            node_path,
+            attempt,
+            error: RuntimeNodeError {
+                code: "runtime_session_terminal_failed".to_string(),
+                message: summary.unwrap_or_else(|| "runtime session failed".to_string()),
+                retryable: false,
+                detail: None,
+            },
+            timestamp,
+        },
+        _ => OrchestrationRuntimeEvent::NodeCancelled {
+            node_path,
+            attempt,
+            reason: Some(format!("unsupported terminal status: {status:?}")),
+            timestamp,
+        },
+    }
+}
+
+fn association_node_is_terminal(
+    run: &LifecycleRun,
+    orchestration_id: Uuid,
+    node_path: &str,
+    attempt: u32,
+) -> bool {
+    run.orchestrations
+        .iter()
+        .find(|orchestration| orchestration.orchestration_id == orchestration_id)
+        .and_then(|orchestration| {
+            find_runtime_node_for_association(&orchestration.node_tree, node_path, attempt)
+        })
+        .is_some_and(|node| {
+            matches!(
+                node.status,
+                RuntimeNodeStatus::Completed
+                    | RuntimeNodeStatus::Failed
+                    | RuntimeNodeStatus::Cancelled
+                    | RuntimeNodeStatus::Skipped
+            )
+        })
+}
+
+fn find_runtime_node_for_association<'a>(
+    nodes: &'a [agentdash_domain::workflow::RuntimeNodeState],
+    node_path: &str,
+    attempt: u32,
+) -> Option<&'a agentdash_domain::workflow::RuntimeNodeState> {
+    for node in nodes {
+        if node.node_path == node_path && node.attempt == attempt {
+            return Some(node);
+        }
+        if let Some(found) = find_runtime_node_for_association(&node.children, node_path, attempt) {
+            return Some(found);
+        }
+    }
+    None
 }

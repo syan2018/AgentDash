@@ -160,6 +160,114 @@ view_projection text
 
 正式 runtime 接入点是 orchestration activation：compiler 输出不可变 plan，runtime helper 直接 materialize initial `OrchestrationInstance`。后续 scheduler 迁移应继续消费同一 `OrchestrationPlanSnapshot` 和 `RuntimeNodeState` 合同推进节点、state exchange 与 terminal materialization，并删除 `WorkflowGraphInstance` / activity attempt path 对 command side 的影响。
 
+## Scenario: Orchestration Runtime Reducer
+
+### 1. Scope / Trigger
+
+- Trigger: application 层推进 `OrchestrationInstance` 中的 runtime node 状态，或把 `complete_lifecycle_node` / session terminal callback 接到 common runtime。
+- Scope: `workflow/orchestration/runtime.rs`、`LifecycleOrchestrator`、runtime node output materialization、state exchange、ready queue。
+
+### 2. Signatures
+
+Application reducer events:
+
+```rust
+pub enum OrchestrationRuntimeEvent {
+    NodeStarted {
+        node_path: String,
+        attempt: u32,
+        executor_run_ref: Option<ExecutorRunRef>,
+        timestamp: DateTime<Utc>,
+    },
+    NodeCompleted {
+        node_path: String,
+        attempt: u32,
+        outputs: Vec<NodePortValue>,
+        timestamp: DateTime<Utc>,
+    },
+    NodeFailed {
+        node_path: String,
+        attempt: u32,
+        error: RuntimeNodeError,
+        timestamp: DateTime<Utc>,
+    },
+    NodeCancelled {
+        node_path: String,
+        attempt: u32,
+        reason: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
+}
+```
+
+Reducer entry:
+
+```rust
+apply_orchestration_event(
+    instance: &mut OrchestrationInstance,
+    event: OrchestrationRuntimeEvent,
+) -> Result<OrchestrationRuntimeApplyOutcome, OrchestrationRuntimeError>
+
+apply_orchestration_event_to_run(
+    run: LifecycleRun,
+    orchestration_id: Uuid,
+    event: OrchestrationRuntimeEvent,
+) -> Result<(LifecycleRun, OrchestrationRuntimeApplyOutcome), OrchestrationRuntimeError>
+```
+
+### 3. Contracts
+
+- Reducer 只消费 `OrchestrationInstance` / plan rules / event，不读取 `WorkflowGraphInstance`、assignment 或 claim 仓储。
+- `NodeStarted` 将 matching `RuntimeNodeState` 置为 `Running`，写入 `executor_run_ref`，并从 `ExecutorRunRef` 派生 `RuntimeTraceRef` 去重追加到 `trace_refs`。
+- `NodeCompleted` 校验 completion policy、写 node `outputs`、写 `StateExchangeSnapshot.node_outputs`，再按 `StateExchangeRule` 物化 successor inputs。
+- transition activation 只把满足 condition / join policy 的 Pending successor 置为 `Ready`，并同步 `activation.ready_node_ids` 与 `dispatch.ready_node_ids`。
+- condition false 且所有 incoming source terminal 时，successor 置为 `Skipped`，避免保留不可解释的 Pending node。
+- 本阶段尚未执行的 `max_traversals` 以 blocking diagnostic 置目标 node 为 `Blocked`，错误写入 `RuntimeNodeError`；不能静默激活。
+- terminal event 对已经 `Completed` / `Failed` / `Cancelled` / `Skipped` 的 node 幂等，不重复物化 state exchange 或激活后继。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| event 指向不存在的 `node_path + attempt` | `NodeNotFound` |
+| plan node 缺失 | `PlanNodeNotFound` |
+| completion policy 要求的 output port 未提交 | `CompletionPolicyRejected`，`complete_lifecycle_node` 返回 gate rejected |
+| state exchange source output 缺失 | `StateExchangeMissingOutput`，`complete_lifecycle_node` 返回 gate rejected |
+| transition condition 不满足且 incoming sources terminal | successor `Skipped` |
+| transition 带 `max_traversals` | successor `Blocked` + `max_traversals_not_supported` diagnostic |
+| duplicate terminal event | `terminal_idempotent=true`，不改 outputs，不重复 ready successor |
+
+### 5. Good/Base/Bad Cases
+
+- Good: entry node completed with output `{ proposal: ... }` materializes `state_snapshot.node_outputs["entry"]["proposal"]` and successor input port.
+- Base: simple `Always` transition activates one successor and updates ready queue.
+- Bad: missing required output port keeps current node unmodified and reports gate rejection to the tool caller.
+
+### 6. Tests Required
+
+- Unit: activation materializes entry ready nodes.
+- Unit: `NodeStarted` writes executor ref, trace ref, and clears ready queue.
+- Unit: `NodeCompleted` activates simple transition.
+- Unit: state exchange copies output into successor input.
+- Unit: duplicate terminal event is idempotent.
+- Unit: condition false skips unreachable successor.
+- Unit: `max_traversals` blocks successor with diagnostic.
+- Integration: session terminal callback and `complete_lifecycle_node` route through runtime node resolver and reducer.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+RuntimeSession terminal -> mutate RuntimeNodeState directly in orchestrator
+```
+
+#### Correct
+
+```text
+RuntimeSession terminal -> RuntimeTraceAnchor -> OrchestrationRuntimeEvent -> reducer -> LifecycleRun.orchestrations[]
+```
+
 ## Contract Appendices
 
 - [Activity Lifecycle Backend Contract](./activity-lifecycle.md)

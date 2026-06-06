@@ -7,6 +7,8 @@ pub use compiler::{
     WorkflowGraphCompileSourceMetadata, WorkflowGraphCompiler, compile_workflow_graph,
 };
 pub use runtime::{
-    ROOT_ORCHESTRATION_ROLE, activate_orchestration, activate_root_orchestration,
+    OrchestrationRuntimeApplyOutcome, OrchestrationRuntimeDiagnostic, OrchestrationRuntimeError,
+    OrchestrationRuntimeEvent, ROOT_ORCHESTRATION_ROLE, activate_orchestration,
+    activate_root_orchestration, apply_orchestration_event, apply_orchestration_event_to_run,
     materialize_plan_activation,
 };

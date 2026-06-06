@@ -6,6 +6,12 @@
 
 本任务不实现 dynamic script runtime。它的目标是先把正式运行时路径收敛干净：静态 graph 通过同一套 Orchestration Plan IR 执行，同时拆除 `WorkflowGraphInstance`、Activity-specific repository 和 activity attempt 坐标对 runtime command path 的拥有关系。
 
+## 目标校准
+
+父任务的原始目标是用 research 目录下两份 Claude Workflow 资料作为架构压力测试，确认 AgentDash 的 Lifecycle / Orchestration 框架能承载脚本化编排、隔离运行时、typed execution、journal/cache/snapshot、权限/预算和进度观察等核心行为族。本子任务只处理其中的 runtime 地基：静态 `WorkflowGraph` 先编译到 `OrchestrationPlanSnapshot`，再由同一个 Orchestration runtime 执行。动态脚本、脚本资产审批和保存为 workflow 是后续 compiler frontend；不能在本子任务里引入平行 runtime。
+
+本任务的判定口径是：所有运行态推进都能解释为 `LifecycleRun.orchestrations[]` 中某个 `OrchestrationInstance` 的 plan/node/state exchange 变化。Graph-compatible view 可以继续生成给现有前端观察，但不能重新成为 command path 的事实源。
+
 ## 前置条件
 
 - `orchestration-domain-contract` 已完成并使用 `plan_digest` 作为 plan snapshot 内容身份。
@@ -41,7 +47,7 @@
 - [x] `orchestration_id + node_path + attempt` 替代 `graph_instance_id + activity_key + attempt` 成为 scheduler、executor、terminal 和 trace anchor 的节点坐标。
 - [ ] Agent / Function API / BashExec 或本机 effect / Human approval 节点能从 plan node 启动并更新 `RuntimeNodeState`。
 - [ ] Function/local effect 即使同步完成，也记录 started 与 terminal materialization，不绕过 runtime node state。
-- [ ] transition condition 与 artifact/state exchange 能从已完成 node outputs 物化 successor inputs。
+- [x] transition condition 与 artifact/state exchange 能从已完成 node outputs 物化 successor inputs。
 - [ ] join policy、attempt policy、`max_traversals` 至少在 runtime plan/materialization 层有明确执行或 blocking diagnostic，不静默降级。
 - [x] session terminal callback 和 `complete_lifecycle_node` 通过 runtime node resolver 推进节点，重复 terminal event 幂等。
 - [x] `LifecycleRunView` 能从 orchestration snapshot 生成现有 graph-compatible projection。

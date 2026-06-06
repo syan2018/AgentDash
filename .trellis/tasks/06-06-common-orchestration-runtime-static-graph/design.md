@@ -16,6 +16,13 @@ crates/agentdash-application/src/workflow/orchestration/resolver.rs
 
 domain 层保留 plan/node/snapshot/journal value objects；infrastructure 只负责保存 `LifecycleRun` aggregate、必要 journal/lease/index 表和 trace anchors。definition provenance 可以保存在 plan metadata 或可选 source/provenance 字段中，但 runtime command、scheduler、terminal callback 和 projection 都以 `lifecycle_run_id + orchestration_id + node_path + attempt` 为坐标。
 
+当前正式接入按两层边界推进：
+
+- **Runtime reducer**：纯 application 状态机，只接收 `OrchestrationInstance`、plan rules 和 node event，负责更新 `RuntimeNodeState`、`StateExchangeSnapshot`、ready queue 和 orchestration status。
+- **Executor launcher**：有副作用的 application adapter，负责把 ready semantic node 启动为 AgentRun / FunctionRun / local effect / HumanGate，并把启动结果写回 reducer。
+
+第一实现切片先完成 reducer 与现有 terminal bridge 接入。这样可以先验证 plan IR、state exchange、successor activation 和 terminal idempotency 是否成立，再接 executor launcher，避免 dispatch service 继续私自启动 entry session。
+
 ## 状态流
 
 ```mermaid

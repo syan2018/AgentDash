@@ -140,7 +140,7 @@ Contract:
 
 ## Artifact Contract
 
-Agent executor 的 output port 内容是 lifecycle artifact 值，必须写入 JSON 内容。Activity completed 时只读取 activity 已声明的 output ports，并把每个 port 的文件内容解析为 `serde_json::Value`；解析失败表示 artifact contract 无效，activity 不进入 completed。这样后继 artifact binding、gate evaluation 与 workflow projection 消费的是结构化值，而不是由 orchestrator 猜测的自由文本。
+Agent executor 的 output port 内容是 lifecycle artifact 值。Activity / runtime node completed 时只读取当前 node scope 下已声明或被 state exchange 使用的 output ports；每个 port 内容优先解析为 `serde_json::Value`，解析失败时物化为 JSON string。这样后继 artifact binding、gate evaluation 与 workflow projection 消费的是结构化值，同时允许 agent 通过 lifecycle VFS 写入普通文本产物。
 
 ## Workflow Template Asset Contract
 

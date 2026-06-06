@@ -100,7 +100,7 @@ flowchart TD
         ARS["AgentRuns<br/>main + child + collaborator"]
         AF["AgentFrames<br/>surface revisions"]
         OSSET["Orchestrations<br/>0..N internal instances"]
-        OI["OrchestrationInstance<br/>role + status + source"]
+        OI["OrchestrationInstance<br/>orchestration_id + role + status"]
         VIEW["LifecycleRunView<br/>progress / control projection"]
     end
 
@@ -128,7 +128,7 @@ flowchart TD
 - `Orchestrations` 是 `LifecycleRun` 内部的编排状态集合，可以同时存在多个 `OrchestrationInstance`。
 - `WorkflowGraph` 不再直接等于 runtime state；它只是 `WorkflowGraphDefinition`。
 - 动态脚本可以是 `WorkflowScriptDefinition` 或 `RunScriptArtifact`，与 graph 一样编译为 `OrchestrationPlanSnapshot`。
-- `OrchestrationInstance` 替代 `WorkflowGraphInstance` 的目标语义：它表达“Lifecycle 内一个可独立推进的内部编排实例”，不关心来源是 graph 还是 script。
+- `OrchestrationInstance` 替代 `WorkflowGraphInstance` 的目标语义：它表达“Lifecycle 内一个可独立推进的内部编排实例”，运行身份由 `orchestration_id` 承担，不关心来源是 graph 还是 script。
 - `PlanActivation` 是 `OrchestrationInstance` 的子状态：它表达“某份 plan snapshot 在该 instance 内被激活”。
 - `RuntimeNodeState` 替代 `ActivityAttemptState` 的中心地位：节点可以是 activity、phase、agent call、function、local effect、extension action、human gate、parallel group、barrier、subworkflow。
 - `OrchestrationJournal` 是编排 facts；`StateExchangeSnapshot` 是可恢复快照；read model 从二者投影。
@@ -191,7 +191,7 @@ flowchart TD
 | Physical store | 关键字段 | 职责 |
 | --- | --- | --- |
 | `workflow_assets` 或保留现有资产表 | `kind`, `project_id`, `key`, `definition`, `version`, `source` | 保存可复用定义资产。可以物理上继续分 `agent_procedures` / `workflow_graphs`，但目标 repository 不应为每个 runtime 概念继续拆。 |
-| `lifecycle_runs` | `id`, `project_id`, `subject_ref`, `status`, `source_ref`, `context`, `orchestrations`, `view_projection`, `seq`, `updated_at` | 一个 Lifecycle 的主要事实聚合。`context` 保存主 Agent、AgentRun、subject、权限和预算摘要；`orchestrations` 是 0..N 个 `OrchestrationInstance`，每个 instance 保存 plan activation、node tree、dispatch、agent invocation、artifact refs、cache/cursor。 |
+| `lifecycle_runs` | `id`, `project_id`, `subject_ref`, `status`, `context`, `orchestrations`, `view_projection`, `seq`, `updated_at` | 一个 Lifecycle 的主要事实聚合。`context` 保存主 Agent、AgentRun、subject、权限和预算摘要；`orchestrations` 是 0..N 个 `OrchestrationInstance`，每个 instance 保存 plan activation、node tree、dispatch、agent invocation、artifact refs、cache/cursor。定义来源、资产 revision、script digest 等 provenance 进入 plan metadata 或可选审计字段，不作为 runtime identity。 |
 | `lifecycle_orchestration_journal_entries` | `lifecycle_run_id`, `orchestration_id`, `seq`, `event_kind`, `event`, `created_at` | 只承担无界 append facts。若早期运行规模小，也可先按 chunk 存入 `orchestrations[].journal_chunks`；一旦需要 resume/replay/增量订阅，再独立成表。`orchestration_id` 是必要维度，因为同一个 Lifecycle 可并发多个 instance。 |
 | `runtime_trace_anchors` | `runtime_session_id`, `lifecycle_run_id`, `orchestration_id`, `runtime_node_id/node_path`, `agent_run_id`, `frame_id`, `anchor` | 反向索引热路径。它是索引/证据，不应成为 runtime state 的第二事实源。 |
 | `session_events` | 现有 session event schema | 保持 conversation runtime 的事实流，不混入 workflow 编排事实。 |

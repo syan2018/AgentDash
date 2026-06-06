@@ -1,8 +1,8 @@
-# Common Orchestration Runtime Static Graph 设计计划
+# Common Orchestration Runtime 正式接入设计计划
 
 ## 意图
 
-本任务把静态 graph 的 runtime 从 Activity-specific state machine 迁到 common orchestration runtime。它只消费 compiler 输出的 `OrchestrationPlanSnapshot`，并把运行态写入 `LifecycleRun.orchestrations[]`。旧 `WorkflowGraphInstance.activity_state` 是迁移来源和兼容投影，不再是目标事实源。
+本任务把 runtime 从 Activity-specific state machine 收敛到 common orchestration runtime。它只消费 compiler 输出的 `OrchestrationPlanSnapshot`，并把运行态写入 `LifecycleRun.orchestrations[]`。`OrchestrationInstance.orchestration_id` 是唯一运行实例身份；静态 `WorkflowGraph` 只是当前 compiler 输入之一，不决定 runtime identity。旧 `WorkflowGraphInstance.activity_state`、`WorkflowGraphInstanceRepository` 和 activity attempt 坐标是迁移来源与拆除对象，不再作为目标事实源或目标仓储边界。
 
 ## 运行时边界
 
@@ -14,22 +14,22 @@ crates/agentdash-application/src/workflow/orchestration/scheduler.rs
 crates/agentdash-application/src/workflow/orchestration/resolver.rs
 ```
 
-domain 层保留 plan/node/snapshot/journal value objects；infrastructure 只负责保存 `LifecycleRun` aggregate、必要 journal/lease/index 表和 trace anchors。
+domain 层保留 plan/node/snapshot/journal value objects；infrastructure 只负责保存 `LifecycleRun` aggregate、必要 journal/lease/index 表和 trace anchors。definition provenance 可以保存在 plan metadata 或可选 source/provenance 字段中，但 runtime command、scheduler、terminal callback 和 projection 都以 `lifecycle_run_id + orchestration_id + node_path + attempt` 为坐标。
 
 ## 状态流
 
 ```mermaid
 sequenceDiagram
-    participant Graph as WorkflowGraph
+    participant Asset as WorkflowGraph / Script / Run Artifact
     participant Compiler as WorkflowGraphCompiler
     participant Run as LifecycleRun
     participant Runtime as OrchestrationRuntime
     participant Exec as ExecutorLauncher
     participant View as LifecycleRunView
 
-    Graph->>Compiler: compile definition
+    Asset->>Compiler: compile definition or run artifact
     Compiler-->>Run: OrchestrationPlanSnapshot
-    Run->>Runtime: create OrchestrationInstance(role=root)
+    Run->>Runtime: create OrchestrationInstance(orchestration_id)
     Runtime->>Run: materialize entry RuntimeNodeState
     Runtime->>Exec: claim and launch semantic node
     Exec-->>Runtime: executor ref / terminal outcome
@@ -39,6 +39,7 @@ sequenceDiagram
 
 ## 核心合同
 
+- `OrchestrationInstance`：保存 orchestration id、role/status、plan snapshot、activation、node tree、dispatch、state exchange、journal cursor。
 - `PlanActivation`：保存 args、cursor、limits、ready roots。
 - `RuntimeNodeState`：保存 node status、attempt、inputs/outputs、executor refs、trace refs、error、cache。
 - `StateExchangeSnapshot`：保存变量、node outputs、artifact refs、cache refs。
@@ -65,11 +66,11 @@ runtime_session_id
   -> RuntimeNodeState terminal event
 ```
 
-旧 resolver 仍可作为迁移参考，但新 command path 不能同时读取 activity attempt 和 runtime node 两套事实源。
+旧 resolver 只作为迁移参考；新 command path 不能同时读取 activity attempt 和 runtime node 两套事实源，也不能再通过 `graph_instance_id + activity_key + attempt` 定位执行节点。
 
 ## Projection
 
-第一版 UI 可以继续消费 graph-compatible `LifecycleRunView.workflow_graph_instances[]` 和 `active_activity_refs[]`。这些字段从 root orchestration snapshot 投影，不再从旧 `activity_state` 推进。native orchestration progress tree 可以后续新增。
+第一版 UI 可以继续消费 graph-compatible `LifecycleRunView.workflow_graph_instances[]` 和 `active_activity_refs[]`。这些字段从 orchestration snapshot 投影，不再从旧 `WorkflowGraphInstance.activity_state` 推进。native orchestration progress tree 可以后续新增。
 
 ## 仓储边界
 
@@ -77,9 +78,11 @@ runtime_session_id
 - journal 只有在 resume/replay/增量订阅需要时拆成 append 表。
 - lease/outbox 只有在多 worker claim 并发需要时拆表；拆表后也不能成为 node truth。
 - runtime trace anchor 是反向索引，不是 runtime state。
+- `WorkflowGraphInstanceRepository`、`lifecycle_workflow_instances`、`AgentAssignment(graph_instance_id, activity_key, attempt)` 这类旧 Activity 仓储不进入目标 runtime path；迁移时要么删除，要么降级为由 orchestration projection 生成的临时 read adapter。
 
 ## 风险
 
 - 最大风险是新旧 runtime 双读 fallback。实现时允许短期生成兼容 projection，但不允许 command/scheduler 同时从两套 snapshot 判定状态。
+- 另一个风险是把 `WorkflowGraphInstance` 当成 orchestration 的“外壳”。这会继续把运行实例身份绑定到某一种资产形态，阻碍后续 script / run artifact 进入同一 runtime。
 - Function/local effect 不能绕过 journal/snapshot，否则会在最早的非 Agent 节点上破坏 common runtime。
 - terminal callback 必须幂等，否则 tool completion 和 session terminal callback 可能重复推进 successor。

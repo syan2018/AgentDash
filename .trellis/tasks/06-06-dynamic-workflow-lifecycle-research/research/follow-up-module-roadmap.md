@@ -38,7 +38,7 @@ agent-run-api-naming
 
 ### Orchestration domain contract
 
-第一步应只建立共同 runtime contract 与 `LifecycleRun` 的持久化承载能力。`WorkflowGraphInstance.activity_state`、`ActivityExecutionClaim`、`AgentAssignment`、`RuntimeSessionExecutionAnchor` 仍是当前静态 graph runtime 的迁移来源；新的 `orchestrations[]` 在该阶段先证明 0..N instance 可以被领域模型和 repository 正确保存/读取。
+第一步应建立共同 runtime contract 与 `LifecycleRun` 的持久化承载能力，并把运行实例身份锚定到 `orchestration_id`。`WorkflowGraphInstance.activity_state`、`ActivityExecutionClaim`、`AgentAssignment`、`RuntimeSessionExecutionAnchor` 是当前静态 graph runtime 的迁移来源；新的 `orchestrations[]` 要证明 0..N instance 可以被领域模型和 repository 正确保存/读取，后续 command path 不再围绕 graph instance 身份扩展。
 
 建议文件入口：
 
@@ -52,7 +52,7 @@ agent-run-api-naming
 
 - domain 字段和本轮新增 PostgreSQL 列都使用 `context`、`orchestrations`、`view_projection`，不带 `_json` / `_jsonb` 后缀；JSON 文本只是存储方式。
 - 是否增加 `orchestration_revision` 取决于本阶段是否同步维护 revision 语义。
-- `OrchestrationInstance` 至少包含 `orchestration_id`、`role`、`source_ref`、`status`、`plan_snapshot`、`activation`、`node_tree`、`dispatch`、`state_snapshot`、`journal_cursor`、时间戳。
+- `OrchestrationInstance` 至少包含 `orchestration_id`、`role`、`status`、`plan_snapshot`、`activation`、`node_tree`、`dispatch`、`state_snapshot`、`journal_cursor`、时间戳。definition source / asset provenance 进入 plan metadata 或可选审计字段，不作为 runtime identity。
 
 验证闭包：
 
@@ -90,7 +90,7 @@ agent-run-api-naming
 
 ### Common orchestration runtime
 
-第三步把静态 graph 的执行从 `WorkflowGraphInstance.activity_state` 迁移到 `OrchestrationInstance` snapshot / journal 规则。它是架构收敛点：静态 graph 与未来 script compiler 共享同一套 node materialization、dispatch、terminal callback、projection 和 trace anchor。
+第三步把静态 graph 的执行从 `WorkflowGraphInstance.activity_state` 迁移到 `OrchestrationInstance` snapshot / journal 规则，并拆除 `WorkflowGraphInstanceRepository`、activity attempt claim、`AgentAssignment(graph_instance_id, activity_key, attempt)` 对 command path 的拥有关系。它是架构收敛点：静态 graph 与未来 script compiler 共享同一套 node materialization、dispatch、terminal callback、projection 和 trace anchor。
 
 建议文件入口：
 
@@ -129,7 +129,7 @@ agent-run-api-naming
 
 3. `common-orchestration-runtime-static-graph`
    - 目标：用 plan snapshot 执行静态 graph，并生成旧 view projection。
-   - 退出条件：静态 graph e2e 不再依赖 `WorkflowGraphInstance.activity_state` 作为推进事实源。
+   - 退出条件：静态 graph e2e 不再依赖 `WorkflowGraphInstance` / `WorkflowGraphInstanceRepository` 作为运行实例身份或推进事实源。
 
 4. `runtime-trace-anchor-convergence`
    - 目标：把 session terminal / complete tool / cancel control 的反查坐标升级到 orchestration node。

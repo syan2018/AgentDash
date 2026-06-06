@@ -77,7 +77,7 @@ Terminal callback 现在通过 session terminal effect outbox 调用 workflow or
 | Lifecycle subject/project/status/main agent/current agent summaries | `LifecycleRun.context` in aggregate snapshot | 生命周期上下文属于 owning run，读取 Lifecycle progress 时总是需要；不应从 runtime session 推断。 |
 | AgentRun refs / AgentFrame refs / current frame ids | `LifecycleRun.context.agent_runs[]` with frame refs; full frame surface remains frame store | Agent execution identity 属于 Lifecycle；frame surface 可能较大且已有独立 revision store。 |
 | Permission scope / budget summary | `LifecycleRun.context` plus per-orchestration counters | 权限和预算跨 orchestration 生效，但执行消耗要能按 instance/node 归集。 |
-| `OrchestrationInstance` identity/status/source_ref/role | `LifecycleRun.orchestrations[]` | Orchestration 是 Lifecycle 内部状态容器，不是平级 run。 |
+| `OrchestrationInstance` identity/status/role | `LifecycleRun.orchestrations[]` | Orchestration 是 Lifecycle 内部状态容器，不是平级 run；`orchestration_id` 是运行实例身份，definition source / asset provenance 只作为 metadata 或审计信息。 |
 | Immutable compiled plan for this run | `orchestrations[].plan_snapshot` initially; split only if plan becomes cold/large or shared cache | 审计复现优先；静态 graph 和 script 都需要相同 runtime input。 |
 | Plan activation args/cursor/limits/ready roots | `orchestrations[].activation` | 属于 plan 在本 instance 内的 materialized runtime state。 |
 | Runtime node tree/status/attempts/inputs/outputs/executor refs/children/phase_path/error/trace refs | `orchestrations[].state_exchange_snapshot.node_tree` or `orchestrations[].node_tree` | 这是替代 `ActivityLifecycleRunState.attempts` 的核心事实源。 |
@@ -156,7 +156,7 @@ runtime_session_id
 
 - Make `LifecycleRunView` builder read from `LifecycleRun.orchestrations[]` / `view_projection`.
 - Generate current `workflow_graph_instances` and `active_activity_refs` from root static graph orchestration until frontend has native orchestration tree UI.
-- Demote `WorkflowGraphInstanceRepository` to definition-instance projection/migration source, then remove `activity_state_json` from write path.
+- Remove `WorkflowGraphInstanceRepository` from the command path, then remove `activity_state_json` writes. Any graph-compatible view must be projected from `LifecycleRun.orchestrations[]`.
 - Demote `AgentAssignmentRepository` to active agent invocation projection or replace terminal resolver with trace anchor fields.
 - Keep `runtime_session_execution_anchors` or renamed `runtime_trace_anchors` as a narrow index, adding `orchestration_id` and `node_path`.
 - Add migrations as new files per database spec; do not edit `0001_init.sql` in a normal implementation task.

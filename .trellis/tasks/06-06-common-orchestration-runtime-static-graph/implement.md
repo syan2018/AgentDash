@@ -1,8 +1,8 @@
-# Common Orchestration Runtime Static Graph 实施计划
+# Common Orchestration Runtime 正式接入实施计划
 
 ## 状态
 
-暂不启动实现。本任务依赖 `workflow-graph-compiler` 的 plan 输出稳定。当前只作为顺序推进的第三个子任务，防止后续直接改旧 Activity engine。
+已进入实现阶段。本任务依赖 `workflow-graph-compiler` 的 plan 输出稳定；后续实现应围绕唯一 runtime path 收敛，而不是继续加固旧 Activity engine 或 `WorkflowGraphInstance` 中间身份。
 
 ## 上下文顺序
 
@@ -20,21 +20,23 @@
 
 ## 建议实施步骤
 
-1. 新增 application orchestration runtime 模块，只消费 `OrchestrationPlanSnapshot`。
-2. 定义 `OrchestrationEvent`，覆盖当前 ActivityEvent 等价事件和 plan activation。
-3. 实现 entry ready node materialization。
-4. 实现 node event -> `RuntimeNodeState` / `StateExchangeSnapshot` 纯状态推进。
-5. 接入 semantic executor launcher：
+1. 修正 domain/application 合同，使 runtime 坐标以 `orchestration_id + node_path + attempt` 为准；definition provenance 只进入 plan metadata 或可选审计字段。
+2. 新增 application orchestration runtime 模块，只消费 `OrchestrationPlanSnapshot` 与 `OrchestrationInstance`，不消费 `WorkflowGraphInstance`。
+3. 定义 `OrchestrationEvent`，覆盖当前 ActivityEvent 等价事件和 plan activation。
+4. 实现 entry ready node materialization。
+5. 实现 node event -> `RuntimeNodeState` / `StateExchangeSnapshot` 纯状态推进。
+6. 接入 semantic executor launcher：
    - `AgentCall`
    - `Function`
    - `LocalEffect`
    - `HumanGate`
-6. 接入 scheduler claim/outbox；若沿用现有 claim 表模式，明确它只是 lease。
-7. 升级 runtime trace anchor / resolver 到 orchestration node 坐标。
-8. 改造 session terminal callback 和 `complete_lifecycle_node` 走 runtime node terminal event。
-9. 从 orchestration snapshot 生成 graph-compatible `LifecycleRunView`。
-10. 移除 scheduler / command path 对 `WorkflowGraphInstance.activity_state` 的事实源读取。
-11. 更新 specs 与 migration。
+7. 接入 scheduler claim/outbox；若沿用现有 claim 表模式，必须改成 `orchestration_id + node_path + attempt` lease，并明确它只是 operational lease。
+8. 升级 runtime trace anchor / resolver 到 orchestration node 坐标。
+9. 改造 session terminal callback 和 `complete_lifecycle_node` 走 runtime node terminal event。
+10. 从 orchestration snapshot 生成 graph-compatible `LifecycleRunView`。
+11. 移除 scheduler / command path 对 `WorkflowGraphInstance.activity_state`、`WorkflowGraphInstanceRepository`、`AgentAssignment(graph_instance_id, activity_key, attempt)` 的事实源读取。
+12. 新增 migration 拆除或停止主线读写 `lifecycle_workflow_instances`、activity attempt claim/assignment 旧坐标；必要投影只能由 orchestration snapshot 派生。
+13. 更新 specs 与 migration。
 
 ## 验证命令
 
@@ -65,7 +67,7 @@ pnpm dev
 ## 停止条件
 
 - compiler 输出不足以表达 runtime 所需节点、rules 或 state exchange。
-- 实现需要继续依赖 `WorkflowGraphInstance.activity_state` 作为推进事实源。
+- 实现需要继续依赖 `WorkflowGraphInstance` 或 `WorkflowGraphInstanceRepository` 作为 runtime identity / command path。
 - terminal resolver 无法稳定得到 `orchestration_id` / `node_path`。
 - Function/local effect 只能通过特殊旁路完成，无法进入 `RuntimeNodeState`。
 - 需要新增长期兼容 fallback。

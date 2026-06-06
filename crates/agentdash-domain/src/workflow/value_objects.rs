@@ -35,7 +35,7 @@ pub use orchestration::{
     OrchestrationInstance, OrchestrationJournalFact, OrchestrationLimits,
     OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus, PlanActivation,
     PlanNode, PlanNodeKind, RuntimeNodeError, RuntimeNodeState, RuntimeNodeStatus, RuntimeTraceRef,
-    StateArtifactRef, StateExchangeSnapshot,
+    StateArtifactRef, StateExchangeRule, StateExchangeSnapshot,
 };
 pub use ports::{
     ContextStrategy, GateStrategy, InputPortDefinition, OutputPortDefinition, StandaloneFulfillment,

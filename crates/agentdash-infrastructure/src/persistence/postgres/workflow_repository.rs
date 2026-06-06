@@ -1074,12 +1074,17 @@ mod workflow_claim_tests {
                 executor: Some(executor),
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
+                completion_policy: None,
+                iteration_policy: None,
+                join_policy: None,
                 result_contract: None,
                 metadata: None,
             }],
             entry_node_ids: vec![role.to_string()],
             activation_rules: Vec::new(),
+            state_exchange_rules: Vec::new(),
             limits: Default::default(),
+            metadata: None,
             created_at: chrono::Utc::now(),
         };
         OrchestrationInstance::new(role, source_ref, plan_snapshot)

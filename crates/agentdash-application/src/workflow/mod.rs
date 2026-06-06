@@ -18,6 +18,7 @@ pub mod graph_resolver;
 pub mod lifecycle;
 pub mod lifecycle_gate_service;
 pub mod lifecycle_run_view_builder;
+pub mod orchestration;
 pub mod orchestrator;
 mod project_agent_session_start;
 pub mod projection;
@@ -80,6 +81,11 @@ pub use lifecycle::mount::{
     writable_port_keys_for_active_workflow,
 };
 pub use lifecycle_gate_service::LifecycleGateService;
+pub use orchestration::{
+    WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION, WorkflowGraphCompileDiagnostic,
+    WorkflowGraphCompileInput, WorkflowGraphCompileMode, WorkflowGraphCompileOutput,
+    WorkflowGraphCompileSourceMetadata, WorkflowGraphCompiler, compile_workflow_graph,
+};
 pub use orchestrator::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,

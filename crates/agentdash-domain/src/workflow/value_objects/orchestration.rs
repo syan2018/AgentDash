@@ -7,8 +7,9 @@ use uuid::Uuid;
 
 use super::run_state::ExecutorRunRef;
 use super::{
-    AgentReusePolicy, FunctionActivityExecutorSpec, HumanActivityExecutorSpec, InputPortDefinition,
-    OutputPortDefinition, RuntimeSessionPolicy,
+    ActivityCompletionPolicy, ActivityIterationPolicy, ActivityJoinPolicy, AgentReusePolicy,
+    ArtifactAliasPolicy, FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
+    InputPortDefinition, OutputPortDefinition, RuntimeSessionPolicy, TransitionCondition,
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -140,8 +141,12 @@ pub struct OrchestrationPlanSnapshot {
     pub entry_node_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub activation_rules: Vec<ActivationRule>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub state_exchange_rules: Vec<StateExchangeRule>,
     #[serde(default)]
     pub limits: OrchestrationLimits,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -160,6 +165,12 @@ pub struct PlanNode {
     pub input_ports: Vec<InputPortDefinition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub output_ports: Vec<OutputPortDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_policy: Option<ActivityCompletionPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iteration_policy: Option<ActivityIterationPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join_policy: Option<ActivityJoinPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_contract: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -217,6 +228,19 @@ pub enum ActivationRule {
     Entry {
         node_id: String,
     },
+    Transition {
+        rule_id: String,
+        from_node_id: String,
+        to_node_id: String,
+        #[serde(default)]
+        condition: TransitionCondition,
+        #[serde(default)]
+        join_policy: ActivityJoinPolicy,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_traversals: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_path: Option<String>,
+    },
     Dependency {
         node_id: String,
         depends_on_node_ids: Vec<String>,
@@ -245,6 +269,21 @@ pub enum ActivationRule {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_traversals: Option<u32>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StateExchangeRule {
+    pub rule_id: String,
+    pub from_node_id: String,
+    pub from_port: String,
+    pub to_node_id: String,
+    pub to_port: String,
+    #[serde(default)]
+    pub alias: ArtifactAliasPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_transition_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -529,6 +568,9 @@ mod tests {
             executor,
             input_ports: Vec::new(),
             output_ports: Vec::new(),
+            completion_policy: None,
+            iteration_policy: None,
+            join_policy: None,
             result_contract: None,
             metadata: None,
         }
@@ -579,10 +621,12 @@ mod tests {
             activation_rules: vec![ActivationRule::Entry {
                 node_id: "agent".to_string(),
             }],
+            state_exchange_rules: Vec::new(),
             limits: OrchestrationLimits {
                 max_concurrency: Some(2),
                 ..OrchestrationLimits::default()
             },
+            metadata: None,
             created_at: Utc::now(),
         };
 

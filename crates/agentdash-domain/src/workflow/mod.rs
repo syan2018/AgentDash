@@ -57,10 +57,10 @@ pub use value_objects::{
     OrchestrationJournalFact, OrchestrationLimits, OrchestrationPlanSnapshot,
     OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition, PlanActivation, PlanNode,
     PlanNodeKind, RuntimeNodeError, RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionPolicy,
-    RuntimeTraceRef, StandaloneFulfillment, StateArtifactRef, StateExchangeSnapshot,
-    ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState,
-    TransitionCondition, ValidationIssue, ValidationSeverity, WorkflowContextBinding,
-    WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowSessionTerminalState,
-    reduce_tool_capability_directives,
+    RuntimeTraceRef, StandaloneFulfillment, StateArtifactRef, StateExchangeRule,
+    StateExchangeSnapshot, ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction,
+    ToolCapabilitySlotState, TransitionCondition, ValidationIssue, ValidationSeverity,
+    WorkflowContextBinding, WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec,
+    WorkflowSessionTerminalState, reduce_tool_capability_directives,
 };
 pub use workflow_graph_instance::WorkflowGraphInstance;

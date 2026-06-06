@@ -3,7 +3,7 @@
   "name": "workflow-graph-compiler",
   "title": "WorkflowGraph 编译器",
   "description": "在 Orchestration 领域合同落地后，规划确定性的 WorkflowGraph 到 OrchestrationPlanSnapshot 编译器；实现前先停下评审。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

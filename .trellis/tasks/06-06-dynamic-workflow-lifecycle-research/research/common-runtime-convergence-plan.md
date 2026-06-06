@@ -98,16 +98,16 @@ Terminal callback 现在通过 session terminal effect outbox 调用 workflow or
 
 #### Phase A：静态 graph runtime 合同预备
 
-Precondition: `OrchestrationPlanSnapshot` / `RuntimeNodeState` / `OrchestrationInstance` domain contract and `WorkflowGraph -> OrchestrationPlanSnapshot` compiler must exist. If not, do not start common runtime by editing old engine directly.
+前置条件：`OrchestrationPlanSnapshot` / `RuntimeNodeState` / `OrchestrationInstance` domain contract 和 `WorkflowGraph -> OrchestrationPlanSnapshot` compiler 必须先存在。若前置条件不满足，不要直接编辑旧 engine 来启动 common runtime。
 
-Work:
+工作内容：
 
 - Add a small `OrchestrationRuntime` application module that consumes `OrchestrationPlanSnapshot`, not `WorkflowGraph`.
 - Define `OrchestrationEvent` equivalents for current Activity events: `NodeClaimAccepted`, `NodeStartFailed`, `NodeStarted`, `NodeCompleted`, `NodeFailed`, `NodeCancelled`, `HumanDecisionSubmitted`, plus `PlanActivated`.
 - Implement pure materialization from event -> snapshot first, mirroring `LifecycleEngine` behavior but using `RuntimeNodeState`.
 - Keep graph compiler fixtures as runtime fixtures; every old Activity behavior must enter through plan nodes.
 
-Exit criteria:
+退出标准：
 
 - A root static graph can initialize `OrchestrationInstance(role=root)` with entry ready node.
 - Activity-specific `ActivityLifecycleRunState` is no longer needed inside the new runtime core.
@@ -167,7 +167,7 @@ runtime_session_id
 
 The existing contract requires `LifecycleRunView.workflow_graph_instances[]` and `active_activity_refs[]` (`crates/agentdash-contracts/src/workflow.rs:834`), and frontend store ingests graph instances from the run view (`packages/app-web/src/stores/lifecycleStore.ts:129`). If runtime switches to orchestration snapshot without a graph-compatible projection, current UI loses active node display and graph instance indexing.
 
-Mitigation:
+缓解策略：
 
 - First release should project static graph orchestration into the old view fields.
 - Projection must be read-only; commands should use runtime node refs or session commands, not `ActivityAttemptView`.
@@ -177,13 +177,13 @@ Mitigation:
 
 Current callback path assumes runtime session maps to `AgentAssignment` and Activity attempt (`crates/agentdash-application/src/workflow/session_association.rs:178`). It also runs from terminal effect outbox after terminal event persistence (`crates/agentdash-application/src/session/terminal_effects.rs:158`). New runtime must preserve the outbox boundary but replace the resolver.
 
-Risks:
+风险：
 
 - Duplicate advancement if `complete_lifecycle_node` completes a node and later session terminal callback also completes it.
 - Lost terminal advancement if trace anchor lacks node_path.
 - Callback failure creating dead-letter effect while orchestration state remains running.
 
-Mitigation:
+缓解策略：
 
 - Add idempotent terminal fact application keyed by `(lifecycle_run_id, orchestration_id, node_path, attempt, terminal_source)`.
 - Anchor must be written before runtime session launch is accepted.
@@ -193,13 +193,13 @@ Mitigation:
 
 Function executor currently returns `FunctionRun` and immediate terminal event (`crates/agentdash-application/src/workflow/agent_executor.rs:910`), and `FunctionRunner` owns raw API/bash side effects (`crates/agentdash-spi/src/platform/function_runner.rs:36`). New runtime must not treat function node as an AgentRun-less oddity.
 
-Risks:
+风险：
 
 - Immediate function completion bypasses journal or node start state.
 - Bash/API permission and workspace root are not modeled in plan/runtime.
 - Large stdout/stderr/API body bloats `LifecycleRun.orchestrations[]`.
 
-Mitigation:
+缓解策略：
 
 - Always append `NodeStarted` before `EffectCompleted/EffectFailed`, even for synchronous functions.
 - Model function/local effect as typed `ExecutorSpec` with capability key and audit refs.
@@ -209,13 +209,13 @@ Mitigation:
 
 Cancel currently spans ActivityEvent, claim update, assignment release, and runtime delivery command (`crates/agentdash-application/src/workflow/subject_execution_control.rs:83`、`crates/agentdash-application/src/workflow/subject_execution_control.rs:249`). Pause/resume does not exist as orchestration command in current code; `LifecycleGateService` is durable wait/resume for gates, not whole workflow pause (`crates/agentdash-application/src/workflow/lifecycle_gate_service.rs:1`). Retry exists only as scheduler start failure semantics and attempt policy, not as user-facing node retry.
 
-Risks:
+风险：
 
 - Partial cancel leaves node cancelled but runtime session still running, or runtime cancelled but node still running.
 - Pause that only stops scheduler does not decide what happens to active AgentRun/function nodes.
 - Retry may reuse stale outputs/cache or violate `max_attempts`.
 
-Mitigation:
+缓解策略：
 
 - Write control commands as orchestration journal facts: `PauseRequested`, `ResumeRequested`, `CancelRequested`, `RetryRequested`.
 - Scheduler must refuse new claims when instance status is paused/cancelling.
@@ -316,7 +316,7 @@ Mitigation:
 ## 注意事项 / 未发现
 
 - `python ./.trellis/scripts/task.py current --source` returned no active task in this Codex session, but the user prompt explicitly provided the task path and output path; this file was written only under that requested task's `research/` directory.
-- Source search did not find implemented `OrchestrationInstance` / `OrchestrationPlanSnapshot` / `RuntimeNodeState` / `StateExchangeSnapshot` domain types in production code; those concepts currently exist in task design/research artifacts, not code.
+- `OrchestrationInstance` / `OrchestrationPlanSnapshot` / `RuntimeNodeState` / `StateExchangeSnapshot` 已在 `orchestration-domain-contract` 任务中落入代码；后续 common runtime 实现前必须重新读取最终代码合同，并先处理 compiler 计划提出的 plan digest 修正。
 - Current specs still state `WorkflowGraphInstance.activity_state` is authoritative Activity runtime state. That is a current-state contract and must be updated during implementation; it is not compatible with the target common runtime truth model.
 - Pause/resume/retry are not yet first-class orchestration commands in current workflow code. Existing durable gate wait/resume and scheduler retryable start failure are related mechanisms but not whole-instance pause/resume or user-facing node retry.
 - This research did not run tests and did not inspect generated TypeScript output beyond source contracts/store files.

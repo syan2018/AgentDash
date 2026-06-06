@@ -80,7 +80,7 @@
 
 | 字段 | 类型建议 | 说明 |
 | --- | --- | --- |
-| `plan_id` | `Uuid` | 单份 snapshot identity。 |
+| `plan_digest` | `String` | 单份 snapshot 的内容身份，由 canonical source + compiler schema 计算；运行实例继续使用 UUID。 |
 | `plan_version` | `u32` | IR schema version，从 1 开始。 |
 | `source_ref` | `OrchestrationSourceRef` | 可审计来源。 |
 | `nodes` | `Vec<PlanNode>` | 扁平节点列表，节点用 `node_id`/`parent_node_id`/`node_path` 表达树。 |

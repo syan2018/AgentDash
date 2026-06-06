@@ -90,11 +90,13 @@ flowchart TD
 
 `OrchestrationPlanSnapshot` 是 graph/script 的共同 runtime 输入。最小能力闭包应覆盖：
 
-- `PlanNode(kind=activity|agent_call|function|local_effect|extension_action|human_gate|phase|parallel_group|pipeline|barrier|subworkflow)`
+- `PlanNode(kind=agent_call|function|local_effect|extension_action|human_gate|phase|parallel_group|pipeline|barrier|subworkflow|activity)`
 - `ActivationRule`：entry、condition、artifact binding、join policy、iteration/retry policy。
 - `ExecutorSpec`：AgentProcedure、continue root、function API/bash、human decision、effect capability key。
 - `ResultContract`：output ports、schema、terminal status、cache key inputs。
 - `Limits`：concurrency、total agent/effect count、budget、timeout、max traversals。
+
+`activity` 不是 graph compiler 的默认运行节点类型。它只保留为 legacy/source projection 语义。静态 graph 的 Agent / API / Bash / Human activity 应编译成 `agent_call` / `function` / `local_effect` / `human_gate` 等语义节点；source activity key、旧 UI label 和 activity-compatible projection 放在 metadata 或 read projection 中。
 
 ### RuntimeNodeState
 
@@ -216,8 +218,8 @@ sequenceDiagram
 ### Phase 3：WorkflowGraph compiler
 
 - 实现 `WorkflowGraph -> OrchestrationPlanSnapshot`。
-- 覆盖 Activity executor、transition condition、artifact binding、join/iteration policy、attempt policy。
-- 将 `FunctionActivityExecutorSpec::ApiRequest` / `BashExec` 编译成 function/effect node。
+- 覆盖 Activity executor、transition condition、artifact binding、join/iteration policy、attempt policy，并把旧 graph 的 flow edge / artifact edge 规范化为控制流与状态交换两个维度。
+- 将 Agent / API request / BashExec / Human activity 分别编译成 `agent_call` / `function` / `local_effect` / `human_gate` 语义节点；不要用脚本模拟 graph，也不要统一落成 `activity` wrapper。
 
 这一阶段的目标是证明现有静态 graph 能落到 common runtime IR。
 

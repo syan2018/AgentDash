@@ -238,7 +238,7 @@ sequenceDiagram
     Scheduler->>Journal: append NodeClaimed / NodeStarted
 ```
 
-静态 graph 的 Activity 可以编译成 `PlanNode(kind=activity)`，transition 编译成 activation rule / artifact binding rule。这样现有 graph runtime 先进入统一 plan runtime，动态 script 后续只是第二种 compiler frontend。
+静态 graph 的 Activity 不应默认编译成 `PlanNode(kind=activity)`。`Activity` 是 graph definition / 旧 UI projection 的概念；进入 runtime IR 时应按 executor 编译成语义节点：Agent activity -> `agent_call`，API request -> `function`，BashExec / 本机桥接 -> `local_effect`，Human approval -> `human_gate`。transition 编译成控制 activation rule，artifact binding 编译成状态交换 / 变量绑定 rule。这样现有 graph runtime 先进入统一 plan runtime，动态 script 后续只是第二种 compiler frontend。
 
 ## 动态 Script 如何落入目标模型
 

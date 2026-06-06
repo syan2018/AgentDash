@@ -65,7 +65,8 @@ agent-run-api-naming
 
 建议文件入口：
 
-- `crates/agentdash-domain/src/workflow/orchestration_plan_compiler.rs`
+- `crates/agentdash-application/src/workflow/orchestration/compiler.rs`
+- `crates/agentdash-application/src/workflow/orchestration/mod.rs`
 - `crates/agentdash-domain/src/workflow/value_objects/orchestration.rs`
 - `crates/agentdash-domain/src/workflow/value_objects/activity_def.rs`
 - `crates/agentdash-domain/src/workflow/validation.rs`
@@ -75,6 +76,9 @@ agent-run-api-naming
 - Agent / Function / Human executor identity，其中 API request 与 BashExec 应继续作为 typed function / local effect。
 - `completion_policy`、input/output ports、transition condition、artifact binding、`join_policy`、`iteration_policy`、`max_traversals`。
 - 当前 runtime 尚未执行的 `Any` / `First` / `NOfM` join、`artifact_alias`、`max_traversals` 也要进入 plan，因为目标 runtime 以 plan 为事实源。
+- 旧 `flow` edge 是过程控制，`artifact` / bindings 是状态交换。compiler 应把二者规范化为 activation rule 与 state exchange rule，而不是延续早期 flow/artifact edge 的二分简化。
+- graph activity 按 executor 编译成 semantic node kind：AgentCall / Function / LocalEffect / HumanGate。`Activity` 只用于 source metadata 或兼容 projection。
+- plan snapshot 身份使用 deterministic digest；UUID 留给 orchestration instance 和其它运行实例。
 
 验证闭包：
 

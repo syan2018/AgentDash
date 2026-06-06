@@ -150,13 +150,14 @@ ExecutorRunRef extension for effect refs if needed
 | 当前 WorkflowGraph | OrchestrationPlanSnapshot |
 | --- | --- |
 | `entry_activity_key` | entry activation rule |
-| `ActivityDefinition` | `PlanNode(kind=activity)` |
-| `ActivityExecutorSpec::Agent` | `PlanNode.executor=agent_call` |
-| `ActivityExecutorSpec::Function(ApiRequest/BashExec)` | `PlanNode.executor=function/local_effect` |
-| `ActivityExecutorSpec::Human` | `PlanNode.executor=human_gate` |
-| `ActivityTransition` | activation rule / dependency edge |
+| `ActivityDefinition` | source metadata + semantic `PlanNode` seed |
+| `ActivityExecutorSpec::Agent` | `PlanNode(kind=agent_call)` + `ExecutorSpec::AgentProcedure` |
+| `ActivityExecutorSpec::Function(ApiRequest)` | `PlanNode(kind=function)` + typed function executor |
+| `ActivityExecutorSpec::Function(BashExec)` | `PlanNode(kind=local_effect)` + typed effect/function executor |
+| `ActivityExecutorSpec::Human` | `PlanNode(kind=human_gate)` |
+| `ActivityTransition` | control activation rule / dependency edge |
 | `TransitionCondition` | condition expression |
-| `ArtifactBinding` | artifact exchange rule |
+| `ArtifactBinding` | state exchange / variable binding rule |
 | `max_traversals` / attempt policies | limit / retry / iteration policy |
 
 ### 测试

@@ -84,3 +84,17 @@ POST   /sessions/{runtime_session_id}/pending-messages/{message_id}/promote
 ```
 
 `/sessions/{runtime_session_id}` 最清楚地表达了用户对当前 runtime session 的 delivery/control command。AgentRun / LifecycleRun 的写入归属属于 application service 内部解析结果；若后续需要显式管理 Lifecycle 内 AgentRun 资源，使用 `/lifecycles/{lifecycle_run_id}/agent-runs`。
+
+## 2026-06-06：WorkflowGraph compiler 语义修正
+
+用户进一步指出，Claude Workflow 参考的关键不是把 graph 用一段脚本模拟出来。Claude Workflow 的脚本里，`flow` 是命令式过程控制，`artifact` / 中间结果是变量和状态交换；一次运行轨迹可以投影成 DAG，但编排程序本身不应被静态 graph 形态限制。AgentDash 现有 flow edge / artifact edge 是快速实现阶段的简化，不能成为目标 IR 的上限。
+
+据此修正 compiler 计划：
+
+- `WorkflowGraph -> OrchestrationPlanSnapshot` 是 definition 到语义 IR 的编译器，不是 graph-to-script。
+- compiler 推荐放在 application 层；domain 层持有 `OrchestrationPlanSnapshot`、`PlanNode`、`ActivationRule`、`ExecutorSpec` 等值对象和不变量。
+- plan snapshot identity 使用 deterministic digest；UUID 留给 `OrchestrationInstance`、LifecycleRun、AgentRun 等运行实例。
+- graph activity 进入 runtime IR 时按 executor 变成语义节点：Agent activity -> `AgentCall`，API request -> `Function`，BashExec / 本机桥接 -> `LocalEffect`，Human approval -> `HumanGate`。`Activity` 只保留为 source metadata 或兼容 projection。
+- 旧 `ActivityTransitionKind::Flow` / `Artifact` 只作为 source metadata 和 normalization hint。目标 runtime 中，control dependency / condition / join / traversal limit 是过程控制维度；artifact binding / node output / input materialization 是状态交换维度。
+
+这也暴露出已落地第一版 domain contract 的后续修正点：当前 `OrchestrationPlanSnapshot` 仍有 `plan_id: Uuid`。在 compiler 实现前，应先把 plan snapshot 的内容身份收敛到 digest，避免后续 cache/resume/audit 被随机 ID 污染。

@@ -60,7 +60,7 @@ crates/agentdash-domain/src/workflow/value_objects/orchestration.rs
   - `journal_cursor`
   - timestamps
 - `OrchestrationPlanSnapshot`
-  - `plan_id`
+  - `plan_digest`
   - `plan_version`
   - `source_ref`
   - `nodes`

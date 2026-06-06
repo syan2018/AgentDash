@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-workflow-behavior-coverage.md","reason":"检查脚本语法和 compiler 是否覆盖核心行为族。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/design.md","reason":"检查是否仍然以 OrchestrationPlanSnapshot 和 common runtime 为唯一运行入口。"}
+{"file":".trellis/tasks/archive/2026-06/06-06-common-orchestration-runtime-static-graph/prd.md","reason":"检查实现是否复用当前 runtime 地基，不新增平行 scheduler。"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"检查 runtime event、executor launcher 和 HumanGate decision 合同。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查新增 API/DTO 是否通过 generated contracts 进入前端。"}

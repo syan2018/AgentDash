@@ -33,7 +33,8 @@
 - [x] 补充 `design.md` 与 `implement.md`，整理正式实现前的设计和实施拆解。
 - [x] 经过用户 review 后启动第一批机械迁移。
 - [x] 完成 session-scoped AgentRun command API 机械迁移，并提交为独立变更。
-- [ ] 后续模块实现继续按子任务 review 后启动。
+- [x] 已完成的 domain contract、graph compiler、common runtime 子任务完成归档。
+- [ ] Dynamic Script Artifact Compiler 子任务完成设计评审并进入实现。
 
 ## 文档索引
 
@@ -54,9 +55,10 @@
 | `research/README.md` | research 子目录索引，说明外部资料副本与研究产物来源。 |
 | `research/claude-dynamic-workflows-official-doc-zh-cn.md` | 用户贴入的 Claude 官方 Dynamic Workflows 文档副本。 |
 | `research/claude-dynamic-workflows-article-zhihu-simpread.md` | 用户贴入的中文调研文章副本。 |
-| `../06-06-orchestration-domain-contract/` | 子任务：落地 LifecycleRun orchestration 领域合同、持久化字段与 roundtrip 验证。 |
-| `../06-06-workflow-graph-compiler/` | 子任务：实现静态 `WorkflowGraph -> OrchestrationPlanSnapshot` compiler。 |
-| `../06-06-common-orchestration-runtime-static-graph/` | 子任务：将 compiler 输出正式接入 common orchestration runtime，并收敛旧 Activity runtime 事实源。 |
+| `../archive/2026-06/06-06-orchestration-domain-contract/` | 已归档子任务：落地 LifecycleRun orchestration 领域合同、持久化字段与 roundtrip 验证。 |
+| `../archive/2026-06/06-06-workflow-graph-compiler/` | 已归档子任务：实现静态 `WorkflowGraph -> OrchestrationPlanSnapshot` compiler。 |
+| `../archive/2026-06/06-06-common-orchestration-runtime-static-graph/` | 已归档子任务：将 compiler 输出正式接入 common orchestration runtime，并收敛旧 Activity runtime 事实源。 |
+| `../06-06-dynamic-script-artifact-compiler/` | 当前剩余子任务：设计并实现动态脚本资产与 `ScriptCompiler -> OrchestrationPlanSnapshot` frontend。 |
 | `implement.jsonl` / `check.jsonl` | Trellis manifest 文件，列出实现/检查子代理压缩后需要恢复的任务文档、研究文档与 spec。 |
 | `task.json` | Trellis task 元数据，当前 status 为 `in_progress`。 |
 
@@ -73,4 +75,4 @@
 - 评估当前代码时必须谨慎：Lifecycle / WorkflowGraph 相关实现来自快速重构阶段，只能作为现状事实与迁移来源，不应被默认视为最终目标架构。
 - runtime session 入口的 AgentRun command API 目标命名采用 `/sessions/{runtime_session_id}/messages`、`/sessions/{runtime_session_id}/steering`、`/sessions/{runtime_session_id}/pending-messages`；显式 AgentRun 资源管理语境再使用 `/lifecycles/{lifecycle_run_id}/agent-runs`。
 - 正式实现入口以 `design.md` 和 `implement.md` 为准；`research.md` 与 `target-model-sketch.md` 记录形成这些方案的研究依据和概念模型。
-- 后续模块启动前优先读取 `research/follow-up-module-roadmap.md`，再分别进入 domain contract、compiler、common runtime 三份模块预研文档，避免在压缩后丢失研究上下文。
+- 后续模块启动前优先读取 `research/follow-up-module-roadmap.md` 与 `../06-06-dynamic-script-artifact-compiler/`，再复核已归档 domain contract、compiler、common runtime 子任务，避免在压缩后丢失研究上下文。

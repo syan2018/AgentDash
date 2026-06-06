@@ -21,7 +21,8 @@
   "children": [
     "06-06-orchestration-domain-contract",
     "06-06-workflow-graph-compiler",
-    "06-06-common-orchestration-runtime-static-graph"
+    "06-06-common-orchestration-runtime-static-graph",
+    "06-06-dynamic-script-artifact-compiler"
   ],
   "parent": null,
   "relatedFiles": [],

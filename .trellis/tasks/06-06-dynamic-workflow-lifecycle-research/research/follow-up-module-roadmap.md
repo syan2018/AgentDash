@@ -5,8 +5,8 @@
 ## 当前状态
 
 - 已完成 `agent-run-api-naming` 的第一步机械迁移：外露 command route 收敛到 `/sessions/{runtime_session_id}/...`。
-- 当前任务已进入 `in_progress`，但后续模块仍以规划 / research 为主，不直接实现代码。
-- 已创建后续子任务：`orchestration-domain-contract`、`workflow-graph-compiler`、`common-orchestration-runtime-static-graph`。推进顺序是先收敛 IR 合同，再实现 compiler，再接 common runtime。
+- `orchestration-domain-contract`、`workflow-graph-compiler`、`common-orchestration-runtime-static-graph` 已完成并归档到 `.trellis/tasks/archive/2026-06/`。
+- 当前剩余模块是 `06-06-dynamic-script-artifact-compiler`：设计动态脚本资产、脚本语法/AST、审批流和 `ScriptCompiler -> OrchestrationPlanSnapshot` frontend。
 - `.trellis/config.yaml` 存在任务外本地变更，后续提交继续排除。
 - 目标架构仍以 `Lifecycle` 作为完整上下文容器；`Orchestration` 是 `LifecycleRun` 内部的 0..N 状态容器，用于承载编译后的 plan、runtime node tree、dispatch、journal cursor 和 state exchange snapshot。
 
@@ -17,15 +17,16 @@
 | Orchestration domain contract | 落 `LifecycleContext`、`OrchestrationInstance`、`OrchestrationPlanSnapshot`、`RuntimeNodeState`、`StateExchangeSnapshot` 的最小合同与迁移字段 | `research/orchestration-domain-contract-plan.md` |
 | WorkflowGraph compiler | 将现有静态 `WorkflowGraph` 编译为 `OrchestrationPlanSnapshot`，覆盖 Activity executor、transition、artifact、join/iteration policy | `research/workflow-graph-compiler-plan.md` |
 | Common orchestration runtime | 用 common runtime snapshot/journal 执行静态 graph，并规划旧过程仓储的 projection / lease / trace index 收敛 | `research/common-runtime-convergence-plan.md` |
+| Dynamic script artifact compiler | 新增 run script artifact / reusable script definition 与脚本 compiler frontend，输出同一 `OrchestrationPlanSnapshot` | `../06-06-dynamic-script-artifact-compiler/` |
 
 ## 依赖关系
 
 ```text
 agent-run-api-naming
-  -> orchestration-domain-contract
-  -> workflow-graph-compiler
-  -> common-orchestration-runtime-static-graph
-  -> dynamic-script-artifact-compiler
+  -> orchestration-domain-contract [archived]
+  -> workflow-graph-compiler [archived]
+  -> common-orchestration-runtime-static-graph [archived]
+  -> dynamic-script-artifact-compiler [planning]
 ```
 
 关键依赖不是 task tree 位置，而是 contract 成熟度：
@@ -147,4 +148,5 @@ agent-run-api-naming
 2. `design.md`：确认 Lifecycle / Orchestration 分层、API 命名和阶段设计。
 3. `implement.md`：确认子任务列表、验证命令和风险文件。
 4. `research/follow-up-module-roadmap.md`：确认后续模块顺序与汇总结论。
-5. 三份模块 research：分别恢复 domain contract、compiler、runtime convergence 的源码事实和测试闭包。
+5. `../06-06-dynamic-script-artifact-compiler/prd.md`、`design.md`、`implement.md`：恢复当前剩余目标。
+6. 已归档三份子任务和模块 research：分别复核 domain contract、compiler、runtime convergence 的源码事实和测试闭包。

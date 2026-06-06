@@ -20,7 +20,8 @@
   "subtasks": [],
   "children": [
     "06-06-orchestration-domain-contract",
-    "06-06-workflow-graph-compiler"
+    "06-06-workflow-graph-compiler",
+    "06-06-common-orchestration-runtime-static-graph"
   ],
   "parent": null,
   "relatedFiles": [],

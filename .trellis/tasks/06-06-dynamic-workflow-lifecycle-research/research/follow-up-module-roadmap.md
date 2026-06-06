@@ -6,6 +6,7 @@
 
 - 已完成 `agent-run-api-naming` 的第一步机械迁移：外露 command route 收敛到 `/sessions/{runtime_session_id}/...`。
 - 当前任务已进入 `in_progress`，但后续模块仍以规划 / research 为主，不直接实现代码。
+- 已创建后续子任务：`orchestration-domain-contract`、`workflow-graph-compiler`、`common-orchestration-runtime-static-graph`。推进顺序是先收敛 IR 合同，再实现 compiler，再接 common runtime。
 - `.trellis/config.yaml` 存在任务外本地变更，后续提交继续排除。
 - 目标架构仍以 `Lifecycle` 作为完整上下文容器；`Orchestration` 是 `LifecycleRun` 内部的 0..N 状态容器，用于承载编译后的 plan、runtime node tree、dispatch、journal cursor 和 state exchange snapshot。
 

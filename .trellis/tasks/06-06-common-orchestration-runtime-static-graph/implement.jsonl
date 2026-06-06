@@ -1,0 +1,14 @@
+{"file":".trellis/tasks/06-06-common-orchestration-runtime-static-graph/prd.md","reason":"当前任务目标、前置条件、范围和验收标准。"}
+{"file":".trellis/tasks/06-06-common-orchestration-runtime-static-graph/design.md","reason":"common orchestration runtime 的技术边界、状态流、executor 映射和 projection 方案。"}
+{"file":".trellis/tasks/06-06-common-orchestration-runtime-static-graph/implement.md","reason":"实施顺序、验证命令和停止条件。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/common-runtime-convergence-plan.md","reason":"父任务 runtime convergence 源码事实、状态归属和迁移阶段。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/workflow-graph-compiler-plan.md","reason":"compiler 输出语义、Plan IR 和状态交换规则，runtime 必须消费该输出。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-workflow-behavior-coverage.md","reason":"Claude Workflow 行为覆盖矩阵，作为 runtime 能力压力测试。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/current-code-context.md","reason":"Lifecycle / WorkflowGraph / executor / persistence 当前代码事实地图。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"workflow backend 当前架构、不变量和目标职责。"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"当前 Activity runtime、executor、artifact、terminal callback 合同。"}
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"RuntimeSession command、terminal outbox 和 trace anchor 边界。"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"RuntimeSession 作为 delivery / trace substrate 的职责边界。"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"repository port 和 aggregate 边界规则。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"migration、复杂值对象持久化和 schema 历史规则。"}
+{"file":".trellis/spec/frontend/workflow-activity-lifecycle.md","reason":"当前 LifecycleRunView / graph-compatible projection 的前端消费边界。"}

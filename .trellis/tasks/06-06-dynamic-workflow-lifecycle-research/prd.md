@@ -54,6 +54,9 @@
 | `research/README.md` | research 子目录索引，说明外部资料副本与研究产物来源。 |
 | `research/claude-dynamic-workflows-official-doc-zh-cn.md` | 用户贴入的 Claude 官方 Dynamic Workflows 文档副本。 |
 | `research/claude-dynamic-workflows-article-zhihu-simpread.md` | 用户贴入的中文调研文章副本。 |
+| `../06-06-orchestration-domain-contract/` | 子任务：落地 LifecycleRun orchestration 领域合同、持久化字段与 roundtrip 验证。 |
+| `../06-06-workflow-graph-compiler/` | 子任务：实现静态 `WorkflowGraph -> OrchestrationPlanSnapshot` compiler。 |
+| `../06-06-common-orchestration-runtime-static-graph/` | 子任务：将 compiler 输出正式接入 common orchestration runtime，并收敛旧 Activity runtime 事实源。 |
 | `implement.jsonl` / `check.jsonl` | Trellis manifest 文件，列出实现/检查子代理压缩后需要恢复的任务文档、研究文档与 spec。 |
 | `task.json` | Trellis task 元数据，当前 status 为 `in_progress`。 |
 

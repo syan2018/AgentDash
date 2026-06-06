@@ -17,11 +17,11 @@ import type {
 import type {
   EnqueuePendingMessageRequest,
   EnqueuePendingMessageResponse,
-  LifecycleAgentMessageRequest,
-  LifecycleAgentMessageResponse,
-  LifecycleAgentSteeringRequest,
-  LifecycleAgentSteeringResponse,
   PendingMessageView,
+  AgentRunMessageRequest,
+  AgentRunMessageResponse,
+  AgentRunSteeringRequest,
+  AgentRunSteeringResponse,
 } from "../generated/workflow-contracts";
 
 function sessionCommandPath(runtimeSessionId: string, route: string): string {
@@ -71,21 +71,21 @@ export async function fetchRuntimeTrace(runtimeSessionId: string): Promise<Runti
   );
 }
 
-export async function sendLifecycleAgentMessageByRuntimeSession(
+export async function sendAgentRunMessageByRuntimeSession(
   runtimeSessionId: string,
-  request: LifecycleAgentMessageRequest,
-): Promise<LifecycleAgentMessageResponse> {
-  return api.post<LifecycleAgentMessageResponse>(
+  request: AgentRunMessageRequest,
+): Promise<AgentRunMessageResponse> {
+  return api.post<AgentRunMessageResponse>(
     sessionCommandPath(runtimeSessionId, "/messages"),
     request,
   );
 }
 
-export async function sendLifecycleAgentSteeringMessageByRuntimeSession(
+export async function steerAgentRunByRuntimeSession(
   runtimeSessionId: string,
-  request: LifecycleAgentSteeringRequest,
-): Promise<LifecycleAgentSteeringResponse> {
-  return api.post<LifecycleAgentSteeringResponse>(
+  request: AgentRunSteeringRequest,
+): Promise<AgentRunSteeringResponse> {
+  return api.post<AgentRunSteeringResponse>(
     sessionCommandPath(runtimeSessionId, "/steering"),
     request,
   );

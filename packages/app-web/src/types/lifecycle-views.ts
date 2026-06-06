@@ -1,6 +1,6 @@
 export type {
   AgentFrameRefDto,
-  LifecycleAgentRefDto,
+  AgentRunRefDto,
   LifecycleRunRefDto,
   RuntimeSessionRefDto,
   SubjectRefDto,
@@ -8,10 +8,10 @@ export type {
 export type {
   ActiveRuntimeNodeRefDto,
   AgentFrameRuntimeView,
-  LifecycleAgentView,
+  AgentRunView,
   LifecycleRunView,
   LifecycleSubjectAssociationDto,
-  OrchestrationRunView,
+  OrchestrationInstanceView,
   ProjectActiveAgentsView,
   ProjectSessionListEntry,
   ProjectSessionListView,

@@ -11,7 +11,7 @@ import { create } from "zustand";
 
 import type {
   LifecycleRunView,
-  LifecycleAgentView,
+  AgentRunView,
   AgentFrameRuntimeView,
   SubjectExecutionView,
   RuntimeSessionTraceView,
@@ -29,7 +29,7 @@ import {
 
 interface LifecycleState {
   lifecycleRuns: Map<string, LifecycleRunView>;
-  agents: Map<string, LifecycleAgentView>;
+  agents: Map<string, AgentRunView>;
   frames: Map<string, AgentFrameRuntimeView>;
   subjectExecutions: Map<string, SubjectExecutionView>;
   runtimeTraces: Map<string, RuntimeSessionTraceView>;
@@ -39,7 +39,7 @@ interface LifecycleState {
 
   // ── write actions ──
   setLifecycleRun: (lifecycleRun: LifecycleRunView) => void;
-  setAgent: (agent: LifecycleAgentView) => void;
+  setAgent: (agent: AgentRunView) => void;
   setFrame: (frame: AgentFrameRuntimeView) => void;
   setSubjectExecution: (view: SubjectExecutionView) => void;
   setRuntimeTrace: (trace: RuntimeSessionTraceView) => void;
@@ -60,7 +60,7 @@ interface LifecycleState {
   /** 按 subject association 聚合：返回指定 subject 关联的所有 LifecycleRun */
   lifecycleRunsBySubject: (subjectKind: string, subjectId: string) => LifecycleRunView[];
   /** 返回指定 LifecycleRun 下的所有 agent */
-  agentsByLifecycleRun: (lifecycleRunId: string) => LifecycleAgentView[];
+  agentsByLifecycleRun: (lifecycleRunId: string) => AgentRunView[];
   /** 返回指定 LifecycleRun 当前 agent/frame delivery runtime session id */
   deliveryRuntimeSessionIdForLifecycleRun: (lifecycleRunId: string) => string | null;
 }
@@ -209,7 +209,7 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   },
 
   agentsByLifecycleRun: (lifecycleRunId) => {
-    const result: LifecycleAgentView[] = [];
+    const result: AgentRunView[] = [];
     for (const agent of get().agents.values()) {
       if (agent.agent_ref.run_id === lifecycleRunId) result.push(agent);
     }

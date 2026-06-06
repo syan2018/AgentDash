@@ -528,7 +528,7 @@ pub struct LifecycleRunRefDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleAgentRefDto {
+pub struct AgentRunRefDto {
     pub run_id: String,
     pub agent_id: String,
 }
@@ -587,8 +587,8 @@ pub struct RuntimeSessionExecutionAnchorDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleAgentMessageRequest {
-    /// canonical 用户输入，与 steer（`LifecycleAgentSteeringRequest.input`）同形。
+pub struct AgentRunMessageRequest {
+    /// canonical 用户输入，与 steer（`AgentRunSteeringRequest.input`）同形。
     pub input: Vec<codex::UserInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
@@ -597,17 +597,17 @@ pub struct LifecycleAgentMessageRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleAgentMessageResponse {
+pub struct AgentRunMessageResponse {
     pub runtime_session_id: String,
     pub turn_id: String,
     pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: LifecycleAgentRefDto,
+    pub agent_ref: AgentRunRefDto,
     pub frame_ref: AgentFrameRefDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleAgentSteeringRequest {
+pub struct AgentRunSteeringRequest {
     pub input: Vec<codex::UserInput>,
 }
 
@@ -625,7 +625,7 @@ pub struct RuntimeSessionCommandStateDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleAgentSteeringResponse {
+pub struct AgentRunSteeringResponse {
     pub runtime_session_id: String,
     pub accepted: bool,
     pub state: RuntimeSessionCommandStateDto,
@@ -638,7 +638,7 @@ pub struct StoryLaunchResult {
     pub story_id: String,
     pub project_agent_id: String,
     pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: LifecycleAgentRefDto,
+    pub agent_ref: AgentRunRefDto,
     pub frame_ref: AgentFrameRefDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -695,7 +695,7 @@ pub struct ActiveRuntimeNodeRefDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct OrchestrationRunView {
+pub struct OrchestrationInstanceView {
     pub orchestration_id: String,
     pub role: String,
     pub status: String,
@@ -711,8 +711,8 @@ pub struct OrchestrationRunView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleAgentView {
-    pub agent_ref: LifecycleAgentRefDto,
+pub struct AgentRunView {
+    pub agent_ref: AgentRunRefDto,
     pub project_id: String,
     pub agent_kind: String,
     pub agent_role: String,
@@ -753,11 +753,11 @@ pub struct LifecycleRunView {
     pub root_graph_id: Option<String>,
     pub status: LifecycleRunStatus,
     #[serde(default)]
-    pub orchestrations: Vec<OrchestrationRunView>,
+    pub orchestrations: Vec<OrchestrationInstanceView>,
     #[serde(default)]
     pub active_runtime_node_refs: Vec<ActiveRuntimeNodeRefDto>,
     #[serde(default)]
-    pub agents: Vec<LifecycleAgentView>,
+    pub agents: Vec<AgentRunView>,
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
     #[serde(default)]
@@ -801,7 +801,7 @@ pub struct SubjectExecutionView {
     pub runs: Vec<LifecycleRunView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub current_agent: Option<LifecycleAgentView>,
+    pub current_agent: Option<AgentRunView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub latest_runtime_node: Option<RuntimeNodeView>,
@@ -873,7 +873,7 @@ pub struct SessionRuntimeControlView {
     pub run: Option<LifecycleRunView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub agent: Option<LifecycleAgentView>,
+    pub agent: Option<AgentRunView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub frame_runtime: Option<AgentFrameRuntimeView>,
@@ -922,7 +922,7 @@ pub struct ProjectSessionListEntry {
     pub run_ref: Option<LifecycleRunRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub agent_ref: Option<LifecycleAgentRefDto>,
+    pub agent_ref: Option<AgentRunRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub frame_ref: Option<AgentFrameRefDto>,
@@ -947,7 +947,7 @@ pub struct ProjectSessionListView {
 pub struct ProjectActiveAgentsView {
     pub project_id: String,
     pub runs: Vec<LifecycleRunView>,
-    pub agents: Vec<LifecycleAgentView>,
+    pub agents: Vec<AgentRunView>,
 }
 
 fn bool_true() -> bool {

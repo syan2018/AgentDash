@@ -22,8 +22,8 @@ import {
 } from "../features/workspace-panel";
 import { useSessionRuntimeState } from "../features/workspace-panel/model/useSessionRuntimeState";
 import {
-  sendLifecycleAgentMessageByRuntimeSession,
-  sendLifecycleAgentSteeringMessageByRuntimeSession,
+  sendAgentRunMessageByRuntimeSession,
+  steerAgentRunByRuntimeSession,
 } from "../services/lifecycle";
 import type { ExecutorConfig } from "../services/executor";
 import type { JsonValue } from "../generated/common-contracts";
@@ -502,7 +502,7 @@ export function SessionPage({
     }
 
     if (action === "send_next") {
-      const response = await sendLifecycleAgentMessageByRuntimeSession(sessionId, {
+      const response = await sendAgentRunMessageByRuntimeSession(sessionId, {
         input: inputBlocks,
         executor_config: executorConfig as unknown as JsonValue | undefined,
       });
@@ -512,7 +512,7 @@ export function SessionPage({
       return;
     }
     if (action === "steer") {
-      await sendLifecycleAgentSteeringMessageByRuntimeSession(sessionId, {
+      await steerAgentRunByRuntimeSession(sessionId, {
         input: inputBlocks,
       });
       void refreshSessionRuntimeContext().catch(() => {});

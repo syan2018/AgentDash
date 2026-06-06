@@ -12,7 +12,7 @@ use crate::session::{LaunchCommand, SessionLaunchService, UserPromptInput};
 use crate::workflow::WorkflowApplicationError;
 
 #[derive(Debug, Clone)]
-pub struct LifecycleAgentMessageCommand {
+pub struct AgentRunMessageCommand {
     pub delivery_runtime_session_id: String,
     pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
     pub executor_config: Option<AgentConfig>,
@@ -20,7 +20,7 @@ pub struct LifecycleAgentMessageCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LifecycleAgentMessageDispatch {
+pub struct AgentRunMessageDispatch {
     pub runtime_session_id: String,
     pub turn_id: String,
     pub run_id: Uuid,
@@ -30,7 +30,7 @@ pub struct LifecycleAgentMessageDispatch {
 }
 
 #[derive(Debug, Clone)]
-pub struct LifecycleAgentMessageDelivery {
+pub struct AgentRunMessageDelivery {
     pub delivery_runtime_session_id: String,
     pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
     pub executor_config: Option<AgentConfig>,
@@ -38,29 +38,29 @@ pub struct LifecycleAgentMessageDelivery {
 }
 
 #[async_trait]
-pub trait LifecycleAgentMessageDeliveryPort: Send + Sync {
+pub trait AgentRunMessageDeliveryPort: Send + Sync {
     async fn deliver_user_message(
         &self,
-        delivery: LifecycleAgentMessageDelivery,
+        delivery: AgentRunMessageDelivery,
     ) -> Result<String, WorkflowApplicationError>;
 }
 
 #[derive(Clone)]
-pub struct SessionLaunchLifecycleAgentMessageDeliveryPort {
+pub struct AgentRunMessageLaunchDeliveryPort {
     session_launch: SessionLaunchService,
 }
 
-impl SessionLaunchLifecycleAgentMessageDeliveryPort {
+impl AgentRunMessageLaunchDeliveryPort {
     pub fn new(session_launch: SessionLaunchService) -> Self {
         Self { session_launch }
     }
 }
 
 #[async_trait]
-impl LifecycleAgentMessageDeliveryPort for SessionLaunchLifecycleAgentMessageDeliveryPort {
+impl AgentRunMessageDeliveryPort for AgentRunMessageLaunchDeliveryPort {
     async fn deliver_user_message(
         &self,
-        delivery: LifecycleAgentMessageDelivery,
+        delivery: AgentRunMessageDelivery,
     ) -> Result<String, WorkflowApplicationError> {
         let user_input = UserPromptInput {
             input: Some(delivery.input),
@@ -84,7 +84,7 @@ impl LifecycleAgentMessageDeliveryPort for SessionLaunchLifecycleAgentMessageDel
     }
 }
 
-pub struct LifecycleAgentMessageService<'a, D> {
+pub struct AgentRunMessageService<'a, D> {
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
@@ -92,9 +92,9 @@ pub struct LifecycleAgentMessageService<'a, D> {
     delivery: D,
 }
 
-impl<'a, D> LifecycleAgentMessageService<'a, D>
+impl<'a, D> AgentRunMessageService<'a, D>
 where
-    D: LifecycleAgentMessageDeliveryPort,
+    D: AgentRunMessageDeliveryPort,
 {
     pub fn new(
         lifecycle_run_repo: &'a dyn LifecycleRunRepository,
@@ -114,8 +114,8 @@ where
 
     pub async fn dispatch_user_message(
         &self,
-        command: LifecycleAgentMessageCommand,
-    ) -> Result<LifecycleAgentMessageDispatch, WorkflowApplicationError> {
+        command: AgentRunMessageCommand,
+    ) -> Result<AgentRunMessageDispatch, WorkflowApplicationError> {
         if command.delivery_runtime_session_id.trim().is_empty() {
             return Err(WorkflowApplicationError::BadRequest(
                 "delivery runtime session id 不能为空".to_string(),
@@ -133,7 +133,7 @@ where
 
         let turn_id = self
             .delivery
-            .deliver_user_message(LifecycleAgentMessageDelivery {
+            .deliver_user_message(AgentRunMessageDelivery {
                 delivery_runtime_session_id: command.delivery_runtime_session_id.clone(),
                 input: command.input,
                 executor_config: command.executor_config,
@@ -141,7 +141,7 @@ where
             })
             .await?;
 
-        Ok(LifecycleAgentMessageDispatch {
+        Ok(AgentRunMessageDispatch {
             runtime_session_id: command.delivery_runtime_session_id,
             turn_id,
             run_id: run.id,
@@ -497,14 +497,14 @@ mod tests {
 
     #[derive(Default)]
     struct FakeDelivery {
-        calls: Mutex<Vec<LifecycleAgentMessageDelivery>>,
+        calls: Mutex<Vec<AgentRunMessageDelivery>>,
     }
 
     #[async_trait]
-    impl LifecycleAgentMessageDeliveryPort for &FakeDelivery {
+    impl AgentRunMessageDeliveryPort for &FakeDelivery {
         async fn deliver_user_message(
             &self,
-            delivery: LifecycleAgentMessageDelivery,
+            delivery: AgentRunMessageDelivery,
         ) -> Result<String, WorkflowApplicationError> {
             self.calls.lock().unwrap().push(delivery);
             Ok("turn-1".to_string())
@@ -554,7 +554,7 @@ mod tests {
             &anchor_repo,
             "runtime-1",
         );
-        let service = LifecycleAgentMessageService::new(
+        let service = AgentRunMessageService::new(
             &run_repo,
             &agent_repo,
             &frame_repo,
@@ -563,7 +563,7 @@ mod tests {
         );
 
         let result = service
-            .dispatch_user_message(LifecycleAgentMessageCommand {
+            .dispatch_user_message(AgentRunMessageCommand {
                 delivery_runtime_session_id: "runtime-1".to_string(),
                 input: agentdash_agent_protocol::text_user_input_blocks("hello"),
                 executor_config: None,
@@ -588,7 +588,7 @@ mod tests {
         let frame_repo = InMemoryFrameRepo::default();
         let anchor_repo = InMemoryAnchorRepo::default();
         let delivery = FakeDelivery::default();
-        let service = LifecycleAgentMessageService::new(
+        let service = AgentRunMessageService::new(
             &run_repo,
             &agent_repo,
             &frame_repo,
@@ -597,7 +597,7 @@ mod tests {
         );
 
         let error = service
-            .dispatch_user_message(LifecycleAgentMessageCommand {
+            .dispatch_user_message(AgentRunMessageCommand {
                 delivery_runtime_session_id: "missing".to_string(),
                 input: agentdash_agent_protocol::text_user_input_blocks("hello"),
                 executor_config: None,

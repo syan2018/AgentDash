@@ -31,7 +31,7 @@ use agentdash_contracts::session::{
     SessionNdjsonEnvelope, SessionProjectionRollbackResponse, SessionProjectionViewResponse,
 };
 use agentdash_contracts::workflow::{
-    LifecycleAgentRefDto, LifecycleRunRefDto, PendingMessageView, ProjectSessionListEntry,
+    AgentRunRefDto, LifecycleRunRefDto, PendingMessageView, ProjectSessionListEntry,
     ProjectSessionListView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
     SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
     SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
@@ -597,7 +597,7 @@ async fn project_session_entry(
         run_ref: Some(LifecycleRunRefDto {
             run_id: run.id.to_string(),
         }),
-        agent_ref: Some(LifecycleAgentRefDto {
+        agent_ref: Some(AgentRunRefDto {
             run_id: agent.run_id.to_string(),
             agent_id: agent.id.to_string(),
         }),

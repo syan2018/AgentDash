@@ -103,13 +103,13 @@ use agentdash_contracts::vfs::{
 };
 use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentFrameRefDto,
-    AgentFrameRuntimeView, AgentProcedureContract, DefinitionSource, DeleteAgentProcedureResponse,
-    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
-    EnqueuePendingMessageRequest, EnqueuePendingMessageResponse, HookPresetResponse,
-    HookPresetsResponse, LifecycleAgentMessageRequest, LifecycleAgentMessageResponse,
-    LifecycleAgentRefDto, LifecycleAgentSteeringRequest, LifecycleAgentSteeringResponse,
-    LifecycleAgentView, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
-    LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto, OrchestrationRunView,
+    AgentFrameRuntimeView, AgentProcedureContract, AgentRunMessageRequest, AgentRunMessageResponse,
+    AgentRunRefDto, AgentRunSteeringRequest, AgentRunSteeringResponse, AgentRunView,
+    DefinitionSource, DeleteAgentProcedureResponse, DeleteHookPresetResponse,
+    DeleteWorkflowGraphResponse, EffectiveSessionContract, EnqueuePendingMessageRequest,
+    EnqueuePendingMessageResponse, HookPresetResponse, HookPresetsResponse,
+    LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology,
+    LifecycleRunView, LifecycleSubjectAssociationDto, OrchestrationInstanceView,
     PendingMessageView, ProjectActiveAgentsView, ProjectSessionListEntry, ProjectSessionListView,
     RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionCommandStateDto,
     RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, RuntimeSessionTraceView,
@@ -346,25 +346,25 @@ fn main() {
             export_all::<ValidationIssue>(dir);
             export_all::<SubjectRefDto>(dir);
             export_all::<LifecycleRunRefDto>(dir);
-            export_all::<LifecycleAgentRefDto>(dir);
+            export_all::<AgentRunRefDto>(dir);
             export_all::<AgentFrameRefDto>(dir);
             export_all::<RuntimeSessionRefDto>(dir);
             export_all::<SessionShellDto>(dir);
             export_all::<RuntimeSessionExecutionAnchorDto>(dir);
-            export_all::<LifecycleAgentMessageRequest>(dir);
-            export_all::<LifecycleAgentMessageResponse>(dir);
-            export_all::<LifecycleAgentSteeringRequest>(dir);
+            export_all::<AgentRunMessageRequest>(dir);
+            export_all::<AgentRunMessageResponse>(dir);
+            export_all::<AgentRunSteeringRequest>(dir);
             export_all::<RuntimeSessionCommandStateDto>(dir);
-            export_all::<LifecycleAgentSteeringResponse>(dir);
+            export_all::<AgentRunSteeringResponse>(dir);
             export_all::<StoryLaunchResult>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
             export_all::<RuntimeNodeView>(dir);
             export_all::<ActiveRuntimeNodeRefDto>(dir);
-            export_all::<OrchestrationRunView>(dir);
+            export_all::<OrchestrationInstanceView>(dir);
             export_all::<LifecycleRunView>(dir);
             export_all::<SubmitOrchestrationHumanDecisionRequest>(dir);
             export_all::<SubmitOrchestrationHumanDecisionResponse>(dir);
-            export_all::<LifecycleAgentView>(dir);
+            export_all::<AgentRunView>(dir);
             export_all::<AgentFrameRuntimeView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);

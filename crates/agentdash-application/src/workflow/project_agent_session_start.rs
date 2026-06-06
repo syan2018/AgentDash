@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionMeta};
 use crate::workflow::{
-    LifecycleAgentMessageCommand, LifecycleAgentMessageDeliveryPort, LifecycleAgentMessageService,
+    AgentRunMessageCommand, AgentRunMessageDeliveryPort, AgentRunMessageService,
     LifecycleDispatchService, RuntimeSessionCreator, WorkflowApplicationError,
 };
 
@@ -129,7 +129,7 @@ impl<'a> ProjectAgentSessionStartService<'a> {
         delivery: D,
     ) -> Result<ProjectAgentSessionStartDispatch, WorkflowApplicationError>
     where
-        D: LifecycleAgentMessageDeliveryPort,
+        D: AgentRunMessageDeliveryPort,
     {
         if command.input.is_empty() {
             return Err(WorkflowApplicationError::BadRequest(
@@ -211,7 +211,7 @@ impl<'a> ProjectAgentSessionStartService<'a> {
             return Err(error);
         }
 
-        let message_service = LifecycleAgentMessageService::new(
+        let message_service = AgentRunMessageService::new(
             self.repos.lifecycle_run_repo,
             self.repos.lifecycle_agent_repo,
             self.repos.agent_frame_repo,
@@ -220,7 +220,7 @@ impl<'a> ProjectAgentSessionStartService<'a> {
         );
 
         let message_dispatch = match message_service
-            .dispatch_user_message(LifecycleAgentMessageCommand {
+            .dispatch_user_message(AgentRunMessageCommand {
                 delivery_runtime_session_id: runtime_session_id.clone(),
                 input: command.input,
                 executor_config: command.executor_config,
@@ -843,10 +843,10 @@ mod tests {
     struct FailingDelivery;
 
     #[async_trait]
-    impl LifecycleAgentMessageDeliveryPort for FailingDelivery {
+    impl AgentRunMessageDeliveryPort for FailingDelivery {
         async fn deliver_user_message(
             &self,
-            _delivery: crate::workflow::LifecycleAgentMessageDelivery,
+            _delivery: crate::workflow::AgentRunMessageDelivery,
         ) -> Result<String, WorkflowApplicationError> {
             Err(WorkflowApplicationError::Internal(
                 "connector setup failed".to_string(),

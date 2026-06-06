@@ -12,8 +12,8 @@ use uuid::Uuid;
 
 use agentdash_contracts::core::DeletedIdResponse;
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto, RuntimeSessionRefDto,
-    StoryLaunchResult, SubjectRefDto,
+    AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, StoryLaunchResult,
+    SubjectRefDto,
 };
 use agentdash_domain::story::ChangeKind;
 
@@ -546,7 +546,7 @@ fn story_launch_result_to_dto(result: StoryLifecycleLaunchResult) -> StoryLaunch
         run_ref: LifecycleRunRefDto {
             run_id: result.runtime_refs.run_ref.to_string(),
         },
-        agent_ref: LifecycleAgentRefDto {
+        agent_ref: AgentRunRefDto {
             run_id: result.runtime_refs.run_ref.to_string(),
             agent_id: result.runtime_refs.agent_ref.to_string(),
         },

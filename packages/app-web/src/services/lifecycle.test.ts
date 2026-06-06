@@ -19,8 +19,8 @@ import {
   enqueuePendingMessage,
   listPendingMessages,
   promotePendingMessage,
-  sendLifecycleAgentMessageByRuntimeSession,
-  sendLifecycleAgentSteeringMessageByRuntimeSession,
+  sendAgentRunMessageByRuntimeSession,
+  steerAgentRunByRuntimeSession,
 } from "./lifecycle";
 
 describe("lifecycle message service", () => {
@@ -40,7 +40,7 @@ describe("lifecycle message service", () => {
   });
 
   it("sends user messages through the session command endpoint", async () => {
-    await sendLifecycleAgentMessageByRuntimeSession("runtime/1", {
+    await sendAgentRunMessageByRuntimeSession("runtime/1", {
       input: [{ type: "text", text: "hello", text_elements: [] }],
       executor_config: {
         executor: "PI_AGENT",
@@ -63,7 +63,7 @@ describe("lifecycle message service", () => {
   });
 
   it("sends steering input through the session steering endpoint", async () => {
-    await sendLifecycleAgentSteeringMessageByRuntimeSession("runtime/1", {
+    await steerAgentRunByRuntimeSession("runtime/1", {
       input: [{ type: "text", text: "adjust course", text_elements: [] }],
     });
 

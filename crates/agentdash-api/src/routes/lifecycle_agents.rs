@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use agentdash_application::workflow::{
-    LifecycleAgentMessageCommand, LifecycleAgentMessageService, LifecycleAgentSteeringCommand,
-    LifecycleAgentSteeringService, SessionLaunchLifecycleAgentMessageDeliveryPort,
+    AgentRunMessageCommand, AgentRunMessageLaunchDeliveryPort, AgentRunMessageService,
+    AgentRunSteeringCommand, AgentRunSteeringService,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, EnqueuePendingMessageRequest, EnqueuePendingMessageResponse,
-    LifecycleAgentMessageRequest, LifecycleAgentMessageResponse, LifecycleAgentRefDto,
-    LifecycleAgentSteeringRequest, LifecycleAgentSteeringResponse, LifecycleRunRefDto,
-    PendingMessageView, RuntimeSessionCommandStateDto,
+    AgentFrameRefDto, AgentRunMessageRequest, AgentRunMessageResponse, AgentRunRefDto,
+    AgentRunSteeringRequest, AgentRunSteeringResponse, EnqueuePendingMessageRequest,
+    EnqueuePendingMessageResponse, LifecycleRunRefDto, PendingMessageView,
+    RuntimeSessionCommandStateDto,
 };
 use agentdash_spi::AgentConfig;
 use axum::{
@@ -50,8 +50,8 @@ pub async fn send_session_message(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(runtime_session_id): Path<String>,
-    Json(req): Json<LifecycleAgentMessageRequest>,
-) -> Result<Json<LifecycleAgentMessageResponse>, ApiError> {
+    Json(req): Json<AgentRunMessageRequest>,
+) -> Result<Json<AgentRunMessageResponse>, ApiError> {
     if req.input.is_empty() {
         return Err(ApiError::BadRequest("input 不能为空".to_string()));
     }
@@ -104,9 +104,8 @@ pub async fn send_session_message(
         .transpose()
         .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
 
-    let delivery =
-        SessionLaunchLifecycleAgentMessageDeliveryPort::new(state.services.session_launch.clone());
-    let service = LifecycleAgentMessageService::new(
+    let delivery = AgentRunMessageLaunchDeliveryPort::new(state.services.session_launch.clone());
+    let service = AgentRunMessageService::new(
         state.repos.lifecycle_run_repo.as_ref(),
         state.repos.lifecycle_agent_repo.as_ref(),
         state.repos.agent_frame_repo.as_ref(),
@@ -115,7 +114,7 @@ pub async fn send_session_message(
     );
 
     let dispatch = service
-        .dispatch_user_message(LifecycleAgentMessageCommand {
+        .dispatch_user_message(AgentRunMessageCommand {
             delivery_runtime_session_id: runtime_session_id.clone(),
             input: req.input,
             executor_config,
@@ -124,13 +123,13 @@ pub async fn send_session_message(
         .await
         .map_err(ApiError::from)?;
 
-    Ok(Json(LifecycleAgentMessageResponse {
+    Ok(Json(AgentRunMessageResponse {
         runtime_session_id: dispatch.runtime_session_id,
         turn_id: dispatch.turn_id,
         run_ref: LifecycleRunRefDto {
             run_id: dispatch.run_id.to_string(),
         },
-        agent_ref: LifecycleAgentRefDto {
+        agent_ref: AgentRunRefDto {
             run_id: dispatch.run_id.to_string(),
             agent_id: dispatch.agent_id.to_string(),
         },
@@ -146,8 +145,8 @@ pub async fn steer_session(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(runtime_session_id): Path<String>,
-    Json(req): Json<LifecycleAgentSteeringRequest>,
-) -> Result<Json<LifecycleAgentSteeringResponse>, ApiError> {
+    Json(req): Json<AgentRunSteeringRequest>,
+) -> Result<Json<AgentRunSteeringResponse>, ApiError> {
     if req.input.is_empty() {
         return Err(ApiError::BadRequest("input 不能为空".to_string()));
     }
@@ -178,7 +177,7 @@ pub async fn steer_session(
     )
     .await?;
 
-    let service = LifecycleAgentSteeringService::new(
+    let service = AgentRunSteeringService::new(
         state.repos.lifecycle_run_repo.as_ref(),
         state.repos.lifecycle_agent_repo.as_ref(),
         state.repos.agent_frame_repo.as_ref(),
@@ -188,7 +187,7 @@ pub async fn steer_session(
         state.services.session_eventing.clone(),
     );
     let dispatch = service
-        .steer(LifecycleAgentSteeringCommand {
+        .steer(AgentRunSteeringCommand {
             delivery_runtime_session_id: runtime_session_id.clone(),
             input: req.input,
         })
@@ -200,7 +199,7 @@ pub async fn steer_session(
         .inspect_session_execution_state(&runtime_session_id)
         .await?;
 
-    Ok(Json(LifecycleAgentSteeringResponse {
+    Ok(Json(AgentRunSteeringResponse {
         runtime_session_id: dispatch.runtime_session_id,
         accepted: true,
         state: runtime_command_state_dto(execution_state),
@@ -320,7 +319,7 @@ async fn promote_pending_message(
         .await
         .ok_or_else(|| ApiError::NotFound(format!("pending message {} 不存在", message_id)))?;
 
-    let service = LifecycleAgentSteeringService::new(
+    let service = AgentRunSteeringService::new(
         state.repos.lifecycle_run_repo.as_ref(),
         state.repos.lifecycle_agent_repo.as_ref(),
         state.repos.agent_frame_repo.as_ref(),
@@ -330,7 +329,7 @@ async fn promote_pending_message(
         state.services.session_eventing.clone(),
     );
     let dispatch = service
-        .steer(LifecycleAgentSteeringCommand {
+        .steer(AgentRunSteeringCommand {
             delivery_runtime_session_id: runtime_session_id.clone(),
             input: msg.input,
         })

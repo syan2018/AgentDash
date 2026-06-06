@@ -32,12 +32,11 @@ pub(crate) use activity_activation::{
     ActivityActivation, ActivityActivationInput, activate_activity_with_platform,
 };
 pub use agent_message::{
-    LifecycleAgentMessageCommand, LifecycleAgentMessageDelivery, LifecycleAgentMessageDeliveryPort,
-    LifecycleAgentMessageDispatch, LifecycleAgentMessageService,
-    SessionLaunchLifecycleAgentMessageDeliveryPort,
+    AgentRunMessageCommand, AgentRunMessageDelivery, AgentRunMessageDeliveryPort,
+    AgentRunMessageDispatch, AgentRunMessageLaunchDeliveryPort, AgentRunMessageService,
 };
 pub use agent_steering::{
-    LifecycleAgentSteeringCommand, LifecycleAgentSteeringDispatch, LifecycleAgentSteeringService,
+    AgentRunSteeringCommand, AgentRunSteeringDispatch, AgentRunSteeringService,
 };
 pub use agentdash_domain::workflow::{
     AgentReusePolicy, RuntimeSessionPolicy, WorkflowSessionTerminalState,

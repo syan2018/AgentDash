@@ -6,6 +6,8 @@ import type { UserInput } from "./backbone-protocol";
 
 export type AgentFrameRefDto = { agent_id: string, frame_id: string, revision?: number, };
 
+export type AgentRunRefDto = { run_id: string, agent_id: string, };
+
 export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, };
 
 export type CreateProjectAgentSessionRequest = {
@@ -14,17 +16,15 @@ export type CreateProjectAgentSessionRequest = {
  */
 input: Array<UserInput>, executor_config?: JsonValue, };
 
-export type LifecycleAgentRefDto = { run_id: string, agent_id: string, };
-
 export type LifecycleRunRefDto = { run_id: string, };
 
 export type ProjectAgent = { id: string, project_id: string, name: string, agent_type: string, config: JsonValue, default_lifecycle_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, knowledge_enabled: boolean, created_at: string, updated_at: string, };
 
 export type ProjectAgentExecutor = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, permission_policy?: string, };
 
-export type ProjectAgentLaunchResult = { created: boolean, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: LifecycleAgentRefDto, frame_ref: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_ref?: SubjectRefDto, };
+export type ProjectAgentLaunchResult = { created: boolean, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_ref?: SubjectRefDto, };
 
-export type ProjectAgentSessionStartResult = { runtime_session_id: string, turn_id: string, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: LifecycleAgentRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
+export type ProjectAgentSessionStartResult = { runtime_session_id: string, turn_id: string, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
 
 export type ProjectAgentSummary = { key: string, display_name: string, description: string, executor: ProjectAgentExecutor, preset_name?: string, source: string, };
 

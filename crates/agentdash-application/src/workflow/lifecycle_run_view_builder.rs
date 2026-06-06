@@ -7,13 +7,14 @@ use serde_json::json;
 use uuid::Uuid;
 
 use agentdash_contracts::workflow::{
-    ActiveRuntimeNodeRefDto, ExecutorRunRef as ContractExecutorRunRef, LifecycleAgentRefDto,
-    LifecycleAgentView, LifecycleExecutionEntry as ContractLifecycleExecutionEntry,
+    ActiveRuntimeNodeRefDto, AgentRunRefDto, AgentRunView,
+    ExecutorRunRef as ContractExecutorRunRef,
+    LifecycleExecutionEntry as ContractLifecycleExecutionEntry,
     LifecycleExecutionEventKind as ContractLifecycleExecutionEventKind, LifecycleRunRefDto,
     LifecycleRunStatus as ContractLifecycleRunStatus,
     LifecycleRunTopology as ContractLifecycleRunTopology, LifecycleRunView,
-    LifecycleSubjectAssociationDto, OrchestrationRunView, ProjectActiveAgentsView, RuntimeNodeView,
-    RuntimeSessionRefDto, SubjectExecutionView, SubjectRefDto,
+    LifecycleSubjectAssociationDto, OrchestrationInstanceView, ProjectActiveAgentsView,
+    RuntimeNodeView, RuntimeSessionRefDto, SubjectExecutionView, SubjectRefDto,
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
@@ -86,7 +87,7 @@ pub async fn build_subject_execution_view(
     let runs = repos.lifecycle_run_repo.list_by_ids(&run_ids).await?;
 
     let mut run_views = Vec::with_capacity(runs.len());
-    let mut current_agent: Option<LifecycleAgentView> = None;
+    let mut current_agent: Option<AgentRunView> = None;
     let latest_runtime_node = None;
     let artifacts = json!({});
 
@@ -192,16 +193,16 @@ pub fn association_to_dto(
     }
 }
 
-pub fn lifecycle_agent_to_view(agent: &LifecycleAgent) -> LifecycleAgentView {
+pub fn lifecycle_agent_to_view(agent: &LifecycleAgent) -> AgentRunView {
     lifecycle_agent_to_view_with_delivery(agent, None)
 }
 
 fn lifecycle_agent_to_view_with_delivery(
     agent: &LifecycleAgent,
     delivery_runtime_session_id: Option<String>,
-) -> LifecycleAgentView {
-    LifecycleAgentView {
-        agent_ref: LifecycleAgentRefDto {
+) -> AgentRunView {
+    AgentRunView {
+        agent_ref: AgentRunRefDto {
             run_id: agent.run_id.to_string(),
             agent_id: agent.id.to_string(),
         },
@@ -222,7 +223,7 @@ fn lifecycle_agent_to_view_with_delivery(
 async fn lifecycle_agent_views(
     repos: &RepositorySet,
     agents: &[LifecycleAgent],
-) -> Result<Vec<LifecycleAgentView>, DomainError> {
+) -> Result<Vec<AgentRunView>, DomainError> {
     let mut views = Vec::with_capacity(agents.len());
     for agent in agents {
         let delivery_runtime_session_id =
@@ -269,9 +270,9 @@ fn topology_to_dto(topology: DomainLifecycleRunTopology) -> ContractLifecycleRun
 
 fn assemble_lifecycle_run_view(
     run: &LifecycleRun,
-    agents: Vec<LifecycleAgentView>,
+    agents: Vec<AgentRunView>,
     subject_associations: Vec<LifecycleSubjectAssociationDto>,
-    orchestrations: Vec<OrchestrationRunView>,
+    orchestrations: Vec<OrchestrationInstanceView>,
     active_runtime_node_refs: Vec<ActiveRuntimeNodeRefDto>,
     runtime_trace_refs: Vec<RuntimeSessionRefDto>,
 ) -> LifecycleRunView {
@@ -299,15 +300,15 @@ fn assemble_lifecycle_run_view(
     }
 }
 
-fn orchestration_views(run: &LifecycleRun) -> Vec<OrchestrationRunView> {
+fn orchestration_views(run: &LifecycleRun) -> Vec<OrchestrationInstanceView> {
     run.orchestrations
         .iter()
         .map(orchestration_to_view)
         .collect()
 }
 
-fn orchestration_to_view(instance: &OrchestrationInstance) -> OrchestrationRunView {
-    OrchestrationRunView {
+fn orchestration_to_view(instance: &OrchestrationInstance) -> OrchestrationInstanceView {
+    OrchestrationInstanceView {
         orchestration_id: instance.orchestration_id.to_string(),
         role: instance.role.clone(),
         status: status_string(&instance.status),

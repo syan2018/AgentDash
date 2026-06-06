@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import type {
   AgentFrameRuntimeView,
-  LifecycleAgentView,
+  AgentRunView,
   LifecycleRunView,
   SubjectExecutionView,
 } from "../types";
@@ -157,7 +157,7 @@ function AgentSummary({
   agent,
   frame,
 }: {
-  agent: LifecycleAgentView | null;
+  agent: AgentRunView | null;
   frame: AgentFrameRuntimeView | null;
 }) {
   const navigate = useNavigate();

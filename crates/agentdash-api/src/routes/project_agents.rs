@@ -4,8 +4,8 @@ use agentdash_application::session::construction_planner::{
     ResolvedProjectAgentContext, build_project_agent_context,
 };
 use agentdash_application::workflow::{
-    ProjectAgentSessionStartCommand, ProjectAgentSessionStartRepos,
-    ProjectAgentSessionStartService, SessionLaunchLifecycleAgentMessageDeliveryPort,
+    AgentRunMessageLaunchDeliveryPort, ProjectAgentSessionStartCommand,
+    ProjectAgentSessionStartRepos, ProjectAgentSessionStartService,
 };
 use agentdash_domain::{agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project};
 use agentdash_spi::AgentConfig;
@@ -22,7 +22,7 @@ use agentdash_contracts::project_agent::{
     ProjectAgentSessionStartResult, ProjectAgentSummary, ThinkingLevel, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
+    AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
 };
 
 use crate::{
@@ -216,7 +216,7 @@ pub async fn launch_project_agent(
         run_ref: LifecycleRunRefDto {
             run_id: dispatch_result.runtime_refs.run_ref.to_string(),
         },
-        agent_ref: LifecycleAgentRefDto {
+        agent_ref: AgentRunRefDto {
             run_id: dispatch_result.runtime_refs.run_ref.to_string(),
             agent_id: dispatch_result.runtime_refs.agent_ref.to_string(),
         },
@@ -262,8 +262,7 @@ pub async fn create_project_agent_session(
         ProjectAgentSessionStartRepos::from_repository_set(&state.repos),
         &state.services.session_core,
     );
-    let delivery =
-        SessionLaunchLifecycleAgentMessageDeliveryPort::new(state.services.session_launch.clone());
+    let delivery = AgentRunMessageLaunchDeliveryPort::new(state.services.session_launch.clone());
     let dispatch = service
         .start_session(
             ProjectAgentSessionStartCommand {
@@ -290,7 +289,7 @@ pub async fn create_project_agent_session(
         run_ref: LifecycleRunRefDto {
             run_id: dispatch.run_id.to_string(),
         },
-        agent_ref: LifecycleAgentRefDto {
+        agent_ref: AgentRunRefDto {
             run_id: dispatch.run_id.to_string(),
             agent_id: dispatch.agent_id.to_string(),
         },

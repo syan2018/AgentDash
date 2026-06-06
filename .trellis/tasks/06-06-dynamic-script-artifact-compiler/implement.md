@@ -2,7 +2,7 @@
 
 ## 阶段
 
-### Phase 1：公共 Rhai 内核抽取
+### Phase 1：公共 Rhai 内核抽取（已完成）
 
 1. 从 `RhaiHookScriptEvaluator` 中抽出 `RhaiScriptRuntime` 内核：
    - sandbox limits
@@ -11,7 +11,15 @@
    - serde_json ctx/value bridge
    - helper/module registration hook
 2. `RhaiHookScriptEvaluator` 改为公共内核的 adapter，并保持现有 `HookScriptEvaluator` SPI 不变。
-3. 新增 workflow script evaluator SPI 草案，例如：
+
+完成状态：
+
+- `agentdash-infrastructure::script_runtime::RhaiScriptRuntime` 已承载 Rhai engine、沙箱限制、AST cache、compile/validate/eval 和 JSON bridge。
+- 模块入口为 `script_runtime/mod.rs`，Rhai 具体实现位于 `script_runtime/rhai.rs`，后续新增脚本后端或 builder adapter 时继续按目录扩展。
+- `RhaiHookScriptEvaluator` 已收敛为 Hook adapter：只注册 Hook helper、维护 preset cache，并继续实现原 `HookScriptEvaluator` SPI。
+- 公共内核已有基础单测覆盖 JSON ctx bridge、helper 注册和 operation limit。
+
+后续进入 workflow script evaluator 前需要新增 SPI 草案，例如：
 
    ```rust
    pub trait WorkflowScriptEvaluator: Send + Sync {
@@ -24,7 +32,7 @@
    }
    ```
 
-4. 新增 `RhaiWorkflowScriptEvaluator`，只注册 workflow builder helpers，不注册 hook decision helpers。
+并新增 `RhaiWorkflowScriptEvaluator`，只注册 workflow builder helpers，不注册 hook decision helpers。
 
 停止点：公共内核抽取必须先保持 Hook 现有测试通过，再进入 workflow compiler。
 

@@ -3,7 +3,7 @@
   "name": "dynamic-script-artifact-compiler",
   "title": "Dynamic Script Artifact Compiler",
   "description": "引入动态脚本资产与脚本编译器前端，将模型生成/用户编写的 workflow script 编译为 OrchestrationPlanSnapshot，并复用 common orchestration runtime。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

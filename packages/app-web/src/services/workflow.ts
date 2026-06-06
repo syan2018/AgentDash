@@ -592,26 +592,6 @@ export async function deleteWorkflowGraph(id: string): Promise<void> {
   await api.delete(`/workflow-graphs/${id}`);
 }
 
-export async function submitHumanDecision(input: {
-  run_id: string;
-  graph_instance_id: string;
-  activity_key: string;
-  attempt: number;
-  decision_port: string;
-  decision: string;
-  summary?: string;
-}): Promise<WorkflowRun> {
-  const raw = await api.post<Record<string, unknown>>(
-    `/lifecycle-runs/${input.run_id}/graph-instances/${input.graph_instance_id}/activities/${encodeURIComponent(input.activity_key)}/attempts/${input.attempt}/human-decision`,
-    {
-      decision_port: input.decision_port,
-      decision: input.decision,
-      summary: input.summary,
-    },
-  );
-  return mapWorkflowRun(raw);
-}
-
 export async function createAgentProcedure(input: {
   project_id: string;
   key: string;

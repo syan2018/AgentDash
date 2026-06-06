@@ -7,10 +7,10 @@ use crate::shared_library::InstalledAssetSource;
 
 use super::validation::{validate_agent_procedure, validate_workflow_graph};
 use super::value_objects::{
-    ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaimStatus,
-    ActivityLifecycleRunState, ActivityRunStatus, ActivityTransition, AgentProcedureContract,
-    DefinitionSource, EffectiveSessionContract, ExecutorRunRef, LifecycleContext,
-    LifecycleExecutionEntry, LifecycleRunStatus, OrchestrationInstance, ValidationIssue,
+    ActivityDefinition, ActivityTransition, AgentProcedureContract, DefinitionSource,
+    EffectiveSessionContract, LifecycleContext, LifecycleExecutionEntry, LifecycleRunStatus,
+    OrchestrationInstance, OrchestrationStatus, RuntimeNodeState, RuntimeNodeStatus,
+    ValidationIssue,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,48 +89,6 @@ pub struct WorkflowGraph {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ActivityExecutionClaim {
-    pub run_id: Uuid,
-    pub graph_instance_id: Uuid,
-    pub activity_key: String,
-    pub attempt: u32,
-    pub claim_id: Uuid,
-    pub executor_kind: String,
-    pub status: ActivityExecutionClaimStatus,
-    pub idempotency_key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_run_ref: Option<ExecutorRunRef>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-impl ActivityExecutionClaim {
-    pub fn new(
-        run_id: Uuid,
-        graph_instance_id: Uuid,
-        activity_key: impl Into<String>,
-        attempt: u32,
-        executor_kind: impl Into<String>,
-    ) -> Self {
-        let activity_key = activity_key.into();
-        let now = Utc::now();
-        Self {
-            run_id,
-            graph_instance_id,
-            activity_key: activity_key.clone(),
-            attempt,
-            claim_id: Uuid::new_v4(),
-            executor_kind: executor_kind.into(),
-            status: ActivityExecutionClaimStatus::Claiming,
-            idempotency_key: format!("{run_id}:{graph_instance_id}:{activity_key}:{attempt}"),
-            executor_run_ref: None,
-            created_at: now,
-            updated_at: now,
-        }
-    }
-}
-
 impl WorkflowGraph {
     pub fn new(
         project_id: Uuid,
@@ -181,16 +139,6 @@ impl WorkflowGraph {
             )],
         }
     }
-}
-
-/// 结构化的活跃 Activity 引用。替代旧的 `"graph_instance_id:activity_key"` 字符串拼接。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ActiveActivityRef {
-    pub run_id: Uuid,
-    pub graph_instance_id: Uuid,
-    pub activity_key: String,
-    pub attempt: u32,
-    pub status: ActivityAttemptStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -259,17 +207,6 @@ impl LifecycleRun {
         }
     }
 
-    pub fn sync_graph_instance_activity_projections<'a, I>(&mut self, states: I)
-    where
-        I: IntoIterator<Item = (Uuid, &'a ActivityLifecycleRunState)>,
-    {
-        let states = states.into_iter().collect::<Vec<_>>();
-        self.status = aggregate_lifecycle_status(states.iter().map(|(_, state)| state.status));
-        let now = Utc::now();
-        self.updated_at = now;
-        self.last_activity_at = now;
-    }
-
     pub fn set_lifecycle_context(&mut self, context: LifecycleContext) {
         self.context = context;
         self.touch_activity();
@@ -281,6 +218,7 @@ impl LifecycleRun {
             return false;
         }
         self.orchestrations.push(orchestration);
+        self.refresh_status_from_orchestrations();
         self.touch_activity();
         true
     }
@@ -295,6 +233,7 @@ impl LifecycleRun {
             .iter()
             .position(|existing| existing.orchestration_id == orchestration_id)?;
         let previous = std::mem::replace(&mut self.orchestrations[position], orchestration);
+        self.refresh_status_from_orchestrations();
         self.touch_activity();
         Some(previous)
     }
@@ -317,81 +256,73 @@ impl LifecycleRun {
         self.updated_at = Utc::now();
         self.last_activity_at = self.updated_at;
     }
+
+    fn refresh_status_from_orchestrations(&mut self) {
+        self.status = aggregate_orchestration_status(&self.orchestrations);
+    }
 }
 
-pub fn active_activity_refs_from_states<'a, I>(run_id: Uuid, states: I) -> Vec<ActiveActivityRef>
-where
-    I: IntoIterator<Item = (Uuid, &'a ActivityLifecycleRunState)>,
-{
-    states
-        .into_iter()
-        .flat_map(|(graph_instance_id, activity_state)| {
-            activity_state
-                .attempts
-                .iter()
-                .filter(|attempt| {
-                    matches!(
-                        attempt.status,
-                        ActivityAttemptStatus::Ready
-                            | ActivityAttemptStatus::Claiming
-                            | ActivityAttemptStatus::Running
-                    )
-                })
-                .map(move |attempt| ActiveActivityRef {
-                    run_id,
-                    graph_instance_id,
-                    activity_key: attempt.activity_key.clone(),
-                    attempt: attempt.attempt,
-                    status: attempt.status,
-                })
-        })
-        .collect()
-}
-
-pub fn has_active_activity_state(activity_state: &ActivityLifecycleRunState) -> bool {
-    activity_state.attempts.iter().any(|attempt| {
-        matches!(
-            attempt.status,
-            ActivityAttemptStatus::Ready
-                | ActivityAttemptStatus::Claiming
-                | ActivityAttemptStatus::Running
-        )
-    })
-}
-
-fn aggregate_lifecycle_status<I>(statuses: I) -> LifecycleRunStatus
-where
-    I: IntoIterator<Item = ActivityRunStatus>,
-{
-    let statuses = statuses.into_iter().collect::<Vec<_>>();
-    if statuses.is_empty() {
+fn aggregate_orchestration_status(orchestrations: &[OrchestrationInstance]) -> LifecycleRunStatus {
+    if orchestrations.is_empty() {
         return LifecycleRunStatus::Ready;
     }
-    if statuses.contains(&ActivityRunStatus::Failed) {
+    if orchestrations
+        .iter()
+        .any(|instance| instance.status == OrchestrationStatus::Failed)
+    {
         return LifecycleRunStatus::Failed;
     }
-    if statuses.contains(&ActivityRunStatus::Running) {
-        return LifecycleRunStatus::Running;
-    }
-    if statuses.contains(&ActivityRunStatus::Ready) {
-        return LifecycleRunStatus::Ready;
-    }
-    if statuses.contains(&ActivityRunStatus::Blocked) {
-        return LifecycleRunStatus::Blocked;
-    }
-    if statuses
+    if orchestrations
         .iter()
-        .all(|status| *status == ActivityRunStatus::Completed)
-    {
-        return LifecycleRunStatus::Completed;
-    }
-    if statuses
-        .iter()
-        .all(|status| *status == ActivityRunStatus::Cancelled)
+        .all(|instance| instance.status == OrchestrationStatus::Cancelled)
     {
         return LifecycleRunStatus::Cancelled;
     }
-    LifecycleRunStatus::Running
+    if orchestrations
+        .iter()
+        .all(|instance| instance.status == OrchestrationStatus::Completed)
+    {
+        return LifecycleRunStatus::Completed;
+    }
+    if orchestration_nodes(orchestrations)
+        .iter()
+        .any(|node| node.status == RuntimeNodeStatus::Blocked)
+    {
+        return LifecycleRunStatus::Blocked;
+    }
+    if orchestrations.iter().any(|instance| {
+        matches!(
+            instance.status,
+            OrchestrationStatus::Running | OrchestrationStatus::Paused
+        ) || orchestration_nodes(std::slice::from_ref(instance))
+            .iter()
+            .any(|node| {
+                matches!(
+                    node.status,
+                    RuntimeNodeStatus::Claiming | RuntimeNodeStatus::Running
+                )
+            })
+    }) {
+        return LifecycleRunStatus::Running;
+    }
+    LifecycleRunStatus::Ready
+}
+
+fn orchestration_nodes(orchestrations: &[OrchestrationInstance]) -> Vec<&RuntimeNodeState> {
+    fn collect<'a>(node: &'a RuntimeNodeState, nodes: &mut Vec<&'a RuntimeNodeState>) {
+        nodes.push(node);
+        for child in &node.children {
+            collect(child, nodes);
+        }
+    }
+
+    let mut nodes = Vec::new();
+    for instance in orchestrations {
+        for node in &instance.node_tree {
+            collect(node, &mut nodes);
+        }
+    }
+    nodes
 }
 
 pub fn build_effective_contract(
@@ -453,26 +384,6 @@ mod tests {
 
         let effective = build_effective_contract("lc", "step", Some(&primary));
         assert_eq!(effective.hook_rules.len(), 0);
-    }
-
-    #[test]
-    fn activity_execution_claim_uses_attempt_idempotency_key() {
-        let run_id = Uuid::new_v4();
-        let graph_instance_id = Uuid::new_v4();
-        let claim = ActivityExecutionClaim::new(run_id, graph_instance_id, "plan", 2, "agent");
-
-        assert_eq!(claim.run_id, run_id);
-        assert_eq!(claim.graph_instance_id, graph_instance_id);
-        assert_eq!(claim.activity_key, "plan");
-        assert_eq!(claim.attempt, 2);
-        assert_eq!(claim.executor_kind, "agent");
-        assert_eq!(claim.status, ActivityExecutionClaimStatus::Claiming);
-        assert_eq!(
-            claim.idempotency_key,
-            format!("{run_id}:{graph_instance_id}:plan:2")
-        );
-        assert!(claim.status.is_active());
-        assert!(!ActivityExecutionClaimStatus::Succeeded.is_active());
     }
 
     fn orchestration_instance(role: &str, executor: ExecutorSpec) -> OrchestrationInstance {

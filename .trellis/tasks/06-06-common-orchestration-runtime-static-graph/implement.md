@@ -2,24 +2,40 @@
 
 ## 状态
 
-已进入实现阶段。本任务依赖 `workflow-graph-compiler` 的 plan 输出稳定；后续实现应围绕唯一 runtime path 收敛，而不是继续加固旧 Activity engine 或 `WorkflowGraphInstance` 中间身份。
+已进入实现阶段。本任务依赖 `workflow-graph-compiler` 的 plan 输出稳定；后续实现应围绕唯一 runtime path 收敛：`LifecycleRun.orchestrations[] -> OrchestrationInstance -> RuntimeNodeState`。
 
 当前实现进展：
 
 - 静态 `WorkflowGraph` dispatch / lifecycle start 已先编译为 `OrchestrationPlanSnapshot`，并直接写入 `LifecycleRun.orchestrations[]`。
 - 主 runtime 坐标已切到 `orchestration_id + node_path + attempt`；`RuntimeSessionExecutionAnchor` 持久化该坐标，session terminal / subject cancel / complete node 通过 anchor 回到 runtime node。
-- `RepositorySet`、API bootstrap、PostgreSQL repository implementation 已停止构造和注入 `WorkflowGraphInstanceRepository`、`AgentAssignmentRepository`、`ActivityExecutionClaimRepository`。
-- domain repository contract 已移除 `WorkflowGraphInstanceRepository`、`AgentAssignmentRepository`、`ActivityExecutionClaimRepository` 三个旧仓储 trait；application 模块树已删除旧 `activity_run` / `scheduler` / `agent_executor` 路径。
+- `RepositorySet`、API bootstrap、PostgreSQL repository implementation 已停止构造和注入 Activity-specific runtime repository。
+- domain repository contract 已移除 Activity-specific runtime repository trait；application 模块树已删除旧 `activity_run` / `scheduler` / `agent_executor` 路径。
 - lifecycle VFS mount metadata、artifact scope、session assembly 和 frame construction 已转为 `orchestration_id + node_path + attempt`。`LifecycleMountSurface` 作为 session/VFS 的窄接口，provider 从 `LifecycleRun.orchestrations[]` 定位 `OrchestrationInstance` 与 `RuntimeNodeState`，不再读取 graph instance 仓储。
 - 新增 migration `0004_orchestration_runtime_convergence.sql` 将 anchor / routine dispatch schema 切到 orchestration node 坐标，并 drop 旧 activity claim / assignment / workflow instance 表。
 - dispatch、subject cancel、boot task projection 测试已经改为断言 `LifecycleRun.orchestrations[]`，不再通过旧 graph instance / assignment mock 证明行为。
 
+当前已收口面：
+
+- `LifecycleRunView` 公开 `orchestrations[]`、`RuntimeNodeView` 与 `active_runtime_node_refs[]`；API / frontend / VFS / hook projection 从 orchestration snapshot 读取。
+- `workflow/lifecycle/journey` 的 progress helper 已改为 runtime node helper。
+- `workflow/orchestration/runtime.rs` 已完成 reducer 第一切片：NodeStarted / NodeCompleted / NodeFailed / NodeCancelled 可更新 runtime node、trace refs、state exchange、transition successor 和 terminal idempotency；`complete_lifecycle_node` / session terminal callback 已接到 reducer。
+- `ActivityActivation` 中 phase hot-update applier 当前未被新主路径调用；后续应结合 orchestration executor adapter 决定保留为 live capability transition，还是并入统一 executor surface。
+
 后续剩余面：
 
-- `LifecycleRunView.workflow_graph_instances[]` 等 graph-compatible DTO 仍保留旧字段；短期作为 projection 兼容 view，command path 不消费这些字段。
-- `workflow/lifecycle/journey` 仍保留若干旧 graph instance helper 供兼容 projection 参考；后续应在 native orchestration progress tree 落地后删去。
-- `ActivityActivation` 中 phase hot-update applier 当前未被新主路径调用；后续应结合 orchestration executor adapter 决定保留为 live capability transition，还是并入统一 executor surface。
-- `workflow/orchestration/runtime.rs` 已完成 reducer 第一切片：NodeStarted / NodeCompleted / NodeFailed / NodeCancelled 可更新 runtime node、trace refs、state exchange、transition successor 和 terminal idempotency；`complete_lifecycle_node` / session terminal callback 已接到 reducer。
+- 完整 semantic executor launcher 仍需覆盖 Function / LocalEffect / HumanGate。
+- Function/local effect 的同步 terminal 仍需统一记录 started 与 terminal materialization。
+- attempt policy 与 `max_traversals` 目前只有 reducer 层 blocking diagnostic，仍需和 scheduler / retry policy 一起补齐。
+
+## 最终收口批次
+
+本批次执行旧运行态结构硬删除：
+
+- 删除 domain 中 Activity-specific runtime entity / value object / module export。
+- 删除 application 旧 engine 与 graph-instance helper，projection、journey、mount、task/story projection 统一使用 `RuntimeNodeStatus` / `RuntimeNodeState`。
+- 删除 API / contracts / frontend 中 graph instance、active activity、assignment DTO 与 route surface；contracts 重新生成。
+- PostgreSQL anchor repository 不再读写 graph/activity binding columns；当前 schema 由 `0004_orchestration_runtime_convergence.sql` drop 旧列和旧表。
+- 规格文档同步为 common orchestration runtime 当前合同。
 
 ## 当前实现切片
 
@@ -64,7 +80,7 @@
 ## 建议实施步骤
 
 1. 修正 domain/application 合同，使 runtime 坐标以 `orchestration_id + node_path + attempt` 为准；definition provenance 只进入 plan metadata 或可选审计字段。
-2. 新增 application orchestration runtime 模块，只消费 `OrchestrationPlanSnapshot` 与 `OrchestrationInstance`，不消费 `WorkflowGraphInstance`。
+2. 新增 application orchestration runtime 模块，只消费 `OrchestrationPlanSnapshot` 与 `OrchestrationInstance`。
 3. 定义 `OrchestrationEvent`，覆盖当前 ActivityEvent 等价事件和 plan activation。
 4. 实现 entry ready node materialization。
 5. 实现 node event -> `RuntimeNodeState` / `StateExchangeSnapshot` 纯状态推进。
@@ -77,7 +93,7 @@
 8. 升级 runtime trace anchor / resolver 到 orchestration node 坐标。
 9. 改造 session terminal callback 和 `complete_lifecycle_node` 走 runtime node terminal event。
 10. 从 orchestration snapshot 生成 graph-compatible `LifecycleRunView`。
-11. 移除 scheduler / command path 对 `WorkflowGraphInstance.activity_state`、`WorkflowGraphInstanceRepository`、`AgentAssignment(graph_instance_id, activity_key, attempt)` 的事实源读取。（已完成主线删除）
+11. 移除 scheduler / command path 对 Activity-specific runtime snapshot 和 repository 的事实源读取。（已完成主线删除）
 12. 新增 migration 拆除或停止主线读写 `lifecycle_workflow_instances`、activity attempt claim/assignment 旧坐标；必要投影只能由 orchestration snapshot 派生。（已完成 schema 收束）
 13. 更新 specs 与 migration。
 
@@ -110,7 +126,7 @@ pnpm dev
 ## 停止条件
 
 - compiler 输出不足以表达 runtime 所需节点、rules 或 state exchange。
-- 实现需要继续依赖 `WorkflowGraphInstance` 或 `WorkflowGraphInstanceRepository` 作为 runtime identity / command path。
+- 实现需要引入第二套 runtime identity / command path。
 - terminal resolver 无法稳定得到 `orchestration_id` / `node_path`。
 - Function/local effect 只能通过特殊旁路完成，无法进入 `RuntimeNodeState`。
 - 需要新增长期兼容 fallback。

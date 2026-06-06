@@ -1,15 +1,11 @@
 // ─── Workflow ─────────────────────────────────────────
 import type { JsonValue } from "../generated/common-contracts";
 import type {
-  ActivityAttemptStatus,
   ActivityCompletionPolicy,
   ActivityDefinition as GeneratedActivityDefinition,
   ActivityExecutorSpec,
-  ActivityInputArtifact,
   ActivityIterationPolicy,
   ActivityJoinPolicy,
-  ActivityOutputArtifact,
-  ActivityRunStatus,
   ActivityTransition as GeneratedActivityTransition,
   ActivityTransitionKind,
   AgentActivityExecutorSpec,
@@ -48,14 +44,10 @@ import type {
 import type { InstalledAssetSourceDto } from "./shared-library";
 
 export type {
-  ActivityAttemptStatus,
   ActivityCompletionPolicy,
   ActivityExecutorSpec,
-  ActivityInputArtifact,
   ActivityIterationPolicy,
   ActivityJoinPolicy,
-  ActivityOutputArtifact,
-  ActivityRunStatus,
   ActivityTransitionKind,
   AgentActivityExecutorSpec,
   AgentReusePolicy,

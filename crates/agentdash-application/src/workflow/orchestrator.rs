@@ -185,7 +185,7 @@ impl LifecycleOrchestrator {
         .await
         .map_err(|error| error.to_string())?
         else {
-            return Err("当前 runtime session 没有关联 lifecycle activity attempt".to_string());
+            return Err("当前 runtime session 没有关联 lifecycle runtime node".to_string());
         };
 
         let status = if input.outcome == LifecycleNodeAdvanceOutcome::Failed {

@@ -80,8 +80,6 @@ pub struct AgentFrameBuilder {
     vfs_surface: Option<serde_json::Value>,
     mcp_surface: Option<serde_json::Value>,
     execution_profile: Option<serde_json::Value>,
-    graph_instance_id: Option<Uuid>,
-    activity_key: Option<String>,
     created_by_kind: String,
     created_by_id: Option<String>,
 }
@@ -96,8 +94,6 @@ impl AgentFrameBuilder {
             vfs_surface: None,
             mcp_surface: None,
             execution_profile: None,
-            graph_instance_id: None,
-            activity_key: None,
             created_by_kind: "frame_builder".to_string(),
             created_by_id: None,
         }
@@ -207,16 +203,6 @@ impl AgentFrameBuilder {
         self
     }
 
-    pub fn with_graph_instance(
-        mut self,
-        graph_instance_id: Uuid,
-        activity_key: impl Into<String>,
-    ) -> Self {
-        self.graph_instance_id = Some(graph_instance_id);
-        self.activity_key = Some(activity_key.into());
-        self
-    }
-
     pub fn with_created_by(mut self, kind: impl Into<String>, id: Option<String>) -> Self {
         self.created_by_kind = kind.into();
         self.created_by_id = id;
@@ -245,14 +231,6 @@ impl AgentFrameBuilder {
         let mut frame =
             AgentFrame::new_revision(self.agent_id, next_revision, &self.created_by_kind);
         frame.procedure_id = procedure_id;
-        frame.graph_instance_id = self
-            .graph_instance_id
-            .or_else(|| current.as_ref().and_then(|frame| frame.graph_instance_id));
-        frame.activity_key = self.activity_key.clone().or_else(|| {
-            current
-                .as_ref()
-                .and_then(|frame| frame.activity_key.clone())
-        });
         frame.effective_capability_json = self.capability_surface.clone().or_else(|| {
             current
                 .as_ref()
@@ -411,14 +389,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_revision_carries_forward_activity_scope() {
+    async fn build_revision_carries_forward_runtime_surface() {
         let repo = InMemoryFrameRepo::default();
         let agent_id = Uuid::new_v4();
-        let graph_instance_id = Uuid::new_v4();
 
         let mut frame1 = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("session-1")
-            .with_graph_instance(graph_instance_id, "implement")
             .with_execution_profile_raw(serde_json::json!({"executor": "local"}))
             .build(&repo)
             .await
@@ -433,29 +409,11 @@ mod tests {
             .expect("frame2");
 
         assert_eq!(frame2.revision, frame1.revision + 1);
-        assert_eq!(frame2.graph_instance_id, Some(graph_instance_id));
-        assert_eq!(frame2.activity_key.as_deref(), Some("implement"));
         assert_eq!(
             frame2.execution_profile_json,
             Some(serde_json::json!({"executor": "local"}))
         );
         assert_eq!(frame2.visible_canvas_mount_ids(), vec!["demo".to_string()]);
-    }
-
-    #[tokio::test]
-    async fn build_with_graph_instance() {
-        let repo = InMemoryFrameRepo::default();
-        let agent_id = Uuid::new_v4();
-        let gi_id = Uuid::new_v4();
-
-        let frame = AgentFrameBuilder::new(agent_id)
-            .with_graph_instance(gi_id, "implement")
-            .build(&repo)
-            .await
-            .expect("build");
-
-        assert_eq!(frame.graph_instance_id, Some(gi_id));
-        assert_eq!(frame.activity_key.as_deref(), Some("implement"));
     }
 
     #[tokio::test]
@@ -478,7 +436,6 @@ mod tests {
         let repo = InMemoryFrameRepo::default();
         let agent_id = Uuid::new_v4();
         let proc_id = Uuid::new_v4();
-        let graph_instance_id = Uuid::new_v4();
         let activation = ActivityActivation {
             capability_state: CapabilityState::from_clusters([ToolCluster::Read]),
             mcp_servers: vec![SessionMcpServer {
@@ -518,7 +475,6 @@ mod tests {
         });
 
         let frame = AgentFrameBuilder::new(agent_id)
-            .with_graph_instance(graph_instance_id, "implement")
             .with_procedure(AgentProcedureRef::ById(proc_id))
             .with_runtime_session("runtime-1")
             .with_surface_input(AgentFrameSurfaceInput {
@@ -533,8 +489,6 @@ mod tests {
             .expect("frame");
 
         assert_eq!(frame.procedure_id, Some(proc_id));
-        assert_eq!(frame.graph_instance_id, Some(graph_instance_id));
-        assert_eq!(frame.activity_key.as_deref(), Some("implement"));
         assert_eq!(
             frame
                 .execution_profile_json

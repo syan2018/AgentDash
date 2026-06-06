@@ -19,8 +19,8 @@ pub enum ExecutionSource {
 
 /// 决定 LifecycleRun 的复用策略。
 ///
-/// - `ReuseExisting`: 复用 `parent_run_id` 指向的 run，不创建新 graph instance。
-/// - `AppendGraph`: 复用 `parent_run_id` 指向的 run 并追加一个 WorkflowGraphInstance。
+/// - `ReuseExisting`: 复用 `parent_run_id` 指向的 run，不创建新 orchestration。
+/// - `AppendGraph`: 复用 `parent_run_id` 指向的 run 并追加一个 OrchestrationInstance。
 /// - `CreateLinkedRun`: 创建独立 LifecycleRun（新生命周期/上下文/控制边界）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -148,7 +148,7 @@ pub struct SubjectExecutionIntent {
     pub runtime_policy: RuntimePolicy,
 }
 
-/// 只启动 tracked lifecycle process + root graph instance。
+/// 只启动 tracked lifecycle process + root orchestration。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleRunStartIntent {
     pub project_id: Uuid,

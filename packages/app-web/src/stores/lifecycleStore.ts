@@ -11,7 +11,6 @@ import { create } from "zustand";
 
 import type {
   LifecycleRunView,
-  WorkflowGraphInstanceView,
   LifecycleAgentView,
   AgentFrameRuntimeView,
   SubjectExecutionView,
@@ -30,7 +29,6 @@ import {
 
 interface LifecycleState {
   lifecycleRuns: Map<string, LifecycleRunView>;
-  graphInstances: Map<string, WorkflowGraphInstanceView>;
   agents: Map<string, LifecycleAgentView>;
   frames: Map<string, AgentFrameRuntimeView>;
   subjectExecutions: Map<string, SubjectExecutionView>;
@@ -41,7 +39,6 @@ interface LifecycleState {
 
   // ── write actions ──
   setLifecycleRun: (lifecycleRun: LifecycleRunView) => void;
-  setGraphInstance: (instance: WorkflowGraphInstanceView) => void;
   setAgent: (agent: LifecycleAgentView) => void;
   setFrame: (frame: AgentFrameRuntimeView) => void;
   setSubjectExecution: (view: SubjectExecutionView) => void;
@@ -72,7 +69,6 @@ interface LifecycleState {
 
 export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   lifecycleRuns: new Map(),
-  graphInstances: new Map(),
   agents: new Map(),
   frames: new Map(),
   subjectExecutions: new Map(),
@@ -85,13 +81,6 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
       const next = new Map(s.lifecycleRuns);
       next.set(lifecycleRun.run_ref.run_id, lifecycleRun);
       return { lifecycleRuns: next };
-    }),
-
-  setGraphInstance: (instance) =>
-    set((s) => {
-      const next = new Map(s.graphInstances);
-      next.set(instance.id, instance);
-      return { graphInstances: next };
     }),
 
   setAgent: (agent) =>
@@ -131,11 +120,6 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
       const nextLifecycleRuns = new Map(s.lifecycleRuns);
       nextLifecycleRuns.set(lifecycleRun.run_ref.run_id, lifecycleRun);
 
-      const nextGraphInstances = new Map(s.graphInstances);
-      for (const gi of lifecycleRun.workflow_graph_instances) {
-        nextGraphInstances.set(gi.id, gi);
-      }
-
       const nextAgents = new Map(s.agents);
       for (const agent of lifecycleRun.agents) {
         nextAgents.set(agent.agent_ref.agent_id, agent);
@@ -143,7 +127,6 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
 
       return {
         lifecycleRuns: nextLifecycleRuns,
-        graphInstances: nextGraphInstances,
         agents: nextAgents,
       };
     }),

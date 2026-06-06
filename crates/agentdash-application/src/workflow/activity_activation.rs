@@ -59,7 +59,7 @@ pub struct ActivityActivationInput<'a> {
     pub orchestration_id: Uuid,
     /// 当前 Activity 在 orchestration runtime 中的稳定 node path。
     pub node_path: &'a str,
-    /// 当前 Activity attempt，用于把 lifecycle VFS artifact 写入绑定到精确 attempt。
+    /// 当前 runtime node attempt，用于把 lifecycle VFS artifact 写入绑定到精确 attempt。
     pub attempt: u32,
     /// lifecycle key,lifecycle mount 路径的一部分。
     pub lifecycle_key: &'a str,
@@ -76,7 +76,7 @@ pub struct ActivityActivationInput<'a> {
     /// 运行时 capability 指令(PhaseNode 热更新场景);追加到 baseline 后由 slot 归约。
     pub tool_directives: &'a [ToolCapabilityDirective],
     /// 已就绪的前驱 output port key 集合,kickoff prompt 标注状态时使用。
-    /// 调用方提前按 activity attempt scope 查好，activate_step 不做 IO。
+    /// 调用方提前按 runtime node scope 查好，activate_step 不做 IO。
     pub ready_port_keys: BTreeSet<String>,
     /// Companion agent 候选列表（workflow/lifecycle 路径通常为空）。
     pub available_companions: Vec<agentdash_spi::context::capability::CompanionAgentEntry>,

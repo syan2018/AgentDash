@@ -1,4 +1,3 @@
-mod agent_assignment;
 mod agent_frame;
 mod agent_lineage;
 pub mod dispatch;
@@ -10,9 +9,7 @@ mod repository;
 mod runtime_session_anchor;
 mod validation;
 mod value_objects;
-mod workflow_graph_instance;
 
-pub use agent_assignment::AgentAssignment;
 pub use agent_frame::AgentFrame;
 pub use agent_lineage::AgentLineage;
 pub use dispatch::{
@@ -24,9 +21,7 @@ pub use dispatch::{
     SubjectExecutionRef, WorkflowGraphRef,
 };
 pub use entity::{
-    ActiveActivityRef, ActivityExecutionClaim, AgentProcedure, LifecycleRun, LifecycleRunTopology,
-    WorkflowGraph, active_activity_refs_from_states, build_effective_contract,
-    has_active_activity_state,
+    AgentProcedure, LifecycleRun, LifecycleRunTopology, WorkflowGraph, build_effective_contract,
 };
 pub use lifecycle_agent::{LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::LifecycleGate;
@@ -41,10 +36,8 @@ pub use repository::{
 pub use runtime_session_anchor::{RuntimeDeliverySelectionPolicy, RuntimeSessionExecutionAnchor};
 pub use validation::{validate_agent_procedure, validate_workflow_graph};
 pub use value_objects::{
-    ActivationRule, ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy,
-    ActivityDefinition, ActivityExecutionClaimStatus, ActivityExecutorSpec, ActivityInputArtifact,
-    ActivityIterationPolicy, ActivityJoinPolicy, ActivityLifecycleRunState, ActivityOutputArtifact,
-    ActivityPortValue, ActivityRunStatus, ActivityTransition, ActivityTransitionKind,
+    ActivationRule, ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
+    ActivityIterationPolicy, ActivityJoinPolicy, ActivityTransition, ActivityTransitionKind,
     AgentActivityExecutorSpec, AgentFrameRef, AgentProcedureContract, AgentReusePolicy,
     AgentRunRef, ApiRequestExecutorSpec, ArtifactAliasPolicy, ArtifactBinding,
     BashExecExecutorSpec, CapabilityConfig, ContextStrategy, DefinitionSource,
@@ -62,4 +55,3 @@ pub use value_objects::{
     WorkflowContextBinding, WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec,
     WorkflowSessionTerminalState, reduce_tool_capability_directives,
 };
-pub use workflow_graph_instance::WorkflowGraphInstance;

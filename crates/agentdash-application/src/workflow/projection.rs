@@ -1,8 +1,8 @@
 use agentdash_domain::workflow::{
-    ActivityAttemptState, ActivityDefinition, AgentFrameRepository, AgentProcedure,
-    AgentProcedureContract, AgentProcedureRepository, LifecycleAgentRepository, LifecycleNodeType,
-    LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository, WorkflowGraph,
-    WorkflowGraphRepository,
+    ActivityDefinition, AgentFrameRepository, AgentProcedure, AgentProcedureContract,
+    AgentProcedureRepository, LifecycleAgentRepository, LifecycleNodeType, LifecycleRun,
+    LifecycleRunRepository, OrchestrationInstance, RuntimeNodeState,
+    RuntimeSessionExecutionAnchorRepository, WorkflowGraph, WorkflowGraphRepository,
 };
 use agentdash_spi::hooks::HookControlTarget;
 
@@ -26,7 +26,7 @@ pub struct ActiveWorkflowProjection {
     pub node_path: String,
     pub lifecycle: WorkflowGraph,
     pub active_activity: ActivityDefinition,
-    pub active_attempt: ActivityAttemptState,
+    pub active_attempt: RuntimeNodeState,
     /// 由 activity executor policy 推导的 node 语义:
     /// `continue_current_agent` → PhaseNode,`create_activity_agent` → AgentNode。
     pub active_node_type: LifecycleNodeType,
@@ -54,7 +54,6 @@ impl ActiveWorkflowProjection {
 }
 
 /// 由 activity executor 推导 (procedure_key, node_type)。
-#[cfg(test)]
 fn derive_node_facts(activity: &ActivityDefinition) -> (Option<String>, LifecycleNodeType) {
     use agentdash_domain::workflow::ActivityExecutorSpec;
 
@@ -77,8 +76,8 @@ fn derive_node_facts(activity: &ActivityDefinition) -> (Option<String>, Lifecycl
 /// RuntimeSession -> RuntimeSessionExecutionAnchor -> LifecycleRun.orchestrations。
 pub async fn resolve_active_workflow_projection_for_session(
     session_id: &str,
-    _definition_repo: &dyn AgentProcedureRepository,
-    _activity_lifecycle_repo: &dyn WorkflowGraphRepository,
+    definition_repo: &dyn AgentProcedureRepository,
+    activity_lifecycle_repo: &dyn WorkflowGraphRepository,
     frame_repo: &dyn AgentFrameRepository,
     _agent_repo: &dyn LifecycleAgentRepository,
     run_repo: &dyn LifecycleRunRepository,
@@ -86,31 +85,153 @@ pub async fn resolve_active_workflow_projection_for_session(
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
     let resolver =
         ActivityRuntimeAssociationResolver::new(frame_repo, run_repo).with_anchor_repo(anchor_repo);
-    let Some(_association) = resolver
+    let Some(association) = resolver
         .resolve_by_runtime_session(session_id)
         .await
         .map_err(|error| error.to_string())?
     else {
         return Ok(None);
     };
-    Ok(None)
+    active_workflow_projection_from_runtime_node(
+        association.run,
+        association.orchestration_id,
+        &association.node_path,
+        association.attempt,
+        definition_repo,
+        activity_lifecycle_repo,
+    )
+    .await
 }
 
 pub async fn resolve_active_workflow_projection_for_target(
     target: &HookControlTarget,
-    _definition_repo: &dyn AgentProcedureRepository,
-    _activity_lifecycle_repo: &dyn WorkflowGraphRepository,
+    definition_repo: &dyn AgentProcedureRepository,
+    activity_lifecycle_repo: &dyn WorkflowGraphRepository,
     _frame_repo: &dyn AgentFrameRepository,
     run_repo: &dyn LifecycleRunRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
-    let Some(_run) = run_repo
+    let Some(run) = run_repo
         .get_by_id(target.run_id)
         .await
         .map_err(|e| format!("查询 lifecycle run 失败: {e}"))?
     else {
         return Ok(None);
     };
-    Ok(None)
+    let Some((orchestration_id, node_path, attempt)) = run
+        .orchestrations
+        .iter()
+        .find_map(active_node_ref_for_orchestration)
+    else {
+        return Ok(None);
+    };
+    active_workflow_projection_from_runtime_node(
+        run,
+        orchestration_id,
+        &node_path,
+        attempt,
+        definition_repo,
+        activity_lifecycle_repo,
+    )
+    .await
+}
+
+async fn active_workflow_projection_from_runtime_node(
+    run: LifecycleRun,
+    orchestration_id: uuid::Uuid,
+    node_path: &str,
+    attempt: u32,
+    definition_repo: &dyn AgentProcedureRepository,
+    activity_lifecycle_repo: &dyn WorkflowGraphRepository,
+) -> Result<Option<ActiveWorkflowProjection>, String> {
+    let Some(root_graph_id) = run.root_graph_id else {
+        return Ok(None);
+    };
+    let Some(orchestration) = run.orchestration_by_id(orchestration_id) else {
+        return Ok(None);
+    };
+    let Some(active_attempt) =
+        find_runtime_node(&orchestration.node_tree, node_path, attempt).cloned()
+    else {
+        return Ok(None);
+    };
+    let Some(lifecycle) = activity_lifecycle_repo
+        .get_by_id(root_graph_id)
+        .await
+        .map_err(|error| format!("查询 WorkflowGraph 失败: {error}"))?
+    else {
+        return Ok(None);
+    };
+    let Some(active_activity) = lifecycle.activities.iter().find(|activity| {
+        activity.key == active_attempt.node_id || activity.key == active_attempt.node_path
+    }) else {
+        return Ok(None);
+    };
+    let active_activity = active_activity.clone();
+    let (active_procedure_key, active_node_type) = derive_node_facts(&active_activity);
+    let primary_workflow = match active_procedure_key.as_deref() {
+        Some(key) if !key.trim().is_empty() => definition_repo
+            .get_by_project_and_key(run.project_id, key)
+            .await
+            .map_err(|error| format!("查询 AgentProcedure 失败: {error}"))?,
+        _ => None,
+    };
+    Ok(Some(ActiveWorkflowProjection {
+        run,
+        orchestration_id,
+        node_path: node_path.to_string(),
+        lifecycle,
+        active_activity,
+        active_attempt,
+        active_node_type,
+        active_procedure_key,
+        primary_workflow,
+    }))
+}
+
+fn active_node_ref_for_orchestration(
+    orchestration: &OrchestrationInstance,
+) -> Option<(uuid::Uuid, String, u32)> {
+    find_first_active_node(&orchestration.node_tree).map(|node| {
+        (
+            orchestration.orchestration_id,
+            node.node_path.clone(),
+            node.attempt,
+        )
+    })
+}
+
+fn find_first_active_node(nodes: &[RuntimeNodeState]) -> Option<&RuntimeNodeState> {
+    for node in nodes {
+        if matches!(
+            node.status,
+            agentdash_domain::workflow::RuntimeNodeStatus::Ready
+                | agentdash_domain::workflow::RuntimeNodeStatus::Claiming
+                | agentdash_domain::workflow::RuntimeNodeStatus::Running
+                | agentdash_domain::workflow::RuntimeNodeStatus::Blocked
+        ) {
+            return Some(node);
+        }
+        if let Some(child) = find_first_active_node(&node.children) {
+            return Some(child);
+        }
+    }
+    None
+}
+
+fn find_runtime_node<'a>(
+    nodes: &'a [RuntimeNodeState],
+    node_path: &str,
+    attempt: u32,
+) -> Option<&'a RuntimeNodeState> {
+    for node in nodes {
+        if node.node_path == node_path && node.attempt == attempt {
+            return Some(node);
+        }
+        if let Some(child) = find_runtime_node(&node.children, node_path, attempt) {
+            return Some(child);
+        }
+    }
+    None
 }
 
 /// 测试夹具:构造 Activity 形态的 [`ActiveWorkflowProjection`]，供 hooks / vfs
@@ -118,10 +239,9 @@ pub async fn resolve_active_workflow_projection_for_target(
 #[cfg(test)]
 pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowProjection {
     use agentdash_domain::workflow::{
-        ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
-        ActivityLifecycleRunState, ActivityRunStatus, AgentActivityExecutorSpec, AgentProcedure,
-        AgentProcedureContract, DefinitionSource, OutputPortDefinition, WorkflowGraph,
-        WorkflowInjectionSpec,
+        ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
+        AgentProcedureContract, DefinitionSource, OutputPortDefinition, PlanNodeKind,
+        RuntimeNodeState, RuntimeNodeStatus, WorkflowGraph, WorkflowInjectionSpec,
     };
     use uuid::Uuid;
 
@@ -170,27 +290,24 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
         vec![],
     )
     .expect("lifecycle definition should build");
-    let activity_state = ActivityLifecycleRunState {
-        graph_instance_id: uuid::Uuid::new_v4(),
-        status: ActivityRunStatus::Running,
-        attempts: vec![ActivityAttemptState {
-            activity_key: "implement".to_string(),
-            attempt: 1,
-            status: ActivityAttemptStatus::Running,
-            executor_run: None,
-            started_at: None,
-            completed_at: None,
-            summary: None,
-        }],
-        outputs: Vec::new(),
+    let active_attempt = RuntimeNodeState {
+        node_id: "implement".to_string(),
+        node_path: "implement".to_string(),
+        kind: PlanNodeKind::AgentCall,
+        status: RuntimeNodeStatus::Running,
+        attempt: 1,
         inputs: Vec::new(),
+        outputs: Vec::new(),
+        executor_run_ref: None,
+        children: Vec::new(),
+        phase_path: Vec::new(),
+        started_at: None,
+        completed_at: None,
+        error: None,
+        trace_refs: Vec::new(),
+        cache: None,
     };
-    let mut run = LifecycleRun::new_control(project_id, lifecycle.id);
-    run.sync_graph_instance_activity_projections([(
-        activity_state.graph_instance_id,
-        &activity_state,
-    )]);
-    let active_attempt = activity_state.attempts[0].clone();
+    let run = LifecycleRun::new_control(project_id, lifecycle.id);
     let (active_procedure_key, active_node_type) = derive_node_facts(&active_activity);
     ActiveWorkflowProjection {
         run,

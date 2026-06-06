@@ -7,19 +7,21 @@ use serde_json::json;
 use uuid::Uuid;
 
 use agentdash_contracts::workflow::{
-    ActiveActivityRefDto, ActivityAttemptView, LifecycleAgentRefDto, LifecycleAgentView,
-    LifecycleExecutionEntry as ContractLifecycleExecutionEntry,
+    ActiveRuntimeNodeRefDto, ExecutorRunRef as ContractExecutorRunRef, LifecycleAgentRefDto,
+    LifecycleAgentView, LifecycleExecutionEntry as ContractLifecycleExecutionEntry,
     LifecycleExecutionEventKind as ContractLifecycleExecutionEventKind, LifecycleRunRefDto,
     LifecycleRunStatus as ContractLifecycleRunStatus,
     LifecycleRunTopology as ContractLifecycleRunTopology, LifecycleRunView,
-    LifecycleSubjectAssociationDto, ProjectActiveAgentsView, RuntimeSessionRefDto,
-    SubjectExecutionView, SubjectRefDto, WorkflowGraphInstanceView,
+    LifecycleSubjectAssociationDto, OrchestrationRunView, ProjectActiveAgentsView, RuntimeNodeView,
+    RuntimeSessionRefDto, SubjectExecutionView, SubjectRefDto,
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
-    LifecycleAgent, LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind, LifecycleRun,
+    ExecutorRunRef as DomainExecutorRunRef, LifecycleAgent,
+    LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind, LifecycleRun,
     LifecycleRunStatus as DomainLifecycleRunStatus,
-    LifecycleRunTopology as DomainLifecycleRunTopology, LifecycleSubjectAssociation, SubjectRef,
+    LifecycleRunTopology as DomainLifecycleRunTopology, LifecycleSubjectAssociation,
+    OrchestrationInstance, RuntimeNodeState, RuntimeNodeStatus, SubjectRef,
 };
 
 use crate::repository_set::RepositorySet;
@@ -54,8 +56,8 @@ pub async fn build_lifecycle_run_view_with_preloaded(
         );
     }
 
-    let workflow_graph_instances = Vec::new();
-    let active_activity_refs = Vec::new();
+    let orchestrations = orchestration_views(run);
+    let active_runtime_node_refs = active_runtime_node_refs(run);
     let runtime_trace_refs = collect_runtime_trace_refs(repos, run.id).await?;
 
     Ok(assemble_lifecycle_run_view(
@@ -65,8 +67,8 @@ pub async fn build_lifecycle_run_view_with_preloaded(
             .iter()
             .map(association_to_dto)
             .collect(),
-        workflow_graph_instances,
-        active_activity_refs,
+        orchestrations,
+        active_runtime_node_refs,
         runtime_trace_refs,
     ))
 }
@@ -85,7 +87,7 @@ pub async fn build_subject_execution_view(
 
     let mut run_views = Vec::with_capacity(runs.len());
     let mut current_agent: Option<LifecycleAgentView> = None;
-    let latest_attempt: Option<ActivityAttemptView> = None;
+    let latest_runtime_node = None;
     let artifacts = json!({});
 
     for run in &runs {
@@ -106,7 +108,7 @@ pub async fn build_subject_execution_view(
         associations: associations.iter().map(association_to_dto).collect(),
         runs: run_views,
         current_agent,
-        latest_attempt,
+        latest_runtime_node,
         artifacts,
     })
 }
@@ -269,8 +271,8 @@ fn assemble_lifecycle_run_view(
     run: &LifecycleRun,
     agents: Vec<LifecycleAgentView>,
     subject_associations: Vec<LifecycleSubjectAssociationDto>,
-    workflow_graph_instances: Vec<WorkflowGraphInstanceView>,
-    active_activity_refs: Vec<ActiveActivityRefDto>,
+    orchestrations: Vec<OrchestrationRunView>,
+    active_runtime_node_refs: Vec<ActiveRuntimeNodeRefDto>,
     runtime_trace_refs: Vec<RuntimeSessionRefDto>,
 ) -> LifecycleRunView {
     LifecycleRunView {
@@ -281,8 +283,8 @@ fn assemble_lifecycle_run_view(
         topology: topology_to_dto(run.topology),
         root_graph_id: run.root_graph_id.map(|id| id.to_string()),
         status: status_to_dto(run.status),
-        workflow_graph_instances,
-        active_activity_refs,
+        orchestrations,
+        active_runtime_node_refs,
         agents,
         subject_associations,
         runtime_trace_refs,
@@ -295,6 +297,111 @@ fn assemble_lifecycle_run_view(
         updated_at: run.updated_at.to_rfc3339(),
         last_activity_at: run.last_activity_at.to_rfc3339(),
     }
+}
+
+fn orchestration_views(run: &LifecycleRun) -> Vec<OrchestrationRunView> {
+    run.orchestrations
+        .iter()
+        .map(orchestration_to_view)
+        .collect()
+}
+
+fn orchestration_to_view(instance: &OrchestrationInstance) -> OrchestrationRunView {
+    OrchestrationRunView {
+        orchestration_id: instance.orchestration_id.to_string(),
+        role: instance.role.clone(),
+        status: status_string(&instance.status),
+        plan_digest: instance.plan_snapshot.plan_digest.clone(),
+        source_ref: serde_json::to_value(&instance.source_ref).unwrap_or(serde_json::Value::Null),
+        ready_node_ids: instance.dispatch.ready_node_ids.clone(),
+        nodes: instance
+            .node_tree
+            .iter()
+            .map(runtime_node_to_view)
+            .collect(),
+        created_at: instance.created_at.to_rfc3339(),
+        updated_at: instance.updated_at.to_rfc3339(),
+    }
+}
+
+fn runtime_node_to_view(node: &RuntimeNodeState) -> RuntimeNodeView {
+    RuntimeNodeView {
+        node_id: node.node_id.clone(),
+        node_path: node.node_path.clone(),
+        kind: status_string(&node.kind),
+        status: status_string(&node.status),
+        attempt: node.attempt,
+        executor_run_ref: node.executor_run_ref.as_ref().map(executor_run_ref_to_dto),
+        started_at: node.started_at.map(|timestamp| timestamp.to_rfc3339()),
+        completed_at: node.completed_at.map(|timestamp| timestamp.to_rfc3339()),
+        children: node.children.iter().map(runtime_node_to_view).collect(),
+    }
+}
+
+fn executor_run_ref_to_dto(refs: &DomainExecutorRunRef) -> ContractExecutorRunRef {
+    match refs {
+        DomainExecutorRunRef::RuntimeSession { session_id } => {
+            ContractExecutorRunRef::RuntimeSession {
+                session_id: session_id.clone(),
+            }
+        }
+        DomainExecutorRunRef::FunctionRun { run_id } => ContractExecutorRunRef::FunctionRun {
+            run_id: run_id.clone(),
+        },
+        DomainExecutorRunRef::HumanDecision { decision_id } => {
+            ContractExecutorRunRef::HumanDecision {
+                decision_id: decision_id.clone(),
+            }
+        }
+    }
+}
+
+fn active_runtime_node_refs(run: &LifecycleRun) -> Vec<ActiveRuntimeNodeRefDto> {
+    run.orchestrations
+        .iter()
+        .flat_map(|instance| {
+            flatten_runtime_nodes(&instance.node_tree)
+                .into_iter()
+                .filter(|node| {
+                    matches!(
+                        node.status,
+                        RuntimeNodeStatus::Ready
+                            | RuntimeNodeStatus::Claiming
+                            | RuntimeNodeStatus::Running
+                            | RuntimeNodeStatus::Blocked
+                    )
+                })
+                .map(move |node| ActiveRuntimeNodeRefDto {
+                    run_id: run.id.to_string(),
+                    orchestration_id: instance.orchestration_id.to_string(),
+                    node_path: node.node_path.clone(),
+                    attempt: node.attempt,
+                    status: status_string(&node.status),
+                })
+        })
+        .collect()
+}
+
+fn flatten_runtime_nodes(nodes: &[RuntimeNodeState]) -> Vec<&RuntimeNodeState> {
+    fn collect<'a>(node: &'a RuntimeNodeState, acc: &mut Vec<&'a RuntimeNodeState>) {
+        acc.push(node);
+        for child in &node.children {
+            collect(child, acc);
+        }
+    }
+
+    let mut flattened = Vec::new();
+    for node in nodes {
+        collect(node, &mut flattened);
+    }
+    flattened
+}
+
+fn status_string<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn execution_entry_to_dto(

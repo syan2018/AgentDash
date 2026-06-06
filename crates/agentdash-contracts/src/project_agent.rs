@@ -4,8 +4,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::workflow::{
-    AgentAssignmentRefDto, AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto,
-    RuntimeSessionRefDto, SubjectRefDto,
+    AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -61,9 +60,6 @@ pub struct ProjectAgentLaunchResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub assignment_ref: Option<AgentAssignmentRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub subject_ref: Option<SubjectRefDto>,

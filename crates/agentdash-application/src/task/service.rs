@@ -3,8 +3,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityAttemptStatus, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource,
-    RunPolicy, RuntimeDeliverySelectionPolicy, RuntimePolicy, SubjectExecutionIntent, SubjectRef,
+    AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, RunPolicy,
+    RuntimeDeliverySelectionPolicy, RuntimeNodeStatus, RuntimePolicy, SubjectExecutionIntent,
+    SubjectRef,
 };
 
 use crate::repository_set::RepositorySet;
@@ -17,7 +18,7 @@ use crate::workflow::{
 
 use super::execution::*;
 use super::gateway::get_task as gw_get_task;
-use super::view_projector::project_task_view_from_attempt_status;
+use super::view_projector::project_task_view_from_runtime_node_status;
 
 /// 基础设施回调 — 仅封装 Application 层无法直接完成的操作
 ///
@@ -206,10 +207,10 @@ impl StoryActivityActivationService {
             self.dispatcher.deliver_runtime_cancel(command).await?;
         }
 
-        let projected_task = project_task_view_from_attempt_status(
+        let projected_task = project_task_view_from_runtime_node_status(
             &self.repos,
             task.id,
-            ActivityAttemptStatus::Cancelled,
+            RuntimeNodeStatus::Cancelled,
             "task_cancel_requested",
             serde_json::json!({
                 "runtime_refs": cancel_result.runtime_refs,

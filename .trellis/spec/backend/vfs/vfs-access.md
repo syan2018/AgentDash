@@ -157,7 +157,7 @@ Routine memory 复用 InlineFile 存储，provider 由 mount metadata 中的 `ro
 
 ## Lifecycle Runtime Mount
 
-Lifecycle runtime mount 暴露当前 lifecycle container 内部的 orchestration node 投影。它不以 `WorkflowGraphInstance`、activity attempt 或某种资产实例作为运行身份；session assembly 通过 application 层 surface 传入以下字段：
+Lifecycle runtime mount 暴露当前 lifecycle container 内部的 orchestration node 投影。它以 `orchestration_id + node_path + attempt` 作为运行节点身份；session assembly 通过 application 层 surface 传入以下字段：
 
 ```rust
 pub struct LifecycleMountSurface<'a> {

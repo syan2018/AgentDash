@@ -41,10 +41,7 @@ pub use ports::{
     ContextStrategy, GateStrategy, InputPortDefinition, OutputPortDefinition, StandaloneFulfillment,
 };
 pub use run_state::{
-    ActivityAttemptState, ActivityAttemptStatus, ActivityExecutionClaimStatus,
-    ActivityInputArtifact, ActivityLifecycleRunState, ActivityOutputArtifact, ActivityPortValue,
-    ActivityRunStatus, ExecutorRunRef, LifecycleExecutionEntry, LifecycleExecutionEventKind,
-    LifecycleRunStatus,
+    ExecutorRunRef, LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleRunStatus,
 };
 
 #[cfg(test)]

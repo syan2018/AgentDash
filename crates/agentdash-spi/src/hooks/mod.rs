@@ -549,8 +549,6 @@ pub struct HookControlTarget {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub frame_id: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assignment_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

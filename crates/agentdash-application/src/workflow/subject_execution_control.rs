@@ -805,7 +805,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_graphless_subject_execution_delivers_runtime_without_assignment() {
+    async fn cancel_graphless_subject_execution_delivers_runtime_without_orchestration_binding() {
         let project_id = Uuid::new_v4();
         let subject = SubjectRef::new("task", Uuid::new_v4());
         let run_repo = RunRepo::default();

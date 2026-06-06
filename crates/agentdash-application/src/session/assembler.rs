@@ -1779,10 +1779,9 @@ mod tests {
     use super::*;
     use crate::vfs::build_lifecycle_mount_with_ports;
     use agentdash_domain::workflow::{
-        ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleRunState,
-        AgentActivityExecutorSpec, AgentProcedure, AgentProcedureContract, DefinitionSource,
-        InputPortDefinition, LifecycleNodeType, OutputPortDefinition, WorkflowGraph,
-        WorkflowInjectionSpec,
+        ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
+        AgentProcedureContract, DefinitionSource, InputPortDefinition, LifecycleNodeType,
+        OutputPortDefinition, WorkflowGraph, WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
 
@@ -2094,25 +2093,7 @@ mod tests {
             vec![],
         )
         .expect("lifecycle");
-        let graph_instance_id = uuid::Uuid::new_v4();
-        let activity_state = ActivityLifecycleRunState {
-            graph_instance_id,
-            status: agentdash_domain::workflow::ActivityRunStatus::Running,
-            attempts: vec![agentdash_domain::workflow::ActivityAttemptState {
-                activity_key: "implement".to_string(),
-                attempt: 1,
-                status: agentdash_domain::workflow::ActivityAttemptStatus::Running,
-                executor_run: None,
-                started_at: None,
-                completed_at: None,
-                summary: None,
-            }],
-            outputs: Vec::new(),
-            inputs: Vec::new(),
-        };
-        let mut run =
-            agentdash_domain::workflow::LifecycleRun::new_control(project_id, lifecycle.id);
-        run.sync_graph_instance_activity_projections([(graph_instance_id, &activity_state)]);
+        let run = agentdash_domain::workflow::LifecycleRun::new_control(project_id, lifecycle.id);
         let workflow = AgentProcedure::new(
             project_id,
             "wf_impl",

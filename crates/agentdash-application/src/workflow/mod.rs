@@ -5,7 +5,6 @@ mod catalog;
 mod completion;
 mod definition;
 pub mod dispatch_service;
-pub mod engine;
 mod error;
 pub mod execution_log;
 pub mod frame_builder;
@@ -41,8 +40,7 @@ pub use agent_steering::{
     LifecycleAgentSteeringCommand, LifecycleAgentSteeringDispatch, LifecycleAgentSteeringService,
 };
 pub use agentdash_domain::workflow::{
-    ActivityInputArtifact, ActivityLifecycleRunState, ActivityOutputArtifact, ActivityPortValue,
-    ActivityRunStatus, AgentReusePolicy, RuntimeSessionPolicy, WorkflowSessionTerminalState,
+    AgentReusePolicy, RuntimeSessionPolicy, WorkflowSessionTerminalState,
 };
 pub use catalog::{ActivityLifecycleCatalogService, WorkflowCatalogService};
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
@@ -55,7 +53,6 @@ pub use dispatch_service::{
     LifecycleDispatchService, RuntimeSessionCreationRequest, RuntimeSessionCreator,
     SessionPersistenceRuntimeSessionCreator,
 };
-pub use engine::{ActivityEvent, LifecycleEngine, LifecycleEngineError};
 pub use error::WorkflowApplicationError;
 pub use execution_log::{
     RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef, load_scoped_port_output_map,

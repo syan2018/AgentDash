@@ -17,10 +17,6 @@ function JsonBlock({ value }: { value: unknown }) {
   );
 }
 
-function shortGraphInstanceId(graphInstanceId: string | undefined): string | null {
-  return graphInstanceId ? graphInstanceId.slice(0, 8) : null;
-}
-
 function SubjectExecutionContent({ view }: { view: SubjectExecutionView | null }) {
   const navigate = useNavigate();
 
@@ -37,7 +33,7 @@ function SubjectExecutionContent({ view }: { view: SubjectExecutionView | null }
     );
   }
 
-  const latestAttemptGraphInstanceId = shortGraphInstanceId(view.latest_attempt?.graph_instance_id);
+  const latestRuntimeNode = view.latest_runtime_node;
 
   return (
     <div className="space-y-4 p-4">
@@ -65,11 +61,10 @@ function SubjectExecutionContent({ view }: { view: SubjectExecutionView | null }
           )}
         </div>
         <div className="rounded-[8px] border border-border bg-background p-3">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Latest Activity Attempt</p>
-          {view.latest_attempt ? (
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Latest Runtime Node</p>
+          {latestRuntimeNode ? (
             <p className="mt-2 text-xs text-foreground">
-              {latestAttemptGraphInstanceId ? `graph instance ${latestAttemptGraphInstanceId} · ` : ""}
-              {view.latest_attempt.activity_key} #{view.latest_attempt.attempt} · {view.latest_attempt.status}
+              {latestRuntimeNode.node_path} #{latestRuntimeNode.attempt} · {latestRuntimeNode.status}
             </p>
           ) : (
             <p className="mt-2 text-xs text-muted-foreground">暂无</p>

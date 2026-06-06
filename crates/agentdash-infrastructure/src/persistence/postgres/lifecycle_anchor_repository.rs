@@ -166,8 +166,6 @@ struct FrameRow {
     agent_id: String,
     revision: i32,
     procedure_id: Option<String>,
-    graph_instance_id: Option<String>,
-    activity_key: Option<String>,
     effective_capability_json: Option<String>,
     context_slice_json: Option<String>,
     vfs_surface_json: Option<String>,
@@ -196,11 +194,6 @@ impl TryFrom<FrameRow> for AgentFrame {
             agent_id: parse_uuid(&row.agent_id, "agent_frames.agent_id")?,
             revision: row.revision,
             procedure_id: opt_uuid(row.procedure_id.as_ref(), "agent_frames.procedure_id")?,
-            graph_instance_id: opt_uuid(
-                row.graph_instance_id.as_ref(),
-                "agent_frames.graph_instance_id",
-            )?,
-            activity_key: row.activity_key,
             effective_capability_json: parse_opt_json(
                 row.effective_capability_json,
                 "effective_capability_json",
@@ -237,19 +230,17 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
     async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
         sqlx::query(
             r#"INSERT INTO agent_frames
-                (id, agent_id, revision, procedure_id, graph_instance_id, activity_key,
+                (id, agent_id, revision, procedure_id,
                  effective_capability_json, context_slice_json, vfs_surface_json, mcp_surface_json,
                  visible_canvas_mount_ids_json,
                  execution_profile_json,
                  created_by_kind, created_by_id, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
         )
         .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
         .bind(frame.revision)
         .bind(frame.procedure_id.map(|id| id.to_string()))
-        .bind(frame.graph_instance_id.map(|id| id.to_string()))
-        .bind(&frame.activity_key)
         .bind(opt_json_str(&frame.effective_capability_json)?)
         .bind(opt_json_str(&frame.context_slice_json)?)
         .bind(opt_json_str(&frame.vfs_surface_json)?)
@@ -267,7 +258,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
 
     async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         sqlx::query_as::<_, FrameRow>(
-            r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
+            r#"SELECT id,agent_id,revision,procedure_id,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       visible_canvas_mount_ids_json,
                       execution_profile_json,
@@ -284,7 +275,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
 
     async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         sqlx::query_as::<_, FrameRow>(
-            r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
+            r#"SELECT id,agent_id,revision,procedure_id,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       visible_canvas_mount_ids_json,
                       execution_profile_json,
@@ -301,7 +292,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
 
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
         sqlx::query_as::<_, FrameRow>(
-            r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
+            r#"SELECT id,agent_id,revision,procedure_id,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       visible_canvas_mount_ids_json,
                       execution_profile_json,

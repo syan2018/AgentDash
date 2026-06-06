@@ -447,8 +447,6 @@ mod tests {
                 vfs_surface: serde_json::Value::Null,
                 mcp_surface: serde_json::Value::Null,
                 runtime_session_id: Some("sess-launch".to_string()),
-                graph_instance_id: None,
-                activity_key: None,
             },
             intent: FrameLaunchIntent {
                 input: None,

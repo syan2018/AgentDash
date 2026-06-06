@@ -111,42 +111,43 @@ const lifecycleRunView: LifecycleRunView = {
   topology: "workflow_graph",
   root_graph_id: "lifecycle-projection",
   status: "running",
-  active_activity_refs: [
+  active_runtime_node_refs: [
     {
       run_id: "run-projection-123456",
-      graph_instance_id: "graph-instance-projection",
-      activity_key: "implement",
+      orchestration_id: "orchestration-projection",
+      node_path: "implement",
       attempt: 2,
       status: "running",
     },
   ],
-  workflow_graph_instances: [
+  orchestrations: [
     {
-      id: "graph-instance-projection",
-      run_id: "run-projection-123456",
-      graph_id: "graph-projection",
+      orchestration_id: "orchestration-projection",
       role: "primary",
       status: "running",
-      activities: [
+      plan_digest: "sha256:projection",
+      source_ref: { kind: "workflow_graph", graph_id: "graph-projection" },
+      ready_node_ids: [],
+      nodes: [
         {
-          activity_key: "implement",
+          node_id: "implement",
+          node_path: "implement",
+          kind: "agent_call",
           status: "running",
-          attempts: [
-            {
-              graph_instance_id: "graph-instance-projection",
-              activity_key: "implement",
-              attempt: 2,
-              status: "running",
-            },
-            {
-              graph_instance_id: "graph-instance-projection",
-              activity_key: "review",
-              attempt: 1,
-              status: "completed",
-            },
-          ],
+          attempt: 2,
+          children: [],
+        },
+        {
+          node_id: "review",
+          node_path: "review",
+          kind: "agent_call",
+          status: "completed",
+          attempt: 1,
+          children: [],
         },
       ],
+      created_at: "2026-06-02T00:00:00Z",
+      updated_at: "2026-06-02T00:00:00Z",
     },
   ],
   agents: [],
@@ -207,7 +208,7 @@ describe("ContextOverviewTab projection contract", () => {
     expect(html).toContain("runtime-skill");
   });
 
-  it("从 lifecycle run view 的 graph instance projection 展示活跃 attempt", () => {
+  it("从 lifecycle run view 的 orchestration projection 展示活跃 runtime node", () => {
     const html = renderToStaticMarkup(
       <ContextOverviewTab
         contextSnapshot={contextSnapshot}
@@ -222,9 +223,9 @@ describe("ContextOverviewTab projection contract", () => {
     );
 
     expect(html).toContain("Projection Lifecycle");
-    expect(html).toContain("Attempt · Running");
+    expect(html).toContain("Node · Running");
     expect(html).toContain("进度 1/2");
-    expect(html).toContain("graph-instance-projection:implement");
+    expect(html).toContain("orchestration-projection:implement#2");
   });
 
   it("无 owner/context snapshot 时仍从 lifecycle run projection 展示运行状态", () => {

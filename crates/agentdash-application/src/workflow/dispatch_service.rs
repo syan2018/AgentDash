@@ -1484,8 +1484,6 @@ mod tests {
         assert_eq!(agent_repo.items.lock().unwrap().len(), 1);
         let frames = frame_repo.items.lock().unwrap().clone();
         assert_eq!(frames.len(), 1);
-        assert_eq!(frames[0].graph_instance_id, None);
-        assert_eq!(frames[0].activity_key, None);
         assert_eq!(runtime_session_creator.items.lock().unwrap().len(), 1);
         assert_eq!(assoc_repo.items.lock().unwrap().len(), 1);
         assert!(result.delivery_runtime_ref.is_some());
@@ -1602,8 +1600,6 @@ mod tests {
 
         let frames = frame_repo.items.lock().unwrap().clone();
         assert_eq!(frames.len(), 1);
-        assert_eq!(frames[0].graph_instance_id, None);
-        assert_eq!(frames[0].activity_key, None);
 
         let anchors = anchor_repo.items.lock().unwrap().clone();
         assert_eq!(anchors.len(), 1);

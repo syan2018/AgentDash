@@ -2,7 +2,7 @@
 
 ## 意图
 
-本任务把 runtime 从 Activity-specific state machine 收敛到 common orchestration runtime。它只消费 compiler 输出的 `OrchestrationPlanSnapshot`，并把运行态写入 `LifecycleRun.orchestrations[]`。`OrchestrationInstance.orchestration_id` 是唯一运行实例身份；静态 `WorkflowGraph` 只是当前 compiler 输入之一，不决定 runtime identity。旧 `WorkflowGraphInstance.activity_state`、`WorkflowGraphInstanceRepository` 和 activity attempt 坐标是迁移来源与拆除对象，不再作为目标事实源或目标仓储边界。
+本任务把 runtime 收敛到 common orchestration runtime。它只消费 compiler 输出的 `OrchestrationPlanSnapshot`，并把运行态写入 `LifecycleRun.orchestrations[]`。`OrchestrationInstance.orchestration_id` 是唯一运行实例身份；静态 `WorkflowGraph` 只是当前 compiler 输入之一，不决定 runtime identity。
 
 ## 运行时边界
 
@@ -73,15 +73,15 @@ runtime_session_id
   -> RuntimeNodeState terminal event
 ```
 
-旧 resolver 只作为迁移参考；新 command path 不能同时读取 activity attempt 和 runtime node 两套事实源，也不能再通过 `graph_instance_id + activity_key + attempt` 定位执行节点。
+terminal resolver 只通过 lifecycle / orchestration / node / agent / frame 坐标定位执行节点。
 
 ## Projection
 
-第一版 UI 可以继续消费 graph-compatible `LifecycleRunView.workflow_graph_instances[]` 和 `active_activity_refs[]`。这些字段从 orchestration snapshot 投影，不再从旧 `WorkflowGraphInstance.activity_state` 推进。native orchestration progress tree 可以后续新增。
+UI 直接消费 `LifecycleRunView.orchestrations[]`、`RuntimeNodeView` 与 `active_runtime_node_refs[]`。这些字段从 orchestration snapshot 投影，native orchestration progress tree 后续可在同一 contract 上继续增强。
 
 ## VFS / Session Surface
 
-`lifecycle` 仍是面向主 AgentRun 的共同生命周期容器；`orchestration` 是 lifecycle 内部的运行态状态容器。session assembly、VFS mount 和 hook projection 不直接暴露或反查 `WorkflowGraphInstance`，而是通过 `LifecycleMountSurface` 这类窄接口传递：
+`lifecycle` 仍是面向主 AgentRun 的共同生命周期容器；`orchestration` 是 lifecycle 内部的运行态状态容器。session assembly、VFS mount 和 hook projection 通过 `LifecycleMountSurface` 这类窄接口传递：
 
 ```text
 run_id + orchestration_id + node_path + attempt + writable_port_keys
@@ -95,11 +95,11 @@ run_id + orchestration_id + node_path + attempt + writable_port_keys
 - journal 只有在 resume/replay/增量订阅需要时拆成 append 表。
 - lease/outbox 只有在多 worker claim 并发需要时拆表；拆表后也不能成为 node truth。
 - runtime trace anchor 是反向索引，不是 runtime state。
-- `WorkflowGraphInstanceRepository`、`lifecycle_workflow_instances`、`AgentAssignment(graph_instance_id, activity_key, attempt)` 这类旧 Activity 仓储不进入目标 runtime path；迁移时要么删除，要么降级为由 orchestration projection 生成的临时 read adapter。
+- `LifecycleRunRepository` 持久化 aggregate；runtime snapshot 随 `LifecycleRun.orchestrations[]` 整体读写。
 
 ## 风险
 
-- 最大风险是新旧 runtime 双读 fallback。实现时允许短期生成兼容 projection，但不允许 command/scheduler 同时从两套 snapshot 判定状态。
-- 另一个风险是把 `WorkflowGraphInstance` 当成 orchestration 的“外壳”。这会继续把运行实例身份绑定到某一种资产形态，阻碍后续 script / run artifact 进入同一 runtime。
+- 最大风险是 command/scheduler 绕过 orchestration snapshot 判定状态。实现时 projection 可以为 UI 服务，但状态推进必须回到 runtime node event。
+- orchestration identity 必须独立于 asset shape，原因是后续 script / run artifact 需要进入同一 runtime。
 - Function/local effect 不能绕过 journal/snapshot，否则会在最早的非 Agent 节点上破坏 common runtime。
 - terminal callback 必须幂等，否则 tool completion 和 session terminal callback 可能重复推进 successor。

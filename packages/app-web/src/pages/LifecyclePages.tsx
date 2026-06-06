@@ -34,10 +34,6 @@ function EmptyHint({ message }: { message: string }) {
   );
 }
 
-function shortId(id: string): string {
-  return id.slice(0, 8);
-}
-
 function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
   const navigate = useNavigate();
   return (
@@ -51,7 +47,7 @@ function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
             {lifecycleRun.status}
           </span>
           <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 text-muted-foreground">
-            graph instances {lifecycleRun.workflow_graph_instances.length}
+            orchestrations {lifecycleRun.orchestrations.length}
           </span>
           <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 text-muted-foreground">
             agent {lifecycleRun.agents.length}
@@ -194,16 +190,6 @@ function AgentSummary({
               <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 font-mono text-muted-foreground">
                 {frame.frame_ref.frame_id}
               </span>
-              {frame.graph_instance_id && (
-                <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 font-mono text-muted-foreground">
-                  graph instance {shortId(frame.graph_instance_id)}
-                </span>
-              )}
-              {frame.activity_key && (
-                <span className="rounded-[6px] border border-border bg-secondary px-2 py-1 text-muted-foreground">
-                  {frame.activity_key}
-                </span>
-              )}
             </div>
             {frame.runtime_session_refs.length > 0 && (
               <div className="flex flex-wrap gap-2">

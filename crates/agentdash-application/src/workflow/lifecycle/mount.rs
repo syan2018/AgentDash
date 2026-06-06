@@ -92,9 +92,9 @@ mod tests {
     use crate::vfs::build_lifecycle_mount_with_ports;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
-        ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
-        ActivityLifecycleRunState, ActivityRunStatus, BashExecExecutorSpec, DefinitionSource,
-        FunctionActivityExecutorSpec, LifecycleRun, OutputPortDefinition, WorkflowGraph,
+        ActivityDefinition, ActivityExecutorSpec, BashExecExecutorSpec, DefinitionSource,
+        FunctionActivityExecutorSpec, LifecycleRun, OutputPortDefinition, PlanNodeKind,
+        RuntimeNodeState, RuntimeNodeStatus, WorkflowGraph,
     };
     use uuid::Uuid;
 
@@ -133,27 +133,24 @@ mod tests {
             vec![],
         )
         .expect("lifecycle");
-        let activity_state = ActivityLifecycleRunState {
-            graph_instance_id: uuid::Uuid::new_v4(),
-            status: ActivityRunStatus::Running,
-            attempts: vec![ActivityAttemptState {
-                activity_key: "plan".to_string(),
-                attempt: 1,
-                status: ActivityAttemptStatus::Running,
-                executor_run: None,
-                started_at: None,
-                completed_at: None,
-                summary: None,
-            }],
-            outputs: Vec::new(),
+        let active_attempt = RuntimeNodeState {
+            node_id: "plan".to_string(),
+            node_path: "plan".to_string(),
+            kind: PlanNodeKind::LocalEffect,
+            status: RuntimeNodeStatus::Running,
+            attempt: 1,
             inputs: Vec::new(),
+            outputs: Vec::new(),
+            executor_run_ref: None,
+            children: Vec::new(),
+            phase_path: Vec::new(),
+            started_at: None,
+            completed_at: None,
+            error: None,
+            trace_refs: Vec::new(),
+            cache: None,
         };
-        let mut run = LifecycleRun::new_control(project_id, lifecycle.id);
-        run.sync_graph_instance_activity_projections([(
-            activity_state.graph_instance_id,
-            &activity_state,
-        )]);
-        let active_attempt = activity_state.attempts[0].clone();
+        let run = LifecycleRun::new_control(project_id, lifecycle.id);
 
         ActiveWorkflowProjection {
             run,

@@ -1446,7 +1446,6 @@ mod tests {
                     run_id: uuid::Uuid::nil(),
                     agent_id: uuid::Uuid::nil(),
                     frame_id: uuid::Uuid::nil(),
-                    assignment_id: None,
                 },
                 provenance: agentdash_spi::hooks::RuntimeAdapterProvenance::runtime_session(
                     "sess-hook".to_string(),
@@ -1532,7 +1531,6 @@ mod tests {
                     run_id: uuid::Uuid::nil(),
                     agent_id: uuid::Uuid::nil(),
                     frame_id: uuid::Uuid::nil(),
-                    assignment_id: None,
                 },
                 provenance: agentdash_spi::hooks::RuntimeAdapterProvenance::runtime_session(
                     "sess-hook".to_string(),
@@ -1607,7 +1605,6 @@ mod tests {
                     run_id: uuid::Uuid::nil(),
                     agent_id: uuid::Uuid::nil(),
                     frame_id: uuid::Uuid::nil(),
-                    assignment_id: None,
                 },
                 provenance: agentdash_spi::hooks::RuntimeAdapterProvenance::runtime_session(
                     "sess-hook".to_string(),

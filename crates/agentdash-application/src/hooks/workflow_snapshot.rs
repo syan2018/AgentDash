@@ -114,7 +114,6 @@ impl WorkflowSnapshotBuilder {
             run_id: agent.run_id,
             agent_id: agent.id,
             frame_id: frame.id,
-            assignment_id: None,
         }))
     }
 

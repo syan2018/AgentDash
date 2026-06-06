@@ -4,8 +4,8 @@ use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
-    ActivityAttemptStatus, AgentFrameRepository, AgentProcedureRepository,
-    LifecycleAgentRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    AgentFrameRepository, AgentProcedureRepository, LifecycleAgentRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository, RuntimeNodeStatus,
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository, build_effective_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
@@ -152,13 +152,12 @@ impl AppExecutionHookProvider {
                 };
                 let activity_status = Some(
                     match workflow.active_attempt.status {
-                        ActivityAttemptStatus::Pending => "pending",
-                        ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => "ready",
-                        ActivityAttemptStatus::Running => "running",
-                        ActivityAttemptStatus::Completed => "completed",
-                        ActivityAttemptStatus::Failed | ActivityAttemptStatus::Cancelled => {
-                            "failed"
-                        }
+                        RuntimeNodeStatus::Pending => "pending",
+                        RuntimeNodeStatus::Ready | RuntimeNodeStatus::Claiming => "ready",
+                        RuntimeNodeStatus::Running | RuntimeNodeStatus::Blocked => "running",
+                        RuntimeNodeStatus::Completed => "completed",
+                        RuntimeNodeStatus::Failed | RuntimeNodeStatus::Cancelled => "failed",
+                        RuntimeNodeStatus::Skipped => "skipped",
                     }
                     .to_string(),
                 );

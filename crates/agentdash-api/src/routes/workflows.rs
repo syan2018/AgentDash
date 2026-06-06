@@ -22,9 +22,9 @@ use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
     CreateAgentProcedureRequest, CreateWorkflowGraphRequest, ListWorkflowsQuery,
-    RegisterPresetRequest, StartWorkflowRunRequest, SubmitHumanDecisionRequest, ToolCatalogQuery,
-    UpdateAgentProcedureRequest, UpdateWorkflowGraphRequest, ValidateAgentProcedureRequest,
-    ValidateScriptRequest, ValidateWorkflowGraphRequest, WorkflowValidationResponse,
+    RegisterPresetRequest, StartWorkflowRunRequest, ToolCatalogQuery, UpdateAgentProcedureRequest,
+    UpdateWorkflowGraphRequest, ValidateAgentProcedureRequest, ValidateScriptRequest,
+    ValidateWorkflowGraphRequest, WorkflowValidationResponse,
 };
 use crate::rpc::ApiError;
 use agentdash_application::session::context::normalize_string;
@@ -98,10 +98,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/lifecycle-runs/{id}",
             axum::routing::get(get_lifecycle_run),
-        )
-        .route(
-            "/lifecycle-runs/{run_id}/graph-instances/{graph_instance_id}/activities/{activity_key}/attempts/{attempt}/human-decision",
-            axum::routing::post(submit_human_decision),
         )
 }
 
@@ -360,31 +356,6 @@ pub async fn get_lifecycle_run(
     )
     .await?;
     Ok(Json(run))
-}
-
-pub async fn submit_human_decision(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, _graph_instance_id, _activity_key, _attempt)): Path<(
-        String,
-        String,
-        String,
-        u32,
-    )>,
-    Json(_req): Json<SubmitHumanDecisionRequest>,
-) -> Result<Json<LifecycleRun>, ApiError> {
-    let run_id = parse_uuid(&run_id, "run_id")?;
-    let existing_run = load_lifecycle_run(&state, run_id).await?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        existing_run.project_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    Err(ApiError::BadRequest(
-        "human decision 入口需要迁移到 orchestration runtime node/gate 坐标".to_string(),
-    ))
 }
 
 pub async fn create_agent_procedure(

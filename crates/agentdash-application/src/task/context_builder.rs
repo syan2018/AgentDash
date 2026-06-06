@@ -180,7 +180,7 @@ pub async fn build_task_session_context(
 /// 通过 task 关联的 agent → frame 查找活跃 lifecycle workflow projection。
 ///
 /// 链路: LifecycleSubjectAssociation(Task) → LifecycleAgent → AgentFrame
-///      → RuntimeSession trace lookup → AgentFrame → AgentAssignment → ActivityAttemptState
+///      → RuntimeSession trace lookup → RuntimeSessionExecutionAnchor → RuntimeNodeState
 ///
 /// 只读视图辅助函数；失败或缺失均返回 None，绝不抛错。
 async fn find_active_workflow_via_task_sessions(

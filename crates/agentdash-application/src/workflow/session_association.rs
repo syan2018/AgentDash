@@ -8,7 +8,7 @@ use uuid::Uuid;
 pub const LIFECYCLE_NODE_LABEL_PREFIX: &str = "lifecycle_node:";
 pub const LIFECYCLE_ACTIVITY_LABEL_PREFIX: &str = "lifecycle_activity:";
 
-/// 子 session 与 lifecycle activity attempt 的关联解析结果。
+/// 子 session 与 lifecycle runtime node 的关联解析结果。
 #[derive(Debug, Clone)]
 pub struct LifecycleActivitySessionAssociation {
     pub run: LifecycleRun,
@@ -537,7 +537,7 @@ mod tests {
             .resolve_by_runtime_session("sess-anchor")
             .await
             .expect("anchor resolver should not error")
-            .expect("anchor assignment should resolve");
+            .expect("anchor runtime node should resolve");
 
         assert_eq!(association.orchestration_id, orchestration_id);
         assert_eq!(association.node_path, "custom_main");

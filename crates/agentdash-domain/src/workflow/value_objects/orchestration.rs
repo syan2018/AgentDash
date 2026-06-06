@@ -44,10 +44,6 @@ pub struct AgentFrameRef {
     pub revision: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub procedure_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub graph_instance_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub activity_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

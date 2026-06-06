@@ -26,7 +26,7 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
 use agentdash_domain::task::{Task, TaskStatus};
 use agentdash_domain::workflow::{
-    ActivityAttemptStatus, LifecycleRun, LifecycleRunRepository, LifecycleRunStatus,
+    LifecycleRun, LifecycleRunRepository, LifecycleRunStatus,
     LifecycleSubjectAssociationRepository, RuntimeNodeState, RuntimeNodeStatus,
 };
 
@@ -38,14 +38,14 @@ pub enum TaskViewProjectionError {
     TaskNotFound(Uuid),
 }
 
-/// 将一个明确的 ActivityAttempt 状态投影到 Task view。
+/// 将一个明确的 runtime node 状态投影到 Task view。
 ///
 /// 入口用于 runtime command 已经推进 orchestration node 后的同步投影；Task
 /// status 仍然只消费 lifecycle runtime node 状态，不成为 cancel/start/continue 的事实源。
-pub async fn project_task_view_from_attempt_status(
+pub async fn project_task_view_from_runtime_node_status(
     repos: &RepositorySet,
     task_id: Uuid,
-    attempt_status: agentdash_domain::workflow::ActivityAttemptStatus,
+    node_status: RuntimeNodeStatus,
     reason: &str,
     context: serde_json::Value,
 ) -> Result<Task, TaskViewProjectionError> {
@@ -56,7 +56,7 @@ pub async fn project_task_view_from_attempt_status(
         .ok_or(TaskViewProjectionError::TaskNotFound(task_id))?;
     let previous_status = story.find_task(task_id).map(|task| task.status().clone());
     let changed = story
-        .apply_task_projection(task_id, attempt_status)
+        .apply_task_projection(task_id, node_status)
         .ok_or(TaskViewProjectionError::TaskNotFound(task_id))?;
     let task = story
         .find_task(task_id)
@@ -78,7 +78,7 @@ pub async fn project_task_view_from_attempt_status(
                     "reason": reason,
                     "task_id": task_id,
                     "story_id": story_id,
-                    "attempt_status": attempt_status,
+                    "runtime_node_status": node_status,
                     "from": previous_status,
                     "to": next_status,
                     "context": context,
@@ -290,7 +290,7 @@ fn is_run_active(status: LifecycleRunStatus) -> bool {
     )
 }
 
-fn lifecycle_task_projection_statuses(run: &LifecycleRun) -> Vec<ActivityAttemptStatus> {
+fn lifecycle_task_projection_statuses(run: &LifecycleRun) -> Vec<RuntimeNodeStatus> {
     let mut statuses = Vec::new();
     for orchestration in &run.orchestrations {
         collect_node_projection_statuses(&orchestration.node_tree, &mut statuses);
@@ -300,7 +300,7 @@ fn lifecycle_task_projection_statuses(run: &LifecycleRun) -> Vec<ActivityAttempt
 
 fn collect_node_projection_statuses(
     nodes: &[RuntimeNodeState],
-    statuses: &mut Vec<ActivityAttemptStatus>,
+    statuses: &mut Vec<RuntimeNodeStatus>,
 ) {
     for node in nodes {
         if let Some(status) = task_projection_status_from_node(node.status) {
@@ -310,18 +310,16 @@ fn collect_node_projection_statuses(
     }
 }
 
-fn task_projection_status_from_node(status: RuntimeNodeStatus) -> Option<ActivityAttemptStatus> {
+fn task_projection_status_from_node(status: RuntimeNodeStatus) -> Option<RuntimeNodeStatus> {
     match status {
         RuntimeNodeStatus::Pending => None,
-        RuntimeNodeStatus::Ready => Some(ActivityAttemptStatus::Ready),
-        RuntimeNodeStatus::Claiming => Some(ActivityAttemptStatus::Claiming),
-        RuntimeNodeStatus::Running | RuntimeNodeStatus::Blocked => {
-            Some(ActivityAttemptStatus::Running)
-        }
-        RuntimeNodeStatus::Completed => Some(ActivityAttemptStatus::Completed),
-        RuntimeNodeStatus::Failed => Some(ActivityAttemptStatus::Failed),
+        RuntimeNodeStatus::Ready => Some(RuntimeNodeStatus::Ready),
+        RuntimeNodeStatus::Claiming => Some(RuntimeNodeStatus::Claiming),
+        RuntimeNodeStatus::Running | RuntimeNodeStatus::Blocked => Some(RuntimeNodeStatus::Running),
+        RuntimeNodeStatus::Completed => Some(RuntimeNodeStatus::Completed),
+        RuntimeNodeStatus::Failed => Some(RuntimeNodeStatus::Failed),
         RuntimeNodeStatus::Cancelled | RuntimeNodeStatus::Skipped => {
-            Some(ActivityAttemptStatus::Cancelled)
+            Some(RuntimeNodeStatus::Cancelled)
         }
     }
 }
@@ -609,12 +607,12 @@ mod tests {
 
     // ── Fixtures ─────────────────────────────────────────────────
 
-    fn make_run_with_activity_status(
+    fn make_run_with_runtime_node_status(
         project_id: Uuid,
         root_graph_id: Uuid,
         _session_id: &str,
         activity_key: &str,
-        target: ActivityAttemptStatus,
+        target: RuntimeNodeStatus,
     ) -> LifecycleRun {
         let mut run = LifecycleRun::new_control(project_id, root_graph_id);
         run.status = LifecycleRunStatus::Running;
@@ -655,15 +653,7 @@ mod tests {
             node_id: activity_key.to_string(),
             node_path: activity_key.to_string(),
             kind: PlanNodeKind::AgentCall,
-            status: match target {
-                ActivityAttemptStatus::Pending => RuntimeNodeStatus::Pending,
-                ActivityAttemptStatus::Ready => RuntimeNodeStatus::Ready,
-                ActivityAttemptStatus::Claiming => RuntimeNodeStatus::Claiming,
-                ActivityAttemptStatus::Running => RuntimeNodeStatus::Running,
-                ActivityAttemptStatus::Completed => RuntimeNodeStatus::Completed,
-                ActivityAttemptStatus::Failed => RuntimeNodeStatus::Failed,
-                ActivityAttemptStatus::Cancelled => RuntimeNodeStatus::Cancelled,
-            },
+            status: target,
             attempt: 1,
             inputs: Vec::new(),
             outputs: Vec::new(),
@@ -702,12 +692,12 @@ mod tests {
         story.add_task(task);
 
         let lifecycle_id = Uuid::new_v4();
-        let run = make_run_with_activity_status(
+        let run = make_run_with_runtime_node_status(
             project_id,
             lifecycle_id,
             "sess-boot-running",
             "only",
-            ActivityAttemptStatus::Running,
+            RuntimeNodeStatus::Running,
         );
         let assoc = association_for_task(run.id, task_id);
 
@@ -759,12 +749,12 @@ mod tests {
         story.force_set_task_status(task_id, TaskStatus::Running);
 
         let lifecycle_id = Uuid::new_v4();
-        let run = make_run_with_activity_status(
+        let run = make_run_with_runtime_node_status(
             project_id,
             lifecycle_id,
             "sess-boot-completed",
             "only",
-            ActivityAttemptStatus::Completed,
+            RuntimeNodeStatus::Completed,
         );
         let assoc = association_for_task(run.id, task_id);
 
@@ -815,12 +805,12 @@ mod tests {
         story.force_set_task_status(task_id, TaskStatus::Running);
 
         let lifecycle_id = Uuid::new_v4();
-        let run = make_run_with_activity_status(
+        let run = make_run_with_runtime_node_status(
             project_id,
             lifecycle_id,
             "sess-boot-cancelled",
             "only",
-            ActivityAttemptStatus::Cancelled,
+            RuntimeNodeStatus::Cancelled,
         );
         let assoc = association_for_task(run.id, task_id);
 
@@ -916,12 +906,12 @@ mod tests {
         story.add_task(task);
 
         let lifecycle_id = Uuid::new_v4();
-        let mut run = make_run_with_activity_status(
+        let mut run = make_run_with_runtime_node_status(
             project_id,
             lifecycle_id,
             "sess-boot-inactive",
             "only",
-            ActivityAttemptStatus::Running,
+            RuntimeNodeStatus::Running,
         );
         run.status = LifecycleRunStatus::Completed;
         let assoc = association_for_task(run.id, task_id);
@@ -973,12 +963,12 @@ mod tests {
         story.add_task(task);
 
         let lifecycle_id = Uuid::new_v4();
-        let run = make_run_with_activity_status(
+        let run = make_run_with_runtime_node_status(
             project_id,
             lifecycle_id,
             "sess-boot-no-assoc",
             "only",
-            ActivityAttemptStatus::Running,
+            RuntimeNodeStatus::Running,
         );
 
         let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {

@@ -230,7 +230,6 @@ pub async fn launch_project_agent(
             .map(|runtime_session_id| RuntimeSessionRefDto {
                 runtime_session_id: runtime_session_id.to_string(),
             }),
-        assignment_ref: None,
         subject_ref: intent.subject_ref.as_ref().map(|subject| SubjectRefDto {
             kind: subject.kind.clone(),
             id: subject.id.to_string(),

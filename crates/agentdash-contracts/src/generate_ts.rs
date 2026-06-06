@@ -102,21 +102,21 @@ use agentdash_contracts::vfs::{
     UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
-    ActiveActivityRefDto, ActivityAttemptView, ActivityDefinition, ActivityLifecycleRunState,
-    ActivityStateView, ActivityTransition, AgentAssignmentRefDto, AgentFrameRefDto,
+    ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, DefinitionSource, DeleteAgentProcedureResponse,
     DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
     EnqueuePendingMessageRequest, EnqueuePendingMessageResponse, HookPresetResponse,
     HookPresetsResponse, LifecycleAgentMessageRequest, LifecycleAgentMessageResponse,
     LifecycleAgentRefDto, LifecycleAgentSteeringRequest, LifecycleAgentSteeringResponse,
     LifecycleAgentView, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
-    LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto, PendingMessageView,
-    ProjectActiveAgentsView, ProjectSessionListEntry, ProjectSessionListView,
-    RegisterHookPresetResponse, RuntimeSessionCommandStateDto, RuntimeSessionExecutionAnchorDto,
-    RuntimeSessionRefDto, RuntimeSessionTraceView, SessionRuntimeActionAvailabilityView,
-    SessionRuntimeActionSetView, SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView,
-    SessionRuntimeControlView, SessionShellDto, StoryLaunchResult, SubjectExecutionView,
-    SubjectRefDto, ValidateHookScriptResponse, ValidationIssue, WorkflowGraphInstanceView,
+    LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto, OrchestrationRunView,
+    PendingMessageView, ProjectActiveAgentsView, ProjectSessionListEntry, ProjectSessionListView,
+    RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionCommandStateDto,
+    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, RuntimeSessionTraceView,
+    SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
+    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
+    SessionShellDto, StoryLaunchResult, SubjectExecutionView, SubjectRefDto,
+    ValidateHookScriptResponse, ValidationIssue,
 };
 use ts_rs::TS;
 
@@ -338,7 +338,6 @@ fn main() {
             export_all::<AgentProcedureContract>(dir);
             export_all::<ActivityDefinition>(dir);
             export_all::<ActivityTransition>(dir);
-            export_all::<ActivityLifecycleRunState>(dir);
             export_all::<LifecycleExecutionEntry>(dir);
             export_all::<LifecycleRunStatus>(dir);
             export_all::<LifecycleRunTopology>(dir);
@@ -356,13 +355,11 @@ fn main() {
             export_all::<LifecycleAgentSteeringRequest>(dir);
             export_all::<RuntimeSessionCommandStateDto>(dir);
             export_all::<LifecycleAgentSteeringResponse>(dir);
-            export_all::<AgentAssignmentRefDto>(dir);
             export_all::<StoryLaunchResult>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
-            export_all::<ActiveActivityRefDto>(dir);
-            export_all::<ActivityAttemptView>(dir);
-            export_all::<ActivityStateView>(dir);
-            export_all::<WorkflowGraphInstanceView>(dir);
+            export_all::<RuntimeNodeView>(dir);
+            export_all::<ActiveRuntimeNodeRefDto>(dir);
+            export_all::<OrchestrationRunView>(dir);
             export_all::<LifecycleRunView>(dir);
             export_all::<LifecycleAgentView>(dir);
             export_all::<AgentFrameRuntimeView>(dir);

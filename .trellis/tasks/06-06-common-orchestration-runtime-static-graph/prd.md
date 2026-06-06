@@ -4,7 +4,7 @@
 
 在 `workflow-graph-compiler` 能稳定输出 `OrchestrationPlanSnapshot` 后，将 runtime 正式收敛到 common orchestration runtime：以 `LifecycleRun.orchestrations[]` 中的 `OrchestrationInstance` 作为唯一运行实例、runtime node state、state exchange snapshot、journal cursor 和 projection 事实源。静态 `WorkflowGraph` 只是当前 compiler 输入之一；未来 `WorkflowScriptDefinition`、Run script artifact 或其它资产也应编译到同一 plan/runtime 合同。
 
-本任务不实现 dynamic script runtime。它的目标是先把正式运行时路径收敛干净：静态 graph 通过同一套 Orchestration Plan IR 执行，同时拆除 `WorkflowGraphInstance`、Activity-specific repository 和 activity attempt 坐标对 runtime command path 的拥有关系。
+本任务不实现 dynamic script runtime。它的目标是先把正式运行时路径收敛干净：静态 graph 通过同一套 Orchestration Plan IR 执行，同时拆除 Activity-specific runtime repository 和 activity attempt 坐标对 runtime command path 的拥有关系。
 
 ## 目标校准
 
@@ -20,7 +20,7 @@
 
 ## 需求
 
-- 新增 application 层 `OrchestrationRuntime` 或等价模块，输入是 `OrchestrationPlanSnapshot` 和 `OrchestrationInstance`，不是 `WorkflowGraph` 或 `WorkflowGraphInstance`。
+- 新增 application 层 `OrchestrationRuntime` 或等价模块，输入是 `OrchestrationPlanSnapshot` 和 `OrchestrationInstance`。
 - `orchestration_id` 是唯一运行实例身份；definition source / asset provenance 只作为可选审计信息或 plan metadata，不参与 runtime identity。
 - 初始化 orchestration：从 plan entry rules materialize ready runtime nodes。静态 graph、后续脚本和其它资产都走同一 activation 规则。
 - 用 `RuntimeNodeState` 表达 node status、attempt、inputs、outputs、executor refs、trace refs、error 与 cache refs。
@@ -30,7 +30,7 @@
 - 将 runtime session terminal resolver 从 activity attempt 坐标升级为 lifecycle / orchestration / node / agent / frame 坐标。
 - 生成 graph-compatible `LifecycleRunView` projection，保证当前前端仍能观察静态 workflow run。
 - 移除或停止读取旧 Activity runtime truth path，避免新旧 snapshot 双读 fallback。
-- 拆除 `WorkflowGraphInstanceRepository` / `lifecycle_workflow_instances` / `ActivityBindingRefs(graph_instance_id, activity_key, attempt)` 对 command path 的拥有关系；必要的旧视图字段只能由 orchestration projection 派生。
+- 拆除 Activity-specific runtime repository / table / binding refs 对 command path 的拥有关系；外部视图直接由 orchestration projection 派生。
 
 ## 非目标
 
@@ -43,15 +43,15 @@
 ## 验收标准
 
 - [x] 静态 graph run 初始化后，`LifecycleRun.orchestrations[]` 直接拥有一个 `OrchestrationInstance`，entry semantic node 处于 ready 状态。
-- [x] 新 runtime 创建、调度、terminal callback、projection 不创建或读取 `WorkflowGraphInstance` 作为运行实例身份。
-- [x] `orchestration_id + node_path + attempt` 替代 `graph_instance_id + activity_key + attempt` 成为 scheduler、executor、terminal 和 trace anchor 的节点坐标。
+- [x] 新 runtime 创建、调度、terminal callback、projection 不创建或读取 Activity-specific runtime instance 作为运行实例身份。
+- [x] `orchestration_id + node_path + attempt` 成为 scheduler、executor、terminal 和 trace anchor 的节点坐标。
 - [ ] Agent / Function API / BashExec 或本机 effect / Human approval 节点能从 plan node 启动并更新 `RuntimeNodeState`。（已完成 graph-backed entry AgentCall 的 `NodeStarted` materialization；完整 semantic launcher 仍待实现。）
 - [ ] Function/local effect 即使同步完成，也记录 started 与 terminal materialization，不绕过 runtime node state。
 - [x] transition condition 与 artifact/state exchange 能从已完成 node outputs 物化 successor inputs。
 - [ ] join policy、attempt policy、`max_traversals` 至少在 runtime plan/materialization 层有明确执行或 blocking diagnostic，不静默降级。
 - [x] session terminal callback 和 `complete_lifecycle_node` 通过 runtime node resolver 推进节点，重复 terminal event 幂等。
-- [x] `LifecycleRunView` 能从 orchestration snapshot 生成现有 graph-compatible projection。
-- [x] `WorkflowGraphInstanceRepository`、Activity claim/assignment 的事实源职责完成删除或降级为可移除 projection/lease adapter。
+- [x] `LifecycleRunView` 能从 orchestration snapshot 生成 orchestration / runtime node projection。
+- [x] Activity-specific runtime repository、claim、assignment 的事实源职责完成删除。
 - [x] targeted Rust tests、migration guard 和 `git diff --check` 通过。
 
 ## 备注

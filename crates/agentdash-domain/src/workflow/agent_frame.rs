@@ -14,10 +14,6 @@ pub struct AgentFrame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub procedure_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub graph_instance_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub activity_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_capability_json: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_slice_json: Option<serde_json::Value>,
@@ -43,8 +39,6 @@ impl AgentFrame {
             agent_id,
             revision: 1,
             procedure_id: None,
-            graph_instance_id: None,
-            activity_key: None,
             effective_capability_json: None,
             context_slice_json: None,
             vfs_surface_json: None,
@@ -63,8 +57,6 @@ impl AgentFrame {
             agent_id,
             revision,
             procedure_id: None,
-            graph_instance_id: None,
-            activity_key: None,
             effective_capability_json: None,
             context_slice_json: None,
             vfs_surface_json: None,

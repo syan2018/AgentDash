@@ -30,7 +30,6 @@ impl WorkflowGraphCompileSourceMetadata {
             source_ref: OrchestrationSourceRef::WorkflowGraph {
                 graph_id: graph.id,
                 graph_version: Some(graph.version),
-                graph_instance_id: None,
             },
             source_path: format!("workflow_graphs[{}]", graph.id),
         }

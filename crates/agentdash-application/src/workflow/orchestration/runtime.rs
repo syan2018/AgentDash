@@ -123,11 +123,9 @@ mod tests {
     #[test]
     fn orchestration_runtime_activation_materializes_entry_ready_nodes() {
         let graph_id = Uuid::new_v4();
-        let graph_instance_id = Uuid::new_v4();
         let source_ref = OrchestrationSourceRef::WorkflowGraph {
             graph_id,
             graph_version: Some(7),
-            graph_instance_id: Some(graph_instance_id),
         };
 
         let orchestration =

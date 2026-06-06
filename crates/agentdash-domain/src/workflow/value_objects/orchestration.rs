@@ -102,8 +102,6 @@ pub enum OrchestrationSourceRef {
         graph_id: Uuid,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         graph_version: Option<i32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        graph_instance_id: Option<Uuid>,
     },
     RunScriptArtifact {
         artifact_id: Uuid,
@@ -554,7 +552,6 @@ mod tests {
         OrchestrationSourceRef::WorkflowGraph {
             graph_id: Uuid::new_v4(),
             graph_version: Some(1),
-            graph_instance_id: Some(Uuid::new_v4()),
         }
     }
 

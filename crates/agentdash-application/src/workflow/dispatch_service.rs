@@ -683,12 +683,16 @@ impl<'a> LifecycleDispatchService<'a> {
                     .map(|state| (instance.id, state))
             },
         ));
-        if !run_has_workflow_graph_orchestration(run, workflow_graph.id, graph_instance.id) {
-            let plan_snapshot = plan_snapshot.ok_or_else(|| {
-                WorkflowApplicationError::Internal(
-                    "workflow graph orchestration activation 缺少 plan snapshot".to_string(),
-                )
-            })?;
+        let plan_snapshot = plan_snapshot.ok_or_else(|| {
+            WorkflowApplicationError::Internal(
+                "workflow graph orchestration activation 缺少 plan snapshot".to_string(),
+            )
+        })?;
+        if !run_has_workflow_orchestration_for_role_and_plan(
+            run,
+            &graph_instance.role,
+            &plan_snapshot.plan_digest,
+        ) {
             attach_workflow_graph_orchestration(
                 run,
                 workflow_graph,
@@ -1005,7 +1009,6 @@ fn attach_workflow_graph_orchestration(
     let source_ref = OrchestrationSourceRef::WorkflowGraph {
         graph_id: workflow_graph.id,
         graph_version: Some(workflow_graph.version),
-        graph_instance_id: Some(graph_instance.id),
     };
     let role = if graph_instance.is_root() {
         ROOT_ORCHESTRATION_ROLE.to_string()
@@ -1016,20 +1019,13 @@ fn attach_workflow_graph_orchestration(
     run.add_orchestration(orchestration);
 }
 
-fn run_has_workflow_graph_orchestration(
+fn run_has_workflow_orchestration_for_role_and_plan(
     run: &LifecycleRun,
-    workflow_graph_id: Uuid,
-    graph_instance_id: Uuid,
+    role: &str,
+    plan_digest: &str,
 ) -> bool {
     run.orchestrations.iter().any(|orchestration| {
-        matches!(
-            orchestration.source_ref,
-            OrchestrationSourceRef::WorkflowGraph {
-                graph_id,
-                graph_instance_id: Some(instance_id),
-                ..
-            } if graph_id == workflow_graph_id && instance_id == graph_instance_id
-        )
+        orchestration.role == role && orchestration.plan_snapshot.plan_digest == plan_digest
     })
 }
 
@@ -2024,9 +2020,7 @@ mod tests {
             OrchestrationSourceRef::WorkflowGraph {
                 graph_id,
                 graph_version: Some(1),
-                graph_instance_id: Some(instance_id),
             } if graph_id == workflow_graph.id
-                && Some(instance_id) == result.runtime_refs.graph_instance_ref()
         ));
         assert_eq!(
             orchestration.activation.ready_node_ids,
@@ -2110,15 +2104,13 @@ mod tests {
             OrchestrationSourceRef::WorkflowGraph {
                 graph_id,
                 graph_version: Some(1),
-                graph_instance_id: Some(instance_id),
-            } if graph_id == workflow_graph.id && instance_id == result.graph_instance_ref
+            } if graph_id == workflow_graph.id
         ));
         assert!(matches!(
             orchestration.plan_snapshot.source_ref,
             OrchestrationSourceRef::WorkflowGraph {
                 graph_id,
                 graph_version: Some(1),
-                graph_instance_id: None,
             } if graph_id == workflow_graph.id
         ));
         assert!(
@@ -2599,8 +2591,7 @@ mod tests {
             OrchestrationSourceRef::WorkflowGraph {
                 graph_id,
                 graph_version: Some(1),
-                graph_instance_id: Some(instance_id),
-            } if graph_id == workflow_graph.id && instance_id == instances[0].id
+            } if graph_id == workflow_graph.id
         ));
         assert_eq!(
             orchestration.activation.ready_node_ids,

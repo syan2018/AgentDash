@@ -479,7 +479,6 @@ mod tests {
         let source_ref = OrchestrationSourceRef::WorkflowGraph {
             graph_id: Uuid::new_v4(),
             graph_version: Some(1),
-            graph_instance_id: Some(Uuid::new_v4()),
         };
         let plan_snapshot = OrchestrationPlanSnapshot {
             plan_digest: format!("sha256:{role}"),

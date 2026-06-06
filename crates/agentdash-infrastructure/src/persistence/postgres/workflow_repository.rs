@@ -4,9 +4,10 @@ use agentdash_domain::common::error::DomainError;
 use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::workflow::{
     ActivityExecutionClaim, ActivityExecutionClaimRepository, ActivityExecutionClaimStatus,
-    AgentProcedure, AgentProcedureRepository, ExecutorRunRef, LifecycleRun, LifecycleRunRepository,
-    LifecycleRunTopology, WorkflowGraph, WorkflowGraphRepository, WorkflowTemplateInstallBundle,
-    WorkflowTemplateInstallRepository, WorkflowTemplateInstallResult,
+    AgentProcedure, AgentProcedureRepository, ExecutorRunRef, LifecycleContext, LifecycleRun,
+    LifecycleRunRepository, LifecycleRunTopology, OrchestrationInstance, WorkflowGraph,
+    WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
+    WorkflowTemplateInstallResult,
 };
 
 pub struct PostgresWorkflowRepository {
@@ -34,8 +35,8 @@ impl PostgresWorkflowRepository {
 
 const WF_COLS: &str = "id,project_id,key,name,description,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const WG_COLS: &str = "id,project_id,key,name,description,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,topology,root_graph_id,status,execution_log,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,topology,root_graph_id,status,execution_log,created_at,updated_at,last_activity_at";
+const RUN_COLS: &str = "id,project_id,topology,root_graph_id,context,orchestrations,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,topology,root_graph_id,context,orchestrations,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
 const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,graph_instance_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
 
 #[async_trait::async_trait]
@@ -522,12 +523,15 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
         .bind(topology_to_db(run.topology))
         .bind(run.root_graph_id.map(|id| id.to_string()))
+        .bind(serde_json::to_string(&run.context)?)
+        .bind(serde_json::to_string(&run.orchestrations)?)
+        .bind(serialize_optional_json(&run.view_projection)?)
         .bind(serde_json::to_string(&run.status)?)
         .bind(serde_json::to_string(&run.execution_log)?)
         .bind(run.created_at)
@@ -610,10 +614,13 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,topology=$2,root_graph_id=$3,status=$4,execution_log=$5,updated_at=$6,last_activity_at=$7 WHERE id=$8")
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,topology=$2,root_graph_id=$3,context=$4,orchestrations=$5,view_projection=$6,status=$7,execution_log=$8,updated_at=$9,last_activity_at=$10 WHERE id=$11")
             .bind(run.project_id.to_string())
             .bind(topology_to_db(run.topology))
             .bind(run.root_graph_id.map(|id| id.to_string()))
+            .bind(serde_json::to_string(&run.context)?)
+            .bind(serde_json::to_string(&run.orchestrations)?)
+            .bind(serialize_optional_json(&run.view_projection)?)
             .bind(serde_json::to_string(&run.status)?)
             .bind(serde_json::to_string(&run.execution_log)?)
             .bind(chrono::Utc::now()).bind(run.last_activity_at).bind(run.id.to_string())
@@ -753,6 +760,9 @@ struct LifecycleRunRow {
     project_id: String,
     topology: String,
     root_graph_id: Option<String>,
+    context: String,
+    orchestrations: String,
+    view_projection: Option<String>,
     status: String,
     execution_log: String,
     created_at: chrono::DateTime<chrono::Utc>,
@@ -771,6 +781,16 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
                 .root_graph_id
                 .as_deref()
                 .map(|id| parse_uuid(id, "root_graph"))
+                .transpose()?,
+            context: parse_json_column::<LifecycleContext>(&row.context, "lifecycle_runs.context")?,
+            orchestrations: parse_json_column::<Vec<OrchestrationInstance>>(
+                &row.orchestrations,
+                "lifecycle_runs.orchestrations",
+            )?,
+            view_projection: row
+                .view_projection
+                .as_deref()
+                .map(|raw| parse_json_column(raw, "lifecycle_runs.view_projection"))
                 .transpose()?,
             status: serde_json::from_str(&row.status)?,
             execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
@@ -879,6 +899,16 @@ fn serialize_executor_run_ref(
         .map_err(Into::into)
 }
 
+fn serialize_optional_json(
+    value: &Option<serde_json::Value>,
+) -> Result<Option<String>, DomainError> {
+    value
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(Into::into)
+}
+
 fn installed_library_asset_id(source: &Option<InstalledAssetSource>) -> Option<String> {
     source
         .as_ref()
@@ -936,9 +966,13 @@ mod workflow_claim_tests {
     use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-        AgentActivityExecutorSpec, AgentProcedureContract, AgentReusePolicy, RuntimeSessionPolicy,
-        WorkflowTemplateInstallBundle,
+        AgentActivityExecutorSpec, AgentProcedureContract, AgentReusePolicy, AgentRunRef,
+        BashExecExecutorSpec, ExecutorSpec, FunctionActivityExecutorSpec,
+        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleContext, LifecycleRunStatus,
+        OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNode,
+        PlanNodeKind, RuntimeSessionPolicy, WorkflowTemplateInstallBundle,
     };
+    use serde_json::json;
 
     #[test]
     fn workflow_claim_row_parses_executor_run_ref() {
@@ -961,7 +995,7 @@ mod workflow_claim_tests {
                 })
                 .expect("executor run json"),
             ),
-            created_at: now.clone(),
+            created_at: now,
             updated_at: now,
         };
 
@@ -980,6 +1014,102 @@ mod workflow_claim_tests {
                 session_id: "child-session".to_string()
             })
         );
+    }
+
+    fn lifecycle_run_row() -> LifecycleRunRow {
+        let now = chrono::Utc::now();
+        LifecycleRunRow {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: uuid::Uuid::new_v4().to_string(),
+            topology: "graphless".to_string(),
+            root_graph_id: None,
+            context: "{}".to_string(),
+            orchestrations: "[]".to_string(),
+            view_projection: None,
+            status: serde_json::to_string(&LifecycleRunStatus::Ready).expect("status json"),
+            execution_log: "[]".to_string(),
+            created_at: now,
+            updated_at: now,
+            last_activity_at: now,
+        }
+    }
+
+    #[test]
+    fn workflow_repository_lifecycle_run_row_parses_empty_orchestration_contract() {
+        let run = LifecycleRun::try_from(lifecycle_run_row()).expect("run");
+
+        assert_eq!(run.context, LifecycleContext::default());
+        assert!(run.orchestrations.is_empty());
+        assert!(run.view_projection.is_none());
+    }
+
+    #[test]
+    fn workflow_repository_lifecycle_run_row_reports_bad_orchestration_column() {
+        let mut row = lifecycle_run_row();
+        row.orchestrations = "not-json".to_string();
+
+        let error = LifecycleRun::try_from(row).expect_err("bad JSON should fail");
+        assert!(
+            error.to_string().contains("lifecycle_runs.orchestrations"),
+            "unexpected error: {error}"
+        );
+    }
+
+    fn orchestration_instance(role: &str, executor: ExecutorSpec) -> OrchestrationInstance {
+        let source_ref = OrchestrationSourceRef::WorkflowGraph {
+            graph_id: uuid::Uuid::new_v4(),
+            graph_version: Some(1),
+            graph_instance_id: Some(uuid::Uuid::new_v4()),
+        };
+        let plan_snapshot = OrchestrationPlanSnapshot {
+            plan_id: uuid::Uuid::new_v4(),
+            plan_version: 1,
+            source_ref: source_ref.clone(),
+            nodes: vec![PlanNode {
+                node_id: role.to_string(),
+                node_path: role.to_string(),
+                parent_node_id: None,
+                kind: PlanNodeKind::Activity,
+                label: Some(role.to_string()),
+                executor: Some(executor),
+                input_ports: Vec::new(),
+                output_ports: Vec::new(),
+                result_contract: None,
+                metadata: None,
+            }],
+            entry_node_ids: vec![role.to_string()],
+            activation_rules: Vec::new(),
+            limits: Default::default(),
+            created_at: chrono::Utc::now(),
+        };
+        OrchestrationInstance::new(role, source_ref, plan_snapshot)
+    }
+
+    fn agent_executor() -> ExecutorSpec {
+        ExecutorSpec::AgentProcedure {
+            procedure_key: "workflow.plan".to_string(),
+            agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
+            runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+        }
+    }
+
+    fn function_executor() -> ExecutorSpec {
+        ExecutorSpec::Function {
+            spec: FunctionActivityExecutorSpec::BashExec(BashExecExecutorSpec {
+                command: "pnpm".to_string(),
+                args: vec!["test".to_string()],
+                working_directory: None,
+            }),
+        }
+    }
+
+    fn human_executor() -> ExecutorSpec {
+        ExecutorSpec::Human {
+            spec: HumanActivityExecutorSpec::Approval(HumanApprovalExecutorSpec {
+                form_schema_key: "approval.plan_review".to_string(),
+                title: None,
+            }),
+        }
     }
 
     fn test_procedure(project_id: uuid::Uuid, key: &str, digest: &str) -> AgentProcedure {
@@ -1122,5 +1252,85 @@ mod workflow_claim_tests {
                 .source_version,
             "v2"
         );
+    }
+
+    #[tokio::test]
+    async fn workflow_repository_lifecycle_run_orchestration_roundtrips() {
+        let Some(pool) = test_pg_pool("workflow_lifecycle_orchestration").await else {
+            return;
+        };
+        let repo = PostgresWorkflowRepository::new(pool);
+        repo.initialize().await.expect("initialize");
+
+        let project_id = uuid::Uuid::new_v4();
+        let mut run = LifecycleRun::new_control(project_id, uuid::Uuid::new_v4());
+        let agent_run_id = uuid::Uuid::new_v4();
+        let context = LifecycleContext {
+            main_agent_run_id: Some(agent_run_id),
+            agent_runs: vec![AgentRunRef {
+                agent_run_id,
+                role: "primary".to_string(),
+                status: "active".to_string(),
+                current_frame_id: Some(uuid::Uuid::new_v4()),
+                project_agent_id: Some(uuid::Uuid::new_v4()),
+            }],
+            ..LifecycleContext::default()
+        };
+        run.set_lifecycle_context(context.clone());
+        run.view_projection = Some(json!({"summary": "one"}));
+
+        let agent_orchestration = orchestration_instance("agent", agent_executor());
+        assert!(run.add_orchestration(agent_orchestration.clone()));
+        LifecycleRunRepository::create(&repo, &run)
+            .await
+            .expect("create run");
+
+        let created = LifecycleRunRepository::get_by_id(&repo, run.id)
+            .await
+            .expect("get run")
+            .expect("run exists");
+        assert_eq!(created.context, context);
+        assert_eq!(created.orchestrations, vec![agent_orchestration]);
+        assert_eq!(created.view_projection, Some(json!({"summary": "one"})));
+
+        let mut updated = created;
+        assert!(updated.add_orchestration(orchestration_instance("function", function_executor())));
+        assert!(updated.add_orchestration(orchestration_instance("human", human_executor())));
+        updated.view_projection = Some(json!({"summary": "multiple", "count": 3}));
+        LifecycleRunRepository::update(&repo, &updated)
+            .await
+            .expect("update run");
+
+        let restored = LifecycleRunRepository::get_by_id(&repo, run.id)
+            .await
+            .expect("get updated run")
+            .expect("updated run exists");
+        assert_eq!(restored.context, context);
+        assert_eq!(restored.orchestrations.len(), 3);
+        assert_eq!(
+            restored.view_projection,
+            Some(json!({"summary": "multiple", "count": 3}))
+        );
+        assert!(matches!(
+            restored.orchestrations[0].plan_snapshot.nodes[0]
+                .executor
+                .as_ref()
+                .expect("agent executor"),
+            ExecutorSpec::AgentProcedure { .. }
+        ));
+        assert!(matches!(
+            restored.orchestrations[1].plan_snapshot.nodes[0]
+                .executor
+                .as_ref()
+                .expect("function executor"),
+            ExecutorSpec::Function { .. }
+        ));
+        assert!(matches!(
+            restored.orchestrations[2].plan_snapshot.nodes[0]
+                .executor
+                .as_ref()
+                .expect("human executor"),
+            ExecutorSpec::Human { .. }
+        ));
     }
 }

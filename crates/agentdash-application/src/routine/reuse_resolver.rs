@@ -313,7 +313,6 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
-    use chrono::Utc;
     use serde_json::json;
 
     use super::*;
@@ -322,8 +321,7 @@ mod tests {
         RoutineExecutionRepository, RoutineExecutionStatus, RoutineTriggerConfig,
     };
     use agentdash_domain::workflow::{
-        AgentAssignment, AgentFrame, LifecycleAgent, LifecycleRun, LifecycleRunStatus,
-        LifecycleSubjectAssociation,
+        AgentAssignment, AgentFrame, LifecycleAgent, LifecycleRun, LifecycleSubjectAssociation,
     };
 
     #[derive(Default)]
@@ -807,18 +805,7 @@ mod tests {
     }
 
     fn test_run(project_id: Uuid) -> LifecycleRun {
-        let now = Utc::now();
-        LifecycleRun {
-            id: Uuid::new_v4(),
-            project_id,
-            topology: agentdash_domain::workflow::LifecycleRunTopology::WorkflowGraph,
-            root_graph_id: Some(Uuid::new_v4()),
-            status: LifecycleRunStatus::Ready,
-            execution_log: Vec::new(),
-            created_at: now,
-            updated_at: now,
-            last_activity_at: now,
-        }
+        LifecycleRun::new_control(project_id, Uuid::new_v4())
     }
 
     #[test]

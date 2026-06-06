@@ -920,18 +920,7 @@ impl<'a> LifecycleDispatchService<'a> {
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
 fn create_lifecycle_run(project_id: Uuid, root_graph_id: Uuid) -> LifecycleRun {
-    let now = chrono::Utc::now();
-    LifecycleRun {
-        id: Uuid::new_v4(),
-        project_id,
-        topology: agentdash_domain::workflow::LifecycleRunTopology::WorkflowGraph,
-        root_graph_id: Some(root_graph_id),
-        status: agentdash_domain::workflow::LifecycleRunStatus::Ready,
-        execution_log: Vec::new(),
-        created_at: now,
-        updated_at: now,
-        last_activity_at: now,
-    }
+    LifecycleRun::new_control(project_id, root_graph_id)
 }
 
 fn graph_instance_role_from_source(source: &ExecutionSource) -> &'static str {

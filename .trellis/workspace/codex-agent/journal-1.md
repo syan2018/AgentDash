@@ -146,3 +146,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: 动态脚本编译前端收口
+
+**Date**: 2026-06-07
+**Task**: 动态脚本编译前端收口
+**Branch**: `codex/dynamic-workflow-lifecycle-migration`
+
+### Summary
+
+完成 Rhai workflow script preflight、ScriptCompiler 到 OrchestrationPlanSnapshot、runtime activation root args 物化、workflow-scripts preflight API 与前端 contract/service surface，并归档动态脚本编译任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `94829759` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -3,7 +3,7 @@
   "name": "common-orchestration-runtime-static-graph",
   "title": "Common Orchestration Runtime Static Graph",
   "description": "将静态 WorkflowGraph 编译后的 OrchestrationPlanSnapshot 接入 common orchestration runtime，用 LifecycleRun.orchestrations[] 作为 runtime snapshot/journal/projection 事实源，并收敛旧 Activity runtime 读取路径。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

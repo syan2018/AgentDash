@@ -7,9 +7,11 @@ Activity lifecycle 的目标模型是 `LifecycleRun(topology=workflow_graph) -> 
 ## Core Runtime Contract
 
 - `WorkflowGraph` 是可执行 Activity graph definition，包含 activities、transitions、ports、artifact bindings 与 executor slots。
-- `LifecycleRun` 是 tracked life process / control ledger，不是单个 graph 的 run；`topology=workflow_graph` 的同一个 `LifecycleRun` 可以包含多个 `WorkflowGraphInstance`。
+- `LifecycleRun` 是 tracked life process / control ledger，不是单个 graph 的 run；`topology=workflow_graph` 的同一个 `LifecycleRun` 可以包含多个 `WorkflowGraphInstance`，每个 graph instance 对应一个 `OrchestrationInstance` runtime snapshot。
 - `LifecycleRun.root_graph_id` 只在 `topology=workflow_graph` 中存在；`topology=graphless` 的 run 不创建 `WorkflowGraphInstance`、Activity state、claim 或 `AgentAssignment`。
 - root graph 只是 `WorkflowGraphInstance(role=root)`；当前 `LifecycleRun.lifecycle_id` 只是 root graph backfill 来源。
+- 静态 `WorkflowGraph` 创建或复用 graph instance 前必须先 strict compile 为 `OrchestrationPlanSnapshot`；blocking diagnostics 在创建 run / graph instance 前返回。
+- graph instance activation 会 materialize `RuntimeNodeState`、entry ready queue 与 `StateExchangeSnapshot` 到 `LifecycleRun.orchestrations[]`，原因是动态 workflow 与静态 graph 需要共享同一 runtime plan 合同。
 - Activity runtime identity 必须以 `graph_instance_id + activity_key` 为 namespace。
 - Attempt / claim / assignment key 必须包含 `graph_instance_id + activity_key + attempt`。
 - `WorkflowGraphInstance.activity_state` 是 activity runtime state 的权威状态源；run-level active display 通过 `LifecycleRunView.active_activity_refs` 从 graph instance attempts 派生。

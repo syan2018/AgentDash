@@ -8,9 +8,10 @@ use agentdash_domain::workflow::{
     AgentLineage, AgentPolicy, AgentRuntimeRefs, ExecutionDispatchResult, ExecutionIntent,
     ExecutionSource, GatePolicy, InteractionDispatchIntent, InteractionGateOpenedDispatchResult,
     LifecycleAgent, LifecycleGate, LifecycleRun, LifecycleRunStartDispatchResult,
-    LifecycleRunStartIntent, LifecycleSubjectAssociation, RunPolicy, RuntimePolicy,
-    RuntimeSessionExecutionAnchor, SubjectExecutionDispatchResult, SubjectExecutionIntent,
-    SubjectExecutionRef, SubjectRef, WorkflowGraph, WorkflowGraphInstance, WorkflowGraphRef,
+    LifecycleRunStartIntent, LifecycleSubjectAssociation, OrchestrationPlanSnapshot,
+    OrchestrationSourceRef, RunPolicy, RuntimePolicy, RuntimeSessionExecutionAnchor,
+    SubjectExecutionDispatchResult, SubjectExecutionIntent, SubjectExecutionRef, SubjectRef,
+    ValidationSeverity, WorkflowGraph, WorkflowGraphInstance, WorkflowGraphRef,
 };
 use agentdash_domain::workflow::{
     AgentAssignmentRepository, AgentFrameRepository, AgentLineageRepository,
@@ -23,6 +24,11 @@ use super::LifecycleEngine;
 use super::WorkflowApplicationError;
 use super::frame_builder::AgentFrameBuilder;
 use super::graph_resolver::WorkflowGraphResolver;
+use super::orchestration::{
+    ROOT_ORCHESTRATION_ROLE, WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION, WorkflowGraphCompileInput,
+    WorkflowGraphCompileMode, WorkflowGraphCompileSourceMetadata, WorkflowGraphCompiler,
+    activate_orchestration,
+};
 use crate::session::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
 
 #[derive(Debug, Clone)]
@@ -323,10 +329,17 @@ impl<'a> LifecycleDispatchService<'a> {
             .resolve(intent.project_id, &intent.workflow_graph_ref)
             .await?
             .graph;
+        let plan_snapshot = compile_static_graph_orchestration_plan(&workflow_graph)?;
         let mut run = create_lifecycle_run(intent.project_id, workflow_graph.id);
+        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, workflow_graph.id);
+        attach_workflow_graph_orchestration(
+            &mut run,
+            &workflow_graph,
+            &graph_instance,
+            plan_snapshot,
+        );
         self.run_repo.create(&run).await?;
 
-        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, workflow_graph.id);
         let state = LifecycleEngine::initialize(&workflow_graph, graph_instance.id)
             .map_err(|error| WorkflowApplicationError::BadRequest(error.to_string()))?;
         graph_instance
@@ -364,6 +377,7 @@ impl<'a> LifecycleDispatchService<'a> {
             .resolve(plan.project_id, workflow_graph_ref)
             .await?
             .graph;
+        let plan_snapshot = compile_static_graph_orchestration_plan(&workflow_graph)?;
         let mut run = self.resolve_or_create_run(&plan, &workflow_graph).await?;
         let graph_instance = self
             .resolve_or_create_graph_instance(&run, &workflow_graph, &plan)
@@ -372,7 +386,12 @@ impl<'a> LifecycleDispatchService<'a> {
             .align_workflow_graph_with_instance(&plan, workflow_graph, &graph_instance)
             .await?;
         let graph_instance = self
-            .ensure_graph_instance_activity_state(&mut run, graph_instance, &workflow_graph)
+            .ensure_graph_instance_activity_state(
+                &mut run,
+                graph_instance,
+                &workflow_graph,
+                Some(plan_snapshot),
+            )
             .await?;
         let agent = self.resolve_or_create_agent(&run, &plan).await?;
         let association = if let Some(subject_ref) = &plan.subject_ref {
@@ -644,6 +663,7 @@ impl<'a> LifecycleDispatchService<'a> {
         run: &mut LifecycleRun,
         mut graph_instance: WorkflowGraphInstance,
         workflow_graph: &WorkflowGraph,
+        plan_snapshot: Option<OrchestrationPlanSnapshot>,
     ) -> Result<WorkflowGraphInstance, WorkflowApplicationError> {
         if graph_instance.activity_state.is_none() {
             let state = LifecycleEngine::initialize(workflow_graph, graph_instance.id)
@@ -663,6 +683,19 @@ impl<'a> LifecycleDispatchService<'a> {
                     .map(|state| (instance.id, state))
             },
         ));
+        if !run_has_workflow_graph_orchestration(run, workflow_graph.id, graph_instance.id) {
+            let plan_snapshot = plan_snapshot.ok_or_else(|| {
+                WorkflowApplicationError::Internal(
+                    "workflow graph orchestration activation 缺少 plan snapshot".to_string(),
+                )
+            })?;
+            attach_workflow_graph_orchestration(
+                run,
+                workflow_graph,
+                &graph_instance,
+                plan_snapshot,
+            );
+        }
         self.run_repo.update(run).await?;
         Ok(graph_instance)
     }
@@ -921,6 +954,83 @@ impl<'a> LifecycleDispatchService<'a> {
 
 fn create_lifecycle_run(project_id: Uuid, root_graph_id: Uuid) -> LifecycleRun {
     LifecycleRun::new_control(project_id, root_graph_id)
+}
+
+fn compile_static_graph_orchestration_plan(
+    workflow_graph: &WorkflowGraph,
+) -> Result<OrchestrationPlanSnapshot, WorkflowApplicationError> {
+    let output = WorkflowGraphCompiler::compile(WorkflowGraphCompileInput {
+        graph: workflow_graph,
+        source_metadata: WorkflowGraphCompileSourceMetadata::from_graph(workflow_graph),
+        compile_mode: WorkflowGraphCompileMode::Strict,
+        target_schema_version: WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION,
+    });
+
+    if output.has_blocking_diagnostics() {
+        return Err(WorkflowApplicationError::BadRequest(
+            blocking_compile_diagnostics_message(workflow_graph, &output.diagnostics),
+        ));
+    }
+
+    Ok(output.plan_snapshot)
+}
+
+fn blocking_compile_diagnostics_message(
+    workflow_graph: &WorkflowGraph,
+    diagnostics: &[super::WorkflowGraphCompileDiagnostic],
+) -> String {
+    let details = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == ValidationSeverity::Error)
+        .map(|diagnostic| {
+            format!(
+                "{} at {}: {}",
+                diagnostic.code, diagnostic.source_path, diagnostic.message
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!(
+        "WorkflowGraph {} 无法编译为 OrchestrationPlanSnapshot: {}",
+        workflow_graph.id, details
+    )
+}
+
+fn attach_workflow_graph_orchestration(
+    run: &mut LifecycleRun,
+    workflow_graph: &WorkflowGraph,
+    graph_instance: &WorkflowGraphInstance,
+    plan_snapshot: OrchestrationPlanSnapshot,
+) {
+    let source_ref = OrchestrationSourceRef::WorkflowGraph {
+        graph_id: workflow_graph.id,
+        graph_version: Some(workflow_graph.version),
+        graph_instance_id: Some(graph_instance.id),
+    };
+    let role = if graph_instance.is_root() {
+        ROOT_ORCHESTRATION_ROLE.to_string()
+    } else {
+        graph_instance.role.clone()
+    };
+    let orchestration = activate_orchestration(role, source_ref, plan_snapshot);
+    run.add_orchestration(orchestration);
+}
+
+fn run_has_workflow_graph_orchestration(
+    run: &LifecycleRun,
+    workflow_graph_id: Uuid,
+    graph_instance_id: Uuid,
+) -> bool {
+    run.orchestrations.iter().any(|orchestration| {
+        matches!(
+            orchestration.source_ref,
+            OrchestrationSourceRef::WorkflowGraph {
+                graph_id,
+                graph_instance_id: Some(instance_id),
+                ..
+            } if graph_id == workflow_graph_id && instance_id == graph_instance_id
+        )
+    })
 }
 
 fn graph_instance_role_from_source(source: &ExecutionSource) -> &'static str {
@@ -1905,6 +2015,24 @@ mod tests {
                 .graph_instance_ref()
                 .expect("graph instance ref")
         );
+        assert_eq!(runs[0].orchestrations.len(), 1);
+        let orchestration = &runs[0].orchestrations[0];
+        assert_eq!(orchestration.role, ROOT_ORCHESTRATION_ROLE);
+        assert_eq!(orchestration.status, OrchestrationStatus::Running);
+        assert!(matches!(
+            orchestration.source_ref,
+            OrchestrationSourceRef::WorkflowGraph {
+                graph_id,
+                graph_version: Some(1),
+                graph_instance_id: Some(instance_id),
+            } if graph_id == workflow_graph.id
+                && Some(instance_id) == result.runtime_refs.graph_instance_ref()
+        ));
+        assert_eq!(
+            orchestration.activation.ready_node_ids,
+            vec![workflow_graph.entry_activity_key.clone()]
+        );
+        assert_eq!(orchestration.node_tree[0].status, RuntimeNodeStatus::Ready);
         assert!(assignment_repo.items.lock().unwrap().is_empty());
     }
 
@@ -1973,6 +2101,163 @@ mod tests {
             active_attempts[0].activity_key,
             workflow_graph.entry_activity_key
         );
+        assert_eq!(runs[0].orchestrations.len(), 1);
+        let orchestration = &runs[0].orchestrations[0];
+        assert_eq!(orchestration.role, "root");
+        assert_eq!(orchestration.status, OrchestrationStatus::Running);
+        assert!(matches!(
+            orchestration.source_ref,
+            OrchestrationSourceRef::WorkflowGraph {
+                graph_id,
+                graph_version: Some(1),
+                graph_instance_id: Some(instance_id),
+            } if graph_id == workflow_graph.id && instance_id == result.graph_instance_ref
+        ));
+        assert!(matches!(
+            orchestration.plan_snapshot.source_ref,
+            OrchestrationSourceRef::WorkflowGraph {
+                graph_id,
+                graph_version: Some(1),
+                graph_instance_id: None,
+            } if graph_id == workflow_graph.id
+        ));
+        assert!(
+            orchestration
+                .plan_snapshot
+                .plan_digest
+                .starts_with("sha256:")
+        );
+        assert_eq!(
+            orchestration.plan_snapshot.entry_node_ids,
+            vec![workflow_graph.entry_activity_key.clone()]
+        );
+        assert_eq!(
+            orchestration.activation.ready_node_ids,
+            vec![workflow_graph.entry_activity_key.clone()]
+        );
+        assert_eq!(
+            orchestration.dispatch.ready_node_ids,
+            vec![workflow_graph.entry_activity_key.clone()]
+        );
+        assert_eq!(orchestration.node_tree.len(), 1);
+        assert_eq!(
+            orchestration.node_tree[0].node_id,
+            workflow_graph.entry_activity_key
+        );
+        assert_eq!(orchestration.node_tree[0].kind, PlanNodeKind::AgentCall);
+        assert_eq!(orchestration.node_tree[0].status, RuntimeNodeStatus::Ready);
+        assert_eq!(orchestration.node_tree[0].attempt, 1);
+        assert!(orchestration.state_snapshot.node_outputs.is_empty());
+        assert!(orchestration.state_snapshot.variables.is_empty());
+        assert!(agent_repo.items.lock().unwrap().is_empty());
+        assert!(assignment_repo.items.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_run_start_rejects_blocking_compiler_diagnostics_without_creating_run() {
+        let project_id = Uuid::new_v4();
+        let run_repo = InMemoryRunRepo::default();
+        let workflow_repo = InMemoryWorkflowGraphRepo::default();
+        let gi_repo = InMemoryGraphInstanceRepo::default();
+        let agent_repo = InMemoryAgentRepo::default();
+        let frame_repo = InMemoryFrameRepo::default();
+        let assignment_repo = InMemoryAssignmentRepo::default();
+        let assoc_repo = InMemoryAssociationRepo::default();
+        let gate_repo = InMemoryGateRepo::default();
+        let lineage_repo = InMemoryLineageRepo::default();
+        let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
+        let mut workflow_graph =
+            build_test_workflow_graph(project_id, TEST_WORKFLOW_GRAPH_KEY, TEST_ACTIVITY_KEY);
+        workflow_graph.activities[0].executor =
+            ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+                procedure_key: TEST_AGENT_PROCEDURE_KEY.to_string(),
+                agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
+                runtime_session_policy: RuntimeSessionPolicy::DeliverToCurrentTrace,
+            });
+        workflow_repo.items.lock().unwrap().push(workflow_graph);
+        let service = make_service(
+            &run_repo,
+            &workflow_repo,
+            &gi_repo,
+            &agent_repo,
+            &frame_repo,
+            &assignment_repo,
+            &assoc_repo,
+            &gate_repo,
+            &lineage_repo,
+            &runtime_session_creator,
+        );
+
+        let err = service
+            .start_lifecycle_run(&LifecycleRunStartIntent {
+                project_id,
+                source: ExecutionSource::Api,
+                workflow_graph_ref: test_workflow_graph_ref(project_id),
+            })
+            .await
+            .expect_err("blocking compiler diagnostics should fail");
+
+        assert!(matches!(err, WorkflowApplicationError::BadRequest(_)));
+        assert!(
+            err.to_string()
+                .contains("unsupported_agent_executor_policy")
+        );
+        assert!(run_repo.items.lock().unwrap().is_empty());
+        assert!(gi_repo.items.lock().unwrap().is_empty());
+        assert!(agent_repo.items.lock().unwrap().is_empty());
+        assert!(assignment_repo.items.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn graph_dispatch_rejects_blocking_compiler_diagnostics_without_creating_run() {
+        let project_id = Uuid::new_v4();
+        let run_repo = InMemoryRunRepo::default();
+        let workflow_repo = InMemoryWorkflowGraphRepo::default();
+        let gi_repo = InMemoryGraphInstanceRepo::default();
+        let agent_repo = InMemoryAgentRepo::default();
+        let frame_repo = InMemoryFrameRepo::default();
+        let assignment_repo = InMemoryAssignmentRepo::default();
+        let assoc_repo = InMemoryAssociationRepo::default();
+        let gate_repo = InMemoryGateRepo::default();
+        let lineage_repo = InMemoryLineageRepo::default();
+        let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
+        let mut workflow_graph =
+            build_test_workflow_graph(project_id, TEST_WORKFLOW_GRAPH_KEY, TEST_ACTIVITY_KEY);
+        workflow_graph.activities[0].executor =
+            ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+                procedure_key: TEST_AGENT_PROCEDURE_KEY.to_string(),
+                agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
+                runtime_session_policy: RuntimeSessionPolicy::DeliverToCurrentTrace,
+            });
+        workflow_repo.items.lock().unwrap().push(workflow_graph);
+        let service = make_service(
+            &run_repo,
+            &workflow_repo,
+            &gi_repo,
+            &agent_repo,
+            &frame_repo,
+            &assignment_repo,
+            &assoc_repo,
+            &gate_repo,
+            &lineage_repo,
+            &runtime_session_creator,
+        );
+
+        let mut intent = new_project_agent_intent(project_id);
+        intent.workflow_graph_ref = Some(test_workflow_graph_ref(project_id));
+
+        let err = service
+            .launch_agent(&intent)
+            .await
+            .expect_err("blocking compiler diagnostics should fail");
+
+        assert!(matches!(err, WorkflowApplicationError::BadRequest(_)));
+        assert!(
+            err.to_string()
+                .contains("unsupported_agent_executor_policy")
+        );
+        assert!(run_repo.items.lock().unwrap().is_empty());
+        assert!(gi_repo.items.lock().unwrap().is_empty());
         assert!(agent_repo.items.lock().unwrap().is_empty());
         assert!(assignment_repo.items.lock().unwrap().is_empty());
     }
@@ -2303,6 +2588,23 @@ mod tests {
         assert!(
             instances[0].activity_state.is_some(),
             "dispatch 创建的 graph instance 必须可调度"
+        );
+        let runs = run_repo.items.lock().unwrap().clone();
+        assert_eq!(runs[0].orchestrations.len(), 1);
+        let orchestration = &runs[0].orchestrations[0];
+        assert_eq!(orchestration.role, "task_execution");
+        assert_eq!(orchestration.status, OrchestrationStatus::Running);
+        assert!(matches!(
+            orchestration.source_ref,
+            OrchestrationSourceRef::WorkflowGraph {
+                graph_id,
+                graph_version: Some(1),
+                graph_instance_id: Some(instance_id),
+            } if graph_id == workflow_graph.id && instance_id == instances[0].id
+        ));
+        assert_eq!(
+            orchestration.activation.ready_node_ids,
+            vec![workflow_graph.entry_activity_key.clone()]
         );
         let frames = frame_repo.items.lock().unwrap().clone();
         assert_eq!(frames[0].graph_instance_id, None);

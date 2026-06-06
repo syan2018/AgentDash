@@ -1,4 +1,4 @@
-{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/prd.md","reason":"检查任务边界、文档索引和当前 planning/implementation gate 是否一致。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/prd.md","reason":"检查任务边界、文档索引和当前剩余 Dynamic Script gate 是否一致。"}
 {"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/design.md","reason":"检查实现设计是否保持 Lifecycle / Orchestration 分层、typed execution 和 session-scoped API 命名。"}
 {"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/implement.md","reason":"检查实施拆解、验证命令、风险文件和子任务依赖是否完整。"}
 {"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/target-model-sketch.md","reason":"检查命名、仓储和 API 草案是否与 design/implement 一致。"}

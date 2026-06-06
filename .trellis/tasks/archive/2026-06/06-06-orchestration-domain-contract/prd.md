@@ -36,16 +36,16 @@
 
 ## 验收标准
 
-- [ ] Domain value objects 能编译，并按 snake_case / tagged enum 约定完成 serde roundtrip。
-- [ ] `LifecycleRun::new_control` 与 `LifecycleRun::new_graphless` 初始化空 context / orchestration / projection 字段。
-- [ ] `LifecycleRun` 提供小型 aggregate 方法：设置 lifecycle context、添加/替换/查找 orchestration instance。
-- [ ] PostgreSQL `LifecycleRunRepository` 的 create / update / select 能保存和恢复 `context`、`orchestrations`、`view_projection`。
-- [ ] 新 migration 添加三列并通过 migration guard。
-- [ ] 测试至少覆盖空 run、单 orchestration run、包含 Agent / Function / Human executor ref 的多 orchestration run。
-- [ ] 已触及包的现有 Activity runtime 测试与类型检查仍通过。
+- [x] Domain value objects 能编译，并按 snake_case / tagged enum 约定完成 serde roundtrip。
+- [x] `LifecycleRun::new_control` 与 `LifecycleRun::new_graphless` 初始化空 context / orchestration / projection 字段。
+- [x] `LifecycleRun` 提供小型 aggregate 方法：设置 lifecycle context、添加/替换/查找 orchestration instance。
+- [x] PostgreSQL `LifecycleRunRepository` 的 create / update / select 能保存和恢复 `context`、`orchestrations`、`view_projection`。
+- [x] 新 migration 添加三列并通过 migration guard。
+- [x] 测试至少覆盖空 run、单 orchestration run、包含 Agent / Function / Human executor ref 的多 orchestration run。
+- [x] 已触及包的现有 Activity runtime 测试与类型检查仍通过。
 
 ## 备注
 
 - 父任务：`.trellis/tasks/06-06-dynamic-workflow-lifecycle-research`。
 - 研究来源：`.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/orchestration-domain-contract-plan.md`。
-- 本任务是后续 `workflow-graph-compiler` 的合同地基；它应让 compiler 可以实现，但不实现 compiler 本身。
+- 本任务是已归档 `workflow-graph-compiler` 的合同地基；它提供 compiler 需要的领域合同，但自身不实现 compiler。

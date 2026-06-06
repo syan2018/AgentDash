@@ -120,7 +120,7 @@ POST   /sessions/{runtime_session_id}/pending-messages/{message_id}/promote
 保持 session command 语义，授权和业务归属仍落回 Lifecycle control-plane identity。
 
 `POST /sessions/{runtime_session_id}/messages` 代表 idle session 的下一轮用户消息，继续沿
-`LifecycleAgentMessageService` 进入 session launch / prompt claim 主数据流。
+`AgentRunMessageService` 进入 session launch / prompt claim 主数据流。
 
 `POST /sessions/{runtime_session_id}/steering` 代表 running session 的运行中用户输入，要求
 connector 对该 live session 支持 steering，然后调用 `SessionControlService` 的
@@ -151,11 +151,11 @@ POST   /sessions/{runtime_session_id}/pending-messages/{message_id}/promote
 
 #### 3. Contracts
 
-- `messages` request: `LifecycleAgentMessageRequest`，包含 non-empty `input`，可带
+- `messages` request: `AgentRunMessageRequest`，包含 non-empty `input`，可带
   `executor_config`。
-- `messages` response: runtime session、turn id、run ref、agent ref、frame ref。
-- `steering` request: `LifecycleAgentSteeringRequest`，包含 non-empty `input`。
-- `steering` response: runtime session、accepted、runtime command state。
+- `messages` response: `AgentRunMessageResponse`，返回 runtime session、turn id、run ref、agent ref、frame ref。
+- `steering` request: `AgentRunSteeringRequest`，包含 non-empty `input`。
+- `steering` response: `AgentRunSteeringResponse`，返回 runtime session、accepted、runtime command state。
 - `pending-messages` POST request: `EnqueuePendingMessageRequest`，包含 non-empty
   `input`，可带 `executor_config`。
 - `pending-messages` GET response: `PendingMessageView[]`。
@@ -182,27 +182,18 @@ POST   /sessions/{runtime_session_id}/pending-messages/{message_id}/promote
 #### 6. Tests Required
 
 - Backend route registration 覆盖六个 session-scoped endpoint。
-- Frontend service test 断言 URL 编码后的 `/sessions/{id}/...`。
+- Frontend service test 断言 URL 编码后的 `/sessions/{id}/...` 与 `AgentRun*` generated DTO。
 - `cargo check -p agentdash-api` 保证 handler path extractor 与 response types 对齐。
 - `pnpm --filter app-web test -- lifecycle` 覆盖 service 调用面。
-- grep 检查产品代码和 session specs 中没有旧的 agent-scoped lookup endpoint
-  或旧 steering route 名。
+- grep 检查产品代码和 session specs 中 session-scoped route names 与 generated DTO names 一致。
 
-#### 7. Wrong vs Correct
-
-Wrong:
-
-```text
-POST /<agent-scoped-resource>/by-<lookup-strategy>/{runtime_session_id}/<message-kind>
-```
-
-Correct:
+#### 7. Route Shape
 
 ```text
 POST /sessions/{runtime_session_id}/steering
 ```
 
-正确路径保留 session delivery/control 入口语义；handler 内部解析 anchor 后再进入
+该路径保留 session delivery/control 入口语义；handler 内部解析 anchor 后再进入
 Lifecycle / AgentRun 权限与状态校验。
 
 ## Terminal Effects
@@ -242,9 +233,9 @@ requested -> failed
 
 下一轮 prompt 从 delivery outbox 查询 requested commands，并通过关联的 frame transition records 还原 transition apply plan；connector accepted 后写
 applied。若 applied 状态提交失败，必须立刻尝试把同一批 command 标记为 `failed`，
-清理 turn，并让本次 launch 返回错误；不能继续启动 processor，也不能保留 `requested`
-等待下一轮静默重复应用。旧 `pending` 状态不再作为 runtime command 事实名使用；
-数据库迁移会把既有 runtime command 行更新为 `requested`。
+清理 turn，并让本次 launch 返回错误；这样 delivery outbox 不会重复应用同一批
+requested commands。runtime command state 的事实名是 `requested`；数据库 migration
+负责保证持久化行使用该状态名。
 
 `RuntimeDeliveryCommand` payload 保存 delivery kind、`frame_transition_id` 与 target
 frame reference；`AgentFrameTransitionRecord` 保存 `RuntimeCapabilityTransition`

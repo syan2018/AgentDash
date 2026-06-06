@@ -2,19 +2,19 @@
 
 ## 状态
 
-暂不启动实现。本任务刻意停在规划状态，等 Orchestration 领域合同实现后，再一起评审编译器设计。
+已完成第一版静态 `WorkflowGraph -> OrchestrationPlanSnapshot` compiler 实现并归档。实现仍遵循本计划中的边界：compiler 是 application 层纯函数转换，不读仓储、不创建 run、不拥有 runtime / scheduler state。
 
 ## 上下文顺序
 
 实现代理必须读取：
 
 1. 本任务 `prd.md`、`design.md`、`implement.md`。
-2. `.trellis/tasks/06-06-orchestration-domain-contract` artifacts 和最终实现 diff。
+2. `.trellis/tasks/archive/2026-06/06-06-orchestration-domain-contract` artifacts 和最终实现 diff。
 3. 父任务编译器研究：`.trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/workflow-graph-compiler-plan.md`。
 4. 父任务两份 Claude Workflow 资料副本与行为覆盖矩阵，尤其是 `flow` 作为过程控制、artifact / 变量作为状态交换的语义。
 5. `implement.jsonl` 中列出的当前代码事实和 specs。
 
-## 建议实施步骤
+## 实施步骤
 
 1. 重新打开最终 domain contract 类型名，并先修正 compiler 必须依赖的合同偏差：
    - `OrchestrationPlanSnapshot` 的内容身份使用 deterministic digest；

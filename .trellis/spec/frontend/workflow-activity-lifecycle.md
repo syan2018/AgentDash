@@ -1,31 +1,33 @@
 # WorkflowGraph / LifecycleRun Frontend Contract
 
-前端运行观察的目标模型以 `LifecycleRunView`、`LifecycleAgentView`、`AgentFrameRuntimeView` 与 `SubjectExecutionView` 为主；`WorkflowGraphInstanceView -> ActivityState / ActivityAttemptState` 只在 `topology="workflow_graph"` 的显式 Activity runtime 中出现。前端不以 RuntimeSession id 或单 graph id 作为 lifecycle 主索引。
+前端运行观察的目标模型以 `LifecycleRunView.orchestrations[]`、`OrchestrationInstanceView`、`RuntimeNodeView`、`AgentRunView`、`AgentFrameRuntimeView` 与 `SubjectExecutionView` 为主。前端不以 RuntimeSession id、WorkflowGraph id 或单 graph id 作为 lifecycle 主索引。
 
 ## Invariants
 
-- 前端读写 `WorkflowGraph` definition；当前 `ActivityLifecycleDefinition` 是迁移来源。
+- 前端读写 `WorkflowGraph` definition；application compiler 将静态 definition 编译为 `OrchestrationPlanSnapshot` 后进入 runtime。
 - 用户层 Workflow 资产入口以 `WorkflowGraph` definition 为主；Agent Activity 关联的 `AgentProcedure` 提供单个 Activity contract，可作为编辑器配套 draft 维护。
-- Run view 必须支持同一个 `LifecycleRun` 下 0..N 个 `WorkflowGraphInstance`。
-- Frontend store normalize by run、graph instance、subject、agent、frame。
+- Run view 必须支持同一个 `LifecycleRun` 下 0..N 个 `OrchestrationInstance` 投影。
+- Frontend store normalize by run、orchestration、runtime node、subject、agent、frame。
+- Runtime node 的稳定坐标是 `orchestration_id + node_path + attempt`；`active_runtime_node_refs` 使用同一坐标。
 - `/session/:id` 是 `RuntimeTraceView`，不是业务 runtime root。
-- Read view 不能作为 command input；write command 使用 `ExecutionIntent`、`SubjectRef`、run/graph/agent/frame refs。
+- Read view 不能作为 command input；write command 使用 `ExecutionIntent`、`SubjectRef`、run/agent/frame refs 或 runtime node refs。
 - `session_id` 只在 runtime trace refs 中出现，不能作为 lifecycle 主键。
 
 ## Target Views
 
 | View | 用途 |
 | --- | --- |
-| `LifecycleRunView` | 展示 run、graph instances、agents、gates、subject associations 与 runtime trace refs |
-| `WorkflowGraphInstanceView` | 展示某个 graph instance 的 role、status、activities、attempts、artifact state |
-| `LifecycleAgentView` | 展示 run 内 agent identity、role、status、lineage、current frame |
+| `LifecycleRunView` | 展示 run、orchestrations、active runtime nodes、agents、subject associations、runtime trace refs 与 execution log |
+| `OrchestrationInstanceView` | 展示某个 orchestration instance 的 role、status、plan digest、source ref、ready nodes 与 runtime node tree |
+| `RuntimeNodeView` | 展示 runtime node 的 `node_path`、kind、status、attempt、executor run ref、时间戳与 children |
+| `AgentRunView` | 展示 run 内 agent identity、role、status、lineage、current frame |
 | `AgentFrameRuntimeView` | 展示 frame revision 的 procedure、capability、context、VFS、MCP，以及由 anchor read model 投影的 runtime refs |
 | `SubjectExecutionView` | 展示业务 subject 的执行投影，例如 current agent、latest attempt、artifacts |
 | `RuntimeSessionTraceView` | 展示 event stream、turns、tools、projection、debug、lineage |
 
 ## API Surface
 
-Definition APIs can keep current route names during migration, but generated frontend types should converge on target naming:
+Definition APIs use `WorkflowGraph` naming and generated frontend types stay aligned with runtime DTO naming:
 
 ```ts
 fetchWorkflowGraphs(opts): Promise<WorkflowGraph[]>
@@ -47,8 +49,8 @@ fetchRuntimeTrace(runtimeSessionId): Promise<RuntimeSessionTraceView>
 Session command APIs use runtime session as the delivery/control entrypoint:
 
 ```ts
-sendLifecycleAgentMessageByRuntimeSession(runtimeSessionId, request)
-sendLifecycleAgentSteeringMessageByRuntimeSession(runtimeSessionId, request)
+sendAgentRunMessageByRuntimeSession(runtimeSessionId, request: AgentRunMessageRequest)
+steerAgentRunByRuntimeSession(runtimeSessionId, request: AgentRunSteeringRequest)
 listPendingMessages(runtimeSessionId)
 enqueuePendingMessage(runtimeSessionId, request)
 deletePendingMessage(runtimeSessionId, messageId)
@@ -72,36 +74,74 @@ Definition request/response fields:
 
 ## Run Contract
 
-`LifecycleRunView` exposes graph instances instead of a single workflow run:
+`LifecycleRunView` exposes orchestration runtime projections instead of a single workflow run:
 
 ```ts
 type LifecycleRunView = {
-  id: string
+  run_ref: LifecycleRunRefDto
+  project_id: string
   topology: "graphless" | "workflow_graph"
   root_graph_id?: string | null
   status: LifecycleRunStatus
-  workflow_graph_instances: WorkflowGraphInstanceView[]
-  active_activity_refs: ActiveActivityRef[]
-  agents: LifecycleAgentView[]
+  orchestrations: OrchestrationInstanceView[]
+  active_runtime_node_refs: ActiveRuntimeNodeRefDto[]
+  agents: AgentRunView[]
   subject_associations: LifecycleSubjectAssociationDto[]
   runtime_trace_refs: RuntimeSessionRef[]
+  execution_log: LifecycleExecutionEntry[]
+  created_at: string
+  updated_at: string
+  last_activity_at: string
+}
+
+type OrchestrationInstanceView = {
+  orchestration_id: string
+  role: string
+  status: string
+  plan_digest: string
+  source_ref: unknown
+  ready_node_ids: string[]
+  nodes: RuntimeNodeView[]
+  created_at: string
+  updated_at: string
+}
+
+type RuntimeNodeView = {
+  node_id: string
+  node_path: string
+  kind: string
+  status: string
+  attempt: number
+  executor_run_ref?: ExecutorRunRef
+  started_at?: string
+  completed_at?: string
+  children: RuntimeNodeView[]
+}
+
+type ActiveRuntimeNodeRefDto = {
+  run_id: string
+  orchestration_id: string
+  node_path: string
+  attempt: number
+  status: string
 }
 ```
 
-`topology="graphless"` runs represent ordinary Agent runtime control-plane state and may have `root_graph_id=null` with `workflow_graph_instances=[]`. Activity timeline UI is entered from `topology="workflow_graph"` runs and their graph instances.
+`topology="graphless"` runs represent ordinary Agent runtime control-plane state and may have `root_graph_id=null` with `orchestrations=[]`. Activity timeline UI is entered from `topology="workflow_graph"` runs and their orchestration runtime node tree.
 
-`WorkflowGraphInstanceView.activity_state.attempts[]` contains `graph_instance_id`、`activity_key`、`attempt`、`status`、`assignment_ref?`、`executor_run?`。
+Runtime node lookup and human gate commands use `orchestration_id + node_path + attempt` as the durable node coordinate.
 
 ## Store Boundary
 
 - `workflowStore` owns `WorkflowGraph` definition drafts, validation state, editor selection; Agent Activity 的 `AgentProcedure` draft 是配套 contract 编辑数据。
 - `lifecycleStore` owns runtime projections: runs indexed by `run_id`。
-- graph instances indexed by `graph_instance_id`。
+- orchestrations indexed by `orchestration_id`。
+- runtime nodes indexed by `orchestration_id + node_path + attempt`。
 - subject execution indexed by `subject_kind + subject_id`。
 - agents indexed by `agent_id` and frames by `frame_id`。
 - Runtime trace store indexed by `runtime_session_id` only for debug / trace drill-down。
 
-Lifecycle primary state is indexed by run / graph instance / subject / agent / frame. Graphless runs still normalize run / subject / agent / frame state even when no graph instance exists.
+Lifecycle primary state is indexed by run / orchestration / runtime node / subject / agent / frame. Graphless runs still normalize run / subject / agent / frame state even when no orchestration exists.
 
 ## Mapper Boundary
 
@@ -109,9 +149,9 @@ Lifecycle primary state is indexed by run / graph instance / subject / agent / f
 - Required object field missing -> throw at mapper boundary。
 - Validation endpoint returns `issues[]`; editor stores `WorkflowValidationResult` and blocks save on error severity。
 - Human decision submit API error keeps current run visible and lets caller reload through store polling。
-- Nullable `session_id` from legacy DTO must not become a required business key.
+- Runtime trace refs remain delivery/debug refs and do not become required lifecycle business keys.
 - `packages/app-web/src/types/lifecycle-views.ts` is a facade over generated contracts. Ref DTOs
-  shared with ProjectAgent, such as `LifecycleRunRefDto`、`LifecycleAgentRefDto`、
+  shared with ProjectAgent, such as `LifecycleRunRefDto`、`AgentRunRefDto`、
   `AgentFrameRefDto`、`RuntimeSessionRefDto`、`SubjectRefDto` and
   `AgentAssignmentRefDto`, are re-exported from `project-agent-contracts`; lifecycle view DTOs
   remain re-exported from `workflow-contracts`.

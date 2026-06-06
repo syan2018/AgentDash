@@ -2,7 +2,7 @@
 
 ## 意图
 
-本任务把父任务研究模型落成第一批生产代码合同。范围刻意收窄：`LifecycleRun` 具备拥有 orchestration 上下文和快照的能力，但现有静态 graph runtime 继续使用 `WorkflowGraphInstance.activity_state`，直到 compiler 与 common runtime 子任务完成 review 并启动。
+本任务把父任务研究模型落成第一批生产代码合同。范围刻意收窄：`LifecycleRun` 具备拥有 orchestration 上下文和快照的能力；该合同作为后续 compiler 与 common runtime 的地基，本任务自身不切换静态 graph runtime 事实源。
 
 ## Aggregate 边界
 

@@ -2,7 +2,7 @@
 
 ## 意图
 
-本任务只准备第一版静态 graph 编译器，不实现它。编译器负责把现有 `WorkflowGraph` definition 翻译为 Orchestration 领域合同任务引入的 immutable `OrchestrationPlanSnapshot`。
+本任务已完成第一版静态 graph 编译器实现。编译器负责把现有 `WorkflowGraph` definition 翻译为 Orchestration 领域合同任务引入的 immutable `OrchestrationPlanSnapshot`。
 
 编译器是当前静态 workflow asset 到目标 common runtime 的桥。它不能因为旧 Activity runtime 没有完整执行某些字段，就把 public graph 语义降级或丢弃。
 
@@ -10,7 +10,7 @@
 
 ## 依赖
 
-实现阻塞于 `.trellis/tasks/06-06-orchestration-domain-contract`。需要等领域合同落地并确认具体类型命名后，再评审并启动本任务。本任务当前保持 `planning`。
+实现建立在已归档的 Orchestration 领域合同之上，并为已归档的 common runtime 静态 graph 接入提供稳定 plan 输入。领域合同中的类型命名和 plan snapshot 身份语义是 compiler 保持确定性输出的前提。
 
 ## 编译器边界
 
@@ -75,7 +75,7 @@ plan_digest = sha256(canonical_json({
 }))
 ```
 
-如果当前已落地合同仍有 `plan_id: Uuid`，本任务启动实现前应先评审并修正合同：`OrchestrationInstance.orchestration_id` 继续使用 UUID，`OrchestrationPlanSnapshot` 使用 digest 作为不可变编译产物身份。digest 面向机器和缓存，不需要人工手写；UI 可显示短 digest 或 source key/version。
+`OrchestrationInstance.orchestration_id` 继续使用 UUID，`OrchestrationPlanSnapshot` 使用 digest 作为不可变编译产物身份。digest 面向机器和缓存，不需要人工手写；UI 可显示短 digest 或 source key/version。
 
 ## 诊断
 

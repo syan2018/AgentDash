@@ -4,7 +4,7 @@
 
 沉淀 Claude Code Dynamic Workflows 对 AgentDash Lifecycle Activity / WorkflowGraph 模块的启发与差距判断，并把 research 目录下两份 Claude Code Workflow 资料作为核心行为覆盖与扩展性压力测试，反向检验 AgentDash 的 Lifecycle / Orchestration 目标架构是否真实具备可扩展性。
 
-本任务只保存 research、目标设计和实施计划文档，不进入代码实现。
+本任务作为 Dynamic Workflow / Lifecycle 收敛工作的总入口，保存 research、目标设计、实施拆解和子任务索引；代码实现由拆分子任务承载。
 
 ## 需求
 
@@ -18,7 +18,7 @@
 - 新增 discussion journal，保存本次讨论中的判断变化与用户补充的架构原则。
 - 在 research 中补充关键事实来源复核索引，说明后续应该去哪些 spec、源码、migration 和外部资料复核结论。
 - 补充正式实现前的 `design.md` 与 `implement.md`，把 API 命名、目标 runtime 模型、迁移阶段、验证命令和风险文件写清楚。
-- 当前任务已在用户确认后进入 `in_progress`，本轮除已完成的 session-scoped API 机械迁移外，后续工作继续以任务文档、模块预研和实现前计划为主。
+- 当前任务已在用户确认后进入 `in_progress`；domain contract、graph compiler、common runtime 子任务已完成并归档，剩余 gate 是 Dynamic Script Artifact Compiler 的设计评审与实现启动。
 
 ## 验收标准
 
@@ -40,7 +40,7 @@
 
 | 文档 | 职责 |
 | --- | --- |
-| `prd.md` | 任务入口、验收标准、文档索引和当前 planning gate。 |
+| `prd.md` | 任务入口、验收标准、文档索引和当前剩余 Dynamic Script gate。 |
 | `research.md` | 研究结论总览：Claude Workflow 关键启发、AgentDash 当前差距、目标方向和事实来源索引。 |
 | `discussion-journal.md` | 按时间记录用户修正与共识变化，保留为什么收敛到当前模型的上下文。 |
 | `target-model-sketch.md` | 概念模型草案：Lifecycle / Orchestration / AgentRun / FunctionRun 命名、关系图和仓储边界。 |

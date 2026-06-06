@@ -482,7 +482,7 @@ mod tests {
             graph_instance_id: Some(Uuid::new_v4()),
         };
         let plan_snapshot = OrchestrationPlanSnapshot {
-            plan_id: Uuid::new_v4(),
+            plan_digest: format!("sha256:{role}"),
             plan_version: 1,
             source_ref: source_ref.clone(),
             nodes: vec![PlanNode {

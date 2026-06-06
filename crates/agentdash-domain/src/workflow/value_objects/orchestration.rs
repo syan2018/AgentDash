@@ -131,7 +131,7 @@ pub enum OrchestrationStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OrchestrationPlanSnapshot {
-    pub plan_id: Uuid,
+    pub plan_digest: String,
     pub plan_version: u32,
     pub source_ref: OrchestrationSourceRef,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -437,7 +437,7 @@ pub struct NodeCacheRef {
 pub enum OrchestrationJournalFact {
     PlanActivated {
         orchestration_id: Uuid,
-        plan_id: Uuid,
+        plan_digest: String,
         timestamp: DateTime<Utc>,
     },
     NodeReady {
@@ -538,7 +538,7 @@ mod tests {
     fn orchestration_plan_snapshot_serializes_tagged_executor_shapes() {
         let source_ref = workflow_source();
         let snapshot = OrchestrationPlanSnapshot {
-            plan_id: Uuid::new_v4(),
+            plan_digest: "sha256:workflow-plan-v1".to_string(),
             plan_version: 1,
             source_ref: source_ref.clone(),
             nodes: vec![
@@ -587,6 +587,7 @@ mod tests {
         };
 
         let value = serde_json::to_value(&snapshot).expect("serialize plan snapshot");
+        assert_eq!(value["plan_digest"], "sha256:workflow-plan-v1");
         assert_eq!(value["source_ref"]["kind"], "workflow_graph");
         assert_eq!(value["nodes"][0]["executor"]["kind"], "agent_procedure");
         assert_eq!(value["nodes"][1]["executor"]["kind"], "function");
@@ -691,7 +692,7 @@ mod tests {
         let facts = vec![
             OrchestrationJournalFact::PlanActivated {
                 orchestration_id,
-                plan_id: Uuid::new_v4(),
+                plan_digest: "sha256:activated-plan".to_string(),
                 timestamp: Utc::now(),
             },
             OrchestrationJournalFact::NodeCompleted {
@@ -714,6 +715,7 @@ mod tests {
 
         let value = serde_json::to_value(&facts).expect("serialize journal facts");
         assert_eq!(value[0]["kind"], "plan_activated");
+        assert_eq!(value[0]["plan_digest"], "sha256:activated-plan");
         assert_eq!(value[1]["kind"], "node_completed");
         assert_eq!(value[2]["kind"], "human_gate_resolved");
         let restored: Vec<OrchestrationJournalFact> =

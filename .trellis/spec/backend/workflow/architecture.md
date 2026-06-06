@@ -73,6 +73,9 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `workflow/value_objects/run_state.rs` | Lifecycle execution ledger 与 executor refs |
 | `workflow/value_objects/orchestration.rs` | Lifecycle-owned orchestration contract、plan snapshot、runtime node state、dispatch/state exchange/journal fact value types |
 | `workflow/validation.rs` | Workflow contract validation、Lifecycle DAG validation、Activity lifecycle transition/port/policy validation |
+| `agentdash-spi::workflow::script` | Workflow script evaluator port；application 只消费脚本校验与 builder document 输出，不依赖具体脚本引擎 |
+| `agentdash-infrastructure::workflow_scripts` | Rhai workflow builder adapter；只注册 workflow helper surface，并复用公共 `RhaiScriptRuntime` |
+| `agentdash-application::workflow::script` | typed workflow script builder document 与 pathful diagnostics；后续 compiler 从这里进入 plan IR |
 
 ## Local Decisions
 
@@ -325,6 +328,102 @@ dispatch_common creates RuntimeSessionExecutionAnchor, but leaves node Ready
 
 ```text
 dispatch_common creates anchor -> submits NodeStarted -> persists LifecycleRun with node Running
+```
+
+## Scenario: Workflow Script Builder Frontend
+
+### 1. Scope / Trigger
+
+- Trigger: 新增或修改 workflow script builder helper、`WorkflowScriptEvaluator` SPI、typed builder document，或把动态脚本接入 OrchestrationPlan compiler。
+- Scope: `agentdash-spi::workflow::script`、`agentdash-infrastructure::workflow_scripts`、`agentdash-application::workflow::script`、后续 `workflow/orchestration` script compiler。
+
+### 2. Signatures
+
+SPI port:
+
+```rust
+pub trait WorkflowScriptEvaluator: Send + Sync {
+    fn validate_workflow_script(&self, script: &str) -> Result<(), Vec<String>>;
+    fn eval_workflow_script(
+        &self,
+        script: &str,
+        ctx: &serde_json::Value,
+    ) -> Result<serde_json::Value, String>;
+}
+```
+
+Application builder parse:
+
+```rust
+parse_workflow_script_builder_document(
+    value: serde_json::Value,
+) -> WorkflowScriptBuilderParseOutput
+```
+
+首批 builder statement:
+
+```rust
+WorkflowScriptStatement::{
+    Phase,
+    Log,
+    Agent,
+    Parallel,
+    Pipeline,
+    Function,
+    LocalEffect,
+    HumanGate,
+}
+```
+
+### 3. Contracts
+
+- Rhai workflow evaluator 只能返回 serializable builder document；不能启动 AgentRun、FunctionRun、LocalEffect，不能访问文件系统、shell 或网络。
+- Hook Rhai helper 与 workflow Rhai helper 分属不同 adapter；workflow evaluator 不注册 `block` / `inject` / `approve` 等 Hook helper。
+- Rhai helper 输出必须包含 `kind` discriminator；reserved fields such as `kind` / `name` / `request` / `effect` 由 helper 拥有，脚本 options 不能覆盖。
+- Application 层先把 evaluator 返回的 JSON 解析为 typed builder document，再进入后续 compiler；`serde_json::Value` 不作为长期 compiler 输入。
+- typed builder parser 负责结构合同和 source-path diagnostics；变量解析、唯一命名、capability 声明、预算/并发上限和 plan mapping 由后续 compiler/preflight 负责。
+- `RhaiWorkflowScriptEvaluator` 位于 infrastructure，原因是 Rhai engine、sandbox 与 helper 注册是具体技术 adapter；application 只依赖 SPI port 与 typed builder contract。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| Rhai syntax invalid | `validate_workflow_script` 返回 diagnostic strings |
+| workflow evaluator 调用 Hook helper | eval 返回 Rhai unknown function error |
+| builder document root `kind != workflow` | `unexpected_builder_document_kind` |
+| statement `kind` 不在首批 primitive 内 | `unknown_primitive`，source path 指向 `<path>.kind` |
+| primitive 缺少必填字段 | `missing_field`，source path 指向缺失字段 |
+| string / array 字段类型错误 | `invalid_field_type`，source path 指向错误字段或元素 |
+| request / effect helper kind 未知 | `unknown_request_helper` / `unknown_effect_helper` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `workflow(#{ body: [phase(\"collect\", [parallel([...])])] })` eval 后解析为 typed `WorkflowScriptBuilderDocument`。
+- Base: `agent` 的 `inputs` / `outputs` 缺省为空数组，后续 compiler 再决定是否需要 blocking diagnostic。
+- Bad: Rhai helper 直接执行 HTTP、shell 或文件写入；这些副作用必须只在 common orchestration runtime executor 阶段发生。
+
+### 6. Tests Required
+
+- SPI crate 编译通过，保证 port 不依赖 application / infrastructure。
+- Infrastructure test 覆盖 workflow evaluator eval builder document、syntax validate、Hook helper unavailable。
+- Application test 覆盖 phase / parallel / agent / pipeline / function / local_effect / human_gate 的 typed parse。
+- Application test 覆盖 pathful diagnostics，至少断言每类 primitive 的缺失字段 path。
+- Hook test 回归，保证公共 Rhai runtime 抽取后 Hook helper surface 未变化。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+RhaiWorkflowScriptEvaluator -> OrchestrationPlanSnapshot
+```
+
+#### Correct
+
+```text
+RhaiWorkflowScriptEvaluator -> builder document JSON
+  -> agentdash-application::workflow::script typed builder document
+  -> ScriptCompiler -> OrchestrationPlanSnapshot
 ```
 
 ## Contract Appendices

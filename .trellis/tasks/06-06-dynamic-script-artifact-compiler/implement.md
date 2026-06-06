@@ -36,14 +36,22 @@
 
 停止点：公共内核抽取必须先保持 Hook 现有测试通过，再进入 workflow compiler。
 
-### Phase 2：Rhai builder DSL 与 AST 评审
+### Phase 2：Rhai builder DSL 与 typed builder document（最小后端切片已完成）
 
 1. 基于 `research/claude-workflow-behavior-coverage.md` 列出必须覆盖的脚本行为。
 2. 首版语法采用 restricted Rhai builder DSL；提供同一组示例：phase、parallel agent fanout、pipeline、human gate、function/local effect、state variable。
 3. 明确 helper 返回的是 serializable builder document，而不是直接执行 side effect。
 4. 和用户评审 builder document shape。
 
-停止点：语法形态和 AST 合同确认前不进入代码实现。
+完成状态：
+
+- 新增 `WorkflowScriptEvaluator` SPI port，application 后续只依赖 port 与 builder document 合同。
+- 新增 `RhaiWorkflowScriptEvaluator` infrastructure adapter，复用 `RhaiScriptRuntime`，并只注册 workflow builder helper surface。
+- 首批 helper 已覆盖 `workflow`、`phase`、`log`、`agent`、`parallel`、`pipeline`、`function`、`local_effect`、`human_gate`、`api_request`、`bash_exec`、`capability_effect`；helper 只构造 serializable builder document。
+- application workflow script 模块新增 typed builder document 解析合同，能从 `serde_json::Value` 解析 phase / parallel / agent / pipeline / function / local_effect / human_gate，并返回 pathful diagnostics。
+- 聚焦测试覆盖 Rhai evaluator eval、workflow evaluator 中 Hook helper 不可用、typed builder document 解析和 Rhai syntax validate。
+
+下一步：进入 AST / builder document -> `OrchestrationPlanSnapshot` compiler，把 typed builder document 映射到 common orchestration runtime IR；该 compiler 会在 application workflow orchestration 边界内实现，不由 Rhai adapter 直接生成 plan。
 
 ### Phase 3：领域合同与资产边界
 

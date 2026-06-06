@@ -8,6 +8,7 @@ pub mod script_runtime;
 pub mod secret;
 pub mod skill_source;
 pub mod storage;
+pub mod workflow_scripts;
 
 pub use function_runner::DefaultFunctionRunner;
 pub use hooks::RhaiHookScriptEvaluator;
@@ -49,3 +50,4 @@ pub use script_runtime::{RhaiScriptLimits, RhaiScriptRuntime};
 pub use secret::LlmProviderSecretCipher;
 pub use skill_source::HttpRemoteSkillSource;
 pub use storage::FilesystemExtensionPackageArtifactStorage;
+pub use workflow_scripts::RhaiWorkflowScriptEvaluator;

@@ -4,6 +4,7 @@ pub mod extension_package;
 pub mod hooks;
 pub mod platform;
 pub mod session_persistence;
+pub mod workflow;
 
 // ─── agent-types re-export（保持外部 API 不变）──────────────
 
@@ -82,6 +83,10 @@ pub use hooks::{
     RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry, SessionSnapshotMetadata,
     SharedHookRuntime, SubjectRunContext, action_type,
 };
+
+// ─── workflow scripts ──────────────────────────────────────
+
+pub use workflow::script::WorkflowScriptEvaluator;
 
 // ─── platform ───────────────────────────────────────────────
 

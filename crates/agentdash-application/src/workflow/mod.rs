@@ -21,6 +21,7 @@ mod project_agent_session_start;
 pub mod projection;
 pub(crate) mod run;
 pub mod runtime_launch;
+pub mod script;
 mod session_association;
 mod session_run_context_resolver;
 mod subject_execution_control;
@@ -93,6 +94,13 @@ pub use projection::{
 };
 pub use run::select_active_run;
 pub use runtime_launch::{FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface};
+pub use script::{
+    WorkflowScriptAgent, WorkflowScriptBuilderDiagnostic, WorkflowScriptBuilderDocument,
+    WorkflowScriptBuilderParseOutput, WorkflowScriptEffect, WorkflowScriptFunction,
+    WorkflowScriptHumanGate, WorkflowScriptLocalEffect, WorkflowScriptParallel,
+    WorkflowScriptPhase, WorkflowScriptPipeline, WorkflowScriptRequest, WorkflowScriptStatement,
+    parse_workflow_script_builder_document,
+};
 pub use session_association::{
     LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,
     build_lifecycle_node_label, lifecycle_activity_parts_from_label,

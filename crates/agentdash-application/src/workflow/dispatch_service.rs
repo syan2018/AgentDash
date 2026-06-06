@@ -5,9 +5,9 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     AgentFrame, AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage, AgentPolicy,
-    AgentRuntimeRefs, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, GatePolicy,
-    InteractionDispatchIntent, InteractionGateOpenedDispatchResult, LifecycleAgent, LifecycleGate,
-    LifecycleRun, LifecycleRunStartDispatchResult, LifecycleRunStartIntent,
+    AgentRuntimeRefs, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, ExecutorRunRef,
+    GatePolicy, InteractionDispatchIntent, InteractionGateOpenedDispatchResult, LifecycleAgent,
+    LifecycleGate, LifecycleRun, LifecycleRunStartDispatchResult, LifecycleRunStartIntent,
     LifecycleSubjectAssociation, OrchestrationBindingRefs, OrchestrationInstance,
     OrchestrationPlanSnapshot, OrchestrationSourceRef, RunPolicy, RuntimePolicy,
     RuntimeSessionExecutionAnchor, SubjectExecutionDispatchResult, SubjectExecutionIntent,
@@ -23,9 +23,9 @@ use super::WorkflowApplicationError;
 use super::frame_builder::AgentFrameBuilder;
 use super::graph_resolver::WorkflowGraphResolver;
 use super::orchestration::{
-    ROOT_ORCHESTRATION_ROLE, WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION, WorkflowGraphCompileInput,
-    WorkflowGraphCompileMode, WorkflowGraphCompileSourceMetadata, WorkflowGraphCompiler,
-    activate_orchestration,
+    OrchestrationRuntimeEvent, ROOT_ORCHESTRATION_ROLE, WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION,
+    WorkflowGraphCompileInput, WorkflowGraphCompileMode, WorkflowGraphCompileSourceMetadata,
+    WorkflowGraphCompiler, activate_orchestration, apply_orchestration_event_to_run,
 };
 use crate::session::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
 
@@ -90,7 +90,7 @@ impl RuntimeSessionCreator for SessionPersistenceRuntimeSessionCreator {
 ///
 /// 接收 `ExecutionIntent`，根据 policy 决定：
 /// - 复用 / 创建 LifecycleRun
-/// - 创建 / 复用 WorkflowGraphInstance
+/// - 创建 / 复用 OrchestrationInstance
 /// - 创建 LifecycleSubjectAssociation（如果有 subject_ref）
 /// - 创建 / 复用 LifecycleAgent
 /// - 创建 AgentFrame initial revision
@@ -400,6 +400,27 @@ impl<'a> LifecycleDispatchService<'a> {
             );
             anchor_repo.upsert(&anchor).await?;
         }
+        let session_id = runtime_session_ref.ok_or_else(|| {
+            WorkflowApplicationError::Internal(
+                "Graph-backed dispatch 缺少 RuntimeSession，无法 materialize entry NodeStarted"
+                    .to_string(),
+            )
+        })?;
+        let (updated_run, _) = apply_orchestration_event_to_run(
+            run,
+            orchestration_binding.orchestration_ref,
+            OrchestrationRuntimeEvent::NodeStarted {
+                node_path: orchestration_binding.node_path.clone(),
+                attempt: orchestration_binding.attempt,
+                executor_run_ref: Some(ExecutorRunRef::RuntimeSession {
+                    session_id: session_id.to_string(),
+                }),
+                timestamp: chrono::Utc::now(),
+            },
+        )
+        .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
+        run = updated_run;
+        self.run_repo.update(&run).await?;
 
         let subject_execution_ref = association.as_ref().map(|assoc| SubjectExecutionRef {
             subject_ref: plan
@@ -813,13 +834,13 @@ fn orchestration_entry_binding(
 
 fn orchestration_role_for_dispatch(plan: &DispatchPlan) -> &str {
     if matches!(plan.run_policy, RunPolicy::AppendGraph) {
-        graph_instance_role_from_source(&plan.source)
+        append_orchestration_role_from_source(&plan.source)
     } else {
         ROOT_ORCHESTRATION_ROLE
     }
 }
 
-fn graph_instance_role_from_source(source: &ExecutionSource) -> &'static str {
+fn append_orchestration_role_from_source(source: &ExecutionSource) -> &'static str {
     match source {
         ExecutionSource::ParentAgent => "task_execution",
         ExecutionSource::Routine => "routine_execution",
@@ -1558,7 +1579,26 @@ mod tests {
         assert_eq!(orchestration.status, OrchestrationStatus::Running);
         assert_eq!(orchestration.node_tree.len(), 1);
         assert_eq!(orchestration.node_tree[0].node_path, TEST_ACTIVITY_KEY);
-        assert_eq!(orchestration.node_tree[0].status, RuntimeNodeStatus::Ready);
+        assert!(orchestration.activation.ready_node_ids.is_empty());
+        assert!(orchestration.dispatch.ready_node_ids.is_empty());
+        let session_id = result.delivery_runtime_ref.expect("runtime session");
+        assert_eq!(
+            orchestration.node_tree[0].status,
+            RuntimeNodeStatus::Running
+        );
+        assert_eq!(
+            orchestration.node_tree[0].executor_run_ref,
+            Some(ExecutorRunRef::RuntimeSession {
+                session_id: session_id.to_string()
+            })
+        );
+        assert_eq!(
+            orchestration.node_tree[0].trace_refs,
+            vec![RuntimeTraceRef::RuntimeSession {
+                session_id: session_id.to_string()
+            }]
+        );
+        assert!(orchestration.node_tree[0].started_at.is_some());
 
         let frames = frame_repo.items.lock().unwrap().clone();
         assert_eq!(frames.len(), 1);
@@ -1575,7 +1615,6 @@ mod tests {
         assert_eq!(anchors[0].node_attempt, Some(1));
         assert_eq!(result.subject_execution_ref.subject_ref.kind, "task");
         assert_eq!(result.subject_execution_ref.subject_ref.id, task_id);
-        assert!(result.delivery_runtime_ref.is_some());
     }
 
     #[tokio::test]
@@ -1626,11 +1665,25 @@ mod tests {
                 graph_version: Some(1),
             } if graph_id == workflow_graph.id
         ));
+        assert!(orchestration.activation.ready_node_ids.is_empty());
+        assert!(orchestration.dispatch.ready_node_ids.is_empty());
+        let session_id = result.delivery_runtime_ref.expect("runtime session");
         assert_eq!(
-            orchestration.activation.ready_node_ids,
-            vec![workflow_graph.entry_activity_key.clone()]
+            orchestration.node_tree[0].status,
+            RuntimeNodeStatus::Running
         );
-        assert_eq!(orchestration.node_tree[0].status, RuntimeNodeStatus::Ready);
+        assert_eq!(
+            orchestration.node_tree[0].executor_run_ref,
+            Some(ExecutorRunRef::RuntimeSession {
+                session_id: session_id.to_string()
+            })
+        );
+        assert_eq!(
+            orchestration.node_tree[0].trace_refs,
+            vec![RuntimeTraceRef::RuntimeSession {
+                session_id: session_id.to_string()
+            }]
+        );
     }
 
     #[tokio::test]
@@ -1701,6 +1754,8 @@ mod tests {
         );
         assert_eq!(orchestration.node_tree[0].kind, PlanNodeKind::AgentCall);
         assert_eq!(orchestration.node_tree[0].status, RuntimeNodeStatus::Ready);
+        assert_eq!(orchestration.node_tree[0].executor_run_ref, None);
+        assert!(orchestration.node_tree[0].trace_refs.is_empty());
         assert!(agent_repo.items.lock().unwrap().is_empty());
     }
 

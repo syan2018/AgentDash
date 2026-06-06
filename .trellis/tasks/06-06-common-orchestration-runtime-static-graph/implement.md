@@ -37,6 +37,16 @@
 
 本切片已完成。当前 reducer 支持简单 transition、condition、All/Any/First/NOfM join、state exchange materialization、duplicate terminal idempotency；`max_traversals` 暂以 blocking diagnostic 将目标 node 标记为 Blocked，后续结合 attempt/traversal policy 一并实现。
 
+## 当前实现切片：AgentCall started materialization
+
+本轮只处理 graph-backed dispatch 的 entry AgentCall 已启动事实，不同时展开完整 scheduler：
+
+1. `dispatch_common` 在创建 runtime session、AgentFrame、RuntimeSessionExecutionAnchor 后，必须向 reducer 提交 `NodeStarted`。
+2. `NodeStarted.executor_run_ref` 使用 `ExecutorRunRef::RuntimeSession { session_id }`，由 reducer 同步写入 `RuntimeNodeState.executor_run_ref` 和 `trace_refs`。
+3. 更新后的 `LifecycleRun` 必须持久化，返回给上层的 `DispatchFacts.run` 也应是 node 已 `Running` 的版本。
+4. `start_lifecycle_run` 只初始化 orchestration，不创建 runtime session，因此 entry node 仍保持 `Ready`。
+5. 本切片不做 Function / LocalEffect / HumanGate launcher，不新增 lease/outbox 表，不改 frontend/API。
+
 ## 上下文顺序
 
 实现代理必须读取：

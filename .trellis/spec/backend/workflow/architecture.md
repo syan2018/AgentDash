@@ -268,6 +268,68 @@ RuntimeSession terminal -> mutate RuntimeNodeState directly in orchestrator
 RuntimeSession terminal -> RuntimeTraceAnchor -> OrchestrationRuntimeEvent -> reducer -> LifecycleRun.orchestrations[]
 ```
 
+## Scenario: Graph-backed AgentCall Dispatch Start
+
+### 1. Scope / Trigger
+
+- Trigger: `LifecycleDispatchService::dispatch_common` 已为 graph-backed dispatch 创建 runtime session、AgentFrame、current agent frame 和 `RuntimeSessionExecutionAnchor`。
+- Scope: graph-backed entry `AgentCall` 的 launch evidence materialization；不包含完整 scheduler / executor launcher。
+
+### 2. Signatures
+
+Dispatch path must submit:
+
+```rust
+OrchestrationRuntimeEvent::NodeStarted {
+    node_path: orchestration_binding.node_path,
+    attempt: orchestration_binding.attempt,
+    executor_run_ref: Some(ExecutorRunRef::RuntimeSession { session_id }),
+    timestamp,
+}
+```
+
+### 3. Contracts
+
+- Graph-backed dispatch 创建 runtime session 后，entry runtime node 必须通过 reducer 从 `Ready` 转为 `Running`。
+- Reducer 写入 `executor_run_ref` 和 `RuntimeTraceRef::RuntimeSession`，并移除 ready queue 中的 entry node。
+- 更新后的 `LifecycleRun` 必须回写 repository，且 dispatch result 的 `runtime_refs` 仍使用同一个 `orchestration_id + node_path + attempt`。
+- `start_lifecycle_run` 只初始化 orchestration，不创建 runtime session，因此 entry node 仍为 `Ready`。
+- 如果 graph-backed dispatch 无法取得 runtime session id，不能伪造 `NodeStarted`；应返回内部错误并保持事实一致。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| graph-backed dispatch 成功创建 runtime session | entry node `Running`，ready queues 为空 |
+| `RuntimePolicy` 未提供 session id | 返回 internal error，不写 fake executor ref |
+| `start_lifecycle_run` | entry node `Ready`，无 executor ref |
+
+### 5. Good/Base/Bad Cases
+
+- Good: subject execution with workflow graph creates one runtime session anchor and the root node has matching `ExecutorRunRef::RuntimeSession` plus trace ref.
+- Base: lifecycle start API creates orchestration only; no agent/frame/session side effect.
+- Bad: dispatch returns a delivery runtime session while `RuntimeNodeState` stays `Ready` with no executor ref.
+
+### 6. Tests Required
+
+- Dispatch service graph-backed subject execution asserts node `Running`、empty ready queues、executor ref、trace ref、anchor refs。
+- Project agent graph dispatch by key asserts the same started materialization。
+- Lifecycle run start test asserts entry remains `Ready`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+dispatch_common creates RuntimeSessionExecutionAnchor, but leaves node Ready
+```
+
+#### Correct
+
+```text
+dispatch_common creates anchor -> submits NodeStarted -> persists LifecycleRun with node Running
+```
+
 ## Contract Appendices
 
 - [Activity Lifecycle Backend Contract](./activity-lifecycle.md)

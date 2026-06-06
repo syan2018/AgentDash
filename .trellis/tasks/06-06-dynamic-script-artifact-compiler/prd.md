@@ -21,6 +21,8 @@
 - 定义脚本来源：
   - `RunScriptArtifact`：本次运行中由模型生成或用户临时编辑、经审批后启动的脚本。
   - `WorkflowScriptDefinition`：可复用项目/库级 workflow script 资产。
+- 首版脚本形态采用 restricted Rhai workflow builder DSL，原因是 Hook 已经使用 Rhai，动态 workflow 又需要与 hook/gate/policy 约束协同；统一表达层可以复用沙箱、AST 缓存、语法校验、诊断和开发者心智。
+- 将现有 Hook Rhai 引擎的通用能力抽出为公共脚本内核，至少覆盖 sandbox limits、AST cache、helper/module registration、validate/eval 和 JSON value bridge；Hook 与 Workflow Script 分别注册自己的 surface。
 - 定义最小脚本语法或 AST，覆盖 Claude Workflow 核心行为族：
   - `phase`
   - `log`
@@ -39,6 +41,7 @@
   - 不启动 AgentRun / FunctionRun / LocalEffect。
   - 不执行 shell / 文件系统 / 网络副作用。
   - 不绕过 permission / capability surface。
+- Rhai 脚本可以在编译期被解释执行，但执行结果只能是 workflow builder AST / plan builder document；不能直接调用 AgentRun、FunctionRun、LocalEffect 或 hook side effect。
 - 定义 pathful diagnostics，覆盖语法错误、未知原语、非法变量引用、循环/并发上限缺失、executor spec 缺失、权限声明缺失、无界 fanout 或无法编译的动态形态。
 - 设计运行前审批流：脚本源码、args、limits、plan preview、diagnostics 和 capability summary 必须在创建正式 `OrchestrationInstance` 前可见。
 - 设计保存为 workflow 的边界：临时 run artifact 可保存为 `WorkflowScriptDefinition`，但保存动作不改变已运行实例的 plan snapshot 身份。
@@ -55,10 +58,11 @@
 
 ## 验收标准
 
-- [ ] `prd.md`、`design.md`、`implement.md` 明确脚本资产、语法/AST、compiler、审批流、保存流和 runtime 复用边界。
+- [ ] `prd.md`、`design.md`、`implement.md` 明确脚本资产、Rhai builder DSL、公共脚本内核、compiler、审批流、保存流和 runtime 复用边界。
 - [ ] design 证明脚本 frontend 能覆盖 `research/claude-workflow-behavior-coverage.md` 的核心行为族，并说明暂不实现或以 diagnostics 阻塞的行为。
 - [ ] design 明确 `RunScriptArtifact` 与 `WorkflowScriptDefinition` 的身份、revision、digest、provenance 和权限边界。
 - [ ] design 给出 script AST -> `OrchestrationPlanSnapshot` 的映射表。
+- [ ] design 明确 Hook Rhai 与 Workflow Rhai 共享内核但隔离业务 surface 的模块边界。
 - [ ] implement plan 给出第一批 fixtures、diagnostics、contract DTO、API route、migration、frontend preview 和验证命令。
 - [ ] context manifests 指向父任务 research、common runtime 子任务、workflow specs 和 cross-layer contract specs。
 - [ ] 任务保持 planning，直到用户评审脚本语法和资产边界。

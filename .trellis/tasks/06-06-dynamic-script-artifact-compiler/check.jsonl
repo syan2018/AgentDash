@@ -3,3 +3,4 @@
 {"file":".trellis/tasks/archive/2026-06/06-06-common-orchestration-runtime-static-graph/prd.md","reason":"检查实现是否复用当前 runtime 地基，不新增平行 scheduler。"}
 {"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"检查 runtime event、executor launcher 和 HumanGate decision 合同。"}
 {"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查新增 API/DTO 是否通过 generated contracts 进入前端。"}
+{"file":".trellis/spec/backend/hooks/hook-script-engine.md","reason":"检查公共 Rhai 内核抽取是否保留 Hook 脚本合同与沙箱限制。"}

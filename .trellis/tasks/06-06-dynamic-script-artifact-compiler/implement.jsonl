@@ -7,3 +7,4 @@
 {"file":".trellis/tasks/archive/2026-06/06-06-common-orchestration-runtime-static-graph/prd.md","reason":"当前 runtime 地基完成面和剩余脚本 frontend 边界。"}
 {"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"semantic executor launcher、runtime event 和 node state 合同。"}
 {"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"跨层 DTO 生成和前端服务 contract 规则。"}
+{"file":".trellis/spec/backend/hooks/hook-script-engine.md","reason":"现有 Rhai Hook 引擎、沙箱、AST cache、helper 和返回值合同，供抽取公共脚本内核时复核。"}

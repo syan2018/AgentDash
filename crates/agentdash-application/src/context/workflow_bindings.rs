@@ -21,8 +21,8 @@ pub fn contribute_workflow_binding(
         source: "legacy:contributor:workflow_bindings".to_string(),
         content: format!(
             "## Workflow Projection Snapshot\n- lifecycle: {} (`{}`)\n- step: `{}`\n- primary_workflow: {}\n- run_status: `{}`\n- binding_count: {}\n- resolved_binding_count: {}",
-            workflow.lifecycle.name,
-            workflow.lifecycle.key,
+            workflow.lifecycle_name,
+            workflow.lifecycle_key,
             workflow.active_activity.key,
             workflow
                 .primary_workflow

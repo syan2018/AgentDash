@@ -66,10 +66,6 @@ pub trait LifecycleRunRepository: Send + Sync {
     async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError>;
     async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError>;
-    async fn list_by_root_graph(
-        &self,
-        root_graph_id: Uuid,
-    ) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }

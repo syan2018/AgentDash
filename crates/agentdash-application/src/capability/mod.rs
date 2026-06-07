@@ -28,6 +28,6 @@ pub use resolver::{
 };
 pub use session_workflow_context::{
     SessionWorkflowOwner, SessionWorkflowRepos, resolve_session_workflow_context,
-    tool_directives_from_active_workflow,
+    tool_directives_from_active_workflow, tool_directives_from_active_workflow_projection,
 };
 pub use tool_catalog::query_tool_catalog;

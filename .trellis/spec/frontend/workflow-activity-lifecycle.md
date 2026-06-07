@@ -81,7 +81,6 @@ type LifecycleRunView = {
   run_ref: LifecycleRunRefDto
   project_id: string
   topology: "graphless" | "workflow_graph"
-  root_graph_id?: string | null
   status: LifecycleRunStatus
   orchestrations: OrchestrationInstanceView[]
   active_runtime_node_refs: ActiveRuntimeNodeRefDto[]
@@ -127,7 +126,7 @@ type ActiveRuntimeNodeRefDto = {
 }
 ```
 
-`topology="graphless"` runs represent ordinary Agent runtime control-plane state and may have `root_graph_id=null` with `orchestrations=[]`. Activity timeline UI is entered from `topology="workflow_graph"` runs and their orchestration runtime node tree.
+`topology="graphless"` runs represent ordinary Agent runtime control-plane state with `orchestrations=[]`. Activity timeline UI is entered from `topology="workflow_graph"` runs and their orchestration runtime node tree. Graph-backed provenance is read from `OrchestrationInstanceView.source_ref` and plan metadata, so the UI can display static WorkflowGraph origin without using a run-level graph field.
 
 Runtime node lookup and human gate commands use `orchestration_id + node_path + attempt` as the durable node coordinate.
 

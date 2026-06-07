@@ -109,7 +109,6 @@ const lifecycleRunView: LifecycleRunView = {
   run_ref: { run_id: "run-projection-123456" },
   project_id: "project-projection",
   topology: "workflow_graph",
-  root_graph_id: "lifecycle-projection",
   status: "running",
   active_runtime_node_refs: [
     {

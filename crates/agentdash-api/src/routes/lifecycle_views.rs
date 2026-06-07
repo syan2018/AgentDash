@@ -340,7 +340,6 @@ pub(crate) fn agent_frame_runtime_to_view(
 ) -> AgentFrameRuntimeView {
     AgentFrameRuntimeView {
         frame_ref: agent_frame_ref(frame),
-        procedure_id: frame.procedure_id.map(|id| id.to_string()),
         capability_surface: frame
             .effective_capability_json
             .clone()

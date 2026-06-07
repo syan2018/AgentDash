@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, AgentProcedureRef, AgentProcedureRepository,
+    AgentFrame, AgentFrameRepository, AgentProcedureExecutionSpec, AgentProcedureRepository,
     AgentReusePolicy, ArtifactAliasPolicy, ExecutorRunRef, ExecutorSpec,
     FunctionActivityExecutorSpec, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
     LifecycleGateRepository, LifecycleRun, LifecycleRunRepository, NodePortValue,
@@ -236,7 +236,7 @@ impl OrchestrationExecutorLauncher {
     ) -> Result<Option<LaunchedAgentNode>, WorkflowApplicationError> {
         let executor = target.plan_node.executor.clone();
         let Some(ExecutorSpec::AgentProcedure {
-            procedure_key,
+            procedure,
             agent_reuse_policy,
             runtime_session_policy,
         }) = executor
@@ -251,25 +251,27 @@ impl OrchestrationExecutorLauncher {
             .await?;
             return Ok(None);
         };
-        let procedure = match self
-            .repos
-            .agent_procedure_repo
-            .get_by_project_and_key(run.project_id, &procedure_key)
-            .await?
-        {
-            Some(procedure) => procedure,
-            None => {
-                self.block_ready_node(
-                    run,
-                    target,
-                    "agent_procedure_not_found",
-                    &format!("AgentProcedure `{procedure_key}` 不存在"),
-                    false,
-                )
-                .await?;
-                return Ok(None);
-            }
-        };
+        if let AgentProcedureExecutionSpec::ByKey { procedure_key } = &procedure {
+            match self
+                .repos
+                .agent_procedure_repo
+                .get_by_project_and_key(run.project_id, procedure_key)
+                .await?
+            {
+                Some(_) => {}
+                None => {
+                    self.block_ready_node(
+                        run,
+                        target,
+                        "agent_procedure_not_found",
+                        &format!("AgentProcedure `{procedure_key}` 不存在"),
+                        false,
+                    )
+                    .await?;
+                    return Ok(None);
+                }
+            };
+        }
 
         let (mut agent, session_id) = match (agent_reuse_policy, runtime_session_policy) {
             (AgentReusePolicy::CreateActivityAgent, RuntimeSessionPolicy::CreateNew) => {
@@ -319,12 +321,7 @@ impl OrchestrationExecutorLauncher {
         };
 
         let frame = self
-            .create_frame(
-                &agent,
-                &target,
-                Some(session_id.clone()),
-                Some(procedure.id),
-            )
+            .create_frame(&agent, &target, Some(session_id.clone()))
             .await?;
         agent.set_current_frame(frame.id);
         self.repos.lifecycle_agent_repo.update(&agent).await?;
@@ -643,7 +640,6 @@ impl OrchestrationExecutorLauncher {
         agent: &LifecycleAgent,
         target: &ReadyNodeTarget,
         runtime_session_ref: Option<String>,
-        procedure_id: Option<Uuid>,
     ) -> Result<AgentFrame, WorkflowApplicationError> {
         let mut builder = AgentFrameBuilder::new(agent.id).with_created_by(
             "orchestration_executor",
@@ -652,9 +648,6 @@ impl OrchestrationExecutorLauncher {
                 target.orchestration_id, target.node_path, target.attempt
             )),
         );
-        if let Some(procedure_id) = procedure_id {
-            builder = builder.with_procedure(AgentProcedureRef::ById(procedure_id));
-        }
         if let Some(session_id) = runtime_session_ref {
             builder = builder.with_runtime_session(session_id);
         }
@@ -1043,20 +1036,6 @@ mod launcher_drain_tests {
                 .collect())
         }
 
-        async fn list_by_root_graph(
-            &self,
-            root_graph_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|run| run.root_graph_id == Some(root_graph_id))
-                .cloned()
-                .collect())
-        }
-
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items.iter_mut().find(|existing| existing.id == run.id) {
@@ -1157,6 +1136,54 @@ mod launcher_drain_tests {
         async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
             Ok(())
         }
+    }
+
+    struct RejectingProcedureRepo;
+
+    #[async_trait]
+    impl AgentProcedureRepository for RejectingProcedureRepo {
+        async fn create(&self, _procedure: &AgentProcedure) -> Result<(), DomainError> {
+            Err(repo_lookup_error())
+        }
+
+        async fn get_by_id(&self, _id: Uuid) -> Result<Option<AgentProcedure>, DomainError> {
+            Err(repo_lookup_error())
+        }
+
+        async fn get_by_key(&self, _key: &str) -> Result<Option<AgentProcedure>, DomainError> {
+            Err(repo_lookup_error())
+        }
+
+        async fn get_by_project_and_key(
+            &self,
+            _project_id: Uuid,
+            _key: &str,
+        ) -> Result<Option<AgentProcedure>, DomainError> {
+            Err(repo_lookup_error())
+        }
+
+        async fn list_all(&self) -> Result<Vec<AgentProcedure>, DomainError> {
+            Err(repo_lookup_error())
+        }
+
+        async fn list_by_project(
+            &self,
+            _project_id: Uuid,
+        ) -> Result<Vec<AgentProcedure>, DomainError> {
+            Err(repo_lookup_error())
+        }
+
+        async fn update(&self, _procedure: &AgentProcedure) -> Result<(), DomainError> {
+            Err(repo_lookup_error())
+        }
+
+        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
+            Err(repo_lookup_error())
+        }
+    }
+
+    fn repo_lookup_error() -> DomainError {
+        DomainError::InvalidConfig("snapshot procedure must not query repository".to_string())
     }
 
     #[derive(Default)]
@@ -1363,7 +1390,7 @@ mod launcher_drain_tests {
     fn launcher_with_procedure_repo(
         run_repo: Arc<InMemoryRunRepo>,
         gate_repo: Arc<InMemoryGateRepo>,
-        procedure_repo: Arc<InMemoryProcedureRepo>,
+        procedure_repo: Arc<dyn AgentProcedureRepository>,
     ) -> OrchestrationExecutorLauncher {
         OrchestrationExecutorLauncher::from_repositories(OrchestrationExecutorRepositories {
             lifecycle_run_repo: run_repo,
@@ -1428,7 +1455,7 @@ mod launcher_drain_tests {
             created_at: Utc::now(),
         };
         let orchestration = activate_root_orchestration(source_ref, plan_snapshot);
-        let mut run = LifecycleRun::new_control(Uuid::new_v4(), graph_id);
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
         assert!(run.add_orchestration(orchestration));
         run
     }
@@ -1474,7 +1501,21 @@ mod launcher_drain_tests {
 
     fn agent_executor(procedure_key: &str) -> ExecutorSpec {
         ExecutorSpec::AgentProcedure {
-            procedure_key: procedure_key.to_string(),
+            procedure: AgentProcedureExecutionSpec::by_key(procedure_key),
+            agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
+            runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+        }
+    }
+
+    fn snapshot_agent_executor() -> ExecutorSpec {
+        ExecutorSpec::AgentProcedure {
+            procedure: AgentProcedureExecutionSpec::Snapshot {
+                procedure_key: None,
+                name: Some("Inline Review".to_string()),
+                contract: AgentProcedureContract::default(),
+                source_ref: None,
+                contract_digest: Some("sha256:inline".to_string()),
+            },
             agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
             runtime_session_policy: RuntimeSessionPolicy::CreateNew,
         }
@@ -1629,6 +1670,38 @@ mod launcher_drain_tests {
             }]
         );
         assert!(latest.orchestrations[0].dispatch.ready_node_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn launcher_launches_snapshot_agent_without_procedure_repository_lookup() {
+        let node = plan_node(
+            "agent",
+            PlanNodeKind::AgentCall,
+            Some(snapshot_agent_executor()),
+        );
+        let run = run_with_node(node);
+        let run_id = run.id;
+        let run_repo = Arc::new(InMemoryRunRepo::default());
+        run_repo.insert(run);
+        let launcher = launcher_with_procedure_repo(
+            run_repo.clone(),
+            Arc::new(InMemoryGateRepo::default()),
+            Arc::new(RejectingProcedureRepo),
+        );
+
+        let result = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("snapshot agent should launch without repository lookup");
+
+        assert_eq!(result.launched_agent_nodes.len(), 1);
+        let latest = latest_run(&run_repo, run_id);
+        let node = runtime_node(&latest, "agent");
+        assert_eq!(node.status, RuntimeNodeStatus::Running);
+        assert!(matches!(
+            node.executor_run_ref,
+            Some(ExecutorRunRef::RuntimeSession { .. })
+        ));
     }
 
     #[tokio::test]

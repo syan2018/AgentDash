@@ -5,8 +5,8 @@ use std::sync::Arc;
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::workflow::{
-    ExecutorRunRef, LifecycleRun, LifecycleRunRepository, OrchestrationInstance, RuntimeNodeState,
-    RuntimeNodeStatus,
+    ExecutorRunRef, LifecycleRun, LifecycleRunRepository, OrchestrationInstance,
+    OrchestrationSourceRef, RuntimeNodeState, RuntimeNodeStatus,
 };
 use async_trait::async_trait;
 use serde::Serialize;
@@ -57,7 +57,6 @@ impl LifecycleMountProvider {
 struct LifecycleRunOverview<'a> {
     id: Uuid,
     project_id: Uuid,
-    root_graph_id: Option<Uuid>,
     status: &'a agentdash_domain::workflow::LifecycleRunStatus,
     orchestration_count: usize,
     active_node_refs: Vec<String>,
@@ -240,7 +239,6 @@ fn run_overview(run: &LifecycleRun) -> LifecycleRunOverview<'_> {
     LifecycleRunOverview {
         id: run.id,
         project_id: run.project_id,
-        root_graph_id: run.root_graph_id,
         status: &run.status,
         orchestration_count: run.orchestrations.len(),
         active_node_refs,
@@ -249,6 +247,48 @@ fn run_overview(run: &LifecycleRun) -> LifecycleRunOverview<'_> {
         updated_at: run.updated_at,
         last_activity_at: run.last_activity_at,
     }
+}
+
+fn same_source_family(left: &OrchestrationSourceRef, right: &OrchestrationSourceRef) -> bool {
+    match (left, right) {
+        (
+            OrchestrationSourceRef::WorkflowGraph { graph_id: left, .. },
+            OrchestrationSourceRef::WorkflowGraph {
+                graph_id: right, ..
+            },
+        ) => left == right,
+        (
+            OrchestrationSourceRef::RunScriptArtifact {
+                artifact_id: left, ..
+            },
+            OrchestrationSourceRef::RunScriptArtifact {
+                artifact_id: right, ..
+            },
+        ) => left == right,
+        (
+            OrchestrationSourceRef::WorkflowScript {
+                script_id: left, ..
+            },
+            OrchestrationSourceRef::WorkflowScript {
+                script_id: right, ..
+            },
+        ) => left == right,
+        (
+            OrchestrationSourceRef::Inline {
+                source_digest: left,
+            },
+            OrchestrationSourceRef::Inline {
+                source_digest: right,
+            },
+        ) => left == right,
+        _ => false,
+    }
+}
+
+fn run_has_source_family(run: &LifecycleRun, source_ref: &OrchestrationSourceRef) -> bool {
+    run.orchestrations
+        .iter()
+        .any(|orchestration| same_source_family(&orchestration.source_ref, source_ref))
 }
 
 fn records_prefix(node_path: &str) -> String {
@@ -333,17 +373,18 @@ impl MountProvider for LifecycleMountProvider {
                         .await
                         .map_err(map_journey_err)?,
                     ["runs"] => {
-                        let root_graph_id = active.run.root_graph_id.ok_or_else(|| {
-                            MountError::OperationFailed(
-                                "当前 lifecycle run 没有关联 root_graph_id".to_string(),
-                            )
-                        })?;
                         let runs = self
                             .lifecycle_run_repo
-                            .list_by_root_graph(root_graph_id)
+                            .list_by_project(active.run.project_id)
                             .await
                             .map_err(map_domain_err)?;
-                        let summaries = runs.iter().map(run_overview).collect::<Vec<_>>();
+                        let summaries = runs
+                            .iter()
+                            .filter(|run| {
+                                run_has_source_family(run, &active.orchestration.source_ref)
+                            })
+                            .map(run_overview)
+                            .collect::<Vec<_>>();
                         to_json_pretty(&summaries).map_err(map_journey_err)?
                     }
                     ["runs", id_str] => {

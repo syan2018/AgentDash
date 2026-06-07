@@ -168,7 +168,6 @@ pub async fn launch_project_agent(
         parent_run_id: None,
         parent_agent_id: None,
         workflow_graph_ref,
-        agent_procedure_ref: None,
         run_policy: RunPolicy::CreateLinkedRun,
         agent_policy: AgentPolicy::Create,
         context_policy: ContextPolicy::Isolated,

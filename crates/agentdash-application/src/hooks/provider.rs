@@ -6,7 +6,8 @@ use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentProcedureRepository, LifecycleAgentRepository,
     LifecycleRunRepository, LifecycleSubjectAssociationRepository, RuntimeNodeStatus,
-    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository, build_effective_contract,
+    RuntimeSessionExecutionAnchorRepository, build_effective_contract,
+    build_effective_contract_from_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -46,7 +47,6 @@ impl AppExecutionHookProvider {
         project_repo: Arc<dyn ProjectRepository>,
         story_repo: Arc<dyn StoryRepository>,
         agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
-        workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
         agent_frame_repo: Arc<dyn AgentFrameRepository>,
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -69,7 +69,6 @@ impl AppExecutionHookProvider {
             ),
             workflow_builder: WorkflowSnapshotBuilder::new(
                 agent_procedure_repo,
-                workflow_graph_repo,
                 agent_frame_repo,
                 lifecycle_agent_repo,
                 lifecycle_run_repo,
@@ -129,7 +128,7 @@ impl AppExecutionHookProvider {
                 code: "active_workflow_resolved".to_string(),
                 message: format!(
                     "命中 active lifecycle step：{} / {}",
-                    workflow.lifecycle.key, workflow.active_activity.key
+                    workflow.lifecycle_key, workflow.active_activity.key
                 ),
             });
 
@@ -170,9 +169,9 @@ impl AppExecutionHookProvider {
                     }
                 });
                 meta.active_workflow = Some(ActiveWorkflowMeta {
-                    workflow_graph_id: Some(workflow.lifecycle.id),
-                    lifecycle_key: Some(workflow.lifecycle.key.clone()),
-                    lifecycle_name: Some(workflow.lifecycle.name.clone()),
+                    workflow_graph_id: workflow.lifecycle_graph_id,
+                    lifecycle_key: Some(workflow.lifecycle_key.clone()),
+                    lifecycle_name: Some(workflow.lifecycle_name.clone()),
                     run_id: Some(workflow.run.id),
                     run_status: Some(workflow.run.status),
                     activity_key: Some(workflow.active_activity.key.clone()),
@@ -186,11 +185,18 @@ impl AppExecutionHookProvider {
                         .primary_workflow
                         .as_ref()
                         .map(|w| w.name.clone()),
-                    effective_contract: Some(build_effective_contract(
-                        &workflow.lifecycle.key,
-                        &workflow.active_activity.key,
-                        workflow.primary_workflow.as_ref(),
-                    )),
+                    effective_contract: Some(match workflow.active_contract() {
+                        Some(contract) => build_effective_contract_from_contract(
+                            &workflow.lifecycle_key,
+                            &workflow.active_activity.key,
+                            contract,
+                        ),
+                        None => build_effective_contract(
+                            &workflow.lifecycle_key,
+                            &workflow.active_activity.key,
+                            None,
+                        ),
+                    }),
                     output_port_keys: {
                         let port_keys: Vec<String> = workflow
                             .active_activity

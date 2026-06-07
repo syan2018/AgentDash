@@ -19,7 +19,7 @@
 use std::collections::BTreeSet;
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, AgentFrameRepository, AgentProcedure, MountDirective,
+    ActivityDefinition, AgentFrameRepository, AgentProcedureContract, MountDirective,
     ToolCapabilityDirective,
 };
 use agentdash_spi::CapabilityScopeCtx;
@@ -50,9 +50,8 @@ pub struct ActivityActivationInput<'a> {
     /// 当前激活的 activity 定义;提供 output/input ports、key、description。
     /// node_type / procedure_key 由 executor 推导,激活计算本身不需要。
     pub active_activity: &'a ActivityDefinition,
-    /// activity 绑定的 workflow 定义(若有);提供 `contract.capability_config.tool_directives` baseline 与
-    /// injection/hook_rules/constraints/completion。
-    pub workflow: Option<&'a AgentProcedure>,
+    /// activity 绑定的 AgentProcedure 执行合同(若有);提供 capability baseline 与 mount overlay。
+    pub workflow_contract: Option<&'a AgentProcedureContract>,
     /// lifecycle 的 run_id,用于构建 `lifecycle://<run_id>/artifacts/...` mount。
     pub run_id: Uuid,
     /// 当前 Activity 所属 orchestration instance，用于把 lifecycle VFS 绑定到运行态事实源。
@@ -127,15 +126,15 @@ pub fn activate_activity_with_platform(
     let baseline_directives: Vec<ToolCapabilityDirective> =
         input.baseline_override.clone().unwrap_or_else(|| {
             input
-                .workflow
-                .map(|w| w.contract.capability_config.tool_directives.clone())
+                .workflow_contract
+                .map(|contract| contract.capability_config.tool_directives.clone())
                 .unwrap_or_default()
         });
 
     let mut combined_directives = baseline_directives;
     combined_directives.extend(input.tool_directives.iter().cloned());
 
-    let has_active_workflow = input.workflow.is_some();
+    let has_active_workflow = input.workflow_contract.is_some();
 
     // ── 2. 调 Resolver ──
     let mut contributions = Vec::new();
@@ -197,8 +196,8 @@ pub fn activate_activity_with_platform(
     };
     // Activity 没有 step 级 capability_config;mount overlay 全部来自 workflow contract。
     let mount_directives = input
-        .workflow
-        .map(|workflow| workflow.contract.capability_config.mount_directives.clone())
+        .workflow_contract
+        .map(|contract| contract.capability_config.mount_directives.clone())
         .unwrap_or_default();
 
     // ── 5. kickoff prompt fragment ──
@@ -468,7 +467,7 @@ mod tests {
                 task_id,
             },
             active_activity: &step,
-            workflow: None,
+            workflow_contract: None,
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -505,7 +504,7 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: Some(&workflow),
+            workflow_contract: Some(&workflow.contract),
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -539,7 +538,7 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: Some(&workflow),
+            workflow_contract: Some(&workflow.contract),
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -579,7 +578,7 @@ mod tests {
         let base_input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: Some(&full_read_workflow),
+            workflow_contract: Some(&full_read_workflow.contract),
             run_id,
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -594,7 +593,7 @@ mod tests {
             available_companions: Vec::new(),
         };
         let restricted_input = ActivityActivationInput {
-            workflow: Some(&restricted_read_workflow),
+            workflow_contract: Some(&restricted_read_workflow.contract),
             ..base_input.clone()
         };
 
@@ -649,7 +648,7 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: Some(&workflow),
+            workflow_contract: Some(&workflow.contract),
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -712,7 +711,7 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: Some(&workflow),
+            workflow_contract: Some(&workflow.contract),
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -758,7 +757,7 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: None,
+            workflow_contract: None,
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -817,7 +816,7 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: None,
+            workflow_contract: None,
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",

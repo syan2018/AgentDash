@@ -400,20 +400,6 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_root_graph(
-            &self,
-            root_graph_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|run| run.root_graph_id == Some(root_graph_id))
-                .cloned()
-                .collect())
-        }
-
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             let mut runs = self.runs.lock().unwrap();
             if let Some(existing) = runs.iter_mut().find(|existing| existing.id == run.id) {
@@ -680,7 +666,7 @@ mod tests {
 
     fn run_with_running_node(project_id: Uuid) -> (LifecycleRun, Uuid) {
         let graph_id = Uuid::new_v4();
-        let mut run = LifecycleRun::new_control(project_id, graph_id);
+        let mut run = LifecycleRun::new_control(project_id);
         let source_ref = OrchestrationSourceRef::WorkflowGraph {
             graph_id,
             graph_version: Some(1),
@@ -876,7 +862,7 @@ mod tests {
         let frame_repo = FrameRepo::default();
         let anchor_repo = AnchorRepo::default();
 
-        let run = LifecycleRun::new_control(project_id, Uuid::new_v4());
+        let run = LifecycleRun::new_control(project_id);
         let mut agent = LifecycleAgent::new_root(run.id, project_id, "task_agent");
         agent.status = "completed".to_string();
         agent_repo.create(&agent).await.expect("agent");

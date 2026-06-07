@@ -2,9 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::workflow::{
     ActivityDefinition, ActivityExecutorSpec, ActivityJoinPolicy, ActivityTransition,
-    ActivityTransitionKind, ExecutorSpec, FunctionActivityExecutorSpec, OrchestrationLimits,
-    OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNode, PlanNodeKind, StateExchangeRule,
-    TransitionCondition, ValidationSeverity, WorkflowGraph, validate_workflow_graph,
+    ActivityTransitionKind, AgentProcedureExecutionSpec, ExecutorSpec,
+    FunctionActivityExecutorSpec, OrchestrationLimits, OrchestrationPlanSnapshot,
+    OrchestrationSourceRef, PlanNode, PlanNodeKind, StateExchangeRule, TransitionCondition,
+    ValidationSeverity, WorkflowGraph, validate_workflow_graph,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -337,7 +338,7 @@ impl<'a> Compiler<'a> {
                 (
                     PlanNodeKind::AgentCall,
                     ExecutorSpec::AgentProcedure {
-                        procedure_key: spec.procedure_key.clone(),
+                        procedure: AgentProcedureExecutionSpec::by_key(spec.procedure_key.clone()),
                         agent_reuse_policy: spec.agent_reuse_policy,
                         runtime_session_policy: spec.runtime_session_policy,
                     },

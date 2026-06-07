@@ -443,20 +443,6 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_root_graph(
-            &self,
-            root_graph_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|run| run.root_graph_id == Some(root_graph_id))
-                .cloned()
-                .collect())
-        }
-
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items.iter_mut().find(|item| item.id == run.id) {
@@ -739,7 +725,7 @@ mod tests {
     }
 
     fn test_run(project_id: Uuid) -> LifecycleRun {
-        LifecycleRun::new_control(project_id, Uuid::new_v4())
+        LifecycleRun::new_control(project_id)
     }
 
     fn test_orchestration(node_path: &str) -> OrchestrationInstance {

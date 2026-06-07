@@ -282,7 +282,6 @@ fn assemble_lifecycle_run_view(
         },
         project_id: run.project_id.to_string(),
         topology: topology_to_dto(run.topology),
-        root_graph_id: run.root_graph_id.map(|id| id.to_string()),
         status: status_to_dto(run.status),
         orchestrations,
         active_runtime_node_refs,

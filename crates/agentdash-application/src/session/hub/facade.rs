@@ -177,7 +177,6 @@ fn envelope_from_construction(construction: RuntimeContextInspectionPlan) -> Fra
             agent_id: uuid::Uuid::new_v4(),
             frame_id: uuid::Uuid::new_v4(),
             frame_revision: 1,
-            procedure_ref: None,
             capability_surface: serde_json::Value::Null,
             context_slice: serde_json::Value::Null,
             vfs_surface: serde_json::Value::Null,

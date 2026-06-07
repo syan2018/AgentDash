@@ -41,7 +41,6 @@ CREATE TABLE agent_frames (
     id text NOT NULL,
     agent_id text NOT NULL,
     revision integer DEFAULT 1 NOT NULL,
-    procedure_id text,
     graph_instance_id text,
     activity_key text,
     effective_capability_json text,
@@ -283,7 +282,9 @@ CREATE TABLE lifecycle_runs (
     id text NOT NULL,
     project_id text NOT NULL,
     topology text NOT NULL,
-    root_graph_id text,
+    context text DEFAULT '{}'::text NOT NULL,
+    orchestrations text DEFAULT '[]'::text NOT NULL,
+    view_projection text,
     status text NOT NULL,
     execution_log text DEFAULT '[]'::text NOT NULL,
     created_at timestamp with time zone NOT NULL,
@@ -884,12 +885,6 @@ ALTER TABLE ONLY lifecycle_gates
 
 ALTER TABLE ONLY lifecycle_runs
     ADD CONSTRAINT lifecycle_runs_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY lifecycle_runs
-    ADD CONSTRAINT lifecycle_runs_topology_root_graph_check CHECK (
-        (topology = 'graphless' AND root_graph_id IS NULL)
-        OR (topology = 'workflow_graph' AND root_graph_id IS NOT NULL)
-    );
 
 ALTER TABLE ONLY lifecycle_subject_associations
     ADD CONSTRAINT lifecycle_subject_associations_pkey PRIMARY KEY (id);

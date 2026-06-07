@@ -277,7 +277,6 @@ export interface WorkflowRun {
   id: string;
   project_id: string;
   topology: "graphless" | "workflow_graph";
-  root_graph_id?: string;
   status: WorkflowRunStatus;
   execution_log: LifecycleExecutionEntry[];
   created_at: string;

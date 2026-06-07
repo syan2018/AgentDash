@@ -480,7 +480,6 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
       WORKFLOW_RUN_TOPOLOGIES,
       "workflow run topology",
     ),
-    root_graph_id: optStringField(raw, "root_graph_id") || undefined,
     status: normalizeEnum<WorkflowRunStatus>(raw.status, WORKFLOW_RUN_STATUSES, "workflow run status"),
     execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),
     created_at: requireStringField(raw, "created_at"),

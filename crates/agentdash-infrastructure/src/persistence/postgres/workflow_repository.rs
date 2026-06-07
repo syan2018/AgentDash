@@ -29,8 +29,8 @@ impl PostgresWorkflowRepository {
 
 const WF_COLS: &str = "id,project_id,key,name,description,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const WG_COLS: &str = "id,project_id,key,name,description,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,topology,root_graph_id,context,orchestrations,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,topology,root_graph_id,context,orchestrations,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
+const RUN_COLS: &str = "id,project_id,topology,context,orchestrations,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,topology,context,orchestrations,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
 
 #[async_trait::async_trait]
 impl AgentProcedureRepository for PostgresWorkflowRepository {
@@ -419,12 +419,11 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
         .bind(topology_to_db(run.topology))
-        .bind(run.root_graph_id.map(|id| id.to_string()))
         .bind(serde_json::to_string(&run.context)?)
         .bind(serde_json::to_string(&run.orchestrations)?)
         .bind(serialize_optional_json(&run.view_projection)?)
@@ -493,27 +492,10 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         .collect()
     }
 
-    async fn list_by_root_graph(
-        &self,
-        root_graph_id: uuid::Uuid,
-    ) -> Result<Vec<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>(&format!(
-            "SELECT {RUN_COLS} FROM lifecycle_runs WHERE root_graph_id = $1 ORDER BY created_at DESC"
-        ))
-        .bind(root_graph_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,topology=$2,root_graph_id=$3,context=$4,orchestrations=$5,view_projection=$6,status=$7,execution_log=$8,updated_at=$9,last_activity_at=$10 WHERE id=$11")
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,topology=$2,context=$3,orchestrations=$4,view_projection=$5,status=$6,execution_log=$7,updated_at=$8,last_activity_at=$9 WHERE id=$10")
             .bind(run.project_id.to_string())
             .bind(topology_to_db(run.topology))
-            .bind(run.root_graph_id.map(|id| id.to_string()))
             .bind(serde_json::to_string(&run.context)?)
             .bind(serde_json::to_string(&run.orchestrations)?)
             .bind(serialize_optional_json(&run.view_projection)?)
@@ -655,7 +637,6 @@ struct LifecycleRunRow {
     id: String,
     project_id: String,
     topology: String,
-    root_graph_id: Option<String>,
     context: String,
     orchestrations: String,
     view_projection: Option<String>,
@@ -673,11 +654,6 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             id: parse_uuid(&row.id, "lifecycle_run")?,
             project_id: parse_uuid(&row.project_id, "project")?,
             topology: parse_topology(&row.topology)?,
-            root_graph_id: row
-                .root_graph_id
-                .as_deref()
-                .map(|id| parse_uuid(id, "root_graph"))
-                .transpose()?,
             context: parse_json_column::<LifecycleContext>(&row.context, "lifecycle_runs.context")?,
             orchestrations: parse_json_column::<Vec<OrchestrationInstance>>(
                 &row.orchestrations,
@@ -796,11 +772,12 @@ mod workflow_claim_tests {
     use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-        AgentActivityExecutorSpec, AgentProcedureContract, AgentReusePolicy, AgentRunRef,
-        BashExecExecutorSpec, ExecutorSpec, FunctionActivityExecutorSpec,
-        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleContext, LifecycleRunStatus,
-        OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNode,
-        PlanNodeKind, RuntimeSessionPolicy, WorkflowTemplateInstallBundle,
+        AgentActivityExecutorSpec, AgentProcedureContract, AgentProcedureExecutionSpec,
+        AgentReusePolicy, AgentRunRef, BashExecExecutorSpec, ExecutorSpec,
+        FunctionActivityExecutorSpec, HumanActivityExecutorSpec, HumanApprovalExecutorSpec,
+        LifecycleContext, LifecycleRunStatus, OrchestrationInstance, OrchestrationPlanSnapshot,
+        OrchestrationSourceRef, PlanNode, PlanNodeKind, RuntimeSessionPolicy,
+        WorkflowTemplateInstallBundle,
     };
     use serde_json::json;
 
@@ -810,7 +787,6 @@ mod workflow_claim_tests {
             id: uuid::Uuid::new_v4().to_string(),
             project_id: uuid::Uuid::new_v4().to_string(),
             topology: "graphless".to_string(),
-            root_graph_id: None,
             context: "{}".to_string(),
             orchestrations: "[]".to_string(),
             view_projection: None,
@@ -879,7 +855,7 @@ mod workflow_claim_tests {
 
     fn agent_executor() -> ExecutorSpec {
         ExecutorSpec::AgentProcedure {
-            procedure_key: "workflow.plan".to_string(),
+            procedure: AgentProcedureExecutionSpec::by_key("workflow.plan"),
             agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
             runtime_session_policy: RuntimeSessionPolicy::CreateNew,
         }
@@ -1055,7 +1031,7 @@ mod workflow_claim_tests {
         repo.initialize().await.expect("initialize");
 
         let project_id = uuid::Uuid::new_v4();
-        let mut run = LifecycleRun::new_control(project_id, uuid::Uuid::new_v4());
+        let mut run = LifecycleRun::new_control(project_id);
         let agent_run_id = uuid::Uuid::new_v4();
         let context = LifecycleContext {
             main_agent_run_id: Some(agent_run_id),

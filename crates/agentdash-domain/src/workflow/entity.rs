@@ -153,9 +153,6 @@ pub struct LifecycleRun {
     pub id: Uuid,
     pub project_id: Uuid,
     pub topology: LifecycleRunTopology,
-    /// 此 run 关联的 root WorkflowGraph ID；graphless run 不拥有 WorkflowGraph。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root_graph_id: Option<Uuid>,
     #[serde(default)]
     pub context: LifecycleContext,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -171,13 +168,12 @@ pub struct LifecycleRun {
 }
 
 impl LifecycleRun {
-    pub fn new_control(project_id: Uuid, root_graph_id: Uuid) -> Self {
+    pub fn new_control(project_id: Uuid) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             project_id,
             topology: LifecycleRunTopology::WorkflowGraph,
-            root_graph_id: Some(root_graph_id),
             context: LifecycleContext::default(),
             orchestrations: Vec::new(),
             view_projection: None,
@@ -195,7 +191,6 @@ impl LifecycleRun {
             id: Uuid::new_v4(),
             project_id,
             topology: LifecycleRunTopology::Graphless,
-            root_graph_id: None,
             context: LifecycleContext::default(),
             orchestrations: Vec::new(),
             view_projection: None,
@@ -331,12 +326,9 @@ pub fn build_effective_contract(
     primary_workflow: Option<&AgentProcedure>,
 ) -> EffectiveSessionContract {
     match primary_workflow {
-        Some(w) => EffectiveSessionContract {
-            lifecycle_key: Some(lifecycle_key.to_string()),
-            active_activity_key: Some(active_activity_key.to_string()),
-            injection: w.contract.injection.clone(),
-            hook_rules: w.contract.hook_rules.clone(),
-        },
+        Some(w) => {
+            build_effective_contract_from_contract(lifecycle_key, active_activity_key, &w.contract)
+        }
         None => EffectiveSessionContract {
             lifecycle_key: Some(lifecycle_key.to_string()),
             active_activity_key: Some(active_activity_key.to_string()),
@@ -345,14 +337,27 @@ pub fn build_effective_contract(
     }
 }
 
+pub fn build_effective_contract_from_contract(
+    lifecycle_key: &str,
+    active_activity_key: &str,
+    contract: &AgentProcedureContract,
+) -> EffectiveSessionContract {
+    EffectiveSessionContract {
+        lifecycle_key: Some(lifecycle_key.to_string()),
+        active_activity_key: Some(active_activity_key.to_string()),
+        injection: contract.injection.clone(),
+        hook_rules: contract.hook_rules.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::workflow::value_objects::{
-        AgentReusePolicy, BashExecExecutorSpec, ExecutorSpec, FunctionActivityExecutorSpec,
-        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, OrchestrationPlanSnapshot,
-        OrchestrationSourceRef, OrchestrationStatus, PlanNode, PlanNodeKind, RuntimeSessionPolicy,
-        WorkflowContextBinding, WorkflowInjectionSpec,
+        AgentProcedureExecutionSpec, AgentReusePolicy, BashExecExecutorSpec, ExecutorSpec,
+        FunctionActivityExecutorSpec, HumanActivityExecutorSpec, HumanApprovalExecutorSpec,
+        OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus, PlanNode,
+        PlanNodeKind, RuntimeSessionPolicy, WorkflowContextBinding, WorkflowInjectionSpec,
     };
 
     fn contract() -> AgentProcedureContract {
@@ -422,7 +427,7 @@ mod tests {
 
     fn agent_executor() -> ExecutorSpec {
         ExecutorSpec::AgentProcedure {
-            procedure_key: "workflow.plan".to_string(),
+            procedure: AgentProcedureExecutionSpec::by_key("workflow.plan"),
             agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
             runtime_session_policy: RuntimeSessionPolicy::CreateNew,
         }
@@ -449,7 +454,7 @@ mod tests {
 
     #[test]
     fn lifecycle_run_orchestration_contract_defaults_empty() {
-        let control = LifecycleRun::new_control(Uuid::new_v4(), Uuid::new_v4());
+        let control = LifecycleRun::new_control(Uuid::new_v4());
         assert_eq!(control.context, LifecycleContext::default());
         assert!(control.orchestrations.is_empty());
         assert!(control.view_projection.is_none());
@@ -462,7 +467,7 @@ mod tests {
 
     #[test]
     fn lifecycle_run_orchestration_aggregate_adds_replaces_and_finds_one_instance() {
-        let mut run = LifecycleRun::new_control(Uuid::new_v4(), Uuid::new_v4());
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
         let context = LifecycleContext {
             main_agent_run_id: Some(Uuid::new_v4()),
             ..LifecycleContext::default()
@@ -498,7 +503,7 @@ mod tests {
 
     #[test]
     fn lifecycle_run_orchestration_aggregate_keeps_multiple_executor_instances() {
-        let mut run = LifecycleRun::new_control(Uuid::new_v4(), Uuid::new_v4());
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
         assert!(run.add_orchestration(orchestration_instance("agent", agent_executor())));
         assert!(run.add_orchestration(orchestration_instance("function", function_executor())));
         assert!(run.add_orchestration(orchestration_instance("human", human_executor())));

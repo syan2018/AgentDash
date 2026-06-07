@@ -333,18 +333,6 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_root_graph(
-            &self,
-            root_graph_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .runs
-                .values()
-                .filter(|run| run.root_graph_id == Some(root_graph_id))
-                .cloned()
-                .collect())
-        }
-
         async fn update(&self, _run: &LifecycleRun) -> Result<(), DomainError> {
             Ok(())
         }
@@ -459,12 +447,11 @@ mod tests {
     #[tokio::test]
     async fn resolver_uses_orchestration_anchor_after_runtime_frame_revision_changes() {
         let project_id = Uuid::new_v4();
-        let lifecycle_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let orchestration_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
         let launch_frame_id = Uuid::new_v4();
-        let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
+        let mut run = LifecycleRun::new_control(project_id);
         run.id = run_id;
         let mut launch_frame = AgentFrame::new_revision(agent_id, 1, "launch");
         launch_frame.id = launch_frame_id;
@@ -503,12 +490,11 @@ mod tests {
     #[tokio::test]
     async fn resolver_uses_execution_anchor_node_evidence() {
         let project_id = Uuid::new_v4();
-        let lifecycle_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let orchestration_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
         let launch_frame_id = Uuid::new_v4();
-        let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
+        let mut run = LifecycleRun::new_control(project_id);
         run.id = run_id;
         let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
             "sess-anchor",
@@ -547,10 +533,9 @@ mod tests {
     #[tokio::test]
     async fn resolver_returns_none_for_graphless_anchor() {
         let project_id = Uuid::new_v4();
-        let lifecycle_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
-        let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
+        let mut run = LifecycleRun::new_control(project_id);
         run.id = run_id;
         let current_frame = AgentFrame::new_revision(agent_id, 2, "capability_update");
         let frame_id = current_frame.id;
@@ -578,10 +563,9 @@ mod tests {
     #[tokio::test]
     async fn resolver_returns_none_without_anchor_repo() {
         let project_id = Uuid::new_v4();
-        let lifecycle_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
-        let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
+        let mut run = LifecycleRun::new_control(project_id);
         run.id = run_id;
         let current_frame = AgentFrame::new_revision(agent_id, 1, "agent_launch");
         let frame_repo = TestFrameRepo {

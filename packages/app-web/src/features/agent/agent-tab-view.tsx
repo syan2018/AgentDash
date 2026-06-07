@@ -9,15 +9,8 @@ import { useLifecycleStore } from "../../stores/lifecycleStore";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { ActiveSessionList } from "./active-session-list";
+import { projectAgentDraftSessionPath } from "./project-agent-paths";
 import { ProjectAgentView } from "../project/project-agent-view";
-
-export function projectAgentDraftSessionPath(projectId: string, agentKey: string): string {
-  const params = new URLSearchParams({
-    project_id: projectId,
-    project_agent_id: agentKey,
-  });
-  return `/session/new?${params.toString()}`;
-}
 
 export function AgentTabView() {
   const navigate = useNavigate();

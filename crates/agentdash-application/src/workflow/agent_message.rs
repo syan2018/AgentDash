@@ -280,20 +280,6 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_root_graph(
-            &self,
-            root_graph_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|run| run.root_graph_id == Some(root_graph_id))
-                .cloned()
-                .collect())
-        }
-
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items.iter_mut().find(|existing| existing.id == run.id) {
@@ -519,7 +505,7 @@ mod tests {
         runtime_session_id: &str,
     ) -> (LifecycleRun, LifecycleAgent, AgentFrame) {
         let project_id = Uuid::new_v4();
-        let mut run = LifecycleRun::new_control(project_id, Uuid::new_v4());
+        let mut run = LifecycleRun::new_control(project_id);
         run.created_at = Utc::now();
         let mut agent = LifecycleAgent::new_root(run.id, project_id, "project_agent");
         let frame = AgentFrame::new_revision(agent.id, 1, "test");

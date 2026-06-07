@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use agentdash_domain::workflow::{AgentFrame, AgentProcedureRef};
+use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
     AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, SessionContextBundle,
@@ -31,7 +31,6 @@ pub struct FrameRuntimeSurface {
     pub agent_id: Uuid,
     pub frame_id: Uuid,
     pub frame_revision: i32,
-    pub procedure_ref: Option<AgentProcedureRef>,
     pub capability_surface: serde_json::Value,
     pub context_slice: serde_json::Value,
     pub vfs_surface: serde_json::Value,
@@ -45,7 +44,6 @@ impl FrameRuntimeSurface {
             agent_id: frame.agent_id,
             frame_id: frame.id,
             frame_revision: frame.revision,
-            procedure_ref: frame.procedure_id.map(AgentProcedureRef::ById),
             capability_surface: frame
                 .effective_capability_json
                 .clone()
@@ -118,11 +116,9 @@ mod tests {
     #[test]
     fn frame_runtime_surface_from_frame_projects_all_fields() {
         let agent_id = Uuid::new_v4();
-        let proc_id = Uuid::new_v4();
         let session_id = Uuid::new_v4();
 
         let mut frame = AgentFrame::new_revision(agent_id, 3, "test");
-        frame.procedure_id = Some(proc_id);
         frame.effective_capability_json = Some(serde_json::json!({"file_read": true}));
         frame.context_slice_json = Some(serde_json::json!({"project": "demo"}));
         frame.vfs_surface_json = Some(serde_json::json!({"mounts": []}));
@@ -134,10 +130,6 @@ mod tests {
         assert_eq!(surface.frame_id, frame.id);
         assert_eq!(surface.frame_revision, 3);
         assert_eq!(surface.runtime_session_id, Some(session_id.to_string()));
-        assert!(matches!(
-            surface.procedure_ref,
-            Some(AgentProcedureRef::ById(id)) if id == proc_id
-        ));
         assert_eq!(
             surface.capability_surface,
             serde_json::json!({"file_read": true})
@@ -157,7 +149,6 @@ mod tests {
 
         assert_eq!(surface.agent_id, agent_id);
         assert_eq!(surface.frame_revision, 1);
-        assert!(surface.procedure_ref.is_none());
         assert!(surface.runtime_session_id.is_none());
         assert!(surface.capability_surface.is_null());
         assert!(surface.context_slice.is_null());

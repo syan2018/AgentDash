@@ -165,7 +165,6 @@ struct FrameRow {
     id: String,
     agent_id: String,
     revision: i32,
-    procedure_id: Option<String>,
     effective_capability_json: Option<String>,
     context_slice_json: Option<String>,
     vfs_surface_json: Option<String>,
@@ -193,7 +192,6 @@ impl TryFrom<FrameRow> for AgentFrame {
             id: parse_uuid(&row.id, "agent_frames.id")?,
             agent_id: parse_uuid(&row.agent_id, "agent_frames.agent_id")?,
             revision: row.revision,
-            procedure_id: opt_uuid(row.procedure_id.as_ref(), "agent_frames.procedure_id")?,
             effective_capability_json: parse_opt_json(
                 row.effective_capability_json,
                 "effective_capability_json",
@@ -230,17 +228,16 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
     async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
         sqlx::query(
             r#"INSERT INTO agent_frames
-                (id, agent_id, revision, procedure_id,
+                (id, agent_id, revision,
                  effective_capability_json, context_slice_json, vfs_surface_json, mcp_surface_json,
                  visible_canvas_mount_ids_json,
                  execution_profile_json,
                  created_by_kind, created_by_id, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"#,
         )
         .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
         .bind(frame.revision)
-        .bind(frame.procedure_id.map(|id| id.to_string()))
         .bind(opt_json_str(&frame.effective_capability_json)?)
         .bind(opt_json_str(&frame.context_slice_json)?)
         .bind(opt_json_str(&frame.vfs_surface_json)?)
@@ -258,7 +255,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
 
     async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         sqlx::query_as::<_, FrameRow>(
-            r#"SELECT id,agent_id,revision,procedure_id,
+            r#"SELECT id,agent_id,revision,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       visible_canvas_mount_ids_json,
                       execution_profile_json,
@@ -275,7 +272,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
 
     async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         sqlx::query_as::<_, FrameRow>(
-            r#"SELECT id,agent_id,revision,procedure_id,
+            r#"SELECT id,agent_id,revision,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       visible_canvas_mount_ids_json,
                       execution_profile_json,
@@ -292,7 +289,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
 
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
         sqlx::query_as::<_, FrameRow>(
-            r#"SELECT id,agent_id,revision,procedure_id,
+            r#"SELECT id,agent_id,revision,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       visible_canvas_mount_ids_json,
                       execution_profile_json,
@@ -769,9 +766,9 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
                  run_id = EXCLUDED.run_id,
                  launch_frame_id = EXCLUDED.launch_frame_id,
                  agent_id = EXCLUDED.agent_id,
-                 orchestration_id = COALESCE(EXCLUDED.orchestration_id, runtime_session_execution_anchors.orchestration_id),
-                 node_path = COALESCE(EXCLUDED.node_path, runtime_session_execution_anchors.node_path),
-                 node_attempt = COALESCE(EXCLUDED.node_attempt, runtime_session_execution_anchors.node_attempt),
+                 orchestration_id = EXCLUDED.orchestration_id,
+                 node_path = EXCLUDED.node_path,
+                 node_attempt = EXCLUDED.node_attempt,
                  updated_at = EXCLUDED.updated_at"#,
         )
         .bind(&a.runtime_session_id)

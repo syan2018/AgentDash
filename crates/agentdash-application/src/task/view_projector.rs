@@ -536,19 +536,6 @@ mod tests {
                 .cloned()
                 .collect())
         }
-        async fn list_by_root_graph(
-            &self,
-            root_graph_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|r| r.root_graph_id == Some(root_graph_id))
-                .cloned()
-                .collect())
-        }
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             let mut guard = self.runs.lock().unwrap();
             if let Some(existing) = guard.iter_mut().find(|r| r.id == run.id) {
@@ -609,16 +596,16 @@ mod tests {
 
     fn make_run_with_runtime_node_status(
         project_id: Uuid,
-        root_graph_id: Uuid,
+        graph_id: Uuid,
         _session_id: &str,
         activity_key: &str,
         target: RuntimeNodeStatus,
     ) -> LifecycleRun {
-        let mut run = LifecycleRun::new_control(project_id, root_graph_id);
+        let mut run = LifecycleRun::new_control(project_id);
         run.status = LifecycleRunStatus::Running;
 
         let source_ref = OrchestrationSourceRef::WorkflowGraph {
-            graph_id: root_graph_id,
+            graph_id,
             graph_version: Some(1),
         };
         let plan_snapshot = OrchestrationPlanSnapshot {

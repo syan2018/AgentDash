@@ -453,7 +453,6 @@ impl LifecycleJourneyProjection {
 pub struct LifecycleRunOverview<'a> {
     id: Uuid,
     project_id: Uuid,
-    root_graph_id: Option<Uuid>,
     status: &'a LifecycleRunStatus,
     active_runtime_node_refs: Vec<String>,
     step_count: usize,
@@ -468,7 +467,6 @@ pub fn run_overview<'a>(run: &'a LifecycleRun) -> LifecycleRunOverview<'a> {
     LifecycleRunOverview {
         id: run.id,
         project_id: run.project_id,
-        root_graph_id: run.root_graph_id,
         status: &run.status,
         active_runtime_node_refs,
         step_count: run

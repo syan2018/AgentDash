@@ -2,12 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::workflow::{
     ActivationRule, ActivityCompletionPolicy, ActivityIterationPolicy, ActivityJoinPolicy,
-    AgentReusePolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy, BashExecExecutorSpec,
-    ContextStrategy, ExecutorSpec, FunctionActivityExecutorSpec, GateStrategy,
-    HumanActivityExecutorSpec, HumanApprovalExecutorSpec, InputPortDefinition, OrchestrationLimits,
-    OrchestrationPlanSnapshot, OrchestrationSourceRef, OutputPortDefinition, PlanNode,
-    PlanNodeKind, RuntimeSessionPolicy, StandaloneFulfillment, StateExchangeRule,
-    TransitionCondition, ValidationSeverity,
+    AgentProcedureContract, AgentProcedureExecutionSpec, AgentReusePolicy, ApiRequestExecutorSpec,
+    ArtifactAliasPolicy, BashExecExecutorSpec, ContextStrategy, ExecutorSpec,
+    FunctionActivityExecutorSpec, GateStrategy, HumanActivityExecutorSpec,
+    HumanApprovalExecutorSpec, InputPortDefinition, OrchestrationLimits, OrchestrationPlanSnapshot,
+    OrchestrationSourceRef, OutputPortDefinition, PlanNode, PlanNodeKind, RuntimeSessionPolicy,
+    StandaloneFulfillment, StateExchangeRule, TransitionCondition, ValidationSeverity,
+    WorkflowInjectionSpec,
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -615,20 +616,36 @@ impl<'a> Compiler<'a> {
             .as_deref()
             .map(str::trim)
             .unwrap_or_default();
-        let executor = if procedure_key.is_empty() {
-            self.diagnostics.push(ScriptCompileDiagnostic::error(
-                "agent_missing_procedure",
-                format!("Agent node `{}` must declare procedure", agent.name),
-                format!("{source_path}.procedure"),
-            ));
-            None
-        } else {
+        let inline_prompt = agent.prompt.as_deref().map(str::trim).unwrap_or_default();
+        let executor = if !procedure_key.is_empty() {
             self.capability_summary.record_agent(procedure_key);
             Some(ExecutorSpec::AgentProcedure {
-                procedure_key: procedure_key.to_string(),
+                procedure: AgentProcedureExecutionSpec::by_key(procedure_key.to_string()),
                 agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
                 runtime_session_policy: RuntimeSessionPolicy::CreateNew,
             })
+        } else if !inline_prompt.is_empty() {
+            Some(ExecutorSpec::AgentProcedure {
+                procedure: AgentProcedureExecutionSpec::Snapshot {
+                    procedure_key: None,
+                    name: Some(agent.name.clone()),
+                    contract: inline_agent_contract(agent),
+                    source_ref: Some(self.input.source_ref.clone()),
+                    contract_digest: Some(inline_agent_contract_digest(agent)),
+                },
+                agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
+                runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+            })
+        } else {
+            self.diagnostics.push(ScriptCompileDiagnostic::error(
+                "agent_missing_procedure",
+                format!(
+                    "Agent node `{}` must declare procedure or prompt",
+                    agent.name
+                ),
+                format!("{source_path}.procedure"),
+            ));
+            None
         };
 
         self.push_executable_node(ExecutableNodeInput {
@@ -1317,6 +1334,33 @@ fn output_completion_policy(outputs: &[String]) -> ActivityCompletionPolicy {
     }
 }
 
+fn inline_agent_contract(agent: &WorkflowScriptAgent) -> AgentProcedureContract {
+    AgentProcedureContract {
+        injection: WorkflowInjectionSpec {
+            guidance: agent
+                .prompt
+                .as_deref()
+                .map(str::trim)
+                .filter(|prompt| !prompt.is_empty())
+                .map(str::to_string),
+            context_bindings: Vec::new(),
+        },
+        input_ports: agent.inputs.iter().map(|key| input_port(key)).collect(),
+        output_ports: agent.outputs.iter().map(|key| output_port(key)).collect(),
+        ..AgentProcedureContract::default()
+    }
+}
+
+fn inline_agent_contract_digest(agent: &WorkflowScriptAgent) -> String {
+    let value = serde_json::to_value(inline_agent_contract(agent))
+        .expect("inline agent contract should serialize");
+    let canonical = canonicalize_value(value);
+    let bytes = serde_json::to_vec(&canonical).expect("canonical contract should serialize");
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
 fn node_id_for(phase_path: &[String], name: &str) -> String {
     let mut segments = phase_path
         .iter()
@@ -1476,6 +1520,17 @@ mod tests {
         })
     }
 
+    fn inline_agent(name: &str, inputs: &[&str], outputs: &[&str]) -> WorkflowScriptStatement {
+        WorkflowScriptStatement::Agent(WorkflowScriptAgent {
+            name: name.to_string(),
+            procedure: None,
+            prompt: Some(format!("Run {name} inline")),
+            inputs: inputs.iter().map(|value| value.to_string()).collect(),
+            outputs: outputs.iter().map(|value| value.to_string()).collect(),
+            limits: None,
+        })
+    }
+
     fn api_function(name: &str, inputs: &[&str], outputs: &[&str]) -> WorkflowScriptStatement {
         WorkflowScriptStatement::Function(WorkflowScriptFunction {
             name: name.to_string(),
@@ -1528,7 +1583,9 @@ mod tests {
         assert!(matches!(
             node.executor,
             Some(ExecutorSpec::AgentProcedure {
-                ref procedure_key,
+                procedure: AgentProcedureExecutionSpec::ByKey {
+                    ref procedure_key
+                },
                 ..
             }) if procedure_key == "workflow.research"
         ));
@@ -1539,6 +1596,53 @@ mod tests {
                 [0]["port"],
             "topic"
         );
+    }
+
+    #[test]
+    fn script_compiler_embeds_prompt_agent_as_snapshot_procedure() {
+        let document = doc(vec![inline_agent("research", &["topic"], &["result"])]);
+
+        let output = compile(&document);
+
+        assert!(
+            !output.has_blocking_diagnostics(),
+            "{:?}",
+            output.diagnostics
+        );
+        let node = output
+            .plan_snapshot
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "research")
+            .expect("research node");
+        match node.executor.as_ref().expect("executor") {
+            ExecutorSpec::AgentProcedure {
+                procedure:
+                    AgentProcedureExecutionSpec::Snapshot {
+                        procedure_key,
+                        name,
+                        contract,
+                        contract_digest,
+                        ..
+                    },
+                ..
+            } => {
+                assert_eq!(procedure_key, &None);
+                assert_eq!(name.as_deref(), Some("research"));
+                assert_eq!(
+                    contract.injection.guidance.as_deref(),
+                    Some("Run research inline")
+                );
+                assert_eq!(contract.input_ports[0].key, "topic");
+                assert_eq!(contract.output_ports[0].key, "result");
+                assert!(
+                    contract_digest
+                        .as_deref()
+                        .is_some_and(|value| value.starts_with("sha256:"))
+                );
+            }
+            other => panic!("unexpected executor: {other:?}"),
+        }
     }
 
     #[test]

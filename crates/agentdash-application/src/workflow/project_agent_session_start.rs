@@ -157,7 +157,6 @@ impl<'a> ProjectAgentSessionStartService<'a> {
             parent_run_id: None,
             parent_agent_id: None,
             workflow_graph_ref: workflow_graph_ref_for_project_agent(&project_agent),
-            agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
             context_policy: ContextPolicy::Isolated,
@@ -451,20 +450,6 @@ mod tests {
                 .unwrap()
                 .iter()
                 .filter(|run| run.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_root_graph(
-            &self,
-            root_graph_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|run| run.root_graph_id == Some(root_graph_id))
                 .cloned()
                 .collect())
         }

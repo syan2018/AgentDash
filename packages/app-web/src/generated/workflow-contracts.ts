@@ -23,7 +23,7 @@ export type ActivityTransitionKind = "flow" | "artifact";
 
 export type AgentActivityExecutorSpec = { procedure_key: string, agent_reuse_policy: AgentReusePolicy, runtime_session_policy: RuntimeSessionPolicy, };
 
-export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, procedure_id?: string, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, };
+export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, };
 
 export type AgentProcedureContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, capability_config?: CapabilityConfig, output_ports?: Array<OutputPortDefinition>, input_ports?: Array<InputPortDefinition>, };
 
@@ -101,7 +101,7 @@ export type LifecycleRunStatus = "draft" | "ready" | "running" | "blocked" | "co
 
 export type LifecycleRunTopology = "graphless" | "workflow_graph";
 
-export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string, topology: LifecycleRunTopology, root_graph_id?: string, status: LifecycleRunStatus, orchestrations: Array<OrchestrationInstanceView>, active_runtime_node_refs: Array<ActiveRuntimeNodeRefDto>, agents: Array<AgentRunView>, subject_associations: Array<LifecycleSubjectAssociationDto>, runtime_trace_refs: Array<RuntimeSessionRefDto>, execution_log: Array<LifecycleExecutionEntry>, created_at: string, updated_at: string, last_activity_at: string, };
+export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string, topology: LifecycleRunTopology, status: LifecycleRunStatus, orchestrations: Array<OrchestrationInstanceView>, active_runtime_node_refs: Array<ActiveRuntimeNodeRefDto>, agents: Array<AgentRunView>, subject_associations: Array<LifecycleSubjectAssociationDto>, runtime_trace_refs: Array<RuntimeSessionRefDto>, execution_log: Array<LifecycleExecutionEntry>, created_at: string, updated_at: string, last_activity_at: string, };
 
 export type LifecycleSubjectAssociationDto = { id: string, anchor_run_id: string, anchor_agent_id?: string, subject_ref: SubjectRefDto, role: string, metadata?: JsonValue, created_at: string, };
 

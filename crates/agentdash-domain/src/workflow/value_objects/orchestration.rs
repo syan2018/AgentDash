@@ -7,8 +7,8 @@ use uuid::Uuid;
 
 use super::run_state::ExecutorRunRef;
 use super::{
-    ActivityCompletionPolicy, ActivityIterationPolicy, ActivityJoinPolicy, AgentReusePolicy,
-    ArtifactAliasPolicy, FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
+    ActivityCompletionPolicy, ActivityIterationPolicy, ActivityJoinPolicy, AgentProcedureContract,
+    AgentReusePolicy, ArtifactAliasPolicy, FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
     InputPortDefinition, OutputPortDefinition, RuntimeSessionPolicy, TransitionCondition,
 };
 
@@ -42,8 +42,6 @@ pub struct AgentFrameRef {
     pub frame_id: Uuid,
     pub agent_run_id: Uuid,
     pub revision: i32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub procedure_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -189,9 +187,50 @@ pub enum PlanNodeKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentProcedureExecutionSpec {
+    ByKey {
+        procedure_key: String,
+    },
+    Snapshot {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        procedure_key: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        contract: AgentProcedureContract,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_ref: Option<OrchestrationSourceRef>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        contract_digest: Option<String>,
+    },
+}
+
+impl AgentProcedureExecutionSpec {
+    pub fn by_key(procedure_key: impl Into<String>) -> Self {
+        Self::ByKey {
+            procedure_key: procedure_key.into(),
+        }
+    }
+
+    pub fn procedure_key(&self) -> Option<&str> {
+        match self {
+            Self::ByKey { procedure_key } => Some(procedure_key.as_str()),
+            Self::Snapshot { procedure_key, .. } => procedure_key.as_deref(),
+        }
+    }
+
+    pub fn snapshot_contract(&self) -> Option<&AgentProcedureContract> {
+        match self {
+            Self::Snapshot { contract, .. } => Some(contract),
+            Self::ByKey { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutorSpec {
     AgentProcedure {
-        procedure_key: String,
+        procedure: AgentProcedureExecutionSpec,
         #[serde(default)]
         agent_reuse_policy: AgentReusePolicy,
         #[serde(default)]
@@ -581,7 +620,7 @@ mod tests {
                     "agent",
                     PlanNodeKind::AgentCall,
                     Some(ExecutorSpec::AgentProcedure {
-                        procedure_key: "workflow.plan".to_string(),
+                        procedure: AgentProcedureExecutionSpec::by_key("workflow.plan"),
                         agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
                         runtime_session_policy: RuntimeSessionPolicy::CreateNew,
                     }),

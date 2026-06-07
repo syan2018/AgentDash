@@ -100,7 +100,7 @@ function resolveActiveNode(
     return best;
   };
 
-  if (activeWorkflow) {
+  if (activeWorkflow?.activity_key) {
     const matched = latestByNode(activeWorkflow.activity_key);
     if (matched) return matched;
   }
@@ -248,12 +248,18 @@ function WorkflowContextCard({
   const nodes = collectRuntimeNodes(activeRun);
   const completedCount = nodes.filter((node) => node.status === "completed").length;
   const totalCount = nodes.length;
+  const workflowTitle =
+    activeWorkflow?.lifecycle_name ??
+    activeWorkflow?.primary_workflow_name ??
+    activeWorkflow?.lifecycle_key ??
+    "当前 Workflow";
+  const activityTitle =
+    activeWorkflow?.activity_title ?? activeWorkflow?.activity_key ?? "当前步骤";
+  const lifecycleKey = activeWorkflow?.lifecycle_key ?? "unknown";
+  const runIdPrefix = activeWorkflow?.run_id ? activeWorkflow.run_id.slice(0, 8) : "—";
 
   return (
-    <SurfaceCard
-      eyebrow="Workflow 上下文"
-      title={activeWorkflow?.lifecycle_name ?? activeWorkflow?.primary_workflow_name ?? "当前 Workflow"}
-    >
+    <SurfaceCard eyebrow="Workflow 上下文" title={workflowTitle}>
       <div className="flex flex-wrap gap-2">
         {activeRun && (
           <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
@@ -286,9 +292,9 @@ function WorkflowContextCard({
         <div className="mt-3 space-y-1 rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-xs">
           {activeWorkflow && (
             <>
-              <p className="font-medium text-foreground">{activeWorkflow.activity_title}</p>
+              <p className="font-medium text-foreground">{activityTitle}</p>
               <p className="text-[11px] text-muted-foreground">
-                lifecycle: {activeWorkflow.lifecycle_key} · run: {activeWorkflow.run_id.slice(0, 8)}
+                lifecycle: {lifecycleKey} · run: {runIdPrefix}
               </p>
             </>
           )}

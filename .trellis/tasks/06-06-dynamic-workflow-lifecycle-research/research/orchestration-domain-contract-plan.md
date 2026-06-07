@@ -49,7 +49,7 @@
 
 `AgentRunRef` 最小字段：`agent_run_id`、`role`、`status`、`current_frame_id`、`project_agent_id`。当前代码仍叫 `LifecycleAgent`，但 contract 字段名应朝 AgentRun 语义收敛。
 
-`AgentFrameRef` 最小字段：`frame_id`、`agent_run_id`、`revision`、`procedure_id`、`graph_instance_id`、`activity_key`。它只表达引用，完整 surface 继续由 `AgentFrame` repository 拥有。
+`AgentFrameRef` 最小字段：`frame_id`、`agent_run_id`、`revision`，显式 workflow 绑定通过 `orchestration_id`、`node_path`、`attempt` 表达。它只表达 frame revision 引用，完整 surface 继续由 `AgentFrame` repository 拥有。
 
 `OrchestrationInstance`：
 

@@ -45,7 +45,7 @@ pub fn lifecycle_mount_surface_for_active_workflow(
         run_id: workflow.run.id,
         orchestration_id: workflow.orchestration_id,
         node_path: &workflow.node_path,
-        lifecycle_key: &workflow.lifecycle.key,
+        lifecycle_key: &workflow.lifecycle_key,
         attempt: workflow.active_attempt.attempt,
         writable_port_keys: writable_port_keys_for_active_workflow(workflow),
     }
@@ -150,17 +150,20 @@ mod tests {
             trace_refs: Vec::new(),
             cache: None,
         };
-        let run = LifecycleRun::new_control(project_id, lifecycle.id);
+        let run = LifecycleRun::new_control(project_id);
 
         ActiveWorkflowProjection {
             run,
             orchestration_id: uuid::Uuid::new_v4(),
             node_path: "plan".to_string(),
-            lifecycle,
+            lifecycle_graph_id: Some(lifecycle.id),
+            lifecycle_key: lifecycle.key.clone(),
+            lifecycle_name: lifecycle.name.clone(),
             active_activity: activity,
             active_attempt,
             active_node_type: agentdash_domain::workflow::LifecycleNodeType::AgentNode,
             active_procedure_key: None,
+            snapshot_contract: None,
             primary_workflow: None,
         }
     }

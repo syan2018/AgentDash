@@ -854,9 +854,6 @@ pub struct LifecycleRunView {
     pub run_ref: LifecycleRunRefDto,
     pub project_id: String,
     pub topology: LifecycleRunTopology,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub root_graph_id: Option<String>,
     pub status: LifecycleRunStatus,
     #[serde(default)]
     pub orchestrations: Vec<OrchestrationInstanceView>,
@@ -879,9 +876,6 @@ pub struct LifecycleRunView {
 #[serde(rename_all = "snake_case")]
 pub struct AgentFrameRuntimeView {
     pub frame_ref: AgentFrameRefDto,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub procedure_id: Option<String>,
     #[serde(default)]
     pub capability_surface: Value,
     #[serde(default)]

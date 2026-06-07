@@ -85,14 +85,6 @@ pub enum WorkflowGraphRef {
     ByKey { project_id: Uuid, key: String },
 }
 
-/// 单个 Agent Activity 的 procedure override 引用。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentProcedureRef {
-    ById(Uuid),
-    ByKey { project_id: Uuid, key: String },
-}
-
 /// Subject/agent/run 视图入口引用。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubjectExecutionRef {
@@ -118,8 +110,6 @@ pub struct AgentLaunchIntent {
     pub parent_agent_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_graph_ref: Option<WorkflowGraphRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_procedure_ref: Option<AgentProcedureRef>,
     pub run_policy: RunPolicy,
     pub agent_policy: AgentPolicy,
     pub context_policy: ContextPolicy,
@@ -139,8 +129,6 @@ pub struct SubjectExecutionIntent {
     pub parent_agent_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_graph_ref: Option<WorkflowGraphRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_procedure_ref: Option<AgentProcedureRef>,
     pub run_policy: RunPolicy,
     pub agent_policy: AgentPolicy,
     pub context_policy: ContextPolicy,
@@ -165,8 +153,6 @@ pub struct InteractionDispatchIntent {
     pub parent_agent_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_graph_ref: Option<WorkflowGraphRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_procedure_ref: Option<AgentProcedureRef>,
     pub context_policy: ContextPolicy,
     pub capability_policy: CapabilityPolicy,
     pub runtime_policy: RuntimePolicy,
@@ -306,7 +292,6 @@ mod tests {
             parent_run_id: None,
             parent_agent_id: None,
             workflow_graph_ref: None,
-            agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
             context_policy: ContextPolicy::Isolated,

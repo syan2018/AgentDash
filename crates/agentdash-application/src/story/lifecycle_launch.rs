@@ -108,7 +108,6 @@ pub fn build_story_root_launch_intent(
         parent_run_id: None,
         parent_agent_id: None,
         workflow_graph_ref,
-        agent_procedure_ref: None,
         run_policy: agentdash_domain::workflow::RunPolicy::CreateLinkedRun,
         agent_policy: AgentPolicy::Create,
         context_policy: ContextPolicy::Isolated,

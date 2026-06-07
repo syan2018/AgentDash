@@ -13,15 +13,16 @@ mod value_objects;
 pub use agent_frame::AgentFrame;
 pub use agent_lineage::AgentLineage;
 pub use dispatch::{
-    AgentLaunchDispatchResult, AgentLaunchIntent, AgentPolicy, AgentProcedureRef, AgentRuntimeRefs,
-    CapabilityPolicy, ContextPolicy, ExecutionDispatchResult, ExecutionIntent, ExecutionSource,
-    GatePolicy, InteractionDispatchIntent, InteractionGateOpenedDispatchResult,
+    AgentLaunchDispatchResult, AgentLaunchIntent, AgentPolicy, AgentRuntimeRefs, CapabilityPolicy,
+    ContextPolicy, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, GatePolicy,
+    InteractionDispatchIntent, InteractionGateOpenedDispatchResult,
     LifecycleRunStartDispatchResult, LifecycleRunStartIntent, OrchestrationBindingRefs, RunPolicy,
     RuntimeControlRefs, RuntimePolicy, SubjectExecutionDispatchResult, SubjectExecutionIntent,
     SubjectExecutionRef, WorkflowGraphRef,
 };
 pub use entity::{
     AgentProcedure, LifecycleRun, LifecycleRunTopology, WorkflowGraph, build_effective_contract,
+    build_effective_contract_from_contract,
 };
 pub use lifecycle_agent::{LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::LifecycleGate;
@@ -38,8 +39,8 @@ pub use validation::{validate_agent_procedure, validate_workflow_graph};
 pub use value_objects::{
     ActivationRule, ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
     ActivityIterationPolicy, ActivityJoinPolicy, ActivityTransition, ActivityTransitionKind,
-    AgentActivityExecutorSpec, AgentFrameRef, AgentProcedureContract, AgentReusePolicy,
-    AgentRunRef, ApiRequestExecutorSpec, ArtifactAliasPolicy, ArtifactBinding,
+    AgentActivityExecutorSpec, AgentFrameRef, AgentProcedureContract, AgentProcedureExecutionSpec,
+    AgentReusePolicy, AgentRunRef, ApiRequestExecutorSpec, ArtifactAliasPolicy, ArtifactBinding,
     BashExecExecutorSpec, CapabilityConfig, ContextStrategy, DefinitionSource,
     DispatchLeaseSnapshot, DispatchOutboxItem, DispatchState, EffectiveSessionContract,
     ExecutorRunRef, ExecutorSpec, FunctionActivityExecutorSpec, GateStrategy,

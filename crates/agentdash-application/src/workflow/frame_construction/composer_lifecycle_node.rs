@@ -1,11 +1,17 @@
 //! Lifecycle node compose 路径 — activity activation + lifecycle mount。
 
-use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
+use agentdash_domain::workflow::{
+    AgentFrame, AgentProcedure, AgentProcedureContract, AgentProcedureExecutionSpec, ExecutorSpec,
+    LifecycleAgent, LifecycleRun,
+};
 use agentdash_spi::ConnectorError;
 
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::{LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit};
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
+use crate::workflow::projection::{
+    activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
+};
 use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
 use super::{FrameConstructionService, connector_internal, frame_builder_from_existing};
@@ -64,35 +70,19 @@ pub(super) async fn compose(
                 orchestration_id, node_path
             ))
         })?;
-    let graph_id = run.root_graph_id.ok_or_else(|| {
-        ConnectorError::InvalidConfig(format!("LifecycleRun {} 缺少 root_graph_id", run.id))
-    })?;
-    let lifecycle = svc
-        .repos
-        .workflow_graph_repo
-        .get_by_id(graph_id)
+    let lifecycle_identity = lifecycle_identity_from_orchestration(orchestration);
+    let activity = activity_definition_from_plan_node(plan_node);
+    let loaded_workflow = load_workflow_for_plan_node(svc, run.project_id, plan_node)
         .await
-        .map_err(connector_internal)?
-        .ok_or_else(|| ConnectorError::InvalidConfig(format!("WorkflowGraph {graph_id} 不存在")))?;
-    let activity = lifecycle
-        .activities
-        .iter()
-        .find(|item| item.key == plan_node.node_id || item.key == plan_node.node_path)
-        .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!(
-                "WorkflowGraph {} 中不存在 orchestration node `{}` 对应的 activity",
-                lifecycle.id, plan_node.node_path
-            ))
-        })?;
-    let workflow = match &activity.executor {
-        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => svc
-            .repos
-            .agent_procedure_repo
-            .get_by_project_and_key(run.project_id, &spec.procedure_key)
-            .await
-            .map_err(connector_internal)?,
-        _ => None,
-    };
+        .map_err(connector_internal)?;
+    let snapshot_contract = snapshot_contract_for_plan_node(plan_node);
+    let workflow_contract =
+        snapshot_contract.or_else(|| loaded_workflow.as_ref().map(|workflow| &workflow.contract));
+    let snapshot_label = snapshot_label_for_plan_node(plan_node);
+    let workflow_label = loaded_workflow
+        .as_ref()
+        .map(|workflow| format!("`{}` ({})", workflow.key, workflow.name))
+        .or(snapshot_label);
     let inherited_executor_config = command
         .user_input()
         .executor_config
@@ -109,9 +99,10 @@ pub(super) async fn compose(
             orchestration_id,
             node_path: &node_path,
             attempt,
-            lifecycle: &lifecycle,
-            activity,
-            workflow: workflow.as_ref(),
+            lifecycle_key: &lifecycle_identity.key,
+            activity: &activity,
+            workflow_contract,
+            workflow_label: workflow_label.as_deref(),
             inherited_executor_config,
         },
         Some(svc.audit_bus.clone()),
@@ -129,4 +120,54 @@ pub(super) async fn compose(
         None,
     )
     .await
+}
+
+async fn load_workflow_for_plan_node(
+    svc: &FrameConstructionService,
+    project_id: uuid::Uuid,
+    plan_node: &agentdash_domain::workflow::PlanNode,
+) -> Result<Option<AgentProcedure>, agentdash_domain::DomainError> {
+    let Some(ExecutorSpec::AgentProcedure {
+        procedure: AgentProcedureExecutionSpec::ByKey { procedure_key },
+        ..
+    }) = &plan_node.executor
+    else {
+        return Ok(None);
+    };
+
+    svc.repos
+        .agent_procedure_repo
+        .get_by_project_and_key(project_id, procedure_key)
+        .await
+}
+
+fn snapshot_contract_for_plan_node(
+    plan_node: &agentdash_domain::workflow::PlanNode,
+) -> Option<&AgentProcedureContract> {
+    match &plan_node.executor {
+        Some(ExecutorSpec::AgentProcedure { procedure, .. }) => procedure.snapshot_contract(),
+        _ => None,
+    }
+}
+
+fn snapshot_label_for_plan_node(
+    plan_node: &agentdash_domain::workflow::PlanNode,
+) -> Option<String> {
+    match &plan_node.executor {
+        Some(ExecutorSpec::AgentProcedure {
+            procedure:
+                AgentProcedureExecutionSpec::Snapshot {
+                    procedure_key,
+                    name,
+                    ..
+                },
+            ..
+        }) => Some(match (procedure_key.as_deref(), name.as_deref()) {
+            (Some(key), Some(name)) => format!("`{key}` ({name})"),
+            (Some(key), None) => format!("`{key}`"),
+            (None, Some(name)) => name.to_string(),
+            (None, None) => "inline workflow".to_string(),
+        }),
+        _ => None,
+    }
 }

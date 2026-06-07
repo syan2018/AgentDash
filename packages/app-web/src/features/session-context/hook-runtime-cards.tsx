@@ -102,25 +102,31 @@ function HookRuntimeWorkflowMetaCard({
 }: {
   metadata: ActiveWorkflowHookMetadata;
 }) {
+  const lifecycleLabel = metadata.lifecycle_name ?? metadata.lifecycle_key ?? "Workflow";
+  const activityLabel = metadata.activity_title ?? metadata.activity_key ?? "当前步骤";
+  const sourceLabel = metadata.workflow_graph_id
+    ? `workflow_graph_id: ${metadata.workflow_graph_id}`
+    : `source: ${metadata.lifecycle_key ?? "inline"}`;
+
   return (
     <div className="mt-3 rounded-[8px] border border-border bg-background/70 px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-foreground">
-          {metadata.lifecycle_name} / {metadata.activity_title}
+          {lifecycleLabel} / {activityLabel}
         </span>
         <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
-          run: {metadata.run_status}
+          run: {metadata.run_status ?? "unknown"}
         </span>
         <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
-          activity: {metadata.activity_key}
+          activity: {metadata.activity_key ?? "—"}
         </span>
       </div>
       <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
         <span className="rounded-[8px] border border-border bg-background px-2 py-1">
-          workflow_graph_id: {metadata.workflow_graph_id}
+          {sourceLabel}
         </span>
         <span className="rounded-[8px] border border-border bg-background px-2 py-1">
-          run_id: {metadata.run_id}
+          run_id: {metadata.run_id ?? "—"}
         </span>
         <span className="rounded-[8px] border border-border bg-background px-2 py-1">
           workflow: {metadata.procedure_key ?? "—"}

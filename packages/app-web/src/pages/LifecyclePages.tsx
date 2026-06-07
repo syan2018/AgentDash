@@ -4,6 +4,8 @@ import type {
   AgentFrameRuntimeView,
   AgentRunView,
   LifecycleRunView,
+  OrchestrationInstanceView,
+  RuntimeNodeView,
   SubjectExecutionView,
 } from "../types";
 import { subjectExecutionKey } from "../types";
@@ -34,6 +36,57 @@ function EmptyHint({ message }: { message: string }) {
   );
 }
 
+function RuntimeNodeTree({ nodes }: { nodes: RuntimeNodeView[] }) {
+  if (nodes.length === 0) return <EmptyHint message="暂无 runtime node" />;
+  return (
+    <div className="space-y-2">
+      {nodes.map((node) => (
+        <div
+          key={`${node.node_path}:${node.attempt}`}
+          className="border-l border-border py-1 pl-3"
+        >
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate font-mono text-xs text-foreground">{node.node_path}</p>
+              <p className="text-xs text-muted-foreground">
+                {node.kind} · attempt {node.attempt}
+              </p>
+            </div>
+            <span className="shrink-0 rounded-[6px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground">
+              {node.status}
+            </span>
+          </div>
+          {node.children.length > 0 && (
+            <div className="mt-2">
+              <RuntimeNodeTree nodes={node.children} />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OrchestrationSummary({ orchestration }: { orchestration: OrchestrationInstanceView }) {
+  return (
+    <div className="space-y-3 py-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="font-mono text-muted-foreground">{orchestration.orchestration_id}</span>
+        <span className="rounded-[6px] border border-border bg-background px-2 py-1 text-muted-foreground">
+          {orchestration.role}
+        </span>
+        <span className="rounded-[6px] border border-border bg-background px-2 py-1 text-muted-foreground">
+          {orchestration.status}
+        </span>
+        <span className="rounded-[6px] border border-border bg-background px-2 py-1 text-muted-foreground">
+          ready {orchestration.ready_node_ids.length}
+        </span>
+      </div>
+      <RuntimeNodeTree nodes={orchestration.nodes} />
+    </div>
+  );
+}
+
 function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
   const navigate = useNavigate();
   return (
@@ -53,6 +106,21 @@ function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
             agent {lifecycleRun.agents.length}
           </span>
         </div>
+      </Section>
+
+      <Section title="Orchestrations">
+        {lifecycleRun.orchestrations.length === 0 ? (
+          <EmptyHint message="暂无 orchestration" />
+        ) : (
+          <div className="divide-y divide-border">
+            {lifecycleRun.orchestrations.map((orchestration) => (
+              <OrchestrationSummary
+                key={orchestration.orchestration_id}
+                orchestration={orchestration}
+              />
+            ))}
+          </div>
+        )}
       </Section>
 
       <Section title="Agents">

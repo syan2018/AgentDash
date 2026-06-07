@@ -28,7 +28,7 @@ fn workflow_scope_key(workflow: &ActiveWorkflowProjection) -> String {
         .primary_workflow
         .as_ref()
         .map(|w| w.key.clone())
-        .unwrap_or_else(|| workflow.lifecycle.key.clone())
+        .unwrap_or_else(|| workflow.lifecycle_key.clone())
 }
 
 pub(super) fn global_builtin_source() -> &'static str {

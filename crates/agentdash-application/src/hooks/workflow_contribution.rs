@@ -9,8 +9,8 @@ pub(super) fn build_step_summary_markdown(workflow: &ActiveWorkflowProjection) -
     };
     format!(
         "## Active Workflow Step\n- lifecycle: {} (`{}`)\n- step: `{}`\n{}\n- advance: `{}`\n- status: `{}`\n\n{}",
-        workflow.lifecycle.name,
-        workflow.lifecycle.key,
+        workflow.lifecycle_name,
+        workflow.lifecycle_key,
         workflow.active_activity.key,
         wf_line,
         workflow.advance_label(),

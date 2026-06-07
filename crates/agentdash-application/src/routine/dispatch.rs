@@ -38,7 +38,6 @@ pub fn build_routine_execution_intent(
         parent_run_id: None,
         parent_agent_id: None,
         workflow_graph_ref: None,
-        agent_procedure_ref: None,
         run_policy,
         agent_policy,
         context_policy: ContextPolicy::Isolated,

@@ -312,7 +312,7 @@ impl<'a> LifecycleDispatchService<'a> {
             .await?
             .graph;
         let plan_snapshot = compile_static_graph_orchestration_plan(&workflow_graph)?;
-        let mut run = create_lifecycle_run(intent.project_id, workflow_graph.id);
+        let mut run = create_lifecycle_run(intent.project_id);
         let orchestration_binding = ensure_workflow_graph_orchestration(
             &mut run,
             &workflow_graph,
@@ -517,7 +517,7 @@ impl<'a> LifecycleDispatchService<'a> {
     async fn resolve_or_create_run(
         &self,
         plan: &DispatchPlan,
-        workflow_graph: &WorkflowGraph,
+        _workflow_graph: &WorkflowGraph,
     ) -> Result<LifecycleRun, WorkflowApplicationError> {
         match (&plan.run_policy, plan.parent_run_id) {
             // same-run: 复用现有 run 或追加 graph
@@ -535,7 +535,7 @@ impl<'a> LifecycleDispatchService<'a> {
             )),
             // 创建新 run
             _ => {
-                let run = create_lifecycle_run(plan.project_id, workflow_graph.id);
+                let run = create_lifecycle_run(plan.project_id);
                 self.run_repo.create(&run).await?;
                 Ok(run)
             }
@@ -734,8 +734,8 @@ impl<'a> LifecycleDispatchService<'a> {
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
-fn create_lifecycle_run(project_id: Uuid, root_graph_id: Uuid) -> LifecycleRun {
-    LifecycleRun::new_control(project_id, root_graph_id)
+fn create_lifecycle_run(project_id: Uuid) -> LifecycleRun {
+    LifecycleRun::new_control(project_id)
 }
 
 fn compile_static_graph_orchestration_plan(
@@ -934,12 +934,6 @@ mod tests {
         async fn list_by_project(
             &self,
             _project_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(vec![])
-        }
-        async fn list_by_root_graph(
-            &self,
-            _root_graph_id: Uuid,
         ) -> Result<Vec<LifecycleRun>, DomainError> {
             Ok(vec![])
         }
@@ -1366,7 +1360,6 @@ mod tests {
             parent_run_id: None,
             parent_agent_id: None,
             workflow_graph_ref: None,
-            agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
             context_policy: ContextPolicy::Isolated,
@@ -1383,7 +1376,6 @@ mod tests {
             parent_run_id: None,
             parent_agent_id: None,
             workflow_graph_ref: None,
-            agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
             context_policy: ContextPolicy::Isolated,
@@ -1400,7 +1392,6 @@ mod tests {
             parent_run_id: None,
             parent_agent_id: None,
             workflow_graph_ref: None,
-            agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
             context_policy: ContextPolicy::Isolated,
@@ -1478,7 +1469,6 @@ mod tests {
         let runs = run_repo.items.lock().unwrap().clone();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].topology, LifecycleRunTopology::Graphless);
-        assert_eq!(runs[0].root_graph_id, None);
         assert!(runs[0].orchestrations.is_empty());
         assert_eq!(result.runtime_refs.orchestration_ref(), None);
         assert_eq!(agent_repo.items.lock().unwrap().len(), 1);
@@ -1546,7 +1536,7 @@ mod tests {
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         let anchor_repo = InMemoryExecutionAnchorRepo::default();
-        let workflow_graph = seed_test_workflow_graph(&workflow_repo, project_id);
+        seed_test_workflow_graph(&workflow_repo, project_id);
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1565,7 +1555,6 @@ mod tests {
 
         let runs = run_repo.items.lock().unwrap().clone();
         assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].root_graph_id, Some(workflow_graph.id));
         assert_eq!(runs[0].orchestrations.len(), 1);
         let orchestration = &runs[0].orchestrations[0];
         assert_eq!(
@@ -1645,7 +1634,6 @@ mod tests {
         let result = service.launch_agent(&intent).await.expect("dispatch");
 
         let runs = run_repo.items.lock().unwrap().clone();
-        assert_eq!(runs[0].root_graph_id, Some(workflow_graph.id));
         assert_eq!(runs[0].orchestrations.len(), 1);
         let orchestration = &runs[0].orchestrations[0];
         assert_eq!(orchestration.role, ROOT_ORCHESTRATION_ROLE);
@@ -1815,8 +1803,8 @@ mod tests {
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        let workflow_graph = seed_test_workflow_graph(&workflow_repo, project_id);
-        let existing_run = create_lifecycle_run(project_id, workflow_graph.id);
+        seed_test_workflow_graph(&workflow_repo, project_id);
+        let existing_run = create_lifecycle_run(project_id);
         let first_agent = LifecycleAgent::new_root(existing_run.id, project_id, "routine");
         let target_agent = LifecycleAgent::new_root(existing_run.id, project_id, "routine");
         run_repo.items.lock().unwrap().push(existing_run.clone());

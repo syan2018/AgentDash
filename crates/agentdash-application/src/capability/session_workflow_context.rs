@@ -246,6 +246,15 @@ pub fn tool_directives_from_active_workflow(
     workflow.contract.capability_config.tool_directives.clone()
 }
 
+pub fn tool_directives_from_active_workflow_projection(
+    workflow: &crate::workflow::ActiveWorkflowProjection,
+) -> Vec<ToolCapabilityDirective> {
+    workflow
+        .active_contract()
+        .map(|contract| contract.capability_config.tool_directives.clone())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

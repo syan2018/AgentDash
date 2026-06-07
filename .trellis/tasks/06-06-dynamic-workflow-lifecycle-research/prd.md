@@ -18,7 +18,7 @@
 - 新增 discussion journal，保存本次讨论中的判断变化与用户补充的架构原则。
 - 在 research 中补充关键事实来源复核索引，说明后续应该去哪些 spec、源码、migration 和外部资料复核结论。
 - 补充正式实现前的 `design.md` 与 `implement.md`，把 API 命名、目标 runtime 模型、迁移阶段、验证命令和风险文件写清楚。
-- 当前任务已在用户确认后进入 `in_progress`；domain contract、graph compiler、common runtime 子任务已完成并归档，剩余 gate 是 Dynamic Script Artifact Compiler 的设计评审与实现启动。
+- 当前任务的 domain contract、graph compiler、common runtime 与 Dynamic Script Artifact Compiler 子任务均已完成并归档；本目录保留为 Dynamic Workflow / Lifecycle 收敛工作的研究入口、设计索引和完成态上下文。
 
 ## 验收标准
 
@@ -34,13 +34,13 @@
 - [x] 经过用户 review 后启动第一批机械迁移。
 - [x] 完成 session-scoped AgentRun command API 机械迁移，并提交为独立变更。
 - [x] 已完成的 domain contract、graph compiler、common runtime 子任务完成归档。
-- [ ] Dynamic Script Artifact Compiler 子任务完成设计评审并进入实现。
+- [x] Dynamic Script Artifact Compiler 子任务完成设计评审、实现与归档。
 
 ## 文档索引
 
 | 文档 | 职责 |
 | --- | --- |
-| `prd.md` | 任务入口、验收标准、文档索引和当前剩余 Dynamic Script gate。 |
+| `prd.md` | 任务入口、验收标准、文档索引和完成态上下文。 |
 | `research.md` | 研究结论总览：Claude Workflow 关键启发、AgentDash 当前差距、目标方向和事实来源索引。 |
 | `discussion-journal.md` | 按时间记录用户修正与共识变化，保留为什么收敛到当前模型的上下文。 |
 | `target-model-sketch.md` | 概念模型草案：Lifecycle / Orchestration / AgentRun / FunctionRun 命名、关系图和仓储边界。 |
@@ -58,11 +58,11 @@
 | `../archive/2026-06/06-06-orchestration-domain-contract/` | 已归档子任务：落地 LifecycleRun orchestration 领域合同、持久化字段与 roundtrip 验证。 |
 | `../archive/2026-06/06-06-workflow-graph-compiler/` | 已归档子任务：实现静态 `WorkflowGraph -> OrchestrationPlanSnapshot` compiler。 |
 | `../archive/2026-06/06-06-common-orchestration-runtime-static-graph/` | 已归档子任务：将 compiler 输出正式接入 common orchestration runtime，并收敛旧 Activity runtime 事实源。 |
-| `../06-06-dynamic-script-artifact-compiler/` | 当前剩余子任务：设计并实现动态脚本资产与 `ScriptCompiler -> OrchestrationPlanSnapshot` frontend。 |
+| `../archive/2026-06/06-06-dynamic-script-artifact-compiler/` | 已归档子任务：设计并实现动态脚本资产与 `ScriptCompiler -> OrchestrationPlanSnapshot` frontend。 |
 | `implement.jsonl` / `check.jsonl` | Trellis manifest 文件，列出实现/检查子代理压缩后需要恢复的任务文档、研究文档与 spec。 |
-| `task.json` | Trellis task 元数据，当前 status 为 `in_progress`。 |
+| `task.json` | Trellis task 元数据，当前 status 为 `completed`。 |
 
-## 当前 Gate
+## 当前上下文
 
 - 旧任务目录中的历史 branching 设计不作为本任务依据。
 - Claude Workflow 行为覆盖矩阵见 `research/claude-workflow-behavior-coverage.md`。后续正式设计必须覆盖核心语义，而不是复制 Claude Code 的全部产品表象；无法落入 `LifecycleRun` / `OrchestrationInstance`，或无法通过 `AgentRun` / `FunctionRun` / 受控本机 effect invocation / `RuntimeTraceAnchor` 等执行与 trace surface 表达的行为，都应视为目标架构缺口。
@@ -75,4 +75,4 @@
 - 评估当前代码时必须谨慎：Lifecycle / WorkflowGraph 相关实现来自快速重构阶段，只能作为现状事实与迁移来源，不应被默认视为最终目标架构。
 - runtime session 入口的 AgentRun command API 目标命名采用 `/sessions/{runtime_session_id}/messages`、`/sessions/{runtime_session_id}/steering`、`/sessions/{runtime_session_id}/pending-messages`；显式 AgentRun 资源管理语境再使用 `/lifecycles/{lifecycle_run_id}/agent-runs`。
 - 正式实现入口以 `design.md` 和 `implement.md` 为准；`research.md` 与 `target-model-sketch.md` 记录形成这些方案的研究依据和概念模型。
-- 后续模块启动前优先读取 `research/follow-up-module-roadmap.md` 与 `../06-06-dynamic-script-artifact-compiler/`，再复核已归档 domain contract、compiler、common runtime 子任务，避免在压缩后丢失研究上下文。
+- 后续模块启动前优先读取 `research/follow-up-module-roadmap.md`，再复核已归档 domain contract、compiler、common runtime 与 dynamic script 子任务，原因是这些材料共同定义了 Dynamic Workflow / Lifecycle 收敛后的目标模型。

@@ -38,7 +38,6 @@ pub fn build_routine_execution_intent(
         parent_run_id: None,
         parent_agent_id: None,
         workflow_graph_ref: None,
-        agent_procedure_ref: None,
         run_policy,
         agent_policy,
         context_policy: ContextPolicy::Isolated,
@@ -124,7 +123,8 @@ mod tests {
             run_id,
             agent_id,
             frame_id: Uuid::new_v4(),
-            assignment_id: None,
+            orchestration_id: None,
+            node_path: None,
         };
         let intent = build_routine_execution_intent_with_reuse(&routine, &execution, Some(&target));
 

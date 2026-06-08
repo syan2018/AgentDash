@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use super::value_objects::{StoryContext, StoryPriority, StoryStatus, StoryType};
 use crate::task::{Task, TaskExecutionProjection, TaskSpecMut};
-use crate::workflow::ActivityAttemptStatus;
+use crate::workflow::RuntimeNodeStatus;
 
 /// Story — 用户价值单元
 ///
@@ -91,7 +91,7 @@ impl Story {
 
     /// 强制设置 task.status。
     ///
-    /// 此入口仅用于 projector 已经从 LifecycleRun / Activity attempt 得出目标状态后的
+    /// 此入口仅用于 projector 已经从 LifecycleRun / runtime node 得出目标状态后的
     /// 聚合写回；用户/API/MCP 命令不得绕过 lifecycle 投影直接调用。
     ///
     /// 返回 `Some(true)` 表示状态发生变化，`Some(false)` 表示无变化，`None` 表示 task 不存在。
@@ -135,21 +135,22 @@ impl Story {
         Some(result)
     }
 
-    /// M2 projector 入口：将 Activity attempt 状态投射到指定 Task。
+    /// M2 projector 入口：将 runtime node 状态投射到指定 Task。
     ///
     /// 返回 `Some(true)` 表示投影后 task.status 发生变化；
     /// `Some(false)` 表示 task 存在但状态不变；`None` 表示 task 不存在。
     ///
     /// 只修改投影字段（status / artifacts 等），不触达 spec 字段；
-    /// 由启动期 Task view 投影器在 activity attempt 状态推进时调用。
+    /// 由启动期 Task view 投影器在 runtime node 状态推进时调用。
     pub fn apply_task_projection(
         &mut self,
         task_id: Uuid,
-        attempt_status: ActivityAttemptStatus,
+        node_status: RuntimeNodeStatus,
     ) -> Option<bool> {
         let task = self.tasks.iter_mut().find(|t| t.id == task_id)?;
-        let changed =
-            task.apply_projection(TaskExecutionProjection::from_attempt_status(attempt_status));
+        let changed = task.apply_projection(TaskExecutionProjection::from_runtime_node_status(
+            node_status,
+        ));
         if changed {
             self.updated_at = Utc::now();
         }
@@ -276,7 +277,7 @@ mod tests {
     #[test]
     fn apply_task_projection_maps_step_status() {
         use crate::task::TaskStatus;
-        use crate::workflow::ActivityAttemptStatus;
+        use crate::workflow::RuntimeNodeStatus;
 
         let project_id = Uuid::new_v4();
         let mut story = Story::new(project_id, "S".into(), "".into());
@@ -286,7 +287,7 @@ mod tests {
 
         // Pending → Pending (no change initially)
         let changed = story
-            .apply_task_projection(task_id, ActivityAttemptStatus::Pending)
+            .apply_task_projection(task_id, RuntimeNodeStatus::Pending)
             .expect("task exists");
         assert!(!changed);
         assert_eq!(
@@ -296,7 +297,7 @@ mod tests {
 
         // Ready → Assigned
         let changed = story
-            .apply_task_projection(task_id, ActivityAttemptStatus::Ready)
+            .apply_task_projection(task_id, RuntimeNodeStatus::Ready)
             .expect("task exists");
         assert!(changed);
         assert_eq!(
@@ -306,13 +307,13 @@ mod tests {
 
         // Claiming → Assigned (no change)
         let changed = story
-            .apply_task_projection(task_id, ActivityAttemptStatus::Claiming)
+            .apply_task_projection(task_id, RuntimeNodeStatus::Claiming)
             .expect("task exists");
         assert!(!changed);
 
         // Running → Running
         story
-            .apply_task_projection(task_id, ActivityAttemptStatus::Running)
+            .apply_task_projection(task_id, RuntimeNodeStatus::Running)
             .expect("task exists");
         assert_eq!(
             *story.find_task(task_id).unwrap().status(),
@@ -321,7 +322,7 @@ mod tests {
 
         // Completed → AwaitingVerification
         story
-            .apply_task_projection(task_id, ActivityAttemptStatus::Completed)
+            .apply_task_projection(task_id, RuntimeNodeStatus::Completed)
             .expect("task exists");
         assert_eq!(
             *story.find_task(task_id).unwrap().status(),
@@ -330,7 +331,7 @@ mod tests {
 
         // Failed → Failed
         story
-            .apply_task_projection(task_id, ActivityAttemptStatus::Failed)
+            .apply_task_projection(task_id, RuntimeNodeStatus::Failed)
             .expect("task exists");
         assert_eq!(
             *story.find_task(task_id).unwrap().status(),
@@ -340,7 +341,7 @@ mod tests {
         // Cancelled → Cancelled
         story.force_set_task_status(task_id, TaskStatus::Running);
         story
-            .apply_task_projection(task_id, ActivityAttemptStatus::Cancelled)
+            .apply_task_projection(task_id, RuntimeNodeStatus::Cancelled)
             .expect("task exists");
         assert_eq!(
             *story.find_task(task_id).unwrap().status(),
@@ -350,10 +351,10 @@ mod tests {
 
     #[test]
     fn apply_task_projection_returns_none_for_unknown_task() {
-        use crate::workflow::ActivityAttemptStatus;
+        use crate::workflow::RuntimeNodeStatus;
         let project_id = Uuid::new_v4();
         let mut story = Story::new(project_id, "S".into(), "".into());
-        let res = story.apply_task_projection(Uuid::new_v4(), ActivityAttemptStatus::Running);
+        let res = story.apply_task_projection(Uuid::new_v4(), RuntimeNodeStatus::Running);
         assert!(res.is_none());
     }
 

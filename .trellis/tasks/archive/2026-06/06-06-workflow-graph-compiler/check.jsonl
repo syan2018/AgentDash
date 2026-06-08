@@ -1,0 +1,8 @@
+{"file":".trellis/tasks/archive/2026-06/06-06-workflow-graph-compiler/prd.md","reason":"检查 compiler 任务完成状态、范围和验收标准是否一致。"}
+{"file":".trellis/tasks/archive/2026-06/06-06-workflow-graph-compiler/design.md","reason":"检查 compiler 边界、映射、diagnostics 和 fixtures 是否完整。"}
+{"file":".trellis/tasks/archive/2026-06/06-06-workflow-graph-compiler/implement.md","reason":"检查实施步骤是否依赖已归档 domain contract 并保留边界。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/workflow-graph-compiler-plan.md","reason":"检查计划是否覆盖研究中的语义、风险和验证要求。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"检查 plan 不复制旧 runtime 的不完整语义。"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"检查 Agent/Function/Human executor 语义被保留。"}
+{"file":".trellis/spec/backend/workflow/lifecycle-edge.md","reason":"检查 edge/artifact/advancement 语义一致性。"}
+{"file":".trellis/spec/frontend/workflow-activity-lifecycle.md","reason":"检查 compiler strictness 不意外改变前端 definition contract。"}

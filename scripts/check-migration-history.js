@@ -4,9 +4,30 @@ import { execFileSync } from "node:child_process";
 
 const MIGRATION_PREFIX = "crates/agentdash-infrastructure/migrations/";
 const ALLOW_REWRITE = process.env.ALLOW_MIGRATION_BASELINE_REWRITE === "1";
+const BASE_REF = process.env.MIGRATION_HISTORY_BASE_REF || "origin/main";
 
 function git(args) {
   return execFileSync("git", args, { encoding: "utf8" }).trim();
+}
+
+function gitMaybe(args) {
+  try {
+    return execFileSync("git", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function gitSucceeds(args) {
+  try {
+    execFileSync("git", args, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function splitTabLine(line) {
@@ -21,6 +42,22 @@ function stagedDiffNameStatus() {
 function trackedMigrations() {
   const output = git(["ls-tree", "-r", "--name-only", "HEAD", MIGRATION_PREFIX]);
   return new Set(output ? output.split(/\r?\n/).filter(Boolean) : []);
+}
+
+function migrationRepairBase() {
+  return gitMaybe(["merge-base", "HEAD", BASE_REF]);
+}
+
+function stagedContentMatchesRef(path, ref) {
+  if (!ref) return false;
+  const staged = gitMaybe(["show", `:${path}`]);
+  const base = gitMaybe(["show", `${ref}:${path}`]);
+  return staged !== "" && staged === base;
+}
+
+function pathExistsInRef(path, ref) {
+  if (!ref) return false;
+  return gitSucceeds(["cat-file", "-e", `${ref}:${path}`]);
 }
 
 function changedMigrationPaths(parts) {
@@ -39,6 +76,7 @@ function main() {
 
   const tracked = trackedMigrations();
   const violations = [];
+  const repairBase = migrationRepairBase();
 
   for (const line of stagedDiffNameStatus()) {
     const parts = splitTabLine(line);
@@ -48,6 +86,15 @@ function main() {
     if (!touchesTracked) continue;
 
     if (status.startsWith("A")) continue;
+    if (paths.every((path) => !pathExistsInRef(path, repairBase))) continue;
+    if (
+      status === "M" &&
+      paths.length === 1 &&
+      stagedContentMatchesRef(paths[0], repairBase)
+    ) {
+      console.log(`migration history guard allowed restoring ${paths[0]} to ${BASE_REF}`);
+      continue;
+    }
     violations.push(line);
   }
 

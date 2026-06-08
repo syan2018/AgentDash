@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { projectAgentDraftSessionPath } from "./agent-tab-view";
+import { projectAgentDraftSessionPath } from "./project-agent-paths";
 
 describe("projectAgentDraftSessionPath", () => {
   it("构造 ProjectAgent Draft session route", () => {

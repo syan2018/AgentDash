@@ -19,7 +19,7 @@
 use std::collections::BTreeSet;
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, AgentFrameRepository, AgentProcedure, MountDirective,
+    ActivityDefinition, AgentFrameRepository, AgentProcedureContract, MountDirective,
     ToolCapabilityDirective,
 };
 use agentdash_spi::CapabilityScopeCtx;
@@ -36,7 +36,7 @@ use crate::platform_config::PlatformConfig;
 use crate::session::SessionCapabilityService;
 use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
 use crate::session::types::AgentFrameRuntimeTarget;
-use crate::vfs::build_lifecycle_mount_with_activity_scope;
+use crate::vfs::build_lifecycle_mount_with_node_scope;
 use crate::workflow::frame_builder::AgentFrameBuilder;
 
 /// 激活一个 lifecycle activity 所需的全部纯计算输入。
@@ -50,14 +50,15 @@ pub struct ActivityActivationInput<'a> {
     /// 当前激活的 activity 定义;提供 output/input ports、key、description。
     /// node_type / procedure_key 由 executor 推导,激活计算本身不需要。
     pub active_activity: &'a ActivityDefinition,
-    /// activity 绑定的 workflow 定义(若有);提供 `contract.capability_config.tool_directives` baseline 与
-    /// injection/hook_rules/constraints/completion。
-    pub workflow: Option<&'a AgentProcedure>,
+    /// activity 绑定的 AgentProcedure 执行合同(若有);提供 capability baseline 与 mount overlay。
+    pub workflow_contract: Option<&'a AgentProcedureContract>,
     /// lifecycle 的 run_id,用于构建 `lifecycle://<run_id>/artifacts/...` mount。
     pub run_id: Uuid,
-    /// 当前 Activity 所属 graph instance，用于把 lifecycle VFS 绑定到状态事实源。
-    pub graph_instance_id: Uuid,
-    /// 当前 Activity attempt，用于把 lifecycle VFS artifact 写入绑定到精确 attempt。
+    /// 当前 Activity 所属 orchestration instance，用于把 lifecycle VFS 绑定到运行态事实源。
+    pub orchestration_id: Uuid,
+    /// 当前 Activity 在 orchestration runtime 中的稳定 node path。
+    pub node_path: &'a str,
+    /// 当前 runtime node attempt，用于把 lifecycle VFS artifact 写入绑定到精确 attempt。
     pub attempt: u32,
     /// lifecycle key,lifecycle mount 路径的一部分。
     pub lifecycle_key: &'a str,
@@ -74,7 +75,7 @@ pub struct ActivityActivationInput<'a> {
     /// 运行时 capability 指令(PhaseNode 热更新场景);追加到 baseline 后由 slot 归约。
     pub tool_directives: &'a [ToolCapabilityDirective],
     /// 已就绪的前驱 output port key 集合,kickoff prompt 标注状态时使用。
-    /// 调用方提前按 activity attempt scope 查好，activate_step 不做 IO。
+    /// 调用方提前按 runtime node scope 查好，activate_step 不做 IO。
     pub ready_port_keys: BTreeSet<String>,
     /// Companion agent 候选列表（workflow/lifecycle 路径通常为空）。
     pub available_companions: Vec<agentdash_spi::context::capability::CompanionAgentEntry>,
@@ -125,15 +126,15 @@ pub fn activate_activity_with_platform(
     let baseline_directives: Vec<ToolCapabilityDirective> =
         input.baseline_override.clone().unwrap_or_else(|| {
             input
-                .workflow
-                .map(|w| w.contract.capability_config.tool_directives.clone())
+                .workflow_contract
+                .map(|contract| contract.capability_config.tool_directives.clone())
                 .unwrap_or_default()
         });
 
     let mut combined_directives = baseline_directives;
     combined_directives.extend(input.tool_directives.iter().cloned());
 
-    let has_active_workflow = input.workflow.is_some();
+    let has_active_workflow = input.workflow_contract.is_some();
 
     // ── 2. 调 Resolver ──
     let mut contributions = Vec::new();
@@ -178,12 +179,12 @@ pub fn activate_activity_with_platform(
         .iter()
         .map(|p| p.key.clone())
         .collect();
-    let lifecycle_mount = build_lifecycle_mount_with_activity_scope(
+    let lifecycle_mount = build_lifecycle_mount_with_node_scope(
         input.run_id,
-        input.graph_instance_id,
+        input.orchestration_id,
+        input.node_path,
         input.lifecycle_key,
         &writable_port_keys,
-        Some(&input.active_activity.key),
         Some(input.attempt),
     );
     let lifecycle_vfs = Vfs {
@@ -195,8 +196,8 @@ pub fn activate_activity_with_platform(
     };
     // Activity 没有 step 级 capability_config;mount overlay 全部来自 workflow contract。
     let mount_directives = input
-        .workflow
-        .map(|workflow| workflow.contract.capability_config.mount_directives.clone())
+        .workflow_contract
+        .map(|contract| contract.capability_config.mount_directives.clone())
         .unwrap_or_default();
 
     // ── 5. kickoff prompt fragment ──
@@ -466,9 +467,10 @@ mod tests {
                 task_id,
             },
             active_activity: &step,
-            workflow: None,
+            workflow_contract: None,
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "trellis_dev_task",
             agent_mcp_servers: vec![],
@@ -502,9 +504,10 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: Some(&workflow),
+            workflow_contract: Some(&workflow.contract),
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc_admin",
             agent_mcp_servers: vec![],
@@ -535,9 +538,10 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: Some(&workflow),
+            workflow_contract: Some(&workflow.contract),
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc_phase",
             agent_mcp_servers: vec![],
@@ -574,9 +578,10 @@ mod tests {
         let base_input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: Some(&full_read_workflow),
+            workflow_contract: Some(&full_read_workflow.contract),
             run_id,
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc_phase",
             agent_mcp_servers: vec![],
@@ -588,7 +593,7 @@ mod tests {
             available_companions: Vec::new(),
         };
         let restricted_input = ActivityActivationInput {
-            workflow: Some(&restricted_read_workflow),
+            workflow_contract: Some(&restricted_read_workflow.contract),
             ..base_input.clone()
         };
 
@@ -643,9 +648,10 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: Some(&workflow),
+            workflow_contract: Some(&workflow.contract),
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc_phase",
             agent_mcp_servers: vec![],
@@ -705,9 +711,10 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: Some(&workflow),
+            workflow_contract: Some(&workflow.contract),
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc",
             agent_mcp_servers: vec![],
@@ -750,9 +757,10 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: None,
+            workflow_contract: None,
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc",
             agent_mcp_servers: vec![],
@@ -808,9 +816,10 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
-            workflow: None,
+            workflow_contract: None,
             run_id: Uuid::new_v4(),
-            graph_instance_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc",
             agent_mcp_servers: vec![],

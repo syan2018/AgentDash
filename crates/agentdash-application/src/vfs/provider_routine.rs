@@ -698,9 +698,10 @@ mod tests {
                     Uuid::new_v4(),
                     Uuid::new_v4(),
                     Uuid::new_v4(),
-                    Some(agentdash_domain::workflow::ActivityBindingRefs::new(
+                    Some(agentdash_domain::workflow::OrchestrationBindingRefs::new(
                         Uuid::new_v4(),
-                        Some(Uuid::new_v4()),
+                        "routine.main",
+                        1,
                     )),
                 ),
             )),

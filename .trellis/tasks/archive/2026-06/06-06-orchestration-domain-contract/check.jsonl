@@ -1,0 +1,9 @@
+{"file":".trellis/tasks/archive/2026-06/06-06-orchestration-domain-contract/prd.md","reason":"检查实现是否满足子任务验收标准。"}
+{"file":".trellis/tasks/archive/2026-06/06-06-orchestration-domain-contract/design.md","reason":"检查实现是否保持 aggregate 边界、非目标和持久化策略。"}
+{"file":".trellis/tasks/archive/2026-06/06-06-orchestration-domain-contract/implement.md","reason":"检查步骤、验证命令和停止条件是否闭合。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/orchestration-domain-contract-plan.md","reason":"检查领域合同、migration、repository roundtrip 是否符合研究结论。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/current-code-context.md","reason":"检查实现是否基于当前代码事实，不凭记忆改动。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"检查旧 runtime 事实源没有被本任务切换。"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"检查 Activity runtime 和 FunctionRun 语义没有被破坏。"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"检查 repository 边界与 aggregate 归属。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查 migration 与 JSON TEXT 持久化规范。"}

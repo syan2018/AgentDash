@@ -79,16 +79,16 @@ export interface SessionExecutionState {
 }
 
 export interface ActiveWorkflowHookMetadata {
-  workflow_graph_id: string;
-  lifecycle_key: string;
-  lifecycle_name: string;
-  run_id: string;
-  run_status: string;
-  activity_key: string;
-  activity_title: string;
-  primary_workflow_id: string;
+  workflow_graph_id?: string | null;
+  lifecycle_key?: string | null;
+  lifecycle_name?: string | null;
+  run_id?: string | null;
+  run_status?: string | null;
+  activity_key?: string | null;
+  activity_title?: string | null;
+  primary_workflow_id?: string | null;
   procedure_key?: string | null;
-  primary_workflow_name: string;
+  primary_workflow_name?: string | null;
 }
 
 export interface HookRuntimeMetadata {

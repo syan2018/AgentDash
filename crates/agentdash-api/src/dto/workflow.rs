@@ -22,13 +22,6 @@ pub struct StartWorkflowRunRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct SubmitHumanDecisionRequest {
-    pub decision_port: String,
-    pub decision: serde_json::Value,
-    pub summary: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct CreateAgentProcedureRequest {
     pub project_id: String,
     pub key: String,

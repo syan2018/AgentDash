@@ -87,6 +87,8 @@ pub struct ServiceSet {
     pub runtime_gateway: Arc<RuntimeGateway>,
     /// Extension package archive object 存储端口 — API 只通过 application use case 消费。
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
+    /// Workflow function/local-effect executor port — orchestration scheduler 共享。
+    pub function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
 }
 
 /// 应用级配置
@@ -158,6 +160,8 @@ impl AppState {
         let setup_action_transport = relay_bootstrap.setup_action_transport;
         let shell_output_registry = relay_bootstrap.shell_output_registry;
         let terminal_cache = relay_bootstrap.terminal_cache;
+        let function_runner: Arc<dyn agentdash_spi::FunctionRunner> =
+            Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new());
 
         let vfs_bootstrap = crate::bootstrap::vfs::build_vfs_kernel(
             repos.clone(),
@@ -165,6 +169,7 @@ impl AppState {
             backend_registry.clone(),
             shell_output_registry.clone(),
             platform_config.clone(),
+            function_runner.clone(),
             integration_registration.mount_providers,
         );
         let mount_provider_registry = vfs_bootstrap.mount_provider_registry;
@@ -183,6 +188,7 @@ impl AppState {
                 session_services_handle,
                 runtime_tool_provider,
                 mcp_relay_provider,
+                function_runner: function_runner.clone(),
                 platform_config: platform_config.clone(),
                 integration_connectors: integration_registration.connectors,
                 extra_skill_dirs: integration_registration.extra_skill_dirs,
@@ -234,7 +240,6 @@ impl AppState {
                 lifecycle_subject_association_repo: repos
                     .lifecycle_subject_association_repo
                     .clone(),
-                workflow_graph_instance_repo: repos.workflow_graph_instance_repo.clone(),
                 lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;
@@ -260,14 +265,10 @@ impl AppState {
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
                 session_runtime.clone(),
                 story_repo_port.clone(),
-                repos.workflow_graph_repo.clone(),
                 repos.lifecycle_run_repo.clone(),
-                repos.workflow_graph_instance_repo.clone(),
-                repos.activity_execution_claim_repo.clone(),
                 repos.lifecycle_subject_association_repo.clone(),
                 repos.lifecycle_agent_repo.clone(),
                 repos.agent_frame_repo.clone(),
-                repos.agent_assignment_repo.clone(),
                 repos.execution_anchor_repo.clone(),
             ),
         );
@@ -319,6 +320,7 @@ impl AppState {
                 audit_bus,
                 runtime_gateway,
                 extension_package_artifact_storage,
+                function_runner,
             },
             config: AppConfig {
                 platform_config,

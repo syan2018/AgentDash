@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
     CapabilityResolver, CapabilityResolverInput, ContextContributionSource, ContextContributions,
-    McpCandidates, ToolContribution, tool_directives_from_active_workflow,
+    McpCandidates, ToolContribution, tool_directives_from_active_workflow_projection,
 };
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -75,11 +75,9 @@ pub async fn build_task_session_context(
     let workflow = find_active_workflow_via_task_sessions(repos, task.id).await;
 
     // ── 资源 Capability / MCP 列表 ──
-    let workflow_directives = workflow.as_ref().and_then(|p| {
-        p.primary_workflow
-            .as_ref()
-            .map(tool_directives_from_active_workflow)
-    });
+    let workflow_directives = workflow
+        .as_ref()
+        .map(tool_directives_from_active_workflow_projection);
     let mut contributions = Vec::new();
     if let Some(directives) = workflow_directives {
         contributions.push(ContextContributions {
@@ -180,7 +178,7 @@ pub async fn build_task_session_context(
 /// 通过 task 关联的 agent → frame 查找活跃 lifecycle workflow projection。
 ///
 /// 链路: LifecycleSubjectAssociation(Task) → LifecycleAgent → AgentFrame
-///      → RuntimeSession trace lookup → AgentFrame → AgentAssignment → ActivityAttemptState
+///      → RuntimeSession trace lookup → RuntimeSessionExecutionAnchor → RuntimeNodeState
 ///
 /// 只读视图辅助函数；失败或缺失均返回 None，绝不抛错。
 async fn find_active_workflow_via_task_sessions(
@@ -233,13 +231,10 @@ async fn find_active_workflow_via_task_sessions(
         if let Ok(Some(projection)) = resolve_active_workflow_projection_for_session(
             &session_id,
             repos.agent_procedure_repo.as_ref(),
-            repos.workflow_graph_repo.as_ref(),
             repos.agent_frame_repo.as_ref(),
             repos.lifecycle_agent_repo.as_ref(),
-            repos.agent_assignment_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
             repos.execution_anchor_repo.as_ref(),
-            repos.workflow_graph_instance_repo.as_ref(),
         )
         .await
         {

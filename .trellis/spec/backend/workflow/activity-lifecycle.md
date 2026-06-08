@@ -1,21 +1,8 @@
 # WorkflowGraph Activity Backend Contract
 
-Activity lifecycle 的目标模型是 `LifecycleRun(topology=workflow_graph) -> WorkflowGraph -> WorkflowGraphInstance -> ActivityState / ActivityAttemptState`。当前代码中的 `ActivityLifecycleDefinition` 是 `WorkflowGraph` 的迁移来源；当前 `ActivityLifecycleRunState` 会迁入 run 内各 `WorkflowGraphInstance` 的 activity state namespace。`topology=graphless` 的普通 Agent runtime 不进入本契约，它只通过 run / agent / frame / runtime session anchor 与 subject association 表达控制面。
+Activity lifecycle 是静态 `WorkflowGraph` 的定义层合同。运行态由 `LifecycleRun.orchestrations[]` 中的 `OrchestrationInstance` 承担；每个节点的 durable 状态落在 `RuntimeNodeState`，并通过 `orchestration_id + node_path + attempt` 定位。这样同一 Lifecycle 可以同时承载 root workflow、追加 workflow、review flow 或未来脚本编排，而不会把 runtime identity 绑定到某一种资产形态。
 
 模块不变量见 [Workflow Architecture](./architecture.md)。
-
-## Core Runtime Contract
-
-- `WorkflowGraph` 是可执行 Activity graph definition，包含 activities、transitions、ports、artifact bindings 与 executor slots。
-- `LifecycleRun` 是 tracked life process / control ledger，不是单个 graph 的 run；`topology=workflow_graph` 的同一个 `LifecycleRun` 可以包含多个 `WorkflowGraphInstance`。
-- `LifecycleRun.root_graph_id` 只在 `topology=workflow_graph` 中存在；`topology=graphless` 的 run 不创建 `WorkflowGraphInstance`、Activity state、claim 或 `AgentAssignment`。
-- root graph 只是 `WorkflowGraphInstance(role=root)`；当前 `LifecycleRun.lifecycle_id` 只是 root graph backfill 来源。
-- Activity runtime identity 必须以 `graph_instance_id + activity_key` 为 namespace。
-- Attempt / claim / assignment key 必须包含 `graph_instance_id + activity_key + attempt`。
-- `WorkflowGraphInstance.activity_state` 是 activity runtime state 的权威状态源；run-level active display 通过 `LifecycleRunView.active_activity_refs` 从 graph instance attempts 派生。
-- Scheduler 负责 durable claim 和 executor 启动；executor 只通过事件把结果交还给 `LifecycleEngine`。
-- Function executor 即使立即完成，也必须产出 Activity terminal event，而不是直接修改 run state。
-- Hook evaluation 可以报告 completion metadata，但 durable state advancement 仍由 ActivityEvent application 拥有。
 
 ## Definition Contract
 
@@ -29,120 +16,164 @@ pub struct WorkflowGraph {
 }
 ```
 
-迁移来源：
+当前 domain 中 `ActivityDefinition` 仍表达节点定义，原因是这个命名已经覆盖 Agent / Function / Human gate 等 workflow step 的编辑与模板语义；进入 runtime 前必须由 application compiler 转换为 semantic `OrchestrationPlanSnapshot`。
 
-```rust
-// 当前名称，目标语义是 WorkflowGraph
-pub struct ActivityLifecycleDefinition {
-    pub entry_activity_key: String,
-    pub activities: Vec<ActivityDefinition>,
-    pub transitions: Vec<ActivityTransition>,
-}
-```
+## Runtime Contract
 
-`WorkflowDefinition` 的目标语义不是 graph config，而是 `AgentProcedure`：单个 Agent Activity 的 behavior / capability / context / hook contract。Agent executor 只引用 procedure 或 procedure policy，不应把整张 graph topology 塞进 procedure。
+- `WorkflowGraph` 只作为 compiler 输入，不拥有运行实例身份。
+- compiler 输出 `OrchestrationPlanSnapshot(plan_digest=...)`；blocking diagnostics 在创建 orchestration 前返回给调用方。
+- `LifecycleRun.add_orchestration` 直接保存 `OrchestrationInstance`，entry rules materialize 为 `RuntimeNodeState(status=Ready)` 与 ready queue。
+- node status、inputs、outputs、executor refs、trace refs、error、cache refs 和 state exchange 都由 common orchestration runtime reducer 写入。
+- Agent / Function / LocalEffect / HumanGate executor 统一提交 `NodeStarted` 与 terminal node event；同步完成的 executor 也要先记录 started，再记录 completed/failed。
+- Runtime session 反查节点时走 `RuntimeSessionExecutionAnchor -> LifecycleRun -> OrchestrationInstance -> RuntimeNodeState`。
+- Active workflow projection 从 `LifecycleRun.orchestrations[]` 派生，供 API / frontend / VFS / hook 查询同一事实源。
 
-## WorkflowGraphInstance Contract
+## Agent Node Execution
 
-```text
-WorkflowGraphInstance
-  id
-  run_id
-  graph_id
-  role
-  status
-  activity_state
-  created_at
-  updated_at
-```
-
-Rules:
-
-- `(run_id, role=root)` 在一个 run 内只能有一个。
-- `WorkflowGraphInstance` 只属于 `topology=workflow_graph` 的 run。
-- `role=task_execution`、`role=companion_review`、`role=routine_phase` 等只是同一 run 内 graph instance 的用途，不自动创建 child run。
-- Child / linked `LifecycleRun` 只表达独立 lifecycle、context channel、control boundary、navigation boundary 或 long-lived projection boundary。
-
-## Executor Launcher
-
-Trait contract 目标形态：
-
-```rust
-#[async_trait]
-pub trait ActivityExecutorLauncher {
-    async fn start(
-        &self,
-        graph_instance: &WorkflowGraphInstance,
-        definition: &WorkflowGraph,
-        state: &ActivityLifecycleRunState,
-        claim: &ActivityExecutionClaim,
-    ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError>;
-}
-
-pub struct ActivityExecutorStartResult {
-    pub assignment_ref: Option<AgentAssignmentRef>,
-    pub executor_run: ExecutorRunRef,
-    pub immediate_events: Vec<ActivityEvent>,
-}
-```
-
-`ExecutorRunRef::AgentSession` 只保留 runtime evidence；Agent identity、frame revision 与 Activity attempt 的桥接由 `AgentAssignment` 提供。
-
-## Agent Assignment Route
-
-Agent Activity 的标准执行链路：
+Agent node 启动后，runtime evidence 表达为：
 
 ```text
-WorkflowGraphInstance
-  -> ActivityState(activity_key)
-  -> ActivityAttemptState(graph_instance_id, activity_key, attempt)
-  -> AgentAssignment(run_id, graph_instance_id, activity_key, attempt, agent_id, frame_id)
+LifecycleRun
+  -> OrchestrationInstance(orchestration_id)
+  -> RuntimeNodeState(node_path, attempt)
   -> LifecycleAgent
   -> AgentFrame
-  -> RuntimeSessionExecutionAnchor refs
+  -> RuntimeSessionExecutionAnchor(runtime_session_id, orchestration_id, node_path, attempt)
 ```
 
-`complete_lifecycle_node`、terminal callback、VFS lifecycle provider、hook advance/resolution 都应使用 assignment / graph instance refs 推进 Activity。Session-indexed lookup 只能作为 trace adapter，并必须立即反查到 frame/agent/assignment。
+`ExecutorRunRef::RuntimeSession { session_id }` 只表示 connector delivery / trace evidence。业务归属、权限和 subject projection 仍通过 `LifecycleSubjectAssociation`、`LifecycleAgent` 与 `AgentFrame` 推导。
 
-Runtime session 反查优先级：
+## Function / Local Effect Execution
+
+Function 和本机 effect 可以在同一 scheduler pass 内同步完成，但仍遵守 runtime event 顺序：
 
 ```text
-runtime_session_id
-  -> RuntimeSessionExecutionAnchor
-  -> run_id / launch_frame_id / agent_id / assignment_id / graph_instance_id / activity_key / attempt
-  -> ActivityEvent application
-```
-
-`AgentFrameRuntimeView.runtime_session_refs` 从 `RuntimeSessionExecutionAnchor` read model 投影，原因是 frame surface 与 runtime trace 索引有不同变化节奏。
-
-## Function Executor
-
-Function Activity 没有 Agent runtime terminal，因此启动后必须在同一次 scheduler pass 内把 terminal event 交给状态机。
-
-Function execution port:
-
-```rust
-async fn execute_function_activity(
-    definition: &WorkflowGraph,
-    activity: &ActivityDefinition,
-    claim: &ActivityExecutionClaim,
-    state: &ActivityLifecycleRunState,
-) -> Result<FunctionExecutionResult, String>;
+NodeStarted(executor_run_ref)
+NodeCompleted(outputs) | NodeFailed(error)
 ```
 
 Contract:
 
-- Scheduler 先记录 `ExecutorStarted`，再应用 `immediate_events`。
-- Agent/Human executors 返回 started result，不带 immediate events。
-- Function executors 返回 `ExecutorRunRef::FunctionRun { run_id }` plus exactly one terminal event。
-- success -> `ActivityEvent::ActivityCompleted`。
-- failure -> `ActivityEvent::ActivityFailed`。
-- Function output values 映射到 declared `activity.output_ports`。
-- completion policy validation 由 `LifecycleEngine` 拥有。
+- success 写 declared output ports，并由 state exchange materialize successor inputs。
+- failure 写 `RuntimeNodeError`，后续 retry / iteration policy 决定是否再激活新的 attempt。
+- completion policy validation 由 orchestration runtime reducer 拥有。
+- 本机执行能力的权限、预算和系统桥接开关由 AgentRun capability / permission surface 表达。
+
+## Scenario: Semantic Executor Launcher
+
+### 1. Scope / Trigger
+
+- Trigger: application 层消费 `LifecycleRun.orchestrations[].dispatch.ready_node_ids` 并启动 semantic `PlanNode`。
+- Scope: `workflow/orchestration/executor_launcher.rs`、`LifecycleOrchestrator` terminal bridge、`complete_lifecycle_node` tool、workflow API route、`agentdash-contracts::workflow` DTO。
+
+### 2. Signatures
+
+Application:
+
+```rust
+OrchestrationExecutorLauncher::drain_ready_nodes(
+    run_id: Uuid,
+) -> Result<OrchestrationExecutorDrainResult, WorkflowApplicationError>
+
+OrchestrationExecutorLauncher::submit_human_gate_decision(
+    input: SubmitHumanGateDecisionInput,
+) -> Result<SubmitHumanGateDecisionResult, WorkflowApplicationError>
+```
+
+Runtime events:
+
+```rust
+NodeStarted { node_path, attempt, executor_run_ref, timestamp }
+NodeCompleted { node_path, attempt, outputs, timestamp }
+NodeFailed { node_path, attempt, error, timestamp }
+NodeBlocked { node_path, attempt, error, timestamp }
+```
+
+HTTP:
+
+```text
+POST /api/workflows/lifecycle-runs/{run_id}/orchestration-human-decisions
+```
+
+Request:
+
+```rust
+SubmitOrchestrationHumanDecisionRequest {
+    orchestration_id: String,
+    node_path: String,
+    attempt: u32, // default 1
+    decision: serde_json::Value,
+    resolved_by: Option<String>,
+}
+```
+
+Response:
+
+```rust
+SubmitOrchestrationHumanDecisionResponse {
+    run: LifecycleRunView,
+    gate_id: String,
+}
+```
+
+### 3. Contracts
+
+- `drain_ready_nodes` 每次从 `LifecycleRunRepository` 重新加载 aggregate，处理一个 ready node 后写回，再进入下一轮；这样所有后继激活都来自 reducer materialization 后的最新 snapshot。
+- AgentCall 正式支持 `AgentReusePolicy::CreateActivityAgent + RuntimeSessionPolicy::CreateNew`，并创建 `LifecycleAgent`、`AgentFrame`、`RuntimeSessionExecutionAnchor` 后提交 `NodeStarted(ExecutorRunRef::RuntimeSession)`。
+- Function API 与 BashExec 使用 `FunctionRunner` SPI。同步完成也必须先提交 `NodeStarted(ExecutorRunRef::FunctionRun)`，再提交 `NodeCompleted` 或 `NodeFailed`。
+- compiler 将 BashExec 映射为 `PlanNodeKind::LocalEffect + ExecutorSpec::Function(BashExec)`；执行器按 typed executor spec 调用 `run_bash`，因此 `PlanNodeKind` 表达流程语义，`ExecutorSpec` 表达副作用机制。
+- HumanGate 创建 `LifecycleGate(gate_kind=orchestration_human_gate)`，payload 必须包含 `run_id`、`orchestration_id`、`node_path`、`attempt`、`plan_node_id` 与 executor contract；runtime node 写 `ExecutorRunRef::HumanDecision`。
+- Human decision route 校验 run project edit permission，通过 `orchestration_id + node_path + attempt` 定位 running HumanGate node，resolve gate 后提交 `NodeCompleted`，再 drain 后继 ready nodes。
+- `NodeBlocked` 表达计划可识别但当前执行面尚不能真实推进的节点；orchestration status 聚合为 `Paused`，LifecycleRun status 聚合为 `Blocked`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| ready AgentCall 缺少 `ExecutorSpec::AgentProcedure` | `NodeBlocked(code=agent_executor_missing)` |
+| AgentProcedure key 不存在 | `NodeBlocked(code=agent_procedure_not_found)` |
+| AgentCall policy 不是 `CreateActivityAgent + CreateNew` | `NodeBlocked(code=agent_executor_policy_not_supported)` |
+| ready Function / BashExec 没有 `FunctionRunner` | `NodeFailed(code=function_runner_unavailable)` |
+| API request 返回非 2xx | `NodeFailed(code=api_request_status_failed)` |
+| BashExec 非 0 exit | `NodeFailed(code=bash_exec_nonzero)` |
+| `ExecutorSpec::LocalEffect(capability_key, input)` 尚无 concrete executor | `NodeFailed(code=local_effect_capability_not_supported)`，detail 携带 orchestration node coordinate |
+| ready HumanGate 缺少 Human executor | `NodeBlocked(code=human_gate_executor_missing)` |
+| decision route 指向非 Running node | `Conflict` |
+| decision route 指向非 HumanGate node | `Conflict` |
+| referenced lifecycle gate 不存在 | `NotFound` |
+| gate 已 resolved | `Conflict` |
+| node 声明多 attempt、unbounded attempt 或非 latest artifact alias | 副作用前 `NodeBlocked` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Function API node 从 Ready 进入 Running，再 Completed，`RuntimeNodeState.executor_run_ref` 与 `trace_refs` 写入 `FunctionRun`，declared output ports 进入 `state_snapshot.node_outputs`。
+- Good: HumanGate node 打开 gate 后保持 Running；用户提交 decision 后 node Completed，后继节点由同一个 drain pass 启动。
+- Base: compiler 产生的 BashExec LocalEffect 使用 `ExecutorSpec::Function(BashExec)` 执行，并按 declared output ports materialize stdout/stderr/exit code。
+- Bad: executor side effect 启动后 terminal materialization 被 completion policy 拒绝时，执行器重新加载最新 run 并写 `NodeFailed(code=terminal_materialization_failed)`。
+
+### 6. Tests Required
+
+- Unit: reducer `NodeBlocked` 将 runtime node 置为 Blocked，并将 orchestration / lifecycle status 聚合为 Paused / Blocked。
+- Integration: launcher drain 覆盖 Function `NodeStarted -> NodeCompleted`、trace ref、output port materialization 与 function context。
+- Integration: launcher drain 覆盖 LocalEffect capability 未接入时 `NodeStarted -> NodeFailed`，error detail 带 orchestration node coordinate。
+- Integration: launcher drain 覆盖 HumanGate gate payload、`ExecutorRunRef::HumanDecision` 与 ready queue 清空。
+- Integration: attempt policy blocking 发生在 executor side effect 之前。
+- Cross-layer: `pnpm run contracts:check` 与 `pnpm run frontend:check` 覆盖 decision route DTO 生成和前端服务签名。
+
+### 7. Evidence Chain
+
+```text
+LifecycleRun.orchestrations[].dispatch.ready_node_ids
+  -> OrchestrationExecutorLauncher
+  -> typed executor side effect
+  -> OrchestrationRuntimeEvent
+  -> RuntimeNodeState
+  -> LifecycleRunView / VFS / hook projection
+```
 
 ## Artifact Contract
 
-Agent executor 的 output port 内容是 lifecycle artifact 值，必须写入 JSON 内容。Activity completed 时只读取 activity 已声明的 output ports，并把每个 port 的文件内容解析为 `serde_json::Value`；解析失败表示 artifact contract 无效，activity 不进入 completed。这样后继 artifact binding、gate evaluation 与 workflow projection 消费的是结构化值，而不是由 orchestrator 猜测的自由文本。
+Agent executor 的 output port 内容是 lifecycle artifact 值。Runtime node completed 时只读取当前 node scope 下已声明或被 state exchange 使用的 output ports；每个 port 内容优先解析为 `serde_json::Value`，解析失败时物化为 JSON string。这样后继 artifact binding、gate evaluation 与 workflow projection 消费的是结构化值，同时允许 agent 通过 lifecycle VFS 写入普通文本产物。
 
 ## Workflow Template Asset Contract
 
@@ -154,14 +185,14 @@ Contract:
 - Shared Library startup repair rewrites builtin workflow template assets to normalized shape and recomputes `payload_digest`。
 - Project install/update commits workflow definitions and workflow graph definitions in one database transaction。
 - Overwrite install preserves project resource ids and `created_at`，increments `version`，updates installed source metadata together。
-- Runtime active workflow projection resolves from `WorkflowGraphInstance`、`AgentAssignment` and `ActivityAttemptState`。
+- Runtime active workflow projection resolves from `LifecycleRun.orchestrations[]`。
 
 ## Validation
 
 | Level | Target | Assertion |
 |-------|--------|-----------|
 | Unit | `WorkflowGraph` / current `ActivityLifecycleDefinition` serde roundtrip | graph definition 不携带 runtime state |
-| Unit | `WorkflowGraphInstance` activity namespace | 同一 run 内重名 activity key 不污染 state |
-| Integration | Scheduler claim key | 包含 `graph_instance_id + activity_key + attempt` |
-| Integration | Terminal callback | 通过 RuntimeSession -> AgentFrame -> LifecycleAgent -> AgentAssignment -> ActivityAttemptState 推进 |
-| Integration | Function executor | 立即产出 terminal event 并写入 declared output ports |
+| Unit | `OrchestrationInstance` runtime namespace | 同一 run 内重名 node path 不污染 state |
+| Integration | Runtime node key | scheduler / terminal / trace anchor 包含 `orchestration_id + node_path + attempt` |
+| Integration | Terminal callback | 通过 RuntimeSession -> RuntimeSessionExecutionAnchor -> OrchestrationInstance -> RuntimeNodeState 推进 |
+| Integration | Function executor | 先记录 `NodeStarted`，再记录 terminal event 与 declared output ports |

@@ -3,10 +3,10 @@ use sqlx::PgPool;
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::workflow::{
-    ActivityExecutionClaim, ActivityExecutionClaimRepository, ActivityExecutionClaimStatus,
-    AgentProcedure, AgentProcedureRepository, ExecutorRunRef, LifecycleRun, LifecycleRunRepository,
-    LifecycleRunTopology, WorkflowGraph, WorkflowGraphRepository, WorkflowTemplateInstallBundle,
-    WorkflowTemplateInstallRepository, WorkflowTemplateInstallResult,
+    AgentProcedure, AgentProcedureRepository, LifecycleContext, LifecycleRun,
+    LifecycleRunRepository, LifecycleRunTopology, OrchestrationInstance, WorkflowGraph,
+    WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
+    WorkflowTemplateInstallResult,
 };
 
 pub struct PostgresWorkflowRepository {
@@ -21,12 +21,7 @@ impl PostgresWorkflowRepository {
     pub async fn initialize(&self) -> Result<(), DomainError> {
         crate::migration::assert_postgres_tables_ready(
             &self.pool,
-            &[
-                "agent_procedures",
-                "workflow_graphs",
-                "lifecycle_runs",
-                "activity_execution_claims",
-            ],
+            &["agent_procedures", "workflow_graphs", "lifecycle_runs"],
         )
         .await
     }
@@ -34,9 +29,8 @@ impl PostgresWorkflowRepository {
 
 const WF_COLS: &str = "id,project_id,key,name,description,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const WG_COLS: &str = "id,project_id,key,name,description,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,topology,root_graph_id,status,execution_log,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,topology,root_graph_id,status,execution_log,created_at,updated_at,last_activity_at";
-const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,graph_instance_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
+const RUN_COLS: &str = "id,project_id,topology,context,orchestrations,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,topology,context,orchestrations,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
 
 #[async_trait::async_trait]
 impl AgentProcedureRepository for PostgresWorkflowRepository {
@@ -422,112 +416,17 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
 }
 
 #[async_trait::async_trait]
-impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
-    async fn create_or_get(
-        &self,
-        claim: &ActivityExecutionClaim,
-    ) -> Result<ActivityExecutionClaim, DomainError> {
-        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
-            "INSERT INTO activity_execution_claims ({ACTIVITY_CLAIM_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) \
-             ON CONFLICT (idempotency_key) DO UPDATE SET updated_at = activity_execution_claims.updated_at \
-             RETURNING {ACTIVITY_CLAIM_COLS}"
-        ))
-        .bind(claim.claim_id.to_string())
-        .bind(claim.run_id.to_string())
-        .bind(claim.graph_instance_id.to_string())
-        .bind(&claim.activity_key)
-        .bind(claim.attempt as i32)
-        .bind(&claim.executor_kind)
-        .bind(claim.status.as_str())
-        .bind(&claim.idempotency_key)
-        .bind(serialize_executor_run_ref(&claim.executor_run_ref)?)
-        .bind(claim.created_at)
-        .bind(claim.updated_at)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(db_err)?
-        .try_into()
-    }
-
-    async fn get_by_idempotency_key(
-        &self,
-        idempotency_key: &str,
-    ) -> Result<Option<ActivityExecutionClaim>, DomainError> {
-        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
-            "SELECT {ACTIVITY_CLAIM_COLS} FROM activity_execution_claims WHERE idempotency_key = $1"
-        ))
-        .bind(idempotency_key)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
-    }
-
-    async fn list_active_by_run(
-        &self,
-        run_id: uuid::Uuid,
-    ) -> Result<Vec<ActivityExecutionClaim>, DomainError> {
-        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
-            "SELECT {ACTIVITY_CLAIM_COLS} FROM activity_execution_claims WHERE run_id = $1 AND status IN ('claiming','running') ORDER BY created_at ASC"
-        ))
-        .bind(run_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-
-    async fn update(&self, claim: &ActivityExecutionClaim) -> Result<(), DomainError> {
-        let result = sqlx::query(
-            "UPDATE activity_execution_claims SET status=$1,executor_run_ref=$2,updated_at=$3 WHERE claim_id=$4",
-        )
-        .bind(claim.status.as_str())
-        .bind(serialize_executor_run_ref(&claim.executor_run_ref)?)
-        .bind(claim.updated_at)
-        .bind(claim.claim_id.to_string())
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        ensure_rows_affected(
-            result.rows_affected(),
-            "activity_execution_claim",
-            &claim.claim_id,
-        )
-    }
-
-    async fn abandon_claiming_before(
-        &self,
-        cutoff: chrono::DateTime<chrono::Utc>,
-    ) -> Result<Vec<ActivityExecutionClaim>, DomainError> {
-        let now = chrono::Utc::now();
-        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
-            "UPDATE activity_execution_claims SET status='abandoned',updated_at=$1 \
-             WHERE status='claiming' AND updated_at < $2 RETURNING {ACTIVITY_CLAIM_COLS}"
-        ))
-        .bind(now)
-        .bind(cutoff)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-}
-
-#[async_trait::async_trait]
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
         .bind(topology_to_db(run.topology))
-        .bind(run.root_graph_id.map(|id| id.to_string()))
+        .bind(serde_json::to_string(&run.context)?)
+        .bind(serde_json::to_string(&run.orchestrations)?)
+        .bind(serialize_optional_json(&run.view_projection)?)
         .bind(serde_json::to_string(&run.status)?)
         .bind(serde_json::to_string(&run.execution_log)?)
         .bind(run.created_at)
@@ -593,27 +492,13 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         .collect()
     }
 
-    async fn list_by_root_graph(
-        &self,
-        root_graph_id: uuid::Uuid,
-    ) -> Result<Vec<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>(&format!(
-            "SELECT {RUN_COLS} FROM lifecycle_runs WHERE root_graph_id = $1 ORDER BY created_at DESC"
-        ))
-        .bind(root_graph_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,topology=$2,root_graph_id=$3,status=$4,execution_log=$5,updated_at=$6,last_activity_at=$7 WHERE id=$8")
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,topology=$2,context=$3,orchestrations=$4,view_projection=$5,status=$6,execution_log=$7,updated_at=$8,last_activity_at=$9 WHERE id=$10")
             .bind(run.project_id.to_string())
             .bind(topology_to_db(run.topology))
-            .bind(run.root_graph_id.map(|id| id.to_string()))
+            .bind(serde_json::to_string(&run.context)?)
+            .bind(serde_json::to_string(&run.orchestrations)?)
+            .bind(serialize_optional_json(&run.view_projection)?)
             .bind(serde_json::to_string(&run.status)?)
             .bind(serde_json::to_string(&run.execution_log)?)
             .bind(chrono::Utc::now()).bind(run.last_activity_at).bind(run.id.to_string())
@@ -752,7 +637,9 @@ struct LifecycleRunRow {
     id: String,
     project_id: String,
     topology: String,
-    root_graph_id: Option<String>,
+    context: String,
+    orchestrations: String,
+    view_projection: Option<String>,
     status: String,
     execution_log: String,
     created_at: chrono::DateTime<chrono::Utc>,
@@ -767,72 +654,21 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             id: parse_uuid(&row.id, "lifecycle_run")?,
             project_id: parse_uuid(&row.project_id, "project")?,
             topology: parse_topology(&row.topology)?,
-            root_graph_id: row
-                .root_graph_id
+            context: parse_json_column::<LifecycleContext>(&row.context, "lifecycle_runs.context")?,
+            orchestrations: parse_json_column::<Vec<OrchestrationInstance>>(
+                &row.orchestrations,
+                "lifecycle_runs.orchestrations",
+            )?,
+            view_projection: row
+                .view_projection
                 .as_deref()
-                .map(|id| parse_uuid(id, "root_graph"))
+                .map(|raw| parse_json_column(raw, "lifecycle_runs.view_projection"))
                 .transpose()?,
             status: serde_json::from_str(&row.status)?,
             execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
             created_at: row.created_at,
             updated_at: row.updated_at,
             last_activity_at: row.last_activity_at,
-        })
-    }
-}
-
-#[derive(sqlx::FromRow)]
-struct ActivityExecutionClaimRow {
-    claim_id: String,
-    run_id: String,
-    graph_instance_id: String,
-    activity_key: String,
-    attempt: i32,
-    executor_kind: String,
-    status: String,
-    idempotency_key: String,
-    executor_run_ref: Option<String>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-impl TryFrom<ActivityExecutionClaimRow> for ActivityExecutionClaim {
-    type Error = DomainError;
-
-    fn try_from(row: ActivityExecutionClaimRow) -> Result<Self, Self::Error> {
-        let status = row
-            .status
-            .parse::<ActivityExecutionClaimStatus>()
-            .map_err(DomainError::InvalidConfig)?;
-        let executor_run_ref = row
-            .executor_run_ref
-            .map(|raw| {
-                parse_json_column::<ExecutorRunRef>(
-                    &raw,
-                    "activity_execution_claims.executor_run_ref",
-                )
-            })
-            .transpose()?;
-        Ok(ActivityExecutionClaim {
-            run_id: parse_uuid(&row.run_id, "lifecycle_run")?,
-            graph_instance_id: parse_uuid(
-                &row.graph_instance_id,
-                "activity_execution_claim.graph_instance",
-            )?,
-            activity_key: row.activity_key,
-            attempt: u32::try_from(row.attempt).map_err(|_| {
-                DomainError::InvalidConfig(format!(
-                    "activity_execution_claims.attempt 无效: {}",
-                    row.attempt
-                ))
-            })?,
-            claim_id: parse_uuid(&row.claim_id, "activity_execution_claim")?,
-            executor_kind: row.executor_kind,
-            status,
-            idempotency_key: row.idempotency_key,
-            executor_run_ref,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
         })
     }
 }
@@ -869,10 +705,10 @@ fn parse_json_column<T: serde::de::DeserializeOwned>(
         .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 
-fn serialize_executor_run_ref(
-    executor_run_ref: &Option<ExecutorRunRef>,
+fn serialize_optional_json(
+    value: &Option<serde_json::Value>,
 ) -> Result<Option<String>, DomainError> {
-    executor_run_ref
+    value
         .as_ref()
         .map(serde_json::to_string)
         .transpose()
@@ -936,50 +772,112 @@ mod workflow_claim_tests {
     use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-        AgentActivityExecutorSpec, AgentProcedureContract, AgentReusePolicy, RuntimeSessionPolicy,
+        AgentActivityExecutorSpec, AgentProcedureContract, AgentProcedureExecutionSpec,
+        AgentReusePolicy, AgentRunRef, BashExecExecutorSpec, ExecutorSpec,
+        FunctionActivityExecutorSpec, HumanActivityExecutorSpec, HumanApprovalExecutorSpec,
+        LifecycleContext, LifecycleRunStatus, OrchestrationInstance, OrchestrationPlanSnapshot,
+        OrchestrationSourceRef, PlanNode, PlanNodeKind, RuntimeSessionPolicy,
         WorkflowTemplateInstallBundle,
     };
+    use serde_json::json;
+
+    fn lifecycle_run_row() -> LifecycleRunRow {
+        let now = chrono::Utc::now();
+        LifecycleRunRow {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: uuid::Uuid::new_v4().to_string(),
+            topology: "graphless".to_string(),
+            context: "{}".to_string(),
+            orchestrations: "[]".to_string(),
+            view_projection: None,
+            status: serde_json::to_string(&LifecycleRunStatus::Ready).expect("status json"),
+            execution_log: "[]".to_string(),
+            created_at: now,
+            updated_at: now,
+            last_activity_at: now,
+        }
+    }
 
     #[test]
-    fn workflow_claim_row_parses_executor_run_ref() {
-        let run_id = uuid::Uuid::new_v4();
-        let graph_instance_id = uuid::Uuid::new_v4();
-        let claim_id = uuid::Uuid::new_v4();
-        let now = chrono::Utc::now();
-        let row = ActivityExecutionClaimRow {
-            claim_id: claim_id.to_string(),
-            run_id: run_id.to_string(),
-            graph_instance_id: graph_instance_id.to_string(),
-            activity_key: "plan".to_string(),
-            attempt: 2,
-            executor_kind: "agent".to_string(),
-            status: "running".to_string(),
-            idempotency_key: format!("{run_id}:{graph_instance_id}:plan:2"),
-            executor_run_ref: Some(
-                serde_json::to_string(&ExecutorRunRef::RuntimeSession {
-                    session_id: "child-session".to_string(),
-                })
-                .expect("executor run json"),
-            ),
-            created_at: now.clone(),
-            updated_at: now,
-        };
+    fn workflow_repository_lifecycle_run_row_parses_empty_orchestration_contract() {
+        let run = LifecycleRun::try_from(lifecycle_run_row()).expect("run");
 
-        let claim = ActivityExecutionClaim::try_from(row).expect("claim");
+        assert_eq!(run.context, LifecycleContext::default());
+        assert!(run.orchestrations.is_empty());
+        assert!(run.view_projection.is_none());
+    }
 
-        assert_eq!(claim.run_id, run_id);
-        assert_eq!(claim.graph_instance_id, graph_instance_id);
-        assert_eq!(claim.claim_id, claim_id);
-        assert_eq!(claim.activity_key, "plan");
-        assert_eq!(claim.attempt, 2);
-        assert_eq!(claim.status, ActivityExecutionClaimStatus::Running);
-        assert!(claim.status.is_active());
-        assert_eq!(
-            claim.executor_run_ref,
-            Some(ExecutorRunRef::RuntimeSession {
-                session_id: "child-session".to_string()
-            })
+    #[test]
+    fn workflow_repository_lifecycle_run_row_reports_bad_orchestration_column() {
+        let mut row = lifecycle_run_row();
+        row.orchestrations = "not-json".to_string();
+
+        let error = LifecycleRun::try_from(row).expect_err("bad JSON should fail");
+        assert!(
+            error.to_string().contains("lifecycle_runs.orchestrations"),
+            "unexpected error: {error}"
         );
+    }
+
+    fn orchestration_instance(role: &str, executor: ExecutorSpec) -> OrchestrationInstance {
+        let source_ref = OrchestrationSourceRef::WorkflowGraph {
+            graph_id: uuid::Uuid::new_v4(),
+            graph_version: Some(1),
+        };
+        let plan_snapshot = OrchestrationPlanSnapshot {
+            plan_digest: format!("sha256:{role}"),
+            plan_version: 1,
+            source_ref: source_ref.clone(),
+            nodes: vec![PlanNode {
+                node_id: role.to_string(),
+                node_path: role.to_string(),
+                parent_node_id: None,
+                kind: PlanNodeKind::Activity,
+                label: Some(role.to_string()),
+                executor: Some(executor),
+                input_ports: Vec::new(),
+                output_ports: Vec::new(),
+                completion_policy: None,
+                iteration_policy: None,
+                join_policy: None,
+                result_contract: None,
+                metadata: None,
+            }],
+            entry_node_ids: vec![role.to_string()],
+            activation_rules: Vec::new(),
+            state_exchange_rules: Vec::new(),
+            limits: Default::default(),
+            metadata: None,
+            created_at: chrono::Utc::now(),
+        };
+        OrchestrationInstance::new(role, source_ref, plan_snapshot)
+    }
+
+    fn agent_executor() -> ExecutorSpec {
+        ExecutorSpec::AgentProcedure {
+            procedure: AgentProcedureExecutionSpec::by_key("workflow.plan"),
+            agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
+            runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+        }
+    }
+
+    fn function_executor() -> ExecutorSpec {
+        ExecutorSpec::Function {
+            spec: FunctionActivityExecutorSpec::BashExec(BashExecExecutorSpec {
+                command: "pnpm".to_string(),
+                args: vec!["test".to_string()],
+                working_directory: None,
+            }),
+        }
+    }
+
+    fn human_executor() -> ExecutorSpec {
+        ExecutorSpec::Human {
+            spec: HumanActivityExecutorSpec::Approval(HumanApprovalExecutorSpec {
+                form_schema_key: "approval.plan_review".to_string(),
+                title: None,
+            }),
+        }
     }
 
     fn test_procedure(project_id: uuid::Uuid, key: &str, digest: &str) -> AgentProcedure {
@@ -1122,5 +1020,85 @@ mod workflow_claim_tests {
                 .source_version,
             "v2"
         );
+    }
+
+    #[tokio::test]
+    async fn workflow_repository_lifecycle_run_orchestration_roundtrips() {
+        let Some(pool) = test_pg_pool("workflow_lifecycle_orchestration").await else {
+            return;
+        };
+        let repo = PostgresWorkflowRepository::new(pool);
+        repo.initialize().await.expect("initialize");
+
+        let project_id = uuid::Uuid::new_v4();
+        let mut run = LifecycleRun::new_control(project_id);
+        let agent_run_id = uuid::Uuid::new_v4();
+        let context = LifecycleContext {
+            main_agent_run_id: Some(agent_run_id),
+            agent_runs: vec![AgentRunRef {
+                agent_run_id,
+                role: "primary".to_string(),
+                status: "active".to_string(),
+                current_frame_id: Some(uuid::Uuid::new_v4()),
+                project_agent_id: Some(uuid::Uuid::new_v4()),
+            }],
+            ..LifecycleContext::default()
+        };
+        run.set_lifecycle_context(context.clone());
+        run.view_projection = Some(json!({"summary": "one"}));
+
+        let agent_orchestration = orchestration_instance("agent", agent_executor());
+        assert!(run.add_orchestration(agent_orchestration.clone()));
+        LifecycleRunRepository::create(&repo, &run)
+            .await
+            .expect("create run");
+
+        let created = LifecycleRunRepository::get_by_id(&repo, run.id)
+            .await
+            .expect("get run")
+            .expect("run exists");
+        assert_eq!(created.context, context);
+        assert_eq!(created.orchestrations, vec![agent_orchestration]);
+        assert_eq!(created.view_projection, Some(json!({"summary": "one"})));
+
+        let mut updated = created;
+        assert!(updated.add_orchestration(orchestration_instance("function", function_executor())));
+        assert!(updated.add_orchestration(orchestration_instance("human", human_executor())));
+        updated.view_projection = Some(json!({"summary": "multiple", "count": 3}));
+        LifecycleRunRepository::update(&repo, &updated)
+            .await
+            .expect("update run");
+
+        let restored = LifecycleRunRepository::get_by_id(&repo, run.id)
+            .await
+            .expect("get updated run")
+            .expect("updated run exists");
+        assert_eq!(restored.context, context);
+        assert_eq!(restored.orchestrations.len(), 3);
+        assert_eq!(
+            restored.view_projection,
+            Some(json!({"summary": "multiple", "count": 3}))
+        );
+        assert!(matches!(
+            restored.orchestrations[0].plan_snapshot.nodes[0]
+                .executor
+                .as_ref()
+                .expect("agent executor"),
+            ExecutorSpec::AgentProcedure { .. }
+        ));
+        assert!(matches!(
+            restored.orchestrations[1].plan_snapshot.nodes[0]
+                .executor
+                .as_ref()
+                .expect("function executor"),
+            ExecutorSpec::Function { .. }
+        ));
+        assert!(matches!(
+            restored.orchestrations[2].plan_snapshot.nodes[0]
+                .executor
+                .as_ref()
+                .expect("human executor"),
+            ExecutorSpec::Human { .. }
+        ));
     }
 }

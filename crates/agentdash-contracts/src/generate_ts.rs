@@ -102,21 +102,26 @@ use agentdash_contracts::vfs::{
     UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
-    ActiveActivityRefDto, ActivityAttemptView, ActivityDefinition, ActivityLifecycleRunState,
-    ActivityStateView, ActivityTransition, AgentAssignmentRefDto, AgentFrameRefDto,
-    AgentFrameRuntimeView, AgentProcedureContract, DefinitionSource, DeleteAgentProcedureResponse,
-    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
-    EnqueuePendingMessageRequest, EnqueuePendingMessageResponse, HookPresetResponse,
-    HookPresetsResponse, LifecycleAgentMessageRequest, LifecycleAgentMessageResponse,
-    LifecycleAgentRefDto, LifecycleAgentSteeringRequest, LifecycleAgentSteeringResponse,
-    LifecycleAgentView, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
-    LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto, PendingMessageView,
+    ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentFrameRefDto,
+    AgentFrameRuntimeView, AgentProcedureContract, AgentRunMessageRequest, AgentRunMessageResponse,
+    AgentRunRefDto, AgentRunSteeringRequest, AgentRunSteeringResponse, AgentRunView,
+    DefinitionSource, DeleteAgentProcedureResponse, DeleteHookPresetResponse,
+    DeleteWorkflowGraphResponse, EffectiveSessionContract, EnqueuePendingMessageRequest,
+    EnqueuePendingMessageResponse, HookPresetResponse, HookPresetsResponse,
+    LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology,
+    LifecycleRunView, LifecycleSubjectAssociationDto, OrchestrationInstanceView,
+    PendingMessageView, PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse,
     ProjectActiveAgentsView, ProjectSessionListEntry, ProjectSessionListView,
-    RegisterHookPresetResponse, RuntimeSessionCommandStateDto, RuntimeSessionExecutionAnchorDto,
-    RuntimeSessionRefDto, RuntimeSessionTraceView, SessionRuntimeActionAvailabilityView,
-    SessionRuntimeActionSetView, SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView,
-    SessionRuntimeControlView, SessionShellDto, StoryLaunchResult, SubjectExecutionView,
-    SubjectRefDto, ValidateHookScriptResponse, ValidationIssue, WorkflowGraphInstanceView,
+    RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionCommandStateDto,
+    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, RuntimeSessionTraceView,
+    SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
+    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
+    SessionShellDto, StoryLaunchResult, SubjectExecutionView, SubjectRefDto,
+    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
+    ValidateHookScriptResponse, ValidationIssue, WorkflowScriptApiEndpointDto,
+    WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
+    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
+    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto,
 };
 use ts_rs::TS;
 
@@ -338,7 +343,6 @@ fn main() {
             export_all::<AgentProcedureContract>(dir);
             export_all::<ActivityDefinition>(dir);
             export_all::<ActivityTransition>(dir);
-            export_all::<ActivityLifecycleRunState>(dir);
             export_all::<LifecycleExecutionEntry>(dir);
             export_all::<LifecycleRunStatus>(dir);
             export_all::<LifecycleRunTopology>(dir);
@@ -346,25 +350,25 @@ fn main() {
             export_all::<ValidationIssue>(dir);
             export_all::<SubjectRefDto>(dir);
             export_all::<LifecycleRunRefDto>(dir);
-            export_all::<LifecycleAgentRefDto>(dir);
+            export_all::<AgentRunRefDto>(dir);
             export_all::<AgentFrameRefDto>(dir);
             export_all::<RuntimeSessionRefDto>(dir);
             export_all::<SessionShellDto>(dir);
             export_all::<RuntimeSessionExecutionAnchorDto>(dir);
-            export_all::<LifecycleAgentMessageRequest>(dir);
-            export_all::<LifecycleAgentMessageResponse>(dir);
-            export_all::<LifecycleAgentSteeringRequest>(dir);
+            export_all::<AgentRunMessageRequest>(dir);
+            export_all::<AgentRunMessageResponse>(dir);
+            export_all::<AgentRunSteeringRequest>(dir);
             export_all::<RuntimeSessionCommandStateDto>(dir);
-            export_all::<LifecycleAgentSteeringResponse>(dir);
-            export_all::<AgentAssignmentRefDto>(dir);
+            export_all::<AgentRunSteeringResponse>(dir);
             export_all::<StoryLaunchResult>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
-            export_all::<ActiveActivityRefDto>(dir);
-            export_all::<ActivityAttemptView>(dir);
-            export_all::<ActivityStateView>(dir);
-            export_all::<WorkflowGraphInstanceView>(dir);
+            export_all::<RuntimeNodeView>(dir);
+            export_all::<ActiveRuntimeNodeRefDto>(dir);
+            export_all::<OrchestrationInstanceView>(dir);
             export_all::<LifecycleRunView>(dir);
-            export_all::<LifecycleAgentView>(dir);
+            export_all::<SubmitOrchestrationHumanDecisionRequest>(dir);
+            export_all::<SubmitOrchestrationHumanDecisionResponse>(dir);
+            export_all::<AgentRunView>(dir);
             export_all::<AgentFrameRuntimeView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
@@ -382,6 +386,15 @@ fn main() {
             export_all::<DefinitionSource>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);
             export_all::<DeleteAgentProcedureResponse>(dir);
+            export_all::<PreflightWorkflowScriptRequest>(dir);
+            export_all::<WorkflowScriptPreflightDiagnosticDto>(dir);
+            export_all::<WorkflowScriptPlanPreviewNodeDto>(dir);
+            export_all::<WorkflowScriptPlanPreviewDto>(dir);
+            export_all::<WorkflowScriptApiEndpointDto>(dir);
+            export_all::<WorkflowScriptBashCommandDto>(dir);
+            export_all::<WorkflowScriptHumanGateCapabilityDto>(dir);
+            export_all::<WorkflowScriptCapabilitySummaryDto>(dir);
+            export_all::<PreflightWorkflowScriptResponse>(dir);
             export_all::<HookPresetResponse>(dir);
             export_all::<HookPresetsResponse>(dir);
             export_all::<ValidateHookScriptResponse>(dir);

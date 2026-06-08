@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::context_source::ContextSourceRef;
-use crate::workflow::ActivityAttemptStatus;
+use crate::workflow::RuntimeNodeStatus;
 
 /// Task 状态枚举
 /// 生命周期: Pending → Assigned → Running → AwaitingVerification → Completed/Failed/Cancelled
@@ -42,18 +42,18 @@ pub struct TaskExecutionProjection {
 }
 
 impl TaskExecutionProjection {
-    /// 将 workflow attempt 状态翻译成 Task 自己的 execution projection。
+    /// 将 orchestration runtime node 状态翻译成 Task 自己的 execution projection。
     ///
     /// `Completed` 会先进入 `AwaitingVerification`，因为 Task 的业务完成态仍由
     /// hook / verification 决策；`Cancelled` 独立于 `Failed`，表示执行被停止。
-    pub fn from_attempt_status(attempt_status: ActivityAttemptStatus) -> Self {
-        let status = match attempt_status {
-            ActivityAttemptStatus::Pending => TaskStatus::Pending,
-            ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => TaskStatus::Assigned,
-            ActivityAttemptStatus::Running => TaskStatus::Running,
-            ActivityAttemptStatus::Completed => TaskStatus::AwaitingVerification,
-            ActivityAttemptStatus::Failed => TaskStatus::Failed,
-            ActivityAttemptStatus::Cancelled => TaskStatus::Cancelled,
+    pub fn from_runtime_node_status(node_status: RuntimeNodeStatus) -> Self {
+        let status = match node_status {
+            RuntimeNodeStatus::Pending | RuntimeNodeStatus::Skipped => TaskStatus::Pending,
+            RuntimeNodeStatus::Ready | RuntimeNodeStatus::Claiming => TaskStatus::Assigned,
+            RuntimeNodeStatus::Running | RuntimeNodeStatus::Blocked => TaskStatus::Running,
+            RuntimeNodeStatus::Completed => TaskStatus::AwaitingVerification,
+            RuntimeNodeStatus::Failed => TaskStatus::Failed,
+            RuntimeNodeStatus::Cancelled => TaskStatus::Cancelled,
         };
         Self { status }
     }

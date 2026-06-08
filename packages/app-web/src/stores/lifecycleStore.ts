@@ -11,11 +11,12 @@ import { create } from "zustand";
 
 import type {
   LifecycleRunView,
-  WorkflowGraphInstanceView,
-  LifecycleAgentView,
+  AgentRunView,
   AgentFrameRuntimeView,
   SubjectExecutionView,
   RuntimeSessionTraceView,
+  OrchestrationInstanceView,
+  RuntimeNodeView,
 } from "../types";
 import { subjectExecutionKey } from "../types";
 import {
@@ -30,8 +31,9 @@ import {
 
 interface LifecycleState {
   lifecycleRuns: Map<string, LifecycleRunView>;
-  graphInstances: Map<string, WorkflowGraphInstanceView>;
-  agents: Map<string, LifecycleAgentView>;
+  orchestrations: Map<string, OrchestrationInstanceView>;
+  runtimeNodes: Map<string, RuntimeNodeView>;
+  agents: Map<string, AgentRunView>;
   frames: Map<string, AgentFrameRuntimeView>;
   subjectExecutions: Map<string, SubjectExecutionView>;
   runtimeTraces: Map<string, RuntimeSessionTraceView>;
@@ -41,8 +43,9 @@ interface LifecycleState {
 
   // ── write actions ──
   setLifecycleRun: (lifecycleRun: LifecycleRunView) => void;
-  setGraphInstance: (instance: WorkflowGraphInstanceView) => void;
-  setAgent: (agent: LifecycleAgentView) => void;
+  setOrchestration: (orchestration: OrchestrationInstanceView) => void;
+  setRuntimeNode: (orchestrationId: string, node: RuntimeNodeView) => void;
+  setAgent: (agent: AgentRunView) => void;
   setFrame: (frame: AgentFrameRuntimeView) => void;
   setSubjectExecution: (view: SubjectExecutionView) => void;
   setRuntimeTrace: (trace: RuntimeSessionTraceView) => void;
@@ -63,16 +66,32 @@ interface LifecycleState {
   /** 按 subject association 聚合：返回指定 subject 关联的所有 LifecycleRun */
   lifecycleRunsBySubject: (subjectKind: string, subjectId: string) => LifecycleRunView[];
   /** 返回指定 LifecycleRun 下的所有 agent */
-  agentsByLifecycleRun: (lifecycleRunId: string) => LifecycleAgentView[];
+  agentsByLifecycleRun: (lifecycleRunId: string) => AgentRunView[];
   /** 返回指定 LifecycleRun 当前 agent/frame delivery runtime session id */
   deliveryRuntimeSessionIdForLifecycleRun: (lifecycleRunId: string) => string | null;
 }
 
 // ─── Store ───────────────────────────────────────────────
 
+export function runtimeNodeKey(orchestrationId: string, nodePath: string, attempt: number): string {
+  return `${orchestrationId}:${nodePath}:${attempt}`;
+}
+
+function indexRuntimeNodes(
+  map: Map<string, RuntimeNodeView>,
+  orchestrationId: string,
+  nodes: RuntimeNodeView[],
+) {
+  for (const node of nodes) {
+    map.set(runtimeNodeKey(orchestrationId, node.node_path, node.attempt), node);
+    indexRuntimeNodes(map, orchestrationId, node.children);
+  }
+}
+
 export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   lifecycleRuns: new Map(),
-  graphInstances: new Map(),
+  orchestrations: new Map(),
+  runtimeNodes: new Map(),
   agents: new Map(),
   frames: new Map(),
   subjectExecutions: new Map(),
@@ -87,11 +106,18 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
       return { lifecycleRuns: next };
     }),
 
-  setGraphInstance: (instance) =>
+  setOrchestration: (orchestration) =>
     set((s) => {
-      const next = new Map(s.graphInstances);
-      next.set(instance.id, instance);
-      return { graphInstances: next };
+      const next = new Map(s.orchestrations);
+      next.set(orchestration.orchestration_id, orchestration);
+      return { orchestrations: next };
+    }),
+
+  setRuntimeNode: (orchestrationId, node) =>
+    set((s) => {
+      const next = new Map(s.runtimeNodes);
+      next.set(runtimeNodeKey(orchestrationId, node.node_path, node.attempt), node);
+      return { runtimeNodes: next };
     }),
 
   setAgent: (agent) =>
@@ -131,9 +157,11 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
       const nextLifecycleRuns = new Map(s.lifecycleRuns);
       nextLifecycleRuns.set(lifecycleRun.run_ref.run_id, lifecycleRun);
 
-      const nextGraphInstances = new Map(s.graphInstances);
-      for (const gi of lifecycleRun.workflow_graph_instances) {
-        nextGraphInstances.set(gi.id, gi);
+      const nextOrchestrations = new Map(s.orchestrations);
+      const nextRuntimeNodes = new Map(s.runtimeNodes);
+      for (const orchestration of lifecycleRun.orchestrations) {
+        nextOrchestrations.set(orchestration.orchestration_id, orchestration);
+        indexRuntimeNodes(nextRuntimeNodes, orchestration.orchestration_id, orchestration.nodes);
       }
 
       const nextAgents = new Map(s.agents);
@@ -143,7 +171,8 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
 
       return {
         lifecycleRuns: nextLifecycleRuns,
-        graphInstances: nextGraphInstances,
+        orchestrations: nextOrchestrations,
+        runtimeNodes: nextRuntimeNodes,
         agents: nextAgents,
       };
     }),
@@ -226,7 +255,7 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   },
 
   agentsByLifecycleRun: (lifecycleRunId) => {
-    const result: LifecycleAgentView[] = [];
+    const result: AgentRunView[] = [];
     for (const agent of get().agents.values()) {
       if (agent.agent_ref.run_id === lifecycleRunId) result.push(agent);
     }

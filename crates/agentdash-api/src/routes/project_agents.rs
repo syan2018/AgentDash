@@ -4,8 +4,8 @@ use agentdash_application::session::construction_planner::{
     ResolvedProjectAgentContext, build_project_agent_context,
 };
 use agentdash_application::workflow::{
-    ProjectAgentSessionStartCommand, ProjectAgentSessionStartRepos,
-    ProjectAgentSessionStartService, SessionLaunchLifecycleAgentMessageDeliveryPort,
+    AgentRunMessageLaunchDeliveryPort, ProjectAgentSessionStartCommand,
+    ProjectAgentSessionStartRepos, ProjectAgentSessionStartService,
 };
 use agentdash_domain::{agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project};
 use agentdash_spi::AgentConfig;
@@ -22,7 +22,7 @@ use agentdash_contracts::project_agent::{
     ProjectAgentSessionStartResult, ProjectAgentSummary, ThinkingLevel, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
+    AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
 };
 
 use crate::{
@@ -168,7 +168,6 @@ pub async fn launch_project_agent(
         parent_run_id: None,
         parent_agent_id: None,
         workflow_graph_ref,
-        agent_procedure_ref: None,
         run_policy: RunPolicy::CreateLinkedRun,
         agent_policy: AgentPolicy::Create,
         context_policy: ContextPolicy::Isolated,
@@ -179,10 +178,8 @@ pub async fn launch_project_agent(
     let dispatch_service = LifecycleDispatchService::new(
         state.repos.lifecycle_run_repo.as_ref(),
         state.repos.workflow_graph_repo.as_ref(),
-        state.repos.workflow_graph_instance_repo.as_ref(),
         state.repos.lifecycle_agent_repo.as_ref(),
         state.repos.agent_frame_repo.as_ref(),
-        state.repos.agent_assignment_repo.as_ref(),
         state.repos.lifecycle_subject_association_repo.as_ref(),
         state.repos.lifecycle_gate_repo.as_ref(),
         state.repos.agent_lineage_repo.as_ref(),
@@ -218,7 +215,7 @@ pub async fn launch_project_agent(
         run_ref: LifecycleRunRefDto {
             run_id: dispatch_result.runtime_refs.run_ref.to_string(),
         },
-        agent_ref: LifecycleAgentRefDto {
+        agent_ref: AgentRunRefDto {
             run_id: dispatch_result.runtime_refs.run_ref.to_string(),
             agent_id: dispatch_result.runtime_refs.agent_ref.to_string(),
         },
@@ -232,7 +229,6 @@ pub async fn launch_project_agent(
             .map(|runtime_session_id| RuntimeSessionRefDto {
                 runtime_session_id: runtime_session_id.to_string(),
             }),
-        assignment_ref: None,
         subject_ref: intent.subject_ref.as_ref().map(|subject| SubjectRefDto {
             kind: subject.kind.clone(),
             id: subject.id.to_string(),
@@ -265,8 +261,7 @@ pub async fn create_project_agent_session(
         ProjectAgentSessionStartRepos::from_repository_set(&state.repos),
         &state.services.session_core,
     );
-    let delivery =
-        SessionLaunchLifecycleAgentMessageDeliveryPort::new(state.services.session_launch.clone());
+    let delivery = AgentRunMessageLaunchDeliveryPort::new(state.services.session_launch.clone());
     let dispatch = service
         .start_session(
             ProjectAgentSessionStartCommand {
@@ -293,7 +288,7 @@ pub async fn create_project_agent_session(
         run_ref: LifecycleRunRefDto {
             run_id: dispatch.run_id.to_string(),
         },
-        agent_ref: LifecycleAgentRefDto {
+        agent_ref: AgentRunRefDto {
             run_id: dispatch.run_id.to_string(),
             agent_id: dispatch.agent_id.to_string(),
         },

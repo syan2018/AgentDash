@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端质量检查入口"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "workflow runtime identity 和事实源检查"}
+{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "orchestration executor 行为检查"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "contract drift 检查"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 generated DTO 类型检查"}
+{"file": ".trellis/tasks/06-07-plan-driven-runtime-cleanup/research/current-chain-review.md", "reason": "对照本任务发现项确认修复范围"}

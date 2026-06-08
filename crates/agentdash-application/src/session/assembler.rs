@@ -34,7 +34,9 @@ use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
 use agentdash_domain::workflow::ToolCapabilityDirective;
-use agentdash_domain::workflow::{ActivityDefinition, LifecycleRun, WorkflowGraph};
+use agentdash_domain::workflow::{
+    ActivityDefinition, AgentProcedureContract, LifecycleRun, WorkflowGraph,
+};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
@@ -46,6 +48,7 @@ use crate::capability::{
     AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
     CompanionContribution, ContextContributionSource, ContextContributions, McpCandidates,
     ToolContribution, tool_directives_from_active_workflow,
+    tool_directives_from_active_workflow_projection,
 };
 use crate::companion::{
     skill_projection::{
@@ -78,7 +81,7 @@ use crate::vfs::{
     resolve_context_bindings,
 };
 use crate::workflow::{
-    ActiveWorkflowProjection, ActivityActivationInput, ActivityAttemptArtifactScope,
+    ActiveWorkflowProjection, ActivityActivationInput, RuntimeNodeArtifactScope,
     activate_activity_with_platform, ensure_active_workflow_lifecycle_mount,
     load_scoped_port_output_map,
 };
@@ -601,11 +604,7 @@ impl<'a> SessionRequestAssembler<'a> {
         active_workflow: Option<&ActiveWorkflowProjection>,
     ) -> Result<CapabilityState, String> {
         let workflow_tool: Option<ToolContribution> = if let Some(workflow) = active_workflow {
-            let directives = workflow
-                .primary_workflow
-                .as_ref()
-                .map(tool_directives_from_active_workflow)
-                .unwrap_or_default();
+            let directives = tool_directives_from_active_workflow_projection(workflow);
             Some(ToolContribution {
                 directives,
                 has_active_workflow: true,
@@ -884,11 +883,7 @@ impl<'a> SessionRequestAssembler<'a> {
         workflow: Option<&ActiveWorkflowProjection>,
     ) -> (CapabilityState, Vec<agentdash_spi::SessionMcpServer>) {
         let mut contributions = Vec::new();
-        if let Some(directives) = workflow.and_then(|p| {
-            p.primary_workflow
-                .as_ref()
-                .map(tool_directives_from_active_workflow)
-        }) {
+        if let Some(directives) = workflow.map(tool_directives_from_active_workflow_projection) {
             contributions.push(ContextContributions {
                 source: ContextContributionSource::Workflow,
                 tool: Some(ToolContribution {
@@ -1207,7 +1202,8 @@ impl<'a> SessionRequestAssembler<'a> {
                     dispatch_prompt: spec.companion.dispatch_prompt,
                 },
                 run: spec.run,
-                graph_instance_id: spec.graph_instance_id,
+                orchestration_id: spec.orchestration_id,
+                node_path: spec.node_path,
                 attempt: spec.attempt,
                 lifecycle: spec.lifecycle,
                 activity: spec.activity,
@@ -1284,10 +1280,10 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
         project_id: spec.run.project_id,
     };
 
-    let artifact_scope = ActivityAttemptArtifactScope {
+    let artifact_scope = RuntimeNodeArtifactScope {
         run_id: spec.run.id,
-        graph_instance_id: spec.graph_instance_id,
-        activity_key: spec.activity.key.clone(),
+        orchestration_id: spec.orchestration_id,
+        node_path: spec.node_path.to_string(),
         attempt: spec.attempt,
     };
     let port_output_map =
@@ -1298,11 +1294,12 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
         &ActivityActivationInput {
             owner_ctx,
             active_activity: spec.activity,
-            workflow: spec.workflow,
+            workflow_contract: spec.workflow_contract,
             run_id: spec.run.id,
-            graph_instance_id: spec.graph_instance_id,
+            orchestration_id: spec.orchestration_id,
+            node_path: spec.node_path,
             attempt: spec.attempt,
-            lifecycle_key: &spec.lifecycle.key,
+            lifecycle_key: spec.lifecycle_key,
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, spec.run.project_id).await,
             companion_slice_mode: None,
@@ -1389,12 +1386,12 @@ fn contribute_lifecycle_context(
 
     let step_desc = spec.activity.description.trim();
     let workflow_label = spec
-        .workflow
-        .map(|workflow| format!("`{}` ({})", workflow.key, workflow.name))
+        .workflow_label
+        .map(str::to_string)
         .unwrap_or_else(|| "未绑定 workflow".to_string());
     let node_type = activity_node_type(spec.activity);
     let mut lifecycle_lines = vec![
-        format!("- Lifecycle: `{}`", spec.lifecycle.key),
+        format!("- Lifecycle: `{}`", spec.lifecycle_key),
         format!("- Run: `{}`", spec.run.id),
         format!("- Step: `{}`", spec.activity.key),
         format!("- Node type: `{node_type:?}`"),
@@ -1426,9 +1423,9 @@ fn contribute_lifecycle_context(
         content: format!("## Lifecycle Node\n{}", lifecycle_lines.join("\n")),
     });
 
-    if let Some(workflow) = spec.workflow {
+    if let Some(workflow_contract) = spec.workflow_contract {
         if let Some(content) = crate::context::rendering::render_workflow_injection(
-            &workflow.contract.injection,
+            &workflow_contract.injection,
             crate::context::rendering::WorkflowInjectionMode::Declarative,
         ) {
             fragments.push(agentdash_spi::ContextFragment {
@@ -1547,11 +1544,13 @@ pub struct StoryStepSpec<'a> {
 /// Lifecycle AgentNode compose 输入。
 pub struct LifecycleNodeSpec<'a> {
     pub run: &'a LifecycleRun,
-    pub graph_instance_id: Uuid,
+    pub orchestration_id: Uuid,
+    pub node_path: &'a str,
     pub attempt: u32,
-    pub lifecycle: &'a WorkflowGraph,
+    pub lifecycle_key: &'a str,
     pub activity: &'a ActivityDefinition,
-    pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
+    pub workflow_contract: Option<&'a AgentProcedureContract>,
+    pub workflow_label: Option<&'a str>,
     pub inherited_executor_config: Option<AgentConfig>,
 }
 
@@ -1576,7 +1575,8 @@ pub struct CompanionParentSpec<'a> {
 pub struct CompanionParentWorkflowSpec<'a> {
     pub companion: CompanionParentSpec<'a>,
     pub run: &'a LifecycleRun,
-    pub graph_instance_id: Uuid,
+    pub orchestration_id: Uuid,
+    pub node_path: &'a str,
     pub attempt: u32,
     pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
@@ -1594,7 +1594,8 @@ pub struct CompanionWorkflowSpec<'a> {
     pub companion: CompanionSpec<'a>,
     /// 已创建的 lifecycle run。
     pub run: &'a LifecycleRun,
-    pub graph_instance_id: Uuid,
+    pub orchestration_id: Uuid,
+    pub node_path: &'a str,
     pub attempt: u32,
     pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
@@ -1621,10 +1622,10 @@ pub(in crate::session) async fn compose_companion_with_workflow(
 
     // ── 2. Workflow activity activation（产出 lifecycle mount + 能力 + MCP） ──
     let owner_ctx = CapabilityScopeCtx::Project { project_id };
-    let artifact_scope = ActivityAttemptArtifactScope {
+    let artifact_scope = RuntimeNodeArtifactScope {
         run_id: spec.run.id,
-        graph_instance_id: spec.graph_instance_id,
-        activity_key: spec.activity.key.clone(),
+        orchestration_id: spec.orchestration_id,
+        node_path: spec.node_path.to_string(),
         attempt: spec.attempt,
     };
     let port_output_map =
@@ -1635,9 +1636,10 @@ pub(in crate::session) async fn compose_companion_with_workflow(
         &ActivityActivationInput {
             owner_ctx,
             active_activity: spec.activity,
-            workflow: spec.workflow,
+            workflow_contract: spec.workflow.map(|workflow| &workflow.contract),
             run_id: spec.run.id,
-            graph_instance_id: spec.graph_instance_id,
+            orchestration_id: spec.orchestration_id,
+            node_path: spec.node_path,
             attempt: spec.attempt,
             lifecycle_key: &spec.lifecycle.key,
             agent_mcp_servers: vec![],
@@ -1773,10 +1775,9 @@ mod tests {
     use super::*;
     use crate::vfs::build_lifecycle_mount_with_ports;
     use agentdash_domain::workflow::{
-        ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleRunState,
-        AgentActivityExecutorSpec, AgentProcedure, AgentProcedureContract, DefinitionSource,
-        InputPortDefinition, LifecycleNodeType, OutputPortDefinition, WorkflowGraph,
-        WorkflowInjectionSpec,
+        ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
+        AgentProcedureContract, DefinitionSource, InputPortDefinition, LifecycleNodeType,
+        OutputPortDefinition, WorkflowGraph, WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
 
@@ -1972,6 +1973,7 @@ mod tests {
         let lifecycle_mount = build_lifecycle_mount_with_ports(
             run_id,
             Uuid::new_v4(),
+            "test-node",
             "test-lifecycle",
             &["report".to_string()],
         );
@@ -2000,7 +2002,14 @@ mod tests {
     #[test]
     fn append_lifecycle_mount_creates_vfs_when_base_is_absent() {
         let prepared = SessionAssemblyBuilder::new()
-            .append_lifecycle_mount(Uuid::new_v4(), Uuid::new_v4(), "test-lifecycle", &[])
+            .append_lifecycle_mount(crate::workflow::LifecycleMountSurface {
+                run_id: Uuid::new_v4(),
+                orchestration_id: Uuid::new_v4(),
+                node_path: "test-node",
+                lifecycle_key: "test-lifecycle",
+                attempt: 1,
+                writable_port_keys: Vec::new(),
+            })
             .build();
 
         let vfs = prepared.vfs.expect("lifecycle mount should create VFS");
@@ -2080,25 +2089,7 @@ mod tests {
             vec![],
         )
         .expect("lifecycle");
-        let graph_instance_id = uuid::Uuid::new_v4();
-        let activity_state = ActivityLifecycleRunState {
-            graph_instance_id,
-            status: agentdash_domain::workflow::ActivityRunStatus::Running,
-            attempts: vec![agentdash_domain::workflow::ActivityAttemptState {
-                activity_key: "implement".to_string(),
-                attempt: 1,
-                status: agentdash_domain::workflow::ActivityAttemptStatus::Running,
-                executor_run: None,
-                started_at: None,
-                completed_at: None,
-                summary: None,
-            }],
-            outputs: Vec::new(),
-            inputs: Vec::new(),
-        };
-        let mut run =
-            agentdash_domain::workflow::LifecycleRun::new_control(project_id, lifecycle.id);
-        run.sync_graph_instance_activity_projections([(graph_instance_id, &activity_state)]);
+        let run = agentdash_domain::workflow::LifecycleRun::new_control(project_id);
         let workflow = AgentProcedure::new(
             project_id,
             "wf_impl",
@@ -2116,7 +2107,8 @@ mod tests {
         .expect("workflow");
         let mount = crate::vfs::build_lifecycle_mount_with_ports(
             run.id,
-            graph_instance_id,
+            uuid::Uuid::new_v4(),
+            "implement",
             &lifecycle.key,
             &["summary".into()],
         );
@@ -2143,11 +2135,13 @@ mod tests {
 
         let spec = LifecycleNodeSpec {
             run: &run,
-            graph_instance_id,
+            orchestration_id: uuid::Uuid::new_v4(),
+            node_path: "implement",
             attempt: 1,
-            lifecycle: &lifecycle,
+            lifecycle_key: &lifecycle.key,
             activity: &activity,
-            workflow: Some(&workflow),
+            workflow_contract: Some(&workflow.contract),
+            workflow_label: Some("`wf_impl` (Implementation)"),
             inherited_executor_config: None,
         };
         let contribution =

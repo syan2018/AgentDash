@@ -952,8 +952,6 @@ mod tests {
                             run_id,
                             frame.id,
                             frame.agent_id,
-                            frame.graph_instance_id,
-                            frame.activity_key.clone(),
                         );
                         anchors.insert(runtime_session_id.clone(), anchor);
                     }
@@ -972,18 +970,6 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(anchor.runtime_session_id.clone(), anchor.clone());
-            Ok(())
-        }
-
-        async fn update_assignment(
-            &self,
-            runtime_session_id: &str,
-            assignment_id: Uuid,
-            attempt: i32,
-        ) -> Result<(), DomainError> {
-            if let Some(anchor) = self.anchors.lock().unwrap().get_mut(runtime_session_id) {
-                anchor.fill_assignment(assignment_id, attempt);
-            }
             Ok(())
         }
 

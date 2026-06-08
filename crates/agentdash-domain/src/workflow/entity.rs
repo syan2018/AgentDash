@@ -1,15 +1,16 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::shared_library::InstalledAssetSource;
 
 use super::validation::{validate_agent_procedure, validate_workflow_graph};
 use super::value_objects::{
-    ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaimStatus,
-    ActivityLifecycleRunState, ActivityRunStatus, ActivityTransition, AgentProcedureContract,
-    DefinitionSource, EffectiveSessionContract, ExecutorRunRef, LifecycleExecutionEntry,
-    LifecycleRunStatus, ValidationIssue,
+    ActivityDefinition, ActivityTransition, AgentProcedureContract, DefinitionSource,
+    EffectiveSessionContract, LifecycleContext, LifecycleExecutionEntry, LifecycleRunStatus,
+    OrchestrationInstance, OrchestrationStatus, RuntimeNodeState, RuntimeNodeStatus,
+    ValidationIssue,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,48 +89,6 @@ pub struct WorkflowGraph {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ActivityExecutionClaim {
-    pub run_id: Uuid,
-    pub graph_instance_id: Uuid,
-    pub activity_key: String,
-    pub attempt: u32,
-    pub claim_id: Uuid,
-    pub executor_kind: String,
-    pub status: ActivityExecutionClaimStatus,
-    pub idempotency_key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_run_ref: Option<ExecutorRunRef>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-impl ActivityExecutionClaim {
-    pub fn new(
-        run_id: Uuid,
-        graph_instance_id: Uuid,
-        activity_key: impl Into<String>,
-        attempt: u32,
-        executor_kind: impl Into<String>,
-    ) -> Self {
-        let activity_key = activity_key.into();
-        let now = Utc::now();
-        Self {
-            run_id,
-            graph_instance_id,
-            activity_key: activity_key.clone(),
-            attempt,
-            claim_id: Uuid::new_v4(),
-            executor_kind: executor_kind.into(),
-            status: ActivityExecutionClaimStatus::Claiming,
-            idempotency_key: format!("{run_id}:{graph_instance_id}:{activity_key}:{attempt}"),
-            executor_run_ref: None,
-            created_at: now,
-            updated_at: now,
-        }
-    }
-}
-
 impl WorkflowGraph {
     pub fn new(
         project_id: Uuid,
@@ -182,16 +141,6 @@ impl WorkflowGraph {
     }
 }
 
-/// 结构化的活跃 Activity 引用。替代旧的 `"graph_instance_id:activity_key"` 字符串拼接。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ActiveActivityRef {
-    pub run_id: Uuid,
-    pub graph_instance_id: Uuid,
-    pub activity_key: String,
-    pub attempt: u32,
-    pub status: ActivityAttemptStatus,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleRunTopology {
@@ -204,9 +153,12 @@ pub struct LifecycleRun {
     pub id: Uuid,
     pub project_id: Uuid,
     pub topology: LifecycleRunTopology,
-    /// 此 run 关联的 root WorkflowGraph ID；graphless run 不拥有 WorkflowGraph。
+    #[serde(default)]
+    pub context: LifecycleContext,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub orchestrations: Vec<OrchestrationInstance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root_graph_id: Option<Uuid>,
+    pub view_projection: Option<Value>,
     pub status: LifecycleRunStatus,
     #[serde(default)]
     pub execution_log: Vec<LifecycleExecutionEntry>,
@@ -216,13 +168,15 @@ pub struct LifecycleRun {
 }
 
 impl LifecycleRun {
-    pub fn new_control(project_id: Uuid, root_graph_id: Uuid) -> Self {
+    pub fn new_control(project_id: Uuid) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             project_id,
             topology: LifecycleRunTopology::WorkflowGraph,
-            root_graph_id: Some(root_graph_id),
+            context: LifecycleContext::default(),
+            orchestrations: Vec::new(),
+            view_projection: None,
             status: LifecycleRunStatus::Ready,
             execution_log: Vec::new(),
             created_at: now,
@@ -237,7 +191,9 @@ impl LifecycleRun {
             id: Uuid::new_v4(),
             project_id,
             topology: LifecycleRunTopology::Graphless,
-            root_graph_id: None,
+            context: LifecycleContext::default(),
+            orchestrations: Vec::new(),
+            view_projection: None,
             status: LifecycleRunStatus::Ready,
             execution_log: Vec::new(),
             created_at: now,
@@ -246,15 +202,41 @@ impl LifecycleRun {
         }
     }
 
-    pub fn sync_graph_instance_activity_projections<'a, I>(&mut self, states: I)
-    where
-        I: IntoIterator<Item = (Uuid, &'a ActivityLifecycleRunState)>,
-    {
-        let states = states.into_iter().collect::<Vec<_>>();
-        self.status = aggregate_lifecycle_status(states.iter().map(|(_, state)| state.status));
-        let now = Utc::now();
-        self.updated_at = now;
-        self.last_activity_at = now;
+    pub fn set_lifecycle_context(&mut self, context: LifecycleContext) {
+        self.context = context;
+        self.touch_activity();
+    }
+
+    pub fn add_orchestration(&mut self, orchestration: OrchestrationInstance) -> bool {
+        let orchestration_id = orchestration.orchestration_id;
+        if self.orchestration_by_id(orchestration_id).is_some() {
+            return false;
+        }
+        self.orchestrations.push(orchestration);
+        self.refresh_status_from_orchestrations();
+        self.touch_activity();
+        true
+    }
+
+    pub fn replace_orchestration(
+        &mut self,
+        orchestration: OrchestrationInstance,
+    ) -> Option<OrchestrationInstance> {
+        let orchestration_id = orchestration.orchestration_id;
+        let position = self
+            .orchestrations
+            .iter()
+            .position(|existing| existing.orchestration_id == orchestration_id)?;
+        let previous = std::mem::replace(&mut self.orchestrations[position], orchestration);
+        self.refresh_status_from_orchestrations();
+        self.touch_activity();
+        Some(previous)
+    }
+
+    pub fn orchestration_by_id(&self, orchestration_id: Uuid) -> Option<&OrchestrationInstance> {
+        self.orchestrations
+            .iter()
+            .find(|orchestration| orchestration.orchestration_id == orchestration_id)
     }
 
     pub fn append_execution_log(&mut self, entries: Vec<LifecycleExecutionEntry>) {
@@ -262,96 +244,80 @@ impl LifecycleRun {
             return;
         }
         self.execution_log.extend(entries);
+        self.touch_activity();
+    }
+
+    fn touch_activity(&mut self) {
         self.updated_at = Utc::now();
         self.last_activity_at = self.updated_at;
     }
+
+    fn refresh_status_from_orchestrations(&mut self) {
+        self.status = aggregate_orchestration_status(&self.orchestrations);
+    }
 }
 
-pub fn active_activity_refs_from_states<'a, I>(run_id: Uuid, states: I) -> Vec<ActiveActivityRef>
-where
-    I: IntoIterator<Item = (Uuid, &'a ActivityLifecycleRunState)>,
-{
-    states
-        .into_iter()
-        .flat_map(|(graph_instance_id, activity_state)| {
-            activity_state
-                .attempts
-                .iter()
-                .filter(|attempt| {
-                    matches!(
-                        attempt.status,
-                        ActivityAttemptStatus::Ready
-                            | ActivityAttemptStatus::Claiming
-                            | ActivityAttemptStatus::Running
-                    )
-                })
-                .map(move |attempt| ActiveActivityRef {
-                    run_id,
-                    graph_instance_id,
-                    activity_key: attempt.activity_key.clone(),
-                    attempt: attempt.attempt,
-                    status: attempt.status,
-                })
-        })
-        .collect()
-}
-
-pub fn has_active_activity_state(activity_state: &ActivityLifecycleRunState) -> bool {
-    activity_state.attempts.iter().any(|attempt| {
-        matches!(
-            attempt.status,
-            ActivityAttemptStatus::Ready
-                | ActivityAttemptStatus::Claiming
-                | ActivityAttemptStatus::Running
-        )
-    })
-}
-
-fn aggregate_lifecycle_status<I>(statuses: I) -> LifecycleRunStatus
-where
-    I: IntoIterator<Item = ActivityRunStatus>,
-{
-    let statuses = statuses.into_iter().collect::<Vec<_>>();
-    if statuses.is_empty() {
+fn aggregate_orchestration_status(orchestrations: &[OrchestrationInstance]) -> LifecycleRunStatus {
+    if orchestrations.is_empty() {
         return LifecycleRunStatus::Ready;
     }
-    if statuses
+    if orchestrations
         .iter()
-        .any(|status| *status == ActivityRunStatus::Failed)
+        .any(|instance| instance.status == OrchestrationStatus::Failed)
     {
         return LifecycleRunStatus::Failed;
     }
-    if statuses
+    if orchestrations
         .iter()
-        .any(|status| *status == ActivityRunStatus::Running)
-    {
-        return LifecycleRunStatus::Running;
-    }
-    if statuses
-        .iter()
-        .any(|status| *status == ActivityRunStatus::Ready)
-    {
-        return LifecycleRunStatus::Ready;
-    }
-    if statuses
-        .iter()
-        .any(|status| *status == ActivityRunStatus::Blocked)
-    {
-        return LifecycleRunStatus::Blocked;
-    }
-    if statuses
-        .iter()
-        .all(|status| *status == ActivityRunStatus::Completed)
-    {
-        return LifecycleRunStatus::Completed;
-    }
-    if statuses
-        .iter()
-        .all(|status| *status == ActivityRunStatus::Cancelled)
+        .all(|instance| instance.status == OrchestrationStatus::Cancelled)
     {
         return LifecycleRunStatus::Cancelled;
     }
-    LifecycleRunStatus::Running
+    if orchestrations
+        .iter()
+        .all(|instance| instance.status == OrchestrationStatus::Completed)
+    {
+        return LifecycleRunStatus::Completed;
+    }
+    if orchestration_nodes(orchestrations)
+        .iter()
+        .any(|node| node.status == RuntimeNodeStatus::Blocked)
+    {
+        return LifecycleRunStatus::Blocked;
+    }
+    if orchestrations.iter().any(|instance| {
+        matches!(
+            instance.status,
+            OrchestrationStatus::Running | OrchestrationStatus::Paused
+        ) || orchestration_nodes(std::slice::from_ref(instance))
+            .iter()
+            .any(|node| {
+                matches!(
+                    node.status,
+                    RuntimeNodeStatus::Claiming | RuntimeNodeStatus::Running
+                )
+            })
+    }) {
+        return LifecycleRunStatus::Running;
+    }
+    LifecycleRunStatus::Ready
+}
+
+fn orchestration_nodes(orchestrations: &[OrchestrationInstance]) -> Vec<&RuntimeNodeState> {
+    fn collect<'a>(node: &'a RuntimeNodeState, nodes: &mut Vec<&'a RuntimeNodeState>) {
+        nodes.push(node);
+        for child in &node.children {
+            collect(child, nodes);
+        }
+    }
+
+    let mut nodes = Vec::new();
+    for instance in orchestrations {
+        for node in &instance.node_tree {
+            collect(node, &mut nodes);
+        }
+    }
+    nodes
 }
 
 pub fn build_effective_contract(
@@ -360,12 +326,9 @@ pub fn build_effective_contract(
     primary_workflow: Option<&AgentProcedure>,
 ) -> EffectiveSessionContract {
     match primary_workflow {
-        Some(w) => EffectiveSessionContract {
-            lifecycle_key: Some(lifecycle_key.to_string()),
-            active_activity_key: Some(active_activity_key.to_string()),
-            injection: w.contract.injection.clone(),
-            hook_rules: w.contract.hook_rules.clone(),
-        },
+        Some(w) => {
+            build_effective_contract_from_contract(lifecycle_key, active_activity_key, &w.contract)
+        }
         None => EffectiveSessionContract {
             lifecycle_key: Some(lifecycle_key.to_string()),
             active_activity_key: Some(active_activity_key.to_string()),
@@ -374,10 +337,28 @@ pub fn build_effective_contract(
     }
 }
 
+pub fn build_effective_contract_from_contract(
+    lifecycle_key: &str,
+    active_activity_key: &str,
+    contract: &AgentProcedureContract,
+) -> EffectiveSessionContract {
+    EffectiveSessionContract {
+        lifecycle_key: Some(lifecycle_key.to_string()),
+        active_activity_key: Some(active_activity_key.to_string()),
+        injection: contract.injection.clone(),
+        hook_rules: contract.hook_rules.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow::value_objects::{WorkflowContextBinding, WorkflowInjectionSpec};
+    use crate::workflow::value_objects::{
+        AgentProcedureExecutionSpec, AgentReusePolicy, BashExecExecutorSpec, ExecutorSpec,
+        FunctionActivityExecutorSpec, HumanActivityExecutorSpec, HumanApprovalExecutorSpec,
+        OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus, PlanNode,
+        PlanNodeKind, RuntimeSessionPolicy, WorkflowContextBinding, WorkflowInjectionSpec,
+    };
 
     fn contract() -> AgentProcedureContract {
         AgentProcedureContract {
@@ -389,7 +370,6 @@ mod tests {
                     required: true,
                     title: None,
                 }],
-                ..WorkflowInjectionSpec::default()
             },
             ..AgentProcedureContract::default()
         }
@@ -411,23 +391,144 @@ mod tests {
         assert_eq!(effective.hook_rules.len(), 0);
     }
 
-    #[test]
-    fn activity_execution_claim_uses_attempt_idempotency_key() {
-        let run_id = Uuid::new_v4();
-        let graph_instance_id = Uuid::new_v4();
-        let claim = ActivityExecutionClaim::new(run_id, graph_instance_id, "plan", 2, "agent");
+    fn orchestration_instance(role: &str, executor: ExecutorSpec) -> OrchestrationInstance {
+        let source_ref = OrchestrationSourceRef::WorkflowGraph {
+            graph_id: Uuid::new_v4(),
+            graph_version: Some(1),
+        };
+        let plan_snapshot = OrchestrationPlanSnapshot {
+            plan_digest: format!("sha256:{role}"),
+            plan_version: 1,
+            source_ref: source_ref.clone(),
+            nodes: vec![PlanNode {
+                node_id: role.to_string(),
+                node_path: role.to_string(),
+                parent_node_id: None,
+                kind: PlanNodeKind::Activity,
+                label: None,
+                executor: Some(executor),
+                input_ports: Vec::new(),
+                output_ports: Vec::new(),
+                completion_policy: None,
+                iteration_policy: None,
+                join_policy: None,
+                result_contract: None,
+                metadata: None,
+            }],
+            entry_node_ids: vec![role.to_string()],
+            activation_rules: Vec::new(),
+            state_exchange_rules: Vec::new(),
+            limits: Default::default(),
+            metadata: None,
+            created_at: Utc::now(),
+        };
+        OrchestrationInstance::new(role, source_ref, plan_snapshot)
+    }
 
-        assert_eq!(claim.run_id, run_id);
-        assert_eq!(claim.graph_instance_id, graph_instance_id);
-        assert_eq!(claim.activity_key, "plan");
-        assert_eq!(claim.attempt, 2);
-        assert_eq!(claim.executor_kind, "agent");
-        assert_eq!(claim.status, ActivityExecutionClaimStatus::Claiming);
+    fn agent_executor() -> ExecutorSpec {
+        ExecutorSpec::AgentProcedure {
+            procedure: AgentProcedureExecutionSpec::by_key("workflow.plan"),
+            agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
+            runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+        }
+    }
+
+    fn function_executor() -> ExecutorSpec {
+        ExecutorSpec::Function {
+            spec: FunctionActivityExecutorSpec::BashExec(BashExecExecutorSpec {
+                command: "pnpm".to_string(),
+                args: vec!["test".to_string()],
+                working_directory: None,
+            }),
+        }
+    }
+
+    fn human_executor() -> ExecutorSpec {
+        ExecutorSpec::Human {
+            spec: HumanActivityExecutorSpec::Approval(HumanApprovalExecutorSpec {
+                form_schema_key: "approval.plan_review".to_string(),
+                title: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn lifecycle_run_orchestration_contract_defaults_empty() {
+        let control = LifecycleRun::new_control(Uuid::new_v4());
+        assert_eq!(control.context, LifecycleContext::default());
+        assert!(control.orchestrations.is_empty());
+        assert!(control.view_projection.is_none());
+
+        let graphless = LifecycleRun::new_graphless(Uuid::new_v4());
+        assert_eq!(graphless.context, LifecycleContext::default());
+        assert!(graphless.orchestrations.is_empty());
+        assert!(graphless.view_projection.is_none());
+    }
+
+    #[test]
+    fn lifecycle_run_orchestration_aggregate_adds_replaces_and_finds_one_instance() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let context = LifecycleContext {
+            main_agent_run_id: Some(Uuid::new_v4()),
+            ..LifecycleContext::default()
+        };
+        run.set_lifecycle_context(context.clone());
+        assert_eq!(run.context, context);
+
+        let orchestration = orchestration_instance("root", agent_executor());
+        let orchestration_id = orchestration.orchestration_id;
+        assert!(run.add_orchestration(orchestration.clone()));
+        assert!(!run.add_orchestration(orchestration));
         assert_eq!(
-            claim.idempotency_key,
-            format!("{run_id}:{graph_instance_id}:plan:2")
+            run.orchestration_by_id(orchestration_id)
+                .expect("orchestration")
+                .role,
+            "root"
         );
-        assert!(claim.status.is_active());
-        assert!(!ActivityExecutionClaimStatus::Succeeded.is_active());
+
+        let mut replacement = orchestration_instance("root_replacement", function_executor());
+        replacement.orchestration_id = orchestration_id;
+        replacement.status = OrchestrationStatus::Running;
+        let previous = run
+            .replace_orchestration(replacement)
+            .expect("previous orchestration");
+        assert_eq!(previous.role, "root");
+        assert_eq!(
+            run.orchestration_by_id(orchestration_id)
+                .expect("orchestration")
+                .status,
+            OrchestrationStatus::Running
+        );
+    }
+
+    #[test]
+    fn lifecycle_run_orchestration_aggregate_keeps_multiple_executor_instances() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        assert!(run.add_orchestration(orchestration_instance("agent", agent_executor())));
+        assert!(run.add_orchestration(orchestration_instance("function", function_executor())));
+        assert!(run.add_orchestration(orchestration_instance("human", human_executor())));
+
+        assert_eq!(run.orchestrations.len(), 3);
+        assert!(matches!(
+            run.orchestrations[0].plan_snapshot.nodes[0]
+                .executor
+                .as_ref()
+                .expect("agent executor"),
+            ExecutorSpec::AgentProcedure { .. }
+        ));
+        assert!(matches!(
+            run.orchestrations[1].plan_snapshot.nodes[0]
+                .executor
+                .as_ref()
+                .expect("function executor"),
+            ExecutorSpec::Function { .. }
+        ));
+        assert!(matches!(
+            run.orchestrations[2].plan_snapshot.nodes[0]
+                .executor
+                .as_ref()
+                .expect("human executor"),
+            ExecutorSpec::Human { .. }
+        ));
     }
 }

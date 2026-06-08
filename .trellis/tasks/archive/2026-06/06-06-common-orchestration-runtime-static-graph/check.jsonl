@@ -1,0 +1,8 @@
+{"file":".trellis/tasks/06-06-common-orchestration-runtime-static-graph/prd.md","reason":"检查实现是否满足 runtime static graph 验收标准。"}
+{"file":".trellis/tasks/06-06-common-orchestration-runtime-static-graph/design.md","reason":"检查状态源、executor 映射、terminal resolver 和 projection 是否符合设计。"}
+{"file":".trellis/tasks/06-06-common-orchestration-runtime-static-graph/implement.md","reason":"检查实施顺序、验证命令和停止条件是否被遵守。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/common-runtime-convergence-plan.md","reason":"检查迁移是否符合父任务 runtime convergence 计划。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-workflow-behavior-coverage.md","reason":"检查 runtime 能力是否覆盖核心 workflow 行为族。"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"检查旧 Activity runtime 语义是否被正确迁移或投影。"}
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"检查 terminal callback、session command 和 trace anchor 边界。"}
+{"file":".trellis/spec/frontend/workflow-activity-lifecycle.md","reason":"检查 graph-compatible LifecycleRunView projection 是否保持前端可观察能力。"}

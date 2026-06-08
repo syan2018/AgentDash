@@ -6,7 +6,7 @@
 //! hook query/resolution 以 `run_id + agent_id + frame_id` 为主语：
 //!
 //! - 读取 context/capability/VFS/MCP surface：从 `AgentFrame` 读取
-//! - advance/resolution：使用 assignment 或 graph instance refs 推进 Activity
+//! - advance/resolution：使用 RuntimeSessionExecutionAnchor / orchestration node refs 推进 runtime node
 //! - `runtime_session_id` 仅保留 trace adapter / provider query 语义
 
 use std::collections::BTreeSet;
@@ -157,7 +157,6 @@ impl AgentFrameHookRuntime {
             run_id: self.run_id,
             agent_id: self.agent_id,
             frame_id: self.frame_id,
-            assignment_id: None,
         }
     }
 

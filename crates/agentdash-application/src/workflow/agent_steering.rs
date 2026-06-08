@@ -13,13 +13,13 @@ use crate::session::{
 use crate::workflow::WorkflowApplicationError;
 
 #[derive(Debug, Clone)]
-pub struct LifecycleAgentSteeringCommand {
+pub struct AgentRunSteeringCommand {
     pub delivery_runtime_session_id: String,
     pub input: Vec<UserInputBlock>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LifecycleAgentSteeringDispatch {
+pub struct AgentRunSteeringDispatch {
     pub runtime_session_id: String,
     pub run_id: Uuid,
     pub agent_id: Uuid,
@@ -27,7 +27,7 @@ pub struct LifecycleAgentSteeringDispatch {
     pub active_turn_id: String,
 }
 
-pub struct LifecycleAgentSteeringService<'a> {
+pub struct AgentRunSteeringService<'a> {
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
@@ -37,7 +37,7 @@ pub struct LifecycleAgentSteeringService<'a> {
     session_eventing: SessionEventingService,
 }
 
-impl<'a> LifecycleAgentSteeringService<'a> {
+impl<'a> AgentRunSteeringService<'a> {
     pub fn new(
         lifecycle_run_repo: &'a dyn LifecycleRunRepository,
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
@@ -60,8 +60,8 @@ impl<'a> LifecycleAgentSteeringService<'a> {
 
     pub async fn steer(
         &self,
-        command: LifecycleAgentSteeringCommand,
-    ) -> Result<LifecycleAgentSteeringDispatch, WorkflowApplicationError> {
+        command: AgentRunSteeringCommand,
+    ) -> Result<AgentRunSteeringDispatch, WorkflowApplicationError> {
         if command.delivery_runtime_session_id.trim().is_empty() {
             return Err(WorkflowApplicationError::BadRequest(
                 "delivery runtime session id 不能为空".to_string(),
@@ -189,7 +189,7 @@ impl<'a> LifecycleAgentSteeringService<'a> {
                 ))
             })?;
 
-        Ok(LifecycleAgentSteeringDispatch {
+        Ok(AgentRunSteeringDispatch {
             runtime_session_id: command.delivery_runtime_session_id,
             run_id: run.id,
             agent_id: agent.id,

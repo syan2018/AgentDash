@@ -99,42 +99,25 @@ Dynamic workflow script
 
 这样可以保留 AgentDash 已经正确建立的 lifecycle / agent / frame / runtime anchor 控制面，同时引入 Claude Dynamic Workflows 的核心能力：编排代码化、运行时约束、可恢复 journal 和可审进度树。关键收敛点是：`WorkflowGraph` 不直接等于 runtime state；它应先编译成可执行规则，再与动态脚本共享同一个 runtime。
 
-目标命名与仓储草案见 `target-model-sketch.md`。该草案已修正为：`Lifecycle` 是项目核心概念，不重命名；`LifecycleRun` 是面向主 Agent 的完整上下文容器；`OrchestrationInstance` 是 Lifecycle 内部可 0..N 并发存在的状态容器，内部用 `OrchestrationPlanSnapshot`、`PlanActivation`、`RuntimeNodeState`、`OrchestrationJournal` 表达编排运行态。仓储上不建议按每个概念拆表，而是以 `lifecycle_runs` 作为主要 aggregate，辅以 append journal 和必要反向索引。领域字段不使用 `_jsonb` 后缀；物理列名和列类型留给 migration 设计决定。
+对于 `WorkflowGraph` compiler，需要特别避免把 graph 编译成一段脚本来模拟。Claude Workflow 里的脚本是面向过程的控制流，artifact / 中间结果是变量和状态交换；映射到 AgentDash 的目标 IR 时，`flow` 应成为 activation / condition / join / traversal 等控制规则，`artifact` 应成为 node output、input materialization、state exchange snapshot 和 cache key 的变量规则。旧 graph 里的 flow edge / artifact edge 只是 definition 层的 source metadata 与 normalization hint，不能成为 runtime IR 的上限。
+
+静态 graph 的 Activity 进入 runtime IR 时也不应统一落成 `PlanNode(kind=activity)`。目标计划应按 executor 生成语义节点：Agent activity 对应 `AgentCall`，API request 对应 `Function`，BashExec / 本机 bridge 对应 `LocalEffect`，Human approval 对应 `HumanGate`。`Activity` 可以继续作为旧 UI/source projection 语义保留，但不是 common runtime 的默认执行身份。
+
+目标命名与仓储草案见 `target-model-sketch.md`。该草案已修正为：`Lifecycle` 是项目核心概念，不重命名；`LifecycleRun` 是面向主 Agent 的完整上下文容器；`OrchestrationInstance` 是 Lifecycle 内部可 0..N 并发存在的状态容器，内部用 `OrchestrationPlanSnapshot`、`PlanActivation`、`RuntimeNodeState`、`OrchestrationJournal` 表达编排运行态。仓储上不建议按每个概念拆表，而是以 `lifecycle_runs` 作为主要 aggregate，辅以 append journal 和必要反向索引。新增目标字段和新增列不使用 `_json` / `_jsonb` 后缀；JSON 文本只是存储方式。
 
 行为覆盖矩阵见 `research/claude-workflow-behavior-coverage.md`。该矩阵是后续 design 的架构压力测试：如果某类核心 workflow 语义只能通过新增平行 runtime 支持，或无法映射到 Lifecycle / Orchestration / typed execution identity / trace surface，就说明目标架构还不妥善。这里的 typed execution identity 至少包括 `AgentRun` 与 `FunctionRun`，后续也可以扩展出本机 bridge / extension action 的 effect invocation 引用。
 
-## 候选分阶段路线
+## 路线收敛
 
-### Phase 0：概念收敛
+早期路线已经收敛到 `design.md` 与 `implement.md`：
 
-- 明确产品命名：例如 Script Workflow、Dynamic Workflow、Orchestration Script。
-- 明确 `WorkflowGraph`、dynamic script 与 common runtime IR 的关系：图和脚本都是定义态输入，runtime scripted rule plan 才是执行态输入。
-- 更新 backend/frontend workflow spec，先定义目标模型、非目标和仓储收敛方向。
+- 第一批：session-scoped API 命名迁移、AgentRun 外露语义收敛、最小 Orchestration domain contract 与 migration。
+- 第二批：`WorkflowGraph -> OrchestrationPlanSnapshot` compiler，证明静态 graph 能落入 common runtime IR。
+- 第三批：common orchestration runtime 承载静态 graph，生成兼容 projection，并收敛旧过程仓储职责。
+- 第四批：动态 script artifact / reusable script definition / script compiler，输出同一 `OrchestrationPlanSnapshot`。
+- 后续 UI 与治理：progress tree、pause/resume/stop/restart、token/cost、权限提示、保存为 Project/Shared Library asset。
 
-### Phase 1：静态 graph 编译器雏形
-
-- 先从现有 `WorkflowGraph` 编译到 runtime scripted rule plan，证明静态 graph 可以脱离当前分散过程仓储直接进入统一 runtime 规则。
-- 编译结果包含 activity activation rule、transition condition、artifact binding、attempt policy、executor slot 和 output contract。
-- 不急于接入动态脚本，先确认 IR 能覆盖现有 graph runtime。
-
-### Phase 2：runtime snapshot / journal
-
-- 引入持久化状态交换快照与 journal，把 phase、ready queue、agent call、cache、artifact exchange 和 resume cursor 放进统一 runtime store。
-- `LifecycleRun.execution_log` 只保留摘要事件，不承载完整过程状态。
-- 审查 `ActivityExecutionClaim`、`WorkflowGraphInstance.activity_state`、`AgentAssignment` 的职责是否可以降为 projection / index / lease，而非分散真相源。
-
-### Phase 3：动态脚本定义态
-
-- 支持 `meta`、`phase()`、`log()`、`agent()`、`parallel()`、`pipeline()` 的受限脚本输入，并编译到同一份 runtime scripted rule plan。若脚本需要本机/system bridge 能力，应显式生成 function/local effect/extension action 节点，由平台权限与审计面执行，而不是让脚本 runtime 自行访问宿主。
-- `agent()` 复用现有 Lifecycle graphless agent launch 和 runtime session anchor，或在需要 Activity 绑定时生成统一 runtime node binding。
-- 支持 schema 校验、失败重试、并发上限、agent 总数上限和预算。
-
-### Phase 4：UI 与治理
-
-- 新增 unified workflow run progress tree，同时展示由 graph 编译来的静态节点和由 script 动态展开的 agent call。
-- 支持 pause/resume/stop/restart agent。
-- 接入 token/cost 统计、权限提示、工具 allowlist 展示。
-- 支持将成功脚本保存为 Project asset 或 Shared Library asset。
+本文件保留研究结论和路线形成原因；具体合同、阶段边界、风险文件和验证命令以 `design.md` / `implement.md` 为准。
 
 ## 需要后续决策的问题
 

@@ -120,8 +120,12 @@ impl RoutineDispatchRefs {
         self.runtime_refs.frame_ref
     }
 
-    pub fn assignment_id(&self) -> Option<Uuid> {
-        self.runtime_refs.assignment_ref()
+    pub fn orchestration_id(&self) -> Option<Uuid> {
+        self.runtime_refs.orchestration_ref()
+    }
+
+    pub fn node_path(&self) -> Option<&str> {
+        self.runtime_refs.node_path()
     }
 }
 

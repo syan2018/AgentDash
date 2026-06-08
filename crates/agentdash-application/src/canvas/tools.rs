@@ -1001,7 +1001,6 @@ mod tests {
                 run_id: self.active_run_id,
                 agent_id: f.agent_id,
                 frame_id: f.id,
-                assignment_id: None,
             }))
         }
 

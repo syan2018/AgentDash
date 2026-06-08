@@ -8,6 +8,8 @@
 
 `HookScriptEngine` 位于 `agentdash-application::hooks`，负责预编译 builtin preset `.rhai` 脚本、运行时注册用户自定义 preset、沙箱求值并返回结构化 `ScriptDecision`。
 
+Rhai 的具体执行能力由 `agentdash-infrastructure::script_runtime::RhaiScriptRuntime` 承载。该公共内核只管理 engine 初始化、sandbox limits、AST cache 和 `serde_json::Value` bridge；Hook adapter 负责注册 `block` / `inject` / `approve` 等 Hook helper，并维护 preset cache。这样 workflow script builder 等后续脚本入口可以复用同一 Rhai 安全内核，同时保持各自业务 surface 独立。
+
 ### 执行流程
 
 ```

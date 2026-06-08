@@ -9,7 +9,7 @@
 - `RuntimeSession` 降级为 runtime trace container，不承载 business ownership。
 - `LifecycleRun` 是 tracked life process / control ledger，不直接拥有 subject aggregate body。
 - `LifecycleSubjectAssociation` 统一表达 source、subject、projection、control scope、lineage 等关系。
-- Activity / ActivityAttemptState 不作为 subject anchor；执行证据来自 `AgentAssignment`、artifact 与 event。
+- Runtime node 不作为 subject anchor；执行证据来自 `RuntimeSessionExecutionAnchor`、orchestration journal、artifact 与 event。
 
 ## Domain Entity
 
@@ -111,17 +111,18 @@ runtime_session_id
   -> LifecycleAgent
   -> LifecycleRun
   -> LifecycleSubjectAssociationRepository.list_by_anchor(run_id, agent_id?)
+  -> optional OrchestrationInstance / RuntimeNodeState by orchestration_id + node_path + attempt
 ```
 
-RuntimeSessionExecutionAnchor 是 runtime trace 到 run / agent / frame / assignment / attempt 的权威索引，原因是 `RuntimeSession` 只表达消息流和投递证据，业务归属必须落到 lifecycle 控制面。
+RuntimeSessionExecutionAnchor 是 runtime trace 到 run / agent / frame / orchestration node 的权威索引，原因是 `RuntimeSession` 只表达消息流和投递证据，业务归属必须落到 lifecycle 控制面。
 
 ### Task Projection
 
 ```text
 SubjectRef(kind=Task, id=task_id)
   -> agent-scoped association
-  -> AgentAssignment
-  -> ActivityAttemptState
+  -> LifecycleRun.orchestrations[]
+  -> RuntimeNodeState
   -> artifacts
   -> SubjectExecutionView.task_projection
 ```

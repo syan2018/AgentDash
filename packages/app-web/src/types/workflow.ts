@@ -1,15 +1,11 @@
 // ─── Workflow ─────────────────────────────────────────
 import type { JsonValue } from "../generated/common-contracts";
 import type {
-  ActivityAttemptStatus,
   ActivityCompletionPolicy,
   ActivityDefinition as GeneratedActivityDefinition,
   ActivityExecutorSpec,
-  ActivityInputArtifact,
   ActivityIterationPolicy,
   ActivityJoinPolicy,
-  ActivityOutputArtifact,
-  ActivityRunStatus,
   ActivityTransition as GeneratedActivityTransition,
   ActivityTransitionKind,
   AgentActivityExecutorSpec,
@@ -48,14 +44,10 @@ import type {
 import type { InstalledAssetSourceDto } from "./shared-library";
 
 export type {
-  ActivityAttemptStatus,
   ActivityCompletionPolicy,
   ActivityExecutorSpec,
-  ActivityInputArtifact,
   ActivityIterationPolicy,
   ActivityJoinPolicy,
-  ActivityOutputArtifact,
-  ActivityRunStatus,
   ActivityTransitionKind,
   AgentActivityExecutorSpec,
   AgentReusePolicy,
@@ -285,7 +277,6 @@ export interface WorkflowRun {
   id: string;
   project_id: string;
   topology: "graphless" | "workflow_graph";
-  root_graph_id?: string;
   status: WorkflowRunStatus;
   execution_log: LifecycleExecutionEntry[];
   created_at: string;

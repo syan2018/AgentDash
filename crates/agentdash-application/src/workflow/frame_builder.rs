@@ -11,7 +11,7 @@
 //!   builder 产出带 surface 的 initial frame，取代当前 `new_initial` 裸构造。
 
 use agentdash_domain::DomainError;
-use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, AgentProcedureRef};
+use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository};
 use agentdash_spi::{AgentConfig, CapabilityState, SessionContextBundle, SessionMcpServer, Vfs};
 use uuid::Uuid;
 
@@ -74,14 +74,11 @@ pub(crate) fn build_lifecycle_activation_surface(
 /// capability / context / VFS / MCP 任一维度变更时构造新 builder 并 build。
 pub struct AgentFrameBuilder {
     agent_id: Uuid,
-    procedure_ref: Option<AgentProcedureRef>,
     context_slice: Option<serde_json::Value>,
     capability_surface: Option<serde_json::Value>,
     vfs_surface: Option<serde_json::Value>,
     mcp_surface: Option<serde_json::Value>,
     execution_profile: Option<serde_json::Value>,
-    graph_instance_id: Option<Uuid>,
-    activity_key: Option<String>,
     created_by_kind: String,
     created_by_id: Option<String>,
 }
@@ -90,22 +87,14 @@ impl AgentFrameBuilder {
     pub fn new(agent_id: Uuid) -> Self {
         Self {
             agent_id,
-            procedure_ref: None,
             context_slice: None,
             capability_surface: None,
             vfs_surface: None,
             mcp_surface: None,
             execution_profile: None,
-            graph_instance_id: None,
-            activity_key: None,
             created_by_kind: "frame_builder".to_string(),
             created_by_id: None,
         }
-    }
-
-    pub fn with_procedure(mut self, procedure_ref: AgentProcedureRef) -> Self {
-        self.procedure_ref = Some(procedure_ref);
-        self
     }
 
     pub fn with_context(mut self, context_slice: serde_json::Value) -> Self {
@@ -207,16 +196,6 @@ impl AgentFrameBuilder {
         self
     }
 
-    pub fn with_graph_instance(
-        mut self,
-        graph_instance_id: Uuid,
-        activity_key: impl Into<String>,
-    ) -> Self {
-        self.graph_instance_id = Some(graph_instance_id);
-        self.activity_key = Some(activity_key.into());
-        self
-    }
-
     pub fn with_created_by(mut self, kind: impl Into<String>, id: Option<String>) -> Self {
         self.created_by_kind = kind.into();
         self.created_by_id = id;
@@ -233,26 +212,8 @@ impl AgentFrameBuilder {
             None => 1,
         };
 
-        let procedure_id = self
-            .procedure_ref
-            .as_ref()
-            .and_then(|r| match r {
-                AgentProcedureRef::ById(id) => Some(*id),
-                AgentProcedureRef::ByKey { .. } => None,
-            })
-            .or_else(|| current.as_ref().and_then(|frame| frame.procedure_id));
-
         let mut frame =
             AgentFrame::new_revision(self.agent_id, next_revision, &self.created_by_kind);
-        frame.procedure_id = procedure_id;
-        frame.graph_instance_id = self
-            .graph_instance_id
-            .or_else(|| current.as_ref().and_then(|frame| frame.graph_instance_id));
-        frame.activity_key = self.activity_key.clone().or_else(|| {
-            current
-                .as_ref()
-                .and_then(|frame| frame.activity_key.clone())
-        });
         frame.effective_capability_json = self.capability_surface.clone().or_else(|| {
             current
                 .as_ref()
@@ -411,14 +372,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_revision_carries_forward_activity_scope() {
+    async fn build_revision_carries_forward_runtime_surface() {
         let repo = InMemoryFrameRepo::default();
         let agent_id = Uuid::new_v4();
-        let graph_instance_id = Uuid::new_v4();
 
         let mut frame1 = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("session-1")
-            .with_graph_instance(graph_instance_id, "implement")
             .with_execution_profile_raw(serde_json::json!({"executor": "local"}))
             .build(&repo)
             .await
@@ -433,8 +392,6 @@ mod tests {
             .expect("frame2");
 
         assert_eq!(frame2.revision, frame1.revision + 1);
-        assert_eq!(frame2.graph_instance_id, Some(graph_instance_id));
-        assert_eq!(frame2.activity_key.as_deref(), Some("implement"));
         assert_eq!(
             frame2.execution_profile_json,
             Some(serde_json::json!({"executor": "local"}))
@@ -443,42 +400,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_with_graph_instance() {
-        let repo = InMemoryFrameRepo::default();
-        let agent_id = Uuid::new_v4();
-        let gi_id = Uuid::new_v4();
-
-        let frame = AgentFrameBuilder::new(agent_id)
-            .with_graph_instance(gi_id, "implement")
-            .build(&repo)
-            .await
-            .expect("build");
-
-        assert_eq!(frame.graph_instance_id, Some(gi_id));
-        assert_eq!(frame.activity_key.as_deref(), Some("implement"));
-    }
-
-    #[tokio::test]
-    async fn build_with_procedure_ref_by_id() {
-        let repo = InMemoryFrameRepo::default();
-        let agent_id = Uuid::new_v4();
-        let proc_id = Uuid::new_v4();
-
-        let frame = AgentFrameBuilder::new(agent_id)
-            .with_procedure(AgentProcedureRef::ById(proc_id))
-            .build(&repo)
-            .await
-            .expect("build");
-
-        assert_eq!(frame.procedure_id, Some(proc_id));
-    }
-
-    #[tokio::test]
     async fn lifecycle_activation_surface_outputs_single_coherent_frame_revision() {
         let repo = InMemoryFrameRepo::default();
         let agent_id = Uuid::new_v4();
-        let proc_id = Uuid::new_v4();
-        let graph_instance_id = Uuid::new_v4();
         let activation = ActivityActivation {
             capability_state: CapabilityState::from_clusters([ToolCluster::Read]),
             mcp_servers: vec![SessionMcpServer {
@@ -518,8 +442,6 @@ mod tests {
         });
 
         let frame = AgentFrameBuilder::new(agent_id)
-            .with_graph_instance(graph_instance_id, "implement")
-            .with_procedure(AgentProcedureRef::ById(proc_id))
             .with_runtime_session("runtime-1")
             .with_surface_input(AgentFrameSurfaceInput {
                 capability_state: Some(&surface.capability_state),
@@ -532,9 +454,6 @@ mod tests {
             .await
             .expect("frame");
 
-        assert_eq!(frame.procedure_id, Some(proc_id));
-        assert_eq!(frame.graph_instance_id, Some(graph_instance_id));
-        assert_eq!(frame.activity_key.as_deref(), Some("implement"));
         assert_eq!(
             frame
                 .execution_profile_json

@@ -6,8 +6,10 @@ mod injection;
 mod lifecycle_def;
 mod metadata;
 mod mount_directive;
+mod orchestration;
 mod ports;
 mod run_state;
+mod script_asset;
 
 pub use activity_def::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
@@ -28,14 +30,26 @@ pub use injection::{WorkflowContextBinding, WorkflowInjectionSpec};
 pub use lifecycle_def::LifecycleNodeType;
 pub use metadata::{DefinitionSource, ValidationIssue, ValidationSeverity};
 pub use mount_directive::MountDirective;
+pub use orchestration::{
+    ActivationRule, AgentFrameRef, AgentProcedureExecutionSpec, AgentRunRef, DispatchLeaseSnapshot,
+    DispatchOutboxItem, DispatchState, ExecutorSpec, LifecycleContext, NodeCacheRef,
+    NodeCacheState, NodePortValue, OrchestrationInstance, OrchestrationJournalFact,
+    OrchestrationLimits, OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus,
+    PlanActivation, PlanNode, PlanNodeKind, RuntimeNodeError, RuntimeNodeState, RuntimeNodeStatus,
+    RuntimeTraceRef, StateArtifactRef, StateExchangeRule, StateExchangeSnapshot,
+};
 pub use ports::{
     ContextStrategy, GateStrategy, InputPortDefinition, OutputPortDefinition, StandaloneFulfillment,
 };
 pub use run_state::{
-    ActivityAttemptState, ActivityAttemptStatus, ActivityExecutionClaimStatus,
-    ActivityInputArtifact, ActivityLifecycleRunState, ActivityOutputArtifact, ActivityPortValue,
-    ActivityRunStatus, ExecutorRunRef, LifecycleExecutionEntry, LifecycleExecutionEventKind,
-    LifecycleRunStatus,
+    ExecutorRunRef, LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleRunStatus,
+};
+pub use script_asset::{
+    RunScriptArtifact, RunScriptArtifactStatus, WorkflowScriptApiEndpoint,
+    WorkflowScriptBashCommand, WorkflowScriptCapabilitySummary, WorkflowScriptDefinition,
+    WorkflowScriptDefinitionScope, WorkflowScriptDefinitionStatus,
+    WorkflowScriptHumanGateCapability, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
+    workflow_script_source_digest,
 };
 
 #[cfg(test)]
@@ -56,7 +70,6 @@ mod tests {
                     required: true,
                     title: None,
                 }],
-                ..WorkflowInjectionSpec::default()
             },
             ..AgentProcedureContract::default()
         }

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层、repository 和 migration 入口规范"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "LifecycleRun / OrchestrationPlanSnapshot / runtime identity 合同"}
+{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "semantic executor launcher 与 activity runtime 合同"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Rust contract 与 generated TypeScript 同步规则"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "generated DTO 消费边界"}
+{"file": ".trellis/tasks/06-07-plan-driven-runtime-cleanup/research/current-chain-review.md", "reason": "本任务的链路审查和风险列表"}

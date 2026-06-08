@@ -100,7 +100,7 @@ flowchart TD
         ARS["AgentRuns<br/>main + child + collaborator"]
         AF["AgentFrames<br/>surface revisions"]
         OSSET["Orchestrations<br/>0..N internal instances"]
-        OI["OrchestrationInstance<br/>role + status + source"]
+        OI["OrchestrationInstance<br/>orchestration_id + role + status"]
         VIEW["LifecycleRunView<br/>progress / control projection"]
     end
 
@@ -128,7 +128,7 @@ flowchart TD
 - `Orchestrations` 是 `LifecycleRun` 内部的编排状态集合，可以同时存在多个 `OrchestrationInstance`。
 - `WorkflowGraph` 不再直接等于 runtime state；它只是 `WorkflowGraphDefinition`。
 - 动态脚本可以是 `WorkflowScriptDefinition` 或 `RunScriptArtifact`，与 graph 一样编译为 `OrchestrationPlanSnapshot`。
-- `OrchestrationInstance` 替代 `WorkflowGraphInstance` 的目标语义：它表达“Lifecycle 内一个可独立推进的内部编排实例”，不关心来源是 graph 还是 script。
+- `OrchestrationInstance` 替代 `WorkflowGraphInstance` 的目标语义：它表达“Lifecycle 内一个可独立推进的内部编排实例”，运行身份由 `orchestration_id` 承担，不关心来源是 graph 还是 script。
 - `PlanActivation` 是 `OrchestrationInstance` 的子状态：它表达“某份 plan snapshot 在该 instance 内被激活”。
 - `RuntimeNodeState` 替代 `ActivityAttemptState` 的中心地位：节点可以是 activity、phase、agent call、function、local effect、extension action、human gate、parallel group、barrier、subworkflow。
 - `OrchestrationJournal` 是编排 facts；`StateExchangeSnapshot` 是可恢复快照；read model 从二者投影。
@@ -184,14 +184,14 @@ flowchart TD
 
 不满足这些理由的对象，应优先作为 owning aggregate 内的结构化 JSON 字段：node tree、plan activation、agent invocation、artifact refs、变量摘要、ready queue、budget summary、UI progress projection 都可以先内聚在 `LifecycleRun` aggregate 内。
 
-这里不再用 `_jsonb` 作为领域字段后缀。`_jsonb` 只应该是物理数据库列在明确采用 PostgreSQL `jsonb` 类型时的实现细节；当前项目数据库规范仍写着“复杂值对象以 JSON 文本存入 `TEXT`”，现有 schema 也主要使用 `*_json` / `*_state_json`。目标文档中的领域字段应写 `context`、`orchestrations`、`view_projection`；物理列名可按最终 migration 决定为 `context_json` / `orchestrations_json`，或在迁移到原生 `jsonb` 时使用对应列类型。
+这里不再用 `_json` / `_jsonb` 作为新目标字段后缀。当前项目数据库规范写着“复杂值对象以 JSON 文本存入 `TEXT`”，但 JSON 只是存储方式，不应该反向污染 `LifecycleRun` 的目标命名。新增目标字段和本轮新增列统一写 `context`、`orchestrations`、`view_projection`；旧 schema 中已有的 `activity_state_json` 等列只作为历史事实和迁移来源看待。
 
 ### 推荐的最小物理仓储
 
 | Physical store | 关键字段 | 职责 |
 | --- | --- | --- |
 | `workflow_assets` 或保留现有资产表 | `kind`, `project_id`, `key`, `definition`, `version`, `source` | 保存可复用定义资产。可以物理上继续分 `agent_procedures` / `workflow_graphs`，但目标 repository 不应为每个 runtime 概念继续拆。 |
-| `lifecycle_runs` | `id`, `project_id`, `subject_ref`, `status`, `source_ref`, `context`, `orchestrations`, `view_projection`, `seq`, `updated_at` | 一个 Lifecycle 的主要事实聚合。`context` 保存主 Agent、AgentRun、subject、权限和预算摘要；`orchestrations` 是 0..N 个 `OrchestrationInstance`，每个 instance 保存 plan activation、node tree、dispatch、agent invocation、artifact refs、cache/cursor。 |
+| `lifecycle_runs` | `id`, `project_id`, `subject_ref`, `status`, `context`, `orchestrations`, `view_projection`, `seq`, `updated_at` | 一个 Lifecycle 的主要事实聚合。`context` 保存主 Agent、AgentRun、subject、权限和预算摘要；`orchestrations` 是 0..N 个 `OrchestrationInstance`，每个 instance 保存 plan activation、node tree、dispatch、agent invocation、artifact refs、cache/cursor。定义来源、资产 revision、script digest 等 provenance 进入 plan metadata 或可选审计字段，不作为 runtime identity。 |
 | `lifecycle_orchestration_journal_entries` | `lifecycle_run_id`, `orchestration_id`, `seq`, `event_kind`, `event`, `created_at` | 只承担无界 append facts。若早期运行规模小，也可先按 chunk 存入 `orchestrations[].journal_chunks`；一旦需要 resume/replay/增量订阅，再独立成表。`orchestration_id` 是必要维度，因为同一个 Lifecycle 可并发多个 instance。 |
 | `runtime_trace_anchors` | `runtime_session_id`, `lifecycle_run_id`, `orchestration_id`, `runtime_node_id/node_path`, `agent_run_id`, `frame_id`, `anchor` | 反向索引热路径。它是索引/证据，不应成为 runtime state 的第二事实源。 |
 | `session_events` | 现有 session event schema | 保持 conversation runtime 的事实流，不混入 workflow 编排事实。 |
@@ -238,7 +238,7 @@ sequenceDiagram
     Scheduler->>Journal: append NodeClaimed / NodeStarted
 ```
 
-静态 graph 的 Activity 可以编译成 `PlanNode(kind=activity)`，transition 编译成 activation rule / artifact binding rule。这样现有 graph runtime 先进入统一 plan runtime，动态 script 后续只是第二种 compiler frontend。
+静态 graph 的 Activity 不应默认编译成 `PlanNode(kind=activity)`。`Activity` 是 graph definition / 旧 UI projection 的概念；进入 runtime IR 时应按 executor 编译成语义节点：Agent activity -> `agent_call`，API request -> `function`，BashExec / 本机桥接 -> `local_effect`，Human approval -> `human_gate`。transition 编译成控制 activation rule，artifact binding 编译成状态交换 / 变量绑定 rule。这样现有 graph runtime 先进入统一 plan runtime，动态 script 后续只是第二种 compiler frontend。
 
 ## 动态 Script 如何落入目标模型
 
@@ -264,15 +264,11 @@ sequenceDiagram
 
 ## 迁移策略草案
 
-1. 先定义 `LifecycleRun.context`、`LifecycleRun.orchestrations[]`、`OrchestrationInstance`、`OrchestrationPlanSnapshot` 与 `StateExchangeSnapshot` 的最小 JSON contract。领域命名不带 `_jsonb` 后缀；物理列名和列类型留给 migration 设计决定。
-2. 写 `WorkflowGraph -> OrchestrationPlanSnapshot` 编译器，覆盖当前 Activity executor、transition condition、artifact binding、attempt policy。
-3. 将现有 `FunctionActivityExecutorSpec::ApiRequest` / `BashExec` 编译为 common runtime 的 function/effect node，保留 `ExecutorRunRef::FunctionRun` 的非 Agent 执行语义，并补齐权限、workspace root、结果引用和审计落点。
-4. 用 `OrchestrationInstance` + journal/snapshot runtime 跑静态 graph，先生成兼容 `LifecycleRunView` / `WorkflowGraphInstanceView` projection。
-5. 将 `WorkflowGraphInstance.activity_state` 降级为兼容 projection 或迁移来源，并并入 `lifecycle_runs.orchestrations[]` 的目标 aggregate。
-6. 将 `ActivityExecutionClaim` 泛化成 `DispatchLease` 概念，但先以内嵌 dispatch state 实现；只有调度并发证明需要时再拆 lease 表。
-7. 将 `LifecycleAgent` 目标命名改为 `AgentRun`；将 `AgentAssignment` 泛化成 `AgentInvocation` / `RuntimeNodeBinding` 概念，默认归入 orchestration node state；只保留必要的 `RuntimeTraceAnchor` 反向索引。
-8. 将 API / DTO / frontend store 的 `lifecycle-agents` / `LifecycleAgent*` 外露命名迁移到 `run` / `AgentRun*`，并保留 `Lifecycle` 作为顶层容器名。
-9. 最后引入 `WorkflowScriptDefinition` / `RunScriptArtifact` 与 script compiler。
+正式制作方案已移到 `design.md` 与 `implement.md`。本模型层只保留三条迁移原则：
+
+- 先定义 common runtime contract，再让静态 `WorkflowGraph` 和动态 script 都编译到 `OrchestrationPlanSnapshot`。
+- 先证明静态 graph 能通过 `OrchestrationInstance` + journal/snapshot runtime 执行，再引入动态 script compiler。
+- 现有 `WorkflowGraphInstance.activity_state`、`ActivityExecutionClaim`、`AgentAssignment` 作为迁移来源、projection、lease 或 trace index 重新定位，不作为新 runtime 的第二事实源。
 
 ## 仍需确认的问题
 
@@ -291,20 +287,26 @@ AgentRun / AgentFrame / RuntimeTraceAnchor       -> execution identity and trace
 
 ### API 命名草案
 
-当前 `/lifecycle-agents/by-runtime-session/{runtime_session_id}/messages` 这类端点把内部旧名暴露到了 API。目标上，AgentRun 相关 command API 可以收敛为更自然的 `run` noun：
+当前 `/lifecycle-agents/by-runtime-session/{runtime_session_id}/messages` 这类端点同时暴露了内部旧名和反查机制。目标上，前端拿到的是 runtime session id，用户动作也是“对当前会话发送/排队/steer 输入”；后端内部再通过 `RuntimeTraceAnchor` 解析到 `LifecycleRun` / `AgentRun` / `AgentFrame`。因此 session-scoped command API 更自然：
 
 ```text
-POST /runs/by-runtime-session/{runtime_session_id}/messages
-POST /runs/by-runtime-session/{runtime_session_id}/steering-messages
-GET  /runs/by-runtime-session/{runtime_session_id}/pending-messages
-POST /runs/by-runtime-session/{runtime_session_id}/pending-messages/{message_id}/promote
+POST   /sessions/{runtime_session_id}/messages
+POST   /sessions/{runtime_session_id}/steering
+GET    /sessions/{runtime_session_id}/pending-messages
+POST   /sessions/{runtime_session_id}/pending-messages
+DELETE /sessions/{runtime_session_id}/pending-messages/{message_id}
+POST   /sessions/{runtime_session_id}/pending-messages/{message_id}/promote
 ```
 
-如果后续担心和 `LifecycleRun` 的 run noun 冲突，更稳妥的外部 API 是在 Lifecycle 作用域内使用 `runs`：
+这里选择直接使用 `/sessions/{runtime_session_id}` 作为 command 入口。`run` 中间层会让路径看起来像在选择某个 `AgentRun` 或 `LifecycleRun` 资源，而这些 command 的入口事实是 runtime session；它们是否更新 `AgentRun`、pending queue、session event 或 runtime command outbox 是 application service 的内部职责，URL 层聚焦用户实际操作的 session delivery/control surface。
+
+如果需要显式管理 Lifecycle 内 AgentRun 资源，而不是通过 session 投递 command，可以在 Lifecycle 作用域内使用 `agent-runs`：
 
 ```text
-GET  /lifecycles/{lifecycle_run_id}/runs
-GET  /lifecycles/{lifecycle_run_id}/runs/{agent_run_id}
+GET /lifecycles/{lifecycle_run_id}/agent-runs
+GET /lifecycles/{lifecycle_run_id}/agent-runs/{agent_run_id}
 ```
 
-运行时反查类 command 由于入口是 `runtime_session_id`，可以保留 `/runs/by-runtime-session/...` 作为 convenience route；它解析到的是当前 runtime session 对应的 `AgentRun`。
+命名原则是：session delivery/control commands 挂在 `/sessions/{id}` 下；Lifecycle aggregate 和 AgentRun 资源管理挂在 `/lifecycles/{id}` 下；`RuntimeTraceAnchor` 作为解析机制留在 application service 内部。
+
+具体改动顺序、风险文件和验证命令见 `implement.md` 的 `agent-run-api-naming` 任务。

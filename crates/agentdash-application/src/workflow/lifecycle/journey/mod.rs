@@ -9,14 +9,13 @@ use std::sync::Arc;
 use agentdash_agent_protocol::BackboneEvent;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
-    ActivityAttemptState, ActivityAttemptStatus, ExecutorRunRef, LifecycleRun, LifecycleRunStatus,
-    WorkflowGraphInstance, active_activity_refs_from_states,
+    ExecutorRunRef, LifecycleRun, LifecycleRunStatus, RuntimeNodeState, RuntimeNodeStatus,
 };
 use serde::Serialize;
 use uuid::Uuid;
 
 use crate::session::{PersistedSessionEvent, SessionPersistence};
-use crate::workflow::execution_log::{ActivityAttemptArtifactScope, ActivityPortArtifactRef};
+use crate::workflow::execution_log::{RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef};
 
 pub mod session_items;
 
@@ -261,7 +260,7 @@ impl LifecycleJourneyProjection {
 
     pub async fn list_scoped_port_outputs(
         &self,
-        scope: &ActivityAttemptArtifactScope,
+        scope: &RuntimeNodeArtifactScope,
     ) -> JourneyResult<BTreeMap<String, String>> {
         let prefix = scope.path_prefix();
         let files = self
@@ -287,7 +286,7 @@ impl LifecycleJourneyProjection {
 
     pub async fn read_scoped_port_output(
         &self,
-        artifact_ref: &ActivityPortArtifactRef,
+        artifact_ref: &RuntimeNodePortArtifactRef,
     ) -> JourneyResult<String> {
         self.inline_file_repo
             .get_file(
@@ -309,7 +308,7 @@ impl LifecycleJourneyProjection {
 
     pub async fn write_scoped_port_output(
         &self,
-        artifact_ref: &ActivityPortArtifactRef,
+        artifact_ref: &RuntimeNodePortArtifactRef,
         content: &str,
     ) -> JourneyResult<()> {
         let file = InlineFile::new(
@@ -407,7 +406,7 @@ impl LifecycleJourneyProjection {
     pub async fn read_node_summary(
         &self,
         run_id: Uuid,
-        step: &ActivityAttemptState,
+        step: &RuntimeNodeState,
     ) -> JourneyResult<String> {
         if let Ok(Some(file)) = self
             .inline_file_repo
@@ -415,7 +414,7 @@ impl LifecycleJourneyProjection {
                 InlineFileOwnerKind::LifecycleRun,
                 run_id,
                 SESSION_RECORDS_CONTAINER,
-                &format!("{}/summary", step.activity_key),
+                &format!("{}/summary", step.node_path),
             )
             .await
             && let Some(content) = file.into_text_content()
@@ -423,9 +422,10 @@ impl LifecycleJourneyProjection {
             return Ok(content);
         }
 
-        step.summary.clone().ok_or_else(|| {
-            LifecycleJourneyError::NotFound(format!("node `{}` 没有 summary", step.activity_key))
-        })
+        Err(LifecycleJourneyError::NotFound(format!(
+            "node `{}` 没有 summary",
+            step.node_path
+        )))
     }
 
     pub async fn read_node_conclusions(
@@ -453,9 +453,8 @@ impl LifecycleJourneyProjection {
 pub struct LifecycleRunOverview<'a> {
     id: Uuid,
     project_id: Uuid,
-    root_graph_id: Option<Uuid>,
     status: &'a LifecycleRunStatus,
-    active_activity_refs: Vec<String>,
+    active_runtime_node_refs: Vec<String>,
     step_count: usize,
     log_count: usize,
     created_at: chrono::DateTime<chrono::Utc>,
@@ -463,48 +462,48 @@ pub struct LifecycleRunOverview<'a> {
     last_activity_at: chrono::DateTime<chrono::Utc>,
 }
 
-pub fn run_overview<'a>(
-    run: &'a LifecycleRun,
-    graph_instances: &[WorkflowGraphInstance],
-) -> LifecycleRunOverview<'a> {
+pub fn run_overview<'a>(run: &'a LifecycleRun) -> LifecycleRunOverview<'a> {
+    let active_runtime_node_refs = active_runtime_node_refs(run);
     LifecycleRunOverview {
         id: run.id,
         project_id: run.project_id,
-        root_graph_id: run.root_graph_id,
         status: &run.status,
-        active_activity_refs: active_activity_refs_from_states(
-            run.id,
-            graph_instances.iter().filter_map(|instance| {
-                instance
-                    .activity_state
-                    .as_ref()
-                    .map(|state| (instance.id, state))
-            }),
-        )
-        .into_iter()
-        .map(|active| {
-            format!(
-                "{}:{}#{}:{}",
-                active.graph_instance_id,
-                active.activity_key,
-                active.attempt,
-                serde_json::to_value(active.status)
-                    .ok()
-                    .and_then(|value| value.as_str().map(ToOwned::to_owned))
-                    .unwrap_or_else(|| "unknown".to_string())
-            )
-        })
-        .collect(),
-        step_count: graph_instances
+        active_runtime_node_refs,
+        step_count: run
+            .orchestrations
             .iter()
-            .filter_map(|instance| instance.activity_state.as_ref())
-            .map(|state| state.attempts.len())
+            .map(|instance| flatten_runtime_nodes(&instance.node_tree).len())
             .sum(),
         log_count: run.execution_log.len(),
         created_at: run.created_at,
         updated_at: run.updated_at,
         last_activity_at: run.last_activity_at,
     }
+}
+
+fn active_runtime_node_refs(run: &LifecycleRun) -> Vec<String> {
+    run.orchestrations
+        .iter()
+        .flat_map(|instance| {
+            flatten_runtime_nodes(&instance.node_tree)
+                .into_iter()
+                .filter(|node| {
+                    matches!(
+                        node.status,
+                        RuntimeNodeStatus::Ready
+                            | RuntimeNodeStatus::Claiming
+                            | RuntimeNodeStatus::Running
+                            | RuntimeNodeStatus::Blocked
+                    )
+                })
+                .map(move |node| {
+                    format!(
+                        "{}:{}#{}:{:?}",
+                        instance.orchestration_id, node.node_path, node.attempt, node.status
+                    )
+                })
+        })
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -539,74 +538,69 @@ pub fn group_events_into_turn_summaries(events: &[PersistedSessionEvent]) -> Vec
         .collect()
 }
 
-/// 取展示用的 Activity attempt 列表（投影 node 列表用）。
-pub fn step_states_from_graph_instance(
-    graph_instance: &WorkflowGraphInstance,
-) -> JourneyResult<Vec<ActivityAttemptState>> {
-    Ok(graph_instance_state(graph_instance)?.attempts.clone())
+/// 取展示用的 runtime node 列表。
+pub fn step_states_from_runtime_nodes(nodes: &[RuntimeNodeState]) -> Vec<RuntimeNodeState> {
+    flatten_runtime_nodes(nodes).into_iter().cloned().collect()
 }
 
-pub fn find_step(
-    graph_instance: &WorkflowGraphInstance,
-    key: &str,
-) -> JourneyResult<ActivityAttemptState> {
-    graph_instance_state(graph_instance)?
-        .attempts
-        .iter()
-        .find(|attempt| attempt.activity_key == key)
+pub fn find_step(nodes: &[RuntimeNodeState], key: &str) -> JourneyResult<RuntimeNodeState> {
+    flatten_runtime_nodes(nodes)
+        .into_iter()
+        .find(|node| node.node_path == key || node.node_id == key)
         .cloned()
         .ok_or_else(|| LifecycleJourneyError::NotFound(format!("node 不存在: {key}")))
 }
 
-pub fn current_step(graph_instance: &WorkflowGraphInstance) -> JourneyResult<ActivityAttemptState> {
-    graph_instance_state(graph_instance)?
-        .attempts
-        .iter()
-        .find(|attempt| {
+pub fn current_step(nodes: &[RuntimeNodeState]) -> JourneyResult<RuntimeNodeState> {
+    flatten_runtime_nodes(nodes)
+        .into_iter()
+        .find(|node| {
             matches!(
-                attempt.status,
-                ActivityAttemptStatus::Ready
-                    | ActivityAttemptStatus::Claiming
-                    | ActivityAttemptStatus::Running
+                node.status,
+                RuntimeNodeStatus::Ready
+                    | RuntimeNodeStatus::Claiming
+                    | RuntimeNodeStatus::Running
+                    | RuntimeNodeStatus::Blocked
             )
         })
         .cloned()
         .ok_or_else(|| {
-            LifecycleJourneyError::NotFound("当前 graph instance 没有活跃 node".to_string())
+            LifecycleJourneyError::NotFound("当前 orchestration 没有活跃 node".to_string())
         })
 }
 
-pub fn attempt_session_id(attempt: &ActivityAttemptState) -> Option<String> {
-    match &attempt.executor_run {
+pub fn attempt_session_id(attempt: &RuntimeNodeState) -> Option<String> {
+    match &attempt.executor_run_ref {
         Some(ExecutorRunRef::RuntimeSession { session_id }) => Some(session_id.clone()),
         _ => None,
     }
 }
 
-pub fn step_session_id(graph_instance: &WorkflowGraphInstance, key: &str) -> JourneyResult<String> {
-    attempt_session_id(&find_step(graph_instance, key)?)
+pub fn step_session_id(nodes: &[RuntimeNodeState], key: &str) -> JourneyResult<String> {
+    attempt_session_id(&find_step(nodes, key)?)
         .ok_or_else(|| LifecycleJourneyError::NotFound(format!("node `{key}` 没有关联 session")))
 }
 
-pub fn current_step_session_id(
-    graph_instance: &WorkflowGraphInstance,
-) -> JourneyResult<(String, String)> {
-    let attempt = current_step(graph_instance)?;
+pub fn current_step_session_id(nodes: &[RuntimeNodeState]) -> JourneyResult<(String, String)> {
+    let attempt = current_step(nodes)?;
     let session_id = attempt_session_id(&attempt).ok_or_else(|| {
-        LifecycleJourneyError::NotFound(format!("node `{}` 没有关联 session", attempt.activity_key))
+        LifecycleJourneyError::NotFound(format!("node `{}` 没有关联 session", attempt.node_path))
     })?;
-    Ok((attempt.activity_key, session_id))
+    Ok((attempt.node_path, session_id))
 }
 
-fn graph_instance_state(
-    graph_instance: &WorkflowGraphInstance,
-) -> JourneyResult<&agentdash_domain::workflow::ActivityLifecycleRunState> {
-    graph_instance.activity_state.as_ref().ok_or_else(|| {
-        LifecycleJourneyError::NotFound(format!(
-            "graph instance {} 缺少 activity state",
-            graph_instance.id
-        ))
-    })
+fn flatten_runtime_nodes(nodes: &[RuntimeNodeState]) -> Vec<&RuntimeNodeState> {
+    fn collect<'a>(node: &'a RuntimeNodeState, acc: &mut Vec<&'a RuntimeNodeState>) {
+        acc.push(node);
+        for child in &node.children {
+            collect(child, acc);
+        }
+    }
+    let mut flattened = Vec::new();
+    for node in nodes {
+        collect(node, &mut flattened);
+    }
+    flattened
 }
 
 pub fn join_rest(rest: &[&str]) -> JourneyResult<String> {

@@ -1,5 +1,11 @@
 import { api } from "../api/client";
 import { asRecord, asRecordArray, asStringArray, optStringField, requireStringField } from "../api/mappers";
+import type {
+  PreflightWorkflowScriptRequest,
+  PreflightWorkflowScriptResponse,
+  SubmitOrchestrationHumanDecisionRequest,
+  SubmitOrchestrationHumanDecisionResponse,
+} from "../generated/workflow-contracts";
 import { isWorkflowJsonValue } from "../types";
 import { mapInstalledAssetSource } from "./sharedLibrary";
 import type {
@@ -474,7 +480,6 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
       WORKFLOW_RUN_TOPOLOGIES,
       "workflow run topology",
     ),
-    root_graph_id: optStringField(raw, "root_graph_id") || undefined,
     status: normalizeEnum<WorkflowRunStatus>(raw.status, WORKFLOW_RUN_STATUSES, "workflow run status"),
     execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),
     created_at: requireStringField(raw, "created_at"),
@@ -588,28 +593,24 @@ export async function validateWorkflowGraph(input: {
   };
 }
 
+export async function preflightWorkflowScript(
+  input: PreflightWorkflowScriptRequest,
+): Promise<PreflightWorkflowScriptResponse> {
+  return api.post<PreflightWorkflowScriptResponse>("/workflow-scripts/preflight", input);
+}
+
 export async function deleteWorkflowGraph(id: string): Promise<void> {
   await api.delete(`/workflow-graphs/${id}`);
 }
 
-export async function submitHumanDecision(input: {
-  run_id: string;
-  graph_instance_id: string;
-  activity_key: string;
-  attempt: number;
-  decision_port: string;
-  decision: string;
-  summary?: string;
-}): Promise<WorkflowRun> {
-  const raw = await api.post<Record<string, unknown>>(
-    `/lifecycle-runs/${input.run_id}/graph-instances/${input.graph_instance_id}/activities/${encodeURIComponent(input.activity_key)}/attempts/${input.attempt}/human-decision`,
-    {
-      decision_port: input.decision_port,
-      decision: input.decision,
-      summary: input.summary,
-    },
+export async function submitOrchestrationHumanDecision(
+  runId: string,
+  input: SubmitOrchestrationHumanDecisionRequest,
+): Promise<SubmitOrchestrationHumanDecisionResponse> {
+  return api.post<SubmitOrchestrationHumanDecisionResponse>(
+    `/lifecycle-runs/${encodeURIComponent(runId)}/orchestration-human-decisions`,
+    input,
   );
-  return mapWorkflowRun(raw);
 }
 
 export async function createAgentProcedure(input: {

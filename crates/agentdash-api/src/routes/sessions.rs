@@ -31,7 +31,7 @@ use agentdash_contracts::session::{
     SessionNdjsonEnvelope, SessionProjectionRollbackResponse, SessionProjectionViewResponse,
 };
 use agentdash_contracts::workflow::{
-    LifecycleAgentRefDto, LifecycleRunRefDto, PendingMessageView, ProjectSessionListEntry,
+    AgentRunRefDto, LifecycleRunRefDto, PendingMessageView, ProjectSessionListEntry,
     ProjectSessionListView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
     SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
     SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
@@ -597,7 +597,7 @@ async fn project_session_entry(
         run_ref: Some(LifecycleRunRefDto {
             run_id: run.id.to_string(),
         }),
-        agent_ref: Some(LifecycleAgentRefDto {
+        agent_ref: Some(AgentRunRefDto {
             run_id: agent.run_id.to_string(),
             agent_id: agent.id.to_string(),
         }),
@@ -630,10 +630,9 @@ fn anchor_dto(anchor: &RuntimeSessionExecutionAnchor) -> RuntimeSessionExecution
         run_id: anchor.run_id.to_string(),
         agent_id: anchor.agent_id.to_string(),
         launch_frame_id: anchor.launch_frame_id.to_string(),
-        assignment_id: anchor.assignment_id.map(|id| id.to_string()),
-        graph_instance_id: anchor.graph_instance_id.map(|id| id.to_string()),
-        activity_key: anchor.activity_key.clone(),
-        attempt: anchor.attempt,
+        orchestration_id: anchor.orchestration_id.map(|id| id.to_string()),
+        node_path: anchor.node_path.clone(),
+        node_attempt: anchor.node_attempt,
         created_by_kind: anchor.created_by_kind.clone(),
         created_at: anchor.created_at.to_rfc3339(),
         updated_at: anchor.updated_at.to_rfc3339(),

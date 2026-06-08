@@ -1,1 +1,17 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/prd.md","reason":"任务入口、文档索引、planning gate；压缩后先读这里恢复任务边界。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/design.md","reason":"实现设计主入口，包含目标架构、核心合同、API 命名、数据流与阶段方案。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/implement.md","reason":"实施拆解主入口，包含建议子任务、第一批范围、风险文件与验证命令。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/target-model-sketch.md","reason":"Lifecycle / Orchestration / AgentRun / FunctionRun 目标概念、命名与仓储边界。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/current-code-context.md","reason":"当前代码事实地图，包含需要回源码复核的文件和关键行号。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-workflow-behavior-coverage.md","reason":"Claude Workflow 核心行为覆盖矩阵，用作架构压力测试。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/follow-up-module-roadmap.md","reason":"后续模块路线汇总，压缩后用于恢复子任务顺序、依赖和验证闭包。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/orchestration-domain-contract-plan.md","reason":"Orchestration 领域合同、migration、repository roundtrip 和第一阶段边界。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/workflow-graph-compiler-plan.md","reason":"WorkflowGraph 到 OrchestrationPlanSnapshot compiler 的映射、diagnostics、fixtures 和风险。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/common-runtime-convergence-plan.md","reason":"Common orchestration runtime、snapshot/journal、scheduler、terminal resolver 和 projection 收敛计划。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"当前 workflow/lifecycle 目标契约，作为迁移来源和需更新的 spec。"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"Activity runtime、executor、FunctionRun 与 graph instance 当前契约。"}
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"session runtime-control 与 steering API 现状，API 命名迁移需要同步。"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"runtime session 到 Lifecycle/Agent/Frame 反查链路。"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"仓储拆分与 aggregate 判断规则。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"migration 与复杂值对象持久化规范。"}
+{"file":".trellis/spec/frontend/workflow-activity-lifecycle.md","reason":"前端 workflow definition/run/store 边界与 run view 现状。"}

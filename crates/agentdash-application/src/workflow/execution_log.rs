@@ -1,8 +1,8 @@
 //! Lifecycle run data I/O helpers.
 //!
 //! - Execution log recording (`PendingExecutionLogEntry` → `LifecycleRun.execution_log`)
-//! - Activity summary materialization (→ inline_fs `session_records/{activity_key}/summary`)
-//! - Scoped activity port output loading (← inline_fs `port_outputs/`)
+//! - Activity summary materialization (→ inline_fs `session_records/{node_path}/summary`)
+//! - Scoped runtime node port output loading (← inline_fs `port_outputs/`)
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -146,7 +146,7 @@ pub fn artifact_appended_entry(
     }
 }
 
-/// 将 activity summary 物化到 inline_fs（`session_records/{activity_key}/summary`）。
+/// 将 node summary 物化到 inline_fs（`session_records/{activity_key}/summary`）。
 pub async fn materialize_activity_summary(
     repo: &dyn InlineFileRepository,
     run_id: Uuid,
@@ -163,21 +163,21 @@ pub async fn materialize_activity_summary(
     let _ = repo.upsert_file(&file).await;
 }
 
-/// Activity attempt 级别的 port output artifact scope。
+/// Runtime node attempt 级别的 port output artifact scope。
 #[derive(Debug, Clone)]
-pub struct ActivityAttemptArtifactScope {
+pub struct RuntimeNodeArtifactScope {
     pub run_id: Uuid,
-    pub graph_instance_id: Uuid,
-    pub activity_key: String,
+    pub orchestration_id: Uuid,
+    pub node_path: String,
     pub attempt: u32,
 }
 
-impl ActivityAttemptArtifactScope {
-    pub fn port_ref(&self, port_key: impl Into<String>) -> ActivityPortArtifactRef {
-        ActivityPortArtifactRef {
+impl RuntimeNodeArtifactScope {
+    pub fn port_ref(&self, port_key: impl Into<String>) -> RuntimeNodePortArtifactRef {
+        RuntimeNodePortArtifactRef {
             run_id: self.run_id,
-            graph_instance_id: self.graph_instance_id,
-            activity_key: self.activity_key.clone(),
+            orchestration_id: self.orchestration_id,
+            node_path: self.node_path.clone(),
             attempt: self.attempt,
             port_key: port_key.into(),
         }
@@ -186,34 +186,39 @@ impl ActivityAttemptArtifactScope {
     pub(crate) fn path_prefix(&self) -> String {
         format!(
             "{}/{}/{}/",
-            self.graph_instance_id, self.activity_key, self.attempt
+            self.orchestration_id,
+            encode_node_path_segment(&self.node_path),
+            self.attempt
         )
     }
 }
 
-/// Activity attempt scoped port artifact 引用。
+/// Runtime node attempt scoped port artifact 引用。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActivityPortArtifactRef {
+pub struct RuntimeNodePortArtifactRef {
     pub run_id: Uuid,
-    pub graph_instance_id: Uuid,
-    pub activity_key: String,
+    pub orchestration_id: Uuid,
+    pub node_path: String,
     pub attempt: u32,
     pub port_key: String,
 }
 
-impl ActivityPortArtifactRef {
+impl RuntimeNodePortArtifactRef {
     pub fn inline_path(&self) -> String {
         format!(
             "{}/{}/{}/{}",
-            self.graph_instance_id, self.activity_key, self.attempt, self.port_key
+            self.orchestration_id,
+            encode_node_path_segment(&self.node_path),
+            self.attempt,
+            self.port_key
         )
     }
 }
 
-/// 加载 activity attempt 级别的 port output map（仅含非空内容）。
+/// 加载 runtime node attempt 级别的 port output map（仅含非空内容）。
 pub async fn load_scoped_port_output_map(
     repo: &dyn InlineFileRepository,
-    scope: &ActivityAttemptArtifactScope,
+    scope: &RuntimeNodeArtifactScope,
 ) -> BTreeMap<String, String> {
     let prefix = scope.path_prefix();
     repo.list_files(
@@ -233,4 +238,20 @@ pub async fn load_scoped_port_output_map(
         (!content.trim().is_empty()).then_some((port_key, content))
     })
     .collect()
+}
+
+pub fn encode_node_path_segment(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::new();
+    for byte in value.as_bytes() {
+        let is_safe = byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-');
+        if is_safe {
+            encoded.push(char::from(*byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[(byte >> 4) as usize]));
+            encoded.push(char::from(HEX[(byte & 0x0F) as usize]));
+        }
+    }
+    encoded
 }

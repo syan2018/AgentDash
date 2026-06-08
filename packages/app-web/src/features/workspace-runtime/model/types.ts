@@ -3,7 +3,7 @@ import type {
   AgentFrameHookRuntimeInfo,
   AgentFrameRuntimeView,
   LifecycleRunView,
-  LifecycleAgentView,
+  AgentRunView,
   LifecycleSubjectAssociationDto,
   RuntimeSessionExecutionAnchorDto,
   ResolvedVfsSurface,
@@ -38,7 +38,7 @@ export interface WorkspaceRuntimeData {
   sessionMeta: SessionShellDto | null;
   controlAnchor: RuntimeSessionExecutionAnchorDto | null;
   lifecycleRun: LifecycleRunView | null;
-  lifecycleAgent: LifecycleAgentView | null;
+  lifecycleAgent: AgentRunView | null;
   frameRuntime: AgentFrameRuntimeView | null;
   subjectAssociations: LifecycleSubjectAssociationDto[];
   runtimeStatus: SessionRuntimeStateStatus;

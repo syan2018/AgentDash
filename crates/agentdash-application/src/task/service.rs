@@ -3,8 +3,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityAttemptStatus, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource,
-    RunPolicy, RuntimeDeliverySelectionPolicy, RuntimePolicy, SubjectExecutionIntent, SubjectRef,
+    AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, RunPolicy,
+    RuntimeDeliverySelectionPolicy, RuntimeNodeStatus, RuntimePolicy, SubjectExecutionIntent,
+    SubjectRef,
 };
 
 use crate::repository_set::RepositorySet;
@@ -17,7 +18,7 @@ use crate::workflow::{
 
 use super::execution::*;
 use super::gateway::get_task as gw_get_task;
-use super::view_projector::project_task_view_from_attempt_status;
+use super::view_projector::project_task_view_from_runtime_node_status;
 
 /// 基础设施回调 — 仅封装 Application 层无法直接完成的操作
 ///
@@ -128,7 +129,6 @@ impl StoryActivityActivationService {
             parent_run_id: None,
             parent_agent_id: None,
             workflow_graph_ref: None,
-            agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
             context_policy: ContextPolicy::Isolated,
@@ -167,7 +167,6 @@ impl StoryActivityActivationService {
             parent_run_id: Some(refs.run_id),
             parent_agent_id: Some(refs.agent_id),
             workflow_graph_ref: None,
-            agent_procedure_ref: None,
             run_policy: RunPolicy::ReuseExisting,
             agent_policy: AgentPolicy::Resume,
             context_policy: ContextPolicy::Inherit,
@@ -206,10 +205,10 @@ impl StoryActivityActivationService {
             self.dispatcher.deliver_runtime_cancel(command).await?;
         }
 
-        let projected_task = project_task_view_from_attempt_status(
+        let projected_task = project_task_view_from_runtime_node_status(
             &self.repos,
             task.id,
-            ActivityAttemptStatus::Cancelled,
+            RuntimeNodeStatus::Cancelled,
             "task_cancel_requested",
             serde_json::json!({
                 "runtime_refs": cancel_result.runtime_refs,
@@ -298,10 +297,8 @@ impl StoryActivityActivationService {
         let dispatch_service = LifecycleDispatchService::new(
             self.repos.lifecycle_run_repo.as_ref(),
             self.repos.workflow_graph_repo.as_ref(),
-            self.repos.workflow_graph_instance_repo.as_ref(),
             self.repos.lifecycle_agent_repo.as_ref(),
             self.repos.agent_frame_repo.as_ref(),
-            self.repos.agent_assignment_repo.as_ref(),
             self.repos.lifecycle_subject_association_repo.as_ref(),
             self.repos.lifecycle_gate_repo.as_ref(),
             self.repos.agent_lineage_repo.as_ref(),
@@ -317,14 +314,10 @@ impl StoryActivityActivationService {
 
     fn subject_execution_control_service(&self) -> SubjectExecutionControlService<'_> {
         SubjectExecutionControlService::new(
-            self.repos.workflow_graph_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
-            self.repos.workflow_graph_instance_repo.as_ref(),
-            self.repos.activity_execution_claim_repo.as_ref(),
             self.repos.lifecycle_subject_association_repo.as_ref(),
             self.repos.lifecycle_agent_repo.as_ref(),
             self.repos.agent_frame_repo.as_ref(),
-            self.repos.agent_assignment_repo.as_ref(),
             self.repos.execution_anchor_repo.as_ref(),
         )
     }

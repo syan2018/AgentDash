@@ -7,13 +7,13 @@
 import { useState } from "react";
 import { VfsBrowser } from "../vfs";
 import { SurfaceCard } from "../session-context";
-import { ATTEMPT_STATUS_LABEL, RUN_STATUS_LABEL } from "../workflow/shared-labels";
+import { RUNTIME_NODE_STATUS_LABEL, RUN_STATUS_LABEL } from "../workflow/shared-labels";
 import type {
   ActiveWorkflowHookMetadata,
-  ActivityAttemptView,
   HookInjection,
   AgentFrameHookRuntimeInfo,
   LifecycleRunView,
+  RuntimeNodeView,
   ResolvedMountSummary,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
@@ -61,9 +61,9 @@ function hasCompositionContent(composition: SessionComposition | null | undefine
   );
 }
 
-function formatAttemptStatus(status: string): string {
-  return status in ATTEMPT_STATUS_LABEL
-    ? ATTEMPT_STATUS_LABEL[status as keyof typeof ATTEMPT_STATUS_LABEL]
+function formatRuntimeNodeStatus(status: string): string {
+  return status in RUNTIME_NODE_STATUS_LABEL
+    ? RUNTIME_NODE_STATUS_LABEL[status]
     : status;
 }
 
@@ -76,58 +76,56 @@ function resolveActiveRun(
   return lifecycleRun;
 }
 
-function collectAttempts(run: LifecycleRunView | null): ActivityAttemptView[] {
-  return run?.workflow_graph_instances.flatMap((instance) => (
-    instance.activities.flatMap((activity) => activity.attempts)
-  )) ?? [];
+function collectRuntimeNodes(run: LifecycleRunView | null): RuntimeNodeView[] {
+  const flatten = (node: RuntimeNodeView): RuntimeNodeView[] => [
+    node,
+    ...node.children.flatMap(flatten),
+  ];
+  return run?.orchestrations.flatMap((instance) => instance.nodes.flatMap(flatten)) ?? [];
 }
 
-function resolveActiveAttempt(
+function resolveActiveNode(
   run: LifecycleRunView | null,
   activeWorkflow: ActiveWorkflowHookMetadata | null,
-): ActivityAttemptView | null {
-  const attempts = collectAttempts(run);
-  if (attempts.length === 0) return null;
+): RuntimeNodeView | null {
+  const nodes = collectRuntimeNodes(run);
+  if (nodes.length === 0) return null;
 
-  const latestByActivity = (key: string): ActivityAttemptView | null => {
-    let best: ActivityAttemptView | null = null;
-    for (const attempt of attempts) {
-      if (attempt.activity_key !== key) continue;
-      if (!best || attempt.attempt >= best.attempt) best = attempt;
+  const latestByNode = (key: string): RuntimeNodeView | null => {
+    let best: RuntimeNodeView | null = null;
+    for (const node of nodes) {
+      if (node.node_path !== key && node.node_id !== key) continue;
+      if (!best || node.attempt >= best.attempt) best = node;
     }
     return best;
   };
 
-  if (activeWorkflow) {
-    const matched = latestByActivity(activeWorkflow.activity_key);
+  if (activeWorkflow?.activity_key) {
+    const matched = latestByNode(activeWorkflow.activity_key);
     if (matched) return matched;
   }
   return (
-    attempts.find((a) => a.status === "running" || a.status === "claiming")
-    ?? attempts.find((a) => a.status === "ready")
-    ?? attempts[attempts.length - 1]
+    nodes.find((node) => node.status === "running" || node.status === "claiming")
+    ?? nodes.find((node) => node.status === "ready")
+    ?? nodes[nodes.length - 1]
     ?? null
   );
 }
 
-function activeAttemptLabels(run: LifecycleRunView | null): string[] {
+function activeRuntimeNodeLabels(run: LifecycleRunView | null): string[] {
   if (!run) return [];
-  if (run.active_activity_refs.length > 0) {
-    return run.active_activity_refs.map((active) => (
-      `${active.graph_instance_id}:${active.activity_key}#${active.attempt}`
+  if (run.active_runtime_node_refs.length > 0) {
+    return run.active_runtime_node_refs.map((active) => (
+      `${active.orchestration_id}:${active.node_path}#${active.attempt}`
     ));
   }
-  return collectAttempts(run)
-    .filter((attempt) => (
-      attempt.status === "running"
-      || attempt.status === "claiming"
-      || attempt.status === "ready"
+  return collectRuntimeNodes(run)
+    .filter((node) => (
+      node.status === "running"
+      || node.status === "claiming"
+      || node.status === "ready"
     ))
-    .map((attempt) => (
-      attempt.graph_instance_id
-        ? `${attempt.graph_instance_id}:${attempt.activity_key}#${attempt.attempt}`
-        : `${attempt.activity_key}#${attempt.attempt}`
-    ));
+    .map((node) => `${node.node_path}#${node.attempt}`);
 }
 
 function isWorkflowContextInjection(injection: HookInjection): boolean {
@@ -231,8 +229,8 @@ function WorkflowContextCard({
 }) {
   const activeWorkflow = hookRuntime?.snapshot.metadata?.active_workflow ?? null;
   const activeRun = resolveActiveRun(lifecycleRun, activeWorkflow);
-  const activeAttempt = resolveActiveAttempt(activeRun, activeWorkflow);
-  const activeLabels = activeAttemptLabels(activeRun);
+  const activeNode = resolveActiveNode(activeRun, activeWorkflow);
+  const activeLabels = activeRuntimeNodeLabels(activeRun);
   const lifecycleMounts = runtimeSurface?.mounts.filter((mount) => mount.provider === "lifecycle_vfs") ?? [];
   const workflowInjections = hookRuntime?.snapshot.injections.filter(isWorkflowContextInjection) ?? [];
   const hasLegacySteps = (composition?.workflow_steps.length ?? 0) > 0;
@@ -247,15 +245,21 @@ function WorkflowContextCard({
     );
   }
 
-  const attempts = collectAttempts(activeRun);
-  const completedCount = attempts.filter((a) => a.status === "completed").length;
-  const totalCount = attempts.length;
+  const nodes = collectRuntimeNodes(activeRun);
+  const completedCount = nodes.filter((node) => node.status === "completed").length;
+  const totalCount = nodes.length;
+  const workflowTitle =
+    activeWorkflow?.lifecycle_name ??
+    activeWorkflow?.primary_workflow_name ??
+    activeWorkflow?.lifecycle_key ??
+    "当前 Workflow";
+  const activityTitle =
+    activeWorkflow?.activity_title ?? activeWorkflow?.activity_key ?? "当前步骤";
+  const lifecycleKey = activeWorkflow?.lifecycle_key ?? "unknown";
+  const runIdPrefix = activeWorkflow?.run_id ? activeWorkflow.run_id.slice(0, 8) : "—";
 
   return (
-    <SurfaceCard
-      eyebrow="Workflow 上下文"
-      title={activeWorkflow?.lifecycle_name ?? activeWorkflow?.primary_workflow_name ?? "当前 Workflow"}
-    >
+    <SurfaceCard eyebrow="Workflow 上下文" title={workflowTitle}>
       <div className="flex flex-wrap gap-2">
         {activeRun && (
           <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
@@ -267,9 +271,9 @@ function WorkflowContextCard({
             Workflow · {activeWorkflow.procedure_key}
           </span>
         )}
-        {activeAttempt && (
+        {activeNode && (
           <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
-            Attempt · {formatAttemptStatus(activeAttempt.status)}
+            Node · {formatRuntimeNodeStatus(activeNode.status)}
           </span>
         )}
         {totalCount > 0 && (
@@ -284,19 +288,19 @@ function WorkflowContextCard({
         )}
       </div>
 
-      {(activeWorkflow || activeAttempt) && (
+      {(activeWorkflow || activeNode) && (
         <div className="mt-3 space-y-1 rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-xs">
           {activeWorkflow && (
             <>
-              <p className="font-medium text-foreground">{activeWorkflow.activity_title}</p>
+              <p className="font-medium text-foreground">{activityTitle}</p>
               <p className="text-[11px] text-muted-foreground">
-                lifecycle: {activeWorkflow.lifecycle_key} · run: {activeWorkflow.run_id.slice(0, 8)}
+                lifecycle: {lifecycleKey} · run: {runIdPrefix}
               </p>
             </>
           )}
           {activeLabels.length > 0 && (
             <p className="text-[11px] text-muted-foreground">
-              Active attempts: {activeLabels.join(", ")}
+              Active nodes: {activeLabels.join(", ")}
             </p>
           )}
         </div>

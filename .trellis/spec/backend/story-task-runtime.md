@@ -8,7 +8,7 @@
 
 - **Story** 是 aggregate root，表达一条持久化的业务工作单元。Story 不绑定 `RuntimeSession`。
 - **Task** 是 Story aggregate 下的 child entity，保存在 `stories.tasks` JSONB 列。无独立 repository、无独立表；Task 本体不拥有 runtime truth。
-- **LifecycleRun** 是被追踪的执行生命过程 / control ledger。普通 Agent runtime 使用 `topology=graphless`，显式 Activity 工作流使用 `topology=workflow_graph` 并可以包含多个 `WorkflowGraphInstance`。
+- **LifecycleRun** 是被追踪的执行生命过程 / control ledger。普通 Agent runtime 使用 `topology=graphless`；显式 workflow runtime 使用 `topology=workflow_graph`，并通过 `LifecycleRun.orchestrations[]` 承载 0..N 个内部编排实例。
 - **LifecycleSubjectAssociation** 是关联层实体，用 `(anchor_run_id, anchor_agent_id?, subject_kind, subject_id, role)` 显式表达 whole-run 或 agent-scoped subject 关系。
 - **RuntimeSession** 是 runtime trace 容器：承载 event log、debug replay、agent 交互轨迹。不承载 ownership、permission scope 或 lifecycle progress truth。
 
@@ -21,20 +21,20 @@
 - 持有启动参数（title / priority / context / agent preference 等）和业务审计字段（status）。
 - 持有 `Vec<Task>` 作为 aggregate 内 child entity 集合。
 - 所有 task 变更必须通过 Story aggregate 方法（`add_task` / `remove_task`），由 `StoryRepository::update` 原子写回。
-- **不持有** runtime truth；runtime truth 在 LifecycleRun / WorkflowGraphInstance / LifecycleAgent / AgentFrame / AgentAssignment / ActivityAttemptState。
+- **不持有** runtime truth；runtime truth 在 `LifecycleRun` / `OrchestrationInstance` / `RuntimeNodeState` / `LifecycleAgent` / `AgentFrame` / `RuntimeSessionExecutionAnchor`。
 
 ### Task
 
 - **Durable spec**：id / story_id / workspace_id / title / description / authoring preference / dispatch policy。
-- **投影字段**：status / artifacts / current agent / latest attempt，由 `SubjectRef(kind=Task)`、`LifecycleSubjectAssociation`、`LifecycleAgent`、`AgentFrame` 与 lifecycle artifacts 派生；显式 Activity 工作流再通过 `AgentAssignment` 与 `ActivityAttemptState` 补充 attempt 投影，外部不可直接写为 runtime truth。
+- **投影字段**：status / artifacts / current agent / latest runtime node，由 `SubjectRef(kind=Task)`、`LifecycleSubjectAssociation`、`LifecycleAgent`、`AgentFrame`、`RuntimeNodeState` 与 lifecycle artifacts 派生；外部不可直接写为 runtime truth。
 - **禁止**新增 runtime 字段：`executor_session_id`、`runtime_session_id`、`activity_key`、`attempt`、`execution_mode` 等属于 lifecycle / assignment / projection 层。
-- Task execution 通过 `SubjectRef(kind=Task, id=task_id)` 进入 `ExecutionIntent`；默认使用 graphless run / `LifecycleAgent` / `AgentFrame` 控制面，显式 Activity 工作流才在同一 `LifecycleRun` 内追加或复用 `WorkflowGraphInstance`。
+- Task execution 通过 `SubjectRef(kind=Task, id=task_id)` 进入 `ExecutionIntent`；默认使用 graphless run / `LifecycleAgent` / `AgentFrame` 控制面，显式 workflow runtime 在同一 `LifecycleRun` 内追加或复用 `OrchestrationInstance`。
 
 ### LifecycleRun
 
 - 不拥有 `RuntimeSession`；runtime session 到 run / agent / frame 的关系由 `RuntimeSessionExecutionAnchor` 索引。
 - 业务归属通过 `LifecycleSubjectAssociation` 表达。
-- `topology=graphless` 的运行态由 run / agent / frame / runtime session anchor 与 subject association 表达。`topology=workflow_graph` 的运行态按 `WorkflowGraphInstance` 分 namespace；activity state、claim、assignment、attempt key 必须包含 `graph_instance_id`。
+- `topology=graphless` 的运行态由 run / agent / frame / runtime session anchor 与 subject association 表达。`topology=workflow_graph` 的运行态按 `OrchestrationInstance.orchestration_id` 分 namespace；runtime node key 必须包含 `orchestration_id + node_path + attempt`。
 - 推进规则见 [workflow/lifecycle-edge.md](./workflow/lifecycle-edge.md)。
 
 ### LifecycleSubjectAssociation
@@ -44,7 +44,7 @@
 - `role`：Source / Subject / ProjectionTarget / ControlScope / Lineage。
 - 一个 run 可拥有多个 association（如：Source=RoutineExecution + Subject=Story + ProjectionTarget=Task）。
 - `anchor_agent_id != null` 表示某个 `LifecycleAgent` 正在处理或投影该 subject。
-- Activity / ActivityAttemptState 不作为 subject anchor；执行证据来自 `AgentAssignment`、artifact 与 event。
+- Runtime node 不作为 subject anchor；执行证据来自 `RuntimeSessionExecutionAnchor`、orchestration journal、artifact 与 event。
 
 ### RuntimeSession（纯 runtime trace 容器）
 
@@ -60,12 +60,12 @@
 | 关系 | 基数 | 绑定方式 |
 |------|------|----------|
 | Story ↔ LifecycleRun | 1:N | `LifecycleSubjectAssociation(anchor_run_id, subject_kind=Story, role=Subject)` |
-| LifecycleRun ↔ WorkflowGraphInstance | 0:N | `WorkflowGraphInstance(run_id, graph_id, role)`；仅 `topology=workflow_graph` |
+| LifecycleRun ↔ OrchestrationInstance | 0:N | `LifecycleRun.orchestrations[]`；仅显式 workflow / script / append orchestration runtime |
 | LifecycleRun ↔ LifecycleAgent | 1:N | `LifecycleAgent(run_id)` |
 | LifecycleAgent ↔ AgentFrame | 1:N | `AgentFrame(agent_id, revision)` |
 | Story ↔ Task | 1:N | Story aggregate 持有 `Vec<Task>` |
 | Task ↔ LifecycleAgent | 0..N | `LifecycleSubjectAssociation(anchor_agent_id, subject_kind=Task)` |
-| ActivityAttemptState ↔ LifecycleAgent | 0..N | `AgentAssignment(graph_instance_id, activity_key, attempt, agent_id, frame_id)` |
+| RuntimeNodeState ↔ LifecycleAgent | 0..N | `RuntimeSessionExecutionAnchor(orchestration_id, node_path, attempt, agent_id, frame_id)` 与 frame/current-agent refs |
 | RoutineExecution → LifecycleRun | 1:N | `LifecycleSubjectAssociation(subject_kind=RoutineExecution, role=Source)` |
 | Project ↔ RuntimeSession | 1:N | `RuntimeSessionExecutionAnchor.run_id → LifecycleRun.project_id` read model |
 
@@ -98,7 +98,7 @@ task_id → SubjectRef(kind=Task, id=task_id)
         → lifecycle_subject_association_repo.list_by_subject(Task, task_id)
         → anchor agent / run
         → LifecycleAgent.current_frame / runtime anchors / artifacts
-        → workflow_graph topology 时再进入 agent assignments / attempts
+        → workflow_graph topology 时进入 LifecycleRun.orchestrations[] / RuntimeNodeState
         → SubjectExecutionView.task_projection
 ```
 
@@ -125,7 +125,7 @@ runtime_session_id → RuntimeSessionExecutionAnchor
 
 - `start_task` / `continue_task` / `cancel_task` 等 facade 名字保留。
 - 内部统一提交 `ExecutionIntent(subject_ref=SubjectRef(kind=Task, id=task_id), ...)`。
-- Task / Routine execution response 返回 `AgentRuntimeRefs` envelope；run / agent / frame 是通用控制面，graph instance / assignment 只通过可选 Activity binding 暴露。
+- Task / Routine execution response 返回 `AgentRuntimeRefs` envelope；run / agent / frame 是通用控制面，显式 workflow 节点通过 orchestration/node refs 暴露。
 - **不允许**为新场景再开 Task-specific session 装配分支；Task runtime 进入统一 lifecycle dispatch 路径。
 - Subject / agent / run-oriented API 是 Story / Task 业务查询的主路径；session route 只提供 RuntimeTrace。
 

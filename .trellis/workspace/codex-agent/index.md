@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
-- **Last Active**: 2026-06-04
+- **Total Sessions**: 5
+- **Last Active**: 2026-06-07
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~148 | Active |
+| `journal-1.md` | ~181 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-06-07 | 动态脚本编译前端收口 | `94829759` | `codex/dynamic-workflow-lifecycle-migration` |
 | 4 | 2026-06-04 | 接通 Codex 协议化 Steer 控制面 | `9fa958b5` | `codex/session-runtime-control-actions` |
 | 3 | 2026-06-04 | Session 控制动作模型修复 | `3bbcc968`, `cd365a1c` | `codex/session-runtime-control-actions` |
 | 2 | 2026-06-04 | Agent 页 Draft 会话启动 | `4748e234`, `368f1f86` | `main` |

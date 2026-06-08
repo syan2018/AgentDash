@@ -6,13 +6,13 @@
  * 绝不向用户暴露 GUID。
  */
 
-import type { LifecycleRunView, LifecycleAgentView } from "../../types";
+import type { LifecycleRunView, AgentRunView } from "../../types";
 import type { SessionExecutionStatusValue } from "../../services/session";
 import { findStoryById, useStoryStore } from "../../stores/storyStore";
 
 export interface SessionEntry {
   lifecycleRun: LifecycleRunView;
-  agent: LifecycleAgentView;
+  agent: AgentRunView;
   sessionTitle: string | null;
   deliveryRuntimeSessionId: string | null;
   executionStatus: SessionExecutionStatusValue;

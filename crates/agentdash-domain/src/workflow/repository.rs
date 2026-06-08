@@ -1,14 +1,12 @@
 use uuid::Uuid;
 
-use super::agent_assignment::AgentAssignment;
 use super::agent_frame::AgentFrame;
 use super::agent_lineage::AgentLineage;
-use super::entity::{ActivityExecutionClaim, AgentProcedure, LifecycleRun, WorkflowGraph};
+use super::entity::{AgentProcedure, LifecycleRun, WorkflowGraph};
 use super::lifecycle_agent::LifecycleAgent;
 use super::lifecycle_gate::LifecycleGate;
 use super::lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 use super::runtime_session_anchor::RuntimeSessionExecutionAnchor;
-use super::workflow_graph_instance::WorkflowGraphInstance;
 use crate::common::error::DomainError;
 
 #[async_trait::async_trait]
@@ -63,53 +61,13 @@ pub trait WorkflowTemplateInstallRepository: Send + Sync {
 }
 
 #[async_trait::async_trait]
-pub trait ActivityExecutionClaimRepository: Send + Sync {
-    async fn create_or_get(
-        &self,
-        claim: &ActivityExecutionClaim,
-    ) -> Result<ActivityExecutionClaim, DomainError>;
-    async fn get_by_idempotency_key(
-        &self,
-        idempotency_key: &str,
-    ) -> Result<Option<ActivityExecutionClaim>, DomainError>;
-    async fn list_active_by_run(
-        &self,
-        run_id: Uuid,
-    ) -> Result<Vec<ActivityExecutionClaim>, DomainError>;
-    async fn update(&self, claim: &ActivityExecutionClaim) -> Result<(), DomainError>;
-    async fn abandon_claiming_before(
-        &self,
-        cutoff: chrono::DateTime<chrono::Utc>,
-    ) -> Result<Vec<ActivityExecutionClaim>, DomainError>;
-}
-
-#[async_trait::async_trait]
 pub trait LifecycleRunRepository: Send + Sync {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError>;
     async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError>;
     async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError>;
-    async fn list_by_root_graph(
-        &self,
-        root_graph_id: Uuid,
-    ) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
-}
-
-// ─── Target Anchor Repositories ─────────────────────────────────────────────
-
-#[async_trait::async_trait]
-pub trait WorkflowGraphInstanceRepository: Send + Sync {
-    async fn create(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError>;
-    async fn get(&self, id: Uuid) -> Result<Option<WorkflowGraphInstance>, DomainError>;
-    async fn get_by_run_and_id(
-        &self,
-        run_id: Uuid,
-        id: Uuid,
-    ) -> Result<Option<WorkflowGraphInstance>, DomainError>;
-    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<WorkflowGraphInstance>, DomainError>;
-    async fn update(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError>;
 }
 
 #[async_trait::async_trait]
@@ -131,26 +89,6 @@ pub trait AgentFrameRepository: Send + Sync {
         frame_id: Uuid,
         mount_id: &str,
     ) -> Result<(), DomainError>;
-}
-
-#[async_trait::async_trait]
-pub trait AgentAssignmentRepository: Send + Sync {
-    async fn create(&self, assignment: &AgentAssignment) -> Result<(), DomainError>;
-    async fn get(&self, assignment_id: Uuid) -> Result<Option<AgentAssignment>, DomainError>;
-    async fn find_for_attempt(
-        &self,
-        graph_instance_id: Uuid,
-        activity_key: &str,
-        attempt: i32,
-    ) -> Result<Option<AgentAssignment>, DomainError>;
-    /// 查询指定 agent 当前 active 的 assignments（lease_status = 'active'）。
-    /// 替代 `list_by_run` + 全量扫描的启发式选择模式。
-    async fn find_active_for_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Vec<AgentAssignment>, DomainError>;
-    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentAssignment>, DomainError>;
-    async fn update(&self, assignment: &AgentAssignment) -> Result<(), DomainError>;
 }
 
 #[async_trait::async_trait]
@@ -186,15 +124,8 @@ pub trait AgentLineageRepository: Send + Sync {
 /// RuntimeSession → 控制面锚点的 repository。
 #[async_trait::async_trait]
 pub trait RuntimeSessionExecutionAnchorRepository: Send + Sync {
-    /// 第一段写入或更新（runtime_session + frame 创建后，assignment 可能尚未创建）。
+    /// 写入或更新 runtime_session 到 lifecycle / agent / frame / orchestration node 的锚点。
     async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError>;
-    /// 第二段补写：assignment 创建后回填 assignment_id + attempt。
-    async fn update_assignment(
-        &self,
-        runtime_session_id: &str,
-        assignment_id: Uuid,
-        attempt: i32,
-    ) -> Result<(), DomainError>;
     /// 按 runtime_session_id 删除锚点。
     async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError>;
     /// 按 runtime_session_id 查找锚点。

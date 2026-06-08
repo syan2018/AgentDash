@@ -1,8 +1,8 @@
-//! LifecycleOrchestrator — Activity runtime event bridge
+//! LifecycleOrchestrator — Orchestration runtime terminal bridge
 //!
-//! 职责：把 Activity executor 子 session 的 terminal 事件与
-//! `complete_lifecycle_node` 工具提交转换成 ActivityEvent，再交给
-//! LifecycleEngine 与 durable scheduler 统一推进。
+//! 职责：把 runtime node 子 session 的 terminal 事件与
+//! `complete_lifecycle_node` 工具提交转换成 OrchestrationRuntimeEvent，
+//! 再交给 common orchestration reducer 推进。
 //!
 //! 不维护自己的状态 — 所有状态读写都通过 LifecycleRun / session services。
 //! 不是后台进程 — 通过事件驱动（advance tool / session terminal）被调用。
@@ -12,28 +12,23 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    ActivityCompletionPolicy, ActivityDefinition, ActivityPortValue, ExecutorRunRef, LifecycleRun,
-    WorkflowGraphInstance, WorkflowSessionTerminalState,
+    LifecycleRun, NodePortValue, RuntimeNodeError, RuntimeNodeStatus, WorkflowSessionTerminalState,
 };
 use agentdash_spi::FunctionRunner;
 use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 
 use super::session_association::resolve_activity_session_association;
 use crate::session::SessionTerminalCallback;
-use crate::session::{
-    SessionCapabilityService, SessionCoreService, SessionHookService, SessionLaunchService,
+use crate::workflow::execution_log::{RuntimeNodeArtifactScope, load_scoped_port_output_map};
+use crate::workflow::orchestration::{
+    OrchestrationExecutorLauncher, OrchestrationRuntimeError, OrchestrationRuntimeEvent,
+    apply_orchestration_event_to_run,
 };
-use crate::workflow::execution_log::ActivityAttemptArtifactScope;
-use crate::workflow::{
-    ActivityEvent, ActivityLifecycleRunService, AgentActivityExecutorLauncher,
-    AgentActivityLaunchContext, AgentActivityRuntimePort, load_scoped_port_output_map,
-    session_terminal_summary,
-};
+use crate::workflow::session_terminal_summary;
 
 #[derive(Debug)]
 pub struct OrchestrationResult {
@@ -76,41 +71,28 @@ pub enum AdvanceCurrentNodeStatus {
 #[derive(Debug, Clone)]
 pub struct AdvanceCurrentNodeResult {
     pub run: LifecycleRun,
-    pub graph_instance: WorkflowGraphInstance,
-    pub activity_key: String,
+    pub orchestration_id: Uuid,
+    pub node_path: String,
     pub status: AdvanceCurrentNodeStatus,
     pub orchestration_warning: Option<String>,
 }
 
 pub struct LifecycleOrchestrator {
-    session_core: SessionCoreService,
-    session_launch: SessionLaunchService,
-    session_hooks: SessionHookService,
-    session_capability: SessionCapabilityService,
     repos: RepositorySet,
-    platform_config: SharedPlatformConfig,
-    function_runner: Arc<dyn FunctionRunner>,
+    function_runner: Option<Arc<dyn FunctionRunner>>,
 }
 
 impl LifecycleOrchestrator {
-    pub fn new(
-        session_core: SessionCoreService,
-        session_launch: SessionLaunchService,
-        session_hooks: SessionHookService,
-        session_capability: SessionCapabilityService,
-        repos: RepositorySet,
-        platform_config: SharedPlatformConfig,
-        function_runner: Arc<dyn FunctionRunner>,
-    ) -> Self {
+    pub fn new(repos: RepositorySet) -> Self {
         Self {
-            session_core,
-            session_launch,
-            session_hooks,
-            session_capability,
             repos,
-            platform_config,
-            function_runner,
+            function_runner: None,
         }
+    }
+
+    pub fn with_function_runner(mut self, function_runner: Arc<dyn FunctionRunner>) -> Self {
+        self.function_runner = Some(function_runner);
+        self
     }
 
     /// 当某个 session 进入 terminal 状态时调用。
@@ -140,7 +122,6 @@ impl LifecycleOrchestrator {
             session_id,
             self.repos.agent_frame_repo.as_ref(),
             self.repos.lifecycle_agent_repo.as_ref(),
-            self.repos.agent_assignment_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
             Some(self.repos.execution_anchor_repo.as_ref()),
         )
@@ -149,39 +130,65 @@ impl LifecycleOrchestrator {
         else {
             return Ok(None);
         };
-        let Some(event) = activity_terminal_event(
-            terminal_state,
-            &association.activity_key,
-            association.attempt,
-        ) else {
+        let Some(status) = runtime_node_terminal_status(terminal_state) else {
             return Ok(None);
         };
 
         info!(
             run_id = %association.run.id,
-            activity_key = %association.activity_key,
+            orchestration_id = %association.orchestration_id,
+            node_path = %association.node_path,
             attempt = association.attempt,
             terminal_state = terminal_state,
-            "Orchestrator: activity session terminal, applying ActivityEvent"
+            "Orchestrator: runtime session terminal, materializing orchestration node"
         );
 
-        let service = ActivityLifecycleRunService::new(
-            self.repos.workflow_graph_repo.as_ref(),
-            self.repos.lifecycle_run_repo.as_ref(),
-            self.repos.workflow_graph_instance_repo.as_ref(),
-            self.repos.activity_execution_claim_repo.as_ref(),
+        let outputs = if status == RuntimeNodeStatus::Completed
+            && !association_node_is_terminal(
+                &association.run,
+                association.orchestration_id,
+                &association.node_path,
+                association.attempt,
+            ) {
+            self.load_runtime_node_outputs(
+                association.run.id,
+                association.orchestration_id,
+                &association.node_path,
+                association.attempt,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+        let terminal_summary =
+            session_terminal_summary(workflow_terminal_state_from_str(terminal_state), None);
+        let event = runtime_terminal_event(
+            association.node_path.clone(),
+            association.attempt,
+            status,
+            outputs,
+            Some(terminal_summary),
         );
-        let update = service
-            .apply_event(association.graph_instance_id, event)
+        let (run, _outcome) =
+            apply_orchestration_event_to_run(association.run, association.orchestration_id, event)
+                .map_err(|error| error.to_string())?;
+        self.repos
+            .lifecycle_run_repo
+            .update(&run)
             .await
-            .map_err(|error| format!("推进 activity lifecycle run 失败: {error}"))?;
-        let activated_nodes = self
-            .launch_ready_activity_attempts(&update.run, update.graph_instance.id)
-            .await?;
+            .map_err(|error| format!("更新 LifecycleRun orchestration 失败: {error}"))?;
+        let drain_result = self.drain_ready_nodes(run.id).await?;
 
         Ok(Some(OrchestrationResult {
-            run_id: update.run.id,
-            activated_nodes,
+            run_id: run.id,
+            activated_nodes: drain_result
+                .launched_agent_nodes
+                .into_iter()
+                .map(|node| ActivatedNode {
+                    node_key: node.node_path,
+                    runtime_session_id: node.runtime_session_id,
+                })
+                .collect(),
         }))
     }
 
@@ -193,187 +200,113 @@ impl LifecycleOrchestrator {
             &input.runtime_session_id,
             self.repos.agent_frame_repo.as_ref(),
             self.repos.lifecycle_agent_repo.as_ref(),
-            self.repos.agent_assignment_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
             Some(self.repos.execution_anchor_repo.as_ref()),
         )
         .await
         .map_err(|error| error.to_string())?
         else {
-            return Err("当前 runtime session 没有关联 lifecycle activity attempt".to_string());
+            return Err("当前 runtime session 没有关联 lifecycle runtime node".to_string());
         };
 
-        let graph_instance = self
-            .repos
-            .workflow_graph_instance_repo
-            .get_by_run_and_id(association.run.id, association.graph_instance_id)
-            .await
-            .map_err(|error| format!("加载 workflow graph instance 失败: {error}"))?
-            .ok_or_else(|| {
-                format!(
-                    "workflow graph instance 不存在: {}",
-                    association.graph_instance_id
-                )
-            })?;
-        let definition = self
-            .repos
-            .workflow_graph_repo
-            .get_by_id(graph_instance.graph_id)
-            .await
-            .map_err(|error| format!("加载 activity lifecycle definition 失败: {error}"))?
-            .ok_or_else(|| {
-                format!(
-                    "activity lifecycle definition 不存在: {}",
-                    graph_instance.graph_id
-                )
-            })?;
-        let activity = definition
-            .activities
-            .iter()
-            .find(|activity| activity.key == association.activity_key)
-            .ok_or_else(|| format!("activity 不存在: {}", association.activity_key))?;
-
-        let event = if input.outcome == LifecycleNodeAdvanceOutcome::Failed {
-            ActivityEvent::ActivityFailed {
-                activity_key: association.activity_key.clone(),
-                attempt: association.attempt,
-                error: input
-                    .summary
-                    .clone()
-                    .unwrap_or_else(|| "agent 主动标记 activity failed".to_string()),
-            }
+        let status = if input.outcome == LifecycleNodeAdvanceOutcome::Failed {
+            RuntimeNodeStatus::Failed
         } else {
-            let artifact_scope = ActivityAttemptArtifactScope {
-                run_id: association.run.id,
-                graph_instance_id: association.graph_instance_id,
-                activity_key: association.activity_key.clone(),
-                attempt: association.attempt,
-            };
-            let port_output_map =
-                load_scoped_port_output_map(self.repos.inline_file_repo.as_ref(), &artifact_scope)
-                    .await;
-            let required_output_keys = match &activity.completion_policy {
-                ActivityCompletionPolicy::OutputPorts { required_ports } => required_ports.clone(),
-                _ => Vec::new(),
-            };
-            let missing_output_keys = required_output_keys
-                .iter()
-                .filter(|key| !port_output_map.contains_key(key.as_str()))
-                .cloned()
-                .collect::<Vec<_>>();
-            if !missing_output_keys.is_empty() {
+            RuntimeNodeStatus::Completed
+        };
+        let outputs = if status == RuntimeNodeStatus::Completed {
+            self.load_runtime_node_outputs(
+                association.run.id,
+                association.orchestration_id,
+                &association.node_path,
+                association.attempt,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+        let event = runtime_terminal_event(
+            association.node_path.clone(),
+            association.attempt,
+            status,
+            outputs,
+            input.summary.clone(),
+        );
+        let run_before = association.run.clone();
+        let updated_run = match apply_orchestration_event_to_run(
+            association.run,
+            association.orchestration_id,
+            event,
+        ) {
+            Ok((run, _outcome)) => run,
+            Err(OrchestrationRuntimeError::CompletionPolicyRejected {
+                missing_output_ports,
+                ..
+            }) if input.outcome == LifecycleNodeAdvanceOutcome::Completed => {
                 return Ok(AdvanceCurrentNodeResult {
-                    run: association.run,
-                    graph_instance,
-                    activity_key: association.activity_key,
+                    run: run_before,
+                    orchestration_id: association.orchestration_id,
+                    node_path: association.node_path,
                     status: AdvanceCurrentNodeStatus::GateRejected {
-                        gate_collision_count: 0,
-                        missing_output_keys,
+                        gate_collision_count: 1,
+                        missing_output_keys: missing_output_ports,
                         terminal_failed: false,
                     },
                     orchestration_warning: None,
                 });
             }
-            let outputs = activity_outputs_from_scoped_port_map(activity, port_output_map)?;
-            ActivityEvent::ActivityCompleted {
-                activity_key: association.activity_key.clone(),
-                attempt: association.attempt,
-                outputs,
-                summary: input.summary.clone(),
+            Err(OrchestrationRuntimeError::StateExchangeMissingOutput { from_port, .. })
+                if input.outcome == LifecycleNodeAdvanceOutcome::Completed =>
+            {
+                return Ok(AdvanceCurrentNodeResult {
+                    run: run_before,
+                    orchestration_id: association.orchestration_id,
+                    node_path: association.node_path,
+                    status: AdvanceCurrentNodeStatus::GateRejected {
+                        gate_collision_count: 1,
+                        missing_output_keys: vec![from_port],
+                        terminal_failed: false,
+                    },
+                    orchestration_warning: None,
+                });
             }
+            Err(error) => return Err(error.to_string()),
         };
-
-        let service = ActivityLifecycleRunService::new(
-            self.repos.workflow_graph_repo.as_ref(),
-            self.repos.lifecycle_run_repo.as_ref(),
-            self.repos.workflow_graph_instance_repo.as_ref(),
-            self.repos.activity_execution_claim_repo.as_ref(),
-        );
-        let update = service
-            .apply_event(association.graph_instance_id, event)
+        self.repos
+            .lifecycle_run_repo
+            .update(&updated_run)
             .await
-            .map_err(|error| format!("推进 activity lifecycle run 失败: {error}"))?;
+            .map_err(|error| format!("更新 LifecycleRun orchestration 失败: {error}"))?;
+        let drain_result = self.drain_ready_nodes(updated_run.id).await?;
         self.refresh_hook_snapshot(&input.hook_runtime, &input.turn_id)
             .await?;
 
-        let orchestration_warning = if input.outcome == LifecycleNodeAdvanceOutcome::Completed {
-            match self
-                .launch_ready_activity_attempts(&update.run, update.graph_instance.id)
-                .await
-            {
-                Ok(_) => None,
-                Err(error) => Some(format!(
-                    "activity 已完成，但后继 executor 启动失败：{error}"
-                )),
-            }
-        } else {
-            None
-        };
-        let final_run = self.load_run(update.run.id).await?;
-        let final_graph_instance = self
-            .repos
-            .workflow_graph_instance_repo
-            .get_by_run_and_id(final_run.id, update.graph_instance.id)
-            .await
-            .map_err(|e| format!("加载 workflow graph instance 失败: {e}"))?
-            .unwrap_or(update.graph_instance);
+        let final_run = self.load_run(updated_run.id).await?;
         Ok(AdvanceCurrentNodeResult {
             run: final_run,
-            graph_instance: final_graph_instance,
-            activity_key: association.activity_key,
+            orchestration_id: association.orchestration_id,
+            node_path: association.node_path,
             status: if input.outcome == LifecycleNodeAdvanceOutcome::Failed {
                 AdvanceCurrentNodeStatus::Failed
             } else {
                 AdvanceCurrentNodeStatus::Completed
             },
-            orchestration_warning,
+            orchestration_warning: orchestration_warning_from_drain(&drain_result),
         })
     }
 
-    async fn launch_ready_activity_attempts(
+    async fn drain_ready_nodes(
         &self,
-        run: &LifecycleRun,
-        graph_instance_id: Uuid,
-    ) -> Result<Vec<ActivatedNode>, String> {
-        let service = ActivityLifecycleRunService::new(
-            self.repos.workflow_graph_repo.as_ref(),
-            self.repos.lifecycle_run_repo.as_ref(),
-            self.repos.workflow_graph_instance_repo.as_ref(),
-            self.repos.activity_execution_claim_repo.as_ref(),
-        );
-        let launcher = AgentActivityExecutorLauncher::new(
-            AgentActivityLaunchContext::detached(run.project_id, String::new()),
-            AgentActivityRuntimePort::new(
-                self.session_core.clone(),
-                self.session_launch.clone(),
-                self.repos.clone(),
-                self.function_runner.clone(),
-            )
-            .with_runtime_context(
-                self.session_hooks.clone(),
-                self.session_capability.clone(),
-                self.platform_config.clone(),
-            ),
-        );
-        let (_update, outcomes) = service
-            .launch_ready_attempts(graph_instance_id, &launcher)
+        run_id: Uuid,
+    ) -> Result<crate::workflow::OrchestrationExecutorDrainResult, String> {
+        let mut launcher = OrchestrationExecutorLauncher::new(self.repos.clone());
+        if let Some(function_runner) = &self.function_runner {
+            launcher = launcher.with_function_runner(function_runner.clone());
+        }
+        launcher
+            .drain_ready_nodes(run_id)
             .await
-            .map_err(|error| format!("启动后继 activity executor 失败: {error}"))?;
-        Ok(outcomes
-            .into_iter()
-            .filter_map(|outcome| {
-                if !outcome.started {
-                    return None;
-                }
-                match outcome.claim.executor_run_ref {
-                    Some(ExecutorRunRef::RuntimeSession { session_id }) => Some(ActivatedNode {
-                        node_key: outcome.claim.activity_key,
-                        runtime_session_id: session_id,
-                    }),
-                    _ => None,
-                }
-            })
-            .collect())
+            .map_err(|error| error.to_string())
     }
 
     async fn refresh_hook_snapshot(
@@ -417,6 +350,31 @@ impl LifecycleOrchestrator {
             .map_err(|e| format!("加载 lifecycle run 失败: {e}"))?
             .ok_or_else(|| format!("lifecycle run 不存在: {run_id}"))
     }
+
+    async fn load_runtime_node_outputs(
+        &self,
+        run_id: Uuid,
+        orchestration_id: Uuid,
+        node_path: &str,
+        attempt: u32,
+    ) -> Result<Vec<NodePortValue>, String> {
+        let scope = RuntimeNodeArtifactScope {
+            run_id,
+            orchestration_id,
+            node_path: node_path.to_string(),
+            attempt,
+        };
+        let output_map =
+            load_scoped_port_output_map(self.repos.inline_file_repo.as_ref(), &scope).await;
+        output_map
+            .into_iter()
+            .map(|(port_key, content)| {
+                let value = serde_json::from_str(&content)
+                    .unwrap_or_else(|_| serde_json::Value::String(content));
+                Ok(NodePortValue { port_key, value })
+            })
+            .collect()
+    }
 }
 
 #[async_trait::async_trait]
@@ -442,145 +400,111 @@ impl SessionTerminalCallback for LifecycleOrchestrator {
     }
 }
 
-fn activity_outputs_from_scoped_port_map(
-    activity: &ActivityDefinition,
-    port_output_map: std::collections::BTreeMap<String, String>,
-) -> Result<Vec<ActivityPortValue>, String> {
-    let declared_output_keys = activity
-        .output_ports
-        .iter()
-        .map(|port| port.key.as_str())
-        .collect::<Vec<_>>();
-
-    port_output_map
-        .into_iter()
-        .filter(|(port_key, _)| declared_output_keys.contains(&port_key.as_str()))
-        .map(|(port_key, content)| {
-            let value = serde_json::from_str(&content).map_err(|error| {
-                format!(
-                    "activity `{}` output port `{}` 必须写入 JSON 内容: {error}",
-                    activity.key, port_key
-                )
-            })?;
-            Ok(ActivityPortValue { port_key, value })
-        })
-        .collect()
-}
-
-fn activity_terminal_event(
-    terminal_state: &str,
-    activity_key: &str,
-    attempt: u32,
-) -> Option<ActivityEvent> {
+fn runtime_node_terminal_status(terminal_state: &str) -> Option<RuntimeNodeStatus> {
     match terminal_state {
-        "completed" => Some(ActivityEvent::ActivityCompleted {
-            activity_key: activity_key.to_string(),
-            attempt,
-            outputs: Vec::new(),
-            summary: Some(session_terminal_summary(
-                WorkflowSessionTerminalState::Completed,
-                None,
-            )),
-        }),
-        "failed" => Some(ActivityEvent::ActivityFailed {
-            activity_key: activity_key.to_string(),
-            attempt,
-            error: session_terminal_summary(WorkflowSessionTerminalState::Failed, None),
-        }),
-        "interrupted" => Some(ActivityEvent::ActivityFailed {
-            activity_key: activity_key.to_string(),
-            attempt,
-            error: session_terminal_summary(WorkflowSessionTerminalState::Interrupted, None),
-        }),
+        "completed" | "succeeded" | "success" => Some(RuntimeNodeStatus::Completed),
+        "failed" | "error" => Some(RuntimeNodeStatus::Failed),
+        "interrupted" | "cancelled" | "canceled" => Some(RuntimeNodeStatus::Cancelled),
         _ => None,
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::BTreeMap;
-
-    use agentdash_domain::workflow::{
-        ActivityExecutorSpec, ActivityIterationPolicy, ActivityJoinPolicy,
-        AgentActivityExecutorSpec, OutputPortDefinition,
-    };
-
-    #[test]
-    fn activity_terminal_failed_maps_to_failed_event() {
-        assert_eq!(
-            activity_terminal_event("failed", "plan", 1),
-            Some(ActivityEvent::ActivityFailed {
-                activity_key: "plan".to_string(),
-                attempt: 1,
-                error: "关联 session 以失败终态结束".to_string(),
-            })
-        );
+fn workflow_terminal_state_from_str(terminal_state: &str) -> WorkflowSessionTerminalState {
+    match terminal_state {
+        "completed" | "succeeded" | "success" => WorkflowSessionTerminalState::Completed,
+        "interrupted" | "cancelled" | "canceled" => WorkflowSessionTerminalState::Interrupted,
+        _ => WorkflowSessionTerminalState::Failed,
     }
+}
 
-    #[test]
-    fn activity_terminal_completed_maps_to_completed_event() {
-        assert_eq!(
-            activity_terminal_event("completed", "plan", 1),
-            Some(ActivityEvent::ActivityCompleted {
-                activity_key: "plan".to_string(),
-                attempt: 1,
-                outputs: Vec::new(),
-                summary: Some("关联 session 已自然结束".to_string()),
-            })
-        );
+fn runtime_terminal_event(
+    node_path: String,
+    attempt: u32,
+    status: RuntimeNodeStatus,
+    outputs: Vec<NodePortValue>,
+    summary: Option<String>,
+) -> OrchestrationRuntimeEvent {
+    let timestamp = chrono::Utc::now();
+    match status {
+        RuntimeNodeStatus::Completed => OrchestrationRuntimeEvent::NodeCompleted {
+            node_path,
+            attempt,
+            outputs,
+            timestamp,
+        },
+        RuntimeNodeStatus::Cancelled => OrchestrationRuntimeEvent::NodeCancelled {
+            node_path,
+            attempt,
+            reason: summary,
+            timestamp,
+        },
+        RuntimeNodeStatus::Failed => OrchestrationRuntimeEvent::NodeFailed {
+            node_path,
+            attempt,
+            error: RuntimeNodeError {
+                code: "runtime_session_terminal_failed".to_string(),
+                message: summary.unwrap_or_else(|| "runtime session failed".to_string()),
+                retryable: false,
+                detail: None,
+            },
+            timestamp,
+        },
+        _ => OrchestrationRuntimeEvent::NodeCancelled {
+            node_path,
+            attempt,
+            reason: Some(format!("unsupported terminal status: {status:?}")),
+            timestamp,
+        },
     }
+}
 
-    #[test]
-    fn activity_outputs_parse_declared_json_ports() {
-        let activity = test_activity_with_outputs(&["result"]);
-        let outputs = activity_outputs_from_scoped_port_map(
-            &activity,
-            BTreeMap::from([
-                ("ignored".to_string(), "\"not declared\"".to_string()),
-                ("result".to_string(), "{\"ok\":true}".to_string()),
-            ]),
-        )
-        .expect("json output");
+fn association_node_is_terminal(
+    run: &LifecycleRun,
+    orchestration_id: Uuid,
+    node_path: &str,
+    attempt: u32,
+) -> bool {
+    run.orchestrations
+        .iter()
+        .find(|orchestration| orchestration.orchestration_id == orchestration_id)
+        .and_then(|orchestration| {
+            find_runtime_node_for_association(&orchestration.node_tree, node_path, attempt)
+        })
+        .is_some_and(|node| {
+            matches!(
+                node.status,
+                RuntimeNodeStatus::Completed
+                    | RuntimeNodeStatus::Failed
+                    | RuntimeNodeStatus::Cancelled
+                    | RuntimeNodeStatus::Skipped
+            )
+        })
+}
 
-        assert_eq!(outputs.len(), 1);
-        assert_eq!(outputs[0].port_key, "result");
-        assert_eq!(outputs[0].value, serde_json::json!({ "ok": true }));
+fn orchestration_warning_from_drain(
+    result: &crate::workflow::OrchestrationExecutorDrainResult,
+) -> Option<String> {
+    if result.failed_nodes.is_empty() {
+        return None;
     }
+    Some(format!(
+        "后继 runtime node 启动失败: {}",
+        result.failed_nodes.join(", ")
+    ))
+}
 
-    #[test]
-    fn activity_outputs_reject_invalid_json_port_content() {
-        let activity = test_activity_with_outputs(&["result"]);
-        let error = activity_outputs_from_scoped_port_map(
-            &activity,
-            BTreeMap::from([("result".to_string(), "plain text".to_string())]),
-        )
-        .expect_err("invalid json");
-
-        assert!(error.contains("output port `result`"));
-        assert!(error.contains("必须写入 JSON 内容"));
-    }
-
-    fn test_activity_with_outputs(keys: &[&str]) -> ActivityDefinition {
-        ActivityDefinition {
-            key: "build".to_string(),
-            description: String::new(),
-            executor: ActivityExecutorSpec::Agent(
-                AgentActivityExecutorSpec::create_activity_agent("workflow"),
-            ),
-            input_ports: Vec::new(),
-            output_ports: keys
-                .iter()
-                .map(|key| OutputPortDefinition {
-                    key: (*key).to_string(),
-                    description: String::new(),
-                    gate_strategy: Default::default(),
-                    gate_params: None,
-                })
-                .collect(),
-            completion_policy: ActivityCompletionPolicy::default(),
-            iteration_policy: ActivityIterationPolicy::default(),
-            join_policy: ActivityJoinPolicy::default(),
+fn find_runtime_node_for_association<'a>(
+    nodes: &'a [agentdash_domain::workflow::RuntimeNodeState],
+    node_path: &str,
+    attempt: u32,
+) -> Option<&'a agentdash_domain::workflow::RuntimeNodeState> {
+    for node in nodes {
+        if node.node_path == node_path && node.attempt == attempt {
+            return Some(node);
+        }
+        if let Some(found) = find_runtime_node_for_association(&node.children, node_path, attempt) {
+            return Some(found);
         }
     }
+    None
 }

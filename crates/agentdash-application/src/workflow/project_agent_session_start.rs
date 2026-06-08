@@ -2,10 +2,9 @@ use uuid::Uuid;
 
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::workflow::{
-    AgentAssignmentRepository, AgentFrameRepository, AgentLineageRepository,
-    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
-    WorkflowGraphInstanceRepository, WorkflowGraphRepository,
+    AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository,
+    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
 };
 use agentdash_domain::workflow::{
     AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, RunPolicy,
@@ -18,7 +17,7 @@ use async_trait::async_trait;
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionMeta};
 use crate::workflow::{
-    LifecycleAgentMessageCommand, LifecycleAgentMessageDeliveryPort, LifecycleAgentMessageService,
+    AgentRunMessageCommand, AgentRunMessageDeliveryPort, AgentRunMessageService,
     LifecycleDispatchService, RuntimeSessionCreator, WorkflowApplicationError,
 };
 
@@ -46,10 +45,8 @@ pub struct ProjectAgentSessionStartRepos<'a> {
     pub project_agent_repo: &'a dyn ProjectAgentRepository,
     pub lifecycle_run_repo: &'a dyn LifecycleRunRepository,
     pub workflow_graph_repo: &'a dyn WorkflowGraphRepository,
-    pub workflow_graph_instance_repo: &'a dyn WorkflowGraphInstanceRepository,
     pub lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     pub agent_frame_repo: &'a dyn AgentFrameRepository,
-    pub agent_assignment_repo: &'a dyn AgentAssignmentRepository,
     pub lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
     pub lifecycle_gate_repo: &'a dyn LifecycleGateRepository,
     pub agent_lineage_repo: &'a dyn AgentLineageRepository,
@@ -63,10 +60,8 @@ impl<'a> ProjectAgentSessionStartRepos<'a> {
             project_agent_repo: repos.project_agent_repo.as_ref(),
             lifecycle_run_repo: repos.lifecycle_run_repo.as_ref(),
             workflow_graph_repo: repos.workflow_graph_repo.as_ref(),
-            workflow_graph_instance_repo: repos.workflow_graph_instance_repo.as_ref(),
             lifecycle_agent_repo: repos.lifecycle_agent_repo.as_ref(),
             agent_frame_repo: repos.agent_frame_repo.as_ref(),
-            agent_assignment_repo: repos.agent_assignment_repo.as_ref(),
             lifecycle_subject_association_repo: repos.lifecycle_subject_association_repo.as_ref(),
             lifecycle_gate_repo: repos.lifecycle_gate_repo.as_ref(),
             agent_lineage_repo: repos.agent_lineage_repo.as_ref(),
@@ -134,7 +129,7 @@ impl<'a> ProjectAgentSessionStartService<'a> {
         delivery: D,
     ) -> Result<ProjectAgentSessionStartDispatch, WorkflowApplicationError>
     where
-        D: LifecycleAgentMessageDeliveryPort,
+        D: AgentRunMessageDeliveryPort,
     {
         if command.input.is_empty() {
             return Err(WorkflowApplicationError::BadRequest(
@@ -162,7 +157,6 @@ impl<'a> ProjectAgentSessionStartService<'a> {
             parent_run_id: None,
             parent_agent_id: None,
             workflow_graph_ref: workflow_graph_ref_for_project_agent(&project_agent),
-            agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
             context_policy: ContextPolicy::Isolated,
@@ -173,10 +167,8 @@ impl<'a> ProjectAgentSessionStartService<'a> {
         let dispatch_service = LifecycleDispatchService::new(
             self.repos.lifecycle_run_repo,
             self.repos.workflow_graph_repo,
-            self.repos.workflow_graph_instance_repo,
             self.repos.lifecycle_agent_repo,
             self.repos.agent_frame_repo,
-            self.repos.agent_assignment_repo,
             self.repos.lifecycle_subject_association_repo,
             self.repos.lifecycle_gate_repo,
             self.repos.agent_lineage_repo,
@@ -218,7 +210,7 @@ impl<'a> ProjectAgentSessionStartService<'a> {
             return Err(error);
         }
 
-        let message_service = LifecycleAgentMessageService::new(
+        let message_service = AgentRunMessageService::new(
             self.repos.lifecycle_run_repo,
             self.repos.lifecycle_agent_repo,
             self.repos.agent_frame_repo,
@@ -227,7 +219,7 @@ impl<'a> ProjectAgentSessionStartService<'a> {
         );
 
         let message_dispatch = match message_service
-            .dispatch_user_message(LifecycleAgentMessageCommand {
+            .dispatch_user_message(AgentRunMessageCommand {
                 delivery_runtime_session_id: runtime_session_id.clone(),
                 input: command.input,
                 executor_config: command.executor_config,
@@ -331,9 +323,8 @@ mod tests {
     use crate::session::{ExecutionStatus, TitleSource};
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentAssignment, AgentFrame, AgentLineage, LifecycleAgent, LifecycleGate, LifecycleRun,
+        AgentFrame, AgentLineage, LifecycleAgent, LifecycleGate, LifecycleRun,
         LifecycleSubjectAssociation, RuntimeSessionExecutionAnchor, WorkflowGraph,
-        WorkflowGraphInstance,
     };
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -463,20 +454,6 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_root_graph(
-            &self,
-            root_graph_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|run| run.root_graph_id == Some(root_graph_id))
-                .cloned()
-                .collect())
-        }
-
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items.iter_mut().find(|existing| existing.id == run.id) {
@@ -524,39 +501,6 @@ mod tests {
         }
 
         async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct GraphInstanceRepo;
-
-    #[async_trait]
-    impl WorkflowGraphInstanceRepository for GraphInstanceRepo {
-        async fn create(&self, _instance: &WorkflowGraphInstance) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn get(&self, _id: Uuid) -> Result<Option<WorkflowGraphInstance>, DomainError> {
-            Ok(None)
-        }
-
-        async fn get_by_run_and_id(
-            &self,
-            _run_id: Uuid,
-            _id: Uuid,
-        ) -> Result<Option<WorkflowGraphInstance>, DomainError> {
-            Ok(None)
-        }
-
-        async fn list_by_run(
-            &self,
-            _run_id: Uuid,
-        ) -> Result<Vec<WorkflowGraphInstance>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn update(&self, _instance: &WorkflowGraphInstance) -> Result<(), DomainError> {
             Ok(())
         }
     }
@@ -657,44 +601,6 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct AssignmentRepo;
-
-    #[async_trait]
-    impl AgentAssignmentRepository for AssignmentRepo {
-        async fn create(&self, _assignment: &AgentAssignment) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn get(&self, _assignment_id: Uuid) -> Result<Option<AgentAssignment>, DomainError> {
-            Ok(None)
-        }
-
-        async fn find_for_attempt(
-            &self,
-            _graph_instance_id: Uuid,
-            _activity_key: &str,
-            _attempt: i32,
-        ) -> Result<Option<AgentAssignment>, DomainError> {
-            Ok(None)
-        }
-
-        async fn find_active_for_agent(
-            &self,
-            _agent_id: Uuid,
-        ) -> Result<Vec<AgentAssignment>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn list_by_run(&self, _run_id: Uuid) -> Result<Vec<AgentAssignment>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn update(&self, _assignment: &AgentAssignment) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
     struct AssociationRepo {
         items: Mutex<Vec<LifecycleSubjectAssociation>>,
     }
@@ -789,15 +695,6 @@ mod tests {
     impl RuntimeSessionExecutionAnchorRepository for AnchorRepo {
         async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
             self.items.lock().unwrap().push(anchor.clone());
-            Ok(())
-        }
-
-        async fn update_assignment(
-            &self,
-            _runtime_session_id: &str,
-            _assignment_id: Uuid,
-            _attempt: i32,
-        ) -> Result<(), DomainError> {
             Ok(())
         }
 
@@ -931,10 +828,10 @@ mod tests {
     struct FailingDelivery;
 
     #[async_trait]
-    impl LifecycleAgentMessageDeliveryPort for FailingDelivery {
+    impl AgentRunMessageDeliveryPort for FailingDelivery {
         async fn deliver_user_message(
             &self,
-            _delivery: crate::workflow::LifecycleAgentMessageDelivery,
+            _delivery: crate::workflow::AgentRunMessageDelivery,
         ) -> Result<String, WorkflowApplicationError> {
             Err(WorkflowApplicationError::Internal(
                 "connector setup failed".to_string(),
@@ -951,10 +848,8 @@ mod tests {
         };
         let run_repo = RunRepo::default();
         let workflow_graph_repo = WorkflowGraphRepo;
-        let graph_instance_repo = GraphInstanceRepo;
         let agent_repo = AgentRepo::default();
         let frame_repo = FrameRepo::default();
-        let assignment_repo = AssignmentRepo;
         let association_repo = AssociationRepo::default();
         let gate_repo = GateRepo;
         let lineage_repo = LineageRepo;
@@ -965,10 +860,8 @@ mod tests {
                 project_agent_repo: &project_agent_repo,
                 lifecycle_run_repo: &run_repo,
                 workflow_graph_repo: &workflow_graph_repo,
-                workflow_graph_instance_repo: &graph_instance_repo,
                 lifecycle_agent_repo: &agent_repo,
                 agent_frame_repo: &frame_repo,
-                agent_assignment_repo: &assignment_repo,
                 lifecycle_subject_association_repo: &association_repo,
                 lifecycle_gate_repo: &gate_repo,
                 agent_lineage_repo: &lineage_repo,

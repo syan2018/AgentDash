@@ -1,13 +1,10 @@
 pub(crate) mod activity_activation;
-mod activity_run;
-pub mod agent_executor;
 pub mod agent_message;
 pub mod agent_steering;
 mod catalog;
 mod completion;
 mod definition;
 pub mod dispatch_service;
-pub mod engine;
 mod error;
 pub mod execution_log;
 pub mod frame_builder;
@@ -18,12 +15,13 @@ pub mod graph_resolver;
 pub mod lifecycle;
 pub mod lifecycle_gate_service;
 pub mod lifecycle_run_view_builder;
+pub mod orchestration;
 pub mod orchestrator;
 mod project_agent_session_start;
 pub mod projection;
 pub(crate) mod run;
 pub mod runtime_launch;
-pub mod scheduler;
+pub mod script;
 mod session_association;
 mod session_run_context_resolver;
 mod subject_execution_control;
@@ -33,25 +31,16 @@ pub mod tools;
 pub(crate) use activity_activation::KickoffPromptFragment;
 pub(crate) use activity_activation::{
     ActivityActivation, ActivityActivationInput, activate_activity_with_platform,
-    agent_mcp_entries_from_servers, build_capability_state_for_activation,
-};
-pub use activity_run::{ActivityGraphInstanceExecutionResult, ActivityLifecycleRunService};
-pub use agent_executor::{
-    AgentActivityAssignmentTarget, AgentActivityExecutorLauncher, AgentActivityLaunchContext,
-    AgentActivityRuntimePort, AgentActivitySessionPort, ContinueRootExecutionPolicy,
-    RuntimeSessionDeliveryPolicy,
 };
 pub use agent_message::{
-    LifecycleAgentMessageCommand, LifecycleAgentMessageDelivery, LifecycleAgentMessageDeliveryPort,
-    LifecycleAgentMessageDispatch, LifecycleAgentMessageService,
-    SessionLaunchLifecycleAgentMessageDeliveryPort,
+    AgentRunMessageCommand, AgentRunMessageDelivery, AgentRunMessageDeliveryPort,
+    AgentRunMessageDispatch, AgentRunMessageLaunchDeliveryPort, AgentRunMessageService,
 };
 pub use agent_steering::{
-    LifecycleAgentSteeringCommand, LifecycleAgentSteeringDispatch, LifecycleAgentSteeringService,
+    AgentRunSteeringCommand, AgentRunSteeringDispatch, AgentRunSteeringService,
 };
 pub use agentdash_domain::workflow::{
-    ActivityInputArtifact, ActivityLifecycleRunState, ActivityOutputArtifact, ActivityPortValue,
-    ActivityRunStatus, AgentReusePolicy, RuntimeSessionPolicy, WorkflowSessionTerminalState,
+    AgentReusePolicy, RuntimeSessionPolicy, WorkflowSessionTerminalState,
 };
 pub use catalog::{ActivityLifecycleCatalogService, WorkflowCatalogService};
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
@@ -64,10 +53,9 @@ pub use dispatch_service::{
     LifecycleDispatchService, RuntimeSessionCreationRequest, RuntimeSessionCreator,
     SessionPersistenceRuntimeSessionCreator,
 };
-pub use engine::{ActivityEvent, LifecycleEngine, LifecycleEngineError};
 pub use error::WorkflowApplicationError;
 pub use execution_log::{
-    ActivityAttemptArtifactScope, ActivityPortArtifactRef, load_scoped_port_output_map,
+    RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef, load_scoped_port_output_map,
     materialize_activity_summary,
 };
 pub use frame_builder::AgentFrameBuilder;
@@ -76,10 +64,24 @@ pub use frame_hook_runtime::AgentFrameHookRuntime;
 pub use frame_surface::{AgentFrameSurfaceExt, FrameContextBundleSummary};
 pub use graph_resolver::{ResolvedWorkflowGraph, WorkflowGraphResolver};
 pub use lifecycle::mount::{
-    append_active_workflow_lifecycle_mount, ensure_active_workflow_lifecycle_mount,
+    LifecycleMountSurface, append_active_workflow_lifecycle_mount,
+    ensure_active_workflow_lifecycle_mount, lifecycle_mount_surface_for_active_workflow,
     writable_port_keys_for_active_workflow,
 };
 pub use lifecycle_gate_service::LifecycleGateService;
+pub use orchestration::{
+    OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher, SubmitHumanGateDecisionInput,
+    SubmitHumanGateDecisionResult,
+};
+pub use orchestration::{
+    ScriptCompileDiagnostic, ScriptCompileInput, ScriptCompileOutput, ScriptCompiler,
+    WORKFLOW_SCRIPT_COMPILER_SCHEMA_VERSION, compile_workflow_script_builder_document,
+};
+pub use orchestration::{
+    WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION, WorkflowGraphCompileDiagnostic,
+    WorkflowGraphCompileInput, WorkflowGraphCompileMode, WorkflowGraphCompileOutput,
+    WorkflowGraphCompileSourceMetadata, WorkflowGraphCompiler, compile_workflow_graph,
+};
 pub use orchestrator::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
@@ -96,11 +98,17 @@ pub use projection::{
 };
 pub use run::select_active_run;
 pub use runtime_launch::{FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface};
-pub use scheduler::{
-    ActivityExecutorLaunchOutcome, ActivityExecutorLauncher, ActivityExecutorScheduler,
-    ActivityExecutorStartError,
+pub use script::{
+    WorkflowScriptAgent, WorkflowScriptBuilderDiagnostic, WorkflowScriptBuilderDocument,
+    WorkflowScriptBuilderParseOutput, WorkflowScriptCompileDiagnostic, WorkflowScriptCompileInput,
+    WorkflowScriptCompileOutput, WorkflowScriptCompiler, WorkflowScriptEffect,
+    WorkflowScriptFunction, WorkflowScriptHumanGate, WorkflowScriptLocalEffect,
+    WorkflowScriptParallel, WorkflowScriptPhase, WorkflowScriptPipeline, WorkflowScriptPlanPreview,
+    WorkflowScriptPlanPreviewNode, WorkflowScriptPreflightDiagnostic, WorkflowScriptPreflightInput,
+    WorkflowScriptPreflightOutput, WorkflowScriptPreflightService, WorkflowScriptRequest,
+    WorkflowScriptStatement, extract_workflow_script_capability_summary,
+    parse_workflow_script_builder_document, preflight_workflow_script,
 };
-pub(crate) use session_association::select_assignment_for_frame;
 pub use session_association::{
     LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,
     build_lifecycle_node_label, lifecycle_activity_parts_from_label,

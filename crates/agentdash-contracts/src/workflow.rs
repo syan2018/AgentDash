@@ -395,85 +395,26 @@ pub struct ArtifactBinding {
     pub alias: ArtifactAliasPolicy,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ActivityAttemptStatus {
-    Pending,
-    Ready,
-    Claiming,
-    Running,
-    Completed,
-    Failed,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-pub struct ActivityAttemptState {
-    pub activity_key: String,
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+pub struct SubmitOrchestrationHumanDecisionRequest {
+    pub orchestration_id: String,
+    pub node_path: String,
+    #[serde(default = "default_attempt")]
     pub attempt: u32,
-    pub status: ActivityAttemptStatus,
+    pub decision: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub executor_run: Option<ExecutorRunRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub started_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub completed_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub summary: Option<String>,
+    pub resolved_by: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
-pub struct ActivityPortValue {
-    pub port_key: String,
-    pub value: Value,
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct SubmitOrchestrationHumanDecisionResponse {
+    pub run: LifecycleRunView,
+    pub gate_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
-pub struct ActivityOutputArtifact {
-    pub graph_instance_id: String,
-    pub activity_key: String,
-    pub attempt: u32,
-    pub port_key: String,
-    pub value: Value,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
-pub struct ActivityInputArtifact {
-    pub graph_instance_id: String,
-    pub activity_key: String,
-    pub attempt: u32,
-    pub port_key: String,
-    pub source_graph_instance_id: String,
-    pub source_activity_key: String,
-    pub source_attempt: u32,
-    pub source_port_key: String,
-    pub value: Value,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
-pub struct ActivityLifecycleRunState {
-    pub graph_instance_id: String,
-    pub status: ActivityRunStatus,
-    pub attempts: Vec<ActivityAttemptState>,
-    pub outputs: Vec<ActivityOutputArtifact>,
-    pub inputs: Vec<ActivityInputArtifact>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ActivityRunStatus {
-    Ready,
-    Running,
-    Blocked,
-    Completed,
-    Failed,
-    Cancelled,
+fn default_attempt() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -482,16 +423,6 @@ pub enum ExecutorRunRef {
     RuntimeSession { session_id: String },
     FunctionRun { run_id: String },
     HumanDecision { decision_id: String },
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ActivityExecutionClaimStatus {
-    Claiming,
-    Running,
-    Succeeded,
-    Failed,
-    Abandoned,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -571,6 +502,112 @@ pub struct ValidateHookScriptResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct PreflightWorkflowScriptRequest {
+    pub project_id: String,
+    pub source_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub args: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub ctx: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptPreflightDiagnosticDto {
+    pub code: String,
+    pub severity: ValidationSeverity,
+    pub message: String,
+    pub source_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptPlanPreviewNodeDto {
+    pub node_id: String,
+    pub node_path: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptPlanPreviewDto {
+    pub plan_digest: String,
+    pub node_count: usize,
+    pub entry_node_ids: Vec<String>,
+    pub nodes: Vec<WorkflowScriptPlanPreviewNodeDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptApiEndpointDto {
+    pub method: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptBashCommandDto {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub working_directory: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptHumanGateCapabilityDto {
+    pub name: String,
+    pub form_schema: String,
+    pub decision_port: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowScriptCapabilitySummaryDto {
+    #[serde(default)]
+    pub agent_procedure_keys: Vec<String>,
+    #[serde(default)]
+    pub function_api_endpoints: Vec<WorkflowScriptApiEndpointDto>,
+    #[serde(default)]
+    pub local_effect_capabilities: Vec<String>,
+    #[serde(default)]
+    pub bash_commands: Vec<WorkflowScriptBashCommandDto>,
+    #[serde(default)]
+    pub human_gates: Vec<WorkflowScriptHumanGateCapabilityDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct PreflightWorkflowScriptResponse {
+    pub valid: bool,
+    pub source_digest: String,
+    #[ts(type = "JsonValue")]
+    pub source_ref: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub raw_builder_document: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub plan_snapshot: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plan_preview: Option<WorkflowScriptPlanPreviewDto>,
+    pub capability_summary: WorkflowScriptCapabilitySummaryDto,
+    pub diagnostics: Vec<WorkflowScriptPreflightDiagnosticDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct RegisterHookPresetResponse {
     pub registered: bool,
     pub key: String,
@@ -597,7 +634,7 @@ pub struct LifecycleRunRefDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleAgentRefDto {
+pub struct AgentRunRefDto {
     pub run_id: String,
     pub agent_id: String,
 }
@@ -642,16 +679,13 @@ pub struct RuntimeSessionExecutionAnchorDto {
     pub launch_frame_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub assignment_id: Option<String>,
+    pub orchestration_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub graph_instance_id: Option<String>,
+    pub node_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub activity_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub attempt: Option<i32>,
+    pub node_attempt: Option<u32>,
     pub created_by_kind: String,
     pub created_at: String,
     pub updated_at: String,
@@ -659,8 +693,8 @@ pub struct RuntimeSessionExecutionAnchorDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleAgentMessageRequest {
-    /// canonical 用户输入，与 steer（`LifecycleAgentSteeringRequest.input`）同形。
+pub struct AgentRunMessageRequest {
+    /// canonical 用户输入，与 steer（`AgentRunSteeringRequest.input`）同形。
     pub input: Vec<codex::UserInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
@@ -669,17 +703,17 @@ pub struct LifecycleAgentMessageRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleAgentMessageResponse {
+pub struct AgentRunMessageResponse {
     pub runtime_session_id: String,
     pub turn_id: String,
     pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: LifecycleAgentRefDto,
+    pub agent_ref: AgentRunRefDto,
     pub frame_ref: AgentFrameRefDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleAgentSteeringRequest {
+pub struct AgentRunSteeringRequest {
     pub input: Vec<codex::UserInput>,
 }
 
@@ -697,25 +731,10 @@ pub struct RuntimeSessionCommandStateDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleAgentSteeringResponse {
+pub struct AgentRunSteeringResponse {
     pub runtime_session_id: String,
     pub accepted: bool,
     pub state: RuntimeSessionCommandStateDto,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentAssignmentRefDto {
-    pub assignment_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub run_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub agent_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub frame_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -725,7 +744,7 @@ pub struct StoryLaunchResult {
     pub story_id: String,
     pub project_agent_id: String,
     pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: LifecycleAgentRefDto,
+    pub agent_ref: AgentRunRefDto,
     pub frame_ref: AgentFrameRefDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -751,55 +770,55 @@ pub struct LifecycleSubjectAssociationDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ActivityAttemptView {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub graph_instance_id: Option<String>,
-    pub activity_key: String,
-    pub attempt: u32,
+pub struct RuntimeNodeView {
+    pub node_id: String,
+    pub node_path: String,
+    pub kind: String,
     pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub assignment_ref: Option<AgentAssignmentRefDto>,
+    pub attempt: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub executor_run_ref: Option<ExecutorRunRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub children: Vec<RuntimeNodeView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ActiveActivityRefDto {
+pub struct ActiveRuntimeNodeRefDto {
     pub run_id: String,
-    pub graph_instance_id: String,
-    pub activity_key: String,
+    pub orchestration_id: String,
+    pub node_path: String,
     pub attempt: u32,
     pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ActivityStateView {
-    pub activity_key: String,
-    pub status: String,
-    pub attempts: Vec<ActivityAttemptView>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct WorkflowGraphInstanceView {
-    pub id: String,
-    pub run_id: String,
-    pub graph_id: String,
+pub struct OrchestrationInstanceView {
+    pub orchestration_id: String,
     pub role: String,
     pub status: String,
+    pub plan_digest: String,
+    pub source_ref: Value,
     #[serde(default)]
-    pub activities: Vec<ActivityStateView>,
+    pub ready_node_ids: Vec<String>,
+    #[serde(default)]
+    pub nodes: Vec<RuntimeNodeView>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleAgentView {
-    pub agent_ref: LifecycleAgentRefDto,
+pub struct AgentRunView {
+    pub agent_ref: AgentRunRefDto,
     pub project_id: String,
     pub agent_kind: String,
     pub agent_role: String,
@@ -835,16 +854,13 @@ pub struct LifecycleRunView {
     pub run_ref: LifecycleRunRefDto,
     pub project_id: String,
     pub topology: LifecycleRunTopology,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub root_graph_id: Option<String>,
     pub status: LifecycleRunStatus,
     #[serde(default)]
-    pub workflow_graph_instances: Vec<WorkflowGraphInstanceView>,
+    pub orchestrations: Vec<OrchestrationInstanceView>,
     #[serde(default)]
-    pub active_activity_refs: Vec<ActiveActivityRefDto>,
+    pub active_runtime_node_refs: Vec<ActiveRuntimeNodeRefDto>,
     #[serde(default)]
-    pub agents: Vec<LifecycleAgentView>,
+    pub agents: Vec<AgentRunView>,
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
     #[serde(default)]
@@ -860,15 +876,6 @@ pub struct LifecycleRunView {
 #[serde(rename_all = "snake_case")]
 pub struct AgentFrameRuntimeView {
     pub frame_ref: AgentFrameRefDto,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub procedure_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub graph_instance_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub activity_key: Option<String>,
     #[serde(default)]
     pub capability_surface: Value,
     #[serde(default)]
@@ -894,10 +901,10 @@ pub struct SubjectExecutionView {
     pub runs: Vec<LifecycleRunView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub current_agent: Option<LifecycleAgentView>,
+    pub current_agent: Option<AgentRunView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub latest_attempt: Option<ActivityAttemptView>,
+    pub latest_runtime_node: Option<RuntimeNodeView>,
     #[serde(default)]
     pub artifacts: Value,
 }
@@ -966,7 +973,7 @@ pub struct SessionRuntimeControlView {
     pub run: Option<LifecycleRunView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub agent: Option<LifecycleAgentView>,
+    pub agent: Option<AgentRunView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub frame_runtime: Option<AgentFrameRuntimeView>,
@@ -1015,7 +1022,7 @@ pub struct ProjectSessionListEntry {
     pub run_ref: Option<LifecycleRunRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub agent_ref: Option<LifecycleAgentRefDto>,
+    pub agent_ref: Option<AgentRunRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub frame_ref: Option<AgentFrameRefDto>,
@@ -1040,7 +1047,7 @@ pub struct ProjectSessionListView {
 pub struct ProjectActiveAgentsView {
     pub project_id: String,
     pub runs: Vec<LifecycleRunView>,
-    pub agents: Vec<LifecycleAgentView>,
+    pub agents: Vec<AgentRunView>,
 }
 
 fn bool_true() -> bool {

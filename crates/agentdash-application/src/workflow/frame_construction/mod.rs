@@ -14,7 +14,7 @@ mod composer_task;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_domain::workflow::{AgentFrame, AgentProcedureRef, LifecycleAgent};
+use agentdash_domain::workflow::{AgentFrame, LifecycleAgent};
 use agentdash_spi::{AgentConfig, AgentConnector, ConnectorError};
 
 use crate::context::SharedContextAuditBus;
@@ -289,14 +289,6 @@ pub(crate) fn frame_builder_from_existing(
     let mut builder = AgentFrameBuilder::new(frame.agent_id)
         .with_runtime_session(runtime_session_id.to_string())
         .with_created_by("session_launch", Some(created_by_id.to_string()));
-    if let Some(procedure_id) = frame.procedure_id {
-        builder = builder.with_procedure(AgentProcedureRef::ById(procedure_id));
-    }
-    if let (Some(graph_instance_id), Some(activity_key)) =
-        (frame.graph_instance_id, frame.activity_key.clone())
-    {
-        builder = builder.with_graph_instance(graph_instance_id, activity_key);
-    }
     if let Some(profile) = frame.execution_profile_json.clone() {
         builder = builder.with_execution_profile_raw(profile);
     }

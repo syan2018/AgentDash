@@ -4,31 +4,39 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
+use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
-    ActivityEvent, ActivityLifecycleCatalogService, ActivityLifecycleRunService,
-    AgentActivityExecutorLauncher, AgentActivityLaunchContext, AgentActivityRuntimePort,
-    LifecycleDispatchService,
+    ActivityLifecycleCatalogService, LifecycleDispatchService, OrchestrationExecutorLauncher,
+    ScriptCompiler, SubmitHumanGateDecisionInput, WorkflowScriptPreflightInput,
+    WorkflowScriptPreflightService, lifecycle_run_view_builder,
 };
 use agentdash_contracts::workflow::{
     DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
-    HookPresetResponse, HookPresetsResponse, RegisterHookPresetResponse,
-    ValidateHookScriptResponse,
+    HookPresetResponse, HookPresetsResponse, PreflightWorkflowScriptRequest,
+    PreflightWorkflowScriptResponse, RegisterHookPresetResponse,
+    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
+    ValidateHookScriptResponse, ValidationSeverity as ContractValidationSeverity,
+    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
+    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
+    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto,
 };
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, AgentProcedure, DefinitionSource, ExecutionSource, LifecycleRun,
-    LifecycleRunStartIntent, ValidationIssue, ValidationSeverity, WorkflowGraph, WorkflowGraphRef,
+    LifecycleRunStartIntent, OrchestrationSourceRef, ValidationIssue, ValidationSeverity,
+    WorkflowGraph, WorkflowGraphRef, WorkflowScriptCapabilitySummary, WorkflowScriptProvenance,
+    WorkflowScriptProvenanceSource, workflow_script_source_digest,
 };
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
     CreateAgentProcedureRequest, CreateWorkflowGraphRequest, ListWorkflowsQuery,
-    RegisterPresetRequest, StartWorkflowRunRequest, SubmitHumanDecisionRequest, ToolCatalogQuery,
-    UpdateAgentProcedureRequest, UpdateWorkflowGraphRequest, ValidateAgentProcedureRequest,
-    ValidateScriptRequest, ValidateWorkflowGraphRequest, WorkflowValidationResponse,
+    RegisterPresetRequest, StartWorkflowRunRequest, ToolCatalogQuery, UpdateAgentProcedureRequest,
+    UpdateWorkflowGraphRequest, ValidateAgentProcedureRequest, ValidateScriptRequest,
+    ValidateWorkflowGraphRequest, WorkflowValidationResponse,
 };
 use crate::rpc::ApiError;
 use agentdash_application::session::context::normalize_string;
@@ -73,6 +81,10 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::post(validate_workflow_graph),
         )
         .route(
+            "/workflow-scripts/preflight",
+            axum::routing::post(preflight_workflow_script),
+        )
+        .route(
             "/agent-procedures/{id}",
             axum::routing::get(get_agent_procedure)
                 .put(update_agent_procedure)
@@ -104,8 +116,8 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::get(get_lifecycle_run),
         )
         .route(
-            "/lifecycle-runs/{run_id}/graph-instances/{graph_instance_id}/activities/{activity_key}/attempts/{attempt}/human-decision",
-            axum::routing::post(submit_human_decision),
+            "/lifecycle-runs/{id}/orchestration-human-decisions",
+            axum::routing::post(submit_orchestration_human_decision),
         )
 }
 
@@ -274,6 +286,91 @@ pub async fn validate_workflow_graph(
     }
 }
 
+pub async fn preflight_workflow_script(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<PreflightWorkflowScriptRequest>,
+) -> Result<Json<PreflightWorkflowScriptResponse>, ApiError> {
+    let project_id = parse_uuid_required(&req.project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let source_digest = workflow_script_source_digest(&req.source_text);
+    let source_ref = OrchestrationSourceRef::Inline {
+        source_digest: source_digest.clone(),
+    };
+    let evaluator = agentdash_infrastructure::RhaiWorkflowScriptEvaluator::new();
+    let compiler = ScriptCompiler;
+    let mut provenance =
+        WorkflowScriptProvenance::new(WorkflowScriptProvenanceSource::UserAuthored);
+    provenance.created_by = Some(current_user.user_id.clone());
+    provenance.runtime_session_id = req.runtime_session_id.clone();
+
+    let output = WorkflowScriptPreflightService::preflight(WorkflowScriptPreflightInput {
+        evaluator: &evaluator,
+        compiler: &compiler,
+        source_text: &req.source_text,
+        ctx: workflow_script_eval_context(project_id, &current_user.user_id, req.ctx),
+        args: req.args,
+        source_ref,
+        provenance,
+    });
+
+    let valid = !output.has_blocking_diagnostics();
+    let source_ref = serde_json::to_value(&output.source_ref).map_err(|error| {
+        ApiError::Internal(format!("序列化 workflow script source_ref 失败: {error}"))
+    })?;
+    let plan_snapshot = match &output.plan_snapshot {
+        Some(plan_snapshot) => Some(serde_json::to_value(plan_snapshot).map_err(|error| {
+            ApiError::Internal(format!(
+                "序列化 workflow script plan_snapshot 失败: {error}"
+            ))
+        })?),
+        None => None,
+    };
+
+    Ok(Json(PreflightWorkflowScriptResponse {
+        valid,
+        source_digest,
+        source_ref,
+        raw_builder_document: output.raw_builder_document,
+        plan_snapshot,
+        plan_preview: output
+            .plan_preview
+            .map(|preview| WorkflowScriptPlanPreviewDto {
+                plan_digest: preview.plan_digest,
+                node_count: preview.node_count,
+                entry_node_ids: preview.entry_node_ids,
+                nodes: preview
+                    .nodes
+                    .into_iter()
+                    .map(|node| WorkflowScriptPlanPreviewNodeDto {
+                        node_id: node.node_id,
+                        node_path: node.node_path,
+                        kind: node.kind,
+                        label: node.label,
+                    })
+                    .collect(),
+            }),
+        capability_summary: workflow_script_capability_summary_dto(output.capability_summary),
+        diagnostics: output
+            .diagnostics
+            .into_iter()
+            .map(|diagnostic| WorkflowScriptPreflightDiagnosticDto {
+                code: diagnostic.code,
+                severity: contract_validation_severity(diagnostic.severity),
+                message: diagnostic.message,
+                source_path: diagnostic.source_path,
+            })
+            .collect(),
+    }))
+}
+
 pub async fn delete_workflow_graph(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -314,10 +411,8 @@ pub async fn start_lifecycle_run(
     let dispatch_service = LifecycleDispatchService::new(
         state.repos.lifecycle_run_repo.as_ref(),
         state.repos.workflow_graph_repo.as_ref(),
-        state.repos.workflow_graph_instance_repo.as_ref(),
         state.repos.lifecycle_agent_repo.as_ref(),
         state.repos.agent_frame_repo.as_ref(),
-        state.repos.agent_assignment_repo.as_ref(),
         state.repos.lifecycle_subject_association_repo.as_ref(),
         state.repos.lifecycle_gate_repo.as_ref(),
         state.repos.agent_lineage_repo.as_ref(),
@@ -331,12 +426,6 @@ pub async fn start_lifecycle_run(
             workflow_graph_ref,
         })
         .await?;
-    let service = ActivityLifecycleRunService::new(
-        state.repos.workflow_graph_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.workflow_graph_instance_repo.as_ref(),
-        state.repos.activity_execution_claim_repo.as_ref(),
-    );
     let run = state
         .repos
         .lifecycle_run_repo
@@ -348,24 +437,9 @@ pub async fn start_lifecycle_run(
                 dispatch_result.run_ref
             ))
         })?;
-    let launcher = AgentActivityExecutorLauncher::new(
-        AgentActivityLaunchContext::detached(run.project_id, String::new()),
-        AgentActivityRuntimePort::new(
-            state.services.session_core.clone(),
-            state.services.session_launch.clone(),
-            state.repos.clone(),
-            Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new()),
-        )
-        .with_runtime_context(
-            state.services.session_hooks.clone(),
-            state.services.session_capability.clone(),
-            state.config.platform_config.clone(),
-        ),
-    );
-    service
-        .launch_ready_attempts(dispatch_result.graph_instance_ref, &launcher)
-        .await?;
-
+    let launcher = OrchestrationExecutorLauncher::new(state.repos.clone())
+        .with_function_runner(state.services.function_runner.clone());
+    launcher.drain_ready_nodes(run.id).await?;
     let latest_run = state
         .repos
         .lifecycle_run_repo
@@ -392,75 +466,43 @@ pub async fn get_lifecycle_run(
     Ok(Json(run))
 }
 
-pub async fn submit_human_decision(
+pub async fn submit_orchestration_human_decision(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path((run_id, graph_instance_id, activity_key, attempt)): Path<(String, String, String, u32)>,
-    Json(req): Json<SubmitHumanDecisionRequest>,
-) -> Result<Json<LifecycleRun>, ApiError> {
+    Path(run_id): Path<String>,
+    Json(req): Json<SubmitOrchestrationHumanDecisionRequest>,
+) -> Result<Json<SubmitOrchestrationHumanDecisionResponse>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
-    let graph_instance_id = parse_uuid(&graph_instance_id, "graph_instance_id")?;
-    let existing_run = load_lifecycle_run(&state, run_id).await?;
+    let orchestration_id = parse_uuid(&req.orchestration_id, "orchestration_id")?;
+    let run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
-        existing_run.project_id,
+        run.project_id,
         ProjectPermission::Edit,
     )
     .await?;
-    state
-        .repos
-        .workflow_graph_instance_repo
-        .get_by_run_and_id(run_id, graph_instance_id)
-        .await?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "workflow_graph_instance 不存在: {graph_instance_id}"
-            ))
-        })?;
-    let service = ActivityLifecycleRunService::new(
-        state.repos.workflow_graph_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.workflow_graph_instance_repo.as_ref(),
-        state.repos.activity_execution_claim_repo.as_ref(),
-    );
-    let update = service
-        .apply_event(
-            graph_instance_id,
-            ActivityEvent::HumanDecisionSubmitted {
-                activity_key,
-                attempt,
-                decision_port: req.decision_port,
-                decision: req.decision,
-                summary: req.summary.and_then(normalize_string),
-            },
-        )
+
+    let launcher = OrchestrationExecutorLauncher::new(state.repos.clone())
+        .with_function_runner(state.services.function_runner.clone());
+    let result = launcher
+        .submit_human_gate_decision(SubmitHumanGateDecisionInput {
+            run_id,
+            orchestration_id,
+            node_path: req.node_path,
+            attempt: req.attempt,
+            decision: req.decision,
+            resolved_by: req
+                .resolved_by
+                .unwrap_or_else(|| current_user.user_id.to_string()),
+        })
         .await?;
-    let run = update.run;
-    let launcher = AgentActivityExecutorLauncher::new(
-        AgentActivityLaunchContext::detached(run.project_id, String::new()),
-        AgentActivityRuntimePort::new(
-            state.services.session_core.clone(),
-            state.services.session_launch.clone(),
-            state.repos.clone(),
-            Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new()),
-        )
-        .with_runtime_context(
-            state.services.session_hooks.clone(),
-            state.services.session_capability.clone(),
-            state.config.platform_config.clone(),
-        ),
-    );
-    service
-        .launch_ready_attempts(update.graph_instance.id, &launcher)
-        .await?;
-    let latest_run = state
-        .repos
-        .lifecycle_run_repo
-        .get_by_id(run.id)
-        .await?
-        .unwrap_or(run);
-    Ok(Json(latest_run))
+    let view =
+        lifecycle_run_view_builder::build_lifecycle_run_view(&state.repos, &result.run).await?;
+    Ok(Json(SubmitOrchestrationHumanDecisionResponse {
+        run: view,
+        gate_id: result.gate_id.to_string(),
+    }))
 }
 
 pub async fn create_agent_procedure(
@@ -724,6 +766,67 @@ fn parse_project_id_query(raw: Option<&str>) -> Result<Uuid, ApiError> {
         return Err(ApiError::BadRequest("project_id 不能为空".to_string()));
     };
     parse_uuid_required(raw, "project_id")
+}
+
+fn workflow_script_eval_context(project_id: Uuid, user_id: &str, ctx: Option<Value>) -> Value {
+    let mut object = match ctx {
+        Some(Value::Object(object)) => object,
+        Some(value) => {
+            let mut object = Map::new();
+            object.insert("input".to_string(), value);
+            object
+        }
+        None => Map::new(),
+    };
+    object
+        .entry("project_id".to_string())
+        .or_insert_with(|| json!(project_id));
+    object
+        .entry("user_id".to_string())
+        .or_insert_with(|| json!(user_id));
+    Value::Object(object)
+}
+
+fn contract_validation_severity(severity: ValidationSeverity) -> ContractValidationSeverity {
+    match severity {
+        ValidationSeverity::Error => ContractValidationSeverity::Error,
+        ValidationSeverity::Warning => ContractValidationSeverity::Warning,
+    }
+}
+
+fn workflow_script_capability_summary_dto(
+    summary: WorkflowScriptCapabilitySummary,
+) -> WorkflowScriptCapabilitySummaryDto {
+    WorkflowScriptCapabilitySummaryDto {
+        agent_procedure_keys: summary.agent_procedure_keys,
+        function_api_endpoints: summary
+            .function_api_endpoints
+            .into_iter()
+            .map(|endpoint| WorkflowScriptApiEndpointDto {
+                method: endpoint.method,
+                url: endpoint.url,
+            })
+            .collect(),
+        local_effect_capabilities: summary.local_effect_capabilities,
+        bash_commands: summary
+            .bash_commands
+            .into_iter()
+            .map(|command| WorkflowScriptBashCommandDto {
+                command: command.command,
+                args: command.args,
+                working_directory: command.working_directory,
+            })
+            .collect(),
+        human_gates: summary
+            .human_gates
+            .into_iter()
+            .map(|gate| WorkflowScriptHumanGateCapabilityDto {
+                name: gate.name,
+                form_schema: gate.form_schema,
+                decision_port: gate.decision_port,
+            })
+            .collect(),
+    }
 }
 
 fn parse_optional_uuid(raw: Option<&str>, field: &str) -> Result<Option<Uuid>, ApiError> {

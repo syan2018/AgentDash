@@ -15,9 +15,7 @@ use agentdash_domain::DomainError;
 use agentdash_domain::permission::{
     GrantScope, PermissionGrant, PermissionGrantRepository, PolicyOutcome, ScopeEscalationIntent,
 };
-use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, AgentProcedureRef, ToolCapabilityPath,
-};
+use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, ToolCapabilityPath};
 use agentdash_spi::platform::tool_capability::capability_to_tool_clusters;
 use agentdash_spi::{
     CapabilityState, RuntimeCapabilityTransition, SetToolAccessEffect, ToolCapability,
@@ -305,15 +303,6 @@ impl PermissionGrantService {
                 Some(grant.id.to_string()),
             );
 
-        if let Some(procedure_id) = current_frame.procedure_id {
-            builder = builder.with_procedure(AgentProcedureRef::ById(procedure_id));
-        }
-        if let (Some(graph_instance_id), Some(activity_key)) = (
-            current_frame.graph_instance_id,
-            current_frame.activity_key.clone(),
-        ) {
-            builder = builder.with_graph_instance(graph_instance_id, activity_key);
-        }
         if let Some(context) = current_frame.context_slice_json.clone() {
             builder = builder.with_context(context);
         }

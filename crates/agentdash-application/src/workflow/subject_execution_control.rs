@@ -1,15 +1,14 @@
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityBindingRefs, ActivityExecutionClaimRepository, ActivityExecutionClaimStatus,
-    AgentAssignment, AgentAssignmentRepository, AgentFrame, AgentFrameRepository, LifecycleAgent,
-    LifecycleAgentRepository, LifecycleRunRepository, LifecycleSubjectAssociation,
-    LifecycleSubjectAssociationRepository, RuntimeControlRefs, RuntimeDeliverySelectionPolicy,
-    RuntimeSessionExecutionAnchorRepository, SubjectRef, WorkflowGraphInstanceRepository,
-    WorkflowGraphRepository,
+    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
+    OrchestrationBindingRefs, RuntimeControlRefs, RuntimeDeliverySelectionPolicy, RuntimeNodeError,
+    RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
+    RuntimeSessionExecutionAnchorRepository, SubjectRef,
 };
 
-use super::{ActivityEvent, ActivityLifecycleRunService, WorkflowApplicationError};
+use super::WorkflowApplicationError;
 
 #[derive(Debug, Clone)]
 pub struct CancelSubjectExecutionCommand {
@@ -38,44 +37,31 @@ pub struct SubjectExecutionCancelResult {
 struct SubjectExecutionCancelTarget {
     association: LifecycleSubjectAssociation,
     agent: LifecycleAgent,
-    assignment: Option<AgentAssignment>,
     delivery_frame: AgentFrame,
+    anchor: Option<RuntimeSessionExecutionAnchor>,
 }
 
 pub struct SubjectExecutionControlService<'a> {
-    workflow_graph_repo: &'a dyn WorkflowGraphRepository,
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
-    workflow_graph_instance_repo: &'a dyn WorkflowGraphInstanceRepository,
-    claim_repo: &'a dyn ActivityExecutionClaimRepository,
     lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
-    agent_assignment_repo: &'a dyn AgentAssignmentRepository,
     execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
 }
 
 impl<'a> SubjectExecutionControlService<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        workflow_graph_repo: &'a dyn WorkflowGraphRepository,
         lifecycle_run_repo: &'a dyn LifecycleRunRepository,
-        workflow_graph_instance_repo: &'a dyn WorkflowGraphInstanceRepository,
-        claim_repo: &'a dyn ActivityExecutionClaimRepository,
         lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         agent_frame_repo: &'a dyn AgentFrameRepository,
-        agent_assignment_repo: &'a dyn AgentAssignmentRepository,
         execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
     ) -> Self {
         Self {
-            workflow_graph_repo,
             lifecycle_run_repo,
-            workflow_graph_instance_repo,
-            claim_repo,
             lifecycle_subject_association_repo,
             lifecycle_agent_repo,
             agent_frame_repo,
-            agent_assignment_repo,
             execution_anchor_repo,
         }
     }
@@ -86,10 +72,8 @@ impl<'a> SubjectExecutionControlService<'a> {
     ) -> Result<SubjectExecutionCancelResult, WorkflowApplicationError> {
         let target = self.resolve_cancel_target(&command.subject_ref).await?;
 
-        self.apply_cancel_event(&target, command.reason.clone())
+        self.materialize_cancelled_node(&target, command.reason.clone())
             .await?;
-        self.abandon_claim(&target).await?;
-        self.release_assignment(&target).await?;
 
         let runtime_delivery = self
             .runtime_delivery_command(
@@ -103,14 +87,8 @@ impl<'a> SubjectExecutionControlService<'a> {
             subject_ref: command.subject_ref,
             association_ref: target.association.id,
             runtime_refs: runtime_refs_for_target(&target),
-            activity_key: target
-                .assignment
-                .as_ref()
-                .map(|assignment| assignment.activity_key.clone()),
-            attempt: target
-                .assignment
-                .as_ref()
-                .map(|assignment| assignment.attempt),
+            activity_key: None,
+            attempt: None,
             runtime_delivery,
         })
     }
@@ -141,18 +119,18 @@ impl<'a> SubjectExecutionControlService<'a> {
         })?;
 
         let agent = self.resolve_associated_agent(&association).await?;
-        let assignment = self
-            .resolve_active_assignment(&association, agent.id)
-            .await?;
-        let delivery_frame = self
-            .resolve_delivery_frame(&agent, assignment.as_ref())
-            .await?;
+        let delivery_frame = self.resolve_delivery_frame(&agent).await?;
+        let anchor = self
+            .execution_anchor_repo
+            .latest_for_agent(agent.id)
+            .await?
+            .filter(|anchor| anchor.run_id == association.anchor_run_id);
 
         Ok(SubjectExecutionCancelTarget {
             association,
             agent,
-            assignment,
             delivery_frame,
+            anchor,
         })
     }
 
@@ -199,25 +177,9 @@ impl<'a> SubjectExecutionControlService<'a> {
             })
     }
 
-    async fn resolve_active_assignment(
-        &self,
-        association: &LifecycleSubjectAssociation,
-        agent_id: Uuid,
-    ) -> Result<Option<AgentAssignment>, WorkflowApplicationError> {
-        Ok(self
-            .agent_assignment_repo
-            .list_by_run(association.anchor_run_id)
-            .await?
-            .into_iter()
-            .filter(|assignment| assignment.agent_id == agent_id)
-            .filter(|assignment| assignment.lease_status == "active")
-            .max_by_key(|assignment| assignment.assigned_at))
-    }
-
     async fn resolve_delivery_frame(
         &self,
         agent: &LifecycleAgent,
-        assignment: Option<&AgentAssignment>,
     ) -> Result<AgentFrame, WorkflowApplicationError> {
         let frame_id = agent.current_frame_id.ok_or_else(|| {
             WorkflowApplicationError::Conflict(format!(
@@ -234,91 +196,50 @@ impl<'a> SubjectExecutionControlService<'a> {
                 frame.id, agent.id
             )));
         }
-        if let Some(assignment) = assignment
-            && (frame.graph_instance_id != Some(assignment.graph_instance_id)
-                || frame.activity_key.as_deref() != Some(assignment.activity_key.as_str()))
-        {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "agent frame {} 与 assignment {} 的 activity scope 不一致",
-                frame.id, assignment.id
-            )));
-        }
         Ok(frame)
     }
 
-    async fn apply_cancel_event(
+    async fn materialize_cancelled_node(
         &self,
         target: &SubjectExecutionCancelTarget,
         reason: Option<String>,
     ) -> Result<(), WorkflowApplicationError> {
-        let Some(assignment) = target.assignment.as_ref() else {
+        let Some(anchor) = target.anchor.as_ref() else {
             return Ok(());
         };
-        let attempt = u32::try_from(assignment.attempt).map_err(|_| {
-            WorkflowApplicationError::Conflict(format!(
-                "assignment {} 的 attempt 非法: {}",
-                assignment.id, assignment.attempt
-            ))
-        })?;
-        let activity_service = ActivityLifecycleRunService::new(
-            self.workflow_graph_repo,
-            self.lifecycle_run_repo,
-            self.workflow_graph_instance_repo,
-            self.claim_repo,
-        );
-        activity_service
-            .apply_event(
-                assignment.graph_instance_id,
-                ActivityEvent::ActivityCancelled {
-                    activity_key: assignment.activity_key.clone(),
-                    attempt,
-                    reason,
-                },
-            )
-            .await?;
-        Ok(())
-    }
-
-    async fn abandon_claim(
-        &self,
-        target: &SubjectExecutionCancelTarget,
-    ) -> Result<(), WorkflowApplicationError> {
-        let Some(assignment) = target.assignment.as_ref() else {
+        let Some(orchestration_id) = anchor.orchestration_id else {
             return Ok(());
         };
-        let idempotency_key = format!(
-            "{}:{}:{}:{}",
-            assignment.run_id,
-            assignment.graph_instance_id,
-            assignment.activity_key,
-            assignment.attempt
-        );
-        let Some(mut claim) = self
-            .claim_repo
-            .get_by_idempotency_key(&idempotency_key)
+        let Some(node_path) = anchor.node_path.as_deref() else {
+            return Ok(());
+        };
+        let mut run = self
+            .lifecycle_run_repo
+            .get_by_id(target.association.anchor_run_id)
             .await?
+            .ok_or_else(|| {
+                WorkflowApplicationError::NotFound(format!(
+                    "lifecycle run 不存在: {}",
+                    target.association.anchor_run_id
+                ))
+            })?;
+        let Some(orchestration) = run
+            .orchestrations
+            .iter_mut()
+            .find(|item| item.orchestration_id == orchestration_id)
         else {
             return Ok(());
         };
-        if !claim.status.is_active() {
-            return Ok(());
+        let changed = mark_runtime_node_cancelled(
+            &mut orchestration.node_tree,
+            node_path,
+            anchor.node_attempt.unwrap_or(1),
+            reason,
+        );
+        if changed {
+            orchestration.updated_at = chrono::Utc::now();
+            self.lifecycle_run_repo.update(&run).await?;
         }
-        claim.status = ActivityExecutionClaimStatus::Abandoned;
-        claim.updated_at = chrono::Utc::now();
-        self.claim_repo.update(&claim).await?;
-        Ok(())
-    }
-
-    async fn release_assignment(
-        &self,
-        target: &SubjectExecutionCancelTarget,
-    ) -> Result<(), WorkflowApplicationError> {
-        let Some(assignment) = target.assignment.as_ref() else {
-            return Ok(());
-        };
-        let mut assignment = assignment.clone();
-        assignment.release();
-        self.agent_assignment_repo.update(&assignment).await?;
         Ok(())
     }
 
@@ -360,14 +281,53 @@ impl<'a> SubjectExecutionControlService<'a> {
 }
 
 fn runtime_refs_for_target(target: &SubjectExecutionCancelTarget) -> RuntimeControlRefs {
+    let orchestration_binding = target.anchor.as_ref().and_then(|anchor| {
+        Some(OrchestrationBindingRefs::new(
+            anchor.orchestration_id?,
+            anchor.node_path.clone()?,
+            anchor.node_attempt.unwrap_or(1),
+        ))
+    });
     RuntimeControlRefs::new(
         target.agent.run_id,
         target.agent.id,
         target.delivery_frame.id,
-        target.assignment.as_ref().map(|assignment| {
-            ActivityBindingRefs::new(assignment.graph_instance_id, Some(assignment.id))
-        }),
+        orchestration_binding,
     )
+}
+
+fn mark_runtime_node_cancelled(
+    nodes: &mut [RuntimeNodeState],
+    node_path: &str,
+    attempt: u32,
+    reason: Option<String>,
+) -> bool {
+    for node in nodes {
+        if node.node_path == node_path && node.attempt == attempt {
+            if matches!(
+                node.status,
+                RuntimeNodeStatus::Completed
+                    | RuntimeNodeStatus::Failed
+                    | RuntimeNodeStatus::Cancelled
+                    | RuntimeNodeStatus::Skipped
+            ) {
+                return false;
+            }
+            node.status = RuntimeNodeStatus::Cancelled;
+            node.completed_at = Some(chrono::Utc::now());
+            node.error = Some(RuntimeNodeError {
+                code: "cancelled".to_string(),
+                message: reason.unwrap_or_else(|| "subject execution cancelled".to_string()),
+                retryable: false,
+                detail: None,
+            });
+            return true;
+        }
+        if mark_runtime_node_cancelled(&mut node.children, node_path, attempt, reason.clone()) {
+            return true;
+        }
+    }
+    false
 }
 
 fn select_subject_association(
@@ -386,57 +346,12 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
-        ActivityExecutionClaim, ActivityExecutorSpec, ActivityLifecycleRunState,
-        AgentActivityExecutorSpec, DefinitionSource, ExecutorRunRef, LifecycleRun,
-        RuntimeSessionExecutionAnchor, WorkflowGraph, WorkflowGraphInstance,
+        LifecycleRun, OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef,
+        OrchestrationStatus, PlanNodeKind, RuntimeSessionExecutionAnchor,
     };
+    use chrono::Utc;
 
     use super::*;
-    use crate::workflow::LifecycleEngine;
-
-    struct GraphRepo {
-        graph: WorkflowGraph,
-    }
-
-    #[async_trait::async_trait]
-    impl WorkflowGraphRepository for GraphRepo {
-        async fn create(&self, _lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowGraph>, DomainError> {
-            Ok((self.graph.id == id).then(|| self.graph.clone()))
-        }
-
-        async fn get_by_project_and_key(
-            &self,
-            project_id: Uuid,
-            key: &str,
-        ) -> Result<Option<WorkflowGraph>, DomainError> {
-            Ok(
-                (self.graph.project_id == project_id && self.graph.key == key)
-                    .then(|| self.graph.clone()),
-            )
-        }
-
-        async fn list_by_project(
-            &self,
-            project_id: Uuid,
-        ) -> Result<Vec<WorkflowGraph>, DomainError> {
-            Ok((self.graph.project_id == project_id)
-                .then(|| vec![self.graph.clone()])
-                .unwrap_or_default())
-        }
-
-        async fn update(&self, _lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
 
     #[derive(Default)]
     struct RunRepo {
@@ -485,20 +400,6 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_root_graph(
-            &self,
-            root_graph_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|run| run.root_graph_id == Some(root_graph_id))
-                .cloned()
-                .collect())
-        }
-
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             let mut runs = self.runs.lock().unwrap();
             if let Some(existing) = runs.iter_mut().find(|existing| existing.id == run.id) {
@@ -509,129 +410,6 @@ mod tests {
 
         async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
             Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct GraphInstanceRepo {
-        instances: Mutex<Vec<WorkflowGraphInstance>>,
-    }
-
-    #[async_trait::async_trait]
-    impl WorkflowGraphInstanceRepository for GraphInstanceRepo {
-        async fn create(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError> {
-            self.instances.lock().unwrap().push(instance.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<WorkflowGraphInstance>, DomainError> {
-            Ok(self
-                .instances
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|instance| instance.id == id)
-                .cloned())
-        }
-
-        async fn get_by_run_and_id(
-            &self,
-            run_id: Uuid,
-            id: Uuid,
-        ) -> Result<Option<WorkflowGraphInstance>, DomainError> {
-            Ok(self
-                .instances
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|instance| instance.run_id == run_id && instance.id == id)
-                .cloned())
-        }
-
-        async fn list_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<WorkflowGraphInstance>, DomainError> {
-            Ok(self
-                .instances
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|instance| instance.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError> {
-            let mut instances = self.instances.lock().unwrap();
-            if let Some(existing) = instances
-                .iter_mut()
-                .find(|existing| existing.id == instance.id)
-            {
-                *existing = instance.clone();
-            }
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct ClaimRepo {
-        claims: Mutex<Vec<ActivityExecutionClaim>>,
-    }
-
-    #[async_trait::async_trait]
-    impl ActivityExecutionClaimRepository for ClaimRepo {
-        async fn create_or_get(
-            &self,
-            claim: &ActivityExecutionClaim,
-        ) -> Result<ActivityExecutionClaim, DomainError> {
-            self.claims.lock().unwrap().push(claim.clone());
-            Ok(claim.clone())
-        }
-
-        async fn get_by_idempotency_key(
-            &self,
-            idempotency_key: &str,
-        ) -> Result<Option<ActivityExecutionClaim>, DomainError> {
-            Ok(self
-                .claims
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|claim| claim.idempotency_key == idempotency_key)
-                .cloned())
-        }
-
-        async fn list_active_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<ActivityExecutionClaim>, DomainError> {
-            Ok(self
-                .claims
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|claim| claim.run_id == run_id && claim.status.is_active())
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, claim: &ActivityExecutionClaim) -> Result<(), DomainError> {
-            let mut claims = self.claims.lock().unwrap();
-            if let Some(existing) = claims
-                .iter_mut()
-                .find(|existing| existing.idempotency_key == claim.idempotency_key)
-            {
-                *existing = claim.clone();
-            }
-            Ok(())
-        }
-
-        async fn abandon_claiming_before(
-            &self,
-            _cutoff: chrono::DateTime<chrono::Utc>,
-        ) -> Result<Vec<ActivityExecutionClaim>, DomainError> {
-            Ok(Vec::new())
         }
     }
 
@@ -783,84 +561,6 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct AssignmentRepo {
-        assignments: Mutex<Vec<AgentAssignment>>,
-    }
-
-    #[async_trait::async_trait]
-    impl AgentAssignmentRepository for AssignmentRepo {
-        async fn create(&self, assignment: &AgentAssignment) -> Result<(), DomainError> {
-            self.assignments.lock().unwrap().push(assignment.clone());
-            Ok(())
-        }
-
-        async fn get(&self, assignment_id: Uuid) -> Result<Option<AgentAssignment>, DomainError> {
-            Ok(self
-                .assignments
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|assignment| assignment.id == assignment_id)
-                .cloned())
-        }
-
-        async fn find_for_attempt(
-            &self,
-            graph_instance_id: Uuid,
-            activity_key: &str,
-            attempt: i32,
-        ) -> Result<Option<AgentAssignment>, DomainError> {
-            Ok(self
-                .assignments
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|assignment| {
-                    assignment.graph_instance_id == graph_instance_id
-                        && assignment.activity_key == activity_key
-                        && assignment.attempt == attempt
-                })
-                .cloned())
-        }
-
-        async fn find_active_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Vec<AgentAssignment>, DomainError> {
-            Ok(self
-                .assignments
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|a| a.agent_id == agent_id && a.lease_status == "active")
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentAssignment>, DomainError> {
-            Ok(self
-                .assignments
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|assignment| assignment.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, assignment: &AgentAssignment) -> Result<(), DomainError> {
-            let mut assignments = self.assignments.lock().unwrap();
-            if let Some(existing) = assignments
-                .iter_mut()
-                .find(|existing| existing.id == assignment.id)
-            {
-                *existing = assignment.clone();
-            }
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
     struct AnchorRepo {
         anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
     }
@@ -882,24 +582,6 @@ mod tests {
                 *existing = anchor.clone();
             } else {
                 anchors.push(anchor.clone());
-            }
-            Ok(())
-        }
-
-        async fn update_assignment(
-            &self,
-            runtime_session_id: &str,
-            assignment_id: Uuid,
-            attempt: i32,
-        ) -> Result<(), DomainError> {
-            if let Some(anchor) = self
-                .anchors
-                .lock()
-                .unwrap()
-                .iter_mut()
-                .find(|anchor| anchor.runtime_session_id == runtime_session_id)
-            {
-                anchor.fill_assignment(assignment_id, attempt);
             }
             Ok(())
         }
@@ -982,121 +664,76 @@ mod tests {
         }
     }
 
-    fn graph(project_id: Uuid) -> WorkflowGraph {
-        WorkflowGraph::new(
-            project_id,
-            "task.lifecycle",
-            "Task Lifecycle",
-            "",
-            DefinitionSource::UserAuthored,
-            "main",
-            vec![ActivityDefinition {
-                key: "main".to_string(),
-                description: "main".to_string(),
-                executor: ActivityExecutorSpec::Agent(
-                    AgentActivityExecutorSpec::create_activity_agent("task_agent"),
-                ),
-                input_ports: Vec::new(),
-                output_ports: Vec::new(),
-                completion_policy: ActivityCompletionPolicy::ExecutorTerminal,
-                iteration_policy: Default::default(),
-                join_policy: Default::default(),
-            }],
-            Vec::new(),
-        )
-        .expect("graph")
-    }
-
-    fn running_state(graph: &WorkflowGraph, graph_instance_id: Uuid) -> ActivityLifecycleRunState {
-        let mut state = LifecycleEngine::initialize(graph, graph_instance_id).expect("init");
-        LifecycleEngine::apply_event(
-            graph,
-            &mut state,
-            ActivityEvent::SchedulerClaimAccepted {
-                activity_key: "main".to_string(),
-                attempt: 1,
-            },
-        )
-        .expect("claim");
-        LifecycleEngine::apply_event(
-            graph,
-            &mut state,
-            ActivityEvent::ExecutorStarted {
-                activity_key: "main".to_string(),
-                attempt: 1,
-                executor_run: ExecutorRunRef::RuntimeSession {
-                    session_id: "runtime-1".to_string(),
-                },
-            },
-        )
-        .expect("started");
-        state
+    fn run_with_running_node(project_id: Uuid) -> (LifecycleRun, Uuid) {
+        let graph_id = Uuid::new_v4();
+        let mut run = LifecycleRun::new_control(project_id);
+        let source_ref = OrchestrationSourceRef::WorkflowGraph {
+            graph_id,
+            graph_version: Some(1),
+        };
+        let plan_snapshot = OrchestrationPlanSnapshot {
+            plan_digest: "sha256:subject-cancel-test".to_string(),
+            plan_version: 1,
+            source_ref: source_ref.clone(),
+            nodes: Vec::new(),
+            entry_node_ids: vec!["main".to_string()],
+            activation_rules: Vec::new(),
+            state_exchange_rules: Vec::new(),
+            limits: Default::default(),
+            metadata: None,
+            created_at: Utc::now(),
+        };
+        let mut orchestration = OrchestrationInstance::new("root", source_ref, plan_snapshot);
+        orchestration.status = OrchestrationStatus::Running;
+        orchestration.node_tree = vec![RuntimeNodeState {
+            node_id: "main".to_string(),
+            node_path: "main".to_string(),
+            kind: PlanNodeKind::AgentCall,
+            status: RuntimeNodeStatus::Running,
+            attempt: 1,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            executor_run_ref: None,
+            children: Vec::new(),
+            phase_path: Vec::new(),
+            started_at: Some(Utc::now()),
+            completed_at: None,
+            error: None,
+            trace_refs: Vec::new(),
+            cache: None,
+        }];
+        let orchestration_id = orchestration.orchestration_id;
+        run.add_orchestration(orchestration);
+        (run, orchestration_id)
     }
 
     #[tokio::test]
-    async fn cancel_subject_execution_targets_assignment_and_delivers_latest_runtime_ref() {
+    async fn cancel_subject_execution_targets_orchestration_node_and_delivers_runtime_ref() {
         let project_id = Uuid::new_v4();
         let subject = SubjectRef::new("task", Uuid::new_v4());
-        let graph = graph(project_id);
-        let graph_repo = GraphRepo {
-            graph: graph.clone(),
-        };
         let run_repo = RunRepo::default();
-        let graph_instance_repo = GraphInstanceRepo::default();
-        let claim_repo = ClaimRepo::default();
         let association_repo = SubjectAssociationRepo::default();
         let agent_repo = AgentRepo::default();
         let frame_repo = FrameRepo::default();
-        let assignment_repo = AssignmentRepo::default();
         let anchor_repo = AnchorRepo::default();
 
-        let mut run = LifecycleRun::new_control(project_id, graph.id);
-        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, graph.id);
-        graph_instance
-            .replace_activity_state(running_state(&graph, graph_instance.id))
-            .expect("state");
-        run.sync_graph_instance_activity_projections(
-            graph_instance
-                .activity_state
-                .as_ref()
-                .map(|state| (graph_instance.id, state))
-                .into_iter(),
-        );
+        let (run, orchestration_id) = run_with_running_node(project_id);
         run_repo.create(&run).await.expect("run");
-        graph_instance_repo
-            .create(&graph_instance)
-            .await
-            .expect("instance");
 
         let mut agent = LifecycleAgent::new_root(run.id, project_id, "task_agent");
-        let mut frame = AgentFrame::new_revision(agent.id, 1, "test");
-        frame.graph_instance_id = Some(graph_instance.id);
-        frame.activity_key = Some("main".to_string());
+        let frame = AgentFrame::new_revision(agent.id, 1, "test");
         agent.set_current_frame(frame.id);
         agent_repo.create(&agent).await.expect("agent");
         frame_repo.create(&frame).await.expect("frame");
 
-        let assignment =
-            AgentAssignment::new(run.id, graph_instance.id, "main", 1, agent.id, frame.id);
-        assignment_repo
-            .create(&assignment)
-            .await
-            .expect("assignment");
-        anchor_repo.insert(RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-1",
-            run.id,
-            frame.id,
-            agent.id,
-            Some(graph_instance.id),
-            Some("main".to_string()),
-        ));
-        anchor_repo.insert(RuntimeSessionExecutionAnchor::new_dispatch(
+        anchor_repo.insert(RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
             "runtime-2",
             run.id,
             frame.id,
             agent.id,
-            Some(graph_instance.id),
-            Some("main".to_string()),
+            orchestration_id,
+            "main",
+            1,
         ));
         association_repo
             .create(&LifecycleSubjectAssociation::new_agent_scoped(
@@ -1109,22 +746,11 @@ mod tests {
             .await
             .expect("association");
 
-        let mut claim = ActivityExecutionClaim::new(run.id, graph_instance.id, "main", 1, "agent");
-        claim.status = ActivityExecutionClaimStatus::Running;
-        claim.executor_run_ref = Some(ExecutorRunRef::RuntimeSession {
-            session_id: "runtime-2".to_string(),
-        });
-        claim_repo.create_or_get(&claim).await.expect("claim");
-
         let service = SubjectExecutionControlService::new(
-            &graph_repo,
             &run_repo,
-            &graph_instance_repo,
-            &claim_repo,
             &association_repo,
             &agent_repo,
             &frame_repo,
-            &assignment_repo,
             &anchor_repo,
         );
         let result = service
@@ -1137,7 +763,12 @@ mod tests {
             .expect("cancel");
 
         assert_eq!(result.subject_ref, subject);
-        assert_eq!(result.runtime_refs.assignment_ref(), Some(assignment.id));
+        assert_eq!(
+            result.runtime_refs.orchestration_ref(),
+            Some(orchestration_id)
+        );
+        assert_eq!(result.runtime_refs.node_path(), Some("main"));
+        assert_eq!(result.runtime_refs.node_attempt(), Some(1));
         assert_eq!(
             result
                 .runtime_delivery
@@ -1146,48 +777,27 @@ mod tests {
             Some("runtime-2")
         );
 
-        let persisted_instance = graph_instance_repo
-            .get(graph_instance.id)
+        let persisted_run = run_repo
+            .get_by_id(run.id)
             .await
-            .expect("query instance")
-            .expect("instance");
-        let state = persisted_instance.activity_state.expect("state");
+            .expect("query run")
+            .expect("run");
+        let node = &persisted_run.orchestrations[0].node_tree[0];
+        assert_eq!(node.status, RuntimeNodeStatus::Cancelled);
         assert_eq!(
-            state.status,
-            agentdash_domain::workflow::ActivityRunStatus::Cancelled
+            node.error.as_ref().map(|error| error.code.as_str()),
+            Some("cancelled")
         );
-        assert_eq!(state.attempts[0].status, ActivityAttemptStatus::Cancelled);
-
-        let claim = claim_repo
-            .get_by_idempotency_key(&claim.idempotency_key)
-            .await
-            .expect("query claim")
-            .expect("claim");
-        assert_eq!(claim.status, ActivityExecutionClaimStatus::Abandoned);
-
-        let assignment = assignment_repo
-            .find_for_attempt(graph_instance.id, "main", 1)
-            .await
-            .expect("query assignment")
-            .expect("assignment");
-        assert_eq!(assignment.lease_status, "released");
-        assert!(assignment.released_at.is_some());
     }
 
     #[tokio::test]
-    async fn cancel_graphless_subject_execution_delivers_runtime_without_assignment() {
+    async fn cancel_graphless_subject_execution_delivers_runtime_without_orchestration_binding() {
         let project_id = Uuid::new_v4();
         let subject = SubjectRef::new("task", Uuid::new_v4());
-        let graph_repo = GraphRepo {
-            graph: graph(project_id),
-        };
         let run_repo = RunRepo::default();
-        let graph_instance_repo = GraphInstanceRepo::default();
-        let claim_repo = ClaimRepo::default();
         let association_repo = SubjectAssociationRepo::default();
         let agent_repo = AgentRepo::default();
         let frame_repo = FrameRepo::default();
-        let assignment_repo = AssignmentRepo::default();
         let anchor_repo = AnchorRepo::default();
 
         let run = LifecycleRun::new_graphless(project_id);
@@ -1202,8 +812,6 @@ mod tests {
             run.id,
             frame.id,
             agent.id,
-            None,
-            None,
         ));
         association_repo
             .create(&LifecycleSubjectAssociation::new_agent_scoped(
@@ -1217,14 +825,10 @@ mod tests {
             .expect("association");
 
         let service = SubjectExecutionControlService::new(
-            &graph_repo,
             &run_repo,
-            &graph_instance_repo,
-            &claim_repo,
             &association_repo,
             &agent_repo,
             &frame_repo,
-            &assignment_repo,
             &anchor_repo,
         );
         let result = service
@@ -1240,36 +844,25 @@ mod tests {
         assert_eq!(result.runtime_refs.run_ref, run.id);
         assert_eq!(result.runtime_refs.agent_ref, agent.id);
         assert_eq!(result.runtime_refs.frame_ref, frame.id);
-        assert_eq!(result.runtime_refs.graph_instance_ref(), None);
-        assert_eq!(result.runtime_refs.assignment_ref(), None);
+        assert_eq!(result.runtime_refs.orchestration_ref(), None);
         assert_eq!(result.activity_key, None);
         assert_eq!(result.attempt, None);
         let command = result.runtime_delivery.expect("runtime delivery");
         assert_eq!(command.runtime_session_id, "runtime-graphless-1");
-        assert_eq!(command.runtime_refs.graph_instance_ref(), None);
-        assert_eq!(command.runtime_refs.assignment_ref(), None);
-        assert!(assignment_repo.assignments.lock().unwrap().is_empty());
-        assert!(claim_repo.claims.lock().unwrap().is_empty());
+        assert_eq!(command.runtime_refs.orchestration_ref(), None);
     }
 
     #[tokio::test]
     async fn cancel_target_rejects_inactive_anchor_agent() {
         let project_id = Uuid::new_v4();
         let subject = SubjectRef::new("task", Uuid::new_v4());
-        let graph = graph(project_id);
-        let graph_repo = GraphRepo {
-            graph: graph.clone(),
-        };
         let run_repo = RunRepo::default();
-        let graph_instance_repo = GraphInstanceRepo::default();
-        let claim_repo = ClaimRepo::default();
         let association_repo = SubjectAssociationRepo::default();
         let agent_repo = AgentRepo::default();
         let frame_repo = FrameRepo::default();
-        let assignment_repo = AssignmentRepo::default();
         let anchor_repo = AnchorRepo::default();
 
-        let run = LifecycleRun::new_control(project_id, graph.id);
+        let run = LifecycleRun::new_control(project_id);
         let mut agent = LifecycleAgent::new_root(run.id, project_id, "task_agent");
         agent.status = "completed".to_string();
         agent_repo.create(&agent).await.expect("agent");
@@ -1282,14 +875,10 @@ mod tests {
         );
 
         let service = SubjectExecutionControlService::new(
-            &graph_repo,
             &run_repo,
-            &graph_instance_repo,
-            &claim_repo,
             &association_repo,
             &agent_repo,
             &frame_repo,
-            &assignment_repo,
             &anchor_repo,
         );
         let err = service

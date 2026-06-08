@@ -374,7 +374,6 @@ mod tests {
             run_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
             agent_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap(),
             frame_id: Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap(),
-            assignment_id: Some(Uuid::parse_str("44444444-4444-4444-4444-444444444444").unwrap()),
         };
         let query = HookRuleEvaluationQuery {
             target: Some(target),
@@ -400,10 +399,6 @@ mod tests {
         assert_eq!(
             ctx_value["hook_target"]["frame_id"],
             "33333333-3333-3333-3333-333333333333"
-        );
-        assert_eq!(
-            ctx_value["hook_target"]["assignment_id"],
-            "44444444-4444-4444-4444-444444444444"
         );
         assert_eq!(ctx_value["session_id"], "sess-frame");
         assert_eq!(ctx_value["turn_id"], "turn-frame");

@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    AgentAssignmentRepository, AgentFrameRepository, AgentProcedureRepository,
-    LifecycleAgentRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
-    WorkflowGraphInstanceRepository, WorkflowGraphRepository,
+    AgentFrameRepository, AgentProcedureRepository, LifecycleAgentRepository,
+    LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::{HookError, hooks::HookControlTarget, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
@@ -11,7 +10,7 @@ use uuid::Uuid;
 use crate::workflow::execution_log as workflow_recording;
 use crate::workflow::{
     ActiveWorkflowProjection, resolve_active_workflow_projection_for_session,
-    resolve_active_workflow_projection_for_target, select_assignment_for_frame,
+    resolve_active_workflow_projection_for_target,
 };
 
 fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
@@ -21,35 +20,26 @@ fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
 /// 根据 session 信息构建 ActiveWorkflowProjection，以及 workflow 推进与日志写入。
 pub struct WorkflowSnapshotBuilder {
     agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
-    workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
     agent_frame_repo: Arc<dyn AgentFrameRepository>,
     lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-    agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
 }
 
 impl WorkflowSnapshotBuilder {
     pub fn new(
         agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
-        workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
         agent_frame_repo: Arc<dyn AgentFrameRepository>,
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-        agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
     ) -> Self {
         Self {
             agent_procedure_repo,
-            workflow_graph_repo,
             agent_frame_repo,
             lifecycle_agent_repo,
-            agent_assignment_repo,
             lifecycle_run_repo,
             execution_anchor_repo,
-            workflow_graph_instance_repo,
         }
     }
 
@@ -71,13 +61,10 @@ impl WorkflowSnapshotBuilder {
         resolve_active_workflow_projection_for_session(
             session_id,
             self.agent_procedure_repo.as_ref(),
-            self.workflow_graph_repo.as_ref(),
             self.agent_frame_repo.as_ref(),
             self.lifecycle_agent_repo.as_ref(),
-            self.agent_assignment_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
             self.execution_anchor_repo.as_ref(),
-            self.workflow_graph_instance_repo.as_ref(),
         )
         .await
         .map_err(HookError::Runtime)
@@ -119,16 +106,10 @@ impl WorkflowSnapshotBuilder {
         else {
             return Ok(None);
         };
-        let assignment_id =
-            select_assignment_for_frame(self.agent_assignment_repo.as_ref(), &frame)
-                .await
-                .map_err(|error| HookError::Runtime(error.to_string()))?
-                .map(|assignment| assignment.id);
         Ok(Some(HookControlTarget {
             run_id: agent.run_id,
             agent_id: agent.id,
             frame_id: frame.id,
-            assignment_id,
         }))
     }
 
@@ -139,11 +120,8 @@ impl WorkflowSnapshotBuilder {
         resolve_active_workflow_projection_for_target(
             target,
             self.agent_procedure_repo.as_ref(),
-            self.workflow_graph_repo.as_ref(),
             self.agent_frame_repo.as_ref(),
-            self.agent_assignment_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
-            self.workflow_graph_instance_repo.as_ref(),
         )
         .await
         .map_err(HookError::Runtime)

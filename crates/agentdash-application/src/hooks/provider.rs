@@ -4,10 +4,10 @@ use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
-    ActivityAttemptStatus, AgentAssignmentRepository, AgentFrameRepository,
-    AgentProcedureRepository, LifecycleAgentRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
-    WorkflowGraphInstanceRepository, WorkflowGraphRepository, build_effective_contract,
+    AgentFrameRepository, AgentProcedureRepository, LifecycleAgentRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository, RuntimeNodeStatus,
+    RuntimeSessionExecutionAnchorRepository, build_effective_contract,
+    build_effective_contract_from_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -47,13 +47,10 @@ impl AppExecutionHookProvider {
         project_repo: Arc<dyn ProjectRepository>,
         story_repo: Arc<dyn StoryRepository>,
         agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
-        workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
         agent_frame_repo: Arc<dyn AgentFrameRepository>,
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-        agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
         lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         script_evaluator_factory: F,
@@ -72,13 +69,10 @@ impl AppExecutionHookProvider {
             ),
             workflow_builder: WorkflowSnapshotBuilder::new(
                 agent_procedure_repo,
-                workflow_graph_repo,
                 agent_frame_repo,
                 lifecycle_agent_repo,
-                agent_assignment_repo,
                 lifecycle_run_repo,
                 execution_anchor_repo,
-                workflow_graph_instance_repo,
             ),
             script_engine: HookScriptEngine::new(evaluator),
         }
@@ -134,7 +128,7 @@ impl AppExecutionHookProvider {
                 code: "active_workflow_resolved".to_string(),
                 message: format!(
                     "命中 active lifecycle step：{} / {}",
-                    workflow.lifecycle.key, workflow.active_activity.key
+                    workflow.lifecycle_key, workflow.active_activity.key
                 ),
             });
 
@@ -157,13 +151,12 @@ impl AppExecutionHookProvider {
                 };
                 let activity_status = Some(
                     match workflow.active_attempt.status {
-                        ActivityAttemptStatus::Pending => "pending",
-                        ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => "ready",
-                        ActivityAttemptStatus::Running => "running",
-                        ActivityAttemptStatus::Completed => "completed",
-                        ActivityAttemptStatus::Failed | ActivityAttemptStatus::Cancelled => {
-                            "failed"
-                        }
+                        RuntimeNodeStatus::Pending => "pending",
+                        RuntimeNodeStatus::Ready | RuntimeNodeStatus::Claiming => "ready",
+                        RuntimeNodeStatus::Running | RuntimeNodeStatus::Blocked => "running",
+                        RuntimeNodeStatus::Completed => "completed",
+                        RuntimeNodeStatus::Failed | RuntimeNodeStatus::Cancelled => "failed",
+                        RuntimeNodeStatus::Skipped => "skipped",
                     }
                     .to_string(),
                 );
@@ -176,9 +169,9 @@ impl AppExecutionHookProvider {
                     }
                 });
                 meta.active_workflow = Some(ActiveWorkflowMeta {
-                    workflow_graph_id: Some(workflow.lifecycle.id),
-                    lifecycle_key: Some(workflow.lifecycle.key.clone()),
-                    lifecycle_name: Some(workflow.lifecycle.name.clone()),
+                    workflow_graph_id: workflow.lifecycle_graph_id,
+                    lifecycle_key: Some(workflow.lifecycle_key.clone()),
+                    lifecycle_name: Some(workflow.lifecycle_name.clone()),
                     run_id: Some(workflow.run.id),
                     run_status: Some(workflow.run.status),
                     activity_key: Some(workflow.active_activity.key.clone()),
@@ -192,11 +185,18 @@ impl AppExecutionHookProvider {
                         .primary_workflow
                         .as_ref()
                         .map(|w| w.name.clone()),
-                    effective_contract: Some(build_effective_contract(
-                        &workflow.lifecycle.key,
-                        &workflow.active_activity.key,
-                        workflow.primary_workflow.as_ref(),
-                    )),
+                    effective_contract: Some(match workflow.active_contract() {
+                        Some(contract) => build_effective_contract_from_contract(
+                            &workflow.lifecycle_key,
+                            &workflow.active_activity.key,
+                            contract,
+                        ),
+                        None => build_effective_contract(
+                            &workflow.lifecycle_key,
+                            &workflow.active_activity.key,
+                            None,
+                        ),
+                    }),
                     output_port_keys: {
                         let port_keys: Vec<String> = workflow
                             .active_activity
@@ -212,10 +212,10 @@ impl AppExecutionHookProvider {
                     },
                     fulfilled_port_keys: {
                         let artifact_scope =
-                            crate::workflow::execution_log::ActivityAttemptArtifactScope {
+                            crate::workflow::execution_log::RuntimeNodeArtifactScope {
                                 run_id: workflow.run.id,
-                                graph_instance_id: workflow.graph_instance_id,
-                                activity_key: workflow.active_activity.key.clone(),
+                                orchestration_id: workflow.orchestration_id,
+                                node_path: workflow.node_path.clone(),
                                 attempt: workflow.active_attempt.attempt,
                             };
                         let map = crate::workflow::load_scoped_port_output_map(

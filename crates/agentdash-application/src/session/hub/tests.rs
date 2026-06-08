@@ -259,7 +259,6 @@ async fn register_hook_target(
         run_id: uuid::Uuid::new_v4(),
         agent_id: frame.agent_id,
         frame_id: frame.id,
-        assignment_id: None,
     };
     targets
         .lock()
@@ -1627,7 +1626,6 @@ impl ExecutionHookProvider for RecordingHookProvider {
             run_id: uuid::Uuid::new_v4(),
             agent_id: f.agent_id,
             frame_id: f.id,
-            assignment_id: None,
         }))
     }
 

@@ -50,15 +50,15 @@ Dynamic script
 
 用户继续明确命名边界：`Lifecycle` 是项目核心定义，不能重命名。它是把主 Agent 以及派生/协作 AgentRun 管进同一个共同生命周期容器的方案，核心仍面向主 Agent。已修正 `target-model-sketch.md`，撤回 `OrchestrationRun` / `RunAgent` 建议，保留 `LifecycleRun` 作为顶层容器，将 `LifecycleAgent` 的目标命名收敛为 `AgentRun`，并仅在 Lifecycle 内部引入 `OrchestrationInstance`、`OrchestrationPlanSnapshot`、`PlanActivation`、`RuntimeNodeState` 等状态概念。
 
-用户进一步精确分层：`Lifecycle` 是全部上下文容器，`Orchestration` 是内部状态容器。随后又指出目标模型必须体现一个 Lifecycle 内可以有多个 orchestration 实例同时运行，并质疑 `_jsonb` 是否只是前文惯性。已修正为：`LifecycleRun.orchestrations[]` 是内部状态实例集合，单个元素叫 `OrchestrationInstance`；plan activation、node tree、dispatch lease、journal/cache/resume 放入对应 instance；subject、主 Agent、AgentRun、AgentFrame、权限、trace 归属仍属于 Lifecycle context。`_jsonb` 不作为领域命名规范，只保留为物理列类型可能性。
+用户进一步精确分层：`Lifecycle` 是全部上下文容器，`Orchestration` 是内部状态容器。随后又指出目标模型必须体现一个 Lifecycle 内可以有多个 orchestration 实例同时运行，并质疑 JSON 存储后缀是否只是前文惯性。已修正为：`LifecycleRun.orchestrations[]` 是内部状态实例集合，单个元素叫 `OrchestrationInstance`；plan activation、node tree、dispatch lease、journal/cache/resume 放入对应 instance；subject、主 Agent、AgentRun、AgentFrame、权限、trace 归属仍属于 Lifecycle context。新增目标字段和新增列统一不使用 `_json` / `_jsonb` 后缀。
 
-后续如果进入正式设计，建议新增 `design.md`，先写三张表：
+后续正式设计已经沉淀为 `design.md` 与 `implement.md`。这两份文档应保持三类信息清晰：
 
 1. Definition input：`WorkflowGraph`、dynamic script、AgentProcedure 的职责边界。
 2. Runtime IR：rule、phase、node、agent call、artifact exchange、join、retry、budget、resume cursor 的最小表达。
 3. Repository convergence matrix：现有仓储中哪些保留为事实源，哪些降级为 projection / index / lease，哪些可以合并到 runtime snapshot / journal。
 
-在这三张表清晰之前，不建议进入代码实现。
+在这三类信息经过 review 前，任务保持 planning 状态。
 
 ## 2026-06-06：覆盖基准与本机执行边界修正
 
@@ -67,3 +67,34 @@ Dynamic script
 用户还指出“脚本本身不能直接访问文件系统或 shell”不能机械套用到 AgentDash。当前项目 workflow 已经支持走系统桥接的本机执行：`FunctionActivityExecutorSpec::BashExec`、`FunctionRunner`、`shell_execute` / `shell_exec`、relay shell exec、extension `process.execute` 都是现有事实。因此更合适的目标边界是：script runtime 不拥有未建模 raw host access；本机执行、API request、extension action 等必须作为受控 function/local effect node 或 effect invocation 进入 permission、workspace root、audit、trace、journal，而不是被排除在 workflow runtime 之外，也不是伪装成 AgentRun。
 
 由此目标模型需要从“AgentRun 承接所有副作用”修正为 typed execution identity：`agent()` 落到 `AgentRun`，function / bash / API / extension action 落到 `FunctionRun` 或更通用的 `RuntimeEffectInvocation`，两者都归属于 `LifecycleRun` 内的某个 `OrchestrationInstance` 与 `RuntimeNodeState`。
+
+## 2026-06-06：Session-scoped command API 命名
+
+用户指出 `/runs/by-runtime-session/{runtime_session_id}/...` 仍然偏长，且 `/run` 这一层语义不够明确。重新复核当前 `lifecycle_agents.rs` 与前端 `lifecycle.ts` 后，确认这些端点的入口事实是 runtime session：API 先用 `runtime_session_id` 找 `RuntimeSessionExecutionAnchor`，再解析到 `LifecycleRun` / `LifecycleAgent` / `AgentFrame` 执行权限检查与消息投递。
+
+因此目标命名调整为 session-scoped command API：
+
+```text
+POST   /sessions/{runtime_session_id}/messages
+POST   /sessions/{runtime_session_id}/steering
+GET    /sessions/{runtime_session_id}/pending-messages
+POST   /sessions/{runtime_session_id}/pending-messages
+DELETE /sessions/{runtime_session_id}/pending-messages/{message_id}
+POST   /sessions/{runtime_session_id}/pending-messages/{message_id}/promote
+```
+
+`/sessions/{runtime_session_id}` 最清楚地表达了用户对当前 runtime session 的 delivery/control command。AgentRun / LifecycleRun 的写入归属属于 application service 内部解析结果；若后续需要显式管理 Lifecycle 内 AgentRun 资源，使用 `/lifecycles/{lifecycle_run_id}/agent-runs`。
+
+## 2026-06-06：WorkflowGraph compiler 语义修正
+
+用户进一步指出，Claude Workflow 参考的关键不是把 graph 用一段脚本模拟出来。Claude Workflow 的脚本里，`flow` 是命令式过程控制，`artifact` / 中间结果是变量和状态交换；一次运行轨迹可以投影成 DAG，但编排程序本身不应被静态 graph 形态限制。AgentDash 现有 flow edge / artifact edge 是快速实现阶段的简化，不能成为目标 IR 的上限。
+
+据此修正 compiler 计划：
+
+- `WorkflowGraph -> OrchestrationPlanSnapshot` 是 definition 到语义 IR 的编译器，不是 graph-to-script。
+- compiler 推荐放在 application 层；domain 层持有 `OrchestrationPlanSnapshot`、`PlanNode`、`ActivationRule`、`ExecutorSpec` 等值对象和不变量。
+- plan snapshot identity 使用 deterministic digest；UUID 留给 `OrchestrationInstance`、LifecycleRun、AgentRun 等运行实例。
+- graph activity 进入 runtime IR 时按 executor 变成语义节点：Agent activity -> `AgentCall`，API request -> `Function`，BashExec / 本机桥接 -> `LocalEffect`，Human approval -> `HumanGate`。`Activity` 只保留为 source metadata 或兼容 projection。
+- 旧 `ActivityTransitionKind::Flow` / `Artifact` 只作为 source metadata 和 normalization hint。目标 runtime 中，control dependency / condition / join / traversal limit 是过程控制维度；artifact binding / node output / input materialization 是状态交换维度。
+
+这也暴露出已落地第一版 domain contract 的后续修正点：当前 `OrchestrationPlanSnapshot` 仍有 `plan_id: Uuid`。在 compiler 实现前，应先把 plan snapshot 的内容身份收敛到 digest，避免后续 cache/resume/audit 被随机 ID 污染。

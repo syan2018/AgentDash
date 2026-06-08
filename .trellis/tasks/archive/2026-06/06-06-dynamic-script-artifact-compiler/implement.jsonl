@@ -1,0 +1,10 @@
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/prd.md","reason":"父任务入口、原始目标和文档索引。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/design.md","reason":"目标架构，定义 graph/script 都编译到 OrchestrationPlanSnapshot。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/target-model-sketch.md","reason":"Lifecycle / Orchestration / script asset 目标概念和仓储边界。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/claude-workflow-behavior-coverage.md","reason":"Claude Workflow 核心行为覆盖矩阵。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/workflow-graph-compiler-plan.md","reason":"Plan IR、semantic node、state exchange 和 diagnostics 约束。"}
+{"file":".trellis/tasks/06-06-dynamic-workflow-lifecycle-research/research/common-runtime-convergence-plan.md","reason":"common runtime 事实源和脚本 frontend 不能引入平行 runtime 的约束。"}
+{"file":".trellis/tasks/archive/2026-06/06-06-common-orchestration-runtime-static-graph/prd.md","reason":"当前 runtime 地基完成面和剩余脚本 frontend 边界。"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"semantic executor launcher、runtime event 和 node state 合同。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"跨层 DTO 生成和前端服务 contract 规则。"}
+{"file":".trellis/spec/backend/hooks/hook-script-engine.md","reason":"现有 Rhai Hook 引擎、沙箱、AST cache、helper 和返回值合同，供抽取公共脚本内核时复核。"}

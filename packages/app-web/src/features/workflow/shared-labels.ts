@@ -1,5 +1,4 @@
 import type {
-  ActivityAttemptStatus,
   LifecycleExecutionEventKind,
   DefinitionSource,
   WorkflowRunStatus,
@@ -27,14 +26,16 @@ export const RUN_STATUS_LABEL: Record<WorkflowRunStatus, string> = {
   cancelled: "Cancelled",
 };
 
-export const ATTEMPT_STATUS_LABEL: Record<ActivityAttemptStatus, string> = {
+export const RUNTIME_NODE_STATUS_LABEL: Record<string, string> = {
   pending: "Pending",
   ready: "Ready",
   claiming: "Claiming",
   running: "Running",
+  blocked: "Blocked",
   completed: "Completed",
   failed: "Failed",
   cancelled: "Cancelled",
+  skipped: "Skipped",
 };
 
 export const DEFINITION_SOURCE_LABEL: Record<DefinitionSource, string> = {

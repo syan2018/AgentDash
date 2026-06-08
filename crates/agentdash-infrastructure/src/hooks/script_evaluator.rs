@@ -1,40 +1,31 @@
 //! Rhai-backed implementation of the [`HookScriptEvaluator`] SPI port.
 //!
-//! Owns the embedded Rhai engine, the compiled-AST caches, the sandbox
-//! limits, and the script helper functions. The application layer passes a
-//! prebuilt context value and receives the raw decision value back.
+//! Registers the Hook-specific Rhai helper surface and preset cache. The
+//! shared engine, sandbox, AST cache and JSON bridge live in
+//! [`crate::script_runtime::RhaiScriptRuntime`].
 
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::sync::RwLock;
 
 use agentdash_spi::HookScriptEvaluator;
-use rhai::{AST, Dynamic, Engine, Scope};
+use rhai::{AST, Dynamic, Engine};
 
-/// Rhai engine wrapper that compiles, caches, and evaluates hook scripts.
+use crate::script_runtime::RhaiScriptRuntime;
+
+/// Rhai-backed Hook script evaluator.
 pub struct RhaiHookScriptEvaluator {
-    engine: Engine,
-    ast_cache: RwLock<HashMap<u64, AST>>,
+    runtime: RhaiScriptRuntime,
     preset_asts: RwLock<HashMap<String, AST>>,
 }
 
 impl RhaiHookScriptEvaluator {
     /// Builds the evaluator and pre-compiles the supplied preset scripts.
     pub fn new(preset_scripts: &[(&str, &str)]) -> Self {
-        let mut engine = Engine::new();
-
-        // 安全沙箱
-        engine.set_max_operations(10_000);
-        engine.set_max_call_levels(32);
-        engine.set_max_string_size(1_048_576);
-        engine.set_max_array_size(1_000);
-        engine.set_max_map_size(500);
-
-        Self::register_helpers(&mut engine);
+        let runtime = RhaiScriptRuntime::new(Self::register_helpers);
 
         let mut preset_asts = HashMap::new();
         for (key, script) in preset_scripts {
-            match engine.compile(script) {
+            match runtime.compile_script(script) {
                 Ok(ast) => {
                     preset_asts.insert(key.to_string(), ast);
                 }
@@ -45,29 +36,9 @@ impl RhaiHookScriptEvaluator {
         }
 
         Self {
-            engine,
-            ast_cache: RwLock::new(HashMap::new()),
+            runtime,
             preset_asts: RwLock::new(preset_asts),
         }
-    }
-
-    fn eval_ast(&self, ast: &AST, ctx: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let ctx_dynamic =
-            rhai::serde::to_dynamic(ctx).map_err(|e| format!("ctx 序列化失败: {e}"))?;
-
-        let mut scope = Scope::new();
-        scope.push("ctx", ctx_dynamic);
-
-        let result: Dynamic = self
-            .engine
-            .eval_ast_with_scope(&mut scope, ast)
-            .map_err(|e| format!("Rhai 脚本执行错误: {e}"))?;
-
-        if result.is_unit() {
-            return Ok(serde_json::Value::Null);
-        }
-
-        rhai::serde::from_dynamic(&result).map_err(|e| format!("返回值解析失败: {e}"))
     }
 
     fn register_helpers(engine: &mut Engine) {
@@ -163,17 +134,11 @@ impl RhaiHookScriptEvaluator {
             m
         });
     }
-
-    fn hash_script(script: &str) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        script.hash(&mut hasher);
-        hasher.finish()
-    }
 }
 
 impl HookScriptEvaluator for RhaiHookScriptEvaluator {
     fn register_preset(&self, key: &str, script: &str) -> Result<(), String> {
-        let ast = self.engine.compile(script).map_err(|e| e.to_string())?;
+        let ast = self.runtime.compile_script(script)?;
         self.preset_asts
             .write()
             .map_err(|e| format!("preset lock: {e}"))?
@@ -190,10 +155,7 @@ impl HookScriptEvaluator for RhaiHookScriptEvaluator {
     }
 
     fn validate_script(&self, script: &str) -> Result<(), Vec<String>> {
-        self.engine
-            .compile(script)
-            .map(|_| ())
-            .map_err(|e| vec![e.to_string()])
+        self.runtime.validate_script(script)
     }
 
     fn eval_preset(
@@ -210,7 +172,7 @@ impl HookScriptEvaluator for RhaiHookScriptEvaluator {
             .ok_or_else(|| format!("未知 preset: {preset_key}"))?;
 
         let start = std::time::Instant::now();
-        let result = self.eval_ast(&ast, ctx);
+        let result = self.runtime.eval_ast(&ast, ctx);
         let elapsed = start.elapsed();
 
         match &result {
@@ -234,27 +196,10 @@ impl HookScriptEvaluator for RhaiHookScriptEvaluator {
         script: &str,
         ctx: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        let hash = Self::hash_script(script);
-
-        let cached = self
-            .ast_cache
-            .read()
-            .ok()
-            .and_then(|cache| cache.get(&hash).cloned());
-
-        let ast = match cached {
-            Some(ast) => ast,
-            None => {
-                let ast = self.engine.compile(script).map_err(|e| e.to_string())?;
-                if let Ok(mut cache) = self.ast_cache.write() {
-                    cache.insert(hash, ast.clone());
-                }
-                ast
-            }
-        };
+        let hash = RhaiScriptRuntime::script_hash(script);
 
         let start = std::time::Instant::now();
-        let result = self.eval_ast(&ast, ctx);
+        let result = self.runtime.eval_script(script, ctx);
         let elapsed = start.elapsed();
 
         match &result {

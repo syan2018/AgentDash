@@ -9,6 +9,7 @@ use agentdash_spi::ToolCluster;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::platform::tool_capability::{
     CAP_CANVAS, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_SHELL_EXECUTE, CAP_WORKFLOW,
+    CAP_WORKSPACE_MODULE,
 };
 use agentdash_spi::{ConnectorError, ExecutionContext};
 use async_trait::async_trait;
@@ -25,6 +26,7 @@ use crate::vfs::tools::fs::{
 };
 use crate::vfs::{VfsMaterializationService, VfsMaterializationTransport};
 use crate::workflow::tools::advance_node::CompleteLifecycleNodeTool;
+use crate::workspace_module::{WorkspaceModuleDescribeTool, WorkspaceModuleListTool};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -324,6 +326,41 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 }
             } else {
                 tracing::warn!("canvas tools 注入失败：无法从 hook session 解析 project_id");
+            }
+        }
+
+        // Workspace Module 簇：module 发现工具（只读，现取现算）
+        if clusters.contains(&ToolCluster::WorkspaceModule) {
+            if let Some(project_id) = project_id_from_context(context) {
+                let visibility = flow.workspace_module.clone();
+                if flow.is_capability_tool_enabled(
+                    CAP_WORKSPACE_MODULE,
+                    "workspace_module_list",
+                    Some(ToolCluster::WorkspaceModule),
+                ) {
+                    tools.push(Arc::new(WorkspaceModuleListTool::new(
+                        self.repos.project_extension_installation_repo.clone(),
+                        self.repos.canvas_repo.clone(),
+                        project_id,
+                        visibility.clone(),
+                    )));
+                }
+                if flow.is_capability_tool_enabled(
+                    CAP_WORKSPACE_MODULE,
+                    "workspace_module_describe",
+                    Some(ToolCluster::WorkspaceModule),
+                ) {
+                    tools.push(Arc::new(WorkspaceModuleDescribeTool::new(
+                        self.repos.project_extension_installation_repo.clone(),
+                        self.repos.canvas_repo.clone(),
+                        project_id,
+                        visibility,
+                    )));
+                }
+            } else {
+                tracing::warn!(
+                    "workspace module tools 注入失败：无法从 hook session 解析 project_id"
+                );
             }
         }
 

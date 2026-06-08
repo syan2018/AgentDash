@@ -133,6 +133,11 @@ use agentdash_contracts::workflow::{
     WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
     WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto,
 };
+use agentdash_contracts::workspace_module::{
+    WorkspaceModuleDescriptor, WorkspaceModuleKind, WorkspaceModuleOperation,
+    WorkspaceModuleStatus, WorkspaceModuleStatusKind, WorkspaceModuleSummary,
+    WorkspaceModuleUiEntry,
+};
 use ts_rs::TS;
 
 fn main() {
@@ -487,6 +492,23 @@ fn main() {
             export_all::<ExtensionRuntimeInvokeActionResponse>(dir);
             export_all::<ExtensionRuntimeInvokeChannelResponse>(dir);
             export_all::<UninstallExtensionInstallationResponse>(dir);
+        },
+    );
+
+    // --- workspace-module-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "workspace-module-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<WorkspaceModuleKind>(dir);
+            export_all::<WorkspaceModuleStatusKind>(dir);
+            export_all::<WorkspaceModuleStatus>(dir);
+            export_all::<WorkspaceModuleSummary>(dir);
+            export_all::<WorkspaceModuleUiEntry>(dir);
+            export_all::<WorkspaceModuleOperation>(dir);
+            export_all::<WorkspaceModuleDescriptor>(dir);
         },
     );
 

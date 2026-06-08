@@ -20,7 +20,6 @@ use agentdash_spi::{
 };
 use uuid::Uuid;
 
-use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::session::post_turn_handler::TerminalHookEffectBinding;
 
 // ─── FrameRuntimeSurface: 只来自 AgentFrame 持久化 surface ───
@@ -76,7 +75,6 @@ pub struct FrameLaunchIntent {
     pub identity: Option<AuthIdentity>,
     pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
-    pub extension_runtime: Option<ExtensionRuntimeProjection>,
 }
 
 // ─── FrameLaunchEnvelope: construction 输出，字段 non-optional ───

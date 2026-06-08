@@ -79,6 +79,8 @@ pub const CAP_FILE_WRITE: &str = "file_write";
 /// 命令执行：shell_exec
 pub const CAP_SHELL_EXECUTE: &str = "shell_execute";
 pub const CAP_CANVAS: &str = "canvas";
+/// Workspace module 发现：workspace_module_list, workspace_module_describe
+pub const CAP_WORKSPACE_MODULE: &str = "workspace_module";
 pub const CAP_WORKFLOW: &str = "workflow";
 pub const CAP_COLLABORATION: &str = "collaboration";
 pub const CAP_STORY_MANAGEMENT: &str = "story_management";
@@ -97,6 +99,7 @@ pub const WELL_KNOWN_KEYS: &[&str] = &[
     CAP_FILE_WRITE,
     CAP_SHELL_EXECUTE,
     CAP_CANVAS,
+    CAP_WORKSPACE_MODULE,
     CAP_WORKFLOW,
     CAP_COLLABORATION,
     CAP_STORY_MANAGEMENT,
@@ -123,6 +126,8 @@ pub const CLUSTER_CANVAS_TOOLS: &[&str] = &[
     "bind_canvas_data",
     "present_canvas",
 ];
+pub const CLUSTER_WORKSPACE_MODULE_TOOLS: &[&str] =
+    &["workspace_module_list", "workspace_module_describe"];
 
 /// 返回 ToolCluster 下属的全部工具名。
 pub fn cluster_tools(cluster: ToolCluster) -> &'static [&'static str] {
@@ -133,6 +138,7 @@ pub fn cluster_tools(cluster: ToolCluster) -> &'static [&'static str] {
         ToolCluster::Workflow => CLUSTER_WORKFLOW_TOOLS,
         ToolCluster::Collaboration => CLUSTER_COLLABORATION_TOOLS,
         ToolCluster::Canvas => CLUSTER_CANVAS_TOOLS,
+        ToolCluster::WorkspaceModule => CLUSTER_WORKSPACE_MODULE_TOOLS,
     }
 }
 
@@ -354,6 +360,21 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             ToolCluster::Canvas,
             CAP_CANVAS,
         ),
+        // ── Workspace Module cluster ──
+        ToolDescriptor::platform(
+            "workspace_module_list",
+            "List Workspace Modules",
+            "列出当前 project 可见的 workspace module（enabled extension + visible canvas）摘要",
+            ToolCluster::WorkspaceModule,
+            CAP_WORKSPACE_MODULE,
+        ),
+        ToolDescriptor::platform(
+            "workspace_module_describe",
+            "Describe Workspace Module",
+            "返回单个 workspace module 的 UI entries 与 operations（含 input/output schema）",
+            ToolCluster::WorkspaceModule,
+            CAP_WORKSPACE_MODULE,
+        ),
         // ── Platform MCP: Relay scope (capability=relay_management) ──
         ToolDescriptor::platform_mcp(
             "list_projects",
@@ -561,6 +582,7 @@ fn capability_to_tool_clusters_by_key(key: &str) -> Vec<ToolCluster> {
         CAP_FILE_WRITE => vec![ToolCluster::Write],
         CAP_SHELL_EXECUTE => vec![ToolCluster::Execute],
         CAP_CANVAS => vec![ToolCluster::Canvas],
+        CAP_WORKSPACE_MODULE => vec![ToolCluster::WorkspaceModule],
         CAP_WORKFLOW => vec![ToolCluster::Workflow],
         CAP_COLLABORATION => vec![ToolCluster::Collaboration],
         _ => vec![],
@@ -729,6 +751,13 @@ pub fn default_visibility_rules() -> &'static [CapabilityVisibilityRule] {
         CapabilityVisibilityRule {
             key: CAP_CANVAS,
             allowed_scopes: &[Project],
+            auto_granted: true,
+            agent_can_grant: false,
+            workflow_can_grant: false,
+        },
+        CapabilityVisibilityRule {
+            key: CAP_WORKSPACE_MODULE,
+            allowed_scopes: &[Project, Story, Task],
             auto_granted: true,
             agent_can_grant: false,
             workflow_can_grant: false,

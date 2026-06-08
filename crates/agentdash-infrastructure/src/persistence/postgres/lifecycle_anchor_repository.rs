@@ -207,6 +207,9 @@ impl TryFrom<FrameRow> for AgentFrame {
                 row.visible_canvas_mount_ids_json,
                 "visible_canvas_mount_ids_json",
             )?,
+            // Workspace module 裁切预留字段（Child 1）：尚无持久化列，运行时默认 None；
+            // Child 3 落 DB 列与编辑入口后再接管读写。
+            visible_workspace_module_refs_json: None,
             created_by_kind: row.created_by_kind,
             created_by_id: row.created_by_id,
             created_at: row.created_at,

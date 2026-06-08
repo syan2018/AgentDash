@@ -24,6 +24,12 @@ pub struct AgentFrame {
     /// 当前可见的 Canvas mount ids（运行时追加，不随 revision 复制）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_canvas_mount_ids_json: Option<serde_json::Value>,
+    /// 可见的 Workspace Module refs 裁切预留字段（运行时追加，不随 revision 复制）。
+    ///
+    /// 非空时 capability 组装会据此把 workspace module 维度设为 allowlist；为空则默认全集。
+    /// 本轮（Child 1）只落字段 + 组装读取，编辑入口在 Child 3。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_workspace_module_refs_json: Option<serde_json::Value>,
     pub created_by_kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_id: Option<String>,
@@ -42,6 +48,7 @@ impl AgentFrame {
             mcp_surface_json: None,
             execution_profile_json: None,
             visible_canvas_mount_ids_json: None,
+            visible_workspace_module_refs_json: None,
             created_by_kind: "backfill".to_string(),
             created_by_id: None,
             created_at: Utc::now(),
@@ -59,6 +66,7 @@ impl AgentFrame {
             mcp_surface_json: None,
             execution_profile_json: None,
             visible_canvas_mount_ids_json: None,
+            visible_workspace_module_refs_json: None,
             created_by_kind: created_by_kind.into(),
             created_by_id: None,
             created_at: Utc::now(),
@@ -90,5 +98,63 @@ impl AgentFrame {
             Some(Value::Array(ids)) => ids.push(next),
             _ => self.visible_canvas_mount_ids_json = Some(Value::Array(vec![next])),
         }
+    }
+
+    pub fn visible_workspace_module_refs(&self) -> Vec<String> {
+        let Some(Value::Array(refs)) = &self.visible_workspace_module_refs_json else {
+            return Vec::new();
+        };
+        refs.iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    }
+
+    pub fn append_visible_workspace_module_ref(&mut self, module_ref: &str) {
+        if module_ref.trim().is_empty() {
+            return;
+        }
+        let already = self
+            .visible_workspace_module_refs()
+            .iter()
+            .any(|existing| existing == module_ref);
+        if already {
+            return;
+        }
+        let next = Value::String(module_ref.to_string());
+        match &mut self.visible_workspace_module_refs_json {
+            Some(Value::Array(refs)) => refs.push(next),
+            _ => self.visible_workspace_module_refs_json = Some(Value::Array(vec![next])),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visible_workspace_module_refs_default_empty() {
+        let frame = AgentFrame::new_initial(Uuid::new_v4());
+        assert!(frame.visible_workspace_module_refs().is_empty());
+        assert!(frame.visible_workspace_module_refs_json.is_none());
+    }
+
+    #[test]
+    fn append_visible_workspace_module_ref_dedups_and_skips_blank() {
+        let mut frame = AgentFrame::new_initial(Uuid::new_v4());
+        frame.append_visible_workspace_module_ref("ext:demo");
+        frame.append_visible_workspace_module_ref("ext:demo");
+        frame.append_visible_workspace_module_ref("   ");
+        frame.append_visible_workspace_module_ref("canvas:dashboard-a");
+        assert_eq!(
+            frame.visible_workspace_module_refs(),
+            vec!["ext:demo".to_string(), "canvas:dashboard-a".to_string()]
+        );
+    }
+
+    #[test]
+    fn new_revision_does_not_carry_workspace_module_refs() {
+        let frame = AgentFrame::new_revision(Uuid::new_v4(), 2, "test");
+        assert!(frame.visible_workspace_module_refs_json.is_none());
     }
 }

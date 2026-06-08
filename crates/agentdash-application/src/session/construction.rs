@@ -15,7 +15,6 @@ use agentdash_spi::CapabilityScope;
 use super::context::SessionContextSnapshot;
 use super::post_turn_handler::TerminalHookEffectBinding;
 use super::types::UserPromptInput;
-use crate::extension_runtime::ExtensionRuntimeProjection;
 
 /// 测试 fixture：RuntimeSession trace 的创建来源信息。
 #[derive(Debug, Clone)]
@@ -142,7 +141,6 @@ pub struct ConstructionProjections {
     pub capability_state: Option<CapabilityState>,
     pub session_capabilities: Option<SessionBaselineCapabilities>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
-    pub extension_runtime: Option<ExtensionRuntimeProjection>,
 }
 
 #[derive(Debug, Clone, Default)]

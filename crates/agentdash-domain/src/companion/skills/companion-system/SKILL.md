@@ -1,13 +1,21 @@
 ---
 name: companion-system
-description: AgentDash companion 通用交互协议手册。用于通过 companion_request/companion_respond 发起 human、platform、parent、sub/session 交互，申请临时能力扩展，采用结构化 payload，并把授权事实汇入平台权限与 Capability runtime。
+description: AgentDash companion interaction protocol. Use when an AgentDashboard session needs companion_request/companion_respond to ask a human, request platform capability grants, coordinate parent/sub-session work, return structured review or completion results, or route model-authored dynamic workflow proposals such as research fanout, review pipelines, runbooks, and local-effect workflows through human/platform review before execution.
 ---
 
 # Companion System
 
 Use this skill when a session has companion tools and needs structured cross-subject interaction.
 
-## Core Model
+## Core Flow
+
+1. Choose the companion target: `human`, `platform`, `parent`, or `sub`.
+2. Send `companion_request` with a JSON object `payload`.
+3. Use a registered `payload.type` when the intent matches a known protocol.
+4. Wait only when the next action depends on the response.
+5. Adopt `companion_respond` through the structured response fields, not through free-form text alone.
+
+## Core Rules
 
 - `companion_request` is the active interaction entrypoint. It carries intent and routing metadata.
 - `companion_respond` returns a structured response to a known `request_id`.
@@ -20,6 +28,8 @@ Use this skill when a session has companion tools and needs structured cross-sub
 - `platform`: ask the AgentDash platform broker to evaluate a structured platform request.
 - `parent`: send review or completion material back to the parent session.
 - `sub`: dispatch work to a companion agent or session.
+
+Read `references/human-interaction.md` for approval, free-form question, and notification examples.
 
 ## Payload Types
 
@@ -37,18 +47,17 @@ For field-level examples, read `references/payload-envelope.md`.
 
 Use `target: "platform"` with `payload.type: "capability_grant_request"` when the session needs a temporary tool or MCP capability that is not currently callable.
 
-Required fields:
+The companion response is only a conversation receipt. The platform grant record and applied `RuntimeCapabilityTransition` are the authority. For required fields and result shape, read `references/capability-grant-request.md`.
 
-- `requested_paths`: non-empty array of `ToolCapabilityPath` strings.
-- `reason`: concise operational reason.
-- `scope`: `turn`, `session`, or `workflow_step`.
+## Workflow Script Preflight
 
-Optional fields:
+Use workflow script preflight when a model or companion drafts a dynamic orchestration script for a multi-agent workflow, such as research fanout, review/approval pipelines, local capability effects, or generated runbooks that need inspection before runtime execution.
 
-- `ttl_seconds`: positive integer lifetime.
-- `interaction_hint`: approval text for the user.
+- Treat workflow scripts as restricted Rhai builder scripts that produce a builder document.
+- Inspect diagnostics, plan preview, and capability summary before asking for approval.
+- Keep approval, launch, and saved-definition work on the dedicated platform commands when those commands are available.
 
-The companion response is only a conversation receipt. The platform grant record and applied `RuntimeCapabilityTransition` are the authority. For details, read `references/capability-grant-request.md`.
+For the supported builder syntax, request/response shape, and compilation semantics, read `references/workflow-script-preflight.md`.
 
 ## Response Adoption
 

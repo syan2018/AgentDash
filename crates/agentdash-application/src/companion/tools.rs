@@ -161,7 +161,7 @@ impl AgentTool for CompanionRequestTool {
     }
 
     fn description(&self) -> &str {
-        "向 companion 通用交互信道发起结构化请求。target 支持 sub、parent、human、platform；payload 必须是 JSON object。复杂 payload 规则见 companion-system skill。"
+        "发起结构化 companion 交互请求；用于询问用户、申请平台能力、协调 parent/sub session，或把动态 workflow 提案交给人/平台评审。payload 必须是 JSON object；复杂规则见 companion-system skill。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -1039,7 +1039,7 @@ impl AgentTool for CompanionRespondTool {
     }
 
     fn description(&self) -> &str {
-        "回应 companion 信道上的请求。request_id 指定回应对象，payload 必须是 JSON object，并应匹配原请求的 expected response type。复杂规则见 companion-system skill。"
+        "回应 companion 交互请求；用于回传用户决策、平台结果、parent/sub session 结论或结构化审阅结果。request_id 指定对象，payload 必须是 JSON object 并匹配 expected response type。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

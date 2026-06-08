@@ -1,6 +1,6 @@
 ---
 name: routine-memory
-description: Maintain Routine memory across scheduled, webhook, and plugin-triggered sessions by reading and updating the routine_vfs mount when it helps the current task.
+description: AgentDashboard Routine memory protocol. Use when a session is started by a scheduled, webhook, or plugin-triggered Routine and has a routine:// VFS mount; read trigger facts and durable Routine/entity memory for cross-trigger continuity, then update only concise future-use facts, decisions, open items, or entity outcomes.
 ---
 
 # Routine Memory
@@ -8,6 +8,8 @@ description: Maintain Routine memory across scheduled, webhook, and plugin-trigg
 Use this skill when the current session was started by a Routine and a `routine://` VFS mount is available.
 
 Routine memory is a compact, durable working memory for the automation rule. It is not a transcript dump. Use it only when the current task benefits from cross-trigger continuity.
+
+For the full file semantics, read `references/memory-model.md`.
 
 ## Read Order
 
@@ -30,5 +32,3 @@ Routine memory is a compact, durable working memory for the automation rule. It 
 - Do not copy large payloads, transcripts, or tool logs into memory.
 - Do not invent facts. Mark uncertain observations as pending confirmation.
 - Use the Routine prompt as the task instruction and Routine memory as supporting context.
-
-See `references/memory-model.md` for the file semantics.

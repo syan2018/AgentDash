@@ -314,14 +314,14 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor::platform(
             "companion_request",
             "Companion Request",
-            "向关联 agent 发起协作请求",
+            "发起 human/platform/parent/sub 结构化协作请求",
             ToolCluster::Collaboration,
             CAP_COLLABORATION,
         ),
         ToolDescriptor::platform(
             "companion_respond",
             "Companion Respond",
-            "回复协作 agent 的请求",
+            "回传 companion 协作请求结果",
             ToolCluster::Collaboration,
             CAP_COLLABORATION,
         ),

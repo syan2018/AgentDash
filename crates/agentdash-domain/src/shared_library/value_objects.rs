@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -194,9 +196,12 @@ impl LibraryAssetPayload {
             LibraryAssetType::AgentTemplate => serde_json::from_value(value)
                 .map(Self::AgentTemplate)
                 .map_err(|error| payload_error("agent_template", error)),
-            LibraryAssetType::McpServerTemplate => serde_json::from_value(value)
-                .map(Self::McpServerTemplate)
-                .map_err(|error| payload_error("mcp_server_template", error)),
+            LibraryAssetType::McpServerTemplate => {
+                let payload = serde_json::from_value::<McpServerTemplatePayload>(value)
+                    .map_err(|error| payload_error("mcp_server_template", error))?;
+                payload.validate()?;
+                Ok(Self::McpServerTemplate(payload))
+            }
             LibraryAssetType::WorkflowTemplate => {
                 let value = normalize_workflow_template_payload_value(value)?;
                 serde_json::from_value(value)
@@ -332,14 +337,567 @@ pub struct ProjectAgentConfigOverride {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct McpServerTemplatePayload {
-    pub transport: McpTransportConfig,
+    pub transport_template: McpTransportTemplate,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_policy: Option<McpRoutePolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parameter_schema: Option<Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
+}
+
+impl McpServerTemplatePayload {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        let parameter_schema = parse_mcp_template_parameter_schema(self.parameter_schema.as_ref())?;
+        self.transport_template
+            .validate("mcp_server_template.transport_template", &parameter_schema)?;
+        for (index, capability) in self.capabilities.iter().enumerate() {
+            require_non_empty(
+                &format!("mcp_server_template.capabilities[{index}]"),
+                capability,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn resolve_transport(
+        &self,
+        parameters: Option<&Value>,
+    ) -> Result<McpTransportConfig, DomainError> {
+        let parameter_schema = parse_mcp_template_parameter_schema(self.parameter_schema.as_ref())?;
+        let parameters = resolve_mcp_template_parameters(parameters, &parameter_schema)?;
+        self.transport_template
+            .resolve("mcp_server_template.transport_template", &parameters)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum McpTransportTemplate {
+    Http { url_template: String },
+    Sse { url_template: String },
+}
+
+impl McpTransportTemplate {
+    pub fn url_template(&self) -> &str {
+        match self {
+            Self::Http { url_template } | Self::Sse { url_template } => url_template,
+        }
+    }
+
+    pub fn from_public_transport(transport: &McpTransportConfig) -> Result<Self, DomainError> {
+        match transport {
+            McpTransportConfig::Http { url, headers } => {
+                if !headers.is_empty() {
+                    return Err(DomainError::InvalidConfig(
+                        "mcp_server_template.transport_template.http 不允许携带 header 值"
+                            .to_string(),
+                    ));
+                }
+                validate_public_http_url(
+                    "mcp_server_template.transport_template.url_template",
+                    url,
+                )?;
+                Ok(Self::Http {
+                    url_template: url.clone(),
+                })
+            }
+            McpTransportConfig::Sse { url, headers } => {
+                if !headers.is_empty() {
+                    return Err(DomainError::InvalidConfig(
+                        "mcp_server_template.transport_template.sse 不允许携带 header 值"
+                            .to_string(),
+                    ));
+                }
+                validate_public_http_url(
+                    "mcp_server_template.transport_template.url_template",
+                    url,
+                )?;
+                Ok(Self::Sse {
+                    url_template: url.clone(),
+                })
+            }
+            McpTransportConfig::Stdio { .. } => Err(DomainError::InvalidConfig(
+                "mcp_server_template 公共模板不支持 stdio transport".to_string(),
+            )),
+        }
+    }
+
+    fn validate(
+        &self,
+        field: &str,
+        parameter_schema: &McpTemplateParameterSchema,
+    ) -> Result<(), DomainError> {
+        let template = self.url_template();
+        require_non_empty(&format!("{field}.url_template"), template)?;
+        validate_secret_free_value(&format!("{field}.url_template"), template)?;
+        let placeholders =
+            extract_mcp_template_placeholders(&format!("{field}.url_template"), template)?;
+        for placeholder in placeholders {
+            if !parameter_schema.properties.contains_key(&placeholder) {
+                return Err(DomainError::InvalidConfig(format!(
+                    "{field}.url_template 占位符 `${{{placeholder}}}` 未在 parameter_schema.properties 中声明"
+                )));
+            }
+        }
+        let probe = replace_mcp_template_placeholders_with_probe(template)?;
+        validate_public_http_url(&format!("{field}.url_template"), &probe)
+    }
+
+    fn resolve(
+        &self,
+        field: &str,
+        parameters: &BTreeMap<String, String>,
+    ) -> Result<McpTransportConfig, DomainError> {
+        let url = resolve_mcp_url_template(
+            &format!("{field}.url_template"),
+            self.url_template(),
+            parameters,
+        )?;
+        validate_public_http_url(&format!("{field}.url"), &url)?;
+        match self {
+            Self::Http { .. } => Ok(McpTransportConfig::Http {
+                url,
+                headers: vec![],
+            }),
+            Self::Sse { .. } => Ok(McpTransportConfig::Sse {
+                url,
+                headers: vec![],
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct McpTemplateParameterSchema {
+    properties: BTreeMap<String, McpTemplateParameterProperty>,
+    required: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone)]
+struct McpTemplateParameterProperty {
+    value_type: Option<McpTemplateParameterType>,
+    default_value: Option<Value>,
+    enum_values: Option<Vec<Value>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpTemplateParameterType {
+    String,
+    Number,
+    Integer,
+    Boolean,
+}
+
+fn parse_mcp_template_parameter_schema(
+    schema: Option<&Value>,
+) -> Result<McpTemplateParameterSchema, DomainError> {
+    let Some(schema) = schema else {
+        return Ok(McpTemplateParameterSchema::default());
+    };
+    let object = schema.as_object().ok_or_else(|| {
+        DomainError::InvalidConfig("mcp_server_template.parameter_schema 必须是对象".to_string())
+    })?;
+    if let Some(schema_type) = object.get("type")
+        && schema_type.as_str() != Some("object")
+    {
+        return Err(DomainError::InvalidConfig(
+            "mcp_server_template.parameter_schema.type 必须是 object".to_string(),
+        ));
+    }
+
+    let properties_value = object.get("properties");
+    let properties_object = match properties_value {
+        Some(Value::Object(properties)) => Some(properties),
+        Some(_) => {
+            return Err(DomainError::InvalidConfig(
+                "mcp_server_template.parameter_schema.properties 必须是对象".to_string(),
+            ));
+        }
+        None => None,
+    };
+
+    let mut properties = BTreeMap::new();
+    if let Some(properties_object) = properties_object {
+        for (key, property_value) in properties_object {
+            validate_mcp_template_parameter_key(
+                "mcp_server_template.parameter_schema.properties",
+                key,
+            )?;
+            let property_object = property_value.as_object().ok_or_else(|| {
+                DomainError::InvalidConfig(format!(
+                    "mcp_server_template.parameter_schema.properties.{key} 必须是对象"
+                ))
+            })?;
+            let value_type = property_object
+                .get("type")
+                .map(|value| parse_mcp_template_parameter_type(key, value))
+                .transpose()?;
+            let default_value = property_object.get("default").cloned();
+            if let Some(default_value) = &default_value {
+                validate_mcp_template_parameter_value(
+                    &format!("mcp_server_template.parameter_schema.properties.{key}.default"),
+                    key,
+                    default_value,
+                    value_type,
+                    None,
+                )?;
+            }
+            let enum_values = match property_object.get("enum") {
+                Some(Value::Array(values)) => {
+                    for (index, value) in values.iter().enumerate() {
+                        validate_mcp_template_parameter_value(
+                            &format!(
+                                "mcp_server_template.parameter_schema.properties.{key}.enum[{index}]"
+                            ),
+                            key,
+                            value,
+                            value_type,
+                            None,
+                        )?;
+                    }
+                    Some(values.clone())
+                }
+                Some(_) => {
+                    return Err(DomainError::InvalidConfig(format!(
+                        "mcp_server_template.parameter_schema.properties.{key}.enum 必须是数组"
+                    )));
+                }
+                None => None,
+            };
+            properties.insert(
+                key.clone(),
+                McpTemplateParameterProperty {
+                    value_type,
+                    default_value,
+                    enum_values,
+                },
+            );
+        }
+    }
+
+    let mut required = BTreeSet::new();
+    match object.get("required") {
+        Some(Value::Array(values)) => {
+            for (index, value) in values.iter().enumerate() {
+                let Some(key) = value.as_str() else {
+                    return Err(DomainError::InvalidConfig(format!(
+                        "mcp_server_template.parameter_schema.required[{index}] 必须是字符串"
+                    )));
+                };
+                validate_mcp_template_parameter_key(
+                    &format!("mcp_server_template.parameter_schema.required[{index}]"),
+                    key,
+                )?;
+                if !properties.contains_key(key) {
+                    return Err(DomainError::InvalidConfig(format!(
+                        "mcp_server_template.parameter_schema.required[{index}] 未在 properties 中声明: {key}"
+                    )));
+                }
+                required.insert(key.to_string());
+            }
+        }
+        Some(_) => {
+            return Err(DomainError::InvalidConfig(
+                "mcp_server_template.parameter_schema.required 必须是字符串数组".to_string(),
+            ));
+        }
+        None => {}
+    }
+
+    Ok(McpTemplateParameterSchema {
+        properties,
+        required,
+    })
+}
+
+fn resolve_mcp_template_parameters(
+    parameters: Option<&Value>,
+    schema: &McpTemplateParameterSchema,
+) -> Result<BTreeMap<String, String>, DomainError> {
+    let empty = serde_json::Map::new();
+    let object = match parameters {
+        Some(Value::Object(object)) => object,
+        Some(_) => {
+            return Err(DomainError::InvalidConfig(
+                "install_options.mcp_server_template.parameters 必须是对象".to_string(),
+            ));
+        }
+        None => &empty,
+    };
+
+    for key in object.keys() {
+        if !schema.properties.contains_key(key) {
+            return Err(DomainError::InvalidConfig(format!(
+                "install_options.mcp_server_template.parameters.{key} 未在 parameter_schema.properties 中声明"
+            )));
+        }
+    }
+    for key in &schema.required {
+        if !object.contains_key(key) {
+            return Err(DomainError::InvalidConfig(format!(
+                "install_options.mcp_server_template.parameters.{key} 缺少必需参数"
+            )));
+        }
+    }
+
+    let mut resolved = BTreeMap::new();
+    for (key, property) in &schema.properties {
+        let value = object.get(key).or(property.default_value.as_ref());
+        if let Some(value) = value {
+            validate_mcp_template_parameter_value(
+                &format!("install_options.mcp_server_template.parameters.{key}"),
+                key,
+                value,
+                property.value_type,
+                property.enum_values.as_deref(),
+            )?;
+            resolved.insert(
+                key.clone(),
+                mcp_template_parameter_value_to_string(value).expect("validated scalar"),
+            );
+        }
+    }
+    Ok(resolved)
+}
+
+fn parse_mcp_template_parameter_type(
+    key: &str,
+    value: &Value,
+) -> Result<McpTemplateParameterType, DomainError> {
+    match value.as_str() {
+        Some("string") => Ok(McpTemplateParameterType::String),
+        Some("number") => Ok(McpTemplateParameterType::Number),
+        Some("integer") => Ok(McpTemplateParameterType::Integer),
+        Some("boolean") => Ok(McpTemplateParameterType::Boolean),
+        Some(other) => Err(DomainError::InvalidConfig(format!(
+            "mcp_server_template.parameter_schema.properties.{key}.type 暂不支持: {other}"
+        ))),
+        None => Err(DomainError::InvalidConfig(format!(
+            "mcp_server_template.parameter_schema.properties.{key}.type 必须是字符串"
+        ))),
+    }
+}
+
+fn validate_mcp_template_parameter_value(
+    field: &str,
+    key: &str,
+    value: &Value,
+    expected_type: Option<McpTemplateParameterType>,
+    enum_values: Option<&[Value]>,
+) -> Result<(), DomainError> {
+    match expected_type {
+        Some(McpTemplateParameterType::String) if !value.is_string() => {
+            return Err(DomainError::InvalidConfig(format!("{field} 必须是 string")));
+        }
+        Some(McpTemplateParameterType::Number) if !value.is_number() => {
+            return Err(DomainError::InvalidConfig(format!("{field} 必须是 number")));
+        }
+        Some(McpTemplateParameterType::Integer) if !is_json_integer(value) => {
+            return Err(DomainError::InvalidConfig(format!(
+                "{field} 必须是 integer"
+            )));
+        }
+        Some(McpTemplateParameterType::Boolean) if !value.is_boolean() => {
+            return Err(DomainError::InvalidConfig(format!(
+                "{field} 必须是 boolean"
+            )));
+        }
+        _ => {}
+    }
+
+    if mcp_template_parameter_value_to_string(value).is_none() {
+        return Err(DomainError::InvalidConfig(format!(
+            "{field} 只支持 string / number / boolean 标量"
+        )));
+    }
+
+    if let Some(enum_values) = enum_values
+        && !enum_values.iter().any(|enum_value| enum_value == value)
+    {
+        return Err(DomainError::InvalidConfig(format!(
+            "{field} 不在 parameter_schema.properties.{key}.enum 允许值内"
+        )));
+    }
+    Ok(())
+}
+
+fn mcp_template_parameter_value_to_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn is_json_integer(value: &Value) -> bool {
+    value
+        .as_i64()
+        .map(|_| true)
+        .or_else(|| value.as_u64().map(|_| true))
+        .unwrap_or(false)
+}
+
+fn extract_mcp_template_placeholders(
+    field: &str,
+    template: &str,
+) -> Result<BTreeSet<String>, DomainError> {
+    let mut placeholders = BTreeSet::new();
+    let mut cursor = 0;
+    while let Some(start_offset) = template[cursor..].find("${") {
+        let start = cursor + start_offset;
+        let key_start = start + 2;
+        let end_offset = template[key_start..].find('}').ok_or_else(|| {
+            DomainError::InvalidConfig(format!("{field} 包含未闭合的 `${{...}}` 占位符"))
+        })?;
+        let end = key_start + end_offset;
+        let key = &template[key_start..end];
+        validate_mcp_template_parameter_key(field, key)?;
+        placeholders.insert(key.to_string());
+        cursor = end + 1;
+    }
+    Ok(placeholders)
+}
+
+fn replace_mcp_template_placeholders_with_probe(template: &str) -> Result<String, DomainError> {
+    let mut values = BTreeMap::new();
+    for key in extract_mcp_template_placeholders(
+        "mcp_server_template.transport_template.url_template",
+        template,
+    )? {
+        values.insert(key, "placeholder".to_string());
+    }
+    resolve_mcp_url_template(
+        "mcp_server_template.transport_template.url_template",
+        template,
+        &values,
+    )
+}
+
+fn resolve_mcp_url_template(
+    field: &str,
+    template: &str,
+    parameters: &BTreeMap<String, String>,
+) -> Result<String, DomainError> {
+    let mut output = String::new();
+    let mut cursor = 0;
+    while let Some(start_offset) = template[cursor..].find("${") {
+        let start = cursor + start_offset;
+        output.push_str(&template[cursor..start]);
+        let key_start = start + 2;
+        let end_offset = template[key_start..].find('}').ok_or_else(|| {
+            DomainError::InvalidConfig(format!("{field} 包含未闭合的 `${{...}}` 占位符"))
+        })?;
+        let end = key_start + end_offset;
+        let key = &template[key_start..end];
+        validate_mcp_template_parameter_key(field, key)?;
+        let value = parameters.get(key).ok_or_else(|| {
+            DomainError::InvalidConfig(format!("{field} 缺少 `${{{key}}}` 的安装参数"))
+        })?;
+        output.push_str(value);
+        cursor = end + 1;
+    }
+    output.push_str(&template[cursor..]);
+    if output.contains("${") {
+        return Err(DomainError::InvalidConfig(format!(
+            "{field} 解析后仍包含未绑定占位符"
+        )));
+    }
+    Ok(output)
+}
+
+fn validate_mcp_template_parameter_key(field: &str, key: &str) -> Result<(), DomainError> {
+    if key.trim().is_empty() {
+        return Err(DomainError::InvalidConfig(format!(
+            "{field} 参数名不能为空"
+        )));
+    }
+    let valid = key
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'));
+    if valid {
+        Ok(())
+    } else {
+        Err(DomainError::InvalidConfig(format!(
+            "{field} 参数名只能包含 ASCII 字母、数字、下划线和连字符: {key}"
+        )))
+    }
+}
+
+fn validate_secret_free_value(field: &str, value: &str) -> Result<(), DomainError> {
+    let lower = value.to_ascii_lowercase();
+    let secret_markers = [
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "apikey",
+        "api_key",
+        "authorization",
+        "bearer ",
+    ];
+    if secret_markers.iter().any(|marker| lower.contains(marker)) {
+        return Err(DomainError::InvalidConfig(format!(
+            "{field} 看起来包含 credential/secret，不能进入公共 MCP 模板"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_public_http_url(field: &str, value: &str) -> Result<(), DomainError> {
+    let trimmed = value.trim();
+    require_non_empty(field, trimmed)?;
+    validate_secret_free_value(field, trimmed)?;
+    let lower = trimmed.to_ascii_lowercase();
+    let without_scheme = lower
+        .strip_prefix("http://")
+        .or_else(|| lower.strip_prefix("https://"))
+        .ok_or_else(|| {
+            DomainError::InvalidConfig(format!("{field} 必须是 http(s) absolute URL"))
+        })?;
+    let authority = without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    if authority.is_empty() {
+        return Err(DomainError::InvalidConfig(format!("{field} 缺少 host")));
+    }
+    if authority.contains('@') {
+        return Err(DomainError::InvalidConfig(format!(
+            "{field} 不能携带 username/password"
+        )));
+    }
+    let host = authority
+        .strip_prefix('[')
+        .and_then(|rest| rest.split(']').next())
+        .unwrap_or_else(|| authority.split(':').next().unwrap_or_default())
+        .trim_end_matches('.');
+    if host.is_empty() {
+        return Err(DomainError::InvalidConfig(format!("{field} 缺少 host")));
+    }
+    let is_local_or_private = matches!(host, "localhost") || host.ends_with(".local") || {
+        match host.parse::<std::net::IpAddr>() {
+            Ok(std::net::IpAddr::V4(ip)) => {
+                ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
+            }
+            Ok(std::net::IpAddr::V6(ip)) => {
+                ip.is_loopback()
+                    || ip.is_unspecified()
+                    || ip.is_unique_local()
+                    || ip.is_unicast_link_local()
+            }
+            Err(_) => false,
+        }
+    };
+    if is_local_or_private {
+        return Err(DomainError::InvalidConfig(format!(
+            "{field} 指向本机或私有网络，不能进入公共 MCP 模板"
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1325,8 +1883,19 @@ mod tests {
     #[test]
     fn validates_payload_by_asset_type() {
         let payload = json!({
-            "transport": { "type": "http", "url": "https://example.com/mcp" },
+            "transport_template": {
+                "type": "http",
+                "url_template": "https://example.com/${workspace}/mcp"
+            },
             "route_policy": "direct",
+            "parameter_schema": {
+                "type": "object",
+                "required": ["workspace"],
+                "properties": {
+                    "workspace": { "type": "string" }
+                },
+                "additionalProperties": false
+            },
             "capabilities": ["search"]
         });
 
@@ -1336,9 +1905,108 @@ mod tests {
         match typed {
             LibraryAssetPayload::McpServerTemplate(payload) => {
                 assert_eq!(payload.capabilities, vec!["search".to_string()]);
+                let transport = payload
+                    .resolve_transport(Some(&json!({"workspace": "acme"})))
+                    .expect("resolve transport");
+                assert_eq!(
+                    transport,
+                    McpTransportConfig::Http {
+                        url: "https://example.com/acme/mcp".to_string(),
+                        headers: vec![]
+                    }
+                );
             }
             other => panic!("unexpected payload: {other:?}"),
         }
+    }
+
+    #[test]
+    fn mcp_template_rejects_private_url_and_stdio_payload() {
+        let private_url = LibraryAssetPayload::from_value(
+            LibraryAssetType::McpServerTemplate,
+            json!({
+                "transport_template": {
+                    "type": "http",
+                    "url_template": "http://localhost:8765/mcp"
+                }
+            }),
+        );
+        assert!(private_url.is_err());
+
+        let stdio = LibraryAssetPayload::from_value(
+            LibraryAssetType::McpServerTemplate,
+            json!({
+                "transport_template": {
+                    "type": "stdio",
+                    "command_template": "npx"
+                }
+            }),
+        );
+        assert!(stdio.is_err());
+    }
+
+    #[test]
+    fn mcp_template_allows_public_hostname_starting_with_fc() {
+        LibraryAssetPayload::from_value(
+            LibraryAssetType::McpServerTemplate,
+            json!({
+                "transport_template": {
+                    "type": "http",
+                    "url_template": "https://fcdn.example.com/mcp"
+                },
+                "route_policy": "direct"
+            }),
+        )
+        .expect("public host names are allowed");
+    }
+
+    #[test]
+    fn mcp_template_resolver_rejects_missing_unknown_and_wrong_type_parameters() {
+        let payload = match LibraryAssetPayload::from_value(
+            LibraryAssetType::McpServerTemplate,
+            json!({
+                "transport_template": {
+                    "type": "sse",
+                    "url_template": "https://mcp.example.com/${workspace}/${shard}/sse"
+                },
+                "parameter_schema": {
+                    "type": "object",
+                    "required": ["workspace", "shard"],
+                    "properties": {
+                        "workspace": { "type": "string" },
+                        "shard": { "type": "integer" }
+                    }
+                }
+            }),
+        )
+        .expect("valid template")
+        {
+            LibraryAssetPayload::McpServerTemplate(payload) => payload,
+            other => panic!("unexpected payload: {other:?}"),
+        };
+
+        assert!(
+            payload
+                .resolve_transport(Some(&json!({"workspace": "acme"})))
+                .is_err()
+        );
+        assert!(
+            payload
+                .resolve_transport(Some(&json!({
+                    "workspace": "acme",
+                    "shard": 1,
+                    "extra": "x"
+                })))
+                .is_err()
+        );
+        assert!(
+            payload
+                .resolve_transport(Some(&json!({
+                    "workspace": "acme",
+                    "shard": "one"
+                })))
+                .is_err()
+        );
     }
 
     #[test]

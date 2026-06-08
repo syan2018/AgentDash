@@ -13,6 +13,7 @@ pub mod identity_directory;
 pub mod lifecycle_agents;
 pub mod lifecycle_views;
 pub mod llm_providers;
+pub mod marketplace;
 pub mod mcp_presets;
 pub mod me;
 pub mod permission_grants;
@@ -86,6 +87,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(backends::router())
         .merge(settings::router())
         .merge(shared_library::router())
+        .merge(marketplace::router())
         .merge(extension_runtime::router())
         .merge(project_extensions::router())
         .merge(extension_package_artifacts::router())

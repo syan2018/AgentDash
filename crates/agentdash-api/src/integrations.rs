@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_application::shared_library::IntegrationEmbeddedLibraryAssetSeed;
-use agentdash_integration_api::{AgentDashIntegration, AuthProvider};
+use agentdash_integration_api::{
+    AgentDashIntegration, AuthProvider, LibraryAssetType, MarketplaceSourceDescriptor,
+    MarketplaceSourceProvider,
+};
 use agentdash_spi::AgentConnector;
 use agentdash_spi::VfsDiscoveryProvider;
 use agentdash_spi::platform::mount::MountProvider;
@@ -22,6 +25,7 @@ pub(crate) struct HostIntegrationRegistration {
     pub connectors: Vec<Arc<dyn AgentConnector>>,
     pub auth_provider: Option<Arc<dyn AuthProvider>>,
     pub mount_providers: Vec<Arc<dyn MountProvider>>,
+    pub marketplace_source_providers: Vec<Arc<dyn MarketplaceSourceProvider>>,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub library_asset_seeds: Vec<IntegrationEmbeddedLibraryAssetSeed>,
 }
@@ -48,6 +52,21 @@ pub(crate) enum IntegrationRegistrationError {
         first_owner: String,
         second_owner: String,
     },
+    #[error(
+        "Marketplace Source `{source_key}` 重复注册：`{first_owner}` 与 `{second_owner}` 不能同时声明同一来源"
+    )]
+    DuplicateMarketplaceSourceKey {
+        source_key: String,
+        first_owner: String,
+        second_owner: String,
+    },
+    #[error(
+        "Host Integration `{integration_name}` 的 Marketplace Source descriptor 非法: {message}"
+    )]
+    InvalidMarketplaceSourceDescriptor {
+        integration_name: String,
+        message: String,
+    },
 }
 
 pub(crate) fn collect_integration_registration(
@@ -59,6 +78,8 @@ pub(crate) fn collect_integration_registration(
     let mut auth_provider_integration: Option<String> = None;
     let mut executor_owners: HashMap<String, String> = HashMap::new();
     let mut mount_providers = Vec::new();
+    let mut marketplace_source_providers = Vec::new();
+    let mut marketplace_source_owners: HashMap<String, String> = HashMap::new();
     let mut extra_skill_dirs = Vec::new();
     let mut library_asset_seeds = Vec::new();
 
@@ -110,6 +131,32 @@ pub(crate) fn collect_integration_registration(
             }));
         }
 
+        let sources = integration.marketplace_source_providers();
+        if !sources.is_empty() {
+            tracing::info!(
+                "  Host Integration `{}` 注册了 {} 个 MarketplaceSourceProvider",
+                integration_name,
+                sources.len()
+            );
+        }
+        for provider in sources {
+            let descriptor = provider.descriptor();
+            validate_marketplace_source_descriptor(&integration_name, &descriptor)?;
+            let source_key = descriptor.source_key.clone();
+            if let Some(first_owner) =
+                marketplace_source_owners.insert(source_key.clone(), integration_name.clone())
+            {
+                return Err(
+                    IntegrationRegistrationError::DuplicateMarketplaceSourceKey {
+                        source_key,
+                        first_owner,
+                        second_owner: integration_name.clone(),
+                    },
+                );
+            }
+            marketplace_source_providers.push(provider);
+        }
+
         for connector in integration.agent_connectors() {
             for executor in connector.list_executors() {
                 if let Some(first_integration) =
@@ -142,9 +189,60 @@ pub(crate) fn collect_integration_registration(
         connectors,
         auth_provider,
         mount_providers,
+        marketplace_source_providers,
         extra_skill_dirs,
         library_asset_seeds,
     })
+}
+
+fn validate_marketplace_source_descriptor(
+    integration_name: &str,
+    descriptor: &MarketplaceSourceDescriptor,
+) -> Result<(), IntegrationRegistrationError> {
+    if descriptor.source_key.trim().is_empty() {
+        return Err(
+            IntegrationRegistrationError::InvalidMarketplaceSourceDescriptor {
+                integration_name: integration_name.to_string(),
+                message: "source_key 不能为空".to_string(),
+            },
+        );
+    }
+
+    if descriptor.supported_asset_types.is_empty() {
+        return Err(
+            IntegrationRegistrationError::InvalidMarketplaceSourceDescriptor {
+                integration_name: integration_name.to_string(),
+                message: format!(
+                    "source_key `{}` 的 supported_asset_types 不能为空",
+                    descriptor.source_key
+                ),
+            },
+        );
+    }
+
+    for asset_type in &descriptor.supported_asset_types {
+        if !is_supported_marketplace_source_asset_type(*asset_type) {
+            return Err(
+                IntegrationRegistrationError::InvalidMarketplaceSourceDescriptor {
+                    integration_name: integration_name.to_string(),
+                    message: format!(
+                        "source_key `{}` 声明了不支持的 asset_type `{}`；首期仅支持 `skill_template` 与 `mcp_server_template`",
+                        descriptor.source_key,
+                        asset_type.as_str()
+                    ),
+                },
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn is_supported_marketplace_source_asset_type(asset_type: LibraryAssetType) -> bool {
+    matches!(
+        asset_type,
+        LibraryAssetType::SkillTemplate | LibraryAssetType::McpServerTemplate
+    )
 }
 
 pub(crate) fn validate_connector_executor_ids(
@@ -175,7 +273,10 @@ mod tests {
 
     use agentdash_integration_api::{
         AgentDashIntegration, AuthError, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
-        IntegrationLibraryAssetSeed, LibraryAssetType,
+        IntegrationLibraryAssetSeed, LibraryAssetType, MarketplaceAssetDetail,
+        MarketplaceAssetPage, MarketplaceAssetQuery, MarketplaceFetchedAsset,
+        MarketplaceSourceDescriptor, MarketplaceSourceError, MarketplaceSourceProvider,
+        MarketplaceSourceProviderKind, MarketplaceSourceTrustLevel,
     };
     use agentdash_spi::{
         AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
@@ -194,6 +295,12 @@ mod tests {
     }
 
     struct SeedIntegration;
+
+    struct MarketplaceIntegration {
+        name: &'static str,
+        source_key: &'static str,
+        supported_asset_types: Vec<LibraryAssetType>,
+    }
 
     impl AgentDashIntegration for SeedIntegration {
         fn name(&self) -> &str {
@@ -222,6 +329,67 @@ mod tests {
                     }]
                 }),
             }]
+        }
+    }
+
+    impl AgentDashIntegration for MarketplaceIntegration {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn marketplace_source_providers(&self) -> Vec<Arc<dyn MarketplaceSourceProvider>> {
+            vec![Arc::new(TestMarketplaceSourceProvider {
+                descriptor: MarketplaceSourceDescriptor {
+                    source_key: self.source_key.to_string(),
+                    display_name: format!("{} Marketplace", self.name),
+                    description: None,
+                    provider_kind: MarketplaceSourceProviderKind::Integration,
+                    supported_asset_types: self.supported_asset_types.clone(),
+                    trust_level: MarketplaceSourceTrustLevel::Organization,
+                    enabled: true,
+                },
+            })]
+        }
+    }
+
+    struct TestMarketplaceSourceProvider {
+        descriptor: MarketplaceSourceDescriptor,
+    }
+
+    #[async_trait]
+    impl MarketplaceSourceProvider for TestMarketplaceSourceProvider {
+        fn descriptor(&self) -> MarketplaceSourceDescriptor {
+            self.descriptor.clone()
+        }
+
+        async fn list_assets(
+            &self,
+            _query: MarketplaceAssetQuery,
+        ) -> Result<MarketplaceAssetPage, MarketplaceSourceError> {
+            Ok(MarketplaceAssetPage {
+                items: vec![],
+                next_cursor: None,
+            })
+        }
+
+        async fn get_asset_detail(
+            &self,
+            external_id: &str,
+        ) -> Result<MarketplaceAssetDetail, MarketplaceSourceError> {
+            Err(MarketplaceSourceError::NotFound {
+                source_key: self.descriptor.source_key.clone(),
+                external_id: external_id.to_string(),
+            })
+        }
+
+        async fn fetch_asset_payload(
+            &self,
+            external_id: &str,
+        ) -> Result<MarketplaceFetchedAsset, MarketplaceSourceError> {
+            Err(MarketplaceSourceError::NotFound {
+                source_key: self.descriptor.source_key.clone(),
+                external_id: external_id.to_string(),
+            })
         }
     }
 
@@ -434,6 +602,132 @@ mod tests {
             registration.library_asset_seeds[0].seed.key,
             "seed-extension"
         );
+    }
+
+    #[test]
+    fn collects_marketplace_source_provider() {
+        let registration =
+            collect_integration_registration(vec![Box::new(MarketplaceIntegration {
+                name: "marketplace-a",
+                source_key: "corp-marketplace",
+                supported_asset_types: vec![
+                    LibraryAssetType::SkillTemplate,
+                    LibraryAssetType::McpServerTemplate,
+                ],
+            })])
+            .expect("collect");
+
+        assert_eq!(registration.marketplace_source_providers.len(), 1);
+        let descriptor = registration.marketplace_source_providers[0].descriptor();
+        assert_eq!(descriptor.source_key, "corp-marketplace");
+        assert_eq!(
+            descriptor.supported_asset_types,
+            vec![
+                LibraryAssetType::SkillTemplate,
+                LibraryAssetType::McpServerTemplate
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_marketplace_source_key() {
+        let err = match collect_integration_registration(vec![
+            Box::new(MarketplaceIntegration {
+                name: "marketplace-a",
+                source_key: "corp-marketplace",
+                supported_asset_types: vec![LibraryAssetType::SkillTemplate],
+            }),
+            Box::new(MarketplaceIntegration {
+                name: "marketplace-b",
+                source_key: "corp-marketplace",
+                supported_asset_types: vec![LibraryAssetType::McpServerTemplate],
+            }),
+        ]) {
+            Ok(_) => panic!("重复 marketplace source_key 应失败"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            IntegrationRegistrationError::DuplicateMarketplaceSourceKey {
+                source_key,
+                first_owner,
+                second_owner,
+            } if source_key == "corp-marketplace"
+                && first_owner == "marketplace-a"
+                && second_owner == "marketplace-b"
+        ));
+    }
+
+    #[test]
+    fn rejects_unsupported_marketplace_source_asset_type() {
+        let err = match collect_integration_registration(vec![Box::new(MarketplaceIntegration {
+            name: "marketplace-a",
+            source_key: "corp-marketplace",
+            supported_asset_types: vec![LibraryAssetType::AgentTemplate],
+        })]) {
+            Ok(_) => panic!("非法 marketplace source asset_type 应失败"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            IntegrationRegistrationError::InvalidMarketplaceSourceDescriptor { .. }
+        ));
+        assert!(
+            err.to_string().contains("agent_template"),
+            "错误信息应包含非法 asset type: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_marketplace_source_supported_asset_types() {
+        let err = match collect_integration_registration(vec![Box::new(MarketplaceIntegration {
+            name: "marketplace-a",
+            source_key: "corp-marketplace",
+            supported_asset_types: vec![],
+        })]) {
+            Ok(_) => panic!("空 supported_asset_types 应失败"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            IntegrationRegistrationError::InvalidMarketplaceSourceDescriptor { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_empty_marketplace_source_key() {
+        let err = match collect_integration_registration(vec![Box::new(MarketplaceIntegration {
+            name: "marketplace-a",
+            source_key: " ",
+            supported_asset_types: vec![LibraryAssetType::SkillTemplate],
+        })]) {
+            Ok(_) => panic!("空 source_key 应失败"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            IntegrationRegistrationError::InvalidMarketplaceSourceDescriptor { .. }
+        ));
+    }
+
+    #[test]
+    fn collects_first_party_marketplace_source_provider() {
+        let registration = collect_integration_registration(
+            agentdash_first_party_integrations::builtin_integrations(),
+        )
+        .expect("first-party integrations collect");
+
+        let source_keys = registration
+            .marketplace_source_providers
+            .iter()
+            .map(|provider| provider.descriptor().source_key)
+            .collect::<Vec<_>>();
+
+        assert!(source_keys.contains(&"agentdash.dev.marketplace".to_string()));
     }
 
     #[test]

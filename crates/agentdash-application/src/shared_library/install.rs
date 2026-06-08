@@ -1,4 +1,5 @@
 use base64::Engine;
+use serde_json::Value;
 use uuid::Uuid;
 
 use agentdash_domain::DomainError;
@@ -9,8 +10,9 @@ use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
 use agentdash_domain::mcp_preset::{McpPreset, McpPresetSource};
 use agentdash_domain::project_vfs_mount::{ProjectVfsMount, ProjectVfsMountContent};
 use agentdash_domain::shared_library::{
-    InstalledAssetSource, LibraryAsset, LibraryAssetPayload, ProjectExtensionInstallation,
-    SharedLibrarySourceStatus, VfsMountTemplatePayload, normalize_workflow_template_value,
+    InstalledAssetSource, LibraryAsset, LibraryAssetPayload, McpServerTemplatePayload,
+    ProjectExtensionInstallation, SharedLibrarySourceStatus, VfsMountTemplatePayload,
+    normalize_workflow_template_value,
 };
 
 use crate::vfs::PROJECT_VFS_MOUNT_CONTAINER_ID;
@@ -26,6 +28,12 @@ pub struct InstallLibraryAssetInput {
     pub library_asset_id: Uuid,
     pub target_key: Option<String>,
     pub overwrite: bool,
+    pub install_options: Option<InstallLibraryAssetOptions>,
+}
+
+#[derive(Debug, Clone)]
+pub enum InstallLibraryAssetOptions {
+    McpServerTemplate { parameters: Value },
 }
 
 #[derive(Debug, Clone)]
@@ -94,26 +102,25 @@ pub async fn install_library_asset_to_project(
 
     match asset.typed_payload()? {
         LibraryAssetPayload::AgentTemplate(payload) => {
+            reject_install_options_for_non_mcp(&input)?;
             install_agent_template(repos, input, asset, payload.config).await
         }
         LibraryAssetPayload::McpServerTemplate(payload) => {
-            let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
-            let installed_source = installed_source_from_asset(&asset);
-            let mut preset = McpPreset::new_user(
+            let preset = mcp_preset_from_template_install(
                 input.project_id,
-                key,
-                asset.display_name.clone(),
-                asset.description.clone(),
-                payload.transport,
-                payload.route_policy.unwrap_or_default(),
-            );
-            preset.installed_source = Some(installed_source);
+                input.target_key.as_deref(),
+                &asset,
+                payload,
+                input.install_options.as_ref(),
+            )?;
             upsert_mcp_preset(repos, preset, input.overwrite).await
         }
         LibraryAssetPayload::WorkflowTemplate(payload) => {
+            reject_install_options_for_non_mcp(&input)?;
             install_workflow_template(repos, input, asset, payload.template).await
         }
         LibraryAssetPayload::SkillTemplate(payload) => {
+            reject_install_options_for_non_mcp(&input)?;
             let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
             let mut skill = SkillAsset::new_user(
                 input.project_id,
@@ -131,9 +138,11 @@ pub async fn install_library_asset_to_project(
             upsert_skill_asset(repos, skill, input.overwrite).await
         }
         LibraryAssetPayload::VfsMountTemplate(payload) => {
+            reject_install_options_for_non_mcp(&input)?;
             install_vfs_mount_template(repos, input, asset, payload).await
         }
         LibraryAssetPayload::ExtensionTemplate(payload) => {
+            reject_install_options_for_non_mcp(&input)?;
             let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
             let installed_source = installed_source_from_asset(&asset);
             let package_artifact =
@@ -159,6 +168,40 @@ pub async fn install_library_asset_to_project(
             upsert_extension_installation(repos, installation, input.overwrite).await
         }
     }
+}
+
+fn mcp_preset_from_template_install(
+    project_id: Uuid,
+    target_key: Option<&str>,
+    asset: &LibraryAsset,
+    payload: McpServerTemplatePayload,
+    install_options: Option<&InstallLibraryAssetOptions>,
+) -> Result<McpPreset, DomainError> {
+    let key = target_key_or_asset_key(target_key, &asset.key);
+    let parameters = match install_options {
+        Some(InstallLibraryAssetOptions::McpServerTemplate { parameters }) => Some(parameters),
+        None => None,
+    };
+    let transport = payload.resolve_transport(parameters)?;
+    let mut preset = McpPreset::new_user(
+        project_id,
+        key,
+        asset.display_name.clone(),
+        asset.description.clone(),
+        transport,
+        payload.route_policy.unwrap_or_default(),
+    );
+    preset.installed_source = Some(installed_source_from_asset(asset));
+    Ok(preset)
+}
+
+fn reject_install_options_for_non_mcp(input: &InstallLibraryAssetInput) -> Result<(), DomainError> {
+    if input.install_options.is_none() {
+        return Ok(());
+    }
+    Err(DomainError::InvalidConfig(
+        "install_options 仅支持 mcp_server_template".to_string(),
+    ))
 }
 
 async fn extension_template_package_artifact_for_install(
@@ -681,4 +724,122 @@ fn target_key_or_asset_key(target_key: Option<&str>, asset_key: &str) -> String 
         .filter(|value| !value.is_empty())
         .unwrap_or(asset_key)
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use agentdash_domain::mcp_preset::{McpRoutePolicy, McpTransportConfig};
+    use agentdash_domain::shared_library::{
+        LibraryAssetScope, LibraryAssetSource, LibraryAssetType, seed_digest,
+    };
+
+    use super::*;
+
+    #[test]
+    fn mcp_template_install_options_create_project_preset_with_installed_source() {
+        let asset = mcp_template_asset(json!({
+            "transport_template": {
+                "type": "http",
+                "url_template": "https://mcp.example.com/${workspace}/mcp"
+            },
+            "route_policy": "direct",
+            "parameter_schema": {
+                "type": "object",
+                "required": ["workspace"],
+                "properties": {
+                    "workspace": { "type": "string" }
+                }
+            },
+            "capabilities": ["search"]
+        }));
+        let payload = match asset.typed_payload().expect("typed") {
+            LibraryAssetPayload::McpServerTemplate(payload) => payload,
+            other => panic!("unexpected payload: {other:?}"),
+        };
+
+        let preset = mcp_preset_from_template_install(
+            Uuid::new_v4(),
+            Some("corp-search"),
+            &asset,
+            payload,
+            Some(&InstallLibraryAssetOptions::McpServerTemplate {
+                parameters: json!({ "workspace": "acme" }),
+            }),
+        )
+        .expect("preset");
+
+        assert_eq!(preset.key, "corp-search");
+        assert_eq!(preset.route_policy, McpRoutePolicy::Direct);
+        assert_eq!(
+            preset.transport,
+            McpTransportConfig::Http {
+                url: "https://mcp.example.com/acme/mcp".to_string(),
+                headers: vec![]
+            }
+        );
+        let installed = preset.installed_source.expect("installed source");
+        assert_eq!(installed.library_asset_id, asset.id);
+        assert_eq!(
+            installed.source_ref,
+            "market:agentdash.dev.marketplace:mcp_server_template:workspace-http-mcp"
+        );
+        assert_eq!(installed.source_version, "0.1.0");
+        assert_eq!(installed.source_digest, asset.payload_digest);
+    }
+
+    #[test]
+    fn mcp_template_install_rejects_missing_required_parameter() {
+        let asset = mcp_template_asset(json!({
+            "transport_template": {
+                "type": "sse",
+                "url_template": "https://mcp.example.com/${workspace}/sse"
+            },
+            "parameter_schema": {
+                "type": "object",
+                "required": ["workspace"],
+                "properties": {
+                    "workspace": { "type": "string" }
+                }
+            }
+        }));
+        let payload = match asset.typed_payload().expect("typed") {
+            LibraryAssetPayload::McpServerTemplate(payload) => payload,
+            other => panic!("unexpected payload: {other:?}"),
+        };
+
+        let err = mcp_preset_from_template_install(
+            Uuid::new_v4(),
+            None,
+            &asset,
+            payload,
+            Some(&InstallLibraryAssetOptions::McpServerTemplate {
+                parameters: json!({}),
+            }),
+        )
+        .expect_err("missing parameter");
+
+        assert!(err.to_string().contains("workspace"));
+    }
+
+    fn mcp_template_asset(payload: serde_json::Value) -> LibraryAsset {
+        LibraryAsset::new(
+            LibraryAssetType::McpServerTemplate,
+            LibraryAssetScope::User,
+            Some("user-1".to_string()),
+            "workspace-http-mcp".to_string(),
+            "Workspace HTTP MCP".to_string(),
+            Some("HTTP MCP template".to_string()),
+            "0.1.0".to_string(),
+            LibraryAssetSource::RemoteImported,
+            Some(
+                "market:agentdash.dev.marketplace:mcp_server_template:workspace-http-mcp"
+                    .to_string(),
+            ),
+            seed_digest(&payload).expect("digest"),
+            payload,
+        )
+        .expect("library asset")
+    }
 }

@@ -107,12 +107,17 @@ DTO 层 `crates/agentdash-api/src/dto/shared_library.rs` 直接透传 `serde_jso
 
 ```jsonc
 {
-  "transport": "McpTransportConfig",
+  "transport_template": {
+    "type": "http | sse",
+    "url_template": "https://mcp.example.com/${workspace}/mcp"
+  },
   "route_policy": "auto | relay | direct?",
   "parameter_schema": "JSONSchema?",
   "capabilities": ["string"]
 }
 ```
+
+`mcp_server_template` 是公共模板，不是 Project 运行连接。模板只支持 HTTP/SSE URL template 与 `${parameter_key}` 占位符；`parameter_schema` 声明安装参数。安装时前端通过 `InstallLibraryAssetRequest.install_options = { asset_type: "mcp_server_template", parameters: {...} }` 提交参数，后端解析成 Project `McpTransportConfig` 并写入 Project MCP Preset 与 `InstalledAssetSource`。公共 payload 不保存 header/env/credential 值、本机路径、localhost 或私网 URL，原因是这些连接材料只属于用户安装上下文。
 
 ### `workflow_template`
 
@@ -217,11 +222,27 @@ source_missing > update_available > up_to_date
 
 ## Install Semantics
 
+External Marketplace source:
+
+1. 前端通过 `GET /api/marketplace/sources` 读取可展示来源与其支持的资产类型。
+2. 前端通过 `GET /api/marketplace/external-assets` 按 `source_key`、`asset_type`、`query`、`cursor`、`limit` 分页读取外部候选；跨来源列表只表达发现结果，cursor 分页绑定单一 source。
+3. 前端通过 `GET /api/marketplace/external-assets/{source_key}/{external_id}` 读取外部详情，详情仍属于 provider 视角的候选资产。
+4. 前端通过 `POST /api/marketplace/external-assets/import` 提交来源身份、外部资产身份和资产类型；后端从 provider 拉取 payload，生成 `LibraryAsset(source = remote_imported)`。
+5. 外部来源 `source_ref` 使用 `market:{source_key}:{asset_type}:{external_id}`；`payload_digest` 使用平台 canonical JSON 规则计算，远端 `digest` 只作为远端版本提示。
+
+External Marketplace refresh:
+
+- `POST /api/marketplace/external-assets/refresh` 返回 `remote_version`、`remote_digest`、`local_version`、`local_digest` 和 `status`。
+- `status` 使用 `up_to_date` / `update_available` / `source_missing` / `not_imported`。
+- refresh 只比较外部 listing 与本地 `remote_imported` LibraryAsset，Project 资源仍通过 Shared Library install / source-status 语义更新。
+
+Skill URL Import 是单项外部来源定位。`POST /api/projects/{project_id}/skill-assets/import` 保持 `{ url }` 入参和 Project `SkillAsset` 响应，但后端写入语义与外部来源一致：先创建或更新 `LibraryAsset(asset_type=skill_template, source=remote_imported)`，再安装到 Project 并写入 `InstalledAssetSource`。因此前端判断远端导入来源时应优先使用 `installed_source`，Project `SkillAsset.source` 不承载 GitHub / ClawHub / skills.sh 的版本事实。
+
 Marketplace install:
 
 1. 用户选择 `LibraryAsset`。
 2. 前端调用 install API。
-3. 后端按 `asset_type` 创建对应 Project 资源。
+3. 后端按 `asset_type` 创建对应 Project 资源；MCP 模板安装时由 `install_options.mcp_server_template.parameters` 解析最终 HTTP/SSE transport。
 4. Project 资源记录 `InstalledAssetSource`。
 5. Project 运行时只读取 Project 资源。
 

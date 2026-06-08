@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/06-05-external-marketplace-sources/prd.md", "reason": "父任务需求与已定 MVP 范围"}
+{"file": ".trellis/tasks/06-05-external-marketplace-sources/design.md", "reason": "父任务设计边界与 child 拆分依据"}
+{"file": ".trellis/tasks/06-05-external-marketplace-sources/implement.md", "reason": "父任务原始执行拆分与已完成项对照"}
+{"file": ".trellis/spec/backend/shared-library.md", "reason": "Shared Library 后端 import/install/source 语义"}
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "跨层 Shared Library 与外部 Marketplace 合同"}
+{"file": ".trellis/spec/backend/capability/integration-api.md", "reason": "Marketplace Source SPI 与 Integration 注册约束"}

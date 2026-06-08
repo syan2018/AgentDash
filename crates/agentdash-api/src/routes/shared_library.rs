@@ -8,10 +8,11 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::shared_library::{
-    InstallLibraryAssetInput, InstallLibraryAssetOutput, ProjectAssetPublishKind,
-    ProjectAssetSourceStatus, ProjectAssetSourceStatusItem, PublishLibraryAssetInput,
-    SeedBuiltinLibraryAssetsInput, SharedLibraryService, install_library_asset_to_project,
-    list_project_asset_source_status, publish_project_asset_to_library,
+    InstallLibraryAssetInput, InstallLibraryAssetOptions as ApplicationInstallLibraryAssetOptions,
+    InstallLibraryAssetOutput, ProjectAssetPublishKind, ProjectAssetSourceStatus,
+    ProjectAssetSourceStatusItem, PublishLibraryAssetInput, SeedBuiltinLibraryAssetsInput,
+    SharedLibraryService, install_library_asset_to_project, list_project_asset_source_status,
+    publish_project_asset_to_library,
 };
 use agentdash_domain::extension_package::ExtensionPackageArtifactOwner;
 use agentdash_domain::shared_library::{
@@ -143,10 +144,21 @@ pub async fn install_library_asset(
             library_asset_id: parse_library_asset_id(&req.library_asset_id)?,
             target_key: req.target_key,
             overwrite: req.overwrite,
+            install_options: req.install_options.map(install_options_input),
         },
     )
     .await?;
     Ok(Json(install_output_response(output)))
+}
+
+fn install_options_input(
+    options: agentdash_contracts::shared_library::InstallLibraryAssetOptions,
+) -> ApplicationInstallLibraryAssetOptions {
+    match options {
+        agentdash_contracts::shared_library::InstallLibraryAssetOptions::McpServerTemplate {
+            parameters,
+        } => ApplicationInstallLibraryAssetOptions::McpServerTemplate { parameters },
+    }
 }
 
 /// POST `/api/projects/:project_id/shared-library/publish`

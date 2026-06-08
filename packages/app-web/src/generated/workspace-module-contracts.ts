@@ -25,7 +25,21 @@ export type WorkspaceModuleOperation = { operation_key: string,
 /**
  * "runtime_action" | "protocol_channel" | "canvas" | "builtin"。
  */
-origin: string, description: string, input_schema?: JsonValue | null, output_schema?: JsonValue | null, permission_summary: Array<string>, };
+origin: string, description: string, input_schema?: JsonValue | null, output_schema?: JsonValue | null, permission_summary: Array<string>,
+/**
+ * 来源专属路由分量，invoke 据此直接派发（不拆 operation_key）。
+ */
+dispatch: WorkspaceModuleOperationDispatch, };
+
+/**
+ * operation 的来源专属派发分量。
+ *
+ * `origin` 是给人/UI 看的扁平标签；`dispatch` 承载 invoke 元工具据以**直接路由**的
+ * 结构化分量，由聚合层（`build_workspace_modules`）在构造 operation 时一并填好。
+ * invoke 据 `dispatch` 派发，**不再字符串拆 `operation_key`**（避免 channel method
+ * 名含驼峰时的反解析脆弱）。
+ */
+export type WorkspaceModuleOperationDispatch = { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_channel", channel_key: string, method_name: string, } | { "kind": "canvas", canvas_action: string, } | { "kind": "builtin", builtin_key: string, };
 
 /**
  * Module 状态 + 不可用原因。

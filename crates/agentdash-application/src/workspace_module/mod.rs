@@ -13,8 +13,9 @@
 mod tools;
 
 use agentdash_contracts::workspace_module::{
-    WorkspaceModuleDescriptor, WorkspaceModuleKind, WorkspaceModuleOperation, WorkspaceModuleStatus,
-    WorkspaceModuleSummary, WorkspaceModuleUiEntry,
+    WorkspaceModuleDescriptor, WorkspaceModuleKind, WorkspaceModuleOperation,
+    WorkspaceModuleOperationDispatch, WorkspaceModuleStatus, WorkspaceModuleSummary,
+    WorkspaceModuleUiEntry,
 };
 use agentdash_domain::canvas::Canvas;
 use agentdash_domain::shared_library::{
@@ -22,8 +23,147 @@ use agentdash_domain::shared_library::{
 };
 
 use crate::extension_runtime::ExtensionRuntimeProjection;
+use crate::runtime_gateway::ExtensionInvocationWorkspaceContext;
+use agentdash_domain::common::Vfs;
 
-pub use tools::{WorkspaceModuleDescribeTool, WorkspaceModuleListTool};
+pub use tools::{
+    WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
+    WorkspaceModulePresentTool,
+};
+
+/// invoke 解析出的 backend target + workspace 上下文。
+///
+/// backend 解析优先级（design D2-3）：`session.backend_execution`（remote 显式）→
+/// `vfs.default_mount().backend_id`（local）→ 都无则 `None`（调用方报"缺 backend"）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedInvocationBackend {
+    pub backend_id: String,
+    pub workspace: Option<ExtensionInvocationWorkspaceContext>,
+}
+
+/// 从 ExecutionContext 自推 backend + workspace（与 HTTP 侧
+/// `select_extension_invocation_workspace` 等价的 application 层共享逻辑）。
+///
+/// - `explicit_backend_id`：来自 `session.backend_execution`（remote 已 claim 的 backend），
+///   优先级最高；为 `None` 时回退到 vfs default mount 的 backend。
+/// - workspace 取与 backend 匹配且 root_ref 非空的 mount（优先 default mount）。
+pub fn resolve_invocation_backend(
+    vfs: Option<&Vfs>,
+    explicit_backend_id: Option<&str>,
+) -> Option<ResolvedInvocationBackend> {
+    let backend_id = match explicit_backend_id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => id.to_string(),
+        None => {
+            let mount = vfs?.default_mount()?;
+            let id = mount.backend_id.trim();
+            if id.is_empty() {
+                return None;
+            }
+            id.to_string()
+        }
+    };
+    let workspace = vfs.and_then(|vfs| select_invocation_workspace(vfs, &backend_id));
+    Some(ResolvedInvocationBackend {
+        backend_id,
+        workspace,
+    })
+}
+
+/// 选 backend 对应的 workspace mount（优先 default mount，再退第一个匹配 mount）。
+/// 与 `routes/extension_runtime.rs::select_extension_invocation_workspace` 同款规则。
+fn select_invocation_workspace(
+    vfs: &Vfs,
+    backend_id: &str,
+) -> Option<ExtensionInvocationWorkspaceContext> {
+    let backend_id = backend_id.trim();
+    if backend_id.is_empty() {
+        return None;
+    }
+    if let Some(default_mount_id) = vfs.default_mount_id.as_deref()
+        && let Some(mount) = vfs.mounts.iter().find(|mount| {
+            mount.id == default_mount_id
+                && mount.backend_id == backend_id
+                && !mount.root_ref.trim().is_empty()
+        })
+    {
+        return Some(ExtensionInvocationWorkspaceContext::new(
+            mount.id.clone(),
+            mount.root_ref.trim().to_string(),
+        ));
+    }
+    vfs.mounts
+        .iter()
+        .find(|mount| mount.backend_id == backend_id && !mount.root_ref.trim().is_empty())
+        .map(|mount| {
+            ExtensionInvocationWorkspaceContext::new(
+                mount.id.clone(),
+                mount.root_ref.trim().to_string(),
+            )
+        })
+}
+
+/// 轻量 input schema 校验（无外部 jsonschema 依赖）。
+///
+/// 覆盖 describe 出的 operation `input_schema` 的常见形态：顶层 `type` 与 `required`。
+/// 校验范围刻意保守——只拦截"类型大类不符"与"缺必填字段"这类明确违例，避免引入完整
+/// JSON Schema 运行时依赖。describe 暴露的 schema 与此校验成对（PRD 风险条）。
+/// 返回 `Err(reason)` 表示 input 不满足 schema。
+pub fn validate_input_against_schema(
+    schema: &serde_json::Value,
+    input: &serde_json::Value,
+) -> Result<(), String> {
+    let serde_json::Value::Object(schema_obj) = schema else {
+        // 非 object schema（如 `true`/空）不约束。
+        return Ok(());
+    };
+
+    if let Some(expected_type) = schema_obj.get("type").and_then(|t| t.as_str())
+        && !json_value_matches_type(input, expected_type)
+    {
+        return Err(format!(
+            "input 类型不匹配 schema：期望 `{expected_type}`，实际 `{}`",
+            json_value_type_name(input)
+        ));
+    }
+
+    if let Some(required) = schema_obj.get("required").and_then(|r| r.as_array()) {
+        let obj = input.as_object();
+        for field in required {
+            let Some(name) = field.as_str() else { continue };
+            let present = obj.is_some_and(|map| map.contains_key(name));
+            if !present {
+                return Err(format!("input 缺少 schema 要求的必填字段 `{name}`"));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn json_value_matches_type(value: &serde_json::Value, expected: &str) -> bool {
+    match expected {
+        "object" => value.is_object(),
+        "array" => value.is_array(),
+        "string" => value.is_string(),
+        "number" => value.is_number(),
+        "integer" => value.is_i64() || value.is_u64(),
+        "boolean" => value.is_boolean(),
+        "null" => value.is_null(),
+        // 未知 type 关键字不约束。
+        _ => true,
+    }
+}
+
+fn json_value_type_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
 
 /// module_id 前缀约定。
 pub const MODULE_ID_EXTENSION_PREFIX: &str = "ext:";
@@ -61,6 +201,9 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
                     input_schema: Some(action.input_schema.clone()),
                     output_schema: Some(action.output_schema.clone()),
                     permission_summary: action.permissions.clone(),
+                    dispatch: WorkspaceModuleOperationDispatch::RuntimeAction {
+                        action_key: action.action_key.clone(),
+                    },
                 })
                 .collect();
 
@@ -78,6 +221,10 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
                         input_schema: Some(method.input_schema.clone()),
                         output_schema: Some(method.output_schema.clone()),
                         permission_summary: method.permissions.clone(),
+                        dispatch: WorkspaceModuleOperationDispatch::ProtocolChannel {
+                            channel_key: channel.channel_key.clone(),
+                            method_name: method.name.clone(),
+                        },
                     });
                 }
             }
@@ -142,22 +289,13 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
 }
 
 fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
-    // canvas bindings → operations（origin = canvas，schema 先给最小）
-    let operations: Vec<WorkspaceModuleOperation> = canvas
-        .bindings
-        .iter()
-        .map(|binding| WorkspaceModuleOperation {
-            operation_key: format!("binding.{}", binding.alias),
-            origin: "canvas".to_string(),
-            description: format!(
-                "canvas data binding `{}` <- {} ({})",
-                binding.alias, binding.source_uri, binding.content_type
-            ),
-            input_schema: None,
-            output_schema: None,
-            permission_summary: Vec::new(),
-        })
-        .collect();
+    // canvas binding 是声明式数据引用（alias <- source_uri），**不是可 invoke 的 RPC**
+    // （research/02、design §4）。canvas runtime action 形态是 RuntimeActionKey，与 binding
+    // alias 不是同一概念，且 Canvas 实体本身不声明可执行 action。本轮 canvas module 因此
+    // 不投影任何 invokable operation——operations 为空，仅保留 ui_entry 供 present/read。
+    // 一旦 canvas 暴露真正的 runtime action surface，再在此处投影为
+    // `WorkspaceModuleOperationDispatch::Canvas { canvas_action }`（保持单一 canonical）。
+    let operations: Vec<WorkspaceModuleOperation> = Vec::new();
 
     // entry/files → ui_entry(canvas)
     let ui_entries = vec![WorkspaceModuleUiEntry {
@@ -364,6 +502,25 @@ mod tests {
             .find(|operation| operation.origin == "protocol_channel")
             .expect("channel-as-operation");
         assert_eq!(channel_op.operation_key, "demo.api.readProfile");
+        // dispatch 结构化分量正确，channel_key 含点、method 保留原始驼峰
+        assert_eq!(
+            channel_op.dispatch,
+            WorkspaceModuleOperationDispatch::ProtocolChannel {
+                channel_key: "demo.api".to_string(),
+                method_name: "readProfile".to_string(),
+            }
+        );
+        let action_op = extension
+            .operations
+            .iter()
+            .find(|operation| operation.origin == "runtime_action")
+            .expect("action-as-operation");
+        assert_eq!(
+            action_op.dispatch,
+            WorkspaceModuleOperationDispatch::RuntimeAction {
+                action_key: "demo.profile".to_string(),
+            }
+        );
 
         // workspace tab → ui entry
         assert_eq!(extension.ui_entries.len(), 1);
@@ -374,6 +531,11 @@ mod tests {
             .find(|module| module.summary.kind == WorkspaceModuleKind::Canvas)
             .expect("canvas module");
         assert_eq!(canvas_module.summary.module_id, "canvas:dashboard-a");
+        // canvas binding 不是 invokable operation：canvas module 本轮无可调用 operation
+        assert!(canvas_module.operations.is_empty());
+        // 仍保留 ui_entry 供 present
+        assert_eq!(canvas_module.ui_entries.len(), 1);
+        assert_eq!(canvas_module.ui_entries[0].renderer_kind, "canvas");
     }
 
     #[test]

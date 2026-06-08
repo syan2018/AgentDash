@@ -79,7 +79,8 @@ pub const CAP_FILE_WRITE: &str = "file_write";
 /// 命令执行：shell_exec
 pub const CAP_SHELL_EXECUTE: &str = "shell_execute";
 pub const CAP_CANVAS: &str = "canvas";
-/// Workspace module 发现：workspace_module_list, workspace_module_describe
+/// Workspace module：workspace_module_list, workspace_module_describe,
+/// workspace_module_invoke, workspace_module_present
 pub const CAP_WORKSPACE_MODULE: &str = "workspace_module";
 pub const CAP_WORKFLOW: &str = "workflow";
 pub const CAP_COLLABORATION: &str = "collaboration";
@@ -126,8 +127,12 @@ pub const CLUSTER_CANVAS_TOOLS: &[&str] = &[
     "bind_canvas_data",
     "present_canvas",
 ];
-pub const CLUSTER_WORKSPACE_MODULE_TOOLS: &[&str] =
-    &["workspace_module_list", "workspace_module_describe"];
+pub const CLUSTER_WORKSPACE_MODULE_TOOLS: &[&str] = &[
+    "workspace_module_list",
+    "workspace_module_describe",
+    "workspace_module_invoke",
+    "workspace_module_present",
+];
 
 /// 返回 ToolCluster 下属的全部工具名。
 pub fn cluster_tools(cluster: ToolCluster) -> &'static [&'static str] {
@@ -372,6 +377,20 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             "workspace_module_describe",
             "Describe Workspace Module",
             "返回单个 workspace module 的 UI entries 与 operations（含 input/output schema）",
+            ToolCluster::WorkspaceModule,
+            CAP_WORKSPACE_MODULE,
+        ),
+        ToolDescriptor::platform(
+            "workspace_module_invoke",
+            "Invoke Workspace Module",
+            "按 module_id + operation_key + input 调用 workspace module 的 operation（宿主解析内部路由并分支派发）",
+            ToolCluster::WorkspaceModule,
+            CAP_WORKSPACE_MODULE,
+        ),
+        ToolDescriptor::platform(
+            "workspace_module_present",
+            "Present Workspace Module",
+            "请求前端打开/激活 workspace module 的 UI view（extension webview 或 canvas panel）",
             ToolCluster::WorkspaceModule,
             CAP_WORKSPACE_MODULE,
         ),

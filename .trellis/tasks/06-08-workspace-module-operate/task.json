@@ -3,7 +3,7 @@
   "name": "workspace-module-operate",
   "title": "Workspace Module 操作面 (invoke + present)",
   "description": "workspace_module_invoke 按 module 来源分支派发(extension→RuntimeGateway, canvas→现有 canvas service, builtin→对应 service)+服务端 schema/权限/归属校验;workspace_module_present best-effort GUI 推送与诊断;canvas 首轮包现有 service 不另起 authoring。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

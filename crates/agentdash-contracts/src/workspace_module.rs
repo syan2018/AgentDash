@@ -84,6 +84,28 @@ pub struct WorkspaceModuleUiEntry {
     pub title: String,
 }
 
+/// operation 的来源专属派发分量。
+///
+/// `origin` 是给人/UI 看的扁平标签；`dispatch` 承载 invoke 元工具据以**直接路由**的
+/// 结构化分量，由聚合层（`build_workspace_modules`）在构造 operation 时一并填好。
+/// invoke 据 `dispatch` 派发，**不再字符串拆 `operation_key`**（避免 channel method
+/// 名含驼峰时的反解析脆弱）。
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkspaceModuleOperationDispatch {
+    /// extension runtime action：直接以 `action_key` 走 RuntimeGateway。
+    RuntimeAction { action_key: String },
+    /// extension protocol channel method：走 ExtensionRuntimeChannelInvoker，不经 action_key。
+    ProtocolChannel {
+        channel_key: String,
+        method_name: String,
+    },
+    /// canvas runtime action：以 UserCanvas actor 走 RuntimeGateway。
+    Canvas { canvas_action: String },
+    /// builtin module operation：预留，本轮 invoke 返回 unimplemented。
+    Builtin { builtin_key: String },
+}
+
 /// 单个 operation（extension action / protocol channel method / canvas / builtin
 /// 同构呈现）。
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
@@ -97,6 +119,8 @@ pub struct WorkspaceModuleOperation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Value>,
     pub permission_summary: Vec<String>,
+    /// 来源专属路由分量，invoke 据此直接派发（不拆 operation_key）。
+    pub dispatch: WorkspaceModuleOperationDispatch,
 }
 
 /// `describe` 返回的完整 descriptor。

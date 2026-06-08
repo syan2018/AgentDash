@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Surface invoke 必须复用 RuntimeGateway actor/context/trace 约束"}
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "Extension、Canvas promote、Shared Library 与 Project installation 的事实源契约"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Workspace Module Registry 横跨 backend/API/frontend/local runtime，需要检查事实源与投影边界"}
+{"file": ".trellis/tasks/06-04-plugin-extension-taxonomy/design.md", "reason": "沿用 Integration / Extension / Capability Pack 的分层与命名结论"}
+{"file": ".trellis/tasks/archive/2026-05/05-26-ts-extension-host-sdk/design.md", "reason": "Extension runtime actions、workspace tabs、TS host、packaged extension 的既有设计"}
+{"file": ".trellis/tasks/archive/2026-05/05-26-canvas-promote-extension/design.md", "reason": "Canvas 到 Extension package 的映射与 promote 链路"}

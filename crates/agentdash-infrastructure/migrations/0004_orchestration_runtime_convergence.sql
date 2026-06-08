@@ -3,6 +3,13 @@ ALTER TABLE runtime_session_execution_anchors
     ADD COLUMN IF NOT EXISTS node_path text,
     ADD COLUMN IF NOT EXISTS node_attempt integer;
 
+ALTER TABLE lifecycle_runs
+    DROP CONSTRAINT IF EXISTS lifecycle_runs_topology_root_graph_check,
+    DROP COLUMN IF EXISTS root_graph_id;
+
+ALTER TABLE agent_frames
+    DROP COLUMN IF EXISTS procedure_id;
+
 ALTER TABLE runtime_session_execution_anchors
     DROP COLUMN IF EXISTS assignment_id,
     DROP COLUMN IF EXISTS graph_instance_id,

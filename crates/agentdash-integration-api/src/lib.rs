@@ -26,6 +26,13 @@ pub mod integration;
 // 复用已有 trait，不重新定义
 pub use agentdash_domain::context_source::ContextSourceKind;
 pub use agentdash_spi::AgentConnector;
+pub use agentdash_spi::platform::marketplace_source;
+pub use agentdash_spi::{
+    MarketplaceAssetDetail, MarketplaceAssetListing, MarketplaceAssetPage, MarketplaceAssetQuery,
+    MarketplaceFetchedAsset, MarketplaceFetchedAssetPayload, MarketplaceInstallRequirement,
+    MarketplaceInstallRequirementKind, MarketplaceSourceDescriptor, MarketplaceSourceError,
+    MarketplaceSourceProvider, MarketplaceSourceProviderKind, MarketplaceSourceTrustLevel,
+};
 pub use agentdash_spi::{RoutineTriggerProvider, SourceResolver, VfsDiscoveryProvider};
 
 pub use auth::{

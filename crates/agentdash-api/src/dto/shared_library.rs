@@ -3,10 +3,10 @@ use serde::Serialize;
 use uuid::Uuid;
 
 pub use agentdash_contracts::shared_library::{
-    InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
-    LibraryAssetDto, LibraryExtensionPackageArtifactDto, ListLibraryAssetsQuery,
-    ProjectAssetSourceStatusDto, ProjectAssetSourceStatusItemDto, PublishLibraryAssetRequest,
-    SeedBuiltinLibraryAssetsRequest,
+    InstallLibraryAssetOptions, InstallLibraryAssetRequest, InstallLibraryAssetResponse,
+    InstalledAssetSourceDto, LibraryAssetDto, LibraryExtensionPackageArtifactDto,
+    ListLibraryAssetsQuery, ProjectAssetSourceStatusDto, ProjectAssetSourceStatusItemDto,
+    PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
     SharedLibrarySourceStatus as ContractSharedLibrarySourceStatus,
 };
 use agentdash_domain::extension_package::ExtensionPackageArtifact;

@@ -434,9 +434,9 @@ mod tests {
                     description: Some("企业搜索 MCP 模板".to_string()),
                     version: "0.2.0".to_string(),
                     payload: json!({
-                        "transport": {
+                        "transport_template": {
                             "type": "http",
-                            "url": "https://mcp.example.com/search"
+                            "url_template": "https://mcp.example.com/search"
                         },
                         "route_policy": "direct",
                         "capabilities": ["search"]
@@ -471,9 +471,9 @@ mod tests {
                 description: None,
                 version: "0.2.0".to_string(),
                 payload: json!({
-                    "transport": {
+                    "transport_template": {
                         "type": "http",
-                        "url": "https://mcp.example.com/search"
+                        "url_template": "https://mcp.example.com/search"
                     },
                     "route_policy": "direct",
                     "capabilities": ["search"]
@@ -488,9 +488,9 @@ mod tests {
 
         let mut changed_seed = base_seed;
         changed_seed.seed.payload = json!({
-            "transport": {
+            "transport_template": {
                 "type": "http",
-                "url": "https://mcp.example.com/search-v2"
+                "url_template": "https://mcp.example.com/search-v2"
             },
             "route_policy": "direct",
             "capabilities": ["search"]
@@ -511,9 +511,9 @@ mod tests {
         let repo = InMemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
         let payload = json!({
-            "transport": {
+            "transport_template": {
                 "type": "http",
-                "url": "https://mcp.example.com/search"
+                "url_template": "https://mcp.example.com/search"
             },
             "route_policy": "direct",
             "capabilities": ["search"]
@@ -613,9 +613,9 @@ mod tests {
                 description: None,
                 version: "0.2.0".to_string(),
                 payload: json!({
-                    "transport": {
+                    "transport_template": {
                         "type": "http",
-                        "url": "https://mcp.example.com/search"
+                        "url_template": "https://mcp.example.com/search"
                     },
                     "route_policy": "direct",
                     "capabilities": ["search"]
@@ -631,9 +631,9 @@ mod tests {
         let mut changed_seed = base_seed;
         changed_seed.seed.version = "0.2.1".to_string();
         changed_seed.seed.payload = json!({
-            "transport": {
+            "transport_template": {
                 "type": "http",
-                "url": "https://mcp.example.com/search-v2"
+                "url_template": "https://mcp.example.com/search-v2"
             },
             "route_policy": "direct",
             "capabilities": ["search"]
@@ -664,9 +664,9 @@ mod tests {
                     description: None,
                     version: "next".to_string(),
                     payload: json!({
-                        "transport": {
+                        "transport_template": {
                             "type": "http",
-                            "url": "https://mcp.example.com/search"
+                            "url_template": "https://mcp.example.com/search"
                         },
                         "route_policy": "direct",
                         "capabilities": ["search"]

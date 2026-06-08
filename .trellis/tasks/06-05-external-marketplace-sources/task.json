@@ -18,7 +18,12 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "06-06-marketplace-source-spi-registry",
+    "06-06-enterprise-marketplace-api-contracts",
+    "06-06-skill-marketplace-import-convergence",
+    "06-06-marketplace-backend-mvp-closure"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

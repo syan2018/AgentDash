@@ -48,6 +48,15 @@ use agentdash_contracts::extension_runtime::{
     ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
     UninstallExtensionInstallationResponse,
 };
+use agentdash_contracts::external_marketplace::{
+    ExternalMarketplaceAssetDetailDto, ExternalMarketplaceAssetListingDto,
+    ExternalMarketplaceAssetPageDto, ExternalMarketplaceInstallRequirementDto,
+    ExternalMarketplaceRefreshStatus, ImportExternalMarketplaceAssetRequest,
+    ImportExternalMarketplaceAssetResponse, ListExternalMarketplaceAssetsQuery,
+    MarketplaceInstallRequirementKindDto, MarketplaceSourceDto, MarketplaceSourceProviderKindDto,
+    MarketplaceSourceTrustLevelDto, RefreshExternalMarketplaceAssetRequest,
+    RefreshExternalMarketplaceAssetResponse,
+};
 use agentdash_contracts::llm_provider::{
     CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
     DeleteLlmProviderResponse, DeleteLlmProviderUserCredentialResponse,
@@ -86,8 +95,9 @@ use agentdash_contracts::settings::{
     UpdateSettingsResponse,
 };
 use agentdash_contracts::shared_library::{
-    InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
-    LibraryAssetDto, LibraryExtensionPackageArtifactDto, ListLibraryAssetsQuery,
+    InstallLibraryAssetOptions, InstallLibraryAssetRequest, InstallLibraryAssetResponse,
+    InstalledAssetSourceDto, LibraryAssetDto, LibraryExtensionPackageArtifactDto,
+    ListLibraryAssetsQuery, McpServerTemplatePayloadDto, McpTransportTemplateDto,
     ProjectAssetSourceStatusDto, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
 };
 use agentdash_contracts::vfs::{
@@ -522,10 +532,37 @@ fn main() {
             export_all::<LibraryAssetDto>(dir);
             export_all::<ListLibraryAssetsQuery>(dir);
             export_all::<SeedBuiltinLibraryAssetsRequest>(dir);
+            export_all::<InstallLibraryAssetOptions>(dir);
             export_all::<InstallLibraryAssetRequest>(dir);
             export_all::<InstallLibraryAssetResponse>(dir);
+            export_all::<McpTransportTemplateDto>(dir);
+            export_all::<McpServerTemplatePayloadDto>(dir);
             export_all::<PublishLibraryAssetRequest>(dir);
             export_all::<ProjectAssetSourceStatusDto>(dir);
+        },
+    );
+
+    // --- external-marketplace-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "external-marketplace-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<MarketplaceSourceProviderKindDto>(dir);
+            export_all::<MarketplaceSourceTrustLevelDto>(dir);
+            export_all::<MarketplaceSourceDto>(dir);
+            export_all::<ListExternalMarketplaceAssetsQuery>(dir);
+            export_all::<MarketplaceInstallRequirementKindDto>(dir);
+            export_all::<ExternalMarketplaceInstallRequirementDto>(dir);
+            export_all::<ExternalMarketplaceAssetListingDto>(dir);
+            export_all::<ExternalMarketplaceAssetPageDto>(dir);
+            export_all::<ExternalMarketplaceAssetDetailDto>(dir);
+            export_all::<ImportExternalMarketplaceAssetRequest>(dir);
+            export_all::<ImportExternalMarketplaceAssetResponse>(dir);
+            export_all::<RefreshExternalMarketplaceAssetRequest>(dir);
+            export_all::<ExternalMarketplaceRefreshStatus>(dir);
+            export_all::<RefreshExternalMarketplaceAssetResponse>(dir);
         },
     );
 
@@ -577,7 +614,7 @@ fn write_domain_dedup(
 
     let mut declarations = BTreeMap::new();
     collect_ts_files(tmp_dir.path(), &mut declarations);
-    let uses_json_value = declarations.remove("JsonValue").is_some();
+    declarations.remove("JsonValue");
 
     // Strip types already defined upstream (remove from declarations).
     let mut stripped: Vec<(String, String)> = Vec::new();
@@ -627,7 +664,7 @@ fn write_domain_dedup(
     lines.push(String::new());
 
     let mut has_imports = false;
-    if uses_json_value {
+    if text_references_type(&remaining_text, "JsonValue") {
         lines.push("import type { JsonValue } from \"./common-contracts\";".to_string());
         has_imports = true;
     }

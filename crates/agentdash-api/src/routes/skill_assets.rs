@@ -14,6 +14,7 @@ use uuid::Uuid;
 use agentdash_application::skill_asset::{
     CreateSkillAssetInput, ImportRemoteSkillAssetInput, SkillAssetApplicationError,
     SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput, content_from_bytes,
+    import_remote_skill_url_to_project,
 };
 use agentdash_contracts::core::DeletedIdResponse;
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
@@ -242,17 +243,17 @@ pub async fn import_remote_skill_asset(
     )
     .await?;
 
-    let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
     let remote_source = agentdash_infrastructure::HttpRemoteSkillSource::new();
-    let asset = service
-        .import_remote(
-            ImportRemoteSkillAssetInput {
-                project_id,
-                url: req.url,
-            },
-            &remote_source,
-        )
-        .await?;
+    let asset = import_remote_skill_url_to_project(
+        &state.repos,
+        ImportRemoteSkillAssetInput {
+            project_id,
+            owner_id: current_user.user_id.clone(),
+            url: req.url,
+        },
+        &remote_source,
+    )
+    .await?;
     Ok(Json(asset.into()))
 }
 

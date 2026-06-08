@@ -1,5 +1,6 @@
 export type {
   InstallLibraryAssetRequest,
+  InstallLibraryAssetOptions,
   InstallLibraryAssetResponse,
   InstalledAssetSourceDto,
   LibraryAssetDto,
@@ -7,6 +8,8 @@ export type {
   LibraryAssetSource,
   LibraryAssetType,
   ListLibraryAssetsQuery,
+  McpServerTemplatePayloadDto,
+  McpTransportTemplateDto,
   ProjectAssetSourceStatusDto,
   ProjectAssetSourceStatusItemDto,
   PublishLibraryAssetRequest,

@@ -16,6 +16,7 @@ import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useCoordinatorStore } from "../stores/coordinatorStore";
 import { WorkspaceList } from "../features/workspace/workspace-list";
+import { WorkspaceModulesPanel } from "../features/workspace-module/ui/WorkspaceModulesPanel";
 import { VfsBrowser } from "../features/vfs";
 import { resolveVfsSurface } from "../services/vfs";
 import type { ResolvedMountSummary } from "../types";
@@ -1103,6 +1104,13 @@ export function ProjectSettingsPage() {
                       onSetDefault={canEditProject ? (wsId) => void saveDefaultWorkspace(wsId) : undefined}
                       onInventoryChanged={() => setWorkspaceInventoryRefreshKey((key) => key + 1)}
                     />
+                  </SectionCard>
+
+                  <SectionCard
+                    title="Workspace Modules"
+                    description="Canvas 与 Extension 贡献的协作模块合并认知：kind / 来源 / 状态 / operations 与 UI entries 数；unavailable 模块给出诊断。启停在各自的 Extension / Canvas 管理入口完成。"
+                  >
+                    <WorkspaceModulesPanel projectId={project.id} />
                   </SectionCard>
 
                 </>

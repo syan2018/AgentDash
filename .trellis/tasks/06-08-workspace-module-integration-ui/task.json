@@ -3,7 +3,7 @@
   "name": "workspace-module-integration-ui",
   "title": "Workspace Module 集成 review 与项目层管理 UI",
   "description": "统一 trace/权限/ContextFrame;实现项目设置页 WorkspaceModule 合并管理 UI(消费 Child 1 契约);文档与 slug 改名收尾。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -19,7 +19,7 @@
   "pr_url": null,
   "subtasks": [],
   "children": [],
-  "parent": "06-08-agent-runtime-surface-registry",
+  "parent": "06-08-workspace-module-registry",
   "relatedFiles": [],
   "notes": "",
   "meta": {}

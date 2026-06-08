@@ -1,6 +1,6 @@
 {
-  "id": "agent-runtime-surface-registry",
-  "name": "agent-runtime-surface-registry",
+  "id": "workspace-module-registry",
+  "name": "workspace-module-registry",
   "title": "Agent Workspace Module Registry 与 Canvas Extension 协作面预研",
   "description": "讨论并规划 Agent Workspace Module Registry，把 Extension、Canvas、Protocol Channel 与内置 GUI/接口协作模块统一为 Agent 可发现、可展开、可调用、可展示的工作台协作模块。",
   "status": "planning",

@@ -171,6 +171,7 @@ struct FrameRow {
     mcp_surface_json: Option<String>,
     execution_profile_json: Option<String>,
     visible_canvas_mount_ids_json: Option<String>,
+    visible_workspace_module_refs_json: Option<String>,
     created_by_kind: String,
     created_by_id: Option<String>,
     created_at: DateTime<Utc>,
@@ -207,9 +208,10 @@ impl TryFrom<FrameRow> for AgentFrame {
                 row.visible_canvas_mount_ids_json,
                 "visible_canvas_mount_ids_json",
             )?,
-            // Workspace module 裁切预留字段（Child 1）：尚无持久化列，运行时默认 None；
-            // Child 3 落 DB 列与编辑入口后再接管读写。
-            visible_workspace_module_refs_json: None,
+            visible_workspace_module_refs_json: parse_opt_json(
+                row.visible_workspace_module_refs_json,
+                "visible_workspace_module_refs_json",
+            )?,
             created_by_kind: row.created_by_kind,
             created_by_id: row.created_by_id,
             created_at: row.created_at,
@@ -234,9 +236,10 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
                 (id, agent_id, revision,
                  effective_capability_json, context_slice_json, vfs_surface_json, mcp_surface_json,
                  visible_canvas_mount_ids_json,
+                 visible_workspace_module_refs_json,
                  execution_profile_json,
                  created_by_kind, created_by_id, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
         )
         .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
@@ -246,6 +249,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .bind(opt_json_str(&frame.vfs_surface_json)?)
         .bind(opt_json_str(&frame.mcp_surface_json)?)
         .bind(opt_json_str(&frame.visible_canvas_mount_ids_json)?)
+        .bind(opt_json_str(&frame.visible_workspace_module_refs_json)?)
         .bind(opt_json_str(&frame.execution_profile_json)?)
         .bind(&frame.created_by_kind)
         .bind(&frame.created_by_id)
@@ -261,6 +265,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"SELECT id,agent_id,revision,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       visible_canvas_mount_ids_json,
+                      visible_workspace_module_refs_json,
                       execution_profile_json,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE id=$1"#,
@@ -278,6 +283,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"SELECT id,agent_id,revision,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       visible_canvas_mount_ids_json,
+                      visible_workspace_module_refs_json,
                       execution_profile_json,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE agent_id=$1 ORDER BY revision DESC LIMIT 1"#,
@@ -295,6 +301,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"SELECT id,agent_id,revision,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       visible_canvas_mount_ids_json,
+                      visible_workspace_module_refs_json,
                       execution_profile_json,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE agent_id=$1 ORDER BY revision ASC"#,

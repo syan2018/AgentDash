@@ -1,6 +1,6 @@
 # Design · Workspace Module 操作面 (invoke + present)
 
-> Parent design: `.trellis/tasks/06-08-agent-runtime-surface-registry/design.md` §6-8、§10。研究依据：本任务 `research/01..06`。Child 1 已落地契约/聚合/只读工具。
+> Parent design: `.trellis/tasks/06-08-workspace-module-registry/design.md` §6-8、§10。研究依据：本任务 `research/01..06`。Child 1 已落地契约/聚合/只读工具。
 
 ## 1. 范围
 

@@ -1,6 +1,6 @@
 # Design · Workspace Module 读路径与单一契约
 
-> Parent design: `.trellis/tasks/06-08-agent-runtime-surface-registry/design.md`。研究依据：本任务 `research/01..07`。
+> Parent design: `.trellis/tasks/06-08-workspace-module-registry/design.md`。研究依据：本任务 `research/01..07`。
 
 ## 1. 范围
 

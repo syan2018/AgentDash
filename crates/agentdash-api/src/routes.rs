@@ -33,6 +33,7 @@ pub mod terminals;
 pub mod vfs;
 pub mod vfs_surfaces;
 pub mod workflows;
+pub mod workspace_module;
 pub mod workspaces;
 
 use std::sync::Arc;
@@ -89,6 +90,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(shared_library::router())
         .merge(marketplace::router())
         .merge(extension_runtime::router())
+        .merge(workspace_module::router())
         .merge(project_extensions::router())
         .merge(extension_package_artifacts::router())
         .merge(sessions::router())

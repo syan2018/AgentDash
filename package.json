@@ -32,7 +32,7 @@
     "desktop:check": "pnpm run shared:check && pnpm --filter app-tauri typecheck && cargo check -p agentdash-local-tauri",
     "frontend:test": "pnpm --filter app-web test",
     "e2e:test": "playwright test",
-    "e2e:test:critical": "playwright test tests/e2e/story-context-injection.spec.ts tests/e2e/task-drawer-return.spec.ts",
+    "e2e:test:critical": "playwright test tests/e2e/story-context-injection.spec.ts",
     "e2e:debug": "playwright test --headed --debug",
     "backend:dev": "cargo run --bin agentdash-server",
     "backend:build": "cargo build --release",

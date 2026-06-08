@@ -157,7 +157,7 @@ impl SessionRuntimeInner {
                     "查找 delivery RuntimeSession `{session_id}` anchor 失败，无法热更新能力状态: {error}"
                 ))
             })?;
-        if !delivery_anchor.is_some_and(|anchor| anchor.agent_id == target_frame.agent_id) {
+        if delivery_anchor.is_none_or(|anchor| anchor.agent_id != target_frame.agent_id) {
             return Err(ConnectorError::Runtime(format!(
                 "Agent `{}` 未绑定 delivery RuntimeSession `{session_id}` 的 anchor，拒绝热更新能力状态",
                 target_frame.agent_id

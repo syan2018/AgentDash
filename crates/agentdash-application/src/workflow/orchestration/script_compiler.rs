@@ -629,7 +629,7 @@ impl<'a> Compiler<'a> {
                 procedure: AgentProcedureExecutionSpec::Snapshot {
                     procedure_key: None,
                     name: Some(agent.name.clone()),
-                    contract: inline_agent_contract(agent),
+                    contract: Box::new(inline_agent_contract(agent)),
                     source_ref: Some(self.input.source_ref.clone()),
                     contract_digest: Some(inline_agent_contract_digest(agent)),
                 },

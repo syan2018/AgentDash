@@ -33,10 +33,11 @@ mod tool_builder;
 mod tests;
 
 pub(crate) use hook_dispatch::{HookTriggerDispatchResult, HookTriggerInput};
+#[cfg(test)]
+pub(crate) use runtime_context_transition::PendingRuntimeContextTransitionInput;
 pub(crate) use runtime_context_transition::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextApplication,
-    PendingRuntimeContextTransitionInput, RuntimeContextTransitionOutcome,
-    build_initial_capability_state_frame,
+    RuntimeContextTransitionOutcome, build_initial_capability_state_frame,
 };
 
 #[derive(Clone)]

@@ -1512,7 +1512,7 @@ mod launcher_drain_tests {
             procedure: AgentProcedureExecutionSpec::Snapshot {
                 procedure_key: None,
                 name: Some("Inline Review".to_string()),
-                contract: AgentProcedureContract::default(),
+                contract: Box::new(AgentProcedureContract::default()),
                 source_ref: None,
                 contract_digest: Some("sha256:inline".to_string()),
             },

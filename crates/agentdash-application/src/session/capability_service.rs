@@ -6,10 +6,12 @@ use std::io;
 use super::capability_projection::{
     SessionCapabilityProjectionInput, derive_session_skill_baseline, merge_live_vfs_skill_entries,
 };
+#[cfg(test)]
+use super::hub::PendingRuntimeContextTransitionInput;
 use super::hub::SessionRuntimeInner;
 use super::hub::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextApplication,
-    PendingRuntimeContextTransitionInput, RuntimeContextTransitionOutcome,
+    RuntimeContextTransitionOutcome,
 };
 use super::runtime_commands::{
     AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeDeliveryCommand,
@@ -113,6 +115,7 @@ impl SessionCapabilityService {
             .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn enqueue_pending_runtime_context_transition(
         &self,
         mut input: PendingRuntimeContextTransitionInput,

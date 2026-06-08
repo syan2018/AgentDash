@@ -19,12 +19,10 @@
 use std::collections::BTreeSet;
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, AgentFrameRepository, AgentProcedureContract, MountDirective,
-    ToolCapabilityDirective,
+    ActivityDefinition, AgentProcedureContract, MountDirective, ToolCapabilityDirective,
 };
 use agentdash_spi::CapabilityScopeCtx;
-use agentdash_spi::hooks::SharedHookRuntime;
-use agentdash_spi::{CapabilityState, SetDelta, Vfs};
+use agentdash_spi::{CapabilityState, Vfs};
 use uuid::Uuid;
 
 use crate::capability::{
@@ -33,11 +31,7 @@ use crate::capability::{
     McpCandidates, ToolContribution,
 };
 use crate::platform_config::PlatformConfig;
-use crate::session::SessionCapabilityService;
-use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
-use crate::session::types::AgentFrameRuntimeTarget;
 use crate::vfs::build_lifecycle_mount_with_node_scope;
-use crate::workflow::frame_builder::AgentFrameBuilder;
 
 /// 激活一个 lifecycle activity 所需的全部纯计算输入。
 ///
@@ -99,8 +93,6 @@ pub struct ActivityActivation {
     pub capability_state: CapabilityState,
     /// 合并并去重后的 MCP server 列表(platform + custom)。
     pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    /// workflow contract + activity 级工具能力指令，作为 runtime command 的 source intent。
-    pub tool_directives: Vec<ToolCapabilityDirective>,
     /// 已解析通过的 capability key 集合(供 hook runtime 初始化、日志、delta 对比)。
     pub capability_keys: BTreeSet<String>,
     /// kickoff prompt 结构化片段;若 activity 没有 port/workflow,字段可能全为空。
@@ -206,7 +198,6 @@ pub fn activate_activity_with_platform(
     ActivityActivation {
         capability_state: cap_output,
         mcp_servers,
-        tool_directives: combined_directives,
         capability_keys,
         kickoff_prompt,
         lifecycle_mount,
@@ -282,75 +273,7 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
     servers.retain(|server| seen.insert(server.name.clone()));
 }
 
-// ─── Appliers ─────────────────────────────────────────────
-//
-// 两个 applier 对应两条激活路径:
-//   A. Orchestrator 创建 AgentNode session —— apply_to_new_lifecycle_session
-//   B. PhaseNode / advance tool 热更新 —— apply_to_frame_runtime_target
-//
-// 新 RuntimeSession launch 必须先写入 AgentFrame revision，再由 frame 投影
-// FrameLaunchEnvelope；running session 只消费已生效的 runtime capability transition。
-
-/// 返回 capability key delta；若仅工具级裁剪 / MCP 表面变化，`capability_delta`
-/// 仍可能是 `None`，但 `emitted_capability_change=true` 表示已经触发工具重建、
-/// runtime context update 事件。
-///
-/// 热更新路径先通过 `AgentFrameBuilder` 写入新 frame revision，再基于该 revision
-/// 投影 runtime delivery；保证 frame audit trail 与实际 runtime surface 一致。
-pub(crate) async fn apply_to_frame_runtime_target(
-    activation: &ActivityActivation,
-    hook_runtime: &SharedHookRuntime,
-    session_capability: &SessionCapabilityService,
-    target: AgentFrameRuntimeTarget,
-    base_surface: Option<CapabilityState>,
-    turn_id: Option<&str>,
-    phase_node_key: &str,
-    run_id: Option<Uuid>,
-    lifecycle_key: Option<&str>,
-    agent_id: Uuid,
-    frame_repo: &dyn AgentFrameRepository,
-) -> Result<RuntimeContextTransitionOutcome, String> {
-    if hook_runtime.session_id() != target.delivery_runtime_session_id {
-        return Err(format!(
-            "Hook runtime session `{}` 与 delivery RuntimeSession `{}` 不一致，拒绝热更新能力状态",
-            hook_runtime.session_id(),
-            target.delivery_runtime_session_id
-        ));
-    }
-    let target_surface = build_capability_state_for_activation(activation, base_surface.as_ref());
-    let key_delta = SetDelta::compute(
-        &hook_runtime.current_capabilities(),
-        &activation.capability_keys,
-    );
-
-    let frame = AgentFrameBuilder::new(agent_id)
-        .with_capability_state(&target_surface)
-        .with_runtime_session(&target.delivery_runtime_session_id)
-        .with_created_by("hot_update", Some(phase_node_key.to_string()))
-        .build(frame_repo)
-        .await
-        .map_err(|e| format!("热更新写入 frame revision 失败: {e}"))?;
-
-    session_capability
-        .apply_live_runtime_context_transition(
-            hook_runtime,
-            LiveRuntimeContextTransitionInput {
-                target_frame_id: frame.id,
-                delivery_runtime_session_id: target.delivery_runtime_session_id,
-                turn_id: turn_id.map(ToString::to_string),
-                phase_node: phase_node_key.to_string(),
-                run_id,
-                lifecycle_key: lifecycle_key.map(ToString::to_string),
-                before_state: base_surface,
-                after_state: target_surface,
-                capability_keys: activation.capability_keys.clone(),
-                key_delta,
-                apply_mode: "live",
-            },
-        )
-        .await
-}
-
+#[cfg(test)]
 pub(crate) fn build_capability_state_for_activation(
     activation: &ActivityActivation,
     base_surface: Option<&CapabilityState>,
@@ -364,20 +287,6 @@ pub(crate) fn build_capability_state_for_activation(
         inherit_skills_from: base_surface,
     });
     surface.capability_state
-}
-
-/// 从当前 runtime MCP server 列表构造 `AgentMcpServerEntry`，供 activity activation
-/// 在 phase 热更新路径里解析自定义 `mcp:<name>` 能力。
-pub(crate) fn agent_mcp_entries_from_servers(
-    servers: &[agentdash_spi::SessionMcpServer],
-) -> Vec<AgentMcpServerEntry> {
-    servers
-        .iter()
-        .map(|server| AgentMcpServerEntry {
-            name: server.name.clone(),
-            server: server.clone(),
-        })
-        .collect()
 }
 
 // ─── available_presets 辅助 ────────────────────────────────
@@ -630,7 +539,6 @@ mod tests {
                         mount_id: Some("review".to_string()),
                     },
                 ],
-                ..Default::default()
             },
             ..AgentProcedureContract::default()
         };

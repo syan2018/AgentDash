@@ -14,8 +14,8 @@ use agentdash_domain::backend::{
     BackendExecutionTerminalKind,
 };
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
-    LifecycleGateRepository,
+    AgentFrame, LifecycleAgent, LifecycleAgentRepository, RuntimeSessionExecutionAnchor,
+    RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::hooks::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
@@ -57,6 +57,10 @@ use crate::session::capability_state::{
     ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
 };
 use crate::session::types::AgentFrameRuntimeTarget;
+use crate::test_support::{
+    MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,
+    MemoryRuntimeSessionExecutionAnchorRepository,
+};
 use crate::vfs::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
     MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
@@ -75,6 +79,7 @@ fn test_hub(
 ) -> SessionRuntimeInner {
     let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
     let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
+    let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
     SessionRuntimeInner::new_with_hooks_and_persistence(
         connector,
         hook_provider,
@@ -82,164 +87,10 @@ fn test_hub(
     )
     .with_agent_frame_repo(frame_repo)
     .with_lifecycle_gate_repo(gate_repo)
-}
-
-#[derive(Default)]
-struct MemoryAgentFrameRepository {
-    frames: TokioMutex<Vec<AgentFrame>>,
-}
-
-#[async_trait::async_trait]
-impl AgentFrameRepository for MemoryAgentFrameRepository {
-    async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
-        self.frames.lock().await.push(frame.clone());
-        Ok(())
-    }
-
-    async fn get(&self, frame_id: uuid::Uuid) -> Result<Option<AgentFrame>, DomainError> {
-        Ok(self
-            .frames
-            .lock()
-            .await
-            .iter()
-            .find(|frame| frame.id == frame_id)
-            .cloned())
-    }
-
-    async fn get_current(&self, agent_id: uuid::Uuid) -> Result<Option<AgentFrame>, DomainError> {
-        Ok(self
-            .frames
-            .lock()
-            .await
-            .iter()
-            .filter(|frame| frame.agent_id == agent_id)
-            .max_by_key(|frame| frame.revision)
-            .cloned())
-    }
-
-    async fn list_by_agent(&self, agent_id: uuid::Uuid) -> Result<Vec<AgentFrame>, DomainError> {
-        Ok(self
-            .frames
-            .lock()
-            .await
-            .iter()
-            .filter(|frame| frame.agent_id == agent_id)
-            .cloned()
-            .collect())
-    }
-
-    async fn append_visible_canvas_mount(
-        &self,
-        frame_id: uuid::Uuid,
-        mount_id: &str,
-    ) -> Result<(), DomainError> {
-        let mut frames = self.frames.lock().await;
-        let frame = frames
-            .iter_mut()
-            .find(|frame| frame.id == frame_id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_frame",
-                id: frame_id.to_string(),
-            })?;
-        frame.append_visible_canvas_mount(mount_id);
-        Ok(())
-    }
-}
-
-#[derive(Default)]
-struct MemoryLifecycleGateRepository {
-    gates: TokioMutex<Vec<LifecycleGate>>,
-}
-
-#[async_trait::async_trait]
-impl LifecycleGateRepository for MemoryLifecycleGateRepository {
-    async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
-        self.gates.lock().await.push(gate.clone());
-        Ok(())
-    }
-
-    async fn get(&self, id: uuid::Uuid) -> Result<Option<LifecycleGate>, DomainError> {
-        Ok(self
-            .gates
-            .lock()
-            .await
-            .iter()
-            .find(|gate| gate.id == id)
-            .cloned())
-    }
-
-    async fn list_open_for_agent(
-        &self,
-        agent_id: uuid::Uuid,
-    ) -> Result<Vec<LifecycleGate>, DomainError> {
-        Ok(self
-            .gates
-            .lock()
-            .await
-            .iter()
-            .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
-            .cloned()
-            .collect())
-    }
-
-    async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
-        let mut gates = self.gates.lock().await;
-        let existing = gates
-            .iter_mut()
-            .find(|existing| existing.id == gate.id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "lifecycle_gate",
-                id: gate.id.to_string(),
-            })?;
-        *existing = gate.clone();
-        Ok(())
-    }
-}
-
-#[derive(Default)]
-struct MemoryLifecycleAgentRepository {
-    agents: TokioMutex<Vec<LifecycleAgent>>,
-}
-
-#[async_trait::async_trait]
-impl LifecycleAgentRepository for MemoryLifecycleAgentRepository {
-    async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
-        self.agents.lock().await.push(agent.clone());
-        Ok(())
-    }
-
-    async fn get(&self, id: uuid::Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
-        Ok(self
-            .agents
-            .lock()
-            .await
-            .iter()
-            .find(|a| a.id == id)
-            .cloned())
-    }
-
-    async fn list_by_run(&self, run_id: uuid::Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
-        Ok(self
-            .agents
-            .lock()
-            .await
-            .iter()
-            .filter(|a| a.run_id == run_id)
-            .cloned()
-            .collect())
-    }
-
-    async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
-        let mut agents = self.agents.lock().await;
-        if let Some(existing) = agents.iter_mut().find(|a| a.id == agent.id) {
-            *existing = agent.clone();
-        }
-        Ok(())
-    }
+    .with_execution_anchor_repo(anchor_repo)
 }
 
 async fn attach_test_frame(hub: &SessionRuntimeInner, session_id: &str) -> AgentFrame {
-    let _ = session_id;
     let frame = AgentFrame::new_initial(uuid::Uuid::new_v4());
     hub.agent_frame_repo
         .as_ref()
@@ -247,6 +98,17 @@ async fn attach_test_frame(hub: &SessionRuntimeInner, session_id: &str) -> Agent
         .create(&frame)
         .await
         .expect("test frame should persist");
+    if let Some(anchor_repo) = hub.execution_anchor_repo.as_ref() {
+        anchor_repo
+            .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
+                session_id,
+                uuid::Uuid::new_v4(),
+                frame.id,
+                frame.agent_id,
+            ))
+            .await
+            .expect("test runtime anchor should persist");
+    }
     frame
 }
 
@@ -1621,7 +1483,7 @@ impl ExecutionHookProvider for RecordingHookProvider {
         let Some(ref repo) = self.frame_repo else {
             return Ok(None);
         };
-        let frame = repo.frames.lock().await.iter().next().cloned();
+        let frame = repo.first_frame().await;
         Ok(frame.map(|f| HookControlTarget {
             run_id: uuid::Uuid::new_v4(),
             agent_id: f.agent_id,
@@ -2161,6 +2023,7 @@ async fn start_prompt_triggers_session_start_before_connector_prompt() {
     });
     let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
     let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
+    let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
     let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
         connector.clone(),
         Some(hook_provider),
@@ -2168,10 +2031,16 @@ async fn start_prompt_triggers_session_start_before_connector_prompt() {
     )
     .with_agent_frame_repo(frame_repo)
     .with_lifecycle_gate_repo(gate_repo)
+    .with_execution_anchor_repo(anchor_repo.clone())
     .with_lifecycle_agent_repo(agent_repo.clone());
     let session = hub.create_session("test").await.expect("create session");
     let frame = attach_test_frame(&hub, &session.id).await;
-    let mut agent = LifecycleAgent::new_root(uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), "test");
+    let anchor = anchor_repo
+        .find_by_session(&session.id)
+        .await
+        .expect("anchor lookup should succeed")
+        .expect("test frame should attach runtime anchor");
+    let mut agent = LifecycleAgent::new_root(anchor.run_id, uuid::Uuid::new_v4(), "test");
     agent.id = frame.agent_id;
     agent_repo.create(&agent).await.expect("create agent");
 

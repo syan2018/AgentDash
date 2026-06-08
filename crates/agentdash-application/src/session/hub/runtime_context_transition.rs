@@ -19,10 +19,14 @@ use super::super::dimension::{self, DimensionDelta};
 use super::SessionRuntimeInner;
 use crate::hooks::hook_injection_to_fragment;
 use crate::session::types::AgentFrameRuntimeTarget;
+#[cfg(test)]
 use crate::session::{
-    AgentFrameTransitionRecord, CapabilityState, CapabilityStateDelta,
-    PendingCapabilityStateTransition, RuntimeCapabilityTransition, RuntimeContextTransition,
-    RuntimeDeliveryCommand, apply_runtime_capability_transition, compute_capability_state_delta,
+    AgentFrameTransitionRecord, RuntimeCapabilityTransition, RuntimeContextTransition,
+    RuntimeDeliveryCommand,
+};
+use crate::session::{
+    CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition,
+    apply_runtime_capability_transition, compute_capability_state_delta,
 };
 
 #[derive(Debug, Clone)]
@@ -48,6 +52,7 @@ pub(crate) struct RuntimeContextTransitionOutcome {
     pub emitted_capability_change: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct PendingRuntimeContextTransitionInput {
     pub target_frame_id: Uuid,
@@ -161,6 +166,7 @@ impl SessionRuntimeInner {
         })
     }
 
+    #[cfg(test)]
     pub(crate) async fn enqueue_pending_runtime_context_transition(
         &self,
         input: PendingRuntimeContextTransitionInput,

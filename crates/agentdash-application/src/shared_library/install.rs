@@ -178,10 +178,8 @@ fn mcp_preset_from_template_install(
     install_options: Option<&InstallLibraryAssetOptions>,
 ) -> Result<McpPreset, DomainError> {
     let key = target_key_or_asset_key(target_key, &asset.key);
-    let parameters = match install_options {
-        Some(InstallLibraryAssetOptions::McpServerTemplate { parameters }) => Some(parameters),
-        None => None,
-    };
+    let parameters = install_options
+        .map(|InstallLibraryAssetOptions::McpServerTemplate { parameters }| parameters);
     let transport = payload.resolve_transport(parameters)?;
     let mut preset = McpPreset::new_user(
         project_id,

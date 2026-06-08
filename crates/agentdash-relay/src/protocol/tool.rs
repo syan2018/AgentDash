@@ -286,7 +286,7 @@ mod tests {
         assert_eq!(json_value["before_lines"], 2);
         assert_eq!(json_value["after_lines"], 3);
         let decoded: ToolSearchPayload = serde_json::from_value(json_value).expect("deserialize");
-        assert_eq!(decoded.case_sensitive, false);
+        assert!(!decoded.case_sensitive);
         assert!(decoded.multiline);
         assert_eq!(decoded.before_lines, 2);
         assert_eq!(decoded.after_lines, 3);

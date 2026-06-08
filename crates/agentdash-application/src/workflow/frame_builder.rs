@@ -253,7 +253,7 @@ impl AgentFrameBuilder {
 mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_domain::workflow::{MountDirective, ToolCapabilityDirective};
+    use agentdash_domain::workflow::MountDirective;
     use agentdash_spi::{McpTransportConfig, ToolCluster};
     use std::{collections::BTreeSet, sync::Mutex};
 
@@ -413,7 +413,6 @@ mod tests {
                 },
                 uses_relay: false,
             }],
-            tool_directives: vec![ToolCapabilityDirective::add_simple("file_read")],
             capability_keys: BTreeSet::from(["file_read".to_string()]),
             kickoff_prompt: Default::default(),
             lifecycle_mount: mount("lifecycle", "lifecycle_vfs"),

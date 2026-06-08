@@ -196,7 +196,7 @@ pub enum AgentProcedureExecutionSpec {
         procedure_key: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
-        contract: AgentProcedureContract,
+        contract: Box<AgentProcedureContract>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source_ref: Option<OrchestrationSourceRef>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -220,7 +220,7 @@ impl AgentProcedureExecutionSpec {
 
     pub fn snapshot_contract(&self) -> Option<&AgentProcedureContract> {
         match self {
-            Self::Snapshot { contract, .. } => Some(contract),
+            Self::Snapshot { contract, .. } => Some(contract.as_ref()),
             Self::ByKey { .. } => None,
         }
     }

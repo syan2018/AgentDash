@@ -113,7 +113,7 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
             .list_by_routine(routine.id, ROUTINE_REUSE_SCAN_LIMIT, 0)
             .await
             .map_err(ApplicationError::from)?;
-        executions.sort_by(|left, right| right.started_at.cmp(&left.started_at));
+        executions.sort_by_key(|execution| std::cmp::Reverse(execution.started_at));
 
         for candidate in executions {
             if !matches_candidate(&candidate) {

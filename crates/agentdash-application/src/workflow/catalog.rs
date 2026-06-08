@@ -353,14 +353,6 @@ mod tests {
         }
     }
 
-    fn workflow_with_ports(
-        key: &str,
-        output_ports: &[&str],
-        input_ports: &[&str],
-    ) -> AgentProcedure {
-        workflow_with_ports_in_project(Uuid::new_v4(), key, output_ports, input_ports)
-    }
-
     fn workflow_with_ports_in_project(
         project_id: Uuid,
         key: &str,

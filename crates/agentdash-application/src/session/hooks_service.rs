@@ -260,7 +260,7 @@ pub(crate) async fn build_frame_hook_runtime(
                 "查询 Hook target 对应 RuntimeSessionExecutionAnchor 失败: {error}"
             ))
         })?;
-    if !anchor.is_some_and(|anchor| anchor.agent_id == target.agent_id) {
+    if anchor.is_none_or(|anchor| anchor.agent_id != target.agent_id) {
         return Err(ConnectorError::Runtime(format!(
             "Hook target agent `{}` does not own delivery RuntimeSession `{session_id}`",
             target.agent_id

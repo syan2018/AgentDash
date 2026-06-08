@@ -33,6 +33,9 @@ pub mod vfs;
 pub mod workflow;
 pub mod workspace;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 pub use error::ApplicationError;
 pub use task::lock as task_lock;
 pub use task::service as task_service;

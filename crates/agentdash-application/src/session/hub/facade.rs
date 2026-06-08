@@ -31,14 +31,6 @@ impl SessionRuntimeInner {
         self.core_service().create_session(title).await
     }
 
-    #[cfg(test)]
-    pub async fn get_session_meta(
-        &self,
-        session_id: &str,
-    ) -> SessionStoreResult<Option<SessionMeta>> {
-        self.core_service().get_session_meta(session_id).await
-    }
-
     /// 查询单个 session 的执行状态。
     #[cfg(test)]
     pub async fn inspect_session_execution_state(

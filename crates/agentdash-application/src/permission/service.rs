@@ -46,7 +46,7 @@ pub enum GrantRequestResult {
     AutoApproved {
         grant: PermissionGrant,
         transition: RuntimeCapabilityTransition,
-        effect_frame: AgentFrame,
+        effect_frame: Box<AgentFrame>,
     },
     /// 需要用户审批（grant 已持久化为 PendingUserApproval）
     PendingUserApproval { grant: PermissionGrant },
@@ -128,7 +128,7 @@ impl PermissionGrantService {
                 Ok(GrantRequestResult::AutoApproved {
                     grant,
                     transition,
-                    effect_frame,
+                    effect_frame: Box::new(effect_frame),
                 })
             }
             PolicyOutcome::NeedsUserApproval => {

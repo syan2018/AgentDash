@@ -10,6 +10,7 @@ import { ProjectCreateDrawer } from "../../features/project/project-selector";
 import type { Project } from "../../types";
 import { SidebarFooter, type FooterPanelKey } from "./SidebarFooter";
 import { SessionShortcutList } from "./SessionShortcutList";
+import { AppErrorBoundary } from "../error/AppErrorBoundary";
 
 // ─── 视图导航定义 ──────────────────────────────────────────
 type NavKey = "agent" | "story" | "assets" | "routine";
@@ -146,7 +147,7 @@ export function WorkspaceLayout() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
-      <aside className="relative flex h-full w-72 flex-col border-r border-border bg-background">
+      <aside className="relative z-10 flex h-full w-72 flex-col bg-sidebar text-sidebar-foreground shadow-md">
         {/* 头部：品牌 */}
         <div className="flex items-center gap-2 border-b border-border px-4 py-3.5">
           <span className="inline-flex rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -175,8 +176,8 @@ export function WorkspaceLayout() {
                 className={() =>
                   `flex h-14 flex-col items-center justify-center gap-1 rounded-[10px] transition-all ${
                     isActive
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                      ? "bg-card text-primary shadow-sm"
+                      : "text-muted-foreground hover:bg-card/50 hover:text-foreground"
                   }`
                 }
               >
@@ -203,7 +204,9 @@ export function WorkspaceLayout() {
       </aside>
 
       <main className="flex-1 overflow-hidden">
-        <Outlet />
+        <AppErrorBoundary resetKeys={[location.pathname]} title="此页面出错了">
+          <Outlet />
+        </AppErrorBoundary>
       </main>
     </div>
   );

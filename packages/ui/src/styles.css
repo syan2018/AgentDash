@@ -144,6 +144,13 @@
     border-color: hsl(var(--border));
   }
 
+  /* 根容器撑满，使 StatusScreen 等 min-h-full 全屏态在顶层也能填满视口 */
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
   body {
     margin: 0;
     background-color: hsl(var(--background));

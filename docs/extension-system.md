@@ -322,5 +322,42 @@ Agent 经四个元工具消费 Workspace Module（application `workspace_module/
 
 ### 可见性裁切与诊断
 
-- **裁切**：AgentFrame 的 `visible_workspace_module_refs` allowlist 经 capability 通道（`WorkspaceModuleDimension`）在 agent 侧生效——为空表示放行全部，非空仅放行 allowlist 内 module。该字段已持久化（`agent_frames.visible_workspace_module_refs_json`）。项目设置页提供合并认知视图；per-frame allowlist 的编辑入口属 agent frame 编辑面。
+- **裁切**：workspace module 可见性经 capability 通道（`WorkspaceModuleDimension`）在 agent 侧生效——`mode=All` 放行全部，`mode=Allowlist` 仅放行 allowlist 内 module。**声明式可见性的事实源是 ProjectAgent preset（`visible_workspace_module_refs`），投影进 base `CapabilityState.workspace_module`，经 `effective_capability_json` 序列化/还原**（与 tool/vfs 等维度同路，见下「能力更新原语」）。清空白名单 → `mode=All`（回到全部可见），不再继承旧名单。`agent_frames.visible_workspace_module_refs_json` 列保留为「运行时 Accumulate grant 预留」，当前不写入。项目设置页（ProjectAgent 配置）即编辑入口。
 - **诊断**：当 extension runtime bundle 缺失时，对应 module 的 `status` 标为 `unavailable` 并携带 `reason`，list/describe 与项目设置页据此呈现诊断。
+
+## 能力更新原语（Capability Update Primitives）
+
+Agent 的运行时能力面（`CapabilityState`：tool / mcp / vfs / companion / skill / workspace_module 六维度）按 **base ⊕ modifier** 两层组织：
+
+- **base（声明式真值）**：来自 ProjectAgent preset 的声明，投影进 base `CapabilityState` 并 materialized 进 `AgentFrame.effective_capability_json`。每个 revision 由当前 config 重新投影——这是清空白名单能可靠回到默认的原因（不存在"继承上一版声明"）。
+- **modifier（运行时增量）**：`RuntimeCapabilityTransition`（declarations + effects），由 workflow / permission grant 在运行时产生，经 `CapabilityDimensionModule` 重放叠加到 base 上。
+- **标识原语**：`CapabilityDimensionKey`（维度）+ `CapabilityArtifactSource`（来源：`preset` / `workflow` / `permission_grant`）+ `declaration_type` / `effect_type`。
+
+每个维度声明一个 **`AccumulationPolicy`**（`agentdash-spi`），统一表达积累规则，替代各处手写 merge：
+
+| Policy | 语义 | 维度 |
+|---|---|---|
+| `Replace` | 声明式整体替换；清空 = 回默认/全集；不跨 revision 累积 | tool、mcp、companion、skill、workspace_module |
+| `Accumulate` | modifier 跨 revision 叠加，直到显式撤销 | vfs（含 canvas mount 累积） |
+| `Ephemeral` | 仅当前 revision 有效，即用即弃 | （预留，当前无） |
+
+### 六维度现状速查
+
+| 维度 | 真值来源 | 投影路径 | Policy | 进 `intersect()` |
+|---|---|---|---|---|
+| **tool**（capabilities/clusters/tool_policy） | preset `capability_directives`（Add/Remove）+ permission grant | **事件溯源**：declaration `capability_directive` → effect `set_tool_access` → 重放 | Replace | 是（集合交，唯一参与裁切的维度） |
+| **mcp**（`tool.mcp_servers`） | preset `mcp_preset_keys` + request | **effect-only** `set_server_set` + `mcp_surface_json` 覆盖 | Replace | 否（透传） |
+| **vfs**（`vfs.active`） | preset `vfs_access_grants` + canvas mount（运行时追加） | **事件溯源**：declaration `mount_operation` → effect `apply_vfs_overlay`/`apply_mount_operations` | **Accumulate** | 否（透传） |
+| **companion**（`companion.agents`） | preset `allowed_companions` | **resolver 单源**（`set_agent_roster` effect 闲置），受 `CAP_COLLABORATION` 门控 | Replace | 否（透传） |
+| **skill**（`skill.skills`） | 权限=preset `skill_asset_keys`；列表=`load_skills_from_vfs` 物化 | **base 投影 / 发现物化**（非事件溯源） | Replace | 否（透传） |
+| **workspace_module**（mode + allowed_module_ids） | preset `visible_workspace_module_refs` | **base 投影** → `effective_capability_json`（mode 三态） | Replace | 否（透传） |
+
+要点：真正走 declaration→effect→replay 的只有 **tool / vfs**（+mcp 仅 effect）；companion/skill/workspace_module 走 base 投影或单源（其 effect 通道留作未来运行时增量）。只有 **tool** 维度参与 `intersect()` 集合裁切，其余 clone 透传。
+
+> workspace_module 的三态由 `WorkspaceModuleDimension.mode` 承载：`All`（未声明 / 清空）/ `Allowlist`（受限）。前端 picker 空选即不写 config（`None`）→ 投影为 `mode=All`，与"清空=全部可见"一致。
+
+### skill / companion 的归类边界
+
+- **skill 权限只管"平台授予"，不管"动态发现"**：授予的事实源是 ProjectAgent preset 的 `skill_asset_keys`（声明式 `Replace`）——每次 bootstrap 由 config 重新种进 VFS mount metadata，清空即不挂载、发现为空，不会复活旧 skill。而 `CapabilityState.skill.skills`（`SkillEntry { name, description, file_path }`）是 `load_skills_from_vfs` 扫 mount **物化出来的发现结果**，属运行时发现/枚举层，**不是权限门**。
+- `frame_builder` 的 `inherit_skills_from` carry-forward 是**发现结果的缓存**（lifecycle 热修订不重扫 VFS 时保住已发现列表），与能力权限原语无关，按此边界保留，不纳入收口。
+- **companion**：`CapabilityState.companion.agents` 由 `CapabilityResolver` 单源产出（受 `CAP_COLLABORATION` 门控），launch command 仅透传，无第二真值源；`Replace` 策略。

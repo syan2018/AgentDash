@@ -12,6 +12,8 @@ pub use agentdash_spi::{
     compute_capability_state_delta,
 };
 
+pub use agentdash_spi::AccumulationPolicy;
+
 use super::types::{
     ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_COMPANION,
     CAPABILITY_DIMENSION_MCP, CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS,
@@ -90,6 +92,28 @@ pub fn capability_state_to_frame_surfaces(state: &CapabilityState) -> FrameCapab
         } else {
             serde_json::to_value(&state.tool.mcp_servers).ok()
         },
+    }
+}
+
+/// 将 ProjectAgent preset 声明的 workspace module 可见性白名单投影进 base
+/// `CapabilityState.workspace_module` 维度（三态直达）。
+///
+/// 语义（workspace_module 属 `Replace` 策略）：
+/// - `None`（Unspecified，未声明）   → `mode = All`（全集可见）
+/// - `Some([])`（Cleared，显式清空） → `mode = All`（**清空回全集**，修复 carry-forward bug）
+/// - `Some([..非空])`（Allowlist）   → `mode = Allowlist` + allowed_module_ids
+///
+/// base 每 revision 由当前 config 重新投影，不存在"继承上一版白名单"，
+/// 因此清空（空集）自然回到 All，而非把旧名单捞回。
+pub fn project_workspace_module_dimension(
+    refs: Option<&[String]>,
+) -> agentdash_spi::WorkspaceModuleDimension {
+    match refs {
+        Some(ids) if !ids.is_empty() => agentdash_spi::WorkspaceModuleDimension {
+            mode: agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist,
+            allowed_module_ids: ids.to_vec(),
+        },
+        _ => agentdash_spi::WorkspaceModuleDimension::default(),
     }
 }
 
@@ -258,6 +282,11 @@ pub struct RuntimeCapabilityProjectionContext;
 ///   写入 AgentFrame revision，CapabilityState 始终是 frame 的投影缓存
 pub trait CapabilityDimensionModule {
     fn key(&self) -> &'static str;
+
+    /// 本维度的累积策略——声明跨 revision 更新如何合并新旧声明。
+    ///
+    /// 无默认实现，强制每个维度显式声明自己属于 `Replace` / `Accumulate` / `Ephemeral`。
+    fn policy(&self) -> AccumulationPolicy;
 
     fn validate_declaration(&self, record: &CapabilityDeclarationRecord) -> Result<(), String>;
 
@@ -491,6 +520,10 @@ impl CapabilityDimensionModule for ToolCapabilityDimensionModule {
         CAPABILITY_DIMENSION_TOOL
     }
 
+    fn policy(&self) -> AccumulationPolicy {
+        AccumulationPolicy::Replace
+    }
+
     fn validate_declaration(&self, record: &CapabilityDeclarationRecord) -> Result<(), String> {
         ensure_declaration_type(record, DECLARATION_TYPE_CAPABILITY_DIRECTIVE)?;
         let _: ToolCapabilityDirective = decode_declaration_payload(record)?;
@@ -521,6 +554,10 @@ impl CapabilityDimensionModule for ToolCapabilityDimensionModule {
 impl CapabilityDimensionModule for McpCapabilityDimensionModule {
     fn key(&self) -> &'static str {
         CAPABILITY_DIMENSION_MCP
+    }
+
+    fn policy(&self) -> AccumulationPolicy {
+        AccumulationPolicy::Replace
     }
 
     fn validate_declaration(&self, record: &CapabilityDeclarationRecord) -> Result<(), String> {
@@ -556,6 +593,10 @@ impl CapabilityDimensionModule for CompanionCapabilityDimensionModule {
         CAPABILITY_DIMENSION_COMPANION
     }
 
+    fn policy(&self) -> AccumulationPolicy {
+        AccumulationPolicy::Replace
+    }
+
     fn validate_declaration(&self, record: &CapabilityDeclarationRecord) -> Result<(), String> {
         Err(format!(
             "dimension `{}` 当前不支持 declaration type `{}`",
@@ -586,6 +627,10 @@ impl CapabilityDimensionModule for CompanionCapabilityDimensionModule {
 impl CapabilityDimensionModule for VfsCapabilityDimensionModule {
     fn key(&self) -> &'static str {
         CAPABILITY_DIMENSION_VFS
+    }
+
+    fn policy(&self) -> AccumulationPolicy {
+        AccumulationPolicy::Accumulate
     }
 
     fn validate_declaration(&self, record: &CapabilityDeclarationRecord) -> Result<(), String> {
@@ -1239,6 +1284,102 @@ mod tests {
         let error = replay_runtime_capability_transition(&CapabilityState::default(), &transition)
             .expect_err("invalid payload should fail at module boundary");
         assert!(error.contains("payload decode failed"));
+    }
+
+    #[test]
+    fn dimension_modules_declare_expected_accumulation_policy() {
+        assert_eq!(
+            ToolCapabilityDimensionModule.policy(),
+            AccumulationPolicy::Replace
+        );
+        assert_eq!(
+            McpCapabilityDimensionModule.policy(),
+            AccumulationPolicy::Replace
+        );
+        assert_eq!(
+            CompanionCapabilityDimensionModule.policy(),
+            AccumulationPolicy::Replace
+        );
+        assert_eq!(
+            VfsCapabilityDimensionModule.policy(),
+            AccumulationPolicy::Accumulate
+        );
+    }
+
+    #[test]
+    fn project_to_base_workspace_module_all_when_none() {
+        let dim = project_workspace_module_dimension(None);
+        assert_eq!(dim.mode, agentdash_spi::WorkspaceModuleVisibilityMode::All);
+        assert!(dim.allowed_module_ids.is_empty());
+    }
+
+    #[test]
+    fn project_to_base_workspace_module_all_when_empty() {
+        // Cleared（显式空集）→ All —— carry-forward bug 回归锁。
+        let dim = project_workspace_module_dimension(Some(&[]));
+        assert_eq!(dim.mode, agentdash_spi::WorkspaceModuleVisibilityMode::All);
+        assert!(dim.allowed_module_ids.is_empty());
+    }
+
+    #[test]
+    fn project_to_base_workspace_module_allowlist_when_set() {
+        let refs = vec!["ext:demo".to_string(), "canvas:dashboard-a".to_string()];
+        let dim = project_workspace_module_dimension(Some(&refs));
+        assert_eq!(
+            dim.mode,
+            agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist
+        );
+        assert_eq!(dim.allowed_module_ids, refs);
+    }
+
+    #[test]
+    fn workspace_module_round_trips_through_effective_capability_json() {
+        // set allowlist → effective_capability_json → 还原 → Allowlist 保真
+        let mut state = CapabilityState::default();
+        state.workspace_module =
+            project_workspace_module_dimension(Some(&["ext:demo".to_string()]));
+        let surfaces = capability_state_to_frame_surfaces(&state);
+        let mut frame = AgentFrame::new_initial(Uuid::new_v4());
+        frame.effective_capability_json = surfaces.effective_capability_json;
+        let projected = project_capability_state_from_frame(&frame);
+        assert_eq!(
+            projected.workspace_module.mode,
+            agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist
+        );
+        assert_eq!(
+            projected.workspace_module.allowed_module_ids,
+            vec!["ext:demo".to_string()]
+        );
+
+        // clear（空集）→ 下一 revision 重新投影 → All（不继承旧名单）
+        let mut cleared = CapabilityState::default();
+        cleared.workspace_module = project_workspace_module_dimension(Some(&[]));
+        let cleared_surfaces = capability_state_to_frame_surfaces(&cleared);
+        let mut next_frame = AgentFrame::new_initial(Uuid::new_v4());
+        next_frame.effective_capability_json = cleared_surfaces.effective_capability_json;
+        let cleared_projected = project_capability_state_from_frame(&next_frame);
+        assert_eq!(
+            cleared_projected.workspace_module.mode,
+            agentdash_spi::WorkspaceModuleVisibilityMode::All
+        );
+    }
+
+    #[test]
+    fn legacy_frame_without_workspace_module_defaults_to_all() {
+        // 旧 frame：effective_capability_json 无 workspace_module 字段 → serde(default) → All
+        let json = serde_json::json!({
+            "tool": {},
+            "companion": {},
+            "vfs": {},
+            "skill": {}
+        });
+        let mut frame = AgentFrame::new_initial(Uuid::new_v4());
+        frame.effective_capability_json = Some(json);
+        let projected = project_capability_state_from_frame(&frame);
+        assert_eq!(
+            projected.workspace_module.mode,
+            agentdash_spi::WorkspaceModuleVisibilityMode::All
+        );
     }
 
     #[test]

@@ -355,23 +355,13 @@ pub(crate) fn build_envelope_from_frame(
             "FrameLaunchEnvelope: executor_config 未在 construction 阶段解析".into(),
         )
     })?;
-    let mut capability_state = capability_state.ok_or_else(|| {
+    let capability_state = capability_state.ok_or_else(|| {
         ConnectorError::InvalidConfig(
             "FrameLaunchEnvelope: capability_state 未在 construction 阶段解析".into(),
         )
     })?;
-    // Workspace module 可见性裁切走 capability 通道（D4）：AgentFrame 预留字段
-    // `visible_workspace_module_refs_json` 是唯一 upstream 输入。非空 → allowlist；
-    // 为空 → 默认全集（all）。本轮编辑入口未开，故默认 all。
-    let visible_module_refs = frame.visible_workspace_module_refs();
-    capability_state.workspace_module = if visible_module_refs.is_empty() {
-        agentdash_spi::WorkspaceModuleDimension::default()
-    } else {
-        agentdash_spi::WorkspaceModuleDimension {
-            mode: agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist,
-            allowed_module_ids: visible_module_refs,
-        }
-    };
+    // Workspace module 可见性已收口进 base CapabilityState.workspace_module（经
+    // effective_capability_json 投影/还原），不再从 frame 旁路字段二次覆盖。
     let working_directory = vfs
         .default_mount()
         .map(|m| PathBuf::from(m.root_ref.trim()))

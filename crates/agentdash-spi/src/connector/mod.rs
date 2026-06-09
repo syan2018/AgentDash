@@ -281,8 +281,9 @@ pub enum WorkspaceModuleVisibilityMode {
 
 /// Workspace module 维度的运行态——可见性裁切的唯一权威来源。
 ///
-/// AgentFrame 的 `visible_workspace_module_refs_json` 是该维度的 upstream 输入之一：
-/// 字段非空 → `Allowlist`；为空 → `All`。工具在返回 projection 前按此维度过滤。
+/// 声明式可见性的唯一 upstream 是 ProjectAgent preset 的 `visible_workspace_module_refs`，
+/// 经 base `CapabilityState.workspace_module` 投影（`effective_capability_json`）流转：
+/// preset 非空 → `Allowlist`；`None`/空集 → `All`。工具在返回 projection 前按此维度过滤。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceModuleDimension {
     #[serde(default)]

@@ -24,10 +24,12 @@ pub struct AgentFrame {
     /// 当前可见的 Canvas mount ids（运行时追加，不随 revision 复制）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_canvas_mount_ids_json: Option<serde_json::Value>,
-    /// 可见的 Workspace Module refs 裁切预留字段（运行时追加，不随 revision 复制）。
+    /// 运行时 Accumulate grant 预留列，当前不写入（恒为 `None`/NULL）。
     ///
-    /// 非空时 capability 组装会据此把 workspace module 维度设为 allowlist；为空则默认全集。
-    /// 本轮（Child 1）只落字段 + 组装读取，编辑入口在 Child 3。
+    /// 声明式 workspace module 可见性已迁至 `effective_capability_json` 中的
+    /// `CapabilityState.workspace_module` 维度（base 收口，经标准 revision 投影）。
+    /// 本列保留以备将来运行时 append 型授予（参照 `visible_canvas_mount_ids_json` 的累积语义），
+    /// 暂不删除以保持零迁移。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_workspace_module_refs_json: Option<serde_json::Value>,
     pub created_by_kind: String,

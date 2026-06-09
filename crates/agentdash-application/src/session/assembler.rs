@@ -299,8 +299,11 @@ pub struct OwnerBootstrapSpec<'a> {
     pub existing_vfs: Option<Vfs>,
     pub visible_canvas_mount_ids: Vec<String>,
     /// Agent preset 声明的 workspace module 可见性白名单（`ext:{key}` / `canvas:{mount_id}`）。
-    /// 空 → 全集可见；非空 → 仅白名单。事实源是 ProjectAgent，写入新 frame revision。
-    pub visible_workspace_module_refs: Vec<String>,
+    ///
+    /// 三态保真（事实源是 ProjectAgent preset，投影进 base `CapabilityState.workspace_module`）：
+    /// `None`（未声明）/`Some([])`（显式清空）→ 全集可见（`mode=All`）；
+    /// `Some([..非空])` → 仅白名单（`mode=Allowlist`）。
+    pub visible_workspace_module_refs: Option<Vec<String>>,
     /// 当前 session 已绑定的活跃 workflow run。Project/Story owner session 在
     /// bootstrap 或续跑时可通过它获得 lifecycle VFS 与 workflow 能力基线。
     pub active_workflow: Option<ActiveWorkflowProjection>,
@@ -719,9 +722,15 @@ impl<'a> SessionRequestAssembler<'a> {
         let vfs = self
             .prepare_owner_bootstrap_vfs(&spec, project_id, active_workflow.as_ref())
             .await?;
-        let cap_output = self
+        let mut cap_output = self
             .resolve_owner_capabilities(&spec, project_id, owner_ctx, active_workflow.as_ref())
             .await?;
+        // Workspace module 声明式可见性收口到 base CapabilityState（取代旧的
+        // visible_workspace_module_refs_json 旁路 + frame_construction 直接赋值）：
+        // 三态直达，经 effective_capability_json 序列化/还原；空集回 All（修 carry-forward bug）。
+        cap_output.workspace_module = crate::session::capability_state::project_workspace_module_dimension(
+            spec.visible_workspace_module_refs.as_deref(),
+        );
         let mut session_mcp_servers = spec.request_mcp_servers.clone();
         session_mcp_servers.extend(cap_output.tool.mcp_servers.iter().cloned());
         session_mcp_servers.extend(spec.agent_mcp.preset_mcp_servers.iter().cloned());
@@ -764,7 +773,6 @@ impl<'a> SessionRequestAssembler<'a> {
             .with_mcp_servers(session_mcp_servers)
             .with_resolved_capabilities(cap_output)
             .with_optional_workspace_defaults(workspace_defaults)
-            .with_visible_workspace_module_refs(spec.visible_workspace_module_refs.clone())
             .with_optional_context_bundle(effective_bundle);
 
         if let Some(vfs) = vfs {

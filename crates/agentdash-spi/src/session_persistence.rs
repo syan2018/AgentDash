@@ -130,6 +130,33 @@ impl CapabilityArtifactSource {
             kind: "permission_grant".to_string(),
         }
     }
+
+    pub fn preset() -> Self {
+        Self {
+            kind: "preset".to_string(),
+        }
+    }
+}
+
+/// 能力维度的累积策略——声明一个维度在跨 revision 更新时如何合并新旧声明。
+///
+/// 这是能力更新模型的显式词汇原语：让"声明式整体替换 / 累积授予 / 一次性"
+/// 成为维度的可声明属性，而非散落在各帧构建分支里的硬编码 merge 行为。
+///
+/// - `Replace`：声明式整体替换。每次 revision 由当前 config 重新投影，
+///   清空（显式空集）即回到该维度的默认态。tool / mcp / companion / workspace_module 属此类。
+/// - `Accumulate`：跨 revision 叠加授予，直到被显式撤销。运行时 grant 型 modifier
+///   （如 canvas mount append、VFS overlay 累积）属此类。
+/// - `Ephemeral`：仅当前 revision 生效，不继承也不累积到下一 revision。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AccumulationPolicy {
+    /// 声明式整体替换；清空回默认态。
+    Replace,
+    /// 跨 revision 累积授予，直到显式撤销。
+    Accumulate,
+    /// 仅当前 revision 生效。
+    Ephemeral,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +198,8 @@ pub const CAPABILITY_DIMENSION_TOOL: &str = "tool";
 pub const CAPABILITY_DIMENSION_MCP: &str = "mcp";
 pub const CAPABILITY_DIMENSION_COMPANION: &str = "companion";
 pub const CAPABILITY_DIMENSION_VFS: &str = "vfs";
+pub const CAPABILITY_DIMENSION_SKILL: &str = "skill";
+pub const CAPABILITY_DIMENSION_WORKSPACE_MODULE: &str = "workspace_module";
 
 pub const DECLARATION_TYPE_CAPABILITY_DIRECTIVE: &str = "capability_directive";
 pub const DECLARATION_TYPE_MOUNT_OPERATION: &str = "mount_operation";

@@ -118,8 +118,11 @@ pub use platform::tool_capability::{
 };
 
 pub use session_persistence::{
-    AgentFrameTransitionRecord, ApplyMountOperationsEffect, ApplyVfsOverlayEffect,
-    CapabilityArtifactSource, CapabilityContributionRecord, CapabilityDeclarationRecord,
+    AccumulationPolicy, AgentFrameTransitionRecord, ApplyMountOperationsEffect,
+    ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_COMPANION, CAPABILITY_DIMENSION_MCP,
+    CAPABILITY_DIMENSION_SKILL, CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS,
+    CAPABILITY_DIMENSION_WORKSPACE_MODULE, CapabilityArtifactSource, CapabilityContributionRecord,
+    CapabilityDeclarationRecord,
     CapabilityDimensionKey, CompactionProjectionCommitResult, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
     EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
     EFFECT_TYPE_SET_MCP_SERVER_SET, EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus,

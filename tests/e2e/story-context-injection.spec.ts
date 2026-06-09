@@ -1,5 +1,7 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
+import { cleanupE2eProjects, trackE2eProject } from "./_helpers/project-cleanup";
+
 const SERVER_PORT = process.env.PLAYWRIGHT_SERVER_PORT ?? "3011";
 const API_ORIGIN = `http://127.0.0.1:${SERVER_PORT}/api`;
 const REPO_ROOT = (process.env.PLAYWRIGHT_E2E_ROOT ?? process.cwd()).replace(/\\/g, "/");
@@ -91,7 +93,7 @@ async function createProject(request: APIRequestContext, suffix: string): Promis
     },
   });
   expect(resp.ok()).toBeTruthy();
-  return (await resp.json()) as ProjectEntity;
+  return trackE2eProject((await resp.json()) as ProjectEntity);
 }
 
 async function createWorkspace(
@@ -265,4 +267,8 @@ test("Story 文件引用可保存到 Story 并分配给 Task Agent", async ({ pa
     "frontend/src/pages/StoryPage.tsx",
     "crates/agentdash-api/src/routes/stories.rs",
   ]);
+});
+
+test.afterEach(async ({ request }) => {
+  await cleanupE2eProjects(request);
 });

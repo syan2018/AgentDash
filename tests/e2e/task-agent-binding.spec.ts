@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { cleanupE2eProjects } from "./_helpers/project-cleanup";
+
 test("Task 创建与详情编辑使用统一 dispatch_preference 结构", async ({ page }) => {
   const suffix = Date.now().toString();
   const projectName = `E2E 项目 ${suffix}`;
@@ -79,4 +81,8 @@ test("Task 创建与详情编辑使用统一 dispatch_preference 结构", async 
   await taskCard.click();
   await expect(drawerPromptTemplate).toHaveValue("更新后的模板");
   await expect(drawerInitialContext).toHaveValue("更新后的上下文");
+});
+
+test.afterEach(async ({ request }) => {
+  await cleanupE2eProjects(request);
 });

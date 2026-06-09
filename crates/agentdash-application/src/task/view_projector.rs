@@ -492,6 +492,12 @@ mod tests {
                 .push((project_id, entity_id, kind));
             Ok(())
         }
+        async fn delete_by_project(&self, project_id: Uuid) -> Result<u64, DomainError> {
+            let mut changes = self.changes.lock().unwrap();
+            let before = changes.len();
+            changes.retain(|(change_project_id, _, _)| *change_project_id != project_id);
+            Ok((before - changes.len()) as u64)
+        }
     }
 
     struct InMemoryLifecycleRunRepo {

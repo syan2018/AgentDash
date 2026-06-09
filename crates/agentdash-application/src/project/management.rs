@@ -1,13 +1,14 @@
-use agentdash_domain::project::ProjectRepository;
 use uuid::Uuid;
 
 use agentdash_domain::context_container::{
     ContextContainerDefinition, validate_context_containers,
 };
+use agentdash_domain::extension_package::ExtensionPackageArtifactOwner;
 use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::project::{Project, ProjectConfig, ProjectVisibility};
-use agentdash_domain::story::{Story, StoryRepository};
-use agentdash_domain::workspace::{Workspace, WorkspaceRepository};
+use agentdash_domain::settings::SettingScope;
+use agentdash_domain::story::Story;
+use agentdash_domain::workspace::Workspace;
 
 use crate::ApplicationError;
 use crate::repository_set::RepositorySet;
@@ -125,14 +126,9 @@ pub async fn delete_project_record(
     repos: &RepositorySet,
     project_id: Uuid,
 ) -> Result<(), ApplicationError> {
-    delete_project_aggregate(
-        repos.project_repo.as_ref(),
-        repos.story_repo.as_ref(),
-        repos.workspace_repo.as_ref(),
-        project_id,
-    )
-    .await
-    .map_err(ApplicationError::from)
+    delete_project_aggregate(repos, project_id)
+        .await
+        .map_err(ApplicationError::from)
 }
 
 pub async fn clone_project_record(
@@ -260,23 +256,115 @@ pub fn build_cloned_project(
 }
 
 pub async fn delete_project_aggregate(
-    project_repo: &dyn ProjectRepository,
-    story_repo: &dyn StoryRepository,
-    workspace_repo: &dyn WorkspaceRepository,
+    repos: &RepositorySet,
     project_id: Uuid,
 ) -> Result<(), agentdash_domain::DomainError> {
+    for run in repos.lifecycle_run_repo.list_by_project(project_id).await? {
+        repos.lifecycle_run_repo.delete(run.id).await?;
+    }
+
+    for routine in repos.routine_repo.list_by_project(project_id).await? {
+        repos.routine_repo.delete(routine.id).await?;
+    }
+
+    for project_agent in repos.project_agent_repo.list_by_project(project_id).await? {
+        repos
+            .project_agent_repo
+            .delete(project_id, project_agent.id)
+            .await?;
+    }
+
+    for installation in repos
+        .project_extension_installation_repo
+        .list_by_project(project_id)
+        .await?
+    {
+        repos
+            .project_extension_installation_repo
+            .delete(project_id, installation.id)
+            .await?;
+    }
+
+    for artifact in repos
+        .extension_package_artifact_repo
+        .list_by_owner(&ExtensionPackageArtifactOwner::project(project_id))
+        .await?
+    {
+        repos
+            .extension_package_artifact_repo
+            .delete(artifact.id)
+            .await?;
+    }
+
+    for canvas in repos.canvas_repo.list_by_project(project_id).await? {
+        repos.canvas_repo.delete(canvas.id).await?;
+    }
+
+    for mount in repos
+        .project_vfs_mount_repo
+        .list_by_project(project_id)
+        .await?
+    {
+        repos
+            .project_vfs_mount_repo
+            .delete(project_id, &mount.mount_id)
+            .await?;
+    }
+
+    for skill in repos.skill_asset_repo.list_by_project(project_id).await? {
+        repos.skill_asset_repo.delete(skill.id).await?;
+    }
+
+    for preset in repos.mcp_preset_repo.list_by_project(project_id).await? {
+        repos.mcp_preset_repo.delete(preset.id).await?;
+    }
+
+    for graph in repos
+        .workflow_graph_repo
+        .list_by_project(project_id)
+        .await?
+    {
+        repos.workflow_graph_repo.delete(graph.id).await?;
+    }
+
+    for procedure in repos
+        .agent_procedure_repo
+        .list_by_project(project_id)
+        .await?
+    {
+        repos.agent_procedure_repo.delete(procedure.id).await?;
+    }
+
     // Story aggregate 已持有 Vec<Task>（stories.tasks JSONB）；删除 story 即级联清理 tasks。
-    let stories = story_repo.list_by_project(project_id).await?;
+    let stories = repos.story_repo.list_by_project(project_id).await?;
     for story in stories {
-        story_repo.delete(story.id).await?;
+        repos.story_repo.delete(story.id).await?;
     }
 
-    let workspaces = workspace_repo.list_by_project(project_id).await?;
+    let workspaces = repos.workspace_repo.list_by_project(project_id).await?;
     for workspace in workspaces {
-        workspace_repo.delete(workspace.id).await?;
+        repos.workspace_repo.delete(workspace.id).await?;
     }
 
-    project_repo.delete(project_id).await?;
+    repos
+        .inline_file_repo
+        .delete_by_owner(InlineFileOwnerKind::Project, project_id)
+        .await?;
+
+    let setting_scope = SettingScope::project(project_id.to_string());
+    for setting in repos.settings_repo.list(&setting_scope, None).await? {
+        repos
+            .settings_repo
+            .delete(&setting_scope, &setting.key)
+            .await?;
+    }
+
+    repos
+        .state_change_repo
+        .delete_by_project(project_id)
+        .await?;
+
+    repos.project_repo.delete(project_id).await?;
     Ok(())
 }
 

@@ -15,6 +15,8 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { cleanupE2eProjects, trackE2eProject } from "./_helpers/project-cleanup";
+
 const execFileAsync = promisify(execFile);
 
 const SERVER_PORT = process.env.PLAYWRIGHT_SERVER_PORT ?? "3011";
@@ -99,7 +101,7 @@ async function createProject(request: APIRequestContext, suffix: string): Promis
     },
   });
   expect(resp.ok(), await resp.text()).toBeTruthy();
-  return (await resp.json()) as ProjectEntity;
+  return trackE2eProject((await resp.json()) as ProjectEntity);
 }
 
 async function grantProjectBackendAccess(
@@ -333,4 +335,8 @@ test("Local Hello 归档可在 Assets 面板上传/安装/卸载", async ({ page
 
   // 防止 lint 投诉 unused：installedSection 仅作为面板可达性的 sanity check 占位。
   await expect(installedSection.first()).toBeVisible();
+});
+
+test.afterEach(async ({ request }) => {
+  await cleanupE2eProjects(request);
 });

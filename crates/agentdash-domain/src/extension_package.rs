@@ -233,6 +233,7 @@ pub trait ExtensionPackageArtifactRepository: Send + Sync {
         &self,
         owner: &ExtensionPackageArtifactOwner,
     ) -> Result<Vec<ExtensionPackageArtifact>, DomainError>;
+    async fn delete(&self, id: Uuid) -> Result<bool, DomainError>;
 }
 
 pub fn validate_sha256_digest(field: &str, value: &str) -> Result<(), DomainError> {

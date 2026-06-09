@@ -59,4 +59,13 @@ impl StateChangeRepository for PostgresStateChangeRepository {
     ) -> Result<(), DomainError> {
         append_state_change(&self.pool, project_id, entity_id, kind, payload, backend_id).await
     }
+
+    async fn delete_by_project(&self, project_id: uuid::Uuid) -> Result<u64, DomainError> {
+        let result = sqlx::query("DELETE FROM state_changes WHERE project_id = $1")
+            .bind(project_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(super::db_err)?;
+        Ok(result.rows_affected())
+    }
 }

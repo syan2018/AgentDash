@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { cleanupE2eProjects, trackE2eProject } from "./_helpers/project-cleanup";
+
 const execFileAsync = promisify(execFile);
 
 const SERVER_PORT = process.env.PLAYWRIGHT_SERVER_PORT ?? "3011";
@@ -96,7 +98,7 @@ async function createProject(request: APIRequestContext, suffix: string): Promis
     },
   });
   expect(resp.ok()).toBeTruthy();
-  return (await resp.json()) as ProjectEntity;
+  return trackE2eProject((await resp.json()) as ProjectEntity);
 }
 
 async function createWorkspace(
@@ -306,4 +308,8 @@ test("Local Hello packaged archive 可安装并通过 WorkspacePanel 调用本�
   await expect(frame.getByTestId("local-hello-session")).toHaveText(sessionId);
   await expect(frame.getByTestId("local-hello-username")).not.toHaveText("unknown");
   await expect(frame.getByTestId("local-hello-platform")).not.toHaveText("unknown");
+});
+
+test.afterEach(async ({ request }) => {
+  await cleanupE2eProjects(request);
 });

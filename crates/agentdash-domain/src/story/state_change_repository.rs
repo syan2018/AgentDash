@@ -29,4 +29,5 @@ pub trait StateChangeRepository: Send + Sync {
         payload: serde_json::Value,
         backend_id: Option<&str>,
     ) -> Result<(), DomainError>;
+    async fn delete_by_project(&self, project_id: Uuid) -> Result<u64, DomainError>;
 }

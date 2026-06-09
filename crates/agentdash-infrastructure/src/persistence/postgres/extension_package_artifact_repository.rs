@@ -105,6 +105,15 @@ impl ExtensionPackageArtifactRepository for PostgresExtensionPackageArtifactRepo
         .map_err(|error| sql_err_for("extension_package_artifacts", error))?;
         rows.into_iter().map(row_to_artifact).collect()
     }
+
+    async fn delete(&self, id: Uuid) -> Result<bool, DomainError> {
+        let result = sqlx::query("DELETE FROM extension_package_artifacts WHERE id = $1")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| sql_err_for("extension_package_artifacts", error))?;
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 fn row_to_artifact(row: sqlx::postgres::PgRow) -> Result<ExtensionPackageArtifact, DomainError> {

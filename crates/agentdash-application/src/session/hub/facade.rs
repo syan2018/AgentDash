@@ -181,7 +181,6 @@ fn envelope_from_construction(construction: RuntimeContextInspectionPlan) -> Fra
             identity: None,
             terminal_hook_effect_binding: None,
             discovered_guidelines: construction.projections.discovered_guidelines,
-            extension_runtime: construction.projections.extension_runtime,
         },
         working_directory,
         executor_config,

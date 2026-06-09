@@ -598,6 +598,29 @@ export function SessionPage({
         }
         break;
       }
+      case "workspace_module_presented": {
+        // workspace_module_present 推送：按 renderer_kind 决定 workspace tab typeId/uri。
+        // - canvas → typeId "canvas"，uri canvas://{mount_id}（与 canvas_presented 对齐）。
+        // - extension webview/panel → typeId = view_key（extension tab type_id），uri = uri_scheme。
+        const data = extractPlatformEventData(_event);
+        const rendererKind = typeof data?.renderer_kind === "string" ? data.renderer_kind : "";
+        const viewKey = typeof data?.view_key === "string" ? (data.view_key as string).trim() : "";
+        const uri = typeof data?.uri === "string" ? (data.uri as string).trim() : "";
+        if (rendererKind === "canvas") {
+          const canvasUri = uri || (viewKey ? `canvas://${viewKey}` : "");
+          if (canvasUri) {
+            void refreshSessionRuntimeContext();
+            expandWorkspacePanel("canvas", canvasUri);
+          }
+        } else if (viewKey) {
+          expandWorkspacePanel(viewKey, uri || undefined);
+        }
+        break;
+      }
+      case "workspace_module_present_failed": {
+        // 后端已产出可操作诊断（无可展示目标）；展示层无需打开 tab，事件本身在 feed 可见。
+        break;
+      }
       default:
         break;
     }

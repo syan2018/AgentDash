@@ -181,6 +181,7 @@ impl AppState {
         let session_services_handle = vfs_bootstrap.session_services_handle;
         let runtime_tool_provider = vfs_bootstrap.runtime_tool_provider;
         let mcp_relay_provider = vfs_bootstrap.mcp_relay_provider;
+        let runtime_gateway_handle = vfs_bootstrap.runtime_gateway_handle;
 
         let session_bootstrap = crate::bootstrap::session::build_session_runtime(
             crate::bootstrap::session::SessionBootstrapInput {
@@ -223,6 +224,9 @@ impl AppState {
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),
         );
+        // RuntimeGateway 装配序晚于 RelayRuntimeToolProvider（gateway 依赖 session_mcp_access，
+        // 后者依赖 provider 产出的工具集），此处把 gateway 回填进延迟句柄，供 workspace_module_invoke。
+        runtime_gateway_handle.set(runtime_gateway.clone()).await;
 
         let lock_map = Arc::new(TaskLockMap::new());
 

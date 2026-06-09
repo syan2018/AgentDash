@@ -78,6 +78,12 @@ pub struct AgentPresetConfig {
     /// 允许此 Agent 调用的 companion agent 名称白名单。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_companions: Option<Vec<String>>,
+    /// 此 Agent 可见的 Workspace Module ref 白名单（形如 `ext:{key}` / `canvas:{mount_id}`）。
+    ///
+    /// 事实源为 ProjectAgent 定义，frame construction 据此填充
+    /// `AgentFrame.visible_workspace_module_refs_json`。`None`/空 → 全集可见；非空 → 仅白名单。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible_workspace_module_refs: Option<Vec<String>>,
 }
 
 /// 用于字段级合并的 helper macro — 消除逐字段重复代码。
@@ -110,6 +116,7 @@ impl AgentPresetConfig {
             vfs_access_grants,
             skill_asset_keys,
             allowed_companions,
+            visible_workspace_module_refs,
         )
     }
 
@@ -255,6 +262,38 @@ mod tests {
                 .as_ref()
                 .map(|items| items[0].mount_id.as_str()),
             Some("override")
+        );
+    }
+
+    #[test]
+    fn preset_config_roundtrips_and_merges_visible_workspace_module_refs() {
+        let config = AgentPresetConfig::from_json(&serde_json::json!({
+            "visible_workspace_module_refs": ["ext:demo", "canvas:dashboard-a"]
+        }))
+        .expect("valid preset config");
+        assert_eq!(
+            config.visible_workspace_module_refs.as_deref(),
+            Some(["ext:demo".to_string(), "canvas:dashboard-a".to_string()].as_slice())
+        );
+
+        let base = AgentPresetConfig {
+            visible_workspace_module_refs: Some(vec!["ext:base".to_string()]),
+            ..Default::default()
+        };
+        let over = AgentPresetConfig {
+            visible_workspace_module_refs: Some(vec!["ext:override".to_string()]),
+            ..Default::default()
+        };
+        assert_eq!(
+            over.merge_over(&base).visible_workspace_module_refs,
+            Some(vec!["ext:override".to_string()])
+        );
+        // 未配置（None）保留 base，回归"未配置=全集"不被破坏。
+        assert_eq!(
+            AgentPresetConfig::default()
+                .merge_over(&base)
+                .visible_workspace_module_refs,
+            Some(vec!["ext:base".to_string()])
         );
     }
 

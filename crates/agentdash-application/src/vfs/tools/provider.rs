@@ -9,6 +9,7 @@ use agentdash_spi::ToolCluster;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::platform::tool_capability::{
     CAP_CANVAS, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_SHELL_EXECUTE, CAP_WORKFLOW,
+    CAP_WORKSPACE_MODULE,
 };
 use agentdash_spi::{ConnectorError, ExecutionContext};
 use async_trait::async_trait;
@@ -24,8 +25,34 @@ use crate::vfs::tools::fs::{
     ShellExecTool,
 };
 use crate::vfs::{VfsMaterializationService, VfsMaterializationTransport};
+use crate::runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
 use crate::workflow::tools::advance_node::CompleteLifecycleNodeTool;
+use crate::workspace_module::{
+    WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
+    WorkspaceModulePresentTool, resolve_invocation_backend,
+};
+use agentdash_application_ports::extension_runtime::ExtensionRuntimeChannelTransport;
 use uuid::Uuid;
+
+/// `RuntimeGateway` 的延迟注入句柄。
+///
+/// gateway 在 app_state 装配序里晚于本 provider 构造（gateway 依赖 session_mcp_access，
+/// 后者又依赖本 provider 产出的工具集），无法在 `new` 时传入。沿用
+/// `SharedSessionToolServicesHandle` 的延迟注入模式：app_state 在 gateway 建好后 `set`。
+#[derive(Clone, Default)]
+pub struct SharedRuntimeGatewayHandle {
+    inner: Arc<RwLock<Option<Arc<RuntimeGateway>>>>,
+}
+
+impl SharedRuntimeGatewayHandle {
+    pub async fn set(&self, gateway: Arc<RuntimeGateway>) {
+        *self.inner.write().await = Some(gateway);
+    }
+
+    pub async fn get(&self) -> Option<Arc<RuntimeGateway>> {
+        self.inner.read().await.clone()
+    }
+}
 
 #[derive(Clone)]
 pub struct RelayRuntimeToolProvider {
@@ -36,6 +63,8 @@ pub struct RelayRuntimeToolProvider {
     function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
     materialization: Option<Arc<VfsMaterializationService>>,
+    runtime_gateway_handle: SharedRuntimeGatewayHandle,
+    extension_channel_transport: Option<Arc<dyn ExtensionRuntimeChannelTransport>>,
 }
 
 impl RelayRuntimeToolProvider {
@@ -55,7 +84,24 @@ impl RelayRuntimeToolProvider {
             function_runner,
             shell_output_registry: None,
             materialization: None,
+            runtime_gateway_handle: SharedRuntimeGatewayHandle::default(),
+            extension_channel_transport: None,
         }
+    }
+
+    /// 注入 RuntimeGateway 延迟句柄（供 workspace_module_invoke 路由 runtime/canvas action）。
+    pub fn with_runtime_gateway_handle(mut self, handle: SharedRuntimeGatewayHandle) -> Self {
+        self.runtime_gateway_handle = handle;
+        self
+    }
+
+    /// 注入 extension channel transport（供 workspace_module_invoke 的 protocol_channel 分支）。
+    pub fn with_extension_channel_transport(
+        mut self,
+        transport: Arc<dyn ExtensionRuntimeChannelTransport>,
+    ) -> Self {
+        self.extension_channel_transport = Some(transport);
+        self
     }
 
     pub fn with_shell_output_registry(
@@ -324,6 +370,103 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 }
             } else {
                 tracing::warn!("canvas tools 注入失败：无法从 hook session 解析 project_id");
+            }
+        }
+
+        // Workspace Module 簇：module 发现工具（只读，现取现算）
+        if clusters.contains(&ToolCluster::WorkspaceModule) {
+            if let Some(project_id) = project_id_from_context(context) {
+                let visibility = flow.workspace_module.clone();
+                if flow.is_capability_tool_enabled(
+                    CAP_WORKSPACE_MODULE,
+                    "workspace_module_list",
+                    Some(ToolCluster::WorkspaceModule),
+                ) {
+                    tools.push(Arc::new(WorkspaceModuleListTool::new(
+                        self.repos.project_extension_installation_repo.clone(),
+                        self.repos.canvas_repo.clone(),
+                        project_id,
+                        visibility.clone(),
+                    )));
+                }
+                if flow.is_capability_tool_enabled(
+                    CAP_WORKSPACE_MODULE,
+                    "workspace_module_describe",
+                    Some(ToolCluster::WorkspaceModule),
+                ) {
+                    tools.push(Arc::new(WorkspaceModuleDescribeTool::new(
+                        self.repos.project_extension_installation_repo.clone(),
+                        self.repos.canvas_repo.clone(),
+                        project_id,
+                        visibility.clone(),
+                    )));
+                }
+
+                // invoke：需 RuntimeGateway + channel transport 注入齐全才装配。
+                if flow.is_capability_tool_enabled(
+                    CAP_WORKSPACE_MODULE,
+                    "workspace_module_invoke",
+                    Some(ToolCluster::WorkspaceModule),
+                ) {
+                    match (
+                        self.runtime_gateway_handle.get().await,
+                        self.extension_channel_transport.as_ref(),
+                    ) {
+                        (Some(gateway), Some(transport)) => {
+                            let backend = resolve_invocation_backend(
+                                context.session.vfs.as_ref(),
+                                context
+                                    .session
+                                    .backend_execution
+                                    .as_ref()
+                                    .map(|placement| placement.backend_id.as_str()),
+                            );
+                            let channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
+                                self.repos.project_extension_installation_repo.clone(),
+                                transport.clone(),
+                            ));
+                            tools.push(Arc::new(WorkspaceModuleInvokeTool::new(
+                                self.repos.project_extension_installation_repo.clone(),
+                                self.repos.canvas_repo.clone(),
+                                project_id,
+                                visibility.clone(),
+                                session_id.clone(),
+                                // AgentFrame ID 不在 ExecutionContext 可达范围内（research/04），
+                                // runtime_action 派发不强制 agent_id（与 RuntimeActionToolSpec 一致）。
+                                None,
+                                backend,
+                                gateway,
+                                channel_invoker,
+                            )));
+                        }
+                        _ => {
+                            tracing::warn!(
+                                "workspace_module_invoke 未装配：缺少 RuntimeGateway 或 channel transport 注入"
+                            );
+                        }
+                    }
+                }
+
+                // present：复用 session eventing 推 present 事件。
+                if flow.is_capability_tool_enabled(
+                    CAP_WORKSPACE_MODULE,
+                    "workspace_module_present",
+                    Some(ToolCluster::WorkspaceModule),
+                ) {
+                    tools.push(Arc::new(WorkspaceModulePresentTool::new(
+                        self.repos.project_extension_installation_repo.clone(),
+                        self.repos.canvas_repo.clone(),
+                        project_id,
+                        visibility,
+                        self.session_services_handle.clone(),
+                        session_id.clone(),
+                        context.session.turn_id.clone(),
+                    )));
+                }
+            } else {
+                tracing::warn!(
+                    "workspace module tools 注入失败：无法从 hook session 解析 project_id"
+                );
             }
         }
 

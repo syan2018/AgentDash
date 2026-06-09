@@ -107,6 +107,9 @@ pub(super) struct SessionAssemblyBuilder {
 
     // ── 用户输入侧 ──
     pub(super) env: HashMap<String, String>,
+
+    // ── Workspace Module 可见性（来自 ProjectAgent preset，事实源派生）──
+    pub(super) visible_workspace_module_refs: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -248,6 +251,12 @@ impl SessionAssemblyBuilder {
         self
     }
 
+    /// 设置 workspace module 可见性白名单（来自 ProjectAgent preset）。
+    pub(super) fn with_visible_workspace_module_refs(mut self, refs: Vec<String>) -> Self {
+        self.visible_workspace_module_refs = refs;
+        self
+    }
+
     /// 一次性吸收 `UserPromptInput` 的所有字段。
     ///
     /// 等价于依次调用 `with_input` / `with_executor_config` / `with_env`；
@@ -302,6 +311,8 @@ impl SessionAssemblyBuilder {
             workspace_defaults: None,
             // 保留调用方已注入的 env 不被 companion slice 清空
             env: self.env,
+            // companion slice 不继承父 agent 的 module 可见性（companion 有自己的能力裁剪）
+            visible_workspace_module_refs: Vec::new(),
         }
     }
 
@@ -381,14 +392,15 @@ pub(super) fn project_assembly_to_frame(
     crate::workflow::frame_builder::AgentFrameBuilder,
     AssemblyLaunchExtras,
 ) {
-    let frame_builder =
-        frame_builder.with_surface_input(crate::workflow::frame_builder::AgentFrameSurfaceInput {
+    let frame_builder = frame_builder
+        .with_surface_input(crate::workflow::frame_builder::AgentFrameSurfaceInput {
             capability_state: prepared.capability_state.as_ref(),
             vfs: prepared.vfs.as_ref(),
             mcp_servers: &prepared.mcp_servers,
             execution_profile: prepared.executor_config.as_ref(),
             context_bundle: prepared.context_bundle.as_ref(),
-        });
+        })
+        .with_visible_workspace_module_refs(prepared.visible_workspace_module_refs.clone());
     let extras = AssemblyLaunchExtras {
         context_bundle: prepared.context_bundle,
         input: prepared.input,

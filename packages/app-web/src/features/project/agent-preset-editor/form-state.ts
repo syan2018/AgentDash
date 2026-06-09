@@ -25,6 +25,7 @@ export interface PresetFormState {
   skill_asset_keys: string[];
   capability_directives: CapabilityKey[];
   allowed_companions: string[];
+  visible_workspace_module_refs: string[];
 }
 
 export function presetToForm(preset?: AgentPreset): PresetFormState {
@@ -45,6 +46,9 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     .filter((d): d is { add: CapabilityKey } => "add" in d)
     .map((d) => d.add);
   const rawCompanions = Array.isArray(cfg.allowed_companions) ? (cfg.allowed_companions as string[]) : [];
+  const rawVisibleModuleRefs = Array.isArray(cfg.visible_workspace_module_refs)
+    ? (cfg.visible_workspace_module_refs as string[])
+    : [];
   return {
     name: preset?.name ?? "",
     display_name: String(cfg.display_name ?? ""),
@@ -62,6 +66,7 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     skill_asset_keys: rawSkillAssetKeys,
     capability_directives: capKeys,
     allowed_companions: rawCompanions,
+    visible_workspace_module_refs: rawVisibleModuleRefs,
   };
 }
 
@@ -83,6 +88,10 @@ export function formToPreset(form: PresetFormState): AgentPreset {
     config.capability_directives = form.capability_directives.map((key) => ({ add: key }));
   }
   if (form.allowed_companions.length > 0) config.allowed_companions = form.allowed_companions;
+  // 空 = 全部可见（不写 config，下游默认全集）；非空 = 仅勾选 module。
+  if (form.visible_workspace_module_refs.length > 0) {
+    config.visible_workspace_module_refs = form.visible_workspace_module_refs;
+  }
   return {
     name: form.name.trim(),
     agent_type: form.agent_type.trim(),

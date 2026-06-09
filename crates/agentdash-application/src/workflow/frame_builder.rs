@@ -79,6 +79,9 @@ pub struct AgentFrameBuilder {
     vfs_surface: Option<serde_json::Value>,
     mcp_surface: Option<serde_json::Value>,
     execution_profile: Option<serde_json::Value>,
+    /// 来自 ProjectAgent preset 的 workspace module 可见性白名单（事实源派生）。
+    /// 非空时覆盖 carry-forward 的 frame 字段；空/None 时保留上一 revision（默认全集）。
+    visible_workspace_module_refs: Option<Vec<String>>,
     created_by_kind: String,
     created_by_id: Option<String>,
 }
@@ -92,9 +95,18 @@ impl AgentFrameBuilder {
             vfs_surface: None,
             mcp_surface: None,
             execution_profile: None,
+            visible_workspace_module_refs: None,
             created_by_kind: "frame_builder".to_string(),
             created_by_id: None,
         }
+    }
+
+    /// 从 ProjectAgent preset 设置 workspace module 可见性白名单。
+    ///
+    /// 语义：`None`/空 → 不写（保留 carry-forward，默认全集）；非空 → 写入 refs（下游 allowlist）。
+    pub fn with_visible_workspace_module_refs(mut self, refs: Vec<String>) -> Self {
+        self.visible_workspace_module_refs = if refs.is_empty() { None } else { Some(refs) };
+        self
     }
 
     pub fn with_context(mut self, context_slice: serde_json::Value) -> Self {
@@ -242,6 +254,20 @@ impl AgentFrameBuilder {
         frame.visible_canvas_mount_ids_json = current
             .as_ref()
             .and_then(|frame| frame.visible_canvas_mount_ids_json.clone());
+        // Workspace module 可见性事实源是 ProjectAgent preset：preset 显式给出白名单时写入本
+        // revision；否则保留上一 revision（None → 下游默认全集）。
+        match &self.visible_workspace_module_refs {
+            Some(refs) if !refs.is_empty() => {
+                for module_ref in refs {
+                    frame.append_visible_workspace_module_ref(module_ref);
+                }
+            }
+            _ => {
+                frame.visible_workspace_module_refs_json = current
+                    .as_ref()
+                    .and_then(|frame| frame.visible_workspace_module_refs_json.clone());
+            }
+        }
         frame.created_by_id = self.created_by_id.clone();
 
         repo.create(&frame).await?;
@@ -397,6 +423,66 @@ mod tests {
             Some(serde_json::json!({"executor": "local"}))
         );
         assert_eq!(frame2.visible_canvas_mount_ids(), vec!["demo".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn build_writes_visible_workspace_module_refs_from_preset() {
+        let repo = InMemoryFrameRepo::default();
+        let agent_id = Uuid::new_v4();
+
+        let frame = AgentFrameBuilder::new(agent_id)
+            .with_visible_workspace_module_refs(vec![
+                "ext:demo".to_string(),
+                "canvas:dashboard-a".to_string(),
+            ])
+            .build(&repo)
+            .await
+            .expect("frame");
+
+        assert_eq!(
+            frame.visible_workspace_module_refs(),
+            vec!["ext:demo".to_string(), "canvas:dashboard-a".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn build_with_empty_workspace_module_refs_yields_empty_frame() {
+        let repo = InMemoryFrameRepo::default();
+        let agent_id = Uuid::new_v4();
+
+        let frame = AgentFrameBuilder::new(agent_id)
+            .with_visible_workspace_module_refs(Vec::new())
+            .build(&repo)
+            .await
+            .expect("frame");
+
+        // 未配置 → frame 字段空 → 下游默认全集（不破坏现有 agent）。
+        assert!(frame.visible_workspace_module_refs().is_empty());
+        assert!(frame.visible_workspace_module_refs_json.is_none());
+    }
+
+    #[tokio::test]
+    async fn build_revision_carries_forward_workspace_module_refs_when_preset_absent() {
+        let repo = InMemoryFrameRepo::default();
+        let agent_id = Uuid::new_v4();
+
+        let frame1 = AgentFrameBuilder::new(agent_id)
+            .with_visible_workspace_module_refs(vec!["ext:demo".to_string()])
+            .build(&repo)
+            .await
+            .expect("frame1");
+        repo.items.lock().unwrap()[0] = frame1.clone();
+
+        // 第二 revision 未带 preset refs → carry-forward 上一 revision。
+        let frame2 = AgentFrameBuilder::new(agent_id)
+            .build(&repo)
+            .await
+            .expect("frame2");
+
+        assert_eq!(
+            frame2.visible_workspace_module_refs(),
+            vec!["ext:demo".to_string()]
+        );
     }
 
     #[tokio::test]

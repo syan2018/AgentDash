@@ -1,0 +1,31 @@
+{
+  "id": "workspace-module-registry",
+  "name": "workspace-module-registry",
+  "title": "Agent Workspace Module Registry 与 Canvas Extension 协作面预研",
+  "description": "讨论并规划 Agent Workspace Module Registry，把 Extension、Canvas、Protocol Channel 与内置 GUI/接口协作模块统一为 Agent 可发现、可展开、可调用、可展示的工作台协作模块。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": "planning",
+  "package": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-06-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-08-workspace-module-read-contract",
+    "06-08-workspace-module-operate",
+    "06-08-workspace-module-integration-ui",
+    "06-09-workspace-module-agent-visibility"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "本任务只沉淀概念模型、技术设计与后续 child 拆分；不直接进入实现。核心方向：Canvas 是动态 workspace module instance，Extension 是 packaged module source，Agent 通过稳定 Workspace Module Tools 协作；surface 保留为底层 runtime projection 命名。",
+  "meta": {}
+}

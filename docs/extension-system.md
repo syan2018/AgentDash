@@ -289,3 +289,38 @@ pnpm --dir examples/extensions/protocol-demo run agentdash:install -- --api-url 
 
 - `examples/extensions/local-hello`：最小 built-in Host API 示例，展示 `ctx.api.local.getProfile()` 从本机 host 获取 profile。
 - `examples/extensions/protocol-demo`：完整协议/channel 示例，展示纯 TS action、用户自写 protocol adapter、workspace/env/process/http facade、protocol channel provider、self-channel shortcut、dependency alias 和 panel action/channel 调用。
+
+## Workspace Module
+
+**Workspace Module 是项目工作空间里"可被 agent 与用户协作消费的能力模块"的统一认知单元。** 它把不同来源的协作能力归一成同一种 descriptor，让 agent 工具与项目设置页用同一份 projection 认知、列举、调用与裁切，避免每类来源各自一套 DTO 和调用约定。
+
+### 来源（kind）与 module_id
+
+Workspace Module 由三类来源聚合而成，各有稳定 id 前缀：
+
+- **Extension**（`ext:{extension_key}`）：已安装并 enabled 的扩展。其 `runtime_actions` 与 `protocol_channels[].methods` 投影为 module 的 operations，`workspace_tabs` 投影为 ui_entries。
+- **Canvas**（`canvas:{mount_id}`）：项目可见的 Canvas。投影为带 ui_entry（供 present/read）的 module；Canvas binding 是声明式数据引用而非可 invoke 的 RPC，本轮 canvas module 不暴露 invokable operation。
+- **Builtin**（`builtin:{key}`）：平台内置能力，预留位（当前为空）。
+
+聚合由单一 canonical 函数 `build_workspace_modules(ext_projection, canvases)` 完成（application `workspace_module` 层）。Agent 工具与 `GET /api/projects/{id}/workspace-modules`（项目设置页数据出口）共用它——**不存在第二份聚合或 DTO**。
+
+### 与 Runtime Surface 的术语边界
+
+- **Runtime Surface** 指 extension runtime projection 的底层分量：`runtime_actions`、`protocol_channels`、`workspace_tabs`、`bundles`、`permissions` 等。它是"扩展声明了什么 / 运行时暴露了什么"的低层事实，按扩展边界组织。
+- **Workspace Module** 是建立在 Runtime Surface（及 Canvas / Builtin）之上的**协作认知层**：按"能力模块"而非"扩展内部结构"组织，统一 kind / status / operations / ui_entries / permission_summary 的表达，服务 agent 与项目管理面。
+
+简言之：Runtime Surface 回答"扩展暴露了哪些底层 action/channel/tab"，Workspace Module 回答"工作空间里有哪些可协作模块、各自能做什么、是否可用"。代码中保留的 `Surface`/`surface` 命名专指底层 runtime projection，不与 Workspace Module 混用。
+
+### 四工具（list / describe / invoke / present）
+
+Agent 经四个元工具消费 Workspace Module（application `workspace_module/tools.rs`）：
+
+- **list**：返回 `WorkspaceModuleSummary` 列表（kind / title / source / status / operation_summary / permission_summary，不含完整 schema）。
+- **describe**：返回单个 `WorkspaceModuleDescriptor`（含每个 operation 的 input/output schema 与 ui_entries）。
+- **invoke**：按 operation 的结构化 `dispatch` 分量直接派发——`RuntimeAction` 走 RuntimeGateway、`ProtocolChannel` 走 channel invoker、`Canvas` 以 canvas actor 派发、`Builtin` 预留。invoke 不字符串拆 `operation_key`，并把 provenance（operation 来源 / backend）与 runtime trace 落进结果 details，统一审计。
+- **present**：把 module 的 ui_entry 呈现给会话用户（webview / canvas panel）。
+
+### 可见性裁切与诊断
+
+- **裁切**：AgentFrame 的 `visible_workspace_module_refs` allowlist 经 capability 通道（`WorkspaceModuleDimension`）在 agent 侧生效——为空表示放行全部，非空仅放行 allowlist 内 module。该字段已持久化（`agent_frames.visible_workspace_module_refs_json`）。项目设置页提供合并认知视图；per-frame allowlist 的编辑入口属 agent frame 编辑面。
+- **诊断**：当 extension runtime bundle 缺失时，对应 module 的 `status` 标为 `unavailable` 并携带 `reason`，list/describe 与项目设置页据此呈现诊断。

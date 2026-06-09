@@ -206,6 +206,8 @@ pub enum ToolCluster {
     Collaboration,
     /// Canvas 资产：canvases_list, canvas_start, bind_canvas_data, present_canvas
     Canvas,
+    /// Workspace module 发现：workspace_module_list, workspace_module_describe
+    WorkspaceModule,
 }
 
 /// 单个 capability 下的工具级过滤规则。
@@ -266,6 +268,41 @@ pub struct SkillDimension {
     pub skills: Vec<SkillEntry>,
 }
 
+/// Workspace module 可见性裁切模式。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceModuleVisibilityMode {
+    /// 默认：全集 = Project enabled extension + project visible canvas。
+    #[default]
+    All,
+    /// 仅 `allowed_module_ids` 列出的 module 可见。
+    Allowlist,
+}
+
+/// Workspace module 维度的运行态——可见性裁切的唯一权威来源。
+///
+/// AgentFrame 的 `visible_workspace_module_refs_json` 是该维度的 upstream 输入之一：
+/// 字段非空 → `Allowlist`；为空 → `All`。工具在返回 projection 前按此维度过滤。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceModuleDimension {
+    #[serde(default)]
+    pub mode: WorkspaceModuleVisibilityMode,
+    #[serde(default)]
+    pub allowed_module_ids: Vec<String>,
+}
+
+impl WorkspaceModuleDimension {
+    /// 判断给定 module_id 是否对当前 session 可见。
+    pub fn allows(&self, module_id: &str) -> bool {
+        match self.mode {
+            WorkspaceModuleVisibilityMode::All => true,
+            WorkspaceModuleVisibilityMode::Allowlist => {
+                self.allowed_module_ids.iter().any(|id| id == module_id)
+            }
+        }
+    }
+}
+
 /// 解析后的能力运行态——AgentFrame revision 的只读投影。
 ///
 /// **数据流向**：
@@ -289,6 +326,9 @@ pub struct CapabilityState {
     /// Skill 维度。
     #[serde(default)]
     pub skill: SkillDimension,
+    /// Workspace module 可见性维度。
+    #[serde(default)]
+    pub workspace_module: WorkspaceModuleDimension,
 }
 
 impl CapabilityState {
@@ -433,6 +473,8 @@ impl CapabilityState {
             vfs: self.vfs.clone(),
             // skill 不参与 capability 交集裁剪，保持调用方当前会话可见技能面。
             skill: self.skill.clone(),
+            // workspace module 可见性不参与 capability 交集裁剪，保持当前会话可见面。
+            workspace_module: self.workspace_module.clone(),
         }
     }
 }

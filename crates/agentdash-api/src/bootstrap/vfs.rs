@@ -5,7 +5,7 @@ use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::SessionPersistence;
 use agentdash_application::vfs::tools::provider::{
-    RelayRuntimeToolProvider, SharedSessionToolServicesHandle,
+    RelayRuntimeToolProvider, SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
 };
 use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_application::vfs::{VfsMutationDispatcher, VfsService};
@@ -22,6 +22,8 @@ pub(crate) struct VfsBootstrapOutput {
     pub session_services_handle: SharedSessionToolServicesHandle,
     pub runtime_tool_provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider>,
     pub mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider>,
+    /// 延迟注入句柄：app_state 在 RuntimeGateway 建好后 `set`，供 workspace_module_invoke 使用。
+    pub runtime_gateway_handle: SharedRuntimeGatewayHandle,
 }
 
 pub(crate) fn build_vfs_kernel(
@@ -80,6 +82,7 @@ pub(crate) fn build_vfs_kernel(
             materialization_transport,
         ));
 
+    let runtime_gateway_handle = SharedRuntimeGatewayHandle::default();
     let runtime_tool_provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider> = Arc::new(
         RelayRuntimeToolProvider::new(
             vfs_service.clone(),
@@ -90,7 +93,10 @@ pub(crate) fn build_vfs_kernel(
             function_runner,
         )
         .with_materialization_service(materialization_service.clone())
-        .with_shell_output_registry(shell_output_registry),
+        .with_shell_output_registry(shell_output_registry)
+        .with_runtime_gateway_handle(runtime_gateway_handle.clone())
+        // extension channel transport = backend_registry（与 HTTP 侧 channel invoker 同源）。
+        .with_extension_channel_transport(backend_registry.clone()),
     );
     let mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider> = Arc::new(
         crate::vfs_materialization::MaterializingMcpRelayProvider::new(
@@ -106,6 +112,7 @@ pub(crate) fn build_vfs_kernel(
         session_services_handle,
         runtime_tool_provider,
         mcp_relay_provider,
+        runtime_gateway_handle,
     }
 }
 

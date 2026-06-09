@@ -13,6 +13,8 @@ Capability 维度管线把能力系统收束为稳定主干和可注册维度模
 | Effect | `RuntimeCapabilityEffectRecord` | runtime command 可持久化并 replay 的执行效果 |
 | Projection | dimension-specific projection | connector、UI、model context 消费的闭包后输出 |
 | Dimension module | `CapabilityDimensionModule` | 一个能力维度的 declaration/effect validation、typed decode、replay、projection normalize 单元 |
+| Accumulation policy | `AccumulationPolicy` | 维度声明其更新积累规则：`Replace` / `Accumulate` / `Ephemeral` |
+| Artifact source | `CapabilityArtifactSource` | 来源标识：`preset` / `workflow` / `permission_grant` |
 
 Record envelope:
 
@@ -43,6 +45,8 @@ payload 不保存完整 `CapabilityState`、`ToolDimension`、`CompanionDimensio
 ## Module Interface
 
 ```rust
+CapabilityDimensionModule::key(&self) -> &'static str
+CapabilityDimensionModule::policy(&self) -> AccumulationPolicy
 CapabilityDimensionModule::validate_declaration(&CapabilityDeclarationRecord) -> Result<(), String>
 CapabilityDimensionModule::compile_declaration(&CapabilityDeclarationRecord) -> Result<Option<CapabilityContributionRecord>, String>
 CapabilityDimensionModule::validate_effect(&RuntimeCapabilityEffectRecord) -> Result<(), String>
@@ -51,6 +55,8 @@ CapabilityDimensionModule::normalize_projection(&mut CapabilityState, &RuntimeCa
 CapabilityDimensionRegistry::register_module(module) -> Result<(), String>
 CapabilityDimensionRegistry::validate_transition(&RuntimeCapabilityTransition) -> Result<(), String>
 ```
+
+`policy()` 无默认实现，强制每个维度显式声明积累规则。
 
 ## Contract
 
@@ -72,17 +78,39 @@ CapabilityDimensionRegistry::validate_transition(&RuntimeCapabilityTransition) -
 | payload 无法 decode 到 module-owned typed payload | module validation error |
 | 重复注册同一个 dimension key | registry registration error |
 
+## Base ⊕ Modifier 分层
+
+有效能力面 = `resolve(base, modifiers)`，两层逻辑分离（非物理拆字段）：
+
+- **base（声明式真值）**：ProjectAgent preset 声明投影进 base `CapabilityState`，materialized 进 `AgentFrame.effective_capability_json`。每个 revision 由当前 config 重新投影——声明式维度清空即回默认，不存在"继承上一版声明"。
+- **modifier（运行时增量）**：`RuntimeCapabilityTransition`（declarations + effects），由 workflow / permission grant 产生，经 dimension module replay 叠加到 base 上；持久化为 `AgentFrameTransitionRecord`。
+
+## Accumulation Policy
+
+每个维度声明一个 `AccumulationPolicy`，统一表达更新如何积累，替代各处手写 merge：
+
+| Policy | 语义 |
+| --- | --- |
+| `Replace` | 声明式整体替换；清空 = 回默认/全集；不跨 revision 累积 |
+| `Accumulate` | modifier 跨 revision 叠加，直到显式撤销 |
+| `Ephemeral` | 仅当前 revision 有效，即用即弃（预留，当前无） |
+
 ## Built-in Dimension Matrix
 
-| 维度 | Declaration | Runtime Effect | Projection | 模块状态 |
-| --- | --- | --- | --- | --- |
-| Tool | `dimension=tool`, `declaration_type=capability_directive` | `set_tool_access` | `CapabilityState.tool.capabilities / enabled_clusters / tool_policy` | built-in module |
-| MCP | 可由 tool declaration 的 `mcp:<server>` 间接声明 | `set_server_set` | `CapabilityState.tool.mcp_servers` | built-in module |
-| Companion | companion contribution 候选 | `set_agent_roster` | `CapabilityState.companion.agents` | built-in module |
-| VFS/mount | `mount_operation` | `apply_vfs_overlay` / `apply_mount_operations` | final VFS / runtime surface | built-in module |
-| Skill baseline | VFS files / local skill dirs | none | `SessionBaselineCapabilities.skills` | projection-only module |
-| Guidelines | VFS/project facts | none | `DiscoveredGuideline[]` | projection-only module |
-| Extension runtime | installed extension assets | future extension effects | command / flag / renderer projection | projection-only module |
+| 维度 | Policy | Declaration | Runtime Effect | Projection | 进 `intersect()` | 模块状态 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Tool | Replace | `dimension=tool`, `declaration_type=capability_directive` | `set_tool_access` | `CapabilityState.tool.capabilities / enabled_clusters / tool_policy` | 是（集合交） | built-in module |
+| MCP | Replace | 可由 tool declaration 的 `mcp:<server>` 间接声明 | `set_server_set` | `CapabilityState.tool.mcp_servers` | 否 | built-in module |
+| Companion | Replace | companion contribution 候选 | `set_agent_roster`（定义未用，resolver 单源） | `CapabilityState.companion.agents` | 否 | built-in module |
+| VFS/mount | Accumulate | `mount_operation` | `apply_vfs_overlay` / `apply_mount_operations` | final VFS / runtime surface（含 canvas mount 累积） | 否 | built-in module |
+| Workspace module | Replace | preset `visible_workspace_module_refs` → base 投影 | none（预留运行时 grant） | `CapabilityState.workspace_module`（`mode` 三态，经 `effective_capability_json`） | 否 | base-projection module |
+| Skill baseline | Replace | 权限=preset `skill_asset_keys`（声明式授予）；列表=VFS files / local skill dirs 物化 | none | `SessionBaselineCapabilities.skills`（发现物化，非权限门） | 否 | projection-only module |
+| Guidelines | — | VFS/project facts | none | `DiscoveredGuideline[]` | 否 | projection-only module |
+| Extension runtime | — | installed extension assets | future extension effects | command / flag / renderer projection | 否 | projection-only module |
+
+> **Workspace module 可见性**：声明式 allowlist 事实源是 ProjectAgent preset `visible_workspace_module_refs`，投影进 base `CapabilityState.workspace_module`（`mode=All` 未配/清空 / `mode=Allowlist` 受限），经 `effective_capability_json` 序列化还原。不走旁路帧字段（`agent_frames.visible_workspace_module_refs_json` 保留为运行时 grant 预留、当前不写入）。
+>
+> **Skill 权限 vs 发现**：skill 的"授予"是 `skill_asset_keys`（声明式 Replace，种进 VFS mount metadata）；`CapabilityState.skill.skills`（`SkillEntry`）是 `load_skills_from_vfs` 扫 mount 的**发现物化结果**，不是权限门。`frame_builder` 的 `inherit_skills_from` carry-forward 是发现缓存（热修订不重扫 VFS），与权限原语无关。
 
 ## Registry Ordering
 

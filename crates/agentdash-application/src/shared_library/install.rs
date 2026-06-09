@@ -389,6 +389,8 @@ async fn install_agent_template(
         vfs_access_grants: None,
         skill_asset_keys: None,
         allowed_companions: None,
+        // 模板安装不预设 module 可见性（module 为项目作用域），项目内按 agent 编辑。
+        visible_workspace_module_refs: None,
     };
     agent.config = serde_json::to_value(agent_config).map_err(DomainError::Serialization)?;
     agent.installed_source = Some(installed_source);

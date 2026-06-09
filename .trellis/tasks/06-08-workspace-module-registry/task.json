@@ -21,7 +21,8 @@
   "children": [
     "06-08-workspace-module-read-contract",
     "06-08-workspace-module-operate",
-    "06-08-workspace-module-integration-ui"
+    "06-08-workspace-module-integration-ui",
+    "06-09-workspace-module-agent-visibility"
   ],
   "parent": null,
   "relatedFiles": [],

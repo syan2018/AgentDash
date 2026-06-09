@@ -78,6 +78,11 @@ pub(super) async fn compose(
                 request_mcp_servers: input.command.local_relay_mcp_declarations().to_vec(),
                 existing_vfs: frame.typed_vfs(),
                 visible_canvas_mount_ids: frame.visible_canvas_mount_ids(),
+                visible_workspace_module_refs: agent_context
+                    .preset_config
+                    .visible_workspace_module_refs
+                    .clone()
+                    .unwrap_or_default(),
                 active_workflow: None,
                 lifecycle,
                 audit_session_key: Some(input.session_id.clone()),

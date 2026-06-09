@@ -10,6 +10,7 @@ import { SkillAssetPicker } from "./skill-asset-picker";
 import { ToolCapabilitiesField } from "./tool-capabilities-field";
 import type { PresetFormState } from "./form-state";
 import { VfsAccessPicker } from "./vfs-access-picker";
+import { WorkspaceModuleVisibilityPicker } from "./workspace-module-visibility-picker";
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useAgentTypeOptions() {
@@ -45,7 +46,7 @@ export function PresetFormFields({
   knowledgeAgentId?: string;
 }) {
   const [activeTab, setActiveTab] = useState<'basic' | 'capability' | 'memory'>('basic');
-  const [activeCapability, setActiveCapability] = useState<'tool' | 'mcp' | 'vfs' | 'skill' | 'companion'>('tool');
+  const [activeCapability, setActiveCapability] = useState<'tool' | 'mcp' | 'vfs' | 'skill' | 'module' | 'companion'>('tool');
   const discovered = useExecutorDiscoveredOptions(form.agent_type);
   const modelSelector = discovered.options?.model_selector ?? null;
   const isModelLoading = !discovered.isInitialized || (discovered.options?.loading_models ?? false);
@@ -392,6 +393,7 @@ export function PresetFormFields({
     form.mcp_preset_keys.length +
     form.vfs_access_grants.length +
     form.skill_asset_keys.length +
+    form.visible_workspace_module_refs.length +
     form.allowed_companions.length;
 
   const tabs: Array<{
@@ -406,7 +408,7 @@ export function PresetFormFields({
   ];
 
   const capabilityItems: Array<{
-    key: 'tool' | 'mcp' | 'vfs' | 'skill' | 'companion';
+    key: 'tool' | 'mcp' | 'vfs' | 'skill' | 'module' | 'companion';
     label: string;
     badge?: string;
     disabled?: boolean;
@@ -432,6 +434,13 @@ export function PresetFormFields({
       key: 'skill',
       label: 'Skills',
       badge: form.skill_asset_keys.length > 0 ? String(form.skill_asset_keys.length) : undefined,
+    },
+    {
+      key: 'module',
+      label: 'Modules',
+      badge: form.visible_workspace_module_refs.length > 0
+        ? String(form.visible_workspace_module_refs.length)
+        : '全部',
     },
     {
       key: 'companion',
@@ -576,6 +585,15 @@ export function PresetFormFields({
                 projectId={projectId}
                 selectedKeys={form.skill_asset_keys}
                 onChange={(skill_asset_keys) => patchForm({ skill_asset_keys })}
+              />
+            )}
+            {activeCapability === 'module' && (
+              <WorkspaceModuleVisibilityPicker
+                projectId={projectId}
+                selectedRefs={form.visible_workspace_module_refs}
+                onChange={(visible_workspace_module_refs) =>
+                  patchForm({ visible_workspace_module_refs })
+                }
               />
             )}
             {activeCapability === 'companion' && renderCompanionContent()}

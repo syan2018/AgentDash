@@ -298,6 +298,9 @@ pub struct OwnerBootstrapSpec<'a> {
     /// 前端已携带的 VFS(None 时 assembler 自行构建)。
     pub existing_vfs: Option<Vfs>,
     pub visible_canvas_mount_ids: Vec<String>,
+    /// Agent preset 声明的 workspace module 可见性白名单（`ext:{key}` / `canvas:{mount_id}`）。
+    /// 空 → 全集可见；非空 → 仅白名单。事实源是 ProjectAgent，写入新 frame revision。
+    pub visible_workspace_module_refs: Vec<String>,
     /// 当前 session 已绑定的活跃 workflow run。Project/Story owner session 在
     /// bootstrap 或续跑时可通过它获得 lifecycle VFS 与 workflow 能力基线。
     pub active_workflow: Option<ActiveWorkflowProjection>,
@@ -761,6 +764,7 @@ impl<'a> SessionRequestAssembler<'a> {
             .with_mcp_servers(session_mcp_servers)
             .with_resolved_capabilities(cap_output)
             .with_optional_workspace_defaults(workspace_defaults)
+            .with_visible_workspace_module_refs(spec.visible_workspace_module_refs.clone())
             .with_optional_context_bundle(effective_bundle);
 
         if let Some(vfs) = vfs {

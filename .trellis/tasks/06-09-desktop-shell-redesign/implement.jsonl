@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "token/surface/radius/primitive 基线与编码约束；本任务要演进并写回此文档"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件分层与基础约定，新增 StatusScreen/ErrorBoundary 需遵循"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "DashboardHost 的 /api/health gate 契约，splash 重做必须保留"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端编码质量约定，0 ESLint warning 要求"}

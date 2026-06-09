@@ -269,19 +269,14 @@ pub struct SkillDimension {
 }
 
 /// Workspace module 可见性裁切模式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceModuleVisibilityMode {
     /// 默认：全集 = Project enabled extension + project visible canvas。
+    #[default]
     All,
     /// 仅 `allowed_module_ids` 列出的 module 可见。
     Allowlist,
-}
-
-impl Default for WorkspaceModuleVisibilityMode {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 /// Workspace module 维度的运行态——可见性裁切的唯一权威来源。

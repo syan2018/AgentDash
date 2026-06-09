@@ -15,14 +15,14 @@ function StatusBadge({ module }: { module: WorkspaceModuleDescriptor }) {
   const { status } = module.summary;
   if (status.kind === "ready") {
     return (
-      <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+      <span className="inline-flex items-center rounded-[8px] border border-success/25 bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
         Ready
       </span>
     );
   }
   return (
     <span
-      className="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400"
+      className="inline-flex items-center rounded-[8px] border border-warning/25 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
       title={status.reason ?? undefined}
     >
       Unavailable
@@ -96,7 +96,7 @@ export function WorkspaceModulesPanel({ projectId }: { projectId: string }) {
               </div>
             </div>
             {unavailable && summary.status.reason && (
-              <p className="mt-2 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300">
+              <p className="mt-2 rounded-[8px] border border-warning/20 bg-warning/10 px-2 py-1 text-xs text-warning">
                 诊断：{summary.status.reason}
               </p>
             )}

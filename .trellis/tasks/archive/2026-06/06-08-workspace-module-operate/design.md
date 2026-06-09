@@ -19,7 +19,7 @@ WorkspaceModuleOperation {
   ... 原字段 ...
   dispatch: WorkspaceModuleOperationDispatch   // 新增，承载来源专属路由分量
 }
-WorkspaceModuleOperationDispatch = 
+WorkspaceModuleOperationDispatch =
   | { kind: "runtime_action", action_key }
   | { kind: "protocol_channel", channel_key, method_name }
   | { kind: "canvas", canvas_action }

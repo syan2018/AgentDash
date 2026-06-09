@@ -146,7 +146,7 @@ export function WorkspaceLayout() {
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
+    <div className="flex h-full w-full overflow-hidden bg-background">
       <aside className="relative z-10 flex h-full w-72 flex-col bg-sidebar text-sidebar-foreground shadow-md">
         {/* 头部：品牌 */}
         <div className="flex items-center gap-2 border-b border-border px-4 py-3.5">

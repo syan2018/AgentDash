@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import WebDashboardApp from 'app-web'
-import { Button, Card, cn } from '@agentdash/ui'
+import { Button, StatusScreen } from '@agentdash/ui'
 import { invoke } from '@tauri-apps/api/core'
+import { DesktopTitlebar } from './DesktopTitlebar'
 import { createTauriLocalRuntimeClient, tauriBrowseDirectory } from './runtimeApi'
 import type { LocalRuntimeClient } from '@agentdash/core/local-runtime'
 import type { BrowseDirectoryResult } from '@agentdash/views/directory-browser'
@@ -39,9 +40,12 @@ function App() {
   }, [client])
 
   return (
-    <main className="min-h-screen min-w-[960px] bg-background text-foreground">
-      <DashboardHost />
-    </main>
+    <div className="flex h-screen min-w-[960px] flex-col bg-background text-foreground">
+      <DesktopTitlebar />
+      <div className="min-h-0 flex-1">
+        <DashboardHost />
+      </div>
+    </div>
   )
 }
 
@@ -91,19 +95,20 @@ function DashboardHost() {
     return <WebDashboardApp />
   }
 
+  const unavailable = state === 'unavailable'
   return (
-    <div className="grid min-h-screen place-items-center bg-background p-6">
-      <Card className="grid w-full max-w-[520px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3.5">
-        <span className={cn('h-2.5 w-2.5 rounded-full bg-muted-foreground', dashboardHostDotClass(state))} />
-        <div>
-          <h1 className="text-base font-semibold text-foreground">Dashboard API</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{dashboardApiMessage(state, apiSnapshot)}</p>
-        </div>
-        <Button onClick={() => setAttempt((value) => value + 1)}>
-          重试
-        </Button>
-      </Card>
-    </div>
+    <StatusScreen
+      tone={unavailable ? 'danger' : 'loading'}
+      title={unavailable ? 'Dashboard API 暂不可用' : '正在启动本机服务…'}
+      description={dashboardApiMessage(state, apiSnapshot)}
+      action={
+        unavailable ? (
+          <Button variant="secondary" onClick={() => setAttempt((value) => value + 1)}>
+            重试
+          </Button>
+        ) : undefined
+      }
+    />
   )
 }
 
@@ -124,17 +129,6 @@ function dashboardApiMessage(state: DashboardApiState, snapshot: DesktopApiSnaps
 
 function normalizeApiOrigin(value: string): string {
   return value.replace(/\/+$/, '')
-}
-
-function dashboardHostDotClass(state: DashboardApiState): string {
-  switch (state) {
-    case 'checking':
-      return 'bg-warning'
-    case 'ready':
-      return 'bg-success'
-    case 'unavailable':
-      return 'bg-destructive'
-  }
 }
 
 export default App

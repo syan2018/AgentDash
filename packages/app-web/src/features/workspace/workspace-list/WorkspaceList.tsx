@@ -19,9 +19,9 @@ import {
 import {
   BindingStatusBadge,
   ResolutionBadge,
-  WorkspaceEditorDrawer,
   WorkspaceStatusBadge,
-} from "./WorkspaceListEditor";
+} from "./badges";
+import { WorkspaceEditorDrawer } from "./WorkspaceListEditor";
 interface WorkspaceListProps {
   projectId: string;
   workspaces: Workspace[];
@@ -42,7 +42,7 @@ export function WorkspaceList({
   const backends = useCoordinatorStore((state) => state.backends);
   const fetchBackends = useCoordinatorStore((state) => state.fetchBackends);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [accesses, setAccesses] = useState<ProjectBackendAccess[]>([]);
   const [candidates, setCandidates] = useState<WorkspaceInventoryCandidate[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -92,6 +92,12 @@ export function WorkspaceList({
     }, 0);
     return () => window.clearTimeout(timer);
   }, [backendRuntimeSignature, loadRoutingInputs]);
+
+  // 从 workspaces 派生当前详情对象，保证保存 + store upsert 后详情抽屉拿到最新数据。
+  const selectedWorkspace = useMemo(
+    () => workspaces.find((item) => item.id === selectedWorkspaceId) ?? null,
+    [workspaces, selectedWorkspaceId],
+  );
 
   const handleToggleDefault = (workspaceId: string, event: MouseEvent) => {
     event.stopPropagation();
@@ -204,7 +210,7 @@ export function WorkspaceList({
                     )}
                     <button
                       type="button"
-                      onClick={() => setSelectedWorkspace(workspace)}
+                      onClick={() => setSelectedWorkspaceId(workspace.id)}
                       className="rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                     >
                       详情
@@ -233,7 +239,7 @@ export function WorkspaceList({
       />
 
       <WorkspaceEditorDrawer
-        key={`workspace-detail-${selectedWorkspace?.id ?? "none"}`}
+        key={`workspace-detail-${selectedWorkspaceId ?? "none"}`}
         open={Boolean(selectedWorkspace)}
         projectId={projectId}
         mode="detail"
@@ -241,7 +247,7 @@ export function WorkspaceList({
         candidates={candidates}
         accesses={accesses}
         canManageBindings={canManageBindings}
-        onClose={() => setSelectedWorkspace(null)}
+        onClose={() => setSelectedWorkspaceId(null)}
         onSetDefault={onSetDefault}
         onCandidatesChanged={loadRoutingInputs}
         onInventoryChanged={onInventoryChanged}

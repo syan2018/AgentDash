@@ -341,6 +341,19 @@ Agent 的运行时能力面（`CapabilityState`：tool / mcp / vfs / companion /
 | `Accumulate` | modifier 跨 revision 叠加，直到显式撤销 | vfs（含 canvas mount 累积） |
 | `Ephemeral` | 仅当前 revision 有效，即用即弃 | （预留，当前无） |
 
+### 六维度现状速查
+
+| 维度 | 真值来源 | 投影路径 | Policy | 进 `intersect()` |
+|---|---|---|---|---|
+| **tool**（capabilities/clusters/tool_policy） | preset `capability_directives`（Add/Remove）+ permission grant | **事件溯源**：declaration `capability_directive` → effect `set_tool_access` → 重放 | Replace | 是（集合交，唯一参与裁切的维度） |
+| **mcp**（`tool.mcp_servers`） | preset `mcp_preset_keys` + request | **effect-only** `set_server_set` + `mcp_surface_json` 覆盖 | Replace | 否（透传） |
+| **vfs**（`vfs.active`） | preset `vfs_access_grants` + canvas mount（运行时追加） | **事件溯源**：declaration `mount_operation` → effect `apply_vfs_overlay`/`apply_mount_operations` | **Accumulate** | 否（透传） |
+| **companion**（`companion.agents`） | preset `allowed_companions` | **resolver 单源**（`set_agent_roster` effect 闲置），受 `CAP_COLLABORATION` 门控 | Replace | 否（透传） |
+| **skill**（`skill.skills`） | 权限=preset `skill_asset_keys`；列表=`load_skills_from_vfs` 物化 | **base 投影 / 发现物化**（非事件溯源） | Replace | 否（透传） |
+| **workspace_module**（mode + allowed_module_ids） | preset `visible_workspace_module_refs` | **base 投影** → `effective_capability_json`（mode 三态） | Replace | 否（透传） |
+
+要点：真正走 declaration→effect→replay 的只有 **tool / vfs**（+mcp 仅 effect）；companion/skill/workspace_module 走 base 投影或单源（其 effect 通道留作未来运行时增量）。只有 **tool** 维度参与 `intersect()` 集合裁切，其余 clone 透传。
+
 > workspace_module 的三态由 `WorkspaceModuleDimension.mode` 承载：`All`（未声明 / 清空）/ `Allowlist`（受限）。前端 picker 空选即不写 config（`None`）→ 投影为 `mode=All`，与"清空=全部可见"一致。
 
 ### skill / companion 的归类边界

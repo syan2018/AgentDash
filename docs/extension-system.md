@@ -342,3 +342,9 @@ Agent 的运行时能力面（`CapabilityState`：tool / mcp / vfs / companion /
 | `Ephemeral` | 仅当前 revision 有效，即用即弃 | （预留，当前无） |
 
 > workspace_module 的三态由 `WorkspaceModuleDimension.mode` 承载：`All`（未声明 / 清空）/ `Allowlist`（受限）。前端 picker 空选即不写 config（`None`）→ 投影为 `mode=All`，与"清空=全部可见"一致。
+
+### skill / companion 的归类边界
+
+- **skill 权限只管"平台授予"，不管"动态发现"**：授予的事实源是 ProjectAgent preset 的 `skill_asset_keys`（声明式 `Replace`）——每次 bootstrap 由 config 重新种进 VFS mount metadata，清空即不挂载、发现为空，不会复活旧 skill。而 `CapabilityState.skill.skills`（`SkillEntry { name, description, file_path }`）是 `load_skills_from_vfs` 扫 mount **物化出来的发现结果**，属运行时发现/枚举层，**不是权限门**。
+- `frame_builder` 的 `inherit_skills_from` carry-forward 是**发现结果的缓存**（lifecycle 热修订不重扫 VFS 时保住已发现列表），与能力权限原语无关，按此边界保留，不纳入收口。
+- **companion**：`CapabilityState.companion.agents` 由 `CapabilityResolver` 单源产出（受 `CAP_COLLABORATION` 门控），launch command 仅透传，无第二真值源；`Replace` 策略。

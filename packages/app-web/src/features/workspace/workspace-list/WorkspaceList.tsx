@@ -11,7 +11,6 @@ import {
   listWorkspaceInventoryCandidates,
 } from "../../../services/backendAccess";
 import {
-  detectedFactsSummary,
   identityKindLabels,
   identitySummary,
   summarizeAvailability,
@@ -80,9 +79,9 @@ export function WorkspaceList({
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">逻辑 Workspace</p>
+            <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Workspace</p>
             <p className="text-xs text-muted-foreground">
-              Workspace 表达身份；运行落点来自已授权 backend/root 的可用目录。
+              每个 Workspace 描述一处代码来源，运行位置来自已授权 Backend 的可选目录。
             </p>
           </div>
           <button
@@ -102,9 +101,9 @@ export function WorkspaceList({
 
         {workspaces.length === 0 && (
           <div className="rounded-[12px] border border-dashed border-border px-4 py-4 text-sm text-muted-foreground">
-            <p>当前还没有 logical Workspace。</p>
+            <p>当前还没有 Workspace。</p>
             <p className="mt-1 text-xs">
-              可以从可用目录发现项创建，或使用本机目录识别快速从本机 backend 添加。
+              可以从可选目录直接创建，或浏览本机目录快速添加。
             </p>
           </div>
         )}
@@ -113,7 +112,6 @@ export function WorkspaceList({
           const availability = summarizeAvailability(workspace, backends, accesses);
           const resolution = summarizeResolution(workspace, backends, accesses);
           const primaryBinding = resolution.binding ?? findWorkspaceBinding(workspace);
-          const factSummary = detectedFactsSummary(primaryBinding);
           const isDefault = defaultWorkspaceId === workspace.id;
           return (
             <div
@@ -140,16 +138,11 @@ export function WorkspaceList({
                     <ResolutionBadge state={resolution.state} />
                   </div>
                   <p className="mt-1 truncate text-xs text-muted-foreground">
-                    身份：{identitySummary(workspace.identity_kind, workspace.identity_payload)}
+                    代码来源：{identitySummary(workspace.identity_kind, workspace.identity_payload)}
                   </p>
                   <p className="mt-1 truncate text-xs text-muted-foreground">
-                    路由：{resolution.label} · {resolution.description}
+                    运行解析：{resolution.label} · {resolution.description}
                   </p>
-                  {factSummary && (
-                    <p className="mt-1 truncate text-xs text-muted-foreground">
-                      Facts: {factSummary}
-                    </p>
-                  )}
                   {resolution.warnings.length > 0 && (
                     <p className="mt-1 truncate text-xs text-warning">
                       {resolution.warnings[0]}
@@ -160,7 +153,7 @@ export function WorkspaceList({
                 <div className="flex shrink-0 flex-col items-end gap-2">
                   <div className="text-right">
                     <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                      落点
+                      运行位置
                     </p>
                     <p className="text-sm font-medium text-foreground">
                       {availability.online}/{availability.total}

@@ -9,12 +9,16 @@ import type {
   WorkspaceInventoryCandidate,
 } from "../../../types";
 import type { WorkspaceBindingInput } from "../../../stores/workspaceStore";
+import { BINDING_STATUS_LABELS, IDENTITY_KIND_LABELS } from "./workspaceTerms";
 
-export const identityKindLabels: Record<WorkspaceIdentityKind, string> = {
-  git_repo: "Git 仓库",
-  p4_workspace: "P4 工作空间",
-  local_dir: "本地目录",
-};
+function bindingStatusText(status: WorkspaceBindingStatus): string {
+  return BINDING_STATUS_LABELS[status] ?? status;
+}
+
+/**
+ * @deprecated 文案统一收口到 workspaceTerms.ts；此处保留 re-export 以兼容现有 import。
+ */
+export const identityKindLabels: Record<WorkspaceIdentityKind, string> = IDENTITY_KIND_LABELS;
 
 export interface WorkspaceResolutionSummary {
   state: "resolved" | "warning" | "blocked";
@@ -107,7 +111,7 @@ export function identitySummary(
     const branch = readString(p, "branch")
       ?? readString(p, "current_branch")
       ?? readNestedString(p, "hints", "current_branch");
-    return [repo ?? "未填写 repo identity", branch].filter(Boolean).join(" · ");
+    return [repo ?? "未填写仓库地址", branch].filter(Boolean).join(" · ");
   }
 
   if (kind === "p4_workspace") {
@@ -118,13 +122,13 @@ export function identitySummary(
       ?? readString(p, "workspace_root")
       ?? readString(p, "root_hint")
       ?? readNestedString(p, "hints", "root_hint");
-    return [server, stream ?? client ?? pathKey ?? "未填写 P4 identity"].filter(Boolean).join(" · ");
+    return [server, stream ?? client ?? pathKey ?? "未填写 P4 工作空间"].filter(Boolean).join(" · ");
   }
 
   return readString(p, "path_key")
     ?? readString(p, "root_hint")
     ?? readNestedString(p, "hints", "root_hint")
-    ?? "未填写本地目录 identity";
+    ?? "未填写本地目录";
 }
 
 export function detectedFactsSummary(binding: WorkspaceBinding | null): string | null {
@@ -222,10 +226,10 @@ export function summarizeResolution(
   if (workspace.bindings.length === 0) {
     return {
       state: "blocked",
-      label: "等待 binding",
-      description: "当前只有 logical identity，尚未匹配到可用 backend/root。",
+      label: "等待运行位置",
+      description: "目前只有代码来源，还没有匹配到可运行的 Backend / 目录。",
       binding: null,
-      warnings: ["没有任何 binding"],
+      warnings: ["还没有任何运行位置"],
     };
   }
 
@@ -236,13 +240,14 @@ export function summarizeResolution(
       const backend = findBackend(backends, binding.backend_id);
       const isAuthorized = authorized.has(binding.backend_id);
       const isOnline = backendIsOnline(backend);
+      const backendLabel = backendDisplayName(backends, binding.backend_id);
       if (!isAuthorized) {
-        warnings.push(`backend ${binding.backend_id} 未授权给当前 Project`);
+        warnings.push(`Backend「${backendLabel}」尚未授权给当前 Project`);
       } else if (!isOnline) {
-        warnings.push(`backend ${binding.backend_id} 当前不在线`);
+        warnings.push(`Backend「${backendLabel}」当前不在线`);
       }
       if (binding.status !== "ready") {
-        warnings.push(`${binding.root_ref} 状态为 ${binding.status}`);
+        warnings.push(`目录「${binding.root_ref}」状态为${bindingStatusText(binding.status)}`);
       }
       return { binding, isAuthorized, isOnline, isReady: binding.status === "ready" };
     })
@@ -264,8 +269,8 @@ export function summarizeResolution(
   if (!selected) {
     return {
       state: "blocked",
-      label: "无法解析",
-      description: warnings[0] ?? "没有可用 binding。",
+      label: "无法运行",
+      description: warnings[0] ?? "当前没有可用的运行位置。",
       binding: null,
       warnings,
     };
@@ -276,7 +281,7 @@ export function summarizeResolution(
     && selected.binding.id !== workspace.default_binding_id;
   return {
     state: fallback || warnings.length > 0 ? "warning" : "resolved",
-    label: fallback ? "已回退到候选 binding" : "已解析",
+    label: fallback ? "已切换到备用运行位置" : "已就绪",
     description: `${backendName} @ ${selected.binding.root_ref}`,
     binding: selected.binding,
     warnings,

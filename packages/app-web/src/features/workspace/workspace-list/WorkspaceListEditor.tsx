@@ -41,35 +41,34 @@ import {
   localAuthorizedBackends,
   summarizeResolution,
 } from "../model/workspaceRouting";
+import {
+  BINDING_STATUS_LABELS,
+  RESOLUTION_STATE_LABELS,
+  WORKSPACE_STATUS_LABELS,
+} from "../model/workspaceTerms";
 
 type CreateMode = "candidate" | "logical" | "local_detect";
 
-const statusConfig: Record<WorkspaceStatus, { label: string; cls: string }> = {
-  pending: { label: "待完善", cls: "border-border bg-secondary text-muted-foreground" },
-  ready: { label: "可用", cls: "border-success/20 bg-success/10 text-success" },
-  active: { label: "使用中", cls: "border-primary/20 bg-primary/10 text-primary" },
-  archived: { label: "已归档", cls: "border-border bg-secondary text-muted-foreground" },
-  error: { label: "异常", cls: "border-destructive/20 bg-destructive/10 text-destructive" },
-};
+type Feedback = { tone: "success" | "info" | "error"; text: string };
 
-const bindingStatusLabels: Record<WorkspaceBindingStatus, string> = {
-  pending: "未确认",
-  ready: "可用",
-  offline: "离线",
-  error: "异常",
+const statusClassNames: Record<WorkspaceStatus, string> = {
+  pending: "border-border bg-secondary text-muted-foreground",
+  ready: "border-success/20 bg-success/10 text-success",
+  active: "border-primary/20 bg-primary/10 text-primary",
+  archived: "border-border bg-secondary text-muted-foreground",
+  error: "border-destructive/20 bg-destructive/10 text-destructive",
 };
 
 const createModeLabels: Record<CreateMode, string> = {
-  candidate: "从发现项创建",
-  logical: "创建逻辑 Workspace",
-  local_detect: "本机目录识别",
+  candidate: "从可选目录创建",
+  logical: "先建空壳，之后补运行位置",
+  local_detect: "浏览本机目录添加",
 };
 
 export function WorkspaceStatusBadge({ status }: { status: WorkspaceStatus }) {
-  const config = statusConfig[status];
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-medium ${config.cls}`}>
-      {config.label}
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-medium ${statusClassNames[status]}`}>
+      {WORKSPACE_STATUS_LABELS[status]}
     </span>
   );
 }
@@ -83,7 +82,7 @@ export function BindingStatusBadge({ status }: { status: WorkspaceBindingStatus 
   return (
     <span className="inline-flex w-fit items-center gap-1.5 self-start whitespace-nowrap text-[11px] text-muted-foreground">
       <span className={`h-1.5 w-1.5 rounded-full ${tone}`} />
-      {bindingStatusLabels[status]}
+      {BINDING_STATUS_LABELS[status]}
     </span>
   );
 }
@@ -117,7 +116,7 @@ export function ResolutionBadge({ state }: { state: "resolved" | "warning" | "bl
     : state === "warning"
       ? "border-warning/25 bg-warning/10 text-warning"
       : "border-destructive/25 bg-destructive/10 text-destructive";
-  const label = state === "resolved" ? "可路由" : state === "warning" ? "需注意" : "不可路由";
+  const label = RESOLUTION_STATE_LABELS[state];
   return (
     <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${cls}`}>
       {label}
@@ -191,13 +190,13 @@ function IdentityFields({
         <input
           value={fieldValue("repo_key")}
           onChange={(event) => onPayloadChange(updatePayloadField(identityPayload, "repo_key", event.target.value))}
-          placeholder="repo_key 或 remote_url"
+          placeholder="仓库地址，例如 https://github.com/org/repo"
           className="agentdash-form-input"
         />
         <input
           value={fieldValue("branch")}
           onChange={(event) => onPayloadChange(updatePayloadField(identityPayload, "branch", event.target.value))}
-          placeholder="branch，可选"
+          placeholder="分支，可选，例如 main"
           className="agentdash-form-input"
         />
       </div>
@@ -210,25 +209,25 @@ function IdentityFields({
         <input
           value={fieldValue("server_address")}
           onChange={(event) => onPayloadChange(updatePayloadField(identityPayload, "server_address", event.target.value))}
-          placeholder="P4 server_address"
+          placeholder="P4 服务器地址，例如 perforce:1666"
           className="agentdash-form-input"
         />
         <input
           value={fieldValue("stream")}
           onChange={(event) => onPayloadChange(updatePayloadField(identityPayload, "stream", event.target.value))}
-          placeholder="stream"
+          placeholder="Stream，例如 //depot/main"
           className="agentdash-form-input"
         />
         <input
           value={fieldValue("client_name")}
           onChange={(event) => onPayloadChange(updatePayloadField(identityPayload, "client_name", event.target.value))}
-          placeholder="client_name"
+          placeholder="客户端名称（client）"
           className="agentdash-form-input"
         />
         <input
           value={fieldValue("path_key")}
           onChange={(event) => onPayloadChange(updatePayloadField(identityPayload, "path_key", event.target.value))}
-          placeholder="path_key"
+          placeholder="本地目录，例如 d:/workspaces/app"
           className="agentdash-form-input"
         />
       </div>
@@ -239,7 +238,7 @@ function IdentityFields({
     <input
       value={fieldValue("path_key")}
       onChange={(event) => onPayloadChange(updatePayloadField(identityPayload, "path_key", event.target.value))}
-      placeholder="path_key，例如 d:/workspaces/app"
+      placeholder="本地目录，例如 d:/workspaces/app"
       className="agentdash-form-input"
     />
   );
@@ -262,7 +261,7 @@ function CandidateList({
   candidates,
   backends,
   selectedKey,
-  emptyText = "暂无未匹配的可用目录发现项。可以使用本机目录识别登记新的可用目录。",
+  emptyText = "暂无可选目录。可以浏览本机目录添加新的可选目录。",
   onSelect,
   onAddBinding,
 }: CandidateListProps) {
@@ -317,7 +316,7 @@ function CandidateList({
                     onClick={() => onAddBinding(candidate)}
                     className="agentdash-button-secondary text-xs"
                   >
-                    添加落点
+                    添加运行位置
                   </button>
                 )}
               </div>
@@ -392,7 +391,7 @@ export function WorkspaceEditorDrawer({
   const [detectBackendId, setDetectBackendId] = useState(initialBinding?.backend_id ?? fallbackDetectBackends[0]?.id ?? "");
   const [detectRootRef, setDetectRootRef] = useState(initialBinding?.root_ref ?? "");
   const [detectionResult, setDetectionResult] = useState<WorkspaceDetectionResult | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [isDetectingDirectory, setIsDetectingDirectory] = useState(false);
   const [isRegisteringInventory, setIsRegisteringInventory] = useState(false);
   const [mountCapabilities, setMountCapabilities] = useState<ContextContainerCapability[]>(
@@ -438,31 +437,31 @@ export function WorkspaceEditorDrawer({
     syncPayload(draft.identity_payload);
     setBindings([draft.binding]);
     setDefaultBindingId(draft.binding.id ?? null);
-    setMessage(null);
+    setFeedback(null);
   };
 
   const handleAddCandidateBinding = (candidate: WorkspaceInventoryCandidate) => {
     const binding = candidateToBindingInput(candidate);
     if (bindings.some((item) => bindingDraftKey(item) === bindingDraftKey(binding))) {
-      setMessage("这个 backend/root 已经在当前落点中");
+      setFeedback({ tone: "info", text: "这个目录已在当前运行位置中" });
       return;
     }
     setBindings((current) => [...current, binding]);
     if (!defaultBindingId) {
       setDefaultBindingId(binding.id ?? null);
     }
-    setMessage("已加入落点，保存后生效");
+    setFeedback({ tone: "success", text: "已加入运行位置，保存后生效" });
   };
 
   const handleDetectLocalDirectory = async (rootRefOverride?: string) => {
     const backendId = effectiveDetectBackendId.trim();
     const rootRef = (rootRefOverride ?? detectRootRef).trim();
     if (!backendId || !rootRef) {
-      setMessage("请先选择已授权 backend 并填写目录根路径");
+      setFeedback({ tone: "error", text: "请先选择已授权 Backend 并填写目录路径" });
       return;
     }
     setIsDetectingDirectory(true);
-    setMessage(null);
+    setFeedback(null);
     try {
       const detected = await detectWorkspace(projectId, backendId, rootRef);
       if (!detected) return;
@@ -475,7 +474,7 @@ export function WorkspaceEditorDrawer({
       if (!name.trim()) {
         setName(buildDefaultWorkspaceName(detected.identity_kind, detected.binding.root_ref));
       }
-      setMessage(null);
+      setFeedback(null);
     } finally {
       setIsDetectingDirectory(false);
     }
@@ -485,16 +484,16 @@ export function WorkspaceEditorDrawer({
     const backendId = effectiveDetectBackendId.trim();
     const rootRef = (rootRefOverride ?? detectRootRef).trim();
     if (!backendId || !rootRef) {
-      setMessage("请先选择已授权 backend 并填写目录根路径");
+      setFeedback({ tone: "error", text: "请先选择已授权 Backend 并填写目录路径" });
       return;
     }
     setIsDetectingDirectory(true);
-    setMessage(null);
+    setFeedback(null);
     try {
       const detected = await detectWorkspace(projectId, backendId, rootRef);
       if (!detected) return;
       setDetectionResult(detected);
-      setMessage(null);
+      setFeedback(null);
     } finally {
       setIsDetectingDirectory(false);
     }
@@ -520,24 +519,24 @@ export function WorkspaceEditorDrawer({
     const backendId = effectiveDetectBackendId.trim();
     const rootRef = (detectionResult?.binding.root_ref ?? detectRootRef).trim();
     if (!backendId || !rootRef) {
-      setMessage("请先选择已授权 backend 并识别或填写目录");
+      setFeedback({ tone: "error", text: "请先选择已授权 Backend 并识别或填写目录" });
       return;
     }
     const access = accesses.find((item) => item.backend_id === backendId && item.status === "active");
     if (!access) {
-      setMessage("当前 Project 尚未授权这个 backend，无法登记 inventory");
+      setFeedback({ tone: "error", text: "当前 Project 尚未授权这个 Backend，无法添加可选目录" });
       return;
     }
 
     setIsRegisteringInventory(true);
-    setMessage(null);
+    setFeedback(null);
     try {
       await registerBackendWorkspaceInventory(projectId, access.id, { root_ref: rootRef });
       await onCandidatesChanged();
       await onInventoryChanged?.();
-      setMessage("已登记为可用目录，可从候选项确认落点");
+      setFeedback({ tone: "success", text: "已登记为可选目录，可在下方确认为运行位置" });
     } catch (registerError) {
-      setMessage((registerError as Error).message);
+      setFeedback({ tone: "error", text: (registerError as Error).message });
     } finally {
       setIsRegisteringInventory(false);
     }
@@ -546,15 +545,15 @@ export function WorkspaceEditorDrawer({
   const handleSave = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setMessage("请填写工作空间名称");
+      setFeedback({ tone: "error", text: "请填写 Workspace 名称" });
       return;
     }
     if (mode === "create" && createMode === "candidate" && bindings.length === 0) {
-      setMessage("请先选择一个发现项");
+      setFeedback({ tone: "error", text: "请先选择一个可选目录" });
       return;
     }
     if (!bindingsAllowedForCurrentUser()) {
-      setMessage("当前权限只能从既有候选项确认落点，不能登记新的可用目录");
+      setFeedback({ tone: "error", text: "当前权限只能从已有可选目录确认运行位置，不能添加新的可选目录" });
       return;
     }
 
@@ -563,7 +562,7 @@ export function WorkspaceEditorDrawer({
       setBindings(normalizedBindings);
     }
 
-    setMessage(null);
+    setFeedback(null);
 
     if (mode === "create") {
       const created = await createWorkspace(projectId, trimmedName, {
@@ -601,7 +600,7 @@ export function WorkspaceEditorDrawer({
   const handleDelete = async () => {
     if (!workspace) return;
     if (deleteConfirmValue.trim() !== workspace.name) {
-      setMessage("请输入完整工作空间名称后再删除");
+      setFeedback({ tone: "error", text: "请输入完整 Workspace 名称后再删除" });
       return;
     }
     await deleteWorkspace(workspace.id, projectId);
@@ -644,9 +643,9 @@ export function WorkspaceEditorDrawer({
         open={open}
         title={mode === "create" ? "新建 Workspace" : "Workspace 详情"}
         subtitle={mode === "create"
-          ? "选择创建路径，再确认 Workspace 身份与运行落点"
+          ? "选择创建方式，再确认代码来源与运行位置"
           : workspace
-            ? `ID: ${workspace.id}`
+            ? identitySummary(workspace.identity_kind, workspace.identity_payload)
             : undefined}
         onClose={onClose}
         widthClassName="max-w-5xl"
@@ -664,10 +663,10 @@ export function WorkspaceEditorDrawer({
         <div className="space-y-4 p-5">
           {mode === "create" && (
             <DetailSection
-              title="创建入口"
+              title="创建方式"
               description={canManageBindings
-                ? "默认使用已登记目录的发现项；管理员可识别本机目录并登记为可用目录。"
-                : "默认使用已登记目录的发现项；当前权限只能从既有候选项创建带落点的 Workspace。"}
+                ? "默认从可选目录创建；管理员还可以浏览本机目录添加新的可选目录。"
+                : "默认从可选目录创建；当前权限只能从已有可选目录创建带运行位置的 Workspace。"}
             >
               <div className="grid gap-2 md:grid-cols-3">
                 {visibleCreateModes.map((value) => (
@@ -688,13 +687,13 @@ export function WorkspaceEditorDrawer({
 
               {createMode === "candidate" && (
                 <p className="mt-3 rounded-[8px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
-                  在下方 Backend 路由中选择一个发现项，确认后会生成 Workspace 身份和初始落点。
+                  在下方「运行位置」中选择一个可选目录，确认后会自动生成代码来源和初始运行位置。
                 </p>
               )}
 
               {createMode === "logical" && (
                 <p className="mt-3 rounded-[8px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
-                  先创建 logical identity，后续由已授权 backend 的可用目录自动匹配 binding。适合先建 Project contract，再让设备补齐可用目录。
+                  先只填写代码来源，运行位置稍后由已授权 Backend 的可选目录自动匹配。适合先约定好 Project，再让设备补齐运行位置。
                 </p>
               )}
 
@@ -706,7 +705,7 @@ export function WorkspaceEditorDrawer({
                       onChange={(event) => setDetectBackendId(event.target.value)}
                       className="agentdash-form-select"
                     >
-                      <option value="">选择已授权 backend</option>
+                      <option value="">选择已授权 Backend</option>
                       {fallbackDetectBackends.map((backend) => (
                         <option key={backend.id} value={backend.id}>
                           {backend.name} {backend.backend_type === "local" ? "(本机)" : "(远程)"}
@@ -744,7 +743,7 @@ export function WorkspaceEditorDrawer({
 
                   {fallbackDetectBackends.length === 0 && (
                     <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                      当前没有已授权且在线的 backend。请先在 Backend Access 中授权本机 backend。
+                      当前没有已授权且在线的 Backend。请先在 Backend Access 中授权本机 Backend。
                     </p>
                   )}
 
@@ -763,7 +762,7 @@ export function WorkspaceEditorDrawer({
                         </p>
                         {detectionResult.matched_workspace_ids.length > 0 && (
                           <p className="mt-1 text-warning">
-                            检测到可能匹配的已有 Workspace：{detectionResult.matched_workspace_ids.join(", ")}
+                            检测到 {detectionResult.matched_workspace_ids.length} 个可能重复的 Workspace，请确认后再创建。
                           </p>
                         )}
                         {detectionResult.warnings.map((warning) => (
@@ -777,7 +776,7 @@ export function WorkspaceEditorDrawer({
                           disabled={isRegisteringInventory}
                           className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          {isRegisteringInventory ? "登记中..." : "登记为可用目录"}
+                          {isRegisteringInventory ? "登记中..." : "登记为可选目录"}
                         </button>
                       </div>
                     </div>
@@ -788,8 +787,8 @@ export function WorkspaceEditorDrawer({
           )}
 
           <DetailSection
-            title="Workspace 身份"
-            description="描述这个工作空间代表哪个仓库、P4 workspace 或本地目录。"
+            title="代码来源"
+            description="描述这个 Workspace 代表哪个仓库、P4 工作空间或本地目录。"
           >
             <div className="grid gap-3 md:grid-cols-2">
               <input
@@ -816,12 +815,12 @@ export function WorkspaceEditorDrawer({
               onPayloadChange={syncPayload}
             />
             <p className="text-xs text-muted-foreground">
-              当前摘要：{identitySummary(identityKind, identityPayload)}
+              当前代码来源：{identitySummary(identityKind, identityPayload)}
             </p>
 
             <details className="rounded-[8px] border border-border bg-background px-3 py-3">
               <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-                高级 identity JSON
+                高级（开发者）：identity JSON
               </summary>
               <textarea
                 value={payloadText}
@@ -831,12 +830,12 @@ export function WorkspaceEditorDrawer({
                     const parsed = JSON.parse(event.target.value);
                     if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
                       setIdentityPayload(parsed as Record<string, unknown>);
-                      setMessage(null);
+                      setFeedback(null);
                     } else {
-                      setMessage("identity_payload 需要是 JSON object");
+                      setFeedback({ tone: "error", text: "identity JSON 需要是一个 JSON 对象" });
                     }
                   } catch {
-                    setMessage("identity_payload 需要是合法 JSON");
+                    setFeedback({ tone: "error", text: "identity JSON 需要是合法 JSON" });
                   }
                 }}
                 className="mt-3 min-h-[132px] w-full rounded-[8px] border border-border bg-background px-3 py-2 font-mono text-xs text-foreground"
@@ -846,8 +845,8 @@ export function WorkspaceEditorDrawer({
 
           {mode === "detail" && resolutionSummary && (
             <DetailSection
-              title="当前路由预览"
-              description="展示保存后的配置会落到哪个 backend/root。"
+              title="运行解析预览"
+              description="展示保存后这个 Workspace 会运行在哪个 Backend / 目录。"
             >
               <div className="rounded-[8px] border border-border bg-background px-3 py-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -867,17 +866,17 @@ export function WorkspaceEditorDrawer({
           )}
 
           <DetailSection
-            title="Backend 路由"
+            title="运行位置"
             description={canManageBindings
-              ? "选择这个 Workspace 可以落到哪些 backend/root；运行时会优先使用在线 backend。"
-              : "当前权限只能从既有候选项确认落点。"}
+              ? "选择这个 Workspace 可以运行在哪些 Backend / 目录；运行时会优先使用在线的 Backend。"
+              : "当前权限只能从已有可选目录确认运行位置。"}
           >
             <div className="space-y-4">
               <div className="space-y-2">
-                <p className="text-xs font-medium text-foreground">当前落点</p>
+                <p className="text-xs font-medium text-foreground">当前运行位置</p>
                 {dedupeBindings(bindings).length === 0 ? (
                   <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                    当前还没有可用落点。请从下方候选项确认一个 backend/root。
+                    当前还没有运行位置。请从下方可选目录确认一个 Backend / 目录。
                   </p>
                 ) : (
                   dedupeBindings(bindings).map((binding) => (
@@ -890,7 +889,7 @@ export function WorkspaceEditorDrawer({
                           {backendDisplayName(backends, binding.backend_id)}
                         </p>
                         <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                          {binding.root_ref || "未填写 root"}
+                          {binding.root_ref || "未填写目录"}
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-3">
@@ -905,13 +904,13 @@ export function WorkspaceEditorDrawer({
               </div>
 
               <div className="space-y-2">
-                <p className="text-xs font-medium text-foreground">可确认候选项</p>
+                <p className="text-xs font-medium text-foreground">可选目录</p>
                 <CandidateList
                   candidates={candidates}
                   backends={backends}
                   emptyText={canManageBindings
-                    ? "暂无未匹配的可用目录发现项。可以使用本机目录识别登记新的可用目录。"
-                    : "暂无可确认的目录候选项。请让管理员先登记可用目录。"}
+                    ? "暂无可选目录。可以浏览本机目录添加新的可选目录。"
+                    : "暂无可选目录。请让管理员先添加可选目录。"}
                   onAddBinding={mode === "detail" ? handleAddCandidateBinding : undefined}
                   selectedKey={selectedCandidateKey}
                   onSelect={mode === "create" ? handleSelectCandidate : undefined}
@@ -921,10 +920,10 @@ export function WorkspaceEditorDrawer({
               {canManageBindings ? (
                 <details className="rounded-[8px] border border-border bg-background px-3 py-3">
                   <summary className="cursor-pointer text-xs font-medium text-foreground">
-                    登记新的可用目录
+                    浏览本机目录添加
                   </summary>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    仅管理员可使用。选择目录后自动识别，状态、identity 和 detected_facts 都来自 backend detect 结果。
+                    仅管理员可使用。选择目录后会自动识别代码来源，识别结果可登记为可选目录。
                   </p>
                   <div className="mt-3 space-y-3">
                     <div className="grid gap-3 md:grid-cols-[200px_minmax(0,1fr)]">
@@ -933,7 +932,7 @@ export function WorkspaceEditorDrawer({
                         onChange={(event) => setDetectBackendId(event.target.value)}
                         className="agentdash-form-select"
                       >
-                        <option value="">选择已授权 backend</option>
+                        <option value="">选择已授权 Backend</option>
                         {fallbackDetectBackends.map((backend) => (
                           <option key={backend.id} value={backend.id}>
                             {backend.name} {backend.backend_type === "local" ? "(本机)" : "(远程)"}
@@ -990,7 +989,7 @@ export function WorkspaceEditorDrawer({
                             disabled={isRegisteringInventory}
                             className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {isRegisteringInventory ? "登记中..." : "登记为可用目录"}
+                            {isRegisteringInventory ? "登记中..." : "登记为可选目录"}
                           </button>
                         </div>
                       </div>
@@ -999,7 +998,7 @@ export function WorkspaceEditorDrawer({
                 </details>
               ) : (
                 <p className="rounded-[8px] border border-border bg-muted/25 px-3 py-3 text-xs text-muted-foreground">
-                  无管理员权限时不开放新的可用目录登记入口。
+                  无管理员权限时不开放添加新的可选目录。
                 </p>
               )}
             </div>
@@ -1033,9 +1032,18 @@ export function WorkspaceEditorDrawer({
             </div>
           </DetailSection>
 
-          {(message || error) && (
-            <p className="text-xs text-destructive">{message || error}</p>
-          )}
+          {(() => {
+            const shown: Feedback | null = error
+              ? { tone: "error", text: error }
+              : feedback;
+            if (!shown) return null;
+            const toneClass = shown.tone === "success"
+              ? "text-success"
+              : shown.tone === "info"
+                ? "text-muted-foreground"
+                : "text-destructive";
+            return <p className={`text-xs ${toneClass}`}>{shown.text}</p>;
+          })()}
 
           <div className="flex items-center justify-between border-t border-border pt-3">
             {mode === "create" && onSetDefault ? (

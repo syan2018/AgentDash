@@ -32,6 +32,7 @@ import {
   SectionTitle,
   Select,
   StatusDot,
+  StatusScreen,
   TextInput,
   Textarea,
   PromptDialog,
@@ -172,6 +173,7 @@ export function DesignSystemPage() {
           <SectionRadius />
           <SectionPrimitives />
           <SectionSurface />
+          <SectionElevationShell />
           <SectionNestingCompare />
           <SectionFormComposite />
         </main>
@@ -198,8 +200,9 @@ function PageHeader({
     { id: "radius", label: "2 · Radius" },
     { id: "primitives", label: "3 · Primitives" },
     { id: "surface", label: "4 · Surface depth" },
-    { id: "nesting", label: "5 · 嵌套对比" },
-    { id: "form", label: "6 · Form 综合" },
+    { id: "elevation", label: "5 · Elevation & Shell" },
+    { id: "nesting", label: "6 · 嵌套对比" },
+    { id: "form", label: "7 · Form 综合" },
   ];
   return (
     <header className="sticky top-0 z-20 border-b border-border/60 bg-background/85 backdrop-blur">
@@ -806,14 +809,104 @@ function SurfaceExample({
 }
 
 // ────────────────────────────────────────────────────────
-// Section 5 · 嵌套对比
+// Section 5 · Elevation & Shell
+// ────────────────────────────────────────────────────────
+
+const ELEVATIONS = [
+  { name: "shadow-sm", cls: "shadow-sm", desc: "卡片静置 / sidebar 收边" },
+  { name: "shadow-md", cls: "shadow-md", desc: "popover / dropdown 浮起" },
+  { name: "shadow-lg", cls: "shadow-lg", desc: "dialog / 抽屉" },
+] as const;
+
+function SectionElevationShell() {
+  return (
+    <SectionShell
+      id="elevation"
+      title="5 · Elevation & Shell"
+      subtitle="阴影是 depth 的第二信号，与 bg/border 协同；同一容器里阴影与重边框二选一。sidebar 为独立表面，与内容区(depth-0)拉开。"
+    >
+      <div className="space-y-8">
+        {/* Elevation 三档 */}
+        <div>
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Elevation tokens
+          </p>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {ELEVATIONS.map((e) => (
+              <div key={e.name} className="space-y-2">
+                <div
+                  className={cn(
+                    "flex h-24 items-center justify-center rounded-[8px] bg-card",
+                    e.cls,
+                  )}
+                >
+                  <code className="font-mono text-xs text-muted-foreground">
+                    {e.name}
+                  </code>
+                </div>
+                <p className="text-[11px] text-muted-foreground">{e.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Sidebar 表面 vs 内容区表面：只演示两个底色层级的差异，非真实导航。 */}
+        <div>
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            表面对比：--sidebar vs --background
+          </p>
+          <div className="flex h-40 overflow-hidden rounded-[12px] border border-border">
+            <div className="grid w-44 place-items-center bg-sidebar p-3 shadow-sm">
+              <code className="font-mono text-[11px] text-muted-foreground">--sidebar</code>
+            </div>
+            <div className="grid flex-1 place-items-center bg-background p-4">
+              <Card className="shadow-sm">
+                <p className="text-sm font-semibold">--background 上的卡片</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  内容区 depth-0；卡片 bg-card + shadow-sm；sidebar 用更冷的 --sidebar + 右缘阴影收边。
+                </p>
+              </Card>
+            </div>
+          </div>
+        </div>
+
+        {/* StatusScreen 全屏态 */}
+        <div>
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            StatusScreen（splash / loading / 错误屏共用）
+          </p>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="h-56 overflow-hidden rounded-[12px] border border-border">
+              <StatusScreen tone="loading" title="正在启动本机服务…" description="桌面端 API 就绪后进入工作台" />
+            </div>
+            <div className="h-56 overflow-hidden rounded-[12px] border border-border">
+              <StatusScreen
+                tone="danger"
+                title="应用遇到错误"
+                description="渲染时发生异常，可尝试重载。"
+                action={
+                  <Button variant="primary" size="sm">
+                    重载应用
+                  </Button>
+                }
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </SectionShell>
+  );
+}
+
+// ────────────────────────────────────────────────────────
+// Section 6 · 嵌套对比
 // ────────────────────────────────────────────────────────
 
 function SectionNestingCompare() {
   return (
     <SectionShell
       id="nesting"
-      title="5 · 嵌套对比"
+      title="6 · 嵌套对比"
       subtitle="左：SkillVfsInspector 旧版 4 层嵌套（已经在调研期就地修过）；右：本任务交付的扁平化版本。"
     >
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -936,7 +1029,7 @@ function SectionFormComposite() {
   return (
     <SectionShell
       id="form"
-      title="6 · Form 综合"
+      title="7 · Form 综合"
       subtitle="模拟 Skill 编辑表单 + Dialog 嵌套，主要用于验收 input/button radius=8 后的整体观感。"
     >
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

@@ -44,10 +44,11 @@ import {
 import {
   BINDING_STATUS_LABELS,
   RESOLUTION_STATE_LABELS,
+  TERMS,
   WORKSPACE_STATUS_LABELS,
 } from "../model/workspaceTerms";
 
-type CreateMode = "candidate" | "logical" | "local_detect";
+type CreateMode = "from_directory" | "logical";
 
 type Feedback = { tone: "success" | "info" | "error"; text: string };
 
@@ -60,9 +61,8 @@ const statusClassNames: Record<WorkspaceStatus, string> = {
 };
 
 const createModeLabels: Record<CreateMode, string> = {
-  candidate: "从可选目录创建",
+  from_directory: "从可选目录创建",
   logical: "先建空壳，之后补运行位置",
-  local_detect: "浏览本机目录添加",
 };
 
 export function WorkspaceStatusBadge({ status }: { status: WorkspaceStatus }) {
@@ -366,12 +366,14 @@ export function WorkspaceEditorDrawer({
   const selectableBackends = useMemo(() => authorizedBackends(backends, accesses), [accesses, backends]);
   const localBackends = useMemo(() => localAuthorizedBackends(backends, accesses), [accesses, backends]);
   const fallbackDetectBackends = localBackends.length > 0 ? localBackends : selectableBackends;
+  // 两条主线对所有人可见；本机目录识别为 from_directory 下受 canManageBindings 控制的次级动作。
   const visibleCreateModes = useMemo<CreateMode[]>(
-    () => canManageBindings ? ["candidate", "logical", "local_detect"] : ["candidate", "logical"],
-    [canManageBindings],
+    () => ["from_directory", "logical"],
+    [],
   );
   const initialBinding = workspace ? findWorkspaceBinding(workspace) : null;
-  const [createMode, setCreateMode] = useState<CreateMode>("candidate");
+  const [createMode, setCreateMode] = useState<CreateMode>("from_directory");
+  const [isLocalDetectOpen, setIsLocalDetectOpen] = useState(false);
   const [selectedCandidateKey, setSelectedCandidateKey] = useState<string | null>(null);
   const [name, setName] = useState(workspace?.name ?? "");
   const [identityKind, setIdentityKind] = useState<WorkspaceIdentityKind>(
@@ -480,6 +482,29 @@ export function WorkspaceEditorDrawer({
     }
   };
 
+  // 一步创建：直接用识别结果构造 binding + 身份，走 createWorkspace，免去「登记 → 回候选区 → 选中 → 保存」多步。
+  const handleCreateFromDetection = async () => {
+    if (!detectionResult) return;
+    const detectedBinding = bindingToInput(detectionResult.binding);
+    const draftName = name.trim()
+      || buildDefaultWorkspaceName(detectionResult.identity_kind, detectionResult.binding.root_ref);
+    setFeedback(null);
+    const created = await createWorkspace(projectId, draftName, {
+      identity_kind: detectionResult.identity_kind,
+      identity_payload: detectionResult.identity_payload as Record<string, unknown>,
+      resolution_policy: resolutionPolicy,
+      bindings: [detectedBinding],
+      mount_capabilities: mountCapabilities,
+    });
+    if (!created) return;
+    if (setAsDefault && onSetDefault) {
+      onSetDefault(created.id);
+    }
+    await onCandidatesChanged();
+    await onInventoryChanged?.();
+    onClose();
+  };
+
   const handleDetectInventoryRegistration = async (rootRefOverride?: string) => {
     const backendId = effectiveDetectBackendId.trim();
     const rootRef = (rootRefOverride ?? detectRootRef).trim();
@@ -503,7 +528,7 @@ export function WorkspaceEditorDrawer({
     const normalizedPath = path.trim();
     setDetectRootRef(normalizedPath);
     if (!normalizedPath) return;
-    if (mode === "create" && createMode === "local_detect") {
+    if (mode === "create" && createMode === "from_directory" && isLocalDetectOpen) {
       void handleDetectLocalDirectory(normalizedPath);
       return;
     }
@@ -548,8 +573,8 @@ export function WorkspaceEditorDrawer({
       setFeedback({ tone: "error", text: "请填写 Workspace 名称" });
       return;
     }
-    if (mode === "create" && createMode === "candidate" && bindings.length === 0) {
-      setFeedback({ tone: "error", text: "请先选择一个可选目录" });
+    if (mode === "create" && createMode === "from_directory" && bindings.length === 0) {
+      setFeedback({ tone: "error", text: `请先选择一个${TERMS.inventory}` });
       return;
     }
     if (!bindingsAllowedForCurrentUser()) {
@@ -576,7 +601,7 @@ export function WorkspaceEditorDrawer({
       if (setAsDefault && onSetDefault) {
         onSetDefault(created.id);
       }
-      onCandidatesChanged();
+      await onCandidatesChanged();
       onClose();
       return;
     }
@@ -593,7 +618,7 @@ export function WorkspaceEditorDrawer({
     });
     if (!updated) return;
 
-    onCandidatesChanged();
+    await onCandidatesChanged();
     onClose();
   };
 
@@ -668,7 +693,7 @@ export function WorkspaceEditorDrawer({
                 ? "默认从可选目录创建；管理员还可以浏览本机目录添加新的可选目录。"
                 : "默认从可选目录创建；当前权限只能从已有可选目录创建带运行位置的 Workspace。"}
             >
-              <div className="grid gap-2 md:grid-cols-3">
+              <div className="grid gap-2 md:grid-cols-2">
                 {visibleCreateModes.map((value) => (
                   <button
                     key={value}
@@ -685,103 +710,124 @@ export function WorkspaceEditorDrawer({
                 ))}
               </div>
 
-              {createMode === "candidate" && (
-                <p className="mt-3 rounded-[8px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
-                  在下方「运行位置」中选择一个可选目录，确认后会自动生成代码来源和初始运行位置。
-                </p>
+              {createMode === "from_directory" && (
+                <div className="mt-3 space-y-3">
+                  <p className="rounded-[8px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
+                    在下方「{TERMS.binding}」中选择一个{TERMS.inventory}，确认后会自动生成{TERMS.identity}和初始{TERMS.binding}。
+                  </p>
+
+                  {canManageBindings && (
+                    <details
+                      open={isLocalDetectOpen}
+                      onToggle={(event) => setIsLocalDetectOpen((event.target as HTMLDetailsElement).open)}
+                      className="rounded-[8px] border border-border bg-background px-3 py-3"
+                    >
+                      <summary className="cursor-pointer text-xs font-medium text-foreground">
+                        找不到？浏览本机目录添加
+                      </summary>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        仅管理员可使用。选择目录后会自动识别{TERMS.identity}，可直接用识别结果创建 Workspace。
+                      </p>
+                      <div className="mt-3 space-y-3">
+                        <div className="grid gap-3 md:grid-cols-[200px_minmax(0,1fr)]">
+                          <select
+                            value={effectiveDetectBackendId}
+                            onChange={(event) => setDetectBackendId(event.target.value)}
+                            className="agentdash-form-select"
+                          >
+                            <option value="">选择已授权 Backend</option>
+                            {fallbackDetectBackends.map((backend) => (
+                              <option key={backend.id} value={backend.id}>
+                                {backend.name} {backend.backend_type === "local" ? "(本机)" : "(远程)"}
+                              </option>
+                            ))}
+                          </select>
+
+                          <div className="flex gap-1.5">
+                            <input
+                              value={detectRootRef}
+                              onChange={(event) => setDetectRootRef(event.target.value)}
+                              onBlur={handleDetectRootBlur}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  handleDetectPathCommitted(detectRootRef);
+                                }
+                              }}
+                              placeholder="选择或填写 backend 上的目录"
+                              className="agentdash-form-input min-w-0 flex-1"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setIsDetectBrowseOpen(true)}
+                              disabled={!effectiveDetectBackendId}
+                              className="shrink-0 rounded-[8px] border border-border bg-background px-2.5 py-2 text-xs text-muted-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              浏览
+                            </button>
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          {isDetectingDirectory ? "正在识别目录..." : "选择目录后会自动识别；手动填写时按 Enter 或离开输入框确认。"}
+                        </p>
+
+                        {fallbackDetectBackends.length === 0 && (
+                          <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                            当前没有已授权且在线的 Backend。请先在 Backend Access 中授权本机 Backend。
+                          </p>
+                        )}
+
+                        {detectionResult && (
+                          <div className="flex flex-wrap items-start justify-between gap-3 rounded-[8px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
+                            <div className="min-w-0 flex-1">
+                              <p>
+                                识别结果：{identityKindLabels[detectionResult.identity_kind]}
+                                <span className="text-muted-foreground/60"> · </span>
+                                <span className="font-mono text-foreground">
+                                  {detectionPrimaryText(detectionResult)}
+                                </span>
+                              </p>
+                              <p className="mt-1">
+                                解析目录：<span className="font-mono text-foreground">{detectionResult.binding.root_ref}</span>
+                              </p>
+                              {detectionResult.matched_workspace_ids.length > 0 && (
+                                <p className="mt-1 text-warning">
+                                  检测到 {detectionResult.matched_workspace_ids.length} 个可能重复的 Workspace，请确认后再创建。
+                                </p>
+                              )}
+                              {detectionResult.warnings.map((warning) => (
+                                <p key={warning} className="mt-1 text-warning">{warning}</p>
+                              ))}
+                            </div>
+                            <div className="flex shrink-0 flex-col gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void handleCreateFromDetection()}
+                                className="agentdash-button-primary"
+                              >
+                                用这个目录创建 Workspace
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleRegisterInventory()}
+                                disabled={isRegisteringInventory}
+                                className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {isRegisteringInventory ? "登记中..." : `仅登记为${TERMS.inventory}`}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </details>
+                  )}
+                </div>
               )}
 
               {createMode === "logical" && (
                 <p className="mt-3 rounded-[8px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
-                  先只填写代码来源，运行位置稍后由已授权 Backend 的可选目录自动匹配。适合先约定好 Project，再让设备补齐运行位置。
+                  先只填写{TERMS.identity}，{TERMS.binding}稍后由已授权 Backend 的{TERMS.inventory}自动匹配。适合先约定好 Project，再让设备补齐{TERMS.binding}。
                 </p>
-              )}
-
-              {canManageBindings && createMode === "local_detect" && (
-                <div className="mt-3 space-y-3">
-                  <div className="grid gap-3 md:grid-cols-[200px_minmax(0,1fr)]">
-                    <select
-                      value={effectiveDetectBackendId}
-                      onChange={(event) => setDetectBackendId(event.target.value)}
-                      className="agentdash-form-select"
-                    >
-                      <option value="">选择已授权 Backend</option>
-                      {fallbackDetectBackends.map((backend) => (
-                        <option key={backend.id} value={backend.id}>
-                          {backend.name} {backend.backend_type === "local" ? "(本机)" : "(远程)"}
-                        </option>
-                      ))}
-                    </select>
-
-                    <div className="flex gap-1.5">
-                      <input
-                        value={detectRootRef}
-                        onChange={(event) => setDetectRootRef(event.target.value)}
-                        onBlur={handleDetectRootBlur}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            handleDetectPathCommitted(detectRootRef);
-                          }
-                        }}
-                        placeholder="选择或填写 backend 上的目录"
-                        className="agentdash-form-input min-w-0 flex-1"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setIsDetectBrowseOpen(true)}
-                        disabled={!effectiveDetectBackendId}
-                        className="shrink-0 rounded-[8px] border border-border bg-background px-2.5 py-2 text-xs text-muted-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        浏览
-                      </button>
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground">
-                    {isDetectingDirectory ? "正在识别目录..." : "选择目录后会自动识别；手动填写时按 Enter 或离开输入框确认。"}
-                  </p>
-
-                  {fallbackDetectBackends.length === 0 && (
-                    <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                      当前没有已授权且在线的 Backend。请先在 Backend Access 中授权本机 Backend。
-                    </p>
-                  )}
-
-                  {detectionResult && (
-                    <div className="flex flex-wrap items-start justify-between gap-3 rounded-[8px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
-                      <div className="min-w-0 flex-1">
-                        <p>
-                          识别结果：{identityKindLabels[detectionResult.identity_kind]}
-                          <span className="text-muted-foreground/60"> · </span>
-                          <span className="font-mono text-foreground">
-                            {detectionPrimaryText(detectionResult)}
-                          </span>
-                        </p>
-                        <p className="mt-1">
-                          解析目录：<span className="font-mono text-foreground">{detectionResult.binding.root_ref}</span>
-                        </p>
-                        {detectionResult.matched_workspace_ids.length > 0 && (
-                          <p className="mt-1 text-warning">
-                            检测到 {detectionResult.matched_workspace_ids.length} 个可能重复的 Workspace，请确认后再创建。
-                          </p>
-                        )}
-                        {detectionResult.warnings.map((warning) => (
-                          <p key={warning} className="mt-1 text-warning">{warning}</p>
-                        ))}
-                      </div>
-                      <div className="shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => void handleRegisterInventory()}
-                          disabled={isRegisteringInventory}
-                          className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {isRegisteringInventory ? "登记中..." : "登记为可选目录"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
               )}
             </DetailSection>
           )}

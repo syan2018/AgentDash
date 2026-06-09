@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import type {
   ProjectBackendAccess,
   Workspace,
@@ -67,6 +67,31 @@ export function WorkspaceList({
     }, 0);
     return () => window.clearTimeout(timer);
   }, [fetchBackends, loadRoutingInputs]);
+
+  // 跟随 backend 上下线 / 健康变化重载运行位置输入，与 BackendAccessPanel 保持一致刷新。
+  const backendRuntimeSignature = useMemo(
+    () => backends
+      .map((backend) => [
+        backend.id,
+        backend.online ? "online" : "offline",
+        backend.runtime_health?.status ?? "",
+        backend.runtime_health?.updated_at ?? "",
+      ].join(":"))
+      .join("|"),
+    [backends],
+  );
+  const hasObservedBackendRuntimeRef = useRef(false);
+  useEffect(() => {
+    if (!backendRuntimeSignature) return;
+    if (!hasObservedBackendRuntimeRef.current) {
+      hasObservedBackendRuntimeRef.current = true;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void loadRoutingInputs();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [backendRuntimeSignature, loadRoutingInputs]);
 
   const handleToggleDefault = (workspaceId: string, event: MouseEvent) => {
     event.stopPropagation();

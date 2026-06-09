@@ -1,0 +1,29 @@
+{
+  "id": "capability-update-primitives",
+  "name": "capability-update-primitives",
+  "title": "Capability Update Primitives 能力更新原语",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-06-09",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "feat/capability-update-primitives",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-09-workspace-module-base-converge",
+    "06-09-skill-companion-bypass-retire"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

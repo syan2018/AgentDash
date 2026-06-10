@@ -24,7 +24,7 @@
 | `file_read` | Read | — | 文件读取 |
 | `file_write` | Write | — | 文件写入 |
 | `shell_execute` | Execute | — | Shell 命令执行 |
-| `canvas` | Canvas | — | Canvas 资产管理 |
+| `workspace_module` | WorkspaceModule | — | Workspace Module 创建、发现、描述、调用与展示；Canvas Agent 入口收束在这里 |
 | `workflow` | Workflow | — | Lifecycle node 推进 |
 | `collaboration` | Collaboration | — | Companion 协作 |
 | `story_management` | — | Story | Story 上下文编排 |
@@ -52,7 +52,7 @@
 | file_read | ✓ | ✓ | ✓* | ✓ | — | — |
 | file_write | ✓ | ✓ | ✓* | ✓ | — | — |
 | shell_execute | ✓ | ✓ | ✓* | ✓ | — | — |
-| canvas | ✓ | — | — | ✓ | — | — |
+| workspace_module | ✓ | ✓ | ✓ | ✓ | — | — |
 | workflow | ✓ | ✓ | ✓ | — | — | ✓ |
 | collaboration | ✓ | — | — | ✓ | — | — |
 | story_management | — | ✓ | — | ✓ | — | — |
@@ -105,6 +105,74 @@ Resolver 在 agent baseline（auto_granted）上应用 reduction：
 - `CapabilityState.tool_policy`：运行态唯一 policy，所有工具暴露层必须消费它
 
 所有工具发现入口必须调用 `capability_state.is_capability_tool_enabled()` 进行 capability-aware 判定。
+
+## Workspace Module Agent Surface
+
+Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `workspace_module` capability 暴露。Canvas 仍保留自己的 domain、repository、VFS provider 与 panel runtime；`workspace_module` 只承担 Agent-facing lifecycle、operation schema、invoke routing 和 presentation facade。
+
+### 1. Scope / Trigger
+
+- Trigger: Canvas 的创建、绑定和展示入口收束到 workspace module，避免 Agent 同时学习 `canvas` 与 `workspace_module` 两套工具面。
+- Scope: capability catalog、ToolCluster 映射、默认 session plan、tool provider 注入、ProjectAgent capability directive roundtrip。
+
+### 2. Signatures
+
+- `workspace_module_create(kind="canvas", input={ canvas_id?: string, title?: string, description?: string })`
+- `workspace_module_list()`
+- `workspace_module_describe(module_id: string)`
+- `workspace_module_invoke(module_id: string, operation_key: string, input: object)`
+- `workspace_module_present(module_id: string, view_key: string)`
+
+### 3. Contracts
+
+- `workspace_module` 是 Canvas Agent 操作的 well-known capability key。
+- 默认 Agent 工具面包含 `workspace_module_create/list/describe/invoke/present`。
+- 已创建 Canvas 表达为 `canvas:{mount_id}` module。
+- Canvas binding 表达为实例 operation：`operation_key="canvas.bind_data"`。
+- Canvas presentation 表达为 UI entry：`presentation_uri="canvas://{mount_id}"`。
+- Canvas 编辑 mount 表达为 VFS URI：`cvs-<mount_id>://...`。
+- ProjectAgent preset 中保存的 `canvas` capability directive 只作为 forward migration 输入；运行态普通 Agent capability 不再以 `canvas` 作为主入口。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 语义 |
+| --- | --- |
+| `kind` 不支持 | tool validation error |
+| `module_id` 不在当前 session 可见 module projection | NotFound / Forbidden |
+| `operation_key` 不在 describe 返回的 operations 中 | BadRequest |
+| Canvas bind input 不满足 operation schema | BadRequest |
+| `view_key` 不在 describe 返回的 UI entries 中 | NotFound |
+| `presentation_uri` 不是 renderer 可打开 URI | backend contract/test failure |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `workspace_module_create(kind="canvas")` 返回 `canvas:{mount_id}`，随后 `workspace_module_describe` 能看到 `canvas.bind_data` 与 `preview` UI entry。
+- Base: 已存在 Canvas 通过 `workspace_module_list -> describe -> present` 打开，不需要重新创建。
+- Bad: Agent-facing catalog 同时暴露独立 Canvas capability 与 workspace module capability，导致同一 Canvas 实例有两套入口。
+
+### 6. Tests Required
+
+- Capability catalog test asserts `workspace_module` contains create/list/describe/invoke/present.
+- Provider/tool-plan test asserts default session tool surface uses workspace module tools for Canvas workflows.
+- Migration guard asserts persisted ProjectAgent `canvas` directives become `workspace_module`.
+- Policy test asserts tool-level filtering still gates each `workspace_module_*` tool via `CapabilityState.tool_policy`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+top-level Canvas capability + separate workspace module capability for the same asset
+```
+
+#### Correct
+
+```text
+workspace_module_create(kind="canvas")
+workspace_module_describe(module_id="canvas:{mount_id}")
+workspace_module_invoke(module_id="canvas:{mount_id}", operation_key="canvas.bind_data", input={...})
+workspace_module_present(module_id="canvas:{mount_id}", view_key="preview")
+```
 
 ## 工具 schema 与模型可见说明
 

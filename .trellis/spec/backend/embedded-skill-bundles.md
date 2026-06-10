@@ -79,6 +79,20 @@ Routine 信息管理使用同一条项目级内嵌 Skill 路径：`routine-memor
 Session 默认具备 memory 协议说明，而 skill 内容仍由 embedded bundle 与 SkillAsset
 管理；`routine_vfs` 只负责 Routine state projection。
 
+Workspace Module 操作协议也使用项目级内嵌 Skill 路径：`workspace-module-system` 应作为 builtin SkillAsset
+同步到项目 SkillAsset，并在 session 具备 `workspace_module` capability 时经 lifecycle VFS projection
+暴露。这个 skill 只描述 Agent 调用 `workspace_module_create/list/describe/invoke/present` 的顺序、
+`canvas:{mount_id}` / `ext:{extension_key}` / `builtin:{key}` module id 形态，以及 Canvas create 后再加载
+`canvas-system` 的边界。原因是 workspace module 是 session 级 bootstrap 协议，而 `canvas-system`
+通常依附于 Canvas VFS mount，只有 Canvas 已创建或展示后才稳定可见。
+
+`workspace-module-system` 的最小注册建议：
+
+- 在 domain 层按现有 embedded bundle 模式声明 `WORKSPACE_MODULE_SYSTEM_BUNDLE`，文件根为 `skills/workspace-module-system`。
+- 在 builtin SkillAsset template 列表中加入 `workspace-module-system`。
+- 在 session assembly 中，当 effective capability 包含 `workspace_module` 时 bootstrap 该 builtin 并把 key 加入 lifecycle skill projection。
+- 注册代码应复用 `SkillAssetService::bootstrap_builtins(project_id, Some(key))` 与 `append_lifecycle_skill_asset_projection`，保持项目级 skill 内容、lifecycle mount 和 skill baseline 使用同一事实源。
+
 ## Validation Contract
 
 - bundle materialization 必须覆盖声明内所有文件。

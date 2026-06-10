@@ -3,7 +3,7 @@
   "name": "canvas-workspace-module-convergence",
   "title": "评估并收束 Canvas 工具到 workspace_module",
   "description": "评估并实施 Canvas Agent 工具面向 workspace_module 的硬收束，统一发现、调用、展示与 capability catalog。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "backend,frontend,cross-layer",
   "package": null,

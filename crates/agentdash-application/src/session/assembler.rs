@@ -596,7 +596,15 @@ impl<'a> SessionRequestAssembler<'a> {
             )
             .await
             .map_err(|e| e.to_string())?;
-            crate::vfs::append_skill_asset_projection(space, project_id, &skill_asset_keys);
+            if !crate::vfs::append_lifecycle_skill_asset_projection(
+                space,
+                project_id,
+                &skill_asset_keys,
+            ) {
+                return Err(
+                    "session VFS 缺少 lifecycle mount，无法投影 SkillAsset baseline".to_string(),
+                );
+            }
         }
 
         Ok(vfs)

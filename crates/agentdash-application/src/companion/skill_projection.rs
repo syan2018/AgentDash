@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::ApplicationError;
 use crate::repository_set::RepositorySet;
 use crate::skill_asset::SkillAssetService;
-use crate::vfs::{PROVIDER_LIFECYCLE_VFS, append_skill_asset_projection};
+use crate::vfs::{PROVIDER_LIFECYCLE_VFS, append_lifecycle_skill_asset_projection};
 use crate::workflow::ActivityActivation;
 
 pub(crate) async fn ensure_companion_system_skill_asset(
@@ -43,8 +43,7 @@ pub(crate) fn append_lifecycle_companion_system_projection(
     if !has_lifecycle_mount(vfs) {
         return false;
     }
-    append_skill_asset_projection(vfs, project_id, skill_asset_keys);
-    true
+    append_lifecycle_skill_asset_projection(vfs, project_id, skill_asset_keys)
 }
 
 pub(crate) async fn project_companion_system_skill_to_activation(

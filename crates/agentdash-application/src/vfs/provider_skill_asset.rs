@@ -625,7 +625,7 @@ impl MountProvider for SkillAssetFsMountProvider {
 mod tests {
     use super::*;
     use crate::skill::load_skills_from_vfs;
-    use crate::vfs::{MountProviderRegistry, VfsService, build_skill_asset_mount};
+    use crate::vfs::{MountProviderRegistry, VfsService, build_project_skill_asset_management_mount};
     use agentdash_domain::DomainError;
     use agentdash_domain::common::MountCapability;
     use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
@@ -739,7 +739,10 @@ mod tests {
         registry.register(Arc::new(SkillAssetFsMountProvider::new(repo)));
         let service = VfsService::new(Arc::new(registry));
         let vfs = agentdash_spi::Vfs {
-            mounts: vec![build_skill_asset_mount(project_id, &["writer".to_string()])],
+            mounts: vec![build_project_skill_asset_management_mount(
+                project_id,
+                &["writer".to_string()],
+            )],
             default_mount_id: None,
             source_project_id: Some(project_id.to_string()),
             source_story_id: None,
@@ -763,7 +766,8 @@ mod tests {
         let project_id = Uuid::new_v4();
         let repo = repo_with_skill(project_id);
         let provider = SkillAssetFsMountProvider::new(repo);
-        let mut mount = build_skill_asset_mount(project_id, &["writer".to_string()]);
+        let mut mount =
+            build_project_skill_asset_management_mount(project_id, &["writer".to_string()]);
         mount.capabilities = vec![MountCapability::Read, MountCapability::List];
         let entries = provider
             .list(
@@ -787,7 +791,8 @@ mod tests {
         let project_id = Uuid::new_v4();
         let repo = repo_with_skill(project_id);
         let provider = SkillAssetFsMountProvider::new(repo);
-        let mut mount = build_skill_asset_mount(project_id, &["writer".to_string()]);
+        let mut mount =
+            build_project_skill_asset_management_mount(project_id, &["writer".to_string()]);
         mount.capabilities = vec![
             MountCapability::Read,
             MountCapability::List,
@@ -856,7 +861,8 @@ mod tests {
         let project_id = Uuid::new_v4();
         let repo = repo_with_skill(project_id);
         let provider = SkillAssetFsMountProvider::new(repo);
-        let mut mount = build_skill_asset_mount(project_id, &["writer".to_string()]);
+        let mut mount =
+            build_project_skill_asset_management_mount(project_id, &["writer".to_string()]);
         mount.capabilities = vec![MountCapability::Read, MountCapability::List];
 
         let result = provider
@@ -886,7 +892,8 @@ mod tests {
         let project_id = Uuid::new_v4();
         let repo = repo_with_skill(project_id);
         let provider = SkillAssetFsMountProvider::new(repo.clone());
-        let mut mount = build_skill_asset_mount(project_id, &["writer".to_string()]);
+        let mut mount =
+            build_project_skill_asset_management_mount(project_id, &["writer".to_string()]);
         mount.capabilities = vec![
             MountCapability::Read,
             MountCapability::Write,
@@ -957,7 +964,8 @@ mod tests {
         let project_id = Uuid::new_v4();
         let repo = repo_with_skill(project_id);
         let provider = SkillAssetFsMountProvider::new(repo.clone());
-        let mut mount = build_skill_asset_mount(project_id, &["writer".to_string()]);
+        let mut mount =
+            build_project_skill_asset_management_mount(project_id, &["writer".to_string()]);
         mount.capabilities = vec![
             MountCapability::Read,
             MountCapability::Write,

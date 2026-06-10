@@ -893,26 +893,6 @@ pub fn build_lifecycle_mount_with_node_scope(
     }
 }
 
-pub fn build_skill_asset_mount(project_id: Uuid, skill_asset_keys: &[String]) -> Mount {
-    Mount {
-        id: "skill-assets".to_string(),
-        provider: PROVIDER_SKILL_ASSET_FS.to_string(),
-        backend_id: String::new(),
-        root_ref: format!("skill-assets://project/{project_id}"),
-        capabilities: vec![
-            MountCapability::Read,
-            MountCapability::List,
-            MountCapability::Search,
-        ],
-        default_write: false,
-        display_name: "Project Skill Assets".to_string(),
-        metadata: serde_json::json!({
-            SKILL_ASSET_PROJECT_ID_METADATA_KEY: project_id.to_string(),
-            SKILL_ASSET_KEYS_METADATA_KEY: normalized_skill_asset_keys(skill_asset_keys),
-        }),
-    }
-}
-
 pub fn build_project_skill_asset_management_mount(
     project_id: Uuid,
     skill_asset_keys: &[String],
@@ -937,10 +917,14 @@ pub fn build_project_skill_asset_management_mount(
     }
 }
 
-pub fn append_skill_asset_projection(vfs: &mut Vfs, project_id: Uuid, skill_asset_keys: &[String]) {
+pub fn append_lifecycle_skill_asset_projection(
+    vfs: &mut Vfs,
+    project_id: Uuid,
+    skill_asset_keys: &[String],
+) -> bool {
     let keys = normalized_skill_asset_keys(skill_asset_keys);
     if keys.is_empty() {
-        return;
+        return true;
     }
 
     if let Some(lifecycle) = vfs
@@ -971,19 +955,10 @@ pub fn append_skill_asset_projection(vfs: &mut Vfs, project_id: Uuid, skill_asse
             ),
         );
         lifecycle.metadata = serde_json::Value::Object(metadata);
-        return;
+        return true;
     }
 
-    let mount = build_skill_asset_mount(project_id, &keys);
-    if let Some(existing) = vfs
-        .mounts
-        .iter_mut()
-        .find(|candidate| candidate.id == mount.id)
-    {
-        *existing = mount;
-    } else {
-        vfs.mounts.push(mount);
-    }
+    false
 }
 
 fn normalized_skill_asset_keys(skill_asset_keys: &[String]) -> Vec<String> {

@@ -1,7 +1,7 @@
 //! Workspace Module 聚合层。
 //!
 //! 把 enabled extension（复用 `ExtensionRuntimeProjection`）+ visible canvas
-//! 聚合为单一 `WorkspaceModuleDescriptor` 契约。该层只做投影转换，不新建业务事实
+//! 聚合为单一 workspace module read model。该层只做投影转换，不新建业务事实
 //! 源——所有数据来自现成的 `extension_runtime` 投影与 `Canvas` 实体。
 //!
 //! 决策对齐：
@@ -12,15 +12,12 @@
 
 mod tools;
 
-use agentdash_contracts::workspace_module::{
-    WorkspaceModuleDescriptor, WorkspaceModuleKind, WorkspaceModuleOperation,
-    WorkspaceModuleOperationDispatch, WorkspaceModuleStatus, WorkspaceModuleSummary,
-    WorkspaceModuleUiEntry,
-};
 use agentdash_domain::canvas::Canvas;
 use agentdash_domain::shared_library::{
     ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration,
 };
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::runtime_gateway::ExtensionInvocationWorkspaceContext;
@@ -30,6 +27,115 @@ pub use tools::{
     WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
     WorkspaceModulePresentTool,
 };
+
+/// Module 的来源类别。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceModuleKind {
+    Extension,
+    Canvas,
+    Builtin,
+}
+
+/// Module 的就绪状态。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceModuleStatusKind {
+    Ready,
+    Unavailable,
+}
+
+/// Module 状态 + 不可用原因。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceModuleStatus {
+    pub kind: WorkspaceModuleStatusKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl WorkspaceModuleStatus {
+    pub fn ready() -> Self {
+        Self {
+            kind: WorkspaceModuleStatusKind::Ready,
+            reason: None,
+        }
+    }
+
+    pub fn unavailable(reason: impl Into<String>) -> Self {
+        Self {
+            kind: WorkspaceModuleStatusKind::Unavailable,
+            reason: Some(reason.into()),
+        }
+    }
+}
+
+/// `list` 返回的摘要 read model，不含完整 schema。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceModuleSummary {
+    pub module_id: String,
+    pub kind: WorkspaceModuleKind,
+    pub title: String,
+    pub description: String,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_summary: Option<String>,
+    pub operation_summary: Vec<String>,
+    pub permission_summary: Vec<String>,
+    pub status: WorkspaceModuleStatus,
+}
+
+/// 单个 UI 入口（webview / canvas / panel）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceModuleUiEntry {
+    pub view_key: String,
+    pub renderer_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri_scheme: Option<String>,
+    pub title: String,
+}
+
+/// operation 的来源专属派发分量。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkspaceModuleOperationDispatch {
+    RuntimeAction {
+        action_key: String,
+    },
+    ProtocolChannel {
+        channel_key: String,
+        method_name: String,
+    },
+    Canvas {
+        canvas_action: String,
+    },
+    Builtin {
+        builtin_key: String,
+    },
+}
+
+/// 单个 operation（extension action / protocol channel method / canvas / builtin 同构呈现）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceModuleOperation {
+    pub operation_key: String,
+    pub origin: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    pub permission_summary: Vec<String>,
+    pub dispatch: WorkspaceModuleOperationDispatch,
+}
+
+/// `describe` 返回的完整 descriptor read model。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceModuleDescriptor {
+    pub summary: WorkspaceModuleSummary,
+    pub ui_entries: Vec<WorkspaceModuleUiEntry>,
+    pub operations: Vec<WorkspaceModuleOperation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_backing: Option<String>,
+}
 
 /// invoke 解析出的 backend target + workspace 上下文。
 ///
@@ -553,7 +659,7 @@ mod tests {
         assert_eq!(modules.len(), 1);
         assert_eq!(
             modules[0].summary.status.kind,
-            agentdash_contracts::workspace_module::WorkspaceModuleStatusKind::Unavailable
+            WorkspaceModuleStatusKind::Unavailable
         );
         assert!(modules[0].summary.status.reason.is_some());
     }

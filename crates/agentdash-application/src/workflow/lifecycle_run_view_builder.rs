@@ -1,21 +1,12 @@
-//! Read Model 投影构建器 — 组装 LifecycleRunView / SubjectExecutionView。
+//! Read Model 投影构建器 — 组装 application-owned LifecycleRunView / SubjectExecutionView。
 //!
 //! 单一所有者：API 路由层不再内联投影逻辑，统一通过本模块构建 read model，
 //! 确保 `runtime_trace_refs`、`subject_associations` 等字段始终被正确填充。
 
-use serde_json::json;
+use chrono::{DateTime, Utc};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
-use agentdash_contracts::workflow::{
-    ActiveRuntimeNodeRefDto, AgentRunRefDto, AgentRunView,
-    ExecutorRunRef as ContractExecutorRunRef,
-    LifecycleExecutionEntry as ContractLifecycleExecutionEntry,
-    LifecycleExecutionEventKind as ContractLifecycleExecutionEventKind, LifecycleRunRefDto,
-    LifecycleRunStatus as ContractLifecycleRunStatus,
-    LifecycleRunTopology as ContractLifecycleRunTopology, LifecycleRunView,
-    LifecycleSubjectAssociationDto, OrchestrationInstanceView, ProjectActiveAgentsView,
-    RuntimeNodeView, RuntimeSessionRefDto, SubjectExecutionView, SubjectRefDto,
-};
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
     ExecutorRunRef as DomainExecutorRunRef, LifecycleAgent,
@@ -26,6 +17,166 @@ use agentdash_domain::workflow::{
 };
 
 use crate::repository_set::RepositorySet;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubjectRefView {
+    pub kind: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleRunRefView {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunRefView {
+    pub run_id: String,
+    pub agent_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeSessionRefView {
+    pub runtime_session_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LifecycleSubjectAssociationView {
+    pub id: String,
+    pub anchor_run_id: String,
+    pub anchor_agent_id: Option<String>,
+    pub subject_ref: SubjectRefView,
+    pub role: String,
+    pub metadata: Option<Value>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleRunStatusView {
+    Draft,
+    Ready,
+    Running,
+    Blocked,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleRunTopologyView {
+    Graphless,
+    WorkflowGraph,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleExecutionEventKindView {
+    ActivityActivated,
+    ActivityCompleted,
+    ConstraintBlocked,
+    CompletionEvaluated,
+    ArtifactAppended,
+    ContextInjected,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExecutorRunRefView {
+    RuntimeSession { session_id: String },
+    FunctionRun { run_id: String },
+    HumanDecision { decision_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LifecycleExecutionEntryView {
+    pub timestamp: DateTime<Utc>,
+    pub activity_key: String,
+    pub event_kind: LifecycleExecutionEventKindView,
+    pub summary: String,
+    pub detail: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeNodeView {
+    pub node_id: String,
+    pub node_path: String,
+    pub kind: String,
+    pub status: String,
+    pub attempt: u32,
+    pub executor_run_ref: Option<ExecutorRunRefView>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub children: Vec<RuntimeNodeView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveRuntimeNodeRefView {
+    pub run_id: String,
+    pub orchestration_id: String,
+    pub node_path: String,
+    pub attempt: u32,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrchestrationInstanceView {
+    pub orchestration_id: String,
+    pub role: String,
+    pub status: String,
+    pub plan_digest: String,
+    pub source_ref: Value,
+    pub ready_node_ids: Vec<String>,
+    pub nodes: Vec<RuntimeNodeView>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentRunView {
+    pub agent_ref: AgentRunRefView,
+    pub project_id: String,
+    pub agent_kind: String,
+    pub agent_role: String,
+    pub project_agent_id: Option<String>,
+    pub status: String,
+    pub current_frame_id: Option<String>,
+    pub delivery_runtime_ref: Option<RuntimeSessionRefView>,
+    pub last_delivery_status: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LifecycleRunView {
+    pub run_ref: LifecycleRunRefView,
+    pub project_id: String,
+    pub topology: LifecycleRunTopologyView,
+    pub status: LifecycleRunStatusView,
+    pub orchestrations: Vec<OrchestrationInstanceView>,
+    pub active_runtime_node_refs: Vec<ActiveRuntimeNodeRefView>,
+    pub agents: Vec<AgentRunView>,
+    pub subject_associations: Vec<LifecycleSubjectAssociationView>,
+    pub runtime_trace_refs: Vec<RuntimeSessionRefView>,
+    pub execution_log: Vec<LifecycleExecutionEntryView>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_activity_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubjectExecutionView {
+    pub subject_ref: SubjectRefView,
+    pub associations: Vec<LifecycleSubjectAssociationView>,
+    pub runs: Vec<LifecycleRunView>,
+    pub current_agent: Option<AgentRunView>,
+    pub latest_runtime_node: Option<RuntimeNodeView>,
+    pub artifacts: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectActiveAgentsView {
+    pub project_id: String,
+    pub runs: Vec<LifecycleRunView>,
+    pub agents: Vec<AgentRunView>,
+}
 
 // ── Public async builders ──────────────────────────────────────
 
@@ -66,7 +217,7 @@ pub async fn build_lifecycle_run_view_with_preloaded(
         lifecycle_agent_views(repos, &agents).await?,
         subject_associations
             .iter()
-            .map(association_to_dto)
+            .map(association_to_view)
             .collect(),
         orchestrations,
         active_runtime_node_refs,
@@ -105,8 +256,8 @@ pub async fn build_subject_execution_view(
     run_views.sort_by(|a, b| b.last_activity_at.cmp(&a.last_activity_at));
 
     Ok(SubjectExecutionView {
-        subject_ref: subject_ref_to_dto(&subject),
-        associations: associations.iter().map(association_to_dto).collect(),
+        subject_ref: subject_ref_to_view(&subject),
+        associations: associations.iter().map(association_to_view).collect(),
         runs: run_views,
         current_agent,
         latest_runtime_node,
@@ -155,13 +306,13 @@ pub async fn build_project_active_agents_view(
 async fn collect_runtime_trace_refs(
     repos: &RepositorySet,
     run_id: Uuid,
-) -> Result<Vec<RuntimeSessionRefDto>, DomainError> {
+) -> Result<Vec<RuntimeSessionRefView>, DomainError> {
     Ok(repos
         .execution_anchor_repo
         .list_by_run(run_id)
         .await?
         .into_iter()
-        .map(|anchor| RuntimeSessionRefDto {
+        .map(|anchor| RuntimeSessionRefView {
             runtime_session_id: anchor.runtime_session_id,
         })
         .collect())
@@ -169,21 +320,21 @@ async fn collect_runtime_trace_refs(
 
 // ── Pure conversion functions (pub for reuse) ──────────────────
 
-pub fn subject_ref_to_dto(subject: &SubjectRef) -> SubjectRefDto {
-    SubjectRefDto {
+pub fn subject_ref_to_view(subject: &SubjectRef) -> SubjectRefView {
+    SubjectRefView {
         kind: subject.kind.clone(),
         id: subject.id.to_string(),
     }
 }
 
-pub fn association_to_dto(
+pub fn association_to_view(
     association: &LifecycleSubjectAssociation,
-) -> LifecycleSubjectAssociationDto {
-    LifecycleSubjectAssociationDto {
+) -> LifecycleSubjectAssociationView {
+    LifecycleSubjectAssociationView {
         id: association.id.to_string(),
         anchor_run_id: association.anchor_run_id.to_string(),
         anchor_agent_id: association.anchor_agent_id.map(|id| id.to_string()),
-        subject_ref: SubjectRefDto {
+        subject_ref: SubjectRefView {
             kind: association.subject_kind.clone(),
             id: association.subject_id.to_string(),
         },
@@ -202,7 +353,7 @@ fn lifecycle_agent_to_view_with_delivery(
     delivery_runtime_session_id: Option<String>,
 ) -> AgentRunView {
     AgentRunView {
-        agent_ref: AgentRunRefDto {
+        agent_ref: AgentRunRefView {
             run_id: agent.run_id.to_string(),
             agent_id: agent.id.to_string(),
         },
@@ -213,7 +364,7 @@ fn lifecycle_agent_to_view_with_delivery(
         status: agent.status.clone(),
         current_frame_id: agent.current_frame_id.map(|id| id.to_string()),
         delivery_runtime_ref: delivery_runtime_session_id
-            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
+            .map(|runtime_session_id| RuntimeSessionRefView { runtime_session_id }),
         last_delivery_status: None,
         created_at: agent.created_at.to_rfc3339(),
         updated_at: agent.updated_at.to_rfc3339(),
@@ -249,40 +400,40 @@ async fn resolve_agent_delivery_runtime_session_id(
 
 // ── Internal pure helpers ──────────────────────────────────────
 
-fn status_to_dto(status: DomainLifecycleRunStatus) -> ContractLifecycleRunStatus {
+fn status_to_view(status: DomainLifecycleRunStatus) -> LifecycleRunStatusView {
     match status {
-        DomainLifecycleRunStatus::Draft => ContractLifecycleRunStatus::Draft,
-        DomainLifecycleRunStatus::Ready => ContractLifecycleRunStatus::Ready,
-        DomainLifecycleRunStatus::Running => ContractLifecycleRunStatus::Running,
-        DomainLifecycleRunStatus::Blocked => ContractLifecycleRunStatus::Blocked,
-        DomainLifecycleRunStatus::Completed => ContractLifecycleRunStatus::Completed,
-        DomainLifecycleRunStatus::Failed => ContractLifecycleRunStatus::Failed,
-        DomainLifecycleRunStatus::Cancelled => ContractLifecycleRunStatus::Cancelled,
+        DomainLifecycleRunStatus::Draft => LifecycleRunStatusView::Draft,
+        DomainLifecycleRunStatus::Ready => LifecycleRunStatusView::Ready,
+        DomainLifecycleRunStatus::Running => LifecycleRunStatusView::Running,
+        DomainLifecycleRunStatus::Blocked => LifecycleRunStatusView::Blocked,
+        DomainLifecycleRunStatus::Completed => LifecycleRunStatusView::Completed,
+        DomainLifecycleRunStatus::Failed => LifecycleRunStatusView::Failed,
+        DomainLifecycleRunStatus::Cancelled => LifecycleRunStatusView::Cancelled,
     }
 }
 
-fn topology_to_dto(topology: DomainLifecycleRunTopology) -> ContractLifecycleRunTopology {
+fn topology_to_view(topology: DomainLifecycleRunTopology) -> LifecycleRunTopologyView {
     match topology {
-        DomainLifecycleRunTopology::Graphless => ContractLifecycleRunTopology::Graphless,
-        DomainLifecycleRunTopology::WorkflowGraph => ContractLifecycleRunTopology::WorkflowGraph,
+        DomainLifecycleRunTopology::Graphless => LifecycleRunTopologyView::Graphless,
+        DomainLifecycleRunTopology::WorkflowGraph => LifecycleRunTopologyView::WorkflowGraph,
     }
 }
 
 fn assemble_lifecycle_run_view(
     run: &LifecycleRun,
     agents: Vec<AgentRunView>,
-    subject_associations: Vec<LifecycleSubjectAssociationDto>,
+    subject_associations: Vec<LifecycleSubjectAssociationView>,
     orchestrations: Vec<OrchestrationInstanceView>,
-    active_runtime_node_refs: Vec<ActiveRuntimeNodeRefDto>,
-    runtime_trace_refs: Vec<RuntimeSessionRefDto>,
+    active_runtime_node_refs: Vec<ActiveRuntimeNodeRefView>,
+    runtime_trace_refs: Vec<RuntimeSessionRefView>,
 ) -> LifecycleRunView {
     LifecycleRunView {
-        run_ref: LifecycleRunRefDto {
+        run_ref: LifecycleRunRefView {
             run_id: run.id.to_string(),
         },
         project_id: run.project_id.to_string(),
-        topology: topology_to_dto(run.topology),
-        status: status_to_dto(run.status),
+        topology: topology_to_view(run.topology),
+        status: status_to_view(run.status),
         orchestrations,
         active_runtime_node_refs,
         agents,
@@ -291,7 +442,7 @@ fn assemble_lifecycle_run_view(
         execution_log: run
             .execution_log
             .iter()
-            .map(execution_entry_to_dto)
+            .map(execution_entry_to_view)
             .collect(),
         created_at: run.created_at.to_rfc3339(),
         updated_at: run.updated_at.to_rfc3339(),
@@ -331,32 +482,28 @@ fn runtime_node_to_view(node: &RuntimeNodeState) -> RuntimeNodeView {
         kind: status_string(&node.kind),
         status: status_string(&node.status),
         attempt: node.attempt,
-        executor_run_ref: node.executor_run_ref.as_ref().map(executor_run_ref_to_dto),
+        executor_run_ref: node.executor_run_ref.as_ref().map(executor_run_ref_to_view),
         started_at: node.started_at.map(|timestamp| timestamp.to_rfc3339()),
         completed_at: node.completed_at.map(|timestamp| timestamp.to_rfc3339()),
         children: node.children.iter().map(runtime_node_to_view).collect(),
     }
 }
 
-fn executor_run_ref_to_dto(refs: &DomainExecutorRunRef) -> ContractExecutorRunRef {
+fn executor_run_ref_to_view(refs: &DomainExecutorRunRef) -> ExecutorRunRefView {
     match refs {
-        DomainExecutorRunRef::RuntimeSession { session_id } => {
-            ContractExecutorRunRef::RuntimeSession {
-                session_id: session_id.clone(),
-            }
-        }
-        DomainExecutorRunRef::FunctionRun { run_id } => ContractExecutorRunRef::FunctionRun {
+        DomainExecutorRunRef::RuntimeSession { session_id } => ExecutorRunRefView::RuntimeSession {
+            session_id: session_id.clone(),
+        },
+        DomainExecutorRunRef::FunctionRun { run_id } => ExecutorRunRefView::FunctionRun {
             run_id: run_id.clone(),
         },
-        DomainExecutorRunRef::HumanDecision { decision_id } => {
-            ContractExecutorRunRef::HumanDecision {
-                decision_id: decision_id.clone(),
-            }
-        }
+        DomainExecutorRunRef::HumanDecision { decision_id } => ExecutorRunRefView::HumanDecision {
+            decision_id: decision_id.clone(),
+        },
     }
 }
 
-fn active_runtime_node_refs(run: &LifecycleRun) -> Vec<ActiveRuntimeNodeRefDto> {
+fn active_runtime_node_refs(run: &LifecycleRun) -> Vec<ActiveRuntimeNodeRefView> {
     run.orchestrations
         .iter()
         .flat_map(|instance| {
@@ -371,7 +518,7 @@ fn active_runtime_node_refs(run: &LifecycleRun) -> Vec<ActiveRuntimeNodeRefDto> 
                             | RuntimeNodeStatus::Blocked
                     )
                 })
-                .map(move |node| ActiveRuntimeNodeRefDto {
+                .map(move |node| ActiveRuntimeNodeRefView {
                     run_id: run.id.to_string(),
                     orchestration_id: instance.orchestration_id.to_string(),
                     node_path: node.node_path.clone(),
@@ -404,39 +551,39 @@ fn status_string<T: serde::Serialize>(value: &T) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-fn execution_entry_to_dto(
+fn execution_entry_to_view(
     entry: &agentdash_domain::workflow::LifecycleExecutionEntry,
-) -> ContractLifecycleExecutionEntry {
-    ContractLifecycleExecutionEntry {
+) -> LifecycleExecutionEntryView {
+    LifecycleExecutionEntryView {
         timestamp: entry.timestamp,
         activity_key: entry.activity_key.clone(),
-        event_kind: execution_event_kind_to_dto(entry.event_kind),
+        event_kind: execution_event_kind_to_view(entry.event_kind),
         summary: entry.summary.clone(),
         detail: entry.detail.clone(),
     }
 }
 
-fn execution_event_kind_to_dto(
+fn execution_event_kind_to_view(
     kind: DomainLifecycleExecutionEventKind,
-) -> ContractLifecycleExecutionEventKind {
+) -> LifecycleExecutionEventKindView {
     match kind {
         DomainLifecycleExecutionEventKind::ActivityActivated => {
-            ContractLifecycleExecutionEventKind::ActivityActivated
+            LifecycleExecutionEventKindView::ActivityActivated
         }
         DomainLifecycleExecutionEventKind::ActivityCompleted => {
-            ContractLifecycleExecutionEventKind::ActivityCompleted
+            LifecycleExecutionEventKindView::ActivityCompleted
         }
         DomainLifecycleExecutionEventKind::ConstraintBlocked => {
-            ContractLifecycleExecutionEventKind::ConstraintBlocked
+            LifecycleExecutionEventKindView::ConstraintBlocked
         }
         DomainLifecycleExecutionEventKind::CompletionEvaluated => {
-            ContractLifecycleExecutionEventKind::CompletionEvaluated
+            LifecycleExecutionEventKindView::CompletionEvaluated
         }
         DomainLifecycleExecutionEventKind::ArtifactAppended => {
-            ContractLifecycleExecutionEventKind::ArtifactAppended
+            LifecycleExecutionEventKindView::ArtifactAppended
         }
         DomainLifecycleExecutionEventKind::ContextInjected => {
-            ContractLifecycleExecutionEventKind::ContextInjected
+            LifecycleExecutionEventKindView::ContextInjected
         }
     }
 }

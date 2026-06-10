@@ -7,7 +7,9 @@ use axum::{
 use serde_json::Value;
 use uuid::Uuid;
 
-use agentdash_application::workflow::lifecycle_run_view_builder;
+use agentdash_application::workflow::lifecycle_run_view_builder::{
+    self, SubjectExecutionView as SubjectExecutionReadModel,
+};
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentFrameRuntimeView, LifecycleRunView, ProjectActiveAgentsView,
     RuntimeSessionRefDto, RuntimeSessionTraceView, SubjectExecutionView,
@@ -23,6 +25,11 @@ use crate::{
         load_story_and_project_with_permission, load_task_story_project_with_permission,
     },
     rpc::ApiError,
+};
+
+use super::lifecycle_contracts::{
+    lifecycle_run_view_to_contract, project_active_agents_view_to_contract,
+    subject_execution_view_to_contract,
 };
 
 pub fn router() -> axum::Router<Arc<AppState>> {
@@ -65,7 +72,7 @@ pub async fn get_lifecycle_run_view(
     .await?;
 
     let view = lifecycle_run_view_builder::build_lifecycle_run_view(&state.repos, &run).await?;
-    Ok(Json(view))
+    Ok(Json(lifecycle_run_view_to_contract(view)))
 }
 
 pub async fn get_subject_execution(
@@ -78,7 +85,7 @@ pub async fn get_subject_execution(
         lifecycle_run_view_builder::build_subject_execution_view(&state.repos, subject.clone())
             .await?;
     authorize_subject_execution_view(&state, &current_user, &subject, &view).await?;
-    Ok(Json(view))
+    Ok(Json(subject_execution_view_to_contract(view)))
 }
 
 pub async fn get_agent_frame_runtime(
@@ -172,14 +179,14 @@ pub async fn get_project_active_agents(
     let view =
         lifecycle_run_view_builder::build_project_active_agents_view(&state.repos, project_id)
             .await?;
-    Ok(Json(view))
+    Ok(Json(project_active_agents_view_to_contract(view)))
 }
 
 async fn authorize_subject_execution_view(
     state: &Arc<AppState>,
     current_user: &agentdash_integration_api::AuthIdentity,
     subject: &SubjectRef,
-    view: &SubjectExecutionView,
+    view: &SubjectExecutionReadModel,
 ) -> Result<(), ApiError> {
     if let Some(project_id) = view
         .runs

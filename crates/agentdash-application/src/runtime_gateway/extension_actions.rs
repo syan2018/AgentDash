@@ -2,19 +2,16 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agentdash_application_ports::extension_runtime::{
+    ExtensionActionInvokeRequest, ExtensionChannelConsumerPayload, ExtensionChannelInvokeRequest,
+    ExtensionInvocationWorkspacePayload, ExtensionPackageArtifactPayload,
     ExtensionRuntimeActionTransport, ExtensionRuntimeActionTransportError,
-    ExtensionRuntimeChannelTransport,
+    ExtensionRuntimeChannelTransport, ExtensionRuntimeHostPayload,
 };
 use agentdash_domain::shared_library::{
     ExtensionDependencyDeclaration, ExtensionPermissionDecision,
     ExtensionProtocolChannelDefinition, ExtensionProtocolChannelMethodDefinition,
     ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ProjectExtensionInstallation,
     ProjectExtensionInstallationRepository,
-};
-use agentdash_relay::{
-    CommandExtensionActionInvokePayload, CommandExtensionChannelInvokePayload,
-    ExtensionChannelConsumerRelay, ExtensionInvocationWorkspaceRelay,
-    ExtensionPackageArtifactRelay, ExtensionRuntimeHostRelay,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -43,8 +40,8 @@ impl ExtensionInvocationWorkspaceContext {
         }
     }
 
-    fn into_relay(self) -> ExtensionInvocationWorkspaceRelay {
-        ExtensionInvocationWorkspaceRelay {
+    fn into_payload(self) -> ExtensionInvocationWorkspacePayload {
+        ExtensionInvocationWorkspacePayload {
             mount_id: self.mount_id,
             root_ref: self.root_ref,
         }
@@ -172,26 +169,26 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
         let permission_decisions = validate_action_permissions(installation, action, &request)?;
         let workspace = extension_invocation_workspace_from_metadata(&request)?;
 
-        let relay_payload = CommandExtensionActionInvokePayload {
+        let transport_request = ExtensionActionInvokeRequest {
             extension_key: installation.extension_key.clone(),
             extension_id: installation.manifest.extension_id.clone(),
             action_key: action.action_key.clone(),
             project_id: project_id.to_string(),
             session_id,
             input: request.input.clone(),
-            package_artifact: Some(ExtensionPackageArtifactRelay {
+            package_artifact: Some(ExtensionPackageArtifactPayload {
                 artifact_id: artifact.artifact_id.to_string(),
                 archive_digest: artifact.archive_digest.clone(),
             }),
-            runtime_extensions: runtime_host_relays(&installations),
-            workspace: workspace.map(ExtensionInvocationWorkspaceContext::into_relay),
+            runtime_extensions: runtime_host_payloads(&installations),
+            workspace: workspace.map(ExtensionInvocationWorkspaceContext::into_payload),
             trace_id: request.trace.trace_id.clone(),
             invocation_id: request.trace.invocation_id.clone(),
         };
 
         let response = self
             .transport
-            .invoke_extension_action(&backend_id, relay_payload)
+            .invoke_extension_action(&backend_id, transport_request)
             .await
             .map_err(|error| transport_error_to_invocation(error, &request))?;
 
@@ -301,19 +298,19 @@ fn extension_invocation_workspace_from_metadata(
         })
 }
 
-fn runtime_host_relays(
+fn runtime_host_payloads(
     installations: &[ProjectExtensionInstallation],
-) -> Vec<ExtensionRuntimeHostRelay> {
+) -> Vec<ExtensionRuntimeHostPayload> {
     installations
         .iter()
         .filter_map(|installation| {
             installation
                 .package_artifact
                 .as_ref()
-                .map(|artifact| ExtensionRuntimeHostRelay {
+                .map(|artifact| ExtensionRuntimeHostPayload {
                     extension_key: installation.extension_key.clone(),
                     extension_id: installation.manifest.extension_id.clone(),
-                    package_artifact: Some(ExtensionPackageArtifactRelay {
+                    package_artifact: Some(ExtensionPackageArtifactPayload {
                         artifact_id: artifact.artifact_id.to_string(),
                         archive_digest: artifact.archive_digest.clone(),
                     }),
@@ -391,7 +388,7 @@ impl ExtensionRuntimeChannelInvoker {
                 Some(request.trace.clone()),
             )
         })?;
-        let relay_payload = CommandExtensionChannelInvokePayload {
+        let transport_request = ExtensionChannelInvokeRequest {
             provider_extension_key: resolved.provider.extension_key.clone(),
             provider_extension_id: resolved.provider.manifest.extension_id.clone(),
             channel_key: resolved.channel.channel_key.clone(),
@@ -399,11 +396,11 @@ impl ExtensionRuntimeChannelInvoker {
             project_id: request.project_id.to_string(),
             session_id: request.session_id.clone(),
             input: request.input.clone(),
-            package_artifact: ExtensionPackageArtifactRelay {
+            package_artifact: ExtensionPackageArtifactPayload {
                 artifact_id: artifact.artifact_id.to_string(),
                 archive_digest: artifact.archive_digest.clone(),
             },
-            consumer: channel_consumer_relay(
+            consumer: channel_consumer_payload(
                 &request.consumer,
                 resolved.consumer_installation,
                 resolved.dependency_alias,
@@ -411,13 +408,13 @@ impl ExtensionRuntimeChannelInvoker {
             workspace: request
                 .workspace
                 .clone()
-                .map(ExtensionInvocationWorkspaceContext::into_relay),
+                .map(ExtensionInvocationWorkspaceContext::into_payload),
             trace_id: request.trace.trace_id.clone(),
             invocation_id: request.trace.invocation_id.clone(),
         };
         let response = self
             .transport
-            .invoke_extension_channel(&request.backend_id, relay_payload)
+            .invoke_extension_channel(&request.backend_id, transport_request)
             .await
             .map_err(|error| transport_error_to_channel_invocation(error, &request))?;
         let mut metadata = BTreeMap::new();
@@ -721,14 +718,14 @@ fn parse_semver_prefix(value: &str) -> Option<(u64, u64, u64)> {
     Some((major, minor, patch))
 }
 
-fn channel_consumer_relay(
+fn channel_consumer_payload(
     consumer: &ExtensionRuntimeChannelConsumer,
     consumer_installation: Option<&ProjectExtensionInstallation>,
     dependency_alias: Option<&str>,
-) -> ExtensionChannelConsumerRelay {
+) -> ExtensionChannelConsumerPayload {
     match consumer {
         ExtensionRuntimeChannelConsumer::ExtensionPanel { extension_key } => {
-            ExtensionChannelConsumerRelay {
+            ExtensionChannelConsumerPayload {
                 kind: "extension_panel".to_string(),
                 extension_key: Some(extension_key.clone()),
                 extension_id: consumer_installation
@@ -737,14 +734,14 @@ fn channel_consumer_relay(
             }
         }
         ExtensionRuntimeChannelConsumer::UserCanvas { canvas_id } => {
-            ExtensionChannelConsumerRelay {
+            ExtensionChannelConsumerPayload {
                 kind: "canvas".to_string(),
                 extension_key: None,
                 extension_id: canvas_id.map(|id| id.to_string()),
                 dependency_alias: dependency_alias.map(str::to_string),
             }
         }
-        ExtensionRuntimeChannelConsumer::SessionUser => ExtensionChannelConsumerRelay {
+        ExtensionRuntimeChannelConsumer::SessionUser => ExtensionChannelConsumerPayload {
             kind: "session_user".to_string(),
             extension_key: None,
             extension_id: None,
@@ -815,6 +812,9 @@ fn transport_error_to_invocation(
 mod tests {
     use std::sync::Mutex as StdMutex;
 
+    use agentdash_application_ports::extension_runtime::{
+        ExtensionActionInvokeResponse, ExtensionChannelInvokeResponse,
+    };
     use agentdash_domain::DomainError;
     use agentdash_domain::extension_package::{
         ExtensionPackageArtifactRef, ExtensionPackageMetadata,
@@ -824,9 +824,6 @@ mod tests {
         ExtensionProtocolChannelDefinition, ExtensionProtocolChannelMethodDefinition,
         ExtensionRuntimeActionDefinition, ExtensionTemplatePayload, InstalledAssetSource,
         ProjectExtensionInstallation,
-    };
-    use agentdash_relay::{
-        ResponseExtensionActionInvokePayload, ResponseExtensionChannelInvokePayload,
     };
     use serde_json::json;
 
@@ -896,8 +893,8 @@ mod tests {
     }
 
     struct FakeTransport {
-        result: Result<ResponseExtensionActionInvokePayload, ExtensionRuntimeActionTransportError>,
-        last_payload: StdMutex<Option<CommandExtensionActionInvokePayload>>,
+        result: Result<ExtensionActionInvokeResponse, ExtensionRuntimeActionTransportError>,
+        last_payload: StdMutex<Option<ExtensionActionInvokeRequest>>,
     }
 
     #[async_trait]
@@ -905,9 +902,8 @@ mod tests {
         async fn invoke_extension_action(
             &self,
             backend_id: &str,
-            payload: CommandExtensionActionInvokePayload,
-        ) -> Result<ResponseExtensionActionInvokePayload, ExtensionRuntimeActionTransportError>
-        {
+            payload: ExtensionActionInvokeRequest,
+        ) -> Result<ExtensionActionInvokeResponse, ExtensionRuntimeActionTransportError> {
             assert_eq!(backend_id, "backend-1");
             *self.last_payload.lock().expect("lock") = Some(payload);
             self.result.clone()
@@ -915,8 +911,8 @@ mod tests {
     }
 
     struct FakeChannelTransport {
-        result: Result<ResponseExtensionChannelInvokePayload, ExtensionRuntimeActionTransportError>,
-        last_payload: StdMutex<Option<CommandExtensionChannelInvokePayload>>,
+        result: Result<ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError>,
+        last_payload: StdMutex<Option<ExtensionChannelInvokeRequest>>,
     }
 
     #[async_trait]
@@ -924,9 +920,8 @@ mod tests {
         async fn invoke_extension_channel(
             &self,
             backend_id: &str,
-            payload: CommandExtensionChannelInvokePayload,
-        ) -> Result<ResponseExtensionChannelInvokePayload, ExtensionRuntimeActionTransportError>
-        {
+            payload: ExtensionChannelInvokeRequest,
+        ) -> Result<ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError> {
             assert_eq!(backend_id, "backend-1");
             *self.last_payload.lock().expect("lock") = Some(payload);
             self.result.clone()
@@ -1284,8 +1279,8 @@ mod tests {
         request
     }
 
-    fn response_payload(output: serde_json::Value) -> ResponseExtensionActionInvokePayload {
-        ResponseExtensionActionInvokePayload {
+    fn response_payload(output: serde_json::Value) -> ExtensionActionInvokeResponse {
+        ExtensionActionInvokeResponse {
             extension_key: "local-hello".to_string(),
             extension_id: "local-hello".to_string(),
             action_key: "local-hello.profile".to_string(),
@@ -1294,10 +1289,8 @@ mod tests {
         }
     }
 
-    fn channel_response_payload(
-        output: serde_json::Value,
-    ) -> ResponseExtensionChannelInvokePayload {
-        ResponseExtensionChannelInvokePayload {
+    fn channel_response_payload(output: serde_json::Value) -> ExtensionChannelInvokeResponse {
+        ExtensionChannelInvokeResponse {
             provider_extension_key: "provider".to_string(),
             provider_extension_id: "provider".to_string(),
             channel_key: "provider.api".to_string(),

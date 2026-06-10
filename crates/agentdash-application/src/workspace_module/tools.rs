@@ -10,9 +10,6 @@ use std::sync::Arc;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
-use agentdash_contracts::workspace_module::{
-    WorkspaceModuleDescriptor, WorkspaceModuleOperation, WorkspaceModuleOperationDispatch,
-};
 use agentdash_domain::canvas::{Canvas, CanvasRepository};
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_spi::WorkspaceModuleDimension;
@@ -33,7 +30,8 @@ use crate::runtime_gateway::{
 };
 use crate::vfs::tools::SharedSessionToolServicesHandle;
 use crate::workspace_module::{
-    ResolvedInvocationBackend, build_workspace_modules, validate_input_against_schema,
+    ResolvedInvocationBackend, WorkspaceModuleDescriptor, WorkspaceModuleOperation,
+    WorkspaceModuleOperationDispatch, build_workspace_modules, validate_input_against_schema,
 };
 
 /// 现取现算：拉 enabled extension projection + visible canvas，聚合 + capability 过滤。
@@ -1204,10 +1202,8 @@ mod tests {
 
     use crate::runtime_gateway::{RuntimeActionKind, RuntimeInvocationOutput, RuntimeProvider};
     use agentdash_application_ports::extension_runtime::{
+        ExtensionChannelInvokeRequest, ExtensionChannelInvokeResponse,
         ExtensionRuntimeActionTransportError, ExtensionRuntimeChannelTransport,
-    };
-    use agentdash_relay::{
-        CommandExtensionChannelInvokePayload, ResponseExtensionChannelInvokePayload,
     };
 
     struct EchoActionProvider {
@@ -1240,9 +1236,8 @@ mod tests {
         async fn invoke_extension_channel(
             &self,
             _backend_id: &str,
-            _payload: CommandExtensionChannelInvokePayload,
-        ) -> Result<ResponseExtensionChannelInvokePayload, ExtensionRuntimeActionTransportError>
-        {
+            _payload: ExtensionChannelInvokeRequest,
+        ) -> Result<ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError> {
             Err(ExtensionRuntimeActionTransportError::Failed(
                 "noop channel transport".to_string(),
             ))

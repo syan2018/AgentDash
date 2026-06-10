@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use agentdash_application_ports::vfs_materialization::VfsMaterializationTransport;
-use agentdash_relay::{
+use agentdash_application_ports::vfs_materialization::{
     MaterializationAccessMode, MaterializationCacheScope, MaterializationPlanKind,
-    MaterializationTargetKind, VfsMaterializeContent, VfsMaterializeEntry, VfsMaterializePayload,
+    MaterializationTargetKind, VfsMaterializationTransport, VfsMaterializeContent,
+    VfsMaterializeEntry, VfsMaterializeRequest,
 };
 use agentdash_spi::{Mount, MountCapability, Vfs};
 use futures::future::BoxFuture;
@@ -126,7 +126,7 @@ impl VfsMaterializationService {
         source_uri: &str,
         target: &ResourceRef,
         source_mount: &Mount,
-    ) -> Result<VfsMaterializePayload, String> {
+    ) -> Result<VfsMaterializeRequest, String> {
         let plan = self
             .plan_entries(
                 input.vfs,
@@ -141,7 +141,7 @@ impl VfsMaterializationService {
             .read_plan_entries(input.vfs, target, &plan, input.overlay, input.identity)
             .await?;
 
-        Ok(VfsMaterializePayload {
+        Ok(VfsMaterializeRequest {
             session_id: input.session_id.to_string(),
             turn_id: input.turn_id.map(str::to_string),
             tool_call_id: input.tool_call_id.map(str::to_string),
@@ -163,7 +163,7 @@ impl VfsMaterializationService {
     async fn build_payload_for_context(
         &self,
         input: MaterializationBuildInput<'_>,
-    ) -> Result<VfsMaterializePayload, String> {
+    ) -> Result<VfsMaterializeRequest, String> {
         let plan = self
             .plan_entries(
                 input.vfs,
@@ -184,7 +184,7 @@ impl VfsMaterializationService {
             )
             .await?;
 
-        Ok(VfsMaterializePayload {
+        Ok(VfsMaterializeRequest {
             session_id: input.session_id.to_string(),
             turn_id: input.turn_id.map(str::to_string),
             tool_call_id: input.tool_call_id.map(str::to_string),

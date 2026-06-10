@@ -14,6 +14,9 @@ use axum::{
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
+use crate::routes::lifecycle_contracts::{
+    agent_run_to_contract, lifecycle_run_view_to_contract, subject_association_to_contract,
+};
 use crate::routes::lifecycle_views::{
     agent_frame_ref, agent_frame_runtime_to_view, runtime_refs_for_agent,
 };
@@ -246,6 +249,7 @@ pub async fn get_session_runtime_control(
                 || assoc.anchor_agent_id.is_none()
         })
         .cloned()
+        .map(subject_association_to_contract)
         .collect::<Vec<_>>();
     let execution_state = state
         .services
@@ -338,8 +342,8 @@ pub async fn get_session_runtime_control(
         session_meta: session_shell_dto(&meta),
         control_plane,
         anchor: Some(anchor_dto(&anchor)),
-        run: Some(run_view),
-        agent: agent_view,
+        run: Some(lifecycle_run_view_to_contract(run_view)),
+        agent: agent_view.map(agent_run_to_contract),
         frame_runtime,
         subject_associations,
         actions: SessionRuntimeActionSetView {

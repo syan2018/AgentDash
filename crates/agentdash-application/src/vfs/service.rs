@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::runtime::Mount;
+use crate::vfs::types::{runtime_entry_is_binary, runtime_text_file_attributes};
 use crate::vfs::*;
 use agentdash_spi::{MountCapability, Vfs};
 use async_trait::async_trait;
@@ -542,20 +543,9 @@ impl VfsService {
             && let Some(override_state) = ov.read_override(&dispatch.mount.id, &path).await
         {
             return match override_state {
-                Some(content) => {
-                    let mut attrs = serde_json::Map::new();
-                    attrs.insert(
-                        "content_kind".to_string(),
-                        serde_json::Value::String("text".to_string()),
-                    );
-                    attrs.insert(
-                        "mime_type".to_string(),
-                        serde_json::Value::String("text/plain; charset=utf-8".to_string()),
-                    );
-                    Ok(RuntimeFileEntry::file(path)
-                        .with_size(content.len() as u64)
-                        .with_attributes(attrs))
-                }
+                Some(content) => Ok(RuntimeFileEntry::file(path)
+                    .with_size(content.len() as u64)
+                    .with_attributes(runtime_text_file_attributes())),
                 None => Err(MountError::NotFound(target.path.clone())),
             };
         }
@@ -1108,7 +1098,7 @@ impl VfsService {
         let mut files = BTreeMap::new();
         for entry in full_result.entries {
             if !entry.is_dir {
-                if entry_content_kind(&entry).as_deref() == Some("binary") {
+                if runtime_entry_is_binary(&entry) {
                     continue;
                 }
                 let read_result = provider.read_text(mount, &entry.path, &ctx).await?;
@@ -1286,15 +1276,6 @@ fn normalize_patch_entry_paths(entry: &mut PatchEntry, fallback: &str) -> Result
     }
 
     Ok(mount_id)
-}
-
-fn entry_content_kind(entry: &RuntimeFileEntry) -> Option<String> {
-    entry
-        .attributes
-        .as_ref()
-        .and_then(|attrs| attrs.get("content_kind"))
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string)
 }
 
 struct ProviderPatchTarget<'a> {

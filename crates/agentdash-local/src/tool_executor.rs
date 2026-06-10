@@ -10,7 +10,9 @@ use std::time::Duration;
 use agentdash_application::vfs::{ApplyPatchAffectedPaths, FsPatchTarget, apply_patch_to_target};
 use agentdash_relay::{FileEntryRelay, SearchHit, ShellOutputStream};
 use ignore::WalkBuilder;
-use tokio::io::{AsyncBufReadExt, BufReader};
+
+use crate::process_executor::ProcessExecutor;
+pub use crate::process_executor::ProcessOutput as ShellResult;
 
 pub(crate) struct SearchParams<'a> {
     pub query: &'a str,
@@ -25,6 +27,7 @@ pub(crate) struct SearchParams<'a> {
 pub struct ToolExecutor {
     workspace_roots_configured: bool,
     canonical_workspace_roots: Vec<PathBuf>,
+    process_executor: ProcessExecutor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,13 +51,6 @@ const BUILTIN_NOISE_DIRS: &[&str] = &[
     ".venv",
     "__pycache__",
 ];
-
-/// Shell 执行结果
-pub struct ShellResult {
-    pub exit_code: i32,
-    pub stdout: String,
-    pub stderr: String,
-}
 
 /// 文件 bytes 读取结果
 pub struct BinaryFileResult {
@@ -80,7 +76,7 @@ pub enum ToolError {
     PatchApply(String),
 }
 
-fn canonicalize_workspace_roots(workspace_roots: Vec<PathBuf>) -> Vec<PathBuf> {
+pub(crate) fn canonicalize_workspace_roots(workspace_roots: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut canonical_roots = Vec::new();
     for root in workspace_roots {
         let Ok(canonical) = std::fs::canonicalize(root) else {
@@ -97,10 +93,12 @@ fn canonicalize_workspace_roots(workspace_roots: Vec<PathBuf>) -> Vec<PathBuf> {
 impl ToolExecutor {
     pub fn new(workspace_roots: Vec<PathBuf>) -> Self {
         let workspace_roots_configured = !workspace_roots.is_empty();
+        let process_executor = ProcessExecutor::new(workspace_roots.clone());
         let canonical_workspace_roots = canonicalize_workspace_roots(workspace_roots);
         Self {
             workspace_roots_configured,
             canonical_workspace_roots,
+            process_executor,
         }
     }
 
@@ -239,24 +237,17 @@ impl ToolExecutor {
             .map_err(|e| ToolError::PatchApply(e.to_string()))
     }
 
+    #[allow(dead_code)]
     pub fn resolve_shell_cwd(
         &self,
         workspace_root: &str,
         cwd: Option<&str>,
     ) -> Result<PathBuf, ToolError> {
-        let ws = self.validate_workspace_root(workspace_root)?;
-        let requested = cwd.unwrap_or_default().trim();
-        if requested.is_empty() || requested == "." {
-            return Ok(ws);
-        }
+        self.process_executor.resolve_cwd(workspace_root, cwd)
+    }
 
-        if is_absolute_like(requested) {
-            return Err(ToolError::InvalidPath(
-                "shell cwd 必须是相对于 workspace root 的路径".to_string(),
-            ));
-        }
-
-        resolve_existing_path_with_root(&ws, requested)
+    pub(crate) fn process_executor(&self) -> &ProcessExecutor {
+        &self.process_executor
     }
 
     #[allow(dead_code)]
@@ -267,31 +258,15 @@ impl ToolExecutor {
         cwd: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> Result<ShellResult, ToolError> {
-        let ws = self.resolve_shell_cwd(workspace_root, cwd)?;
-        let timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000));
-
         tracing::debug!(
             command = %command,
             workspace_root = workspace_root,
             requested_cwd = ?cwd,
-            cwd = %ws.display(),
             "shell_exec"
         );
-
-        let child = shell_command(command, &ws)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
-
-        match tokio::time::timeout(timeout, child.wait_with_output()).await {
-            Ok(Ok(output)) => Ok(ShellResult {
-                exit_code: output.status.code().unwrap_or(-1),
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            }),
-            Ok(Err(e)) => Err(ToolError::Io(e)),
-            Err(_) => Err(ToolError::Timeout(timeout_ms.unwrap_or(30_000))),
-        }
+        self.process_executor
+            .shell_exec(command, workspace_root, cwd, timeout_ms, &[])
+            .await
     }
 
     /// 流式 shell 执行 — 逐行推送 stdout/stderr 到回调，完成后返回最终结果。
@@ -301,97 +276,20 @@ impl ToolExecutor {
         workspace_root: &str,
         cwd: Option<&str>,
         timeout_ms: Option<u64>,
-        mut on_output: F,
+        on_output: F,
     ) -> Result<ShellResult, ToolError>
     where
         F: FnMut(&str, ShellOutputStream) + Send,
     {
-        let ws = self.resolve_shell_cwd(workspace_root, cwd)?;
-        let timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000));
-
         tracing::debug!(
             command = %command,
-            cwd = %ws.display(),
+            workspace_root = workspace_root,
+            requested_cwd = ?cwd,
             "shell_exec_streaming"
         );
-
-        let mut child = shell_command(command, &ws)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
-
-        let stdout = child.stdout.take().expect("stdout piped");
-        let stderr = child.stderr.take().expect("stderr piped");
-
-        let mut stdout_reader = BufReader::new(stdout);
-        let mut stderr_reader = BufReader::new(stderr);
-        let mut stdout_buf = String::new();
-        let mut stderr_buf = String::new();
-
-        let read_loop = async {
-            let mut stdout_done = false;
-            let mut stderr_done = false;
-            let mut stdout_line = Vec::new();
-            let mut stderr_line = Vec::new();
-
-            while !stdout_done || !stderr_done {
-                tokio::select! {
-                    read = stdout_reader.read_until(b'\n', &mut stdout_line), if !stdout_done => {
-                        match read {
-                            Ok(0) => {
-                                stdout_done = true;
-                            }
-                            Ok(_) => {
-                                let chunk = decode_output_chunk(&stdout_line);
-                                stdout_line.clear();
-                                on_output(&chunk, ShellOutputStream::Stdout);
-                                stdout_buf.push_str(&chunk);
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "stdout read error");
-                                return Err(e);
-                            }
-                        }
-                    }
-                    read = stderr_reader.read_until(b'\n', &mut stderr_line), if !stderr_done => {
-                        match read {
-                            Ok(0) => {
-                                stderr_done = true;
-                            }
-                            Ok(_) => {
-                                let chunk = decode_output_chunk(&stderr_line);
-                                stderr_line.clear();
-                                on_output(&chunk, ShellOutputStream::Stderr);
-                                stderr_buf.push_str(&chunk);
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "stderr read error");
-                                return Err(e);
-                            }
-                        }
-                    }
-                }
-            }
-
-            Ok::<(), std::io::Error>(())
-        };
-
-        match tokio::time::timeout(timeout, read_loop).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(ToolError::Io(e)),
-            Err(_) => {
-                let _ = child.kill().await;
-                return Err(ToolError::Timeout(timeout_ms.unwrap_or(30_000)));
-            }
-        }
-
-        let status = child.wait().await.map_err(ToolError::Io)?;
-
-        Ok(ShellResult {
-            exit_code: status.code().unwrap_or(-1),
-            stdout: stdout_buf,
-            stderr: stderr_buf,
-        })
+        self.process_executor
+            .shell_exec_streaming(command, workspace_root, cwd, timeout_ms, &[], on_output)
+            .await
     }
 
     pub async fn file_list(
@@ -619,7 +517,7 @@ async fn run_ripgrep(
     Ok((hits, truncated))
 }
 
-fn resolve_existing_path_with_root(
+pub(crate) fn resolve_existing_path_with_root(
     workspace_root: &Path,
     relative_path: &str,
 ) -> Result<PathBuf, ToolError> {
@@ -702,7 +600,7 @@ fn normalize_relative_path(input: &str) -> Result<PathBuf, ToolError> {
     Ok(normalized)
 }
 
-fn is_absolute_like(raw: &str) -> bool {
+pub(crate) fn is_absolute_like(raw: &str) -> bool {
     raw.starts_with('/')
         || raw.starts_with('\\')
         || raw.starts_with("//")
@@ -906,37 +804,6 @@ fn infer_mime_type(path: &str) -> String {
 
 fn is_image_path(path: &Path) -> bool {
     infer_mime_type(&path.to_string_lossy()).starts_with("image/")
-}
-
-fn shell_command(command: &str, cwd: &Path) -> tokio::process::Command {
-    #[cfg(windows)]
-    {
-        let mut shell = tokio::process::Command::new("powershell.exe");
-        let command = format!(
-            "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = $OutputEncoding; {command}"
-        );
-        shell
-            .arg("-NoLogo")
-            .arg("-NoProfile")
-            .arg("-NonInteractive")
-            .arg("-ExecutionPolicy")
-            .arg("Bypass")
-            .arg("-Command")
-            .arg(command)
-            .current_dir(cwd);
-        shell
-    }
-
-    #[cfg(not(windows))]
-    {
-        let mut shell = tokio::process::Command::new("sh");
-        shell.arg("-c").arg(command).current_dir(cwd);
-        shell
-    }
-}
-
-fn decode_output_chunk(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).to_string()
 }
 
 #[cfg(test)]
@@ -1417,5 +1284,24 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "stream ok");
         assert_eq!(streamed.trim(), "stream ok");
+    }
+
+    #[tokio::test]
+    async fn shell_exec_streaming_timeout_returns_tool_timeout() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+        let command = if cfg!(windows) {
+            "Start-Sleep -Milliseconds 1000"
+        } else {
+            "sleep 1"
+        };
+
+        let error = executor
+            .shell_exec_streaming(command, &root, None, Some(50), |_, _| {})
+            .await
+            .expect_err("streaming shell timeout should stay a tool timeout");
+
+        assert!(matches!(error, ToolError::Timeout(50)));
     }
 }

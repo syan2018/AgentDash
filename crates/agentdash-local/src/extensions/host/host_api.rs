@@ -288,14 +288,22 @@ mod tests {
     #[tokio::test]
     async fn process_host_apis_cover_allowed_denied_and_param_errors() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let active = active_extension(temp.path(), &["process.execute"], &[]);
+        let active = active_extension(
+            temp.path(),
+            &["process.execute", "env.read:AGENTDASH_TEST_ENV"],
+            &[],
+        );
 
         let shell = resolve_host_api(
             Some(&active),
             "process.shell",
             &action_params(json!({
-                "command": "node -e \"console.log('shell-ok')\"",
-                "options": { "timeout_ms": 5000, "max_output_bytes": 1024 },
+                "command": "node -e \"console.log(process.env.AGENTDASH_TEST_ENV)\"",
+                "options": {
+                    "env": { "AGENTDASH_TEST_ENV": "shell-env-ok" },
+                    "timeout_ms": 5000,
+                    "max_output_bytes": 1024
+                },
             })),
         )
         .await
@@ -305,7 +313,7 @@ mod tests {
             shell["stdout"]
                 .as_str()
                 .unwrap_or_default()
-                .contains("shell-ok")
+                .contains("shell-env-ok")
         );
 
         let exec = resolve_host_api(
@@ -313,8 +321,12 @@ mod tests {
             "process.exec",
             &action_params(json!({
                 "command": "node",
-                "args": ["-e", "console.log('exec-ok')"],
-                "options": { "timeout_ms": 5000, "max_output_bytes": 1024 },
+                "args": ["-e", "console.log(process.env.AGENTDASH_TEST_ENV)"],
+                "options": {
+                    "env": { "AGENTDASH_TEST_ENV": "exec-env-ok" },
+                    "timeout_ms": 5000,
+                    "max_output_bytes": 1024
+                },
             })),
         )
         .await
@@ -324,8 +336,23 @@ mod tests {
             exec["stdout"]
                 .as_str()
                 .unwrap_or_default()
-                .contains("exec-ok")
+                .contains("exec-env-ok")
         );
+
+        let timed_out = resolve_host_api(
+            Some(&active),
+            "process.exec",
+            &action_params(json!({
+                "command": "node",
+                "args": ["-e", "setTimeout(() => {}, 1000)"],
+                "options": { "timeout_ms": 50 },
+            })),
+        )
+        .await
+        .expect("exec timeout should resolve to timed_out result");
+        assert_eq!(timed_out["exit_code"], -1);
+        assert_eq!(timed_out["timed_out"], true);
+        assert_eq!(timed_out["truncated"], false);
 
         let denied = resolve_host_api(
             Some(&active_extension(temp.path(), &[], &[])),
@@ -339,11 +366,51 @@ mod tests {
             "extension action `local-hello.profile` 未声明 process.execute",
         );
 
+        let env_denied = resolve_host_api(
+            Some(&active_extension(temp.path(), &["process.execute"], &[])),
+            "process.exec",
+            &action_params(json!({
+                "command": "node",
+                "args": ["-e", "console.log(process.env.AGENTDASH_TEST_ENV)"],
+                "options": { "env": { "AGENTDASH_TEST_ENV": "secret" } },
+            })),
+        )
+        .await
+        .expect_err("env overlay should require env permission");
+        assert_contains(
+            &env_denied,
+            "extension action `local-hello.profile` 未声明 env.read 或 env.read:AGENTDASH_TEST_ENV",
+        );
+
         let missing_command =
             resolve_host_api(Some(&active), "process.exec", &action_params(json!({})))
                 .await
                 .expect_err("missing command");
         assert_contains(&missing_command, "host api 参数 `command` 不能为空");
+
+        let invalid_arg = resolve_host_api(
+            Some(&active),
+            "process.exec",
+            &action_params(json!({ "command": "node", "args": ["-e", 42] })),
+        )
+        .await
+        .expect_err("non-string arg should fail closed");
+        assert_contains(&invalid_arg, "host api 参数 `args[1]` 必须是字符串");
+
+        let invalid_env = resolve_host_api(
+            Some(&active),
+            "process.shell",
+            &action_params(json!({
+                "command": "node -e \"console.log('unused')\"",
+                "options": { "env": { "AGENTDASH_TEST_ENV": 42 } },
+            })),
+        )
+        .await
+        .expect_err("non-string env value should fail closed");
+        assert_contains(
+            &invalid_env,
+            "host api 参数 `options.env.AGENTDASH_TEST_ENV` 的值必须是字符串",
+        );
     }
 
     #[tokio::test]

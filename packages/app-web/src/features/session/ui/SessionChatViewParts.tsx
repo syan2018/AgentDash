@@ -461,9 +461,10 @@ export function SessionChatComposer({
                 isDiscoveredLoading={isDiscoveredLoading}
                 executorName={executorName}
                 readonly={isSteerReadonly}
-                onReset={execConfig.reset}
-                onRefetch={discovery.refetch}
-                onReconnect={discovered.reconnect}
+                onRefresh={() => {
+                  discovery.refetch();
+                  discovered.reconnect();
+                }}
               />
             </div>
           )}

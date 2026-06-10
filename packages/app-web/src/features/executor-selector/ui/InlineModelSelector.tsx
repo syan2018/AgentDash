@@ -18,9 +18,7 @@ export interface InlineModelSelectorProps {
   executorName?: string;
   /** steer 态只读（Phase B 预留） */
   readonly?: boolean;
-  onReset: () => void;
-  onRefetch: () => void;
-  onReconnect: () => void;
+  onRefresh: () => void;
 }
 
 export function InlineModelSelector({
@@ -29,9 +27,7 @@ export function InlineModelSelector({
   isDiscoveredLoading,
   executorName,
   readonly: isReadonly = false,
-  onReset,
-  onRefetch,
-  onReconnect,
+  onRefresh,
 }: InlineModelSelectorProps) {
   const [open, setOpen] = useState(false);
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
@@ -237,24 +233,10 @@ export function InlineModelSelector({
             <div className="mt-2 flex items-center gap-1 border-t border-border pt-2">
               <button
                 type="button"
-                onClick={() => { onReset(); setOpen(false); }}
-                className="rounded-[6px] px-2 py-1 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-              >
-                重置
-              </button>
-              <button
-                type="button"
-                onClick={onRefetch}
+                onClick={onRefresh}
                 className="rounded-[6px] px-2 py-1 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground"
               >
                 刷新
-              </button>
-              <button
-                type="button"
-                onClick={onReconnect}
-                className="rounded-[6px] px-2 py-1 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-              >
-                重连
               </button>
             </div>
           </div>

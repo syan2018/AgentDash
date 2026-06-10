@@ -15,7 +15,7 @@ import type {
 } from "../generated/session-contracts";
 import type { JsonValue } from "../generated/common-contracts";
 import type { SessionExecutionState, SessionExecutionStatus } from "../types";
-import type { SessionTabLayout } from "../features/workspace-panel/tab-type-registry";
+import type { SessionTabLayout } from "../features/workspace-runtime";
 
 export type TitleSource = "auto" | "source" | "user";
 

@@ -5,17 +5,18 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTabTypeRegistrySnapshot } from "./tab-type-registry";
+import type { TabTypeDescriptor } from "./tab-type-registry";
 
 interface AddTabMenuProps {
+  tabTypes: TabTypeDescriptor[];
   onAddTab: (typeId: string) => void;
 }
 
-export function AddTabMenu({ onAddTab }: AddTabMenuProps) {
+export function AddTabMenu({ tabTypes, onAddTab }: AddTabMenuProps) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const creatableTypes = useTabTypeRegistrySnapshot().filter((type) => !type.pinned);
+  const creatableTypes = tabTypes.filter((type) => !type.pinned);
 
   const handleSelect = useCallback(
     (typeId: string) => {

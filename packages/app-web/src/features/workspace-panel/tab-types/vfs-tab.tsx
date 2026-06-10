@@ -30,6 +30,16 @@ function buildMountUri(mountId: string, filePath?: string | null): string {
   return filePath ? `${mountId}://${filePath}` : `${mountId}://`;
 }
 
+function resolveVfsTitle(uri: string): string {
+  const parsed = parseMountUri(uri);
+  if (parsed?.path) {
+    const filename = parsed.path.split("/").pop() ?? parsed.path;
+    return filename;
+  }
+  if (parsed?.mountId) return parsed.mountId;
+  return "资源浏览";
+}
+
 function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
   const { runtimeError, runtimeSurface } = useWorkspaceData();
   const parsed = parseMountUri(uri);
@@ -39,7 +49,7 @@ function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
   const handleNavigate = useCallback(
     (mountId: string, filePath: string | null) => {
       const newUri = buildMountUri(mountId, filePath);
-      useWorkspaceTabStore.getState().updateTabUri(tabId, newUri);
+      useWorkspaceTabStore.getState().updateTabUri(tabId, newUri, resolveVfsTitle(newUri));
     },
     [tabId],
   );
@@ -73,15 +83,7 @@ export const vfsTabType: TabTypeDescriptor = {
 
   renderContent: (props) => <VfsTabContent {...props} />,
 
-  resolveTitle: (uri) => {
-    const parsed = parseMountUri(uri);
-    if (parsed?.path) {
-      const filename = parsed.path.split("/").pop() ?? parsed.path;
-      return filename;
-    }
-    if (parsed?.mountId) return parsed.mountId;
-    return "资源浏览";
-  },
+  resolveTitle: resolveVfsTitle,
 
   parseUri: (uri) => {
     const parsed = parseMountUri(uri);

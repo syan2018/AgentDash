@@ -35,6 +35,8 @@
 | vfs-service Batch C | 修复 | 已提交 | `fixes/012-vfs-runtime-metadata-accessors.md` |
 | vfs-service Batch B | 修复 | 已提交 | `fixes/013-vfs-patch-path-target-helper.md` |
 | vfs-service Batch F | 修复 | 已提交 | `fixes/014-vfs-search-service-split.md` |
+| workflow-orchestration | follow-up research | 已归档 | `research/workflow-orchestration-executable-plan.md` |
+| local-runtime | follow-up research | 已归档 | `research/local-runtime-followup-executable-plan.md` |
 
 ## 已完成模块
 

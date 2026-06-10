@@ -3,7 +3,7 @@
   "name": "story-task-agent-frontend-contract-cleanup",
   "title": "收束 Story/Task Agent 前端与契约暴露",
   "description": "移除前端 Story/Task Agent 启动交互、contracts/generated types、ProjectAgent 默认 Story/Task 标记和 permission/capability 文案残留。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "frontend,cross-layer",
   "package": null,

@@ -3,7 +3,7 @@
   "name": "story-task-agent-command-hard-cut",
   "title": "硬切 Story/Task Agent command 与 composer 残留",
   "description": "删除 Story/Task 专用 agent command 入口、story_step/task composer 与 Story owner composer 残留，保留 ProjectAgent 与 lifecycle node launch。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "backend,cross-layer",
   "package": null,

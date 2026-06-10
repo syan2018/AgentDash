@@ -377,6 +377,8 @@ fn parse_item_string_field(
 #[cfg(test)]
 mod tests {
     use super::parse_relay_mcp_servers;
+    use agentdash_application::relay_connector::session_mcp_server_to_relay_prompt_value;
+    use agentdash_spi::{McpEnvVar, McpTransportConfig, SessionMcpServer};
 
     #[test]
     fn relay_mcp_servers_require_explicit_type() {
@@ -419,6 +421,65 @@ mod tests {
         .expect_err("缺少 name 的 MCP server 不应被接受");
 
         assert!(error.to_string().contains("name"));
+    }
+
+    #[test]
+    fn relay_mcp_servers_reject_nested_session_mcp_server_shape() {
+        let error = parse_relay_mcp_servers(&[serde_json::json!({
+            "name": "nested-server",
+            "transport": {
+                "type": "stdio",
+                "command": "npx"
+            },
+            "uses_relay": false
+        })])
+        .expect_err("嵌套 transport 的内部 SessionMcpServer 形态不应被接受");
+
+        assert!(error.to_string().contains("nested-server"));
+        assert!(error.to_string().contains("type"));
+    }
+
+    #[test]
+    fn relay_mcp_servers_parse_application_prompt_wire_shape() {
+        let value = session_mcp_server_to_relay_prompt_value(&SessionMcpServer {
+            name: "application-stdio".to_string(),
+            transport: McpTransportConfig::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "server".to_string()],
+                env: vec![McpEnvVar {
+                    name: "TOKEN".to_string(),
+                    value: "secret".to_string(),
+                }],
+            },
+            uses_relay: false,
+        });
+
+        assert_eq!(
+            value.get("type").and_then(serde_json::Value::as_str),
+            Some("stdio")
+        );
+        assert_eq!(
+            value.get("command").and_then(serde_json::Value::as_str),
+            Some("npx")
+        );
+        assert!(value.get("transport").is_none());
+
+        let servers = parse_relay_mcp_servers(&[value])
+            .expect("application relay prompt MCP wire shape 应被本机 parser 接受");
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].name, "application-stdio");
+        assert_eq!(
+            servers[0].transport,
+            McpTransportConfig::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "server".to_string()],
+                env: vec![McpEnvVar {
+                    name: "TOKEN".to_string(),
+                    value: "secret".to_string(),
+                }],
+            }
+        );
     }
 
     #[test]

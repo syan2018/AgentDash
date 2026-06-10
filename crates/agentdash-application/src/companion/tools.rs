@@ -32,29 +32,21 @@ use super::{
     OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
     build_companion_event_notification,
 };
-use crate::session::AgentFrameRuntimeTarget;
+use crate::session::{
+    AgentFrameRuntimeTarget, CompanionLaunchSource, LaunchCommand, UserPromptInput,
+};
 use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::workflow::dispatch_service::LifecycleDispatchService;
 use crate::workflow::resolve_current_frame_for_runtime_session;
 
 pub use agentdash_spi::CompanionSliceMode;
 
-/// Companion dispatch 结果——包含 lifecycle 锚点引用。
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct CompanionAgentRef {
-    pub agent_id: Uuid,
-    pub frame_id: Uuid,
-    pub gate_id: Option<Uuid>,
-    pub run_id: Uuid,
-    pub runtime_session_id: Option<String>,
-}
-
 struct CompanionDispatchOutcome {
     run_ref: Uuid,
     agent_ref: Uuid,
     frame_ref: Uuid,
     gate_ref: Option<Uuid>,
+    delivery_runtime_session_id: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
@@ -265,7 +257,7 @@ impl CompanionRequestTool {
             .and_then(|v| v.as_u64())
             .map(|v| v as usize);
 
-        let _companion_executor_config = if let Some(key) = agent_key {
+        let companion_executor_config = if let Some(key) = agent_key {
             self.resolve_companion_agent_config(hook_runtime.as_ref(), key)
                 .await?
         } else {
@@ -330,6 +322,7 @@ impl CompanionRequestTool {
                 max_constraints,
             },
         );
+        let dispatch_prompt = build_companion_dispatch_prompt(&dispatch_plan, prompt);
         record_subagent_trace(
             hook_runtime.as_ref(),
             Some(&session_services),
@@ -394,6 +387,14 @@ impl CompanionRequestTool {
                     agent_ref: result.runtime_refs.agent_ref,
                     frame_ref: result.runtime_refs.frame_ref,
                     gate_ref: Some(result.gate_ref),
+                    delivery_runtime_session_id: result
+                        .delivery_runtime_ref
+                        .ok_or_else(|| {
+                            AgentToolError::ExecutionFailed(
+                                "dispatch 未创建 child delivery runtime session".to_string(),
+                            )
+                        })?
+                        .to_string(),
                 }
             } else {
                 let result = dispatch_svc
@@ -417,9 +418,41 @@ impl CompanionRequestTool {
                     agent_ref: result.runtime_refs.agent_ref,
                     frame_ref: result.runtime_refs.frame_ref,
                     gate_ref: None,
+                    delivery_runtime_session_id: result
+                        .delivery_runtime_ref
+                        .ok_or_else(|| {
+                            AgentToolError::ExecutionFailed(
+                                "dispatch 未创建 child delivery runtime session".to_string(),
+                            )
+                        })?
+                        .to_string(),
                 }
             }
         };
+
+        let launch_outcome = session_services
+            .launch
+            .launch_command_with_outcome(
+                &dispatch_result.delivery_runtime_session_id,
+                LaunchCommand::companion_dispatch_input(
+                    UserPromptInput::from_text(&dispatch_prompt),
+                    CompanionLaunchSource {
+                        parent_session_id: current_session_id.clone(),
+                        slice_mode,
+                        companion_executor_config,
+                        dispatch_prompt: dispatch_prompt.clone(),
+                        workflow: None,
+                    },
+                ),
+            )
+            .await
+            .map_err(|error| {
+                AgentToolError::ExecutionFailed(format!(
+                    "child companion session launch 失败: {error}"
+                ))
+            })?;
+        let child_turn_id = launch_outcome.turn_id.clone();
+        let child_context_sources = launch_outcome.context_sources.clone();
 
         // ─── Hook: after_subagent_dispatch ──────────────────────────────
         let after_resolution = evaluate_subagent_hook(
@@ -432,6 +465,8 @@ impl CompanionRequestTool {
                 "agent_ref": dispatch_result.agent_ref.to_string(),
                 "frame_ref": dispatch_result.frame_ref.to_string(),
                 "gate_ref": dispatch_result.gate_ref.map(|id| id.to_string()),
+                "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
+                "turn_id": child_turn_id.clone(),
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
             })),
@@ -476,7 +511,8 @@ impl CompanionRequestTool {
                 .unwrap_or_default();
 
             let mut text = format!(
-                "Companion `{companion_label}` 已完成。\n- status: {status}\n- summary: {summary}",
+                "Companion `{companion_label}` 已完成。\n- child_session_id: {}\n- child_turn_id: {}\n- status: {status}\n- summary: {summary}",
+                dispatch_result.delivery_runtime_session_id, child_turn_id,
             );
             if !findings.is_empty() {
                 text.push_str(&format!("\n- findings:\n- {findings}"));
@@ -490,7 +526,13 @@ impl CompanionRequestTool {
                     "wait": true,
                     "companion_label": companion_label,
                     "agent_ref": dispatch_result.agent_ref.to_string(),
+                    "frame_ref": dispatch_result.frame_ref.to_string(),
+                    "run_ref": dispatch_result.run_ref.to_string(),
                     "gate_ref": gate_id.to_string(),
+                    "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
+                    "child_session_id": dispatch_result.delivery_runtime_session_id.clone(),
+                    "child_turn_id": child_turn_id.clone(),
+                    "context_sources": child_context_sources.clone(),
                     "status": status,
                     "summary": summary,
                     "result": result_payload,
@@ -501,9 +543,11 @@ impl CompanionRequestTool {
         // ─── Async dispatch (wait=false) ────────────────────────────────
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "已派发 companion agent（异步）。\n- dispatch_id: {}\n- label: {}\n- agent_ref: {}\n- frame_ref: {}",
+                "已派发 companion agent（异步）。\n- dispatch_id: {}\n- label: {}\n- child_session_id: {}\n- child_turn_id: {}\n- agent_ref: {}\n- frame_ref: {}",
                 dispatch_plan.dispatch_id,
                 companion_label,
+                dispatch_result.delivery_runtime_session_id,
+                child_turn_id,
                 dispatch_result.agent_ref,
                 dispatch_result.frame_ref,
             ))],
@@ -516,6 +560,10 @@ impl CompanionRequestTool {
                 "frame_ref": dispatch_result.frame_ref.to_string(),
                 "run_ref": dispatch_result.run_ref.to_string(),
                 "gate_ref": dispatch_result.gate_ref.map(|id| id.to_string()),
+                "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
+                "child_session_id": dispatch_result.delivery_runtime_session_id,
+                "child_turn_id": child_turn_id,
+                "context_sources": child_context_sources,
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
                 "matched_rule_keys": after_resolution.matched_rule_keys,
@@ -1839,38 +1887,42 @@ pub fn build_companion_execution_slice(
     vfs: Option<&Vfs>,
     mcp_servers: &[agentdash_spi::SessionMcpServer],
     mode: CompanionSliceMode,
-) -> CompanionExecutionSlice {
+) -> Result<CompanionExecutionSlice, String> {
     match mode {
-        CompanionSliceMode::Full => CompanionExecutionSlice {
-            vfs: vfs.cloned(),
-            mcp_servers: mcp_servers.to_vec(),
-        },
-        CompanionSliceMode::Compact => CompanionExecutionSlice {
-            vfs: Some(filter_vfs_capabilities(
-                vfs,
-                &[
-                    MountCapability::Read,
-                    MountCapability::List,
-                    MountCapability::Search,
-                    MountCapability::Exec,
-                ],
-            )),
-            mcp_servers: Vec::new(),
-        },
+        CompanionSliceMode::Full => {
+            let vfs = vfs
+                .cloned()
+                .ok_or_else(|| "companion Full slice 缺少 parent VFS".to_string())?;
+            Ok(CompanionExecutionSlice {
+                vfs: Some(vfs),
+                mcp_servers: mcp_servers.to_vec(),
+            })
+        }
+        CompanionSliceMode::Compact => {
+            let vfs = vfs.ok_or_else(|| "companion Compact slice 缺少 parent VFS".to_string())?;
+            Ok(CompanionExecutionSlice {
+                vfs: Some(filter_vfs_capabilities(
+                    vfs,
+                    &[
+                        MountCapability::Read,
+                        MountCapability::List,
+                        MountCapability::Search,
+                        MountCapability::Exec,
+                    ],
+                )),
+                mcp_servers: Vec::new(),
+            })
+        }
         CompanionSliceMode::WorkflowOnly | CompanionSliceMode::ConstraintsOnly => {
-            CompanionExecutionSlice {
+            Ok(CompanionExecutionSlice {
                 vfs: Some(Vfs::default()),
                 mcp_servers: Vec::new(),
-            }
+            })
         }
     }
 }
 
-fn filter_vfs_capabilities(vfs: Option<&Vfs>, allowed: &[MountCapability]) -> Vfs {
-    let Some(vfs) = vfs else {
-        return Vfs::default();
-    };
-
+fn filter_vfs_capabilities(vfs: &Vfs, allowed: &[MountCapability]) -> Vfs {
     let mounts = vfs
         .mounts
         .iter()
@@ -2157,7 +2209,8 @@ mod companion_tests {
                 uses_relay: false,
             }],
             CompanionSliceMode::Compact,
-        );
+        )
+        .expect("compact slice should resolve");
 
         let sliced_space = slice.vfs.expect("compact should keep sliced vfs");
         assert_eq!(slice.mcp_servers.len(), 0);
@@ -2204,12 +2257,21 @@ mod companion_tests {
                 uses_relay: false,
             }],
             CompanionSliceMode::WorkflowOnly,
-        );
+        )
+        .expect("workflow_only slice should resolve");
 
         let sliced_space = slice.vfs.expect("workflow_only should force empty vfs");
         assert!(sliced_space.mounts.is_empty());
         assert!(sliced_space.default_mount_id.is_none());
         assert!(slice.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn compact_execution_slice_requires_parent_vfs() {
+        let error = build_companion_execution_slice(None, &[], CompanionSliceMode::Compact)
+            .expect_err("compact slice without parent vfs should fail");
+
+        assert!(error.contains("缺少 parent VFS"));
     }
 
     #[test]

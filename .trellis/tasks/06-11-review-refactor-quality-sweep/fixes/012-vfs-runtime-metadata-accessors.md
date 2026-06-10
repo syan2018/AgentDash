@@ -38,4 +38,4 @@
 
 ## Commit
 
-待提交。
+`46cbdbfb refactor(vfs): 收敛 runtime file metadata 访问器`

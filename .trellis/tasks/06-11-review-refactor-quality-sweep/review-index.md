@@ -32,7 +32,7 @@
 | vfs-service Batch D | 修复 | 已提交 | `fixes/010-vfs-tool-boundary-cleanup.md` |
 | vfs-service Batch E | 修复 | 已提交 | `fixes/010-vfs-tool-boundary-cleanup.md` |
 | vfs-service Batch A | 修复 | 已提交 | `fixes/011-vfs-search-identity-propagation.md` |
-| vfs-service Batch C | 修复 | 待提交 | `fixes/012-vfs-runtime-metadata-accessors.md` |
+| vfs-service Batch C | 修复 | 已提交 | `fixes/012-vfs-runtime-metadata-accessors.md` |
 
 ## 已完成模块
 
@@ -86,3 +86,4 @@
 | `5dc5cdc1` | session-stream | 收敛 context frame UI 输入为解析后 view model |
 | `a08122a3` | vfs-service | 收敛工具路径 normalize 与 VFS tool factory 装配 |
 | `ed7852b4` | vfs-service | 传递 search/grep identity 到 provider 与 inline grep |
+| `46cbdbfb` | vfs-service | 收敛 runtime file metadata 常量与访问器 |

@@ -1,104 +1,13 @@
 import { api } from "../api/client";
-import { asRecord } from "../api/mappers";
-import { mapInstalledAssetSource } from "./sharedLibrary";
 import type {
   CloneMcpPresetRequest,
   CreateMcpPresetRequest,
   ListMcpPresetQuery,
   McpPresetDto,
-  McpPresetSource,
-  McpRoutePolicy,
   McpTransportConfig,
   ProbeMcpPresetResponse,
   UpdateMcpPresetRequest,
 } from "../types";
-
-function normalizeSource(value: unknown): McpPresetSource {
-  if (value === "builtin") return "builtin";
-  return "user";
-}
-
-function normalizeRoutePolicy(value: unknown): McpRoutePolicy {
-  if (value === "relay" || value === "direct") return value;
-  return "auto";
-}
-
-function readString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function mapHeaderList(raw: unknown) {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((item) => {
-      const value = asRecord(item);
-      return value ? { name: readString(value.name), value: readString(value.value) } : null;
-    })
-    .filter((item) => item !== null);
-}
-
-function mapEnvList(raw: unknown) {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((item) => {
-      const value = asRecord(item);
-      return value ? { name: readString(value.name), value: readString(value.value) } : null;
-    })
-    .filter((item) => item !== null);
-}
-
-function mapMcpTransport(raw: unknown): McpTransportConfig {
-  const value = asRecord(raw);
-  if (!value) {
-    throw new Error("mcp preset transport 缺失或不是对象");
-  }
-  switch (value.type) {
-    case "http":
-      return {
-        type: "http",
-        url: readString(value.url),
-        headers: mapHeaderList(value.headers),
-      };
-    case "sse":
-      return {
-        type: "sse",
-        url: readString(value.url),
-        headers: mapHeaderList(value.headers),
-      };
-    case "stdio":
-      return {
-        type: "stdio",
-        command: readString(value.command),
-        args: Array.isArray(value.args) ? value.args.map(readString) : [],
-        env: mapEnvList(value.env),
-      };
-    default:
-      throw new Error(`未知的 mcp preset transport.type: ${String(value.type)}`);
-  }
-}
-
-export function mapMcpPreset(raw: Record<string, unknown>): McpPresetDto {
-  return {
-    id: String(raw.id ?? ""),
-    project_id: String(raw.project_id ?? ""),
-    key: String(raw.key ?? ""),
-    display_name: String(raw.display_name ?? raw.key ?? ""),
-    description:
-      raw.description === null || raw.description === undefined
-        ? undefined
-        : String(raw.description),
-    transport: mapMcpTransport(raw.transport),
-    route_policy: normalizeRoutePolicy(raw.route_policy),
-    source: normalizeSource(raw.source),
-    builtin_key:
-      raw.builtin_key === null || raw.builtin_key === undefined
-        ? undefined
-        : String(raw.builtin_key),
-    installed_source: mapInstalledAssetSource(raw.installed_source) ?? undefined,
-    created_at: String(raw.created_at ?? new Date().toISOString()),
-    updated_at: String(raw.updated_at ?? new Date().toISOString()),
-  };
-}
 
 export async function fetchProjectMcpPresets(
   projectId: string,
@@ -109,31 +18,28 @@ export async function fetchProjectMcpPresets(
     params.set("source", query.source);
   }
   const qs = params.toString() ? `?${params}` : "";
-  const raw = await api.get<Record<string, unknown>[]>(
+  return await api.get<McpPresetDto[]>(
     `/projects/${encodeURIComponent(projectId)}/mcp-presets${qs}`,
   );
-  return raw.map(mapMcpPreset);
 }
 
 export async function createMcpPreset(
   projectId: string,
   input: CreateMcpPresetRequest,
 ): Promise<McpPresetDto> {
-  const raw = await api.post<Record<string, unknown>>(
+  return await api.post<McpPresetDto>(
     `/projects/${encodeURIComponent(projectId)}/mcp-presets`,
     input,
   );
-  return mapMcpPreset(raw);
 }
 
 export async function fetchMcpPreset(
   projectId: string,
   presetId: string,
 ): Promise<McpPresetDto> {
-  const raw = await api.get<Record<string, unknown>>(
+  return await api.get<McpPresetDto>(
     `/projects/${encodeURIComponent(projectId)}/mcp-presets/${encodeURIComponent(presetId)}`,
   );
-  return mapMcpPreset(raw);
 }
 
 export async function updateMcpPreset(
@@ -141,11 +47,10 @@ export async function updateMcpPreset(
   presetId: string,
   input: UpdateMcpPresetRequest,
 ): Promise<McpPresetDto> {
-  const raw = await api.patch<Record<string, unknown>>(
+  return await api.patch<McpPresetDto>(
     `/projects/${encodeURIComponent(projectId)}/mcp-presets/${encodeURIComponent(presetId)}`,
     input,
   );
-  return mapMcpPreset(raw);
 }
 
 export async function deleteMcpPreset(
@@ -162,11 +67,10 @@ export async function cloneMcpPreset(
   presetId: string,
   input: CloneMcpPresetRequest = {},
 ): Promise<McpPresetDto> {
-  const raw = await api.post<Record<string, unknown>>(
+  return await api.post<McpPresetDto>(
     `/projects/${encodeURIComponent(projectId)}/mcp-presets/${encodeURIComponent(presetId)}/clone`,
     input,
   );
-  return mapMcpPreset(raw);
 }
 
 /**

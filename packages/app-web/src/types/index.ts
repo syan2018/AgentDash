@@ -32,7 +32,7 @@ import type {
 // ─── Generated Core Contracts ─────────────────────────
 
 export type TaskDispatchPreference = CoreTaskDispatchPreference & {
-  thinking_level: ThinkingLevel | null;
+  thinking_level?: ThinkingLevel | null;
 };
 export type AgentPreset = CoreAgentPreset;
 export type Artifact = CoreArtifact;

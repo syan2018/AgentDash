@@ -36,6 +36,17 @@ use agentdash_integration_api::SkillDiscoveryProvider;
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
+const PLATFORM_MCP_BASE_URL_ENV: &str = "AGENTDASH_MCP_BASE_URL";
+
+fn configured_platform_mcp_base_url() -> Option<String> {
+    resolve_platform_mcp_base_url(std::env::var(PLATFORM_MCP_BASE_URL_ENV).ok())
+}
+
+fn resolve_platform_mcp_base_url(raw_value: Option<String>) -> Option<String> {
+    raw_value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
 
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
 pub struct ServiceSet {
@@ -152,10 +163,7 @@ impl AppState {
         );
 
         let platform_config: SharedPlatformConfig = Arc::new(PlatformConfig {
-            mcp_base_url: std::env::var("AGENTDASH_MCP_BASE_URL").ok().or_else(|| {
-                let port = std::env::var("PORT").unwrap_or_else(|_| "3001".into());
-                Some(format!("http://127.0.0.1:{port}"))
-            }),
+            mcp_base_url: configured_platform_mcp_base_url(),
         });
 
         let relay_bootstrap =
@@ -380,5 +388,28 @@ impl AppState {
         crate::bootstrap::background_workers::start_post_app_state_workers(&mut state).await;
 
         Ok(state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_platform_mcp_base_url;
+
+    #[test]
+    fn platform_mcp_base_url_missing_env_keeps_platform_mcp_disabled() {
+        assert_eq!(resolve_platform_mcp_base_url(None), None);
+    }
+
+    #[test]
+    fn platform_mcp_base_url_blank_env_keeps_platform_mcp_disabled() {
+        assert_eq!(resolve_platform_mcp_base_url(Some("   ".to_string())), None);
+    }
+
+    #[test]
+    fn platform_mcp_base_url_uses_explicit_env_value() {
+        assert_eq!(
+            resolve_platform_mcp_base_url(Some("  http://127.0.0.1:3001/  ".to_string())),
+            Some("http://127.0.0.1:3001/".to_string())
+        );
     }
 }

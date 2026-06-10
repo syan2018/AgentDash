@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_domain::backend::BackendExecutionLeaseRepository;
+use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, RuntimeSessionExecutionAnchorRepository,
 };
@@ -36,7 +37,7 @@ pub(in crate::session) struct SessionLaunchDeps {
         Arc<tokio::sync::RwLock<Option<DynTerminalHookEffectHandlerRegistry>>>,
     context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,
     base_system_prompt: String,
-    user_preferences: Vec<String>,
+    settings_repo: Option<Arc<dyn SettingsRepository>>,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
     mcp_relay_provider: Option<Arc<dyn McpRelayProvider>>,
     pub(super) backend_execution_transport: Option<Arc<dyn RelayPromptTransport>>,
@@ -62,7 +63,7 @@ impl SessionLaunchDeps {
             hook_effect_handler_registry: inner.hook_effect_handler_registry.clone(),
             context_audit_bus: inner.context_audit_bus.clone(),
             base_system_prompt: inner.base_system_prompt.clone(),
-            user_preferences: inner.user_preferences.clone(),
+            settings_repo: inner.settings_repo.clone(),
             runtime_tool_provider: inner.runtime_tool_provider.clone(),
             mcp_relay_provider: inner.mcp_relay_provider.clone(),
             backend_execution_transport: inner.backend_execution_transport.clone(),
@@ -102,7 +103,7 @@ impl SessionLaunchDeps {
             connector: self.connector.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
             base_system_prompt: self.base_system_prompt.clone(),
-            user_preferences: self.user_preferences.clone(),
+            settings_repo: self.settings_repo.clone(),
             runtime_tool_provider: self.runtime_tool_provider.clone(),
             mcp_relay_provider: self.mcp_relay_provider.clone(),
             hooks: self.hooks.clone(),
@@ -160,7 +161,7 @@ pub(super) struct TurnPreparationDeps {
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) base_system_prompt: String,
-    pub(super) user_preferences: Vec<String>,
+    pub(super) settings_repo: Option<Arc<dyn SettingsRepository>>,
     pub(super) hooks: SessionHookService,
     pub(super) capability: SessionCapabilityService,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,

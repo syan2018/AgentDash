@@ -11,7 +11,7 @@ function readVal(settings: { key: string; value: unknown }[], key: string, fallb
   return String(entry.value);
 }
 
-export function AgentSection({
+export function PiAgentPreferencesSection({
   settings,
   saving,
   onSave,
@@ -424,4 +424,3 @@ function formatRuntimeTimestamp(value: string | null | undefined) {
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
 }
-

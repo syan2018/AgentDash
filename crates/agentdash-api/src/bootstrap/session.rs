@@ -78,7 +78,7 @@ pub(crate) async fn build_session_runtime(
     } = input;
 
     let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
-    let mut prompt_config: Option<(String, Vec<String>)> = None;
+    let mut base_system_prompt: Option<String> = None;
 
     if let Some(result) = build_pi_agent_connector(PiAgentConnectorDeps {
         settings_repo: repos.settings_repo.clone(),
@@ -88,10 +88,7 @@ pub(crate) async fn build_session_runtime(
     })
     .await
     {
-        prompt_config = Some((
-            result.connector.base_system_prompt().to_string(),
-            result.connector.user_preferences().to_vec(),
-        ));
+        base_system_prompt = Some(result.connector.base_system_prompt().to_string());
         sub_connectors.push(Arc::new(result.connector));
     }
 
@@ -141,10 +138,10 @@ pub(crate) async fn build_session_runtime(
     .with_agent_frame_repo(repos.agent_frame_repo.clone())
     .with_execution_anchor_repo(repos.execution_anchor_repo.clone())
     .with_lifecycle_agent_repo(repos.lifecycle_agent_repo.clone())
-    .with_lifecycle_gate_repo(repos.lifecycle_gate_repo.clone());
-    if let Some((base_sp, user_prefs)) = prompt_config {
-        session_runtime_builder =
-            session_runtime_builder.with_system_prompt_config(base_sp, user_prefs);
+    .with_lifecycle_gate_repo(repos.lifecycle_gate_repo.clone())
+    .with_settings_repository(repos.settings_repo.clone());
+    if let Some(base_sp) = base_system_prompt {
+        session_runtime_builder = session_runtime_builder.with_system_prompt_config(base_sp);
     }
 
     let session_core = session_runtime_builder.core_service();

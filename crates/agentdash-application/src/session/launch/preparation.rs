@@ -1,4 +1,5 @@
 use agentdash_agent_protocol::SourceInfo;
+use agentdash_domain::settings::SettingScope;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SharedHookRuntime,
 };
@@ -105,12 +106,21 @@ impl TurnPreparer {
             had_existing_runtime,
             &launch_plan.summary.follow_up_source,
         );
+        let user_preferences = if include_connector_startup_context {
+            load_user_preferences(
+                deps.settings_repo.as_deref(),
+                context.session.identity.as_ref(),
+            )
+            .await
+        } else {
+            Vec::new()
+        };
         let identity_frame = if include_connector_startup_context {
             build_identity_context_frame(&IdentityFrameInput {
                 base_system_prompt: &deps.base_system_prompt,
                 agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
                 agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
-                user_preferences: &deps.user_preferences,
+                user_preferences: &user_preferences,
                 discovered_guidelines: &discovered_guidelines,
             })
         } else {
@@ -292,6 +302,38 @@ impl TurnPreparer {
             post_turn_handler,
         })
     }
+}
+
+async fn load_user_preferences(
+    settings_repo: Option<&dyn agentdash_domain::settings::SettingsRepository>,
+    identity: Option<&agentdash_spi::AuthIdentity>,
+) -> Vec<String> {
+    let (Some(settings_repo), Some(identity)) = (settings_repo, identity) else {
+        return Vec::new();
+    };
+    let scope = SettingScope::user(identity.user_id.clone());
+    let setting = match settings_repo.get(&scope, "agent.pi.user_preferences").await {
+        Ok(Some(setting)) => setting,
+        Ok(None) => return Vec::new(),
+        Err(error) => {
+            tracing::warn!(
+                user_id = %identity.user_id,
+                error = %error,
+                "读取 Pi Agent 用户偏好失败"
+            );
+            return Vec::new();
+        }
+    };
+    setting
+        .value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn collect_queued_turn_start_frames(

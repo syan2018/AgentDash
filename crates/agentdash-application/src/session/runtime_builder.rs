@@ -93,14 +93,16 @@ impl SessionRuntimeBuilder {
         self
     }
 
-    pub fn with_system_prompt_config(
+    pub fn with_system_prompt_config(mut self, base_system_prompt: String) -> Self {
+        self.inner = self.inner.with_system_prompt_config(base_system_prompt);
+        self
+    }
+
+    pub fn with_settings_repository(
         mut self,
-        base_system_prompt: String,
-        user_preferences: Vec<String>,
+        repo: Arc<dyn agentdash_domain::settings::SettingsRepository>,
     ) -> Self {
-        self.inner = self
-            .inner
-            .with_system_prompt_config(base_system_prompt, user_preferences);
+        self.inner = self.inner.with_settings_repository(repo);
         self
     }
 

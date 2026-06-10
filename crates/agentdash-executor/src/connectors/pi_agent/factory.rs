@@ -25,7 +25,6 @@ impl LlmBridge for NoopBridge {
 /// Provider 列表从 `llm_providers` DB 表加载。
 /// settings_repo 用于读取以下配置：
 /// - `agent.pi.base_system_prompt`：覆盖内置 Layer 0 system prompt
-/// - `agent.pi.user_preferences`：JSON 数组，用户偏好提示（Layer 2）
 ///
 /// 按 sort_order，首个完成注册的 provider 的首个模型作为默认 bridge。
 pub async fn build_pi_agent_connector(
@@ -38,8 +37,6 @@ pub async fn build_pi_agent_connector(
         .await
         .or_else(|| std::env::var("PI_AGENT_SYSTEM_PROMPT").ok())
         .unwrap_or_else(|| super::system_prompt::DEFAULT_SYSTEM_PROMPT.to_string());
-
-    let user_preferences = read_user_preferences(settings).await;
 
     let providers = build_provider_entries_from_db(
         llm_provider_repo,
@@ -62,7 +59,6 @@ pub async fn build_pi_agent_connector(
     };
 
     let mut connector = PiAgentConnector::new(global_default_bridge, system_prompt);
-    connector.set_user_preferences(user_preferences);
 
     for provider in providers {
         connector.add_provider(provider.entry);
@@ -78,30 +74,6 @@ pub async fn build_pi_agent_connector(
         );
     }
     Some(connector)
-}
-
-/// 从 settings 读取用户偏好提示列表。
-///
-/// 读取 `agent.pi.user_preferences`（JSON 数组）。
-async fn read_user_preferences(
-    settings: &dyn agentdash_domain::settings::SettingsRepository,
-) -> Vec<String> {
-    let scope = agentdash_domain::settings::SettingScope::system();
-
-    if let Ok(Some(setting)) = settings.get(&scope, "agent.pi.user_preferences").await {
-        if let Some(arr) = setting.value.as_array() {
-            let prefs: Vec<String> = arr
-                .iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .filter(|s| !s.trim().is_empty())
-                .collect();
-            if !prefs.is_empty() {
-                return prefs;
-            }
-        }
-    }
-
-    Vec::new()
 }
 
 async fn read_setting_str(

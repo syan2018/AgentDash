@@ -12,7 +12,7 @@ import { DebugPrefsSection } from "./DebugPrefsSection";
 import { UserByokSection } from "./UserByokSection";
 import { SectionCard } from "./primitives";
 import { LlmProvidersSection } from "./LlmProvidersSection";
-import { AgentSection, BackendSection, ExecutorSection } from "./SettingsSystemSections";
+import { BackendSection, ExecutorSection, PiAgentPreferencesSection } from "./SettingsSystemSections";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -247,13 +247,13 @@ export function SettingsPage() {
               discoveryRefreshKey={llmDiscoveryRefreshKey}
               onRefreshModels={() => setLlmDiscoveryRefreshKey((k) => k + 1)}
             />
-            <AgentSection settings={settings} saving={saving} onSave={handleSave} />
             <ExecutorSection settings={settings} saving={saving} onSave={handleSave} />
           </>
         )}
 
         {activePanel === "user" && scopeRequest && (
           <>
+            <PiAgentPreferencesSection settings={settings} saving={saving} onSave={handleSave} />
             <UserByokSection onRefreshModels={() => setLlmDiscoveryRefreshKey((k) => k + 1)} />
             <DebugPrefsSection />
           </>

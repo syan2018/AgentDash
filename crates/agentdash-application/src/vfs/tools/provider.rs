@@ -8,8 +8,7 @@ use agentdash_spi::DynAgentTool;
 use agentdash_spi::ToolCluster;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::platform::tool_capability::{
-    CAP_CANVAS, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_SHELL_EXECUTE, CAP_WORKFLOW,
-    CAP_WORKSPACE_MODULE,
+    CAP_CANVAS, CAP_COLLABORATION, CAP_WORKFLOW, CAP_WORKSPACE_MODULE,
 };
 use agentdash_spi::{ConnectorError, ExecutionContext};
 use async_trait::async_trait;
@@ -21,10 +20,8 @@ use crate::platform_config::SharedPlatformConfig;
 use crate::runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
 use crate::vfs::inline_persistence::{InlineContentOverlay, InlineContentPersister};
 use crate::vfs::service::VfsService;
-use crate::vfs::tools::fs::{
-    FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool, SharedRuntimeVfs,
-    ShellExecTool,
-};
+use crate::vfs::tools::factory::{VfsToolFactory, VfsToolFactoryInput};
+use crate::vfs::tools::fs::SharedRuntimeVfs;
 use crate::vfs::{VfsMaterializationService, VfsMaterializationTransport};
 use crate::workflow::tools::advance_node::CompleteLifecycleNodeTool;
 use crate::workspace_module::{
@@ -184,82 +181,19 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         let mut tools: Vec<DynAgentTool> = Vec::new();
         let session_services = self.session_services_handle.get().await;
         let flow = &context.turn.capability_state;
-
-        // Read 簇：只读文件系统访问
-        if clusters.contains(&ToolCluster::Read) {
-            if flow.is_capability_tool_enabled(
-                CAP_FILE_READ,
-                "mounts_list",
-                Some(ToolCluster::Read),
-            ) {
-                tools.push(Arc::new(MountsListTool::new(
-                    self.service.clone(),
-                    shared_vfs.clone(),
-                )));
-            }
-            if flow.is_capability_tool_enabled(CAP_FILE_READ, "fs_read", Some(ToolCluster::Read)) {
-                tools.push(Arc::new(FsReadTool::new(
-                    self.service.clone(),
-                    shared_vfs.clone(),
-                    overlay.clone(),
-                    identity.clone(),
-                )));
-            }
-            if flow.is_capability_tool_enabled(CAP_FILE_READ, "fs_glob", Some(ToolCluster::Read)) {
-                tools.push(Arc::new(FsGlobTool::new(
-                    self.service.clone(),
-                    shared_vfs.clone(),
-                    overlay.clone(),
-                    identity.clone(),
-                )));
-            }
-            if flow.is_capability_tool_enabled(CAP_FILE_READ, "fs_grep", Some(ToolCluster::Read)) {
-                tools.push(Arc::new(FsGrepTool::new(
-                    self.service.clone(),
-                    shared_vfs.clone(),
-                    overlay.clone(),
-                    identity.clone(),
-                )));
-            }
-        }
-
-        // Write 簇：文件写入
-        if clusters.contains(&ToolCluster::Write)
-            && flow.is_capability_tool_enabled(
-                CAP_FILE_WRITE,
-                "fs_apply_patch",
-                Some(ToolCluster::Write),
-            )
-        {
-            tools.push(Arc::new(FsApplyPatchTool::new(
-                self.service.clone(),
-                shared_vfs.clone(),
-                overlay.clone(),
-                identity.clone(),
-            )));
-        }
-
-        // Execute 簇：命令执行
-        if clusters.contains(&ToolCluster::Execute)
-            && flow.is_capability_tool_enabled(
-                CAP_SHELL_EXECUTE,
-                "shell_exec",
-                Some(ToolCluster::Execute),
-            )
-        {
-            let mut shell_tool = ShellExecTool::new(self.service.clone(), shared_vfs.clone())
-                .with_materialization_context(
-                    self.materialization.clone(),
-                    session_id.clone(),
-                    Some(context.session.turn_id.clone()),
-                    overlay.clone(),
-                    identity.clone(),
-                );
-            if let Some(ref registry) = self.shell_output_registry {
-                shell_tool = shell_tool.with_shell_output_registry(registry.clone());
-            }
-            tools.push(Arc::new(shell_tool));
-        }
+        tools.extend(
+            VfsToolFactory::new(self.service.clone())
+                .with_materialization(self.materialization.clone())
+                .with_shell_output_registry(self.shell_output_registry.clone())
+                .build_tools(VfsToolFactoryInput {
+                    shared_vfs: shared_vfs.clone(),
+                    overlay: overlay.clone(),
+                    identity: identity.clone(),
+                    session_id: session_id.clone(),
+                    turn_id: context.session.turn_id.clone(),
+                    flow,
+                }),
+        );
 
         // Workflow 簇：lifecycle node 推进
         if clusters.contains(&ToolCluster::Workflow)

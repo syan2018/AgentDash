@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use crate::canvas::{BindCanvasDataTool, ListCanvasesTool, PresentCanvasTool, StartCanvasTool};
+use crate::companion::tool_context::CompanionToolContext;
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
 use crate::platform_config::SharedPlatformConfig;
 use crate::runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
@@ -213,18 +214,19 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
         // Collaboration 簇：Companion 协作 + Hook action 解析
         if clusters.contains(&ToolCluster::Collaboration) {
+            let companion_tool_context = CompanionToolContext::resolve(context, &self.repos).await;
             if flow.is_capability_tool_enabled(
                 CAP_COLLABORATION,
                 "companion_request",
                 Some(ToolCluster::Collaboration),
             ) {
-                let mut companion_request_tool = CompanionRequestTool::new(
+                let companion_request_tool = CompanionRequestTool::new(
                     self.repos.project_agent_repo.clone(),
                     self.repos.clone(),
                     self.session_services_handle.clone(),
-                    context,
+                    companion_tool_context.clone(),
+                    context.session.executor_config.clone(),
                 );
-                companion_request_tool.resolve_lifecycle_anchors().await;
                 tools.push(Arc::new(companion_request_tool));
             }
             if flow.is_capability_tool_enabled(
@@ -235,7 +237,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 tools.push(Arc::new(CompanionRespondTool::new(
                     self.repos.clone(),
                     self.session_services_handle.clone(),
-                    context,
+                    companion_tool_context,
                 )));
             }
         }

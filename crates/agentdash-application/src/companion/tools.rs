@@ -12,12 +12,10 @@ use agentdash_domain::workflow::{
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::hooks::{
-    HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, RuntimeAdapterProvenance,
-};
+use agentdash_spi::hooks::{HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery};
 use agentdash_spi::{
-    AgentConfig, ExecutionContext, HookPendingAction, HookPendingActionResolutionKind,
-    HookPendingActionStatus, HookTraceEntry, HookTrigger, MountCapability, RuntimeEventSource, Vfs,
+    AgentConfig, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
+    HookTraceEntry, HookTrigger, MountCapability, RuntimeEventSource, Vfs,
 };
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -26,10 +24,13 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use super::tool_context::{
+    CompanionHookProvenance, CompanionHookProvenanceSource, CompanionToolContext,
+};
 use super::{
-    CompanionGateControlService, CompleteCompanionChildResultCommand, NoopCompanionGateDelivery,
+    CompanionGateControlService, CompleteCompanionChildResultCommand,
     OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
-    SessionEventingCompanionGateDelivery, build_companion_event_notification,
+    build_companion_event_notification,
 };
 use crate::session::AgentFrameRuntimeTarget;
 use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
@@ -88,68 +89,62 @@ pub struct CompanionRequestParams {
     pub payload: serde_json::Value,
 }
 
+async fn require_session_services(
+    handle: &SharedSessionToolServicesHandle,
+    action: &str,
+) -> Result<SessionToolServices, AgentToolError> {
+    handle.get().await.ok_or_else(|| {
+        AgentToolError::ExecutionFailed(format!("Session services 尚未完成初始化，无法{action}"))
+    })
+}
+
+struct CompanionGateControlFactory<'a> {
+    repos: &'a crate::repository_set::RepositorySet,
+}
+
+impl<'a> CompanionGateControlFactory<'a> {
+    fn new(repos: &'a crate::repository_set::RepositorySet) -> Self {
+        Self { repos }
+    }
+
+    fn with_session_eventing(
+        &self,
+        session_services: &SessionToolServices,
+    ) -> CompanionGateControlService {
+        CompanionGateControlService::with_session_eventing(
+            self.repos.lifecycle_gate_repo.clone(),
+            self.repos.agent_frame_repo.clone(),
+            self.repos.lifecycle_agent_repo.clone(),
+            self.repos.execution_anchor_repo.clone(),
+            self.repos.agent_lineage_repo.clone(),
+            session_services.eventing.clone(),
+        )
+    }
+}
+
 #[derive(Clone)]
 pub struct CompanionRequestTool {
     project_agent_repo: Arc<dyn ProjectAgentRepository>,
     repos: crate::repository_set::RepositorySet,
     session_services_handle: SharedSessionToolServicesHandle,
-    current_session_id: Option<String>,
-    current_turn_id: String,
     current_executor_config: AgentConfig,
-    hook_runtime: Option<agentdash_spi::hooks::SharedHookRuntime>,
-    /// Lifecycle anchor: agent_id of the parent (current) agent.
-    current_agent_id: Option<Uuid>,
-    /// Lifecycle anchor: frame_id of the current agent frame.
-    current_frame_id: Option<Uuid>,
-    /// Lifecycle anchor: run_id of the current lifecycle run.
-    current_run_id: Option<Uuid>,
-    /// Project ID for dispatch intent.
-    project_id: Option<Uuid>,
+    tool_context: CompanionToolContext,
 }
 
 impl CompanionRequestTool {
-    pub fn new(
+    pub(crate) fn new(
         project_agent_repo: Arc<dyn ProjectAgentRepository>,
         repos: crate::repository_set::RepositorySet,
         session_services_handle: SharedSessionToolServicesHandle,
-        context: &ExecutionContext,
+        tool_context: CompanionToolContext,
+        current_executor_config: AgentConfig,
     ) -> Self {
         Self {
             project_agent_repo,
             repos,
             session_services_handle,
-            current_session_id: context
-                .turn
-                .hook_runtime
-                .as_ref()
-                .map(|session| session.session_id().to_string()),
-            current_turn_id: context.session.turn_id.clone(),
-            current_executor_config: context.session.executor_config.clone(),
-            hook_runtime: context.turn.hook_runtime.clone(),
-            current_agent_id: None,
-            current_frame_id: None,
-            current_run_id: None,
-            project_id: None,
-        }
-    }
-
-    /// 从 runtime session 反查 lifecycle anchor 并设置。
-    pub async fn resolve_lifecycle_anchors(&mut self) {
-        let Some(session_id) = &self.current_session_id else {
-            return;
-        };
-        if let Ok(Some((_anchor, agent, frame))) = resolve_current_frame_for_runtime_session(
-            session_id,
-            self.repos.execution_anchor_repo.as_ref(),
-            self.repos.lifecycle_agent_repo.as_ref(),
-            self.repos.agent_frame_repo.as_ref(),
-        )
-        .await
-        {
-            self.current_frame_id = Some(frame.id);
-            self.current_agent_id = Some(agent.id);
-            self.current_run_id = Some(agent.run_id);
-            self.project_id = Some(agent.project_id);
+            current_executor_config,
+            tool_context,
         }
     }
 }
@@ -239,11 +234,9 @@ impl CompanionRequestTool {
             ));
         }
 
-        let hook_runtime = self.hook_runtime.as_ref().ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "当前缺少 hook runtime，无法生成 companion request 上下文".to_string(),
-            )
-        })?;
+        let hook_runtime = self
+            .tool_context
+            .require_hook_runtime("生成 companion request 上下文")?;
 
         let companion_label = payload
             .get("label")
@@ -283,7 +276,7 @@ impl CompanionRequestTool {
         let before_resolution = evaluate_subagent_hook(
             hook_runtime.as_ref(),
             HookTrigger::BeforeSubagentDispatch,
-            Some(self.current_turn_id.clone()),
+            Some(self.tool_context.turn_id().to_string()),
             &companion_label,
             Some(serde_json::json!({
                 "prompt": prompt,
@@ -294,17 +287,15 @@ impl CompanionRequestTool {
         )
         .await?;
 
-        let session_services = self.session_services_handle.get().await.ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "Session services 尚未完成初始化，无法执行 companion request".to_string(),
-            )
-        })?;
+        let session_services =
+            require_session_services(&self.session_services_handle, "执行 companion request")
+                .await?;
 
         if let Some(reason) = before_resolution.block_reason.clone() {
             record_subagent_trace(
                 hook_runtime.as_ref(),
                 Some(&session_services),
-                Some(self.current_turn_id.as_str()),
+                Some(self.tool_context.turn_id()),
                 HookTrigger::BeforeSubagentDispatch,
                 "deny",
                 &companion_label,
@@ -315,38 +306,23 @@ impl CompanionRequestTool {
         }
 
         // ─── 构建 dispatch plan（用于 context slice / prompt 生成） ──────
-        let current_session_id = self.current_session_id.clone().ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "当前 runtime session 缺失，无法派发 companion agent".to_string(),
-            )
-        })?;
-        let project_id = self.project_id.ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "当前 runtime session 未绑定 LifecycleAgent project，无法派发 companion agent"
-                    .to_string(),
-            )
-        })?;
-        let parent_run_id = self.current_run_id.ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "当前 runtime session 未绑定 LifecycleRun，无法派发 companion agent".to_string(),
-            )
-        })?;
-        let parent_agent_id = self.current_agent_id.ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "当前 runtime session 未绑定 LifecycleAgent，无法派发 companion agent".to_string(),
-            )
-        })?;
-        let parent_frame_id = self.current_frame_id.ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "当前 runtime session 未绑定 AgentFrame，无法派发 companion agent".to_string(),
-            )
-        })?;
+        let current_session_id = self
+            .tool_context
+            .require_delivery_runtime_session_id("派发 companion agent")?
+            .to_string();
+        let anchor = self
+            .tool_context
+            .require_lifecycle_anchor("派发 companion agent")?;
+        let project_id = anchor.project_id;
+        let parent_run_id = anchor.run_id;
+        let parent_agent_id = anchor.agent_id;
+        let parent_frame_id = anchor.frame_id;
         let dispatch_plan = build_companion_dispatch_plan(
             hook_runtime.as_ref(),
             &before_resolution,
             &CompanionDispatchConfig {
                 parent_session_id: &current_session_id,
-                parent_turn_id: &self.current_turn_id,
+                parent_turn_id: self.tool_context.turn_id(),
                 companion_label: &companion_label,
                 slice_mode,
                 adoption_mode,
@@ -357,7 +333,7 @@ impl CompanionRequestTool {
         record_subagent_trace(
             hook_runtime.as_ref(),
             Some(&session_services),
-            Some(self.current_turn_id.as_str()),
+            Some(self.tool_context.turn_id()),
             HookTrigger::BeforeSubagentDispatch,
             "allow",
             &companion_label,
@@ -449,7 +425,7 @@ impl CompanionRequestTool {
         let after_resolution = evaluate_subagent_hook(
             hook_runtime.as_ref(),
             HookTrigger::AfterSubagentDispatch,
-            Some(self.current_turn_id.clone()),
+            Some(self.tool_context.turn_id().to_string()),
             &companion_label,
             Some(serde_json::json!({
                 "dispatch_id": dispatch_plan.dispatch_id,
@@ -464,7 +440,7 @@ impl CompanionRequestTool {
         record_subagent_trace(
             hook_runtime.as_ref(),
             Some(&session_services),
-            Some(self.current_turn_id.as_str()),
+            Some(self.tool_context.turn_id()),
             HookTrigger::AfterSubagentDispatch,
             "dispatched",
             &companion_label,
@@ -596,33 +572,18 @@ impl CompanionRequestTool {
             ));
         }
 
-        let current_session_id = self.current_session_id.clone().ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "当前 session 没有可识别的上下文，无法向上提审".to_string(),
-            )
-        })?;
-        let session_services = self.session_services_handle.get().await.ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "Session services 尚未完成初始化，无法向上提审".to_string(),
-            )
-        })?;
-
-        let delivery = Arc::new(SessionEventingCompanionGateDelivery::new(
-            session_services.eventing.clone(),
-        ))
-            as Arc<dyn super::gate_control::CompanionGateNotificationDelivery>;
-        let gate_control = CompanionGateControlService::new(
-            self.repos.lifecycle_gate_repo.clone(),
-            self.repos.agent_frame_repo.clone(),
-            self.repos.lifecycle_agent_repo.clone(),
-            self.repos.execution_anchor_repo.clone(),
-            self.repos.agent_lineage_repo.clone(),
-            delivery,
-        );
+        let current_session_id = self
+            .tool_context
+            .require_delivery_runtime_session_id("向上提审")?
+            .to_string();
+        let session_services =
+            require_session_services(&self.session_services_handle, "向上提审").await?;
+        let gate_control =
+            CompanionGateControlFactory::new(&self.repos).with_session_eventing(&session_services);
         let opened = gate_control
             .open_parent_request(OpenCompanionParentRequestCommand {
                 child_runtime_session_id: current_session_id,
-                turn_id: self.current_turn_id.clone(),
+                turn_id: self.tool_context.turn_id().to_string(),
                 wait,
                 payload: payload.clone(),
             })
@@ -711,11 +672,15 @@ impl CompanionRequestTool {
             ));
         }
 
-        let current_session_id = self.current_session_id.clone().ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "当前 session 没有可识别的上下文，无法向用户发起请求".to_string(),
-            )
-        })?;
+        let current_session_id = self
+            .tool_context
+            .require_delivery_runtime_session_id("向用户发起请求")?
+            .to_string();
+        let session_services =
+            require_session_services(&self.session_services_handle, "向用户发起请求").await?;
+        let anchor = self
+            .tool_context
+            .require_lifecycle_anchor("向用户发起请求")?;
 
         let request_id = format!("human-{}", Uuid::new_v4().simple());
         let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -735,25 +700,14 @@ impl CompanionRequestTool {
         if wait {
             // 创建 durable LifecycleGate 代替 in-memory channel
             let gate_meta = serde_json::json!({
-                "session_id": current_session_id,
-                "turn_id": self.current_turn_id,
+                "session_id": current_session_id.clone(),
+                "turn_id": self.tool_context.turn_id(),
                 "request_type": payload_type,
             });
-            let run_id = self.current_run_id.ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "缺少 lifecycle run_id，无法创建等待 gate".to_string(),
-                )
-            })?;
-            let agent_id = self.current_agent_id.ok_or_else(|| {
-                AgentToolError::ExecutionFailed("缺少 agent_id，无法创建等待 gate".to_string())
-            })?;
-            let frame_id = self.current_frame_id.ok_or_else(|| {
-                AgentToolError::ExecutionFailed("缺少 frame_id，无法创建等待 gate".to_string())
-            })?;
             let gate = agentdash_domain::workflow::LifecycleGate::open(
-                run_id,
-                Some(agent_id),
-                Some(frame_id),
+                anchor.run_id,
+                Some(anchor.agent_id),
+                Some(anchor.frame_id),
                 "companion_wait",
                 &request_id,
                 Some(gate_meta),
@@ -766,20 +720,16 @@ impl CompanionRequestTool {
                 .map_err(|e| AgentToolError::ExecutionFailed(format!("创建等待 gate 失败: {e}")))?;
             let request_id = gate_id.to_string();
 
-            let session_services = self.session_services_handle.get().await.ok_or_else(|| {
-                AgentToolError::ExecutionFailed("Session services 尚未初始化".to_string())
-            })?;
-
             let notification = build_companion_event_notification(
                 &current_session_id,
-                &self.current_turn_id,
+                self.tool_context.turn_id(),
                 "companion_human_request",
                 prompt.to_string(),
                 serde_json::json!({
-                    "request_id": request_id,
-                    "gate_id": request_id,
+                    "request_id": request_id.clone(),
+                    "gate_id": request_id.clone(),
                     "prompt": prompt,
-                    "options": options,
+                    "options": options.clone(),
                     "wait": true,
                     "payload_type": payload_type,
                     "ui_hint": ui_hint,
@@ -852,29 +802,14 @@ impl CompanionRequestTool {
             })
         } else {
             let gate_meta = serde_json::json!({
-                "session_id": current_session_id,
-                "turn_id": self.current_turn_id,
+                "session_id": current_session_id.clone(),
+                "turn_id": self.tool_context.turn_id(),
                 "request_type": payload_type,
             });
-            let run_id = self.current_run_id.ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "缺少 lifecycle run_id，无法创建非阻塞请求 gate".to_string(),
-                )
-            })?;
-            let agent_id = self.current_agent_id.ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "缺少 agent_id，无法创建非阻塞请求 gate".to_string(),
-                )
-            })?;
-            let frame_id = self.current_frame_id.ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "缺少 frame_id，无法创建非阻塞请求 gate".to_string(),
-                )
-            })?;
             let gate = agentdash_domain::workflow::LifecycleGate::open(
-                run_id,
-                Some(agent_id),
-                Some(frame_id),
+                anchor.run_id,
+                Some(anchor.agent_id),
+                Some(anchor.frame_id),
                 "companion_human_request",
                 &request_id,
                 Some(gate_meta),
@@ -889,28 +824,29 @@ impl CompanionRequestTool {
                 })?;
             let request_id = gate_id.to_string();
 
-            if let Some(session_services) = self.session_services_handle.get().await {
-                let notification = build_companion_event_notification(
-                    &current_session_id,
-                    &self.current_turn_id,
-                    "companion_human_request",
-                    prompt.to_string(),
-                    serde_json::json!({
-                        "request_id": request_id,
-                        "gate_id": request_id,
-                        "prompt": prompt,
-                        "options": options,
-                        "wait": false,
-                        "payload_type": payload_type,
-                        "ui_hint": ui_hint,
-                        "payload": payload,
-                    }),
-                );
-                let _ = session_services
-                    .eventing
-                    .inject_notification(&current_session_id, notification)
-                    .await;
-            }
+            let notification = build_companion_event_notification(
+                &current_session_id,
+                self.tool_context.turn_id(),
+                "companion_human_request",
+                prompt.to_string(),
+                serde_json::json!({
+                    "request_id": request_id.clone(),
+                    "gate_id": request_id.clone(),
+                    "prompt": prompt,
+                    "options": options.clone(),
+                    "wait": false,
+                    "payload_type": payload_type,
+                    "ui_hint": ui_hint,
+                    "payload": payload,
+                }),
+            );
+            session_services
+                .eventing
+                .inject_notification(&current_session_id, notification)
+                .await
+                .map_err(|error| {
+                    AgentToolError::ExecutionFailed(format!("发送用户协作请求失败: {error}"))
+                })?;
 
             Ok(AgentToolResult {
                 content: vec![ContentPart::text(format!(
@@ -1007,27 +943,19 @@ pub struct CompanionRespondParams {
 pub struct CompanionRespondTool {
     repos: crate::repository_set::RepositorySet,
     session_services_handle: SharedSessionToolServicesHandle,
-    current_session_id: Option<String>,
-    current_turn_id: String,
-    hook_runtime: Option<agentdash_spi::hooks::SharedHookRuntime>,
+    tool_context: CompanionToolContext,
 }
 
 impl CompanionRespondTool {
-    pub fn new(
+    pub(crate) fn new(
         repos: crate::repository_set::RepositorySet,
         session_services_handle: SharedSessionToolServicesHandle,
-        context: &ExecutionContext,
+        tool_context: CompanionToolContext,
     ) -> Self {
         Self {
             repos,
             session_services_handle,
-            current_session_id: context
-                .turn
-                .hook_runtime
-                .as_ref()
-                .map(|session| session.session_id().to_string()),
-            current_turn_id: context.session.turn_id.clone(),
-            hook_runtime: context.turn.hook_runtime.clone(),
+            tool_context,
         }
     }
 }
@@ -1074,11 +1002,12 @@ impl AgentTool for CompanionRespondTool {
             ));
         }
 
-        let current_session_id = self.current_session_id.clone().ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "当前 session 没有可识别的上下文，无法回应 companion 请求".to_string(),
-            )
-        })?;
+        let current_session_id = self
+            .tool_context
+            .require_delivery_runtime_session_id("回应 companion 请求")?
+            .to_string();
+        let session_services =
+            require_session_services(&self.session_services_handle, "回应 companion 请求").await?;
 
         // 多个独立副作用，不互斥：
         // 1. parent agent resolve parent-owned LifecycleGate
@@ -1087,15 +1016,25 @@ impl AgentTool for CompanionRespondTool {
         // 哪些命中由上下文决定，可以同时命中多个。
 
         let resolved_parent_request = self
-            .try_resolve_parent_request_gate(request_id, &current_session_id, &payload)
+            .try_resolve_parent_request_gate(
+                request_id,
+                &current_session_id,
+                &payload,
+                &session_services,
+            )
             .await?;
 
         let resolved_action = self
-            .try_resolve_pending_action(request_id, &current_session_id, &payload)
+            .try_resolve_pending_action(
+                request_id,
+                &current_session_id,
+                &payload,
+                &session_services,
+            )
             .await?;
 
         let completed_to_parent = self
-            .try_complete_to_parent(request_id, &current_session_id, &payload)
+            .try_complete_to_parent(request_id, &current_session_id, &payload, &session_services)
             .await?;
 
         // 根据命中情况构造返回值
@@ -1178,29 +1117,15 @@ impl CompanionRespondTool {
         request_id: &str,
         current_session_id: &str,
         payload: &serde_json::Value,
+        session_services: &SessionToolServices,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
-        let delivery = self
-            .session_services_handle
-            .get()
-            .await
-            .map(|services| {
-                Arc::new(SessionEventingCompanionGateDelivery::new(services.eventing))
-                    as Arc<dyn super::gate_control::CompanionGateNotificationDelivery>
-            })
-            .unwrap_or_else(|| Arc::new(NoopCompanionGateDelivery));
-        let service = CompanionGateControlService::new(
-            self.repos.lifecycle_gate_repo.clone(),
-            self.repos.agent_frame_repo.clone(),
-            self.repos.lifecycle_agent_repo.clone(),
-            self.repos.execution_anchor_repo.clone(),
-            self.repos.agent_lineage_repo.clone(),
-            delivery,
-        );
+        let service =
+            CompanionGateControlFactory::new(&self.repos).with_session_eventing(session_services);
         let Some(result) = service
             .resolve_parent_request(ResolveCompanionParentRequestCommand {
                 request_id: request_id.to_string(),
                 parent_runtime_session_id: current_session_id.to_string(),
-                resolved_turn_id: self.current_turn_id.clone(),
+                resolved_turn_id: self.tool_context.turn_id().to_string(),
                 payload: payload.clone(),
             })
             .await
@@ -1239,8 +1164,9 @@ impl CompanionRespondTool {
         request_id: &str,
         current_session_id: &str,
         payload: &serde_json::Value,
+        session_services: &SessionToolServices,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
-        let hook_runtime = match &self.hook_runtime {
+        let hook_runtime = match self.tool_context.hook_runtime() {
             Some(session) => session,
             None => return Ok(None),
         };
@@ -1278,7 +1204,7 @@ impl CompanionRespondTool {
                 request_id,
                 resolution_kind,
                 note.clone(),
-                Some(self.current_turn_id.clone()),
+                Some(self.tool_context.turn_id().to_string()),
             )
             .ok_or_else(|| {
                 AgentToolError::ExecutionFailed(format!(
@@ -1286,17 +1212,20 @@ impl CompanionRespondTool {
                 ))
             })?;
 
-        if let Some(session_services) = self.session_services_handle.get().await {
-            let notification = build_hook_action_resolved_notification(
-                current_session_id,
-                &self.current_turn_id,
-                &action,
-            );
-            let _ = session_services
-                .eventing
-                .inject_notification(current_session_id, notification)
-                .await;
-        }
+        let notification = build_hook_action_resolved_notification(
+            current_session_id,
+            self.tool_context.turn_id(),
+            &action,
+        );
+        session_services
+            .eventing
+            .inject_notification(current_session_id, notification)
+            .await
+            .map_err(|error| {
+                AgentToolError::ExecutionFailed(format!(
+                    "发送 companion pending action 解析通知失败: {error}"
+                ))
+            })?;
 
         Ok(Some(AgentToolResult {
             content: vec![ContentPart::text(format!(
@@ -1312,7 +1241,7 @@ impl CompanionRespondTool {
             details: Some(serde_json::json!({
                 "mode": "resolve_pending_action",
                 "session_id": current_session_id,
-                "turn_id": self.current_turn_id,
+                "turn_id": self.tool_context.turn_id(),
                 "action": action,
             })),
         }))
@@ -1327,29 +1256,15 @@ impl CompanionRespondTool {
         request_id: &str,
         current_session_id: &str,
         payload: &serde_json::Value,
+        session_services: &SessionToolServices,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
-        let delivery = self
-            .session_services_handle
-            .get()
-            .await
-            .map(|services| {
-                Arc::new(SessionEventingCompanionGateDelivery::new(services.eventing))
-                    as Arc<dyn super::gate_control::CompanionGateNotificationDelivery>
-            })
-            .unwrap_or_else(|| Arc::new(NoopCompanionGateDelivery));
-        let service = CompanionGateControlService::new(
-            self.repos.lifecycle_gate_repo.clone(),
-            self.repos.agent_frame_repo.clone(),
-            self.repos.lifecycle_agent_repo.clone(),
-            self.repos.execution_anchor_repo.clone(),
-            self.repos.agent_lineage_repo.clone(),
-            delivery,
-        );
+        let service =
+            CompanionGateControlFactory::new(&self.repos).with_session_eventing(session_services);
         let Some(result) = service
             .complete_child_result_to_parent(CompleteCompanionChildResultCommand {
                 request_id: request_id.to_string(),
                 child_runtime_session_id: current_session_id.to_string(),
-                resolved_turn_id: self.current_turn_id.clone(),
+                resolved_turn_id: self.tool_context.turn_id().to_string(),
                 payload: payload.clone(),
             })
             .await
@@ -1533,13 +1448,11 @@ async fn evaluate_subagent_hook(
     subagent_type: &str,
     payload: Option<serde_json::Value>,
 ) -> Result<agentdash_spi::HookResolution, AgentToolError> {
+    let provenance = CompanionHookProvenance::from_hook_runtime(hook_runtime, turn_id);
     let resolution = hook_runtime
         .evaluate_from_provenance(HookRuntimeEvaluationQuery {
-            provenance: RuntimeAdapterProvenance::runtime_session(
-                hook_runtime.session_id().to_string(),
-                turn_id.clone(),
-                "companion_subagent_hook_evaluate",
-            ),
+            provenance: provenance
+                .runtime_session(CompanionHookProvenanceSource::SubagentHookEvaluate),
             trigger,
             tool_name: None,
             tool_call_id: None,
@@ -1554,11 +1467,8 @@ async fn evaluate_subagent_hook(
     if resolution.refresh_snapshot {
         hook_runtime
             .refresh_from_provenance(HookRuntimeRefreshQuery {
-                provenance: RuntimeAdapterProvenance::runtime_session(
-                    hook_runtime.session_id().to_string(),
-                    turn_id,
-                    "companion_subagent_hook_refresh",
-                ),
+                provenance: provenance
+                    .runtime_session(CompanionHookProvenanceSource::SubagentHookRefresh),
                 reason: Some(format!("trigger:{trigger:?}:{subagent_type}")),
             })
             .await

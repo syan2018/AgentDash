@@ -125,6 +125,7 @@ pub struct SessionEventingCompanionGateDelivery {
     eventing: SessionEventingService,
 }
 
+#[cfg(test)]
 #[derive(Clone, Default)]
 pub struct NoopCompanionGateDelivery;
 
@@ -134,6 +135,7 @@ impl SessionEventingCompanionGateDelivery {
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl CompanionGateNotificationDelivery for NoopCompanionGateDelivery {
     async fn deliver_human_response(

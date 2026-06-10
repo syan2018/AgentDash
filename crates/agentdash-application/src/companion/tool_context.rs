@@ -1,0 +1,223 @@
+use agentdash_spi::hooks::{HookRuntimeAccess, RuntimeAdapterProvenance, SharedHookRuntime};
+use agentdash_spi::{AgentToolError, ExecutionContext};
+use uuid::Uuid;
+
+use crate::repository_set::RepositorySet;
+
+#[derive(Clone, Copy)]
+pub(crate) struct CompanionLifecycleAnchor {
+    pub project_id: Uuid,
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub frame_id: Uuid,
+}
+
+#[derive(Clone)]
+pub(crate) struct CompanionToolContext {
+    delivery_runtime_session_id: Option<String>,
+    turn_id: String,
+    hook_runtime: Option<SharedHookRuntime>,
+    lifecycle_anchor: Option<CompanionLifecycleAnchor>,
+    lifecycle_anchor_error: Option<String>,
+}
+
+impl CompanionToolContext {
+    pub(crate) async fn resolve(context: &ExecutionContext, repos: &RepositorySet) -> Self {
+        let delivery_runtime_session_id = context
+            .turn
+            .hook_runtime
+            .as_ref()
+            .map(|session| session.session_id().to_string());
+        let (lifecycle_anchor, lifecycle_anchor_error) =
+            match delivery_runtime_session_id.as_deref() {
+                Some(session_id) => match resolve_lifecycle_anchor(session_id, repos).await {
+                    Ok(anchor) => (Some(anchor), None),
+                    Err(error) => (None, Some(error)),
+                },
+                None => (None, None),
+            };
+
+        Self {
+            delivery_runtime_session_id,
+            turn_id: context.session.turn_id.clone(),
+            hook_runtime: context.turn.hook_runtime.clone(),
+            lifecycle_anchor,
+            lifecycle_anchor_error,
+        }
+    }
+
+    pub(crate) fn turn_id(&self) -> &str {
+        &self.turn_id
+    }
+
+    pub(crate) fn hook_runtime(&self) -> Option<&SharedHookRuntime> {
+        self.hook_runtime.as_ref()
+    }
+
+    pub(crate) fn require_hook_runtime(
+        &self,
+        action: &str,
+    ) -> Result<&SharedHookRuntime, AgentToolError> {
+        self.hook_runtime.as_ref().ok_or_else(|| {
+            AgentToolError::ExecutionFailed(format!("当前缺少 hook runtime，无法{action}"))
+        })
+    }
+
+    pub(crate) fn require_delivery_runtime_session_id(
+        &self,
+        action: &str,
+    ) -> Result<&str, AgentToolError> {
+        self.delivery_runtime_session_id.as_deref().ok_or_else(|| {
+            AgentToolError::ExecutionFailed(format!(
+                "当前缺少 delivery runtime session id，无法{action}"
+            ))
+        })
+    }
+
+    pub(crate) fn require_lifecycle_anchor(
+        &self,
+        action: &str,
+    ) -> Result<CompanionLifecycleAnchor, AgentToolError> {
+        if let Some(anchor) = self.lifecycle_anchor {
+            return Ok(anchor);
+        }
+
+        if let Some(error) = &self.lifecycle_anchor_error {
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "{error}，无法{action}"
+            )));
+        }
+
+        Err(AgentToolError::ExecutionFailed(format!(
+            "当前 delivery runtime session 缺少 lifecycle anchor，无法{action}"
+        )))
+    }
+}
+
+async fn resolve_lifecycle_anchor(
+    runtime_session_id: &str,
+    repos: &RepositorySet,
+) -> Result<CompanionLifecycleAnchor, String> {
+    let anchor = repos
+        .execution_anchor_repo
+        .find_by_session(runtime_session_id)
+        .await
+        .map_err(|error| {
+            format!(
+                "查询 runtime session `{runtime_session_id}` 的 RuntimeSessionExecutionAnchor 失败: {error}"
+            )
+        })?
+        .ok_or_else(|| {
+            format!("runtime session `{runtime_session_id}` 缺少 RuntimeSessionExecutionAnchor")
+        })?;
+
+    let agent = repos
+        .lifecycle_agent_repo
+        .get(anchor.agent_id)
+        .await
+        .map_err(|error| {
+            format!(
+                "查询 runtime session `{runtime_session_id}` anchor 指向的 LifecycleAgent `{}` 失败: {error}",
+                anchor.agent_id
+            )
+        })?
+        .ok_or_else(|| {
+            format!(
+                "runtime session `{runtime_session_id}` anchor 指向的 LifecycleAgent 不存在: {}",
+                anchor.agent_id
+            )
+        })?;
+
+    if agent.run_id != anchor.run_id {
+        return Err(format!(
+            "runtime session `{runtime_session_id}` anchor run_id `{}` 与 LifecycleAgent run_id `{}` 不一致",
+            anchor.run_id, agent.run_id
+        ));
+    }
+
+    let frame = match repos
+        .agent_frame_repo
+        .get_current(agent.id)
+        .await
+        .map_err(|error| {
+            format!(
+                "查询 LifecycleAgent `{}` 的 current AgentFrame 失败: {error}",
+                agent.id
+            )
+        })? {
+        Some(frame) => frame,
+        None => repos
+            .agent_frame_repo
+            .get(anchor.launch_frame_id)
+            .await
+            .map_err(|error| {
+                format!(
+                    "查询 runtime session `{runtime_session_id}` anchor launch AgentFrame `{}` 失败: {error}",
+                    anchor.launch_frame_id
+                )
+            })?
+            .ok_or_else(|| {
+                format!(
+                    "runtime session `{runtime_session_id}` anchor 指向的 launch AgentFrame 不存在: {}",
+                    anchor.launch_frame_id
+                )
+            })?,
+    };
+
+    if frame.agent_id != agent.id {
+        return Err(format!(
+            "runtime session `{runtime_session_id}` 解析到的 AgentFrame `{}` 属于 agent `{}`，与 anchor agent `{}` 不一致",
+            frame.id, frame.agent_id, agent.id
+        ));
+    }
+
+    Ok(CompanionLifecycleAnchor {
+        project_id: agent.project_id,
+        run_id: agent.run_id,
+        agent_id: agent.id,
+        frame_id: frame.id,
+    })
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum CompanionHookProvenanceSource {
+    SubagentHookEvaluate,
+    SubagentHookRefresh,
+}
+
+impl CompanionHookProvenanceSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::SubagentHookEvaluate => "companion_subagent_hook_evaluate",
+            Self::SubagentHookRefresh => "companion_subagent_hook_refresh",
+        }
+    }
+}
+
+pub(crate) struct CompanionHookProvenance {
+    runtime_session_id: String,
+    turn_id: Option<String>,
+}
+
+impl CompanionHookProvenance {
+    pub(crate) fn from_hook_runtime(
+        hook_runtime: &dyn HookRuntimeAccess,
+        turn_id: Option<String>,
+    ) -> Self {
+        Self {
+            runtime_session_id: hook_runtime.session_id().to_string(),
+            turn_id,
+        }
+    }
+
+    pub(crate) fn runtime_session(
+        &self,
+        source: CompanionHookProvenanceSource,
+    ) -> RuntimeAdapterProvenance {
+        RuntimeAdapterProvenance::runtime_session(
+            self.runtime_session_id.clone(),
+            self.turn_id.clone(),
+            source.as_str(),
+        )
+    }
+}

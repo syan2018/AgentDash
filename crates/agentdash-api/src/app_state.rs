@@ -32,6 +32,7 @@ use agentdash_executor::AgentConnector;
 use agentdash_integration_api::AgentDashIntegration;
 use agentdash_integration_api::AuthMode;
 use agentdash_integration_api::MarketplaceSourceProvider;
+use agentdash_integration_api::SkillDiscoveryProvider;
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -57,6 +58,8 @@ pub struct ServiceSet {
     pub vfs_mutation_dispatcher: Arc<VfsMutationDispatcher>,
     /// Host Integration 额外 skill 目录 — construction 阶段统一 discovery 后进入 session capabilities。
     pub extra_skill_dirs: Vec<std::path::PathBuf>,
+    /// Host Integration 动态 skill discovery providers — construction 阶段统一聚合。
+    pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
     /// Host Integration Marketplace Source providers — 后续 external marketplace API 统一从这里读取来源。
     pub marketplace_source_providers: Vec<Arc<dyn MarketplaceSourceProvider>>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
@@ -196,6 +199,7 @@ impl AppState {
                 platform_config: platform_config.clone(),
                 integration_connectors: integration_registration.connectors,
                 extra_skill_dirs: integration_registration.extra_skill_dirs,
+                skill_discovery_providers: integration_registration.skill_discovery_providers,
                 llm_provider_secret: llm_provider_secret.clone(),
             },
         )
@@ -214,6 +218,7 @@ impl AppState {
         let connector = session_bootstrap.connector;
         let hook_provider = session_bootstrap.hook_provider;
         let extra_skill_dirs = session_bootstrap.extra_skill_dirs;
+        let skill_discovery_providers = session_bootstrap.skill_discovery_providers;
 
         let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> =
             Arc::new(session_capability.clone());
@@ -312,6 +317,7 @@ impl AppState {
                 vfs_service,
                 vfs_mutation_dispatcher,
                 extra_skill_dirs,
+                skill_discovery_providers,
                 marketplace_source_providers: integration_registration.marketplace_source_providers,
                 backend_registry,
                 backend_runtime_events,

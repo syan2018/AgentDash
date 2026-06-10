@@ -1,13 +1,23 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use agentdash_spi::context::capability::{SessionBaselineCapabilities, SkillEntry};
-use agentdash_spi::{DiscoveredGuideline, SessionMcpServer, Vfs};
+use agentdash_spi::context::capability::{
+    SessionBaselineCapabilities, SkillCapabilityEntry, SkillEntry, SkillProviderCluster,
+};
+use agentdash_spi::{
+    DiscoveredGuideline, SessionMcpServer, SkillContextExposure, SkillDiscoveryCluster,
+    SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryOutput, SkillDiscoveryProvider,
+    Vfs, skill_capability_key,
+};
 
 use crate::context::mount_file_discovery::{BUILTIN_GUIDELINE_RULES, discover_mount_files};
 use crate::vfs::VfsService;
 
-use super::baseline_capabilities::build_session_baseline_capabilities;
+use super::baseline_capabilities::{
+    INTEGRATION_STATIC_SKILL_PROVIDER_KEY, WORKSPACE_SKILL_PROVIDER_KEY,
+    build_session_baseline_capabilities_from_clusters, skills_to_provider_clusters,
+};
 use super::types::CapabilityState;
 
 #[derive(Clone, Copy)]
@@ -15,6 +25,7 @@ pub struct SessionCapabilityProjectionInput<'a> {
     pub vfs_service: Option<&'a VfsService>,
     pub active_vfs: Option<&'a Vfs>,
     pub extra_skill_dirs: &'a [PathBuf],
+    pub skill_discovery_providers: &'a [Arc<dyn SkillDiscoveryProvider>],
     pub diagnostics_label: &'static str,
 }
 
@@ -46,36 +57,85 @@ pub async fn derive_session_capability_projection(
 pub async fn derive_session_skill_baseline(
     input: SessionCapabilityProjectionInput<'_>,
 ) -> Option<SessionBaselineCapabilities> {
-    let mut skills =
-        if let (Some(vfs_service), Some(active_vfs)) = (input.vfs_service, input.active_vfs) {
-            let result = crate::skill::load_skills_from_vfs(vfs_service, active_vfs).await;
-            log_skill_diagnostics(input.diagnostics_label, "vfs", &result.diagnostics);
-            result.skills
-        } else {
-            Vec::new()
-        };
+    let mut clusters = Vec::new();
+    let mut diagnostics = Vec::new();
 
-    if !input.extra_skill_dirs.is_empty() {
-        let existing_names: HashMap<String, String> = skills
-            .iter()
-            .map(|skill| {
-                (
-                    skill.name.clone(),
-                    skill.file_path.to_string_lossy().to_string(),
-                )
-            })
-            .collect();
-        let result =
-            crate::skill::load_skills_from_local_dirs(input.extra_skill_dirs, &existing_names);
-        log_skill_diagnostics(input.diagnostics_label, "plugin", &result.diagnostics);
-        skills.extend(result.skills);
+    if let (Some(vfs_service), Some(active_vfs)) = (input.vfs_service, input.active_vfs) {
+        let result = crate::skill::load_skills_from_vfs(vfs_service, active_vfs).await;
+        log_skill_diagnostics(input.diagnostics_label, "vfs", &result.diagnostics);
+        diagnostics.extend(loader_diagnostics_to_discovery(
+            WORKSPACE_SKILL_PROVIDER_KEY,
+            result.diagnostics,
+        ));
+        clusters.extend(skills_to_provider_clusters(
+            WORKSPACE_SKILL_PROVIDER_KEY,
+            "Workspace Skills",
+            Some("Skills discovered from the active workspace.".to_string()),
+            Some("当前 workspace 中声明的 skills。".to_string()),
+            None,
+            &result.skills,
+        ));
     }
 
-    if input.vfs_service.is_none() && input.extra_skill_dirs.is_empty() {
+    if !input.extra_skill_dirs.is_empty() {
+        let existing_names = HashMap::new();
+        let result =
+            crate::skill::load_skills_from_local_dirs(input.extra_skill_dirs, &existing_names);
+        log_skill_diagnostics(
+            input.diagnostics_label,
+            "integration-static",
+            &result.diagnostics,
+        );
+        diagnostics.extend(loader_diagnostics_to_discovery(
+            INTEGRATION_STATIC_SKILL_PROVIDER_KEY,
+            result.diagnostics,
+        ));
+        clusters.extend(skills_to_provider_clusters(
+            INTEGRATION_STATIC_SKILL_PROVIDER_KEY,
+            "Integration Skills",
+            Some("Static skill directories contributed by Host Integrations.".to_string()),
+            Some("Host Integration 提供的静态 skill 目录。".to_string()),
+            None,
+            &result.skills,
+        ));
+    }
+
+    let discovery_context = skill_discovery_context_from_vfs(input.active_vfs);
+    for provider in input.skill_discovery_providers {
+        match provider.discover(discovery_context.clone()).await {
+            Ok(output) => {
+                let (provider_clusters, provider_diagnostics) =
+                    provider_output_to_surface(output, provider.provider_key());
+                diagnostics.extend(provider_diagnostics);
+                clusters.extend(provider_clusters);
+            }
+            Err(error) => {
+                diagnostics.push(SkillDiscoveryDiagnostic {
+                    provider_key: provider.provider_key().to_string(),
+                    code: "provider_failed".to_string(),
+                    message: error.to_string(),
+                    local_name: None,
+                    file_path: None,
+                });
+            }
+        }
+    }
+
+    let (clusters, duplicate_diagnostics) = normalize_provider_clusters(clusters);
+    diagnostics.extend(duplicate_diagnostics);
+    log_discovery_diagnostics(input.diagnostics_label, &diagnostics);
+
+    if input.vfs_service.is_none()
+        && input.extra_skill_dirs.is_empty()
+        && input.skill_discovery_providers.is_empty()
+    {
         return None;
     }
 
-    Some(build_session_baseline_capabilities(&skills))
+    Some(build_session_baseline_capabilities_from_clusters(
+        clusters,
+        diagnostics,
+    ))
 }
 
 pub async fn derive_session_guidelines(
@@ -133,11 +193,166 @@ pub fn merge_live_vfs_skill_entries(
         if skill.file_path.contains("://") {
             continue;
         }
-        if !merged.iter().any(|item| item.name == skill.name) {
+        if !merged
+            .iter()
+            .any(|item| item.capability_key_or_name() == skill.capability_key_or_name())
+        {
             merged.push(skill.clone());
         }
     }
     merged
+}
+
+fn skill_discovery_context_from_vfs(active_vfs: Option<&Vfs>) -> SkillDiscoveryContext {
+    SkillDiscoveryContext {
+        workspace_root_ref: active_vfs
+            .and_then(|vfs| vfs.default_mount())
+            .map(|mount| mount.root_ref.clone()),
+        ..SkillDiscoveryContext::default()
+    }
+}
+
+fn provider_output_to_surface(
+    output: SkillDiscoveryOutput,
+    fallback_provider_key: &str,
+) -> (Vec<SkillProviderCluster>, Vec<SkillDiscoveryDiagnostic>) {
+    let mut diagnostics = output.diagnostics;
+    let mut seen_by_provider: HashMap<String, HashSet<String>> = HashMap::new();
+    let clusters = output
+        .clusters
+        .into_iter()
+        .map(|cluster| {
+            discovery_cluster_to_provider_cluster(
+                cluster,
+                fallback_provider_key,
+                &mut diagnostics,
+                &mut seen_by_provider,
+            )
+        })
+        .collect();
+    (clusters, diagnostics)
+}
+
+fn discovery_cluster_to_provider_cluster(
+    cluster: SkillDiscoveryCluster,
+    fallback_provider_key: &str,
+    diagnostics: &mut Vec<SkillDiscoveryDiagnostic>,
+    seen_by_provider: &mut HashMap<String, HashSet<String>>,
+) -> SkillProviderCluster {
+    let provider_key = if cluster.provider_key.trim().is_empty() {
+        fallback_provider_key.to_string()
+    } else {
+        cluster.provider_key
+    };
+    let seen = seen_by_provider.entry(provider_key.clone()).or_default();
+    let mut default_exposed_skills = Vec::new();
+
+    for skill in cluster.skills {
+        if !seen.insert(skill.local_name.clone()) {
+            diagnostics.push(SkillDiscoveryDiagnostic {
+                provider_key: provider_key.clone(),
+                code: "duplicate_local_name".to_string(),
+                message: format!(
+                    "skill `{}` 在 provider `{}` 内重复声明，已保留首次发现项",
+                    skill.local_name, provider_key
+                ),
+                local_name: Some(skill.local_name),
+                file_path: Some(skill.file_path),
+            });
+            continue;
+        }
+
+        if skill.exposure.is_default_exposed() {
+            default_exposed_skills.push(SkillCapabilityEntry {
+                capability_key: skill_capability_key(&provider_key, &skill.local_name),
+                provider_key: provider_key.clone(),
+                local_name: skill.local_name,
+                display_name: skill.display_name,
+                description: skill.description,
+                file_path: skill.file_path,
+                base_dir: skill.base_dir,
+                exposure: SkillContextExposure::DefaultExposed,
+                disable_model_invocation: skill.disable_model_invocation,
+            });
+        }
+    }
+
+    SkillProviderCluster {
+        provider_key,
+        display_name: cluster.display_name,
+        model_summary: cluster.model_summary,
+        ui_summary: cluster.ui_summary,
+        inventory_hint: cluster.inventory_hint,
+        inventory_count: cluster.inventory_count,
+        default_exposed_skills,
+    }
+}
+
+fn normalize_provider_clusters(
+    clusters: Vec<SkillProviderCluster>,
+) -> (Vec<SkillProviderCluster>, Vec<SkillDiscoveryDiagnostic>) {
+    let mut diagnostics = Vec::new();
+    let mut seen_by_provider: HashMap<String, HashSet<String>> = HashMap::new();
+    let clusters = clusters
+        .into_iter()
+        .map(|mut cluster| {
+            let seen = seen_by_provider
+                .entry(cluster.provider_key.clone())
+                .or_default();
+            let mut kept = Vec::new();
+            for skill in cluster.default_exposed_skills {
+                if seen.insert(skill.local_name.clone()) {
+                    kept.push(skill);
+                } else {
+                    diagnostics.push(SkillDiscoveryDiagnostic {
+                        provider_key: cluster.provider_key.clone(),
+                        code: "duplicate_local_name".to_string(),
+                        message: format!(
+                            "skill `{}` 在 provider `{}` 内重复声明，已保留首次发现项",
+                            skill.local_name, cluster.provider_key
+                        ),
+                        local_name: Some(skill.local_name),
+                        file_path: Some(skill.file_path),
+                    });
+                }
+            }
+            cluster.default_exposed_skills = kept;
+            cluster
+        })
+        .collect();
+    (clusters, diagnostics)
+}
+
+fn loader_diagnostics_to_discovery(
+    provider_key: &str,
+    diagnostics: Vec<crate::skill::SkillDiagnostic>,
+) -> Vec<SkillDiscoveryDiagnostic> {
+    diagnostics
+        .into_iter()
+        .map(|diag| SkillDiscoveryDiagnostic {
+            provider_key: provider_key.to_string(),
+            code: "skill_file_diagnostic".to_string(),
+            message: diag.message,
+            local_name: Some(diag.name),
+            file_path: Some(diag.file_path.to_string_lossy().to_string()),
+        })
+        .collect()
+}
+
+fn log_discovery_diagnostics(
+    diagnostics_label: &'static str,
+    diagnostics: &[SkillDiscoveryDiagnostic],
+) {
+    for diag in diagnostics {
+        tracing::warn!(
+            label = diagnostics_label,
+            provider_key = %diag.provider_key,
+            code = %diag.code,
+            local_name = diag.local_name.as_deref().unwrap_or(""),
+            "skill discovery 诊断: {}",
+            diag.message
+        );
+    }
 }
 
 fn log_skill_diagnostics(
@@ -162,10 +377,20 @@ mod tests {
     use super::*;
 
     fn skill(name: &str, file_path: &str) -> SkillEntry {
+        let (provider_key, local_name) = name
+            .split_once('/')
+            .map(|(provider, local)| (provider.to_string(), local.to_string()))
+            .unwrap_or_else(|| ("".to_string(), name.to_string()));
         SkillEntry {
-            name: name.to_string(),
+            name: local_name.clone(),
+            capability_key: name.to_string(),
+            provider_key,
+            local_name,
+            display_name: None,
             description: String::new(),
             file_path: file_path.to_string(),
+            base_dir: None,
+            exposure: SkillContextExposure::DefaultExposed,
             disable_model_invocation: false,
         }
     }
@@ -173,16 +398,118 @@ mod tests {
     #[test]
     fn live_vfs_skill_merge_replaces_uri_skills_and_preserves_local_skills() {
         let existing = vec![
-            skill("old-vfs", "main://skills/old-vfs/SKILL.md"),
-            skill("plugin-skill", "/plugins/plugin-skill/SKILL.md"),
+            skill("workspace/old-vfs", "main://skills/old-vfs/SKILL.md"),
+            skill(
+                "integration-static/plugin-skill",
+                "/plugins/plugin-skill/SKILL.md",
+            ),
         ];
-        let refreshed = vec![skill("new-vfs", "cvs-demo://skills/new-vfs/SKILL.md")];
+        let refreshed = vec![skill(
+            "workspace/new-vfs",
+            "cvs-demo://skills/new-vfs/SKILL.md",
+        )];
 
         let merged = merge_live_vfs_skill_entries(&existing, refreshed);
 
         assert_eq!(merged.len(), 2);
-        assert!(merged.iter().any(|item| item.name == "new-vfs"));
-        assert!(merged.iter().any(|item| item.name == "plugin-skill"));
-        assert!(!merged.iter().any(|item| item.name == "old-vfs"));
+        assert!(
+            merged
+                .iter()
+                .any(|item| item.capability_key == "workspace/new-vfs")
+        );
+        assert!(
+            merged
+                .iter()
+                .any(|item| item.capability_key == "integration-static/plugin-skill")
+        );
+        assert!(
+            !merged
+                .iter()
+                .any(|item| item.capability_key == "workspace/old-vfs")
+        );
+    }
+
+    #[test]
+    fn provider_cluster_allows_same_local_name_across_providers() {
+        let (clusters, diagnostics) = normalize_provider_clusters(vec![
+            SkillProviderCluster {
+                provider_key: "a".to_string(),
+                display_name: "A".to_string(),
+                default_exposed_skills: vec![SkillCapabilityEntry::new(
+                    "a",
+                    "config-edit",
+                    "desc",
+                    "/a/SKILL.md",
+                )],
+                ..Default::default()
+            },
+            SkillProviderCluster {
+                provider_key: "b".to_string(),
+                display_name: "B".to_string(),
+                default_exposed_skills: vec![SkillCapabilityEntry::new(
+                    "b",
+                    "config-edit",
+                    "desc",
+                    "/b/SKILL.md",
+                )],
+                ..Default::default()
+            },
+        ]);
+
+        assert!(diagnostics.is_empty());
+        let caps = build_session_baseline_capabilities_from_clusters(clusters, diagnostics);
+        let keys = caps
+            .skills
+            .iter()
+            .map(|skill| skill.capability_key.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["a/config-edit", "b/config-edit"]);
+    }
+
+    #[test]
+    fn duplicate_local_name_within_provider_produces_diagnostic() {
+        let (clusters, diagnostics) = normalize_provider_clusters(vec![SkillProviderCluster {
+            provider_key: "a".to_string(),
+            display_name: "A".to_string(),
+            default_exposed_skills: vec![
+                SkillCapabilityEntry::new("a", "config-edit", "desc", "/a/one/SKILL.md"),
+                SkillCapabilityEntry::new("a", "config-edit", "desc", "/a/two/SKILL.md"),
+            ],
+            ..Default::default()
+        }]);
+
+        assert_eq!(clusters[0].default_exposed_skills.len(), 1);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "duplicate_local_name");
+    }
+
+    #[tokio::test]
+    async fn extra_skill_dirs_are_wrapped_as_integration_static_cluster() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let skill_dir = root.path().join("review");
+        std::fs::create_dir_all(&skill_dir).expect("skill dir");
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: review\ndescription: Review changes\n---\n",
+        )
+        .expect("skill file");
+
+        let caps = derive_session_skill_baseline(SessionCapabilityProjectionInput {
+            vfs_service: None,
+            active_vfs: None,
+            extra_skill_dirs: &[root.path().to_path_buf()],
+            skill_discovery_providers: &[],
+            diagnostics_label: "test",
+        })
+        .await
+        .expect("capabilities");
+
+        assert_eq!(caps.skills.len(), 1);
+        assert_eq!(caps.skills[0].capability_key, "integration-static/review");
+        assert_eq!(caps.skill_clusters.len(), 1);
+        assert_eq!(
+            caps.skill_clusters[0].provider_key,
+            INTEGRATION_STATIC_SKILL_PROVIDER_KEY
+        );
     }
 }

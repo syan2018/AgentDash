@@ -5,7 +5,7 @@ use std::sync::Arc;
 use agentdash_application::shared_library::IntegrationEmbeddedLibraryAssetSeed;
 use agentdash_integration_api::{
     AgentDashIntegration, AuthProvider, LibraryAssetType, MarketplaceSourceDescriptor,
-    MarketplaceSourceProvider,
+    MarketplaceSourceProvider, SkillDiscoveryProvider,
 };
 use agentdash_spi::AgentConnector;
 use agentdash_spi::VfsDiscoveryProvider;
@@ -26,6 +26,7 @@ pub(crate) struct HostIntegrationRegistration {
     pub auth_provider: Option<Arc<dyn AuthProvider>>,
     pub mount_providers: Vec<Arc<dyn MountProvider>>,
     pub marketplace_source_providers: Vec<Arc<dyn MarketplaceSourceProvider>>,
+    pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub library_asset_seeds: Vec<IntegrationEmbeddedLibraryAssetSeed>,
 }
@@ -61,6 +62,16 @@ pub(crate) enum IntegrationRegistrationError {
         second_owner: String,
     },
     #[error(
+        "Skill Discovery Provider `{provider_key}` 重复注册：`{first_owner}` 与 `{second_owner}` 不能同时声明同一 provider"
+    )]
+    DuplicateSkillDiscoveryProviderKey {
+        provider_key: String,
+        first_owner: String,
+        second_owner: String,
+    },
+    #[error("Host Integration `{integration_name}` 的 Skill Discovery Provider key 不能为空")]
+    InvalidSkillDiscoveryProviderKey { integration_name: String },
+    #[error(
         "Host Integration `{integration_name}` 的 Marketplace Source descriptor 非法: {message}"
     )]
     InvalidMarketplaceSourceDescriptor {
@@ -80,6 +91,8 @@ pub(crate) fn collect_integration_registration(
     let mut mount_providers = Vec::new();
     let mut marketplace_source_providers = Vec::new();
     let mut marketplace_source_owners: HashMap<String, String> = HashMap::new();
+    let mut skill_discovery_providers = Vec::new();
+    let mut skill_provider_owners: HashMap<String, String> = HashMap::new();
     let mut extra_skill_dirs = Vec::new();
     let mut library_asset_seeds = Vec::new();
 
@@ -114,6 +127,37 @@ pub(crate) fn collect_integration_registration(
                 skill_dirs.len()
             );
             extra_skill_dirs.extend(skill_dirs);
+        }
+
+        let skill_providers = integration.skill_discovery_providers();
+        if !skill_providers.is_empty() {
+            tracing::info!(
+                "  Host Integration `{}` 注册了 {} 个 SkillDiscoveryProvider",
+                integration_name,
+                skill_providers.len()
+            );
+        }
+        for provider in skill_providers {
+            let provider_key = provider.provider_key().trim().to_string();
+            if provider_key.is_empty() {
+                return Err(
+                    IntegrationRegistrationError::InvalidSkillDiscoveryProviderKey {
+                        integration_name: integration_name.clone(),
+                    },
+                );
+            }
+            if let Some(first_owner) =
+                skill_provider_owners.insert(provider_key.clone(), integration_name.clone())
+            {
+                return Err(
+                    IntegrationRegistrationError::DuplicateSkillDiscoveryProviderKey {
+                        provider_key,
+                        first_owner,
+                        second_owner: integration_name.clone(),
+                    },
+                );
+            }
+            skill_discovery_providers.push(provider);
         }
 
         let seeds = integration.library_asset_seeds();
@@ -190,6 +234,7 @@ pub(crate) fn collect_integration_registration(
         auth_provider,
         mount_providers,
         marketplace_source_providers,
+        skill_discovery_providers,
         extra_skill_dirs,
         library_asset_seeds,
     })
@@ -276,7 +321,8 @@ mod tests {
         IntegrationLibraryAssetSeed, LibraryAssetType, MarketplaceAssetDetail,
         MarketplaceAssetPage, MarketplaceAssetQuery, MarketplaceFetchedAsset,
         MarketplaceSourceDescriptor, MarketplaceSourceError, MarketplaceSourceProvider,
-        MarketplaceSourceProviderKind, MarketplaceSourceTrustLevel,
+        MarketplaceSourceProviderKind, MarketplaceSourceTrustLevel, SkillDiscoveryContext,
+        SkillDiscoveryOutput, SkillDiscoveryProvider,
     };
     use agentdash_spi::{
         AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
@@ -300,6 +346,11 @@ mod tests {
         name: &'static str,
         source_key: &'static str,
         supported_asset_types: Vec<LibraryAssetType>,
+    }
+
+    struct SkillProviderIntegration {
+        name: &'static str,
+        provider_key: &'static str,
     }
 
     impl AgentDashIntegration for SeedIntegration {
@@ -349,6 +400,36 @@ mod tests {
                     enabled: true,
                 },
             })]
+        }
+    }
+
+    impl AgentDashIntegration for SkillProviderIntegration {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn skill_discovery_providers(&self) -> Vec<Arc<dyn SkillDiscoveryProvider>> {
+            vec![Arc::new(TestSkillDiscoveryProvider {
+                provider_key: self.provider_key,
+            })]
+        }
+    }
+
+    struct TestSkillDiscoveryProvider {
+        provider_key: &'static str,
+    }
+
+    #[async_trait]
+    impl SkillDiscoveryProvider for TestSkillDiscoveryProvider {
+        fn provider_key(&self) -> &str {
+            self.provider_key
+        }
+
+        async fn discover(
+            &self,
+            _context: SkillDiscoveryContext,
+        ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
+            Ok(SkillDiscoveryOutput::default())
         }
     }
 
@@ -627,6 +708,50 @@ mod tests {
                 LibraryAssetType::McpServerTemplate
             ]
         );
+    }
+
+    #[test]
+    fn collects_skill_discovery_provider() {
+        let registration =
+            collect_integration_registration(vec![Box::new(SkillProviderIntegration {
+                name: "skills-a",
+                provider_key: "skills.a",
+            })])
+            .expect("collect");
+
+        assert_eq!(registration.skill_discovery_providers.len(), 1);
+        assert_eq!(
+            registration.skill_discovery_providers[0].provider_key(),
+            "skills.a"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_skill_discovery_provider_key() {
+        let err = match collect_integration_registration(vec![
+            Box::new(SkillProviderIntegration {
+                name: "skills-a",
+                provider_key: "skills.shared",
+            }),
+            Box::new(SkillProviderIntegration {
+                name: "skills-b",
+                provider_key: "skills.shared",
+            }),
+        ]) {
+            Ok(_) => panic!("重复 skill discovery provider key 应失败"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            IntegrationRegistrationError::DuplicateSkillDiscoveryProviderKey {
+                provider_key,
+                first_owner,
+                second_owner,
+            } if provider_key == "skills.shared"
+                && first_owner == "skills-a"
+                && second_owner == "skills-b"
+        ));
     }
 
     #[test]

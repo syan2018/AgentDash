@@ -48,6 +48,14 @@ impl SessionRuntimeBuilder {
         self
     }
 
+    pub fn with_skill_discovery_providers(
+        mut self,
+        providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
+    ) -> Self {
+        self.inner = self.inner.with_skill_discovery_providers(providers);
+        self
+    }
+
     pub fn with_runtime_tool_provider(mut self, provider: Arc<dyn RuntimeToolProvider>) -> Self {
         self.inner = self.inner.with_runtime_tool_provider(provider);
         self

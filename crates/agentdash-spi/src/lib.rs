@@ -56,7 +56,8 @@ pub use context::injection::{
 
 pub use context::bundle::SessionContextBundle;
 pub use context::capability::{
-    CompanionAgentEntry, CompanionSliceMode, SessionBaselineCapabilities, SkillEntry,
+    CompanionAgentEntry, CompanionSliceMode, SessionBaselineCapabilities, SkillCapabilityEntry,
+    SkillEntry, SkillProviderCluster,
 };
 pub use context::tool_schema_sanitizer::{sanitize_tool_schema, schema_value};
 
@@ -106,6 +107,12 @@ pub use platform::mcp_relay::{
 pub use platform::mount::MountEditCapabilities;
 pub use platform::routine::{RoutineFireCallback, RoutineTriggerProvider};
 pub use platform::skill::SkillRef;
+pub use platform::skill_discovery::{
+    DiscoveredSkill, SkillCapabilityId, SkillContextExposure, SkillDiscoveryCluster,
+    SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryError, SkillDiscoveryOutput,
+    SkillDiscoveryOwnerKind, SkillDiscoveryProvider, SkillDiscoveryUserContext,
+    skill_capability_key,
+};
 pub use platform::skill_source::{
     RemoteSkillFetch, RemoteSkillFile, RemoteSkillFileBody, RemoteSkillKind, RemoteSkillSource,
     RemoteSkillSourceError,
@@ -122,13 +129,13 @@ pub use session_persistence::{
     ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_COMPANION, CAPABILITY_DIMENSION_MCP,
     CAPABILITY_DIMENSION_SKILL, CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS,
     CAPABILITY_DIMENSION_WORKSPACE_MODULE, CapabilityArtifactSource, CapabilityContributionRecord,
-    CapabilityDeclarationRecord,
-    CapabilityDimensionKey, CompactionProjectionCommitResult, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
-    EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
-    EFFECT_TYPE_SET_MCP_SERVER_SET, EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus,
-    NewCompactionProjectionCommit, NewTerminalEffectRecord, PendingCapabilityStateTransition,
-    PersistedSessionEvent, RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition,
-    RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand, RuntimeDeliveryCommandKind,
+    CapabilityDeclarationRecord, CapabilityDimensionKey, CompactionProjectionCommitResult,
+    EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
+    EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
+    EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, NewCompactionProjectionCommit,
+    NewTerminalEffectRecord, PendingCapabilityStateTransition, PersistedSessionEvent,
+    RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, RuntimeCommandRecord,
+    RuntimeCommandStatus, RuntimeDeliveryCommand, RuntimeDeliveryCommandKind,
     SESSION_PROJECTION_KIND_AUDIT, SESSION_PROJECTION_KIND_HANDOFF,
     SESSION_PROJECTION_KIND_MODEL_CONTEXT, SESSION_PROJECTION_KIND_TIMELINE,
     SessionCompactionRecord, SessionCompactionStatus, SessionCompactionStore, SessionEventBacklog,

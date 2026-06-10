@@ -50,6 +50,7 @@ pub struct SessionRuntimeInner {
     pub(super) persistence: Arc<dyn SessionPersistence>,
     pub(crate) vfs_service: Option<Arc<crate::vfs::VfsService>>,
     pub(super) extra_skill_dirs: Vec<PathBuf>,
+    pub(super) skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
     pub(super) terminal_callback:
         Arc<tokio::sync::RwLock<Option<super::post_turn_handler::DynSessionTerminalCallback>>>,
     pub(super) hook_effect_handler_registry: Arc<

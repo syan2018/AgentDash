@@ -113,6 +113,7 @@ impl RuntimeContextInspectionPlanner {
             vfs_service: Some(vfs_service),
             active_vfs: vfs,
             extra_skill_dirs,
+            skill_discovery_providers: &[],
             diagnostics_label: "construction_planner",
         })
         .await?;

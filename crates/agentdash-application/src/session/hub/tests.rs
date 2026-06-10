@@ -891,8 +891,14 @@ fn canvas_skill_vfs() -> agentdash_spi::Vfs {
 fn canvas_skill_entry() -> agentdash_spi::context::capability::SkillEntry {
     agentdash_spi::context::capability::SkillEntry {
         name: "canvas-system".to_string(),
+        capability_key: "workspace/canvas-system".to_string(),
+        provider_key: "workspace".to_string(),
+        local_name: "canvas-system".to_string(),
+        display_name: None,
         description: "Canvas authoring skill".to_string(),
         file_path: "cvs-demo://skills/canvas-system/SKILL.md".to_string(),
+        base_dir: Some("cvs-demo://skills/canvas-system".to_string()),
+        exposure: agentdash_spi::SkillContextExposure::DefaultExposed,
         disable_model_invocation: false,
     }
 }
@@ -1047,12 +1053,23 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
     before_state.vfs.active = Some(agentdash_spi::Vfs::default());
     let local_skill = agentdash_spi::context::capability::SkillEntry {
         name: "local-review".to_string(),
+        capability_key: "integration-static/local-review".to_string(),
+        provider_key: "integration-static".to_string(),
+        local_name: "local-review".to_string(),
+        display_name: None,
         description: "Local review skill".to_string(),
         file_path: base
             .path()
             .join("skills/local-review/SKILL.md")
             .to_string_lossy()
             .to_string(),
+        base_dir: Some(
+            base.path()
+                .join("skills/local-review")
+                .to_string_lossy()
+                .to_string(),
+        ),
+        exposure: agentdash_spi::SkillContextExposure::DefaultExposed,
         disable_model_invocation: false,
     };
     before_state.skill.skills = vec![local_skill.clone()];

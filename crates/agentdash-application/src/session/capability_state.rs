@@ -175,7 +175,7 @@ impl<'a> RuntimeContextTransition<'a> {
             .skill
             .skills
             .iter()
-            .map(|skill| skill.name.clone())
+            .map(|skill| skill.capability_key_or_name().to_string())
             .collect::<Vec<_>>();
         let mount_ids: Vec<String> = after_vfs
             .map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect())

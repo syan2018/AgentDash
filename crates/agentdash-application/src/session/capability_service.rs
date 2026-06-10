@@ -208,6 +208,7 @@ impl SessionCapabilityService {
             vfs_service: self.hub.vfs_service.as_deref(),
             active_vfs: Some(active_vfs),
             extra_skill_dirs: &self.hub.extra_skill_dirs,
+            skill_discovery_providers: &self.hub.skill_discovery_providers,
             diagnostics_label: "runtime_context_transition",
         })
         .await

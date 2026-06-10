@@ -40,6 +40,8 @@
 | workflow-orchestration Batch A | 修复 | 已提交 | `fixes/015-workflow-script-preflight-convergence.md` |
 | local-runtime Batch E | 修复 | 已提交 | `fixes/016-local-runtime-mcp-prompt-wire-shape.md` |
 | local-runtime Batch G | 修复 | 已提交 | `fixes/017-local-runtime-host-api-fallback-removal.md` |
+| workflow-orchestration Batch B | 修复 | 已提交 | `fixes/018-workflow-root-args-activation-input.md` |
+| local-runtime Batch F | 修复 | 已提交 | `fixes/019-local-runtime-process-executor.md` |
 
 ## 已完成模块
 
@@ -99,3 +101,5 @@
 | `2bbb515c` | local-runtime | 删除 runtime.invoke 与 extension.channel_invoke host api 占位回退 |
 | `1ac95573` | local-runtime | 对齐 prompt MCP relay 发送形态 |
 | `37be46fa` | workflow-orchestration | 收敛 workflow script capability summary 单一解释器 |
+| `bc29c1b6` | workflow-orchestration | 收敛脚本根参数 typed activation input |
+| `2bff89ac` | local-runtime | 收敛 shell/exec 共享进程执行边界 |

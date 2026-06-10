@@ -17,6 +17,10 @@
 | local-runtime | review | 已归档 | `reviews/004-local-runtime.md` |
 | settings-llm-providers | review | 已归档 | `reviews/005-settings-llm-providers.md` |
 | workflow-orchestration | 修复 | 已提交 | `fixes/001-workflow-orchestration-quick-cleanup.md` |
+| session-stream | research | 进行中 | `research/session-stream-executable-plan.md` |
+| local-runtime | research | 进行中 | `research/local-runtime-executable-plan.md` |
+| settings-llm-providers | 修复 | 进行中 | 待创建 |
+| vfs-service | 修复 | 待提交 | `fixes/002-vfs-create-text-error-semantics.md` |
 
 ## 已完成模块
 
@@ -63,3 +67,4 @@
 | --- | --- | --- |
 | `9c7999a0` | settings-ui | 收敛系统设置区块组件结构 |
 | `c079e519` | workflow-orchestration | 清理不可达诊断、未用编译模式与误导工具描述 |
+| 待提交 | vfs-service | 收敛 `create_text` 错误语义 |

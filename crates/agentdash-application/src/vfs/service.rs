@@ -367,10 +367,8 @@ impl VfsService {
                     target.path
                 )));
             }
-            Err(_) => {
-                // 读取失败在 create 语义下按“不存在或不可读”处理；真正的权限、
-                // backend 离线等错误仍会在 write_text 阶段返回。
-            }
+            Err(MountError::NotFound(_)) => {}
+            Err(error) => return Err(error),
         }
 
         self.write_text(vfs, target, content, overlay, identity)

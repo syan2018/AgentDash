@@ -1,8 +1,12 @@
+mod host_api;
+mod http_api;
 mod manager;
-mod permissions;
+mod permission_guard;
 mod process;
+mod process_api;
 mod protocol;
 mod runner;
+mod workspace_api;
 
 use std::path::PathBuf;
 

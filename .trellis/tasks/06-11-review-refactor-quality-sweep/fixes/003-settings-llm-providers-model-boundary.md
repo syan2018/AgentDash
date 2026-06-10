@@ -33,4 +33,4 @@
 
 ## Commit
 
-待提交。
+`205d2a91 refactor(settings): 收敛 LLM Provider 模型边界`

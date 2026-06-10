@@ -23,7 +23,8 @@ pub(crate) struct SearchParams<'a> {
 
 #[derive(Debug, Clone)]
 pub struct ToolExecutor {
-    workspace_roots: Vec<PathBuf>,
+    workspace_roots_configured: bool,
+    canonical_workspace_roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,9 +80,28 @@ pub enum ToolError {
     PatchApply(String),
 }
 
+fn canonicalize_workspace_roots(workspace_roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut canonical_roots = Vec::new();
+    for root in workspace_roots {
+        let Ok(canonical) = std::fs::canonicalize(root) else {
+            continue;
+        };
+        if !canonical.is_dir() || canonical_roots.contains(&canonical) {
+            continue;
+        }
+        canonical_roots.push(canonical);
+    }
+    canonical_roots
+}
+
 impl ToolExecutor {
     pub fn new(workspace_roots: Vec<PathBuf>) -> Self {
-        Self { workspace_roots }
+        let workspace_roots_configured = !workspace_roots.is_empty();
+        let canonical_workspace_roots = canonicalize_workspace_roots(workspace_roots);
+        Self {
+            workspace_roots_configured,
+            canonical_workspace_roots,
+        }
     }
 
     /// 验证执行类操作的 workspace root，并在配置了 workspace roots 时检查其归属。
@@ -103,14 +123,12 @@ impl ToolExecutor {
             )));
         }
 
-        if self.workspace_roots.is_empty() {
+        if !self.workspace_roots_configured {
             return Ok(canonical);
         }
 
-        for root in &self.workspace_roots {
-            if let Ok(root_canonical) = std::fs::canonicalize(root)
-                && canonical.starts_with(&root_canonical)
-            {
+        for root in &self.canonical_workspace_roots {
+            if canonical.starts_with(root) {
                 return Ok(canonical);
             }
         }
@@ -415,22 +433,18 @@ impl ToolExecutor {
         params: &SearchParams<'_>,
     ) -> Result<(Vec<SearchHit>, bool), ToolError> {
         let ws = self.validate_workspace_root(workspace_root)?;
-        let search_dir = match params.path {
-            Some(p) if !p.trim().is_empty() && p.trim() != "." => {
-                resolve_existing_path_with_root(&ws, p)?
-            }
-            _ => ws.clone(),
-        };
-        let policy = FileDiscoveryPolicy::from_base(&search_dir, &ws);
-        if !policy.allows_path(&search_dir, &ws) {
-            return Ok((Vec::new(), false));
-        }
+        search_workspace_with_ripgrep(&ws, params, detect_ripgrep().await).await
+    }
 
-        if let Some(rg) = detect_ripgrep().await {
-            return run_ripgrep(&rg, &search_dir, &ws, params, policy).await;
-        }
-
-        fallback_search(&ws, &search_dir, params, policy).await
+    #[cfg(test)]
+    async fn search_with_ripgrep_path(
+        &self,
+        workspace_root: &str,
+        params: &SearchParams<'_>,
+        rg_path: Option<PathBuf>,
+    ) -> Result<(Vec<SearchHit>, bool), ToolError> {
+        let ws = self.validate_workspace_root(workspace_root)?;
+        search_workspace_with_ripgrep(&ws, params, rg_path).await
     }
 }
 
@@ -452,6 +466,33 @@ pub(crate) fn resolve_detect_workspace_root(workspace_root: &str) -> Result<Path
 
     std::fs::read_dir(&canonical).map_err(ToolError::Io)?;
     Ok(canonical)
+}
+
+async fn search_workspace_with_ripgrep(
+    workspace_root: &Path,
+    params: &SearchParams<'_>,
+    rg_path: Option<PathBuf>,
+) -> Result<(Vec<SearchHit>, bool), ToolError> {
+    let search_dir = match params.path {
+        Some(p) if !p.trim().is_empty() && p.trim() != "." => {
+            resolve_existing_path_with_root(workspace_root, p)?
+        }
+        _ => workspace_root.to_path_buf(),
+    };
+    let policy = FileDiscoveryPolicy::from_base(&search_dir, workspace_root);
+    if !policy.allows_path(&search_dir, workspace_root) {
+        return Ok((Vec::new(), false));
+    }
+
+    let rg = rg_path.ok_or_else(ripgrep_unavailable_error)?;
+    run_ripgrep(&rg, &search_dir, workspace_root, params, policy).await
+}
+
+fn ripgrep_unavailable_error() -> ToolError {
+    ToolError::Io(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "未找到 rg/ripgrep",
+    ))
 }
 
 async fn detect_ripgrep() -> Option<PathBuf> {
@@ -578,138 +619,6 @@ async fn run_ripgrep(
     Ok((hits, truncated))
 }
 
-async fn fallback_search(
-    workspace_root: &Path,
-    search_dir: &Path,
-    params: &SearchParams<'_>,
-    policy: FileDiscoveryPolicy,
-) -> Result<(Vec<SearchHit>, bool), ToolError> {
-    let ws = workspace_root.to_path_buf();
-    let dir = search_dir.to_path_buf();
-    let query = params.query.to_string();
-    let regex = if params.is_regex {
-        Some(
-            regex::Regex::new(&query)
-                .map_err(|e| ToolError::InvalidPath(format!("无效正则: {e}")))?,
-        )
-    } else {
-        None
-    };
-    let max_results = params.max_results;
-    let context_lines = params.context_lines;
-
-    tokio::task::spawn_blocking(move || {
-        let mut collector = FallbackCollector {
-            workspace_root: &ws,
-            query: &query,
-            regex: regex.as_ref(),
-            max_results,
-            context_lines,
-            policy,
-            hits: Vec::new(),
-            truncated: false,
-        };
-        collector.walk(&dir);
-        Ok((collector.hits, collector.truncated))
-    })
-    .await
-    .map_err(|e| ToolError::Io(std::io::Error::other(e)))?
-}
-
-const FALLBACK_MAX_FILE_BYTES: u64 = 256 * 1024;
-
-struct FallbackCollector<'a> {
-    workspace_root: &'a Path,
-    query: &'a str,
-    regex: Option<&'a regex::Regex>,
-    max_results: usize,
-    context_lines: usize,
-    policy: FileDiscoveryPolicy,
-    hits: Vec<SearchHit>,
-    truncated: bool,
-}
-
-impl FallbackCollector<'_> {
-    fn walk(&mut self, dir: &Path) {
-        let walker = build_walk(dir, self.workspace_root, self.policy, true);
-        for result in walker.build() {
-            if self.hits.len() >= self.max_results {
-                self.truncated = true;
-                return;
-            }
-            let entry = match result {
-                Ok(entry) => entry,
-                Err(_) => continue,
-            };
-            if entry.path() == dir {
-                continue;
-            }
-            if entry
-                .file_type()
-                .is_some_and(|file_type| file_type.is_file())
-            {
-                self.scan_file(entry.path());
-            }
-        }
-    }
-
-    fn scan_file(&mut self, path: &Path) {
-        let meta = match std::fs::metadata(path) {
-            Ok(m) => m,
-            Err(_) => return,
-        };
-        if meta.len() > FALLBACK_MAX_FILE_BYTES {
-            return;
-        }
-        let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        let lines: Vec<&str> = content.lines().collect();
-        let Ok(rel) = workspace_relative_path(path, self.workspace_root) else {
-            tracing::warn!(
-                path = %path.display(),
-                workspace_root = %self.workspace_root.display(),
-                "fallback search skipped path outside workspace root"
-            );
-            return;
-        };
-
-        for (idx, line) in lines.iter().enumerate() {
-            let matched = match &self.regex {
-                Some(re) => re.is_match(line),
-                None => line.contains(self.query),
-            };
-            if matched {
-                let ctx_before: Vec<String> = if self.context_lines > 0 {
-                    let start = idx.saturating_sub(self.context_lines);
-                    lines[start..idx].iter().map(|s| s.to_string()).collect()
-                } else {
-                    Vec::new()
-                };
-                let ctx_after: Vec<String> = if self.context_lines > 0 {
-                    let end = (idx + 1 + self.context_lines).min(lines.len());
-                    lines[idx + 1..end].iter().map(|s| s.to_string()).collect()
-                } else {
-                    Vec::new()
-                };
-
-                self.hits.push(SearchHit {
-                    path: rel.clone(),
-                    line_number: idx + 1,
-                    content: line.to_string(),
-                    context_before: ctx_before,
-                    context_after: ctx_after,
-                });
-                if self.hits.len() >= self.max_results {
-                    self.truncated = true;
-                    return;
-                }
-            }
-        }
-    }
-}
-
 fn resolve_existing_path_with_root(
     workspace_root: &Path,
     relative_path: &str,
@@ -745,12 +654,26 @@ fn resolve_path_for_write_with_root(
     let parent = candidate
         .parent()
         .ok_or_else(|| ToolError::InvalidPath(relative_path.to_string()))?;
-    std::fs::create_dir_all(parent)?;
-    let canonical_parent = std::fs::canonicalize(parent)?;
+    let canonical_parent = canonical_existing_write_parent(parent, relative_path)?;
     if !canonical_parent.starts_with(workspace_root) {
         return Err(ToolError::PathNotAccessible(relative_path.to_string()));
     }
     Ok(candidate)
+}
+
+fn canonical_existing_write_parent(
+    parent: &Path,
+    relative_path: &str,
+) -> Result<PathBuf, ToolError> {
+    let mut current = parent;
+    loop {
+        if current.exists() {
+            return std::fs::canonicalize(current).map_err(ToolError::Io);
+        }
+        current = current
+            .parent()
+            .ok_or_else(|| ToolError::InvalidPath(relative_path.to_string()))?;
+    }
 }
 
 fn normalize_relative_path(input: &str) -> Result<PathBuf, ToolError> {
@@ -1044,6 +967,28 @@ mod tests {
     }
 
     #[test]
+    fn resolve_path_for_write_does_not_create_parent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let nested = temp.path().join("nested");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        let resolved = executor
+            .resolve_path_for_write("nested/demo.txt", &root)
+            .expect("write path should resolve");
+        let expected = std::fs::canonicalize(temp.path())
+            .expect("canonical workspace")
+            .join("nested")
+            .join("demo.txt");
+
+        assert_eq!(resolved, expected);
+        assert!(
+            !nested.exists(),
+            "write path resolution must not create parent directories"
+        );
+    }
+
+    #[test]
     fn validate_workspace_root_allows_mount_root_when_workspace_roots_empty() {
         let workspace = tempfile::tempdir().expect("workspace");
         let executor = ToolExecutor::new(Vec::new());
@@ -1056,6 +1001,37 @@ mod tests {
             resolved,
             std::fs::canonicalize(workspace.path()).expect("canonical workspace")
         );
+    }
+
+    #[test]
+    fn registered_roots_are_canonicalized_and_deduped_on_construction() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let duplicate = workspace.path().join(".");
+        let executor = ToolExecutor::new(vec![workspace.path().to_path_buf(), duplicate]);
+
+        assert!(executor.workspace_roots_configured);
+        assert_eq!(executor.canonical_workspace_roots.len(), 1);
+        assert_eq!(
+            executor.canonical_workspace_roots[0],
+            std::fs::canonicalize(workspace.path()).expect("canonical workspace")
+        );
+    }
+
+    #[test]
+    fn unavailable_registered_roots_do_not_open_workspace_boundary() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let unavailable_parent = tempfile::tempdir().expect("unavailable parent");
+        let unavailable_root = unavailable_parent.path().join("missing");
+        let executor = ToolExecutor::new(vec![unavailable_root]);
+        let root = workspace.path().to_string_lossy().to_string();
+
+        assert!(executor.workspace_roots_configured);
+        assert!(executor.canonical_workspace_roots.is_empty());
+
+        let error = executor
+            .validate_workspace_root(&root)
+            .expect_err("unavailable configured roots should fail closed");
+        assert!(matches!(error, ToolError::PathNotAccessible(_)));
     }
 
     #[test]
@@ -1278,14 +1254,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fallback_search_uses_same_ignore_policy() {
+    async fn search_requires_ripgrep_when_unavailable() {
         let temp = tempfile::tempdir().expect("tempdir");
-        write_file(&temp.path().join(".gitignore"), "ignored/\n");
         write_file(&temp.path().join("src/main.rs"), "needle in source\n");
-        write_file(
-            &temp.path().join("ignored/generated.rs"),
-            "needle in generated\n",
-        );
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
         let params = SearchParams {
             query: "needle",
             path: None,
@@ -1295,28 +1268,14 @@ mod tests {
             context_lines: 0,
         };
 
-        let implicit_policy = FileDiscoveryPolicy::from_base(temp.path(), temp.path());
-        let (default_hits, _) = fallback_search(temp.path(), temp.path(), &params, implicit_policy)
+        let error = executor
+            .search_with_ripgrep_path(&root, &params, None)
             .await
-            .expect("fallback search");
-        assert!(default_hits.iter().any(|hit| hit.path == "src/main.rs"));
-        assert!(
-            !default_hits
-                .iter()
-                .any(|hit| hit.path.starts_with("ignored/"))
-        );
-
-        let ignored_dir = temp.path().join("ignored");
-        let explicit_policy = FileDiscoveryPolicy::from_base(&ignored_dir, temp.path());
-        let (explicit_hits, _) =
-            fallback_search(temp.path(), &ignored_dir, &params, explicit_policy)
-                .await
-                .expect("fallback explicit search");
-        assert!(
-            explicit_hits
-                .iter()
-                .any(|hit| hit.path == "ignored/generated.rs")
-        );
+            .expect_err("search should require ripgrep");
+        assert!(matches!(
+            error,
+            ToolError::Io(ref io_error) if io_error.kind() == std::io::ErrorKind::NotFound
+        ));
     }
 
     #[test]

@@ -11,8 +11,7 @@ use crate::rpc::ApiError;
 
 /// session shell → anchor → frame → typed VFS 查询结果。
 ///
-/// 从 `AgentFrame` 直接反序列化 `vfs_surface_json` 获得，
-/// 替代此前 `RuntimeContextInspectionPlanner::plan_project_context_query` 重建完整 plan 的路径。
+/// 从 `AgentFrame` 直接反序列化 `vfs_surface_json`，复用 frame construction 主链路产物。
 pub(crate) struct SessionFrameVfsResult {
     pub vfs: Option<Vfs>,
     #[allow(dead_code)]

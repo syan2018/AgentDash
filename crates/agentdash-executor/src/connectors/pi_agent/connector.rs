@@ -73,6 +73,7 @@ impl PiAgentModelSelection {
 }
 
 struct ProviderRuntimeState {
+    uses_dynamic_provider_catalog: bool,
     default_bridge: Option<Arc<dyn LlmBridge>>,
     default_model: Option<String>,
     profiles: Vec<EffectiveLlmProviderProfile>,
@@ -167,6 +168,7 @@ impl PiAgentConnector {
                 .map(|provider| (provider.provider_id, provider.reason))
                 .collect();
             return ProviderRuntimeState {
+                uses_dynamic_provider_catalog: true,
                 default_bridge,
                 default_model,
                 profiles: catalog.providers,
@@ -187,6 +189,7 @@ impl PiAgentConnector {
                 .map(|provider| provider.default_model.clone())
                 .or_else(|| Some("static-default".to_string()));
             return ProviderRuntimeState {
+                uses_dynamic_provider_catalog: false,
                 default_bridge: Some(self.bridge.clone()),
                 default_model,
                 profiles: Vec::new(),
@@ -196,6 +199,7 @@ impl PiAgentConnector {
         }
 
         ProviderRuntimeState {
+            uses_dynamic_provider_catalog: false,
             default_bridge: None,
             default_model: None,
             profiles: Vec::new(),
@@ -242,6 +246,13 @@ impl PiAgentConnector {
         }
 
         if provider_id.is_none() && model_id.is_none() {
+            if provider_state.uses_dynamic_provider_catalog {
+                return Err(ConnectorError::InvalidConfig(
+                    "本次 Pi Agent 调用缺少模型选择：请先在模型选择器中选择可用的 Provider/Model，再重新发送"
+                        .to_string(),
+                ));
+            }
+
             if let Some(provider) = provider_state.providers.first() {
                 let resolved_model = provider.resolve_model(None).await.map_err(|error| {
                     ConnectorError::InvalidConfig(describe_provider_model_error(

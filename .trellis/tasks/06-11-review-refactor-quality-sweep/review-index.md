@@ -1,0 +1,65 @@
+# Review Index
+
+## 状态
+
+- 分支：`codex/review-refactor-quality-sweep`
+- 当前阶段：首轮并行扫描与 review
+- 主控：`codex-agent`
+
+## 当前并行队列
+
+| 模块 | 类型 | 状态 | 记录 |
+| --- | --- | --- | --- |
+| settings-ui | 预备修复 | 已提交 | `fixes/000-settings-ui-system-sections.md` |
+| vfs-service | review | 已归档 | `reviews/001-vfs-service.md` |
+| workflow-orchestration | review | 已归档 | `reviews/002-workflow-orchestration.md` |
+| session-stream | review | 已归档 | `reviews/003-session-stream.md` |
+| local-runtime | review | 已归档 | `reviews/004-local-runtime.md` |
+| settings-llm-providers | review | 已归档 | `reviews/005-settings-llm-providers.md` |
+| workflow-orchestration | 修复 | 已提交 | `fixes/001-workflow-orchestration-quick-cleanup.md` |
+
+## 已完成模块
+
+| 模块 | commit | 验证 |
+| --- | --- | --- |
+| settings-ui | `9c7999a0` | `pnpm --filter app-web run typecheck`; `pnpm --filter app-web run lint`; `fuck-u-code analyze packages/app-web/src/features/settings/ui ...` |
+
+## 待 review 候选
+
+| 模块 | 来源 | 备注 |
+| --- | --- | --- |
+| vfs-service | `fuck-u-code` 初筛 | `crates/agentdash-application/src/vfs/service.rs` |
+| workflow-orchestration | `fuck-u-code` 初筛 | `runtime.rs` / `compiler.rs` / `script_compiler.rs` / `executor_launcher.rs` |
+| local-runtime | `fuck-u-code` 初筛 | `crates/agentdash-local/src/tool_executor.rs` |
+| session-stream | `fuck-u-code` 初筛 | `packages/app-web/src/features/session/model/useSessionStream.ts` |
+| settings-llm-providers | `fuck-u-code` 初筛 | `LlmProvidersSection.tsx` 文件过大 |
+
+## 模块级 refactor 候选
+
+这些项体现耦合或职责过宽，但未达到 architecture backlog 门槛，应优先按模块快速修复。
+
+| 模块 | 来源 | 候选 |
+| --- | --- | --- |
+| vfs-service | `reviews/001-vfs-service.md` | runtime tool provider composition root 位置不当，可先在模块内重命名/拆出 VFS tool factory |
+| vfs-service | `reviews/001-vfs-service.md` | API resolver 编排过重，可先收敛 helper/adapter 边界 |
+| workflow-orchestration | `reviews/002-workflow-orchestration.md` | `OrchestrationExecutorLauncher` 过宽，可按 executor kind 渐进拆小服务 |
+| workflow-orchestration | `reviews/002-workflow-orchestration.md` | `ReadyNodeTarget` 裸传坐标和快照，可先引入 typed coordinate/view |
+| session-stream | `reviews/003-session-stream.md` | `useSessionStream` 暴露职责过宽，可先拆 event stream/feed/control 边界 |
+| session-stream | `reviews/003-session-stream.md` | platform/session_meta_update 策略分散，可先抽 `sessionEventPolicy` |
+| local-runtime | `reviews/004-local-runtime.md` | `CommandHandler` 过宽，可拆 command router 和领域 handler context |
+| local-runtime | `reviews/004-local-runtime.md` | `ToolExecutor` 过宽，可拆 workspace boundary、file/search/shell executor |
+| local-runtime | `reviews/004-local-runtime.md` | prompt MCP servers raw JSON，可收敛 relay/local typed contract |
+| local-runtime | `reviews/004-local-runtime.md` | Extension Host 未接通 API surface 可接通或移除 |
+| local-runtime | `reviews/004-local-runtime.md` | env/process 权限边界可收敛为 process/env policy |
+| local-runtime | `reviews/004-local-runtime.md` | 搜索 rg/fallback 双链路可统一 contract 或删除 fallback |
+| settings-llm-providers | `reviews/005-settings-llm-providers.md` | `LlmProviderForm` 可拆状态 hook 和小组件 |
+| settings-llm-providers | `reviews/005-settings-llm-providers.md` | models/blocked_models parse/serialize 可移入 model 并测试 |
+| settings-llm-providers | `reviews/005-settings-llm-providers.md` | probe/OAuth action 可从 UI 下沉到 model |
+| settings-llm-providers | `reviews/005-settings-llm-providers.md` | provider preset 可先移入 settings model 常量 |
+
+## 提交索引
+
+| commit | 模块 | 摘要 |
+| --- | --- | --- |
+| `9c7999a0` | settings-ui | 收敛系统设置区块组件结构 |
+| `e5f31c65` | workflow-orchestration | 清理不可达诊断、未用编译模式与误导工具描述 |

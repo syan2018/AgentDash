@@ -14,10 +14,10 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-/// Agent 主动声明当前 lifecycle node 完成或失败。
+/// Agent session 节点主动提交当前 terminal outcome。
 ///
-/// 这是 DAG 编排的唯一推进路径（决策 D2 / D8）：
-/// agent 调用此工具 → Orchestrator 验证 → 放行或拒绝。
+/// 工具调用会交给 Orchestrator 校验，并通过 common orchestration runtime
+/// materialize 当前节点的 completed / failed outcome。
 #[derive(Clone)]
 pub struct CompleteLifecycleNodeTool {
     repos: crate::repository_set::RepositorySet,
@@ -73,7 +73,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
     }
 
     fn description(&self) -> &str {
-        "声明当前 lifecycle node 完成或失败。这是推进 lifecycle 的唯一方式。\n\
+        "Agent session 节点主动提交当前 terminal outcome。\n\
          - outcome=completed（默认）：检查产物门禁，通过后完成 node 并触发后继编排。\n\
          - outcome=failed：跳过门禁，直接标记 node 失败，不触发后继。"
     }

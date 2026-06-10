@@ -847,15 +847,6 @@ impl<'a> Compiler<'a> {
         } else {
             vec![gate.decision_port.clone()]
         };
-        if !gate.decision_port.trim().is_empty()
-            && !outputs.iter().any(|port| port == &gate.decision_port)
-        {
-            self.diagnostics.push(ScriptCompileDiagnostic::error(
-                "human_gate_decision_port_mismatch",
-                "human_gate decision_port must be declared as an output port",
-                format!("{source_path}.decision_port"),
-            ));
-        }
         self.capability_summary.record_human_gate(
             &gate.name,
             &gate.form_schema,

@@ -105,6 +105,16 @@ export function WorkspaceList({
     onSetDefault(defaultWorkspaceId === workspaceId ? null : workspaceId);
   };
 
+  const handleOpenCreate = async () => {
+    await loadRoutingInputs();
+    setIsCreateOpen(true);
+  };
+
+  const handleOpenDetail = async (workspaceId: string) => {
+    await loadRoutingInputs();
+    setSelectedWorkspaceId(workspaceId);
+  };
+
   return (
     <>
       <div className="space-y-3">
@@ -117,7 +127,7 @@ export function WorkspaceList({
           </div>
           <button
             type="button"
-            onClick={() => setIsCreateOpen(true)}
+            onClick={() => void handleOpenCreate()}
             className="rounded-[8px] border border-border bg-background px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             + 新建 Workspace
@@ -210,7 +220,7 @@ export function WorkspaceList({
                     )}
                     <button
                       type="button"
-                      onClick={() => setSelectedWorkspaceId(workspace.id)}
+                      onClick={() => void handleOpenDetail(workspace.id)}
                       className="rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                     >
                       详情

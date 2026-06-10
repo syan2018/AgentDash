@@ -426,8 +426,20 @@ pub struct RuntimeContextFragmentEntry {
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeSkillEntry {
     pub name: String,
+    #[serde(default)]
+    pub capability_key: String,
+    #[serde(default)]
+    pub provider_key: String,
+    #[serde(default)]
+    pub local_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub description: String,
     pub file_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_dir: Option<String>,
+    #[serde(default)]
+    pub exposure: crate::platform::skill_discovery::SkillContextExposure,
     #[serde(default)]
     pub disable_model_invocation: bool,
 }

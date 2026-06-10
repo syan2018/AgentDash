@@ -130,6 +130,33 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("CTN");
     expect(markup).toContain("Session Continuation");
   });
+
+  it("解析并渲染 skill_delta 的 provider scoped identity", () => {
+    const notice = parseContextFrame(sampleSkillDeltaNotice());
+    const section = notice?.sections[0];
+
+    expect(section?.kind).toBe("skill_delta");
+    if (section?.kind === "skill_delta") {
+      expect(section.added_skills[0]?.capability_key).toBe("copilot/config-edit");
+      expect(section.added_skills[0]?.provider_key).toBe("copilot");
+      expect(section.added_skills[0]?.local_name).toBe("config-edit");
+      expect(section.added_skills[0]?.exposure).toBe("default_exposed");
+      expect(section.changed_skills[0]?.exposure).toBe("explicit_only");
+    }
+
+    const markup = renderToStaticMarkup(
+      <ContextFrameCard data={sampleSkillDeltaNotice()} defaultExpanded />,
+    );
+    expect(markup).toContain("Skills");
+    expect(markup).toContain("+2");
+    expect(markup).toContain("−1");
+    expect(markup).toContain("↻1");
+    expect(markup).toContain("provider: copilot");
+    expect(markup).toContain("capability: copilot/config-edit");
+    expect(markup).toContain("provider: workspace");
+    expect(markup).toContain("capability: workspace/config-edit");
+    expect(markup).toContain("explicit only");
+  });
 });
 
 function sampleNotice(): Record<string, unknown> {
@@ -340,6 +367,63 @@ function sampleContinuationNotice(): Record<string, unknown> {
         summary: "从会话仓储恢复 3 条历史消息。",
         owner_context: "## Owner Context\nproject",
         transcript_markdown: "### Transcript\n#### 用户\n继续处理",
+      },
+    ],
+  };
+}
+
+function sampleSkillDeltaNotice(): Record<string, unknown> {
+  return {
+    id: "skill-delta-1",
+    kind: "capability_state_update",
+    source: "runtime_context_update",
+    phase_node: "apply",
+    delivery_status: "queued_for_transform_context",
+    delivery_channel: "turn_start",
+    message_role: "user",
+    rendered_text: "## Skill Delta",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "skill_delta",
+        added_skills: [
+          {
+            name: "config-edit",
+            capability_key: "copilot/config-edit",
+            provider_key: "copilot",
+            local_name: "config-edit",
+            display_name: "Config Edit",
+            description: "Edit config with provider context",
+            file_path: "copilot://skills/config-edit/SKILL.md",
+            exposure: "default_exposed",
+          },
+          {
+            name: "config-edit",
+            capability_key: "workspace/config-edit",
+            provider_key: "workspace",
+            local_name: "config-edit",
+            description: "Workspace config edit",
+            file_path: "workspace://skills/config-edit/SKILL.md",
+          },
+        ],
+        removed_skills: [
+          {
+            name: "legacy-review",
+            description: "Legacy review skill",
+            file_path: "workspace://skills/legacy-review/SKILL.md",
+          },
+        ],
+        changed_skills: [
+          {
+            capability_key: "provider-x/manual-only",
+            provider_key: "provider-x",
+            local_name: "manual-only",
+            display_name: "Manual Only",
+            description: "Explicit path only",
+            file_path: "provider-x://skills/manual-only/SKILL.md",
+            exposure: "explicit_only",
+          },
+        ],
       },
     ],
   };

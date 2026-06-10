@@ -1752,6 +1752,52 @@ async fn prompt_without_provider_configuration_returns_clear_error() {
 }
 
 #[tokio::test]
+async fn prompt_missing_model_selection_reports_guidance_with_dynamic_providers() {
+    use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
+
+    let settings_repo = Arc::new(TestSettingsRepository::default());
+    let llm_repo = Arc::new(TestLlmProviderRepository::default());
+    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let secret_codec = Arc::new(TestLlmSecretCodec);
+
+    let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
+    provider.global_api_key_ciphertext = "test-key".to_string();
+    provider.default_model = "model-ok".to_string();
+    llm_repo.set_providers(vec![provider]);
+
+    let mut connector = build_pi_agent_connector(
+        settings_repo.as_ref(),
+        llm_repo.as_ref(),
+        credential_repo.as_ref(),
+        secret_codec.as_ref(),
+    )
+    .await
+    .expect("connector should initialize");
+    connector.set_llm_provider_repository(llm_repo);
+    connector.set_llm_provider_credential_repository(credential_repo);
+    connector.set_llm_secret_codec(secret_codec);
+
+    let result = connector
+        .prompt(
+            "session-missing-model-selection",
+            None,
+            &PromptPayload::Text("hello".to_string()),
+            execution_context_with_config(agentdash_spi::AgentConfig::new("PI_AGENT")),
+        )
+        .await;
+
+    match result {
+        Err(ConnectorError::InvalidConfig(message)) => {
+            assert!(message.contains("缺少模型选择"));
+            assert!(message.contains("模型选择器"));
+            assert!(message.contains("Provider/Model"));
+        }
+        Ok(_) => panic!("prompt should fail when dynamic provider mode has no model selection"),
+        Err(other) => panic!("unexpected connector error: {other}"),
+    }
+}
+
+#[tokio::test]
 async fn prompt_selected_unavailable_provider_reports_credential_mode() {
     use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
 

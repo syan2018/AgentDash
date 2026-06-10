@@ -36,6 +36,7 @@ pub(crate) struct SessionBootstrapInput {
     pub platform_config: SharedPlatformConfig,
     pub integration_connectors: Vec<Arc<dyn AgentConnector>>,
     pub extra_skill_dirs: Vec<PathBuf>,
+    pub skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
     pub llm_provider_secret: Arc<dyn LlmSecretCodec>,
 }
 
@@ -54,6 +55,7 @@ pub(crate) struct SessionBootstrapOutput {
     pub connector: Arc<dyn AgentConnector>,
     pub hook_provider: Arc<AppExecutionHookProvider>,
     pub extra_skill_dirs: Vec<PathBuf>,
+    pub skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
 }
 
 pub(crate) async fn build_session_runtime(
@@ -71,6 +73,7 @@ pub(crate) async fn build_session_runtime(
         platform_config: _platform_config,
         integration_connectors,
         extra_skill_dirs,
+        skill_discovery_providers,
         llm_provider_secret,
     } = input;
 
@@ -131,6 +134,7 @@ pub(crate) async fn build_session_runtime(
     )
     .with_vfs_service(vfs_service.clone())
     .with_extra_skill_dirs(extra_skill_dirs.clone())
+    .with_skill_discovery_providers(skill_discovery_providers.clone())
     .with_runtime_tool_provider(runtime_tool_provider)
     .with_mcp_relay_provider(mcp_relay_provider)
     .with_backend_execution_placement(relay_transport, repos.backend_execution_lease_repo.clone())
@@ -188,6 +192,7 @@ pub(crate) async fn build_session_runtime(
         connector,
         hook_provider,
         extra_skill_dirs,
+        skill_discovery_providers,
     })
 }
 

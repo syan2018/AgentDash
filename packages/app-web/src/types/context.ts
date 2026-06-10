@@ -130,11 +130,85 @@ export interface CompanionAgentEntry {
 
 export interface SkillEntry {
   name: string;
+  capability_key?: string;
+  provider_key?: string;
+  local_name?: string;
+  display_name?: string | null;
   description: string;
   file_path: string;
+  base_dir?: string | null;
+  exposure?: SkillContextExposure;
   disable_model_invocation?: boolean;
+}
+
+export type SkillContextExposure = "default_exposed" | "explicit_only";
+
+export interface SkillIdentityFields {
+  name?: string;
+  capability_key?: string;
+  provider_key?: string;
+  local_name?: string;
+  display_name?: string | null;
+  exposure?: SkillContextExposure;
+  disable_model_invocation?: boolean;
+}
+
+export interface SkillCapabilityEntry {
+  capability_key: string;
+  provider_key: string;
+  local_name: string;
+  display_name?: string | null;
+  description: string;
+  file_path: string;
+  base_dir?: string | null;
+  exposure?: SkillContextExposure;
+  disable_model_invocation?: boolean;
+}
+
+export interface SkillProviderCluster {
+  provider_key: string;
+  display_name: string;
+  model_summary?: string | null;
+  ui_summary?: string | null;
+  inventory_hint?: string | null;
+  inventory_count?: number | null;
+  default_exposed_skills: SkillCapabilityEntry[];
+}
+
+export interface SkillDiscoveryDiagnostic {
+  provider_key: string;
+  code: string;
+  message: string;
+  local_name?: string | null;
+  file_path?: string | null;
 }
 
 export interface SessionBaselineCapabilities {
   skills: SkillEntry[];
+  skill_clusters?: SkillProviderCluster[];
+  skill_diagnostics?: SkillDiscoveryDiagnostic[];
+}
+
+export function skillDisplayLabel(skill: SkillIdentityFields): string {
+  return (
+    skill.display_name
+    ?? skill.local_name
+    ?? skill.name
+    ?? skill.capability_key
+    ?? "skill"
+  );
+}
+
+export function skillIdentityKey(skill: SkillIdentityFields): string {
+  if (skill.capability_key) return skill.capability_key;
+  if (skill.provider_key && skill.local_name) return `${skill.provider_key}/${skill.local_name}`;
+  return skill.name ?? skill.local_name ?? "skill";
+}
+
+export function isDefaultExposedSkill(skill: SkillIdentityFields): boolean {
+  return (skill.exposure ?? "default_exposed") === "default_exposed";
+}
+
+export function isModelInvocationVisibleSkill(skill: SkillIdentityFields): boolean {
+  return isDefaultExposedSkill(skill) && skill.disable_model_invocation !== true;
 }

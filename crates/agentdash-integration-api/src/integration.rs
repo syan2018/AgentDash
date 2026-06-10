@@ -5,6 +5,7 @@ use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::MarketplaceSourceProvider;
 use agentdash_spi::RoutineTriggerProvider;
+use agentdash_spi::SkillDiscoveryProvider;
 use agentdash_spi::platform::mount::MountProvider;
 use agentdash_spi::{SourceResolver, VfsDiscoveryProvider};
 
@@ -109,6 +110,14 @@ pub trait AgentDashIntegration: Send + Sync {
     /// 宿主启动时统一收集并校验 `source_key` 与支持的 Shared Library 资产类型。
     /// Provider 只负责外部目录发现、分页、详情和拉取候选 payload，不直接写数据库。
     fn marketplace_source_providers(&self) -> Vec<Arc<dyn MarketplaceSourceProvider>> {
+        vec![]
+    }
+
+    /// 注册动态 Skill Discovery provider。
+    ///
+    /// Provider 可基于 session/workspace/user 等通用上下文贡献 skill inventory 与
+    /// 默认上下文暴露列表。该扩展点只描述 context exposure，不表达权限控制。
+    fn skill_discovery_providers(&self) -> Vec<Arc<dyn SkillDiscoveryProvider>> {
         vec![]
     }
 

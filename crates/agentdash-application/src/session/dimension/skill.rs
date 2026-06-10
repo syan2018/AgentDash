@@ -23,18 +23,33 @@ impl SkillDimensionDelta {
             return None;
         }
         let lookup = |name: &str| -> RuntimeSkillEntry {
-            if let Some(entry) = skill_entries.iter().find(|e| e.name == name) {
+            if let Some(entry) = skill_entries
+                .iter()
+                .find(|e| e.capability_key_or_name() == name)
+            {
                 RuntimeSkillEntry {
                     name: entry.name.clone(),
+                    capability_key: entry.capability_key.clone(),
+                    provider_key: entry.provider_key.clone(),
+                    local_name: entry.local_name.clone(),
+                    display_name: entry.display_name.clone(),
                     description: entry.description.clone(),
                     file_path: entry.file_path.clone(),
+                    base_dir: entry.base_dir.clone(),
+                    exposure: entry.exposure,
                     disable_model_invocation: entry.disable_model_invocation,
                 }
             } else {
                 RuntimeSkillEntry {
                     name: name.to_string(),
+                    capability_key: name.to_string(),
+                    provider_key: String::new(),
+                    local_name: name.to_string(),
+                    display_name: None,
                     description: String::new(),
                     file_path: String::new(),
+                    base_dir: None,
+                    exposure: agentdash_spi::SkillContextExposure::DefaultExposed,
                     disable_model_invocation: false,
                 }
             }

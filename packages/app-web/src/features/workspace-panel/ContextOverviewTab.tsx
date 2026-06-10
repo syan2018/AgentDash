@@ -8,6 +8,12 @@ import { useState } from "react";
 import { VfsBrowser } from "../vfs";
 import { SurfaceCard } from "../session-context";
 import { RUNTIME_NODE_STATUS_LABEL, RUN_STATUS_LABEL } from "../workflow/shared-labels";
+import {
+  isDefaultExposedSkill,
+  isModelInvocationVisibleSkill,
+  skillDisplayLabel,
+  skillIdentityKey,
+} from "../../types";
 import type {
   ActiveWorkflowHookMetadata,
   HookInjection,
@@ -19,6 +25,9 @@ import type {
   SessionBaselineCapabilities,
   SessionComposition,
   SessionContextSnapshot,
+  SkillCapabilityEntry,
+  SkillEntry,
+  SkillProviderCluster,
   Story,
   TaskSessionExecutorSummary,
 } from "../../types";
@@ -549,40 +558,135 @@ function SessionCapabilitiesCard({
 }: {
   capabilities: SessionBaselineCapabilities;
 }) {
-  const visibleSkills = capabilities.skills.filter((s) => !s.disable_model_invocation);
-  const skillCount = visibleSkills.length;
+  const clusters = visibleCapabilityClusters(capabilities);
+  const usesClusters = clusters.length > 0;
+  const visibleSkills = usesClusters ? [] : capabilities.skills.filter(isModelInvocationVisibleSkill);
+  const skillCount = usesClusters
+    ? clusters.reduce((total, cluster) => total + defaultExposedSkills(cluster).length, 0)
+    : visibleSkills.length;
 
-  if (skillCount === 0) return null;
+  if (!usesClusters && skillCount === 0) return null;
 
   return (
     <SurfaceCard
       eyebrow="Session 能力基线"
-      title={skillCount > 0 ? `${skillCount} 个可用 Skill` : ""}
+      title={usesClusters ? `${clusters.length} 个 Skill Provider` : `${skillCount} 个默认暴露 Skill`}
     >
-      {skillCount > 0 && (
-        <div>
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            Skills ({skillCount})
-          </p>
-          <div className="space-y-1">
-            {visibleSkills.map((skill) => (
-              <div
-                key={skill.name}
-                className="flex items-start gap-2 rounded-[6px] border border-border/70 bg-secondary/25 px-2.5 py-1.5"
-              >
-                <span className="shrink-0 text-xs font-medium text-foreground">{skill.name}</span>
-                <span className="flex-1 truncate text-[11px] text-muted-foreground">
-                  {skill.description.length > 100
-                    ? `${skill.description.slice(0, 100)}…`
-                    : skill.description}
-                </span>
-              </div>
-            ))}
-          </div>
+      {usesClusters ? (
+        <div className="space-y-2">
+          {clusters.map((cluster) => (
+            <SkillProviderClusterBlock key={cluster.provider_key} cluster={cluster} />
+          ))}
         </div>
+      ) : (
+        <SkillListBlock skills={visibleSkills} title={`Skills (${skillCount})`} />
       )}
     </SurfaceCard>
   );
+}
+
+function SkillProviderClusterBlock({ cluster }: { cluster: SkillProviderCluster }) {
+  const skills = defaultExposedSkills(cluster);
+  const summary = cluster.ui_summary ?? cluster.model_summary ?? "";
+  return (
+    <div className="rounded-[8px] border border-border/70 bg-secondary/20 px-2.5 py-2">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-medium text-foreground">
+            {cluster.display_name || cluster.provider_key}
+          </p>
+          {summary && (
+            <p className="mt-0.5 text-[11px] leading-5 text-muted-foreground">
+              {summary}
+            </p>
+          )}
+        </div>
+        {cluster.inventory_count != null && (
+          <span className="shrink-0 rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            inventory {cluster.inventory_count}
+          </span>
+        )}
+      </div>
+      {cluster.inventory_hint && (
+        <p className="mt-2 rounded-[6px] border border-border/70 bg-background px-2 py-1.5 text-[11px] leading-5 text-muted-foreground">
+          {cluster.inventory_hint}
+        </p>
+      )}
+      {skills.length > 0 ? (
+        <div className="mt-2">
+          <SkillListBlock skills={skills} title={`默认暴露 Skills (${skills.length})`} />
+        </div>
+      ) : (
+        <p className="mt-2 text-[11px] text-muted-foreground/70">当前没有默认暴露 Skill。</p>
+      )}
+    </div>
+  );
+}
+
+function SkillListBlock({
+  skills,
+  title,
+}: {
+  skills: Array<SkillEntry | SkillCapabilityEntry>;
+  title: string;
+}) {
+  return (
+    <div>
+      <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+        {title}
+      </p>
+      <div className="space-y-1">
+        {skills.map((skill) => (
+          <SkillSummaryRow key={skillIdentityKey(skill)} skill={skill} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SkillSummaryRow({ skill }: { skill: SkillEntry | SkillCapabilityEntry }) {
+  const displayLabel = skillDisplayLabel(skill);
+  const identity = skillIdentityKey(skill);
+  return (
+    <div className="rounded-[6px] border border-border/70 bg-secondary/25 px-2.5 py-1.5">
+      <div className="flex items-start gap-2">
+        <span className="shrink-0 text-xs font-medium text-foreground">{displayLabel}</span>
+        <span className="flex-1 truncate text-[11px] text-muted-foreground">
+          {skill.description.length > 100
+            ? `${skill.description.slice(0, 100)}…`
+            : skill.description}
+        </span>
+      </div>
+      {(skill.provider_key || identity !== displayLabel) && (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {skill.provider_key && <SkillIdentityChip label={skill.provider_key} />}
+          {identity !== displayLabel && <SkillIdentityChip label={identity} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SkillIdentityChip({ label }: { label: string }) {
+  return (
+    <span className="rounded-[4px] border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/70">
+      {label}
+    </span>
+  );
+}
+
+function visibleCapabilityClusters(capabilities: SessionBaselineCapabilities): SkillProviderCluster[] {
+  return (capabilities.skill_clusters ?? []).filter((cluster) => (
+    Boolean(cluster.ui_summary)
+    || Boolean(cluster.model_summary)
+    || Boolean(cluster.inventory_hint)
+    || cluster.inventory_count != null
+    || defaultExposedSkills(cluster).length > 0
+  ));
+}
+
+function defaultExposedSkills(cluster: SkillProviderCluster): SkillCapabilityEntry[] {
+  return (cluster.default_exposed_skills ?? []).filter(isDefaultExposedSkill);
 }
 
 function TechnicalBadges({

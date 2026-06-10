@@ -41,6 +41,7 @@ pub(super) async fn compose(
     );
     let lifecycle = owner_prompt_lifecycle(svc.prompt_lifecycle(Some(&executor_config), input));
     let user_input = required_user_input(input.command.user_input())?;
+    let identity = input.command.identity();
     let builder =
         frame_builder_from_existing(frame, input.session_id.as_str(), input.session_id.as_str())?;
     agent.project_agent_id = Some(project_agent.id);
@@ -55,6 +56,7 @@ pub(super) async fn compose(
                     project: &project,
                     workspace: workspace.as_ref(),
                 },
+                identity: identity.as_ref(),
                 executor_config,
                 user_input,
                 agent_mcp: AgentLevelMcp {

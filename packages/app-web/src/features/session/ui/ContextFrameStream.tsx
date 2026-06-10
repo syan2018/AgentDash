@@ -202,6 +202,10 @@ function summarizeRuntimeUpdate(frame: ContextFrame): string | null {
       removed += section.vfs_mounts_removed.length;
     } else if (section.kind === "tool_schema_delta") {
       added += section.added_tools.length;
+    } else if (section.kind === "skill_delta") {
+      added += section.added_skills.length;
+      removed += section.removed_skills.length;
+      changed += section.changed_skills.length;
     }
   }
   if (added + removed + changed === 0) return null;

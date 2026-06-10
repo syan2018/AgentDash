@@ -100,6 +100,7 @@ impl SessionRuntimeInner {
             persistence,
             vfs_service: None,
             extra_skill_dirs: Vec::new(),
+            skill_discovery_providers: Vec::new(),
             terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
             hook_effect_handler_registry: Arc::new(tokio::sync::RwLock::new(None)),
             session_construction_provider: Arc::new(tokio::sync::RwLock::new(None)),
@@ -197,6 +198,15 @@ impl SessionRuntimeInner {
     /// 注入插件提供的额外 Skill 扫描目录
     pub fn with_extra_skill_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
         self.extra_skill_dirs = dirs;
+        self
+    }
+
+    /// 注入 Host Integration 动态 Skill Discovery providers。
+    pub fn with_skill_discovery_providers(
+        mut self,
+        providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
+    ) -> Self {
+        self.skill_discovery_providers = providers;
         self
     }
 

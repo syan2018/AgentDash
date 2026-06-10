@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent};
-use agentdash_spi::{AgentConfig, AgentConnector, ConnectorError};
+use agentdash_spi::{AgentConfig, AgentConnector, ConnectorError, SkillDiscoveryProvider};
 
 use crate::context::SharedContextAuditBus;
 use crate::platform_config::PlatformConfig;
@@ -51,26 +51,34 @@ pub struct FrameConstructionService {
     pub(crate) audit_bus: SharedContextAuditBus,
     pub(crate) companion_facts: Arc<dyn CompanionParentFactsProvider>,
     pub(crate) connector: Arc<dyn AgentConnector>,
+    pub(crate) extra_skill_dirs: Vec<PathBuf>,
+    pub(crate) skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
+}
+
+pub struct FrameConstructionDeps {
+    pub repos: RepositorySet,
+    pub vfs_service: Arc<VfsService>,
+    pub availability: Arc<dyn BackendAvailability>,
+    pub platform_config: Arc<PlatformConfig>,
+    pub audit_bus: SharedContextAuditBus,
+    pub companion_facts: Arc<dyn CompanionParentFactsProvider>,
+    pub connector: Arc<dyn AgentConnector>,
+    pub extra_skill_dirs: Vec<PathBuf>,
+    pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
 }
 
 impl FrameConstructionService {
-    pub fn new(
-        repos: RepositorySet,
-        vfs_service: Arc<VfsService>,
-        availability: Arc<dyn BackendAvailability>,
-        platform_config: Arc<PlatformConfig>,
-        audit_bus: SharedContextAuditBus,
-        companion_facts: Arc<dyn CompanionParentFactsProvider>,
-        connector: Arc<dyn AgentConnector>,
-    ) -> Self {
+    pub fn new(deps: FrameConstructionDeps) -> Self {
         Self {
-            repos,
-            vfs_service,
-            availability,
-            platform_config,
-            audit_bus,
-            companion_facts,
-            connector,
+            repos: deps.repos,
+            vfs_service: deps.vfs_service,
+            availability: deps.availability,
+            platform_config: deps.platform_config,
+            audit_bus: deps.audit_bus,
+            companion_facts: deps.companion_facts,
+            connector: deps.connector,
+            extra_skill_dirs: deps.extra_skill_dirs,
+            skill_discovery_providers: deps.skill_discovery_providers,
         }
     }
 
@@ -167,6 +175,7 @@ impl FrameConstructionService {
         )
         .with_audit_bus(self.audit_bus.clone())
         .with_companion_parent_facts_provider(self.companion_facts.as_ref())
+        .with_skill_discovery(&self.extra_skill_dirs, &self.skill_discovery_providers)
     }
 
     pub(crate) fn prompt_lifecycle(

@@ -69,6 +69,7 @@ pub(super) async fn compose(
         _ => StoryStepPhase::Continue,
     };
     let explicit_executor_config = input.command.user_input().executor_config.clone();
+    let identity = input.command.identity();
     let builder =
         frame_builder_from_existing(frame, input.session_id.as_str(), input.session_id.as_str())?;
     let (builder, extras, hook_binding) = svc
@@ -80,6 +81,7 @@ pub(super) async fn compose(
                 story: &story,
                 project: &project,
                 workspace: workspace.as_ref(),
+                identity: identity.as_ref(),
                 phase,
                 override_prompt: task_hint
                     .as_ref()

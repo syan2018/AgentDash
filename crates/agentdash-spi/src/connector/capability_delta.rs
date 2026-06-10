@@ -147,7 +147,7 @@ pub fn compute_capability_state_delta(
                 .map(|surface| surface.skill.skills.as_slice())
                 .unwrap_or(&[]),
             after.skill.skills.as_slice(),
-            |skill| skill.name.clone(),
+            |skill| skill.capability_key_or_name().to_string(),
         ),
     }
 }

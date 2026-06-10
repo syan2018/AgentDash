@@ -112,6 +112,7 @@ impl RuntimeContextInspectionPlanner {
         let caps = derive_session_skill_baseline(SessionCapabilityProjectionInput {
             vfs_service: Some(vfs_service),
             active_vfs: vfs,
+            identity: None,
             extra_skill_dirs,
             skill_discovery_providers: &[],
             diagnostics_label: "construction_planner",

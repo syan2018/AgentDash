@@ -12,7 +12,9 @@ use async_trait::async_trait;
 use agentdash_application::session::{
     SessionConstructionProvider, SessionConstructionProviderInput,
 };
-use agentdash_application::workflow::frame_construction::FrameConstructionService;
+use agentdash_application::workflow::frame_construction::{
+    FrameConstructionDeps, FrameConstructionService,
+};
 use agentdash_application::workflow::runtime_launch::FrameLaunchEnvelope;
 use agentdash_spi::ConnectorError;
 
@@ -30,15 +32,17 @@ pub struct AppStateSessionConstructionProvider {
 
 impl AppStateSessionConstructionProvider {
     pub fn new(state: Arc<AppState>) -> Self {
-        let service = FrameConstructionService::new(
-            state.repos.clone(),
-            state.services.vfs_service.clone(),
-            state.services.backend_registry.clone(),
-            state.config.platform_config.clone(),
-            state.services.audit_bus.clone(),
-            Arc::new(state.services.session_capability.clone()),
-            state.services.connector.clone(),
-        );
+        let service = FrameConstructionService::new(FrameConstructionDeps {
+            repos: state.repos.clone(),
+            vfs_service: state.services.vfs_service.clone(),
+            availability: state.services.backend_registry.clone(),
+            platform_config: state.config.platform_config.clone(),
+            audit_bus: state.services.audit_bus.clone(),
+            companion_facts: Arc::new(state.services.session_capability.clone()),
+            connector: state.services.connector.clone(),
+            extra_skill_dirs: state.services.extra_skill_dirs.clone(),
+            skill_discovery_providers: state.services.skill_discovery_providers.clone(),
+        });
         Self { service }
     }
 }

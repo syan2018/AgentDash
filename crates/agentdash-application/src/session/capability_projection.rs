@@ -6,9 +6,9 @@ use agentdash_spi::context::capability::{
     SessionBaselineCapabilities, SkillCapabilityEntry, SkillEntry, SkillProviderCluster,
 };
 use agentdash_spi::{
-    DiscoveredGuideline, SessionMcpServer, SkillContextExposure, SkillDiscoveryCluster,
-    SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryOutput, SkillDiscoveryProvider,
-    Vfs, skill_capability_key,
+    AuthIdentity, DiscoveredGuideline, SessionMcpServer, SkillContextExposure,
+    SkillDiscoveryCluster, SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryOutput,
+    SkillDiscoveryProvider, SkillDiscoveryUserContext, Vfs, skill_capability_key,
 };
 
 use crate::context::mount_file_discovery::{BUILTIN_GUIDELINE_RULES, discover_mount_files};
@@ -24,6 +24,7 @@ use super::types::CapabilityState;
 pub struct SessionCapabilityProjectionInput<'a> {
     pub vfs_service: Option<&'a VfsService>,
     pub active_vfs: Option<&'a Vfs>,
+    pub identity: Option<&'a AuthIdentity>,
     pub extra_skill_dirs: &'a [PathBuf],
     pub skill_discovery_providers: &'a [Arc<dyn SkillDiscoveryProvider>],
     pub diagnostics_label: &'static str,
@@ -100,7 +101,8 @@ pub async fn derive_session_skill_baseline(
         ));
     }
 
-    let discovery_context = skill_discovery_context_from_vfs(input.active_vfs);
+    let discovery_context =
+        skill_discovery_context_from_vfs_and_identity(input.active_vfs, input.identity);
     for provider in input.skill_discovery_providers {
         match provider.discover(discovery_context.clone()).await {
             Ok(output) => {
@@ -203,12 +205,31 @@ pub fn merge_live_vfs_skill_entries(
     merged
 }
 
-fn skill_discovery_context_from_vfs(active_vfs: Option<&Vfs>) -> SkillDiscoveryContext {
+fn skill_discovery_context_from_vfs_and_identity(
+    active_vfs: Option<&Vfs>,
+    identity: Option<&AuthIdentity>,
+) -> SkillDiscoveryContext {
     SkillDiscoveryContext {
         workspace_root_ref: active_vfs
             .and_then(|vfs| vfs.default_mount())
             .map(|mount| mount.root_ref.clone()),
+        user: identity.map(skill_discovery_user_context_from_identity),
         ..SkillDiscoveryContext::default()
+    }
+}
+
+fn skill_discovery_user_context_from_identity(
+    identity: &AuthIdentity,
+) -> SkillDiscoveryUserContext {
+    SkillDiscoveryUserContext {
+        user_id: identity.user_id.clone(),
+        display_name: identity.display_name.clone(),
+        email: identity.email.clone(),
+        groups: identity
+            .groups
+            .iter()
+            .map(|group| group.group_id.clone())
+            .collect(),
     }
 }
 
@@ -375,6 +396,74 @@ fn log_skill_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use std::sync::Mutex;
+
+    fn identity_for_projection() -> AuthIdentity {
+        AuthIdentity {
+            auth_mode: agentdash_spi::AuthMode::Enterprise,
+            user_id: "user-123".to_string(),
+            subject: "subject-123".to_string(),
+            display_name: Some("Ada Lovelace".to_string()),
+            email: Some("ada@example.com".to_string()),
+            avatar_url: Some("https://example.com/avatar.png".to_string()),
+            groups: vec![
+                agentdash_spi::AuthGroup {
+                    group_id: "gameplay".to_string(),
+                    display_name: Some("Gameplay".to_string()),
+                },
+                agentdash_spi::AuthGroup {
+                    group_id: "tools".to_string(),
+                    display_name: None,
+                },
+            ],
+            is_admin: true,
+            provider: Some("test".to_string()),
+            extra: serde_json::json!({
+                "project_id": "should-not-be-projected",
+                "agent_type": "should-not-be-projected"
+            }),
+        }
+    }
+
+    fn vfs_with_default_root(root_ref: &str) -> Vfs {
+        Vfs {
+            mounts: vec![agentdash_domain::common::Mount {
+                id: "workspace".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "backend".to_string(),
+                root_ref: root_ref.to_string(),
+                capabilities: vec![agentdash_domain::common::MountCapability::Read],
+                default_write: false,
+                display_name: "Workspace".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        }
+    }
+
+    #[derive(Default)]
+    struct CapturingSkillDiscoveryProvider {
+        context: Mutex<Option<SkillDiscoveryContext>>,
+    }
+
+    #[async_trait]
+    impl SkillDiscoveryProvider for CapturingSkillDiscoveryProvider {
+        fn provider_key(&self) -> &str {
+            "test.capture"
+        }
+
+        async fn discover(
+            &self,
+            context: SkillDiscoveryContext,
+        ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
+            *self.context.lock().expect("context lock") = Some(context);
+            Ok(SkillDiscoveryOutput::default())
+        }
+    }
 
     fn skill(name: &str, file_path: &str) -> SkillEntry {
         let (provider_key, local_name) = name
@@ -497,6 +586,7 @@ mod tests {
         let caps = derive_session_skill_baseline(SessionCapabilityProjectionInput {
             vfs_service: None,
             active_vfs: None,
+            identity: None,
             extra_skill_dirs: &[root.path().to_path_buf()],
             skill_discovery_providers: &[],
             diagnostics_label: "test",
@@ -511,5 +601,55 @@ mod tests {
             caps.skill_clusters[0].provider_key,
             INTEGRATION_STATIC_SKILL_PROVIDER_KEY
         );
+    }
+
+    #[tokio::test]
+    async fn dynamic_skill_discovery_provider_receives_user_context_projection() {
+        let vfs = vfs_with_default_root("/workspace/project");
+        let identity = identity_for_projection();
+        let provider = Arc::new(CapturingSkillDiscoveryProvider::default());
+        let providers: Vec<Arc<dyn SkillDiscoveryProvider>> = vec![provider.clone()];
+
+        let _ = derive_session_skill_baseline(SessionCapabilityProjectionInput {
+            vfs_service: None,
+            active_vfs: Some(&vfs),
+            identity: Some(&identity),
+            extra_skill_dirs: &[],
+            skill_discovery_providers: &providers,
+            diagnostics_label: "test",
+        })
+        .await;
+
+        let captured = provider
+            .context
+            .lock()
+            .expect("context lock")
+            .clone()
+            .expect("provider context");
+        assert_eq!(
+            captured.workspace_root_ref.as_deref(),
+            Some("/workspace/project")
+        );
+        let user = captured.user.expect("user context");
+        assert_eq!(user.user_id, "user-123");
+        assert_eq!(user.display_name.as_deref(), Some("Ada Lovelace"));
+        assert_eq!(user.email.as_deref(), Some("ada@example.com"));
+        assert_eq!(user.groups, vec!["gameplay", "tools"]);
+        assert!(captured.project_id.is_none());
+        assert!(captured.agent_type.is_none());
+        assert!(captured.detected_facts.is_none());
+    }
+
+    #[test]
+    fn skill_discovery_context_without_identity_keeps_user_absent() {
+        let vfs = vfs_with_default_root("/workspace/project");
+
+        let context = skill_discovery_context_from_vfs_and_identity(Some(&vfs), None);
+
+        assert_eq!(
+            context.workspace_root_ref.as_deref(),
+            Some("/workspace/project")
+        );
+        assert!(context.user.is_none());
     }
 }

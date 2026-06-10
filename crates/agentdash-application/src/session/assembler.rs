@@ -26,7 +26,7 @@
 //! `build_owner_context` / `activate_activity_with_platform` 等),不再重复散落。
 //! 后续必须继续把 task effect / hook 迁移字段拆入 `LaunchPlan` / outbox。
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::{AgentConfig, AgentVfsAccessGrant};
@@ -38,7 +38,7 @@ use agentdash_domain::workflow::{
     ActivityDefinition, AgentProcedureContract, LifecycleRun, WorkflowGraph,
 };
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
+use agentdash_spi::{AuthIdentity, CapabilityScope, CapabilityScopeCtx, SkillDiscoveryProvider};
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -72,6 +72,9 @@ use crate::runtime_bridge::session_mcp_servers_to_runtime;
 use crate::session::assembly_builder::SessionAssemblyBuilder;
 #[cfg(test)]
 use crate::session::assembly_builder::slice_companion_bundle;
+use crate::session::capability_projection::{
+    SessionCapabilityProjectionInput, derive_session_skill_baseline,
+};
 use crate::session::post_turn_handler::TerminalHookEffectBinding;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
@@ -111,6 +114,11 @@ pub struct SessionRequestAssembler<'a> {
     /// 生产路径由 `AppState` 注入 `InMemoryContextAuditBus` 共享实例。
     pub audit_bus: Option<SharedContextAuditBus>,
     pub companion_parent_facts_provider: Option<&'a dyn CompanionParentFactsProvider>,
+    /// Host Integration 提供的静态/dynamic skill discovery 来源。
+    ///
+    /// 只在 session capability baseline 中按 provider 返回的 exposure 投影默认可见 skills。
+    pub extra_skill_dirs: &'a [PathBuf],
+    pub skill_discovery_providers: &'a [Arc<dyn SkillDiscoveryProvider>],
 }
 
 #[async_trait]
@@ -283,6 +291,7 @@ pub struct AgentLevelMcp {
 /// Owner bootstrap compose 的完整输入。
 pub struct OwnerBootstrapSpec<'a> {
     pub owner: OwnerScope<'a>,
+    pub identity: Option<&'a AuthIdentity>,
     pub executor_config: AgentConfig,
     /// user 层 canonical 用户输入(外部传入或 Routine 模板)。
     pub user_input: Vec<agentdash_agent_protocol::UserInputBlock>,
@@ -494,6 +503,8 @@ impl<'a> SessionRequestAssembler<'a> {
             platform_config,
             audit_bus: None,
             companion_parent_facts_provider: None,
+            extra_skill_dirs: &[],
+            skill_discovery_providers: &[],
         }
     }
 
@@ -508,6 +519,16 @@ impl<'a> SessionRequestAssembler<'a> {
         provider: &'a dyn CompanionParentFactsProvider,
     ) -> Self {
         self.companion_parent_facts_provider = Some(provider);
+        self
+    }
+
+    pub fn with_skill_discovery(
+        mut self,
+        extra_skill_dirs: &'a [PathBuf],
+        skill_discovery_providers: &'a [Arc<dyn SkillDiscoveryProvider>],
+    ) -> Self {
+        self.extra_skill_dirs = extra_skill_dirs;
+        self.skill_discovery_providers = skill_discovery_providers;
         self
     }
 
@@ -608,6 +629,7 @@ impl<'a> SessionRequestAssembler<'a> {
         project_id: Uuid,
         owner_ctx: CapabilityScopeCtx,
         active_workflow: Option<&ActiveWorkflowProjection>,
+        vfs: Option<&Vfs>,
     ) -> Result<CapabilityState, String> {
         let workflow_tool: Option<ToolContribution> = if let Some(workflow) = active_workflow {
             let directives = tool_directives_from_active_workflow_projection(workflow);
@@ -661,10 +683,32 @@ impl<'a> SessionRequestAssembler<'a> {
             },
             capability_context: None,
         };
-        Ok(CapabilityResolver::resolve(
-            &cap_input,
-            self.platform_config,
-        ))
+        let mut capability_state = CapabilityResolver::resolve(&cap_input, self.platform_config);
+        self.apply_skill_baseline(&mut capability_state, vfs, spec.identity, "owner_bootstrap")
+            .await;
+        Ok(capability_state)
+    }
+
+    async fn apply_skill_baseline(
+        &self,
+        capability_state: &mut CapabilityState,
+        active_vfs: Option<&Vfs>,
+        identity: Option<&AuthIdentity>,
+        diagnostics_label: &'static str,
+    ) {
+        let Some(caps) = derive_session_skill_baseline(SessionCapabilityProjectionInput {
+            vfs_service: Some(self.vfs_service),
+            active_vfs,
+            identity,
+            extra_skill_dirs: self.extra_skill_dirs,
+            skill_discovery_providers: self.skill_discovery_providers,
+            diagnostics_label,
+        })
+        .await
+        else {
+            return;
+        };
+        capability_state.skill.skills = caps.skills;
     }
 
     async fn build_owner_context_bundle(
@@ -723,14 +767,21 @@ impl<'a> SessionRequestAssembler<'a> {
             .prepare_owner_bootstrap_vfs(&spec, project_id, active_workflow.as_ref())
             .await?;
         let mut cap_output = self
-            .resolve_owner_capabilities(&spec, project_id, owner_ctx, active_workflow.as_ref())
+            .resolve_owner_capabilities(
+                &spec,
+                project_id,
+                owner_ctx,
+                active_workflow.as_ref(),
+                vfs.as_ref(),
+            )
             .await?;
         // Workspace module 声明式可见性收口到 base CapabilityState（取代旧的
         // visible_workspace_module_refs_json 旁路 + frame_construction 直接赋值）：
         // 三态直达，经 effective_capability_json 序列化/还原；空集回 All（修 carry-forward bug）。
-        cap_output.workspace_module = crate::session::capability_state::project_workspace_module_dimension(
-            spec.visible_workspace_module_refs.as_deref(),
-        );
+        cap_output.workspace_module =
+            crate::session::capability_state::project_workspace_module_dimension(
+                spec.visible_workspace_module_refs.as_deref(),
+            );
         let mut session_mcp_servers = spec.request_mcp_servers.clone();
         session_mcp_servers.extend(cap_output.tool.mcp_servers.iter().cloned());
         session_mcp_servers.extend(spec.agent_mcp.preset_mcp_servers.iter().cloned());
@@ -893,6 +944,7 @@ impl<'a> SessionRequestAssembler<'a> {
         &self,
         spec: &StoryStepSpec<'_>,
         workflow: Option<&ActiveWorkflowProjection>,
+        vfs: Option<&Vfs>,
     ) -> (CapabilityState, Vec<agentdash_spi::SessionMcpServer>) {
         let mut contributions = Vec::new();
         if let Some(directives) = workflow.map(tool_directives_from_active_workflow_projection) {
@@ -922,6 +974,8 @@ impl<'a> SessionRequestAssembler<'a> {
         let mut session_mcp_servers = spec.request_mcp_servers.to_vec();
         session_mcp_servers.extend(capability_state.tool.mcp_servers.iter().cloned());
         capability_state.tool.mcp_servers = session_mcp_servers.clone();
+        self.apply_skill_baseline(&mut capability_state, vfs, spec.identity, "story_step")
+            .await;
         (capability_state, session_mcp_servers)
     }
 
@@ -1064,7 +1118,7 @@ impl<'a> SessionRequestAssembler<'a> {
             .resolve_story_step_context_bindings(vfs.as_ref(), spec.active_workflow.as_ref())
             .await?;
         let (capability_state, session_mcp_servers) = self
-            .resolve_story_step_capabilities(&spec, spec.active_workflow.as_ref())
+            .resolve_story_step_capabilities(&spec, spec.active_workflow.as_ref(), vfs.as_ref())
             .await;
         let (context_bundle, task_phase) = self
             .build_story_step_context_bundle(
@@ -1540,6 +1594,7 @@ pub struct StoryStepSpec<'a> {
     pub story: &'a Story,
     pub project: &'a Project,
     pub workspace: Option<&'a Workspace>,
+    pub identity: Option<&'a AuthIdentity>,
     pub phase: StoryStepPhase,
     pub override_prompt: Option<&'a str>,
     pub additional_prompt: Option<&'a str>,

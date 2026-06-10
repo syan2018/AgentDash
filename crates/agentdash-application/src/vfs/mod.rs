@@ -23,8 +23,9 @@ pub mod types;
 pub use agentdash_application_ports::vfs_materialization::VfsMaterializationTransport;
 pub use apply_patch::{
     AffectedPaths as ApplyPatchAffectedPaths, ApplyPatchError, ApplyPatchTarget, FsPatchTarget,
-    ParseError as ApplyPatchParseError, PatchEntry, apply_entries_to_target, apply_patch_to_target,
-    parse_patch as parse_patch_text,
+    NormalizedPatchEntryTargets, ParseError as ApplyPatchParseError, PatchEntry, PatchPathTarget,
+    apply_entries_to_target, apply_patch_to_target, normalize_patch_entry_targets,
+    parse_patch as parse_patch_text, parse_patch_path_target,
 };
 pub use binding_resolver::{ResolveBindingsOutput, ResolvedBinding, resolve_context_bindings};
 pub use materialization::{

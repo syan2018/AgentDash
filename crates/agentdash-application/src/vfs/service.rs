@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -689,9 +688,12 @@ impl VfsService {
         // 按 mount 分组
         let mut grouped: BTreeMap<String, Vec<PatchEntry>> = BTreeMap::new();
         for mut entry in entries {
-            let mount_id = normalize_patch_entry_paths(&mut entry, &fallback_mount_id)
+            let targets = normalize_patch_entry_targets(&mut entry, &fallback_mount_id)
                 .map_err(MountError::OperationFailed)?;
-            grouped.entry(mount_id).or_default().push(entry);
+            grouped
+                .entry(targets.primary.mount_id)
+                .or_default()
+                .push(entry);
         }
 
         let mut result = MultiMountPatchResult::default();
@@ -1234,50 +1236,6 @@ fn is_inline_mount(mount: &Mount) -> bool {
     mount.provider == PROVIDER_INLINE_FS
 }
 
-/// 从 patch 内的路径拆出 mount 前缀，并规范化 mount 相对路径。
-/// `"main://src/lib.rs"` → `("main", "src/lib.rs")`
-/// `"src/lib.rs"` → `(fallback, "src/lib.rs")`
-fn split_mount_prefix(raw: &str, fallback: &str) -> Result<(String, String), String> {
-    if let Some(pos) = raw.find("://") {
-        let mount_id = &raw[..pos];
-        if mount_id.trim().is_empty() {
-            return Err("patch 路径的 mount ID 不能为空".to_string());
-        }
-        let relative = &raw[pos + 3..];
-        let relative = relative.trim_start_matches('/');
-        Ok((
-            mount_id.to_string(),
-            normalize_mount_relative_path(relative, false)?,
-        ))
-    } else {
-        Ok((
-            fallback.to_string(),
-            normalize_mount_relative_path(raw, false)?,
-        ))
-    }
-}
-
-fn normalize_patch_entry_paths(entry: &mut PatchEntry, fallback: &str) -> Result<String, String> {
-    let raw_path = entry.path().to_string_lossy().to_string();
-    let (mount_id, relative) = split_mount_prefix(&raw_path, fallback)?;
-    entry.set_path(PathBuf::from(&relative));
-
-    if let PatchEntry::UpdateFile { move_path, .. } = entry
-        && let Some(target) = move_path.as_mut()
-    {
-        let raw_move_path = target.to_string_lossy().to_string();
-        let (move_mount_id, move_relative) = split_mount_prefix(&raw_move_path, &mount_id)?;
-        if move_mount_id != mount_id {
-            return Err(format!(
-                "patch 不支持跨 mount move: {mount_id} -> {move_mount_id}"
-            ));
-        }
-        *target = PathBuf::from(move_relative);
-    }
-
-    Ok(mount_id)
-}
-
 struct ProviderPatchTarget<'a> {
     provider: &'a dyn MountProvider,
     mount: &'a Mount,
@@ -1427,6 +1385,7 @@ impl ApplyPatchTarget for InlineOverlayPatchTarget<'_> {
 mod tests {
     use super::*;
     use agentdash_spi::platform::auth::AuthIdentity;
+    use std::path::PathBuf;
     use tokio::sync::Mutex;
 
     struct IdentityCaptureProvider {
@@ -1659,9 +1618,17 @@ mod tests {
             chunks: Vec::new(),
         };
 
-        let mount_id = normalize_patch_entry_paths(&mut entry, "main").expect("normalize");
+        let targets = normalize_patch_entry_targets(&mut entry, "main").expect("normalize");
 
-        assert_eq!(mount_id, "main");
+        assert_eq!(targets.primary.mount_id, "main");
+        assert_eq!(targets.primary.relative_path, "src/old.rs");
+        assert_eq!(
+            targets.move_target,
+            Some(PatchPathTarget {
+                mount_id: "main".to_string(),
+                relative_path: "src/new.rs".to_string(),
+            })
+        );
         assert_eq!(entry.path(), PathBuf::from("src/old.rs").as_path());
         match entry {
             PatchEntry::UpdateFile { move_path, .. } => {
@@ -1679,7 +1646,7 @@ mod tests {
             chunks: Vec::new(),
         };
 
-        let err = normalize_patch_entry_paths(&mut entry, "main").expect_err("cross mount");
+        let err = normalize_patch_entry_targets(&mut entry, "main").expect_err("cross mount");
 
         assert!(err.contains("跨 mount move"));
     }
@@ -1692,7 +1659,7 @@ mod tests {
             chunks: Vec::new(),
         };
 
-        let err = normalize_patch_entry_paths(&mut entry, "main").expect_err("escaping move");
+        let err = normalize_patch_entry_targets(&mut entry, "main").expect_err("escaping move");
 
         assert!(err.contains("路径越界"));
     }

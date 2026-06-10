@@ -13,7 +13,7 @@ use crate::vfs::inline_persistence::InlineContentOverlay;
 use crate::vfs::mutation_queue::MutationQueue;
 use crate::vfs::service::VfsService;
 use crate::vfs::tools::common::SharedRuntimeVfs;
-use crate::vfs::{PatchEntry, normalize_mount_relative_path, parse_patch_text, resolve_mount_id};
+use crate::vfs::{normalize_patch_entry_targets, parse_patch_text, resolve_mount_id};
 
 // ---------------------------------------------------------------------------
 // fs_apply_patch — Codex-style description
@@ -125,7 +125,7 @@ impl AgentTool for FsApplyPatchTool {
         let vfs = self.vfs.snapshot().await;
         let mutation_keys =
             fs_apply_patch_mutation_keys(&vfs, params.mount.as_deref(), &params.patch)
-                .unwrap_or_default();
+                .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
         let result = self
             .mutation_queue
             .with_locks(
@@ -184,50 +184,20 @@ fn fs_apply_patch_mutation_keys(
     };
 
     let mut keys = BTreeSet::new();
-    for entry in entries {
-        collect_patch_entry_mutation_keys(&mut keys, &entry, &fallback_mount_id)?;
+    for mut entry in entries {
+        let targets = normalize_patch_entry_targets(&mut entry, &fallback_mount_id)?;
+        keys.insert(format!(
+            "{}://{}",
+            targets.primary.mount_id, targets.primary.relative_path
+        ));
+        if let Some(move_target) = targets.move_target {
+            keys.insert(format!(
+                "{}://{}",
+                move_target.mount_id, move_target.relative_path
+            ));
+        }
     }
     Ok(keys.into_iter().collect())
-}
-
-fn collect_patch_entry_mutation_keys(
-    keys: &mut BTreeSet<String>,
-    entry: &PatchEntry,
-    fallback_mount_id: &str,
-) -> Result<(), String> {
-    let raw_path = entry.path().to_string_lossy();
-    let (mount_id, relative_path) = mutation_key_parts(&raw_path, fallback_mount_id)?;
-    keys.insert(format!("{mount_id}://{relative_path}"));
-
-    if let PatchEntry::UpdateFile {
-        move_path: Some(move_path),
-        ..
-    } = entry
-    {
-        let raw_move_path = move_path.to_string_lossy();
-        let (move_mount_id, move_relative_path) = mutation_key_parts(&raw_move_path, &mount_id)?;
-        keys.insert(format!("{move_mount_id}://{move_relative_path}"));
-    }
-
-    Ok(())
-}
-
-fn mutation_key_parts(raw: &str, fallback_mount_id: &str) -> Result<(String, String), String> {
-    if let Some((mount_id, relative)) = raw.split_once("://") {
-        let mount_id = mount_id.trim();
-        if mount_id.is_empty() {
-            return Err("patch 路径的 mount ID 不能为空".to_string());
-        }
-        return Ok((
-            mount_id.to_string(),
-            normalize_mount_relative_path(relative.trim_start_matches('/'), false)?,
-        ));
-    }
-
-    Ok((
-        fallback_mount_id.to_string(),
-        normalize_mount_relative_path(raw, false)?,
-    ))
 }
 
 #[cfg(test)]
@@ -303,5 +273,42 @@ mod fs_apply_patch_mutation_tests {
             keys,
             vec!["canvas://src/view.tsx", "workspace://src/old.rs"]
         );
+    }
+
+    #[test]
+    fn apply_patch_mutation_keys_normalize_explicit_mount_paths() {
+        let keys = fs_apply_patch_mutation_keys(
+            &vfs(),
+            Some("workspace"),
+            r#"*** Begin Patch
+*** Update File: workspace://src//old.rs
+*** Move to: workspace://src/./new.rs
+@@
+ old
+*** End Patch"#,
+        )
+        .expect("keys should parse");
+
+        assert_eq!(
+            keys,
+            vec!["workspace://src/new.rs", "workspace://src/old.rs"]
+        );
+    }
+
+    #[test]
+    fn apply_patch_mutation_keys_reject_cross_mount_move_target() {
+        let err = fs_apply_patch_mutation_keys(
+            &vfs(),
+            Some("workspace"),
+            r#"*** Begin Patch
+*** Update File: workspace://src/old.rs
+*** Move to: canvas://src/new.rs
+@@
+ old
+*** End Patch"#,
+        )
+        .expect_err("cross-mount move should fail");
+
+        assert!(err.contains("跨 mount move"));
     }
 }

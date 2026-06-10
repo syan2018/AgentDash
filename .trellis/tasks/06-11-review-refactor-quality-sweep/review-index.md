@@ -34,6 +34,7 @@
 | vfs-service Batch A | 修复 | 已提交 | `fixes/011-vfs-search-identity-propagation.md` |
 | vfs-service Batch C | 修复 | 已提交 | `fixes/012-vfs-runtime-metadata-accessors.md` |
 | vfs-service Batch B | 修复 | 已提交 | `fixes/013-vfs-patch-path-target-helper.md` |
+| vfs-service Batch F | 修复 | 待提交 | `fixes/014-vfs-search-service-split.md` |
 
 ## 已完成模块
 

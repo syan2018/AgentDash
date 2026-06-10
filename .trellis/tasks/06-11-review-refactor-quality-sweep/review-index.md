@@ -42,6 +42,8 @@
 | local-runtime Batch G | 修复 | 已提交 | `fixes/017-local-runtime-host-api-fallback-removal.md` |
 | workflow-orchestration Batch B | 修复 | 已提交 | `fixes/018-workflow-root-args-activation-input.md` |
 | local-runtime Batch F | 修复 | 已提交 | `fixes/019-local-runtime-process-executor.md` |
+| local-runtime Batch H | 修复 | 已提交 | `fixes/020-local-runtime-search-executor.md` |
+| workflow-orchestration Batch C | 修复 | 已提交 | `fixes/021-workflow-ready-node-coordinate.md` |
 
 ## 已完成模块
 
@@ -103,3 +105,5 @@
 | `37be46fa` | workflow-orchestration | 收敛 workflow script capability summary 单一解释器 |
 | `bc29c1b6` | workflow-orchestration | 收敛脚本根参数 typed activation input |
 | `2bff89ac` | local-runtime | 收敛 shell/exec 共享进程执行边界 |
+| `9cfeaff1` | workflow-orchestration | 收敛 ready node typed coordinate/view |
+| `fe41d9ed` | local-runtime | 拆出 SearchExecutor 与 FileDiscoveryPolicy |

@@ -27,7 +27,7 @@ interface WorkspaceListProps {
   workspaces: Workspace[];
   defaultWorkspaceId?: string | null;
   canManageBindings?: boolean;
-  onSetDefault?: (workspaceId: string | null) => void;
+  onSetDefault?: (workspaceId: string | null) => void | Promise<void>;
   onInventoryChanged?: () => void | Promise<void>;
 }
 
@@ -239,6 +239,7 @@ export function WorkspaceList({
         projectId={projectId}
         mode="create"
         workspace={null}
+        defaultWorkspaceId={defaultWorkspaceId}
         candidates={candidates}
         accesses={accesses}
         canManageBindings={canManageBindings}

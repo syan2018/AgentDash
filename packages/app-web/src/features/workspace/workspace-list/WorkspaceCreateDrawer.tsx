@@ -39,11 +39,12 @@ import {
 interface WorkspaceCreateDrawerProps {
   open: boolean;
   projectId: string;
+  defaultWorkspaceId?: string | null;
   candidates: WorkspaceInventoryCandidate[];
   accesses: ProjectBackendAccess[];
   canManageBindings: boolean;
   onClose: () => void;
-  onSetDefault?: (workspaceId: string | null) => void;
+  onSetDefault?: (workspaceId: string | null) => void | Promise<void>;
   onCandidatesChanged: () => void | Promise<void>;
   onInventoryChanged?: () => void | Promise<void>;
 }
@@ -53,6 +54,7 @@ const RESOLUTION_POLICY: WorkspaceResolutionPolicy = "prefer_online";
 export function WorkspaceCreateDrawer({
   open,
   projectId,
+  defaultWorkspaceId,
   candidates,
   accesses,
   canManageBindings,
@@ -83,6 +85,7 @@ export function WorkspaceCreateDrawer({
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [mountCapabilities, setMountCapabilities] = useState<ContextContainerCapability[]>([...ALL_CAPABILITIES]);
   const [setAsDefault, setSetAsDefault] = useState(false);
+  const shouldSetCreatedAsDefault = (setAsDefault || !defaultWorkspaceId) && Boolean(onSetDefault);
 
   const syncPayload = (payload: Record<string, unknown>) => {
     setIdentityPayload(payload);
@@ -130,8 +133,8 @@ export function WorkspaceCreateDrawer({
       mount_capabilities: mountCapabilities,
     });
     if (!created) return;
-    if (setAsDefault && onSetDefault) {
-      onSetDefault(created.id);
+    if (shouldSetCreatedAsDefault && onSetDefault) {
+      await onSetDefault(created.id);
     }
     await onCandidatesChanged();
     await onInventoryChanged?.();
@@ -163,8 +166,8 @@ export function WorkspaceCreateDrawer({
       mount_capabilities: mountCapabilities,
     });
     if (!created) return;
-    if (setAsDefault && onSetDefault) {
-      onSetDefault(created.id);
+    if (shouldSetCreatedAsDefault && onSetDefault) {
+      await onSetDefault(created.id);
     }
     await onCandidatesChanged();
     onClose();

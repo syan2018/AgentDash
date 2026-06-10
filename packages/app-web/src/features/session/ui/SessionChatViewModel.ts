@@ -4,6 +4,7 @@ import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { SessionEventEnvelope } from "../model/types";
 import { extractPlatformEventType } from "../model/platformEvent";
+import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
 
 export function toExecutorConfigSource(
   defaults: ProjectAgentExecutor | TaskSessionExecutorSummary | null | undefined,
@@ -35,7 +36,45 @@ export function resolveExecutorFromHint(
   return matched?.id ?? trimmed;
 }
 
-export function collectNewSystemEvents(
+export function collectRenderableSystemEvents(
+  rawEvents: SessionEventEnvelope[],
+  afterSeq: number,
+): {
+  items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }>;
+  lastSeenSeq: number;
+} {
+  const items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }> = [];
+  let lastSeenSeq = afterSeq;
+
+  for (const event of rawEvents) {
+    if (event.event_seq <= afterSeq) {
+      continue;
+    }
+    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
+    const bbEvent = event.notification.event;
+    if (bbEvent.type !== "platform") {
+      continue;
+    }
+    const eventType = extractPlatformEventType(bbEvent);
+    if (!eventType) {
+      continue;
+    }
+    if (!shouldNotifyRenderableSystemEvent(bbEvent)) {
+      continue;
+    }
+    items.push({
+      eventSeq: event.event_seq,
+      eventType,
+      event: bbEvent,
+    });
+  }
+
+  return { items, lastSeenSeq };
+}
+
+export const collectNewSystemEvents = collectRenderableSystemEvents;
+
+export function collectAllPlatformEvents(
   rawEvents: SessionEventEnvelope[],
   afterSeq: number,
 ): {

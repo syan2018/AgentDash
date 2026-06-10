@@ -9,6 +9,7 @@ const RETRY_BASE_MS = 800;
 const RETRY_MAX_MS = 8000;
 
 export type SessionStreamLifecycle = "connecting" | "connected" | "reconnecting" | "closed";
+type SessionNdjsonEventEnvelope = Extract<SessionNdjsonEnvelope, { type: "event" }>;
 
 export interface SessionStreamTransportOptions {
   sessionId: string;
@@ -50,17 +51,23 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function isBackboneEnvelope(value: unknown): value is BackboneEnvelope {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
+  if (!isRecord(value)) return false;
+  const record = value;
   return typeof record.event === "object" && record.event !== null &&
     typeof record.sessionId === "string";
 }
 
-function readOptionalNumber(value: unknown): number | null {
-  if (value == null) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+function isSessionNdjsonEventEnvelope(value: unknown): value is SessionNdjsonEventEnvelope {
+  return isRecord(value) && value.type === "event";
+}
+
+function readRequiredNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function readOptionalString(value: unknown): string | null {
@@ -69,42 +76,64 @@ function readOptionalString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function readOptionalNumber(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 export function parseSessionEventEnvelopePayload(
   payload: unknown,
-  fallbackEventSeq?: number,
-): SessionEventEnvelope | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
+): { event: SessionEventEnvelope | null; error: Error | null } {
+  if (!isRecord(payload)) {
+    return { event: null, error: new Error("Session stream event 必须是对象") };
   }
 
-  const record = payload as Record<string, unknown>;
-  const notification = isBackboneEnvelope(record.notification)
-    ? record.notification
-    : null;
-
-  if (!notification) {
-    return null;
+  if (!isSessionNdjsonEventEnvelope(payload)) {
+    return { event: null, error: new Error("Session stream payload 不是 event 分支") };
   }
 
-  const eventSeq =
-    readOptionalNumber(record.event_seq ?? record.id ?? fallbackEventSeq) ?? 0;
+  const eventSeq = readRequiredNumber(payload.event_seq);
+  if (eventSeq == null) {
+    return { event: null, error: new Error("Session stream event 缺少合法 event_seq") };
+  }
 
-  const eventType = typeof (notification.event as Record<string, unknown>)?.type === "string"
-    ? (notification.event as Record<string, unknown>).type as string
-    : "unknown";
+  const sessionId = readOptionalString(payload.session_id);
+  if (!sessionId) {
+    return { event: null, error: new Error("Session stream event 缺少 session_id") };
+  }
+
+  const occurredAtMs = readRequiredNumber(payload.occurred_at_ms);
+  if (occurredAtMs == null) {
+    return { event: null, error: new Error("Session stream event 缺少 occurred_at_ms") };
+  }
+
+  const committedAtMs = readRequiredNumber(payload.committed_at_ms);
+  if (committedAtMs == null) {
+    return { event: null, error: new Error("Session stream event 缺少 committed_at_ms") };
+  }
+
+  const sessionUpdateType = readOptionalString(payload.session_update_type);
+  if (!sessionUpdateType) {
+    return { event: null, error: new Error("Session stream event 缺少 session_update_type") };
+  }
+
+  if (!isBackboneEnvelope(payload.notification)) {
+    return { event: null, error: new Error("Session stream event 缺少合法 notification") };
+  }
 
   return {
-    session_id: readOptionalString(record.session_id) ?? notification.sessionId,
-    event_seq: eventSeq,
-    notification,
-    occurred_at_ms: readOptionalNumber(record.occurred_at_ms) ?? 0,
-    committed_at_ms: readOptionalNumber(record.committed_at_ms) ?? 0,
-    session_update_type:
-      readOptionalString(record.session_update_type) ??
-      eventType,
-    turn_id: readOptionalString(record.turn_id) ?? undefined,
-    entry_index: readOptionalNumber(record.entry_index) ?? undefined,
-    tool_call_id: readOptionalString(record.tool_call_id) ?? undefined,
+    event: {
+      session_id: sessionId,
+      event_seq: eventSeq,
+      occurred_at_ms: occurredAtMs,
+      committed_at_ms: committedAtMs,
+      session_update_type: sessionUpdateType,
+      turn_id: readOptionalString(payload.turn_id) ?? undefined,
+      entry_index: readOptionalNumber(payload.entry_index),
+      tool_call_id: readOptionalString(payload.tool_call_id) ?? undefined,
+      notification: payload.notification,
+    },
+    error: null,
   };
 }
 
@@ -208,32 +237,39 @@ class FetchNdjsonTransport implements SessionStreamTransport {
       return;
     }
 
-    if (!payload || typeof payload !== "object") return;
-    const record = payload as SessionNdjsonEnvelope;
+    if (!isRecord(payload)) {
+      this.options.onError(new Error("NDJSON 消息必须是对象"));
+      return;
+    }
+    const type = payload.type;
 
-    if (record.type === "connected") {
-      const lastEventIdRaw = record.last_event_id;
-      const lastEventId = Number(lastEventIdRaw);
-      if (Number.isFinite(lastEventId) && lastEventId > this.sinceId) {
+    if (type === "connected") {
+      const lastEventId = readRequiredNumber(payload.last_event_id);
+      if (lastEventId != null && lastEventId > this.sinceId) {
         this.sinceId = lastEventId;
       }
       return;
     }
 
-    if (record.type === "event") {
-      const normalizedEvent = parseSessionEventEnvelopePayload(record);
-      if (normalizedEvent) {
-        if (normalizedEvent.event_seq > this.sinceId) {
-          this.sinceId = normalizedEvent.event_seq;
-        }
-        this.options.onEvent(normalizedEvent);
+    if (type === "event") {
+      const result = parseSessionEventEnvelopePayload(payload);
+      if (result.error) {
+        this.options.onError(result.error);
+        return;
       }
+      if (!result.event) return;
+      if (result.event.event_seq > this.sinceId) {
+        this.sinceId = result.event.event_seq;
+      }
+      this.options.onEvent(result.event);
       return;
     }
 
-    if (record.type === "heartbeat") {
+    if (type === "heartbeat") {
       return;
     }
+
+    this.options.onError(new Error(`未知 Session NDJSON 类型: ${String(type)}`));
   }
 
   private scheduleReconnect(): void {

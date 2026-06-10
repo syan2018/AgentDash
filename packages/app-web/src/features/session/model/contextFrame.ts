@@ -199,10 +199,10 @@ export function parseContextFrame(value: Record<string, unknown>): ContextFrame 
   const delivery = readString(value.delivery_status);
   const deliveryChannel = readString(value.delivery_channel);
   const messageRole = readString(value.message_role);
-  const agentText = readString(value.rendered_text);
+  const agentText = readRenderedText(value.rendered_text);
   const createdAt = readNumber(value.created_at_ms);
   const rawSections = Array.isArray(value.sections) ? value.sections : [];
-  if (!id || !kind || !source || !delivery || !deliveryChannel || !messageRole || !agentText || createdAt == null) return null;
+  if (!id || !kind || !source || !delivery || !deliveryChannel || !messageRole || agentText == null || createdAt == null) return null;
 
   return {
     id,
@@ -447,6 +447,11 @@ function readString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function readRenderedText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return value;
 }
 
 function readNumber(value: unknown): number | null {

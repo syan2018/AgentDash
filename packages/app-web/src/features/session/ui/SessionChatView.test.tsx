@@ -3,6 +3,10 @@ import type { JsonValue } from "../../../generated/common-contracts";
 import type { BackboneEvent, Turn } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "../model/types";
 import { computeProjectionRefreshKey } from "./SessionChatView";
+import {
+  collectAllPlatformEvents,
+  collectRenderableSystemEvents,
+} from "./SessionChatViewModel";
 import { isSessionComposerPrimaryDisabled } from "./SessionChatComposerState";
 
 const completedTurn: Turn = {
@@ -112,6 +116,64 @@ describe("computeProjectionRefreshKey", () => {
     ];
 
     expect(computeProjectionRefreshKey(events)).toBe(2);
+  });
+});
+
+describe("collectRenderableSystemEvents", () => {
+  it("只收集可渲染 system event，同时推进 lastSeenSeq", () => {
+    const events = [
+      eventEnvelope(1, platformMetaEvent("system_message", { message: "需要用户确认" })),
+      eventEnvelope(2, {
+        type: "platform",
+        payload: {
+          kind: "hook_trace",
+          data: {
+            eventType: "hook:before_provider_request:observed",
+            message: "Hook 已观测到 LLM API 请求即将发出",
+            data: {
+              trigger: "before_provider_request",
+              decision: "observed",
+              sequence: 1n,
+              revision: 1n,
+              severity: "info",
+              tool_name: null,
+              tool_call_id: null,
+              subagent_type: null,
+              matched_rule_keys: [],
+              refresh_snapshot: false,
+              block_reason: null,
+              completion: null,
+              diagnostic_codes: ["session_binding_found"],
+              diagnostics: [{ code: "session_binding_found", message: "命中会话绑定" }],
+              injections: [],
+            },
+          },
+        },
+      }),
+      eventEnvelope(3, agentDeltaEvent("assistant-1")),
+    ];
+
+    const result = collectRenderableSystemEvents(events, 0);
+
+    expect(result.lastSeenSeq).toBe(3);
+    expect(result.items.map((item) => item.eventSeq)).toEqual([1]);
+    expect(result.items[0]?.eventType).toBe("system_message");
+  });
+
+  it("全量 platform 收集函数保留不可渲染事件入口", () => {
+    const events = [
+      eventEnvelope(1, platformMetaEvent("system_message", { message: "需要用户确认" })),
+      eventEnvelope(2, platformMetaEvent("unknown_meta", { message: "静默" })),
+      eventEnvelope(3, agentDeltaEvent("assistant-1")),
+    ];
+
+    const result = collectAllPlatformEvents(events, 0);
+
+    expect(result.lastSeenSeq).toBe(3);
+    expect(result.items.map((item) => item.eventType)).toEqual([
+      "system_message",
+      "unknown_meta",
+    ]);
   });
 });
 

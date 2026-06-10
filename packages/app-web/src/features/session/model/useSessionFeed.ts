@@ -5,23 +5,17 @@
  * 暴露 displayItems（聚合后）、rawEntries、tokenUsage 等供 UI 使用。
  */
 
-import { useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { useSessionStream } from "./useSessionStream";
 import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
-import {
-  isAggregatedGroup as isAggregatedGroupItem,
-  isAggregatedContextFrameGroup as isAggregatedContextFrameGroupItem,
-  isAggregatedThinkingGroup as isAggregatedThinkingGroupItem,
-} from "./types";
-import { isRenderablePlatformEvent } from "./systemEventVisibility";
+import { getPlatformEventPolicy } from "./systemEventPolicy";
+import { isToolBurstEligible } from "./threadItemKind";
 import type {
   AggregatedContextFrameGroup,
   SessionDisplayEntry,
   SessionDisplayItem,
   AggregatedEntryGroup,
-  AggregatedThinkingGroup,
   SessionEventEnvelope,
-  ToolAggregationType,
   TokenUsageInfo,
 } from "./types";
 
@@ -54,26 +48,9 @@ function extractThreadItem(event: BackboneEvent): AgentDashThreadItem | null {
   return null;
 }
 
-function getToolAggregationType(event: BackboneEvent): ToolAggregationType | null {
+function isToolBurstEvent(event: BackboneEvent): boolean {
   const item = extractThreadItem(event);
-  if (!item) return null;
-
-  switch (item.type) {
-    case "commandExecution":
-    case "fileChange":
-    case "mcpToolCall":
-    case "dynamicToolCall":
-    case "collabAgentToolCall":
-    case "webSearch":
-    case "imageView":
-    case "imageGeneration":
-    case "fsRead":
-    case "fsGrep":
-    case "fsGlob":
-      return "tool_burst";
-    default:
-      return null;
-  }
+  return item != null && isToolBurstEligible(item);
 }
 
 function isContextFrameEvent(event: BackboneEvent): boolean {
@@ -114,7 +91,7 @@ function isToolEntryTerminal(entry: SessionDisplayEntry): boolean {
 
 function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
   const event = entry.event;
-  if (getToolAggregationType(event) !== null) {
+  if (isToolBurstEvent(event)) {
     if (!isToolEntryTerminal(entry)) return "active_tool";
     return "tool_like";
   }
@@ -151,10 +128,9 @@ function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
   }
 
   if (event.type === "platform") {
-    // context_frame → 侧轨身份/能力切换，不应打散 tool burst
-    if (isContextFrameEvent(event)) return "soft_boundary";
-    // 其他可渲染系统/任务事件 → 硬边界（hook trace、companion、capability change 等）
-    if (isRenderablePlatformEvent(event)) return "hard_boundary";
+    const boundary = getPlatformEventPolicy(event).feedBoundary;
+    if (boundary === "hard") return "hard_boundary";
+    if (boundary === "soft") return "soft_boundary";
     return "neutral";
   }
 
@@ -201,7 +177,9 @@ function pushToolGroup(
 // 注：reasoning_text_delta/summary 同 itemId 已在 useSessionStream 层累积为单条
 // entry，因此 thinking 没有"连续多条"场景，无需聚合。
 
-function isCtxSideGroup(group: AggregatedContextFrameGroup | null): boolean {
+function isCtxSideGroup(
+  group: AggregatedContextFrameGroup | null,
+): group is AggregatedContextFrameGroup {
   return group?.type === "aggregated_context_frames";
 }
 
@@ -257,8 +235,9 @@ function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] 
   };
 
   const joinCtxGroup = (entry: SessionDisplayEntry) => {
-    if (isCtxSideGroup(activeCtxGroup)) {
-      activeCtxGroup!.entries.push(entry);
+    const currentCtxGroup = activeCtxGroup;
+    if (isCtxSideGroup(currentCtxGroup)) {
+      currentCtxGroup.entries.push(entry);
     } else {
       flushCtxGroup();
       activeCtxGroup = createCtxSideGroup(entry);
@@ -315,67 +294,6 @@ function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] 
 
 export { aggregateEntries };
 
-function entryShallowEqual(a: SessionDisplayEntry, b: SessionDisplayEntry): boolean {
-  return (
-    a.id === b.id &&
-    a.eventSeq === b.eventSeq &&
-    a.event === b.event &&
-    a.isPendingApproval === b.isPendingApproval
-  );
-}
-
-function isAggregatedGroupEqual(a: SessionDisplayItem, b: SessionDisplayItem): boolean {
-  if (a === b) return true;
-
-  const aIsGroup = isAggregatedGroupItem(a);
-  const bIsGroup = isAggregatedGroupItem(b);
-  if (aIsGroup !== bIsGroup) return false;
-
-  const aIsThink = isAggregatedThinkingGroupItem(a);
-  const bIsThink = isAggregatedThinkingGroupItem(b);
-  if (aIsThink !== bIsThink) return false;
-
-  const aIsContextFrame = isAggregatedContextFrameGroupItem(a);
-  const bIsContextFrame = isAggregatedContextFrameGroupItem(b);
-  if (aIsContextFrame !== bIsContextFrame) return false;
-
-  if (aIsGroup && bIsGroup) {
-    const ga = a as AggregatedEntryGroup;
-    const gb = b as AggregatedEntryGroup;
-    if (ga.groupKey !== gb.groupKey) return false;
-    if (ga.aggregationType !== gb.aggregationType) return false;
-    if (ga.entries.length !== gb.entries.length) return false;
-    for (let i = 0; i < ga.entries.length; i += 1) {
-      if (!entryShallowEqual(ga.entries[i]!, gb.entries[i]!)) return false;
-    }
-    return true;
-  }
-
-  if (aIsThink && bIsThink) {
-    const ta = a as AggregatedThinkingGroup;
-    const tb = b as AggregatedThinkingGroup;
-    if (ta.groupKey !== tb.groupKey) return false;
-    if (ta.entries.length !== tb.entries.length) return false;
-    for (let i = 0; i < ta.entries.length; i += 1) {
-      if (!entryShallowEqual(ta.entries[i]!, tb.entries[i]!)) return false;
-    }
-    return true;
-  }
-
-  if (aIsContextFrame && bIsContextFrame) {
-    const ca = a as AggregatedContextFrameGroup;
-    const cb = b as AggregatedContextFrameGroup;
-    if (ca.groupKey !== cb.groupKey) return false;
-    if (ca.entries.length !== cb.entries.length) return false;
-    for (let i = 0; i < ca.entries.length; i += 1) {
-      if (!entryShallowEqual(ca.entries[i]!, cb.entries[i]!)) return false;
-    }
-    return true;
-  }
-
-  return entryShallowEqual(a as SessionDisplayEntry, b as SessionDisplayEntry);
-}
-
 export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedResult {
   const { sessionId, endpoint, enableAggregation = true, enabled } = options;
 
@@ -396,38 +314,11 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     enabled,
   });
 
-  const prevDisplayItemsRef = useRef<SessionDisplayItem[]>([]);
-
-  /* eslint-disable react-hooks/refs */
   const displayItems = useMemo(() => {
-    const next: SessionDisplayItem[] = enableAggregation
+    return enableAggregation
       ? aggregateEntries(entries)
       : (entries as SessionDisplayItem[]);
-
-    const prev = prevDisplayItemsRef.current;
-    if (prev.length === next.length) {
-      let allEqual = true;
-      const stabilized: SessionDisplayItem[] = new Array(next.length);
-      for (let i = 0; i < next.length; i += 1) {
-        const a = prev[i]!;
-        const b = next[i]!;
-        if (isAggregatedGroupEqual(a, b)) {
-          stabilized[i] = a;
-        } else {
-          stabilized[i] = b;
-          allEqual = false;
-        }
-      }
-      if (allEqual && prev.every((p, i) => p === stabilized[i])) {
-        return prev;
-      }
-      prevDisplayItemsRef.current = stabilized;
-      return stabilized;
-    }
-    prevDisplayItemsRef.current = next;
-    return next;
   }, [entries, enableAggregation]);
-  /* eslint-enable react-hooks/refs */
 
   const streamingEntryId = useMemo(() => {
     if (!isReceiving || entries.length === 0) return null;
@@ -436,7 +327,6 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     return null;
   }, [isReceiving, entries]);
 
-  /* eslint-disable react-hooks/refs */
   return {
     displayItems,
     rawEntries: entries,

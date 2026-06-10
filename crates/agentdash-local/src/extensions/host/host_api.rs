@@ -28,10 +28,6 @@ pub(super) async fn resolve_host_api(
         "process.shell" => process_api::resolve_process_shell(active, params).await,
         "process.exec" => process_api::resolve_process_exec(active, params).await,
         "http.fetch" => http_api::resolve_http_fetch(active, params).await,
-        "runtime.invoke" => resolve_runtime_invoke(active, params),
-        "extension.channel_invoke" => Err(LocalExtensionHostError::Host(
-            "extension channel provider routing 尚未接入 Project registry".to_string(),
-        )),
         other => Err(LocalExtensionHostError::Host(format!(
             "未知 host api: {other}"
         ))),
@@ -59,24 +55,6 @@ fn resolve_env_get(
     require_declared_permission(active, params, &permissions)?;
     let value = std::env::var(&name).ok();
     Ok(json!(value))
-}
-
-fn resolve_runtime_invoke(
-    active: &ActiveExtension,
-    params: &Value,
-) -> Result<Value, LocalExtensionHostError> {
-    let action_key = require_string(params, "target_action_key")?;
-    require_declared_permission(
-        active,
-        params,
-        &[
-            "runtime.invoke".to_string(),
-            format!("runtime.invoke:{action_key}"),
-        ],
-    )?;
-    Err(LocalExtensionHostError::Host(format!(
-        "runtime.invoke 目标 action `{action_key}` 未在当前 Project extension host 预加载"
-    )))
 }
 
 pub(super) fn require_string(
@@ -180,11 +158,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let active = active_extension(
             temp.path(),
-            &[
-                "local.profile.read",
-                "env.read:PATH",
-                "runtime.invoke:provider.echo",
-            ],
+            &["local.profile.read", "env.read:PATH"],
             &["env.read:PATH"],
         );
 
@@ -230,30 +204,6 @@ mod tests {
         assert_contains(
             &denied,
             "extension action `local-hello.profile` 未声明 env.read 或 env.read:PATH",
-        );
-
-        let runtime = resolve_host_api(
-            Some(&active),
-            "runtime.invoke",
-            &action_params(json!({ "target_action_key": "provider.echo" })),
-        )
-        .await
-        .expect_err("runtime not preloaded");
-        assert_contains(
-            &runtime,
-            "runtime.invoke 目标 action `provider.echo` 未在当前 Project extension host 预加载",
-        );
-
-        let channel_route = resolve_host_api(
-            Some(&active),
-            "extension.channel_invoke",
-            &action_params(json!({ "channel_key": "provider.api", "method": "echo" })),
-        )
-        .await
-        .expect_err("channel route");
-        assert_contains(
-            &channel_route,
-            "extension channel provider routing 尚未接入 Project registry",
         );
 
         let unknown = resolve_host_api(Some(&active), "unknown.api", &action_params(json!({})))

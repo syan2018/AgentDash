@@ -52,11 +52,7 @@ export function createExtensionRuntime({
               return await invokeRegisteredAction(local.extensionKey, local.action, input);
             }
             ensureRuntimeInvokeAllowed(extensionKey, null, actionKey);
-            return await requestHostApi(
-              "runtime.invoke",
-              { target_action_key: actionKey, input: toJsonValue(input) },
-              extensionKey,
-            );
+            throw new Error(`runtime action is not loaded in current extension host: ${actionKey}`);
           },
         },
         local: {
@@ -114,11 +110,7 @@ export function createExtensionRuntime({
             if (local) {
               return await invokeRegisteredChannel(local.extensionKey, canonical, method, input);
             }
-            return await requestHostApi("extension.channel_invoke", {
-              channel_key: channelKey,
-              method,
-              input: toJsonValue(input),
-            }, extensionKey);
+            throwChannelMethodNotLoaded(canonical, method);
           },
           self(channelKey = "api") {
             const canonical = canonicalChannelKey(extensionKey, channelKey);
@@ -136,12 +128,7 @@ export function createExtensionRuntime({
                 if (local) {
                   return await invokeRegisteredChannel(local.extensionKey, resolved.channelKey, method, input);
                 }
-                return await requestHostApi("extension.channel_invoke", {
-                  dependency_alias: alias,
-                  channel_key: channelKey,
-                  method,
-                  input: toJsonValue(input),
-                }, extensionKey);
+                throwChannelMethodNotLoaded(resolved.channelKey, method);
               },
             };
           },
@@ -224,6 +211,10 @@ export function createExtensionRuntime({
     return null;
   }
 
+  function throwChannelMethodNotLoaded(channelKey, method) {
+    throw new Error(`extension channel method is not loaded in current extension host: ${channelKey}.${method}`);
+  }
+
   function ensureRuntimeInvokeAllowed(consumerExtensionKey, targetExtensionKey, targetActionKey) {
     if (targetExtensionKey && consumerExtensionKey === targetExtensionKey) return;
     const permissions = currentInvocationPermissions(consumerExtensionKey);
@@ -271,7 +262,7 @@ export function createExtensionRuntime({
     const record = extensions.get(extensionKey);
     const handler = record?.channels.get(channelHandlerKey(channelKey, method));
     if (!handler) {
-      throw new Error(`extension channel method is not registered: ${channelKey}.${method}`);
+      throwChannelMethodNotLoaded(channelKey, method);
     }
     return await withInvocationContext({
       extensionKey,
@@ -394,7 +385,7 @@ export function createExtensionRuntime({
       ? params.channel_key
       : canonicalChannelKey(scope, params.channel_key);
     const found = findChannel(channelKey, method);
-    if (!found) throw new Error(`extension channel method is not registered: ${channelKey}.${method}`);
+    if (!found) throwChannelMethodNotLoaded(channelKey, method);
     return await invokeRegisteredChannel(found.extensionKey, channelKey, method, params.input);
   }
 

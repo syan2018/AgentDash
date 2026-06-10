@@ -20,10 +20,10 @@
 | session-stream | research | 已归档 | `research/session-stream-executable-plan.md` |
 | local-runtime | research | 已归档 | `research/local-runtime-executable-plan.md` |
 | settings-llm-providers | 修复 | 已提交 | `fixes/003-settings-llm-providers-model-boundary.md` |
-| local-runtime Batch A | 修复 | 待提交 | `fixes/004-local-runtime-tool-executor-boundary.md` |
-| local-runtime Batch B | 修复 | 待提交 | `fixes/005-local-runtime-tool-error-mapping.md` |
-| local-runtime Batch C | 修复 | 待提交 | `fixes/006-local-runtime-relay-mcp-fail-closed.md` |
-| local-runtime Batch D | 修复 | 待提交 | `fixes/007-local-runtime-extension-host-api-split.md` |
+| local-runtime Batch A | 修复 | 已提交 | `fixes/004-local-runtime-tool-executor-boundary.md` |
+| local-runtime Batch B | 修复 | 已提交 | `fixes/005-local-runtime-tool-error-mapping.md` |
+| local-runtime Batch C | 修复 | 已提交 | `fixes/006-local-runtime-relay-mcp-fail-closed.md` |
+| local-runtime Batch D | 修复 | 已提交 | `fixes/007-local-runtime-extension-host-api-split.md` |
 | vfs-service | 修复 | 已提交 | `fixes/002-vfs-create-text-error-semantics.md` |
 
 ## 已完成模块
@@ -73,3 +73,4 @@
 | `c079e519` | workflow-orchestration | 清理不可达诊断、未用编译模式与误导工具描述 |
 | `b9095329` | vfs-service | 收敛 `create_text` 错误语义 |
 | `205d2a91` | settings-llm-providers | 收敛 provider 模型解析、preset 与 action 边界 |
+| `f9f53388` | local-runtime | 收敛 ToolExecutor、ToolError、Relay MCP 与 Extension Host API 边界 |

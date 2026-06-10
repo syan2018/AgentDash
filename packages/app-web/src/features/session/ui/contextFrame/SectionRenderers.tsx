@@ -35,6 +35,7 @@ import type {
 } from "../../model/contextFrame";
 import { sectionKindToToken } from "../../model/contextFrame";
 import { isRecord } from "../../model/platformEvent";
+import { skillDisplayLabel, skillIdentityKey } from "../../../../types/context";
 
 // ─── section header + body 组合 ──────────────────────────────────────────────
 
@@ -493,11 +494,11 @@ function ToolSchemaItem({ tool }: { tool: RuntimeToolSchemaEntry }) {
 function SkillDeltaBody({ section }: { section: SkillDeltaSection }) {
   const render = (items: RuntimeSkillEntry[], symbol: string, label: string) =>
     items.map((skill, index) => (
-      <DiffLine
-        key={`${label}-${skill.name}-${index}`}
+      <SkillDiffLine
+        key={`${label}-${skillIdentityKey(skill)}-${index}`}
         symbol={symbol}
         label={label}
-        value={skill.name}
+        skill={skill}
       />
     ));
 
@@ -516,6 +517,34 @@ function SkillDeltaBody({ section }: { section: SkillDeltaSection }) {
       {render(section.added_skills, "+", "skill")}
       {render(section.removed_skills, "−", "skill")}
       {render(section.changed_skills, "↻", "skill")}
+    </div>
+  );
+}
+
+function SkillDiffLine({
+  symbol,
+  label,
+  skill,
+}: {
+  symbol: string;
+  label: string;
+  skill: RuntimeSkillEntry;
+}) {
+  const displayLabel = skillDisplayLabel(skill);
+  const identity = skillIdentityKey(skill);
+  return (
+    <div className="space-y-1 rounded-[6px] border border-border/60 bg-secondary/15 px-2 py-1.5">
+      <p className="flex items-start gap-2 text-xs leading-5">
+        <span className="shrink-0 w-4 select-none text-muted-foreground/70">{symbol}</span>
+        <span className="shrink-0 text-muted-foreground/80">{label}</span>
+        <span className="min-w-0 break-all font-mono text-foreground/80">{displayLabel}</span>
+      </p>
+      <div className="flex flex-wrap gap-1.5 pl-8">
+        {skill.provider_key && <Chip label={`provider: ${skill.provider_key}`} />}
+        {identity !== displayLabel && <Chip label={`capability: ${identity}`} />}
+        {skill.local_name && skill.local_name !== displayLabel && <Chip label={`local: ${skill.local_name}`} />}
+        {skill.exposure === "explicit_only" && <Chip label="explicit only" />}
+      </div>
     </div>
   );
 }

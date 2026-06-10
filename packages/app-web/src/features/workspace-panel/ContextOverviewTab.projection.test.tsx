@@ -105,6 +105,55 @@ const sessionCapabilities: SessionBaselineCapabilities = {
   ],
 };
 
+const clusteredSessionCapabilities: SessionBaselineCapabilities = {
+  skills: [
+    {
+      name: "legacy-flat-only",
+      description: "cluster 存在时不作为主展示",
+      file_path: "runtime-shared://skills/legacy-flat-only/SKILL.md",
+    },
+  ],
+  skill_clusters: [
+    {
+      provider_key: "copilot",
+      display_name: "Copilot Skills",
+      model_summary: "Copilot provider default exposure.",
+      ui_summary: "只展示默认暴露的 Copilot skill。",
+      inventory_hint: "更多 skill 可在 provider inventory 中查看。",
+      inventory_count: 9,
+      default_exposed_skills: [
+        {
+          capability_key: "copilot/config-edit",
+          provider_key: "copilot",
+          local_name: "config-edit",
+          display_name: "Copilot Config",
+          description: "配置编辑 skill",
+          file_path: "copilot://skills/config-edit/SKILL.md",
+          exposure: "default_exposed",
+        },
+      ],
+    },
+    {
+      provider_key: "workspace",
+      display_name: "Workspace Skills",
+      model_summary: "Workspace provider default exposure.",
+      inventory_count: 1,
+      default_exposed_skills: [
+        {
+          capability_key: "workspace/config-edit",
+          provider_key: "workspace",
+          local_name: "config-edit",
+          display_name: "Workspace Config",
+          description: "workspace 配置编辑 skill",
+          file_path: "workspace://skills/config-edit/SKILL.md",
+          exposure: "default_exposed",
+        },
+      ],
+    },
+  ],
+  skill_diagnostics: [],
+};
+
 const lifecycleRunView: LifecycleRunView = {
   run_ref: { run_id: "run-projection-123456" },
   project_id: "project-projection",
@@ -245,5 +294,29 @@ describe("ContextOverviewTab projection contract", () => {
     expect(html).toContain("Session Agent");
     expect(html).toContain("Run · Running");
     expect(html).not.toContain("当前会话还没有关联的上下文信息。");
+  });
+
+  it("优先从 skill_clusters 展示 session skill provider 和默认暴露 skill", () => {
+    const html = renderToStaticMarkup(
+      <ContextOverviewTab
+        contextSnapshot={contextSnapshot}
+        ownerStory={null}
+        ownerProjectName="Projection Project"
+        executorSummary={contextSnapshot.executor}
+        runtimeSurface={runtimeSurface}
+        hookRuntime={null}
+        sessionCapabilities={clusteredSessionCapabilities}
+        lifecycleRun={null}
+      />,
+    );
+
+    expect(html).toContain("2 个 Skill Provider");
+    expect(html).toContain("Copilot Skills");
+    expect(html).toContain("只展示默认暴露的 Copilot skill。");
+    expect(html).toContain("更多 skill 可在 provider inventory 中查看。");
+    expect(html).toContain("inventory 9");
+    expect(html).toContain("copilot/config-edit");
+    expect(html).toContain("workspace/config-edit");
+    expect(html).not.toContain("legacy-flat-only");
   });
 });

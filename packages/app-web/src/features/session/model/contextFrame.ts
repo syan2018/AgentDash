@@ -1,4 +1,5 @@
 import { isRecord } from "./platformEvent";
+import type { SkillContextExposure } from "../../../types/context";
 
 export interface ContextFrame {
   id: string;
@@ -128,8 +129,14 @@ export interface SystemNoticeSection {
 
 export interface RuntimeSkillEntry {
   name: string;
+  capability_key: string;
+  provider_key: string;
+  local_name: string;
+  display_name?: string;
   description: string;
   file_path: string;
+  base_dir?: string;
+  exposure: SkillContextExposure;
   disable_model_invocation: boolean;
 }
 
@@ -408,14 +415,32 @@ function parseInjectionEntry(value: unknown): RuntimeHookInjectionEntry | null {
 
 function parseSkillEntry(value: unknown): RuntimeSkillEntry | null {
   if (!isRecord(value)) return null;
-  const name = readString(value.name);
+  const rawName = readString(value.name);
+  const providerKey = readString(value.provider_key) ?? "";
+  const localName = readString(value.local_name) ?? rawName ?? "";
+  const displayName = readString(value.display_name) ?? undefined;
+  const capabilityKey =
+    readString(value.capability_key)
+    ?? (providerKey && localName ? `${providerKey}/${localName}` : rawName ?? localName);
+  const name = rawName ?? displayName ?? localName ?? capabilityKey;
   if (!name) return null;
   return {
     name,
+    capability_key: capabilityKey,
+    provider_key: providerKey,
+    local_name: localName || name,
+    display_name: displayName,
     description: readString(value.description) ?? "",
     file_path: readString(value.file_path) ?? "",
+    base_dir: readString(value.base_dir) ?? undefined,
+    exposure: readSkillExposure(value.exposure),
     disable_model_invocation: value.disable_model_invocation === true,
   };
+}
+
+function readSkillExposure(value: unknown): SkillContextExposure {
+  if (value === "explicit_only") return "explicit_only";
+  return "default_exposed";
 }
 
 function readString(value: unknown): string | null {

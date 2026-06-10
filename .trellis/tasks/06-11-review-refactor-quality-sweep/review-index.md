@@ -28,6 +28,9 @@
 | session-stream Batch 1 | 修复 | 已提交 | `fixes/008-session-stream-core-policy-cleanup.md` |
 | session-stream Batch 2 | 修复 | 已提交 | `fixes/008-session-stream-core-policy-cleanup.md` |
 | vfs-service | research | 已归档 | `research/vfs-service-executable-plan.md` |
+| session-stream Batch 3 | 修复 | 已提交 | `fixes/009-session-context-frame-ui-view-model.md` |
+| vfs-service Batch D | 修复 | 已提交 | `fixes/010-vfs-tool-boundary-cleanup.md` |
+| vfs-service Batch E | 修复 | 已提交 | `fixes/010-vfs-tool-boundary-cleanup.md` |
 
 ## 已完成模块
 
@@ -78,3 +81,5 @@
 | `205d2a91` | settings-llm-providers | 收敛 provider 模型解析、preset 与 action 边界 |
 | `f9f53388` | local-runtime | 收敛 ToolExecutor、ToolError、Relay MCP 与 Extension Host API 边界 |
 | `4173fbcf` | session-stream | 收敛 stream reducer、transport contract、event policy 与 feed mapper |
+| `5dc5cdc1` | session-stream | 收敛 context frame UI 输入为解析后 view model |
+| `a08122a3` | vfs-service | 收敛工具路径 normalize 与 VFS tool factory 装配 |

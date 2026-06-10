@@ -4,9 +4,8 @@ use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentProcedureExecutionSpec, AgentProcedureRepository,
     AgentReusePolicy, ArtifactAliasPolicy, ExecutorRunRef, ExecutorSpec,
     FunctionActivityExecutorSpec, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
-    LifecycleGateRepository, LifecycleRun, LifecycleRunRepository, NodePortValue,
-    OrchestrationInstance, OrchestrationStatus, PlanNode, PlanNodeKind, RuntimeNodeError,
-    RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
+    LifecycleGateRepository, LifecycleRun, LifecycleRunRepository, NodePortValue, PlanNode,
+    PlanNodeKind, RuntimeNodeError, RuntimeNodeState, RuntimeSessionExecutionAnchor,
     RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy,
 };
 use agentdash_spi::{ApiRequestOutcome, BashExecOutcome, FunctionRunner};
@@ -17,6 +16,7 @@ use crate::repository_set::RepositorySet;
 use crate::workflow::frame_builder::AgentFrameBuilder;
 use crate::workflow::{RuntimeSessionCreationRequest, WorkflowApplicationError};
 
+use super::ready_node::{ReadyNodeView, RunningNodeView, RuntimeNodeCoordinate};
 use super::runtime::{OrchestrationRuntimeEvent, apply_orchestration_event_to_run};
 
 const MAX_DRAIN_STEPS: usize = 128;
@@ -123,25 +123,31 @@ impl OrchestrationExecutorLauncher {
         let mut result = OrchestrationExecutorDrainResult::default();
         for _ in 0..MAX_DRAIN_STEPS {
             let run = self.load_run(run_id).await?;
-            let Some(target) = ReadyNodeTarget::next(&run) else {
+            let Some((coordinate, kind, attempt_policy)) = ReadyNodeView::next(&run).map(|view| {
+                (
+                    view.coordinate.clone(),
+                    view.plan_node.kind,
+                    unsupported_attempt_policy(view.plan_node),
+                )
+            }) else {
                 return Ok(result);
             };
-            if let Some((code, message)) = unsupported_attempt_policy(&target.plan_node) {
-                let node_path = target.node_path.clone();
-                self.block_ready_node(run, target, code, &message, false)
+            if let Some((code, message)) = attempt_policy {
+                let node_path = coordinate.node_path.clone();
+                self.block_ready_node(run, coordinate, code, &message, false)
                     .await?;
                 result.failed_nodes.push(node_path);
                 continue;
             }
-            match target.kind {
+            match kind {
                 PlanNodeKind::AgentCall => {
-                    if let Some(launched) = self.launch_agent_node(run, target).await? {
+                    if let Some(launched) = self.launch_agent_node(run, coordinate).await? {
                         result.launched_agent_nodes.push(launched);
                     }
                 }
                 PlanNodeKind::Function | PlanNodeKind::LocalEffect => {
-                    let node_path = target.node_path.clone();
-                    match self.launch_function_node(run, target).await? {
+                    let node_path = coordinate.node_path.clone();
+                    match self.launch_function_node(run, coordinate).await? {
                         FunctionLaunchTerminal::Completed => {
                             result.completed_effect_nodes.push(node_path);
                         }
@@ -151,15 +157,15 @@ impl OrchestrationExecutorLauncher {
                     }
                 }
                 PlanNodeKind::HumanGate => {
-                    if let Some(opened) = self.open_human_gate(run, target).await? {
+                    if let Some(opened) = self.open_human_gate(run, coordinate).await? {
                         result.opened_human_gates.push(opened);
                     }
                 }
                 _ => {
-                    let node_path = target.node_path.clone();
+                    let node_path = coordinate.node_path.clone();
                     self.block_ready_node(
                         run,
-                        target,
+                        coordinate,
                         "unsupported_plan_node_kind",
                         "当前 orchestration executor 不支持该 plan node kind",
                         false,
@@ -179,19 +185,25 @@ impl OrchestrationExecutorLauncher {
         input: SubmitHumanGateDecisionInput,
     ) -> Result<SubmitHumanGateDecisionResult, WorkflowApplicationError> {
         let run = self.load_run(input.run_id).await?;
-        let target = ReadyNodeTarget::from_running_node(
-            &run,
+        let coordinate = RuntimeNodeCoordinate::new(
+            input.run_id,
             input.orchestration_id,
-            &input.node_path,
+            input.node_path.clone(),
             input.attempt,
-        )?;
-        if target.kind != PlanNodeKind::HumanGate {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "node {} 不是 HumanGate",
-                input.node_path
-            )));
-        }
-        let gate_id = human_gate_id_from_node(&target.runtime_node)?;
+        );
+        let (gate_id, outputs) = {
+            let view = RunningNodeView::for_coordinate(&run, &coordinate)?;
+            if view.plan_node.kind != PlanNodeKind::HumanGate {
+                return Err(WorkflowApplicationError::Conflict(format!(
+                    "node {} 不是 HumanGate",
+                    input.node_path
+                )));
+            }
+            (
+                human_gate_id_from_node(view.runtime_node)?,
+                human_decision_outputs(view.plan_node, input.decision.clone()),
+            )
+        };
         let mut gate = self
             .repos
             .lifecycle_gate_repo
@@ -207,14 +219,13 @@ impl OrchestrationExecutorLauncher {
         gate.resolve(input.resolved_by);
         self.repos.lifecycle_gate_repo.update(&gate).await?;
 
-        let outputs = human_decision_outputs(&target.plan_node, input.decision);
         let run = self
             .apply_event(
                 run,
-                target.orchestration_id,
+                coordinate.orchestration_id,
                 OrchestrationRuntimeEvent::NodeCompleted {
-                    node_path: target.node_path.clone(),
-                    attempt: target.attempt,
+                    node_path: coordinate.node_path.clone(),
+                    attempt: coordinate.attempt,
                     outputs,
                     timestamp: chrono::Utc::now(),
                 },
@@ -232,9 +243,12 @@ impl OrchestrationExecutorLauncher {
     async fn launch_agent_node(
         &self,
         run: LifecycleRun,
-        target: ReadyNodeTarget,
+        coordinate: RuntimeNodeCoordinate,
     ) -> Result<Option<LaunchedAgentNode>, WorkflowApplicationError> {
-        let executor = target.plan_node.executor.clone();
+        let executor = ReadyNodeView::for_coordinate(&run, &coordinate)?
+            .plan_node
+            .executor
+            .clone();
         let Some(ExecutorSpec::AgentProcedure {
             procedure,
             agent_reuse_policy,
@@ -243,7 +257,7 @@ impl OrchestrationExecutorLauncher {
         else {
             self.block_ready_node(
                 run,
-                target,
+                coordinate,
                 "agent_executor_missing",
                 "AgentCall node 缺少 AgentProcedure executor spec",
                 false,
@@ -262,7 +276,7 @@ impl OrchestrationExecutorLauncher {
                 None => {
                     self.block_ready_node(
                         run,
-                        target,
+                        coordinate,
                         "agent_procedure_not_found",
                         &format!("AgentProcedure `{procedure_key}` 不存在"),
                         false,
@@ -299,7 +313,7 @@ impl OrchestrationExecutorLauncher {
             ) => {
                 self.block_ready_node(
                     run,
-                    target,
+                    coordinate,
                     "agent_executor_policy_not_supported",
                     "ContinueCurrentAgent + DeliverToCurrentTrace 需要 connector delivery surface，当前 orchestration executor 不伪造已投递状态",
                     false,
@@ -310,7 +324,7 @@ impl OrchestrationExecutorLauncher {
             _ => {
                 self.block_ready_node(
                     run,
-                    target,
+                    coordinate,
                     "agent_executor_policy_not_supported",
                     "AgentCall executor policy 当前 scheduler 不支持",
                     false,
@@ -321,7 +335,7 @@ impl OrchestrationExecutorLauncher {
         };
 
         let frame = self
-            .create_frame(&agent, &target, Some(session_id.clone()))
+            .create_frame(&agent, &coordinate, Some(session_id.clone()))
             .await?;
         agent.set_current_frame(frame.id);
         self.repos.lifecycle_agent_repo.update(&agent).await?;
@@ -330,18 +344,18 @@ impl OrchestrationExecutorLauncher {
             run.id,
             frame.id,
             agent.id,
-            target.orchestration_id,
-            target.node_path.clone(),
-            target.attempt,
+            coordinate.orchestration_id,
+            coordinate.node_path.clone(),
+            coordinate.attempt,
         );
         self.repos.execution_anchor_repo.upsert(&anchor).await?;
 
         self.apply_event(
             run,
-            target.orchestration_id,
+            coordinate.orchestration_id,
             OrchestrationRuntimeEvent::NodeStarted {
-                node_path: target.node_path.clone(),
-                attempt: target.attempt,
+                node_path: coordinate.node_path.clone(),
+                attempt: coordinate.attempt,
                 executor_run_ref: Some(ExecutorRunRef::RuntimeSession {
                     session_id: session_id.clone(),
                 }),
@@ -352,9 +366,9 @@ impl OrchestrationExecutorLauncher {
 
         Ok(Some(LaunchedAgentNode {
             run_id: anchor.run_id,
-            orchestration_id: target.orchestration_id,
-            node_path: target.node_path,
-            attempt: target.attempt,
+            orchestration_id: coordinate.orchestration_id,
+            node_path: coordinate.node_path,
+            attempt: coordinate.attempt,
             runtime_session_id: session_id,
         }))
     }
@@ -362,16 +376,16 @@ impl OrchestrationExecutorLauncher {
     async fn launch_function_node(
         &self,
         run: LifecycleRun,
-        target: ReadyNodeTarget,
+        coordinate: RuntimeNodeCoordinate,
     ) -> Result<FunctionLaunchTerminal, WorkflowApplicationError> {
         let function_run_id = Uuid::new_v4().to_string();
         let run = self
             .apply_event(
                 run,
-                target.orchestration_id,
+                coordinate.orchestration_id,
                 OrchestrationRuntimeEvent::NodeStarted {
-                    node_path: target.node_path.clone(),
-                    attempt: target.attempt,
+                    node_path: coordinate.node_path.clone(),
+                    attempt: coordinate.attempt,
                     executor_run_ref: Some(ExecutorRunRef::FunctionRun {
                         run_id: function_run_id.clone(),
                     }),
@@ -380,16 +394,16 @@ impl OrchestrationExecutorLauncher {
             )
             .await?;
 
-        let terminal = match self.execute_function_like_node(&run, &target).await {
+        let terminal = match self.execute_function_like_node(&run, &coordinate).await {
             Ok(outputs) => OrchestrationRuntimeEvent::NodeCompleted {
-                node_path: target.node_path.clone(),
-                attempt: target.attempt,
+                node_path: coordinate.node_path.clone(),
+                attempt: coordinate.attempt,
                 outputs,
                 timestamp: chrono::Utc::now(),
             },
             Err(error) => OrchestrationRuntimeEvent::NodeFailed {
-                node_path: target.node_path.clone(),
-                attempt: target.attempt,
+                node_path: coordinate.node_path.clone(),
+                attempt: coordinate.attempt,
                 error,
                 timestamp: chrono::Utc::now(),
             },
@@ -397,21 +411,21 @@ impl OrchestrationExecutorLauncher {
         let completed = matches!(terminal, OrchestrationRuntimeEvent::NodeCompleted { .. });
         let run_id = run.id;
         if let Err(error) = self
-            .apply_event(run, target.orchestration_id, terminal)
+            .apply_event(run, coordinate.orchestration_id, terminal)
             .await
         {
             let latest_run = self.load_run(run_id).await?;
             self.apply_event(
                 latest_run,
-                target.orchestration_id,
+                coordinate.orchestration_id,
                 OrchestrationRuntimeEvent::NodeFailed {
-                    node_path: target.node_path.clone(),
-                    attempt: target.attempt,
+                    node_path: coordinate.node_path.clone(),
+                    attempt: coordinate.attempt,
                     error: RuntimeNodeError {
                         code: "terminal_materialization_failed".to_string(),
                         message: error.to_string(),
                         retryable: false,
-                        detail: Some(json!({ "node_id": target.node_id })),
+                        detail: Some(coordinate.detail()),
                     },
                     timestamp: chrono::Utc::now(),
                 },
@@ -429,14 +443,22 @@ impl OrchestrationExecutorLauncher {
     async fn open_human_gate(
         &self,
         run: LifecycleRun,
-        target: ReadyNodeTarget,
+        coordinate: RuntimeNodeCoordinate,
     ) -> Result<Option<OpenedHumanGate>, WorkflowApplicationError> {
-        match target.plan_node.executor.clone() {
+        let (plan_node_id, label, executor) = {
+            let view = ReadyNodeView::for_coordinate(&run, &coordinate)?;
+            (
+                view.plan_node.node_id.clone(),
+                view.plan_node.label.clone(),
+                view.plan_node.executor.clone(),
+            )
+        };
+        match executor.clone() {
             Some(ExecutorSpec::Human { .. }) => {}
             None => {
                 self.block_ready_node(
                     run,
-                    target,
+                    coordinate,
                     "human_gate_executor_missing",
                     "HumanGate node 缺少 Human executor spec",
                     false,
@@ -447,7 +469,7 @@ impl OrchestrationExecutorLauncher {
             Some(_) => {
                 self.block_ready_node(
                     run,
-                    target,
+                    coordinate,
                     "human_gate_executor_mismatch",
                     "HumanGate node 的 executor spec 类型不匹配",
                     false,
@@ -461,16 +483,20 @@ impl OrchestrationExecutorLauncher {
             None,
             None,
             "orchestration_human_gate",
-            human_gate_correlation_id(target.orchestration_id, &target.node_path, target.attempt),
+            human_gate_correlation_id(
+                coordinate.orchestration_id,
+                &coordinate.node_path,
+                coordinate.attempt,
+            ),
             Some(json!({
                 "contract": "orchestration_human_gate.v1",
-                "run_id": run.id,
-                "orchestration_id": target.orchestration_id,
-                "node_path": target.node_path.clone(),
-                "attempt": target.attempt,
-                "plan_node_id": target.node_id.clone(),
-                "label": target.plan_node.label.clone(),
-                "executor": target.plan_node.executor.clone(),
+                "run_id": coordinate.run_id,
+                "orchestration_id": coordinate.orchestration_id,
+                "node_path": coordinate.node_path.clone(),
+                "attempt": coordinate.attempt,
+                "plan_node_id": plan_node_id,
+                "label": label,
+                "executor": executor,
             })),
         );
         let gate_id = gate.id;
@@ -478,10 +504,10 @@ impl OrchestrationExecutorLauncher {
 
         self.apply_event(
             run,
-            target.orchestration_id,
+            coordinate.orchestration_id,
             OrchestrationRuntimeEvent::NodeStarted {
-                node_path: target.node_path.clone(),
-                attempt: target.attempt,
+                node_path: coordinate.node_path.clone(),
+                attempt: coordinate.attempt,
                 executor_run_ref: Some(ExecutorRunRef::HumanDecision {
                     decision_id: gate_id.to_string(),
                 }),
@@ -491,10 +517,10 @@ impl OrchestrationExecutorLauncher {
         .await?;
 
         Ok(Some(OpenedHumanGate {
-            run_id: target.run_id,
-            orchestration_id: target.orchestration_id,
-            node_path: target.node_path,
-            attempt: target.attempt,
+            run_id: coordinate.run_id,
+            orchestration_id: coordinate.orchestration_id,
+            node_path: coordinate.node_path,
+            attempt: coordinate.attempt,
             gate_id,
         }))
     }
@@ -502,22 +528,22 @@ impl OrchestrationExecutorLauncher {
     async fn block_ready_node(
         &self,
         run: LifecycleRun,
-        target: ReadyNodeTarget,
+        coordinate: RuntimeNodeCoordinate,
         code: &str,
         message: &str,
         retryable: bool,
     ) -> Result<(), WorkflowApplicationError> {
         self.apply_event(
             run,
-            target.orchestration_id,
+            coordinate.orchestration_id,
             OrchestrationRuntimeEvent::NodeBlocked {
-                node_path: target.node_path,
-                attempt: target.attempt,
+                node_path: coordinate.node_path.clone(),
+                attempt: coordinate.attempt,
                 error: RuntimeNodeError {
                     code: code.to_string(),
                     message: message.to_string(),
                     retryable,
-                    detail: Some(json!({ "node_id": target.node_id })),
+                    detail: Some(coordinate.detail()),
                 },
                 timestamp: chrono::Utc::now(),
             },
@@ -529,7 +555,7 @@ impl OrchestrationExecutorLauncher {
     async fn execute_function_like_node(
         &self,
         run: &LifecycleRun,
-        target: &ReadyNodeTarget,
+        coordinate: &RuntimeNodeCoordinate,
     ) -> Result<Vec<NodePortValue>, RuntimeNodeError> {
         let runner = self
             .function_runner
@@ -540,48 +566,60 @@ impl OrchestrationExecutorLauncher {
                 retryable: true,
                 detail: None,
             })?;
-        let context = function_context(run, target);
-        let Some(executor) = target.plan_node.executor.as_ref() else {
+        let (context, plan_node, executor) = {
+            let view = RunningNodeView::for_coordinate(run, coordinate).map_err(|error| {
+                RuntimeNodeError {
+                    code: "running_node_view_unavailable".to_string(),
+                    message: error.to_string(),
+                    retryable: false,
+                    detail: Some(coordinate.detail()),
+                }
+            })?;
+            (
+                function_context(run, &view),
+                view.plan_node.clone(),
+                view.plan_node.executor.clone(),
+            )
+        };
+        let Some(executor) = executor else {
             return Err(RuntimeNodeError {
                 code: "executor_spec_missing".to_string(),
                 message: "Function/LocalEffect node 缺少 executor spec".to_string(),
                 retryable: false,
-                detail: Some(json!({ "node_id": target.node_id })),
+                detail: Some(coordinate.detail()),
             });
         };
-        let ExecutorSpec::Function { spec } = executor else {
-            if let ExecutorSpec::LocalEffect {
+        let spec = match executor {
+            ExecutorSpec::Function { spec } => spec,
+            ExecutorSpec::LocalEffect {
                 capability_key,
                 input,
-            } = executor
-            {
+            } => {
                 return Err(RuntimeNodeError {
                     code: "local_effect_capability_not_supported".to_string(),
                     message: format!(
                         "LocalEffect capability `{capability_key}` 尚未接入具体 effect executor"
                     ),
                     retryable: false,
-                    detail: Some(json!({
-                        "contract": "orchestration_node_coordinate.v1",
-                        "orchestration_id": target.orchestration_id,
-                        "node_path": target.node_path.clone(),
-                        "attempt": target.attempt,
-                        "capability_key": capability_key,
-                        "input": input,
-                    })),
+                    detail: Some(coordinate.detail_with([
+                        ("capability_key", json!(capability_key)),
+                        ("input", json!(input)),
+                    ])),
                 });
             }
-            return Err(RuntimeNodeError {
-                code: "executor_spec_mismatch".to_string(),
-                message: "Function/LocalEffect node 的 executor spec 类型不匹配".to_string(),
-                retryable: false,
-                detail: Some(json!({ "node_id": target.node_id })),
-            });
+            _ => {
+                return Err(RuntimeNodeError {
+                    code: "executor_spec_mismatch".to_string(),
+                    message: "Function/LocalEffect node 的 executor spec 类型不匹配".to_string(),
+                    retryable: false,
+                    detail: Some(coordinate.detail()),
+                });
+            }
         };
         match spec {
             FunctionActivityExecutorSpec::ApiRequest(spec) => {
                 let outcome = runner
-                    .run_api_request(spec, &context)
+                    .run_api_request(&spec, &context)
                     .await
                     .map_err(|error| RuntimeNodeError {
                         code: "api_request_failed".to_string(),
@@ -601,12 +639,12 @@ impl OrchestrationExecutorLauncher {
                         })),
                     });
                 }
-                Ok(api_request_outputs(&target.plan_node, outcome))
+                Ok(api_request_outputs(&plan_node, outcome))
             }
             FunctionActivityExecutorSpec::BashExec(spec) => {
                 let outcome =
                     runner
-                        .run_bash(spec, &context)
+                        .run_bash(&spec, &context)
                         .await
                         .map_err(|error| RuntimeNodeError {
                             code: "bash_exec_failed".to_string(),
@@ -615,7 +653,7 @@ impl OrchestrationExecutorLauncher {
                             detail: None,
                         })?;
                 if outcome.success {
-                    Ok(bash_exec_outputs(&target.plan_node, outcome))
+                    Ok(bash_exec_outputs(&plan_node, outcome))
                 } else {
                     Err(RuntimeNodeError {
                         code: "bash_exec_nonzero".to_string(),
@@ -638,14 +676,14 @@ impl OrchestrationExecutorLauncher {
     async fn create_frame(
         &self,
         agent: &LifecycleAgent,
-        target: &ReadyNodeTarget,
+        coordinate: &RuntimeNodeCoordinate,
         runtime_session_ref: Option<String>,
     ) -> Result<AgentFrame, WorkflowApplicationError> {
         let mut builder = AgentFrameBuilder::new(agent.id).with_created_by(
             "orchestration_executor",
             Some(format!(
                 "{}:{}#{}",
-                target.orchestration_id, target.node_path, target.attempt
+                coordinate.orchestration_id, coordinate.node_path, coordinate.attempt
             )),
         );
         if let Some(session_id) = runtime_session_ref {
@@ -677,146 +715,31 @@ impl OrchestrationExecutorLauncher {
     }
 }
 
-#[derive(Debug, Clone)]
-struct ReadyNodeTarget {
-    run_id: Uuid,
-    orchestration_id: Uuid,
-    node_id: String,
-    node_path: String,
-    attempt: u32,
-    kind: PlanNodeKind,
-    plan_node: PlanNode,
-    runtime_node: RuntimeNodeState,
-    state_snapshot: Value,
-}
-
-impl ReadyNodeTarget {
-    fn next(run: &LifecycleRun) -> Option<Self> {
-        for orchestration in &run.orchestrations {
-            if matches!(
-                orchestration.status,
-                OrchestrationStatus::Completed
-                    | OrchestrationStatus::Failed
-                    | OrchestrationStatus::Cancelled
-            ) {
-                continue;
-            }
-            for ready_node_id in &orchestration.dispatch.ready_node_ids {
-                if let Some(target) = Self::from_node_id(run, orchestration, ready_node_id) {
-                    return Some(target);
-                }
-            }
-        }
-        None
-    }
-
-    fn from_node_id(
-        run: &LifecycleRun,
-        orchestration: &OrchestrationInstance,
-        node_id: &str,
-    ) -> Option<Self> {
-        let runtime_node = find_runtime_node_by_id(&orchestration.node_tree, node_id)?;
-        if runtime_node.status != RuntimeNodeStatus::Ready {
-            return None;
-        }
-        let plan_node = orchestration
-            .plan_snapshot
-            .nodes
-            .iter()
-            .find(|node| node.node_id == runtime_node.node_id)?
-            .clone();
-        Some(Self {
-            run_id: run.id,
-            orchestration_id: orchestration.orchestration_id,
-            node_id: runtime_node.node_id.clone(),
-            node_path: runtime_node.node_path.clone(),
-            attempt: runtime_node.attempt,
-            kind: plan_node.kind,
-            plan_node,
-            runtime_node: runtime_node.clone(),
-            state_snapshot: serde_json::to_value(&orchestration.state_snapshot)
-                .unwrap_or(Value::Null),
-        })
-    }
-
-    fn from_running_node(
-        run: &LifecycleRun,
-        orchestration_id: Uuid,
-        node_path: &str,
-        attempt: u32,
-    ) -> Result<Self, WorkflowApplicationError> {
-        let orchestration = run
-            .orchestrations
-            .iter()
-            .find(|item| item.orchestration_id == orchestration_id)
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "orchestration 不存在: {orchestration_id}"
-                ))
-            })?;
-        let runtime_node = find_runtime_node(&orchestration.node_tree, node_path, attempt)
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "runtime node 不存在: {node_path}#{attempt}"
-                ))
-            })?;
-        if runtime_node.status != RuntimeNodeStatus::Running {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "runtime node {} 当前不是 Running",
-                runtime_node.node_path
-            )));
-        }
-        let plan_node = orchestration
-            .plan_snapshot
-            .nodes
-            .iter()
-            .find(|node| node.node_id == runtime_node.node_id)
-            .ok_or_else(|| {
-                WorkflowApplicationError::Internal(format!(
-                    "plan node 不存在: {}",
-                    runtime_node.node_id
-                ))
-            })?
-            .clone();
-        Ok(Self {
-            run_id: run.id,
-            orchestration_id,
-            node_id: runtime_node.node_id.clone(),
-            node_path: runtime_node.node_path.clone(),
-            attempt: runtime_node.attempt,
-            kind: plan_node.kind,
-            plan_node,
-            runtime_node: runtime_node.clone(),
-            state_snapshot: serde_json::to_value(&orchestration.state_snapshot)
-                .unwrap_or(Value::Null),
-        })
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FunctionLaunchTerminal {
     Completed,
     Failed,
 }
 
-fn function_context(run: &LifecycleRun, target: &ReadyNodeTarget) -> Value {
-    let inputs = target
+fn function_context(run: &LifecycleRun, view: &RunningNodeView<'_>) -> Value {
+    let inputs = view
         .runtime_node
         .inputs
         .iter()
         .map(|input| (input.port_key.clone(), input.value.clone()))
         .collect::<serde_json::Map<_, _>>();
+    let state = serde_json::to_value(view.state_snapshot).unwrap_or(Value::Null);
     json!({
         "run_id": run.id,
         "project_id": run.project_id,
-        "orchestration_id": target.orchestration_id,
+        "orchestration_id": view.coordinate.orchestration_id,
         "node": {
-            "id": target.node_id.clone(),
-            "path": target.node_path.clone(),
-            "attempt": target.attempt,
+            "id": view.runtime_node.node_id.clone(),
+            "path": view.coordinate.node_path.clone(),
+            "attempt": view.coordinate.attempt,
             "inputs": inputs,
         },
-        "state": target.state_snapshot.clone(),
+        "state": state,
     })
 }
 
@@ -930,37 +853,6 @@ fn human_gate_correlation_id(orchestration_id: Uuid, node_path: &str, attempt: u
     format!("orchestration:{orchestration_id}:node:{node_path}:attempt:{attempt}")
 }
 
-fn find_runtime_node_by_id<'a>(
-    nodes: &'a [RuntimeNodeState],
-    node_id: &str,
-) -> Option<&'a RuntimeNodeState> {
-    for node in nodes {
-        if node.node_id == node_id {
-            return Some(node);
-        }
-        if let Some(found) = find_runtime_node_by_id(&node.children, node_id) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn find_runtime_node<'a>(
-    nodes: &'a [RuntimeNodeState],
-    node_path: &str,
-    attempt: u32,
-) -> Option<&'a RuntimeNodeState> {
-    for node in nodes {
-        if node.node_path == node_path && node.attempt == attempt {
-            return Some(node);
-        }
-        if let Some(found) = find_runtime_node(&node.children, node_path, attempt) {
-            return Some(found);
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod launcher_drain_tests {
     use std::sync::{Arc, Mutex};
@@ -971,8 +863,8 @@ mod launcher_drain_tests {
         AgentProcedure, AgentProcedureContract, AgentProcedureRepository, ApiRequestExecutorSpec,
         BashExecExecutorSpec, DefinitionSource, GateStrategy, HumanActivityExecutorSpec,
         HumanApprovalExecutorSpec, LifecycleAgentRepository, LifecycleGateRepository,
-        LifecycleRunRepository, OrchestrationLimits, OrchestrationSourceRef, OutputPortDefinition,
-        RuntimeTraceRef,
+        LifecycleRunRepository, OrchestrationLimits, OrchestrationSourceRef, OrchestrationStatus,
+        OutputPortDefinition, RuntimeNodeStatus, RuntimeTraceRef,
     };
     use async_trait::async_trait;
     use chrono::Utc;
@@ -1578,7 +1470,7 @@ mod launcher_drain_tests {
 
     #[tokio::test]
     async fn launcher_records_local_effect_as_started_then_failed_with_node_coordinate() {
-        let node = plan_node(
+        let mut node = plan_node(
             "effect",
             PlanNodeKind::LocalEffect,
             Some(ExecutorSpec::LocalEffect {
@@ -1586,6 +1478,7 @@ mod launcher_drain_tests {
                 input: Some(json!({"path": "result.txt"})),
             }),
         );
+        node.node_path = "effects.workspace_write".to_string();
         let run = run_with_node(node);
         let run_id = run.id;
         let orchestration_id = run.orchestrations[0].orchestration_id;
@@ -1599,7 +1492,7 @@ mod launcher_drain_tests {
             .await
             .expect("drain ready nodes");
 
-        assert_eq!(result.failed_nodes, vec!["effect"]);
+        assert_eq!(result.failed_nodes, vec!["effects.workspace_write"]);
         let latest = latest_run(&run_repo, run_id);
         let node = runtime_node(&latest, "effect");
         assert_eq!(node.status, RuntimeNodeStatus::Failed);
@@ -1616,12 +1509,16 @@ mod launcher_drain_tests {
             json!("orchestration_node_coordinate.v1")
         );
         assert_eq!(
+            error.detail.as_ref().expect("detail")["run_id"],
+            json!(run_id)
+        );
+        assert_eq!(
             error.detail.as_ref().expect("detail")["orchestration_id"],
             json!(orchestration_id)
         );
         assert_eq!(
             error.detail.as_ref().expect("detail")["node_path"],
-            json!("effect")
+            json!("effects.workspace_write")
         );
     }
 

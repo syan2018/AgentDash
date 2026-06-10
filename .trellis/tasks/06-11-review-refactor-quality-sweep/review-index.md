@@ -34,7 +34,7 @@
 | vfs-service Batch A | 修复 | 已提交 | `fixes/011-vfs-search-identity-propagation.md` |
 | vfs-service Batch C | 修复 | 已提交 | `fixes/012-vfs-runtime-metadata-accessors.md` |
 | vfs-service Batch B | 修复 | 已提交 | `fixes/013-vfs-patch-path-target-helper.md` |
-| vfs-service Batch F | 修复 | 待提交 | `fixes/014-vfs-search-service-split.md` |
+| vfs-service Batch F | 修复 | 已提交 | `fixes/014-vfs-search-service-split.md` |
 
 ## 已完成模块
 
@@ -90,3 +90,4 @@
 | `ed7852b4` | vfs-service | 传递 search/grep identity 到 provider 与 inline grep |
 | `46cbdbfb` | vfs-service | 收敛 runtime file metadata 常量与访问器 |
 | `c2390ff7` | vfs-service | 统一 patch path target 解析与 mutation key 语义 |
+| `264ec228` | vfs-service | 拆出 search/grep 专属服务边界 |

@@ -5,52 +5,24 @@
 //! 所有执行类操作都受 session mount root 边界约束。
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use agentdash_application::vfs::{ApplyPatchAffectedPaths, FsPatchTarget, apply_patch_to_target};
 use agentdash_relay::{FileEntryRelay, SearchHit, ShellOutputStream};
 use ignore::WalkBuilder;
 
+use crate::file_discovery_policy::FileDiscoveryPolicy;
 use crate::process_executor::ProcessExecutor;
 pub use crate::process_executor::ProcessOutput as ShellResult;
-
-pub(crate) struct SearchParams<'a> {
-    pub query: &'a str,
-    pub path: Option<&'a str>,
-    pub is_regex: bool,
-    pub include_glob: Option<&'a str>,
-    pub max_results: usize,
-    pub context_lines: usize,
-}
+use crate::search_executor::SearchExecutor;
+pub(crate) use crate::search_executor::SearchParams;
 
 #[derive(Debug, Clone)]
 pub struct ToolExecutor {
     workspace_roots_configured: bool,
     canonical_workspace_roots: Vec<PathBuf>,
     process_executor: ProcessExecutor,
+    search_executor: SearchExecutor,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FileDiscoveryIntent {
-    ImplicitWorkspaceScan,
-    ExplicitSubtreeScan,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct FileDiscoveryPolicy {
-    intent: FileDiscoveryIntent,
-}
-
-const HARD_EXCLUDE_DIRS: &[&str] = &[".git", ".svn", ".hg", ".bzr", ".jj", ".sl"];
-const BUILTIN_NOISE_DIRS: &[&str] = &[
-    "node_modules",
-    "target",
-    "dist",
-    "build",
-    ".next",
-    ".venv",
-    "__pycache__",
-];
 
 /// 文件 bytes 读取结果
 pub struct BinaryFileResult {
@@ -94,11 +66,13 @@ impl ToolExecutor {
     pub fn new(workspace_roots: Vec<PathBuf>) -> Self {
         let workspace_roots_configured = !workspace_roots.is_empty();
         let process_executor = ProcessExecutor::new(workspace_roots.clone());
+        let search_executor = SearchExecutor::new();
         let canonical_workspace_roots = canonicalize_workspace_roots(workspace_roots);
         Self {
             workspace_roots_configured,
             canonical_workspace_roots,
             process_executor,
+            search_executor,
         }
     }
 
@@ -331,18 +305,7 @@ impl ToolExecutor {
         params: &SearchParams<'_>,
     ) -> Result<(Vec<SearchHit>, bool), ToolError> {
         let ws = self.validate_workspace_root(workspace_root)?;
-        search_workspace_with_ripgrep(&ws, params, detect_ripgrep().await).await
-    }
-
-    #[cfg(test)]
-    async fn search_with_ripgrep_path(
-        &self,
-        workspace_root: &str,
-        params: &SearchParams<'_>,
-        rg_path: Option<PathBuf>,
-    ) -> Result<(Vec<SearchHit>, bool), ToolError> {
-        let ws = self.validate_workspace_root(workspace_root)?;
-        search_workspace_with_ripgrep(&ws, params, rg_path).await
+        self.search_executor.search(&ws, params).await
     }
 }
 
@@ -364,157 +327,6 @@ pub(crate) fn resolve_detect_workspace_root(workspace_root: &str) -> Result<Path
 
     std::fs::read_dir(&canonical).map_err(ToolError::Io)?;
     Ok(canonical)
-}
-
-async fn search_workspace_with_ripgrep(
-    workspace_root: &Path,
-    params: &SearchParams<'_>,
-    rg_path: Option<PathBuf>,
-) -> Result<(Vec<SearchHit>, bool), ToolError> {
-    let search_dir = match params.path {
-        Some(p) if !p.trim().is_empty() && p.trim() != "." => {
-            resolve_existing_path_with_root(workspace_root, p)?
-        }
-        _ => workspace_root.to_path_buf(),
-    };
-    let policy = FileDiscoveryPolicy::from_base(&search_dir, workspace_root);
-    if !policy.allows_path(&search_dir, workspace_root) {
-        return Ok((Vec::new(), false));
-    }
-
-    let rg = rg_path.ok_or_else(ripgrep_unavailable_error)?;
-    run_ripgrep(&rg, &search_dir, workspace_root, params, policy).await
-}
-
-fn ripgrep_unavailable_error() -> ToolError {
-    ToolError::Io(std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        "未找到 rg/ripgrep",
-    ))
-}
-
-async fn detect_ripgrep() -> Option<PathBuf> {
-    let candidates = if cfg!(windows) {
-        vec!["rg.exe", "rg"]
-    } else {
-        vec!["rg"]
-    };
-    for name in candidates {
-        if let Ok(output) =
-            tokio::process::Command::new(if cfg!(windows) { "where" } else { "which" })
-                .arg(name)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
-                .output()
-                .await
-            && output.status.success()
-        {
-            let path_str = String::from_utf8_lossy(&output.stdout);
-            let first_line = path_str.lines().next().unwrap_or("").trim();
-            if !first_line.is_empty() {
-                return Some(PathBuf::from(first_line));
-            }
-        }
-    }
-    None
-}
-
-async fn run_ripgrep(
-    rg_path: &Path,
-    search_dir: &Path,
-    workspace_root: &Path,
-    params: &SearchParams<'_>,
-    policy: FileDiscoveryPolicy,
-) -> Result<(Vec<SearchHit>, bool), ToolError> {
-    let mut cmd = tokio::process::Command::new(rg_path);
-    cmd.arg("--json")
-        .arg("--max-count")
-        .arg(params.max_results.to_string());
-    for arg in ripgrep_policy_args(policy) {
-        cmd.arg(arg);
-    }
-
-    if params.context_lines > 0 {
-        cmd.arg("-C").arg(params.context_lines.to_string());
-    }
-    if !params.is_regex {
-        cmd.arg("--fixed-strings");
-    }
-    if let Some(glob) = params.include_glob {
-        cmd.arg("--glob").arg(glob);
-    }
-
-    cmd.arg("--").arg(params.query).arg(search_dir);
-    cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let output = tokio::time::timeout(Duration::from_secs(30), cmd.output())
-        .await
-        .map_err(|_| ToolError::Timeout(30_000))?
-        .map_err(ToolError::Io)?;
-
-    let mut hits = Vec::new();
-    let mut truncated = false;
-
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let json: serde_json::Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        if json.get("type").and_then(|t| t.as_str()) != Some("match") {
-            continue;
-        }
-
-        let data = match json.get("data") {
-            Some(d) => d,
-            None => continue,
-        };
-
-        let abs_path = data
-            .get("path")
-            .and_then(|p| p.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("");
-
-        let Ok(rel_path) = workspace_relative_path(Path::new(abs_path), workspace_root) else {
-            tracing::warn!(
-                path = abs_path,
-                workspace_root = %workspace_root.display(),
-                "ripgrep returned path outside workspace root"
-            );
-            continue;
-        };
-
-        let line_number = data
-            .get("line_number")
-            .and_then(|n| n.as_u64())
-            .unwrap_or(0) as usize;
-
-        let content = data
-            .get("lines")
-            .and_then(|l| l.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .trim_end_matches('\n')
-            .trim_end_matches('\r')
-            .to_string();
-
-        hits.push(SearchHit {
-            path: rel_path,
-            line_number,
-            content,
-            context_before: Vec::new(),
-            context_after: Vec::new(),
-        });
-
-        if hits.len() >= params.max_results {
-            truncated = true;
-            break;
-        }
-    }
-
-    Ok((hits, truncated))
 }
 
 pub(crate) fn resolve_existing_path_with_root(
@@ -612,7 +424,10 @@ pub(crate) fn is_absolute_like(raw: &str) -> bool {
             .is_some_and(|(second, third)| *second == b':' && (*third == b'\\' || *third == b'/'))
 }
 
-fn workspace_relative_path(path: &Path, workspace_root: &Path) -> Result<String, ToolError> {
+pub(crate) fn workspace_relative_path(
+    path: &Path,
+    workspace_root: &Path,
+) -> Result<String, ToolError> {
     path.strip_prefix(workspace_root)
         .map(|relative| relative.to_string_lossy().replace('\\', "/"))
         .map_err(|_| {
@@ -701,73 +516,6 @@ fn build_walk(
     let workspace_root = workspace_root.to_path_buf();
     builder.filter_entry(move |entry| policy.allows_path(entry.path(), &workspace_root));
     builder
-}
-
-impl FileDiscoveryPolicy {
-    fn from_base(base: &Path, workspace_root: &Path) -> Self {
-        let intent = if base == workspace_root {
-            FileDiscoveryIntent::ImplicitWorkspaceScan
-        } else {
-            FileDiscoveryIntent::ExplicitSubtreeScan
-        };
-        Self { intent }
-    }
-
-    fn respects_workspace_ignores(self) -> bool {
-        self.intent == FileDiscoveryIntent::ImplicitWorkspaceScan
-    }
-
-    fn allows_path(self, path: &Path, workspace_root: &Path) -> bool {
-        if path_has_named_segment(path, workspace_root, HARD_EXCLUDE_DIRS) {
-            return false;
-        }
-        if self.intent == FileDiscoveryIntent::ImplicitWorkspaceScan
-            && path_has_named_segment(path, workspace_root, BUILTIN_NOISE_DIRS)
-        {
-            return false;
-        }
-        true
-    }
-}
-
-fn path_has_named_segment(path: &Path, workspace_root: &Path, names: &[&str]) -> bool {
-    let relative = path.strip_prefix(workspace_root).unwrap_or(path);
-    relative.components().any(|component| {
-        let std::path::Component::Normal(segment) = component else {
-            return false;
-        };
-        segment_matches(segment, names)
-    })
-}
-
-fn segment_matches(segment: &std::ffi::OsStr, names: &[&str]) -> bool {
-    segment
-        .to_str()
-        .is_some_and(|value| names.iter().any(|name| value.eq_ignore_ascii_case(name)))
-}
-
-fn ripgrep_policy_args(policy: FileDiscoveryPolicy) -> Vec<String> {
-    let mut args = vec!["--hidden".to_string()];
-    if policy.respects_workspace_ignores() {
-        args.push("--no-require-git".to_string());
-    }
-    if !policy.respects_workspace_ignores() {
-        args.push("--no-ignore".to_string());
-    }
-    push_ripgrep_exclude_globs(&mut args, HARD_EXCLUDE_DIRS);
-    if policy.intent == FileDiscoveryIntent::ImplicitWorkspaceScan {
-        push_ripgrep_exclude_globs(&mut args, BUILTIN_NOISE_DIRS);
-    }
-    args
-}
-
-fn push_ripgrep_exclude_globs(args: &mut Vec<String>, dirs: &[&str]) {
-    for dir in dirs {
-        args.push("--glob".to_string());
-        args.push(format!("!{dir}/**"));
-        args.push("--glob".to_string());
-        args.push(format!("!**/{dir}/**"));
-    }
 }
 
 fn file_content_kind(path: &Path, is_dir: bool) -> Option<String> {
@@ -1073,96 +821,6 @@ mod tests {
             .await
             .expect("explicit vcs list");
         assert!(explicit_entries.is_empty());
-    }
-
-    #[tokio::test]
-    async fn search_default_skips_ignored_subtree_but_explicit_path_finds_it() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        write_file(&temp.path().join(".gitignore"), "ignored/\n");
-        write_file(&temp.path().join("src/main.rs"), "needle in source\n");
-        write_file(
-            &temp.path().join("ignored/generated.rs"),
-            "needle in generated\n",
-        );
-        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
-        let root = temp.path().to_string_lossy().to_string();
-
-        let params = SearchParams {
-            query: "needle",
-            path: None,
-            is_regex: false,
-            include_glob: None,
-            max_results: 20,
-            context_lines: 0,
-        };
-        let (default_hits, _) = executor.search(&root, &params).await.expect("search");
-        assert!(default_hits.iter().any(|hit| hit.path == "src/main.rs"));
-        assert!(
-            !default_hits
-                .iter()
-                .any(|hit| hit.path.starts_with("ignored/")),
-            "default search should skip ignored subtree: {default_hits:?}"
-        );
-
-        let explicit_params = SearchParams {
-            path: Some("ignored"),
-            ..params
-        };
-        let (explicit_hits, _) = executor
-            .search(&root, &explicit_params)
-            .await
-            .expect("explicit search");
-        assert!(
-            explicit_hits
-                .iter()
-                .any(|hit| hit.path == "ignored/generated.rs"),
-            "explicit ignored subtree should be searchable: {explicit_hits:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn search_requires_ripgrep_when_unavailable() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        write_file(&temp.path().join("src/main.rs"), "needle in source\n");
-        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
-        let root = temp.path().to_string_lossy().to_string();
-        let params = SearchParams {
-            query: "needle",
-            path: None,
-            is_regex: false,
-            include_glob: None,
-            max_results: 20,
-            context_lines: 0,
-        };
-
-        let error = executor
-            .search_with_ripgrep_path(&root, &params, None)
-            .await
-            .expect_err("search should require ripgrep");
-        assert!(matches!(
-            error,
-            ToolError::Io(ref io_error) if io_error.kind() == std::io::ErrorKind::NotFound
-        ));
-    }
-
-    #[test]
-    fn ripgrep_policy_args_enter_explicit_ignored_subtree_without_vcs_metadata() {
-        let implicit = ripgrep_policy_args(FileDiscoveryPolicy {
-            intent: FileDiscoveryIntent::ImplicitWorkspaceScan,
-        });
-        assert!(implicit.contains(&"--hidden".to_string()));
-        assert!(implicit.contains(&"--no-require-git".to_string()));
-        assert!(!implicit.contains(&"--no-ignore".to_string()));
-        assert!(implicit.contains(&"!**/node_modules/**".to_string()));
-        assert!(implicit.contains(&"!**/.git/**".to_string()));
-
-        let explicit = ripgrep_policy_args(FileDiscoveryPolicy {
-            intent: FileDiscoveryIntent::ExplicitSubtreeScan,
-        });
-        assert!(explicit.contains(&"--no-ignore".to_string()));
-        assert!(!explicit.contains(&"--no-require-git".to_string()));
-        assert!(!explicit.contains(&"!**/node_modules/**".to_string()));
-        assert!(explicit.contains(&"!**/.git/**".to_string()));
     }
 
     #[tokio::test]

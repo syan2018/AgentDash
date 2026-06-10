@@ -44,6 +44,8 @@
 | local-runtime Batch F | 修复 | 已提交 | `fixes/019-local-runtime-process-executor.md` |
 | local-runtime Batch H | 修复 | 已提交 | `fixes/020-local-runtime-search-executor.md` |
 | workflow-orchestration Batch C | 修复 | 已提交 | `fixes/021-workflow-ready-node-coordinate.md` |
+| workflow-orchestration Batch D | 修复 | 已提交 | `fixes/022-workflow-executor-launcher-split.md` |
+| companion-tools | research | 已归档 | `research/companion-tools-executable-plan.md` |
 
 ## 已完成模块
 
@@ -107,3 +109,4 @@
 | `2bff89ac` | local-runtime | 收敛 shell/exec 共享进程执行边界 |
 | `9cfeaff1` | workflow-orchestration | 收敛 ready node typed coordinate/view |
 | `fe41d9ed` | local-runtime | 拆出 SearchExecutor 与 FileDiscoveryPolicy |
+| `41e01337` | workflow-orchestration | 拆分 executor launcher 按 executor kind 的服务边界 |

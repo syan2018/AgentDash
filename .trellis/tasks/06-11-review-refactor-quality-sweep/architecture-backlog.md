@@ -107,3 +107,12 @@
 - 影响面：extension manifest permission、process.shell/process.exec 默认环境、Node/PowerShell 命令发现、SDK 文档与样例、插件运行兼容边界。
 - 建议方向：如果产品要求强隔离，先定义 process 执行是否 `env_clear()`、注入哪些最小基础环境、以及是否需要新的 env pass/inject 权限族。
 - 保留为架构项的原因：完整沙箱会改变公开 extension permission contract 和 runtime 行为，不能混入当前模块级 process executor 收敛。
+
+## ARCH-010: companion platform broker 与权限授权闭环未统一
+
+- 优先级：P1
+- 状态：待设计
+- 证据：`companion_request(target=platform, payload_type=capability_grant_request)` 当前仍会转成人类 companion request；`PermissionGrantService`、grant lifecycle spec 和 companion capability grant reference 已要求授权事实由 permission grant / capability transition 承载。
+- 影响面：companion tool semantics、PermissionGrant 事实源、AgentFrame capability state、runtime tool surface 更新、用户审批 UI/API、CapabilityResolver 可见性。
+- 建议方向：定义单一 platform broker use case，负责 grant 创建、policy decision、用户审批 handoff、frame effect application 与 live runtime capability/tool-schema update。
+- 保留为架构项的原因：最小模块修复可以先拒绝假授权或接入已有 `PermissionGrantService`，但完整 broker 闭环会跨 companion、permission、session capability service、API route、前端审批视图和 runtime projection。

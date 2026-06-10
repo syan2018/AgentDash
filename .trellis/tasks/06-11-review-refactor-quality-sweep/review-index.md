@@ -25,6 +25,9 @@
 | local-runtime Batch C | 修复 | 已提交 | `fixes/006-local-runtime-relay-mcp-fail-closed.md` |
 | local-runtime Batch D | 修复 | 已提交 | `fixes/007-local-runtime-extension-host-api-split.md` |
 | vfs-service | 修复 | 已提交 | `fixes/002-vfs-create-text-error-semantics.md` |
+| session-stream Batch 1 | 修复 | 已提交 | `fixes/008-session-stream-core-policy-cleanup.md` |
+| session-stream Batch 2 | 修复 | 已提交 | `fixes/008-session-stream-core-policy-cleanup.md` |
+| vfs-service | research | 已归档 | `research/vfs-service-executable-plan.md` |
 
 ## 已完成模块
 
@@ -74,3 +77,4 @@
 | `b9095329` | vfs-service | 收敛 `create_text` 错误语义 |
 | `205d2a91` | settings-llm-providers | 收敛 provider 模型解析、preset 与 action 边界 |
 | `f9f53388` | local-runtime | 收敛 ToolExecutor、ToolError、Relay MCP 与 Extension Host API 边界 |
+| `4173fbcf` | session-stream | 收敛 stream reducer、transport contract、event policy 与 feed mapper |

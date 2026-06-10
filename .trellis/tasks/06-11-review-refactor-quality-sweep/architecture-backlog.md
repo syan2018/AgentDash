@@ -71,3 +71,12 @@
 - 影响面：session UI、tool card registry、context frame rendering、generated event contract。
 - 建议方向：定义 session feed view model union，例如 `MessageEntry / ToolEntry / SystemEventEntry / ContextFrameEntry`，UI 不直接 switch generated event。
 - 保留为架构项的原因：涉及 generated event contract、session feed view model、UI registry 多层边界，预计迁移范围较大。
+
+## ARCH-006: runtime tool composer 完整迁出 VFS
+
+- 优先级：P2
+- 状态：待设计
+- 证据：`crates/agentdash-application/src/vfs/tools/provider.rs` 中的 `RelayRuntimeToolProvider` 同时装配 VFS、shell、workflow、companion、canvas、workspace module 等工具；runtime provider wiring 参与 API bootstrap 和 session runtime ready gate。
+- 影响面：VFS tool factory、session runtime composer、API bootstrap、workflow/canvas/companion/workspace module tool assembly、AppState ready gate。
+- 建议方向：先在 VFS 内抽出 VFS tool factory；后续由 session/runtime ownership 下的 `RuntimeToolProviderComposer` 组合各领域 factory，并把 `SessionToolServices` 迁到 session-owned 模块。
+- 保留为架构项的原因：完整迁移预计超过 10 个文件，跨 VFS、session launch、API bootstrap、workflow、companion、canvas、workspace module 与 runtime gateway 边界。

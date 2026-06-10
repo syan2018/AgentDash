@@ -230,15 +230,6 @@ export function ProjectAgentView({
     }
   };
 
-  const handleToggleLinkDefault = async (
-    agentId: string,
-    field: "is_default_for_story" | "is_default_for_task",
-    current: boolean,
-  ) => {
-    await updateProjectAgent(project.id, agentId, { [field]: !current });
-    await fetchProjectAgentConfigs(project.id);
-  };
-
   const sortedAgents = useMemo(() => {
     return [...agents].sort((a, b) => {
       return a.display_name.localeCompare(b.display_name, "zh-CN");
@@ -577,36 +568,6 @@ export function ProjectAgentView({
                             Lifecycle: {projectAgentConfig.default_lifecycle_key}
                           </span>
                         )}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handleToggleLinkDefault(agent.key, "is_default_for_story", projectAgentConfig?.is_default_for_story ?? false);
-                          }}
-                          className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
-                            projectAgentConfig?.is_default_for_story
-                              ? "border-primary/30 bg-primary/10 text-primary"
-                              : "border-border/50 bg-transparent text-muted-foreground/50 hover:border-border hover:text-muted-foreground"
-                          }`}
-                          title={projectAgentConfig?.is_default_for_story ? "取消 Story 默认" : "设为 Story 默认"}
-                        >
-                          Story 默认
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handleToggleLinkDefault(agent.key, "is_default_for_task", projectAgentConfig?.is_default_for_task ?? false);
-                          }}
-                          className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
-                            projectAgentConfig?.is_default_for_task
-                              ? "border-primary/30 bg-primary/10 text-primary"
-                              : "border-border/50 bg-transparent text-muted-foreground/50 hover:border-border hover:text-muted-foreground"
-                          }`}
-                          title={projectAgentConfig?.is_default_for_task ? "取消 Task 默认" : "设为 Task 默认"}
-                        >
-                          Task 默认
-                        </button>
                       </div>
 
                       {/* 操作按钮 */}

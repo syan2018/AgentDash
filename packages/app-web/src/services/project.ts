@@ -148,8 +148,6 @@ export interface CreateProjectAgentPayload {
   agent_type: string;
   config?: Record<string, unknown>;
   default_lifecycle_key?: string;
-  is_default_for_story?: boolean;
-  is_default_for_task?: boolean;
 }
 
 export interface UpdateProjectAgentPayload {
@@ -157,8 +155,6 @@ export interface UpdateProjectAgentPayload {
   agent_type?: string;
   config?: Record<string, unknown>;
   default_lifecycle_key?: string;
-  is_default_for_story?: boolean;
-  is_default_for_task?: boolean;
   knowledge_enabled?: boolean;
 }
 

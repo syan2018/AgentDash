@@ -248,7 +248,10 @@ export type ProjectVfsMount = ProjectVfsMountResponse;
 
 // ─── Project Agent 项目实例 ───
 
-export type ProjectAgent = Omit<GeneratedProjectAgent, "config" | "default_lifecycle_key"> & {
+export type ProjectAgent = Pick<
+  GeneratedProjectAgent,
+  "id" | "project_id" | "name" | "agent_type" | "knowledge_enabled" | "created_at" | "updated_at"
+> & {
   config: AgentPresetConfig;
   default_lifecycle_key: string | null;
 };

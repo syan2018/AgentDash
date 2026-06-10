@@ -171,7 +171,7 @@ export function CreateTaskPanel({
               <div>
                 <p className="text-xs font-medium text-muted-foreground">关联 Story 上下文</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  勾选后会把这些上下文源分配给 Task Agent，并在执行时由后端解析注入。
+                  勾选后会把这些上下文源分配给 Task 运行上下文，并在执行时由后端解析注入。
                 </p>
               </div>
               <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-0.5 text-[10px] text-muted-foreground">

@@ -188,7 +188,7 @@ export const WELL_KNOWN_CAPABILITY_KEYS = [
   "file_read",
   "file_write",
   "shell_execute",
-  "canvas",
+  "workspace_module",
   "workflow",
   "collaboration",
   "story_management",

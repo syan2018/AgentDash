@@ -39,8 +39,8 @@ pub async fn get_project_workspace_modules(
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<ProjectWorkspaceModulePath>,
 ) -> Result<Json<Vec<WorkspaceModuleDescriptor>>, ApiError> {
-    let project_id =
-        Uuid::parse_str(&path.project_id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
+    let project_id = Uuid::parse_str(&path.project_id)
+        .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,

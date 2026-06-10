@@ -40,6 +40,11 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
     },
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::SkillTemplate,
+        key: "workspace-module-system",
+        version: "1.0.0",
+    },
+    BuiltinAssetVersion {
+        asset_type: LibraryAssetType::SkillTemplate,
         key: "companion-system",
         version: "1.0.1",
     },

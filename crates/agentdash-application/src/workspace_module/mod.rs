@@ -10,12 +10,13 @@
 //! - module_id 约定见 §4：`ext:{extension_key}` / `canvas:{mount_id}` /
 //!   `builtin:{key}`。
 
+pub(crate) mod skill_projection;
 mod tools;
 
 use agentdash_contracts::workspace_module::{
-    WorkspaceModuleDescriptor, WorkspaceModuleKind, WorkspaceModuleOperation,
-    WorkspaceModuleOperationDispatch, WorkspaceModuleStatus, WorkspaceModuleSummary,
-    WorkspaceModuleUiEntry,
+    WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
+    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleStatus,
+    WorkspaceModuleSummary, WorkspaceModuleUiEntry,
 };
 use agentdash_domain::canvas::Canvas;
 use agentdash_domain::shared_library::{
@@ -27,8 +28,8 @@ use crate::runtime_gateway::ExtensionInvocationWorkspaceContext;
 use agentdash_domain::common::Vfs;
 
 pub use tools::{
-    WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
-    WorkspaceModulePresentTool,
+    WorkspaceModuleCreateTool, WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool,
+    WorkspaceModuleListTool, WorkspaceModulePresentTool,
 };
 
 /// invoke 解析出的 backend target + workspace 上下文。
@@ -51,7 +52,10 @@ pub fn resolve_invocation_backend(
     vfs: Option<&Vfs>,
     explicit_backend_id: Option<&str>,
 ) -> Option<ResolvedInvocationBackend> {
-    let backend_id = match explicit_backend_id.map(str::trim).filter(|id| !id.is_empty()) {
+    let backend_id = match explicit_backend_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
         Some(id) => id.to_string(),
         None => {
             let mount = vfs?.default_mount()?;
@@ -237,6 +241,7 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
                 .map(|tab| WorkspaceModuleUiEntry {
                     view_key: tab.type_id.clone(),
                     renderer_kind: tab_renderer_kind(&tab.renderer).to_string(),
+                    presentation_uri: Some(format!("{}://panel", tab.uri_scheme)),
                     uri_scheme: Some(tab.uri_scheme.clone()),
                     title: tab.label.clone(),
                 })
@@ -289,19 +294,50 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
 }
 
 fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
-    // canvas binding 是声明式数据引用（alias <- source_uri），**不是可 invoke 的 RPC**
-    // （research/02、design §4）。canvas runtime action 形态是 RuntimeActionKey，与 binding
-    // alias 不是同一概念，且 Canvas 实体本身不声明可执行 action。本轮 canvas module 因此
-    // 不投影任何 invokable operation——operations 为空，仅保留 ui_entry 供 present/read。
-    // 一旦 canvas 暴露真正的 runtime action surface，再在此处投影为
-    // `WorkspaceModuleOperationDispatch::Canvas { canvas_action }`（保持单一 canonical）。
-    let operations: Vec<WorkspaceModuleOperation> = Vec::new();
+    let operations: Vec<WorkspaceModuleOperation> = vec![WorkspaceModuleOperation {
+        operation_key: "canvas.bind_data".to_string(),
+        origin: "host_canvas".to_string(),
+        description: "Declare or update a data binding for this Canvas instance.".to_string(),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "alias": {
+                    "type": "string",
+                    "description": "Runtime binding alias, exposed as bindings/<alias>.json"
+                },
+                "source_uri": {
+                    "type": "string",
+                    "description": "Source resource URI to bind into the Canvas runtime"
+                },
+                "content_type": {
+                    "type": "string",
+                    "description": "Optional content type, defaults to application/json"
+                }
+            },
+            "required": ["alias", "source_uri"],
+            "additionalProperties": false
+        })),
+        output_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "canvas_id": {"type": "string"},
+                "mount_id": {"type": "string"},
+                "bindings": {"type": "array"}
+            },
+            "required": ["canvas_id", "mount_id", "bindings"]
+        })),
+        permission_summary: Vec::new(),
+        dispatch: WorkspaceModuleOperationDispatch::HostCanvas {
+            canvas_action: WorkspaceModuleCanvasHostAction::BindData,
+        },
+    }];
 
     // entry/files → ui_entry(canvas)
     let ui_entries = vec![WorkspaceModuleUiEntry {
-        view_key: canvas.entry_file.clone(),
+        view_key: "preview".to_string(),
         renderer_kind: "canvas".to_string(),
-        uri_scheme: Some(crate::vfs::build_canvas_mount_id(canvas)),
+        presentation_uri: Some(format!("canvas://{}", canvas.mount_id)),
+        uri_scheme: Some("canvas".to_string()),
         title: canvas.title.clone(),
     }];
 
@@ -326,7 +362,10 @@ fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
         summary,
         ui_entries,
         operations,
-        runtime_backing: Some(format!("canvas:{}", crate::vfs::build_canvas_mount_id(canvas))),
+        runtime_backing: Some(format!(
+            "canvas:{}",
+            crate::vfs::build_canvas_mount_id(canvas)
+        )),
     }
 }
 
@@ -531,11 +570,25 @@ mod tests {
             .find(|module| module.summary.kind == WorkspaceModuleKind::Canvas)
             .expect("canvas module");
         assert_eq!(canvas_module.summary.module_id, "canvas:dashboard-a");
-        // canvas binding 不是 invokable operation：canvas module 本轮无可调用 operation
-        assert!(canvas_module.operations.is_empty());
-        // 仍保留 ui_entry 供 present
+        let canvas_op = canvas_module
+            .operations
+            .iter()
+            .find(|operation| operation.operation_key == "canvas.bind_data")
+            .expect("canvas bind operation");
+        assert_eq!(canvas_op.origin, "host_canvas");
+        assert_eq!(
+            canvas_op.dispatch,
+            WorkspaceModuleOperationDispatch::HostCanvas {
+                canvas_action: WorkspaceModuleCanvasHostAction::BindData,
+            }
+        );
         assert_eq!(canvas_module.ui_entries.len(), 1);
         assert_eq!(canvas_module.ui_entries[0].renderer_kind, "canvas");
+        assert_eq!(canvas_module.ui_entries[0].view_key, "preview");
+        assert_eq!(
+            canvas_module.ui_entries[0].presentation_uri.as_deref(),
+            Some("canvas://dashboard-a")
+        );
     }
 
     #[test]

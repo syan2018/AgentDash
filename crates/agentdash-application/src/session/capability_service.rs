@@ -88,6 +88,41 @@ impl SessionCapabilityService {
             .map_err(|e| e.to_string())
     }
 
+    /// Workspace module ref 写入 AgentFrame（运行时动态 grant）。
+    pub(crate) async fn append_visible_workspace_module_ref_to_frame(
+        &self,
+        session_id: &str,
+        module_ref: &str,
+    ) -> Result<(), String> {
+        let frame_id = self.resolve_runtime_session_frame_id(session_id).await?;
+        let repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
+            format!(
+                "session `{session_id}` 无 AgentFrame repository，无法写入 workspace module ref"
+            )
+        })?;
+        repo.append_visible_workspace_module_ref(frame_id, module_ref)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub(crate) async fn visible_workspace_module_refs_from_frame(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<String>, String> {
+        let frame_id = self.resolve_runtime_session_frame_id(session_id).await?;
+        let repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
+            format!(
+                "session `{session_id}` 无 AgentFrame repository，无法读取 workspace module ref"
+            )
+        })?;
+        let frame = repo
+            .get(frame_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("AgentFrame `{frame_id}` 不存在"))?;
+        Ok(frame.visible_workspace_module_refs())
+    }
+
     pub async fn list_requested_runtime_commands(
         &self,
         session_id: &str,

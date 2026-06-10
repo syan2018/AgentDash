@@ -597,20 +597,23 @@ export function SessionPage({
       }
       case "workspace_module_presented": {
         // workspace_module_present 推送：按 renderer_kind 决定 workspace tab typeId/uri。
-        // - canvas → typeId "canvas"，uri canvas://{mount_id}（与 canvas_presented 对齐）。
-        // - extension webview/panel → typeId = view_key（extension tab type_id），uri = uri_scheme。
+        // - canvas → typeId "canvas"，presentation_uri=canvas://{mount_id}。
+        // - extension webview/panel → typeId = view_key，presentation_uri 为后端生成的 tab URI。
         const data = extractPlatformEventData(_event);
         const rendererKind = typeof data?.renderer_kind === "string" ? data.renderer_kind : "";
         const viewKey = typeof data?.view_key === "string" ? (data.view_key as string).trim() : "";
-        const uri = typeof data?.uri === "string" ? (data.uri as string).trim() : "";
+        const presentationUri = typeof data?.presentation_uri === "string"
+          ? (data.presentation_uri as string).trim()
+          : typeof data?.uri === "string"
+            ? (data.uri as string).trim()
+            : "";
         if (rendererKind === "canvas") {
-          const canvasUri = uri || (viewKey ? `canvas://${viewKey}` : "");
-          if (canvasUri) {
+          if (presentationUri) {
             void refreshSessionRuntimeState();
-            expandWorkspacePanel("canvas", canvasUri);
+            expandWorkspacePanel("canvas", presentationUri);
           }
         } else if (viewKey) {
-          expandWorkspacePanel(viewKey, uri || undefined);
+          expandWorkspacePanel(viewKey, presentationUri || undefined);
         }
         break;
       }

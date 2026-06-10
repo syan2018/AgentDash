@@ -555,7 +555,7 @@ mod tests {
             output.has(ToolCluster::Execute),
             "shell_execute auto-granted"
         );
-        assert!(output.has(ToolCluster::Canvas));
+        assert!(output.has(ToolCluster::WorkspaceModule));
         assert!(output.has(ToolCluster::Collaboration));
         assert!(!output.has(ToolCluster::Workflow));
     }
@@ -878,7 +878,7 @@ mod tests {
         assert!(output.has(ToolCluster::Read));
         assert!(output.has(ToolCluster::Write));
         assert!(output.has(ToolCluster::Execute));
-        assert!(output.has(ToolCluster::Canvas));
+        assert!(output.has(ToolCluster::WorkspaceModule));
         assert!(output.has(ToolCluster::Collaboration));
     }
 

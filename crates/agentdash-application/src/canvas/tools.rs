@@ -130,16 +130,27 @@ pub struct PresentCanvasParams {
     pub canvas_id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
-struct CanvasToolResult {
-    action: String,
-    canvas_id: String,
-    mount_id: String,
-    title: String,
-    entry_file: String,
-    skill_name: String,
-    skill_path: String,
+pub(crate) struct CanvasToolResult {
+    pub action: String,
+    pub canvas_id: String,
+    pub mount_id: String,
+    pub title: String,
+    pub entry_file: String,
+    pub skill_name: String,
+    pub skill_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct CanvasBindingToolResult {
+    pub canvas_id: String,
+    pub mount_id: String,
+    pub bindings: Vec<CanvasDataBinding>,
+    pub alias: String,
+    pub source_uri: String,
+    pub content_type: String,
 }
 
 #[async_trait]
@@ -255,110 +266,15 @@ impl AgentTool for StartCanvasTool {
         let params: StartCanvasParams = serde_json::from_value(args).map_err(|error| {
             AgentToolError::InvalidArguments(format!("invalid arguments: {error}"))
         })?;
-        let requested_canvas_id = params
-            .canvas_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-
-        let (canvas, action) = if let Some(canvas_id) = requested_canvas_id {
-            let existing_canvas = self
-                .canvas_repo
-                .get_by_mount_id(self.project_id, &canvas_id)
-                .await
-                .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-
-            if let Some(canvas) = existing_canvas {
-                ensure_canvas_project(canvas.project_id, self.project_id)?;
-                (canvas, "attached".to_string())
-            } else {
-                let title = params
-                    .title
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| {
-                        AgentToolError::InvalidArguments(
-                            "title is required when canvas_id does not match an existing canvas"
-                                .to_string(),
-                        )
-                    })?;
-
-                let canvas = build_canvas(
-                    self.project_id,
-                    Some(canvas_id),
-                    title.to_string(),
-                    params.description.unwrap_or_default(),
-                    Default::default(),
-                )
-                .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-                self.canvas_repo
-                    .create(&canvas)
-                    .await
-                    .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-                (canvas, "created".to_string())
-            }
-        } else {
-            let title = params
-                .title
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| {
-                    AgentToolError::InvalidArguments(
-                        "title is required when creating a new canvas".to_string(),
-                    )
-                })?;
-
-            let canvas = build_canvas(
-                self.project_id,
-                None,
-                title.to_string(),
-                params.description.unwrap_or_default(),
-                Default::default(),
-            )
-            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-            if self
-                .canvas_repo
-                .get_by_mount_id(self.project_id, &canvas.mount_id)
-                .await
-                .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
-                .is_some()
-            {
-                return Err(AgentToolError::ExecutionFailed(format!(
-                    "canvas id already exists: {}",
-                    canvas.mount_id
-                )));
-            }
-            self.canvas_repo
-                .create(&canvas)
-                .await
-                .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-            (canvas, "created".to_string())
-        };
-
-        expose_canvas_to_session(
+        let (_canvas, result) = create_or_attach_canvas_for_session(
+            self.canvas_repo.as_ref(),
+            self.project_id,
             &self.vfs,
             &self.session_services_handle,
             self.current_session_id.as_deref(),
-            &canvas,
+            params,
         )
         .await?;
-
-        let result = CanvasToolResult {
-            action,
-            canvas_id: canvas.mount_id.clone(),
-            mount_id: build_canvas_mount_id(&canvas),
-            title: canvas.title.clone(),
-            entry_file: canvas.entry_file.clone(),
-            skill_name: CANVAS_SYSTEM_SKILL_NAME.to_string(),
-            skill_path: format!(
-                "{}://{}",
-                build_canvas_mount_id(&canvas),
-                CANVAS_SYSTEM_SKILL_PATH
-            ),
-        };
         let details = serde_json::to_value(&result).map_err(|error| {
             AgentToolError::ExecutionFailed(format!("failed to serialize canvas result: {error}"))
         })?;
@@ -368,7 +284,7 @@ impl AgentTool for StartCanvasTool {
                 "action={}\ncanvas_id={}\nmount={}://\ntitle={}\nentry_file={}\nskill={}\nskill_path={}",
                 result.action,
                 result.canvas_id,
-                build_canvas_mount_id(&canvas),
+                result.mount_id,
                 result.title,
                 result.entry_file,
                 result.skill_name,
@@ -403,40 +319,22 @@ impl AgentTool for BindCanvasDataTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: BindCanvasDataParams = serde_json::from_value(args)
             .map_err(|error| AgentToolError::InvalidArguments(format!("参数解析失败: {error}")))?;
-        let mut canvas = load_canvas_by_ref(
-            self.canvas_repo.as_ref(),
-            self.project_id,
-            &params.canvas_id,
-        )
-        .await?;
-
-        let mut binding = CanvasDataBinding::new(params.alias, params.source_uri);
-        if let Some(content_type) = params.content_type {
-            binding.content_type = content_type;
-        }
-        let alias = binding.alias.clone();
-        let source_uri = binding.source_uri.clone();
-        let content_type = binding.content_type.clone();
-        upsert_canvas_binding(&mut canvas, binding)
-            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-        self.canvas_repo
-            .update(&canvas)
-            .await
-            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-
-        let details_value = serde_json::json!({
-            "canvas_id": canvas.mount_id,
-            "mount_id": build_canvas_mount_id(&canvas),
-            "bindings": canvas.bindings,
-        });
+        let result =
+            bind_canvas_data_for_project(self.canvas_repo.as_ref(), self.project_id, params)
+                .await?;
+        let details_value = serde_json::to_value(&result).map_err(|error| {
+            AgentToolError::ExecutionFailed(format!(
+                "failed to serialize canvas bind result: {error}"
+            ))
+        })?;
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
                 "canvas_id={}\nmount={}://\nalias={}\nsource_uri={}\ncontent_type={}",
-                canvas.mount_id,
-                build_canvas_mount_id(&canvas),
-                alias,
-                source_uri,
-                content_type
+                result.canvas_id,
+                result.mount_id,
+                result.alias,
+                result.source_uri,
+                result.content_type
             ))],
             is_error: false,
             details: Some(details_value),
@@ -467,18 +365,13 @@ impl AgentTool for PresentCanvasTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: PresentCanvasParams = serde_json::from_value(args)
             .map_err(|error| AgentToolError::InvalidArguments(format!("参数解析失败: {error}")))?;
-        let canvas = load_canvas_by_ref(
+        let canvas = expose_existing_canvas_for_session(
             self.canvas_repo.as_ref(),
             self.project_id,
             &params.canvas_id,
-        )
-        .await?;
-
-        expose_canvas_to_session(
             &self.vfs,
             &self.session_services_handle,
             Some(&self.current_session_id),
-            &canvas,
         )
         .await?;
 
@@ -510,6 +403,157 @@ impl AgentTool for PresentCanvasTool {
             })),
         })
     }
+}
+
+pub(crate) async fn create_or_attach_canvas_for_session(
+    canvas_repo: &dyn CanvasRepository,
+    project_id: Uuid,
+    vfs: &SharedRuntimeVfs,
+    session_services_handle: &SharedSessionToolServicesHandle,
+    current_session_id: Option<&str>,
+    params: StartCanvasParams,
+) -> Result<(Canvas, CanvasToolResult), AgentToolError> {
+    let requested_canvas_id = params
+        .canvas_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let (canvas, action) = if let Some(canvas_id) = requested_canvas_id {
+        let existing_canvas = canvas_repo
+            .get_by_mount_id(project_id, &canvas_id)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+
+        if let Some(canvas) = existing_canvas {
+            ensure_canvas_project(canvas.project_id, project_id)?;
+            (canvas, "attached".to_string())
+        } else {
+            let title = params
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    AgentToolError::InvalidArguments(
+                        "title is required when canvas_id does not match an existing canvas"
+                            .to_string(),
+                    )
+                })?;
+
+            let canvas = build_canvas(
+                project_id,
+                Some(canvas_id),
+                title.to_string(),
+                params.description.unwrap_or_default(),
+                Default::default(),
+            )
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+            canvas_repo
+                .create(&canvas)
+                .await
+                .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+            (canvas, "created".to_string())
+        }
+    } else {
+        let title = params
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                AgentToolError::InvalidArguments(
+                    "title is required when creating a new canvas".to_string(),
+                )
+            })?;
+
+        let canvas = build_canvas(
+            project_id,
+            None,
+            title.to_string(),
+            params.description.unwrap_or_default(),
+            Default::default(),
+        )
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        if canvas_repo
+            .get_by_mount_id(project_id, &canvas.mount_id)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+            .is_some()
+        {
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "canvas id already exists: {}",
+                canvas.mount_id
+            )));
+        }
+        canvas_repo
+            .create(&canvas)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        (canvas, "created".to_string())
+    };
+
+    expose_canvas_to_session(vfs, session_services_handle, current_session_id, &canvas).await?;
+
+    let result = CanvasToolResult {
+        action,
+        canvas_id: canvas.mount_id.clone(),
+        mount_id: build_canvas_mount_id(&canvas),
+        title: canvas.title.clone(),
+        entry_file: canvas.entry_file.clone(),
+        skill_name: CANVAS_SYSTEM_SKILL_NAME.to_string(),
+        skill_path: format!(
+            "{}://{}",
+            build_canvas_mount_id(&canvas),
+            CANVAS_SYSTEM_SKILL_PATH
+        ),
+    };
+    Ok((canvas, result))
+}
+
+pub(crate) async fn bind_canvas_data_for_project(
+    canvas_repo: &dyn CanvasRepository,
+    project_id: Uuid,
+    params: BindCanvasDataParams,
+) -> Result<CanvasBindingToolResult, AgentToolError> {
+    let mut canvas = load_canvas_by_ref(canvas_repo, project_id, &params.canvas_id).await?;
+
+    let mut binding = CanvasDataBinding::new(params.alias, params.source_uri);
+    if let Some(content_type) = params.content_type {
+        binding.content_type = content_type;
+    }
+    let alias = binding.alias.clone();
+    let source_uri = binding.source_uri.clone();
+    let content_type = binding.content_type.clone();
+    upsert_canvas_binding(&mut canvas, binding)
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+    canvas_repo
+        .update(&canvas)
+        .await
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+
+    Ok(CanvasBindingToolResult {
+        canvas_id: canvas.mount_id.clone(),
+        mount_id: build_canvas_mount_id(&canvas),
+        bindings: canvas.bindings.clone(),
+        alias,
+        source_uri,
+        content_type,
+    })
+}
+
+pub(crate) async fn expose_existing_canvas_for_session(
+    canvas_repo: &dyn CanvasRepository,
+    project_id: Uuid,
+    canvas_id: &str,
+    vfs: &SharedRuntimeVfs,
+    session_services_handle: &SharedSessionToolServicesHandle,
+    current_session_id: Option<&str>,
+) -> Result<Canvas, AgentToolError> {
+    let canvas = load_canvas_by_ref(canvas_repo, project_id, canvas_id).await?;
+    expose_canvas_to_session(vfs, session_services_handle, current_session_id, &canvas).await?;
+    Ok(canvas)
 }
 
 async fn load_canvas_by_ref(
@@ -547,7 +591,7 @@ fn ensure_canvas_project(
     }
 }
 
-async fn expose_canvas_to_session(
+pub(crate) async fn expose_canvas_to_session(
     vfs: &SharedRuntimeVfs,
     session_services_handle: &SharedSessionToolServicesHandle,
     current_session_id: Option<&str>,
@@ -568,6 +612,19 @@ async fn expose_canvas_to_session(
                 mount_id = %mount_id,
                 %error,
                 "Canvas mount 写入 AgentFrame 失败，降级为仅 VFS 可见"
+            );
+        }
+        let module_ref = format!("canvas:{}", canvas.mount_id);
+        if let Err(error) = session_services
+            .capability
+            .append_visible_workspace_module_ref_to_frame(session_id, &module_ref)
+            .await
+        {
+            tracing::warn!(
+                session_id = %session_id,
+                module_ref = %module_ref,
+                %error,
+                "Canvas module ref 写入 AgentFrame 失败，降级为仅 workspace_module base 可见"
             );
         }
         sync_canvas_mount_capability_state_for_runtime_delivery(

@@ -381,8 +381,8 @@ pub(super) fn project_assembly_to_frame(
     crate::workflow::frame_builder::AgentFrameBuilder,
     AssemblyLaunchExtras,
 ) {
-    let frame_builder = frame_builder
-        .with_surface_input(crate::workflow::frame_builder::AgentFrameSurfaceInput {
+    let frame_builder =
+        frame_builder.with_surface_input(crate::workflow::frame_builder::AgentFrameSurfaceInput {
             capability_state: prepared.capability_state.as_ref(),
             vfs: prepared.vfs.as_ref(),
             mcp_servers: &prepared.mcp_servers,

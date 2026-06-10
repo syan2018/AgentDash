@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use crate::session::{
     SessionCapabilityService, SessionControlService, SessionCoreService, SessionEventingService,
@@ -8,16 +8,16 @@ use agentdash_spi::DynAgentTool;
 use agentdash_spi::ToolCluster;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::platform::tool_capability::{
-    CAP_CANVAS, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_SHELL_EXECUTE, CAP_WORKFLOW,
+    CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_SHELL_EXECUTE, CAP_WORKFLOW,
     CAP_WORKSPACE_MODULE,
 };
 use agentdash_spi::{ConnectorError, ExecutionContext};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use crate::canvas::{BindCanvasDataTool, ListCanvasesTool, PresentCanvasTool, StartCanvasTool};
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
 use crate::platform_config::SharedPlatformConfig;
+use crate::runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
 use crate::vfs::inline_persistence::{InlineContentOverlay, InlineContentPersister};
 use crate::vfs::service::VfsService;
 use crate::vfs::tools::fs::{
@@ -25,11 +25,10 @@ use crate::vfs::tools::fs::{
     ShellExecTool,
 };
 use crate::vfs::{VfsMaterializationService, VfsMaterializationTransport};
-use crate::runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
 use crate::workflow::tools::advance_node::CompleteLifecycleNodeTool;
 use crate::workspace_module::{
-    WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
-    WorkspaceModulePresentTool, resolve_invocation_backend,
+    WorkspaceModuleCreateTool, WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool,
+    WorkspaceModuleListTool, WorkspaceModulePresentTool, resolve_invocation_backend,
 };
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeChannelTransport;
 use uuid::Uuid;
@@ -306,73 +305,6 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
             }
         }
 
-        // Canvas 簇：Canvas 资产工具
-        if clusters.contains(&ToolCluster::Canvas) {
-            if let Some(project_id) = project_id_from_context(context) {
-                if flow.is_capability_tool_enabled(
-                    CAP_CANVAS,
-                    "canvases_list",
-                    Some(ToolCluster::Canvas),
-                ) {
-                    tools.push(Arc::new(ListCanvasesTool::new(
-                        self.repos.canvas_repo.clone(),
-                        project_id,
-                    )));
-                }
-                if flow.is_capability_tool_enabled(
-                    CAP_CANVAS,
-                    "canvas_start",
-                    Some(ToolCluster::Canvas),
-                ) {
-                    tools.push(Arc::new(StartCanvasTool::new(
-                        self.repos.canvas_repo.clone(),
-                        project_id,
-                        shared_vfs.clone(),
-                        self.session_services_handle.clone(),
-                        context
-                            .turn
-                            .hook_runtime
-                            .as_ref()
-                            .map(|session| session.session_id().to_string()),
-                    )));
-                }
-                if flow.is_capability_tool_enabled(
-                    CAP_CANVAS,
-                    "bind_canvas_data",
-                    Some(ToolCluster::Canvas),
-                ) {
-                    tools.push(Arc::new(BindCanvasDataTool::new(
-                        self.repos.canvas_repo.clone(),
-                        project_id,
-                    )));
-                }
-
-                if let Some(session_id) = context
-                    .turn
-                    .hook_runtime
-                    .as_ref()
-                    .map(|session| session.session_id().to_string())
-                {
-                    if flow.is_capability_tool_enabled(
-                        CAP_CANVAS,
-                        "present_canvas",
-                        Some(ToolCluster::Canvas),
-                    ) {
-                        tools.push(Arc::new(PresentCanvasTool::new(
-                            self.repos.canvas_repo.clone(),
-                            shared_vfs.clone(),
-                            self.session_services_handle.clone(),
-                            session_id,
-                            context.session.turn_id.clone(),
-                            project_id,
-                        )));
-                    }
-                }
-            } else {
-                tracing::warn!("canvas tools 注入失败：无法从 hook session 解析 project_id");
-            }
-        }
-
         // Workspace Module 簇：module 发现工具（只读，现取现算）
         if clusters.contains(&ToolCluster::WorkspaceModule) {
             if let Some(project_id) = project_id_from_context(context) {
@@ -382,23 +314,48 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                     "workspace_module_list",
                     Some(ToolCluster::WorkspaceModule),
                 ) {
-                    tools.push(Arc::new(WorkspaceModuleListTool::new(
-                        self.repos.project_extension_installation_repo.clone(),
-                        self.repos.canvas_repo.clone(),
-                        project_id,
-                        visibility.clone(),
-                    )));
+                    tools.push(Arc::new(
+                        WorkspaceModuleListTool::new(
+                            self.repos.project_extension_installation_repo.clone(),
+                            self.repos.canvas_repo.clone(),
+                            project_id,
+                            visibility.clone(),
+                        )
+                        .with_runtime_visibility(
+                            self.session_services_handle.clone(),
+                            session_id.clone(),
+                        ),
+                    ));
                 }
                 if flow.is_capability_tool_enabled(
                     CAP_WORKSPACE_MODULE,
                     "workspace_module_describe",
                     Some(ToolCluster::WorkspaceModule),
                 ) {
-                    tools.push(Arc::new(WorkspaceModuleDescribeTool::new(
-                        self.repos.project_extension_installation_repo.clone(),
+                    tools.push(Arc::new(
+                        WorkspaceModuleDescribeTool::new(
+                            self.repos.project_extension_installation_repo.clone(),
+                            self.repos.canvas_repo.clone(),
+                            project_id,
+                            visibility.clone(),
+                        )
+                        .with_runtime_visibility(
+                            self.session_services_handle.clone(),
+                            session_id.clone(),
+                        ),
+                    ));
+                }
+                if flow.is_capability_tool_enabled(
+                    CAP_WORKSPACE_MODULE,
+                    "workspace_module_create",
+                    Some(ToolCluster::WorkspaceModule),
+                ) {
+                    tools.push(Arc::new(WorkspaceModuleCreateTool::new(
                         self.repos.canvas_repo.clone(),
                         project_id,
-                        visibility.clone(),
+                        shared_vfs.clone(),
+                        self.session_services_handle.clone(),
+                        Some(session_id.clone()),
                     )));
                 }
 
@@ -425,19 +382,22 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                                 self.repos.project_extension_installation_repo.clone(),
                                 transport.clone(),
                             ));
-                            tools.push(Arc::new(WorkspaceModuleInvokeTool::new(
-                                self.repos.project_extension_installation_repo.clone(),
-                                self.repos.canvas_repo.clone(),
-                                project_id,
-                                visibility.clone(),
-                                session_id.clone(),
-                                // AgentFrame ID 不在 ExecutionContext 可达范围内（research/04），
-                                // runtime_action 派发不强制 agent_id（与 RuntimeActionToolSpec 一致）。
-                                None,
-                                backend,
-                                gateway,
-                                channel_invoker,
-                            )));
+                            tools.push(Arc::new(
+                                WorkspaceModuleInvokeTool::new(
+                                    self.repos.project_extension_installation_repo.clone(),
+                                    self.repos.canvas_repo.clone(),
+                                    project_id,
+                                    visibility.clone(),
+                                    session_id.clone(),
+                                    // AgentFrame ID 不在 ExecutionContext 可达范围内（research/04），
+                                    // runtime_action 派发不强制 agent_id（与 RuntimeActionToolSpec 一致）。
+                                    None,
+                                    backend,
+                                    gateway,
+                                    channel_invoker,
+                                )
+                                .with_runtime_visibility(self.session_services_handle.clone()),
+                            ));
                         }
                         _ => {
                             tracing::warn!(
@@ -457,7 +417,8 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                         self.repos.project_extension_installation_repo.clone(),
                         self.repos.canvas_repo.clone(),
                         project_id,
-                        visibility,
+                        visibility.clone(),
+                        shared_vfs.clone(),
                         self.session_services_handle.clone(),
                         session_id.clone(),
                         context.session.turn_id.clone(),

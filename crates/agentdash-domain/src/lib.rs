@@ -24,5 +24,6 @@ pub mod story;
 pub mod task;
 pub mod workflow;
 pub mod workspace;
+pub mod workspace_module;
 
 pub use common::error::DomainError;

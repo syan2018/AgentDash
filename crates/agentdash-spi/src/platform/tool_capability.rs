@@ -80,7 +80,7 @@ pub const CAP_FILE_WRITE: &str = "file_write";
 pub const CAP_SHELL_EXECUTE: &str = "shell_execute";
 pub const CAP_CANVAS: &str = "canvas";
 /// Workspace module：workspace_module_list, workspace_module_describe,
-/// workspace_module_invoke, workspace_module_present
+/// workspace_module_create, workspace_module_invoke, workspace_module_present
 pub const CAP_WORKSPACE_MODULE: &str = "workspace_module";
 pub const CAP_WORKFLOW: &str = "workflow";
 pub const CAP_COLLABORATION: &str = "collaboration";
@@ -99,7 +99,6 @@ pub const WELL_KNOWN_KEYS: &[&str] = &[
     CAP_FILE_READ,
     CAP_FILE_WRITE,
     CAP_SHELL_EXECUTE,
-    CAP_CANVAS,
     CAP_WORKSPACE_MODULE,
     CAP_WORKFLOW,
     CAP_COLLABORATION,
@@ -130,6 +129,7 @@ pub const CLUSTER_CANVAS_TOOLS: &[&str] = &[
 pub const CLUSTER_WORKSPACE_MODULE_TOOLS: &[&str] = &[
     "workspace_module_list",
     "workspace_module_describe",
+    "workspace_module_create",
     "workspace_module_invoke",
     "workspace_module_present",
 ];
@@ -336,35 +336,6 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             ToolCluster::Collaboration,
             CAP_COLLABORATION,
         ),
-        // ── Canvas cluster ──
-        ToolDescriptor::platform(
-            "canvases_list",
-            "List Canvases",
-            "列出当前 project 的画布资产",
-            ToolCluster::Canvas,
-            CAP_CANVAS,
-        ),
-        ToolDescriptor::platform(
-            "canvas_start",
-            "Start Canvas",
-            "创建或接入画布资产，并返回 canvas-system skill 路径",
-            ToolCluster::Canvas,
-            CAP_CANVAS,
-        ),
-        ToolDescriptor::platform(
-            "bind_canvas_data",
-            "Bind Canvas Data",
-            "绑定数据到画布",
-            ToolCluster::Canvas,
-            CAP_CANVAS,
-        ),
-        ToolDescriptor::platform(
-            "present_canvas",
-            "Present Canvas",
-            "向用户展示画布",
-            ToolCluster::Canvas,
-            CAP_CANVAS,
-        ),
         // ── Workspace Module cluster ──
         ToolDescriptor::platform(
             "workspace_module_list",
@@ -377,6 +348,13 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             "workspace_module_describe",
             "Describe Workspace Module",
             "返回单个 workspace module 的 UI entries 与 operations（含 input/output schema）",
+            ToolCluster::WorkspaceModule,
+            CAP_WORKSPACE_MODULE,
+        ),
+        ToolDescriptor::platform(
+            "workspace_module_create",
+            "Create Workspace Module",
+            "创建或接入 workspace module 实例；Canvas 使用 kind=canvas 创建后返回 canvas:{mount_id}",
             ToolCluster::WorkspaceModule,
             CAP_WORKSPACE_MODULE,
         ),
@@ -600,7 +578,6 @@ fn capability_to_tool_clusters_by_key(key: &str) -> Vec<ToolCluster> {
         CAP_FILE_READ => vec![ToolCluster::Read],
         CAP_FILE_WRITE => vec![ToolCluster::Write],
         CAP_SHELL_EXECUTE => vec![ToolCluster::Execute],
-        CAP_CANVAS => vec![ToolCluster::Canvas],
         CAP_WORKSPACE_MODULE => vec![ToolCluster::WorkspaceModule],
         CAP_WORKFLOW => vec![ToolCluster::Workflow],
         CAP_COLLABORATION => vec![ToolCluster::Collaboration],
@@ -763,13 +740,6 @@ pub fn default_visibility_rules() -> &'static [CapabilityVisibilityRule] {
         CapabilityVisibilityRule {
             key: CAP_SHELL_EXECUTE,
             allowed_scopes: &[Project, Story, Task],
-            auto_granted: true,
-            agent_can_grant: false,
-            workflow_can_grant: false,
-        },
-        CapabilityVisibilityRule {
-            key: CAP_CANVAS,
-            allowed_scopes: &[Project],
             auto_granted: true,
             agent_can_grant: false,
             workflow_can_grant: false,

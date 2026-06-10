@@ -1,0 +1,30 @@
+{
+  "id": "story-task-agent-cleanup-review",
+  "name": "story-task-agent-cleanup-review",
+  "title": "评估并清理 Story/Task Agent 残留链路",
+  "description": "基于 review 结论，评估 Story/Task owner session、Task Agent 启动入口与 story_step 相关链路是否应整体删除或收束到 ProjectAgent + Lifecycle control-plane。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": "backend,frontend,cross-layer",
+  "package": null,
+  "priority": "P1",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-06-10",
+  "completedAt": null,
+  "branch": "codex/story-task-agent-cleanup-review",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-10-story-task-agent-command-hard-cut",
+    "06-10-subject-context-assignment",
+    "06-10-story-task-agent-frontend-contract-cleanup"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

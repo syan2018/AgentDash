@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/project-overview.md", "reason": "Defines Project, SubjectRef, LifecycleRun, AgentFrame, and RuntimeSession target vocabulary for the parent cleanup."}
+{"file": ".trellis/spec/backend/story-task-runtime.md", "reason": "Defines Story/Task as business subject and projection rather than runtime owner."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Defines RuntimeSession as trace substrate and AgentFrame as runtime surface fact source."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Defines LifecycleSubjectAssociation, LifecycleAgent, AgentFrame, and orchestration contracts."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Defines frontend SubjectExecutionView and lifecycle projection contract."}

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Frontend should consume SubjectExecutionView/LifecycleRunView rather than command paths."}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Frontend state authority and backend projection boundaries."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Generated contract and drift-check requirements for route/DTO removal."}
+{"file": ".trellis/spec/backend/permission/policy-engine.md", "reason": "Permission/capability wording for removing task_management start paths."}

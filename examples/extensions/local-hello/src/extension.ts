@@ -17,6 +17,8 @@ export default defineExtension({
       action_key: LOCAL_HELLO_ACTION_KEY,
       kind: "session_runtime",
       description: "Read the current local runtime profile",
+      input_schema: {},
+      output_schema: {},
       permissions: ["local.profile.read"],
       async invoke() {
         return normalizeProfile(await ctx.api.local.getProfile());

@@ -147,6 +147,8 @@ export default defineExtension({
       action_key: ${JSON.stringify(`${extensionId}.profile`)},
       kind: "session_runtime",
       description: "Read local profile",
+      input_schema: {},
+      output_schema: {},
       async invoke() {
         return await ctx.api.local.getProfile();
       },

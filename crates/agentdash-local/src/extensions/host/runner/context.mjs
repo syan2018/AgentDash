@@ -240,15 +240,14 @@ export function createExtensionRuntime({
     if (currentInvocation.actionKey) {
       const manifestAction = (record.manifest?.runtime_actions ?? [])
         .find((action) => action?.action_key === currentInvocation.actionKey);
-      return stringArray(manifestAction?.permissions ?? record.actions.get(currentInvocation.actionKey)?.permissions);
+      return stringArray(manifestAction?.permissions);
     }
     if (currentInvocation.channelKey && currentInvocation.channelMethod) {
       const manifestChannel = (record.manifest?.protocol_channels ?? [])
         .find((channel) => channel?.channel_key === currentInvocation.channelKey);
       const manifestMethod = (manifestChannel?.methods ?? [])
         .find((method) => method?.name === currentInvocation.channelMethod);
-      const handler = record.channels.get(channelHandlerKey(currentInvocation.channelKey, currentInvocation.channelMethod));
-      return stringArray(manifestMethod?.permissions ?? handler?.permissions);
+      return stringArray(manifestMethod?.permissions);
     }
     return [];
   }
@@ -348,6 +347,7 @@ export function createExtensionRuntime({
       if (typeof extension.activate === "function") {
         await extension.activate(ctx);
       }
+      enforceManifestSurface(record);
     } catch (error) {
       extensions.delete(extensionKey);
       if (defaultExtensionKey === extensionKey) defaultExtensionKey = extensions.keys().next().value ?? null;
@@ -415,6 +415,43 @@ export function createExtensionRuntime({
       channel_keys: [...channelKeys].sort(),
       pid: process.pid,
     };
+  }
+
+  function enforceManifestSurface(record) {
+    const manifestActions = new Set((record.manifest?.runtime_actions ?? [])
+      .map((action) => typeof action?.action_key === "string" ? action.action_key : null)
+      .filter(Boolean));
+    for (const actionKey of record.actions.keys()) {
+      if (!manifestActions.has(actionKey)) {
+        throw new Error(`extension action is registered but not declared in manifest: ${actionKey}`);
+      }
+    }
+    for (const actionKey of manifestActions) {
+      if (!record.actions.has(actionKey)) {
+        throw new Error(`extension action is declared in manifest but not registered: ${actionKey}`);
+      }
+    }
+
+    const manifestMethods = new Set();
+    for (const channel of record.manifest?.protocol_channels ?? []) {
+      if (typeof channel?.channel_key !== "string") continue;
+      const channelKey = canonicalChannelKey(record.extensionKey, channel.channel_key);
+      for (const method of channel.methods ?? []) {
+        if (typeof method?.name === "string") {
+          manifestMethods.add(channelHandlerKey(channelKey, method.name));
+        }
+      }
+    }
+    for (const handlerKey of record.channels.keys()) {
+      if (!manifestMethods.has(handlerKey)) {
+        throw new Error(`extension channel method is registered but not declared in manifest: ${handlerKey.replace("#", ".")}`);
+      }
+    }
+    for (const handlerKey of manifestMethods) {
+      if (!record.channels.has(handlerKey)) {
+        throw new Error(`extension channel method is declared in manifest but not registered: ${handlerKey.replace("#", ".")}`);
+      }
+    }
   }
 
   async function handleRequest(message) {

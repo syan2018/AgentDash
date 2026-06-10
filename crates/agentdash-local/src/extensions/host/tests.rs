@@ -68,7 +68,7 @@ async fn reload_updates_action_handler() {
 #[tokio::test]
 async fn protocol_channel_registers_and_self_invokes() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let package_dir = write_package(temp.path(), channel_bundle(), false, false)
+    let package_dir = write_channel_echo_package(temp.path())
         .await
         .expect("package");
     let manager = test_manager(temp.path());
@@ -318,6 +318,44 @@ async fn permission_denied_when_local_profile_is_not_declared() {
 }
 
 #[tokio::test]
+async fn activation_rejects_handlers_not_declared_by_manifest() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package(temp.path(), extra_action_bundle(), true, true)
+        .await
+        .expect("package");
+    let manager = test_manager(temp.path());
+
+    let err = manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect_err("manifest parity");
+
+    assert!(err.to_string().contains(
+        "extension action is registered but not declared in manifest: local-hello.extra"
+    ));
+    let _ = manager.stop().await;
+}
+
+#[tokio::test]
+async fn activation_rejects_manifest_action_without_handler() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package(temp.path(), no_action_bundle(), true, true)
+        .await
+        .expect("package");
+    let manager = test_manager(temp.path());
+
+    let err = manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect_err("manifest parity");
+
+    assert!(err.to_string().contains(
+        "extension action is declared in manifest but not registered: local-hello.profile"
+    ));
+    let _ = manager.stop().await;
+}
+
+#[tokio::test]
 async fn permission_denied_when_action_local_profile_is_not_declared() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_package(temp.path(), profile_bundle(), true, false)
@@ -529,6 +567,50 @@ async fn write_package_with_permissions(
 async fn write_bundle(package_dir: &Path, bundle: String) -> anyhow::Result<()> {
     tokio::fs::write(package_dir.join("dist").join("extension.js"), bundle).await?;
     Ok(())
+}
+
+async fn write_channel_echo_package(root: &Path) -> anyhow::Result<PathBuf> {
+    let package_dir = root.join("channel-echo");
+    tokio::fs::create_dir_all(package_dir.join("dist")).await?;
+    let bundle = channel_bundle();
+    write_bundle(&package_dir, bundle.clone()).await?;
+    let manifest = json!({
+        "manifest_version": "2",
+        "extension_id": "local-hello",
+        "package": { "name": "@agentdash/local-hello", "version": "0.1.0" },
+        "asset_version": "0.1.0",
+        "runtime_actions": [{
+            "action_key": "local-hello.profile",
+            "kind": "session_runtime",
+            "description": "Read local profile",
+            "input_schema": true,
+            "output_schema": true,
+            "permissions": [],
+        }],
+        "protocol_channels": [{
+            "channel_key": "local-hello.api",
+            "version": "1.0.0",
+            "description": "Local API",
+            "methods": [{
+                "name": "echo",
+                "description": "Echo input",
+                "input_schema": true,
+                "output_schema": true,
+                "permissions": [],
+            }],
+        }],
+        "bundles": [{
+            "kind": "extension_host",
+            "entry": "dist/extension.js",
+            "digest": digest_bytes(bundle.as_bytes()),
+        }],
+    });
+    tokio::fs::write(
+        package_dir.join("agentdash.extension.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )
+    .await?;
+    Ok(package_dir)
 }
 
 async fn write_channel_env_package(
@@ -815,6 +897,41 @@ export default {
       },
     });
   },
+};
+"#
+    .to_string()
+}
+
+fn extra_action_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.runtime.registerAction({
+      action_key: "local-hello.profile",
+      kind: "session_runtime",
+      description: "Read local profile",
+      async invoke() {
+        return await ctx.api.local.getProfile();
+      },
+    });
+    ctx.runtime.registerAction({
+      action_key: "local-hello.extra",
+      kind: "session_runtime",
+      description: "Extra",
+      invoke() {
+        return {};
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn no_action_bundle() -> String {
+    r#"
+export default {
+  activate() {},
 };
 "#
     .to_string()

@@ -1,6 +1,6 @@
 //! ProjectAgent compose 路径 — 最简单的 owner bootstrap（无 workflow / story 依赖）。
 
-use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
+use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun, SubjectRef};
 use agentdash_spi::ConnectorError;
 
 use crate::session::construction_planner::{
@@ -10,6 +10,10 @@ use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::{AgentLevelMcp, OwnerBootstrapSpec, OwnerScope};
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
 use crate::workflow::runtime_launch::FrameLaunchEnvelope;
+use crate::workflow::{
+    SubjectContextAssignment, SubjectContextAssignmentRequest, SubjectContextAssignmentResolver,
+    SubjectWorkspacePolicy,
+};
 
 use super::{
     FrameConstructionService, connector_internal, frame_builder_from_existing,
@@ -50,6 +54,18 @@ pub(super) async fn compose(
     let workspace = resolve_project_workspace(&svc.repos, &project)
         .await
         .map_err(connector_internal)?;
+    let mut subject_assignment =
+        resolve_project_agent_subject_assignment(svc, run.id, agent.id, run.project_id).await?;
+    let subject_owner_ctx = subject_assignment
+        .as_ref()
+        .map(|assignment| assignment.capability_scope.clone());
+    let subject_context_contributions = subject_assignment
+        .as_mut()
+        .map(|assignment| std::mem::take(&mut assignment.contributions))
+        .unwrap_or_default();
+    let subject_workspace = subject_assignment
+        .as_ref()
+        .and_then(|assignment| assignment.workspace.as_ref());
     let executor_config = merge_user_executor_config(
         input.command.user_input().executor_config.clone(),
         &agent_context.executor_config,
@@ -70,6 +86,9 @@ pub(super) async fn compose(
                     agent_display_name: agent_context.display_name.clone(),
                     preset_name: agent_context.preset_name.clone(),
                 },
+                subject_context_contributions,
+                subject_owner_ctx,
+                subject_workspace,
                 executor_config,
                 user_input,
                 agent_mcp: AgentLevelMcp {
@@ -116,4 +135,45 @@ pub(super) async fn compose(
         None,
     )
     .await
+}
+
+async fn resolve_project_agent_subject_assignment(
+    svc: &FrameConstructionService,
+    run_id: uuid::Uuid,
+    agent_id: uuid::Uuid,
+    project_id: uuid::Uuid,
+) -> Result<Option<SubjectContextAssignment>, ConnectorError> {
+    let Some(subject_ref) = resolve_project_agent_subject_ref(svc, run_id, agent_id).await? else {
+        return Ok(None);
+    };
+    let assignment = SubjectContextAssignmentResolver::new(
+        &svc.repos,
+        svc.availability.as_ref(),
+        svc.vfs_service.as_ref(),
+    )
+    .resolve(SubjectContextAssignmentRequest {
+        project_id,
+        subject_ref,
+        workspace_policy: SubjectWorkspacePolicy::SubjectDefault,
+    })
+    .await
+    .map_err(connector_internal)?;
+    Ok(Some(assignment))
+}
+
+async fn resolve_project_agent_subject_ref(
+    svc: &FrameConstructionService,
+    run_id: uuid::Uuid,
+    agent_id: uuid::Uuid,
+) -> Result<Option<SubjectRef>, ConnectorError> {
+    let agent_associations = svc
+        .repos
+        .lifecycle_subject_association_repo
+        .list_by_anchor(run_id, Some(agent_id))
+        .await
+        .map_err(connector_internal)?;
+    Ok(agent_associations
+        .iter()
+        .find(|assoc| assoc.role == "subject" && assoc.subject_kind != "project")
+        .map(|assoc| SubjectRef::new(assoc.subject_kind.clone(), assoc.subject_id)))
 }

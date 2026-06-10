@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use agentdash_application::task::execution::{ExecutionPhase, TaskExecutionCommand};
 use axum::{
     Json,
     extract::{Path, State},
@@ -10,121 +9,15 @@ use uuid::Uuid;
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_task_story_project_with_permission},
-    dto::{
-        CancelTaskResponse, ContinueTaskRequest, ContinueTaskResponse, StartTaskRequest,
-        StartTaskResponse, TaskExecutionViewResponse,
-    },
+    dto::TaskExecutionViewResponse,
     rpc::ApiError,
 };
 
-pub async fn start_task(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(id): Path<String>,
-    Json(req): Json<StartTaskRequest>,
-) -> Result<Json<StartTaskResponse>, ApiError> {
-    let task_id = parse_task_id(&id)?;
-    load_task_story_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        task_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    let result = state
-        .services
-        .story_activity_activation_service
-        .start_task(TaskExecutionCommand {
-            task_id,
-            phase: ExecutionPhase::Start,
-            prompt: req.override_prompt,
-            executor_config: req.executor_config,
-            identity: Some(current_user),
-        })
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(Json(StartTaskResponse {
-        task_id: result.task_id,
-        runtime_refs: result.runtime_refs,
-        subject_execution_ref: result.subject_execution_ref.association_id,
-        delivery_runtime_ref: result.delivery_runtime_ref,
-        status: result.status,
-    }))
-}
-
 pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
-    axum::Router::new()
-        .route("/tasks/{id}/start", axum::routing::post(start_task))
-        .route("/tasks/{id}/continue", axum::routing::post(continue_task))
-        .route("/tasks/{id}/cancel", axum::routing::post(cancel_task))
-        .route(
-            "/tasks/{id}/execution",
-            axum::routing::get(get_task_execution_view),
-        )
-}
-
-pub async fn continue_task(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(id): Path<String>,
-    Json(req): Json<ContinueTaskRequest>,
-) -> Result<Json<ContinueTaskResponse>, ApiError> {
-    let task_id = parse_task_id(&id)?;
-    load_task_story_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        task_id,
-        ProjectPermission::Edit,
+    axum::Router::new().route(
+        "/tasks/{id}/execution",
+        axum::routing::get(get_task_execution_view),
     )
-    .await?;
-    let result = state
-        .services
-        .story_activity_activation_service
-        .continue_task(TaskExecutionCommand {
-            task_id,
-            phase: ExecutionPhase::Continue,
-            prompt: req.additional_prompt,
-            executor_config: req.executor_config,
-            identity: Some(current_user),
-        })
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(Json(ContinueTaskResponse {
-        task_id: result.task_id,
-        runtime_refs: result.runtime_refs,
-        subject_execution_ref: result.subject_execution_ref.association_id,
-        delivery_runtime_ref: result.delivery_runtime_ref,
-        status: result.status,
-    }))
-}
-
-pub async fn cancel_task(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(id): Path<String>,
-) -> Result<Json<CancelTaskResponse>, ApiError> {
-    let task_id = parse_task_id(&id)?;
-    load_task_story_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        task_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    let result = state
-        .services
-        .story_activity_activation_service
-        .cancel_task(task_id)
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(CancelTaskResponse {
-        task: crate::dto::TaskResponse::from(result.task),
-        runtime_refs: result.runtime_refs,
-        subject_execution_ref: result.subject_execution_ref.association_id,
-        runtime_delivery_ref: result.runtime_delivery_ref,
-    }))
 }
 
 pub async fn get_task_execution_view(

@@ -38,10 +38,8 @@ pub struct BuiltTaskSessionContext {
 /// vfs_surfaces 等查询接口，不负责 session 启动。任何 repo 查询失败
 /// 都静默降级为 None。
 ///
-/// M5 之后，task 启动入口（start_task / continue_task）仅作为 facade，
-/// 统一走 `StoryActivityActivationService::activate_story_activity` → `compose_story_step`，
 /// 本函数与启动链路无关，仅复用底层相同的 executor / VFS 解析逻辑以保持
-/// 上下文数据一致。
+/// Task lifecycle projection 的上下文数据一致。
 pub async fn build_task_session_context(
     repos: &RepositorySet,
     vfs_service: &VfsService,

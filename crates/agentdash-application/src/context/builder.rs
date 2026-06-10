@@ -14,9 +14,9 @@ use crate::runtime::RuntimeMcpServer;
 
 /// Session 上下文构建的触发 phase。
 ///
-/// 与 `SessionPlanPhase` 互补：`SessionPlanPhase` 只区分 project/task start/continue/story 四类，
+/// 与 `SessionPlanPhase` 互补：`SessionPlanPhase` 只区分 project/task/story 等 owner 场景，
 /// 新增 phase 覆盖 owner bootstrap、lifecycle node、companion、repository rehydrate 等场景。
-/// Task 执行路径的 phase 标签（`start_task` / `continue_task`）。
+/// Task StoryStep compose 的 phase 标签。
 ///
 /// 主要用于 `contribute_instruction` 在首轮/续跑时选择合适的指令模板，
 /// 以及标记 bundle 的构建来源。

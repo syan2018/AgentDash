@@ -739,21 +739,6 @@ pub struct AgentRunSteeringResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct StoryLaunchResult {
-    pub created: bool,
-    pub story_id: String,
-    pub project_agent_id: String,
-    pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: AgentRunRefDto,
-    pub frame_ref: AgentFrameRefDto,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
-    pub subject_ref: SubjectRefDto,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct LifecycleSubjectAssociationDto {
     pub id: String,
     pub anchor_run_id: String,

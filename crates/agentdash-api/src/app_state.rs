@@ -22,7 +22,6 @@ use agentdash_application::session::{
     SessionLaunchService, SessionRuntimeService, SessionTitleService,
 };
 use agentdash_application::task::service::StoryActivityActivationService;
-use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::vfs::MountProviderRegistry;
 use agentdash_application::vfs::{VfsMutationDispatcher, VfsService};
 use agentdash_domain::llm_provider::LlmSecretCodec;
@@ -71,7 +70,7 @@ pub struct ServiceSet {
     pub vfs_registry: VfsDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
     pub mount_provider_registry: Arc<MountProviderRegistry>,
-    /// Story activity activation 服务 — task route 仅作为用户入口转发到这里
+    /// Story activity activation 服务 — 保留 Task lifecycle 只读投影。
     pub story_activity_activation_service: Arc<StoryActivityActivationService>,
     /// Hook 提供者 — 供 API 层验证脚本等管理接口使用
     pub hook_provider: Arc<AppExecutionHookProvider>,
@@ -126,7 +125,7 @@ impl AppState {
 
     /// 携带 Host Integration 列表构建 AppState
     ///
-    /// 返回 `Arc<Self>` 以支持内部 `DeferredTurnDispatcher` 的延迟绑定。
+    /// 返回 `Arc<Self>` 以支持需要 AppState 引用的延迟装配。
     pub async fn new_with_integrations(
         pool: PgPool,
         integrations: Vec<Box<dyn AgentDashIntegration>>,
@@ -228,8 +227,6 @@ impl AppState {
         // 后者依赖 provider 产出的工具集），此处把 gateway 回填进延迟句柄，供 workspace_module_invoke。
         runtime_gateway_handle.set(runtime_gateway.clone()).await;
 
-        let lock_map = Arc::new(TaskLockMap::new());
-
         let project_repo_port: Arc<dyn ProjectRepository> = repos.project_repo.clone();
         let state_change_repo_port: Arc<dyn StateChangeRepository> =
             repos.state_change_repo.clone();
@@ -280,9 +277,6 @@ impl AppState {
             ),
         );
 
-        let dispatcher =
-            crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(session_runtime.clone());
-
         let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
         session_runtime_builder
             .set_context_audit_bus(audit_bus.clone())
@@ -290,8 +284,6 @@ impl AppState {
 
         let story_activity_activation_service = Arc::new(StoryActivityActivationService {
             repos: repos.clone(),
-            dispatcher: dispatcher.clone(),
-            lock_map: lock_map.clone(),
         });
 
         let state = Self {

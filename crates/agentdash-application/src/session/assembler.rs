@@ -7,7 +7,6 @@
 //! | 路径 | 实现入口 |
 //! |---|---|
 //! | Story/Project | lifecycle dispatch → `SessionRequestAssembler::compose_owner_bootstrap` |
-//! | Story activity activation | `task::service::StoryActivityActivationService::activate_story_activity` → `SessionRequestAssembler::compose_story_step` |
 //! | Routine | `routine::executor::build_project_agent_prompt_request` → `SessionRequestAssembler::compose_owner_bootstrap`(带 trigger tag) |
 //! | Workflow AgentNode | `workflow::orchestrator::start_agent_node_prompt` → `compose_lifecycle_node` |
 //! | Companion | `companion::tools` → `compose_companion` |
@@ -32,7 +31,6 @@ use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::{AgentConfig, AgentVfsAccessGrant};
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
-use agentdash_domain::task::Task;
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workflow::{
     ActivityDefinition, AgentProcedureContract, LifecycleRun, WorkflowGraph,
@@ -59,10 +57,7 @@ use crate::companion::{
 };
 use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
-    TaskExecutionPhase, build_declared_source_warning_fragment, build_session_context_bundle,
-    contribute_binding_initial_context, contribute_core_context, contribute_declared_sources,
-    contribute_instruction, contribute_workflow_binding, contribute_workspace_static_sources,
-    emit_bundle_fragments, resolve_workspace_declared_sources,
+    build_session_context_bundle, emit_bundle_fragments, resolve_workspace_declared_sources,
 };
 use crate::platform_config::PlatformConfig;
 use crate::project::context_builder::{ProjectContextBuildInput, contribute_project_context};
@@ -72,14 +67,8 @@ use crate::runtime_bridge::session_mcp_servers_to_runtime;
 use crate::session::assembly_builder::SessionAssemblyBuilder;
 #[cfg(test)]
 use crate::session::assembly_builder::slice_companion_bundle;
-use crate::session::post_turn_handler::TerminalHookEffectBinding;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
-use crate::task::execution::TaskExecutionError;
-use crate::task::gateway::{effect_executor::TaskHookEffectExecutor, resolve_task_backend_id};
-use crate::vfs::{
-    ResolveBindingsOutput, SessionMountTarget, VfsService, apply_agent_vfs_access_grants,
-    resolve_context_bindings,
-};
+use crate::vfs::{SessionMountTarget, VfsService, apply_agent_vfs_access_grants};
 use crate::workflow::{
     ActiveWorkflowProjection, ActivityActivationInput, RuntimeNodeArtifactScope,
     activate_activity_with_platform, ensure_active_workflow_lifecycle_mount,
@@ -283,6 +272,13 @@ pub struct AgentLevelMcp {
 /// Owner bootstrap compose 的完整输入。
 pub struct OwnerBootstrapSpec<'a> {
     pub owner: OwnerScope<'a>,
+    /// 由 `LifecycleSubjectAssociation` 动态解析出的 subject 上下文。
+    ///
+    /// ProjectAgent 仍以 Project owner 启动；Story/Task 作为 subject profile 通过这里叠加，
+    /// 避免再为 Story/Task 保留独立 owner composer。
+    pub subject_context_contributions: Vec<Contribution>,
+    pub subject_owner_ctx: Option<CapabilityScopeCtx>,
+    pub subject_workspace: Option<&'a Workspace>,
     pub executor_config: AgentConfig,
     /// user 层 canonical 用户输入(外部传入或 Routine 模板)。
     pub user_input: Vec<agentdash_agent_protocol::UserInputBlock>,
@@ -375,7 +371,7 @@ fn resolve_owner_audit_trigger(
 ///
 /// 不再内联 SessionPlan / VFS / MCP 这些"运行时画像"字段 —— 调用方在外层
 /// （`compose_owner_bootstrap`）显式 push SessionPlan contribution，保证三条
-/// compose 路径（owner / story_step / lifecycle_node）的 SessionPlan 产出
+/// compose 路径（owner / lifecycle_node）的 SessionPlan 产出
 /// 节拍一致（PR 5b）。
 fn build_owner_context_contribution(
     owner: &OwnerScope<'_>,
@@ -412,7 +408,7 @@ fn build_owner_context_contribution(
 /// Owner 路径的 SessionPlan contribution 构建（外挂到 compose_owner_bootstrap 顶层）。
 ///
 /// PR 5b 把 SessionPlan fragments 从 `contribute_story_context` / `contribute_project_context`
-/// 内部迁出到此函数，与 task 路径（`compose_story_step` 内部 push）保持一致的外挂节拍。
+/// 内部迁出到此函数，与 lifecycle / companion 路径保持一致的外挂节拍。
 fn build_owner_session_plan_contribution(
     owner: &OwnerScope<'_>,
     vfs: Option<&Vfs>,
@@ -564,7 +560,7 @@ impl<'a> SessionRequestAssembler<'a> {
                         project,
                         &project_vfs_mounts,
                         None,
-                        *workspace,
+                        spec.subject_workspace.or(*workspace),
                         target,
                         Some(spec.executor_config.executor.as_str()),
                     )?,
@@ -680,6 +676,7 @@ impl<'a> SessionRequestAssembler<'a> {
         spec: &OwnerBootstrapSpec<'_>,
         vfs: Option<&Vfs>,
         session_mcp_servers: &[agentdash_spi::SessionMcpServer],
+        subject_context_contributions: Vec<Contribution>,
     ) -> Result<SessionContextBundle, String> {
         let runtime_mcp_servers = session_mcp_servers_to_runtime(session_mcp_servers);
         let (workspace_fragments, workspace_warnings) = match &spec.owner {
@@ -709,23 +706,32 @@ impl<'a> SessionRequestAssembler<'a> {
             spec.executor_config.executor.as_str(),
         );
 
+        let mut contributions = Vec::with_capacity(2 + subject_context_contributions.len());
+        contributions.push(owner_contribution);
+        contributions.extend(subject_context_contributions);
+        contributions.push(session_plan_contribution);
+
         Ok(build_session_context_bundle(
             SessionContextConfig {
                 session_id: Uuid::new_v4(),
                 phase: owner_scope_phase(&spec.owner),
                 default_scope: agentdash_spi::ContextFragment::default_scope(),
             },
-            vec![owner_contribution, session_plan_contribution],
+            contributions,
         ))
     }
 
     /// Owner 级 session bootstrap(Story / Project / Routine)。
     pub(in crate::session) async fn compose_owner_bootstrap(
         &self,
-        spec: OwnerBootstrapSpec<'_>,
+        mut spec: OwnerBootstrapSpec<'_>,
     ) -> Result<SessionAssemblyBuilder, String> {
         let project_id = spec.owner.project_id();
-        let owner_ctx = spec.owner.owner_ctx();
+        let owner_ctx = spec
+            .subject_owner_ctx
+            .clone()
+            .unwrap_or_else(|| spec.owner.owner_ctx());
+        let subject_context_contributions = std::mem::take(&mut spec.subject_context_contributions);
         let active_workflow = spec.active_workflow.clone();
         let vfs = self
             .prepare_owner_bootstrap_vfs(&spec, project_id, active_workflow.as_ref())
@@ -736,14 +742,20 @@ impl<'a> SessionRequestAssembler<'a> {
         // Workspace module 声明式可见性收口到 base CapabilityState（取代旧的
         // visible_workspace_module_refs_json 旁路 + frame_construction 直接赋值）：
         // 三态直达，经 effective_capability_json 序列化/还原；空集回 All（修 carry-forward bug）。
-        cap_output.workspace_module = crate::session::capability_state::project_workspace_module_dimension(
-            spec.visible_workspace_module_refs.as_deref(),
-        );
+        cap_output.workspace_module =
+            crate::session::capability_state::project_workspace_module_dimension(
+                spec.visible_workspace_module_refs.as_deref(),
+            );
         let mut session_mcp_servers = spec.request_mcp_servers.clone();
         session_mcp_servers.extend(cap_output.tool.mcp_servers.iter().cloned());
         session_mcp_servers.extend(spec.agent_mcp.preset_mcp_servers.iter().cloned());
         let context_bundle = self
-            .build_owner_context_bundle(&spec, vfs.as_ref(), &session_mcp_servers)
+            .build_owner_context_bundle(
+                &spec,
+                vfs.as_ref(),
+                &session_mcp_servers,
+                subject_context_contributions,
+            )
             .await?;
         let audit_lifecycle = owner_audit_lifecycle(&spec.lifecycle);
         let (user_input, effective_bundle) = match spec.lifecycle {
@@ -772,7 +784,10 @@ impl<'a> SessionRequestAssembler<'a> {
 
         let workspace_defaults = match &spec.owner {
             OwnerScope::Story { workspace, .. } => workspace.cloned(),
-            OwnerScope::Project { workspace, .. } => workspace.as_deref().cloned(),
+            OwnerScope::Project { workspace, .. } => spec
+                .subject_workspace
+                .cloned()
+                .or_else(|| workspace.as_deref().cloned()),
         };
 
         let mut builder = SessionAssemblyBuilder::new()
@@ -811,332 +826,6 @@ impl<'a> SessionRequestAssembler<'a> {
             frame_builder,
             prepared,
         ))
-    }
-
-    fn resolve_story_step_executor_config(
-        spec: &StoryStepSpec<'_>,
-    ) -> Result<(Option<AgentConfig>, Option<String>), TaskExecutionError> {
-        use crate::task::config::{resolve_task_executor_config, resolve_task_executor_source};
-
-        let executor_source = resolve_task_executor_source(
-            spec.task,
-            spec.project,
-            spec.explicit_executor_config.as_ref(),
-        );
-        match resolve_task_executor_config(
-            spec.explicit_executor_config.clone(),
-            spec.task,
-            spec.project,
-        ) {
-            Ok(config) => Ok((config.clone(), config.as_ref().map(|c| c.executor.clone()))),
-            Err(err) if spec.strict_config_resolution => Err(err),
-            Err(err) => {
-                let _resolution =
-                    crate::session::ExecutorResolution::failed(executor_source, err.to_string());
-                Ok((None, None))
-            }
-        }
-    }
-
-    async fn prepare_story_step_vfs(
-        &self,
-        spec: &StoryStepSpec<'_>,
-        executor_name: Option<&str>,
-        use_cloud_native: bool,
-    ) -> Result<Option<Vfs>, TaskExecutionError> {
-        let vfs = if use_cloud_native {
-            Some(
-                self.vfs_service
-                    .build_vfs(
-                        spec.project,
-                        &self
-                            .repos
-                            .project_vfs_mount_repo
-                            .list_by_project(spec.project.id)
-                            .await
-                            .map_err(|error| {
-                                TaskExecutionError::Internal(format!(
-                                    "读取 Project VFS Mount 失败: {error}"
-                                ))
-                            })?,
-                        Some(spec.story),
-                        spec.workspace,
-                        SessionMountTarget::Task,
-                        executor_name,
-                    )
-                    .map_err(|error| TaskExecutionError::Internal(error.to_string()))?,
-            )
-        } else {
-            None
-        };
-
-        Ok(ensure_active_workflow_lifecycle_mount(
-            vfs,
-            spec.active_workflow.as_ref(),
-        ))
-    }
-
-    async fn resolve_story_step_context_bindings(
-        &self,
-        vfs: Option<&Vfs>,
-        workflow: Option<&ActiveWorkflowProjection>,
-    ) -> Result<Option<ResolveBindingsOutput>, TaskExecutionError> {
-        let (Some(space), Some(wf)) = (vfs, workflow) else {
-            return Ok(None);
-        };
-        let bindings = wf
-            .active_contract()
-            .map(|c| c.injection.context_bindings.as_slice())
-            .unwrap_or(&[]);
-        if bindings.is_empty() {
-            return Ok(None);
-        }
-        resolve_context_bindings(bindings, space, self.vfs_service)
-            .await
-            .map(Some)
-            .map_err(TaskExecutionError::UnprocessableEntity)
-    }
-
-    async fn resolve_story_step_capabilities(
-        &self,
-        spec: &StoryStepSpec<'_>,
-        workflow: Option<&ActiveWorkflowProjection>,
-    ) -> (CapabilityState, Vec<agentdash_spi::SessionMcpServer>) {
-        let mut contributions = Vec::new();
-        if let Some(directives) = workflow.map(tool_directives_from_active_workflow_projection) {
-            contributions.push(ContextContributions {
-                source: ContextContributionSource::Workflow,
-                tool: Some(ToolContribution {
-                    directives,
-                    has_active_workflow: true,
-                }),
-                companion: None,
-            });
-        }
-        let cap_input = CapabilityResolverInput {
-            owner_ctx: CapabilityScopeCtx::Task {
-                project_id: spec.task.project_id,
-                story_id: spec.task.story_id,
-                task_id: spec.task.id,
-            },
-            contributions,
-            mcp_candidates: McpCandidates {
-                presets: load_available_presets(self.repos, spec.task.project_id).await,
-                agent_servers: vec![],
-            },
-            capability_context: None,
-        };
-        let mut capability_state = CapabilityResolver::resolve(&cap_input, self.platform_config);
-        let mut session_mcp_servers = spec.request_mcp_servers.to_vec();
-        session_mcp_servers.extend(capability_state.tool.mcp_servers.iter().cloned());
-        capability_state.tool.mcp_servers = session_mcp_servers.clone();
-        (capability_state, session_mcp_servers)
-    }
-
-    async fn build_story_step_context_bundle(
-        &self,
-        spec: &StoryStepSpec<'_>,
-        vfs: Option<&Vfs>,
-        workflow: Option<&ActiveWorkflowProjection>,
-        resolved_bindings: Option<&ResolveBindingsOutput>,
-        capability_state: &CapabilityState,
-        effective_agent_type: Option<&str>,
-    ) -> Result<(SessionContextBundle, TaskExecutionPhase), TaskExecutionError> {
-        let mut declared_sources = spec.story.context.source_refs.clone();
-        declared_sources.extend(spec.task.dispatch_preference.context_sources.clone());
-        let resolved_workspace_sources = resolve_workspace_declared_sources(
-            self.availability,
-            self.vfs_service,
-            &declared_sources,
-            spec.workspace,
-            86,
-        )
-        .await
-        .map_err(|error| TaskExecutionError::UnprocessableEntity(error.to_string()))?;
-        let task_phase = match spec.phase {
-            StoryStepPhase::Start => TaskExecutionPhase::Start,
-            StoryStepPhase::Continue => TaskExecutionPhase::Continue,
-        };
-
-        let mut contributions: Vec<Contribution> = Vec::new();
-        contributions.push(contribute_core_context(
-            spec.task,
-            spec.story,
-            spec.project,
-            spec.workspace,
-        ));
-        contributions.push(contribute_binding_initial_context(spec.task));
-        contributions.push(contribute_declared_sources(spec.task, spec.story));
-        if !resolved_workspace_sources.fragments.is_empty() {
-            contributions.push(contribute_workspace_static_sources(
-                resolved_workspace_sources.fragments.clone(),
-            ));
-        }
-        if !resolved_workspace_sources.warnings.is_empty() {
-            contributions.push(Contribution::fragments_only(vec![
-                build_declared_source_warning_fragment(
-                    "declared_source_warnings",
-                    96,
-                    &resolved_workspace_sources.warnings,
-                ),
-            ]));
-        }
-
-        let task_mcp_servers = session_mcp_servers_to_runtime(&capability_state.tool.mcp_servers);
-        if let (Some(wf), Some(bindings_out)) = (workflow.cloned(), resolved_bindings.cloned()) {
-            contributions.push(contribute_workflow_binding(&wf, &bindings_out));
-        }
-        contributions.push(contribute_instruction(
-            spec.task,
-            spec.story,
-            spec.workspace,
-            task_phase,
-            spec.override_prompt,
-            spec.additional_prompt,
-        ));
-
-        let effective_session_composition =
-            crate::session::plan::resolve_story_session_composition(Some(spec.story));
-        let session_plan = crate::session::plan::build_session_plan_fragments(
-            crate::session::plan::SessionPlanInput {
-                scope: CapabilityScope::Task,
-                phase: match task_phase {
-                    TaskExecutionPhase::Start => crate::session::plan::SessionPlanPhase::TaskStart,
-                    TaskExecutionPhase::Continue => {
-                        crate::session::plan::SessionPlanPhase::TaskContinue
-                    }
-                },
-                vfs,
-                mcp_servers: &task_mcp_servers,
-                session_composition: effective_session_composition.as_ref(),
-                agent_type: effective_agent_type,
-                preset_name: spec.task.dispatch_preference.preset_name.as_deref(),
-                has_custom_prompt_template: spec
-                    .task
-                    .dispatch_preference
-                    .prompt_template
-                    .as_deref()
-                    .is_some_and(|value| !value.trim().is_empty()),
-                has_initial_context: spec
-                    .task
-                    .dispatch_preference
-                    .initial_context
-                    .as_deref()
-                    .is_some_and(|value| !value.trim().is_empty()),
-                workspace_attached: vfs.is_some(),
-            },
-        );
-        contributions.push(Contribution::fragments_only(session_plan.fragments));
-
-        Ok((
-            build_session_context_bundle(
-                SessionContextConfig {
-                    session_id: Uuid::new_v4(),
-                    phase: match task_phase {
-                        TaskExecutionPhase::Start => ContextBuildPhase::TaskStart,
-                        TaskExecutionPhase::Continue => ContextBuildPhase::TaskContinue,
-                    },
-                    default_scope: agentdash_spi::ContextFragment::default_scope(),
-                },
-                contributions,
-            ),
-            task_phase,
-        ))
-    }
-
-    /// Story step activation 场景下组装 child session。
-    ///
-    /// 内部走 6 个阶段:
-    /// 1. 解析 executor config（来源诊断保留给 tracing/metadata）
-    /// 2. 查找活跃 lifecycle run 对应的 `ActiveWorkflowProjection`（由调用方传入）
-    /// 3. 构建 VFS（workspace mount + lifecycle mount，cloud-native 场景）
-    /// 4. 解析 context bindings（需要 VFS 已就绪）
-    /// 5. CapabilityResolver（以 workflow baseline 或空集为输入）
-    /// 6. 组装 `Vec<Contribution>` → `build_session_context_bundle` 产出 bundle 与 prompt resource block
-    ///
-    /// 输出统一为 `SessionAssemblyBuilder`；调用方投影到 `AgentFrameBuilder`，
-    /// 再由 frame 生成 runtime launch request。
-    pub(in crate::session) async fn compose_story_step(
-        &self,
-        spec: StoryStepSpec<'_>,
-    ) -> Result<SessionAssemblyBuilder, TaskExecutionError> {
-        let (resolved_config, effective_agent_type) =
-            Self::resolve_story_step_executor_config(&spec)?;
-        let use_cloud_native = resolved_config
-            .as_ref()
-            .is_some_and(|c| c.is_cloud_native());
-        let vfs = self
-            .prepare_story_step_vfs(&spec, effective_agent_type.as_deref(), use_cloud_native)
-            .await?;
-        let resolved_bindings = self
-            .resolve_story_step_context_bindings(vfs.as_ref(), spec.active_workflow.as_ref())
-            .await?;
-        let (capability_state, session_mcp_servers) = self
-            .resolve_story_step_capabilities(&spec, spec.active_workflow.as_ref())
-            .await;
-        let (context_bundle, task_phase) = self
-            .build_story_step_context_bundle(
-                &spec,
-                vfs.as_ref(),
-                spec.active_workflow.as_ref(),
-                resolved_bindings.as_ref(),
-                &capability_state,
-                effective_agent_type.as_deref(),
-            )
-            .await?;
-        self.audit_bundle(
-            &context_bundle,
-            spec.audit_session_key.as_deref(),
-            AuditTrigger::ComposerRebuild,
-        );
-        let user_input = build_story_step_trigger_input(task_phase);
-        let mut builder = SessionAssemblyBuilder::new()
-            .with_input(user_input)
-            .with_mcp_servers(session_mcp_servers)
-            .with_resolved_capabilities(capability_state)
-            .with_context_bundle(context_bundle)
-            .with_optional_workspace_defaults(spec.workspace.cloned());
-
-        if let Some(vfs) = vfs {
-            builder = builder.with_vfs(vfs);
-        }
-        if let Some(cfg) = resolved_config {
-            builder = builder.with_executor_config(cfg);
-        }
-
-        Ok(builder.build())
-    }
-
-    /// story_step 的 frame builder 路径。
-    pub async fn compose_story_step_to_frame(
-        &self,
-        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
-        spec: StoryStepSpec<'_>,
-    ) -> Result<
-        (
-            crate::workflow::frame_builder::AgentFrameBuilder,
-            crate::session::assembly_builder::AssemblyLaunchExtras,
-            Option<crate::session::post_turn_handler::TerminalHookEffectBinding>,
-        ),
-        TaskExecutionError,
-    > {
-        let task_id = spec.task.id;
-        let backend_id = resolve_task_backend_id(self.repos, self.availability, spec.task).await?;
-        let prepared = self.compose_story_step(spec).await?;
-        let (fb, extras) =
-            crate::session::assembly_builder::project_assembly_to_frame(frame_builder, prepared);
-        let hook_binding = Some(TerminalHookEffectBinding {
-            handler: serde_json::json!({
-                "kind": "task",
-                "task_id": task_id,
-                "backend_id": backend_id,
-            }),
-            supported_effect_kinds: TaskHookEffectExecutor::SUPPORTED_KINDS
-                .iter()
-                .map(|kind| (*kind).to_string())
-                .collect(),
-        });
-        Ok((fb, extras, hook_binding))
     }
 
     /// lifecycle_node 的 frame builder 路径。
@@ -1511,55 +1200,9 @@ pub(in crate::session) fn compose_companion(spec: CompanionSpec<'_>) -> SessionA
         .build()
 }
 
-fn build_story_step_trigger_input(
-    phase: TaskExecutionPhase,
-) -> Vec<agentdash_agent_protocol::UserInputBlock> {
-    let text = match phase {
-        TaskExecutionPhase::Start => "请开始执行当前任务。",
-        TaskExecutionPhase::Continue => "请继续推进当前任务。",
-    };
-    agentdash_agent_protocol::text_user_input_blocks(text)
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 5:其余 Spec 结构 + 辅助函数
 // ═══════════════════════════════════════════════════════════════════
-
-/// Story step activation 的 phase(与 `crate::task::execution::ExecutionPhase` 映射)。
-#[derive(Debug, Clone, Copy)]
-pub enum StoryStepPhase {
-    Start,
-    Continue,
-}
-
-/// Task execution session 场景下 compose 所需的完整上下文。
-///
-/// 用于 `StoryActivityActivationService` 的 task 启动 / 续跑路径
-/// （`start_task` / `continue_task` 直接以 task 为入口调 compose）。
-///
-/// 与 `LifecycleNodeSpec`（orchestrator 的 phase node 使用）不同：
-/// - `StoryStepSpec` 持有 task/story/project/workspace 完整 entity 引用
-/// - 承载 user prompt 注入（`override_prompt` / `additional_prompt`）
-/// - 承载 explicit executor config（HTTP 请求透传）
-/// - `active_workflow` 可选：task execution session 无 lifecycle binding 时为 `None`，
-///   走纯 task 装配（不带 lifecycle workflow injection）
-pub struct StoryStepSpec<'a> {
-    pub task: &'a Task,
-    pub story: &'a Story,
-    pub project: &'a Project,
-    pub workspace: Option<&'a Workspace>,
-    pub phase: StoryStepPhase,
-    pub override_prompt: Option<&'a str>,
-    pub additional_prompt: Option<&'a str>,
-    pub request_mcp_servers: &'a [agentdash_spi::SessionMcpServer],
-    pub explicit_executor_config: Option<AgentConfig>,
-    /// 若为 true,executor 解析失败时直接返回 Err;否则返回 failed 状态继续。
-    pub strict_config_resolution: bool,
-    /// 对应活跃 lifecycle run 的投影（由 facade 通过 subject association 定位后传入）。
-    pub active_workflow: Option<ActiveWorkflowProjection>,
-    /// 审计总线用于索引的 session key。
-    pub audit_session_key: Option<String>,
-}
 
 /// Lifecycle AgentNode compose 输入。
 pub struct LifecycleNodeSpec<'a> {
@@ -1916,25 +1559,6 @@ mod tests {
         assert!(slots.contains("constraints"));
         assert!(!slots.contains("story"));
         assert!(!slots.contains("workflow_context"));
-    }
-
-    #[test]
-    fn story_step_trigger_prompt_does_not_embed_owner_context() {
-        for phase in [TaskExecutionPhase::Start, TaskExecutionPhase::Continue] {
-            let blocks = build_story_step_trigger_input(phase);
-            let text = blocks
-                .iter()
-                .filter_map(agentdash_agent_protocol::user_input_text)
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            assert!(!text.trim().is_empty());
-            assert!(!text.contains("## Task"));
-            assert!(!text.contains("## Story"));
-            assert!(!text.contains("## Project"));
-            assert!(!text.contains("## Instruction"));
-            assert!(!text.contains("agentdash://task-context"));
-        }
     }
 
     #[test]

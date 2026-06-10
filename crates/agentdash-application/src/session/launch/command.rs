@@ -2,9 +2,7 @@ use std::path::{Path, PathBuf};
 
 use agentdash_spi::SessionMcpServer;
 
-use crate::session::construction_provider::{
-    CompanionLaunchSource, RoutineLaunchSource, TaskLaunchPhase, TaskLaunchSource,
-};
+use crate::session::construction_provider::{CompanionLaunchSource, RoutineLaunchSource};
 use crate::session::types::UserPromptInput;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchSource {
@@ -13,7 +11,6 @@ pub enum LaunchSource {
     HookAutoResume,
     CompanionDispatch,
     CompanionParentResume,
-    TaskService,
     WorkflowOrchestrator,
     RoutineExecutor,
     LocalRelayPrompt,
@@ -25,7 +22,6 @@ pub struct LaunchCommand {
     source: LaunchSource,
     follow_up_session_id: Option<String>,
     identity: Option<agentdash_spi::AuthIdentity>,
-    task: Option<TaskLaunchSource>,
     routine: Option<RoutineLaunchSource>,
     companion: Option<CompanionLaunchSource>,
     local_relay_mcp_declarations: Vec<SessionMcpServer>,
@@ -45,7 +41,6 @@ impl LaunchCommand {
             source,
             follow_up_session_id: None,
             identity: None,
-            task: None,
             routine: None,
             companion: None,
             local_relay_mcp_declarations: Vec::new(),
@@ -64,10 +59,6 @@ impl LaunchCommand {
 
     pub fn identity(&self) -> Option<agentdash_spi::AuthIdentity> {
         self.identity.clone()
-    }
-
-    pub fn task_hint(&self) -> Option<TaskLaunchSource> {
-        self.task.clone()
     }
 
     pub fn companion_hint(&self) -> Option<CompanionLaunchSource> {
@@ -101,7 +92,6 @@ impl LaunchCommand {
             LaunchSource::HookAutoResume => "hook_auto_resume",
             LaunchSource::CompanionDispatch => "companion_dispatch",
             LaunchSource::CompanionParentResume => "companion_parent_resume",
-            LaunchSource::TaskService => "task_service",
             LaunchSource::WorkflowOrchestrator => "workflow_orchestrator",
             LaunchSource::RoutineExecutor => "routine_executor",
             LaunchSource::LocalRelayPrompt => "local_relay_prompt",
@@ -115,14 +105,12 @@ impl LaunchCommand {
     fn command_with(
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
-        task: Option<TaskLaunchSource>,
         routine: Option<RoutineLaunchSource>,
         companion: Option<CompanionLaunchSource>,
         source: LaunchSource,
     ) -> Self {
         let mut command = Self::new(input, source);
         command.identity = identity;
-        command.task = task;
         command.routine = routine;
         command.companion = companion;
         command
@@ -132,7 +120,7 @@ impl LaunchCommand {
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
     ) -> Self {
-        Self::command_with(input, identity, None, None, None, LaunchSource::HttpPrompt)
+        Self::command_with(input, identity, None, None, LaunchSource::HttpPrompt)
     }
 
     pub fn lifecycle_agent_user_message_input(
@@ -142,7 +130,6 @@ impl LaunchCommand {
         Self::command_with(
             input,
             identity,
-            None,
             None,
             None,
             LaunchSource::LifecycleAgentUserMessage,
@@ -165,7 +152,6 @@ impl LaunchCommand {
             input,
             None,
             None,
-            None,
             Some(companion),
             LaunchSource::CompanionDispatch,
         )
@@ -183,31 +169,9 @@ impl LaunchCommand {
         Self::command_with(
             input,
             identity,
-            None,
             Some(routine),
             None,
             LaunchSource::RoutineExecutor,
-        )
-    }
-
-    pub fn task_service_input(
-        input: UserPromptInput,
-        identity: Option<agentdash_spi::AuthIdentity>,
-        phase: TaskLaunchPhase,
-        override_prompt: Option<String>,
-        additional_prompt: Option<String>,
-    ) -> Self {
-        Self::command_with(
-            input,
-            identity,
-            Some(TaskLaunchSource {
-                phase: Some(phase),
-                override_prompt,
-                additional_prompt,
-            }),
-            None,
-            None,
-            LaunchSource::TaskService,
         )
     }
 

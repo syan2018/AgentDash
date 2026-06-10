@@ -8,17 +8,17 @@ export type AgentFrameRefDto = { agent_id: string, frame_id: string, revision?: 
 
 export type AgentRunRefDto = { run_id: string, agent_id: string, };
 
-export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, };
+export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, };
 
 export type CreateProjectAgentSessionRequest = {
 /**
  * canonical 用户输入，与 steer / lifecycle message 同形。
  */
-input: Array<UserInput>, executor_config?: JsonValue, };
+input: Array<UserInput>, executor_config?: JsonValue, subject_ref?: SubjectRefDto, };
 
 export type LifecycleRunRefDto = { run_id: string, };
 
-export type ProjectAgent = { id: string, project_id: string, name: string, agent_type: string, config: JsonValue, default_lifecycle_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, knowledge_enabled: boolean, created_at: string, updated_at: string, };
+export type ProjectAgent = { id: string, project_id: string, name: string, agent_type: string, config: JsonValue, default_lifecycle_key?: string, knowledge_enabled: boolean, created_at: string, updated_at: string, };
 
 export type ProjectAgentExecutor = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, permission_policy?: string, };
 
@@ -34,4 +34,4 @@ export type SubjectRefDto = { kind: string, id: string, };
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-export type UpdateProjectAgentRequest = { name?: string, agent_type?: string, config?: JsonValue, default_lifecycle_key?: string, is_default_for_story?: boolean, is_default_for_task?: boolean, knowledge_enabled?: boolean, };
+export type UpdateProjectAgentRequest = { name?: string, agent_type?: string, config?: JsonValue, default_lifecycle_key?: string, knowledge_enabled?: boolean, };

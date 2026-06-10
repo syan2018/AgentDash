@@ -1,6 +1,6 @@
 //! Compose 路径分类 — 决定 frame construction 走哪个 composer。
 //!
-//! 分类优先级：companion_hint → story association → lifecycle node → task → project_agent。
+//! 分类优先级：companion_hint → lifecycle node → project_agent → existing frame surface。
 
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::ConnectorError;
@@ -25,27 +25,17 @@ pub(super) async fn route_and_compose(
         return super::composer_companion::compose(svc, &frame, agent, companion, &input).await;
     }
 
-    // 2. story association
-    if let Some(story_id) = resolve_story_association(svc, run.id, agent.id).await? {
-        return super::composer_story::compose(svc, &frame, agent, run, story_id, &input).await;
-    }
-
-    // 3. lifecycle node (由 RuntimeSessionExecutionAnchor 的 orchestration binding 决定)
+    // 2. lifecycle node (由 RuntimeSessionExecutionAnchor 的 orchestration binding 决定)
     if has_orchestration_anchor(svc, input.session_id.as_str()).await? {
         return super::composer_lifecycle_node::compose(svc, &frame, agent, run, &input).await;
     }
 
-    // 4. task association
-    if input.command.task_hint().is_some() || has_task_association(svc, run.id, agent.id).await? {
-        return super::composer_task::compose(svc, &frame, agent, run, &input).await;
-    }
-
-    // 5. project_agent fallback
+    // 3. ProjectAgent 入口消费 Story/Task subject context，不再让 subject association 抢走 composer。
     if agent.project_agent_id.is_some() {
         return super::composer_project_agent::compose(svc, &frame, agent, run, &input).await;
     }
 
-    // 6. 尝试直接使用已有 frame surface
+    // 4. 尝试直接使用已有 frame surface
     if frame_surface_ready(&frame) {
         return build_envelope_from_frame(&frame, None, &input.command, None, &input.session_id);
     }
@@ -54,22 +44,6 @@ pub(super) async fn route_and_compose(
         "AgentFrame {} 缺少 launch surface，且无法从 lifecycle anchor 推导 compose 路径",
         frame.id
     )))
-}
-
-async fn has_task_association(
-    svc: &FrameConstructionService,
-    run_id: uuid::Uuid,
-    agent_id: uuid::Uuid,
-) -> Result<bool, ConnectorError> {
-    let associations = svc
-        .repos
-        .lifecycle_subject_association_repo
-        .list_by_anchor(run_id, Some(agent_id))
-        .await
-        .map_err(connector_internal)?;
-    Ok(associations
-        .iter()
-        .any(|assoc| assoc.subject_kind == "task"))
 }
 
 async fn has_orchestration_anchor(
@@ -86,21 +60,4 @@ async fn has_orchestration_anchor(
         anchor
             .is_some_and(|anchor| anchor.orchestration_id.is_some() && anchor.node_path.is_some()),
     )
-}
-
-async fn resolve_story_association(
-    svc: &FrameConstructionService,
-    run_id: uuid::Uuid,
-    agent_id: uuid::Uuid,
-) -> Result<Option<uuid::Uuid>, ConnectorError> {
-    let associations = svc
-        .repos
-        .lifecycle_subject_association_repo
-        .list_by_anchor(run_id, Some(agent_id))
-        .await
-        .map_err(connector_internal)?;
-    Ok(associations
-        .iter()
-        .find(|assoc| assoc.subject_kind == "story")
-        .map(|assoc| assoc.subject_id))
 }

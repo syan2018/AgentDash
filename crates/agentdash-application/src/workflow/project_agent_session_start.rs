@@ -26,6 +26,7 @@ pub struct ProjectAgentSessionStartCommand {
     pub project_agent_id: Uuid,
     pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
     pub executor_config: Option<AgentConfig>,
+    pub subject_ref: Option<SubjectRef>,
     pub identity: Option<AuthIdentity>,
 }
 
@@ -149,7 +150,10 @@ impl<'a> ProjectAgentSessionStartService<'a> {
                 ))
             })?;
 
-        let subject_ref = SubjectRef::new("project", command.project_id);
+        let subject_ref = command
+            .subject_ref
+            .unwrap_or_else(|| SubjectRef::new("project", command.project_id));
+        validate_project_agent_subject_ref(command.project_id, &subject_ref)?;
         let intent = AgentLaunchIntent {
             project_id: command.project_id,
             source: ExecutionSource::ProjectAgent,
@@ -315,6 +319,23 @@ fn workflow_graph_ref_for_project_agent(project_agent: &ProjectAgent) -> Option<
             project_id: project_agent.project_id,
             key: key.to_string(),
         })
+}
+
+fn validate_project_agent_subject_ref(
+    project_id: Uuid,
+    subject_ref: &SubjectRef,
+) -> Result<(), WorkflowApplicationError> {
+    match subject_ref.kind.as_str() {
+        "project" if subject_ref.id == project_id => Ok(()),
+        "project" => Err(WorkflowApplicationError::BadRequest(format!(
+            "Project subject {} 不属于当前 Project {}",
+            subject_ref.id, project_id
+        ))),
+        "story" | "task" => Ok(()),
+        kind => Err(WorkflowApplicationError::BadRequest(format!(
+            "不支持的 ProjectAgent subject kind: {kind}"
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -878,6 +899,7 @@ mod tests {
                     project_agent_id: project_agent.id,
                     input: agentdash_agent_protocol::text_user_input_blocks("hello"),
                     executor_config: None,
+                    subject_ref: None,
                     identity: None,
                 },
                 FailingDelivery,

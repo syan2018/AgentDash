@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use agentdash_application::canvas::{
     CanvasExtensionPackageInput, CanvasMutationInput, CanvasRuntimeBridgeSnapshot,
-    CreateCanvasInput, build_canvas_extension_package, build_runtime_snapshot_with_bindings,
-    create_project_canvas, delete_canvas_record,
+    CanvasRuntimeSnapshot, CreateCanvasInput, build_canvas_extension_package,
+    build_runtime_snapshot_with_bindings, create_project_canvas, delete_canvas_record,
     list_project_canvases as list_project_canvases_use_case, load_canvas_by_ref,
     update_canvas_record,
 };
@@ -17,8 +17,14 @@ use agentdash_application::extension_package::{
     store_extension_package_archive,
 };
 use agentdash_application::runtime_gateway::{
-    RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
-    RuntimeInvocationResult,
+    RuntimeActionKey, RuntimeActionKind, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
+    RuntimeInvocationResult, RuntimeSurface,
+};
+use agentdash_contracts::canvas::{
+    CanvasImportMapDto, CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto,
+    CanvasRuntimeFileDto, CanvasRuntimeSnapshotDto, RuntimeActionDescriptorDto,
+    RuntimeActionKindDto, RuntimeContextDto, RuntimeInvocationOutputDto,
+    RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto, RuntimeTraceDto,
 };
 use agentdash_contracts::core::DeletedIdResponse;
 use agentdash_contracts::extension_package::ExtensionPackageInstallationResponse;
@@ -224,7 +230,7 @@ pub async fn get_canvas_runtime_snapshot(
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
     Query(query): Query<CanvasRuntimeSnapshotQuery>,
-) -> Result<Json<agentdash_application::canvas::CanvasRuntimeSnapshot>, ApiError> {
+) -> Result<Json<CanvasRuntimeSnapshotDto>, ApiError> {
     let canvas =
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::View)
             .await?;
@@ -243,7 +249,7 @@ pub async fn get_canvas_runtime_snapshot(
             build_canvas_runtime_bridge_surface(state.as_ref(), &canvas, session_id)?;
     }
 
-    Ok(Json(snapshot))
+    Ok(Json(canvas_runtime_snapshot_to_contract(snapshot)))
 }
 
 pub async fn invoke_canvas_runtime_action(
@@ -251,7 +257,7 @@ pub async fn invoke_canvas_runtime_action(
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
     Json(req): Json<CanvasRuntimeInvokeRequest>,
-) -> Result<Json<RuntimeInvocationResult>, ApiError> {
+) -> Result<Json<RuntimeInvocationResultDto>, ApiError> {
     let canvas =
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::View)
             .await?;
@@ -279,7 +285,125 @@ pub async fn invoke_canvas_runtime_action(
     );
 
     let result = state.services.runtime_gateway.invoke(request).await?;
-    Ok(Json(result))
+    Ok(Json(runtime_invocation_result_to_contract(result)))
+}
+
+fn canvas_runtime_snapshot_to_contract(
+    snapshot: CanvasRuntimeSnapshot,
+) -> CanvasRuntimeSnapshotDto {
+    CanvasRuntimeSnapshotDto {
+        canvas_id: snapshot.canvas_id.to_string(),
+        session_id: snapshot.session_id,
+        resource_surface_ref: snapshot.resource_surface_ref,
+        entry: snapshot.entry,
+        files: snapshot
+            .files
+            .into_iter()
+            .map(|file| CanvasRuntimeFileDto {
+                path: file.path,
+                content: file.content,
+                file_type: file.file_type,
+            })
+            .collect(),
+        bindings: snapshot
+            .bindings
+            .into_iter()
+            .map(|binding| CanvasRuntimeBindingDto {
+                alias: binding.alias,
+                source_uri: binding.source_uri,
+                data_path: binding.data_path,
+                content_type: binding.content_type,
+                resolved: binding.resolved,
+            })
+            .collect(),
+        import_map: CanvasImportMapDto {
+            imports: snapshot.import_map.imports,
+        },
+        libraries: snapshot.libraries,
+        runtime_bridge: canvas_runtime_bridge_to_contract(snapshot.runtime_bridge),
+    }
+}
+
+fn canvas_runtime_bridge_to_contract(
+    bridge: CanvasRuntimeBridgeSnapshot,
+) -> CanvasRuntimeBridgeSnapshotDto {
+    CanvasRuntimeBridgeSnapshotDto {
+        enabled: bridge.enabled,
+        surface: bridge.surface.map(runtime_surface_to_contract),
+        disabled_reason: bridge.disabled_reason,
+    }
+}
+
+fn runtime_invocation_result_to_contract(
+    result: RuntimeInvocationResult,
+) -> RuntimeInvocationResultDto {
+    RuntimeInvocationResultDto {
+        action_key: result.action_key.to_string(),
+        trace: RuntimeTraceDto {
+            trace_id: result.trace.trace_id,
+            invocation_id: result.trace.invocation_id,
+            parent_trace_id: result.trace.parent_trace_id,
+            created_at: result.trace.created_at.to_rfc3339(),
+        },
+        output: RuntimeInvocationOutputDto {
+            output: result.output.output,
+            metadata: result.output.metadata,
+        },
+    }
+}
+
+fn runtime_surface_to_contract(surface: RuntimeSurface) -> RuntimeSurfaceDto {
+    RuntimeSurfaceDto {
+        context: runtime_context_to_contract(surface.context),
+        actions: surface
+            .actions
+            .into_iter()
+            .map(|action| RuntimeActionDescriptorDto {
+                action_key: action.action_key.to_string(),
+                kind: runtime_action_kind_to_contract(action.kind),
+                description: action.description,
+                input_schema: action.input_schema,
+                output_schema: action.output_schema,
+                default_policy: RuntimePolicyDto {
+                    required_capabilities: action.default_policy.required_capabilities,
+                    timeout_ms: action.default_policy.timeout_ms.map(|value| value as i64),
+                    allow_background: action.default_policy.allow_background,
+                },
+            })
+            .collect(),
+    }
+}
+
+fn runtime_context_to_contract(context: RuntimeContext) -> RuntimeContextDto {
+    match context {
+        RuntimeContext::Session {
+            session_id,
+            project_id,
+            workspace_id,
+        } => RuntimeContextDto::Session {
+            session_id,
+            project_id: project_id.map(|id| id.to_string()),
+            workspace_id: workspace_id.map(|id| id.to_string()),
+        },
+        RuntimeContext::Setup {
+            project_id,
+            workspace_id,
+            backend_id,
+            root_ref,
+        } => RuntimeContextDto::Setup {
+            project_id: project_id.map(|id| id.to_string()),
+            workspace_id: workspace_id.map(|id| id.to_string()),
+            backend_id,
+            root_ref,
+        },
+    }
+}
+
+fn runtime_action_kind_to_contract(kind: RuntimeActionKind) -> RuntimeActionKindDto {
+    match kind {
+        RuntimeActionKind::SessionRuntime => RuntimeActionKindDto::SessionRuntime,
+        RuntimeActionKind::Setup => RuntimeActionKindDto::Setup,
+    }
 }
 
 fn build_canvas_runtime_bridge_surface(

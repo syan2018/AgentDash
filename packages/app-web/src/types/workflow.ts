@@ -36,12 +36,14 @@ import type {
   ValidationSeverity,
   WorkflowContextBinding,
   AgentProcedureContract as GeneratedAgentProcedureContract,
+  AgentProcedureResponse,
   DefinitionSource,
+  WorkflowGraphResponse,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
+  WorkflowTargetKind,
 } from "../generated/workflow-contracts";
-import type { InstalledAssetSourceDto } from "./shared-library";
 
 export type {
   ActivityCompletionPolicy,
@@ -77,39 +79,34 @@ export type {
   ValidationSeverity,
   WorkflowContextBinding,
   DefinitionSource,
+  WorkflowTargetKind,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
 };
 
-export type WorkflowTargetKind = "project" | "story";
 export type WorkflowRunStatus = LifecycleRunStatus;
 export type CapabilityDirective = ToolCapabilityDirective;
 
-export interface WorkflowCapabilityConfig extends GeneratedCapabilityConfig {
+export type WorkflowCapabilityConfig = GeneratedCapabilityConfig & {
   tool_directives: ToolCapabilityDirective[];
   mount_directives: unknown[];
-}
+};
 
 export type CapabilityConfig = WorkflowCapabilityConfig;
 
-export interface AgentProcedureContract
-  extends Omit<GeneratedAgentProcedureContract, "capability_config" | "output_ports" | "input_ports"> {
+export type AgentProcedureContract = Omit<
+  GeneratedAgentProcedureContract,
+  "capability_config" | "output_ports" | "input_ports"
+> & {
   capability_config: WorkflowCapabilityConfig;
   output_ports: OutputPortDefinition[];
   input_ports: InputPortDefinition[];
-}
+};
 
-export interface ActivityDefinition
-  extends Omit<GeneratedActivityDefinition, "input_ports" | "output_ports"> {
-  input_ports: InputPortDefinition[];
-  output_ports: OutputPortDefinition[];
-}
+export type ActivityDefinition = GeneratedActivityDefinition;
 
-export interface ActivityTransition
-  extends Omit<GeneratedActivityTransition, "artifact_bindings"> {
-  artifact_bindings: ArtifactBinding[];
-}
+export type ActivityTransition = GeneratedActivityTransition;
 
 export function isWorkflowJsonValue(value: unknown): value is JsonValue {
   if (
@@ -241,37 +238,9 @@ export interface WorkflowTemplate {
   };
 }
 
-export interface AgentProcedure {
-  id: string;
-  project_id: string;
-  key: string;
-  name: string;
-  description: string;
-  target_kinds: WorkflowTargetKind[];
-  source: DefinitionSource;
-  installed_source?: InstalledAssetSourceDto | null;
-  version: number;
-  contract: AgentProcedureContract;
-  created_at: string;
-  updated_at: string;
-}
+export type AgentProcedure = AgentProcedureResponse;
 
-export interface WorkflowGraph {
-  id: string;
-  project_id: string;
-  key: string;
-  name: string;
-  description: string;
-  target_kinds: WorkflowTargetKind[];
-  source: DefinitionSource;
-  installed_source?: InstalledAssetSourceDto | null;
-  version: number;
-  entry_activity_key: string;
-  activities: ActivityDefinition[];
-  transitions: ActivityTransition[];
-  created_at: string;
-  updated_at: string;
-}
+export type WorkflowGraph = WorkflowGraphResponse;
 
 export interface WorkflowRun {
   id: string;

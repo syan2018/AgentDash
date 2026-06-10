@@ -27,7 +27,6 @@ function snapshot(): CanvasRuntimeSnapshot {
     libraries: [],
     runtime_bridge: {
       enabled: false,
-      surface: null,
       disabled_reason: "test",
     },
   };

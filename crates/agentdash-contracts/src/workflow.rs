@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::shared_library::InstalledAssetSourceDto;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DefinitionSource {
@@ -19,6 +21,13 @@ pub enum DefinitionSource {
 pub enum ValidationSeverity {
     Error,
     Warning,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowTargetKind {
+    Project,
+    Story,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -87,9 +96,9 @@ pub struct WorkflowHookRuleSpec {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
 pub struct CapabilityConfig {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub tool_directives: Vec<ToolCapabilityDirective>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     #[ts(type = "Array<unknown>")]
     pub mount_directives: Vec<Value>,
 }
@@ -167,12 +176,55 @@ pub struct AgentProcedureContract {
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]
     pub hook_rules: Vec<WorkflowHookRuleSpec>,
-    #[serde(default, skip_serializing_if = "CapabilityConfig::is_empty")]
+    #[serde(default)]
     pub capability_config: CapabilityConfig,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub output_ports: Vec<OutputPortDefinition>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub input_ports: Vec<InputPortDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentProcedureResponse {
+    pub id: String,
+    pub project_id: String,
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub target_kinds: Vec<WorkflowTargetKind>,
+    pub source: DefinitionSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub installed_source: Option<InstalledAssetSourceDto>,
+    pub version: i32,
+    pub contract: AgentProcedureContract,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowGraphResponse {
+    pub id: String,
+    pub project_id: String,
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub target_kinds: Vec<WorkflowTargetKind>,
+    pub source: DefinitionSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub installed_source: Option<InstalledAssetSourceDto>,
+    pub version: i32,
+    pub entry_activity_key: String,
+    pub activities: Vec<ActivityDefinition>,
+    #[serde(default)]
+    pub transitions: Vec<ActivityTransition>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 impl CapabilityConfig {
@@ -209,9 +261,9 @@ pub struct ActivityDefinition {
     #[serde(default)]
     pub description: String,
     pub executor: ActivityExecutorSpec,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub input_ports: Vec<InputPortDefinition>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub output_ports: Vec<OutputPortDefinition>,
     #[serde(default)]
     pub completion_policy: ActivityCompletionPolicy,
@@ -347,7 +399,7 @@ pub struct ActivityTransition {
     pub kind: ActivityTransitionKind,
     #[serde(default)]
     pub condition: TransitionCondition,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub artifact_bindings: Vec<ArtifactBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

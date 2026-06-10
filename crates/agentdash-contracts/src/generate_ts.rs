@@ -5,6 +5,12 @@ use std::{
 };
 
 use agentdash_agent_protocol::BackboneEnvelope;
+use agentdash_contracts::canvas::{
+    CanvasImportMapDto, CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto,
+    CanvasRuntimeFileDto, CanvasRuntimeSnapshotDto, RuntimeActionDescriptorDto,
+    RuntimeActionKindDto, RuntimeContextDto, RuntimeInvocationOutputDto,
+    RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto, RuntimeTraceDto,
+};
 use agentdash_contracts::companion::{CompanionGateRespondRequest, CompanionGateRespondResponse};
 use agentdash_contracts::core::{
     AgentPreset, Artifact, ArtifactType, BackendCapabilitiesResponse,
@@ -113,9 +119,9 @@ use agentdash_contracts::vfs::{
 };
 use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentFrameRefDto,
-    AgentFrameRuntimeView, AgentProcedureContract, AgentRunMessageRequest, AgentRunMessageResponse,
-    AgentRunRefDto, AgentRunSteeringRequest, AgentRunSteeringResponse, AgentRunView,
-    DefinitionSource, DeleteAgentProcedureResponse, DeleteHookPresetResponse,
+    AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse, AgentRunMessageRequest,
+    AgentRunMessageResponse, AgentRunRefDto, AgentRunSteeringRequest, AgentRunSteeringResponse,
+    AgentRunView, DefinitionSource, DeleteAgentProcedureResponse, DeleteHookPresetResponse,
     DeleteWorkflowGraphResponse, EffectiveSessionContract, EnqueuePendingMessageRequest,
     EnqueuePendingMessageResponse, HookPresetResponse, HookPresetsResponse,
     LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology,
@@ -128,9 +134,10 @@ use agentdash_contracts::workflow::{
     SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
     SessionShellDto, SubjectExecutionView, SubjectRefDto, SubmitOrchestrationHumanDecisionRequest,
     SubmitOrchestrationHumanDecisionResponse, ValidateHookScriptResponse, ValidationIssue,
-    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
-    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
-    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto,
+    WorkflowGraphResponse, WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto,
+    WorkflowScriptCapabilitySummaryDto, WorkflowScriptHumanGateCapabilityDto,
+    WorkflowScriptPlanPreviewDto, WorkflowScriptPlanPreviewNodeDto,
+    WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModuleKind, WorkspaceModuleOperation,
@@ -347,6 +354,28 @@ fn main() {
         },
     );
 
+    // --- shared-library-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "shared-library-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<InstalledAssetSourceDto>(dir);
+            export_all::<LibraryExtensionPackageArtifactDto>(dir);
+            export_all::<LibraryAssetDto>(dir);
+            export_all::<ListLibraryAssetsQuery>(dir);
+            export_all::<SeedBuiltinLibraryAssetsRequest>(dir);
+            export_all::<InstallLibraryAssetOptions>(dir);
+            export_all::<InstallLibraryAssetRequest>(dir);
+            export_all::<InstallLibraryAssetResponse>(dir);
+            export_all::<McpTransportTemplateDto>(dir);
+            export_all::<McpServerTemplatePayloadDto>(dir);
+            export_all::<PublishLibraryAssetRequest>(dir);
+            export_all::<ProjectAssetSourceStatusDto>(dir);
+        },
+    );
+
     // --- workflow-contracts.ts ---
     emit_domain(
         &generated_dir,
@@ -355,6 +384,8 @@ fn main() {
         check,
         |dir| {
             export_all::<AgentProcedureContract>(dir);
+            export_all::<AgentProcedureResponse>(dir);
+            export_all::<WorkflowGraphResponse>(dir);
             export_all::<ActivityDefinition>(dir);
             export_all::<ActivityTransition>(dir);
             export_all::<LifecycleExecutionEntry>(dir);
@@ -397,6 +428,7 @@ fn main() {
             export_all::<ProjectSessionListEntry>(dir);
             export_all::<ProjectSessionListView>(dir);
             export_all::<DefinitionSource>(dir);
+            export_all::<WorkflowTargetKind>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);
             export_all::<DeleteAgentProcedureResponse>(dir);
             export_all::<PreflightWorkflowScriptRequest>(dir);
@@ -413,6 +445,29 @@ fn main() {
             export_all::<ValidateHookScriptResponse>(dir);
             export_all::<RegisterHookPresetResponse>(dir);
             export_all::<DeleteHookPresetResponse>(dir);
+        },
+    );
+
+    // --- canvas-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "canvas-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<CanvasImportMapDto>(dir);
+            export_all::<CanvasRuntimeFileDto>(dir);
+            export_all::<CanvasRuntimeBindingDto>(dir);
+            export_all::<RuntimeActionKindDto>(dir);
+            export_all::<RuntimePolicyDto>(dir);
+            export_all::<RuntimeActionDescriptorDto>(dir);
+            export_all::<RuntimeContextDto>(dir);
+            export_all::<RuntimeSurfaceDto>(dir);
+            export_all::<CanvasRuntimeBridgeSnapshotDto>(dir);
+            export_all::<CanvasRuntimeSnapshotDto>(dir);
+            export_all::<RuntimeTraceDto>(dir);
+            export_all::<RuntimeInvocationOutputDto>(dir);
+            export_all::<RuntimeInvocationResultDto>(dir);
         },
     );
 
@@ -538,28 +593,6 @@ fn main() {
             export_all::<InstallExtensionPackageArtifactRequest>(dir);
             export_all::<ExtensionPackageInstallationResponse>(dir);
             export_all::<ImportExtensionPackageResponse>(dir);
-        },
-    );
-
-    // --- shared-library-contracts.ts ---
-    emit_domain(
-        &generated_dir,
-        "shared-library-contracts.ts",
-        &mut upstream,
-        check,
-        |dir| {
-            export_all::<InstalledAssetSourceDto>(dir);
-            export_all::<LibraryExtensionPackageArtifactDto>(dir);
-            export_all::<LibraryAssetDto>(dir);
-            export_all::<ListLibraryAssetsQuery>(dir);
-            export_all::<SeedBuiltinLibraryAssetsRequest>(dir);
-            export_all::<InstallLibraryAssetOptions>(dir);
-            export_all::<InstallLibraryAssetRequest>(dir);
-            export_all::<InstallLibraryAssetResponse>(dir);
-            export_all::<McpTransportTemplateDto>(dir);
-            export_all::<McpServerTemplatePayloadDto>(dir);
-            export_all::<PublishLibraryAssetRequest>(dir);
-            export_all::<ProjectAssetSourceStatusDto>(dir);
         },
     );
 

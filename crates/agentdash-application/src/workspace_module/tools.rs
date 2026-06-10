@@ -1107,6 +1107,7 @@ fn build_present_notification(
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::sync::Mutex;
 
     use agentdash_domain::DomainError;
@@ -1116,10 +1117,33 @@ mod tests {
         ExtensionRuntimeActionKind, ExtensionTemplatePayload, ProjectExtensionInstallation,
         ProjectExtensionInstallationRepository,
     };
+    use agentdash_domain::workflow::{
+        AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository,
+        RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    };
+    use agentdash_spi::hooks::{
+        ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
+        AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookResolution,
+        SessionSnapshotMetadata,
+    };
+    use agentdash_spi::{AgentConnector, CapabilityState, ConnectorError, PromptPayload};
+    use futures::stream;
     use tokio::sync::RwLock;
 
     use super::*;
     use crate::canvas::build_canvas;
+    use crate::session::construction::{
+        ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
+        RuntimeContextInspectionPlan,
+    };
+    use crate::session::hub::SessionRuntimeInner;
+    use crate::session::{MemorySessionPersistence, UserPromptInput, local_workspace_vfs};
+    use crate::test_support::{
+        MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,
+        MemoryRuntimeSessionExecutionAnchorRepository,
+    };
+    use crate::vfs::tools::SessionToolServices;
+    use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
 
     fn manifest(extension_id: &str) -> ExtensionTemplatePayload {
         ExtensionTemplatePayload {
@@ -1307,6 +1331,169 @@ mod tests {
             self.canvases.write().await.remove(&id);
             Ok(())
         }
+    }
+
+    #[derive(Default)]
+    struct PendingConnector;
+
+    #[async_trait]
+    impl AgentConnector for PendingConnector {
+        fn connector_id(&self) -> &'static str {
+            "pending"
+        }
+
+        fn connector_type(&self) -> agentdash_spi::ConnectorType {
+            agentdash_spi::ConnectorType::LocalExecutor
+        }
+
+        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+            agentdash_spi::ConnectorCapabilities::default()
+        }
+
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+            Vec::new()
+        }
+
+        async fn discover_options_stream(
+            &self,
+            _executor: &str,
+            _working_dir: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        async fn prompt(
+            &self,
+            _session_id: &str,
+            _follow_up_session_id: Option<&str>,
+            _prompt: &PromptPayload,
+            _context: agentdash_spi::ExecutionContext,
+        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+            Ok(Box::pin(stream::pending()))
+        }
+
+        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn approve_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn reject_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
+
+    struct EmptyHookProvider {
+        active_run_id: Uuid,
+        frame_repo: Arc<MemoryAgentFrameRepository>,
+        agent_id: Uuid,
+    }
+
+    impl EmptyHookProvider {
+        fn snapshot(&self, session_id: String) -> AgentFrameHookSnapshot {
+            AgentFrameHookSnapshot {
+                runtime_adapter_session_id: session_id,
+                metadata: Some(SessionSnapshotMetadata {
+                    active_workflow: Some(ActiveWorkflowMeta {
+                        run_id: Some(self.active_run_id),
+                        ..ActiveWorkflowMeta::default()
+                    }),
+                    ..SessionSnapshotMetadata::default()
+                }),
+                ..AgentFrameHookSnapshot::default()
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ExecutionHookProvider for EmptyHookProvider {
+        async fn resolve_runtime_hook_target(
+            &self,
+            _runtime_session_id: &str,
+        ) -> Result<Option<agentdash_spi::hooks::HookControlTarget>, agentdash_spi::hooks::HookError>
+        {
+            let frame = self
+                .frame_repo
+                .get_current(self.agent_id)
+                .await
+                .map_err(|e| agentdash_spi::hooks::HookError::Runtime(e.to_string()))?;
+            Ok(frame.map(|f| agentdash_spi::hooks::HookControlTarget {
+                run_id: self.active_run_id,
+                agent_id: f.agent_id,
+                frame_id: f.id,
+            }))
+        }
+
+        async fn load_frame_snapshot(
+            &self,
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
+            Ok(self.snapshot(query.provenance.runtime_session_id.unwrap_or_default()))
+        }
+
+        async fn refresh_frame_snapshot(
+            &self,
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
+            Ok(self.snapshot(query.provenance.runtime_session_id.unwrap_or_default()))
+        }
+
+        async fn evaluate_frame_hook(
+            &self,
+            _query: AgentFrameHookEvaluationQuery,
+        ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
+            Ok(HookResolution::default())
+        }
+    }
+
+    fn prompt_construction(
+        session_id: &str,
+        project_id: Uuid,
+        working_dir: &std::path::Path,
+    ) -> RuntimeContextInspectionPlan {
+        let user_input = UserPromptInput {
+            executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
+            ..UserPromptInput::from_text("present workspace module")
+        };
+        let owner = ResolvedSessionOwner {
+            owner_type: agentdash_spi::CapabilityScope::Project,
+            project_id: Some(project_id),
+            trace: OwnerResolutionTrace {
+                selected_reason: "test".to_string(),
+            },
+        };
+        let mut construction =
+            RuntimeContextInspectionPlan::from_source_input(session_id, owner, &user_input);
+        let vfs = local_workspace_vfs(working_dir);
+        let mut capability_state =
+            CapabilityState::from_clusters([agentdash_spi::ToolCluster::WorkspaceModule]);
+        capability_state.vfs.active = Some(vfs.clone());
+        construction.workspace.working_directory = Some(working_dir.to_path_buf());
+        construction.execution_profile.executor_config = user_input.executor_config;
+        construction.surface.vfs = Some(vfs);
+        construction.projections.capability_state = Some(capability_state);
+        construction.resolution = ConstructionResolutionPlan {
+            vfs_source: Some("test.local_workspace_vfs".to_string()),
+            mcp_source: Some("test.empty".to_string()),
+            capability_source: Some("test.capability_state".to_string()),
+            executor_source: Some("test.executor_config".to_string()),
+            working_directory_source: Some("test.working_dir".to_string()),
+            pending_overlay_applied: false,
+            runtime_base_capability_state: None,
+        };
+        construction
     }
 
     async fn fixtures() -> (
@@ -1523,6 +1710,180 @@ mod tests {
         assert!(
             vfs.mounts.iter().any(|mount| mount.id == "cvs-sales-board"),
             "workspace_module_create should expose the Canvas VFS mount"
+        );
+    }
+
+    #[tokio::test]
+    async fn present_canvas_module_refreshes_session_exposure_before_event() {
+        let (install_repo, canvas_repo, project_id) = fixtures().await;
+
+        let mut registry = MountProviderRegistry::new();
+        registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
+        let vfs_service = Arc::new(VfsService::new(Arc::new(registry)));
+        let base = tempfile::tempdir().expect("tempdir");
+        let active_run_id = Uuid::new_v4();
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        let frame = AgentFrame::new_initial(Uuid::new_v4());
+        let frame_id = frame.id;
+        let agent_id = frame.agent_id;
+        frame_repo.create(&frame).await.expect("frame should save");
+        let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
+        let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
+        let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
+        let mut agent =
+            LifecycleAgent::new_root(active_run_id, Uuid::new_v4(), "present-workspace-module");
+        agent.id = agent_id;
+        agent_repo.create(&agent).await.expect("agent should save");
+        let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
+            Arc::new(PendingConnector),
+            Some(Arc::new(EmptyHookProvider {
+                active_run_id,
+                frame_repo: frame_repo.clone(),
+                agent_id,
+            })),
+            Arc::new(MemorySessionPersistence::default()),
+        )
+        .with_vfs_service(vfs_service)
+        .with_agent_frame_repo(frame_repo.clone())
+        .with_lifecycle_gate_repo(gate_repo)
+        .with_lifecycle_agent_repo(agent_repo)
+        .with_execution_anchor_repo(anchor_repo.clone());
+        let session = hub
+            .create_session("present-workspace-module")
+            .await
+            .expect("session should create");
+        anchor_repo
+            .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
+                &session.id,
+                active_run_id,
+                frame_id,
+                agent_id,
+            ))
+            .await
+            .expect("runtime anchor should save");
+        hub.ensure_session(&session.id).await;
+        let turn_id = hub
+            .start_prompt(
+                &session.id,
+                prompt_construction(&session.id, project_id, base.path()),
+            )
+            .await
+            .expect("prompt should start");
+        hub.hook_service()
+            .reload_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
+            .await
+            .expect("hook runtime should reload");
+
+        let handle = SharedSessionToolServicesHandle::default();
+        handle
+            .set(SessionToolServices {
+                core: hub.core_service(),
+                eventing: hub.eventing_service(),
+                control: hub.control_service(),
+                launch: hub.launch_service(),
+                hooks: hub.hook_service(),
+                capability: hub.capability_service(),
+            })
+            .await;
+
+        let shared_vfs =
+            crate::vfs::tools::fs::SharedRuntimeVfs::new(local_workspace_vfs(base.path()));
+        let present_tool = WorkspaceModulePresentTool::new(
+            install_repo,
+            canvas_repo,
+            project_id,
+            WorkspaceModuleDimension::default(),
+            shared_vfs,
+            handle,
+            session.id.clone(),
+            turn_id,
+        );
+
+        present_tool
+            .execute(
+                "tool-present",
+                serde_json::json!({
+                    "module_id": "canvas:dashboard-a",
+                    "view_key": "preview"
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("workspace_module_present should succeed");
+
+        let updated_frame = frame_repo
+            .get_current(agent_id)
+            .await
+            .expect("frame query should succeed")
+            .expect("frame should exist");
+        assert_eq!(
+            updated_frame.visible_canvas_mount_ids(),
+            vec!["dashboard-a".to_string()]
+        );
+        assert_eq!(
+            updated_frame.visible_workspace_module_refs(),
+            vec!["canvas:dashboard-a".to_string()]
+        );
+
+        let state = hub
+            .get_current_capability_state(&session.id)
+            .await
+            .expect("current capability state should exist");
+        let active_vfs = state.vfs.active.expect("active VFS should exist");
+        assert!(
+            active_vfs
+                .mounts
+                .iter()
+                .any(|mount| mount.id == "cvs-dashboard-a")
+        );
+        assert!(state.skill.skills.iter().any(|skill| {
+            skill.name == "canvas-system"
+                && skill.file_path == "cvs-dashboard-a://skills/canvas-system/SKILL.md"
+        }));
+
+        let events = hub
+            .eventing_service()
+            .list_event_page(&session.id, 0, 100)
+            .await
+            .expect("events should list")
+            .events;
+        let capability_index = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    &event.notification.event,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value }
+                    ) if key == "context_frame"
+                        && value.get("kind").and_then(|v| v.as_str()) == Some("capability_state_update")
+                )
+            })
+            .expect("should write capability_state_update context_frame");
+        let presented = events
+            .iter()
+            .enumerate()
+            .find_map(|(index, event)| {
+                let agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value },
+                ) = &event.notification.event
+                else {
+                    return None;
+                };
+                if key == "workspace_module_presented" {
+                    Some((index, value))
+                } else {
+                    None
+                }
+            })
+            .expect("should write workspace_module_presented event");
+        assert!(capability_index < presented.0);
+        assert_eq!(
+            presented
+                .1
+                .get("presentation_uri")
+                .and_then(serde_json::Value::as_str),
+            Some("canvas://dashboard-a")
         );
     }
 

@@ -614,6 +614,13 @@ pub(crate) async fn expose_canvas_to_session(
                 "Canvas mount 写入 AgentFrame 失败，降级为仅 VFS 可见"
             );
         }
+        sync_canvas_mount_capability_state_for_runtime_delivery(
+            vfs,
+            &session_services,
+            session_id,
+            canvas,
+        )
+        .await?;
         let module_ref = format!("canvas:{}", canvas.mount_id);
         if let Err(error) = session_services
             .capability
@@ -627,13 +634,6 @@ pub(crate) async fn expose_canvas_to_session(
                 "Canvas module ref 写入 AgentFrame 失败，降级为仅 workspace_module base 可见"
             );
         }
-        sync_canvas_mount_capability_state_for_runtime_delivery(
-            vfs,
-            &session_services,
-            session_id,
-            canvas,
-        )
-        .await?;
     }
     Ok(())
 }

@@ -34,6 +34,7 @@ import { useLifecycleStore } from "../stores/lifecycleStore";
 import { useProjectStore } from "../stores/projectStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
+import { workspaceModulePresentedTabTarget } from "./SessionPage.workspaceModulePresentation";
 import type {
   RuntimeTraceAgentContext,
   SessionNavigationState,
@@ -600,20 +601,12 @@ export function SessionPage({
         // - canvas → typeId "canvas"，presentation_uri=canvas://{mount_id}。
         // - extension webview/panel → typeId = view_key，presentation_uri 为后端生成的 tab URI。
         const data = extractPlatformEventData(_event);
-        const rendererKind = typeof data?.renderer_kind === "string" ? data.renderer_kind : "";
-        const viewKey = typeof data?.view_key === "string" ? (data.view_key as string).trim() : "";
-        const presentationUri = typeof data?.presentation_uri === "string"
-          ? (data.presentation_uri as string).trim()
-          : typeof data?.uri === "string"
-            ? (data.uri as string).trim()
-            : "";
-        if (rendererKind === "canvas") {
-          if (presentationUri) {
+        const target = workspaceModulePresentedTabTarget(data);
+        if (target) {
+          if (target.refreshRuntime) {
             void refreshSessionRuntimeState();
-            expandWorkspacePanel("canvas", presentationUri);
           }
-        } else if (viewKey) {
-          expandWorkspacePanel(viewKey, presentationUri || undefined);
+          expandWorkspacePanel(target.typeId, target.uri);
         }
         break;
       }

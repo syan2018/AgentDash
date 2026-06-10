@@ -1,22 +1,21 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, AgentProcedureExecutionSpec, AgentProcedureRepository,
-    AgentReusePolicy, ArtifactAliasPolicy, ExecutorRunRef, ExecutorSpec,
-    FunctionActivityExecutorSpec, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
-    LifecycleGateRepository, LifecycleRun, LifecycleRunRepository, NodePortValue, PlanNode,
-    PlanNodeKind, RuntimeNodeError, RuntimeNodeState, RuntimeSessionExecutionAnchor,
-    RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy,
+    AgentFrameRepository, AgentProcedureRepository, ArtifactAliasPolicy, ExecutorRunRef,
+    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRun, LifecycleRunRepository,
+    PlanNode, PlanNodeKind, RuntimeNodeError, RuntimeSessionExecutionAnchorRepository,
 };
-use agentdash_spi::{ApiRequestOutcome, BashExecOutcome, FunctionRunner};
-use serde_json::{Value, json};
+use agentdash_spi::FunctionRunner;
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::repository_set::RepositorySet;
-use crate::workflow::frame_builder::AgentFrameBuilder;
-use crate::workflow::{RuntimeSessionCreationRequest, WorkflowApplicationError};
+use crate::workflow::{RuntimeSessionCreator, WorkflowApplicationError};
 
-use super::ready_node::{ReadyNodeView, RunningNodeView, RuntimeNodeCoordinate};
+use super::agent_node_launcher::{AgentNodeLaunchOutcome, AgentNodeLauncher};
+use super::function_node_runner::FunctionNodeRunner;
+use super::human_gate_launcher::{HumanGateLauncher, HumanGateOpenOutcome};
+use super::ready_node::{ReadyNodeView, RuntimeNodeCoordinate};
 use super::runtime::{OrchestrationRuntimeEvent, apply_orchestration_event_to_run};
 
 const MAX_DRAIN_STEPS: usize = 128;
@@ -67,7 +66,9 @@ pub struct SubmitHumanGateDecisionResult {
 #[derive(Clone)]
 pub struct OrchestrationExecutorLauncher {
     repos: OrchestrationExecutorRepositories,
-    function_runner: Option<Arc<dyn FunctionRunner>>,
+    agent_node_launcher: AgentNodeLauncher,
+    function_node_runner: FunctionNodeRunner,
+    human_gate_launcher: HumanGateLauncher,
 }
 
 #[derive(Clone)]
@@ -78,7 +79,7 @@ struct OrchestrationExecutorRepositories {
     agent_frame_repo: Arc<dyn AgentFrameRepository>,
     lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    runtime_session_creator: Arc<dyn crate::workflow::RuntimeSessionCreator>,
+    runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
 }
 
 impl From<RepositorySet> for OrchestrationExecutorRepositories {
@@ -97,22 +98,33 @@ impl From<RepositorySet> for OrchestrationExecutorRepositories {
 
 impl OrchestrationExecutorLauncher {
     pub fn new(repos: RepositorySet) -> Self {
-        Self {
-            repos: repos.into(),
-            function_runner: None,
-        }
+        Self::from_executor_repositories(repos.into())
     }
 
     #[cfg(test)]
     fn from_repositories(repos: OrchestrationExecutorRepositories) -> Self {
+        Self::from_executor_repositories(repos)
+    }
+
+    fn from_executor_repositories(repos: OrchestrationExecutorRepositories) -> Self {
+        let agent_node_launcher = AgentNodeLauncher::new(
+            repos.agent_procedure_repo.clone(),
+            repos.lifecycle_agent_repo.clone(),
+            repos.agent_frame_repo.clone(),
+            repos.execution_anchor_repo.clone(),
+            repos.runtime_session_creator.clone(),
+        );
+        let human_gate_launcher = HumanGateLauncher::new(repos.lifecycle_gate_repo.clone());
         Self {
             repos,
-            function_runner: None,
+            agent_node_launcher,
+            function_node_runner: FunctionNodeRunner::new(),
+            human_gate_launcher,
         }
     }
 
     pub fn with_function_runner(mut self, runner: Arc<dyn FunctionRunner>) -> Self {
-        self.function_runner = Some(runner);
+        self.function_node_runner = self.function_node_runner.with_runner(runner);
         self
     }
 
@@ -191,33 +203,10 @@ impl OrchestrationExecutorLauncher {
             input.node_path.clone(),
             input.attempt,
         );
-        let (gate_id, outputs) = {
-            let view = RunningNodeView::for_coordinate(&run, &coordinate)?;
-            if view.plan_node.kind != PlanNodeKind::HumanGate {
-                return Err(WorkflowApplicationError::Conflict(format!(
-                    "node {} 不是 HumanGate",
-                    input.node_path
-                )));
-            }
-            (
-                human_gate_id_from_node(view.runtime_node)?,
-                human_decision_outputs(view.plan_node, input.decision.clone()),
-            )
-        };
-        let mut gate = self
-            .repos
-            .lifecycle_gate_repo
-            .get(gate_id)
-            .await?
-            .ok_or_else(|| WorkflowApplicationError::NotFound(format!("gate 不存在: {gate_id}")))?;
-        if !gate.is_open() {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "gate {gate_id} 已经 resolved"
-            )));
-        }
-        gate.payload_json = Some(input.decision.clone());
-        gate.resolve(input.resolved_by);
-        self.repos.lifecycle_gate_repo.update(&gate).await?;
+        let decision = self
+            .human_gate_launcher
+            .resolve_decision(&run, &input, &coordinate)
+            .await?;
 
         let run = self
             .apply_event(
@@ -226,7 +215,7 @@ impl OrchestrationExecutorLauncher {
                 OrchestrationRuntimeEvent::NodeCompleted {
                     node_path: coordinate.node_path.clone(),
                     attempt: coordinate.attempt,
-                    outputs,
+                    outputs: decision.outputs,
                     timestamp: chrono::Utc::now(),
                 },
             )
@@ -235,7 +224,7 @@ impl OrchestrationExecutorLauncher {
         let final_run = self.load_run(run.id).await?;
         Ok(SubmitHumanGateDecisionResult {
             run: final_run,
-            gate_id,
+            gate_id: decision.gate_id,
             drain_result,
         })
     }
@@ -245,132 +234,22 @@ impl OrchestrationExecutorLauncher {
         run: LifecycleRun,
         coordinate: RuntimeNodeCoordinate,
     ) -> Result<Option<LaunchedAgentNode>, WorkflowApplicationError> {
-        let executor = ReadyNodeView::for_coordinate(&run, &coordinate)?
-            .plan_node
-            .executor
-            .clone();
-        let Some(ExecutorSpec::AgentProcedure {
-            procedure,
-            agent_reuse_policy,
-            runtime_session_policy,
-        }) = executor
-        else {
-            self.block_ready_node(
-                run,
-                coordinate,
-                "agent_executor_missing",
-                "AgentCall node 缺少 AgentProcedure executor spec",
-                false,
-            )
-            .await?;
-            return Ok(None);
-        };
-        if let AgentProcedureExecutionSpec::ByKey { procedure_key } = &procedure {
-            match self
-                .repos
-                .agent_procedure_repo
-                .get_by_project_and_key(run.project_id, procedure_key)
-                .await?
-            {
-                Some(_) => {}
-                None => {
-                    self.block_ready_node(
-                        run,
-                        coordinate,
-                        "agent_procedure_not_found",
-                        &format!("AgentProcedure `{procedure_key}` 不存在"),
-                        false,
-                    )
+        match self.agent_node_launcher.launch(&run, &coordinate).await? {
+            AgentNodeLaunchOutcome::Launched { launched, event } => {
+                self.apply_event(run, coordinate.orchestration_id, event)
                     .await?;
-                    return Ok(None);
-                }
-            };
+                Ok(Some(launched))
+            }
+            AgentNodeLaunchOutcome::Blocked {
+                code,
+                message,
+                retryable,
+            } => {
+                self.block_ready_node(run, coordinate, &code, &message, retryable)
+                    .await?;
+                Ok(None)
+            }
         }
-
-        let (mut agent, session_id) = match (agent_reuse_policy, runtime_session_policy) {
-            (AgentReusePolicy::CreateActivityAgent, RuntimeSessionPolicy::CreateNew) => {
-                let agent = LifecycleAgent::new_root(run.id, run.project_id, "workflow_agent")
-                    .with_bootstrap_status(
-                        agentdash_domain::workflow::bootstrap_status::NOT_APPLICABLE,
-                    );
-                self.repos.lifecycle_agent_repo.create(&agent).await?;
-                let session_id = self
-                    .repos
-                    .runtime_session_creator
-                    .create_runtime_session(RuntimeSessionCreationRequest {
-                        project_id: run.project_id,
-                        run_id: run.id,
-                        agent_id: agent.id,
-                        source: agentdash_domain::workflow::ExecutionSource::ParentAgent,
-                    })
-                    .await?
-                    .to_string();
-                (agent, session_id)
-            }
-            (
-                AgentReusePolicy::ContinueCurrentAgent,
-                RuntimeSessionPolicy::DeliverToCurrentTrace,
-            ) => {
-                self.block_ready_node(
-                    run,
-                    coordinate,
-                    "agent_executor_policy_not_supported",
-                    "ContinueCurrentAgent + DeliverToCurrentTrace 需要 connector delivery surface，当前 orchestration executor 不伪造已投递状态",
-                    false,
-                )
-                .await?;
-                return Ok(None);
-            }
-            _ => {
-                self.block_ready_node(
-                    run,
-                    coordinate,
-                    "agent_executor_policy_not_supported",
-                    "AgentCall executor policy 当前 scheduler 不支持",
-                    false,
-                )
-                .await?;
-                return Ok(None);
-            }
-        };
-
-        let frame = self
-            .create_frame(&agent, &coordinate, Some(session_id.clone()))
-            .await?;
-        agent.set_current_frame(frame.id);
-        self.repos.lifecycle_agent_repo.update(&agent).await?;
-        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-            session_id.clone(),
-            run.id,
-            frame.id,
-            agent.id,
-            coordinate.orchestration_id,
-            coordinate.node_path.clone(),
-            coordinate.attempt,
-        );
-        self.repos.execution_anchor_repo.upsert(&anchor).await?;
-
-        self.apply_event(
-            run,
-            coordinate.orchestration_id,
-            OrchestrationRuntimeEvent::NodeStarted {
-                node_path: coordinate.node_path.clone(),
-                attempt: coordinate.attempt,
-                executor_run_ref: Some(ExecutorRunRef::RuntimeSession {
-                    session_id: session_id.clone(),
-                }),
-                timestamp: chrono::Utc::now(),
-            },
-        )
-        .await?;
-
-        Ok(Some(LaunchedAgentNode {
-            run_id: anchor.run_id,
-            orchestration_id: coordinate.orchestration_id,
-            node_path: coordinate.node_path,
-            attempt: coordinate.attempt,
-            runtime_session_id: session_id,
-        }))
     }
 
     async fn launch_function_node(
@@ -394,7 +273,7 @@ impl OrchestrationExecutorLauncher {
             )
             .await?;
 
-        let terminal = match self.execute_function_like_node(&run, &coordinate).await {
+        let terminal = match self.function_node_runner.execute(&run, &coordinate).await {
             Ok(outputs) => OrchestrationRuntimeEvent::NodeCompleted {
                 node_path: coordinate.node_path.clone(),
                 attempt: coordinate.attempt,
@@ -445,84 +324,22 @@ impl OrchestrationExecutorLauncher {
         run: LifecycleRun,
         coordinate: RuntimeNodeCoordinate,
     ) -> Result<Option<OpenedHumanGate>, WorkflowApplicationError> {
-        let (plan_node_id, label, executor) = {
-            let view = ReadyNodeView::for_coordinate(&run, &coordinate)?;
-            (
-                view.plan_node.node_id.clone(),
-                view.plan_node.label.clone(),
-                view.plan_node.executor.clone(),
-            )
-        };
-        match executor.clone() {
-            Some(ExecutorSpec::Human { .. }) => {}
-            None => {
-                self.block_ready_node(
-                    run,
-                    coordinate,
-                    "human_gate_executor_missing",
-                    "HumanGate node 缺少 Human executor spec",
-                    false,
-                )
-                .await?;
-                return Ok(None);
+        match self.human_gate_launcher.open(&run, &coordinate).await? {
+            HumanGateOpenOutcome::Opened { opened, event } => {
+                self.apply_event(run, coordinate.orchestration_id, event)
+                    .await?;
+                Ok(Some(opened))
             }
-            Some(_) => {
-                self.block_ready_node(
-                    run,
-                    coordinate,
-                    "human_gate_executor_mismatch",
-                    "HumanGate node 的 executor spec 类型不匹配",
-                    false,
-                )
-                .await?;
-                return Ok(None);
+            HumanGateOpenOutcome::Blocked {
+                code,
+                message,
+                retryable,
+            } => {
+                self.block_ready_node(run, coordinate, &code, &message, retryable)
+                    .await?;
+                Ok(None)
             }
         }
-        let gate = LifecycleGate::open(
-            run.id,
-            None,
-            None,
-            "orchestration_human_gate",
-            human_gate_correlation_id(
-                coordinate.orchestration_id,
-                &coordinate.node_path,
-                coordinate.attempt,
-            ),
-            Some(json!({
-                "contract": "orchestration_human_gate.v1",
-                "run_id": coordinate.run_id,
-                "orchestration_id": coordinate.orchestration_id,
-                "node_path": coordinate.node_path.clone(),
-                "attempt": coordinate.attempt,
-                "plan_node_id": plan_node_id,
-                "label": label,
-                "executor": executor,
-            })),
-        );
-        let gate_id = gate.id;
-        self.repos.lifecycle_gate_repo.create(&gate).await?;
-
-        self.apply_event(
-            run,
-            coordinate.orchestration_id,
-            OrchestrationRuntimeEvent::NodeStarted {
-                node_path: coordinate.node_path.clone(),
-                attempt: coordinate.attempt,
-                executor_run_ref: Some(ExecutorRunRef::HumanDecision {
-                    decision_id: gate_id.to_string(),
-                }),
-                timestamp: chrono::Utc::now(),
-            },
-        )
-        .await?;
-
-        Ok(Some(OpenedHumanGate {
-            run_id: coordinate.run_id,
-            orchestration_id: coordinate.orchestration_id,
-            node_path: coordinate.node_path,
-            attempt: coordinate.attempt,
-            gate_id,
-        }))
     }
 
     async fn block_ready_node(
@@ -552,146 +369,6 @@ impl OrchestrationExecutorLauncher {
         Ok(())
     }
 
-    async fn execute_function_like_node(
-        &self,
-        run: &LifecycleRun,
-        coordinate: &RuntimeNodeCoordinate,
-    ) -> Result<Vec<NodePortValue>, RuntimeNodeError> {
-        let runner = self
-            .function_runner
-            .as_ref()
-            .ok_or_else(|| RuntimeNodeError {
-                code: "function_runner_unavailable".to_string(),
-                message: "orchestration executor 缺少 FunctionRunner".to_string(),
-                retryable: true,
-                detail: None,
-            })?;
-        let (context, plan_node, executor) = {
-            let view = RunningNodeView::for_coordinate(run, coordinate).map_err(|error| {
-                RuntimeNodeError {
-                    code: "running_node_view_unavailable".to_string(),
-                    message: error.to_string(),
-                    retryable: false,
-                    detail: Some(coordinate.detail()),
-                }
-            })?;
-            (
-                function_context(run, &view),
-                view.plan_node.clone(),
-                view.plan_node.executor.clone(),
-            )
-        };
-        let Some(executor) = executor else {
-            return Err(RuntimeNodeError {
-                code: "executor_spec_missing".to_string(),
-                message: "Function/LocalEffect node 缺少 executor spec".to_string(),
-                retryable: false,
-                detail: Some(coordinate.detail()),
-            });
-        };
-        let spec = match executor {
-            ExecutorSpec::Function { spec } => spec,
-            ExecutorSpec::LocalEffect {
-                capability_key,
-                input,
-            } => {
-                return Err(RuntimeNodeError {
-                    code: "local_effect_capability_not_supported".to_string(),
-                    message: format!(
-                        "LocalEffect capability `{capability_key}` 尚未接入具体 effect executor"
-                    ),
-                    retryable: false,
-                    detail: Some(coordinate.detail_with([
-                        ("capability_key", json!(capability_key)),
-                        ("input", json!(input)),
-                    ])),
-                });
-            }
-            _ => {
-                return Err(RuntimeNodeError {
-                    code: "executor_spec_mismatch".to_string(),
-                    message: "Function/LocalEffect node 的 executor spec 类型不匹配".to_string(),
-                    retryable: false,
-                    detail: Some(coordinate.detail()),
-                });
-            }
-        };
-        match spec {
-            FunctionActivityExecutorSpec::ApiRequest(spec) => {
-                let outcome = runner
-                    .run_api_request(&spec, &context)
-                    .await
-                    .map_err(|error| RuntimeNodeError {
-                        code: "api_request_failed".to_string(),
-                        message: error,
-                        retryable: true,
-                        detail: None,
-                    })?;
-                if !(200..300).contains(&outcome.status) {
-                    return Err(RuntimeNodeError {
-                        code: "api_request_status_failed".to_string(),
-                        message: format!("API request 返回非成功状态: {}", outcome.status),
-                        retryable: false,
-                        detail: Some(json!({
-                            "status": outcome.status,
-                            "body_text": outcome.body_text,
-                            "body_json": outcome.body_json,
-                        })),
-                    });
-                }
-                Ok(api_request_outputs(&plan_node, outcome))
-            }
-            FunctionActivityExecutorSpec::BashExec(spec) => {
-                let outcome =
-                    runner
-                        .run_bash(&spec, &context)
-                        .await
-                        .map_err(|error| RuntimeNodeError {
-                            code: "bash_exec_failed".to_string(),
-                            message: error,
-                            retryable: true,
-                            detail: None,
-                        })?;
-                if outcome.success {
-                    Ok(bash_exec_outputs(&plan_node, outcome))
-                } else {
-                    Err(RuntimeNodeError {
-                        code: "bash_exec_nonzero".to_string(),
-                        message: format!(
-                            "bash exec failed: exit_code={:?}, stderr={}",
-                            outcome.exit_code, outcome.stderr
-                        ),
-                        retryable: false,
-                        detail: Some(json!({
-                            "exit_code": outcome.exit_code,
-                            "stdout": outcome.stdout,
-                            "stderr": outcome.stderr,
-                        })),
-                    })
-                }
-            }
-        }
-    }
-
-    async fn create_frame(
-        &self,
-        agent: &LifecycleAgent,
-        coordinate: &RuntimeNodeCoordinate,
-        runtime_session_ref: Option<String>,
-    ) -> Result<AgentFrame, WorkflowApplicationError> {
-        let mut builder = AgentFrameBuilder::new(agent.id).with_created_by(
-            "orchestration_executor",
-            Some(format!(
-                "{}:{}#{}",
-                coordinate.orchestration_id, coordinate.node_path, coordinate.attempt
-            )),
-        );
-        if let Some(session_id) = runtime_session_ref {
-            builder = builder.with_runtime_session(session_id);
-        }
-        Ok(builder.build(self.repos.agent_frame_repo.as_ref()).await?)
-    }
-
     async fn apply_event(
         &self,
         run: LifecycleRun,
@@ -719,28 +396,6 @@ impl OrchestrationExecutorLauncher {
 enum FunctionLaunchTerminal {
     Completed,
     Failed,
-}
-
-fn function_context(run: &LifecycleRun, view: &RunningNodeView<'_>) -> Value {
-    let inputs = view
-        .runtime_node
-        .inputs
-        .iter()
-        .map(|input| (input.port_key.clone(), input.value.clone()))
-        .collect::<serde_json::Map<_, _>>();
-    let state = serde_json::to_value(view.state_snapshot).unwrap_or(Value::Null);
-    json!({
-        "run_id": run.id,
-        "project_id": run.project_id,
-        "orchestration_id": view.coordinate.orchestration_id,
-        "node": {
-            "id": view.runtime_node.node_id.clone(),
-            "path": view.coordinate.node_path.clone(),
-            "attempt": view.coordinate.attempt,
-            "inputs": inputs,
-        },
-        "state": state,
-    })
 }
 
 fn unsupported_attempt_policy(plan_node: &PlanNode) -> Option<(&'static str, String)> {
@@ -778,100 +433,29 @@ fn unsupported_attempt_policy(plan_node: &PlanNode) -> Option<(&'static str, Str
     None
 }
 
-fn api_request_outputs(plan_node: &PlanNode, outcome: ApiRequestOutcome) -> Vec<NodePortValue> {
-    let raw = json!({
-        "status": outcome.status,
-        "body_text": outcome.body_text,
-        "body_json": outcome.body_json,
-    });
-    map_declared_outputs(plan_node, raw)
-}
-
-fn bash_exec_outputs(plan_node: &PlanNode, outcome: BashExecOutcome) -> Vec<NodePortValue> {
-    let raw = json!({
-        "success": outcome.success,
-        "exit_code": outcome.exit_code,
-        "stdout": outcome.stdout,
-        "stderr": outcome.stderr,
-    });
-    map_declared_outputs(plan_node, raw)
-}
-
-fn map_declared_outputs(plan_node: &PlanNode, raw: Value) -> Vec<NodePortValue> {
-    if plan_node.output_ports.is_empty() {
-        return Vec::new();
-    }
-    if plan_node.output_ports.len() == 1 {
-        return vec![NodePortValue {
-            port_key: plan_node.output_ports[0].key.clone(),
-            value: raw,
-        }];
-    }
-    plan_node
-        .output_ports
-        .iter()
-        .map(|port| NodePortValue {
-            port_key: port.key.clone(),
-            value: raw.get(&port.key).cloned().unwrap_or(Value::Null),
-        })
-        .collect()
-}
-
-fn human_decision_outputs(plan_node: &PlanNode, decision: Value) -> Vec<NodePortValue> {
-    let decision_port = match &plan_node.completion_policy {
-        Some(agentdash_domain::workflow::ActivityCompletionPolicy::HumanDecision {
-            decision_port,
-        }) => decision_port.clone(),
-        _ => plan_node
-            .output_ports
-            .iter()
-            .find(|port| port.key == "decision")
-            .or_else(|| plan_node.output_ports.first())
-            .map(|port| port.key.clone())
-            .unwrap_or_else(|| "decision".to_string()),
-    };
-    vec![NodePortValue {
-        port_key: decision_port,
-        value: decision,
-    }]
-}
-
-fn human_gate_id_from_node(node: &RuntimeNodeState) -> Result<Uuid, WorkflowApplicationError> {
-    match &node.executor_run_ref {
-        Some(ExecutorRunRef::HumanDecision { decision_id }) => Uuid::parse_str(decision_id)
-            .map_err(|error| {
-                WorkflowApplicationError::Internal(format!("decision_id 非 UUID: {error}"))
-            }),
-        _ => Err(WorkflowApplicationError::Conflict(format!(
-            "runtime node {} 没有关联 human decision gate",
-            node.node_path
-        ))),
-    }
-}
-
-fn human_gate_correlation_id(orchestration_id: Uuid, node_path: &str, attempt: u32) -> String {
-    format!("orchestration:{orchestration_id}:node:{node_path}:attempt:{attempt}")
-}
-
 #[cfg(test)]
 mod launcher_drain_tests {
     use std::sync::{Arc, Mutex};
 
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        ActivationRule, ActivityCompletionPolicy, ActivityIterationPolicy, AgentFrameRepository,
-        AgentProcedure, AgentProcedureContract, AgentProcedureRepository, ApiRequestExecutorSpec,
-        BashExecExecutorSpec, DefinitionSource, GateStrategy, HumanActivityExecutorSpec,
-        HumanApprovalExecutorSpec, LifecycleAgentRepository, LifecycleGateRepository,
-        LifecycleRunRepository, OrchestrationLimits, OrchestrationSourceRef, OrchestrationStatus,
-        OutputPortDefinition, RuntimeNodeStatus, RuntimeTraceRef,
+        ActivationRule, ActivityCompletionPolicy, ActivityIterationPolicy, AgentFrame,
+        AgentFrameRepository, AgentProcedure, AgentProcedureContract, AgentProcedureExecutionSpec,
+        AgentProcedureRepository, AgentReusePolicy, ApiRequestExecutorSpec, BashExecExecutorSpec,
+        DefinitionSource, ExecutorSpec, FunctionActivityExecutorSpec, GateStrategy,
+        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleAgent,
+        LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, LifecycleRunRepository,
+        OrchestrationLimits, OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition,
+        RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
+        RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy, RuntimeTraceRef,
     };
+    use agentdash_spi::{ApiRequestOutcome, BashExecOutcome};
     use async_trait::async_trait;
     use chrono::Utc;
     use serde_json::json;
 
-    use crate::workflow::RuntimeSessionCreator;
     use crate::workflow::orchestration::runtime::activate_root_orchestration;
+    use crate::workflow::{RuntimeSessionCreationRequest, RuntimeSessionCreator};
 
     use super::*;
 

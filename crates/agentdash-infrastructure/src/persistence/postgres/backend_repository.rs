@@ -30,10 +30,10 @@ impl BackendRepository for PostgresBackendRepository {
         sqlx::query(
             "INSERT INTO backends (
                 id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
-                profile_id, device_id, machine_id, machine_label, legacy_machine_ids,
+                profile_id, device_id, machine_id, machine_label,
                 visibility, share_scope_kind, share_scope_id, capability_slot, device, last_claimed_at
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name,
                endpoint = excluded.endpoint,
@@ -45,7 +45,6 @@ impl BackendRepository for PostgresBackendRepository {
                device_id = excluded.device_id,
                machine_id = excluded.machine_id,
                machine_label = excluded.machine_label,
-               legacy_machine_ids = excluded.legacy_machine_ids,
                visibility = excluded.visibility,
                share_scope_kind = excluded.share_scope_kind,
                share_scope_id = excluded.share_scope_id,
@@ -64,7 +63,6 @@ impl BackendRepository for PostgresBackendRepository {
         .bind(&config.device_id)
         .bind(&config.machine_id)
         .bind(&config.machine_label)
-        .bind(serde_json::json!(&config.legacy_machine_ids))
         .bind(config.visibility.as_str())
         .bind(config.share_scope_kind.as_str())
         .bind(&config.share_scope_id)
@@ -82,7 +80,6 @@ impl BackendRepository for PostgresBackendRepository {
         let rows = sqlx::query_as::<_, BackendRow>(
             "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
                     profile_id, device_id, machine_id, machine_label,
-                    COALESCE(legacy_machine_ids, '[]'::jsonb) AS legacy_machine_ids,
                     visibility, share_scope_kind, share_scope_id, capability_slot,
                     COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
              FROM backends ORDER BY name",
@@ -98,7 +95,6 @@ impl BackendRepository for PostgresBackendRepository {
         let row = sqlx::query_as::<_, BackendRow>(
             "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
                     profile_id, device_id, machine_id, machine_label,
-                    COALESCE(legacy_machine_ids, '[]'::jsonb) AS legacy_machine_ids,
                     visibility, share_scope_kind, share_scope_id, capability_slot,
                     COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
              FROM backends WHERE id = $1",
@@ -119,7 +115,6 @@ impl BackendRepository for PostgresBackendRepository {
         let rows = sqlx::query_as::<_, BackendRow>(
             "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
                     profile_id, device_id, machine_id, machine_label,
-                    COALESCE(legacy_machine_ids, '[]'::jsonb) AS legacy_machine_ids,
                     visibility, share_scope_kind, share_scope_id, capability_slot,
                     COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
              FROM backends WHERE auth_token = $1",
@@ -149,55 +144,22 @@ impl BackendRepository for PostgresBackendRepository {
         &self,
         claim: &LocalBackendClaim,
     ) -> Result<BackendConfig, DomainError> {
-        let identity_candidates = local_claim_identity_candidates(claim);
         let candidate_rows = sqlx::query_as::<_, (String,)>(
             r#"
-            WITH claim_ids AS (
-                SELECT lower(value) AS value
-                  FROM unnest($5::text[]) AS ids(value)
-            )
             SELECT id
               FROM backends AS b
              WHERE b.backend_type = 'local'
                AND b.share_scope_kind = $2
-               AND (
-                    COALESCE(b.share_scope_id, '') = COALESCE($3, '')
-                    OR (
-                        COALESCE(b.share_scope_id, '') = ''
-                        AND b.owner_user_id IS NULL
-                    )
-               )
+               AND COALESCE(b.share_scope_id, '') = COALESCE($3, '')
                AND capability_slot = $4
-                AND (
-                     b.machine_id = $1
-                     OR lower(COALESCE(b.machine_id, '')) IN (SELECT value FROM claim_ids)
-                     OR lower(COALESCE(b.device_id, '')) IN (SELECT value FROM claim_ids)
-                     OR EXISTS (
-                         SELECT 1
-                           FROM jsonb_array_elements_text(
-                              COALESCE(b.legacy_machine_ids, '[]'::jsonb)
-                          ) AS legacy(value)
-                         WHERE lower(legacy.value) IN (SELECT value FROM claim_ids)
-                    )
-               )
-             ORDER BY CASE
-                    WHEN machine_id = $1 THEN 0
-                    WHEN lower(COALESCE(machine_label, '')) = lower($7) THEN 1
-                    WHEN id = $6 THEN 2
-                    ELSE 3
-               END,
-               last_claimed_at DESC NULLS LAST,
-               created_at DESC,
-               id ASC
+               AND b.machine_id = $1
+             ORDER BY last_claimed_at DESC NULLS LAST, created_at DESC, id ASC
             "#,
         )
         .bind(&claim.machine_id)
         .bind(claim.share_scope_kind.as_str())
         .bind(&claim.share_scope_id)
         .bind(&claim.capability_slot)
-        .bind(&identity_candidates)
-        .bind(&claim.backend_id)
-        .bind(&claim.machine_label)
         .fetch_all(&self.pool)
         .await
         .map_err(super::db_err)?;
@@ -207,15 +169,6 @@ impl BackendRepository for PostgresBackendRepository {
         let existing_id = candidate_ids.first().cloned();
 
         let row = if let Some(existing_id) = existing_id {
-            let duplicate_ids: Vec<String> = candidate_ids
-                .into_iter()
-                .filter(|id| id != &existing_id)
-                .collect();
-            if !duplicate_ids.is_empty() {
-                merge_duplicate_local_backend_rows(&self.pool, &existing_id, &duplicate_ids)
-                    .await?;
-            }
-
             sqlx::query_as::<_, BackendRow>(
                 r#"
                 UPDATE backends
@@ -231,35 +184,15 @@ impl BackendRepository for PostgresBackendRepository {
                        profile_id = $7,
                        machine_id = $8,
                        machine_label = $9,
-                       legacy_machine_ids = (
-                           SELECT COALESCE(jsonb_agg(value), '[]'::jsonb)
-                             FROM (
-                                 SELECT DISTINCT value
-                                   FROM (
-                                       SELECT value
-                                         FROM jsonb_array_elements_text(
-                                             COALESCE(backends.legacy_machine_ids, '[]'::jsonb)
-                                         ) AS ids(value)
-                                        UNION ALL SELECT backends.machine_id
-                                        UNION ALL SELECT backends.device_id
-                                        UNION ALL SELECT value
-                                          FROM jsonb_array_elements_text($10) AS ids(value)
-                                   ) raw(value)
-                                  WHERE value IS NOT NULL
-                                    AND btrim(value) <> ''
-                                    AND value <> $8
-                             ) merged
-                       ),
-                       visibility = $11,
-                       share_scope_kind = $12,
-                       share_scope_id = $13,
-                       capability_slot = $14,
-                       device = $15,
+                       visibility = $10,
+                       share_scope_kind = $11,
+                       share_scope_id = $12,
+                       capability_slot = $13,
+                       device = $14,
                        last_claimed_at = now()
                  WHERE id = $1
                  RETURNING id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
                            profile_id, device_id, machine_id, machine_label,
-                           COALESCE(legacy_machine_ids, '[]'::jsonb) AS legacy_machine_ids,
                            visibility, share_scope_kind, share_scope_id, capability_slot,
                            COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
                 "#,
@@ -273,7 +206,6 @@ impl BackendRepository for PostgresBackendRepository {
             .bind(&claim.profile_id)
             .bind(&claim.machine_id)
             .bind(&claim.machine_label)
-            .bind(serde_json::json!(&claim.legacy_machine_ids))
             .bind(claim.visibility.as_str())
             .bind(claim.share_scope_kind.as_str())
             .bind(&claim.share_scope_id)
@@ -287,13 +219,12 @@ impl BackendRepository for PostgresBackendRepository {
                 r#"
                 INSERT INTO backends (
                     id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
-                    profile_id, machine_id, machine_label, legacy_machine_ids,
+                    profile_id, machine_id, machine_label,
                     visibility, share_scope_kind, share_scope_id, capability_slot, device, last_claimed_at
                 )
-                VALUES ($1, $2, $3, $4, TRUE, 'local', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())
+                VALUES ($1, $2, $3, $4, TRUE, 'local', $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
                 RETURNING id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
                           profile_id, device_id, machine_id, machine_label,
-                          COALESCE(legacy_machine_ids, '[]'::jsonb) AS legacy_machine_ids,
                           visibility, share_scope_kind, share_scope_id, capability_slot,
                           COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
                 "#,
@@ -306,7 +237,6 @@ impl BackendRepository for PostgresBackendRepository {
             .bind(&claim.profile_id)
             .bind(&claim.machine_id)
             .bind(&claim.machine_label)
-            .bind(serde_json::json!(&claim.legacy_machine_ids))
             .bind(claim.visibility.as_str())
             .bind(claim.share_scope_kind.as_str())
             .bind(&claim.share_scope_id)
@@ -405,7 +335,6 @@ struct BackendRow {
     device_id: Option<String>,
     machine_id: Option<String>,
     machine_label: Option<String>,
-    legacy_machine_ids: serde_json::Value,
     visibility: String,
     share_scope_kind: String,
     share_scope_id: Option<String>,
@@ -430,7 +359,6 @@ impl TryFrom<BackendRow> for BackendConfig {
             device_id: row.device_id,
             machine_id: row.machine_id,
             machine_label: row.machine_label,
-            legacy_machine_ids: serde_json::from_value(row.legacy_machine_ids)?,
             visibility: parse_backend_visibility(&row.visibility)?,
             share_scope_kind: parse_backend_share_scope_kind(&row.share_scope_kind)?,
             share_scope_id: row.share_scope_id,
@@ -504,93 +432,6 @@ fn parse_json_column<T: serde::de::DeserializeOwned>(
         .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 
-fn local_claim_identity_candidates(claim: &LocalBackendClaim) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    std::iter::once(claim.machine_id.as_str())
-        .chain(claim.legacy_machine_ids.iter().map(String::as_str))
-        .flat_map(identity_aliases)
-        .filter(|value| seen.insert(value.to_ascii_lowercase()))
-        .collect()
-}
-
-fn identity_aliases(value: &str) -> Vec<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Vec::new();
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    let mut aliases = vec![trimmed.to_string(), lower.clone()];
-    if !lower.ends_with(".local") {
-        aliases.push(format!("{lower}.local"));
-    }
-    aliases
-}
-
-async fn merge_duplicate_local_backend_rows(
-    pool: &PgPool,
-    canonical_id: &str,
-    duplicate_ids: &[String],
-) -> Result<(), DomainError> {
-    let mut tx = pool.begin().await.map_err(super::db_err)?;
-    let workspace_bindings_table: Option<String> =
-        sqlx::query_scalar("SELECT to_regclass('workspace_bindings')::text")
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(super::db_err)?;
-
-    if workspace_bindings_table.is_some() {
-        sqlx::query("UPDATE workspace_bindings SET backend_id = $1 WHERE backend_id = ANY($2)")
-            .bind(canonical_id)
-            .bind(duplicate_ids)
-            .execute(&mut *tx)
-            .await
-            .map_err(super::db_err)?;
-    }
-
-    sqlx::query(
-        r#"
-        UPDATE views
-           SET backend_ids = (
-               SELECT COALESCE(jsonb_agg(id ORDER BY first_seen)::text, '[]')
-                 FROM (
-                     SELECT id, MIN(ord) AS first_seen
-                       FROM (
-                           SELECT CASE
-                                      WHEN value = ANY($2) THEN $1
-                                      ELSE value
-                                  END AS id,
-                                  ord
-                             FROM jsonb_array_elements_text(backend_ids::jsonb)
-                                  WITH ORDINALITY AS items(value, ord)
-                       ) replaced
-                      WHERE btrim(id) <> ''
-                      GROUP BY id
-                 ) deduped
-           )
-         WHERE EXISTS (
-             SELECT 1
-               FROM jsonb_array_elements_text(backend_ids::jsonb) AS items(value)
-              WHERE value = ANY($2)
-         )
-        "#,
-    )
-    .bind(canonical_id)
-    .bind(duplicate_ids)
-    .execute(&mut *tx)
-    .await
-    .map_err(super::db_err)?;
-
-    sqlx::query("DELETE FROM backends WHERE id = ANY($1)")
-        .bind(duplicate_ids)
-        .execute(&mut *tx)
-        .await
-        .map_err(super::db_err)?;
-
-    tx.commit().await.map_err(super::db_err)?;
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,7 +450,6 @@ mod tests {
             device_id: None,
             machine_id: None,
             machine_label: None,
-            legacy_machine_ids: Vec::new(),
             visibility: BackendVisibility::Private,
             share_scope_kind: BackendShareScopeKind::User,
             share_scope_id: None,
@@ -625,7 +465,6 @@ mod tests {
             profile_id: "desktop-local".to_string(),
             machine_id: "machine-a".to_string(),
             machine_label: "Desktop A".to_string(),
-            legacy_machine_ids: vec!["device-a".to_string()],
             visibility: BackendVisibility::Private,
             share_scope_kind: BackendShareScopeKind::User,
             share_scope_id: Some("user-a".to_string()),
@@ -739,7 +578,6 @@ mod tests {
         assert_eq!(second.profile_id.as_deref(), Some("desktop-local"));
         assert_eq!(second.machine_id.as_deref(), Some("machine-a"));
         assert_eq!(second.share_scope_id.as_deref(), Some("user-a"));
-        assert_eq!(second.legacy_machine_ids, vec!["device-a".to_string()]);
     }
 
     #[tokio::test]
@@ -764,97 +602,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_local_backend_merges_legacy_machine_candidates() {
-        let Some(repo) = new_repo().await else {
-            return;
-        };
-        let mut desktop_old = backend("desktop-old", Some("desktop-token"));
-        desktop_old.owner_user_id = Some("user-a".to_string());
-        desktop_old.profile_id = Some("desktop-local".to_string());
-        desktop_old.machine_id = Some("old-desktop-machine".to_string());
-        desktop_old.machine_label = Some("LIAOYIHAO-P".to_string());
-        desktop_old.share_scope_id = Some("user-a".to_string());
-        repo.add_backend(&desktop_old)
-            .await
-            .expect("应能插入旧桌面端 backend");
-
-        let mut dev_old = backend("dev-old", Some("dev-token"));
-        dev_old.owner_user_id = Some("user-a".to_string());
-        dev_old.profile_id = Some("dev-joint".to_string());
-        dev_old.machine_id = Some("old-dev-machine".to_string());
-        dev_old.machine_label = Some("dev-local".to_string());
-        dev_old.share_scope_id = Some("user-a".to_string());
-        repo.add_backend(&dev_old)
-            .await
-            .expect("应能插入旧 dev backend");
-
-        let mut orphan_dev = backend("local-dev-1", Some("orphan-token"));
-        orphan_dev.device_id = Some("legacy-orphan-device".to_string());
-        repo.add_backend(&orphan_dev)
-            .await
-            .expect("应能插入旧手工 dev backend");
-
-        repo.save_view(&ViewConfig {
-            id: "view-local".to_string(),
-            name: "本机视图".to_string(),
-            backend_ids: vec![
-                "dev-old".to_string(),
-                "remote-a".to_string(),
-                "local-dev-1".to_string(),
-                "dev-old".to_string(),
-            ],
-            filters: serde_json::json!({}),
-            sort_by: None,
-        })
-        .await
-        .expect("应能保存引用旧 backend 的视图");
-
-        let mut claim = local_claim();
-        claim.machine_id = "shared-dev-machine".to_string();
-        claim.machine_label = "liaoyihao-p".to_string();
-        claim.legacy_machine_ids = vec![
-            "old-desktop-machine".to_string(),
-            "old-dev-machine".to_string(),
-            "legacy-orphan-device".to_string(),
-        ];
-        claim.backend_id = "local-new".to_string();
-        claim.auth_token = "new-token".to_string();
-
-        let merged = repo
-            .ensure_local_backend(&claim)
-            .await
-            .expect("legacy machine label 应合并旧 backend");
-
-        assert_ne!(merged.id, "local-new");
-        assert_eq!(merged.machine_id.as_deref(), Some("shared-dev-machine"));
-        assert_eq!(merged.machine_label.as_deref(), Some("liaoyihao-p"));
-        assert_eq!(merged.auth_token.as_deref(), Some("desktop-token"));
-        assert!(
-            merged
-                .legacy_machine_ids
-                .iter()
-                .any(|value| value == "old-desktop-machine")
-        );
-        assert!(
-            repo.get_backend("dev-old").await.is_err(),
-            "重复 legacy backend 应被合并清理"
-        );
-        assert!(
-            repo.get_backend("local-dev-1").await.is_err(),
-            "旧手工 backend 应被合并清理"
-        );
-        let views = repo.list_views().await.expect("应能读取视图");
-        let view = views
-            .into_iter()
-            .find(|item| item.id == "view-local")
-            .expect("视图应仍然存在");
-        assert_eq!(
-            view.backend_ids,
-            vec!["desktop-old".to_string(), "remote-a".to_string()]
-        );
-    }
-
-    #[tokio::test]
     async fn ensure_local_backend_does_not_merge_by_machine_label_only() {
         let Some(repo) = new_repo().await else {
             return;
@@ -872,7 +619,6 @@ mod tests {
         let mut claim = local_claim();
         claim.machine_id = "current-machine".to_string();
         claim.machine_label = "LIAOYIHAO-P".to_string();
-        claim.legacy_machine_ids = Vec::new();
         claim.backend_id = "local-current".to_string();
 
         let ensured = repo

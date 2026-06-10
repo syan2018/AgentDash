@@ -146,7 +146,6 @@ pub async fn list_backends(
                 device_id: None,
                 machine_id: None,
                 machine_label: None,
-                legacy_machine_ids: Vec::new(),
                 visibility: BackendVisibility::Private,
                 share_scope_kind: BackendShareScopeKind::User,
                 share_scope_id: None,
@@ -344,7 +343,6 @@ fn online_backend_config(online: &OnlineBackendInfo) -> BackendConfig {
         device_id: None,
         machine_id: None,
         machine_label: None,
-        legacy_machine_ids: Vec::new(),
         visibility: BackendVisibility::Private,
         share_scope_kind: BackendShareScopeKind::User,
         share_scope_id: None,
@@ -443,7 +441,6 @@ pub async fn ensure_local_runtime(
             current_user_id: current_user.user_id.clone(),
             machine_id: req.machine_id,
             machine_label: req.machine_label,
-            legacy_machine_ids: req.legacy_machine_ids,
             profile_id: req.profile_id,
             scope: req.scope.map(|scope| LocalRuntimeScopeInput {
                 kind: scope.kind,

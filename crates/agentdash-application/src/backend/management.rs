@@ -23,7 +23,6 @@ pub struct EnsureLocalRuntimeInput {
     pub current_user_id: String,
     pub machine_id: String,
     pub machine_label: Option<String>,
-    pub legacy_machine_ids: Vec<String>,
     pub profile_id: String,
     pub scope: Option<LocalRuntimeScopeInput>,
     pub capability_slot: Option<String>,
@@ -104,10 +103,6 @@ pub async fn add_backend_record(
         machine_label: existing
             .as_ref()
             .and_then(|item| item.machine_label.clone()),
-        legacy_machine_ids: existing
-            .as_ref()
-            .map(|item| item.legacy_machine_ids.clone())
-            .unwrap_or_default(),
         visibility: existing
             .as_ref()
             .map(|item| item.visibility)
@@ -181,13 +176,11 @@ pub async fn ensure_local_runtime_record(
     device["workspace_root_count"] =
         serde_json::Value::Number(serde_json::Number::from(input.workspace_roots.len() as u64));
 
-    let legacy_machine_ids = normalize_legacy_machine_ids(input.legacy_machine_ids, &machine_id);
     let claim = LocalBackendClaim {
         owner_user_id: input.current_user_id,
         profile_id: profile_id.clone(),
         machine_id: machine_id.clone(),
         machine_label: machine_label.clone(),
-        legacy_machine_ids,
         visibility,
         share_scope_kind,
         share_scope_id: share_scope_id.clone(),
@@ -338,16 +331,6 @@ fn normalize_device_payload(
             "device 必须是 JSON object 或 null".to_string(),
         )),
     }
-}
-
-fn normalize_legacy_machine_ids(values: Vec<String>, machine_id: &str) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    values
-        .into_iter()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty() && value != machine_id)
-        .filter(|value| seen.insert(value.clone()))
-        .collect()
 }
 
 fn default_machine_label(machine_id: &str) -> String {

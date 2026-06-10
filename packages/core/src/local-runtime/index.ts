@@ -24,7 +24,6 @@ export interface RuntimeStartRequest {
   profile_id: string
   machine_id: string
   machine_label?: string | null
-  legacy_machine_ids: string[]
   name?: string
   workspace_roots: string[]
   executor_enabled: boolean

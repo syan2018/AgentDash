@@ -27,8 +27,6 @@ pub struct BackendConfig {
     pub machine_id: Option<String>,
     /// 机器展示标签，通常来自 hostname 或用户命名，不作为唯一键。
     pub machine_label: Option<String>,
-    /// 旧机器身份候选，用于从 hostname / 旧 device_id 合并到 machine_id。
-    pub legacy_machine_ids: Vec<String>,
     /// 本机 backend 可见性。个人本机为 private，共享本机使用 shared / system。
     pub visibility: BackendVisibility,
     /// backend scope 类型。personal runtime 使用 user。
@@ -115,7 +113,6 @@ pub struct LocalBackendClaim {
     pub profile_id: String,
     pub machine_id: String,
     pub machine_label: String,
-    pub legacy_machine_ids: Vec<String>,
     pub visibility: BackendVisibility,
     pub share_scope_kind: BackendShareScopeKind,
     pub share_scope_id: Option<String>,

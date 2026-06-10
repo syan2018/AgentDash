@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Check that capability catalog, default visibility, and tool-policy behavior match the new workspace_module-only Agent surface."}
+{"file": ".trellis/spec/backend/capability/capability-dimension-pipeline.md", "reason": "Check that Canvas present still uses VFS accumulation while workspace module visibility remains a Replace projection."}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "Check that any workspace-module-system embedded skill is registered, materialized, projected, and validated consistently with existing bundled skills."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Check runtime event refresh and WorkspacePanel state do not expose stale Canvas/runtime surfaces after the event-path change."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check backend event payloads and frontend renderer URI handling agree after Canvas presentation moves under workspace_module."}

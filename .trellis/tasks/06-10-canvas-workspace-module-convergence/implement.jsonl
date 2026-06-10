@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Defines well-known capability keys, ToolCluster mappings, tool path policy, and catalog expectations that must change when Canvas tools converge into workspace_module."}
+{"file": ".trellis/spec/backend/capability/capability-dimension-pipeline.md", "reason": "Defines workspace_module as a Replace projection dimension and VFS as Accumulate; needed to preserve Canvas visibility and session mount semantics during convergence."}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "Defines embedded skill bundle authoring, builtin SkillAsset bootstrap, lifecycle projection, and validation rules for adding workspace-module-system guidance."}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Defines WorkspacePanel, canvas-panel, and extension-runtime composition boundaries for frontend Canvas presentation changes."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Defines cross-layer tab renderer and runtime event contracts affected by workspace_module_presented Canvas payload changes."}

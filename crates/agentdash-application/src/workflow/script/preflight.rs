@@ -1,14 +1,14 @@
 use agentdash_domain::workflow::{
     OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNodeKind, ValidationSeverity,
-    WorkflowScriptApiEndpoint, WorkflowScriptBashCommand, WorkflowScriptCapabilitySummary,
-    WorkflowScriptHumanGateCapability, WorkflowScriptProvenance,
+    WorkflowScriptCapabilitySummary, WorkflowScriptProvenance,
 };
 use agentdash_spi::WorkflowScriptEvaluator;
 use serde_json::{Map, Value};
 
+use super::capability_summary::extract_workflow_script_capability_summary;
 use super::{
-    WorkflowScriptBuilderDiagnostic, WorkflowScriptBuilderDocument, WorkflowScriptEffect,
-    WorkflowScriptRequest, WorkflowScriptStatement, parse_workflow_script_builder_document,
+    WorkflowScriptBuilderDiagnostic, WorkflowScriptBuilderDocument,
+    parse_workflow_script_builder_document,
 };
 
 pub struct WorkflowScriptPreflightInput<'a> {
@@ -282,8 +282,15 @@ pub fn preflight_workflow_script(
             .into_iter()
             .map(WorkflowScriptPreflightDiagnostic::from),
     );
-    let plan_preview = compile_output
-        .plan_snapshot
+    let has_blocking_diagnostics = diagnostics
+        .iter()
+        .any(WorkflowScriptPreflightDiagnostic::is_blocking);
+    let plan_snapshot = if has_blocking_diagnostics {
+        None
+    } else {
+        compile_output.plan_snapshot
+    };
+    let plan_preview = plan_snapshot
         .as_ref()
         .map(WorkflowScriptPlanPreview::from_plan_snapshot);
 
@@ -294,107 +301,10 @@ pub fn preflight_workflow_script(
         provenance: input.provenance,
         raw_builder_document: Some(raw_builder_document),
         builder_document: Some(builder_document),
-        plan_snapshot: compile_output.plan_snapshot,
+        plan_snapshot,
         plan_preview,
         capability_summary,
         diagnostics,
-    }
-}
-
-pub fn extract_workflow_script_capability_summary(
-    document: &WorkflowScriptBuilderDocument,
-) -> WorkflowScriptCapabilitySummary {
-    let mut extractor = CapabilitySummaryExtractor::default();
-    extractor.visit_statements(&document.body);
-    extractor.finish()
-}
-
-#[derive(Default)]
-struct CapabilitySummaryExtractor {
-    agent_procedure_keys: Vec<String>,
-    function_api_endpoints: Vec<WorkflowScriptApiEndpoint>,
-    local_effect_capabilities: Vec<String>,
-    bash_commands: Vec<WorkflowScriptBashCommand>,
-    human_gates: Vec<WorkflowScriptHumanGateCapability>,
-}
-
-impl CapabilitySummaryExtractor {
-    fn visit_statements(&mut self, statements: &[WorkflowScriptStatement]) {
-        for statement in statements {
-            self.visit_statement(statement);
-        }
-    }
-
-    fn visit_statement(&mut self, statement: &WorkflowScriptStatement) {
-        match statement {
-            WorkflowScriptStatement::Phase(phase) => self.visit_statements(&phase.body),
-            WorkflowScriptStatement::Log(_) => {}
-            WorkflowScriptStatement::Agent(agent) => {
-                if let Some(procedure) = &agent.procedure {
-                    push_unique(&mut self.agent_procedure_keys, procedure.clone());
-                }
-            }
-            WorkflowScriptStatement::Parallel(parallel) => {
-                self.visit_statements(&parallel.branches)
-            }
-            WorkflowScriptStatement::Pipeline(pipeline) => self.visit_statements(&pipeline.stages),
-            WorkflowScriptStatement::Function(function) => match &function.request {
-                WorkflowScriptRequest::ApiRequest { method, url, .. } => push_unique(
-                    &mut self.function_api_endpoints,
-                    WorkflowScriptApiEndpoint {
-                        method: method.clone(),
-                        url: url.clone(),
-                    },
-                ),
-            },
-            WorkflowScriptStatement::LocalEffect(local_effect) => match &local_effect.effect {
-                WorkflowScriptEffect::BashExec {
-                    command,
-                    args,
-                    working_directory,
-                } => push_unique(
-                    &mut self.bash_commands,
-                    WorkflowScriptBashCommand {
-                        command: command.clone(),
-                        args: args.clone(),
-                        working_directory: working_directory.clone(),
-                    },
-                ),
-                WorkflowScriptEffect::CapabilityEffect { capability_key, .. } => {
-                    push_unique(&mut self.local_effect_capabilities, capability_key.clone());
-                }
-            },
-            WorkflowScriptStatement::HumanGate(human_gate) => push_unique(
-                &mut self.human_gates,
-                WorkflowScriptHumanGateCapability {
-                    name: human_gate.name.clone(),
-                    form_schema: human_gate.form_schema.clone(),
-                    decision_port: human_gate.decision_port.clone(),
-                },
-            ),
-        }
-    }
-
-    fn finish(mut self) -> WorkflowScriptCapabilitySummary {
-        self.agent_procedure_keys.sort();
-        self.function_api_endpoints.sort();
-        self.local_effect_capabilities.sort();
-        self.bash_commands.sort();
-        self.human_gates.sort();
-
-        WorkflowScriptCapabilitySummary {
-            agent_procedure_keys: self.agent_procedure_keys,
-            function_api_endpoints: self.function_api_endpoints,
-            local_effect_capabilities: self.local_effect_capabilities,
-            bash_commands: self.bash_commands,
-            human_gates: self.human_gates,
-        }
-    }
-}
-
-fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
-    if !items.contains(&item) {
-        items.push(item);
     }
 }
 
@@ -445,7 +355,8 @@ fn plan_node_kind_wire_name(kind: PlanNodeKind) -> String {
 #[cfg(test)]
 mod tests {
     use agentdash_domain::workflow::{
-        ActivationRule, OrchestrationLimits, PlanNode, WorkflowScriptProvenance,
+        ActivationRule, OrchestrationLimits, PlanNode, WorkflowScriptApiEndpoint,
+        WorkflowScriptBashCommand, WorkflowScriptHumanGateCapability, WorkflowScriptProvenance,
     };
     use chrono::Utc;
     use serde_json::json;
@@ -580,7 +491,8 @@ mod tests {
         let output = preflight_workflow_script(preflight_input(&evaluator, &compiler));
 
         assert!(output.has_blocking_diagnostics());
-        assert!(output.plan_preview.is_some());
+        assert!(output.plan_snapshot.is_none());
+        assert!(output.plan_preview.is_none());
         assert!(output.diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "unknown_primitive" && diagnostic.source_path == "$.body[1].kind"
         }));

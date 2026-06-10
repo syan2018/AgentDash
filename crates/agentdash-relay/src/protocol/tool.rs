@@ -3,21 +3,21 @@ use serde::{Deserialize, Serialize};
 use super::workspace::FileEntryRelay;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolFileReadPayload {
     pub call_id: String,
     pub path: String,
     pub mount_root_ref: String,
     /// 0-based 起始行号；省略 = 从头读。
-    /// 远端 backend 未识别此字段时按"读全文"回退（兼容旧实现）。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<u64>,
     /// 行数上限；省略 = 读到 EOF。
-    /// 远端 backend 未识别此字段时按"读全文"回退。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolFileWritePayload {
     pub call_id: String,
     pub path: String,
@@ -26,6 +26,7 @@ pub struct ToolFileWritePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolFileDeletePayload {
     pub call_id: String,
     pub path: String,
@@ -33,6 +34,7 @@ pub struct ToolFileDeletePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolFileRenamePayload {
     pub call_id: String,
     pub from_path: String,
@@ -41,6 +43,7 @@ pub struct ToolFileRenamePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolApplyPatchPayload {
     pub call_id: String,
     pub patch: String,
@@ -48,6 +51,7 @@ pub struct ToolApplyPatchPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolShellExecPayload {
     pub call_id: String,
     pub command: String,
@@ -66,54 +70,40 @@ pub struct ToolShellExecPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolFileListPayload {
     pub call_id: String,
     pub path: String,
     pub mount_root_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
-    #[serde(default)]
     pub recursive: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolSearchPayload {
     pub call_id: String,
     pub mount_root_ref: String,
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    #[serde(default)]
     pub is_regex: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_glob: Option<String>,
-    #[serde(default = "default_search_max_results")]
     pub max_results: usize,
-    #[serde(default)]
     pub context_lines: usize,
-    /// `false` ⇒ smart-case；`true` ⇒ 严格大小写。默认 true（与历史一致）。
-    /// 旧远端不识别此字段时反序列化为 default = true，行为不变。
-    #[serde(default = "default_case_sensitive")]
+    /// `false` ⇒ smart-case；`true` ⇒ 严格大小写。
     pub case_sensitive: bool,
     /// `true` ⇒ pattern `.` 跨行 + `^/$` 匹配每行（ripgrep `--multiline
     /// --multiline-dotall`）。
-    #[serde(default)]
     pub multiline: bool,
     /// `-B` 等价；与 `context_lines` 同时设置时取 max。
-    #[serde(default)]
     pub before_lines: usize,
     /// `-A` 等价。
-    #[serde(default)]
     pub after_lines: usize,
 }
 
-fn default_search_max_results() -> usize {
-    50
-}
-
-fn default_case_sensitive() -> bool {
-    true
-}
 fn default_utf8() -> String {
     "utf-8".to_string()
 }
@@ -237,16 +227,38 @@ mod tests {
     }
 
     #[test]
-    fn tool_file_read_payload_legacy_json_without_offset_limit() {
-        // 旧 JSON（没有 offset/limit 字段）反序列化后两字段为 None。
-        let legacy = json!({
+    fn tool_file_read_payload_without_range_uses_full_file() {
+        let value = json!({
             "call_id": "c1",
             "path": "src/main.rs",
             "mount_root_ref": "main"
         });
-        let decoded: ToolFileReadPayload = serde_json::from_value(legacy).expect("deserialize");
+        let decoded: ToolFileReadPayload = serde_json::from_value(value).expect("deserialize");
         assert!(decoded.offset.is_none());
         assert!(decoded.limit.is_none());
+    }
+
+    #[test]
+    fn tool_file_read_payload_rejects_legacy_workspace_root() {
+        let legacy = json!({
+            "call_id": "c1",
+            "path": "src/main.rs",
+            "workspace_root": "/workspace"
+        });
+        let error = serde_json::from_value::<ToolFileReadPayload>(legacy)
+            .expect_err("workspace_root is not part of the current payload");
+        assert!(error.to_string().contains("workspace_root"));
+    }
+
+    #[test]
+    fn tool_file_read_payload_requires_mount_root_ref() {
+        let missing_mount = json!({
+            "call_id": "c1",
+            "path": "src/main.rs"
+        });
+        let error = serde_json::from_value::<ToolFileReadPayload>(missing_mount)
+            .expect_err("mount_root_ref is required");
+        assert!(error.to_string().contains("mount_root_ref"));
     }
 
     #[test]
@@ -293,19 +305,35 @@ mod tests {
     }
 
     #[test]
-    fn tool_search_payload_legacy_json_uses_defaults() {
-        // 旧 JSON 缺 grep 新字段 ⇒ default 值（case_sensitive=true，其余=0/false）。
-        let legacy = json!({
+    fn tool_search_payload_rejects_missing_current_options() {
+        let missing_options = json!({
             "call_id": "c1",
             "mount_root_ref": "m",
             "query": "x",
             "max_results": 50
         });
-        let decoded: ToolSearchPayload = serde_json::from_value(legacy).expect("deserialize");
-        assert!(decoded.case_sensitive);
-        assert!(!decoded.multiline);
-        assert_eq!(decoded.before_lines, 0);
-        assert_eq!(decoded.after_lines, 0);
-        assert_eq!(decoded.context_lines, 0);
+        let error = serde_json::from_value::<ToolSearchPayload>(missing_options)
+            .expect_err("search options are required in current payload");
+        assert!(error.to_string().contains("is_regex"));
+    }
+
+    #[test]
+    fn tool_search_payload_rejects_unknown_legacy_workspace_root() {
+        let legacy = json!({
+            "call_id": "c1",
+            "mount_root_ref": "m",
+            "workspace_root": "/workspace",
+            "query": "x",
+            "is_regex": false,
+            "max_results": 50,
+            "context_lines": 0,
+            "case_sensitive": true,
+            "multiline": false,
+            "before_lines": 0,
+            "after_lines": 0
+        });
+        let error = serde_json::from_value::<ToolSearchPayload>(legacy)
+            .expect_err("unknown workspace_root should be rejected");
+        assert!(error.to_string().contains("workspace_root"));
     }
 }

@@ -681,6 +681,19 @@ mod tests {
     }
 
     #[test]
+    fn command_prompt_payload_rejects_legacy_prompt_and_workspace_root() {
+        let error = serde_json::from_value::<CommandPromptPayload>(serde_json::json!({
+            "session_id": "s1",
+            "prompt": "old text prompt",
+            "workspace_root": "/workspace"
+        }))
+        .expect_err("legacy prompt/workspace_root fields should be rejected");
+
+        let message = error.to_string();
+        assert!(message.contains("prompt") || message.contains("workspace_root"));
+    }
+
+    #[test]
     fn mcp_probe_transport_command_roundtrip() {
         let msg = RelayMessage::CommandMcpProbeTransport {
             id: "probe-1".to_string(),

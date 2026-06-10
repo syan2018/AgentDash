@@ -19,7 +19,7 @@
 | workflow-orchestration | 修复 | 已提交 | `fixes/001-workflow-orchestration-quick-cleanup.md` |
 | session-stream | research | 已归档 | `research/session-stream-executable-plan.md` |
 | local-runtime | research | 已归档 | `research/local-runtime-executable-plan.md` |
-| settings-llm-providers | 修复 | 进行中 | 待创建 |
+| settings-llm-providers | 修复 | 待提交 | `fixes/003-settings-llm-providers-model-boundary.md` |
 | vfs-service | 修复 | 已提交 | `fixes/002-vfs-create-text-error-semantics.md` |
 
 ## 已完成模块
@@ -68,3 +68,4 @@
 | `9c7999a0` | settings-ui | 收敛系统设置区块组件结构 |
 | `c079e519` | workflow-orchestration | 清理不可达诊断、未用编译模式与误导工具描述 |
 | `b9095329` | vfs-service | 收敛 `create_text` 错误语义 |
+| 待提交 | settings-llm-providers | 收敛 provider 模型解析、preset 与 action 边界 |

@@ -29,16 +29,12 @@ interface ProjectState {
     agent_type: string;
     config?: Record<string, unknown>;
     default_lifecycle_key?: string;
-    is_default_for_story?: boolean;
-    is_default_for_task?: boolean;
   }) => Promise<ProjectAgent | null>;
   updateProjectAgent: (projectId: string, agentId: string, payload: {
     name?: string;
     agent_type?: string;
     config?: Record<string, unknown>;
     default_lifecycle_key?: string;
-    is_default_for_story?: boolean;
-    is_default_for_task?: boolean;
     knowledge_enabled?: boolean;
   }) => Promise<ProjectAgent | null>;
   deleteProjectAgent: (projectId: string, agentId: string) => Promise<boolean>;

@@ -24,6 +24,7 @@ pub mod runtime_launch;
 pub mod script;
 mod session_association;
 mod session_run_context_resolver;
+mod subject_context_assignment;
 mod subject_execution_control;
 pub mod tools;
 
@@ -115,6 +116,10 @@ pub use session_association::{
     resolve_activity_session_association, resolve_current_frame_for_runtime_session,
 };
 pub use session_run_context_resolver::{SubjectRunContextResolver, build_subject_run_context};
+pub use subject_context_assignment::{
+    SubjectContextAssignment, SubjectContextAssignmentRequest, SubjectContextAssignmentResolver,
+    SubjectWorkspacePolicy,
+};
 pub use subject_execution_control::{
     CancelSubjectExecutionCommand, RuntimeCancelDeliveryCommand, SubjectExecutionCancelResult,
     SubjectExecutionControlService,

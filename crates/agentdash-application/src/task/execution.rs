@@ -1,7 +1,6 @@
 use uuid::Uuid;
 
-use agentdash_domain::workflow::{AgentRuntimeRefs, SubjectExecutionRef};
-use agentdash_domain::{common::AgentConfig, task::TaskStatus};
+use agentdash_domain::task::TaskStatus;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TaskExecutionError {
@@ -15,46 +14,6 @@ pub enum TaskExecutionError {
     UnprocessableEntity(String),
     #[error("{0}")]
     Internal(String),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutionPhase {
-    Start,
-    Continue,
-}
-
-#[derive(Debug, Clone)]
-pub struct TaskExecutionCommand {
-    pub task_id: Uuid,
-    pub phase: ExecutionPhase,
-    /// Start 时为 override_prompt，Continue 时为 additional_prompt
-    pub prompt: Option<String>,
-    pub executor_config: Option<AgentConfig>,
-    pub identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
-}
-
-/// Task execution dispatch 结果。
-///
-/// session_id 不再作为业务主键，改为 lifecycle 控制面锚点引用。
-#[derive(Debug, Clone)]
-pub struct TaskExecutionResult {
-    pub task_id: Uuid,
-    pub runtime_refs: AgentRuntimeRefs,
-    pub subject_execution_ref: SubjectExecutionRef,
-    pub delivery_runtime_ref: Option<Uuid>,
-    pub status: TaskStatus,
-}
-
-/// Task cancel dispatch 结果。
-///
-/// cancel 的命令目标是 SubjectExecution / Assignment；runtime session 只作为
-/// delivery/provenance ref 返回。
-#[derive(Debug, Clone)]
-pub struct TaskExecutionCancelResult {
-    pub task: agentdash_domain::task::Task,
-    pub runtime_refs: AgentRuntimeRefs,
-    pub subject_execution_ref: SubjectExecutionRef,
-    pub runtime_delivery_ref: Option<String>,
 }
 
 /// Task 执行视图（替代原 TaskSessionResult）。

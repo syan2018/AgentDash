@@ -7,7 +7,9 @@ use agentdash_application::workflow::{
     AgentRunMessageLaunchDeliveryPort, ProjectAgentSessionStartCommand,
     ProjectAgentSessionStartRepos, ProjectAgentSessionStartService,
 };
-use agentdash_domain::{agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project};
+use agentdash_domain::{
+    agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project, workflow::SubjectRef,
+};
 use agentdash_spi::AgentConfig;
 use axum::{
     Json,
@@ -269,6 +271,7 @@ pub async fn create_project_agent_session(
                 project_agent_id,
                 input: req.input,
                 executor_config,
+                subject_ref: parse_subject_ref(req.subject_ref)?,
                 identity: Some(current_user.clone()),
             },
             delivery,
@@ -351,6 +354,17 @@ fn parse_project_agent_id(project_agent_id: &str) -> Result<Uuid, ApiError> {
         .map_err(|_| ApiError::BadRequest(format!("无效的 project_agent_id: {project_agent_id}")))
 }
 
+fn parse_subject_ref(subject_ref: Option<SubjectRefDto>) -> Result<Option<SubjectRef>, ApiError> {
+    subject_ref
+        .map(|subject| {
+            let id = Uuid::parse_str(&subject.id).map_err(|_| {
+                ApiError::BadRequest(format!("无效的 subject_ref.id: {}", subject.id))
+            })?;
+            Ok(SubjectRef::new(subject.kind, id))
+        })
+        .transpose()
+}
+
 // ─── Project Agent API ───
 
 fn build_project_agent_response(agent: &ProjectAgent) -> Result<ProjectAgentResponse, ApiError> {
@@ -361,8 +375,6 @@ fn build_project_agent_response(agent: &ProjectAgent) -> Result<ProjectAgentResp
         agent_type: agent.agent_type.clone(),
         config: agent.config.clone(),
         default_lifecycle_key: agent.default_lifecycle_key.clone(),
-        is_default_for_story: agent.is_default_for_story,
-        is_default_for_task: agent.is_default_for_task,
         knowledge_enabled: agent.knowledge_enabled,
         created_at: agent.created_at.to_rfc3339(),
         updated_at: agent.updated_at.to_rfc3339(),
@@ -444,8 +456,6 @@ pub async fn create_project_agent(
         agent.config = config;
     }
     agent.default_lifecycle_key = lifecycle_key;
-    agent.is_default_for_story = req.is_default_for_story;
-    agent.is_default_for_task = req.is_default_for_task;
 
     state
         .repos
@@ -506,12 +516,6 @@ pub async fn update_project_agent(
             Some(default_lifecycle_key),
         )
         .await?;
-    }
-    if let Some(v) = req.is_default_for_story {
-        agent.is_default_for_story = v;
-    }
-    if let Some(v) = req.is_default_for_task {
-        agent.is_default_for_task = v;
     }
     if let Some(v) = req.knowledge_enabled {
         agent.knowledge_enabled = v;

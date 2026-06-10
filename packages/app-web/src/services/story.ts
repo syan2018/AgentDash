@@ -349,27 +349,6 @@ export async function fetchTask(taskId: string): Promise<Task> {
   return mapTask(raw);
 }
 
-export async function startTaskExecution(
-  taskId: string,
-  payload?: { override_prompt?: string; executor_config?: Record<string, unknown> },
-): Promise<Task> {
-  await api.post<Record<string, unknown>>(`/tasks/${taskId}/start`, payload ?? {});
-  return fetchTask(taskId);
-}
-
-export async function continueTaskExecution(
-  taskId: string,
-  payload?: { additional_prompt?: string; executor_config?: Record<string, unknown> },
-): Promise<Task> {
-  await api.post<Record<string, unknown>>(`/tasks/${taskId}/continue`, payload ?? {});
-  return fetchTask(taskId);
-}
-
-export async function cancelTaskExecution(taskId: string): Promise<Task> {
-  const raw = await api.post<Record<string, unknown>>(`/tasks/${taskId}/cancel`, {});
-  return mapTask(raw.task as Record<string, unknown>);
-}
-
 export async function deleteTask(taskId: string): Promise<void> {
   await api.delete(`/tasks/${taskId}`);
 }

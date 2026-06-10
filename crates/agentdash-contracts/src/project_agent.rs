@@ -72,6 +72,9 @@ pub struct CreateProjectAgentSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub executor_config: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub subject_ref: Option<SubjectRefDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -97,8 +100,6 @@ pub struct ProjectAgent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub default_lifecycle_key: Option<String>,
-    pub is_default_for_story: bool,
-    pub is_default_for_task: bool,
     pub knowledge_enabled: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -114,10 +115,6 @@ pub struct CreateProjectAgentRequest {
     #[serde(default)]
     #[ts(optional)]
     pub default_lifecycle_key: Option<String>,
-    #[serde(default)]
-    pub is_default_for_story: bool,
-    #[serde(default)]
-    pub is_default_for_task: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -134,12 +131,6 @@ pub struct UpdateProjectAgentRequest {
     #[serde(default)]
     #[ts(optional)]
     pub default_lifecycle_key: Option<String>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub is_default_for_story: Option<bool>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub is_default_for_task: Option<bool>,
     #[serde(default)]
     #[ts(optional)]
     pub knowledge_enabled: Option<bool>,

@@ -60,8 +60,8 @@ pub use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 pub use assembler::{
     AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, CompanionSpec,
     CompanionWorkflowSpec, LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
-    SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
-    compose_lifecycle_node_to_frame_with_audit, extract_agent_mcp_entries, load_available_presets,
+    SessionRequestAssembler, compose_lifecycle_node_to_frame_with_audit, extract_agent_mcp_entries,
+    load_available_presets,
 };
 pub use assembly_builder::AssemblyLaunchExtras;
 pub use branching::{
@@ -88,7 +88,7 @@ pub use capability_state::{
 pub use construction_provider::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, RoutineLaunchSource,
     SessionConstructionProvider, SessionConstructionProviderInput,
-    SharedSessionConstructionProvider, TaskLaunchPhase, TaskLaunchSource,
+    SharedSessionConstructionProvider,
 };
 pub use context::ExecutorResolution;
 pub use context_projector::ContextProjector;

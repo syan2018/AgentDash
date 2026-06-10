@@ -82,21 +82,6 @@ interface StoryState {
       dispatch_preference?: TaskDispatchPreference;
     },
   ) => Promise<Task | null>;
-  startTaskExecution: (
-    taskId: string,
-    payload?: {
-      override_prompt?: string;
-      executor_config?: Record<string, unknown>;
-    },
-  ) => Promise<Task | null>;
-  continueTaskExecution: (
-    taskId: string,
-    payload?: {
-      additional_prompt?: string;
-      executor_config?: Record<string, unknown>;
-    },
-  ) => Promise<Task | null>;
-  cancelTaskExecution: (taskId: string) => Promise<Task | null>;
   refreshTask: (taskId: string) => Promise<Task | null>;
   deleteTask: (taskId: string, storyId: string) => Promise<void>;
   selectStory: (id: string | null) => void;
@@ -339,39 +324,6 @@ export const useStoryStore = create<StoryState>((set) => ({
   updateTask: async (taskId, payload) => {
     try {
       const task = await storyService.updateTask(taskId, payload);
-      set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
-      return task;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  startTaskExecution: async (taskId, payload) => {
-    try {
-      const task = await storyService.startTaskExecution(taskId, payload);
-      set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
-      return task;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  continueTaskExecution: async (taskId, payload) => {
-    try {
-      const task = await storyService.continueTaskExecution(taskId, payload);
-      set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
-      return task;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  cancelTaskExecution: async (taskId) => {
-    try {
-      const task = await storyService.cancelTaskExecution(taskId);
       set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
       return task;
     } catch (e) {

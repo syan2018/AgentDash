@@ -8,8 +8,6 @@ mod classify;
 mod composer_companion;
 mod composer_lifecycle_node;
 mod composer_project_agent;
-mod composer_story;
-mod composer_task;
 
 use std::path::PathBuf;
 use std::sync::Arc;

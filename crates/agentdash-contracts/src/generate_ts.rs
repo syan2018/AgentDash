@@ -126,10 +126,9 @@ use agentdash_contracts::workflow::{
     RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, RuntimeSessionTraceView,
     SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
     SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
-    SessionShellDto, StoryLaunchResult, SubjectExecutionView, SubjectRefDto,
-    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
-    ValidateHookScriptResponse, ValidationIssue, WorkflowScriptApiEndpointDto,
-    WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
+    SessionShellDto, SubjectExecutionView, SubjectRefDto, SubmitOrchestrationHumanDecisionRequest,
+    SubmitOrchestrationHumanDecisionResponse, ValidateHookScriptResponse, ValidationIssue,
+    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
     WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
     WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto,
 };
@@ -375,7 +374,6 @@ fn main() {
             export_all::<AgentRunSteeringRequest>(dir);
             export_all::<RuntimeSessionCommandStateDto>(dir);
             export_all::<AgentRunSteeringResponse>(dir);
-            export_all::<StoryLaunchResult>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
             export_all::<RuntimeNodeView>(dir);
             export_all::<ActiveRuntimeNodeRefDto>(dir);

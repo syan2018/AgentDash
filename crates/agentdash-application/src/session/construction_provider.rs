@@ -19,19 +19,6 @@ use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskLaunchPhase {
-    Start,
-    Continue,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct TaskLaunchSource {
-    pub phase: Option<TaskLaunchPhase>,
-    pub override_prompt: Option<String>,
-    pub additional_prompt: Option<String>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RoutineLaunchSource {
     pub routine_id: Uuid,

@@ -5,7 +5,6 @@ pub mod repositories;
 pub mod runtime_gateway;
 pub mod session;
 pub mod session_construction_provider;
-pub mod turn_dispatcher;
 pub mod vfs;
 
 #[cfg(test)]

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/project-overview.md", "reason": "Check final wording against the shared target model."}
+{"file": ".trellis/spec/backend/story-task-runtime.md", "reason": "Check no Story/Task agent owner or command semantics remain in docs or code."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Check runtime/session ownership does not regress to session-first or owner-session paths."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Check lifecycle control-plane and SubjectRef associations remain the source of runtime ownership."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Check frontend only consumes read-only lifecycle and subject projections."}

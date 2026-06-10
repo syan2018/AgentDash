@@ -41,6 +41,7 @@ pub struct TextSearchParams<'a> {
     pub max_results: usize,
     pub context_lines: usize,
     pub overlay: Option<&'a InlineContentOverlay>,
+    pub identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
     /// `false` ⇒ smart-case；`true` ⇒ 严格大小写。默认 `true`（与历史行为一致）。
     pub case_sensitive: bool,
     /// `-B` 等价；与 `context_lines` 同时设置时取 `max(before_lines, context_lines)`。
@@ -924,6 +925,7 @@ impl VfsService {
         query: &str,
         max_results: usize,
         overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<Vec<String>, MountError> {
         self.search_text_extended(
             vfs,
@@ -936,6 +938,7 @@ impl VfsService {
                 max_results,
                 context_lines: 0,
                 overlay,
+                identity,
                 case_sensitive: true,
                 before_lines: 0,
                 after_lines: 0,
@@ -958,7 +961,7 @@ impl VfsService {
             MountCapability::Search,
             params.path,
             true,
-            None,
+            params.identity,
         )?;
         let base_path = dispatch.path.clone();
 
@@ -1024,7 +1027,7 @@ impl VfsService {
             MountCapability::Search,
             params.path,
             true,
-            None,
+            params.identity,
         )?;
         let base_path = dispatch.path.clone();
 
@@ -1093,7 +1096,9 @@ impl VfsService {
             .mount_provider_registry
             .get(&mount.provider)
             .ok_or_else(|| MountError::ProviderNotRegistered(mount.provider.clone()))?;
-        let ctx = MountOperationContext::default();
+        let ctx = MountOperationContext {
+            identity: params.identity.cloned(),
+        };
         let full_opts = ListOptions {
             path: String::new(),
             pattern: None,
@@ -1440,6 +1445,230 @@ impl ApplyPatchTarget for InlineOverlayPatchTarget<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_spi::platform::auth::AuthIdentity;
+    use tokio::sync::Mutex;
+
+    struct IdentityCaptureProvider {
+        provider_id: String,
+        calls: Mutex<Vec<(String, Option<String>)>>,
+    }
+
+    impl IdentityCaptureProvider {
+        fn new(provider_id: impl Into<String>) -> Self {
+            Self {
+                provider_id: provider_id.into(),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        async fn record(&self, operation: &str, ctx: &MountOperationContext) {
+            self.calls.lock().await.push((
+                operation.to_string(),
+                ctx.identity
+                    .as_ref()
+                    .map(|identity| identity.user_id.clone()),
+            ));
+        }
+
+        async fn captured_calls(&self) -> Vec<(String, Option<String>)> {
+            self.calls.lock().await.clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MountProvider for IdentityCaptureProvider {
+        fn provider_id(&self) -> &str {
+            &self.provider_id
+        }
+
+        fn supported_capabilities(&self) -> Vec<&str> {
+            vec!["read", "list", "search"]
+        }
+
+        async fn read_text(
+            &self,
+            _mount: &Mount,
+            path: &str,
+            ctx: &MountOperationContext,
+        ) -> Result<ReadResult, MountError> {
+            self.record("read_text", ctx).await;
+            Ok(ReadResult::new(path, "inline search identity\nother"))
+        }
+
+        async fn write_text(
+            &self,
+            _mount: &Mount,
+            _path: &str,
+            _content: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<(), MountError> {
+            Err(MountError::NotSupported(
+                "identity test provider".to_string(),
+            ))
+        }
+
+        async fn list(
+            &self,
+            _mount: &Mount,
+            _options: &ListOptions,
+            ctx: &MountOperationContext,
+        ) -> Result<ListResult, MountError> {
+            self.record("list", ctx).await;
+            Ok(ListResult {
+                entries: vec![RuntimeFileEntry::file("docs/inline.md")],
+            })
+        }
+
+        async fn search_text(
+            &self,
+            _mount: &Mount,
+            _query: &SearchQuery,
+            ctx: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            self.record("search_text", ctx).await;
+            Ok(SearchResult {
+                matches: vec![SearchMatch {
+                    path: "docs/provider.md".to_string(),
+                    line: Some(3),
+                    content: "found provider".to_string(),
+                }],
+                truncated: false,
+            })
+        }
+
+        async fn grep_text(
+            &self,
+            _mount: &Mount,
+            _query: &GrepQuery,
+            ctx: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            self.record("grep_text", ctx).await;
+            Ok(SearchResult {
+                matches: vec![SearchMatch {
+                    path: "docs/provider.md".to_string(),
+                    line: Some(5),
+                    content: "grep provider".to_string(),
+                }],
+                truncated: false,
+            })
+        }
+    }
+
+    fn search_identity_fixture(
+        provider_id: &str,
+    ) -> (VfsService, Vfs, Arc<IdentityCaptureProvider>) {
+        let provider = Arc::new(IdentityCaptureProvider::new(provider_id));
+        let mut registry = MountProviderRegistry::new();
+        registry.register(provider.clone());
+        let service = VfsService::new(Arc::new(registry));
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "main".to_string(),
+                provider: provider_id.to_string(),
+                backend_id: "backend".to_string(),
+                root_ref: "capture://root".to_string(),
+                capabilities: vec![
+                    MountCapability::Read,
+                    MountCapability::List,
+                    MountCapability::Search,
+                ],
+                default_write: false,
+                display_name: "Capture".to_string(),
+                metadata: serde_json::json!({}),
+            }],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        (service, vfs, provider)
+    }
+
+    fn search_identity() -> AuthIdentity {
+        AuthIdentity::system_routine("search-identity")
+    }
+
+    fn search_identity_params<'a>(
+        identity: &'a AuthIdentity,
+        query: &'a str,
+    ) -> TextSearchParams<'a> {
+        TextSearchParams {
+            mount_id: "main",
+            path: ".",
+            query,
+            is_regex: true,
+            include_glob: None,
+            max_results: 10,
+            context_lines: 0,
+            overlay: None,
+            identity: Some(identity),
+            case_sensitive: true,
+            before_lines: 0,
+            after_lines: 0,
+            multiline: false,
+            output_mode: SearchOutputMode::Content,
+        }
+    }
+
+    #[tokio::test]
+    async fn search_identity_provider_search_receives_identity() {
+        let (service, vfs, provider) = search_identity_fixture("search_identity_provider");
+        let identity = search_identity();
+
+        let (hits, truncated) = service
+            .search_text_extended(&vfs, &search_identity_params(&identity, "provider"))
+            .await
+            .expect("search text");
+
+        assert!(!truncated);
+        assert_eq!(hits, vec!["docs/provider.md:3: found provider"]);
+        assert_eq!(
+            provider.captured_calls().await,
+            vec![("search_text".to_string(), Some(identity.user_id.clone()))]
+        );
+    }
+
+    #[tokio::test]
+    async fn search_identity_provider_grep_receives_identity() {
+        let (service, vfs, provider) = search_identity_fixture("search_identity_provider");
+        let identity = search_identity();
+
+        let (hits, truncated) = service
+            .grep_text_extended(&vfs, &search_identity_params(&identity, "provider"))
+            .await
+            .expect("grep text");
+
+        assert!(!truncated);
+        assert_eq!(hits, vec!["docs/provider.md:5: grep provider"]);
+        assert_eq!(
+            provider.captured_calls().await,
+            vec![("grep_text".to_string(), Some(identity.user_id.clone()))]
+        );
+    }
+
+    #[tokio::test]
+    async fn search_identity_inline_grep_receives_identity() {
+        let (service, vfs, provider) = search_identity_fixture(PROVIDER_INLINE_FS);
+        let identity = search_identity();
+
+        let (hits, truncated) = service
+            .grep_text_extended(
+                &vfs,
+                &search_identity_params(&identity, "inline search identity"),
+            )
+            .await
+            .expect("inline grep");
+
+        assert!(!truncated);
+        assert_eq!(hits, vec!["docs/inline.md:1: inline search identity"]);
+        assert_eq!(
+            provider.captured_calls().await,
+            vec![
+                ("list".to_string(), Some(identity.user_id.clone())),
+                ("read_text".to_string(), Some(identity.user_id.clone())),
+            ]
+        );
+    }
 
     #[test]
     fn patch_entry_normalizes_same_mount_move_target() {

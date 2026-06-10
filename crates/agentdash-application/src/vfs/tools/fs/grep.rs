@@ -40,18 +40,20 @@ pub struct FsGrepTool {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
+    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
 }
 impl FsGrepTool {
     pub fn new(
         service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
-        _identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
             vfs,
             overlay,
+            identity,
         }
     }
 }
@@ -188,6 +190,7 @@ impl AgentTool for FsGrepTool {
                     max_results: service_max,
                     context_lines,
                     overlay: self.overlay.as_ref().map(|arc| arc.as_ref()),
+                    identity: self.identity.as_ref(),
                     case_sensitive: !params.case_insensitive,
                     before_lines,
                     after_lines,

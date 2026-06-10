@@ -31,6 +31,7 @@
 | session-stream Batch 3 | 修复 | 已提交 | `fixes/009-session-context-frame-ui-view-model.md` |
 | vfs-service Batch D | 修复 | 已提交 | `fixes/010-vfs-tool-boundary-cleanup.md` |
 | vfs-service Batch E | 修复 | 已提交 | `fixes/010-vfs-tool-boundary-cleanup.md` |
+| vfs-service Batch A | 修复 | 待提交 | `fixes/011-vfs-search-identity-propagation.md` |
 
 ## 已完成模块
 

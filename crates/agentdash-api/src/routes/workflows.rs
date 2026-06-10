@@ -15,7 +15,7 @@ use agentdash_application::workflow::{
 };
 use agentdash_contracts::workflow::{
     DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
-    HookPresetResponse, HookPresetsResponse, PreflightWorkflowScriptRequest,
+    HookPresetResponse, HookPresetsResponse, LifecycleRunView, PreflightWorkflowScriptRequest,
     PreflightWorkflowScriptResponse, RegisterHookPresetResponse,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
     ValidateHookScriptResponse, ValidationSeverity as ContractValidationSeverity,
@@ -398,7 +398,7 @@ pub async fn start_lifecycle_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<StartWorkflowRunRequest>,
-) -> Result<Json<LifecycleRun>, ApiError> {
+) -> Result<Json<LifecycleRunView>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
     load_project_with_permission(
         state.as_ref(),
@@ -446,14 +446,16 @@ pub async fn start_lifecycle_run(
         .get_by_id(run.id)
         .await?
         .unwrap_or(run);
-    Ok(Json(latest_run))
+    Ok(Json(
+        lifecycle_run_to_contract_view(&state, &latest_run).await?,
+    ))
 }
 
 pub async fn get_lifecycle_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(run_id): Path<String>,
-) -> Result<Json<LifecycleRun>, ApiError> {
+) -> Result<Json<LifecycleRunView>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
     let run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
@@ -463,7 +465,7 @@ pub async fn get_lifecycle_run(
         ProjectPermission::View,
     )
     .await?;
-    Ok(Json(run))
+    Ok(Json(lifecycle_run_to_contract_view(&state, &run).await?))
 }
 
 pub async fn submit_orchestration_human_decision(
@@ -701,6 +703,15 @@ async fn load_lifecycle_run(state: &Arc<AppState>, run_id: Uuid) -> Result<Lifec
         .get_by_id(run_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))
+}
+
+async fn lifecycle_run_to_contract_view(
+    state: &Arc<AppState>,
+    run: &LifecycleRun,
+) -> Result<LifecycleRunView, ApiError> {
+    lifecycle_run_view_builder::build_lifecycle_run_view(&state.repos, run)
+        .await
+        .map_err(ApiError::from)
 }
 
 async fn upsert_agent_procedure(

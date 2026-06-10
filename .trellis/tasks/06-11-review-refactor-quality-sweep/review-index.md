@@ -47,6 +47,7 @@
 | workflow-orchestration Batch D | 修复 | 已提交 | `fixes/022-workflow-executor-launcher-split.md` |
 | companion-tools | research | 已归档 | `research/companion-tools-executable-plan.md` |
 | companion-tools Batch 1 | 修复 | 已提交 | `fixes/023-companion-tool-context.md` |
+| companion-tools Batch 2 | 修复 | 已提交 | `fixes/024-companion-sub-dispatch-launch.md` |
 
 ## 已完成模块
 
@@ -112,3 +113,4 @@
 | `fe41d9ed` | local-runtime | 拆出 SearchExecutor 与 FileDiscoveryPolicy |
 | `41e01337` | workflow-orchestration | 拆分 executor launcher 按 executor kind 的服务边界 |
 | `d64f5fcf` | companion-tools | 收敛 companion 工具 runtime context 与 session services 错误边界 |
+| `f3601887` | companion-tools | 闭合子协作 control-plane 到 child runtime turn 启动链路 |

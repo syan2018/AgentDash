@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use crate::session::{
     SessionCapabilityService, SessionControlService, SessionCoreService, SessionEventingService,
@@ -18,6 +18,7 @@ use tokio::sync::RwLock;
 use crate::canvas::{BindCanvasDataTool, ListCanvasesTool, PresentCanvasTool, StartCanvasTool};
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
 use crate::platform_config::SharedPlatformConfig;
+use crate::runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
 use crate::vfs::inline_persistence::{InlineContentOverlay, InlineContentPersister};
 use crate::vfs::service::VfsService;
 use crate::vfs::tools::fs::{
@@ -25,7 +26,6 @@ use crate::vfs::tools::fs::{
     ShellExecTool,
 };
 use crate::vfs::{VfsMaterializationService, VfsMaterializationTransport};
-use crate::runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
 use crate::workflow::tools::advance_node::CompleteLifecycleNodeTool;
 use crate::workspace_module::{
     WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,

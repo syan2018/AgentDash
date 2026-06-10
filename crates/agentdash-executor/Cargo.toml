@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+agentdash-application-ports = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-agent-types = { workspace = true }

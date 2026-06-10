@@ -108,7 +108,7 @@ impl SessionRuntimeInner {
             base_system_prompt: String::new(),
             settings_repo: None,
             runtime_tool_provider: None,
-            mcp_relay_provider: None,
+            mcp_tool_discovery: None,
             backend_execution_transport: None,
             backend_execution_lease_repo: None,
             agent_frame_repo: None,
@@ -139,11 +139,11 @@ impl SessionRuntimeInner {
         self
     }
 
-    pub fn with_mcp_relay_provider(
+    pub fn with_mcp_tool_discovery(
         mut self,
-        provider: Arc<dyn agentdash_spi::McpRelayProvider>,
+        provider: Arc<dyn agentdash_application_ports::mcp_discovery::McpToolDiscovery>,
     ) -> Self {
-        self.mcp_relay_provider = Some(provider);
+        self.mcp_tool_discovery = Some(provider);
         self
     }
 
@@ -263,8 +263,8 @@ impl SessionRuntimeInner {
         if self.runtime_tool_provider.is_none() {
             return Err("SessionRuntimeInner 缺少 runtime_tool_provider".to_string());
         }
-        if self.mcp_relay_provider.is_none() {
-            return Err("SessionRuntimeInner 缺少 mcp_relay_provider".to_string());
+        if self.mcp_tool_discovery.is_none() {
+            return Err("SessionRuntimeInner 缺少 mcp_tool_discovery".to_string());
         }
         if self.terminal_callback.read().await.is_none() {
             return Err("SessionRuntimeInner 缺少 terminal_callback".to_string());

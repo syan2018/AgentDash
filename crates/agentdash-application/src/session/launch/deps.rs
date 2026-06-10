@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
+use agentdash_application_ports::mcp_discovery::{McpToolDiscovery, McpToolDiscoveryRequest};
 use agentdash_domain::backend::BackendExecutionLeaseRepository;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, RuntimeSessionExecutionAnchorRepository,
 };
+use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
-use agentdash_spi::{AgentConnector, McpRelayProvider};
 
 use crate::context::SharedContextAuditBus;
 use crate::session::capability_service::SessionCapabilityService;
@@ -39,7 +40,7 @@ pub(in crate::session) struct SessionLaunchDeps {
     base_system_prompt: String,
     settings_repo: Option<Arc<dyn SettingsRepository>>,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
-    mcp_relay_provider: Option<Arc<dyn McpRelayProvider>>,
+    mcp_tool_discovery: Option<Arc<dyn McpToolDiscovery>>,
     pub(super) backend_execution_transport: Option<Arc<dyn RelayPromptTransport>>,
     pub(super) backend_execution_lease_repo: Option<Arc<dyn BackendExecutionLeaseRepository>>,
     pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
@@ -65,7 +66,7 @@ impl SessionLaunchDeps {
             base_system_prompt: inner.base_system_prompt.clone(),
             settings_repo: inner.settings_repo.clone(),
             runtime_tool_provider: inner.runtime_tool_provider.clone(),
-            mcp_relay_provider: inner.mcp_relay_provider.clone(),
+            mcp_tool_discovery: inner.mcp_tool_discovery.clone(),
             backend_execution_transport: inner.backend_execution_transport.clone(),
             backend_execution_lease_repo: inner.backend_execution_lease_repo.clone(),
             agent_frame_repo: inner.agent_frame_repo.clone(),
@@ -105,7 +106,7 @@ impl SessionLaunchDeps {
             base_system_prompt: self.base_system_prompt.clone(),
             settings_repo: self.settings_repo.clone(),
             runtime_tool_provider: self.runtime_tool_provider.clone(),
-            mcp_relay_provider: self.mcp_relay_provider.clone(),
+            mcp_tool_discovery: self.mcp_tool_discovery.clone(),
             hooks: self.hooks.clone(),
             capability: self.capability.clone(),
         }
@@ -165,7 +166,7 @@ pub(super) struct TurnPreparationDeps {
     pub(super) hooks: SessionHookService,
     pub(super) capability: SessionCapabilityService,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
-    mcp_relay_provider: Option<Arc<dyn McpRelayProvider>>,
+    mcp_tool_discovery: Option<Arc<dyn McpToolDiscovery>>,
 }
 
 impl TurnPreparationDeps {
@@ -175,8 +176,6 @@ impl TurnPreparationDeps {
         context: &agentdash_spi::ExecutionContext,
         mcp_servers: &[agentdash_spi::SessionMcpServer],
     ) -> Vec<agentdash_agent_types::DynAgentTool> {
-        use agentdash_executor::mcp::{self as mcp_discovery};
-
         let mut all_tools = Vec::new();
 
         if let Some(provider) = &self.runtime_tool_provider {
@@ -189,19 +188,7 @@ impl TurnPreparationDeps {
             }
         }
 
-        let (relay_names, direct_servers) =
-            agentdash_spi::partition_session_mcp_servers(mcp_servers);
-        match mcp_discovery::discover_mcp_tools(&direct_servers, &context.turn.capability_state)
-            .await
-        {
-            Ok(tools) => all_tools.extend(tools),
-            Err(e) => tracing::warn!(
-                session_id = %session_id,
-                "直连 MCP 工具发现失败: {e}"
-            ),
-        }
-
-        if let Some(relay) = &self.mcp_relay_provider {
+        if let Some(discovery) = &self.mcp_tool_discovery {
             let call_context = agentdash_spi::RelayMcpCallContext {
                 session_id: session_id.to_string(),
                 turn_id: Some(context.session.turn_id.clone()),
@@ -209,14 +196,20 @@ impl TurnPreparationDeps {
                 vfs: context.session.vfs.clone(),
                 identity: context.session.identity.clone(),
             };
-            let tools = mcp_discovery::discover_relay_mcp_tools(
-                relay.clone(),
-                &relay_names,
-                &context.turn.capability_state,
-                Some(call_context),
-            )
-            .await;
-            all_tools.extend(tools);
+            match discovery
+                .discover_tool_entries(McpToolDiscoveryRequest {
+                    servers: mcp_servers.to_vec(),
+                    capability_state: context.turn.capability_state.clone(),
+                    call_context: Some(call_context),
+                })
+                .await
+            {
+                Ok(entries) => all_tools.extend(entries.into_iter().map(|entry| entry.tool)),
+                Err(e) => tracing::warn!(
+                    session_id = %session_id,
+                    "MCP 工具发现失败: {e}"
+                ),
+            }
         }
 
         all_tools

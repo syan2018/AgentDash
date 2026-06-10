@@ -625,7 +625,9 @@ impl MountProvider for SkillAssetFsMountProvider {
 mod tests {
     use super::*;
     use crate::skill::load_skills_from_vfs;
-    use crate::vfs::{MountProviderRegistry, VfsService, build_project_skill_asset_management_mount};
+    use crate::vfs::{
+        MountProviderRegistry, VfsService, build_project_skill_asset_management_mount,
+    };
     use agentdash_domain::DomainError;
     use agentdash_domain::common::MountCapability;
     use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};

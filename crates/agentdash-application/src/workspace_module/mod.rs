@@ -51,7 +51,10 @@ pub fn resolve_invocation_backend(
     vfs: Option<&Vfs>,
     explicit_backend_id: Option<&str>,
 ) -> Option<ResolvedInvocationBackend> {
-    let backend_id = match explicit_backend_id.map(str::trim).filter(|id| !id.is_empty()) {
+    let backend_id = match explicit_backend_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
         Some(id) => id.to_string(),
         None => {
             let mount = vfs?.default_mount()?;
@@ -326,7 +329,10 @@ fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
         summary,
         ui_entries,
         operations,
-        runtime_backing: Some(format!("canvas:{}", crate::vfs::build_canvas_mount_id(canvas))),
+        runtime_backing: Some(format!(
+            "canvas:{}",
+            crate::vfs::build_canvas_mount_id(canvas)
+        )),
     }
 }
 

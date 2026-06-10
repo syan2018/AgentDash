@@ -197,7 +197,6 @@ dependencies = [
  "agentdash-application-ports",
  "agentdash-contracts",
  "agentdash-domain",
- "agentdash-executor",
  "agentdash-infrastructure",
  "agentdash-relay",
  "agentdash-spi",
@@ -234,8 +233,10 @@ name = "agentdash-application-ports"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
+ "agentdash-agent-types",
  "agentdash-domain",
  "agentdash-relay",
+ "agentdash-spi",
  "async-trait",
  "serde_json",
  "thiserror 2.0.18",
@@ -279,6 +280,7 @@ dependencies = [
  "agentdash-agent",
  "agentdash-agent-protocol",
  "agentdash-agent-types",
+ "agentdash-application-ports",
  "agentdash-domain",
  "agentdash-mcp",
  "agentdash-spi",

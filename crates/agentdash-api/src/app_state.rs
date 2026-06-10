@@ -191,6 +191,11 @@ impl AppState {
         let session_services_handle = vfs_bootstrap.session_services_handle;
         let runtime_tool_provider = vfs_bootstrap.runtime_tool_provider;
         let mcp_relay_provider = vfs_bootstrap.mcp_relay_provider;
+        let mcp_tool_discovery: Arc<
+            dyn agentdash_application_ports::mcp_discovery::McpToolDiscovery,
+        > = Arc::new(agentdash_executor::mcp::ExecutorMcpToolDiscovery::new(
+            Some(mcp_relay_provider.clone()),
+        ));
         let runtime_gateway_handle = vfs_bootstrap.runtime_gateway_handle;
 
         let session_bootstrap = crate::bootstrap::session::build_session_runtime(
@@ -201,7 +206,7 @@ impl AppState {
                 vfs_service: vfs_service.clone(),
                 session_services_handle,
                 runtime_tool_provider,
-                mcp_relay_provider,
+                mcp_tool_discovery,
                 function_runner: function_runner.clone(),
                 platform_config: platform_config.clone(),
                 integration_connectors: integration_registration.connectors,

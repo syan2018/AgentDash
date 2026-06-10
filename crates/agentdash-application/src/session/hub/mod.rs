@@ -72,8 +72,9 @@ pub struct SessionRuntimeInner {
     /// 运行时工具构建 provider（由 factory 注入，pipeline 在 prompt 前调用）。
     pub(super) runtime_tool_provider:
         Option<Arc<dyn agentdash_spi::connector::RuntimeToolProvider>>,
-    /// MCP Relay 工具发现 provider（由 factory 注入，pipeline 在 prompt 前调用）。
-    pub(super) mcp_relay_provider: Option<Arc<dyn agentdash_spi::McpRelayProvider>>,
+    /// MCP 工具发现端口（由 factory 注入，pipeline 在 prompt 前调用）。
+    pub(super) mcp_tool_discovery:
+        Option<Arc<dyn agentdash_application_ports::mcp_discovery::McpToolDiscovery>>,
     /// Relay backend execution placement dependencies.
     pub(super) backend_execution_transport:
         Option<Arc<dyn agentdash_application_ports::backend_transport::RelayPromptTransport>>,

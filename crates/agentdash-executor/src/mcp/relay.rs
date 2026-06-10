@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
+use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayMcpCallContext, RelayMcpToolInfo};
 use agentdash_spi::{
     AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, DynAgentTool,
     ToolUpdateCallback, sanitize_tool_schema,
 };
-use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayMcpCallContext, RelayMcpToolInfo};
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 

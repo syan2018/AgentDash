@@ -1,8 +1,9 @@
 use std::{path::PathBuf, sync::Arc};
 
+use agentdash_application_ports::mcp_discovery::McpToolDiscovery;
+use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::ExecutionHookProvider;
-use agentdash_spi::{AgentConnector, McpRelayProvider};
 
 use super::branching::SessionBranchingService;
 use super::capability_service::SessionCapabilityService;
@@ -61,8 +62,8 @@ impl SessionRuntimeBuilder {
         self
     }
 
-    pub fn with_mcp_relay_provider(mut self, provider: Arc<dyn McpRelayProvider>) -> Self {
-        self.inner = self.inner.with_mcp_relay_provider(provider);
+    pub fn with_mcp_tool_discovery(mut self, provider: Arc<dyn McpToolDiscovery>) -> Self {
+        self.inner = self.inner.with_mcp_tool_discovery(provider);
         self
     }
 

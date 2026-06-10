@@ -208,8 +208,10 @@ impl AgentTool for WorkspaceModuleDescribeTool {
         _: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let params: WorkspaceModuleDescribeParams = serde_json::from_value(args)
-            .map_err(|error| AgentToolError::InvalidArguments(format!("invalid arguments: {error}")))?;
+        let params: WorkspaceModuleDescribeParams =
+            serde_json::from_value(args).map_err(|error| {
+                AgentToolError::InvalidArguments(format!("invalid arguments: {error}"))
+            })?;
         let module_id = params.module_id.trim();
         if module_id.is_empty() {
             return Err(AgentToolError::InvalidArguments(
@@ -453,8 +455,10 @@ impl AgentTool for WorkspaceModuleInvokeTool {
         _: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let params: WorkspaceModuleInvokeParams = serde_json::from_value(args)
-            .map_err(|error| AgentToolError::InvalidArguments(format!("invalid arguments: {error}")))?;
+        let params: WorkspaceModuleInvokeParams =
+            serde_json::from_value(args).map_err(|error| {
+                AgentToolError::InvalidArguments(format!("invalid arguments: {error}"))
+            })?;
         let module_id = params.module_id.trim();
         let operation_key = params.operation_key.trim();
         if module_id.is_empty() || operation_key.is_empty() {
@@ -576,7 +580,10 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                 let mut provenance = provenance;
                 if let Some(obj) = provenance.as_object_mut() {
                     obj.insert("backend".to_string(), serde_json::json!(backend.backend_id));
-                    obj.insert("channel_key".to_string(), serde_json::json!(result.channel_key));
+                    obj.insert(
+                        "channel_key".to_string(),
+                        serde_json::json!(result.channel_key),
+                    );
                     obj.insert("method".to_string(), serde_json::json!(result.method));
                 }
                 let rendered = serde_json::to_string_pretty(&result.output.output)
@@ -633,17 +640,15 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                     .map_err(runtime_error_to_tool_error)?;
                 Ok(invocation_result_to_tool_result(result, provenance))
             }
-            WorkspaceModuleOperationDispatch::Builtin { builtin_key } => {
-                Ok(structured_tool_error(
-                    "operation_unimplemented",
-                    format!("builtin operation `{builtin_key}` 暂未实装"),
-                    serde_json::json!({
-                        "module_id": module_id,
-                        "operation_key": operation_key,
-                        "builtin_key": builtin_key,
-                    }),
-                ))
-            }
+            WorkspaceModuleOperationDispatch::Builtin { builtin_key } => Ok(structured_tool_error(
+                "operation_unimplemented",
+                format!("builtin operation `{builtin_key}` 暂未实装"),
+                serde_json::json!({
+                    "module_id": module_id,
+                    "operation_key": operation_key,
+                    "builtin_key": builtin_key,
+                }),
+            )),
         }
     }
 }
@@ -719,8 +724,10 @@ impl AgentTool for WorkspaceModulePresentTool {
         _: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let params: WorkspaceModulePresentParams = serde_json::from_value(args)
-            .map_err(|error| AgentToolError::InvalidArguments(format!("invalid arguments: {error}")))?;
+        let params: WorkspaceModulePresentParams =
+            serde_json::from_value(args).map_err(|error| {
+                AgentToolError::InvalidArguments(format!("invalid arguments: {error}"))
+            })?;
         let module_id = params.module_id.trim();
         let view_key = params.view_key.trim();
         if module_id.is_empty() || view_key.is_empty() {
@@ -1005,7 +1012,10 @@ mod tests {
     #[async_trait]
     impl CanvasRepository for FakeCanvasRepo {
         async fn create(&self, canvas: &Canvas) -> Result<(), DomainError> {
-            self.canvases.write().await.insert(canvas.id, canvas.clone());
+            self.canvases
+                .write()
+                .await
+                .insert(canvas.id, canvas.clone());
             Ok(())
         }
         async fn get_by_id(&self, id: Uuid) -> Result<Option<Canvas>, DomainError> {
@@ -1044,7 +1054,10 @@ mod tests {
                 .collect())
         }
         async fn update(&self, canvas: &Canvas) -> Result<(), DomainError> {
-            self.canvases.write().await.insert(canvas.id, canvas.clone());
+            self.canvases
+                .write()
+                .await
+                .insert(canvas.id, canvas.clone());
             Ok(())
         }
         async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
@@ -1128,7 +1141,9 @@ mod tests {
             .expect("operations");
         assert_eq!(operations.len(), 1);
         assert_eq!(
-            operations[0].get("origin").and_then(serde_json::Value::as_str),
+            operations[0]
+                .get("origin")
+                .and_then(serde_json::Value::as_str),
             Some("runtime_action")
         );
     }
@@ -1178,7 +1193,9 @@ mod tests {
             .expect("modules");
         assert_eq!(modules.len(), 1);
         assert_eq!(
-            modules[0].get("module_id").and_then(serde_json::Value::as_str),
+            modules[0]
+                .get("module_id")
+                .and_then(serde_json::Value::as_str),
             Some("ext:demo")
         );
     }
@@ -1238,9 +1255,11 @@ mod tests {
         project_id: Uuid,
         backend: Option<ResolvedInvocationBackend>,
     ) -> WorkspaceModuleInvokeTool {
-        let gateway = Arc::new(RuntimeGateway::new().with_provider(Arc::new(EchoActionProvider {
-            action_key: RuntimeActionKey::parse("demo.profile").expect("valid action key"),
-        })));
+        let gateway = Arc::new(
+            RuntimeGateway::new().with_provider(Arc::new(EchoActionProvider {
+                action_key: RuntimeActionKey::parse("demo.profile").expect("valid action key"),
+            })),
+        );
         let channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
             install_repo.clone(),
             Arc::new(NoopChannelTransport),

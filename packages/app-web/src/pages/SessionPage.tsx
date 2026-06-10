@@ -162,7 +162,7 @@ export function SessionPage({
 
   const {
     state: sessionRuntimeState,
-    refreshContext: refreshSessionRuntimeContext,
+    refreshRuntimeState: refreshSessionRuntimeState,
     refreshHookRuntime: refreshSessionRuntimeHook,
   } = useSessionRuntimeState({
     sessionId: currentSessionId,
@@ -185,7 +185,6 @@ export function SessionPage({
     }, 180);
   }, [currentSessionId, refreshSessionRuntimeHook]);
 
-  const activeSessionContext = sessionRuntimeState.context;
   const runtimeControl: SessionRuntimeControlView | null = sessionRuntimeState.control;
   const draftSessionTitle =
     draftProjectAgent?.display_name
@@ -198,8 +197,7 @@ export function SessionPage({
   const activeHookRuntime = sessionRuntimeState.hook_runtime?.runtime_adapter_session_id === currentSessionId
     ? sessionRuntimeState.hook_runtime
     : null;
-  const sessionWorkspaceId = activeSessionContext?.workspace_id ?? null;
-  const sessionRuntimeSurface = activeSessionContext?.runtime_surface ?? null;
+  const sessionRuntimeSurface = sessionRuntimeState.runtime_surface;
   const sessionContextSnapshot = null;
   const sessionCapabilities = null;
   const taskExecutorSummary = null;
@@ -290,8 +288,7 @@ export function SessionPage({
     ?? traceAgentContext?.executor_hint
     ?? null;
   const chatWorkspaceId =
-    sessionWorkspaceId
-    ?? ownerStory?.default_workspace_id
+    ownerStory?.default_workspace_id
     ?? ownerProject?.config.default_workspace_id
     ?? null;
   const workspaceBackend = useMemo(() => {
@@ -507,7 +504,7 @@ export function SessionPage({
         executor_config: executorConfig as unknown as JsonValue | undefined,
       });
       void fetchAndIngestLifecycleRun(response.run_ref.run_id);
-      void refreshSessionRuntimeContext().catch(() => {});
+      void refreshSessionRuntimeState().catch(() => {});
       scheduleHookRuntimeRefresh("agent_message_sent", true);
       return;
     }
@@ -515,7 +512,7 @@ export function SessionPage({
       await steerAgentRunByRuntimeSession(sessionId, {
         input: inputBlocks,
       });
-      void refreshSessionRuntimeContext().catch(() => {});
+      void refreshSessionRuntimeState().catch(() => {});
       scheduleHookRuntimeRefresh("agent_message_steered", true);
       return;
     }
@@ -524,7 +521,7 @@ export function SessionPage({
         input: inputBlocks,
         executor_config: executorConfig as unknown as JsonValue | undefined,
       });
-      void refreshSessionRuntimeContext().catch(() => {});
+      void refreshSessionRuntimeState().catch(() => {});
       scheduleHookRuntimeRefresh("pending_message_enqueued", true);
       return;
     }
@@ -538,23 +535,23 @@ export function SessionPage({
     draftProjectIdValue,
     fetchAndIngestLifecycleRun,
     navigate,
-    refreshSessionRuntimeContext,
+    refreshSessionRuntimeState,
     scheduleHookRuntimeRefresh,
   ]);
 
   const handlePromotePending = useCallback(async (messageId: string) => {
     if (!currentSessionId) return;
     await promotePendingMessage(currentSessionId, messageId);
-    void refreshSessionRuntimeContext().catch(() => {});
+    void refreshSessionRuntimeState().catch(() => {});
     scheduleHookRuntimeRefresh("pending_message_promoted", true);
-  }, [currentSessionId, refreshSessionRuntimeContext, scheduleHookRuntimeRefresh]);
+  }, [currentSessionId, refreshSessionRuntimeState, scheduleHookRuntimeRefresh]);
 
   const handleDeletePending = useCallback(async (messageId: string) => {
     if (!currentSessionId) return;
     await deletePendingMessage(currentSessionId, messageId);
-    void refreshSessionRuntimeContext().catch(() => {});
+    void refreshSessionRuntimeState().catch(() => {});
     scheduleHookRuntimeRefresh("pending_message_deleted", true);
-  }, [currentSessionId, refreshSessionRuntimeContext, scheduleHookRuntimeRefresh]);
+  }, [currentSessionId, refreshSessionRuntimeState, scheduleHookRuntimeRefresh]);
 
   const handleTurnEnd = useCallback(() => {
     scheduleHookRuntimeRefresh("turn_end", true);
@@ -572,7 +569,7 @@ export function SessionPage({
       case "context_frame": {
         const frameData = extractPlatformEventData(_event);
         if (frameData?.kind === "capability_state_update") {
-          void refreshSessionRuntimeContext();
+          void refreshSessionRuntimeState();
           scheduleHookRuntimeRefresh(eventType);
         }
         break;
@@ -593,7 +590,7 @@ export function SessionPage({
           : "";
         if (nextCanvasId) {
           setActiveCanvasId(nextCanvasId);
-          void refreshSessionRuntimeContext();
+          void refreshSessionRuntimeState();
           expandWorkspacePanel("canvas", `canvas://${nextCanvasId}`);
         }
         break;
@@ -609,7 +606,7 @@ export function SessionPage({
         if (rendererKind === "canvas") {
           const canvasUri = uri || (viewKey ? `canvas://${viewKey}` : "");
           if (canvasUri) {
-            void refreshSessionRuntimeContext();
+            void refreshSessionRuntimeState();
             expandWorkspacePanel("canvas", canvasUri);
           }
         } else if (viewKey) {
@@ -624,7 +621,7 @@ export function SessionPage({
       default:
         break;
     }
-  }, [currentSessionId, scheduleHookRuntimeRefresh, refreshSessionRuntimeContext, expandWorkspacePanel]);
+  }, [currentSessionId, scheduleHookRuntimeRefresh, refreshSessionRuntimeState, expandWorkspacePanel]);
 
   const handleBackToOwner = useCallback(() => {
     if (!effectiveReturnTarget) return;
@@ -690,7 +687,7 @@ export function SessionPage({
     frameRuntime: runtimeControl?.frame_runtime ?? null,
     subjectAssociations: runtimeControl?.subject_associations ?? [],
     runtimeStatus: sessionRuntimeState.status,
-    runtimeError: sessionRuntimeState.error,
+    runtimeError: sessionRuntimeState.error ?? sessionRuntimeState.runtime_surface_error,
     extensionRuntime,
     contextSnapshot: sessionContextSnapshot,
     ownerStory,
@@ -707,6 +704,7 @@ export function SessionPage({
     runtimeControl,
     sessionRuntimeState.status,
     sessionRuntimeState.error,
+    sessionRuntimeState.runtime_surface_error,
     extensionRuntime,
     sessionContextSnapshot,
     ownerStory,

@@ -540,7 +540,7 @@ function SharedFoldersCard({
             onClick={() => setBrowserOpen(!browserOpen)}
             className="rounded-[6px] border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
-            {browserOpen ? "收起地址空间" : "查看地址空间"}
+            {browserOpen ? "收起资源浏览" : "打开资源浏览"}
           </button>
           {browserOpen && (
             <div className="mt-2">

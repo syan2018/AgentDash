@@ -12,7 +12,7 @@ export interface CanvasSessionPanelProps {
   canvasId: string | null;
   sessionId: string | null;
   onClose: () => void;
-  /** 打开该 Canvas 对应 mount 的 VFS 地址空间 Tab */
+  /** 打开该 Canvas 对应 mount 的资源浏览 Tab */
   onBrowseFiles?: (mountId: string) => void;
 }
 

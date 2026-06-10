@@ -31,7 +31,7 @@ function buildMountUri(mountId: string, filePath?: string | null): string {
 }
 
 function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
-  const { runtimeSurface } = useWorkspaceData();
+  const { runtimeError, runtimeSurface } = useWorkspaceData();
   const parsed = parseMountUri(uri);
 
   const hasMounts = Boolean(runtimeSurface?.mounts.length);
@@ -48,7 +48,7 @@ function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
     return (
       <div className="flex h-full min-h-[200px] items-center justify-center px-6">
         <p className="text-center text-sm text-muted-foreground">
-          当前会话没有挂载的地址空间。
+          {runtimeError ?? "当前会话没有挂载可浏览资源。"}
         </p>
       </div>
     );
@@ -66,7 +66,7 @@ function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
 
 export const vfsTabType: TabTypeDescriptor = {
   typeId: "vfs",
-  label: "地址空间",
+  label: "资源浏览",
   icon: VfsIcon,
   allowMultiple: true,
   pinned: false,
@@ -80,7 +80,7 @@ export const vfsTabType: TabTypeDescriptor = {
       return filename;
     }
     if (parsed?.mountId) return parsed.mountId;
-    return "地址空间";
+    return "资源浏览";
   },
 
   parseUri: (uri) => {

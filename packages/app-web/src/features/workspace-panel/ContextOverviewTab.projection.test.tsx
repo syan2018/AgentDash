@@ -236,7 +236,7 @@ const hookRuntime: AgentFrameHookRuntimeInfo = {
 };
 
 describe("ContextOverviewTab projection contract", () => {
-  it("只从 final runtime surface 展示 Session 地址空间与派生能力", () => {
+  it("只从 final runtime surface 展示 Session 资源浏览与派生能力", () => {
     const html = renderToStaticMarkup(
       <ContextOverviewTab
         contextSnapshot={contextSnapshot}

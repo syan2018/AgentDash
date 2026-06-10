@@ -1407,7 +1407,7 @@ pub(in crate::session) async fn compose_companion_with_workflow(
     Ok(SessionAssemblyBuilder::new()
         .with_vfs(slice.vfs.unwrap_or_default())
         .apply_lifecycle_activation(&activation, Some(comp.companion_executor_config.clone()))
-        .append_mcp_servers(slice.mcp_servers.into_iter())
+        .append_mcp_servers(slice.mcp_servers)
         .with_optional_context_bundle(merged_bundle)
         .with_input(user_input)
         .build())

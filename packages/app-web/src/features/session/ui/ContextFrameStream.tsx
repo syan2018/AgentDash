@@ -6,8 +6,7 @@
  * - header 行：CTX badge + "N 帧 · 最后阶段 X" 汇总 + ▲▼
  * - 展开后：横向 frame tab 条（单帧时等效 pill label）+ 对应 frame body
  *
- * 所有 frame 数据是已解析的 `ContextFrame`。SessionEntry 负责从 platform
- * event 提取并解析，再调用本组件。
+ * 所有 frame 数据是 model 层已解析的 `ContextFrame`。UI 只负责展示。
  */
 
 import { useMemo, useState } from "react";

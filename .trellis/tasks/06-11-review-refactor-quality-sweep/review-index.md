@@ -37,6 +37,9 @@
 | vfs-service Batch F | 修复 | 已提交 | `fixes/014-vfs-search-service-split.md` |
 | workflow-orchestration | follow-up research | 已归档 | `research/workflow-orchestration-executable-plan.md` |
 | local-runtime | follow-up research | 已归档 | `research/local-runtime-followup-executable-plan.md` |
+| workflow-orchestration Batch A | 修复 | 已提交 | `fixes/015-workflow-script-preflight-convergence.md` |
+| local-runtime Batch E | 修复 | 已提交 | `fixes/016-local-runtime-mcp-prompt-wire-shape.md` |
+| local-runtime Batch G | 修复 | 已提交 | `fixes/017-local-runtime-host-api-fallback-removal.md` |
 
 ## 已完成模块
 
@@ -93,3 +96,6 @@
 | `46cbdbfb` | vfs-service | 收敛 runtime file metadata 常量与访问器 |
 | `c2390ff7` | vfs-service | 统一 patch path target 解析与 mutation key 语义 |
 | `264ec228` | vfs-service | 拆出 search/grep 专属服务边界 |
+| `2bbb515c` | local-runtime | 删除 runtime.invoke 与 extension.channel_invoke host api 占位回退 |
+| `1ac95573` | local-runtime | 对齐 prompt MCP relay 发送形态 |
+| `37be46fa` | workflow-orchestration | 收敛 workflow script capability summary 单一解释器 |

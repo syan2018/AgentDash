@@ -80,3 +80,30 @@
 - 影响面：VFS tool factory、session runtime composer、API bootstrap、workflow/canvas/companion/workspace module tool assembly、AppState ready gate。
 - 建议方向：先在 VFS 内抽出 VFS tool factory；后续由 session/runtime ownership 下的 `RuntimeToolProviderComposer` 组合各领域 factory，并把 `SessionToolServices` 迁到 session-owned 模块。
 - 保留为架构项的原因：完整迁移预计超过 10 个文件，跨 VFS、session launch、API bootstrap、workflow、companion、canvas、workspace module 与 runtime gateway 边界。
+
+## ARCH-007: local-runtime CommandHandler 服务边界过宽
+
+- 优先级：P2
+- 状态：待设计
+- 证据：`crates/agentdash-local/src/handlers/mod.rs` 的 `CommandHandler` 同时持有 backend/workspace/tool/session/connector/MCP/terminal/materialization/extension artifact 等依赖，`handle()` 仍集中分发 heartbeat、prompt、workspace、tool、MCP、extension、terminal 等 relay command。
+- 影响面：local runtime WebSocket command bus、prompt/session forwarder、tool calls、MCP relay、terminal、materialization、extension artifact activation。
+- 建议方向：设计真实的 command service 边界，例如 `PromptCommandService`、`ToolCommandService`、`ExtensionCommandService`、`TerminalCommandService`，再由小 router 消费 typed handler services。
+- 保留为架构项的原因：有价值的拆分会触及 `handlers/` 大部分文件、`ws_client.rs`、构造/config plumbing 和测试；只包一层 router 无法降低依赖宽度。
+
+## ARCH-008: prompt MCP relay contract 仍是 raw JSON
+
+- 优先级：P2
+- 状态：待设计
+- 证据：`crates/agentdash-relay/src/protocol/prompt.rs` 与 `crates/agentdash-application-ports/src/backend_transport.rs` 仍以 `Vec<serde_json::Value>` 表达 prompt MCP servers；application producer 与 local parser 需要各自解释 wire shape。
+- 影响面：relay protocol、application backend transport port、application relay connector、API workspace resolution、本机 prompt parser，以及所有发送 `command.prompt` 的 backend/local runtime 实现。
+- 建议方向：引入明确的 relay prompt MCP DTO，作为 relay/application/local 共同消费的 typed contract，再逐步移除 raw JSON 解释。
+- 保留为架构项的原因：这是跨 relay/application/local 的公共 wire contract 变更；当前循环只修复发送形态，不把 raw JSON contract 一次性迁移。
+
+## ARCH-009: Extension Host process/env sandbox contract 未定义
+
+- 优先级：P2
+- 状态：待设计
+- 证据：`env.get` 有 `env.read[:NAME]` 权限检查，而 process execution 默认继承宿主进程环境；显式 `options.env` 的权限收敛只能覆盖调用方主动传入的 env overlay。
+- 影响面：extension manifest permission、process.shell/process.exec 默认环境、Node/PowerShell 命令发现、SDK 文档与样例、插件运行兼容边界。
+- 建议方向：如果产品要求强隔离，先定义 process 执行是否 `env_clear()`、注入哪些最小基础环境、以及是否需要新的 env pass/inject 权限族。
+- 保留为架构项的原因：完整沙箱会改变公开 extension permission contract 和 runtime 行为，不能混入当前模块级 process executor 收敛。

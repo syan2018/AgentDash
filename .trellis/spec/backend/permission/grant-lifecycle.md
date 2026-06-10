@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS permission_grants (
     session_id TEXT NOT NULL,
     source_turn_id TEXT,
     source_tool_call_id TEXT,
-    requested_paths TEXT NOT NULL,     -- JSON array: ["story_management", "task_management::start_task"]
+    requested_paths TEXT NOT NULL,     -- JSON array: ["story_management", "task_management::execution_view"]
     reason TEXT NOT NULL,
     grant_scope TEXT NOT NULL,         -- enum: turn / session / workflow_step
     expires_at TEXT,                   -- ISO 8601
@@ -115,7 +115,7 @@ CREATE INDEX idx_permission_grants_status
 | id | String | UUID |
 | run_id | String | UUID |
 | session_id | String | Non-empty |
-| requested_paths | Vec\<String\> | e.g. `["story_management", "task_management::start_task"]` |
+| requested_paths | Vec\<String\> | e.g. `["story_management", "task_management::execution_view"]` |
 | reason | String | Agent-provided justification |
 | grant_scope | String | `turn` / `session` / `workflow_step` |
 | expires_at | Option\<String\> | ISO 8601 |

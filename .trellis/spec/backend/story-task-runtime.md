@@ -1,6 +1,6 @@
-# Story / Task 运行时建模（SubjectRef + Lifecycle projection）
+# Story / Task 运行时建模（SubjectRef + SubjectContext + Lifecycle projection）
 
-> Story / Task / LifecycleRun / LifecycleSubjectAssociation / RuntimeSession 的职责边界与关系拓扑。
+> Story / Task / SubjectContextAssignment / LifecycleRun / LifecycleSubjectAssociation / RuntimeSession 的职责边界与关系拓扑。
 
 ---
 
@@ -10,6 +10,7 @@
 - **Task** 是 Story aggregate 下的 child entity，保存在 `stories.tasks` JSONB 列。无独立 repository、无独立表；Task 本体不拥有 runtime truth。
 - **LifecycleRun** 是被追踪的执行生命过程 / control ledger。普通 Agent runtime 使用 `topology=graphless`；显式 workflow runtime 使用 `topology=workflow_graph`，并通过 `LifecycleRun.orchestrations[]` 承载 0..N 个内部编排实例。
 - **LifecycleSubjectAssociation** 是关联层实体，用 `(anchor_run_id, anchor_agent_id?, subject_kind, subject_id, role)` 显式表达 whole-run 或 agent-scoped subject 关系。
+- **SubjectContextAssignment** 是 `SubjectRef` 到 AgentFrame context / capability / VFS surface 的应用层解析结果。Story / Task 通过该模型作为 ProjectAgent 的 subject profile 注入上下文，不拥有独立 Agent owner。
 - **RuntimeSession** 是 runtime trace 容器：承载 event log、debug replay、agent 交互轨迹。不承载 ownership、permission scope 或 lifecycle progress truth。
 
 ---
@@ -21,14 +22,23 @@
 - 持有启动参数（title / priority / context / agent preference 等）和业务审计字段（status）。
 - 持有 `Vec<Task>` 作为 aggregate 内 child entity 集合。
 - 所有 task 变更必须通过 Story aggregate 方法（`add_task` / `remove_task`），由 `StoryRepository::update` 原子写回。
-- **不持有** runtime truth；runtime truth 在 `LifecycleRun` / `OrchestrationInstance` / `RuntimeNodeState` / `LifecycleAgent` / `AgentFrame` / `RuntimeSessionExecutionAnchor`。
+- Story 作为 subject profile 被 ProjectAgent session 消费；快速创建会话入口复用 ProjectAgent session start 并携带 `subject_ref=story`。
+- Runtime truth 在 `LifecycleRun` / `OrchestrationInstance` / `RuntimeNodeState` / `LifecycleAgent` / `AgentFrame` / `RuntimeSessionExecutionAnchor`。
 
 ### Task
 
 - **Durable spec**：id / story_id / workspace_id / title / description / authoring preference / dispatch policy。
 - **投影字段**：status / artifacts / current agent / latest runtime node，由 `SubjectRef(kind=Task)`、`LifecycleSubjectAssociation`、`LifecycleAgent`、`AgentFrame`、`RuntimeNodeState` 与 lifecycle artifacts 派生；外部不可直接写为 runtime truth。
-- **禁止**新增 runtime 字段：`executor_session_id`、`runtime_session_id`、`activity_key`、`attempt`、`execution_mode` 等属于 lifecycle / assignment / projection 层。
-- Task execution 通过 `SubjectRef(kind=Task, id=task_id)` 进入 `ExecutionIntent`；默认使用 graphless run / `LifecycleAgent` / `AgentFrame` 控制面，显式 workflow runtime 在同一 `LifecycleRun` 内追加或复用 `OrchestrationInstance`。
+- Task context 通过 `SubjectContextAssignment(subject_ref=Task)` 注入 ProjectAgent frame：Task binding、parent Story、Project、effective Workspace 和 declared sources 在 application 层一次解析成 `Contribution`。
+- Task execution view 由 lifecycle association 和 runtime node facts 投影，command 控制走统一 AgentRun / Lifecycle 控制面。
+
+### SubjectContextAssignment
+
+- 输入为 `project_id + SubjectRef(project|story|task)`，输出 `workspace`、`Vec<Contribution>` 和 `CapabilityScopeCtx`。
+- Project subject 使用 ProjectAgent owner context 与 Project workspace 默认值。
+- Story subject 解析 Story、Project、Story/default Project workspace 和 Story declared sources。
+- Task subject 解析 Task binding、parent Story context、effective Task workspace、Story + Task declared sources 和 Task initial context。
+- Assignment 只构建 AgentFrame surface 所需画像；runtime session、LifecycleRun、LifecycleAgent 与 subject association 仍由 lifecycle dispatch / ProjectAgent session start 创建。
 
 ### LifecycleRun
 
@@ -123,10 +133,9 @@ runtime_session_id → RuntimeSessionExecutionAnchor
 
 ## 对外 API 规范
 
-- `start_task` / `continue_task` / `cancel_task` 等 facade 名字保留。
-- 内部统一提交 `ExecutionIntent(subject_ref=SubjectRef(kind=Task, id=task_id), ...)`。
-- Task / Routine execution response 返回 `AgentRuntimeRefs` envelope；run / agent / frame 是通用控制面，显式 workflow 节点通过 orchestration/node refs 暴露。
-- **不允许**为新场景再开 Task-specific session 装配分支；Task runtime 进入统一 lifecycle dispatch 路径。
+- ProjectAgent session start 接收可选 `subject_ref`。省略时为 Project context；传入 Story/Task 时由 SubjectContextAssignment 动态补齐 subject context。
+- Story 快速创建会话是 ProjectAgent session start 的薄入口：选择 ProjectAgent 后携带 `subject_ref=story`，返回同一套 run / agent / frame / runtime session refs。
+- Task 执行面向 read projection：`GET /tasks/{id}/execution` 返回 `SubjectExecutionView`，命令控制走统一 AgentRun / Lifecycle 控制面。
 - Subject / agent / run-oriented API 是 Story / Task 业务查询的主路径；session route 只提供 RuntimeTrace。
 
 ---

@@ -58,13 +58,19 @@ pub struct ResponseMcpProbeTransportPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerDeclarationRelay {
+    pub name: String,
+    pub transport: McpTransportConfigRelay,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandMcpListToolsPayload {
-    pub server_name: String,
+    pub server: McpServerDeclarationRelay,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandMcpCallToolPayload {
-    pub server_name: String,
+    pub server: McpServerDeclarationRelay,
     pub tool_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arguments: Option<serde_json::Map<String, serde_json::Value>>,

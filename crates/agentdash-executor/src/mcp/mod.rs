@@ -39,7 +39,7 @@ impl McpToolDiscovery for ExecutorMcpToolDiscovery {
         &self,
         request: McpToolDiscoveryRequest,
     ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
-        let (relay_names, direct_servers) =
+        let (relay_servers, direct_servers) =
             agentdash_spi::partition_session_mcp_servers(&request.servers);
         let mut entries =
             direct::discover_mcp_tool_entries(&direct_servers, &request.capability_state).await?;
@@ -48,7 +48,7 @@ impl McpToolDiscovery for ExecutorMcpToolDiscovery {
             entries.extend(
                 relay::discover_relay_mcp_tool_entries(
                     relay_provider.clone(),
-                    &relay_names,
+                    &relay_servers,
                     &request.capability_state,
                     request.call_context,
                 )

@@ -2,9 +2,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use agentdash_spi::{
     AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, DynAgentTool,
-    McpTransportConfig, SessionMcpServer, ToolUpdateCallback,
+    McpHttpHeader, McpTransportConfig, SessionMcpServer, ToolUpdateCallback,
 };
 use async_trait::async_trait;
+use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::{
     RoleClient, ServiceExt,
     model::{CallToolRequestParams, CallToolResult, Tool},
@@ -31,6 +32,7 @@ type McpHttpClient = RunningService<RoleClient, ()>;
 struct McpHttpServerSpec {
     name: String,
     url: String,
+    headers: Vec<McpHttpHeader>,
 }
 
 #[derive(Default)]
@@ -87,7 +89,9 @@ impl DirectMcpClientPool {
             return Ok(client);
         }
 
-        let new_client = Arc::new(Mutex::new(connect_http_server(&server.url).await?));
+        let new_client = Arc::new(Mutex::new(
+            connect_http_server(&server.url, &server.headers).await?,
+        ));
         let mut clients = self.clients.write().await;
         if let Some(existing) = clients.get(&key).cloned() {
             drop(clients);
@@ -123,7 +127,11 @@ impl DirectMcpClientPool {
     }
 
     fn key(&self, server: &McpHttpServerSpec) -> String {
-        server.url.clone()
+        format!(
+            "{}\n{}",
+            server.url,
+            serde_json::to_string(&server.headers).unwrap_or_default()
+        )
     }
 }
 
@@ -246,14 +254,30 @@ pub async fn discover_mcp_tool_entries(
 
 async fn connect_http_server(
     url: &str,
+    headers: &[McpHttpHeader],
 ) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>, ConnectorError> {
-    let worker = StreamableHttpClientWorker::new(
-        reqwest::Client::new(),
-        StreamableHttpClientTransportConfig::with_uri(url.to_string()),
-    );
+    let config = StreamableHttpClientTransportConfig::with_uri(url.to_string())
+        .custom_headers(build_header_map(headers)?);
+    let worker = StreamableHttpClientWorker::new(reqwest::Client::new(), config);
     ().serve(worker)
         .await
         .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))
+}
+
+fn build_header_map(
+    headers: &[McpHttpHeader],
+) -> Result<HashMap<HeaderName, HeaderValue>, ConnectorError> {
+    let mut map = HashMap::new();
+    for header in headers {
+        let name = HeaderName::from_bytes(header.name.as_bytes()).map_err(|error| {
+            ConnectorError::InvalidConfig(format!("MCP HTTP header name 无效: {error}"))
+        })?;
+        let value = HeaderValue::from_str(&header.value).map_err(|error| {
+            ConnectorError::InvalidConfig(format!("MCP HTTP header value 无效: {error}"))
+        })?;
+        map.insert(name, value);
+    }
+    Ok(map)
 }
 
 fn convert_call_result(
@@ -299,10 +323,67 @@ fn format_service_error(error: &ServiceError) -> String {
 
 fn parse_http_session_server(server: &SessionMcpServer) -> Option<McpHttpServerSpec> {
     match &server.transport {
-        McpTransportConfig::Http { url, .. } => Some(McpHttpServerSpec {
+        McpTransportConfig::Http { url, headers } => Some(McpHttpServerSpec {
             name: server.name.clone(),
             url: url.clone(),
+            headers: headers.clone(),
         }),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header(value: &str) -> McpHttpHeader {
+        McpHttpHeader {
+            name: "x-session".to_string(),
+            value: value.to_string(),
+        }
+    }
+
+    #[test]
+    fn parse_http_session_server_preserves_resolved_headers() {
+        let server = SessionMcpServer {
+            name: "p4-tools".to_string(),
+            transport: McpTransportConfig::Http {
+                url: "http://127.0.0.1:8999/mcp?p4_client=demo".to_string(),
+                headers: vec![header("demo")],
+            },
+            uses_relay: false,
+        };
+
+        let parsed = parse_http_session_server(&server).expect("http server should parse");
+        assert_eq!(parsed.name, "p4-tools");
+        assert_eq!(parsed.url, "http://127.0.0.1:8999/mcp?p4_client=demo");
+        assert_eq!(parsed.headers, vec![header("demo")]);
+    }
+
+    #[test]
+    fn direct_pool_key_includes_url_and_headers() {
+        let pool = DirectMcpClientPool::default();
+        let base = McpHttpServerSpec {
+            name: "p4-tools".to_string(),
+            url: "http://127.0.0.1:8999/mcp".to_string(),
+            headers: vec![header("session-a")],
+        };
+        let same = McpHttpServerSpec {
+            headers: vec![header("session-a")],
+            ..base.clone()
+        };
+        let different_headers = McpHttpServerSpec {
+            headers: vec![header("session-b")],
+            ..base.clone()
+        };
+        let different_url = McpHttpServerSpec {
+            url: "http://127.0.0.1:8999/other".to_string(),
+            ..base.clone()
+        };
+
+        let base_key = pool.key(&base);
+        assert_eq!(base_key, pool.key(&same));
+        assert_ne!(base_key, pool.key(&different_headers));
+        assert_ne!(base_key, pool.key(&different_url));
     }
 }

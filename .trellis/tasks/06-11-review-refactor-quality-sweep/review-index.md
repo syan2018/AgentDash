@@ -55,6 +55,7 @@
 | mcp-preset-connectors | research | 已归档 | `research/mcp-preset-connectors-executable-plan.md` |
 | session-ui-toolcards Batch A | 修复 | 已提交 | `fixes/026-session-capability-model.md` |
 | mcp-preset-connectors Batch A | 修复 | 已提交 | `fixes/027-mcp-preset-form-helper.md` |
+| session-ui-toolcards Batch B | 修复 | 已提交 | `fixes/028-session-companion-request-view-model.md` |
 
 ## 已完成模块
 
@@ -124,3 +125,4 @@
 | `709ac9a7` | companion-tools | 闭合平台授权假请求链路 |
 | `cb9cb9ab` | session-ui-toolcards | 收敛 capability 资源解析边界 |
 | `f797c541` | mcp-preset-connectors | 收敛前端表单 helper |
+| `d43ce563` | session-ui-toolcards | 收敛 companion 请求视图模型 |

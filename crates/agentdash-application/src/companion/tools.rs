@@ -913,20 +913,18 @@ impl CompanionRequestTool {
         }
     }
 
-    /// target=platform：当前先作为 platform broker 的统一入口，授权类请求会转成
-    /// 人类审批交互；授权事实落地由后续 grant 持久化任务承接。
+    /// target=platform：平台 broker 入口。授权类请求必须接入 PermissionGrantService
+    /// 与 capability runtime broker 后才能处理，不能降级成人类 companion request。
     async fn execute_platform_request(
         &self,
-        wait: bool,
+        _wait: bool,
         payload: &serde_json::Value,
-        cancel: CancellationToken,
+        _cancel: CancellationToken,
     ) -> Result<AgentToolResult, AgentToolError> {
         let payload_type = payload.get("type").and_then(|value| value.as_str());
         match payload_type {
             Some("capability_grant_request") => {
-                let broker_payload = build_platform_capability_grant_payload(payload)?;
-                self.execute_human_request(wait, &broker_payload, cancel)
-                    .await
+                Err(platform_capability_grant_missing_broker_error())
             }
             Some(type_name) => Err(AgentToolError::InvalidArguments(format!(
                 "target=platform 暂不支持 payload.type=`{type_name}`"
@@ -1372,70 +1370,11 @@ fn json_object_payload_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sc
     })
 }
 
-fn build_platform_capability_grant_payload(
-    payload: &serde_json::Value,
-) -> Result<serde_json::Value, AgentToolError> {
-    let mut object = payload.as_object().cloned().ok_or_else(|| {
-        AgentToolError::InvalidArguments(
-            "capability_grant_request payload 必须是 object".to_string(),
-        )
-    })?;
-
-    if !object.contains_key("prompt") && !object.contains_key("message") {
-        let prompt = object
-            .get("interaction_hint")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
-            .unwrap_or_else(|| {
-                build_capability_grant_prompt(&serde_json::Value::Object(object.clone()))
-            });
-        object.insert("prompt".to_string(), serde_json::Value::String(prompt));
-    }
-
-    object
-        .entry("options".to_string())
-        .or_insert_with(|| serde_json::json!(["批准", "拒绝"]));
-    object.insert(
-        "platform_broker".to_string(),
-        serde_json::Value::String("capability_grant".to_string()),
-    );
-
-    Ok(serde_json::Value::Object(object))
-}
-
-fn build_capability_grant_prompt(payload: &serde_json::Value) -> String {
-    let paths = payload
-        .get("requested_paths")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::trim))
-                .filter(|item| !item.is_empty())
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| "未声明具体路径".to_string());
-    let reason = payload
-        .get("reason")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .unwrap_or("未提供理由");
-    let scope = payload
-        .get("scope")
-        .and_then(|value| value.as_str())
-        .unwrap_or("session");
-    let ttl = payload
-        .get("ttl_seconds")
-        .and_then(|value| value.as_u64())
-        .map(|seconds| format!("，TTL {seconds} 秒"))
-        .unwrap_or_default();
-
-    format!("Agent 请求临时能力扩展：{paths}。理由：{reason}。范围：{scope}{ttl}。")
+fn platform_capability_grant_missing_broker_error() -> AgentToolError {
+    AgentToolError::ExecutionFailed(
+        "target=platform payload.type=`capability_grant_request` 暂不支持：缺少 platform permission grant broker，当前 companion context 无法提供 PermissionGrantService::request 所需的 agent_auto_grantable / lifecycle_requestable policy inputs，也没有 live runtime capability update handoff。参见 ARCH-010 完成 broker 闭环后再启用。"
+            .to_string(),
+    )
 }
 
 // ─── hook action 辅助（从 hook_action.rs 合并） ─────────────────────
@@ -2037,8 +1976,8 @@ mod companion_tests {
     use super::{
         CompanionAdoptionMode, CompanionDispatchPlan, CompanionDispatchSlice, CompanionSliceMode,
         build_companion_dispatch_prompt, build_companion_dispatch_slice,
-        build_companion_execution_slice, build_platform_capability_grant_payload,
-        build_subagent_pending_action, companion_owner_candidates,
+        build_companion_execution_slice, build_subagent_pending_action, companion_owner_candidates,
+        platform_capability_grant_missing_broker_error,
     };
     use agentdash_spi::CapabilityScope;
     use agentdash_spi::action_type as at;
@@ -2076,32 +2015,20 @@ mod companion_tests {
     }
 
     #[test]
-    fn platform_capability_grant_payload_adds_prompt_and_options() {
-        let payload = serde_json::json!({
-            "type": "capability_grant_request",
-            "requested_paths": ["workflow_management::upsert_lifecycle_tool"],
-            "reason": "需要更新 lifecycle 定义",
-            "scope": "session",
-            "ttl_seconds": 3600
-        });
+    fn platform_capability_grant_request_reports_missing_broker() {
+        let error = platform_capability_grant_missing_broker_error();
 
-        let broker_payload =
-            build_platform_capability_grant_payload(&payload).expect("broker payload");
-
-        assert_eq!(
-            broker_payload["platform_broker"],
-            serde_json::json!("capability_grant")
-        );
-        assert!(
-            broker_payload["prompt"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("workflow_management::upsert_lifecycle_tool")
-        );
-        assert_eq!(
-            broker_payload["options"],
-            serde_json::json!(["批准", "拒绝"])
-        );
+        match error {
+            agentdash_spi::AgentToolError::ExecutionFailed(message) => {
+                assert!(message.contains("capability_grant_request"));
+                assert!(message.contains("platform permission grant broker"));
+                assert!(message.contains("PermissionGrantService::request"));
+                assert!(message.contains("agent_auto_grantable"));
+                assert!(message.contains("lifecycle_requestable"));
+                assert!(message.contains("ARCH-010"));
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
     }
 
     #[test]

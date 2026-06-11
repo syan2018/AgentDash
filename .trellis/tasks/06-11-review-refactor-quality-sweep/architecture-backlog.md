@@ -116,3 +116,21 @@
 - 影响面：companion tool semantics、PermissionGrant 事实源、AgentFrame capability state、runtime tool surface 更新、用户审批 UI/API、CapabilityResolver 可见性。
 - 建议方向：定义单一 platform broker use case，负责 grant 创建、policy decision、用户审批 handoff、frame effect application 与 live runtime capability/tool-schema update。
 - 保留为架构项的原因：完整 broker 闭环会跨 companion、permission、session capability service、API route、前端审批视图和 runtime projection。
+
+## ARCH-011: Canvas CRUD DTO 事实源未进入 contracts
+
+- 优先级：P2
+- 状态：待设计
+- 证据：runtime snapshot 已复用 generated contract，但 `packages/app-web/src/types/canvas.ts` 仍手写 `CanvasFile` / `CanvasDataBinding` / `Canvas`；`crates/agentdash-api/src/dto/canvas.rs` 也维护 API-local `CreateCanvasRequest` / `UpdateCanvasRequest` / `CanvasResponse`。
+- 影响面：`agentdash-contracts`、API canvas DTO/route、generated TS contracts、前端 canvas service/types、runtime preview 调用面。
+- 建议方向：把浏览器消费的 Canvas CRUD / promote / invoke DTO 迁入 `agentdash-contracts`，由 generated TS 作为前端唯一类型来源，API route 只做 domain/application 映射。
+- 保留为架构项的原因：涉及跨层协议事实源和 contracts 生成链路，预计修改范围超过单一前端模块。
+
+## ARCH-012: Workflow auto-granted baseline 跨层事实源重复
+
+- 优先级：P2
+- 状态：待设计
+- 证据：`packages/app-web/src/features/workflow/ui/panels/shared.ts` 的 `AUTO_GRANTED_BASELINE` 注释表明它镜像后端 `default_visibility_rules`；`CapabilityPanel.tsx` 直接用该前端常量计算 UI baseline。
+- 影响面：后端 workflow capability visibility rules、generated contracts、workflow capability panel、directive 编辑体验。
+- 建议方向：让后端/contract 输出 visibility baseline 或 capability projection，前端只消费 projection，不再手写镜像规则。
+- 保留为架构项的原因：这是跨后端 contract 与前端 UI 的事实源重定，不能在单一 panel 快速修复中完成。

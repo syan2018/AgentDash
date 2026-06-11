@@ -3,7 +3,7 @@
 ## 状态
 
 - 分支：`codex/review-refactor-quality-sweep`
-- 当前阶段：09:16 收尾，等待下一轮窄范围 research / 修复派发
+- 当前阶段：下一轮窄范围 explorer review
 - 主控：`codex-agent`
 
 ## 当前并行队列
@@ -49,8 +49,11 @@
 | companion-tools Batch 1 | 修复 | 已提交 | `fixes/023-companion-tool-context.md` |
 | companion-tools Batch 2 | 修复 | 已提交 | `fixes/024-companion-sub-dispatch-launch.md` |
 | companion-tools Batch 4 | 修复 | 已提交 | `fixes/025-companion-platform-grant.md` |
-| frontend-canvas-workflow | research | 待重派 | `research/frontend-canvas-workflow-executable-plan.md` |
-| executor-connectors | research | 待重派 | `research/executor-connectors-executable-plan.md` |
+| frontend-canvas-workflow | research | 已拆分 | `research/canvas-runtime-preview-executable-plan.md`; `research/workflow-binding-panels-executable-plan.md` |
+| executor-connectors | research | 已拆分 | `research/executor-connector-bridges-executable-plan.md` |
+| canvas-runtime-preview | research | 已归档 | `research/canvas-runtime-preview-executable-plan.md` |
+| workflow-binding-panels | research | 已归档 | `research/workflow-binding-panels-executable-plan.md` |
+| executor-connector-bridges | research | 已归档 | `research/executor-connector-bridges-executable-plan.md` |
 | session-ui-toolcards | research | 已归档 | `research/session-ui-toolcards-executable-plan.md` |
 | mcp-preset-connectors | research | 已归档 | `research/mcp-preset-connectors-executable-plan.md` |
 | session-ui-toolcards Batch A | 修复 | 已提交 | `fixes/026-session-capability-model.md` |

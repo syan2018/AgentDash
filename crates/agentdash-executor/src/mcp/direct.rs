@@ -1,11 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
-use agentdash_spi::platform::tool_capability::{
-    CAP_RELAY_MANAGEMENT, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT, CAP_WORKFLOW_MANAGEMENT,
-};
 use agentdash_spi::{
     AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, DynAgentTool,
-    McpTransportConfig, SessionMcpServer, ToolUpdateCallback, sanitize_tool_schema,
+    McpTransportConfig, SessionMcpServer, ToolUpdateCallback,
 };
 use async_trait::async_trait;
 use rmcp::{
@@ -22,7 +19,11 @@ use tokio_util::sync::CancellationToken;
 use agentdash_mcp::render_content;
 use agentdash_spi::ConnectorError;
 
-use super::DiscoveredMcpTool;
+use super::{
+    DiscoveredMcpTool,
+    common::{McpToolSurface, build_discovered_entry, normalize_args_object},
+    naming::capability_key_for_mcp_server_name,
+};
 
 type McpHttpClient = RunningService<RoleClient, ()>;
 
@@ -128,33 +129,22 @@ impl DirectMcpClientPool {
 
 #[derive(Clone)]
 pub struct McpToolAdapter {
-    runtime_name: String,
-    original_name: String,
-    description: String,
-    parameters_schema: serde_json::Value,
+    surface: McpToolSurface,
     server: McpHttpServerSpec,
     pool: Arc<DirectMcpClientPool>,
 }
 
 impl McpToolAdapter {
     fn from_tool(server: McpHttpServerSpec, pool: Arc<DirectMcpClientPool>, tool: Tool) -> Self {
-        let original_name = tool.name.to_string();
-        let runtime_name = namespaced_tool_name(&server.name, &original_name);
-        let description = tool
-            .description
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("MCP 工具")
-            .to_string();
-        let parameters_schema =
-            sanitize_tool_schema(serde_json::Value::Object((*tool.input_schema).clone()));
+        let surface = McpToolSurface::new(
+            server.name.clone(),
+            tool.name.to_string(),
+            tool.description.as_deref(),
+            serde_json::Value::Object((*tool.input_schema).clone()),
+        );
 
         Self {
-            runtime_name,
-            original_name,
-            description,
-            parameters_schema,
+            surface,
             server,
             pool,
         }
@@ -164,15 +154,15 @@ impl McpToolAdapter {
 #[async_trait]
 impl AgentTool for McpToolAdapter {
     fn name(&self) -> &str {
-        &self.runtime_name
+        &self.surface.runtime_name
     }
 
     fn description(&self) -> &str {
-        &self.description
+        &self.surface.description
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        self.parameters_schema.clone()
+        self.surface.parameters_schema.clone()
     }
 
     async fn execute(
@@ -182,21 +172,12 @@ impl AgentTool for McpToolAdapter {
         _cancel: CancellationToken,
         _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let arguments = match args {
-            serde_json::Value::Null => None,
-            serde_json::Value::Object(map) => Some(map),
-            other => {
-                return Err(AgentToolError::InvalidArguments(format!(
-                    "MCP 工具参数必须是 JSON object，实际为: {}",
-                    other
-                )));
-            }
-        };
+        let arguments = normalize_args_object(args)?;
 
         let request = if let Some(arguments) = arguments {
-            CallToolRequestParams::new(self.original_name.clone()).with_arguments(arguments)
+            CallToolRequestParams::new(self.surface.tool_name.clone()).with_arguments(arguments)
         } else {
-            CallToolRequestParams::new(self.original_name.clone())
+            CallToolRequestParams::new(self.surface.tool_name.clone())
         };
 
         let call_result = self.pool.call_tool(&self.server, request).await;
@@ -204,12 +185,12 @@ impl AgentTool for McpToolAdapter {
         match call_result {
             Ok(result) => Ok(convert_call_result(
                 &self.server,
-                &self.original_name,
+                &self.surface.tool_name,
                 result,
             )),
             Err(error) => Err(AgentToolError::ExecutionFailed(format!(
                 "调用 MCP 工具失败（tool={}）: {}",
-                self.original_name, error
+                self.surface.tool_name, error
             ))),
         }
     }
@@ -256,29 +237,11 @@ pub async fn discover_mcp_tool_entries(
                 tool,
             ));
             let tool = adapter.clone() as DynAgentTool;
-            entries.push(DiscoveredMcpTool {
-                runtime_name: adapter.runtime_name.clone(),
-                server_name: server_spec.name.clone(),
-                tool_name: adapter.original_name.clone(),
-                uses_relay: false,
-                description: adapter.description.clone(),
-                parameters_schema: adapter.parameters_schema.clone(),
-                tool,
-            });
+            entries.push(build_discovered_entry(&adapter.surface, false, tool));
         }
     }
 
     Ok(entries)
-}
-
-pub fn capability_key_for_mcp_server_name(server_name: &str) -> String {
-    match agent_facing_mcp_server_name(server_name).as_str() {
-        "agentdash-relay-tools" => CAP_RELAY_MANAGEMENT.to_string(),
-        "agentdash-story-tools" => CAP_STORY_MANAGEMENT.to_string(),
-        "agentdash-task-tools" => CAP_TASK_MANAGEMENT.to_string(),
-        "agentdash-workflow-tools" => CAP_WORKFLOW_MANAGEMENT.to_string(),
-        other => format!("mcp:{other}"),
-    }
 }
 
 async fn connect_http_server(
@@ -341,85 +304,5 @@ fn parse_http_session_server(server: &SessionMcpServer) -> Option<McpHttpServerS
             url: url.clone(),
         }),
         _ => None,
-    }
-}
-
-pub fn namespaced_tool_name(server_name: &str, tool_name: &str) -> String {
-    let agent_facing_server = agent_facing_mcp_server_name(server_name);
-    format!(
-        "mcp_{}_{}",
-        sanitize_identifier(&agent_facing_server),
-        sanitize_identifier(tool_name)
-    )
-}
-
-pub fn agent_facing_mcp_server_name(server_name: &str) -> String {
-    const PLATFORM_SCOPED_PREFIXES: &[(&str, &str)] = &[
-        ("agentdash-story-tools-", "agentdash-story-tools"),
-        ("agentdash-task-tools-", "agentdash-task-tools"),
-        ("agentdash-workflow-tools-", "agentdash-workflow-tools"),
-    ];
-
-    for (prefix, stable_name) in PLATFORM_SCOPED_PREFIXES {
-        if server_name.starts_with(prefix) {
-            return (*stable_name).to_string();
-        }
-    }
-
-    server_name.to_string()
-}
-
-pub(crate) fn sanitize_identifier(input: &str) -> String {
-    let sanitized = input
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    sanitized.trim_matches('_').to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn namespaced_name_hides_platform_scope_ids() {
-        assert_eq!(
-            namespaced_tool_name("agentdash-task-tools-1234", "update_status"),
-            "mcp_agentdash_task_tools_update_status"
-        );
-        assert_eq!(
-            namespaced_tool_name("agentdash-workflow-tools-8de613e7", "get_lifecycle"),
-            "mcp_agentdash_workflow_tools_get_lifecycle"
-        );
-    }
-
-    #[test]
-    fn namespaced_name_keeps_custom_server_namespace() {
-        assert_eq!(
-            namespaced_tool_name("code-analyzer", "scan_repo"),
-            "mcp_code_analyzer_scan_repo"
-        );
-    }
-
-    #[test]
-    fn platform_mcp_server_names_map_to_capability_keys() {
-        assert_eq!(
-            capability_key_for_mcp_server_name("agentdash-workflow-tools-8de613e7"),
-            "workflow_management"
-        );
-        assert_eq!(
-            capability_key_for_mcp_server_name("agentdash-task-tools-1234"),
-            "task_management"
-        );
-        assert_eq!(
-            capability_key_for_mcp_server_name("code-analyzer"),
-            "mcp:code-analyzer"
-        );
     }
 }

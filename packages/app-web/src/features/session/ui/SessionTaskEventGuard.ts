@@ -1,1 +1,1 @@
-export { isTaskEventUpdate } from "../model/systemEventVisibility";
+export { isTaskEventUpdate } from "../model/systemEventPolicy";

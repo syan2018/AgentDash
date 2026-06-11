@@ -4,6 +4,8 @@ use agentdash_spi::MountEditCapabilities;
 use async_trait::async_trait;
 use tokio::io::AsyncWriteExt;
 
+use crate::vfs::path::normalize_mount_relative_path;
+
 const BEGIN_PATCH_MARKER: &str = "*** Begin Patch";
 const END_PATCH_MARKER: &str = "*** End Patch";
 const ADD_FILE_MARKER: &str = "*** Add File: ";
@@ -75,6 +77,81 @@ impl PatchEntry {
             PatchEntry::UpdateFile { path, .. } => *path = new_path,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatchPathTarget {
+    pub mount_id: String,
+    pub relative_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedPatchEntryTargets {
+    pub primary: PatchPathTarget,
+    pub move_target: Option<PatchPathTarget>,
+}
+
+/// Parses a patch path into its target mount and normalized mount-relative path.
+///
+/// Paths can either be explicit (`main://src/lib.rs`) or bare (`src/lib.rs`),
+/// in which case `fallback_mount_id` supplies the target mount.
+pub fn parse_patch_path_target(
+    raw: &str,
+    fallback_mount_id: &str,
+) -> Result<PatchPathTarget, String> {
+    let raw = raw.trim();
+    if let Some(pos) = raw.find("://") {
+        let mount_id = raw[..pos].trim();
+        if mount_id.is_empty() {
+            return Err("patch 路径的 mount ID 不能为空".to_string());
+        }
+        let relative = raw[pos + 3..].trim_start_matches('/');
+        return Ok(PatchPathTarget {
+            mount_id: mount_id.to_string(),
+            relative_path: normalize_mount_relative_path(relative, false)?,
+        });
+    }
+
+    let fallback_mount_id = fallback_mount_id.trim();
+    if fallback_mount_id.is_empty() {
+        return Err("patch 路径的 fallback mount ID 不能为空".to_string());
+    }
+    Ok(PatchPathTarget {
+        mount_id: fallback_mount_id.to_string(),
+        relative_path: normalize_mount_relative_path(raw, false)?,
+    })
+}
+
+pub fn normalize_patch_entry_targets(
+    entry: &mut PatchEntry,
+    fallback_mount_id: &str,
+) -> Result<NormalizedPatchEntryTargets, String> {
+    let raw_path = entry.path().to_string_lossy();
+    let primary = parse_patch_path_target(&raw_path, fallback_mount_id)?;
+    entry.set_path(PathBuf::from(&primary.relative_path));
+
+    let mut move_target = None;
+    if let PatchEntry::UpdateFile {
+        move_path: Some(target),
+        ..
+    } = entry
+    {
+        let raw_move_path = target.to_string_lossy();
+        let parsed_move = parse_patch_path_target(&raw_move_path, &primary.mount_id)?;
+        if parsed_move.mount_id != primary.mount_id {
+            return Err(format!(
+                "patch 不支持跨 mount move: {} -> {}",
+                primary.mount_id, parsed_move.mount_id
+            ));
+        }
+        *target = PathBuf::from(&parsed_move.relative_path);
+        move_target = Some(parsed_move);
+    }
+
+    Ok(NormalizedPatchEntryTargets {
+        primary,
+        move_target,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

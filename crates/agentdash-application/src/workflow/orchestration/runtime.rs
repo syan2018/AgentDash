@@ -13,6 +13,27 @@ use uuid::Uuid;
 
 pub const ROOT_ORCHESTRATION_ROLE: &str = "root";
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RootInputBinding {
+    pub node_id: String,
+    pub port: String,
+}
+
+impl RootInputBinding {
+    pub fn new(node_id: impl Into<String>, port: impl Into<String>) -> Self {
+        Self {
+            node_id: node_id.into(),
+            port: port.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OrchestrationActivationInput {
+    pub root_args: Option<Value>,
+    pub root_input_bindings: Vec<RootInputBinding>,
+}
+
 pub fn activate_root_orchestration(
     source_ref: OrchestrationSourceRef,
     plan_snapshot: OrchestrationPlanSnapshot,
@@ -25,15 +46,38 @@ pub fn activate_orchestration(
     source_ref: OrchestrationSourceRef,
     plan_snapshot: OrchestrationPlanSnapshot,
 ) -> OrchestrationInstance {
+    activate_orchestration_with_input(
+        role,
+        source_ref,
+        plan_snapshot,
+        OrchestrationActivationInput::default(),
+    )
+}
+
+pub fn activate_orchestration_with_input(
+    role: impl Into<String>,
+    source_ref: OrchestrationSourceRef,
+    plan_snapshot: OrchestrationPlanSnapshot,
+    activation_input: OrchestrationActivationInput,
+) -> OrchestrationInstance {
     let entry_node_ids = plan_snapshot.entry_node_ids.clone();
     let mut instance = OrchestrationInstance::new(role, source_ref, plan_snapshot);
-    materialize_plan_activation(&mut instance, entry_node_ids);
+    materialize_plan_activation_with_input(&mut instance, entry_node_ids, &activation_input);
     instance
 }
 
 pub fn materialize_plan_activation(
     instance: &mut OrchestrationInstance,
     ready_node_ids: Vec<String>,
+) {
+    let activation_input = OrchestrationActivationInput::default();
+    materialize_plan_activation_with_input(instance, ready_node_ids, &activation_input);
+}
+
+fn materialize_plan_activation_with_input(
+    instance: &mut OrchestrationInstance,
+    ready_node_ids: Vec<String>,
+    activation_input: &OrchestrationActivationInput,
 ) {
     let ready_set = ready_node_ids.iter().cloned().collect::<BTreeSet<_>>();
 
@@ -70,7 +114,7 @@ pub fn materialize_plan_activation(
             cache: None,
         })
         .collect();
-    materialize_root_input_bindings(&mut instance.node_tree, &instance.plan_snapshot);
+    materialize_root_input_bindings(&mut instance.node_tree, activation_input);
     instance.state_snapshot = StateExchangeSnapshot::default();
     instance.status = if instance.activation.ready_node_ids.is_empty() {
         OrchestrationStatus::Pending
@@ -82,40 +126,25 @@ pub fn materialize_plan_activation(
 
 fn materialize_root_input_bindings(
     node_tree: &mut [RuntimeNodeState],
-    plan_snapshot: &OrchestrationPlanSnapshot,
+    activation_input: &OrchestrationActivationInput,
 ) {
-    let Some(script_metadata) = plan_snapshot
-        .metadata
+    let Some(args) = activation_input
+        .root_args
         .as_ref()
-        .and_then(|metadata| metadata.get("script"))
-    else {
-        return;
-    };
-    let Some(args) = script_metadata.get("args").and_then(Value::as_object) else {
-        return;
-    };
-    let Some(bindings) = script_metadata
-        .get("root_input_bindings")
-        .and_then(Value::as_array)
+        .and_then(Value::as_object)
     else {
         return;
     };
 
-    for binding in bindings {
-        let Some(node_id) = binding.get("node_id").and_then(Value::as_str) else {
+    for binding in &activation_input.root_input_bindings {
+        let Some(value) = args.get(&binding.port).cloned() else {
             continue;
         };
-        let Some(port) = binding.get("port").and_then(Value::as_str) else {
-            continue;
-        };
-        if binding.get("source").and_then(Value::as_str) != Some("args") {
-            continue;
-        }
-        let Some(value) = args.get(port).cloned() else {
-            continue;
-        };
-        if let Some(node) = node_tree.iter_mut().find(|node| node.node_id == node_id) {
-            upsert_node_port_value(&mut node.inputs, port.to_string(), value);
+        if let Some(node) = node_tree
+            .iter_mut()
+            .find(|node| node.node_id == binding.node_id)
+        {
+            upsert_node_port_value(&mut node.inputs, binding.port.clone(), value);
         }
     }
 }
@@ -1124,6 +1153,62 @@ mod tests {
                 ("follow_up", RuntimeNodeStatus::Pending, 1),
             ]
         );
+    }
+
+    #[test]
+    fn orchestration_runtime_activation_materializes_typed_root_input() {
+        let source_ref = workflow_source();
+        let orchestration = activate_orchestration_with_input(
+            ROOT_ORCHESTRATION_ROLE,
+            source_ref.clone(),
+            plan_snapshot(source_ref),
+            OrchestrationActivationInput {
+                root_args: Some(json!({"topic": "runtime"})),
+                root_input_bindings: vec![RootInputBinding::new("entry", "topic")],
+            },
+        );
+
+        let entry = orchestration
+            .node_tree
+            .iter()
+            .find(|node| node.node_id == "entry")
+            .expect("entry node");
+        assert_eq!(
+            entry.inputs,
+            vec![NodePortValue {
+                port_key: "topic".to_string(),
+                value: json!("runtime"),
+            }]
+        );
+    }
+
+    #[test]
+    fn orchestration_runtime_default_activation_ignores_script_metadata_root_args() {
+        let source_ref = workflow_source();
+        let mut snapshot = plan_snapshot(source_ref.clone());
+        snapshot.metadata = Some(json!({
+            "script": {
+                "args": {
+                    "topic": "metadata-runtime"
+                },
+                "root_input_bindings": [
+                    {
+                        "node_id": "entry",
+                        "port": "topic",
+                        "source": "args"
+                    }
+                ]
+            }
+        }));
+
+        let orchestration = activate_root_orchestration(source_ref, snapshot);
+
+        let entry = orchestration
+            .node_tree
+            .iter()
+            .find(|node| node.node_id == "entry")
+            .expect("entry node");
+        assert!(entry.inputs.is_empty());
     }
 
     #[test]

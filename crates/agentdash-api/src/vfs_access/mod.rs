@@ -451,7 +451,7 @@ mod tests {
         assert!(listed.entries.iter().any(|e| e.path == "notes/todo.md"));
 
         let hits = service
-            .search_text(&vfs, "brief", ".", "verify", 10, None)
+            .search_text(&vfs, "brief", ".", "verify", 10, None, None)
             .await
             .expect("inline search");
         assert_eq!(hits.len(), 1);
@@ -569,6 +569,7 @@ mod tests {
                 "patched inline",
                 10,
                 Some(&overlay),
+                None,
             )
             .await
             .expect("search patched inline");

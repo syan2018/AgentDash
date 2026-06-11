@@ -1,10 +1,19 @@
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import { extractPlatformEventData, extractPlatformEventType, isRecord } from "./platformEvent";
 
-/**
- * 在会话流中显示的系统事件类型白名单。
- */
-const VISIBLE_SYSTEM_EVENT_TYPES = new Set<string>([
+export type PlatformFeedBoundary = "hard" | "soft" | "neutral";
+export type NotificationVisibility = "renderable" | "all";
+
+export interface PlatformEventPolicy {
+  eventType: string | null;
+  isTaskEvent: boolean;
+  isRenderableSystemEvent: boolean;
+  isRenderablePlatformEvent: boolean;
+  feedBoundary: PlatformFeedBoundary;
+  notificationVisibility: NotificationVisibility;
+}
+
+const RENDERABLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "executor_session_bound",
   "turn_interrupted",
   "hook_event",
@@ -85,9 +94,7 @@ function isSignificantHookEvent(data: Record<string, unknown> | null): boolean {
 
   if (typeof data.block_reason === "string" && data.block_reason.trim().length > 0) return true;
   if (data.completion != null) return true;
-  if (Array.isArray(data.injections) && data.injections.length > 0) {
-    return true;
-  }
+  if (Array.isArray(data.injections) && data.injections.length > 0) return true;
   if (Array.isArray(data.diagnostics) && data.diagnostics.some(hasMeaningfulHookDiagnostic)) {
     return true;
   }
@@ -95,28 +102,56 @@ function isSignificantHookEvent(data: Record<string, unknown> | null): boolean {
   return false;
 }
 
-export function isTaskEventUpdate(event: BackboneEvent): boolean {
-  if (event.type !== "platform") return false;
+function isContextFrameEvent(event: BackboneEvent): boolean {
+  return (
+    event.type === "platform" &&
+    event.payload.kind === "session_meta_update" &&
+    event.payload.data.key === "context_frame"
+  );
+}
+
+export function getPlatformEventPolicy(event: BackboneEvent): PlatformEventPolicy {
   const eventType = extractPlatformEventType(event);
-  return typeof eventType === "string" && eventType.startsWith("task_");
+  const isTaskEvent = typeof eventType === "string" && eventType.startsWith("task_");
+  let isRenderableSystemEvent = false;
+
+  if (event.type === "platform" && eventType && RENDERABLE_SYSTEM_EVENT_TYPES.has(eventType)) {
+    if (eventType === "hook_event") {
+      isRenderableSystemEvent = isSignificantHookEvent(extractPlatformEventData(event));
+    } else {
+      isRenderableSystemEvent = true;
+    }
+  }
+
+  const isRenderablePlatformEvent = isTaskEvent || isRenderableSystemEvent;
+  const feedBoundary: PlatformFeedBoundary = isContextFrameEvent(event)
+    ? "soft"
+    : isRenderablePlatformEvent
+      ? "hard"
+      : "neutral";
+
+  return {
+    eventType,
+    isTaskEvent,
+    isRenderableSystemEvent,
+    isRenderablePlatformEvent,
+    feedBoundary,
+    notificationVisibility: isRenderableSystemEvent ? "renderable" : "all",
+  };
+}
+
+export function isTaskEventUpdate(event: BackboneEvent): boolean {
+  return getPlatformEventPolicy(event).isTaskEvent;
 }
 
 export function isRenderableSystemEventUpdate(event: BackboneEvent): boolean {
-  if (event.type !== "platform") return false;
-  const eventType = extractPlatformEventType(event);
-  if (!eventType) return false;
-
-  if (VISIBLE_SYSTEM_EVENT_TYPES.has(eventType)) {
-    if (eventType === "hook_event") {
-      const data = extractPlatformEventData(event);
-      return isSignificantHookEvent(data);
-    }
-    return true;
-  }
-
-  return false;
+  return getPlatformEventPolicy(event).isRenderableSystemEvent;
 }
 
 export function isRenderablePlatformEvent(event: BackboneEvent): boolean {
-  return isTaskEventUpdate(event) || isRenderableSystemEventUpdate(event);
+  return getPlatformEventPolicy(event).isRenderablePlatformEvent;
+}
+
+export function shouldNotifyRenderableSystemEvent(event: BackboneEvent): boolean {
+  return getPlatformEventPolicy(event).isRenderableSystemEvent;
 }

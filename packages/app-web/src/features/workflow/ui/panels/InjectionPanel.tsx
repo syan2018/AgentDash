@@ -13,8 +13,6 @@ import { BindingEditor } from "../../binding-editor";
 
 export interface InjectionPanelProps {
   injection: WorkflowInjectionSpec;
-  /** 紧凑模式（DAG 模式下右侧栏使用）；当前不改变布局，仅为统一 prop 语义。 */
-  compact?: boolean;
   onGuidanceChange: (guidance: string | null) => void;
   onBindingChange: (index: number, patch: Partial<WorkflowContextBinding>) => void;
   onBindingAdd: () => void;
@@ -23,13 +21,11 @@ export interface InjectionPanelProps {
 
 export function InjectionPanel({
   injection,
-  compact: _compact = false,
   onGuidanceChange,
   onBindingChange,
   onBindingAdd,
   onBindingRemove,
 }: InjectionPanelProps) {
-  void _compact;
   const bindings = injection.context_bindings;
 
   return (

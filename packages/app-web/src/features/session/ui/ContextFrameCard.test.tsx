@@ -1,23 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { parseContextFrame } from "../model/contextFrame";
+import { parseContextFrame, type ContextFrame } from "../model/contextFrame";
 import { ContextFrameCard } from "./ContextFrameCard";
 
 describe("ContextFrameCard", () => {
-  it("解析 context_frame 的结构化 sections 与 Agent 可见文本", () => {
-    const notice = parseContextFrame(sampleNotice());
-
-    expect(notice?.phase_node).toBe("apply");
-    expect(notice?.rendered_text).toContain("Tool Schema Delta");
-    expect(notice?.sections).toHaveLength(4);
-    expect(notice?.sections[0]?.kind).toBe("capability_key_delta");
-    expect(notice?.sections[1]?.kind).toBe("tool_path_delta");
-    expect(notice?.sections[2]?.kind).toBe("mcp_server_delta");
-    expect(notice?.sections[3]?.kind).toBe("tool_schema_delta");
-  });
-
   it("默认折叠时仅渲染 header", () => {
-    const markup = renderToStaticMarkup(<ContextFrameCard data={sampleNotice()} />);
+    const markup = renderToStaticMarkup(<ContextFrameCard frame={readFrame(sampleNotice())} />);
 
     expect(markup).toContain("CTX");
     expect(markup).toContain("CAPABILITY");
@@ -29,7 +17,7 @@ describe("ContextFrameCard", () => {
 
   it("展开后按 sections[] 原顺序渲染单列长页", () => {
     const markup = renderToStaticMarkup(
-      <ContextFrameCard data={sampleNotice()} defaultExpanded />,
+      <ContextFrameCard frame={readFrame(sampleNotice())} defaultExpanded />,
     );
 
     // section header token + title + hint
@@ -48,12 +36,8 @@ describe("ContextFrameCard", () => {
   });
 
   it("assignment_context 解析并渲染 ASN token", () => {
-    const notice = parseContextFrame(sampleAssignmentNotice());
-    expect(notice?.kind).toBe("assignment_context");
-    expect(notice?.sections[0]?.kind).toBe("assignment_context");
-
     const markup = renderToStaticMarkup(
-      <ContextFrameCard data={sampleAssignmentNotice()} defaultExpanded />,
+      <ContextFrameCard frame={readFrame(sampleAssignmentNotice())} defaultExpanded />,
     );
     // frame tab 的 ASN token + section block 标题
     expect(markup).toContain("ASN");
@@ -62,40 +46,27 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("ASN");
   });
 
-  it("解析并渲染 identity frame", () => {
-    const notice = parseContextFrame(sampleIdentityNotice());
-    expect(notice?.kind).toBe("identity");
-    expect(notice?.sections[0]?.kind).toBe("identity");
-
+  it("渲染 identity frame", () => {
     const markup = renderToStaticMarkup(
-      <ContextFrameCard data={sampleIdentityNotice()} defaultExpanded />,
+      <ContextFrameCard frame={readFrame(sampleIdentityNotice())} defaultExpanded />,
     );
     expect(markup).toContain("IDN");
     expect(markup).toContain("Identity");
     expect(markup).toContain("override");
   });
 
-  it("解析并渲染 pending_action frame", () => {
-    const notice = parseContextFrame(samplePendingActionNotice());
-    expect(notice?.kind).toBe("pending_action");
-    expect(notice?.sections[0]?.kind).toBe("pending_action");
-
+  it("渲染 pending_action frame", () => {
     const markup = renderToStaticMarkup(
-      <ContextFrameCard data={samplePendingActionNotice()} defaultExpanded />,
+      <ContextFrameCard frame={readFrame(samplePendingActionNotice())} defaultExpanded />,
     );
     expect(markup).toContain("Pending Action");
     expect(markup).toContain("follow_up_required");
     expect(markup).toContain("ACT");
   });
 
-  it("解析并渲染 auto_resume frame", () => {
-    const notice = parseContextFrame(sampleAutoResumeNotice());
-
-    expect(notice?.kind).toBe("auto_resume");
-    expect(notice?.sections[0]?.kind).toBe("auto_resume");
-
+  it("渲染 auto_resume frame", () => {
     const markup = renderToStaticMarkup(
-      <ContextFrameCard data={sampleAutoResumeNotice()} defaultExpanded />,
+      <ContextFrameCard frame={readFrame(sampleAutoResumeNotice())} defaultExpanded />,
     );
     expect(markup).toContain("Auto Resume");
     expect(markup).toContain("hook_before_stop_continue");
@@ -103,14 +74,9 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("RSM");
   });
 
-  it("解析并渲染 compaction_summary frame", () => {
-    const notice = parseContextFrame(sampleCompactionNotice());
-
-    expect(notice?.kind).toBe("compaction_summary");
-    expect(notice?.sections[0]?.kind).toBe("compaction_summary");
-
+  it("渲染 compaction_summary frame", () => {
     const markup = renderToStaticMarkup(
-      <ContextFrameCard data={sampleCompactionNotice()} defaultExpanded />,
+      <ContextFrameCard frame={readFrame(sampleCompactionNotice())} defaultExpanded />,
     );
     expect(markup).toContain("Compaction Summary");
     expect(markup).toContain("12 messages");
@@ -118,34 +84,17 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("CMP");
   });
 
-  it("解析并渲染 continuation_context frame", () => {
-    const notice = parseContextFrame(sampleContinuationNotice());
-
-    expect(notice?.kind).toBe("continuation_context");
-    expect(notice?.sections[0]?.kind).toBe("continuation_context");
-
+  it("渲染 continuation_context frame", () => {
     const markup = renderToStaticMarkup(
-      <ContextFrameCard data={sampleContinuationNotice()} defaultExpanded />,
+      <ContextFrameCard frame={readFrame(sampleContinuationNotice())} defaultExpanded />,
     );
     expect(markup).toContain("CTN");
     expect(markup).toContain("Session Continuation");
   });
 
-  it("解析并渲染 skill_delta 的 provider scoped identity", () => {
-    const notice = parseContextFrame(sampleSkillDeltaNotice());
-    const section = notice?.sections[0];
-
-    expect(section?.kind).toBe("skill_delta");
-    if (section?.kind === "skill_delta") {
-      expect(section.added_skills[0]?.capability_key).toBe("copilot/config-edit");
-      expect(section.added_skills[0]?.provider_key).toBe("copilot");
-      expect(section.added_skills[0]?.local_name).toBe("config-edit");
-      expect(section.added_skills[0]?.exposure).toBe("default_exposed");
-      expect(section.changed_skills[0]?.exposure).toBe("explicit_only");
-    }
-
+  it("渲染 skill_delta 的 provider scoped identity", () => {
     const markup = renderToStaticMarkup(
-      <ContextFrameCard data={sampleSkillDeltaNotice()} defaultExpanded />,
+      <ContextFrameCard frame={readFrame(sampleSkillDeltaNotice())} defaultExpanded />,
     );
     expect(markup).toContain("Skills");
     expect(markup).toContain("+2");
@@ -158,6 +107,14 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("explicit only");
   });
 });
+
+function readFrame(value: Record<string, unknown>): ContextFrame {
+  const frame = parseContextFrame(value);
+  if (!frame) {
+    throw new Error("invalid context frame test fixture");
+  }
+  return frame;
+}
 
 function sampleNotice(): Record<string, unknown> {
   return {

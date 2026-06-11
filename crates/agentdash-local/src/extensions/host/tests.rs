@@ -275,6 +275,35 @@ async fn runtime_invoke_requires_cross_extension_permission() {
 }
 
 #[tokio::test]
+async fn runtime_invoke_reports_unloaded_action_without_host_api_fallback() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package_with_permissions(
+        temp.path(),
+        unloaded_runtime_invoke_bundle(),
+        json!([]),
+        json!(["runtime.invoke:provider.missing"]),
+    )
+    .await
+    .expect("package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect("activate");
+
+    let err = manager
+        .invoke_action("local-hello.profile", json!({ "source": "runtime" }))
+        .await
+        .expect_err("unloaded runtime action");
+
+    assert!(
+        err.to_string()
+            .contains("runtime action is not loaded in current extension host: provider.missing")
+    );
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
 async fn runtime_invoke_limits_recursive_calls() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_package(temp.path(), recursive_runtime_bundle(), false, false)
@@ -295,6 +324,29 @@ async fn runtime_invoke_limits_recursive_calls() {
         err.to_string()
             .contains("extension invocation depth exceeded")
     );
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
+async fn protocol_channel_invoke_reports_unloaded_method_without_host_api_fallback() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package(temp.path(), unloaded_channel_invoke_bundle(), false, false)
+        .await
+        .expect("package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect("activate");
+
+    let err = manager
+        .invoke_action("local-hello.profile", json!({ "source": "channel" }))
+        .await
+        .expect_err("unloaded channel method");
+
+    assert!(err.to_string().contains(
+        "extension channel method is not loaded in current extension host: provider.api.echo"
+    ));
     manager.stop().await.expect("stop");
 }
 
@@ -947,6 +999,42 @@ export default {
       description: "Recursive runtime invoke",
       async invoke() {
         return await ctx.api.runtime.invoke("local-hello.profile", {});
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn unloaded_runtime_invoke_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.runtime.registerAction({
+      action_key: "local-hello.profile",
+      kind: "session_runtime",
+      description: "Invoke unloaded runtime action",
+      async invoke(input) {
+        return await ctx.api.runtime.invoke("provider.missing", input);
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn unloaded_channel_invoke_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.runtime.registerAction({
+      action_key: "local-hello.profile",
+      kind: "session_runtime",
+      description: "Invoke unloaded channel method",
+      async invoke(input) {
+        return await ctx.api.channels.invoke("provider.api", "echo", input);
       },
     });
   },

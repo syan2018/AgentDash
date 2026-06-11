@@ -27,6 +27,11 @@ interface McpProbeState {
   /** 同一 key 的进行中请求；用于去重并发探测。 */
   inflight: Record<string, Promise<ProbeMcpPresetResponse>>;
   getCached: (projectId: string, transport: McpTransportConfig) => ProbeMcpPresetResponse | null;
+  /** 先读同 transport 缓存；未命中时再触发去重 probe。 */
+  getOrRefresh: (
+    projectId: string,
+    transport: McpTransportConfig,
+  ) => Promise<ProbeMcpPresetResponse>;
   /** 触发一次 probe 并把结果写入缓存。同 key 并发请求会去重。 */
   refresh: (projectId: string, transport: McpTransportConfig) => Promise<ProbeMcpPresetResponse>;
   invalidate: (projectId: string, transport?: McpTransportConfig) => void;
@@ -71,6 +76,12 @@ export const useMcpProbeStore = create<McpProbeState>((set, get) => ({
   getCached: (projectId, transport) => {
     const key = buildKey(projectId, transport);
     return get().cache[key]?.result ?? null;
+  },
+
+  getOrRefresh: (projectId, transport) => {
+    const cached = get().getCached(projectId, transport);
+    if (cached) return Promise.resolve(cached);
+    return get().refresh(projectId, transport);
   },
 
   refresh: (projectId, transport) => {

@@ -13,10 +13,13 @@ use agentdash_application_ports::mcp_discovery::{
 use agentdash_spi::{ConnectorError, McpRelayProvider};
 use async_trait::async_trait;
 
+mod common;
 pub mod direct;
+pub mod naming;
 pub mod relay;
 
-pub use direct::{discover_mcp_tool_entries, discover_mcp_tools, namespaced_tool_name};
+pub use direct::{discover_mcp_tool_entries, discover_mcp_tools};
+pub use naming::namespaced_tool_name;
 pub use relay::{discover_relay_mcp_tool_entries, discover_relay_mcp_tools};
 
 #[derive(Clone, Default)]

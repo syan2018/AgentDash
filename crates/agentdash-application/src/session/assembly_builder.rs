@@ -126,11 +126,11 @@ impl SessionAssemblyBuilder {
         mut self,
         parent_vfs: Option<&Vfs>,
         mode: CompanionSliceMode,
-    ) -> Self {
+    ) -> Result<Self, String> {
         use crate::companion::tools::build_companion_execution_slice;
-        let slice = build_companion_execution_slice(parent_vfs, &[], mode);
+        let slice = build_companion_execution_slice(parent_vfs, &[], mode)?;
         self.vfs = slice.vfs;
-        self
+        Ok(self)
     }
 
     /// 在已有 VFS 上追加 lifecycle mount（story step activation 场景）。
@@ -281,10 +281,10 @@ impl SessionAssemblyBuilder {
         mode: CompanionSliceMode,
         executor_config: AgentConfig,
         dispatch_prompt: String,
-    ) -> Self {
+    ) -> Result<Self, String> {
         use crate::companion::tools::build_companion_execution_slice;
 
-        let slice = build_companion_execution_slice(parent_vfs, parent_mcp_servers, mode);
+        let slice = build_companion_execution_slice(parent_vfs, parent_mcp_servers, mode)?;
         let flow_caps = CapabilityResolver::resolve_companion_caps(mode);
 
         let input = agentdash_agent_protocol::text_user_input_blocks(dispatch_prompt);
@@ -292,7 +292,7 @@ impl SessionAssemblyBuilder {
         let sliced_bundle =
             parent_context_bundle.map(|bundle| slice_companion_bundle(bundle, mode));
 
-        Self {
+        Ok(Self {
             vfs: slice.vfs,
             capability_state: Some(flow_caps),
             mcp_servers: slice.mcp_servers,
@@ -302,7 +302,7 @@ impl SessionAssemblyBuilder {
             workspace_defaults: None,
             // 保留调用方已注入的 env 不被 companion slice 清空
             env: self.env,
-        }
+        })
     }
 
     /// 一步完成 lifecycle node 装配（VFS + 能力 + MCP + prompt）。

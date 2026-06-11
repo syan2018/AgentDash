@@ -22,21 +22,14 @@ pub fn resolve_uri_path(vfs: &Vfs, path: &str) -> Result<ResourceRef, String> {
         return parse_mount_uri(trimmed, vfs);
     }
 
-    if let Some(default_mount_id) = vfs.default_mount_id.as_ref()
-        && vfs.mounts.iter().any(|mount| &mount.id == default_mount_id)
-    {
-        return Ok(ResourceRef {
-            mount_id: default_mount_id.clone(),
-            path: trimmed.to_string(),
+    let has_default_mount = vfs
+        .default_mount_id
+        .as_ref()
+        .is_some_and(|default_mount_id| {
+            vfs.mounts.iter().any(|mount| &mount.id == default_mount_id)
         });
-    }
-
-    if vfs.mounts.len() == 1 {
-        let mount_id = vfs.mounts[0].id.clone();
-        return Ok(ResourceRef {
-            mount_id,
-            path: trimmed.to_string(),
-        });
+    if has_default_mount || vfs.mounts.len() == 1 {
+        return parse_mount_uri(trimmed, vfs);
     }
 
     Err(format!(
@@ -98,7 +91,7 @@ mod tests {
     }
 
     #[test]
-    fn unqualified_path_uses_default_mount_when_available() {
+    fn resolve_uri_path_unqualified_uses_default_mount_when_available() {
         let vfs = Vfs {
             mounts: vec![mount("main"), mount("docs")],
             default_mount_id: Some("main".to_string()),
@@ -110,11 +103,57 @@ mod tests {
         let resolved = resolve_uri_path(&vfs, ".").expect("resolve");
 
         assert_eq!(resolved.mount_id, "main");
-        assert_eq!(resolved.path, ".");
+        assert_eq!(resolved.path, "");
     }
 
     #[test]
-    fn unqualified_path_requires_prefix_without_default_or_single_mount() {
+    fn resolve_uri_path_unqualified_normalizes_through_default_mount() {
+        let vfs = Vfs {
+            mounts: vec![mount("main"), mount("docs")],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+
+        let resolved = resolve_uri_path(&vfs, "./src//lib.rs").expect("resolve");
+
+        assert_eq!(resolved.mount_id, "main");
+        assert_eq!(resolved.path, "src/lib.rs");
+    }
+
+    #[test]
+    fn resolve_uri_path_unqualified_rejects_parent_escape() {
+        let vfs = Vfs {
+            mounts: vec![mount("main"), mount("docs")],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+
+        let err = resolve_uri_path(&vfs, "../secret").expect_err("escape rejected");
+
+        assert!(err.contains("越界"));
+    }
+
+    #[test]
+    fn resolve_uri_path_unqualified_rejects_windows_absolute_path() {
+        let vfs = Vfs {
+            mounts: vec![mount("main"), mount("docs")],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+
+        let err = resolve_uri_path(&vfs, "C:/repo/file.rs").expect_err("absolute path rejected");
+
+        assert!(err.contains("相对于 mount 根目录"));
+    }
+
+    #[test]
+    fn resolve_uri_path_unqualified_requires_prefix_without_default_or_single_mount() {
         let vfs = Vfs {
             mounts: vec![mount("main"), mount("docs")],
             default_mount_id: None,

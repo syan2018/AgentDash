@@ -9,28 +9,21 @@
 
 import { useState } from "react";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import { extractPlatformEventData, isRecord } from "../model/platformEvent";
-import { EventFullCard } from "./EventCards";
 import { respondCompanionRequest } from "../../../services/executor";
+import {
+  buildCapabilityGrantSubmission,
+  buildCompanionChoiceSubmission,
+  buildCompanionRequestDetailLines,
+  parseCompanionRequest,
+} from "../model/companionRequestViewModel";
+import { EventFullCard } from "./EventCards";
 
 export interface SessionCompanionRequestCardProps {
   event: BackboneEvent;
 }
 
 export function SessionCompanionRequestCard({ event }: SessionCompanionRequestCardProps) {
-  const data = extractPlatformEventData(event);
-  const payload = isRecord(data?.payload) ? data.payload : null;
-
-  const requestId = typeof data?.request_id === "string" ? data.request_id : null;
-  const gateId = stringField(data, "gate_id") ?? requestId;
-  const payloadType = stringField(data, "payload_type") ?? stringField(payload, "type");
-  const uiHint = stringField(data, "ui_hint");
-  const prompt = stringField(data, "prompt") ?? stringField(payload, "prompt") ?? "Agent 请求你回应";
-  const options = stringArrayField(data, "options");
-  const wait = data?.wait === true;
-  const requestedPaths = stringArrayField(payload, "requested_paths");
-  const isCapabilityGrant =
-    payloadType === "capability_grant_request" || uiHint === "capability_grant_card";
+  const request = parseCompanionRequest(event);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [responded, setResponded] = useState<string | null>(null);
@@ -38,11 +31,11 @@ export function SessionCompanionRequestCard({ event }: SessionCompanionRequestCa
   const [error, setError] = useState<string | null>(null);
 
   const submitPayload = async (responsePayload: Record<string, unknown>, label: string) => {
-    if (!gateId || isSubmitting) return;
+    if (!request.gateId || isSubmitting) return;
     setError(null);
     setIsSubmitting(true);
     try {
-      await respondCompanionRequest(gateId, responsePayload);
+      await respondCompanionRequest(request.gateId, responsePayload);
       setResponded(label);
     } catch (err) {
       setError(err instanceof Error ? err.message : "回应失败");
@@ -52,28 +45,13 @@ export function SessionCompanionRequestCard({ event }: SessionCompanionRequestCa
   };
 
   const handleRespond = async (choice: string) => {
-    await submitPayload(
-      {
-        type: "decision",
-        status: "approved",
-        choice,
-        summary: choice,
-      },
-      choice,
-    );
+    const submission = buildCompanionChoiceSubmission(choice);
+    await submitPayload(submission.payload, submission.label);
   };
 
   const handleCapabilityGrant = async (approved: boolean) => {
-    const status = approved ? "approved" : "rejected";
-    await submitPayload(
-      {
-        type: "capability_grant_result",
-        status,
-        summary: approved ? "用户已批准临时能力申请" : "用户已拒绝临时能力申请",
-        ...(approved ? { granted_paths: requestedPaths } : { rejected_paths: requestedPaths }),
-      },
-      approved ? "已批准" : "已拒绝",
-    );
+    const submission = buildCapabilityGrantSubmission(request, approved);
+    await submitPayload(submission.payload, submission.label);
   };
 
   const handleSubmitCustom = async () => {
@@ -82,26 +60,7 @@ export function SessionCompanionRequestCard({ event }: SessionCompanionRequestCa
     await handleRespond(text);
   };
 
-  const detailLines: string[] = [];
-  if (wait) {
-    detailLines.push(
-      responded
-        ? "你的回应已经提交，session 已继续执行"
-        : "Agent 正在等待你的回应（session 已挂起）",
-    );
-  }
-  if (isCapabilityGrant) {
-    const scope = stringField(payload, "scope");
-    const reason = stringField(payload, "reason");
-    const ttl = numberField(payload, "ttl_seconds");
-    if (requestedPaths.length > 0) detailLines.push(`请求能力：${requestedPaths.join(", ")}`);
-    if (reason) detailLines.push(`理由：${reason}`);
-    if (scope) detailLines.push(`范围：${scope}${ttl ? `，TTL ${ttl} 秒` : ""}`);
-  }
-
-  const badge = wait
-    ? "border-warning/25 bg-warning/10 text-warning"
-    : "border-primary/25 bg-primary/8 text-primary";
+  const detailLines = buildCompanionRequestDetailLines(request, responded);
 
   const bodyExtra = (
     <div className="space-y-2.5">
@@ -111,7 +70,7 @@ export function SessionCompanionRequestCard({ event }: SessionCompanionRequestCa
         </div>
       ) : (
         <>
-          {isCapabilityGrant ? (
+          {request.isCapabilityGrant ? (
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -130,9 +89,9 @@ export function SessionCompanionRequestCard({ event }: SessionCompanionRequestCa
                 {isSubmitting ? "处理中..." : "拒绝"}
               </button>
             </div>
-          ) : options.length > 0 ? (
+          ) : request.options.length > 0 ? (
             <div className="flex flex-wrap gap-2">
-              {options.map((option) => (
+              {request.options.map((option) => (
                 <button
                   key={option}
                   type="button"
@@ -177,32 +136,12 @@ export function SessionCompanionRequestCard({ event }: SessionCompanionRequestCa
 
   return (
     <EventFullCard
-      badgeToken={isCapabilityGrant ? "能力申请" : wait ? "等待回应" : "请求"}
-      badgeClass={badge}
-      message={prompt}
+      badgeToken={request.badgeToken}
+      badgeClass={request.badgeClass}
+      message={request.prompt}
       detailLines={detailLines}
       bodyExtra={bodyExtra}
-      debugChips={[
-        ...(requestId ? [`request: ${requestId.slice(0, 12)}`] : []),
-        ...(gateId && gateId !== requestId ? [`gate: ${gateId.slice(0, 12)}`] : []),
-        ...(payloadType ? [`payload: ${payloadType}`] : []),
-      ]}
+      debugChips={request.debugChips}
     />
   );
-}
-
-function stringField(record: Record<string, unknown> | null | undefined, key: string): string | null {
-  const value = record?.[key];
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-function numberField(record: Record<string, unknown> | null | undefined, key: string): number | null {
-  const value = record?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function stringArrayField(record: Record<string, unknown> | null | undefined, key: string): string[] {
-  const value = record?.[key];
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }

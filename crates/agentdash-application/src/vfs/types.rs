@@ -3,6 +3,44 @@ pub use agentdash_spi::platform::mount::{
     ListResult, ReadResult, RuntimeFileEntry,
 };
 
+pub const RUNTIME_FILE_CONTENT_KIND_ATTR: &str = "content_kind";
+pub const RUNTIME_FILE_MIME_TYPE_ATTR: &str = "mime_type";
+pub const RUNTIME_FILE_CONTENT_KIND_TEXT: &str = "text";
+pub const RUNTIME_FILE_CONTENT_KIND_BINARY: &str = "binary";
+
+pub fn runtime_entry_content_kind(entry: &RuntimeFileEntry) -> Option<&str> {
+    entry
+        .attributes
+        .as_ref()
+        .and_then(|attrs| attrs.get(RUNTIME_FILE_CONTENT_KIND_ATTR))
+        .and_then(|value| value.as_str())
+}
+
+pub fn runtime_entry_mime_type(entry: &RuntimeFileEntry) -> Option<&str> {
+    entry
+        .attributes
+        .as_ref()
+        .and_then(|attrs| attrs.get(RUNTIME_FILE_MIME_TYPE_ATTR))
+        .and_then(|value| value.as_str())
+}
+
+pub fn runtime_entry_is_binary(entry: &RuntimeFileEntry) -> bool {
+    runtime_entry_content_kind(entry) == Some(RUNTIME_FILE_CONTENT_KIND_BINARY)
+}
+
+pub fn runtime_text_file_attributes() -> serde_json::Map<String, serde_json::Value> {
+    let mut attrs = serde_json::Map::new();
+    attrs.insert(
+        RUNTIME_FILE_CONTENT_KIND_ATTR.to_string(),
+        serde_json::Value::String(RUNTIME_FILE_CONTENT_KIND_TEXT.to_string()),
+    );
+    attrs.insert(
+        RUNTIME_FILE_MIME_TYPE_ATTR.to_string(),
+        serde_json::Value::String("text/plain; charset=utf-8".to_string()),
+    );
+    attrs
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceRef {
     pub mount_id: String,

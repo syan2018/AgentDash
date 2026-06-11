@@ -63,6 +63,7 @@ import type {
   ContextUsageSource,
 } from "../../../generated/backbone-protocol";
 import type { SessionEventResponse } from "../../../generated/session-contracts";
+import type { ContextFrame } from "./contextFrame";
 import { resolveKind } from "./threadItemKind";
 
 type JsonRecord = Record<string, unknown>;
@@ -281,6 +282,8 @@ export interface SessionDisplayEntry {
   isPendingApproval?: boolean;
   /** delta 累积后的文本（用于 agent_message_delta / reasoning_text_delta 等） */
   accumulatedText?: string;
+  /** model 层解析后的 context frame，供 UI 直接渲染。 */
+  contextFrame?: ContextFrame;
 }
 
 /** 工具调用聚合状态 */

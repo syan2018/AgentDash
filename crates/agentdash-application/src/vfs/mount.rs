@@ -252,6 +252,7 @@ pub fn workspace_mount(workspace: &Workspace) -> Result<Mount, String> {
             "workspace_identity_kind": workspace.identity_kind,
             "workspace_identity_payload": workspace.identity_payload,
             "workspace_binding_id": binding.id,
+            "workspace_detected_facts": binding.detected_facts.clone(),
         }),
     })
 }
@@ -626,6 +627,48 @@ mod tests {
             "external_docs".to_string(),
             "knowledge".to_string(),
         )
+    }
+
+    #[test]
+    fn workspace_mount_metadata_includes_selected_binding_detected_facts() {
+        let project_id = Uuid::new_v4();
+        let mut workspace = Workspace::new(
+            project_id,
+            "p4 workspace".to_string(),
+            agentdash_domain::workspace::WorkspaceIdentityKind::P4Workspace,
+            serde_json::json!({ "client_name": "p4-client-main" }),
+            agentdash_domain::workspace::WorkspaceResolutionPolicy::PreferDefaultBinding,
+        );
+        let mut binding = WorkspaceBinding::new(
+            workspace.id,
+            "backend-1".to_string(),
+            "main://workspace".to_string(),
+            serde_json::json!({
+                "p4": {
+                    "client_name": "p4-client-main",
+                    "workspace_root": "F:/work/main"
+                }
+            }),
+        );
+        binding.status = agentdash_domain::workspace::WorkspaceBindingStatus::Ready;
+        workspace.set_bindings(vec![binding]);
+
+        let mount = workspace_mount(&workspace).expect("workspace mount");
+
+        assert_eq!(
+            mount
+                .metadata
+                .pointer("/workspace_detected_facts/p4/client_name")
+                .and_then(|value| value.as_str()),
+            Some("p4-client-main")
+        );
+        assert_eq!(
+            mount
+                .metadata
+                .pointer("/workspace_detected_facts/p4/workspace_root")
+                .and_then(|value| value.as_str()),
+            Some("F:/work/main")
+        );
     }
 
     #[test]

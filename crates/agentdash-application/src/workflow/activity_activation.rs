@@ -151,6 +151,7 @@ pub fn activate_activity_with_platform(
             presets: input.available_presets.clone(),
             agent_servers: input.agent_mcp_servers.clone(),
         },
+        mcp_runtime_context: None,
         capability_context: None,
     };
     let mut cap_output = CapabilityResolver::resolve(&cap_input, platform);

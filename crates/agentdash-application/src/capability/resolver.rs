@@ -81,13 +81,15 @@ pub struct CapabilityContext {
 
 /// Resolver 输入 — 纯粹的 session 上下文描述。
 #[derive(Debug, Clone)]
-pub struct CapabilityResolverInput {
+pub struct CapabilityResolverInput<'a> {
     /// session 归属上下文（决定 visibility 基线 + platform MCP scope）。
     pub owner_ctx: CapabilityScopeCtx,
     /// 各来源按 directive 应用顺序排列的 contributions；授权语义由 `source` 显式决定。
     pub contributions: Vec<ContextContributions>,
     /// MCP server 候选数据源。
     pub mcp_candidates: McpCandidates,
+    /// session final VFS 派生的 MCP runtime binding 上下文。
+    pub mcp_runtime_context: Option<crate::mcp_preset::SessionRuntimeMcpContext<'a>>,
     /// LifecycleSubjectAssociation-based 解析上下文（可选，新路径）。
     #[allow(dead_code)]
     pub capability_context: Option<CapabilityContext>,
@@ -209,9 +211,19 @@ impl CapabilityResolver {
     /// 3. 对全部 directives 执行 slot 归约，对 baseline 做覆盖
     /// 4. 解析自定义 MCP → 映射到 cluster / platform MCP scope
     pub fn resolve(
-        input: &CapabilityResolverInput,
+        input: &CapabilityResolverInput<'_>,
         platform: &PlatformConfig,
     ) -> CapabilityResolverOutput {
+        Self::resolve_checked(input, platform).unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "CapabilityResolver resolve 降级为非严格 MCP 解析");
+            CapabilityState::default()
+        })
+    }
+
+    pub fn resolve_checked(
+        input: &CapabilityResolverInput<'_>,
+        platform: &PlatformConfig,
+    ) -> Result<CapabilityResolverOutput, String> {
         let merged = merge_contributions(&input.owner_ctx, &input.contributions);
 
         // baseline：只包含 well-known key 的 agent-level 能力
@@ -250,8 +262,12 @@ impl CapabilityResolver {
                         if let Some(preset) = input.mcp_candidates.presets.get(&server_name) {
                             effective_caps.insert(cap.clone());
                             if seen_custom_mcp_names.insert(server_name.clone()) {
-                                resolved_mcp_servers
-                                    .push(crate::mcp_preset::preset_to_session_mcp_server(preset));
+                                let server = crate::mcp_preset::resolve_preset_mcp_server(
+                                    preset,
+                                    input.mcp_runtime_context.as_ref(),
+                                )
+                                .map_err(|error| error.to_string())?;
+                                resolved_mcp_servers.push(server);
                             }
                         } else if let Some(agent_entry) = input
                             .mcp_candidates
@@ -304,7 +320,7 @@ impl CapabilityResolver {
             agentdash_spi::CompanionDimension::default()
         };
 
-        CapabilityState {
+        Ok(CapabilityState {
             tool: agentdash_spi::ToolDimension {
                 capabilities: effective_caps.clone(),
                 enabled_clusters,
@@ -313,7 +329,7 @@ impl CapabilityResolver {
             },
             companion,
             ..Default::default()
-        }
+        })
     }
 
     /// resolve 后对 CapabilityState 施加 companion slice 裁剪。
@@ -476,6 +492,7 @@ fn build_platform_mcp_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use uuid::Uuid;
 
     fn test_session_mcp(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {
@@ -495,13 +512,42 @@ mod tests {
         }
     }
 
-    fn base_input() -> CapabilityResolverInput {
+    fn test_runtime_vfs() -> agentdash_spi::Vfs {
+        agentdash_spi::Vfs {
+            mounts: vec![agentdash_spi::Mount {
+                id: "main".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "backend-1".to_string(),
+                root_ref: "main://workspace".to_string(),
+                capabilities: vec![],
+                default_write: false,
+                display_name: "Workspace".to_string(),
+                metadata: json!({
+                    "workspace_id": "workspace-1",
+                    "workspace_binding_id": "binding-1",
+                    "workspace_identity_payload": {},
+                    "workspace_detected_facts": {
+                        "p4": {
+                            "client_name": "p4-client-main"
+                        }
+                    }
+                }),
+            }],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: vec![],
+        }
+    }
+
+    fn base_input() -> CapabilityResolverInput<'static> {
         CapabilityResolverInput {
             owner_ctx: CapabilityScopeCtx::Project {
                 project_id: Uuid::new_v4(),
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            mcp_runtime_context: None,
             capability_context: None,
         }
     }
@@ -611,6 +657,7 @@ mod tests {
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            mcp_runtime_context: None,
             capability_context: None,
         };
 
@@ -635,6 +682,7 @@ mod tests {
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            mcp_runtime_context: None,
             capability_context: None,
         };
 
@@ -793,6 +841,65 @@ mod tests {
             }
             other => panic!("期望 Http transport, 实际: {other:?}"),
         }
+    }
+
+    #[test]
+    fn workflow_mcp_capability_resolves_preset_with_runtime_context() {
+        use agentdash_domain::mcp_preset::{
+            McpPreset, McpRoutePolicy, McpRuntimeBindingConfig, McpRuntimeBindingRule,
+            McpRuntimeBindingSource, McpRuntimeBindingTarget, McpTransportConfig,
+        };
+
+        let vfs = test_runtime_vfs();
+        let runtime_context = crate::mcp_preset::SessionRuntimeMcpContext { vfs: Some(&vfs) };
+        let mut input = base_input();
+        input.mcp_runtime_context = Some(runtime_context);
+        with_workflow_directives(
+            &mut input,
+            vec![ToolCapabilityDirective::add_simple("mcp:p4_local")],
+            true,
+        );
+        input.mcp_candidates.presets.insert(
+            "p4_local".to_string(),
+            McpPreset::new_user(
+                Uuid::new_v4(),
+                "p4_local",
+                "P4 Local",
+                None,
+                McpTransportConfig::Http {
+                    url: "http://127.0.0.1:7357/mcp".to_string(),
+                    headers: vec![],
+                },
+                McpRoutePolicy::Direct,
+            )
+            .with_runtime_binding(Some(McpRuntimeBindingConfig {
+                mount_id: None,
+                bindings: vec![McpRuntimeBindingRule {
+                    source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                        path: vec!["p4".to_string(), "client_name".to_string()],
+                    },
+                    target: McpRuntimeBindingTarget::HttpQuery {
+                        name: "p4_client".to_string(),
+                    },
+                    required: true,
+                }],
+            })),
+        );
+
+        let output =
+            CapabilityResolver::resolve_checked(&input, &test_platform()).expect("resolved");
+        let server = state_mcp_server(&output, "p4_local").expect("应注入 p4_local");
+        let agentdash_spi::McpTransportConfig::Http { url, .. } = &server.transport else {
+            panic!("expected http transport");
+        };
+        let parsed = url::Url::parse(url).expect("resolved url");
+        assert_eq!(
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "p4_client")
+                .map(|(_, value)| value.into_owned()),
+            Some("p4-client-main".to_string())
+        );
     }
 
     /// Preset 与 inline agent mcp_server 同名时以 Preset 为准（不重复注入）。
@@ -1075,6 +1182,7 @@ mod tests {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            mcp_runtime_context: None,
             capability_context: None,
         };
 
@@ -1113,6 +1221,7 @@ mod tests {
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            mcp_runtime_context: None,
             capability_context: None,
         };
 
@@ -1155,6 +1264,7 @@ mod tests {
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            mcp_runtime_context: None,
             capability_context: None,
         };
 

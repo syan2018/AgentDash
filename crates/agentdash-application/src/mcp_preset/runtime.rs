@@ -22,19 +22,6 @@ pub struct SessionRuntimeMcpContext<'a> {
     pub vfs: Option<&'a Vfs>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct SessionRuntimeMcpContextOwned {
-    pub vfs: Option<Vfs>,
-}
-
-impl SessionRuntimeMcpContextOwned {
-    pub fn as_ref(&self) -> SessionRuntimeMcpContext<'_> {
-        SessionRuntimeMcpContext {
-            vfs: self.vfs.as_ref(),
-        }
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum McpRuntimeBindingError {
     #[error("MCP preset `{preset_key}` runtime_binding 需要 session context")]
@@ -404,4 +391,193 @@ pub async fn resolve_preset_mcp_presets(
     }
 
     Ok(selected_presets)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::mcp_preset::{McpRoutePolicy, McpTransportConfig};
+    use serde_json::json;
+
+    fn test_vfs() -> Vfs {
+        Vfs {
+            mounts: vec![agentdash_spi::Mount {
+                id: "main".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "backend-1".to_string(),
+                root_ref: "main://workspace".to_string(),
+                capabilities: vec![],
+                default_write: false,
+                display_name: "Workspace".to_string(),
+                metadata: json!({
+                    "workspace_id": "workspace-1",
+                    "workspace_binding_id": "binding-1",
+                    "workspace_identity_payload": {
+                        "kind": "p4_workspace",
+                        "name": "identity-main"
+                    },
+                    "workspace_detected_facts": {
+                        "p4": {
+                            "client_name": "p4-client-main",
+                            "server_address": "ssl:p4.example:1666",
+                            "stream": "//stream/main",
+                            "workspace_root": "F:/work/main",
+                            "user_name": "dev-user"
+                        }
+                    }
+                }),
+            }],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: vec![],
+        }
+    }
+
+    fn runtime_context(vfs: &Vfs) -> SessionRuntimeMcpContext<'_> {
+        SessionRuntimeMcpContext { vfs: Some(vfs) }
+    }
+
+    fn http_preset(binding: McpRuntimeBindingConfig) -> McpPreset {
+        McpPreset::new_user(
+            Uuid::new_v4(),
+            "p4-local",
+            "P4 Local",
+            None,
+            McpTransportConfig::Http {
+                url: "http://127.0.0.1:7357/mcp?p4_client=old".to_string(),
+                headers: vec![],
+            },
+            McpRoutePolicy::Direct,
+        )
+        .with_runtime_binding(Some(binding))
+    }
+
+    #[test]
+    fn runtime_binding_applies_http_query_and_header() {
+        let vfs = test_vfs();
+        let context = runtime_context(&vfs);
+        let preset = http_preset(McpRuntimeBindingConfig {
+            mount_id: None,
+            bindings: vec![
+                McpRuntimeBindingRule {
+                    source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                        path: vec!["p4".to_string(), "client_name".to_string()],
+                    },
+                    target: McpRuntimeBindingTarget::HttpQuery {
+                        name: "p4_client".to_string(),
+                    },
+                    required: true,
+                },
+                McpRuntimeBindingRule {
+                    source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                        path: vec!["p4".to_string(), "workspace_root".to_string()],
+                    },
+                    target: McpRuntimeBindingTarget::HttpHeader {
+                        name: "x-workspace-root".to_string(),
+                    },
+                    required: true,
+                },
+            ],
+        });
+
+        let server =
+            resolve_preset_mcp_server(&preset, Some(&context)).expect("runtime binding resolves");
+
+        let McpTransportConfig::Http { url, headers } = server.transport else {
+            panic!("expected http transport");
+        };
+        let parsed = url::Url::parse(&url).expect("resolved url");
+        assert_eq!(
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "p4_client")
+                .map(|(_, value)| value.into_owned()),
+            Some("p4-client-main".to_string())
+        );
+        assert_eq!(
+            headers
+                .iter()
+                .find(|header| header.name == "x-workspace-root")
+                .map(|header| header.value.as_str()),
+            Some("F:/work/main")
+        );
+    }
+
+    #[test]
+    fn runtime_binding_applies_stdio_env_and_cwd() {
+        let vfs = test_vfs();
+        let context = runtime_context(&vfs);
+        let preset = McpPreset::new_user(
+            Uuid::new_v4(),
+            "p4-stdio",
+            "P4 Stdio",
+            None,
+            McpTransportConfig::Stdio {
+                command: "p4-mcp".to_string(),
+                args: vec![],
+                env: vec![],
+                cwd: None,
+            },
+            McpRoutePolicy::Direct,
+        )
+        .with_runtime_binding(Some(McpRuntimeBindingConfig {
+            mount_id: None,
+            bindings: vec![
+                McpRuntimeBindingRule {
+                    source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                        path: vec!["p4".to_string(), "client_name".to_string()],
+                    },
+                    target: McpRuntimeBindingTarget::StdioEnv {
+                        name: "P4CLIENT".to_string(),
+                    },
+                    required: true,
+                },
+                McpRuntimeBindingRule {
+                    source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                        path: vec!["p4".to_string(), "workspace_root".to_string()],
+                    },
+                    target: McpRuntimeBindingTarget::StdioCwd,
+                    required: true,
+                },
+            ],
+        }));
+
+        let server =
+            resolve_preset_mcp_server(&preset, Some(&context)).expect("runtime binding resolves");
+
+        let McpTransportConfig::Stdio { env, cwd, .. } = server.transport else {
+            panic!("expected stdio transport");
+        };
+        assert_eq!(
+            env.iter()
+                .find(|var| var.name == "P4CLIENT")
+                .map(|var| var.value.as_str()),
+            Some("p4-client-main")
+        );
+        assert_eq!(cwd.as_deref(), Some("F:/work/main"));
+    }
+
+    #[test]
+    fn missing_required_runtime_source_fails_with_diagnostic() {
+        let vfs = test_vfs();
+        let context = runtime_context(&vfs);
+        let preset = http_preset(McpRuntimeBindingConfig {
+            mount_id: None,
+            bindings: vec![McpRuntimeBindingRule {
+                source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                    path: vec!["p4".to_string(), "missing".to_string()],
+                },
+                target: McpRuntimeBindingTarget::HttpQuery {
+                    name: "p4_missing".to_string(),
+                },
+                required: true,
+            }],
+        });
+
+        let error = resolve_preset_mcp_server(&preset, Some(&context)).expect_err("must fail");
+        let message = error.to_string();
+        assert!(message.contains("p4-local"));
+        assert!(message.contains("workspace.detected_facts.p4.missing"));
+    }
 }

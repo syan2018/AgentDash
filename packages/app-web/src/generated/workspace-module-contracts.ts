@@ -4,6 +4,11 @@
 import type { JsonValue } from "./common-contracts";
 
 /**
+ * 宿主拥有的 Canvas module operation。
+ */
+export type WorkspaceModuleCanvasHostAction = "bind_data";
+
+/**
  * `describe` 返回的完整 descriptor。
  */
 export type WorkspaceModuleDescriptor = { summary: WorkspaceModuleSummary, ui_entries: Array<WorkspaceModuleUiEntry>, operations: Array<WorkspaceModuleOperation>,
@@ -18,12 +23,11 @@ runtime_backing?: string | null, };
 export type WorkspaceModuleKind = "extension" | "canvas" | "builtin";
 
 /**
- * 单个 operation（extension action / protocol channel method / canvas / builtin
- * 同构呈现）。
+ * 单个 operation（extension action / protocol channel method / host canvas / builtin 同构呈现）。
  */
 export type WorkspaceModuleOperation = { operation_key: string,
 /**
- * "runtime_action" | "protocol_channel" | "canvas" | "builtin"。
+ * "runtime_action" | "protocol_channel" | "host_canvas" | "builtin"。
  */
 origin: string, description: string, input_schema?: JsonValue | null, output_schema?: JsonValue | null, permission_summary: Array<string>,
 /**
@@ -39,7 +43,7 @@ dispatch: WorkspaceModuleOperationDispatch, };
  * invoke 据 `dispatch` 派发，**不再字符串拆 `operation_key`**（避免 channel method
  * 名含驼峰时的反解析脆弱）。
  */
-export type WorkspaceModuleOperationDispatch = { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_channel", channel_key: string, method_name: string, } | { "kind": "canvas", canvas_action: string, } | { "kind": "builtin", builtin_key: string, };
+export type WorkspaceModuleOperationDispatch = { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_channel", channel_key: string, method_name: string, } | { "kind": "host_canvas", canvas_action: WorkspaceModuleCanvasHostAction, } | { "kind": "builtin", builtin_key: string, };
 
 /**
  * Module 状态 + 不可用原因。
@@ -83,4 +87,14 @@ export type WorkspaceModuleUiEntry = { view_key: string,
 /**
  * "webview" | "canvas" | "panel"。
  */
-renderer_kind: string, uri_scheme?: string | null, title: string, };
+renderer_kind: string,
+/**
+ * 可直接交给 WorkspacePanel 打开的展示 URI，例如 `canvas://dashboard`
+ * 或 extension panel 的 `<scheme>://panel`。
+ */
+presentation_uri?: string | null,
+/**
+ * 底层 renderer scheme。保留给 extension webview/panel 描述，Canvas 的 VFS
+ * 编辑 mount 不应通过该字段作为展示入口。
+ */
+uri_scheme?: string | null, title: string, };

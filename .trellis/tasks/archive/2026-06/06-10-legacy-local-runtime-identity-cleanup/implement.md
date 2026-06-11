@@ -5,4 +5,3 @@
 3. 修改初始化 migration 并按授权运行 migration guard。
 4. 重新生成 frontend contracts，清理前端消费和测试 fixtures。
 5. 运行 targeted Rust / TS 检查：migration guard、contracts check、相关 crate check、frontend check。
-

@@ -336,6 +336,28 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             .map_err(db_err)?;
         Ok(())
     }
+
+    async fn append_visible_workspace_module_ref(
+        &self,
+        frame_id: Uuid,
+        module_ref: &str,
+    ) -> Result<(), DomainError> {
+        let mut frame = self
+            .get(frame_id)
+            .await?
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "agent_frame",
+                id: frame_id.to_string(),
+            })?;
+        frame.append_visible_workspace_module_ref(module_ref);
+        sqlx::query("UPDATE agent_frames SET visible_workspace_module_refs_json=$1 WHERE id=$2")
+            .bind(opt_json_str(&frame.visible_workspace_module_refs_json)?)
+            .bind(frame_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(())
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

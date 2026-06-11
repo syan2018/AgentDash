@@ -442,14 +442,14 @@ describe("aggregateEntries — tool burst", () => {
   });
 
   it("T18: real-world scenario — tools, ctx, more tools all merge into one burst", () => {
-    // 模拟用户截图: mounts_list → ctx × 3 → Read → canvas_start
+    // 模拟用户截图: mounts_list → ctx × 3 → Read → workspace_module_create
     const entries = [
       mkCmdEntry("mounts_list", "mounts"),
       mkContextFrameEntry("ctx1"),
       mkContextFrameEntry("ctx2"),
       mkContextFrameEntry("ctx3"),
       mkCmdEntry("read", "Read"),
-      mkCmdEntry("canvas_start", "canvas"),
+      mkCmdEntry("workspace_module_create", "workspace_module"),
     ];
     const result = aggregateEntries(entries);
     const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
@@ -457,7 +457,7 @@ describe("aggregateEntries — tool burst", () => {
     expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual([
       "mounts_list",
       "read",
-      "canvas_start",
+      "workspace_module_create",
     ]);
   });
 

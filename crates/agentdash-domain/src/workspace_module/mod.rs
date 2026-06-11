@@ -1,0 +1,6 @@
+mod value_objects;
+
+pub use value_objects::{
+    WORKSPACE_MODULE_SYSTEM_BUNDLE, WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
+    WORKSPACE_MODULE_SYSTEM_SKILL_PATH,
+};

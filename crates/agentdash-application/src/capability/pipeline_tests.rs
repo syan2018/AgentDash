@@ -110,7 +110,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     let directives = vec![
         ToolCapabilityDirective::add_simple("workflow_management"),
         ToolCapabilityDirective::add_simple("mcp:external_analyzer"),
-        ToolCapabilityDirective::remove_simple("canvas"),
+        ToolCapabilityDirective::remove_simple("workspace_module"),
     ];
 
     let input = CapabilityResolverInput {
@@ -133,7 +133,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
-    assert!(!output.has(ToolCluster::Canvas));
+    assert!(!output.has(ToolCluster::WorkspaceModule));
     assert!(output.has(ToolCluster::Read));
     assert!(state_has_mcp_url(&output, "/mcp/workflow/"));
     assert!(
@@ -149,7 +149,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
         "file_read",
         "file_write",
         "shell_execute",
-        "canvas",
+        "workspace_module",
         "collaboration",
         "relay_management",
     ]
@@ -170,7 +170,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     assert!(md.contains("**workflow_management**"));
     assert!(md.contains("**mcp:external_analyzer**"));
     assert!(md.contains("### Removed Capabilities"));
-    assert!(md.contains("**canvas**"));
+    assert!(md.contains("**workspace_module**"));
     assert!(md.contains("（不再可用）"));
     assert!(md.contains("Workflow / Lifecycle 定义的查看、创建与编辑"));
 }
@@ -191,7 +191,7 @@ fn phase_node_without_directives_inherits_baseline_and_emits_no_delta() {
     // baseline 自带的能力
     assert!(output.has(ToolCluster::Read));
     assert!(output.has(ToolCluster::Write));
-    assert!(output.has(ToolCluster::Canvas));
+    assert!(output.has(ToolCluster::WorkspaceModule));
 
     let effective_set: BTreeSet<String> = output
         .tool

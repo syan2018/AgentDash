@@ -47,6 +47,7 @@
 - Assets Extension 类目消费 Project extension management API，原因是安装、来源状态、package mode 与卸载/下载动作的事实源是 `ProjectExtensionInstallation`，runtime projection 只服务 WorkspacePanel 与 Gateway admission。
 - Marketplace Extension 卡片和详情抽屉使用 `LibraryAssetDto.extension_package_artifact` 判断 packaged template 可安装性，原因是浏览、安装与发布后的 package 可用状态需要共享同一 Shared Library 合同。
 - WorkspacePanel 是 extension/canvas tab 的 composition root；extension-runtime 与 canvas-panel 不反向依赖 workspace-panel，原因是插件 tab 注册、Canvas 预览和 workspace runtime context 需要保持单向装配关系。
+- WorkspacePanel 打开 Canvas tab 使用 `workspace_module_presented.presentation_uri = canvas://{mount_id}`，原因是 Canvas 展示身份属于 workspace module UI entry；`cvs-<mount_id>://...` 只表达 Agent/runtime VFS 编辑面，不适合作为 tab renderer URI。
 - Workflow 资产入口是 `WorkflowGraph` 定义态入口；Agent Activity 关联的 `AgentProcedure` contract 可以作为编辑器配套 draft 一起维护。运行态观察进入 `lifecycleStore`，原因是 graph definition 与 lifecycle projection 的变化节奏不同。
 
 ## Contract Appendices

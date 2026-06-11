@@ -284,39 +284,35 @@ fn conditional_flow_tools(scope: Option<CapabilityScope>) -> Vec<String> {
         Some(CapabilityScope::Task) => {
             tools.push("complete_lifecycle_node".to_string());
             tools.push("companion_respond".to_string());
-            tools.push("canvases_list".to_string());
-            tools.push("canvas_start".to_string());
-            tools.push("bind_canvas_data".to_string());
-            tools.push("present_canvas".to_string());
+            push_workspace_module_tools(&mut tools);
         }
         Some(CapabilityScope::Story) => {
             tools.push("complete_lifecycle_node".to_string());
             tools.push("companion_request".to_string());
             tools.push("companion_respond".to_string());
-            tools.push("canvases_list".to_string());
-            tools.push("canvas_start".to_string());
-            tools.push("bind_canvas_data".to_string());
-            tools.push("present_canvas".to_string());
+            push_workspace_module_tools(&mut tools);
         }
         Some(CapabilityScope::Project) => {
             tools.push("companion_request".to_string());
             tools.push("companion_respond".to_string());
-            tools.push("canvases_list".to_string());
-            tools.push("canvas_start".to_string());
-            tools.push("bind_canvas_data".to_string());
-            tools.push("present_canvas".to_string());
+            push_workspace_module_tools(&mut tools);
         }
         None => {
             tools.push("complete_lifecycle_node".to_string());
             tools.push("companion_request".to_string());
             tools.push("companion_respond".to_string());
-            tools.push("canvases_list".to_string());
-            tools.push("canvas_start".to_string());
-            tools.push("bind_canvas_data".to_string());
-            tools.push("present_canvas".to_string());
+            push_workspace_module_tools(&mut tools);
         }
     }
     tools
+}
+
+fn push_workspace_module_tools(tools: &mut Vec<String>) {
+    tools.push("workspace_module_list".to_string());
+    tools.push("workspace_module_describe".to_string());
+    tools.push("workspace_module_create".to_string());
+    tools.push("workspace_module_invoke".to_string());
+    tools.push("workspace_module_present".to_string());
 }
 
 fn build_persona_markdown(input: &SessionPlanInput<'_>) -> String {

@@ -15,9 +15,9 @@ function parseCanvasUri(uri: string): { canvasId: string } | null {
 }
 
 function CanvasTabContent({ uri }: TabContentRenderProps) {
-  const { sessionId, activeCanvasId } = useWorkspaceData();
+  const { sessionId } = useWorkspaceData();
   const parsed = parseCanvasUri(uri);
-  const canvasId = parsed?.canvasId || activeCanvasId || null;
+  const canvasId = parsed?.canvasId || null;
 
   const handleBrowseFiles = useCallback((mountId: string) => {
     const uri = `${mountId}://`;
@@ -31,7 +31,7 @@ function CanvasTabContent({ uri }: TabContentRenderProps) {
         <div className="text-center">
           <p className="text-sm font-medium text-muted-foreground">当前会话还没有关联的 Canvas</p>
           <p className="mt-1 text-xs text-muted-foreground/70">
-            当 Agent 创建 Canvas 后，将自动在此展示
+            Canvas 展示会通过 workspace_module_present 打开具体视图
           </p>
         </div>
       </div>

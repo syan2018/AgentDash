@@ -10,9 +10,9 @@
 use std::collections::BTreeSet;
 
 use agentdash_spi::platform::tool_capability::{
-    self, CAP_CANVAS, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_RELAY_MANAGEMENT,
+    self, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_RELAY_MANAGEMENT,
     CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT, CAP_WORKFLOW,
-    CAP_WORKFLOW_MANAGEMENT, ToolCapability,
+    CAP_WORKFLOW_MANAGEMENT, CAP_WORKSPACE_MODULE, ToolCapability,
 };
 
 use crate::session::{CapabilityStateDelta, SetDelta};
@@ -23,7 +23,7 @@ pub fn capability_description(key: &str) -> &'static str {
         CAP_FILE_READ => "文件读取（mounts_list / fs_read / fs_glob / fs_grep）",
         CAP_FILE_WRITE => "文件写入（fs_apply_patch）",
         CAP_SHELL_EXECUTE => "Shell 命令执行",
-        CAP_CANVAS => "Canvas 绘制与展示",
+        CAP_WORKSPACE_MODULE => "Workspace Module 创建、调用与展示（含 Canvas）",
         CAP_WORKFLOW => "Lifecycle 推进与产物上报",
         CAP_COLLABORATION => "Companion 协作 + Hook action 解析",
         CAP_STORY_MANAGEMENT => "Story 上下文管理、Task 创建与批量拆解、状态推进",
@@ -183,7 +183,7 @@ mod tests {
     fn delta_markdown_covers_added_removed_and_effective() {
         let delta = SetDelta {
             added: vec!["file_read".to_string(), "mcp:code_analyzer".to_string()],
-            removed: vec!["canvas".to_string()],
+            removed: vec!["workflow".to_string()],
         };
         let effective: BTreeSet<String> =
             ["file_read".to_string(), "mcp:code_analyzer".to_string()]
@@ -197,7 +197,7 @@ mod tests {
         assert!(md.contains("**file_read**: 文件读取"));
         assert!(md.contains("**mcp:code_analyzer**: 外部自定义 MCP 工具集"));
         assert!(md.contains("### Removed Capabilities"));
-        assert!(md.contains("**canvas**: Canvas 绘制与展示（不再可用）"));
+        assert!(md.contains("**workflow**: Lifecycle 推进与产物上报（不再可用）"));
         assert!(md.contains("### Effective Capabilities"));
         assert!(md.contains("`file_read`"));
     }

@@ -7,7 +7,7 @@
  * 内容区根据 TabTypeDescriptor 渲染对应组件。
  */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo } from "react";
 import { useWorkspaceTabStore } from "../../stores/workspaceTabStore";
 import {
   tabTypeRegistry,
@@ -26,14 +26,12 @@ registerBuiltinTabTypes();
 export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelProps>(
   function WorkspacePanel(props, ref) {
     const { runtimeData } = props;
-    const { projectId, sessionId, activeCanvasId, extensionRuntime } = runtimeData;
+    const { projectId, sessionId, extensionRuntime } = runtimeData;
 
     const tabs = useWorkspaceTabStore((s) => s.tabs);
     const activeTabId = useWorkspaceTabStore((s) => s.activeTabId);
     const storeSessionId = useWorkspaceTabStore((s) => s.sessionId);
     const registrySnapshot = useTabTypeRegistrySnapshot();
-
-    const prevCanvasIdRef = useRef<string | null>(null);
 
     const tabLayoutOptions: WorkspaceTabLayoutOptions = useMemo(() => ({
       tabTypes: registrySnapshot.map((type) => ({
@@ -86,14 +84,6 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         }
       },
     }), [tabLayoutOptions]);
-
-    // activeCanvasId 变化时，自动打开/激活 Canvas Tab
-    useEffect(() => {
-      if (!activeCanvasId || activeCanvasId === prevCanvasIdRef.current) return;
-      prevCanvasIdRef.current = activeCanvasId;
-      const uri = `canvas://${activeCanvasId}`;
-      useWorkspaceTabStore.getState().openOrActivate("canvas", uri, tabLayoutOptions);
-    }, [activeCanvasId, tabLayoutOptions]);
 
     const handleAddTab = useCallback((typeId: string) => {
       useWorkspaceTabStore.getState().addTab(typeId, undefined, true, tabLayoutOptions);

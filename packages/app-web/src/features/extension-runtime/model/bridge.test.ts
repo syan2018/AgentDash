@@ -422,7 +422,6 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
     workspaceBackend: null,
     hookRuntime: null,
     sessionCapabilities: null,
-    activeCanvasId: null,
     ...overrides,
   };
 }

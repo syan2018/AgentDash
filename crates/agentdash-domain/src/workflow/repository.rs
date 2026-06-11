@@ -89,6 +89,13 @@ pub trait AgentFrameRepository: Send + Sync {
         frame_id: Uuid,
         mount_id: &str,
     ) -> Result<(), DomainError>;
+    async fn append_visible_workspace_module_ref(
+        &self,
+        _frame_id: Uuid,
+        _module_ref: &str,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]

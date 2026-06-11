@@ -21,4 +21,3 @@ server ensure API 使用 `machine_id + share_scope_kind + share_scope_id + capab
 - Infrastructure：删除 backends 表列、repository SQL 读写、legacy identity candidates、legacy duplicate merge 测试。
 - API/Contracts：删除 ensure request 输入和 backend response 中的 legacy 字段，重新生成 TS contracts。
 - Local/Tauri/Frontend：机器身份文件、profile、runtime start request、ensure payload 不再读取、保存或发送 legacy ids。
-

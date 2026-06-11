@@ -34,6 +34,7 @@ import { useLifecycleStore } from "../stores/lifecycleStore";
 import { useProjectStore } from "../stores/projectStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
+import { workspaceModulePresentedTabTarget } from "./SessionPage.workspaceModulePresentation";
 import type {
   RuntimeTraceAgentContext,
   SessionNavigationState,
@@ -106,8 +107,6 @@ export function SessionPage({
     story_id: string;
     story: Story | null;
   } | null>(null);
-  const [activeCanvasId, setActiveCanvasId] = useState<string | null>(null);
-
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
 
@@ -582,35 +581,17 @@ export function SessionPage({
         }
         break;
       }
-      case "canvas_presented": {
-        const data = extractPlatformEventData(_event);
-        const nextCanvasIdRaw = data?.canvas_id ?? data?.canvasId ?? data?.id;
-        const nextCanvasId = typeof nextCanvasIdRaw === "string"
-          ? (nextCanvasIdRaw as string).trim()
-          : "";
-        if (nextCanvasId) {
-          setActiveCanvasId(nextCanvasId);
-          void refreshSessionRuntimeState();
-          expandWorkspacePanel("canvas", `canvas://${nextCanvasId}`);
-        }
-        break;
-      }
       case "workspace_module_presented": {
         // workspace_module_present 推送：按 renderer_kind 决定 workspace tab typeId/uri。
-        // - canvas → typeId "canvas"，uri canvas://{mount_id}（与 canvas_presented 对齐）。
-        // - extension webview/panel → typeId = view_key（extension tab type_id），uri = uri_scheme。
+        // - canvas → typeId "canvas"，presentation_uri=canvas://{mount_id}。
+        // - extension webview/panel → typeId = view_key，presentation_uri 为后端生成的 tab URI。
         const data = extractPlatformEventData(_event);
-        const rendererKind = typeof data?.renderer_kind === "string" ? data.renderer_kind : "";
-        const viewKey = typeof data?.view_key === "string" ? (data.view_key as string).trim() : "";
-        const uri = typeof data?.uri === "string" ? (data.uri as string).trim() : "";
-        if (rendererKind === "canvas") {
-          const canvasUri = uri || (viewKey ? `canvas://${viewKey}` : "");
-          if (canvasUri) {
+        const target = workspaceModulePresentedTabTarget(data);
+        if (target) {
+          if (target.refreshRuntime) {
             void refreshSessionRuntimeState();
-            expandWorkspacePanel("canvas", canvasUri);
           }
-        } else if (viewKey) {
-          expandWorkspacePanel(viewKey, uri || undefined);
+          expandWorkspacePanel(target.typeId, target.uri);
         }
         break;
       }
@@ -697,7 +678,6 @@ export function SessionPage({
     workspaceBackend,
     hookRuntime: activeHookRuntime,
     sessionCapabilities,
-    activeCanvasId,
   }), [
     ownerProjectId,
     currentSessionId,
@@ -714,7 +694,6 @@ export function SessionPage({
     workspaceBackend,
     activeHookRuntime,
     sessionCapabilities,
-    activeCanvasId,
   ]);
 
   // ─── owner 信息条（作为 inputPrefix 传入 ChatView）

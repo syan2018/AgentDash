@@ -79,9 +79,22 @@ pub struct WorkspaceModuleUiEntry {
     pub view_key: String,
     /// "webview" | "canvas" | "panel"。
     pub renderer_kind: String,
+    /// 可直接交给 WorkspacePanel 打开的展示 URI，例如 `canvas://dashboard`
+    /// 或 extension panel 的 `<scheme>://panel`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation_uri: Option<String>,
+    /// 底层 renderer scheme。保留给 extension webview/panel 描述，Canvas 的 VFS
+    /// 编辑 mount 不应通过该字段作为展示入口。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uri_scheme: Option<String>,
     pub title: String,
+}
+
+/// 宿主拥有的 Canvas module operation。
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceModuleCanvasHostAction {
+    BindData,
 }
 
 /// operation 的来源专属派发分量。
@@ -100,18 +113,19 @@ pub enum WorkspaceModuleOperationDispatch {
         channel_key: String,
         method_name: String,
     },
-    /// canvas runtime action：以 UserCanvas actor 走 RuntimeGateway。
-    Canvas { canvas_action: String },
+    /// 宿主 Canvas 资产操作：走 application use case，不进入 iframe/runtime action。
+    HostCanvas {
+        canvas_action: WorkspaceModuleCanvasHostAction,
+    },
     /// builtin module operation：预留，本轮 invoke 返回 unimplemented。
     Builtin { builtin_key: String },
 }
 
-/// 单个 operation（extension action / protocol channel method / canvas / builtin
-/// 同构呈现）。
+/// 单个 operation（extension action / protocol channel method / host canvas / builtin 同构呈现）。
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct WorkspaceModuleOperation {
     pub operation_key: String,
-    /// "runtime_action" | "protocol_channel" | "canvas" | "builtin"。
+    /// "runtime_action" | "protocol_channel" | "host_canvas" | "builtin"。
     pub origin: String,
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

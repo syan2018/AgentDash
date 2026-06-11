@@ -195,6 +195,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-types",
  "agentdash-application-ports",
+ "agentdash-contracts",
  "agentdash-domain",
  "agentdash-infrastructure",
  "agentdash-relay",

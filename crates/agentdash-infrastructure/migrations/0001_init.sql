@@ -147,6 +147,7 @@ CREATE TABLE backends (
     last_claimed_at timestamp with time zone,
     machine_id text,
     machine_label text,
+    legacy_machine_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
     visibility text DEFAULT 'private'::text NOT NULL,
     share_scope_kind text DEFAULT 'user'::text NOT NULL,
     share_scope_id text,

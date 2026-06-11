@@ -433,17 +433,17 @@ mod tests {
         assert!(!add.is_remove());
         assert_eq!(add.key(), "file_read");
 
-        let remove = ToolCapabilityDirective::remove_simple("canvas");
+        let remove = ToolCapabilityDirective::remove_simple("example_capability");
         assert!(!remove.is_add());
         assert!(remove.is_remove());
-        assert_eq!(remove.key(), "canvas");
+        assert_eq!(remove.key(), "example_capability");
     }
 
     #[test]
     fn tool_capability_directive_serde_roundtrip() {
         let directives = vec![
             ToolCapabilityDirective::add_simple("file_read"),
-            ToolCapabilityDirective::remove_simple("canvas"),
+            ToolCapabilityDirective::remove_simple("example_capability"),
             ToolCapabilityDirective::add_tool("file_read", "fs_read"),
             ToolCapabilityDirective::remove_tool("file_read", "fs_grep"),
             ToolCapabilityDirective::add_simple("mcp:code_analyzer"),
@@ -544,12 +544,12 @@ mod tests {
     fn reduce_remove_then_add_re_enables() {
         // 后来者胜
         let directives = vec![
-            ToolCapabilityDirective::remove_simple("canvas"),
-            ToolCapabilityDirective::add_simple("canvas"),
+            ToolCapabilityDirective::remove_simple("example_capability"),
+            ToolCapabilityDirective::add_simple("example_capability"),
         ];
         let reduction = reduce_tool_capability_directives(&directives);
         assert_eq!(
-            reduction.slots.get("canvas"),
+            reduction.slots.get("example_capability"),
             Some(&ToolCapabilitySlotState::FullCapability)
         );
     }

@@ -78,9 +78,8 @@ pub const CAP_FILE_READ: &str = "file_read";
 pub const CAP_FILE_WRITE: &str = "file_write";
 /// 命令执行：shell_exec
 pub const CAP_SHELL_EXECUTE: &str = "shell_execute";
-pub const CAP_CANVAS: &str = "canvas";
 /// Workspace module：workspace_module_list, workspace_module_describe,
-/// workspace_module_invoke, workspace_module_present
+/// workspace_module_create, workspace_module_invoke, workspace_module_present
 pub const CAP_WORKSPACE_MODULE: &str = "workspace_module";
 pub const CAP_WORKFLOW: &str = "workflow";
 pub const CAP_COLLABORATION: &str = "collaboration";
@@ -99,7 +98,6 @@ pub const WELL_KNOWN_KEYS: &[&str] = &[
     CAP_FILE_READ,
     CAP_FILE_WRITE,
     CAP_SHELL_EXECUTE,
-    CAP_CANVAS,
     CAP_WORKSPACE_MODULE,
     CAP_WORKFLOW,
     CAP_COLLABORATION,
@@ -121,15 +119,10 @@ pub const CLUSTER_WRITE_TOOLS: &[&str] = &["fs_apply_patch"];
 pub const CLUSTER_EXECUTE_TOOLS: &[&str] = &["shell_exec"];
 pub const CLUSTER_WORKFLOW_TOOLS: &[&str] = &["complete_lifecycle_node"];
 pub const CLUSTER_COLLABORATION_TOOLS: &[&str] = &["companion_request", "companion_respond"];
-pub const CLUSTER_CANVAS_TOOLS: &[&str] = &[
-    "canvases_list",
-    "canvas_start",
-    "bind_canvas_data",
-    "present_canvas",
-];
 pub const CLUSTER_WORKSPACE_MODULE_TOOLS: &[&str] = &[
     "workspace_module_list",
     "workspace_module_describe",
+    "workspace_module_create",
     "workspace_module_invoke",
     "workspace_module_present",
 ];
@@ -142,7 +135,6 @@ pub fn cluster_tools(cluster: ToolCluster) -> &'static [&'static str] {
         ToolCluster::Execute => CLUSTER_EXECUTE_TOOLS,
         ToolCluster::Workflow => CLUSTER_WORKFLOW_TOOLS,
         ToolCluster::Collaboration => CLUSTER_COLLABORATION_TOOLS,
-        ToolCluster::Canvas => CLUSTER_CANVAS_TOOLS,
         ToolCluster::WorkspaceModule => CLUSTER_WORKSPACE_MODULE_TOOLS,
     }
 }
@@ -162,7 +154,7 @@ pub fn capability_tools(key: &str) -> Vec<&'static str> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolSource {
-    /// 平台 cluster-based 工具（read/write/execute/workflow/collaboration/canvas）。
+    /// 平台 cluster-based 工具（read/write/execute/workflow/collaboration/workspace_module）。
     Platform { cluster: ToolCluster },
     /// 平台 MCP scope 工具（relay/story/task/workflow 四大 scope 下静态注册的工具）。
     PlatformMcp { scope: PlatformMcpScope },
@@ -261,7 +253,7 @@ pub fn format_tool_for_prompt(desc: &ToolDescriptor) -> String {
 ///
 /// 包含两类来源：
 /// - `ToolSource::Platform { cluster }` — cluster-based 内嵌工具（read/write/execute/workflow/
-///   collaboration/canvas）
+///   collaboration/workspace_module）
 /// - `ToolSource::PlatformMcp { scope }` — relay/story/task/workflow 四大 scope 下的 MCP 工具
 ///
 /// 所有 `#[tool]` handler 名称与 `agentdash-mcp/src/servers/*.rs` 中注册的 Rust 函数名保持一致；
@@ -336,35 +328,6 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             ToolCluster::Collaboration,
             CAP_COLLABORATION,
         ),
-        // ── Canvas cluster ──
-        ToolDescriptor::platform(
-            "canvases_list",
-            "List Canvases",
-            "列出当前 project 的画布资产",
-            ToolCluster::Canvas,
-            CAP_CANVAS,
-        ),
-        ToolDescriptor::platform(
-            "canvas_start",
-            "Start Canvas",
-            "创建或接入画布资产，并返回 canvas-system skill 路径",
-            ToolCluster::Canvas,
-            CAP_CANVAS,
-        ),
-        ToolDescriptor::platform(
-            "bind_canvas_data",
-            "Bind Canvas Data",
-            "绑定数据到画布",
-            ToolCluster::Canvas,
-            CAP_CANVAS,
-        ),
-        ToolDescriptor::platform(
-            "present_canvas",
-            "Present Canvas",
-            "向用户展示画布",
-            ToolCluster::Canvas,
-            CAP_CANVAS,
-        ),
         // ── Workspace Module cluster ──
         ToolDescriptor::platform(
             "workspace_module_list",
@@ -377,6 +340,13 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             "workspace_module_describe",
             "Describe Workspace Module",
             "返回单个 workspace module 的 UI entries 与 operations（含 input/output schema）",
+            ToolCluster::WorkspaceModule,
+            CAP_WORKSPACE_MODULE,
+        ),
+        ToolDescriptor::platform(
+            "workspace_module_create",
+            "Create Workspace Module",
+            "创建或接入 workspace module 实例；Canvas 使用 kind=canvas 创建后返回 canvas:{mount_id}",
             ToolCluster::WorkspaceModule,
             CAP_WORKSPACE_MODULE,
         ),
@@ -600,7 +570,6 @@ fn capability_to_tool_clusters_by_key(key: &str) -> Vec<ToolCluster> {
         CAP_FILE_READ => vec![ToolCluster::Read],
         CAP_FILE_WRITE => vec![ToolCluster::Write],
         CAP_SHELL_EXECUTE => vec![ToolCluster::Execute],
-        CAP_CANVAS => vec![ToolCluster::Canvas],
         CAP_WORKSPACE_MODULE => vec![ToolCluster::WorkspaceModule],
         CAP_WORKFLOW => vec![ToolCluster::Workflow],
         CAP_COLLABORATION => vec![ToolCluster::Collaboration],
@@ -763,13 +732,6 @@ pub fn default_visibility_rules() -> &'static [CapabilityVisibilityRule] {
         CapabilityVisibilityRule {
             key: CAP_SHELL_EXECUTE,
             allowed_scopes: &[Project, Story, Task],
-            auto_granted: true,
-            agent_can_grant: false,
-            workflow_can_grant: false,
-        },
-        CapabilityVisibilityRule {
-            key: CAP_CANVAS,
-            allowed_scopes: &[Project],
             auto_granted: true,
             agent_can_grant: false,
             workflow_can_grant: false,

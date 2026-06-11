@@ -120,3 +120,63 @@ pnpm run frontend:check
 ```
 
 当 `agentdash-contracts` 引入后，`contracts:check` 同时运行所有 contract 生成器。
+
+## Scenario: Workspace Module Presentation Contract
+
+### 1. Scope / Trigger
+
+- Trigger: Canvas Agent-facing create、bind、present 收束到 `workspace_module`，前端 WorkspacePanel 必须从同一事件契约打开 Canvas tab。
+- Scope: Rust workspace module contract、generated TypeScript、session event reducer、WorkspacePanel tab opening。
+
+### 2. Signatures
+
+- `workspace_module_create(kind="canvas", input={ canvas_id?: string, title?: string, description?: string }) -> WorkspaceModuleDescriptor`
+- `workspace_module_describe(module_id: string) -> WorkspaceModuleDescriptor`
+- `workspace_module_invoke(module_id: string, operation_key: string, input: unknown) -> operation result`
+- `workspace_module_present(module_id: string, view_key: string) -> workspace_module_presented event`
+
+### 3. Contracts
+
+- Canvas module id is `canvas:{mount_id}`.
+- Canvas bind operation key is `canvas.bind_data` and is discoverable through describe.
+- Canvas UI entry exposes `view_key="preview"` and `presentation_uri="canvas://{mount_id}"`.
+- Canvas VFS edit URI is `cvs-<mount_id>://...` and may appear in tool results or diagnostics as `vfs_mount_uri`.
+- `workspace_module_presented` payload includes `module_id`, `view_key`, `renderer_kind`, `presentation_uri`, `title`, and optional Canvas diagnostics such as `vfs_mount_uri`.
+- Frontend opens Canvas tabs from `presentation_uri` only. `view_key` selects a module UI entry; it is not a Canvas id.
+
+### 4. Validation & Error Matrix
+
+| 条件 | 语义 |
+| --- | --- |
+| Backend emits Canvas presentation without `presentation_uri` | contract/test failure |
+| Canvas `presentation_uri` is not `canvas://{mount_id}` | contract/test failure |
+| Frontend receives unsupported `renderer_kind` | ignore or show non-blocking unsupported renderer state |
+| Frontend receives Canvas event with malformed `presentation_uri` | do not open a tab; surface compact error/log |
+| Generated TS drift after Rust DTO change | `pnpm run contracts:check` failure |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `workspace_module_present(canvas:{mount_id}, preview)` refreshes runtime surface, emits `workspace_module_presented.presentation_uri=canvas://{mount_id}`, and WorkspacePanel opens that URI.
+- Base: Extension UI entries continue using their own renderer URI fields without Canvas-specific parsing.
+- Bad: Frontend builds `canvas://{view_key}` or treats `cvs-<mount_id>://...` as the Canvas tab URI.
+
+### 6. Tests Required
+
+- Contract generation check for workspace module DTO/event payload.
+- Backend test asserts Canvas present refreshes VFS/capability state before emitting `workspace_module_presented`.
+- Frontend focused test asserts Canvas `workspace_module_presented.presentation_uri` opens the tab.
+- Frontend typecheck asserts event handling consumes generated DTO fields, not hand-written aliases.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+openWorkspaceTab(`canvas://${event.view_key}`);
+```
+
+#### Correct
+
+```ts
+openWorkspaceTab(event.presentation_uri);
+```

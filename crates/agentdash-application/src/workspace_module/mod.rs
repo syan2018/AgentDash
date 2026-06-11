@@ -10,132 +10,27 @@
 //! - module_id 约定见 §4：`ext:{extension_key}` / `canvas:{mount_id}` /
 //!   `builtin:{key}`。
 
+pub(crate) mod skill_projection;
 mod tools;
 
+use agentdash_contracts::workspace_module::{
+    WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
+    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleStatus,
+    WorkspaceModuleSummary, WorkspaceModuleUiEntry,
+};
 use agentdash_domain::canvas::Canvas;
 use agentdash_domain::shared_library::{
     ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::runtime_gateway::ExtensionInvocationWorkspaceContext;
 use agentdash_domain::common::Vfs;
 
 pub use tools::{
-    WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
-    WorkspaceModulePresentTool,
+    WorkspaceModuleCreateTool, WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool,
+    WorkspaceModuleListTool, WorkspaceModulePresentTool,
 };
-
-/// Module 的来源类别。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspaceModuleKind {
-    Extension,
-    Canvas,
-    Builtin,
-}
-
-/// Module 的就绪状态。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspaceModuleStatusKind {
-    Ready,
-    Unavailable,
-}
-
-/// Module 状态 + 不可用原因。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct WorkspaceModuleStatus {
-    pub kind: WorkspaceModuleStatusKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-impl WorkspaceModuleStatus {
-    pub fn ready() -> Self {
-        Self {
-            kind: WorkspaceModuleStatusKind::Ready,
-            reason: None,
-        }
-    }
-
-    pub fn unavailable(reason: impl Into<String>) -> Self {
-        Self {
-            kind: WorkspaceModuleStatusKind::Unavailable,
-            reason: Some(reason.into()),
-        }
-    }
-}
-
-/// `list` 返回的摘要 read model，不含完整 schema。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkspaceModuleSummary {
-    pub module_id: String,
-    pub kind: WorkspaceModuleKind,
-    pub title: String,
-    pub description: String,
-    pub source: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ui_summary: Option<String>,
-    pub operation_summary: Vec<String>,
-    pub permission_summary: Vec<String>,
-    pub status: WorkspaceModuleStatus,
-}
-
-/// 单个 UI 入口（webview / canvas / panel）。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkspaceModuleUiEntry {
-    pub view_key: String,
-    pub renderer_kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub uri_scheme: Option<String>,
-    pub title: String,
-}
-
-/// operation 的来源专属派发分量。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum WorkspaceModuleOperationDispatch {
-    RuntimeAction {
-        action_key: String,
-    },
-    ProtocolChannel {
-        channel_key: String,
-        method_name: String,
-    },
-    Canvas {
-        canvas_action: String,
-    },
-    Builtin {
-        builtin_key: String,
-    },
-}
-
-/// 单个 operation（extension action / protocol channel method / canvas / builtin 同构呈现）。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkspaceModuleOperation {
-    pub operation_key: String,
-    pub origin: String,
-    pub description: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input_schema: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_schema: Option<Value>,
-    pub permission_summary: Vec<String>,
-    pub dispatch: WorkspaceModuleOperationDispatch,
-}
-
-/// `describe` 返回的完整 descriptor read model。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkspaceModuleDescriptor {
-    pub summary: WorkspaceModuleSummary,
-    pub ui_entries: Vec<WorkspaceModuleUiEntry>,
-    pub operations: Vec<WorkspaceModuleOperation>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_backing: Option<String>,
-}
 
 /// invoke 解析出的 backend target + workspace 上下文。
 ///
@@ -346,6 +241,7 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
                 .map(|tab| WorkspaceModuleUiEntry {
                     view_key: tab.type_id.clone(),
                     renderer_kind: tab_renderer_kind(&tab.renderer).to_string(),
+                    presentation_uri: Some(format!("{}://panel", tab.uri_scheme)),
                     uri_scheme: Some(tab.uri_scheme.clone()),
                     title: tab.label.clone(),
                 })
@@ -398,19 +294,50 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
 }
 
 fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
-    // canvas binding 是声明式数据引用（alias <- source_uri），**不是可 invoke 的 RPC**
-    // （research/02、design §4）。canvas runtime action 形态是 RuntimeActionKey，与 binding
-    // alias 不是同一概念，且 Canvas 实体本身不声明可执行 action。本轮 canvas module 因此
-    // 不投影任何 invokable operation——operations 为空，仅保留 ui_entry 供 present/read。
-    // 一旦 canvas 暴露真正的 runtime action surface，再在此处投影为
-    // `WorkspaceModuleOperationDispatch::Canvas { canvas_action }`（保持单一 canonical）。
-    let operations: Vec<WorkspaceModuleOperation> = Vec::new();
+    let operations: Vec<WorkspaceModuleOperation> = vec![WorkspaceModuleOperation {
+        operation_key: "canvas.bind_data".to_string(),
+        origin: "host_canvas".to_string(),
+        description: "Declare or update a data binding for this Canvas instance.".to_string(),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "alias": {
+                    "type": "string",
+                    "description": "Runtime binding alias, exposed as bindings/<alias>.json"
+                },
+                "source_uri": {
+                    "type": "string",
+                    "description": "Source resource URI to bind into the Canvas runtime"
+                },
+                "content_type": {
+                    "type": "string",
+                    "description": "Optional content type, defaults to application/json"
+                }
+            },
+            "required": ["alias", "source_uri"],
+            "additionalProperties": false
+        })),
+        output_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "canvas_id": {"type": "string"},
+                "mount_id": {"type": "string"},
+                "bindings": {"type": "array"}
+            },
+            "required": ["canvas_id", "mount_id", "bindings"]
+        })),
+        permission_summary: Vec::new(),
+        dispatch: WorkspaceModuleOperationDispatch::HostCanvas {
+            canvas_action: WorkspaceModuleCanvasHostAction::BindData,
+        },
+    }];
 
     // entry/files → ui_entry(canvas)
     let ui_entries = vec![WorkspaceModuleUiEntry {
-        view_key: canvas.entry_file.clone(),
+        view_key: "preview".to_string(),
         renderer_kind: "canvas".to_string(),
-        uri_scheme: Some(crate::vfs::build_canvas_mount_id(canvas)),
+        presentation_uri: Some(format!("canvas://{}", canvas.mount_id)),
+        uri_scheme: Some("canvas".to_string()),
         title: canvas.title.clone(),
     }];
 
@@ -481,6 +408,7 @@ fn describe_permission(
 
 #[cfg(test)]
 mod tests {
+    use agentdash_contracts::workspace_module::WorkspaceModuleStatusKind;
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionPermissionAccess,
@@ -643,11 +571,25 @@ mod tests {
             .find(|module| module.summary.kind == WorkspaceModuleKind::Canvas)
             .expect("canvas module");
         assert_eq!(canvas_module.summary.module_id, "canvas:dashboard-a");
-        // canvas binding 不是 invokable operation：canvas module 本轮无可调用 operation
-        assert!(canvas_module.operations.is_empty());
-        // 仍保留 ui_entry 供 present
+        let canvas_op = canvas_module
+            .operations
+            .iter()
+            .find(|operation| operation.operation_key == "canvas.bind_data")
+            .expect("canvas bind operation");
+        assert_eq!(canvas_op.origin, "host_canvas");
+        assert_eq!(
+            canvas_op.dispatch,
+            WorkspaceModuleOperationDispatch::HostCanvas {
+                canvas_action: WorkspaceModuleCanvasHostAction::BindData,
+            }
+        );
         assert_eq!(canvas_module.ui_entries.len(), 1);
         assert_eq!(canvas_module.ui_entries[0].renderer_kind, "canvas");
+        assert_eq!(canvas_module.ui_entries[0].view_key, "preview");
+        assert_eq!(
+            canvas_module.ui_entries[0].presentation_uri.as_deref(),
+            Some("canvas://dashboard-a")
+        );
     }
 
     #[test]

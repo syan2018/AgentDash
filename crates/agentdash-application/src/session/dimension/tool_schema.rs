@@ -441,7 +441,6 @@ fn tool_cluster_key(cluster: agentdash_spi::ToolCluster) -> &'static str {
         agentdash_spi::ToolCluster::Execute => "execute",
         agentdash_spi::ToolCluster::Workflow => "workflow",
         agentdash_spi::ToolCluster::Collaboration => "collaboration",
-        agentdash_spi::ToolCluster::Canvas => "canvas",
         agentdash_spi::ToolCluster::WorkspaceModule => "workspace_module",
     }
 }

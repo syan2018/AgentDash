@@ -89,7 +89,8 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   companion_human_request:         "Agent 请求用户回应",
   companion_human_response:        "用户已回应 Agent",
   companion_review_request:        "协作 Agent 提审",
-  canvas_presented:                "Canvas 已展示",
+  workspace_module_presented:      "Workspace Module 已展示",
+  workspace_module_present_failed: "Workspace Module 展示失败",
   context_frame:          "Agent 上下文",
   hook_event:                      "流程事件",
 };
@@ -112,7 +113,8 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   companion_human_request:         "Agent 正在等待用户回应",
   companion_human_response:        "已将用户回应写入当前会话",
   companion_review_request:        "协作 Agent 请求审阅",
-  canvas_presented:                "已请求打开 Canvas 面板",
+  workspace_module_presented:      "已请求打开 Workspace Module 视图",
+  workspace_module_present_failed: "后端未找到可展示的 Workspace Module 视图",
   context_frame:          "Agent 上下文已更新",
   hook_event:                      "流程产生新事件",
 };

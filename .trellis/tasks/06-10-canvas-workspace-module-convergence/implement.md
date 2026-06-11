@@ -86,6 +86,13 @@
 - [x] Focused frontend type/lint checks for touched workspace-panel, session, and capability picker files.
 - [x] `pnpm run backend:clippy` if backend shared capability/tool surfaces changed broadly.
 
+## Phase 8 - Redundancy Cleanup
+
+- [x] Remove the old Canvas `ToolCluster` / `CAP_CANVAS` / `CLUSTER_CANVAS_TOOLS` Agent-facing capability surface.
+- [x] Remove old Canvas AgentTool wrappers and the legacy `canvas_presented` notification helper, while keeping Canvas domain/API/runtime preview and workspace module use cases.
+- [x] Remove frontend `canvas_presented` / `activeCanvasId` presentation bypasses so Canvas tabs open from `workspace_module_presented.presentation_uri`.
+- [x] Keep historical executor dynamic-tool fixtures and task research notes unchanged where they document old traces rather than current capability injection.
+
 ## Risky Files
 
 - `crates/agentdash-spi/src/platform/tool_capability.rs`

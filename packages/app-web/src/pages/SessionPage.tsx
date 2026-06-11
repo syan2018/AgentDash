@@ -107,8 +107,6 @@ export function SessionPage({
     story_id: string;
     story: Story | null;
   } | null>(null);
-  const [activeCanvasId, setActiveCanvasId] = useState<string | null>(null);
-
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
 
@@ -583,19 +581,6 @@ export function SessionPage({
         }
         break;
       }
-      case "canvas_presented": {
-        const data = extractPlatformEventData(_event);
-        const nextCanvasIdRaw = data?.canvas_id ?? data?.canvasId ?? data?.id;
-        const nextCanvasId = typeof nextCanvasIdRaw === "string"
-          ? (nextCanvasIdRaw as string).trim()
-          : "";
-        if (nextCanvasId) {
-          setActiveCanvasId(nextCanvasId);
-          void refreshSessionRuntimeState();
-          expandWorkspacePanel("canvas", `canvas://${nextCanvasId}`);
-        }
-        break;
-      }
       case "workspace_module_presented": {
         // workspace_module_present 推送：按 renderer_kind 决定 workspace tab typeId/uri。
         // - canvas → typeId "canvas"，presentation_uri=canvas://{mount_id}。
@@ -693,7 +678,6 @@ export function SessionPage({
     workspaceBackend,
     hookRuntime: activeHookRuntime,
     sessionCapabilities,
-    activeCanvasId,
   }), [
     ownerProjectId,
     currentSessionId,
@@ -710,7 +694,6 @@ export function SessionPage({
     workspaceBackend,
     activeHookRuntime,
     sessionCapabilities,
-    activeCanvasId,
   ]);
 
   // ─── owner 信息条（作为 inputPrefix 传入 ChatView）

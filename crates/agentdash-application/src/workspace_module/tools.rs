@@ -1,8 +1,8 @@
 //! Workspace Module Agent 工具：`workspace_module_list` / `workspace_module_describe`。
 //!
 //! 二者挂在 `RelayRuntimeToolProvider`，用 `project_id_from_context` + repos 现取
-//! 现算（样板 `ListCanvasesTool`）：每次调用拉 enabled installations + visible
-//! canvases，经聚合层 `build_workspace_modules` 投影，再按 capability 的
+//! 现算：每次调用拉 enabled installations + visible canvases，经聚合层
+//! `build_workspace_modules` 投影，再按 capability 的
 //! `WorkspaceModuleDimension` 过滤（可见性裁切的唯一来源，D4）。
 
 use std::sync::Arc;
@@ -882,7 +882,7 @@ pub struct WorkspaceModulePresentParams {
 /// `workspace_module_present`：best-effort 请求宿主向前端 panel 展示某 module 的 UI 入口。
 ///
 /// 复用 `PlatformEvent::SessionMetaUpdate{ key: "workspace_module_presented" }` +
-/// inject_notification（模板 PresentCanvasTool），不新增 PlatformEvent 变体（D2-5）。
+/// inject_notification，不新增 PlatformEvent 变体（D2-5）。
 /// 无可展示目标（module 不可见 / view_key 不存在）时返回**可操作诊断**结构化错误（R4）。
 #[derive(Clone)]
 pub struct WorkspaceModulePresentTool {
@@ -1878,7 +1878,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn present_canvas_module_refreshes_session_exposure_before_event() {
+    async fn canvas_module_present_refreshes_session_exposure_before_event() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
 
         let mut registry = MountProviderRegistry::new();

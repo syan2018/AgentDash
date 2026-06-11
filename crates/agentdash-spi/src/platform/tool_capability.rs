@@ -78,7 +78,6 @@ pub const CAP_FILE_READ: &str = "file_read";
 pub const CAP_FILE_WRITE: &str = "file_write";
 /// 命令执行：shell_exec
 pub const CAP_SHELL_EXECUTE: &str = "shell_execute";
-pub const CAP_CANVAS: &str = "canvas";
 /// Workspace module：workspace_module_list, workspace_module_describe,
 /// workspace_module_create, workspace_module_invoke, workspace_module_present
 pub const CAP_WORKSPACE_MODULE: &str = "workspace_module";
@@ -120,12 +119,6 @@ pub const CLUSTER_WRITE_TOOLS: &[&str] = &["fs_apply_patch"];
 pub const CLUSTER_EXECUTE_TOOLS: &[&str] = &["shell_exec"];
 pub const CLUSTER_WORKFLOW_TOOLS: &[&str] = &["complete_lifecycle_node"];
 pub const CLUSTER_COLLABORATION_TOOLS: &[&str] = &["companion_request", "companion_respond"];
-pub const CLUSTER_CANVAS_TOOLS: &[&str] = &[
-    "canvases_list",
-    "canvas_start",
-    "bind_canvas_data",
-    "present_canvas",
-];
 pub const CLUSTER_WORKSPACE_MODULE_TOOLS: &[&str] = &[
     "workspace_module_list",
     "workspace_module_describe",
@@ -142,7 +135,6 @@ pub fn cluster_tools(cluster: ToolCluster) -> &'static [&'static str] {
         ToolCluster::Execute => CLUSTER_EXECUTE_TOOLS,
         ToolCluster::Workflow => CLUSTER_WORKFLOW_TOOLS,
         ToolCluster::Collaboration => CLUSTER_COLLABORATION_TOOLS,
-        ToolCluster::Canvas => CLUSTER_CANVAS_TOOLS,
         ToolCluster::WorkspaceModule => CLUSTER_WORKSPACE_MODULE_TOOLS,
     }
 }
@@ -162,7 +154,7 @@ pub fn capability_tools(key: &str) -> Vec<&'static str> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolSource {
-    /// 平台 cluster-based 工具（read/write/execute/workflow/collaboration/canvas）。
+    /// 平台 cluster-based 工具（read/write/execute/workflow/collaboration/workspace_module）。
     Platform { cluster: ToolCluster },
     /// 平台 MCP scope 工具（relay/story/task/workflow 四大 scope 下静态注册的工具）。
     PlatformMcp { scope: PlatformMcpScope },
@@ -261,7 +253,7 @@ pub fn format_tool_for_prompt(desc: &ToolDescriptor) -> String {
 ///
 /// 包含两类来源：
 /// - `ToolSource::Platform { cluster }` — cluster-based 内嵌工具（read/write/execute/workflow/
-///   collaboration/canvas）
+///   collaboration/workspace_module）
 /// - `ToolSource::PlatformMcp { scope }` — relay/story/task/workflow 四大 scope 下的 MCP 工具
 ///
 /// 所有 `#[tool]` handler 名称与 `agentdash-mcp/src/servers/*.rs` 中注册的 Rust 函数名保持一致；

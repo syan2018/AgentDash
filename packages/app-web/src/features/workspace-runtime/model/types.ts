@@ -52,5 +52,4 @@ export interface WorkspaceRuntimeData {
   workspaceBackend: WorkspaceBackendTarget | null;
   hookRuntime: AgentFrameHookRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
-  activeCanvasId: string | null;
 }

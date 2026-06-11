@@ -18,4 +18,9 @@ describe("workflow capability editor shared constants", () => {
     expect(AUTO_GRANTED_BASELINE.project).toContain("workspace_module");
     expect(AUTO_GRANTED_BASELINE.project).not.toContain("canvas");
   });
+
+  it("auto-grants workspace_module for story workflows", () => {
+    expect(AUTO_GRANTED_BASELINE.story).toContain("workspace_module");
+    expect(AUTO_GRANTED_BASELINE.story).not.toContain("canvas");
+  });
 });

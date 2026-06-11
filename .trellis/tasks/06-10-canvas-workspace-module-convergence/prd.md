@@ -39,18 +39,18 @@
 
 ## Acceptance Criteria
 
-- [ ] 新增 `workspace_module_create`，能以 `kind="canvas"` 创建或接入 Canvas，返回 `canvas:{mount_id}` module descriptor，并暴露对应 Canvas VFS mount 与 `canvas-system` skill 给当前 session。
-- [ ] `workspace_module_describe(module_id="canvas:{mount_id}")` 能返回实例级 Canvas operations，至少覆盖 `canvas.bind_data`；Canvas instance module 同时返回可展示 UI entry。
-- [ ] `workspace_module_present` 展示 Canvas 后，session runtime surface 能看到对应 Canvas VFS mount，能力状态刷新事件先于展示事件发出。
-- [ ] 前端收到 Canvas 类型的 `workspace_module_presented` 后能稳定打开 `canvas://{mount_id}` 对应 tab，不依赖旧 `canvas_presented` 或 `activeCanvasId` 旁路。
-- [ ] 默认 Agent 工具面不再注入 `canvases_list` / `canvas_start` / `bind_canvas_data` / `present_canvas` 作为独立主入口；默认工具说明指向 `workspace_module_list` / `workspace_module_describe` / `workspace_module_create` / `workspace_module_invoke` / `workspace_module_present`。
-- [ ] capability catalog / picker 中 Canvas 相关 Agent 能力通过 `workspace_module` 表达；`canvas` 不再作为普通 well-known Agent capability 出现。
-- [ ] forward migration 能把已保存 ProjectAgent config 中的 `canvas` capability directive 改写为 `workspace_module`，并通过 migration guard。
-- [ ] 新增或更新内嵌 `workspace-module-system` skill，并在 session 具备 `workspace_module` capability 时可被 Agent 发现；skill 内容通过 skill validation。
-- [ ] `canvas-system` 的核心流程不再要求直接调用旧 Canvas 工具，而是指向 `workspace_module_create` 创建/接入、`workspace_module_present` 展示入口后再进行 Canvas 源码编辑。
-- [ ] 后端针对 workspace module Canvas operations、present session 暴露、capability filtering 有单元测试或集成测试覆盖。
-- [ ] 前端针对 Canvas workspace module present URI 解析和 tab 打开逻辑有 focused 测试或等价验证。
-- [ ] 相关 Trellis spec 更新完成，记录当前目标架构的原因和边界。
+- [x] 新增 `workspace_module_create`，能以 `kind="canvas"` 创建或接入 Canvas，返回 `canvas:{mount_id}` module descriptor，并暴露对应 Canvas VFS mount 与 `canvas-system` skill 给当前 session。
+- [x] `workspace_module_describe(module_id="canvas:{mount_id}")` 能返回实例级 Canvas operations，至少覆盖 `canvas.bind_data`；Canvas instance module 同时返回可展示 UI entry。
+- [x] `workspace_module_present` 展示 Canvas 后，session runtime surface 能看到对应 Canvas VFS mount，能力状态刷新事件先于展示事件发出。
+- [x] 前端收到 Canvas 类型的 `workspace_module_presented` 后能稳定打开 `canvas://{mount_id}` 对应 tab，不依赖旧 `canvas_presented` 或 `activeCanvasId` 旁路。
+- [x] 默认 Agent 工具面不再注入 `canvases_list` / `canvas_start` / `bind_canvas_data` / `present_canvas` 作为独立主入口；默认工具说明指向 `workspace_module_list` / `workspace_module_describe` / `workspace_module_create` / `workspace_module_invoke` / `workspace_module_present`。
+- [x] capability catalog / picker 中 Canvas 相关 Agent 能力通过 `workspace_module` 表达；`canvas` 不再作为普通 well-known Agent capability 出现。
+- [x] forward migration 能把已保存 ProjectAgent config 中的 `canvas` capability directive 改写为 `workspace_module`，并通过 migration guard。
+- [x] 新增或更新内嵌 `workspace-module-system` skill，并在 session 具备 `workspace_module` capability 时可被 Agent 发现；skill 内容通过 skill validation。
+- [x] `canvas-system` 的核心流程不再要求直接调用旧 Canvas 工具，而是指向 `workspace_module_create` 创建/接入、`workspace_module_present` 展示入口后再进行 Canvas 源码编辑。
+- [x] 后端针对 workspace module Canvas operations、present session 暴露、capability filtering 有单元测试或集成测试覆盖。
+- [x] 前端针对 Canvas workspace module present URI 解析和 tab 打开逻辑有 focused 测试或等价验证。
+- [x] 相关 Trellis spec 更新完成，记录当前目标架构的原因和边界。
 
 ## Resolved Decisions
 

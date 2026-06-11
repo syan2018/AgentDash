@@ -204,8 +204,6 @@ pub enum ToolCluster {
     Workflow,
     /// 协作与交互：companion_request, companion_respond
     Collaboration,
-    /// Canvas 资产旧工具簇。普通 Agent capability 面通过 WorkspaceModule 暴露 Canvas。
-    Canvas,
     /// Workspace module：workspace_module_list, workspace_module_describe,
     /// workspace_module_create, workspace_module_invoke, workspace_module_present
     WorkspaceModule,

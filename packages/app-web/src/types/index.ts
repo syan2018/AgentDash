@@ -132,9 +132,6 @@ export const CAPABILITY_OPTIONS: CapabilityOption[] = [
   { value: "workspace_module", label: "Workspace Module", description: "模块创建、调用与展示，包含 Canvas", group: "extended" },
 ];
 
-/** @deprecated 运行态 ToolCluster 名称，仅用于旧 event 展示 */
-export type ToolCluster = "read" | "write" | "execute" | "workflow" | "collaboration" | "canvas";
-
 export type SystemPromptMode = "append" | "override";
 
 // ─── 登录 / 认证 ──────────────────────────────────────

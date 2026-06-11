@@ -56,6 +56,7 @@
 | session-ui-toolcards Batch A | 修复 | 已提交 | `fixes/026-session-capability-model.md` |
 | mcp-preset-connectors Batch A | 修复 | 已提交 | `fixes/027-mcp-preset-form-helper.md` |
 | session-ui-toolcards Batch B | 修复 | 已提交 | `fixes/028-session-companion-request-view-model.md` |
+| mcp-preset-connectors Batch B | 修复 | 已提交 | `fixes/029-mcp-probe-view-model.md` |
 
 ## 已完成模块
 
@@ -126,3 +127,4 @@
 | `cb9cb9ab` | session-ui-toolcards | 收敛 capability 资源解析边界 |
 | `f797c541` | mcp-preset-connectors | 收敛前端表单 helper |
 | `d43ce563` | session-ui-toolcards | 收敛 companion 请求视图模型 |
+| `cdd47f46` | mcp-preset-connectors | 收敛 probe 展示模型 |

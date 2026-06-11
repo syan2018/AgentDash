@@ -30,4 +30,4 @@
 
 ## Commit
 
-- Commit hash:
+- hash: `cdd47f46`

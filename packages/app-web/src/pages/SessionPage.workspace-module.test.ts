@@ -22,6 +22,14 @@ describe("workspaceModulePresentedTabTarget", () => {
     })).toBeNull();
   });
 
+  it("does not open Canvas tabs from legacy uri fallback", () => {
+    expect(workspaceModulePresentedTabTarget({
+      renderer_kind: "canvas",
+      view_key: "preview",
+      uri: "canvas://dashboard-a",
+    })).toBeNull();
+  });
+
   it("opens non-Canvas module views by view_key", () => {
     expect(workspaceModulePresentedTabTarget({
       renderer_kind: "webview",

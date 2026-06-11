@@ -1714,6 +1714,170 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_canvas_runtime_grant_extends_allowlist_session_visibility() {
+        let (install_repo, canvas_repo, project_id) = fixtures().await;
+
+        let mut registry = MountProviderRegistry::new();
+        registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
+        let vfs_service = Arc::new(VfsService::new(Arc::new(registry)));
+        let base = tempfile::tempdir().expect("tempdir");
+        let active_run_id = Uuid::new_v4();
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        let frame = AgentFrame::new_initial(Uuid::new_v4());
+        let frame_id = frame.id;
+        let agent_id = frame.agent_id;
+        frame_repo.create(&frame).await.expect("frame should save");
+        let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
+        let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
+        let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
+        let mut agent =
+            LifecycleAgent::new_root(active_run_id, Uuid::new_v4(), "create-workspace-module");
+        agent.id = agent_id;
+        agent_repo.create(&agent).await.expect("agent should save");
+        let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
+            Arc::new(PendingConnector),
+            Some(Arc::new(EmptyHookProvider {
+                active_run_id,
+                frame_repo: frame_repo.clone(),
+                agent_id,
+            })),
+            Arc::new(MemorySessionPersistence::default()),
+        )
+        .with_vfs_service(vfs_service)
+        .with_agent_frame_repo(frame_repo.clone())
+        .with_lifecycle_gate_repo(gate_repo)
+        .with_lifecycle_agent_repo(agent_repo)
+        .with_execution_anchor_repo(anchor_repo.clone());
+        let session = hub
+            .create_session("create-workspace-module")
+            .await
+            .expect("session should create");
+        anchor_repo
+            .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
+                &session.id,
+                active_run_id,
+                frame_id,
+                agent_id,
+            ))
+            .await
+            .expect("runtime anchor should save");
+        hub.ensure_session(&session.id).await;
+        let turn_id = hub
+            .start_prompt(
+                &session.id,
+                prompt_construction(&session.id, project_id, base.path()),
+            )
+            .await
+            .expect("prompt should start");
+        hub.hook_service()
+            .reload_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
+            .await
+            .expect("hook runtime should reload");
+
+        let handle = SharedSessionToolServicesHandle::default();
+        handle
+            .set(SessionToolServices {
+                core: hub.core_service(),
+                eventing: hub.eventing_service(),
+                control: hub.control_service(),
+                launch: hub.launch_service(),
+                hooks: hub.hook_service(),
+                capability: hub.capability_service(),
+            })
+            .await;
+
+        let shared_vfs =
+            crate::vfs::tools::fs::SharedRuntimeVfs::new(local_workspace_vfs(base.path()));
+        let create_tool = WorkspaceModuleCreateTool::new(
+            canvas_repo.clone(),
+            project_id,
+            shared_vfs,
+            handle.clone(),
+            Some(session.id.clone()),
+        );
+
+        let result = create_tool
+            .execute(
+                "tool-create",
+                serde_json::json!({
+                    "kind": "canvas",
+                    "input": {
+                        "canvas_id": "sales-board",
+                        "title": "Sales Board",
+                        "description": "test canvas"
+                    }
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("workspace_module_create should succeed");
+        assert!(!result.is_error, "expected success, got {result:?}");
+        assert_eq!(
+            result
+                .details
+                .as_ref()
+                .and_then(|details| details.get("module_id"))
+                .and_then(serde_json::Value::as_str),
+            Some("canvas:sales-board")
+        );
+
+        let updated_frame = frame_repo
+            .get_current(agent_id)
+            .await
+            .expect("frame query should succeed")
+            .expect("frame should exist");
+        assert_eq!(
+            updated_frame.visible_workspace_module_refs(),
+            vec!["canvas:sales-board".to_string()]
+        );
+
+        let state = hub
+            .get_current_capability_state(&session.id)
+            .await
+            .expect("current capability state should exist");
+        let active_vfs = state.vfs.active.expect("active VFS should exist");
+        assert!(
+            active_vfs
+                .mounts
+                .iter()
+                .any(|mount| mount.id == "cvs-sales-board")
+        );
+
+        let describe_visibility = WorkspaceModuleDimension {
+            mode: agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist,
+            allowed_module_ids: vec!["ext:demo".to_string()],
+        };
+        let describe_tool = WorkspaceModuleDescribeTool::new(
+            install_repo,
+            canvas_repo,
+            project_id,
+            describe_visibility,
+        )
+        .with_runtime_visibility(handle, session.id.clone());
+        let describe = describe_tool
+            .execute(
+                "tool-describe",
+                serde_json::json!({"module_id": "canvas:sales-board"}),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("workspace_module_describe should succeed");
+        assert!(
+            !describe.is_error,
+            "runtime grant should make created Canvas visible through allowlist describe"
+        );
+        assert_eq!(
+            describe
+                .details
+                .and_then(|details| details.pointer("/summary/module_id").cloned())
+                .and_then(|value| value.as_str().map(str::to_string)),
+            Some("canvas:sales-board".to_string())
+        );
+    }
+
+    #[tokio::test]
     async fn present_canvas_module_refreshes_session_exposure_before_event() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
 

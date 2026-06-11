@@ -468,7 +468,7 @@ mod tests {
         assert!(out.capability_keys.contains("file_read"));
         assert!(out.capability_keys.contains("file_write"));
         assert!(out.capability_keys.contains("shell_execute"));
-        assert!(out.capability_keys.contains("canvas"));
+        assert!(out.capability_keys.contains("workspace_module"));
         assert!(out.capability_keys.contains("collaboration"));
     }
 
@@ -629,7 +629,7 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: Some(vec![
-                ToolCapabilityDirective::add_simple("canvas"),
+                ToolCapabilityDirective::add_simple("workspace_module"),
                 ToolCapabilityDirective::add_simple("collaboration"),
                 // 显式屏蔽 workflow contract 原有的 file_read
                 ToolCapabilityDirective::remove_simple("file_read"),
@@ -640,10 +640,10 @@ mod tests {
         };
 
         let out = activate_activity_with_platform(&input, &test_platform());
-        // baseline_override = canvas + collaboration + Remove(file_read),
+        // baseline_override = workspace_module + collaboration + Remove(file_read),
         // directive = +workflow_management
         // workflow.contract.capability_config.tool_directives = file_read 被 override 替代
-        assert!(out.capability_keys.contains("canvas"));
+        assert!(out.capability_keys.contains("workspace_module"));
         assert!(out.capability_keys.contains("collaboration"));
         assert!(out.capability_keys.contains("workflow_management"));
         // 注意：auto_granted baseline 会带入 file_read；但我们在 override 里写了 Remove(file_read)，

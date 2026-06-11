@@ -11,9 +11,8 @@ export function workspaceModulePresentedTabTarget(
   const viewKey = typeof data?.view_key === "string" ? (data.view_key as string).trim() : "";
   const presentationUri = typeof data?.presentation_uri === "string"
     ? (data.presentation_uri as string).trim()
-    : typeof data?.uri === "string"
-      ? (data.uri as string).trim()
-      : "";
+    : "";
+  const fallbackUri = typeof data?.uri === "string" ? (data.uri as string).trim() : "";
 
   if (rendererKind === "canvas") {
     if (!presentationUri) return null;
@@ -27,7 +26,7 @@ export function workspaceModulePresentedTabTarget(
   if (!viewKey) return null;
   return {
     typeId: viewKey,
-    uri: presentationUri || undefined,
+    uri: presentationUri || fallbackUri || undefined,
     refreshRuntime: false,
   };
 }

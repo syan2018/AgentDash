@@ -377,6 +377,7 @@ async fn publish_agent_payload(
         system_prompt_mode: merged.system_prompt_mode,
         capability_directives: merged.capability_directives.unwrap_or_default(),
         mcp_slots: vec![],
+        mcp_dependencies: vec![],
     };
     serde_json::to_value(agentdash_domain::shared_library::AgentTemplatePayload { config })
         .map_err(|error| PublishLibraryAssetError::Domain(DomainError::Serialization(error)))

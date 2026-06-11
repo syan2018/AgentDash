@@ -2,6 +2,7 @@ export type {
   InstallLibraryAssetRequest,
   InstallLibraryAssetOptions,
   InstallLibraryAssetResponse,
+  AgentTemplateDependencyMode,
   InstalledAssetSourceDto,
   LibraryAssetDto,
   LibraryAssetScope,

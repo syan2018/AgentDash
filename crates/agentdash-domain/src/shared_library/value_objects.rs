@@ -193,9 +193,12 @@ pub enum LibraryAssetPayload {
 impl LibraryAssetPayload {
     pub fn from_value(asset_type: LibraryAssetType, value: Value) -> Result<Self, DomainError> {
         match asset_type {
-            LibraryAssetType::AgentTemplate => serde_json::from_value(value)
-                .map(Self::AgentTemplate)
-                .map_err(|error| payload_error("agent_template", error)),
+            LibraryAssetType::AgentTemplate => {
+                let payload = serde_json::from_value::<AgentTemplatePayload>(value)
+                    .map_err(|error| payload_error("agent_template", error))?;
+                payload.validate()?;
+                Ok(Self::AgentTemplate(payload))
+            }
             LibraryAssetType::McpServerTemplate => {
                 let payload = serde_json::from_value::<McpServerTemplatePayload>(value)
                     .map_err(|error| payload_error("mcp_server_template", error))?;
@@ -272,13 +275,19 @@ fn payload_error(asset_type: &str, error: serde_json::Error) -> DomainError {
     ))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct AgentTemplatePayload {
     pub config: AgentTemplateConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+impl AgentTemplatePayload {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        self.config.validate()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct AgentTemplateConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -301,6 +310,20 @@ pub struct AgentTemplateConfig {
     pub capability_directives: Vec<ToolCapabilityDirective>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp_slots: Vec<AgentMcpSlotTemplate>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_dependencies: Vec<AgentMcpDependencyTemplate>,
+}
+
+impl AgentTemplateConfig {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        for (index, slot) in self.mcp_slots.iter().enumerate() {
+            require_non_empty(&format!("agent_template.config.mcp_slots[{index}].key"), &slot.key)?;
+        }
+        for (index, dependency) in self.mcp_dependencies.iter().enumerate() {
+            dependency.validate(index)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -310,6 +333,57 @@ pub struct AgentMcpSlotTemplate {
     pub description: Option<String>,
     #[serde(default)]
     pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentMcpDependencyTemplate {
+    pub slot_key: String,
+    pub asset_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default = "default_true")]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Value>,
+}
+
+impl AgentMcpDependencyTemplate {
+    fn validate(&self, index: usize) -> Result<(), DomainError> {
+        require_non_empty(
+            &format!("agent_template.config.mcp_dependencies[{index}].slot_key"),
+            &self.slot_key,
+        )?;
+        require_non_empty(
+            &format!("agent_template.config.mcp_dependencies[{index}].asset_key"),
+            &self.asset_key,
+        )?;
+        if let Some(target_key) = &self.target_key {
+            require_non_empty(
+                &format!("agent_template.config.mcp_dependencies[{index}].target_key"),
+                target_key,
+            )?;
+        }
+        if let Some(display_name) = &self.display_name {
+            require_non_empty(
+                &format!("agent_template.config.mcp_dependencies[{index}].display_name"),
+                display_name,
+            )?;
+        }
+        if let Some(parameters) = &self.parameters
+            && !parameters.is_object()
+        {
+            return Err(DomainError::InvalidConfig(format!(
+                "agent_template.config.mcp_dependencies[{index}].parameters 必须是对象"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -877,25 +951,6 @@ fn validate_public_http_url(field: &str, value: &str) -> Result<(), DomainError>
         .trim_end_matches('.');
     if host.is_empty() {
         return Err(DomainError::InvalidConfig(format!("{field} 缺少 host")));
-    }
-    let is_local_or_private = matches!(host, "localhost") || host.ends_with(".local") || {
-        match host.parse::<std::net::IpAddr>() {
-            Ok(std::net::IpAddr::V4(ip)) => {
-                ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
-            }
-            Ok(std::net::IpAddr::V6(ip)) => {
-                ip.is_loopback()
-                    || ip.is_unspecified()
-                    || ip.is_unique_local()
-                    || ip.is_unicast_link_local()
-            }
-            Err(_) => false,
-        }
-    };
-    if is_local_or_private {
-        return Err(DomainError::InvalidConfig(format!(
-            "{field} 指向本机或私有网络，不能进入公共 MCP 模板"
-        )));
     }
     Ok(())
 }
@@ -1913,18 +1968,28 @@ mod tests {
     }
 
     #[test]
-    fn mcp_template_rejects_private_url_and_stdio_payload() {
-        let private_url = LibraryAssetPayload::from_value(
-            LibraryAssetType::McpServerTemplate,
-            json!({
-                "transport_template": {
-                    "type": "http",
-                    "url_template": "http://localhost:8765/mcp"
-                }
-            }),
-        );
-        assert!(private_url.is_err());
+    fn mcp_template_allows_private_local_and_localhost_urls() {
+        for url_template in [
+            "http://localhost:8765/mcp",
+            "http://127.0.0.1:8765/mcp",
+            "http://10.22.71.7:8026/km/read/mcp",
+            "http://host.local:8765/mcp",
+        ] {
+            LibraryAssetPayload::from_value(
+                LibraryAssetType::McpServerTemplate,
+                json!({
+                    "transport_template": {
+                        "type": "http",
+                        "url_template": url_template
+                    }
+                }),
+            )
+            .expect("local/private MCP URLs are allowed");
+        }
+    }
 
+    #[test]
+    fn mcp_template_rejects_stdio_payload() {
         let stdio = LibraryAssetPayload::from_value(
             LibraryAssetType::McpServerTemplate,
             json!({
@@ -1935,6 +2000,31 @@ mod tests {
             }),
         );
         assert!(stdio.is_err());
+    }
+
+    #[test]
+    fn mcp_template_rejects_userinfo_and_secret_markers() {
+        let userinfo = LibraryAssetPayload::from_value(
+            LibraryAssetType::McpServerTemplate,
+            json!({
+                "transport_template": {
+                    "type": "http",
+                    "url_template": "https://user:pass@example.com/mcp"
+                }
+            }),
+        );
+        assert!(userinfo.is_err());
+
+        let secret_marker = LibraryAssetPayload::from_value(
+            LibraryAssetType::McpServerTemplate,
+            json!({
+                "transport_template": {
+                    "type": "http",
+                    "url_template": "https://example.com/mcp?api_key=abc"
+                }
+            }),
+        );
+        assert!(secret_marker.is_err());
     }
 
     #[test]
@@ -1997,8 +2087,62 @@ mod tests {
                     "workspace": "acme",
                     "shard": "one"
                 })))
-                .is_err()
+            .is_err()
         );
+    }
+
+    #[test]
+    fn agent_template_validates_mcp_dependency_contract() {
+        let payload = match LibraryAssetPayload::from_value(
+            LibraryAssetType::AgentTemplate,
+            json!({
+                "config": {
+                    "executor": "pi-agent",
+                    "system_prompt": "Use ABC editing tools.",
+                    "mcp_slots": [{
+                        "key": "abc-copilot-tool",
+                        "display_name": "ABC Copilot Tool"
+                    }],
+                    "mcp_dependencies": [{
+                        "slot_key": "abc-copilot-tool",
+                        "asset_key": "abc-copilot-tool",
+                        "target_key": "abc-copilot-tool",
+                        "display_name": "ABC Copilot Tool",
+                        "required": true,
+                        "parameters": {
+                            "local_ip": "127.0.0.1",
+                            "port": 7321
+                        }
+                    }]
+                }
+            }),
+        )
+        .expect("valid agent template")
+        {
+            LibraryAssetPayload::AgentTemplate(payload) => payload,
+            other => panic!("unexpected payload: {other:?}"),
+        };
+
+        assert_eq!(payload.config.mcp_dependencies.len(), 1);
+        assert_eq!(
+            payload.config.mcp_dependencies[0].slot_key,
+            "abc-copilot-tool"
+        );
+
+        let invalid = LibraryAssetPayload::from_value(
+            LibraryAssetType::AgentTemplate,
+            json!({
+                "config": {
+                    "mcp_dependencies": [{
+                        "slot_key": "abc-copilot-tool",
+                        "asset_key": "abc-copilot-tool",
+                        "parameters": ["not", "object"]
+                    }]
+                }
+            }),
+        );
+
+        assert!(invalid.is_err());
     }
 
     #[test]

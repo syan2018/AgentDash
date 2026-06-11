@@ -1514,7 +1514,7 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
         AgentProcedureContract, DefinitionSource, InputPortDefinition, LifecycleNodeType,
-        OutputPortDefinition, WorkflowGraph, WorkflowInjectionSpec,
+        OutputPortDefinition, WorkflowGraph, WorkflowGraphDraft, WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
 

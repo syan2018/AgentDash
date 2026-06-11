@@ -4,7 +4,9 @@
 import type { JsonValue } from "./common-contracts";
 import type { McpRoutePolicy } from "./mcp-preset-contracts";
 
-export type InstallLibraryAssetOptions = { "asset_type": "mcp_server_template", parameters: JsonValue, };
+export type AgentTemplateDependencyMode = "required" | "all" | "skip";
+
+export type InstallLibraryAssetOptions = { "asset_type": "mcp_server_template", parameters: JsonValue, } | { "asset_type": "agent_template", dependency_mode: AgentTemplateDependencyMode, dependency_parameters: { [key in string]?: JsonValue }, overwrite_dependencies: boolean, };
 
 export type InstallLibraryAssetRequest = { library_asset_id: string, target_key?: string, overwrite: boolean, install_options?: InstallLibraryAssetOptions, };
 

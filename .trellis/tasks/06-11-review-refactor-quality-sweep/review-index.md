@@ -3,7 +3,7 @@
 ## 状态
 
 - 分支：`codex/review-refactor-quality-sweep`
-- 当前阶段：09:30 narrow review 收尾，等待下一轮实现派发
+- 当前阶段：收尾验收与存量快速修复派发
 - 主控：`codex-agent`
 
 ## 当前并行队列
@@ -60,6 +60,7 @@
 | mcp-preset-connectors Batch A | 修复 | 已提交 | `fixes/027-mcp-preset-form-helper.md` |
 | session-ui-toolcards Batch B | 修复 | 已提交 | `fixes/028-session-companion-request-view-model.md` |
 | mcp-preset-connectors Batch B | 修复 | 已提交 | `fixes/029-mcp-probe-view-model.md` |
+| workflow-orchestration clippy gate | 修复 | 已提交 | `fixes/030-workflow-launch-outcome-clippy.md` |
 
 ## 已完成模块
 
@@ -131,3 +132,4 @@
 | `f797c541` | mcp-preset-connectors | 收敛前端表单 helper |
 | `d43ce563` | session-ui-toolcards | 收敛 companion 请求视图模型 |
 | `cdd47f46` | mcp-preset-connectors | 收敛 probe 展示模型 |
+| `9be19743` | workflow-orchestration | 修复编排启动结果 large enum clippy 阻塞 |

@@ -398,7 +398,7 @@ function defaultInstallOptionsForAsset(asset: LibraryAssetDto): InstallLibraryAs
     asset_type: "agent_template",
     dependency_mode: "required",
     dependency_parameters: {},
-    overwrite_dependencies: false,
+    overwrite_dependencies: true,
   };
 }
 

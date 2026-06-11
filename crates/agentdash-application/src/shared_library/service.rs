@@ -256,8 +256,9 @@ fn validate_seed_asset_progression(
         existing.version == current.version,
     ) {
         (true, true) => Ok(()),
+        (true, false) if current_version > existing_version => Ok(()),
         (true, false) => Err(DomainError::InvalidConfig(format!(
-            "Shared Library seed version 变更但 payload 未变化: {source_ref} {} -> {}",
+            "Shared Library seed version 不能回退: {source_ref} {} -> {}",
             existing.version, current.version
         ))),
         (false, _) if current_version > existing_version => Ok(()),
@@ -551,53 +552,6 @@ mod tests {
 
         assert_eq!(seeded[0].id, existing.id);
         assert_ne!(seeded[0].payload_digest, "sha256:stale");
-    }
-
-    #[tokio::test]
-    async fn integration_embedded_seed_rejects_version_bump_without_payload_change() {
-        let repo = InMemoryLibraryAssetRepository::default();
-        let service = SharedLibraryService::new(&repo);
-        let base_seed = IntegrationEmbeddedLibraryAssetSeed {
-            integration_name: "corp.catalog".to_string(),
-            seed: IntegrationLibraryAssetSeed {
-                asset_type: LibraryAssetType::ExtensionTemplate,
-                key: "corp-extension".to_string(),
-                display_name: "Corp Extension".to_string(),
-                description: None,
-                version: "0.2.0".to_string(),
-                payload: json!({
-                    "manifest_version": "2",
-                    "extension_id": "corp-extension",
-                    "package": {
-                        "name": "corp-extension",
-                        "version": "0.2.0"
-                    },
-                    "asset_version": "0.2.0",
-                    "commands": [],
-                    "flags": [],
-                    "message_renderers": [],
-                    "capability_directives": [],
-                    "asset_refs": []
-                }),
-            },
-        };
-
-        service
-            .seed_integration_embedded_assets(vec![base_seed.clone()])
-            .await
-            .expect("initial seed");
-
-        let mut changed_seed = base_seed;
-        changed_seed.seed.version = "0.2.1".to_string();
-
-        let error = service
-            .seed_integration_embedded_assets(vec![changed_seed])
-            .await
-            .expect_err("version bump without payload change must fail");
-
-        assert!(
-            matches!(error, DomainError::InvalidConfig(message) if message.contains("version 变更但 payload 未变化"))
-        );
     }
 
     #[tokio::test]

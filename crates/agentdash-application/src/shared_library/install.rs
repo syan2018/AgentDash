@@ -400,7 +400,6 @@ async fn install_agent_template(
 ) -> Result<InstallLibraryAssetOutput, DomainError> {
     let dependency_plans = resolve_agent_mcp_dependency_plans(
         repos,
-        input.project_id,
         &asset,
         &config.mcp_dependencies,
         input.install_options.as_ref(),
@@ -470,7 +469,6 @@ struct AgentMcpDependencyInstallPlan {
 
 async fn resolve_agent_mcp_dependency_plans(
     repos: &RepositorySet,
-    project_id: Uuid,
     agent_asset: &LibraryAsset,
     dependencies: &[AgentMcpDependencyTemplate],
     install_options: Option<&InstallLibraryAssetOptions>,
@@ -518,17 +516,6 @@ async fn resolve_agent_mcp_dependency_plans(
                 "Agent MCP 依赖 target_key 重复: {target_key}"
             )));
         }
-        if repos
-            .mcp_preset_repo
-            .get_by_project_and_key(project_id, &target_key)
-            .await?
-            .is_some()
-            && !options.overwrite_dependencies
-        {
-            return Err(DomainError::InvalidConfig(format!(
-                "Project MCP Preset key 已存在: {target_key}；安装 AgentTemplate 依赖时未允许覆盖"
-            )));
-        }
         let parameters = merged_dependency_parameters(dependency, &options.dependency_parameters)?;
         // 预先解析一次，确保参数错误发生在任何写入之前。
         payload.resolve_transport(parameters.as_ref())?;
@@ -537,7 +524,7 @@ async fn resolve_agent_mcp_dependency_plans(
             payload,
             target_key,
             parameters,
-            overwrite: options.overwrite_dependencies,
+            overwrite: true,
         });
     }
     Ok(plans)
@@ -546,7 +533,6 @@ async fn resolve_agent_mcp_dependency_plans(
 struct AgentTemplateInstallOptions<'a> {
     dependency_mode: AgentTemplateDependencyMode,
     dependency_parameters: &'a BTreeMap<String, Value>,
-    overwrite_dependencies: bool,
 }
 
 fn agent_template_install_options(
@@ -558,16 +544,14 @@ fn agent_template_install_options(
         None => Ok(AgentTemplateInstallOptions {
             dependency_mode: AgentTemplateDependencyMode::Required,
             dependency_parameters: EMPTY_PARAMETERS.get_or_init(BTreeMap::new),
-            overwrite_dependencies: false,
         }),
         Some(InstallLibraryAssetOptions::AgentTemplate {
             dependency_mode,
             dependency_parameters,
-            overwrite_dependencies,
+            overwrite_dependencies: _,
         }) => Ok(AgentTemplateInstallOptions {
             dependency_mode: *dependency_mode,
             dependency_parameters,
-            overwrite_dependencies: *overwrite_dependencies,
         }),
         Some(InstallLibraryAssetOptions::McpServerTemplate { .. }) => Err(DomainError::InvalidConfig(
             "agent_template 不支持 mcp_server_template install_options".to_string(),
@@ -1168,7 +1152,6 @@ mod tests {
             AgentTemplateDependencyMode::Required
         );
         assert!(options.dependency_parameters.is_empty());
-        assert!(!options.overwrite_dependencies);
     }
 
     fn mcp_template_asset(payload: serde_json::Value) -> LibraryAsset {

@@ -16,7 +16,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   CapabilityDirective,
   McpPresetDto,
-  ProbeMcpPresetResponse,
   ToolDescriptor,
   WorkflowTargetKind,
 } from "../../../../types";
@@ -30,9 +29,14 @@ import {
   removeDirective,
   toolBlockedByWorkflow,
 } from "../../capability-directive-ops";
-import { fetchProjectMcpPresets, probeMcpTransport } from "../../../../services/mcpPreset";
+import { fetchProjectMcpPresets } from "../../../../services/mcpPreset";
 import { fetchToolCatalog } from "../../../../services/workflow";
+import { useMcpProbeStore } from "../../../../stores/mcpProbeStore";
 import { formatTargetKinds } from "../../shared-labels";
+import {
+  mapMcpProbeToToolDescriptors,
+  mcpProbePlaceholderDescriptor,
+} from "../../../mcp-shared/probeViewModel";
 import {
   AUTO_GRANTED_BASELINE,
   CAP_EDITOR_WELL_KNOWN_KEYS,
@@ -41,48 +45,6 @@ import {
   extractMcpPresetName,
   isWellKnownCapability,
 } from "./shared";
-
-/**
- * 把 probe 响应映射为 ToolDescriptor[]，供 ToolListPanel 展示。
- * - ok 状态：按 tool name / description 产出真实描述
- * - error / unsupported：落回带说明的占位符，保持 UI 一致
- */
-function mapProbeToDescriptors(
-  capabilityKey: string,
-  serverName: string,
-  result: ProbeMcpPresetResponse,
-): ToolDescriptor[] {
-  if (result.status === "ok") {
-    if (result.tools.length === 0) {
-      return [mcpPlaceholderDescriptor(capabilityKey, serverName, "MCP Server 未返回任何工具")];
-    }
-    return result.tools.map((tool) => ({
-      name: tool.name,
-      display_name: tool.name,
-      description: tool.description || `MCP 工具 ${serverName}/${tool.name}`,
-      source: { type: "mcp" as const, server_name: serverName },
-      capability_key: capabilityKey,
-    }));
-  }
-  if (result.status === "error") {
-    return [mcpPlaceholderDescriptor(capabilityKey, serverName, `探测失败：${result.error}`)];
-  }
-  return [mcpPlaceholderDescriptor(capabilityKey, serverName, result.reason)];
-}
-
-function mcpPlaceholderDescriptor(
-  capabilityKey: string,
-  serverName: string,
-  description: string,
-): ToolDescriptor {
-  return {
-    name: `mcp:${serverName}`,
-    display_name: `MCP: ${serverName}`,
-    description,
-    source: { type: "mcp", server_name: serverName },
-    capability_key: capabilityKey,
-  };
-}
 
 /** 工具行 — 展示单个工具，带「屏蔽此工具」/「恢复」按钮。 */
 function ToolRow({
@@ -295,6 +257,7 @@ function CapabilitiesEditor({
   const [presets, setPresets] = useState<McpPresetDto[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [presetsError, setPresetsError] = useState<string | null>(null);
+  const getOrRefreshProbe = useMcpProbeStore((state) => state.getOrRefresh);
 
   // 已展开工具面板的 capability key 集合
   const [expandedCaps, setExpandedCaps] = useState<Set<string>>(new Set());
@@ -374,7 +337,7 @@ function CapabilitiesEditor({
           setToolCatalogCache((prev) => ({
             ...prev,
             [key]: [
-              mcpPlaceholderDescriptor(
+              mcpProbePlaceholderDescriptor(
                 key,
                 mcpServerName,
                 `未找到 MCP Preset "${mcpServerName}"`,
@@ -384,16 +347,20 @@ function CapabilitiesEditor({
           return;
         }
         try {
-          const result = await probeMcpTransport(preset.project_id, preset.transport);
+          const result = await getOrRefreshProbe(preset.project_id, preset.transport);
           setToolCatalogCache((prev) => ({
             ...prev,
-            [key]: mapProbeToDescriptors(key, mcpServerName, result),
+            [key]: mapMcpProbeToToolDescriptors({
+              capabilityKey: key,
+              serverName: mcpServerName,
+              result,
+            }),
           }));
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           setToolCatalogCache((prev) => ({
             ...prev,
-            [key]: [mcpPlaceholderDescriptor(key, mcpServerName, `探测失败：${msg}`)],
+            [key]: [mcpProbePlaceholderDescriptor(key, mcpServerName, `探测失败：${msg}`)],
           }));
         }
         return;
@@ -406,7 +373,7 @@ function CapabilitiesEditor({
         setToolCatalogCache((prev) => ({ ...prev, [key]: [] }));
       }
     },
-    [toolCatalogCache, presets],
+    [toolCatalogCache, presets, getOrRefreshProbe],
   );
 
   // 切换 baseline 能力的屏蔽状态：发出 Remove(cap) / 撤销该 Remove

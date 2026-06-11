@@ -53,6 +53,13 @@ import {
   type McpPresetFormState,
 } from "../../mcp-shared/helpers";
 import {
+  buildMcpProbeViewModel,
+  describeMcpProbeTransport,
+  type McpProbeTone,
+  type McpProbeViewModel,
+  type McpProbeViewStatus,
+} from "../../mcp-shared/probeViewModel";
+import {
   AssetCard,
   CardMenu,
   CreateButton,
@@ -438,7 +445,7 @@ function McpPresetCard({
   );
 }
 
-/* ─── 工具 capsule 预览：auto-probe 后展示工具列表（带手动重测）─── */
+/* ─── 工具 capsule 预览：按需 probe 后展示工具列表（带手动重测）─── */
 
 function ToolCapsules({
   probing,
@@ -449,16 +456,11 @@ function ToolCapsules({
   result: ProbeMcpPresetResponse | null;
   onRecheck: () => void;
 }) {
+  const probeView = buildMcpProbeViewModel(result);
   return (
     <div className="mt-3 space-y-1.5">
       <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground/70">
-        <span>
-          {probing
-            ? "探测中…"
-            : result?.status === "ok"
-              ? `发现 ${result.tools.length} 个工具（${result.latency_ms} ms）`
-              : "可用工具"}
-        </span>
+        <span>{probing ? "探测中…" : probeView.headerLabel}</span>
         <button
           type="button"
           onClick={(e) => {
@@ -472,65 +474,54 @@ function ToolCapsules({
           {probing ? "…" : "重新检测"}
         </button>
       </div>
-      <ToolCapsulesBody probing={probing} result={result} />
+      <ToolCapsulesBody probing={probing} probeView={probeView} />
     </div>
   );
 }
 
 function ToolCapsulesBody({
   probing,
-  result,
+  probeView,
 }: {
   probing: boolean;
-  result: ProbeMcpPresetResponse | null;
+  probeView: McpProbeViewModel;
 }) {
   const box =
     "flex min-h-[44px] flex-wrap items-center gap-1.5 rounded-[10px] border border-border/70 bg-secondary/20 p-2.5 text-[11px]";
 
-  if (probing && !result) {
+  if (probing && probeView.status === "idle") {
     return (
       <div className={box}>
         <span className="text-muted-foreground">探测中…</span>
       </div>
     );
   }
-  if (!result) {
-    return (
-      <div className={box}>
-        <span className="text-muted-foreground/60">尚未探测</span>
-      </div>
-    );
-  }
-  if (result.status === "unsupported") {
-    return (
-      <div className={box}>
-        <span className="text-muted-foreground" title={result.reason}>
-          ⚠ {result.reason}
-        </span>
-      </div>
-    );
-  }
-  if (result.status === "error") {
-    const short =
-      result.error.length > 80 ? `${result.error.slice(0, 80)}…` : result.error;
-    return (
-      <div className={box}>
-        <span className="text-destructive" title={result.error}>
-          ✗ {short}
-        </span>
-      </div>
-    );
-  }
 
-  const tools = result.tools;
-  if (tools.length === 0) {
+  if (!probeView.showToolGrid) {
     return (
       <div className={box}>
-        <span className="text-muted-foreground">（未返回工具）</span>
+        <span
+          className={probeBodyClassName(probeView.bodyTone, probeView.status)}
+          title={probeView.bodyTitle ?? undefined}
+        >
+          {probeView.bodyMessage}
+        </span>
       </div>
     );
   }
-  return <ToolCapsuleGrid tools={tools} />;
+  return <ToolCapsuleGrid tools={probeView.tools} />;
+}
+
+function probeBodyClassName(tone: McpProbeTone, status: McpProbeViewStatus): string {
+  if (tone === "danger") return "text-destructive";
+  if (status === "idle") return "text-muted-foreground/60";
+  return "text-muted-foreground";
+}
+
+function probeToneClassName(tone: McpProbeTone): string {
+  if (tone === "success") return "text-success";
+  if (tone === "danger") return "text-destructive";
+  return "text-muted-foreground";
 }
 
 /** 通用 capsule 网格：展示全部工具，hover 显示描述。 */
@@ -810,10 +801,8 @@ function ProbePanel({
   transportType: McpTransportConfig["type"];
   onProbe: () => void;
 }) {
-  const subtitle =
-    transportType === "stdio"
-      ? "通过本机 relay 连接 stdio MCP Server 并调用 tools/list；15 秒超时"
-      : "实时连接 MCP Server 并调用 tools/list；15 秒超时";
+  const subtitle = describeMcpProbeTransport(transportType);
+  const probeView = buildMcpProbeViewModel(result);
 
   return (
     <div className="rounded-[8px] border border-dashed border-border bg-secondary/30 px-3 py-2.5">
@@ -832,30 +821,15 @@ function ProbePanel({
         </button>
       </div>
 
-      {result && (
+      {probeView.detailMessage && (
         <div className="mt-2.5">
-          {result.status === "ok" && (
-            <div>
-              <p className="text-xs text-success">
-                ✓ 连接成功（{result.latency_ms} ms）·{" "}
-                {result.tools.length > 0
-                  ? `发现 ${result.tools.length} 个工具`
-                  : "未返回工具"}
-              </p>
-              {result.tools.length > 0 && (
-                <div className="mt-1.5 max-h-48 overflow-y-auto">
-                  <ToolCapsuleGrid tools={result.tools} />
-                </div>
-              )}
+          <p className={`text-xs ${probeToneClassName(probeView.detailTone)}`}>
+            {probeView.detailMessage}
+          </p>
+          {probeView.showToolGrid && (
+            <div className="mt-1.5 max-h-48 overflow-y-auto">
+              <ToolCapsuleGrid tools={probeView.tools} />
             </div>
-          )}
-          {result.status === "error" && (
-            <p className="text-xs text-destructive">✗ 探测失败：{result.error}</p>
-          )}
-          {result.status === "unsupported" && (
-            <p className="text-xs text-muted-foreground">
-              ⚠ {result.reason}
-            </p>
           )}
         </div>
       )}

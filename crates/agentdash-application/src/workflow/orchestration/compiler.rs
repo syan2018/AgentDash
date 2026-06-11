@@ -411,18 +411,18 @@ impl<'a> Compiler<'a> {
                 ));
             }
 
-            if let Some(target) = to_lookup {
-                if from_lookup.is_some() {
-                    activation_rules.push(agentdash_domain::workflow::ActivationRule::Transition {
-                        rule_id: transition_rule_id(index, transition),
-                        from_node_id: transition.from.clone(),
-                        to_node_id: transition.to.clone(),
-                        condition: transition.condition.clone(),
-                        join_policy: target.activity.join_policy,
-                        max_traversals: transition.max_traversals,
-                        source_path: Some(source_path.clone()),
-                    });
-                }
+            if let Some(target) = to_lookup
+                && from_lookup.is_some()
+            {
+                activation_rules.push(agentdash_domain::workflow::ActivationRule::Transition {
+                    rule_id: transition_rule_id(index, transition),
+                    from_node_id: transition.from.clone(),
+                    to_node_id: transition.to.clone(),
+                    condition: transition.condition.clone(),
+                    join_policy: target.activity.join_policy,
+                    max_traversals: transition.max_traversals,
+                    source_path: Some(source_path.clone()),
+                });
             }
 
             self.compile_artifact_bindings(

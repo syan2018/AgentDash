@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     ActivityDefinition, ActivityTransition, AgentProcedure, AgentProcedureContract,
-    DefinitionSource, WorkflowGraph,
+    DefinitionSource, WorkflowGraph, WorkflowGraphDraft,
 };
 
 pub const TRELLIS_DAG_TASK_TEMPLATE_KEY: &str = "trellis_dag_task";
@@ -63,16 +63,16 @@ impl BuiltinWorkflowTemplateBundle {
             })
             .collect::<Result<Vec<_>, String>>()?;
 
-        let graph = WorkflowGraph::new(
+        let graph = WorkflowGraph::new(WorkflowGraphDraft {
             project_id,
-            self.graph.key.clone(),
-            self.graph.name.clone(),
-            self.graph.description.clone(),
-            DefinitionSource::BuiltinSeed,
-            self.graph.entry_activity_key.clone(),
-            self.graph.activities.clone(),
-            self.graph.transitions.clone(),
-        )?;
+            key: self.graph.key.clone(),
+            name: self.graph.name.clone(),
+            description: self.graph.description.clone(),
+            source: DefinitionSource::BuiltinSeed,
+            entry_activity_key: self.graph.entry_activity_key.clone(),
+            activities: self.graph.activities.clone(),
+            transitions: self.graph.transitions.clone(),
+        })?;
 
         Ok(BuiltinWorkflowBundle { procedures, graph })
     }

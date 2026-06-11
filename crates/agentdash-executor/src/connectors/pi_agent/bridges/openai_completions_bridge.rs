@@ -98,10 +98,10 @@ async fn run_stream(
         }
     }
 
-    if let Some(trailing) = parser.flush() {
-        if trailing.data != "[DONE]" {
-            process_chunk_event(&trailing.data, &mut state, tx).await?;
-        }
+    if let Some(trailing) = parser.flush()
+        && trailing.data != "[DONE]"
+    {
+        process_chunk_event(&trailing.data, &mut state, tx).await?;
     }
 
     let message = state.into_agent_message();
@@ -162,10 +162,10 @@ fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
 
     let mut messages = Vec::new();
 
-    if let Some(ref sp) = request.system_prompt {
-        if !sp.is_empty() {
-            messages.push(serde_json::json!({ "role": "system", "content": sp }));
-        }
+    if let Some(ref sp) = request.system_prompt
+        && !sp.is_empty()
+    {
+        messages.push(serde_json::json!({ "role": "system", "content": sp }));
     }
 
     for msg in &request.messages {
@@ -329,29 +329,29 @@ async fn process_chunk_event(
     };
 
     // 文本内容
-    if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
-        if !text.is_empty() {
-            state.content_parts.push(ContentPart::text(text));
-            let _ = tx.send(StreamChunk::TextDelta(text.to_string())).await;
-        }
+    if let Some(text) = delta.get("content").and_then(|v| v.as_str())
+        && !text.is_empty()
+    {
+        state.content_parts.push(ContentPart::text(text));
+        let _ = tx.send(StreamChunk::TextDelta(text.to_string())).await;
     }
 
     // 推理内容 — 兼容 reasoning_content / reasoning 两种字段名
     for field in &["reasoning_content", "reasoning"] {
-        if let Some(reasoning) = delta.get(*field).and_then(|v| v.as_str()) {
-            if !reasoning.is_empty() {
-                state
-                    .content_parts
-                    .push(ContentPart::reasoning(reasoning, None, None));
-                let _ = tx
-                    .send(StreamChunk::ReasoningDelta {
-                        id: None,
-                        text: reasoning.to_string(),
-                        signature: None,
-                    })
-                    .await;
-                break;
-            }
+        if let Some(reasoning) = delta.get(*field).and_then(|v| v.as_str())
+            && !reasoning.is_empty()
+        {
+            state
+                .content_parts
+                .push(ContentPart::reasoning(reasoning, None, None));
+            let _ = tx
+                .send(StreamChunk::ReasoningDelta {
+                    id: None,
+                    text: reasoning.to_string(),
+                    signature: None,
+                })
+                .await;
+            break;
         }
     }
 

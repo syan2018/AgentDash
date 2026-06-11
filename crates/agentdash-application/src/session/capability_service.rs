@@ -10,13 +10,13 @@ use super::capability_projection::{
 use super::hub::PendingRuntimeContextTransitionInput;
 use super::hub::SessionRuntimeInner;
 use super::hub::{
-    LiveRuntimeContextTransitionInput, PendingRuntimeContextApplication,
-    RuntimeContextTransitionOutcome,
+    ApplyPendingRuntimeContextTransitionInput, LiveRuntimeContextTransitionInput,
+    PendingRuntimeContextApplication, RuntimeContextTransitionOutcome,
 };
 use super::runtime_commands::{
     AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeDeliveryCommand,
 };
-use super::types::{AgentFrameRuntimeTarget, CapabilityState, PendingCapabilityStateTransition};
+use super::types::{AgentFrameRuntimeTarget, CapabilityState};
 use crate::runtime_gateway::{
     McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
 };
@@ -253,24 +253,10 @@ impl SessionCapabilityService {
 
     pub(crate) async fn apply_pending_runtime_context_transitions_on_turn(
         &self,
-        session_id: &str,
-        turn_id: &str,
-        hook_runtime: Option<&agentdash_spi::hooks::SharedHookRuntime>,
-        before_state: CapabilityState,
-        final_capability_state: &CapabilityState,
-        transitions: &[PendingCapabilityStateTransition],
-        tools: &[agentdash_agent_types::DynAgentTool],
+        input: ApplyPendingRuntimeContextTransitionInput<'_>,
     ) -> PendingRuntimeContextApplication {
         self.hub
-            .apply_pending_runtime_context_transitions_on_turn(
-                session_id,
-                turn_id,
-                hook_runtime,
-                before_state,
-                final_capability_state,
-                transitions,
-                tools,
-            )
+            .apply_pending_runtime_context_transitions_on_turn(input)
             .await
     }
 }

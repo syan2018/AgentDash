@@ -451,7 +451,17 @@ mod tests {
         assert!(listed.entries.iter().any(|e| e.path == "notes/todo.md"));
 
         let hits = service
-            .search_text(&vfs, "brief", ".", "verify", 10, None, None)
+            .search_text(
+                &vfs,
+                agentdash_application::vfs::BasicTextSearchRequest {
+                    mount_id: "brief",
+                    path: ".",
+                    query: "verify",
+                    max_results: 10,
+                    overlay: None,
+                    identity: None,
+                },
+            )
             .await
             .expect("inline search");
         assert_eq!(hits.len(), 1);
@@ -564,12 +574,14 @@ mod tests {
         let hits = service
             .search_text(
                 &runtime_vfs,
-                "brief",
-                ".",
-                "patched inline",
-                10,
-                Some(&overlay),
-                None,
+                agentdash_application::vfs::BasicTextSearchRequest {
+                    mount_id: "brief",
+                    path: ".",
+                    query: "patched inline",
+                    max_results: 10,
+                    overlay: Some(&overlay),
+                    identity: None,
+                },
             )
             .await
             .expect("search patched inline");

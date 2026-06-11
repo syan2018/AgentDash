@@ -16,27 +16,30 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone)]
+pub struct UserProfile {
+    pub user_id: String,
+    pub subject: String,
+    pub auth_mode: String,
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+    pub avatar_url: Option<String>,
+    pub is_admin: bool,
+    pub provider: Option<String>,
+}
+
 impl User {
-    pub fn new(
-        user_id: String,
-        subject: String,
-        auth_mode: String,
-        display_name: Option<String>,
-        email: Option<String>,
-        avatar_url: Option<String>,
-        is_admin: bool,
-        provider: Option<String>,
-    ) -> Self {
+    pub fn new(profile: UserProfile) -> Self {
         let now = Utc::now();
         Self {
-            user_id,
-            subject,
-            auth_mode,
-            display_name,
-            email,
-            avatar_url,
-            is_admin,
-            provider,
+            user_id: profile.user_id,
+            subject: profile.subject,
+            auth_mode: profile.auth_mode,
+            display_name: profile.display_name,
+            email: profile.email,
+            avatar_url: profile.avatar_url,
+            is_admin: profile.is_admin,
+            provider: profile.provider,
             created_at: now,
             updated_at: now,
         }

@@ -540,29 +540,26 @@ async fn resolve_admin_probe_api_key(
     req: &ProbeLlmProviderModelsRequest,
     state: &AppState,
 ) -> Result<String, ApiError> {
-    if let Some(key) = &req.api_key {
-        if !key.is_empty() && !is_masked_placeholder(key) {
-            return Ok(key.clone());
-        }
+    if let Some(key) = &req.api_key
+        && !key.is_empty()
+        && !is_masked_placeholder(key)
+    {
+        return Ok(key.clone());
     }
-    if let Some(env_key) = &req.env_api_key {
-        if let Ok(val) = std::env::var(env_key.trim()) {
-            if !val.is_empty() {
-                return Ok(val);
-            }
-        }
+    if let Some(env_key) = &req.env_api_key
+        && let Ok(val) = std::env::var(env_key.trim())
+        && !val.is_empty()
+    {
+        return Ok(val);
     }
-    if let Some(pid) = &req.provider_id {
-        if let Ok(id) = Uuid::parse_str(pid) {
-            if let Ok(provider) = get_llm_provider(&state.repos, id).await {
-                if let Some(resolved) =
-                    resolve_global_credential(&provider, state.secrets.llm_provider_secret.as_ref())
-                        .map_err(ApiError::from)?
-                {
-                    return Ok(resolved.api_key);
-                }
-            }
-        }
+    if let Some(pid) = &req.provider_id
+        && let Ok(id) = Uuid::parse_str(pid)
+        && let Ok(provider) = get_llm_provider(&state.repos, id).await
+        && let Some(resolved) =
+            resolve_global_credential(&provider, state.secrets.llm_provider_secret.as_ref())
+                .map_err(ApiError::from)?
+    {
+        return Ok(resolved.api_key);
     }
     Ok(String::new())
 }
@@ -573,10 +570,11 @@ async fn resolve_user_probe_api_key(
     provider: &LlmProvider,
     user_id: &str,
 ) -> Result<String, ApiError> {
-    if let Some(key) = &req.api_key {
-        if !key.is_empty() && !is_masked_placeholder(key) {
-            return Ok(key.clone());
-        }
+    if let Some(key) = &req.api_key
+        && !key.is_empty()
+        && !is_masked_placeholder(key)
+    {
+        return Ok(key.clone());
     }
     let Some(resolved) = resolve_effective_credential(
         provider,

@@ -393,14 +393,14 @@ mod tests {
     }
 
     fn activity_lifecycle_with_agent(project_id: Uuid, procedure_key: &str) -> WorkflowGraph {
-        WorkflowGraph::new(
+        WorkflowGraph::new(WorkflowGraphDraft {
             project_id,
-            "activity_lc",
-            "Activity lifecycle",
-            "desc",
-            DefinitionSource::UserAuthored,
-            "plan",
-            vec![ActivityDefinition {
+            key: "activity_lc".to_string(),
+            name: "Activity lifecycle".to_string(),
+            description: "desc".to_string(),
+            source: DefinitionSource::UserAuthored,
+            entry_activity_key: "plan".to_string(),
+            activities: vec![ActivityDefinition {
                 key: "plan".to_string(),
                 description: "plan".to_string(),
                 executor: ActivityExecutorSpec::Agent(
@@ -412,8 +412,8 @@ mod tests {
                 iteration_policy: Default::default(),
                 join_policy: Default::default(),
             }],
-            Vec::<ActivityTransition>::new(),
-        )
+            transitions: Vec::<ActivityTransition>::new(),
+        })
         .expect("activity lifecycle definition")
     }
 

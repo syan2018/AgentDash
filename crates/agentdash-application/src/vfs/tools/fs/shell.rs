@@ -203,10 +203,10 @@ impl AgentTool for ShellExecTool {
             .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
 
         // 清理通道
-        if let Some(ref call_id) = streaming_call_id {
-            if let Some(registry) = &self.shell_output_registry {
-                registry.unregister(call_id);
-            }
+        if let Some(ref call_id) = streaming_call_id
+            && let Some(registry) = &self.shell_output_registry
+        {
+            registry.unregister(call_id);
         }
         if let Some(handle) = forward_handle {
             handle.abort();

@@ -1411,14 +1411,14 @@ mod tests {
     }
 
     fn build_test_workflow_graph(project_id: Uuid, key: &str, activity_key: &str) -> WorkflowGraph {
-        WorkflowGraph::new(
+        WorkflowGraph::new(WorkflowGraphDraft {
             project_id,
-            key,
-            key,
-            "test workflow graph",
-            DefinitionSource::UserAuthored,
-            activity_key,
-            vec![ActivityDefinition {
+            key: key.to_string(),
+            name: key.to_string(),
+            description: "test workflow graph".to_string(),
+            source: DefinitionSource::UserAuthored,
+            entry_activity_key: activity_key.to_string(),
+            activities: vec![ActivityDefinition {
                 key: activity_key.to_string(),
                 description: "test activity".to_string(),
                 executor: ActivityExecutorSpec::Agent(
@@ -1430,8 +1430,8 @@ mod tests {
                 iteration_policy: ActivityIterationPolicy::default(),
                 join_policy: ActivityJoinPolicy::All,
             }],
-            Vec::new(),
-        )
+            transitions: Vec::new(),
+        })
         .expect("test workflow graph")
     }
 

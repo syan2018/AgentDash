@@ -65,7 +65,7 @@ pub use provider_lifecycle::LifecycleMountProvider;
 pub use provider_routine::RoutineMountProvider;
 pub use provider_skill_asset::SkillAssetFsMountProvider;
 pub use search::TextSearchParams;
-pub use service::VfsService;
+pub use service::{BasicTextSearchRequest, VfsService};
 pub use surface::{
     ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary, ResolvedVfsSurface,
     ResolvedVfsSurfaceSource,

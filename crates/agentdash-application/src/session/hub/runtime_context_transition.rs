@@ -85,16 +85,16 @@ pub(crate) fn build_initial_capability_state_frame(
         removed: Vec::new(),
     };
     let state_delta = compute_capability_state_delta(None, capability_state, capability_keys);
-    build_context_frame(
-        "bootstrap",
-        Some("initial"),
-        "queued_for_transform_context",
-        &initial_delta,
-        capability_keys,
-        Some(&state_delta),
+    build_context_frame(RuntimeContextUpdateFrameInput {
+        phase_node: "bootstrap",
+        apply_mode: Some("initial"),
+        delivery_status: "queued_for_transform_context",
+        capability_delta: &initial_delta,
+        effective_capabilities: capability_keys,
+        state_delta: Some(&state_delta),
         tools,
-        &capability_state.skill.skills,
-    )
+        skill_entries: &capability_state.skill.skills,
+    })
 }
 
 impl SessionRuntimeInner {
@@ -223,16 +223,16 @@ impl SessionRuntimeInner {
             added: state_delta.tool_capabilities.added.clone(),
             removed: state_delta.tool_capabilities.removed.clone(),
         };
-        let notice = build_context_frame(
-            &input.phase_node,
-            Some("pending_next_turn"),
-            "deferred_until_next_turn",
-            &capability_delta,
-            &input.capability_keys,
-            Some(&state_delta),
-            &[],
-            &input.after_state.skill.skills,
-        );
+        let notice = build_context_frame(RuntimeContextUpdateFrameInput {
+            phase_node: &input.phase_node,
+            apply_mode: Some("pending_next_turn"),
+            delivery_status: "deferred_until_next_turn",
+            capability_delta: &capability_delta,
+            effective_capabilities: &input.capability_keys,
+            state_delta: Some(&state_delta),
+            tools: &[],
+            skill_entries: &input.after_state.skill.skills,
+        });
         self.emit_context_frame(
             &input.delivery_runtime_session_id,
             input.turn_id.as_deref(),
@@ -251,29 +251,23 @@ impl SessionRuntimeInner {
 
     pub(crate) async fn apply_pending_runtime_context_transitions_on_turn(
         &self,
-        session_id: &str,
-        _turn_id: &str,
-        hook_runtime: Option<&SharedHookRuntime>,
-        before_state: CapabilityState,
-        final_capability_state: &CapabilityState,
-        transitions: &[PendingCapabilityStateTransition],
-        tools: &[DynAgentTool],
+        input: ApplyPendingRuntimeContextTransitionInput<'_>,
     ) -> PendingRuntimeContextApplication {
         let mut application = PendingRuntimeContextApplication::default();
-        if transitions.is_empty() {
+        if input.transitions.is_empty() {
             return application;
         }
 
-        if let Some(hook_runtime) = hook_runtime
-            && let Some(last_transition) = transitions.last()
+        if let Some(hook_runtime) = input.hook_runtime
+            && let Some(last_transition) = input.transitions.last()
         {
             let _ = hook_runtime.update_capabilities(last_transition.capability_keys.clone());
         }
 
-        let mut pending_event_before_state = before_state;
-        for (index, pending) in transitions.iter().enumerate() {
-            let pending_after_state = if index + 1 == transitions.len() {
-                final_capability_state.clone()
+        let mut pending_event_before_state = input.before_state;
+        for (index, pending) in input.transitions.iter().enumerate() {
+            let pending_after_state = if index + 1 == input.transitions.len() {
+                input.final_capability_state.clone()
             } else {
                 match apply_runtime_capability_transition(
                     &pending_event_before_state,
@@ -282,7 +276,7 @@ impl SessionRuntimeInner {
                     Ok(state) => state,
                     Err(error) => {
                         tracing::warn!(
-                            session_id,
+                            input.session_id,
                             frame_transition_id = %pending.id,
                             "pending runtime capability transition replay failed before event emission: {error}"
                         );
@@ -299,20 +293,20 @@ impl SessionRuntimeInner {
                 added: state_delta.tool_capabilities.added.clone(),
                 removed: state_delta.tool_capabilities.removed.clone(),
             };
-            let notice = build_context_frame(
-                &pending.phase_node,
-                Some("applied_on_next_turn"),
-                "applied_before_prompt",
-                &capability_delta,
-                &pending.capability_keys,
-                Some(&state_delta),
-                tools,
-                &pending_after_state.skill.skills,
-            );
+            let notice = build_context_frame(RuntimeContextUpdateFrameInput {
+                phase_node: &pending.phase_node,
+                apply_mode: Some("applied_on_next_turn"),
+                delivery_status: "applied_before_prompt",
+                capability_delta: &capability_delta,
+                effective_capabilities: &pending.capability_keys,
+                state_delta: Some(&state_delta),
+                tools: input.tools,
+                skill_entries: &pending_after_state.skill.skills,
+            });
             application.context_frames.push(notice);
 
             let injections = self
-                .collect_runtime_context_update_injections(session_id)
+                .collect_runtime_context_update_injections(input.session_id)
                 .await;
             if let Some(workflow_frame) = build_workflow_assignment_context_frame(
                 &pending.phase_node,
@@ -352,46 +346,96 @@ impl SessionRuntimeInner {
     }
 }
 
+pub(crate) struct ApplyPendingRuntimeContextTransitionInput<'a> {
+    pub session_id: &'a str,
+    pub hook_runtime: Option<&'a SharedHookRuntime>,
+    pub before_state: CapabilityState,
+    pub final_capability_state: &'a CapabilityState,
+    pub transitions: &'a [PendingCapabilityStateTransition],
+    pub tools: &'a [DynAgentTool],
+}
+
 fn build_live_context_frame(
     input: &LiveRuntimeContextTransitionInput,
     notification_delta: &SetDelta,
     state_delta: &CapabilityStateDelta,
     tools: &[DynAgentTool],
 ) -> ContextFrame {
-    let metadata = RuntimeContextUpdateFrame::new(
-        &input.phase_node,
-        Some(input.apply_mode),
-        "queued_for_transform_context",
-        notification_delta,
-        &input.capability_keys,
-        Some(state_delta),
+    let metadata = RuntimeContextUpdateFrame::new(RuntimeContextUpdateFrameInput {
+        phase_node: &input.phase_node,
+        apply_mode: Some(input.apply_mode),
+        delivery_status: "queued_for_transform_context",
+        capability_delta: notification_delta,
+        effective_capabilities: &input.capability_keys,
+        state_delta: Some(state_delta),
         tools,
-        &input.after_state.skill.skills,
-    );
+        skill_entries: &input.after_state.skill.skills,
+    });
     context_frame::build_context_frame(&metadata)
 }
 
-fn build_context_frame(
-    phase_node: &str,
-    apply_mode: Option<&str>,
-    delivery_status: &str,
-    capability_delta: &SetDelta,
-    effective_capabilities: &BTreeSet<String>,
-    state_delta: Option<&CapabilityStateDelta>,
-    tools: &[DynAgentTool],
-    skill_entries: &[agentdash_spi::context::capability::SkillEntry],
-) -> ContextFrame {
-    let metadata = RuntimeContextUpdateFrame::new(
-        phase_node,
-        apply_mode,
-        delivery_status,
-        capability_delta,
-        effective_capabilities,
-        state_delta,
-        tools,
-        skill_entries,
-    );
+fn build_context_frame(input: RuntimeContextUpdateFrameInput<'_>) -> ContextFrame {
+    let metadata = RuntimeContextUpdateFrame::new(input);
     context_frame::build_context_frame(&metadata)
+}
+
+struct RuntimeContextUpdateFrameInput<'a> {
+    phase_node: &'a str,
+    apply_mode: Option<&'a str>,
+    delivery_status: &'a str,
+    capability_delta: &'a SetDelta,
+    effective_capabilities: &'a BTreeSet<String>,
+    state_delta: Option<&'a CapabilityStateDelta>,
+    tools: &'a [DynAgentTool],
+    skill_entries: &'a [agentdash_spi::context::capability::SkillEntry],
+}
+
+impl RuntimeContextUpdateFrame {
+    fn new(input: RuntimeContextUpdateFrameInput<'_>) -> Self {
+        let mut dimensions: Vec<Box<dyn DimensionDelta>> = Vec::new();
+
+        if let Some(d) = dimension::capability_key::CapabilityKeyDimensionDelta::from_delta(
+            input.capability_delta,
+            input.effective_capabilities,
+            input.state_delta,
+        ) {
+            dimensions.push(d);
+        }
+        if let Some(d) =
+            dimension::tool_path::ToolPathDimensionDelta::from_state_delta(input.state_delta)
+        {
+            dimensions.push(d);
+        }
+        if let Some(d) =
+            dimension::mcp_server::McpServerDimensionDelta::from_state_delta(input.state_delta)
+        {
+            dimensions.push(d);
+        }
+        if let Some(d) = dimension::vfs::VfsDimensionDelta::from_state_delta(input.state_delta) {
+            dimensions.push(d);
+        }
+        if let Some(d) = dimension::skill::SkillDimensionDelta::from_state_delta(
+            input.state_delta,
+            input.skill_entries,
+        ) {
+            dimensions.push(d);
+        }
+        if let Some(d) =
+            dimension::tool_schema::ToolSchemaDimensionDelta::from_tools_and_state_delta(
+                input.tools,
+                input.state_delta,
+            )
+        {
+            dimensions.push(d);
+        }
+
+        Self {
+            phase_node: input.phase_node.to_string(),
+            apply_mode: input.apply_mode.map(str::to_string),
+            delivery_status: input.delivery_status.to_string(),
+            dimensions,
+        }
+    }
 }
 
 /// 根据 hook injections 构造独立的 `assignment_context` frame。
@@ -420,61 +464,6 @@ struct RuntimeContextUpdateFrame {
     apply_mode: Option<String>,
     delivery_status: String,
     dimensions: Vec<Box<dyn DimensionDelta>>,
-}
-
-impl RuntimeContextUpdateFrame {
-    fn new(
-        phase_node: &str,
-        apply_mode: Option<&str>,
-        delivery_status: &str,
-        capability_delta: &SetDelta,
-        effective_capabilities: &BTreeSet<String>,
-        state_delta: Option<&CapabilityStateDelta>,
-        tools: &[DynAgentTool],
-        skill_entries: &[agentdash_spi::context::capability::SkillEntry],
-    ) -> Self {
-        let mut dimensions: Vec<Box<dyn DimensionDelta>> = Vec::new();
-
-        if let Some(d) = dimension::capability_key::CapabilityKeyDimensionDelta::from_delta(
-            capability_delta,
-            effective_capabilities,
-            state_delta,
-        ) {
-            dimensions.push(d);
-        }
-        if let Some(d) = dimension::tool_path::ToolPathDimensionDelta::from_state_delta(state_delta)
-        {
-            dimensions.push(d);
-        }
-        if let Some(d) =
-            dimension::mcp_server::McpServerDimensionDelta::from_state_delta(state_delta)
-        {
-            dimensions.push(d);
-        }
-        if let Some(d) = dimension::vfs::VfsDimensionDelta::from_state_delta(state_delta) {
-            dimensions.push(d);
-        }
-        if let Some(d) =
-            dimension::skill::SkillDimensionDelta::from_state_delta(state_delta, skill_entries)
-        {
-            dimensions.push(d);
-        }
-        if let Some(d) =
-            dimension::tool_schema::ToolSchemaDimensionDelta::from_tools_and_state_delta(
-                tools,
-                state_delta,
-            )
-        {
-            dimensions.push(d);
-        }
-
-        Self {
-            phase_node: phase_node.to_string(),
-            apply_mode: apply_mode.map(ToString::to_string),
-            delivery_status: delivery_status.to_string(),
-            dimensions,
-        }
-    }
 }
 
 impl ContextFramePayload for RuntimeContextUpdateFrame {

@@ -101,20 +101,20 @@ async fn run_session(
     // 创建事件通道（CommandHandler 通过此通道推送异步事件）
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<RelayMessage>();
 
-    let handler = CommandHandler::new(
-        config.backend_id.clone(),
-        config.workspace_roots.clone(),
-        config.tool_executor.clone(),
-        config.session_runtime.clone(),
-        config.connector.clone(),
-        config.mcp_manager.clone(),
-        config.workspace_contract_config.clone(),
-        config.extension_host.clone(),
-        config.api_base_url.clone(),
-        config.token.clone(),
-        config.extension_artifact_cache_root.clone(),
+    let handler = CommandHandler::new(crate::handlers::CommandHandlerConfig {
+        backend_id: config.backend_id.clone(),
+        workspace_roots: config.workspace_roots.clone(),
+        tool_executor: config.tool_executor.clone(),
+        session_runtime: config.session_runtime.clone(),
+        connector: config.connector.clone(),
+        mcp_manager: config.mcp_manager.clone(),
+        workspace_contract_config: config.workspace_contract_config.clone(),
+        extension_host: config.extension_host.clone(),
+        extension_artifact_api_base_url: config.api_base_url.clone(),
+        extension_artifact_access_token: config.token.clone(),
+        extension_artifact_cache_root: config.extension_artifact_cache_root.clone(),
         event_tx,
-    );
+    });
 
     // 第一步：发送注册消息
     let register_msg = RelayMessage::Register {

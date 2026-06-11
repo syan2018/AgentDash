@@ -175,13 +175,14 @@ impl TurnPreparer {
         {
             deps.capability
                 .apply_pending_runtime_context_transitions_on_turn(
-                    &session_id,
-                    &turn_id,
-                    hook_runtime.as_ref(),
-                    base_capability_state,
-                    &capability_state,
-                    &launch_plan.runtime_commands.pending_capability_transitions,
-                    &context.turn.assembled_tools,
+                    crate::session::hub::ApplyPendingRuntimeContextTransitionInput {
+                        session_id: &session_id,
+                        hook_runtime: hook_runtime.as_ref(),
+                        before_state: base_capability_state,
+                        final_capability_state: &capability_state,
+                        transitions: &launch_plan.runtime_commands.pending_capability_transitions,
+                        tools: &context.turn.assembled_tools,
+                    },
                 )
                 .await
         } else {
@@ -198,34 +199,32 @@ impl TurnPreparer {
             executor_id: Some(context.session.executor_config.executor.to_string()),
         };
 
-        if is_owner_bootstrap {
-            if let Some(hook_runtime) = hook_runtime.as_ref() {
-                let initial_caps = capability_keys.clone();
-                if !initial_caps.is_empty() {
-                    let _ = hook_runtime.update_capabilities(initial_caps.clone());
-                }
-
-                let _start_effects = deps
-                    .hooks
-                    .emit_session_hook_trigger(
-                        hook_runtime.as_ref(),
-                        &HookTriggerInput {
-                            session_id: &session_id,
-                            turn_id: Some(&turn_id),
-                            trigger: HookTrigger::SessionStart,
-                            payload: Some(serde_json::json!({
-                                "text_prompt": resolved_payload.text_prompt,
-                                "user_block_count": resolved_payload.input.len(),
-                                "tool_capabilities": {
-                                    "current": initial_caps.iter().collect::<Vec<_>>(),
-                                },
-                            })),
-                            refresh_reason: "trigger:session_start",
-                            source: source.clone(),
-                        },
-                    )
-                    .await;
+        if is_owner_bootstrap && let Some(hook_runtime) = hook_runtime.as_ref() {
+            let initial_caps = capability_keys.clone();
+            if !initial_caps.is_empty() {
+                let _ = hook_runtime.update_capabilities(initial_caps.clone());
             }
+
+            let _start_effects = deps
+                .hooks
+                .emit_session_hook_trigger(
+                    hook_runtime.as_ref(),
+                    &HookTriggerInput {
+                        session_id: &session_id,
+                        turn_id: Some(&turn_id),
+                        trigger: HookTrigger::SessionStart,
+                        payload: Some(serde_json::json!({
+                            "text_prompt": resolved_payload.text_prompt,
+                            "user_block_count": resolved_payload.input.len(),
+                            "tool_capabilities": {
+                                "current": initial_caps.iter().collect::<Vec<_>>(),
+                            },
+                        })),
+                        refresh_reason: "trigger:session_start",
+                        source: source.clone(),
+                    },
+                )
+                .await;
         }
 
         let mut accepted_context_frames_to_emit = Vec::new();

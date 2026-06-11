@@ -524,16 +524,16 @@ mod tests {
             iteration_policy: Default::default(),
             join_policy: Default::default(),
         };
-        WorkflowGraph::new(
+        WorkflowGraph::new(WorkflowGraphDraft {
             project_id,
-            "builtin_workflow_admin",
-            "Workflow Admin",
-            "",
-            DefinitionSource::BuiltinSeed,
-            "plan",
-            vec![plan],
-            vec![],
-        )
+            key: "builtin_workflow_admin".to_string(),
+            name: "Workflow Admin".to_string(),
+            description: String::new(),
+            source: DefinitionSource::BuiltinSeed,
+            entry_activity_key: "plan".to_string(),
+            activities: vec![plan],
+            transitions: vec![],
+        })
         .expect("build lifecycle")
     }
 

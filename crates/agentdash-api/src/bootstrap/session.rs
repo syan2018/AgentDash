@@ -108,15 +108,17 @@ pub(crate) async fn build_session_runtime(
 
     let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
     let hook_provider = Arc::new(AppExecutionHookProvider::new(
-        repos.project_repo.clone(),
-        repos.story_repo.clone(),
-        repos.agent_procedure_repo.clone(),
-        repos.agent_frame_repo.clone(),
-        repos.lifecycle_agent_repo.clone(),
-        repos.lifecycle_run_repo.clone(),
-        repos.execution_anchor_repo.clone(),
-        repos.lifecycle_subject_association_repo.clone(),
-        repos.inline_file_repo.clone(),
+        agentdash_application::hooks::AppExecutionHookProviderRepos {
+            project_repo: repos.project_repo.clone(),
+            story_repo: repos.story_repo.clone(),
+            agent_procedure_repo: repos.agent_procedure_repo.clone(),
+            agent_frame_repo: repos.agent_frame_repo.clone(),
+            lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
+            lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
+            execution_anchor_repo: repos.execution_anchor_repo.clone(),
+            lifecycle_subject_association_repo: repos.lifecycle_subject_association_repo.clone(),
+            inline_file_repo: repos.inline_file_repo.clone(),
+        },
         |preset_scripts| {
             Arc::new(agentdash_infrastructure::RhaiHookScriptEvaluator::new(
                 preset_scripts,

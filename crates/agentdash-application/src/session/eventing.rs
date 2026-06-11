@@ -436,14 +436,16 @@ impl SessionEventingService {
         let mut completed_event = envelope;
         enrich_context_compacted_commit_value(
             &mut completed_event,
-            &compaction_id,
-            projection_version,
-            source_start_event_seq,
-            source_end_event_seq,
-            first_kept_event_seq,
-            &trigger,
-            phase.as_deref(),
-            &strategy,
+            ContextCompactedCommitEnrichment {
+                compaction_id: &compaction_id,
+                projection_version,
+                source_start_event_seq,
+                source_end_event_seq,
+                first_kept_event_seq,
+                trigger: &trigger,
+                phase: phase.as_deref(),
+                strategy: &strategy,
+            },
         );
 
         let commit = NewCompactionProjectionCommit {
@@ -678,16 +680,20 @@ fn find_compaction_started_event_seq(
         })
 }
 
-fn enrich_context_compacted_commit_value(
-    envelope: &mut BackboneEnvelope,
-    compaction_id: &str,
+struct ContextCompactedCommitEnrichment<'a> {
+    compaction_id: &'a str,
     projection_version: u64,
     source_start_event_seq: Option<u64>,
     source_end_event_seq: u64,
     first_kept_event_seq: Option<u64>,
-    trigger: &str,
-    phase: Option<&str>,
-    strategy: &str,
+    trigger: &'a str,
+    phase: Option<&'a str>,
+    strategy: &'a str,
+}
+
+fn enrich_context_compacted_commit_value(
+    envelope: &mut BackboneEnvelope,
+    enrichment: ContextCompactedCommitEnrichment<'_>,
 ) {
     let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) =
         &mut envelope.event
@@ -699,7 +705,7 @@ fn enrich_context_compacted_commit_value(
     };
     obj.insert(
         "compaction_id".to_string(),
-        serde_json::Value::String(compaction_id.to_string()),
+        serde_json::Value::String(enrichment.compaction_id.to_string()),
     );
     obj.insert(
         "projection_kind".to_string(),
@@ -707,25 +713,25 @@ fn enrich_context_compacted_commit_value(
     );
     obj.insert(
         "projection_version".to_string(),
-        serde_json::json!(projection_version),
+        serde_json::json!(enrichment.projection_version),
     );
     obj.insert(
         "source_start_event_seq".to_string(),
-        serde_json::to_value(source_start_event_seq).unwrap_or(serde_json::Value::Null),
+        serde_json::to_value(enrichment.source_start_event_seq).unwrap_or(serde_json::Value::Null),
     );
     obj.insert(
         "source_end_event_seq".to_string(),
-        serde_json::json!(source_end_event_seq),
+        serde_json::json!(enrichment.source_end_event_seq),
     );
     obj.insert(
         "first_kept_event_seq".to_string(),
-        serde_json::to_value(first_kept_event_seq).unwrap_or(serde_json::Value::Null),
+        serde_json::to_value(enrichment.first_kept_event_seq).unwrap_or(serde_json::Value::Null),
     );
     obj.insert(
         "trigger".to_string(),
-        serde_json::Value::String(trigger.to_string()),
+        serde_json::Value::String(enrichment.trigger.to_string()),
     );
-    if let Some(phase) = phase {
+    if let Some(phase) = enrichment.phase {
         obj.insert(
             "phase".to_string(),
             serde_json::Value::String(phase.to_string()),
@@ -733,7 +739,7 @@ fn enrich_context_compacted_commit_value(
     }
     obj.insert(
         "strategy".to_string(),
-        serde_json::Value::String(strategy.to_string()),
+        serde_json::Value::String(enrichment.strategy.to_string()),
     );
 }
 

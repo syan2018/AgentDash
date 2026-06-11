@@ -21,8 +21,8 @@ pub use dispatch::{
     SubjectExecutionRef, WorkflowGraphRef,
 };
 pub use entity::{
-    AgentProcedure, LifecycleRun, LifecycleRunTopology, WorkflowGraph, build_effective_contract,
-    build_effective_contract_from_contract,
+    AgentProcedure, LifecycleRun, LifecycleRunTopology, WorkflowGraph, WorkflowGraphDraft,
+    build_effective_contract, build_effective_contract_from_contract,
 };
 pub use lifecycle_agent::{LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::LifecycleGate;

@@ -776,7 +776,7 @@ mod workflow_claim_tests {
         AgentReusePolicy, AgentRunRef, BashExecExecutorSpec, ExecutorSpec,
         FunctionActivityExecutorSpec, HumanActivityExecutorSpec, HumanApprovalExecutorSpec,
         LifecycleContext, LifecycleRunStatus, OrchestrationInstance, OrchestrationPlanSnapshot,
-        OrchestrationSourceRef, PlanNode, PlanNodeKind, RuntimeSessionPolicy,
+        OrchestrationSourceRef, PlanNode, PlanNodeKind, RuntimeSessionPolicy, WorkflowGraphDraft,
         WorkflowTemplateInstallBundle,
     };
     use serde_json::json;
@@ -905,14 +905,14 @@ mod workflow_claim_tests {
         procedure_key: &str,
         digest: &str,
     ) -> WorkflowGraph {
-        let mut lifecycle = WorkflowGraph::new(
+        let mut lifecycle = WorkflowGraph::new(WorkflowGraphDraft {
             project_id,
-            key,
-            format!("Lifecycle {digest}"),
-            "",
-            agentdash_domain::workflow::DefinitionSource::UserAuthored,
-            "plan",
-            vec![ActivityDefinition {
+            key: key.to_string(),
+            name: format!("Lifecycle {digest}"),
+            description: String::new(),
+            source: agentdash_domain::workflow::DefinitionSource::UserAuthored,
+            entry_activity_key: "plan".to_string(),
+            activities: vec![ActivityDefinition {
                 key: "plan".to_string(),
                 description: String::new(),
                 executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
@@ -926,8 +926,8 @@ mod workflow_claim_tests {
                 iteration_policy: Default::default(),
                 join_policy: Default::default(),
             }],
-            vec![],
-        )
+            transitions: vec![],
+        })
         .expect("lifecycle");
         lifecycle.installed_source = Some(InstalledAssetSource::new(
             uuid::Uuid::new_v4(),

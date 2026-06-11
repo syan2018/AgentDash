@@ -27,6 +27,15 @@ struct MountDispatch {
     ctx: MountOperationContext,
 }
 
+pub struct BasicTextSearchRequest<'a> {
+    pub mount_id: &'a str,
+    pub path: &'a str,
+    pub query: &'a str,
+    pub max_results: usize,
+    pub overlay: Option<&'a InlineContentOverlay>,
+    pub identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
+}
+
 impl VfsService {
     pub fn new(mount_provider_registry: Arc<MountProviderRegistry>) -> Self {
         Self {
@@ -871,25 +880,20 @@ impl VfsService {
     pub async fn search_text(
         &self,
         vfs: &Vfs,
-        mount_id: &str,
-        path: &str,
-        query: &str,
-        max_results: usize,
-        overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        request: BasicTextSearchRequest<'_>,
     ) -> Result<Vec<String>, MountError> {
         self.search_text_extended(
             vfs,
             &TextSearchParams {
-                mount_id,
-                path,
-                query,
+                mount_id: request.mount_id,
+                path: request.path,
+                query: request.query,
                 is_regex: false,
                 include_glob: None,
-                max_results,
+                max_results: request.max_results,
                 context_lines: 0,
-                overlay,
-                identity,
+                overlay: request.overlay,
+                identity: request.identity,
                 case_sensitive: true,
                 before_lines: 0,
                 after_lines: 0,

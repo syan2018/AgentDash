@@ -244,33 +244,31 @@ impl CapabilityResolver {
                         } else {
                             effective_caps.remove(&cap);
                         }
-                    } else if cap.is_custom_mcp() {
-                        if let Some(server_name) = cap.custom_mcp_server_name().map(str::to_string)
-                        {
-                            if let Some(preset) = input.mcp_candidates.presets.get(&server_name) {
-                                effective_caps.insert(cap.clone());
-                                if seen_custom_mcp_names.insert(server_name.clone()) {
-                                    resolved_mcp_servers.push(
-                                        crate::mcp_preset::preset_to_session_mcp_server(preset),
-                                    );
-                                }
-                            } else if let Some(agent_entry) = input
-                                .mcp_candidates
-                                .agent_servers
-                                .iter()
-                                .find(|e| e.name == server_name)
-                            {
-                                effective_caps.insert(cap.clone());
-                                if seen_custom_mcp_names.insert(server_name.clone()) {
-                                    resolved_mcp_servers.push(agent_entry.server.clone());
-                                }
-                            } else {
-                                tracing::warn!(
-                                    key = %cap.key(),
-                                    server_name = %server_name,
-                                    "directive 声明了 mcp:{server_name}，但 McpPreset 和 agent 内联都未注册"
-                                );
+                    } else if cap.is_custom_mcp()
+                        && let Some(server_name) = cap.custom_mcp_server_name().map(str::to_string)
+                    {
+                        if let Some(preset) = input.mcp_candidates.presets.get(&server_name) {
+                            effective_caps.insert(cap.clone());
+                            if seen_custom_mcp_names.insert(server_name.clone()) {
+                                resolved_mcp_servers
+                                    .push(crate::mcp_preset::preset_to_session_mcp_server(preset));
                             }
+                        } else if let Some(agent_entry) = input
+                            .mcp_candidates
+                            .agent_servers
+                            .iter()
+                            .find(|e| e.name == server_name)
+                        {
+                            effective_caps.insert(cap.clone());
+                            if seen_custom_mcp_names.insert(server_name.clone()) {
+                                resolved_mcp_servers.push(agent_entry.server.clone());
+                            }
+                        } else {
+                            tracing::warn!(
+                                key = %cap.key(),
+                                server_name = %server_name,
+                                "directive 声明了 mcp:{server_name}，但 McpPreset 和 agent 内联都未注册"
+                            );
                         }
                     }
                 }
@@ -284,14 +282,14 @@ impl CapabilityResolver {
             for cluster in tool_capability::capability_to_tool_clusters(cap) {
                 enabled_clusters.insert(cluster);
             }
-            if let Some(scope) = tool_capability::capability_to_platform_mcp_scope(cap) {
-                if let Some(config) = build_platform_mcp_config(
+            if let Some(scope) = tool_capability::capability_to_platform_mcp_scope(cap)
+                && let Some(config) = build_platform_mcp_config(
                     scope,
                     platform.mcp_base_url.as_deref(),
                     &input.owner_ctx,
-                ) {
-                    resolved_mcp_servers.push(config.to_session_mcp_server());
-                }
+                )
+            {
+                resolved_mcp_servers.push(config.to_session_mcp_server());
             }
         }
 

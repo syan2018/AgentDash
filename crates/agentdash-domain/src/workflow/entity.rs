@@ -89,35 +89,40 @@ pub struct WorkflowGraph {
     pub updated_at: DateTime<Utc>,
 }
 
+pub struct WorkflowGraphDraft {
+    pub project_id: Uuid,
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub source: DefinitionSource,
+    pub entry_activity_key: String,
+    pub activities: Vec<ActivityDefinition>,
+    pub transitions: Vec<ActivityTransition>,
+}
+
 impl WorkflowGraph {
-    pub fn new(
-        project_id: Uuid,
-        key: impl Into<String>,
-        name: impl Into<String>,
-        description: impl Into<String>,
-        source: DefinitionSource,
-        entry_activity_key: impl Into<String>,
-        activities: Vec<ActivityDefinition>,
-        transitions: Vec<ActivityTransition>,
-    ) -> Result<Self, String> {
-        let key = key.into();
-        let name = name.into();
-        let entry_activity_key = entry_activity_key.into();
-        validate_workflow_graph(&key, &name, &entry_activity_key, &activities, &transitions)?;
+    pub fn new(draft: WorkflowGraphDraft) -> Result<Self, String> {
+        validate_workflow_graph(
+            &draft.key,
+            &draft.name,
+            &draft.entry_activity_key,
+            &draft.activities,
+            &draft.transitions,
+        )?;
 
         let now = Utc::now();
         Ok(Self {
             id: Uuid::new_v4(),
-            project_id,
-            key,
-            name,
-            description: description.into(),
-            source,
+            project_id: draft.project_id,
+            key: draft.key,
+            name: draft.name,
+            description: draft.description,
+            source: draft.source,
             installed_source: None,
             version: 1,
-            entry_activity_key,
-            activities,
-            transitions,
+            entry_activity_key: draft.entry_activity_key,
+            activities: draft.activities,
+            transitions: draft.transitions,
             created_at: now,
             updated_at: now,
         })

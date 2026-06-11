@@ -38,41 +38,42 @@ pub struct AppExecutionHookProvider {
     pub(super) script_engine: HookScriptEngine,
 }
 
+pub struct AppExecutionHookProviderRepos {
+    pub project_repo: Arc<dyn ProjectRepository>,
+    pub story_repo: Arc<dyn StoryRepository>,
+    pub agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
+    pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
+    pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
+    pub inline_file_repo: Arc<dyn InlineFileRepository>,
+}
+
 impl AppExecutionHookProvider {
     /// 构造 Facade。
     ///
     /// `script_evaluator_factory` 由 composition root 提供，接收内建 preset
     /// 脚本（key → 源码）并返回具体脚本引擎实现（rhai 实现下沉 infrastructure）。
-    pub fn new<F>(
-        project_repo: Arc<dyn ProjectRepository>,
-        story_repo: Arc<dyn StoryRepository>,
-        agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
-        agent_frame_repo: Arc<dyn AgentFrameRepository>,
-        lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
-        inline_file_repo: Arc<dyn InlineFileRepository>,
-        script_evaluator_factory: F,
-    ) -> Self
+    pub fn new<F>(repos: AppExecutionHookProviderRepos, script_evaluator_factory: F) -> Self
     where
         F: FnOnce(&[(&str, &str)]) -> Arc<dyn HookScriptEvaluator>,
     {
         let preset_scripts = builtin_preset_scripts();
         let evaluator = script_evaluator_factory(&preset_scripts);
         Self {
-            inline_file_repo,
+            inline_file_repo: repos.inline_file_repo,
             owner_resolver: SessionOwnerResolver::new(
-                project_repo,
-                story_repo,
-                lifecycle_subject_association_repo,
+                repos.project_repo,
+                repos.story_repo,
+                repos.lifecycle_subject_association_repo,
             ),
             workflow_builder: WorkflowSnapshotBuilder::new(
-                agent_procedure_repo,
-                agent_frame_repo,
-                lifecycle_agent_repo,
-                lifecycle_run_repo,
-                execution_anchor_repo,
+                repos.agent_procedure_repo,
+                repos.agent_frame_repo,
+                repos.lifecycle_agent_repo,
+                repos.lifecycle_run_repo,
+                repos.execution_anchor_repo,
             ),
             script_engine: HookScriptEngine::new(evaluator),
         }

@@ -226,12 +226,12 @@ impl PiAgentConnector {
             return Ok(provider.create_bridge(&resolved_model.id));
         }
 
-        if let Some(provider_id) = provider_id {
-            if let Some(reason) = provider_state.unavailable_providers.get(provider_id) {
-                return Err(ConnectorError::InvalidConfig(
-                    describe_unavailable_provider(provider_id, reason),
-                ));
-            }
+        if let Some(provider_id) = provider_id
+            && let Some(reason) = provider_state.unavailable_providers.get(provider_id)
+        {
+            return Err(ConnectorError::InvalidConfig(
+                describe_unavailable_provider(provider_id, reason),
+            ));
         }
 
         if provider_id.is_none() && model_id.is_none() {
@@ -650,11 +650,11 @@ impl AgentConnector for PiAgentConnector {
                     .replace_messages_with_refs(state.messages, state.message_refs)
                     .await;
             }
-        } else if incoming_identity_prompt.as_deref() != cached_identity_prompt.as_deref() {
-            if let Some(system_prompt) = incoming_identity_prompt.as_ref() {
-                agent.set_system_prompt(system_prompt.clone());
-                cached_identity_prompt = Some(system_prompt.clone());
-            }
+        } else if incoming_identity_prompt.as_deref() != cached_identity_prompt.as_deref()
+            && let Some(system_prompt) = incoming_identity_prompt.as_ref()
+        {
+            agent.set_system_prompt(system_prompt.clone());
+            cached_identity_prompt = Some(system_prompt.clone());
         }
 
         let hook_trace_rx = context

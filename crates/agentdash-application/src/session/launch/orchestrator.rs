@@ -318,15 +318,12 @@ impl SessionLaunchOrchestrator {
                             );
                             // enforce current_frame_id invariant:
                             // build() 成功后同步 LifecycleAgent.current_frame_id
-                            if let Some(ref agent_repo) = deps.lifecycle_agent_repo {
-                                if let Ok(Some(mut agent)) = agent_repo.get(frame.agent_id).await {
-                                    agent.set_current_frame(frame.id);
-                                    if let Err(e) = agent_repo.update(&agent).await {
-                                        tracing::warn!(
-                                            session_id,
-                                            "同步 current_frame_id 失败: {e}"
-                                        );
-                                    }
+                            if let Some(ref agent_repo) = deps.lifecycle_agent_repo
+                                && let Ok(Some(mut agent)) = agent_repo.get(frame.agent_id).await
+                            {
+                                agent.set_current_frame(frame.id);
+                                if let Err(e) = agent_repo.update(&agent).await {
+                                    tracing::warn!(session_id, "同步 current_frame_id 失败: {e}");
                                 }
                             }
                         }

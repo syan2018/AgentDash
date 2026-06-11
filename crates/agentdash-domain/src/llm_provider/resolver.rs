@@ -46,13 +46,13 @@ pub fn resolve_global_credential(
         }
     }
 
-    if let Some(api_key) = provider.resolve_env_api_key() {
-        if !api_key.trim().is_empty() {
-            return Ok(Some(ResolvedLlmCredential {
-                api_key,
-                source: LlmCredentialSource::GlobalEnv,
-            }));
-        }
+    if let Some(api_key) = provider.resolve_env_api_key()
+        && !api_key.trim().is_empty()
+    {
+        return Ok(Some(ResolvedLlmCredential {
+            api_key,
+            source: LlmCredentialSource::GlobalEnv,
+        }));
     }
 
     Ok(None)

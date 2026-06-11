@@ -418,7 +418,7 @@ impl LifecycleSubjectAssociationRepository for PostgresLifecycleSubjectAssociati
         let metadata = assoc
             .metadata_json
             .as_ref()
-            .map(|v| serde_json::to_string(v))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| DomainError::InvalidConfig(format!("metadata_json: {e}")))?;
         sqlx::query(
@@ -557,7 +557,7 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
         let payload = gate
             .payload_json
             .as_ref()
-            .map(|v| serde_json::to_string(v))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| DomainError::InvalidConfig(format!("payload_json: {e}")))?;
         sqlx::query(
@@ -613,7 +613,7 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
         let payload = gate
             .payload_json
             .as_ref()
-            .map(|v| serde_json::to_string(v))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| DomainError::InvalidConfig(format!("payload_json: {e}")))?;
         sqlx::query(
@@ -689,7 +689,7 @@ impl AgentLineageRepository for PostgresAgentLineageRepository {
         let metadata = lineage
             .metadata_json
             .as_ref()
-            .map(|v| serde_json::to_string(v))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| DomainError::InvalidConfig(format!("metadata_json: {e}")))?;
         sqlx::query(

@@ -400,16 +400,16 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
         iteration_policy: Default::default(),
         join_policy: Default::default(),
     };
-    let lifecycle = WorkflowGraph::new(
+    let lifecycle = WorkflowGraph::new(WorkflowGraphDraft {
         project_id,
-        "trellis_dev_task",
-        "Trellis Dev Lifecycle",
-        "lifecycle desc",
-        DefinitionSource::BuiltinSeed,
-        "implement",
-        vec![active_activity.clone()],
-        vec![],
-    )
+        key: "trellis_dev_task".to_string(),
+        name: "Trellis Dev Lifecycle".to_string(),
+        description: "lifecycle desc".to_string(),
+        source: DefinitionSource::BuiltinSeed,
+        entry_activity_key: "implement".to_string(),
+        activities: vec![active_activity.clone()],
+        transitions: vec![],
+    })
     .expect("lifecycle definition should build");
     let active_attempt = RuntimeNodeState {
         node_id: "implement".to_string(),

@@ -27,8 +27,8 @@ use agentdash_contracts::workflow::{
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, AgentProcedure, DefinitionSource, ExecutionSource, LifecycleRun,
     LifecycleRunStartIntent, OrchestrationSourceRef, ValidationIssue, ValidationSeverity,
-    WorkflowGraph, WorkflowGraphRef, WorkflowScriptCapabilitySummary, WorkflowScriptProvenance,
-    WorkflowScriptProvenanceSource, workflow_script_source_digest,
+    WorkflowGraph, WorkflowGraphDraft, WorkflowGraphRef, WorkflowScriptCapabilitySummary,
+    WorkflowScriptProvenance, WorkflowScriptProvenanceSource, workflow_script_source_digest,
 };
 
 use super::lifecycle_contracts::lifecycle_run_view_to_contract;
@@ -167,16 +167,16 @@ pub async fn create_workflow_graph(
         ProjectPermission::Edit,
     )
     .await?;
-    let definition = WorkflowGraph::new(
+    let definition = WorkflowGraph::new(WorkflowGraphDraft {
         project_id,
-        req.key,
-        req.name,
-        req.description,
-        DefinitionSource::UserAuthored,
-        req.entry_activity_key,
-        req.activities,
-        req.transitions,
-    )
+        key: req.key,
+        name: req.name,
+        description: req.description,
+        source: DefinitionSource::UserAuthored,
+        entry_activity_key: req.entry_activity_key,
+        activities: req.activities,
+        transitions: req.transitions,
+    })
     .map_err(ApiError::BadRequest)?;
     let service = ActivityLifecycleCatalogService::new(
         state.repos.agent_procedure_repo.as_ref(),
@@ -264,16 +264,16 @@ pub async fn validate_workflow_graph(
         ProjectPermission::View,
     )
     .await?;
-    match WorkflowGraph::new(
+    match WorkflowGraph::new(WorkflowGraphDraft {
         project_id,
-        req.key,
-        req.name,
-        req.description,
-        DefinitionSource::UserAuthored,
-        req.entry_activity_key,
-        req.activities,
-        req.transitions,
-    ) {
+        key: req.key,
+        name: req.name,
+        description: req.description,
+        source: DefinitionSource::UserAuthored,
+        entry_activity_key: req.entry_activity_key,
+        activities: req.activities,
+        transitions: req.transitions,
+    }) {
         Ok(definition) => {
             let service = ActivityLifecycleCatalogService::new(
                 state.repos.agent_procedure_repo.as_ref(),

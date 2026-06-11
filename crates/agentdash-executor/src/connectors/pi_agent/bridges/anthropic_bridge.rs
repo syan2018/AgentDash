@@ -153,10 +153,10 @@ fn build_request_body(model_id: &str, request: &BridgeRequest) -> serde_json::Va
         "stream": true,
     });
 
-    if let Some(ref sp) = request.system_prompt {
-        if !sp.is_empty() {
-            body["system"] = serde_json::Value::String(sp.clone());
-        }
+    if let Some(ref sp) = request.system_prompt
+        && !sp.is_empty()
+    {
+        body["system"] = serde_json::Value::String(sp.clone());
     }
 
     if !request.tools.is_empty() {
@@ -284,13 +284,12 @@ fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
                     "is_error": is_error,
                 });
                 // Anthropic: tool_result 必须在 user 消息内
-                if let Some(last) = messages.last_mut() {
-                    if last.get("role").and_then(|r| r.as_str()) == Some("user") {
-                        if let Some(arr) = last.get_mut("content").and_then(|c| c.as_array_mut()) {
-                            arr.push(result);
-                            continue;
-                        }
-                    }
+                if let Some(last) = messages.last_mut()
+                    && last.get("role").and_then(|r| r.as_str()) == Some("user")
+                    && let Some(arr) = last.get_mut("content").and_then(|c| c.as_array_mut())
+                {
+                    arr.push(result);
+                    continue;
                 }
                 messages.push(serde_json::json!({
                     "role": "user",
@@ -510,16 +509,16 @@ async fn process_anthropic_event(
                     }
                 }
                 "input_json_delta" => {
-                    if let Some(partial) = delta.get("partial_json").and_then(|p| p.as_str()) {
-                        if let Some(ref mut tool) = state.pending_tool {
-                            tool.input_json_buf.push_str(partial);
-                            let _ = tx
-                                .send(StreamChunk::ToolCallDelta {
-                                    id: tool.id.clone(),
-                                    content: ToolCallDeltaContent::Arguments(partial.to_string()),
-                                })
-                                .await;
-                        }
+                    if let Some(partial) = delta.get("partial_json").and_then(|p| p.as_str())
+                        && let Some(ref mut tool) = state.pending_tool
+                    {
+                        tool.input_json_buf.push_str(partial);
+                        let _ = tx
+                            .send(StreamChunk::ToolCallDelta {
+                                id: tool.id.clone(),
+                                content: ToolCallDeltaContent::Arguments(partial.to_string()),
+                            })
+                            .await;
                     }
                 }
                 "signature_delta" => {

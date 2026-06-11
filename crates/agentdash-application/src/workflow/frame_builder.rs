@@ -55,10 +55,10 @@ pub(crate) fn build_lifecycle_activation_surface(
     let mut capability_state = input.activation.capability_state.clone();
     capability_state.tool.mcp_servers = input.activation.mcp_servers.clone();
     capability_state.vfs.active = Some(vfs.clone());
-    if capability_state.skill.skills.is_empty() {
-        if let Some(base) = input.inherit_skills_from {
-            capability_state.skill = base.skill.clone();
-        }
+    if capability_state.skill.skills.is_empty()
+        && let Some(base) = input.inherit_skills_from
+    {
+        capability_state.skill = base.skill.clone();
     }
 
     AgentFrameActivationSurface {

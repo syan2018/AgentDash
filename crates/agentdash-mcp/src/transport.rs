@@ -41,6 +41,9 @@ use crate::services::McpServices;
 use agentdash_spi::platform::auth::AuthIdentity;
 
 type McpHttpService<S> = StreamableHttpService<S, LocalSessionManager>;
+type McpServiceCache<K, S> = Arc<Mutex<HashMap<K, McpHttpService<S>>>>;
+type UserServiceKey = String;
+type ProjectScopedServiceKey = (String, Uuid);
 
 /// 创建 Relay 层的 Streamable HTTP 服务
 pub fn create_relay_http_service(
@@ -130,10 +133,10 @@ pub async fn serve_task_via_stdio(
 #[derive(Clone)]
 struct McpHttpRouterState {
     services: Arc<McpServices>,
-    relay_services: Arc<Mutex<HashMap<String, McpHttpService<RelayMcpServer>>>>,
-    story_services: Arc<Mutex<HashMap<(String, Uuid), McpHttpService<StoryMcpServer>>>>,
-    task_services: Arc<Mutex<HashMap<(String, Uuid), McpHttpService<TaskMcpServer>>>>,
-    workflow_services: Arc<Mutex<HashMap<(String, Uuid), McpHttpService<WorkflowMcpServer>>>>,
+    relay_services: McpServiceCache<UserServiceKey, RelayMcpServer>,
+    story_services: McpServiceCache<ProjectScopedServiceKey, StoryMcpServer>,
+    task_services: McpServiceCache<ProjectScopedServiceKey, TaskMcpServer>,
+    workflow_services: McpServiceCache<ProjectScopedServiceKey, WorkflowMcpServer>,
 }
 
 impl McpHttpRouterState {

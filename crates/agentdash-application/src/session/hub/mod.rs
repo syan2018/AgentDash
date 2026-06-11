@@ -37,8 +37,9 @@ pub(crate) use hook_dispatch::{HookTriggerDispatchResult, HookTriggerInput};
 #[cfg(test)]
 pub(crate) use runtime_context_transition::PendingRuntimeContextTransitionInput;
 pub(crate) use runtime_context_transition::{
-    LiveRuntimeContextTransitionInput, PendingRuntimeContextApplication,
-    RuntimeContextTransitionOutcome, build_initial_capability_state_frame,
+    ApplyPendingRuntimeContextTransitionInput, LiveRuntimeContextTransitionInput,
+    PendingRuntimeContextApplication, RuntimeContextTransitionOutcome,
+    build_initial_capability_state_frame,
 };
 
 #[derive(Clone)]

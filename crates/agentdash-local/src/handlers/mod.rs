@@ -55,39 +55,41 @@ pub struct CommandHandler {
     pub(crate) extension_artifact_cache_root: PathBuf,
 }
 
+pub struct CommandHandlerConfig {
+    pub backend_id: String,
+    pub workspace_roots: Vec<PathBuf>,
+    pub tool_executor: ToolExecutor,
+    pub session_runtime: Option<SessionRuntimeServices>,
+    pub connector: Option<Arc<dyn AgentConnector>>,
+    pub mcp_manager: Option<Arc<McpClientManager>>,
+    pub workspace_contract_config: WorkspaceContractRuntimeConfig,
+    pub extension_host: LocalExtensionHostManager,
+    pub extension_artifact_api_base_url: String,
+    pub extension_artifact_access_token: String,
+    pub extension_artifact_cache_root: PathBuf,
+    pub event_tx: mpsc::UnboundedSender<RelayMessage>,
+}
+
 impl CommandHandler {
-    pub fn new(
-        backend_id: String,
-        workspace_roots: Vec<PathBuf>,
-        tool_executor: ToolExecutor,
-        session_runtime: Option<SessionRuntimeServices>,
-        connector: Option<Arc<dyn AgentConnector>>,
-        mcp_manager: Option<Arc<McpClientManager>>,
-        workspace_contract_config: WorkspaceContractRuntimeConfig,
-        extension_host: LocalExtensionHostManager,
-        extension_artifact_api_base_url: String,
-        extension_artifact_access_token: String,
-        extension_artifact_cache_root: PathBuf,
-        event_tx: mpsc::UnboundedSender<RelayMessage>,
-    ) -> Self {
-        let terminal_manager = Arc::new(TerminalManager::new(event_tx.clone()));
-        let materialization_store = Arc::new(MaterializationStore::new(backend_id.clone()));
+    pub fn new(config: CommandHandlerConfig) -> Self {
+        let terminal_manager = Arc::new(TerminalManager::new(config.event_tx.clone()));
+        let materialization_store = Arc::new(MaterializationStore::new(config.backend_id.clone()));
         Self {
-            backend_id,
-            workspace_roots,
-            tool_executor,
-            session_runtime,
-            connector,
-            mcp_manager,
-            workspace_contract_config,
-            event_tx,
+            backend_id: config.backend_id,
+            workspace_roots: config.workspace_roots,
+            tool_executor: config.tool_executor,
+            session_runtime: config.session_runtime,
+            connector: config.connector,
+            mcp_manager: config.mcp_manager,
+            workspace_contract_config: config.workspace_contract_config,
+            event_tx: config.event_tx,
             terminal_manager,
             materialization_store,
             session_forwarders: Arc::new(Mutex::new(HashSet::new())),
-            extension_host,
-            extension_artifact_api_base_url,
-            extension_artifact_access_token,
-            extension_artifact_cache_root,
+            extension_host: config.extension_host,
+            extension_artifact_api_base_url: config.extension_artifact_api_base_url,
+            extension_artifact_access_token: config.extension_artifact_access_token,
+            extension_artifact_cache_root: config.extension_artifact_cache_root,
         }
     }
 

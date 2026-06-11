@@ -7,7 +7,7 @@ use agentdash_application::project::{
     project_authorization_context_from_identity,
 };
 use agentdash_domain::DomainError;
-use agentdash_domain::identity::{Group, User};
+use agentdash_domain::identity::{Group, User, UserProfile};
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
@@ -388,16 +388,16 @@ pub async fn persist_identity_snapshot(
     state: &AppState,
     identity: &AuthIdentity,
 ) -> Result<(), DomainError> {
-    let user = User::new(
-        identity.user_id.clone(),
-        identity.subject.clone(),
-        identity.auth_mode.to_string(),
-        identity.display_name.clone(),
-        identity.email.clone(),
-        identity.avatar_url.clone(),
-        identity.is_admin,
-        identity.provider.clone(),
-    );
+    let user = User::new(UserProfile {
+        user_id: identity.user_id.clone(),
+        subject: identity.subject.clone(),
+        auth_mode: identity.auth_mode.to_string(),
+        display_name: identity.display_name.clone(),
+        email: identity.email.clone(),
+        avatar_url: identity.avatar_url.clone(),
+        is_admin: identity.is_admin,
+        provider: identity.provider.clone(),
+    });
 
     let groups = identity
         .groups

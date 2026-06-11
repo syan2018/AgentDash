@@ -654,17 +654,17 @@ async fn fetch_skills_sh_skill_files(
             if relative_path.is_empty() || relative_path == "SKILL.md" {
                 continue;
             }
-            if let Some(download_url) = entry.download_url {
-                if let Ok(bytes) = fetch_github_file(client, &download_url, &relative_path).await {
-                    total_size = total_size.saturating_add(bytes.len());
-                    if total_size > MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES {
-                        break;
-                    }
-                    files.push(RemoteSkillFile {
-                        path: relative_path,
-                        body: RemoteSkillFileBody::Bytes(bytes),
-                    });
+            if let Some(download_url) = entry.download_url
+                && let Ok(bytes) = fetch_github_file(client, &download_url, &relative_path).await
+            {
+                total_size = total_size.saturating_add(bytes.len());
+                if total_size > MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES {
+                    break;
                 }
+                files.push(RemoteSkillFile {
+                    path: relative_path,
+                    body: RemoteSkillFileBody::Bytes(bytes),
+                });
             }
         }
     }

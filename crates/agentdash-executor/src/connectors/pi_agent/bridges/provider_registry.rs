@@ -257,26 +257,28 @@ pub(crate) struct ProviderEntry {
     models_cache: Arc<RwLock<Option<ModelCatalogSnapshot>>>,
 }
 
+struct ProviderEntryDraft {
+    provider_id: String,
+    provider_name: String,
+    default_model: String,
+    call_profile: ProviderCallProfile,
+    bridge_factory: BridgeFactory,
+    list_models: Option<Arc<dyn Fn() -> ModelListFuture + Send + Sync>>,
+    configured_models: Vec<ModelMeta>,
+    blocked_models: HashSet<String>,
+}
+
 impl ProviderEntry {
-    fn new(
-        provider_id: impl Into<String>,
-        provider_name: impl Into<String>,
-        default_model: String,
-        call_profile: ProviderCallProfile,
-        bridge_factory: BridgeFactory,
-        list_models: Option<Arc<dyn Fn() -> ModelListFuture + Send + Sync>>,
-        configured_models: Vec<ModelMeta>,
-        blocked_models: HashSet<String>,
-    ) -> Self {
+    fn new(draft: ProviderEntryDraft) -> Self {
         Self {
-            provider_id: provider_id.into(),
-            provider_name: provider_name.into(),
-            default_model,
-            call_profile,
-            bridge_factory,
-            list_models,
-            configured_models,
-            blocked_models,
+            provider_id: draft.provider_id,
+            provider_name: draft.provider_name,
+            default_model: draft.default_model,
+            call_profile: draft.call_profile,
+            bridge_factory: draft.bridge_factory,
+            list_models: draft.list_models,
+            configured_models: draft.configured_models,
+            blocked_models: draft.blocked_models,
             models_cache: Arc::new(RwLock::new(None)),
         }
     }
@@ -297,11 +299,11 @@ impl ProviderEntry {
         bridge_factory: BridgeFactory,
         configured_models: Vec<ModelMeta>,
     ) -> Self {
-        Self::new(
-            provider_id,
-            provider_name,
-            default_model.into(),
-            ProviderCallProfile {
+        Self::new(ProviderEntryDraft {
+            provider_id: provider_id.into(),
+            provider_name: provider_name.into(),
+            default_model: default_model.into(),
+            call_profile: ProviderCallProfile {
                 credential_mode: LlmCredentialMode::GlobalOnly,
                 credential_source: LlmCredentialSource::None,
                 protocol: WireProtocol::Anthropic,
@@ -310,10 +312,10 @@ impl ProviderEntry {
                 resolved_wire_api: None,
             },
             bridge_factory,
-            None,
+            list_models: None,
             configured_models,
-            HashSet::new(),
-        )
+            blocked_models: HashSet::new(),
+        })
     }
 
     async fn load_model_catalog(&self) -> ModelCatalogSnapshot {
@@ -650,16 +652,16 @@ async fn build_provider_entry_from_db(
     );
 
     Ok(BuiltProviderEntry {
-        entry: ProviderEntry::new(
+        entry: ProviderEntry::new(ProviderEntryDraft {
             provider_id,
-            db_provider.name.clone(),
+            provider_name: db_provider.name.clone(),
             default_model,
             call_profile,
             bridge_factory,
             list_models,
             configured_models,
             blocked_models,
-        ),
+        }),
         default_bridge,
     })
 }

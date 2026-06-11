@@ -94,7 +94,7 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, BashExecExecutorSpec, DefinitionSource,
         FunctionActivityExecutorSpec, LifecycleRun, OutputPortDefinition, PlanNodeKind,
-        RuntimeNodeState, RuntimeNodeStatus, WorkflowGraph,
+        RuntimeNodeState, RuntimeNodeStatus, WorkflowGraph, WorkflowGraphDraft,
     };
     use uuid::Uuid;
 
@@ -122,16 +122,16 @@ mod tests {
             iteration_policy: Default::default(),
             join_policy: Default::default(),
         };
-        let lifecycle = WorkflowGraph::new(
+        let lifecycle = WorkflowGraph::new(WorkflowGraphDraft {
             project_id,
-            "workflow_admin",
-            "Workflow Admin",
-            "Workflow admin lifecycle",
-            DefinitionSource::BuiltinSeed,
-            "plan",
-            vec![activity.clone()],
-            vec![],
-        )
+            key: "workflow_admin".to_string(),
+            name: "Workflow Admin".to_string(),
+            description: "Workflow admin lifecycle".to_string(),
+            source: DefinitionSource::BuiltinSeed,
+            entry_activity_key: "plan".to_string(),
+            activities: vec![activity.clone()],
+            transitions: vec![],
+        })
         .expect("lifecycle");
         let active_attempt = RuntimeNodeState {
             node_id: "plan".to_string(),

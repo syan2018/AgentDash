@@ -187,16 +187,14 @@ impl PayloadTypeRegistry {
         }
 
         // 如果知道原始 request type，校验 response type 是否匹配
-        if let Some(req_type) = request_type {
-            if let Some(req_def) = self.types.get(req_type) {
-                if let Some(expected_response) = req_def.response_type {
-                    if type_name != expected_response {
-                        return Some(format!(
-                            "request type=`{req_type}` 期望 response type=`{expected_response}`，收到 `{type_name}`"
-                        ));
-                    }
-                }
-            }
+        if let Some(req_type) = request_type
+            && let Some(req_def) = self.types.get(req_type)
+            && let Some(expected_response) = req_def.response_type
+            && type_name != expected_response
+        {
+            return Some(format!(
+                "request type=`{req_type}` 期望 response type=`{expected_response}`，收到 `{type_name}`"
+            ));
         }
 
         for field in definition.required_fields {

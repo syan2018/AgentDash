@@ -183,10 +183,10 @@ async fn load_companion_candidates(
 
     let mut entries = Vec::new();
     for agent in agents {
-        if let Some(ref allowed) = caller_allowed {
-            if !allowed.iter().any(|a| a.eq_ignore_ascii_case(&agent.name)) {
-                continue;
-            }
+        if let Some(ref allowed) = caller_allowed
+            && !allowed.iter().any(|a| a.eq_ignore_ascii_case(&agent.name))
+        {
+            continue;
         }
         let preset = agent.preset_config().map_err(|error| error.to_string())?;
         let display = preset
@@ -1202,21 +1202,21 @@ fn contribute_lifecycle_context(
         content: format!("## Lifecycle Node\n{}", lifecycle_lines.join("\n")),
     });
 
-    if let Some(workflow_contract) = spec.workflow_contract {
-        if let Some(content) = crate::context::rendering::render_workflow_injection(
+    if let Some(workflow_contract) = spec.workflow_contract
+        && let Some(content) = crate::context::rendering::render_workflow_injection(
             &workflow_contract.injection,
             crate::context::rendering::WorkflowInjectionMode::Declarative,
-        ) {
-            fragments.push(agentdash_spi::ContextFragment {
-                slot: "workflow_context".to_string(),
-                label: "lifecycle_workflow_injection".to_string(),
-                order: 83,
-                strategy: agentdash_spi::MergeStrategy::Append,
-                scope: agentdash_spi::ContextFragment::default_scope(),
-                source: "lifecycle:workflow_injection".to_string(),
-                content,
-            });
-        }
+        )
+    {
+        fragments.push(agentdash_spi::ContextFragment {
+            slot: "workflow_context".to_string(),
+            label: "lifecycle_workflow_injection".to_string(),
+            order: 83,
+            strategy: agentdash_spi::MergeStrategy::Append,
+            scope: agentdash_spi::ContextFragment::default_scope(),
+            source: "lifecycle:workflow_injection".to_string(),
+            content,
+        });
     }
 
     let mut runtime_parts = vec![format!(
@@ -1795,16 +1795,16 @@ mod tests {
             iteration_policy: Default::default(),
             join_policy: Default::default(),
         };
-        let lifecycle = WorkflowGraph::new(
+        let lifecycle = WorkflowGraph::new(WorkflowGraphDraft {
             project_id,
-            "dev",
-            "Dev",
-            "dev lifecycle",
-            DefinitionSource::BuiltinSeed,
-            "implement",
-            vec![activity.clone()],
-            vec![],
-        )
+            key: "dev".to_string(),
+            name: "Dev".to_string(),
+            description: "dev lifecycle".to_string(),
+            source: DefinitionSource::BuiltinSeed,
+            entry_activity_key: "implement".to_string(),
+            activities: vec![activity.clone()],
+            transitions: vec![],
+        })
         .expect("lifecycle");
         let run = agentdash_domain::workflow::LifecycleRun::new_control(project_id);
         let workflow = AgentProcedure::new(

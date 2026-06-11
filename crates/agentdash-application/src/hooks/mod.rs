@@ -16,7 +16,7 @@ mod workflow_snapshot;
 pub(crate) use fragment_bridge::hook_injection_to_fragment;
 pub use owner_resolver::SessionOwnerResolver;
 pub use presets::{HookRulePreset, PresetSource, hook_rule_preset_registry};
-pub use provider::AppExecutionHookProvider;
+pub use provider::{AppExecutionHookProvider, AppExecutionHookProviderRepos};
 pub use workflow_snapshot::WorkflowSnapshotBuilder;
 
 // Re-exports consumed by child modules (rules.rs, snapshot_helpers.rs, etc.)

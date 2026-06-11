@@ -1,4 +1,4 @@
-﻿//! SessionTurnProcessor — per-turn 事件处理器。
+//! SessionTurnProcessor — per-turn 事件处理器。
 //!
 //! 统一 cloud-native 和 relay 两条路径的 notification 处理逻辑。
 //! 所有 turn 生命周期内的 notification（无论来自 connector stream 还是 relay 注入）
@@ -111,15 +111,14 @@ impl SessionTurnProcessor {
         }
 
         // channel 关闭但没收到显式 Terminal → 检测 cancel 状态
-        if !received_terminal {
-            if let Some((kind, message)) = deps
+        if !received_terminal
+            && let Some((kind, message)) = deps
                 .turn_supervisor
                 .cancel_interrupted_terminal(&session_id, &turn_id)
                 .await
-            {
-                terminal_kind = kind;
-                terminal_message = message;
-            }
+        {
+            terminal_kind = kind;
+            terminal_message = message;
         }
 
         // 生成并持久化终态 notification

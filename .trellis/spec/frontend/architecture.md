@@ -2,14 +2,14 @@
 
 ## Role
 
-前端负责以 Project 为中心组织业务视图，消费后端权威状态与实时事件，提供 Workspace、Story、Task、Session、Workflow、VFS、Assets 等交互界面。前端不创建第二套业务事实源。
+前端负责以 Project 为中心组织业务视图，消费后端权威状态与实时事件，提供 Workspace、Story、Task、AgentRun、Workflow、VFS、Assets 等交互界面。前端不创建第二套业务事实源。
 
 ## Invariants
 
 - API 字段直接使用后端 `snake_case`，前端不做 camelCase/snake_case 双风格兼容。
 - API 响应必须经 mapper 从 `unknown` 转换为 typed object。
-- Story / Task / Session / Workflow 等业务状态以后端为准，前端不自行推断权威状态。
-- Lifecycle 运行态以后端 `LifecycleRunView` / `SubjectExecutionView` / `AgentFrameRuntimeView` 为准；`RuntimeSession` 页面只展示 trace，不作为业务执行归属事实源。
+- Story / Task / AgentRun / Workflow 等业务状态以后端为准，前端不自行推断权威状态。
+- Lifecycle 运行态以后端 `LifecycleRunView` / `SubjectExecutionView` / `AgentFrameRuntimeView` / `AgentRunWorkspaceView` 为准；用户可见执行工作台展示 AgentRun Workspace，`RuntimeSession` trace view 只展示 trace，不作为业务执行归属事实源。
 - Project 是顶层导航和隔离单元；Workspace、Story、Assets、runtime preview 都按 Project scope 组织。
 - Session workspace panel、context overview 和 VFS tab 以 `runtime_surface` 作为 runtime mount 展示与浏览能力的唯一 UI 输入。
 - Feature module 遵循 model / ui 分离，跨 feature 共享能力进入明确的 shared package 或 primitive。

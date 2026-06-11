@@ -22,7 +22,7 @@
 - `SessionMeta` 保留 trace/delivery ledger 字段：runtime session id、event seq、executor_session_id、trace title provenance、terminal trace summary。
 - AgentRun Workspace 提供 public shell：display title、title source、delivery status、last turn id、last activity/update time、delivery runtime ref。
 - Project sidebar/list 入口从 AgentRun Workspace 或 AgentRun list projection 出发，不再以 RuntimeSession list/meta 作为入口事实源。
-- Runtime-control 的 command enablement 以 AgentRun/AgentFrame/command receipt/active turn 投影为准；`SessionMeta.last_delivery_status` 只作为 trace fallback，不作为 workspace authoritative status。
+- AgentRun Workspace 的 command enablement 以 AgentRun/AgentFrame/command receipt/active turn 投影为准；`SessionMeta.last_delivery_status` 只作为 trace recovery signal，不作为 workspace authoritative status。
 - 标题编辑如保留，目标应是 AgentRun Workspace title，而不是 RuntimeSession trace title。
 - RuntimeSession trace 页面可以只读展示 trace metadata 和事件流，不参与 workspace identity。
 

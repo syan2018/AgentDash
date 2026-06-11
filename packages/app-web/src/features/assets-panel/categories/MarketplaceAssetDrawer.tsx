@@ -558,7 +558,7 @@ interface McpParsed {
 
 function parseMcpPayload(raw: unknown): McpParsed | null {
   if (!isObject(raw)) return null;
-  const transport = isObject(raw.transport) ? raw.transport : null;
+  const transport = isObject(raw.transport_template) ? raw.transport_template : null;
   if (!transport) return null;
   const transportType = asString(transport.type) ?? "unknown";
   const routePolicy = asString(raw.route_policy);
@@ -567,13 +567,8 @@ function parseMcpPayload(raw: unknown): McpParsed | null {
 
   let summary: string | null = null;
   if (transportType === "http" || transportType === "sse") {
-    const url = asString(transport.url);
+    const url = asString(transport.url_template);
     if (url) summary = `${transportType.toUpperCase()} ${url}`;
-  } else if (transportType === "stdio") {
-    const command = asString(transport.command);
-    const argsRaw = Array.isArray(transport.args) ? transport.args : [];
-    const args = argsRaw.filter((v): v is string => typeof v === "string").join(" ");
-    if (command) summary = `${command}${args ? ` ${args}` : ""}`;
   }
 
   return { transportType, routePolicy, transportSummary: summary, capabilities };
@@ -592,6 +587,9 @@ function AgentTemplateBody({ payload }: { payload: unknown }) {
         {parsed.executor && <MetaChip>executor: {parsed.executor}</MetaChip>}
         {parsed.thinkingLevel && <MetaChip>thinking: {parsed.thinkingLevel}</MetaChip>}
         <MetaChip>{parsed.mcpSlotCount} MCP slot</MetaChip>
+        {parsed.mcpDependencyCount > 0 && (
+          <MetaChip>{parsed.mcpDependencyCount} MCP dependency</MetaChip>
+        )}
         <MetaChip>{parsed.capabilityCount} capability</MetaChip>
       </div>
       {parsed.systemPrompt && (
@@ -604,6 +602,16 @@ function AgentTemplateBody({ payload }: { payload: unknown }) {
           </pre>
         </details>
       )}
+      {parsed.mcpDependencies.length > 0 && (
+        <CompactList
+          title="mcp dependencies"
+          items={parsed.mcpDependencies.map((dependency) => ({
+            key: dependency.targetKey || dependency.assetKey,
+            meta: dependency.required ? "required" : "optional",
+            description: dependency.displayName || dependency.slotKey,
+          }))}
+        />
+      )}
     </section>
   );
 }
@@ -614,6 +622,14 @@ interface AgentParsed {
   thinkingLevel: string | null;
   systemPrompt: string | null;
   mcpSlotCount: number;
+  mcpDependencyCount: number;
+  mcpDependencies: Array<{
+    slotKey: string;
+    assetKey: string;
+    targetKey: string | null;
+    displayName: string | null;
+    required: boolean;
+  }>;
   capabilityCount: number;
 }
 
@@ -622,6 +638,14 @@ function parseAgentPayload(raw: unknown): AgentParsed | null {
   const config = isObject(raw.config) ? raw.config : null;
   if (!config) return null;
   const mcpSlots = Array.isArray(config.mcp_slots) ? config.mcp_slots : [];
+  const rawDependencies = Array.isArray(config.mcp_dependencies) ? config.mcp_dependencies : [];
+  const mcpDependencies = rawDependencies.filter(isObject).map((dependency) => ({
+    slotKey: asString(dependency.slot_key) ?? "",
+    assetKey: asString(dependency.asset_key) ?? "",
+    targetKey: asString(dependency.target_key),
+    displayName: asString(dependency.display_name),
+    required: dependency.required !== false,
+  })).filter((dependency) => dependency.assetKey.length > 0);
   const caps = Array.isArray(config.capability_directives) ? config.capability_directives : [];
   return {
     modelId: asString(config.model_id),
@@ -629,6 +653,8 @@ function parseAgentPayload(raw: unknown): AgentParsed | null {
     thinkingLevel: asString(config.thinking_level),
     systemPrompt: asString(config.system_prompt),
     mcpSlotCount: mcpSlots.length,
+    mcpDependencyCount: mcpDependencies.length,
+    mcpDependencies,
     capabilityCount: caps.length,
   };
 }

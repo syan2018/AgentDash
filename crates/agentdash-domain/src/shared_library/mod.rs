@@ -7,8 +7,8 @@ pub use entity::LibraryAsset;
 pub use project_extension::{ProjectExtensionInstallation, ProjectExtensionInstallationRepository};
 pub use repository::{LibraryAssetListFilter, LibraryAssetRepository};
 pub use value_objects::{
-    AgentMcpSlotTemplate, AgentTemplateConfig, AgentTemplatePayload, BuiltinSeed,
-    EXTENSION_PERMISSION_LOCAL_PROFILE_READ, EXTENSION_PERMISSION_PROCESS_EXECUTE,
+    AgentMcpDependencyTemplate, AgentMcpSlotTemplate, AgentTemplateConfig, AgentTemplatePayload,
+    BuiltinSeed, EXTENSION_PERMISSION_LOCAL_PROFILE_READ, EXTENSION_PERMISSION_PROCESS_EXECUTE,
     ExtensionAssetRef, ExtensionBundleKind, ExtensionBundleRef, ExtensionCommandDefinition,
     ExtensionCommandHandler, ExtensionDependencyDeclaration, ExtensionFlagDefinition,
     ExtensionFlagType, ExtensionMessageRendererDefinition, ExtensionPermissionAccess,
@@ -16,10 +16,10 @@ pub use value_objects::{
     ExtensionProcessPermissionAccess, ExtensionProtocolChannelDefinition,
     ExtensionProtocolChannelMethodDefinition, ExtensionRendererDeclaration,
     ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ExtensionTemplatePayload,
-    ExtensionWorkspaceTabDefinition, ExtensionWorkspaceTabRendererDeclaration,
-    InlineMountFilePayload, InstalledAssetSource, IntegrationLibraryAssetSeed, LibraryAssetPayload,
-    LibraryAssetScope, LibraryAssetSource, LibraryAssetType, McpServerTemplatePayload,
-    McpTransportTemplate, ProjectAgentConfigOverride, SharedLibrarySourceStatus,
+    ExtensionWorkspaceTabDefinition, ExtensionWorkspaceTabRendererDeclaration, InlineMountFilePayload,
+    InstalledAssetSource, IntegrationLibraryAssetSeed, LibraryAssetPayload, LibraryAssetScope,
+    LibraryAssetSource, LibraryAssetType, McpServerTemplatePayload, McpTransportTemplate,
+    ProjectAgentConfigOverride, SharedLibrarySourceStatus,
     SkillTemplateFilePayload, SkillTemplatePayload, VfsMountTemplatePayload,
     WorkflowTemplatePayload, normalize_workflow_lifecycle_value,
     normalize_workflow_template_payload_value, normalize_workflow_template_value,

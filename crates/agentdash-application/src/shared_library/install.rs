@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use base64::Engine;
 use serde_json::Value;
 use uuid::Uuid;
@@ -10,9 +12,9 @@ use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
 use agentdash_domain::mcp_preset::{McpPreset, McpPresetSource};
 use agentdash_domain::project_vfs_mount::{ProjectVfsMount, ProjectVfsMountContent};
 use agentdash_domain::shared_library::{
-    InstalledAssetSource, LibraryAsset, LibraryAssetPayload, McpServerTemplatePayload,
-    ProjectExtensionInstallation, SharedLibrarySourceStatus, VfsMountTemplatePayload,
-    normalize_workflow_template_value,
+    AgentMcpDependencyTemplate, InstalledAssetSource, LibraryAsset, LibraryAssetListFilter,
+    LibraryAssetPayload, LibraryAssetType, McpServerTemplatePayload, ProjectExtensionInstallation,
+    SharedLibrarySourceStatus, VfsMountTemplatePayload, normalize_workflow_template_value,
 };
 
 use crate::vfs::PROJECT_VFS_MOUNT_CONTAINER_ID;
@@ -34,6 +36,19 @@ pub struct InstallLibraryAssetInput {
 #[derive(Debug, Clone)]
 pub enum InstallLibraryAssetOptions {
     McpServerTemplate { parameters: Value },
+    AgentTemplate {
+        dependency_mode: AgentTemplateDependencyMode,
+        dependency_parameters: BTreeMap<String, Value>,
+        overwrite_dependencies: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AgentTemplateDependencyMode {
+    #[default]
+    Required,
+    All,
+    Skip,
 }
 
 #[derive(Debug, Clone)]
@@ -102,7 +117,7 @@ pub async fn install_library_asset_to_project(
 
     match asset.typed_payload()? {
         LibraryAssetPayload::AgentTemplate(payload) => {
-            reject_install_options_for_non_mcp(&input)?;
+            reject_install_options_for_non_agent(&input)?;
             install_agent_template(repos, input, asset, payload.config).await
         }
         LibraryAssetPayload::McpServerTemplate(payload) => {
@@ -111,16 +126,16 @@ pub async fn install_library_asset_to_project(
                 input.target_key.as_deref(),
                 &asset,
                 payload,
-                input.install_options.as_ref(),
+                mcp_template_parameters(input.install_options.as_ref())?,
             )?;
             upsert_mcp_preset(repos, preset, input.overwrite).await
         }
         LibraryAssetPayload::WorkflowTemplate(payload) => {
-            reject_install_options_for_non_mcp(&input)?;
+            reject_install_options_for_non_mcp_or_agent(&input)?;
             install_workflow_template(repos, input, asset, payload.template).await
         }
         LibraryAssetPayload::SkillTemplate(payload) => {
-            reject_install_options_for_non_mcp(&input)?;
+            reject_install_options_for_non_mcp_or_agent(&input)?;
             let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
             let mut skill = SkillAsset::new_user(
                 input.project_id,
@@ -138,11 +153,11 @@ pub async fn install_library_asset_to_project(
             upsert_skill_asset(repos, skill, input.overwrite).await
         }
         LibraryAssetPayload::VfsMountTemplate(payload) => {
-            reject_install_options_for_non_mcp(&input)?;
+            reject_install_options_for_non_mcp_or_agent(&input)?;
             install_vfs_mount_template(repos, input, asset, payload).await
         }
         LibraryAssetPayload::ExtensionTemplate(payload) => {
-            reject_install_options_for_non_mcp(&input)?;
+            reject_install_options_for_non_mcp_or_agent(&input)?;
             let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
             let installed_source = installed_source_from_asset(&asset);
             let package_artifact =
@@ -175,11 +190,9 @@ fn mcp_preset_from_template_install(
     target_key: Option<&str>,
     asset: &LibraryAsset,
     payload: McpServerTemplatePayload,
-    install_options: Option<&InstallLibraryAssetOptions>,
+    parameters: Option<&Value>,
 ) -> Result<McpPreset, DomainError> {
     let key = target_key_or_asset_key(target_key, &asset.key);
-    let parameters = install_options
-        .map(|InstallLibraryAssetOptions::McpServerTemplate { parameters }| parameters);
     let transport = payload.resolve_transport(parameters)?;
     let mut preset = McpPreset::new_user(
         project_id,
@@ -193,13 +206,36 @@ fn mcp_preset_from_template_install(
     Ok(preset)
 }
 
-fn reject_install_options_for_non_mcp(input: &InstallLibraryAssetInput) -> Result<(), DomainError> {
+fn mcp_template_parameters(
+    install_options: Option<&InstallLibraryAssetOptions>,
+) -> Result<Option<&Value>, DomainError> {
+    match install_options {
+        None => Ok(None),
+        Some(InstallLibraryAssetOptions::McpServerTemplate { parameters }) => Ok(Some(parameters)),
+        Some(InstallLibraryAssetOptions::AgentTemplate { .. }) => Err(DomainError::InvalidConfig(
+            "mcp_server_template 不支持 agent_template install_options".to_string(),
+        )),
+    }
+}
+
+fn reject_install_options_for_non_mcp_or_agent(
+    input: &InstallLibraryAssetInput,
+) -> Result<(), DomainError> {
     if input.install_options.is_none() {
         return Ok(());
     }
     Err(DomainError::InvalidConfig(
-        "install_options 仅支持 mcp_server_template".to_string(),
+        "install_options 仅支持 mcp_server_template / agent_template".to_string(),
     ))
+}
+
+fn reject_install_options_for_non_agent(input: &InstallLibraryAssetInput) -> Result<(), DomainError> {
+    match &input.install_options {
+        None | Some(InstallLibraryAssetOptions::AgentTemplate { .. }) => Ok(()),
+        Some(InstallLibraryAssetOptions::McpServerTemplate { .. }) => Err(
+            DomainError::InvalidConfig("agent_template 不支持 mcp_server_template install_options".to_string()),
+        ),
+    }
 }
 
 async fn extension_template_package_artifact_for_install(
@@ -362,6 +398,29 @@ async fn install_agent_template(
     asset: LibraryAsset,
     config: agentdash_domain::shared_library::AgentTemplateConfig,
 ) -> Result<InstallLibraryAssetOutput, DomainError> {
+    let dependency_plans = resolve_agent_mcp_dependency_plans(
+        repos,
+        &asset,
+        &config.mcp_dependencies,
+        input.install_options.as_ref(),
+    )
+    .await?;
+
+    let mut mcp_preset_keys = Vec::with_capacity(dependency_plans.len());
+    for plan in dependency_plans {
+        let preset = mcp_preset_from_template_install(
+            input.project_id,
+            Some(&plan.target_key),
+            &plan.asset,
+            plan.payload,
+            plan.parameters.as_ref(),
+        )?;
+        let installed = upsert_mcp_preset(repos, preset, plan.overwrite).await?;
+        if let InstallLibraryAssetOutput::McpPreset { .. } = installed {
+            mcp_preset_keys.push(plan.target_key);
+        }
+    }
+
     let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
     let installed_source = installed_source_from_asset(&asset);
     let mut agent = ProjectAgent::new(
@@ -385,7 +444,7 @@ async fn install_agent_template(
         description: asset.description,
         capability_directives: (!config.capability_directives.is_empty())
             .then_some(config.capability_directives),
-        mcp_preset_keys: None,
+        mcp_preset_keys: (!mcp_preset_keys.is_empty()).then_some(mcp_preset_keys),
         vfs_access_grants: None,
         skill_asset_keys: None,
         allowed_companions: None,
@@ -398,6 +457,233 @@ async fn install_agent_template(
     Ok(InstallLibraryAssetOutput::ProjectAgent {
         project_agent_id: agent.id,
     })
+}
+
+struct AgentMcpDependencyInstallPlan {
+    asset: LibraryAsset,
+    payload: McpServerTemplatePayload,
+    target_key: String,
+    parameters: Option<Value>,
+    overwrite: bool,
+}
+
+async fn resolve_agent_mcp_dependency_plans(
+    repos: &RepositorySet,
+    agent_asset: &LibraryAsset,
+    dependencies: &[AgentMcpDependencyTemplate],
+    install_options: Option<&InstallLibraryAssetOptions>,
+) -> Result<Vec<AgentMcpDependencyInstallPlan>, DomainError> {
+    let options = agent_template_install_options(install_options)?;
+    if options.dependency_mode == AgentTemplateDependencyMode::Skip || dependencies.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let active_dependencies = dependencies
+        .iter()
+        .filter(|dependency| {
+            dependency.required || options.dependency_mode == AgentTemplateDependencyMode::All
+        })
+        .collect::<Vec<_>>();
+    if active_dependencies.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let candidate_assets = repos
+        .shared_library_repo
+        .list(LibraryAssetListFilter {
+            asset_type: Some(LibraryAssetType::McpServerTemplate),
+            include_deprecated: false,
+            ..Default::default()
+        })
+        .await?;
+
+    let mut seen_target_keys = BTreeSet::new();
+    let mut plans = Vec::with_capacity(active_dependencies.len());
+    for dependency in active_dependencies {
+        let asset = resolve_agent_mcp_dependency_asset(agent_asset, dependency, &candidate_assets)?;
+        let payload = match asset.typed_payload()? {
+            LibraryAssetPayload::McpServerTemplate(payload) => payload,
+            other => {
+                return Err(DomainError::InvalidConfig(format!(
+                    "Agent MCP 依赖 `{}` 指向非 MCP 模板 payload: {other:?}",
+                    dependency.asset_key
+                )));
+            }
+        };
+        let target_key = dependency_target_key(dependency);
+        if !seen_target_keys.insert(target_key.clone()) {
+            return Err(DomainError::InvalidConfig(format!(
+                "Agent MCP 依赖 target_key 重复: {target_key}"
+            )));
+        }
+        let parameters = merged_dependency_parameters(dependency, &options.dependency_parameters)?;
+        // 预先解析一次，确保参数错误发生在任何写入之前。
+        payload.resolve_transport(parameters.as_ref())?;
+        plans.push(AgentMcpDependencyInstallPlan {
+            asset,
+            payload,
+            target_key,
+            parameters,
+            overwrite: true,
+        });
+    }
+    Ok(plans)
+}
+
+struct AgentTemplateInstallOptions<'a> {
+    dependency_mode: AgentTemplateDependencyMode,
+    dependency_parameters: &'a BTreeMap<String, Value>,
+}
+
+fn agent_template_install_options(
+    install_options: Option<&InstallLibraryAssetOptions>,
+) -> Result<AgentTemplateInstallOptions<'_>, DomainError> {
+    static EMPTY_PARAMETERS: std::sync::OnceLock<BTreeMap<String, Value>> =
+        std::sync::OnceLock::new();
+    match install_options {
+        None => Ok(AgentTemplateInstallOptions {
+            dependency_mode: AgentTemplateDependencyMode::Required,
+            dependency_parameters: EMPTY_PARAMETERS.get_or_init(BTreeMap::new),
+        }),
+        Some(InstallLibraryAssetOptions::AgentTemplate {
+            dependency_mode,
+            dependency_parameters,
+            overwrite_dependencies: _,
+        }) => Ok(AgentTemplateInstallOptions {
+            dependency_mode: *dependency_mode,
+            dependency_parameters,
+        }),
+        Some(InstallLibraryAssetOptions::McpServerTemplate { .. }) => Err(DomainError::InvalidConfig(
+            "agent_template 不支持 mcp_server_template install_options".to_string(),
+        )),
+    }
+}
+
+fn resolve_agent_mcp_dependency_asset(
+    agent_asset: &LibraryAsset,
+    dependency: &AgentMcpDependencyTemplate,
+    candidate_assets: &[LibraryAsset],
+) -> Result<LibraryAsset, DomainError> {
+    let candidates = candidate_assets
+        .iter()
+        .filter(|asset| asset.key == dependency.asset_key)
+        .cloned()
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Err(DomainError::NotFound {
+            entity: "mcp_server_template",
+            id: dependency.asset_key.clone(),
+        });
+    }
+
+    if let Some(agent_family) = source_family(agent_asset) {
+        let same_family = candidates
+            .iter()
+            .filter(|asset| source_family(asset).as_deref() == Some(agent_family.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if same_family.len() == 1 {
+            return Ok(same_family[0].clone());
+        }
+        if same_family.len() > 1 {
+            return Err(ambiguous_dependency_error(dependency, &same_family));
+        }
+    }
+
+    let same_scope = candidates
+        .iter()
+        .filter(|asset| {
+            asset.scope == agent_asset.scope && asset.owner_id.as_deref() == agent_asset.owner_id.as_deref()
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if same_scope.len() == 1 {
+        return Ok(same_scope[0].clone());
+    }
+    if same_scope.len() > 1 {
+        return Err(ambiguous_dependency_error(dependency, &same_scope));
+    }
+
+    if candidates.len() == 1 {
+        return Ok(candidates[0].clone());
+    }
+    Err(ambiguous_dependency_error(dependency, &candidates))
+}
+
+fn ambiguous_dependency_error(
+    dependency: &AgentMcpDependencyTemplate,
+    candidates: &[LibraryAsset],
+) -> DomainError {
+    let identities = candidates
+        .iter()
+        .map(|asset| {
+            format!(
+                "{}:{:?}:{}",
+                asset.key,
+                asset.scope,
+                asset.source_ref.as_deref().unwrap_or("<none>")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    DomainError::InvalidConfig(format!(
+        "Agent MCP 依赖 `{}` 匹配到多个 MCP 模板: {identities}",
+        dependency.asset_key
+    ))
+}
+
+fn dependency_target_key(dependency: &AgentMcpDependencyTemplate) -> String {
+    dependency
+        .target_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&dependency.asset_key)
+        .to_string()
+}
+
+fn merged_dependency_parameters(
+    dependency: &AgentMcpDependencyTemplate,
+    request_parameters: &BTreeMap<String, Value>,
+) -> Result<Option<Value>, DomainError> {
+    let mut merged = serde_json::Map::new();
+    if let Some(defaults) = &dependency.parameters {
+        let defaults = defaults.as_object().ok_or_else(|| {
+            DomainError::InvalidConfig(format!(
+                "Agent MCP 依赖 `{}` parameters 必须是对象",
+                dependency.asset_key
+            ))
+        })?;
+        for (key, value) in defaults {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
+    let override_parameters = request_parameters
+        .get(&dependency.slot_key)
+        .or_else(|| request_parameters.get(&dependency.asset_key));
+    if let Some(override_parameters) = override_parameters {
+        let override_parameters = override_parameters.as_object().ok_or_else(|| {
+            DomainError::InvalidConfig(format!(
+                "install_options.agent_template.dependency_parameters.{} 必须是对象",
+                dependency.slot_key
+            ))
+        })?;
+        for (key, value) in override_parameters {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
+    Ok((!merged.is_empty()).then_some(Value::Object(merged)))
+}
+
+fn source_family(asset: &LibraryAsset) -> Option<String> {
+    let source_ref = asset.source_ref.as_deref()?;
+    let mut parts = source_ref.split(':');
+    match parts.next()? {
+        "integration" => parts.next().map(|name| format!("integration:{name}")),
+        "market" => parts.next().map(|name| format!("market:{name}")),
+        "builtin" => Some("builtin".to_string()),
+        _ => None,
+    }
 }
 
 async fn install_vfs_mount_template(
@@ -728,6 +1014,8 @@ fn target_key_or_asset_key(target_key: Option<&str>, asset_key: &str) -> String 
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use serde_json::json;
 
     use agentdash_domain::mcp_preset::{McpRoutePolicy, McpTransportConfig};
@@ -758,15 +1046,14 @@ mod tests {
             LibraryAssetPayload::McpServerTemplate(payload) => payload,
             other => panic!("unexpected payload: {other:?}"),
         };
+        let parameters = json!({ "workspace": "acme" });
 
         let preset = mcp_preset_from_template_install(
             Uuid::new_v4(),
             Some("corp-search"),
             &asset,
             payload,
-            Some(&InstallLibraryAssetOptions::McpServerTemplate {
-                parameters: json!({ "workspace": "acme" }),
-            }),
+            Some(&parameters),
         )
         .expect("preset");
 
@@ -808,19 +1095,63 @@ mod tests {
             LibraryAssetPayload::McpServerTemplate(payload) => payload,
             other => panic!("unexpected payload: {other:?}"),
         };
+        let parameters = json!({});
 
         let err = mcp_preset_from_template_install(
             Uuid::new_v4(),
             None,
             &asset,
             payload,
-            Some(&InstallLibraryAssetOptions::McpServerTemplate {
-                parameters: json!({}),
-            }),
+            Some(&parameters),
         )
         .expect_err("missing parameter");
 
         assert!(err.to_string().contains("workspace"));
+    }
+
+    #[test]
+    fn agent_dependency_parameters_merge_defaults_and_request_overrides() {
+        let dependency = AgentMcpDependencyTemplate {
+            slot_key: "abc-copilot-tool".to_string(),
+            asset_key: "abc-copilot-tool".to_string(),
+            target_key: None,
+            display_name: None,
+            required: true,
+            parameters: Some(json!({
+                "local_ip": "127.0.0.1",
+                "port": 7321
+            })),
+        };
+        let mut request_parameters = BTreeMap::new();
+        request_parameters.insert(
+            "abc-copilot-tool".to_string(),
+            json!({
+                "local_ip": "10.1.2.3"
+            }),
+        );
+
+        let merged = merged_dependency_parameters(&dependency, &request_parameters)
+            .expect("merged parameters")
+            .expect("non-empty parameters");
+
+        assert_eq!(
+            merged,
+            json!({
+                "local_ip": "10.1.2.3",
+                "port": 7321
+            })
+        );
+    }
+
+    #[test]
+    fn agent_template_install_options_default_to_required_dependencies() {
+        let options = agent_template_install_options(None).expect("default options");
+
+        assert_eq!(
+            options.dependency_mode,
+            AgentTemplateDependencyMode::Required
+        );
+        assert!(options.dependency_parameters.is_empty());
     }
 
     fn mcp_template_asset(payload: serde_json::Value) -> LibraryAsset {

@@ -186,7 +186,8 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityTransition,
         AgentActivityExecutorSpec, AgentProcedureContract, ContextStrategy, DefinitionSource,
-        GateStrategy, InputPortDefinition, OutputPortDefinition, WorkflowGraphRepository,
+        GateStrategy, InputPortDefinition, OutputPortDefinition, WorkflowGraphDraft,
+        WorkflowGraphRepository,
     };
 
     use super::*;

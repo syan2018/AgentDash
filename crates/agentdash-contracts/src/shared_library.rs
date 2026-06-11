@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use serde_json::Value;
 use ts_rs::TS;
 
@@ -133,6 +134,23 @@ pub struct InstallLibraryAssetRequest {
 #[serde(tag = "asset_type", rename_all = "snake_case")]
 pub enum InstallLibraryAssetOptions {
     McpServerTemplate { parameters: Value },
+    AgentTemplate {
+        #[serde(default)]
+        dependency_mode: AgentTemplateDependencyMode,
+        #[serde(default)]
+        dependency_parameters: BTreeMap<String, Value>,
+        #[serde(default)]
+        overwrite_dependencies: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTemplateDependencyMode {
+    #[default]
+    Required,
+    All,
+    Skip,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

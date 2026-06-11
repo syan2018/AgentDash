@@ -267,7 +267,7 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
         AgentProcedureContract, AgentProcedureRepository, DefinitionSource,
-        ToolCapabilityDirective, WorkflowGraph, WorkflowGraphRepository,
+        ToolCapabilityDirective, WorkflowGraph, WorkflowGraphDraft, WorkflowGraphRepository,
     };
 
     use super::*;

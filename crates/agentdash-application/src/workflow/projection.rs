@@ -362,7 +362,8 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
         AgentProcedureContract, DefinitionSource, OutputPortDefinition, PlanNodeKind,
-        RuntimeNodeState, RuntimeNodeStatus, WorkflowGraph, WorkflowInjectionSpec,
+        RuntimeNodeState, RuntimeNodeStatus, WorkflowGraph, WorkflowGraphDraft,
+        WorkflowInjectionSpec,
     };
     use uuid::Uuid;
 

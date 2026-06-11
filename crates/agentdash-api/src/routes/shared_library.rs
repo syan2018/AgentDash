@@ -8,6 +8,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::shared_library::{
+    AgentTemplateDependencyMode as ApplicationAgentTemplateDependencyMode,
     InstallLibraryAssetInput, InstallLibraryAssetOptions as ApplicationInstallLibraryAssetOptions,
     InstallLibraryAssetOutput, ProjectAssetPublishKind, ProjectAssetSourceStatus,
     ProjectAssetSourceStatusItem, PublishLibraryAssetInput, SeedBuiltinLibraryAssetsInput,
@@ -158,6 +159,25 @@ fn install_options_input(
         agentdash_contracts::shared_library::InstallLibraryAssetOptions::McpServerTemplate {
             parameters,
         } => ApplicationInstallLibraryAssetOptions::McpServerTemplate { parameters },
+        agentdash_contracts::shared_library::InstallLibraryAssetOptions::AgentTemplate {
+            dependency_mode,
+            dependency_parameters,
+            overwrite_dependencies,
+        } => ApplicationInstallLibraryAssetOptions::AgentTemplate {
+            dependency_mode: match dependency_mode {
+                agentdash_contracts::shared_library::AgentTemplateDependencyMode::Required => {
+                    ApplicationAgentTemplateDependencyMode::Required
+                }
+                agentdash_contracts::shared_library::AgentTemplateDependencyMode::All => {
+                    ApplicationAgentTemplateDependencyMode::All
+                }
+                agentdash_contracts::shared_library::AgentTemplateDependencyMode::Skip => {
+                    ApplicationAgentTemplateDependencyMode::Skip
+                }
+            },
+            dependency_parameters,
+            overwrite_dependencies,
+        },
     }
 }
 

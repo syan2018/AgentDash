@@ -9,7 +9,7 @@
 use std::time::{Duration, Instant};
 
 use agentdash_domain::mcp_preset::{
-    McpRuntimeBindingConfig, McpRuntimeBindingSource, McpTransportConfig,
+    McpHttpHeader, McpRuntimeBindingConfig, McpRuntimeBindingSource, McpTransportConfig,
 };
 use agentdash_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_spi::platform::mcp_relay::McpRelayProvider;
@@ -52,8 +52,8 @@ pub async fn probe_transport(
     http_probe: &dyn McpProbeTransport,
 ) -> ProbeResult {
     match transport {
-        McpTransportConfig::Http { url, .. } | McpTransportConfig::Sse { url, .. } => {
-            probe_http(http_probe, url).await
+        McpTransportConfig::Http { url, headers } | McpTransportConfig::Sse { url, headers } => {
+            probe_http(http_probe, url, headers).await
         }
         McpTransportConfig::Stdio { .. } => match relay {
             Some(relay) => probe_via_relay(relay, transport).await,
@@ -142,12 +142,16 @@ async fn probe_via_relay(
     }
 }
 
-async fn probe_http(http_probe: &dyn McpProbeTransport, url: &str) -> ProbeResult {
+async fn probe_http(
+    http_probe: &dyn McpProbeTransport,
+    url: &str,
+    headers: &[McpHttpHeader],
+) -> ProbeResult {
     let start = Instant::now();
 
     match timeout(
         Duration::from_secs(PROBE_TIMEOUT_SECS),
-        http_probe.probe_http(url),
+        http_probe.probe_http(url, headers),
     )
     .await
     {
@@ -174,6 +178,24 @@ mod tests {
     use super::*;
     use agentdash_domain::mcp_preset::{McpEnvVar, McpRuntimeBindingRule, McpRuntimeBindingTarget};
     use agentdash_infrastructure::RmcpProbeTransport;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct CapturingHttpProbe {
+        headers: Arc<Mutex<Vec<McpHttpHeader>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl McpProbeTransport for CapturingHttpProbe {
+        async fn probe_http(
+            &self,
+            _url: &str,
+            headers: &[McpHttpHeader],
+        ) -> Result<Vec<agentdash_spi::platform::mcp_probe::McpProbedTool>, String> {
+            *self.headers.lock().expect("headers lock") = headers.to_vec();
+            Ok(Vec::new())
+        }
+    }
 
     #[tokio::test]
     async fn stdio_without_relay_returns_error() {
@@ -206,6 +228,26 @@ mod tests {
             }
             other => panic!("expected Error, got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn http_probe_forwards_transport_headers() {
+        let probe = CapturingHttpProbe::default();
+        let captured = probe.headers.clone();
+        let header = McpHttpHeader {
+            name: "x-session".to_string(),
+            value: "demo".to_string(),
+        };
+        let transport = McpTransportConfig::Http {
+            url: "http://127.0.0.1:1/mcp".to_string(),
+            headers: vec![header.clone()],
+        };
+
+        match probe_transport(&transport, None, &probe).await {
+            ProbeResult::Ok { .. } => {}
+            other => panic!("expected Ok from fake probe, got: {other:?}"),
+        }
+        assert_eq!(captured.lock().expect("headers lock").as_slice(), &[header]);
     }
 
     #[test]

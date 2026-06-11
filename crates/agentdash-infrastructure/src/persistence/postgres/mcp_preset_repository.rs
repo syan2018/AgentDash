@@ -333,7 +333,10 @@ impl TryFrom<McpPresetRow> for McpPreset {
 mod tests {
     use uuid::Uuid;
 
-    use agentdash_domain::mcp_preset::{McpPresetRepository, McpRoutePolicy, McpTransportConfig};
+    use agentdash_domain::mcp_preset::{
+        McpPresetRepository, McpRoutePolicy, McpRuntimeBindingConfig, McpRuntimeBindingRule,
+        McpRuntimeBindingSource, McpRuntimeBindingTarget, McpTransportConfig,
+    };
 
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
@@ -360,6 +363,18 @@ mod tests {
             return;
         };
         let project_id = Uuid::new_v4();
+        let runtime_binding = McpRuntimeBindingConfig {
+            mount_id: Some("main".to_string()),
+            bindings: vec![McpRuntimeBindingRule {
+                source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                    path: vec!["p4".to_string(), "client_name".to_string()],
+                },
+                target: McpRuntimeBindingTarget::HttpHeader {
+                    name: "x-p4-client".to_string(),
+                },
+                required: true,
+            }],
+        };
         let preset = McpPreset::new_user(
             project_id,
             "fetch-preset",
@@ -367,7 +382,8 @@ mod tests {
             Some("demo".to_string()),
             sample_http_transport(),
             McpRoutePolicy::Direct,
-        );
+        )
+        .with_runtime_binding(Some(runtime_binding.clone()));
 
         repo.create(&preset).await.expect("create preset");
 
@@ -378,6 +394,7 @@ mod tests {
         assert_eq!(loaded.source, McpPresetSource::User);
         assert_eq!(loaded.transport, preset.transport);
         assert_eq!(loaded.route_policy, McpRoutePolicy::Direct);
+        assert_eq!(loaded.runtime_binding, Some(runtime_binding));
     }
 
     #[tokio::test]

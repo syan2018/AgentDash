@@ -7,6 +7,8 @@
 
 use async_trait::async_trait;
 
+use crate::McpHttpHeader;
+
 /// A single tool discovered while probing an MCP server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpProbedTool {
@@ -19,5 +21,9 @@ pub struct McpProbedTool {
 /// the caller wraps the call to bound the whole probe.
 #[async_trait]
 pub trait McpProbeTransport: Send + Sync {
-    async fn probe_http(&self, url: &str) -> Result<Vec<McpProbedTool>, String>;
+    async fn probe_http(
+        &self,
+        url: &str,
+        headers: &[McpHttpHeader],
+    ) -> Result<Vec<McpProbedTool>, String>;
 }

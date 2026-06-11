@@ -8,7 +8,7 @@ import type { Canvas, CanvasDataBinding, CanvasRuntimeSnapshot } from "../../typ
 import { CanvasBindingsEditor } from "./CanvasBindingsEditor";
 import { CanvasRuntimePreview } from "./CanvasRuntimePreview";
 
-export interface CanvasSessionPanelProps {
+export interface CanvasRuntimePanelProps {
   canvasId: string | null;
   sessionId: string | null;
   onClose: () => void;
@@ -16,7 +16,7 @@ export interface CanvasSessionPanelProps {
   onBrowseFiles?: (mountId: string) => void;
 }
 
-export function CanvasSessionPanel({ canvasId, sessionId, onClose, onBrowseFiles }: CanvasSessionPanelProps) {
+export function CanvasRuntimePanel({ canvasId, sessionId, onClose, onBrowseFiles }: CanvasRuntimePanelProps) {
   const [canvas, setCanvas] = useState<Canvas | null>(null);
   const [snapshot, setSnapshot] = useState<CanvasRuntimeSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -232,4 +232,4 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose, onBrowseFiles
   );
 }
 
-export default CanvasSessionPanel;
+export default CanvasRuntimePanel;

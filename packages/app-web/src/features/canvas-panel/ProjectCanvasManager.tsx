@@ -7,7 +7,7 @@ import {
 } from "../../services/canvas";
 import type { Canvas } from "../../types";
 import { formatDateTime } from "../../lib/format";
-import { CanvasSessionPanel } from "./CanvasSessionPanel";
+import { CanvasRuntimePanel } from "./CanvasRuntimePanel";
 
 export interface ProjectCanvasManagerProps {
   projectId: string;
@@ -334,7 +334,7 @@ export function ProjectCanvasManager({
               </div>
             </div>
             <div className="min-h-0 flex-1">
-              <CanvasSessionPanel
+              <CanvasRuntimePanel
                 canvasId={selectedCanvas.id}
                 sessionId={null}
                 onClose={() => setSelectedCanvasId(null)}

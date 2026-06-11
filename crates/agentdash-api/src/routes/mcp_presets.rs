@@ -118,6 +118,7 @@ pub async fn create_mcp_preset(
             description: req.description,
             transport: req.transport.into(),
             route_policy: req.route_policy.into(),
+            runtime_binding: req.runtime_binding.map(Into::into),
         })
         .await?;
     Ok(Json(preset.into()))
@@ -167,6 +168,9 @@ pub async fn update_mcp_preset(
                 description: req.description,
                 transport: req.transport.map(Into::into),
                 route_policy: req.route_policy.map(Into::into),
+                runtime_binding: req
+                    .runtime_binding
+                    .map(|runtime_binding| runtime_binding.map(Into::into)),
             },
         )
         .await?;

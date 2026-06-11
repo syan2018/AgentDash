@@ -211,18 +211,22 @@ fn mcp_transport_to_relay(
                     .collect(),
             }
         }
-        agentdash_domain::mcp_preset::McpTransportConfig::Stdio { command, args, env } => {
-            McpTransportConfigRelay::Stdio {
-                command: command.clone(),
-                args: args.clone(),
-                env: env
-                    .iter()
-                    .map(|var| McpEnvVarRelay {
-                        name: var.name.clone(),
-                        value: var.value.clone(),
-                    })
-                    .collect(),
-            }
-        }
+        agentdash_domain::mcp_preset::McpTransportConfig::Stdio {
+            command,
+            args,
+            env,
+            cwd,
+        } => McpTransportConfigRelay::Stdio {
+            command: command.clone(),
+            args: args.clone(),
+            env: env
+                .iter()
+                .map(|var| McpEnvVarRelay {
+                    name: var.name.clone(),
+                    value: var.value.clone(),
+                })
+                .collect(),
+            cwd: cwd.clone(),
+        },
     }
 }

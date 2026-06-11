@@ -22,11 +22,19 @@ impl CommandHandler {
 
         let probe_fut = async {
             match &transport {
-                McpTransportConfigRelay::Stdio { command, args, env } => {
+                McpTransportConfigRelay::Stdio {
+                    command,
+                    args,
+                    env,
+                    cwd,
+                } => {
                     let mut cmd = tokio::process::Command::new(command);
                     cmd.args(args);
                     for var in env {
                         cmd.env(&var.name, &var.value);
+                    }
+                    if let Some(cwd) = cwd {
+                        cmd.current_dir(cwd);
                     }
                     let child = TokioChildProcess::new(cmd)
                         .map_err(|e| format!("spawn stdio 进程失败: {e}"))?;

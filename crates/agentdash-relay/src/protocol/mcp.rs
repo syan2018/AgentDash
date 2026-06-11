@@ -33,6 +33,8 @@ pub enum McpTransportConfigRelay {
         args: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         env: Vec<McpEnvVarRelay>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
     },
 }
 

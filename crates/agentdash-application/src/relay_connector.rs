@@ -404,12 +404,18 @@ pub fn session_mcp_server_to_relay_prompt_value(server: &SessionMcpServer) -> se
             "url": url,
             "headers": headers,
         }),
-        McpTransportConfig::Stdio { command, args, env } => serde_json::json!({
+        McpTransportConfig::Stdio {
+            command,
+            args,
+            env,
+            cwd,
+        } => serde_json::json!({
             "name": &server.name,
             "type": "stdio",
             "command": command,
             "args": args,
             "env": env,
+            "cwd": cwd,
         }),
     }
 }
@@ -784,6 +790,7 @@ mod tests {
                     name: "TOKEN".to_string(),
                     value: "secret".to_string(),
                 }],
+                cwd: Some("C:/workspace".to_string()),
             },
             uses_relay: false,
         };
@@ -851,6 +858,10 @@ mod tests {
         assert_eq!(
             payload.mcp_servers[0].get("env"),
             Some(&serde_json::json!([{ "name": "TOKEN", "value": "secret" }]))
+        );
+        assert_eq!(
+            payload.mcp_servers[0].get("cwd"),
+            Some(&serde_json::json!("C:/workspace"))
         );
         assert!(payload.mcp_servers[0].get("transport").is_none());
     }

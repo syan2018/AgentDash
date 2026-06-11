@@ -3,7 +3,7 @@
 
 export type CloneMcpPresetRequest = { key?: string, display_name?: string, };
 
-export type CreateMcpPresetRequest = { key: string, display_name: string, description?: string, transport: McpTransportConfigDto, route_policy: McpRoutePolicy, };
+export type CreateMcpPresetRequest = { key: string, display_name: string, description?: string, transport: McpTransportConfigDto, route_policy: McpRoutePolicy, runtime_binding?: McpRuntimeBindingConfigDto, };
 
 export type DeleteMcpPresetResponse = { deleted: string, };
 
@@ -15,16 +15,24 @@ export type McpEnvVar = { name: string, value: string, };
 
 export type McpHttpHeader = { name: string, value: string, };
 
-export type McpPresetResponse = { id: string, project_id: string, key: string, display_name: string, description?: string, transport: McpTransportConfigDto, route_policy: McpRoutePolicy, source: McpPresetSourceTag, builtin_key?: string, installed_source?: InstalledAssetSourceResponse, created_at: string, updated_at: string, };
+export type McpPresetResponse = { id: string, project_id: string, key: string, display_name: string, description?: string, transport: McpTransportConfigDto, route_policy: McpRoutePolicy, runtime_binding?: McpRuntimeBindingConfigDto, source: McpPresetSourceTag, builtin_key?: string, installed_source?: InstalledAssetSourceResponse, created_at: string, updated_at: string, };
 
 export type McpPresetSourceTag = "builtin" | "user";
 
 export type McpRoutePolicy = "auto" | "relay" | "direct";
 
-export type McpTransportConfigDto = { "type": "http", url: string, headers?: Array<McpHttpHeader>, } | { "type": "sse", url: string, headers?: Array<McpHttpHeader>, } | { "type": "stdio", command: string, args?: Array<string>, env?: Array<McpEnvVar>, };
+export type McpRuntimeBindingConfigDto = { mount_id?: string, bindings?: Array<McpRuntimeBindingRuleDto>, };
+
+export type McpRuntimeBindingRuleDto = { source: McpRuntimeBindingSourceDto, target: McpRuntimeBindingTargetDto, required: boolean, };
+
+export type McpRuntimeBindingSourceDto = { "kind": "vfs_root_ref" } | { "kind": "vfs_backend_id" } | { "kind": "workspace_id" } | { "kind": "workspace_binding_id" } | { "kind": "workspace_identity", path: Array<string>, } | { "kind": "workspace_detected_fact", path: Array<string>, };
+
+export type McpRuntimeBindingTargetDto = { "kind": "http_query", name: string, } | { "kind": "http_header", name: string, } | { "kind": "stdio_env", name: string, } | { "kind": "stdio_cwd" };
+
+export type McpTransportConfigDto = { "type": "http", url: string, headers?: Array<McpHttpHeader>, } | { "type": "sse", url: string, headers?: Array<McpHttpHeader>, } | { "type": "stdio", command: string, args?: Array<string>, env?: Array<McpEnvVar>, cwd?: string, };
 
 export type ProbeMcpPresetResponse = { "status": "ok", latency_ms: number, tools: Array<ProbeMcpToolInfo>, } | { "status": "error", error: string, } | { "status": "unsupported", reason: string, };
 
 export type ProbeMcpToolInfo = { name: string, description: string, };
 
-export type UpdateMcpPresetRequest = { key?: string, display_name?: string, description?: string | null, transport?: McpTransportConfigDto, route_policy?: McpRoutePolicy, };
+export type UpdateMcpPresetRequest = { key?: string, display_name?: string, description?: string | null, transport?: McpTransportConfigDto, route_policy?: McpRoutePolicy, runtime_binding?: McpRuntimeBindingConfigDto | null, };

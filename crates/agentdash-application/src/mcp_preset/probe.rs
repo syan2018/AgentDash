@@ -133,6 +133,7 @@ mod tests {
                 name: "FOO".to_string(),
                 value: "bar".to_string(),
             }],
+            cwd: None,
         };
         match probe_transport(&transport, None, &RmcpProbeTransport::new()).await {
             ProbeResult::Error { error } => {

@@ -686,6 +686,7 @@ mod tests {
                 "@modelcontextprotocol/server-fetch".to_string(),
             ],
             env: vec![],
+            cwd: None,
         };
 
         let error = mcp_transport_template_for_publish(&transport).expect_err("stdio rejected");

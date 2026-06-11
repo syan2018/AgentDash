@@ -34,6 +34,8 @@ pub enum McpTransportConfig {
         args: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         env: Vec<McpEnvVar>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
     },
 }
 
@@ -46,6 +48,46 @@ impl McpTransportConfig {
             Self::Stdio { .. } => "stdio",
         }
     }
+}
+
+/// MCP Preset 的 session 运行时绑定配置。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpRuntimeBindingConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mount_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bindings: Vec<McpRuntimeBindingRule>,
+}
+
+/// 单条运行时绑定规则：从 session surface 读取 source，写入 transport target。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpRuntimeBindingRule {
+    pub source: McpRuntimeBindingSource,
+    pub target: McpRuntimeBindingTarget,
+    #[serde(default)]
+    pub required: bool,
+}
+
+/// 运行时绑定可读取的 session source。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum McpRuntimeBindingSource {
+    VfsRootRef,
+    VfsBackendId,
+    WorkspaceId,
+    WorkspaceBindingId,
+    WorkspaceIdentity { path: Vec<String> },
+    WorkspaceDetectedFact { path: Vec<String> },
+}
+
+/// 运行时绑定写入的 transport target。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum McpRuntimeBindingTarget {
+    HttpQuery { name: String },
+    HttpHeader { name: String },
+    StdioEnv { name: String },
+    StdioCwd,
 }
 
 /// 应用层路由策略——不属于 transport 连接定义。
@@ -137,6 +179,7 @@ mod tests {
                 name: "ROOT".to_string(),
                 value: ".".to_string(),
             }],
+            cwd: Some("/workspace/demo".to_string()),
         };
         let json = serde_json::to_string(&decl).expect("serialize stdio");
         let back: McpTransportConfig = serde_json::from_str(&json).expect("deserialize stdio");
@@ -150,6 +193,7 @@ mod tests {
             command: "npx".to_string(),
             args: vec![],
             env: vec![],
+            cwd: None,
         };
         let http = McpTransportConfig::Http {
             url: "https://example.com/mcp".to_string(),
@@ -186,5 +230,27 @@ mod tests {
         assert_eq!(back.tag(), "user");
         assert!(back.builtin_key().is_none());
         assert!(!back.is_builtin());
+    }
+
+    #[test]
+    fn runtime_binding_roundtrip() {
+        let binding = McpRuntimeBindingConfig {
+            mount_id: Some("main".to_string()),
+            bindings: vec![McpRuntimeBindingRule {
+                source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                    path: vec!["p4".to_string(), "client_name".to_string()],
+                },
+                target: McpRuntimeBindingTarget::HttpQuery {
+                    name: "p4_client".to_string(),
+                },
+                required: true,
+            }],
+        };
+
+        let json = serde_json::to_string(&binding).expect("serialize binding");
+        assert!(json.contains("\"kind\":\"workspace_detected_fact\""));
+        let back: McpRuntimeBindingConfig =
+            serde_json::from_str(&json).expect("deserialize binding");
+        assert_eq!(back, binding);
     }
 }

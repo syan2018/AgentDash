@@ -1,7 +1,7 @@
 use uuid::Uuid;
 
 use agentdash_domain::mcp_preset::{
-    McpPreset, McpPresetRepository, McpRoutePolicy, McpTransportConfig,
+    McpPreset, McpPresetRepository, McpRoutePolicy, McpRuntimeBindingConfig, McpTransportConfig,
 };
 
 use super::definition::{BuiltinMcpPresetTemplate, list_builtin_mcp_preset_templates};
@@ -21,6 +21,7 @@ pub struct CreateMcpPresetInput {
     pub description: Option<String>,
     pub transport: McpTransportConfig,
     pub route_policy: McpRoutePolicy,
+    pub runtime_binding: Option<McpRuntimeBindingConfig>,
 }
 
 /// 更新 preset 的输入——可选字段，`None` 表示保持原值。
@@ -31,6 +32,7 @@ pub struct UpdateMcpPresetInput {
     pub description: Option<Option<String>>,
     pub transport: Option<McpTransportConfig>,
     pub route_policy: Option<McpRoutePolicy>,
+    pub runtime_binding: Option<Option<McpRuntimeBindingConfig>>,
 }
 
 /// 复制 preset（常用于「复制 builtin 为 user」）的输入。
@@ -83,7 +85,8 @@ where
             input.description,
             input.transport,
             input.route_policy,
-        );
+        )
+        .with_runtime_binding(input.runtime_binding);
         self.repo.create(&preset).await?;
         Ok(preset)
     }
@@ -124,6 +127,9 @@ where
         if let Some(route_policy) = input.route_policy {
             preset.route_policy = route_policy;
         }
+        if let Some(runtime_binding) = input.runtime_binding {
+            preset.runtime_binding = runtime_binding;
+        }
         preset.touch();
 
         self.repo.update(&preset).await?;
@@ -162,7 +168,8 @@ where
             source.description.clone(),
             source.transport.clone(),
             source.route_policy,
-        );
+        )
+        .with_runtime_binding(source.runtime_binding.clone());
         self.repo.create(&preset).await?;
         Ok(preset)
     }
@@ -423,6 +430,7 @@ mod tests {
                 description: None,
                 transport: http_transport(),
                 route_policy: McpRoutePolicy::Direct,
+                runtime_binding: None,
             })
             .await
             .expect("create");
@@ -445,6 +453,7 @@ mod tests {
             description: None,
             transport: http_transport(),
             route_policy: McpRoutePolicy::Direct,
+            runtime_binding: None,
         };
         service.create(input()).await.expect("first");
         let err = service.create(input()).await.expect_err("duplicate");
@@ -467,6 +476,7 @@ mod tests {
                 description: None,
                 transport: http_transport(),
                 route_policy: McpRoutePolicy::Direct,
+                runtime_binding: None,
             })
             .await
             .expect_err("blank key should fail");
@@ -482,8 +492,10 @@ mod tests {
                     command: "".to_string(),
                     args: vec![],
                     env: vec![],
+                    cwd: None,
                 },
                 route_policy: McpRoutePolicy::Auto,
+                runtime_binding: None,
             })
             .await
             .expect_err("empty command should fail");

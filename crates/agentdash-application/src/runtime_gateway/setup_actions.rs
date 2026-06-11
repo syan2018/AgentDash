@@ -501,6 +501,7 @@ mod tests {
             command: "npx".to_string(),
             args: vec![],
             env: vec![],
+            cwd: None,
         })
         .expect("serialize transport");
         let request = RuntimeInvocationRequest::new(

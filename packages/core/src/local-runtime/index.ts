@@ -48,7 +48,7 @@ export interface McpHttpHeader {
 export type McpTransportConfig =
   | { type: 'http'; url: string; headers?: McpHttpHeader[] }
   | { type: 'sse'; url: string; headers?: McpHttpHeader[] }
-  | { type: 'stdio'; command: string; args?: string[]; env?: McpEnvVar[] }
+  | { type: 'stdio'; command: string; args?: string[]; env?: McpEnvVar[]; cwd?: string }
 
 export interface McpLocalServerEntry {
   name: string
@@ -112,6 +112,7 @@ export function normalizeMcpLocalServer(server: McpLocalServerEntry): McpLocalSe
   if (t.type === 'stdio') {
     const args = t.args?.map((a) => a.trim()).filter(Boolean) ?? []
     const env = t.env?.filter((e) => e.name.trim()) ?? []
+    const cwd = t.cwd?.trim()
     return {
       name,
       transport: {
@@ -119,6 +120,7 @@ export function normalizeMcpLocalServer(server: McpLocalServerEntry): McpLocalSe
         command: t.command.trim(),
         ...(args.length ? { args } : {}),
         ...(env.length ? { env } : {}),
+        ...(cwd ? { cwd } : {}),
       },
     }
   }
@@ -136,7 +138,7 @@ export function createDefaultMcpLocalServer(
 ): McpLocalServerEntry {
   switch (transportType) {
     case 'stdio':
-      return { name, transport: { type: 'stdio', command: '', args: [], env: [] } }
+      return { name, transport: { type: 'stdio', command: '', args: [], env: [], cwd: '' } }
     case 'http':
       return { name, transport: { type: 'http', url: '' } }
     case 'sse':

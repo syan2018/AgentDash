@@ -72,6 +72,9 @@ pub enum McpTransportConfigDto {
         args: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         env: Vec<McpEnvVar>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        cwd: Option<String>,
     },
 }
 
@@ -86,10 +89,16 @@ impl From<domain::McpTransportConfig> for McpTransportConfigDto {
                 url,
                 headers: headers.into_iter().map(Into::into).collect(),
             },
-            domain::McpTransportConfig::Stdio { command, args, env } => Self::Stdio {
+            domain::McpTransportConfig::Stdio {
+                command,
+                args,
+                env,
+                cwd,
+            } => Self::Stdio {
                 command,
                 args,
                 env: env.into_iter().map(Into::into).collect(),
+                cwd,
             },
         }
     }
@@ -106,11 +115,148 @@ impl From<McpTransportConfigDto> for domain::McpTransportConfig {
                 url,
                 headers: headers.into_iter().map(Into::into).collect(),
             },
-            McpTransportConfigDto::Stdio { command, args, env } => Self::Stdio {
+            McpTransportConfigDto::Stdio {
+                command,
+                args,
+                env,
+                cwd,
+            } => Self::Stdio {
                 command,
                 args,
                 env: env.into_iter().map(Into::into).collect(),
+                cwd,
             },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct McpRuntimeBindingConfigDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mount_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bindings: Vec<McpRuntimeBindingRuleDto>,
+}
+
+impl From<domain::McpRuntimeBindingConfig> for McpRuntimeBindingConfigDto {
+    fn from(config: domain::McpRuntimeBindingConfig) -> Self {
+        Self {
+            mount_id: config.mount_id,
+            bindings: config.bindings.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<McpRuntimeBindingConfigDto> for domain::McpRuntimeBindingConfig {
+    fn from(config: McpRuntimeBindingConfigDto) -> Self {
+        Self {
+            mount_id: config.mount_id,
+            bindings: config.bindings.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct McpRuntimeBindingRuleDto {
+    pub source: McpRuntimeBindingSourceDto,
+    pub target: McpRuntimeBindingTargetDto,
+    #[serde(default)]
+    pub required: bool,
+}
+
+impl From<domain::McpRuntimeBindingRule> for McpRuntimeBindingRuleDto {
+    fn from(rule: domain::McpRuntimeBindingRule) -> Self {
+        Self {
+            source: rule.source.into(),
+            target: rule.target.into(),
+            required: rule.required,
+        }
+    }
+}
+
+impl From<McpRuntimeBindingRuleDto> for domain::McpRuntimeBindingRule {
+    fn from(rule: McpRuntimeBindingRuleDto) -> Self {
+        Self {
+            source: rule.source.into(),
+            target: rule.target.into(),
+            required: rule.required,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum McpRuntimeBindingSourceDto {
+    VfsRootRef,
+    VfsBackendId,
+    WorkspaceId,
+    WorkspaceBindingId,
+    WorkspaceIdentity { path: Vec<String> },
+    WorkspaceDetectedFact { path: Vec<String> },
+}
+
+impl From<domain::McpRuntimeBindingSource> for McpRuntimeBindingSourceDto {
+    fn from(source: domain::McpRuntimeBindingSource) -> Self {
+        match source {
+            domain::McpRuntimeBindingSource::VfsRootRef => Self::VfsRootRef,
+            domain::McpRuntimeBindingSource::VfsBackendId => Self::VfsBackendId,
+            domain::McpRuntimeBindingSource::WorkspaceId => Self::WorkspaceId,
+            domain::McpRuntimeBindingSource::WorkspaceBindingId => Self::WorkspaceBindingId,
+            domain::McpRuntimeBindingSource::WorkspaceIdentity { path } => {
+                Self::WorkspaceIdentity { path }
+            }
+            domain::McpRuntimeBindingSource::WorkspaceDetectedFact { path } => {
+                Self::WorkspaceDetectedFact { path }
+            }
+        }
+    }
+}
+
+impl From<McpRuntimeBindingSourceDto> for domain::McpRuntimeBindingSource {
+    fn from(source: McpRuntimeBindingSourceDto) -> Self {
+        match source {
+            McpRuntimeBindingSourceDto::VfsRootRef => Self::VfsRootRef,
+            McpRuntimeBindingSourceDto::VfsBackendId => Self::VfsBackendId,
+            McpRuntimeBindingSourceDto::WorkspaceId => Self::WorkspaceId,
+            McpRuntimeBindingSourceDto::WorkspaceBindingId => Self::WorkspaceBindingId,
+            McpRuntimeBindingSourceDto::WorkspaceIdentity { path } => {
+                Self::WorkspaceIdentity { path }
+            }
+            McpRuntimeBindingSourceDto::WorkspaceDetectedFact { path } => {
+                Self::WorkspaceDetectedFact { path }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum McpRuntimeBindingTargetDto {
+    HttpQuery { name: String },
+    HttpHeader { name: String },
+    StdioEnv { name: String },
+    StdioCwd,
+}
+
+impl From<domain::McpRuntimeBindingTarget> for McpRuntimeBindingTargetDto {
+    fn from(target: domain::McpRuntimeBindingTarget) -> Self {
+        match target {
+            domain::McpRuntimeBindingTarget::HttpQuery { name } => Self::HttpQuery { name },
+            domain::McpRuntimeBindingTarget::HttpHeader { name } => Self::HttpHeader { name },
+            domain::McpRuntimeBindingTarget::StdioEnv { name } => Self::StdioEnv { name },
+            domain::McpRuntimeBindingTarget::StdioCwd => Self::StdioCwd,
+        }
+    }
+}
+
+impl From<McpRuntimeBindingTargetDto> for domain::McpRuntimeBindingTarget {
+    fn from(target: McpRuntimeBindingTargetDto) -> Self {
+        match target {
+            McpRuntimeBindingTargetDto::HttpQuery { name } => Self::HttpQuery { name },
+            McpRuntimeBindingTargetDto::HttpHeader { name } => Self::HttpHeader { name },
+            McpRuntimeBindingTargetDto::StdioEnv { name } => Self::StdioEnv { name },
+            McpRuntimeBindingTargetDto::StdioCwd => Self::StdioCwd,
         }
     }
 }
@@ -192,6 +338,9 @@ pub struct McpPresetResponse {
     pub description: Option<String>,
     pub transport: McpTransportConfigDto,
     pub route_policy: McpRoutePolicy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_binding: Option<McpRuntimeBindingConfigDto>,
     pub source: McpPresetSourceTag,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -218,6 +367,7 @@ impl From<domain::McpPreset> for McpPresetResponse {
             description: preset.description,
             transport: preset.transport.into(),
             route_policy: preset.route_policy.into(),
+            runtime_binding: preset.runtime_binding.map(Into::into),
             source,
             builtin_key,
             installed_source: preset.installed_source.map(Into::into),
@@ -242,6 +392,9 @@ pub struct CreateMcpPresetRequest {
     pub transport: McpTransportConfigDto,
     #[serde(default)]
     pub route_policy: McpRoutePolicy,
+    #[serde(default)]
+    #[ts(optional)]
+    pub runtime_binding: Option<McpRuntimeBindingConfigDto>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, TS)]
@@ -261,6 +414,9 @@ pub struct UpdateMcpPresetRequest {
     #[serde(default)]
     #[ts(optional)]
     pub route_policy: Option<McpRoutePolicy>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    #[ts(optional)]
+    pub runtime_binding: Option<Option<McpRuntimeBindingConfigDto>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, TS)]

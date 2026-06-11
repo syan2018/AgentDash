@@ -156,6 +156,7 @@ mod tests {
                         name: "NODE_ENV".to_string(),
                         value: "test".to_string(),
                     }],
+                    cwd: Some(temp.path().to_string_lossy().to_string()),
                 },
             }],
             workspace_contract: WorkspaceContractRuntimeConfig {
@@ -178,7 +179,10 @@ mod tests {
         assert_eq!(loaded.mcp_servers[0].name, "filesystem");
         assert_eq!(loaded.mcp_servers[0].transport.transport_kind(), "stdio");
         match &loaded.mcp_servers[0].transport {
-            McpTransportConfig::Stdio { command, .. } => assert_eq!(command, "npx"),
+            McpTransportConfig::Stdio { command, cwd, .. } => {
+                assert_eq!(command, "npx");
+                assert_eq!(cwd.as_deref(), Some(temp.path().to_string_lossy().as_ref()));
+            }
             _ => panic!("expected stdio transport"),
         }
         assert!(loaded.workspace_contract.enabled);

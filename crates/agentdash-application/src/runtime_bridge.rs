@@ -15,7 +15,10 @@ pub fn session_mcp_server_to_runtime(server: &SessionMcpServer) -> RuntimeMcpSer
             url: url.clone(),
         },
         McpTransportConfig::Stdio {
-            command, args, env, ..
+            command,
+            args,
+            env,
+            cwd,
         } => RuntimeMcpServer::Stdio {
             name: server.name.clone(),
             command: command.clone(),
@@ -24,7 +27,7 @@ pub fn session_mcp_server_to_runtime(server: &SessionMcpServer) -> RuntimeMcpSer
                 .iter()
                 .map(|item| (item.name.clone(), item.value.clone()))
                 .collect::<BTreeMap<_, _>>(),
-            cwd: None,
+            cwd: cwd.clone(),
         },
     }
 }
@@ -56,6 +59,7 @@ pub fn runtime_mcp_server_to_session(server: &RuntimeMcpServer) -> Option<Sessio
             command,
             args,
             env,
+            cwd,
             ..
         } => Some(SessionMcpServer {
             name: name.clone(),
@@ -69,6 +73,7 @@ pub fn runtime_mcp_server_to_session(server: &RuntimeMcpServer) -> Option<Sessio
                         value: v.clone(),
                     })
                     .collect(),
+                cwd: cwd.clone(),
             },
             uses_relay: false,
         }),

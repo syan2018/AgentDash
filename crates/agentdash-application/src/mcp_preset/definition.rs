@@ -28,6 +28,8 @@ pub struct BuiltinMcpPresetTemplate {
     /// 应用层路由策略。
     #[serde(default)]
     pub route_policy: McpRoutePolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_binding: Option<agentdash_domain::mcp_preset::McpRuntimeBindingConfig>,
 }
 
 impl BuiltinMcpPresetTemplate {
@@ -42,6 +44,7 @@ impl BuiltinMcpPresetTemplate {
             self.transport.clone(),
             self.route_policy,
         )
+        .with_runtime_binding(self.runtime_binding.clone())
     }
 }
 

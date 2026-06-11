@@ -131,11 +131,19 @@ impl McpClientManager {
 
         let transport_kind = entry.transport.transport_kind();
         let client = match &entry.transport {
-            agentdash_domain::mcp_preset::McpTransportConfig::Stdio { command, args, env } => {
+            agentdash_domain::mcp_preset::McpTransportConfig::Stdio {
+                command,
+                args,
+                env,
+                cwd,
+            } => {
                 let mut cmd = tokio::process::Command::new(command);
                 cmd.args(args);
                 for var in env {
                     cmd.env(&var.name, &var.value);
+                }
+                if let Some(cwd) = cwd {
+                    cmd.current_dir(cwd);
                 }
                 let transport = TokioChildProcess::new(cmd)
                     .map_err(|e| anyhow::anyhow!("spawn stdio MCP 进程失败: {e}"))?;

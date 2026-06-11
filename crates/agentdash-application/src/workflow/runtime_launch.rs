@@ -85,6 +85,7 @@ pub struct FrameLaunchIntent {
 #[derive(Debug, Clone)]
 pub struct FrameLaunchEnvelope {
     pub surface: FrameRuntimeSurface,
+    pub pending_frame: Option<AgentFrame>,
     pub intent: FrameLaunchIntent,
     pub working_directory: PathBuf,
     pub executor_config: AgentConfig,

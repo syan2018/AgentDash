@@ -71,6 +71,7 @@ export function SessionChatView({
   showExecutorSelector = true,
   controlState,
   onPrimaryAction,
+  onCancelAction,
   pendingMessages,
   onPromotePending,
   onDeletePending,
@@ -455,7 +456,11 @@ export function SessionChatView({
     setSendError(null);
     setIsCancelling(true);
     try {
-      await sendCancel();
+      if (onCancelAction) {
+        await onCancelAction();
+      } else {
+        await sendCancel();
+      }
       // 不 await 状态刷新，避免 UI 卡在"取消中…"；
       // 1.5s 轮询 + 流事件会自然驱动 executionState 更新。
       void refreshExecutionState()
@@ -472,7 +477,7 @@ export function SessionChatView({
       cancelInFlightRef.current = false;
       setIsCancelling(false);
     }
-  }, [controlState.cancelAction.enabled, hasSession, refreshExecutionState, sendCancel, sessionId]);
+  }, [controlState.cancelAction.enabled, hasSession, onCancelAction, refreshExecutionState, sendCancel, sessionId]);
 
   // ─── 文件引用 & 键盘 ─────────────────────────────────
 

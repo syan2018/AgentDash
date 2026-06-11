@@ -177,6 +177,7 @@ pub(super) fn envelope_from_construction(
             mcp_surface: serde_json::Value::Null,
             runtime_session_id: Some(construction.session_id.clone()),
         },
+        pending_frame: None,
         intent: FrameLaunchIntent {
             input: construction.prompt.input,
             environment_variables: construction.prompt.environment_variables,

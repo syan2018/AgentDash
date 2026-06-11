@@ -89,6 +89,8 @@ export interface SessionChatViewProps {
     imageAttachments?: ImageAttachment[],
   ) => Promise<void>;
 
+  onCancelAction?: () => Promise<void>;
+
   // ─── Pending Queue ─────────────────────────────────
 
   /** 排队中的消息列表（来自 runtimeControl.pending_messages） */

@@ -27,7 +27,7 @@ use crate::workflow::{
     },
 };
 
-pub struct ProjectAgentSessionStartCommand {
+pub struct ProjectAgentRunStartCommand {
     pub project_id: Uuid,
     pub project_agent_id: Uuid,
     pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
@@ -38,7 +38,7 @@ pub struct ProjectAgentSessionStartCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProjectAgentSessionStartDispatch {
+pub struct ProjectAgentRunStartDispatch {
     pub project_agent: ProjectAgent,
     pub runtime_session_id: String,
     pub turn_id: String,
@@ -50,7 +50,7 @@ pub struct ProjectAgentSessionStartDispatch {
     pub command_receipt: AgentRunCommandReceiptView,
 }
 
-pub struct ProjectAgentSessionStartRepos<'a> {
+pub struct ProjectAgentRunStartRepos<'a> {
     pub project_agent_repo: &'a dyn ProjectAgentRepository,
     pub lifecycle_run_repo: &'a dyn LifecycleRunRepository,
     pub workflow_graph_repo: &'a dyn WorkflowGraphRepository,
@@ -64,7 +64,7 @@ pub struct ProjectAgentSessionStartRepos<'a> {
     pub runtime_session_creator: &'a dyn RuntimeSessionCreator,
 }
 
-impl<'a> ProjectAgentSessionStartRepos<'a> {
+impl<'a> ProjectAgentRunStartRepos<'a> {
     pub fn from_repository_set(repos: &'a RepositorySet) -> Self {
         Self {
             project_agent_repo: repos.project_agent_repo.as_ref(),
@@ -121,24 +121,24 @@ impl RuntimeSessionDraftCleanupPort for SessionCoreService {
     }
 }
 
-pub struct ProjectAgentSessionStartService<'a> {
-    repos: ProjectAgentSessionStartRepos<'a>,
+pub struct ProjectAgentRunStartService<'a> {
+    repos: ProjectAgentRunStartRepos<'a>,
     cleanup: &'a dyn RuntimeSessionDraftCleanupPort,
 }
 
-impl<'a> ProjectAgentSessionStartService<'a> {
+impl<'a> ProjectAgentRunStartService<'a> {
     pub fn new(
-        repos: ProjectAgentSessionStartRepos<'a>,
+        repos: ProjectAgentRunStartRepos<'a>,
         cleanup: &'a dyn RuntimeSessionDraftCleanupPort,
     ) -> Self {
         Self { repos, cleanup }
     }
 
-    pub async fn start_session<D>(
+    pub async fn start_run<D>(
         &self,
-        command: ProjectAgentSessionStartCommand,
+        command: ProjectAgentRunStartCommand,
         delivery: D,
-    ) -> Result<ProjectAgentSessionStartDispatch, WorkflowApplicationError>
+    ) -> Result<ProjectAgentRunStartDispatch, WorkflowApplicationError>
     where
         D: AgentRunMessageDeliveryPort,
     {
@@ -242,7 +242,7 @@ impl<'a> ProjectAgentSessionStartService<'a> {
             .delivery_runtime_ref
             .ok_or_else(|| {
                 WorkflowApplicationError::Internal(
-                    "ProjectAgent session materialize 未创建 RuntimeSession".to_string(),
+                    "ProjectAgent AgentRun materialize 未创建 RuntimeSession".to_string(),
                 )
             })?
             .to_string();
@@ -331,7 +331,7 @@ impl<'a> ProjectAgentSessionStartService<'a> {
             .mark_accepted(claim.record.id, accepted_refs)
             .await?;
 
-        Ok(ProjectAgentSessionStartDispatch {
+        Ok(ProjectAgentRunStartDispatch {
             project_agent,
             runtime_session_id,
             turn_id: message_dispatch.turn_id,
@@ -395,8 +395,8 @@ fn project_agent_start_dispatch_from_accepted_refs(
     subject_ref: Option<SubjectRef>,
     refs: AgentRunDeliveryAcceptedRefs,
     command_receipt: AgentRunCommandReceiptView,
-) -> ProjectAgentSessionStartDispatch {
-    ProjectAgentSessionStartDispatch {
+) -> ProjectAgentRunStartDispatch {
+    ProjectAgentRunStartDispatch {
         project_agent,
         runtime_session_id: refs.runtime_session_id.unwrap_or_default(),
         turn_id: refs.turn_id.unwrap_or_default(),
@@ -990,8 +990,8 @@ mod tests {
         let anchor_repo = AnchorRepo::default();
         let command_receipt_repo = MemoryAgentRunDeliveryCommandReceiptRepository::default();
         let runtime_creator = RuntimeCreator::default();
-        let service = ProjectAgentSessionStartService::new(
-            ProjectAgentSessionStartRepos {
+        let service = ProjectAgentRunStartService::new(
+            ProjectAgentRunStartRepos {
                 project_agent_repo: &project_agent_repo,
                 lifecycle_run_repo: &run_repo,
                 workflow_graph_repo: &workflow_graph_repo,
@@ -1007,7 +1007,7 @@ mod tests {
             &runtime_creator,
         );
 
-        let command = || ProjectAgentSessionStartCommand {
+        let command = || ProjectAgentRunStartCommand {
             project_id,
             project_agent_id: project_agent.id,
             input: agentdash_agent_protocol::text_user_input_blocks("hello"),
@@ -1018,11 +1018,11 @@ mod tests {
         };
 
         let first = service
-            .start_session(command(), SuccessfulDelivery)
+            .start_run(command(), SuccessfulDelivery)
             .await
             .expect("first start");
         let second = service
-            .start_session(command(), SuccessfulDelivery)
+            .start_run(command(), SuccessfulDelivery)
             .await
             .expect("duplicate start");
 
@@ -1053,8 +1053,8 @@ mod tests {
         let anchor_repo = AnchorRepo::default();
         let command_receipt_repo = MemoryAgentRunDeliveryCommandReceiptRepository::default();
         let runtime_creator = RuntimeCreator::default();
-        let service = ProjectAgentSessionStartService::new(
-            ProjectAgentSessionStartRepos {
+        let service = ProjectAgentRunStartService::new(
+            ProjectAgentRunStartRepos {
                 project_agent_repo: &project_agent_repo,
                 lifecycle_run_repo: &run_repo,
                 workflow_graph_repo: &workflow_graph_repo,
@@ -1071,8 +1071,8 @@ mod tests {
         );
 
         let error = service
-            .start_session(
-                ProjectAgentSessionStartCommand {
+            .start_run(
+                ProjectAgentRunStartCommand {
                     project_id,
                     project_agent_id: project_agent.id,
                     input: agentdash_agent_protocol::text_user_input_blocks("hello"),

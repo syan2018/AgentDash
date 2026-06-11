@@ -2,7 +2,6 @@ import { api, type ApiHttpError } from "../api/client";
 import { requireStringField } from "../api/mappers";
 import { settingsApi } from "../api/settings";
 import type {
-  CancelSessionResponse,
   CreateSessionForkRequest,
   DeleteSessionResponse,
   RollbackSessionProjectionRequest,
@@ -127,10 +126,6 @@ function mapSessionExecutionState(raw: Record<string, unknown>): SessionExecutio
 export async function fetchSessionExecutionState(id: string): Promise<SessionExecutionState> {
   const raw = await api.get<Record<string, unknown>>(`/sessions/${encodeURIComponent(id)}/state`);
   return mapSessionExecutionState(raw);
-}
-
-export async function cancelSession(id: string): Promise<CancelSessionResponse> {
-  return api.post<CancelSessionResponse>(`/sessions/${encodeURIComponent(id)}/cancel`, {});
 }
 
 // ─── Pending Message Queue ───────────────────────────

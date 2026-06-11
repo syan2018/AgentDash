@@ -67,7 +67,7 @@ pub struct ProjectAgentLaunchResult {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-pub struct CreateProjectAgentSessionRequest {
+pub struct CreateProjectAgentRunRequest {
     /// canonical 用户输入，与 steer / lifecycle message 同形。
     pub input: Vec<codex::UserInput>,
     pub client_command_id: String,
@@ -80,7 +80,7 @@ pub struct CreateProjectAgentSessionRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ProjectAgentSessionStartResult {
+pub struct ProjectAgentRunStartResult {
     pub command_receipt: AgentRunCommandReceipt,
     pub accepted_refs: AgentRunAcceptedRefs,
     pub runtime_session_id: String,

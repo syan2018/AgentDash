@@ -81,20 +81,19 @@ use agentdash_contracts::permission::{
     PermissionGrantStatusDto,
 };
 use agentdash_contracts::project_agent::{
-    CreateProjectAgentRequest, CreateProjectAgentSessionRequest, ProjectAgent,
-    ProjectAgentExecutor, ProjectAgentLaunchResult, ProjectAgentSessionStartResult,
-    ProjectAgentSummary, UpdateProjectAgentRequest,
+    CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent, ProjectAgentExecutor,
+    ProjectAgentLaunchResult, ProjectAgentRunStartResult, ProjectAgentSummary,
+    UpdateProjectAgentRequest,
 };
 use agentdash_contracts::session::{
-    ApproveToolCallResponse, CancelSessionResponse, CreateSessionForkRequest,
-    DeleteSessionResponse, RejectToolCallResponse, RollbackSessionProjectionRequest,
-    SessionCommandStateResponse, SessionEventResponse, SessionEventsPageResponse,
-    SessionForkChildSessionResponse, SessionForkResponse, SessionLineageRecordResponse,
-    SessionLineageRelationKindDto, SessionLineageStatusDto, SessionLineageViewResponse,
-    SessionMessageRefDto, SessionNdjsonEnvelope, SessionProjectionMessageRefResponse,
-    SessionProjectionRollbackResponse, SessionProjectionSegmentProvenanceResponse,
-    SessionProjectionSegmentViewResponse, SessionProjectionSourceRangeResponse,
-    SessionProjectionViewResponse,
+    ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
+    RejectToolCallResponse, RollbackSessionProjectionRequest, SessionCommandStateResponse,
+    SessionEventResponse, SessionEventsPageResponse, SessionForkChildSessionResponse,
+    SessionForkResponse, SessionLineageRecordResponse, SessionLineageRelationKindDto,
+    SessionLineageStatusDto, SessionLineageViewResponse, SessionMessageRefDto,
+    SessionNdjsonEnvelope, SessionProjectionMessageRefResponse, SessionProjectionRollbackResponse,
+    SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
+    SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
 };
 use agentdash_contracts::settings::{
     SettingResponse, SettingUpdate, SettingsScopeKind, SettingsScopeQuery, UpdateSettingsRequest,
@@ -180,8 +179,8 @@ fn main() {
             export_all::<ProjectAgentExecutor>(dir);
             export_all::<ProjectAgentSummary>(dir);
             export_all::<ProjectAgentLaunchResult>(dir);
-            export_all::<CreateProjectAgentSessionRequest>(dir);
-            export_all::<ProjectAgentSessionStartResult>(dir);
+            export_all::<CreateProjectAgentRunRequest>(dir);
+            export_all::<ProjectAgentRunStartResult>(dir);
             export_all::<CreateProjectAgentRequest>(dir);
             export_all::<UpdateProjectAgentRequest>(dir);
         },
@@ -291,7 +290,6 @@ fn main() {
             export_all::<SessionNdjsonEnvelope>(dir);
             export_all::<SessionCommandStateResponse>(dir);
             export_all::<DeleteSessionResponse>(dir);
-            export_all::<CancelSessionResponse>(dir);
             export_all::<ApproveToolCallResponse>(dir);
             export_all::<RejectToolCallResponse>(dir);
             export_all::<SessionProjectionSourceRangeResponse>(dir);

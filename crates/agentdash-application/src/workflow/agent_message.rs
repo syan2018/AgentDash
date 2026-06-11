@@ -140,15 +140,13 @@ where
             ));
         }
 
-        let (run, agent, frame) = self
+        let (run, agent, _frame) = self
             .resolve_control_plane(&command.delivery_runtime_session_id)
             .await?;
         let request_digest = digest_command_request(&serde_json::json!({
             "kind": "agent_run_message",
             "run_id": run.id,
             "agent_id": agent.id,
-            "frame_id": frame.id,
-            "frame_revision": frame.revision,
             "runtime_session_id": command.delivery_runtime_session_id,
             "input": command.input,
             "executor_config": command.executor_config,
@@ -186,11 +184,14 @@ where
                 return Err(error);
             }
         };
+        let (_accepted_run, _accepted_agent, accepted_frame) = self
+            .resolve_control_plane(&command.delivery_runtime_session_id)
+            .await?;
         let accepted_refs = AgentRunDeliveryAcceptedRefs {
             run_id: run.id,
             agent_id: agent.id,
-            frame_id: Some(frame.id),
-            frame_revision: Some(frame.revision),
+            frame_id: Some(accepted_frame.id),
+            frame_revision: Some(accepted_frame.revision),
             runtime_session_id: Some(command.delivery_runtime_session_id.clone()),
             turn_id: Some(turn_id.clone()),
         };
@@ -204,8 +205,8 @@ where
             turn_id,
             run_id: run.id,
             agent_id: agent.id,
-            frame_id: frame.id,
-            frame_revision: frame.revision,
+            frame_id: accepted_frame.id,
+            frame_revision: accepted_frame.revision,
             command_receipt: AgentRunCommandReceiptView::from_record(&receipt, false),
         })
     }
@@ -689,6 +690,39 @@ mod tests {
         }
     }
 
+    struct AdvancingDelivery<'a> {
+        agent_repo: &'a InMemoryAgentRepo,
+        frame_repo: &'a InMemoryFrameRepo,
+        agent_id: Uuid,
+    }
+
+    #[async_trait]
+    impl AgentRunMessageDeliveryPort for &AdvancingDelivery<'_> {
+        async fn deliver_user_message(
+            &self,
+            delivery: AgentRunMessageDelivery,
+        ) -> Result<String, WorkflowApplicationError> {
+            let mut agent = self
+                .agent_repo
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|agent| agent.id == self.agent_id)
+                .cloned()
+                .expect("seeded agent");
+            let accepted_frame = AgentFrame::new_revision(self.agent_id, 2, "accepted");
+            agent.set_current_frame(accepted_frame.id);
+            self.frame_repo.items.lock().unwrap().push(accepted_frame);
+            let mut agents = self.agent_repo.items.lock().unwrap();
+            if let Some(existing) = agents.iter_mut().find(|item| item.id == agent.id) {
+                *existing = agent;
+            }
+            assert_eq!(delivery.delivery_runtime_session_id, "runtime-1");
+            Ok("turn-accepted".to_string())
+        }
+    }
+
     fn seed_control_plane(
         run_repo: &InMemoryRunRepo,
         agent_repo: &InMemoryAgentRepo,
@@ -812,6 +846,62 @@ mod tests {
         assert!(!first.command_receipt.duplicate);
         assert!(second.command_receipt.duplicate);
         assert_eq!(delivery.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_records_frame_after_delivery_acceptance() {
+        let run_repo = InMemoryRunRepo::default();
+        let agent_repo = InMemoryAgentRepo::default();
+        let frame_repo = InMemoryFrameRepo::default();
+        let anchor_repo = InMemoryAnchorRepo::default();
+        let command_receipt_repo = InMemoryCommandReceiptRepo::default();
+        let (_run, agent, launch_frame) = seed_control_plane(
+            &run_repo,
+            &agent_repo,
+            &frame_repo,
+            &anchor_repo,
+            "runtime-1",
+        );
+        let delivery = AdvancingDelivery {
+            agent_repo: &agent_repo,
+            frame_repo: &frame_repo,
+            agent_id: agent.id,
+        };
+        let service = AgentRunMessageService::new(
+            &run_repo,
+            &agent_repo,
+            &frame_repo,
+            &anchor_repo,
+            &command_receipt_repo,
+            &delivery,
+        );
+
+        let first = service
+            .dispatch_user_message(AgentRunMessageCommand {
+                delivery_runtime_session_id: "runtime-1".to_string(),
+                input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                client_command_id: "cmd-accepted".to_string(),
+                executor_config: None,
+                identity: None,
+            })
+            .await
+            .expect("first dispatch");
+
+        assert_ne!(first.frame_id, launch_frame.id);
+        assert_eq!(first.frame_revision, 2);
+        let duplicate = service
+            .dispatch_user_message(AgentRunMessageCommand {
+                delivery_runtime_session_id: "runtime-1".to_string(),
+                input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                client_command_id: "cmd-accepted".to_string(),
+                executor_config: None,
+                identity: None,
+            })
+            .await
+            .expect("duplicate dispatch");
+        assert!(duplicate.command_receipt.duplicate);
+        assert_eq!(duplicate.frame_id, first.frame_id);
+        assert_eq!(duplicate.frame_revision, 2);
     }
 
     #[tokio::test]

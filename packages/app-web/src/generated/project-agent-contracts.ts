@@ -14,7 +14,7 @@ export type AgentRunRefDto = { run_id: string, agent_id: string, };
 
 export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, };
 
-export type CreateProjectAgentSessionRequest = {
+export type CreateProjectAgentRunRequest = {
 /**
  * canonical 用户输入，与 steer / lifecycle message 同形。
  */
@@ -28,7 +28,7 @@ export type ProjectAgentExecutor = { executor: string, provider_id?: string, mod
 
 export type ProjectAgentLaunchResult = { created: boolean, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_ref?: SubjectRefDto, };
 
-export type ProjectAgentSessionStartResult = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, runtime_session_id: string, turn_id: string, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
+export type ProjectAgentRunStartResult = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, runtime_session_id: string, turn_id: string, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
 
 export type ProjectAgentSummary = { key: string, display_name: string, description: string, executor: ProjectAgentExecutor, preset_name?: string, source: string, };
 

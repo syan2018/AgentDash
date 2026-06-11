@@ -2,6 +2,7 @@ use agentdash_spi::ConnectorError;
 
 use super::connector_start::ConnectorAcceptedTurn;
 use super::deps::TurnCommitDeps;
+use crate::session::capability_state::capability_state_to_frame_surfaces;
 use crate::session::hub_support::{
     TurnTerminalKind, build_turn_started_envelope, build_turn_terminal_envelope,
     build_user_input_submitted_envelope,
@@ -150,6 +151,39 @@ impl TurnCommitter {
         ) else {
             return;
         };
+
+        if let Some(mut pending_frame) = prepared.pending_frame.clone() {
+            let surfaces = capability_state_to_frame_surfaces(&prepared.accepted_capability_state);
+            pending_frame.effective_capability_json = surfaces.effective_capability_json;
+            pending_frame.vfs_surface_json = surfaces.vfs_surface_json;
+            pending_frame.mcp_surface_json = surfaces.mcp_surface_json;
+            match frame_repo.create(&pending_frame).await {
+                Ok(()) => {
+                    tracing::debug!(
+                        session_id,
+                        agent_id = %pending_frame.agent_id,
+                        revision = pending_frame.revision,
+                        "accepted pending AgentFrame revision 已写入"
+                    );
+                    if let Ok(Some(mut agent)) = agent_repo.get(pending_frame.agent_id).await {
+                        agent.set_current_frame(pending_frame.id);
+                        if let Err(error) = agent_repo.update(&agent).await {
+                            tracing::warn!(
+                                session_id,
+                                "同步 accepted pending current_frame_id 失败: {error}"
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        session_id,
+                        "accepted pending AgentFrame revision 写入失败: {error}"
+                    );
+                }
+            }
+            return;
+        }
 
         match resolve_current_frame_for_runtime_session(
             session_id,

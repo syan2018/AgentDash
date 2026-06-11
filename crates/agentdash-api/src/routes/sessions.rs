@@ -24,11 +24,11 @@ use agentdash_application::session::{
 };
 use agentdash_application::workflow::lifecycle_run_view_builder;
 use agentdash_contracts::session::{
-    ApproveToolCallResponse, CancelSessionResponse, CreateSessionForkRequest,
-    DeleteSessionResponse, RejectToolCallResponse, RollbackSessionProjectionRequest,
-    SessionCommandStateResponse, SessionEventResponse, SessionEventsPageResponse,
-    SessionForkChildSessionResponse, SessionForkResponse, SessionLineageViewResponse,
-    SessionNdjsonEnvelope, SessionProjectionRollbackResponse, SessionProjectionViewResponse,
+    ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
+    RejectToolCallResponse, RollbackSessionProjectionRequest, SessionEventResponse,
+    SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
+    SessionLineageViewResponse, SessionNdjsonEnvelope, SessionProjectionRollbackResponse,
+    SessionProjectionViewResponse,
 };
 use agentdash_contracts::workflow::{
     PendingMessageView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
@@ -116,7 +116,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             "/sessions/{id}/context/audit",
             axum::routing::get(get_session_context_audit),
         )
-        .route("/sessions/{id}/cancel", axum::routing::post(cancel_session))
         .route(
             "/sessions/{id}/tool-approvals/{tool_call_id}/approve",
             axum::routing::post(approve_tool_call),
@@ -426,38 +425,6 @@ pub async fn get_session_state(
     };
 
     Ok(Json(response))
-}
-
-fn session_command_state_response(
-    execution_state: SessionExecutionState,
-) -> SessionCommandStateResponse {
-    match execution_state {
-        SessionExecutionState::Idle => SessionCommandStateResponse {
-            status: "idle".to_string(),
-            turn_id: None,
-            message: None,
-        },
-        SessionExecutionState::Running { turn_id } => SessionCommandStateResponse {
-            status: "running".to_string(),
-            turn_id,
-            message: None,
-        },
-        SessionExecutionState::Completed { turn_id } => SessionCommandStateResponse {
-            status: "completed".to_string(),
-            turn_id: Some(turn_id),
-            message: None,
-        },
-        SessionExecutionState::Failed { turn_id, message } => SessionCommandStateResponse {
-            status: "failed".to_string(),
-            turn_id: Some(turn_id),
-            message,
-        },
-        SessionExecutionState::Interrupted { turn_id, message } => SessionCommandStateResponse {
-            status: "interrupted".to_string(),
-            turn_id,
-            message,
-        },
-    }
 }
 
 async fn load_lifecycle_run_for_session(
@@ -780,38 +747,6 @@ pub async fn delete_session(
     Ok(Json(DeleteSessionResponse {
         deleted: true,
         session_id,
-    }))
-}
-
-pub async fn cancel_session(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-) -> Result<Json<CancelSessionResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    state
-        .services
-        .session_runtime
-        .cancel(&session_id)
-        .await
-        .map_err(ApiError::from)?;
-
-    let execution_state = state
-        .services
-        .session_core
-        .inspect_session_execution_state(&session_id)
-        .await?;
-
-    Ok(Json(CancelSessionResponse {
-        cancelled: true,
-        session_id,
-        state: session_command_state_response(execution_state),
     }))
 }
 

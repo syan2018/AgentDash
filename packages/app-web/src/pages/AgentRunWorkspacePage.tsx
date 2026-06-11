@@ -27,6 +27,7 @@ import {
 } from "../features/workspace-panel";
 import { useAgentRunWorkspaceState } from "../features/workspace-panel/model/useAgentRunWorkspaceState";
 import {
+  cancelAgentRun,
   deleteAgentRunPendingMessage,
   enqueueAgentRunPendingMessage,
   promoteAgentRunPendingMessage,
@@ -101,7 +102,7 @@ export function AgentRunWorkspacePage({
   const projects = useProjectStore((state) => state.projects);
   const agentsByProjectId = useProjectStore((state) => state.agentsByProjectId);
   const fetchProjectAgents = useProjectStore((state) => state.fetchProjectAgents);
-  const createProjectAgentRuntimeSession = useProjectStore((state) => state.createProjectAgentRuntimeSession);
+  const createProjectAgentRun = useProjectStore((state) => state.createProjectAgentRun);
   const fetchAndIngestLifecycleRun = useLifecycleStore((state) => state.fetchAndIngestLifecycleRun);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
@@ -507,7 +508,7 @@ export function AgentRunWorkspacePage({
       if (!draftProjectIdValue || !draftProjectAgentKey || !draftProjectAgent) {
         throw new Error(chatControlState.primaryAction.unavailableReason ?? "当前 Draft 尚未就绪。");
       }
-      const response = await createProjectAgentRuntimeSession(draftProjectIdValue, draftProjectAgentKey, {
+      const response = await createProjectAgentRun(draftProjectIdValue, draftProjectAgentKey, {
         input: inputBlocks,
         client_command_id: clientCommandId,
         executor_config: executorConfig as unknown as JsonValue | undefined,
@@ -578,7 +579,7 @@ export function AgentRunWorkspacePage({
     throw new Error(csPrimary.unavailableReason ?? "当前 AgentRun 不可执行该控制动作。");
   }, [
     chatControlState,
-    createProjectAgentRuntimeSession,
+    createProjectAgentRun,
     currentAgentId,
     currentRunId,
     deliveryRuntimeSessionId,
@@ -591,6 +592,15 @@ export function AgentRunWorkspacePage({
     runtimeControl?.delivery_trace_meta?.last_turn_id,
     scheduleHookRuntimeRefresh,
   ]);
+
+  const handleCancelAgentRun = useCallback(async () => {
+    if (!currentRunId || !currentAgentId) {
+      throw new Error("当前 AgentRun 尚未就绪。");
+    }
+    await cancelAgentRun(currentRunId, currentAgentId);
+    void refreshAgentRunWorkspaceState().catch(() => {});
+    scheduleHookRuntimeRefresh("agent_run_cancelled", true);
+  }, [currentAgentId, currentRunId, refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh]);
 
   const handlePromotePending = useCallback(async (messageId: string) => {
     if (!currentRunId || !currentAgentId) return;
@@ -864,6 +874,7 @@ export function AgentRunWorkspacePage({
               executorStateKey={executorStateKey}
               controlState={chatControlState}
               onPrimaryAction={handleAgentRunPrimaryAction}
+              onCancelAction={handleCancelAgentRun}
               pendingMessages={runtimeControl?.pending_messages}
               onPromotePending={(id) => { void handlePromotePending(id); }}
               onDeletePending={(id) => { void handleDeletePending(id); }}

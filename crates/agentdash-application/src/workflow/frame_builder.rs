@@ -206,6 +206,17 @@ impl AgentFrameBuilder {
     ///
     /// 从 repository 读取当前最新 revision number，递增后创建新 frame。
     pub async fn build(&self, repo: &dyn AgentFrameRepository) -> Result<AgentFrame, DomainError> {
+        let frame = self.build_uncommitted(repo).await?;
+        repo.create(&frame).await?;
+        Ok(frame)
+    }
+
+    /// 构建新 revision 但不写入仓储。Session launch construction 用它把完整
+    /// runtime surface 传给 connector，等 connector accepted 后再提交。
+    pub(crate) async fn build_uncommitted(
+        &self,
+        repo: &dyn AgentFrameRepository,
+    ) -> Result<AgentFrame, DomainError> {
         let current = repo.get_current(self.agent_id).await?;
         let next_revision = match current.as_ref() {
             Some(current) => current.revision + 1,
@@ -247,7 +258,6 @@ impl AgentFrameBuilder {
         // （恒 None），仅作为运行时 Accumulate grant 预留列。
         frame.created_by_id = self.created_by_id.clone();
 
-        repo.create(&frame).await?;
         Ok(frame)
     }
 }

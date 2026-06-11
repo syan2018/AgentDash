@@ -139,3 +139,7 @@ export async function promoteAgentRunPendingMessage(
     {},
   );
 }
+
+export async function cancelAgentRun(runId: string, agentId: string): Promise<void> {
+  await api.post<void>(agentRunCommandPath(runId, agentId, "/cancel"), {});
+}

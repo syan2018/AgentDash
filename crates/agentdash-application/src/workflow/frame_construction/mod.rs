@@ -12,7 +12,7 @@ mod composer_project_agent;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_domain::workflow::{AgentFrame, LifecycleAgent};
+use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::{AgentConfig, AgentConnector, ConnectorError, SkillDiscoveryProvider};
 
 use crate::context::SharedContextAuditBus;
@@ -195,34 +195,28 @@ impl FrameConstructionService {
         )
     }
 
-    /// 持久化 compose 后的 frame revision，更新 agent current_frame_id，
-    /// 然后从持久化后的 frame 直接构造 FrameLaunchEnvelope。
-    pub(crate) async fn persist_composed_frame(
+    /// 构造 compose 后的 pending frame revision，并从该 frame 构造 FrameLaunchEnvelope。
+    pub(crate) async fn compose_pending_frame(
         &self,
         builder: AgentFrameBuilder,
-        agent: &mut LifecycleAgent,
         extras: AssemblyLaunchExtras,
         command: &LaunchCommand,
         runtime_session_id: &str,
         hook_binding: Option<TerminalHookEffectBinding>,
     ) -> Result<FrameLaunchEnvelope, ConnectorError> {
         let frame = builder
-            .build(self.repos.agent_frame_repo.as_ref())
+            .build_uncommitted(self.repos.agent_frame_repo.as_ref())
             .await
             .map_err(connector_internal)?;
-        agent.set_current_frame(frame.id);
-        self.repos
-            .lifecycle_agent_repo
-            .update(agent)
-            .await
-            .map_err(connector_internal)?;
-        build_envelope_from_frame(
+        let mut envelope = build_envelope_from_frame(
             &frame,
             Some(extras),
             command,
             hook_binding,
             runtime_session_id,
-        )
+        )?;
+        envelope.pending_frame = Some(frame);
+        Ok(envelope)
     }
 }
 
@@ -381,6 +375,7 @@ pub(crate) fn build_envelope_from_frame(
 
     Ok(FrameLaunchEnvelope {
         surface,
+        pending_frame: None,
         intent: FrameLaunchIntent {
             input,
             environment_variables,

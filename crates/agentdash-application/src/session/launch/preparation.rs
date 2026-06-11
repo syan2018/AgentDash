@@ -1,5 +1,6 @@
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_domain::settings::SettingScope;
+use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SharedHookRuntime,
 };
@@ -27,6 +28,7 @@ pub(in crate::session) struct TurnPreparationInput {
 }
 
 pub(in crate::session) struct PreparedTurn {
+    pub pending_frame: Option<AgentFrame>,
     pub session_id: String,
     pub turn_id: String,
     pub resolved_payload: ResolvedPromptPayload,
@@ -287,6 +289,7 @@ impl TurnPreparer {
         );
 
         Ok(PreparedTurn {
+            pending_frame: launch_plan.pending_frame,
             session_id,
             turn_id,
             resolved_payload,

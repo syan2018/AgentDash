@@ -119,25 +119,26 @@ use agentdash_contracts::vfs::{
 };
 use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentFrameRefDto,
-    AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse, AgentRunMessageRequest,
-    AgentRunMessageResponse, AgentRunRefDto, AgentRunSteeringRequest, AgentRunSteeringResponse,
-    AgentRunView, DefinitionSource, DeleteAgentProcedureResponse, DeleteHookPresetResponse,
-    DeleteWorkflowGraphResponse, EffectiveSessionContract, EnqueuePendingMessageRequest,
-    EnqueuePendingMessageResponse, HookPresetResponse, HookPresetsResponse,
-    LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology,
-    LifecycleRunView, LifecycleSubjectAssociationDto, OrchestrationInstanceView,
-    PendingMessageView, PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse,
-    ProjectActiveAgentsView, ProjectSessionListEntry, ProjectSessionListView,
-    RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionCommandStateDto,
-    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, RuntimeSessionTraceView,
-    SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
-    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
-    SessionShellDto, SubjectExecutionView, SubjectRefDto, SubmitOrchestrationHumanDecisionRequest,
-    SubmitOrchestrationHumanDecisionResponse, ValidateHookScriptResponse, ValidationIssue,
-    WorkflowGraphResponse, WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto,
-    WorkflowScriptCapabilitySummaryDto, WorkflowScriptHumanGateCapabilityDto,
-    WorkflowScriptPlanPreviewDto, WorkflowScriptPlanPreviewNodeDto,
-    WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
+    AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse, AgentRunAcceptedRefs,
+    AgentRunCommandReceipt, AgentRunMessageRequest, AgentRunMessageResponse, AgentRunRefDto,
+    AgentRunSteeringRequest, AgentRunSteeringResponse, AgentRunView, AgentRunWorkspaceShell,
+    AgentRunWorkspaceView, DefinitionSource, DeleteAgentProcedureResponse,
+    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
+    EnqueuePendingMessageRequest, EnqueuePendingMessageResponse, HookPresetResponse,
+    HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
+    LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
+    OrchestrationInstanceView, PendingMessageView, PreflightWorkflowScriptRequest,
+    PreflightWorkflowScriptResponse, ProjectActiveAgentsView, ProjectSessionListEntry,
+    ProjectSessionListView, RegisterHookPresetResponse, RuntimeNodeView,
+    RuntimeSessionCommandStateDto, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
+    RuntimeSessionTraceMeta, RuntimeSessionTraceView, SessionRuntimeActionAvailabilityView,
+    SessionRuntimeActionSetView, SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView,
+    SessionRuntimeControlView, SessionShellDto, SubjectExecutionView, SubjectRefDto,
+    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
+    ValidateHookScriptResponse, ValidationIssue, WorkflowGraphResponse,
+    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
+    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
+    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
@@ -405,6 +406,8 @@ fn main() {
             export_all::<AgentRunSteeringRequest>(dir);
             export_all::<RuntimeSessionCommandStateDto>(dir);
             export_all::<AgentRunSteeringResponse>(dir);
+            export_all::<AgentRunCommandReceipt>(dir);
+            export_all::<AgentRunAcceptedRefs>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
             export_all::<RuntimeNodeView>(dir);
             export_all::<ActiveRuntimeNodeRefDto>(dir);
@@ -414,6 +417,9 @@ fn main() {
             export_all::<SubmitOrchestrationHumanDecisionResponse>(dir);
             export_all::<AgentRunView>(dir);
             export_all::<AgentFrameRuntimeView>(dir);
+            export_all::<RuntimeSessionTraceMeta>(dir);
+            export_all::<AgentRunWorkspaceShell>(dir);
+            export_all::<AgentRunWorkspaceView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
             export_all::<RuntimeSessionTraceView>(dir);

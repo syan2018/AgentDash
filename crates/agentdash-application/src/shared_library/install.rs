@@ -516,7 +516,7 @@ async fn resolve_agent_mcp_dependency_plans(
                 "Agent MCP 依赖 target_key 重复: {target_key}"
             )));
         }
-        let parameters = merged_dependency_parameters(dependency, &options.dependency_parameters)?;
+        let parameters = merged_dependency_parameters(dependency, options.dependency_parameters)?;
         // 预先解析一次，确保参数错误发生在任何写入之前。
         payload.resolve_transport(parameters.as_ref())?;
         plans.push(AgentMcpDependencyInstallPlan {

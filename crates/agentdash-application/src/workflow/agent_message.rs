@@ -76,11 +76,7 @@ impl AgentRunMessageDeliveryPort for AgentRunMessageLaunchDeliveryPort {
         self.session_launch
             .launch_command(&delivery.delivery_runtime_session_id, command)
             .await
-            .map_err(|error| {
-                WorkflowApplicationError::Internal(format!(
-                    "LifecycleAgent 用户消息投递失败: {error}"
-                ))
-            })
+            .map_err(WorkflowApplicationError::from)
     }
 }
 

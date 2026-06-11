@@ -4,7 +4,8 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::workflow::{
-    AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
+    AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto,
+    LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -69,6 +70,7 @@ pub struct ProjectAgentLaunchResult {
 pub struct CreateProjectAgentSessionRequest {
     /// canonical 用户输入，与 steer / lifecycle message 同形。
     pub input: Vec<codex::UserInput>,
+    pub client_command_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub executor_config: Option<Value>,
@@ -79,6 +81,8 @@ pub struct CreateProjectAgentSessionRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ProjectAgentSessionStartResult {
+    pub command_receipt: AgentRunCommandReceipt,
+    pub accepted_refs: AgentRunAcceptedRefs,
     pub runtime_session_id: String,
     pub turn_id: String,
     pub agent: ProjectAgentSummary,

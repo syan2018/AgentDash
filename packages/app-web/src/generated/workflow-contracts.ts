@@ -3,7 +3,7 @@
 
 import type { JsonValue } from "./common-contracts";
 import type { UserInput } from "./backbone-protocol";
-import type { AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto } from "./project-agent-contracts";
+import type { AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto } from "./project-agent-contracts";
 import type { InstalledAssetSourceDto } from "./shared-library-contracts";
 
 export type ActiveRuntimeNodeRefDto = { run_id: string, orchestration_id: string, node_path: string, attempt: number, status: string, };
@@ -36,13 +36,13 @@ export type AgentRunMessageRequest = {
 /**
  * canonical 用户输入，与 steer（`AgentRunSteeringRequest.input`）同形。
  */
-input: Array<UserInput>, executor_config?: JsonValue, };
+input: Array<UserInput>, client_command_id: string, executor_config?: JsonValue, };
 
-export type AgentRunMessageResponse = { runtime_session_id: string, turn_id: string, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, };
+export type AgentRunMessageResponse = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, };
 
-export type AgentRunSteeringRequest = { input: Array<UserInput>, };
+export type AgentRunSteeringRequest = { input: Array<UserInput>, client_command_id: string, expected_turn_id?: string, expected_runtime_session_id?: string, };
 
-export type AgentRunSteeringResponse = { runtime_session_id: string, accepted: boolean, state: RuntimeSessionCommandStateDto, };
+export type AgentRunSteeringResponse = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, state: RuntimeSessionCommandStateDto, };
 
 export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string, agent_kind: string, agent_role: string, project_agent_id?: string, status: string, current_frame_id?: string,
 /**
@@ -53,6 +53,10 @@ delivery_runtime_ref?: RuntimeSessionRefDto,
  * agent 最新 execution status（如 running / completed / idle）。
  */
 last_delivery_status?: string, created_at: string, updated_at: string, };
+
+export type AgentRunWorkspaceShell = { display_title: string, title_source: string, workspace_status: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
+
+export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: SessionRuntimeControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: SessionRuntimeActionSetView, pending_messages: Array<PendingMessageView>, };
 
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
 
@@ -76,9 +80,9 @@ export type DeleteWorkflowGraphResponse = { deleted: boolean, };
 
 export type EffectiveSessionContract = { lifecycle_key?: string, active_activity_key?: string, injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, };
 
-export type EnqueuePendingMessageRequest = { input: Array<UserInput>, executor_config?: JsonValue, };
+export type EnqueuePendingMessageRequest = { input: Array<UserInput>, client_command_id: string, executor_config?: JsonValue, };
 
-export type EnqueuePendingMessageResponse = { message: PendingMessageView, };
+export type EnqueuePendingMessageResponse = { command_receipt: AgentRunCommandReceipt, message: PendingMessageView, };
 
 export type ExecutorRunRef = { "kind": "runtime_session", session_id: string, } | { "kind": "function_run", run_id: string, } | { "kind": "human_decision", decision_id: string, };
 
@@ -133,6 +137,8 @@ export type RuntimeSessionCommandStateDto = { status: string, turn_id?: string, 
 export type RuntimeSessionExecutionAnchorDto = { runtime_session_id: string, run_id: string, agent_id: string, launch_frame_id: string, orchestration_id?: string, node_path?: string, node_attempt?: number, created_by_kind: string, created_at: string, updated_at: string, };
 
 export type RuntimeSessionPolicy = "create_new" | "deliver_to_current_trace";
+
+export type RuntimeSessionTraceMeta = { runtime_session_ref: RuntimeSessionRefDto, last_event_seq: bigint, executor_session_id?: string, trace_title: string, trace_title_source: string, delivery_status: string, last_turn_id?: string, terminal_summary?: string, updated_at: bigint, };
 
 export type RuntimeSessionTraceView = { runtime_session_ref: RuntimeSessionRefDto, frame_ref?: AgentFrameRefDto, events: Array<JsonValue>, turns: Array<JsonValue>, };
 

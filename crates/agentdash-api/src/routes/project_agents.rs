@@ -24,7 +24,8 @@ use agentdash_contracts::project_agent::{
     ProjectAgentSessionStartResult, ProjectAgentSummary, ThinkingLevel, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
+    AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto,
+    LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
 };
 
 use crate::{
@@ -83,6 +84,10 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         )
         .route(
             "/projects/{id}/agents/{project_agent_id}/sessions",
+            axum::routing::post(create_project_agent_session),
+        )
+        .route(
+            "/projects/{id}/agents/{project_agent_id}/agent-runs",
             axum::routing::post(create_project_agent_session),
         )
 }
@@ -244,6 +249,11 @@ pub async fn create_project_agent_session(
     Path((project_id, agent_key)): Path<(String, String)>,
     Json(req): Json<CreateProjectAgentSessionRequest>,
 ) -> Result<Json<ProjectAgentSessionStartResult>, ApiError> {
+    if req.client_command_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "client_command_id 不能为空".to_string(),
+        ));
+    }
     let project_id = parse_project_id(&project_id)?;
     let project = load_project_with_permission(
         state.as_ref(),
@@ -285,6 +295,30 @@ pub async fn create_project_agent_session(
     let summary = build_project_agent_summary(&project, &agent_context);
 
     Ok(Json(ProjectAgentSessionStartResult {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id: req.client_command_id,
+            status: "accepted".to_string(),
+            duplicate: false,
+            message: None,
+        },
+        accepted_refs: AgentRunAcceptedRefs {
+            run_ref: LifecycleRunRefDto {
+                run_id: dispatch.run_id.to_string(),
+            },
+            agent_ref: AgentRunRefDto {
+                run_id: dispatch.run_id.to_string(),
+                agent_id: dispatch.agent_id.to_string(),
+            },
+            frame_ref: Some(AgentFrameRefDto {
+                agent_id: dispatch.agent_id.to_string(),
+                frame_id: dispatch.frame_id.to_string(),
+                revision: Some(dispatch.frame_revision),
+            }),
+            runtime_session_ref: Some(RuntimeSessionRefDto {
+                runtime_session_id: dispatch.runtime_session_id.clone(),
+            }),
+            turn_id: Some(dispatch.turn_id.clone()),
+        },
         runtime_session_id: dispatch.runtime_session_id,
         turn_id: dispatch.turn_id,
         agent: summary,

@@ -39,9 +39,12 @@ pub struct ApiServerOptions {
 
 impl ApiServerOptions {
     pub fn from_env() -> Result<Self> {
-        let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into());
-        let port = std::env::var("PORT")
-            .unwrap_or_else(|_| "3001".into())
+        let host = read_env("AGENTDASH_BIND_HOST")
+            .or_else(|| read_env("HOST"))
+            .unwrap_or_else(|| "0.0.0.0".into());
+        let port = read_env("AGENTDASH_PORT")
+            .or_else(|| read_env("PORT"))
+            .unwrap_or_else(|| "3001".into())
             .parse::<u16>()?;
 
         Ok(Self {
@@ -62,11 +65,25 @@ impl ApiServerOptions {
     }
 }
 
+fn read_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 #[derive(Debug, Clone)]
 pub struct ApiServerReady {
     pub addr: String,
     pub origin: String,
     pub database_url: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DatabaseReady {
+    pub database_url: String,
+    pub schema_version: i64,
 }
 
 pub struct ApiServer {
@@ -105,22 +122,23 @@ pub async fn run_server_with_options(
     server.serve().await
 }
 
+pub async fn run_postgres_migrations_with_options(
+    options: ApiServerOptions,
+) -> Result<DatabaseReady> {
+    let (ready, _db_runtime) = prepare_database(&options, true).await?;
+    Ok(ready)
+}
+
+pub async fn check_postgres_ready_with_options(options: ApiServerOptions) -> Result<DatabaseReady> {
+    let (ready, _db_runtime) = prepare_database(&options, false).await?;
+    Ok(ready)
+}
+
 pub async fn build_server(
     integrations: Vec<Box<dyn AgentDashIntegration>>,
     options: ApiServerOptions,
 ) -> Result<ApiServer> {
-    let db_runtime = agentdash_infrastructure::postgres_runtime::PostgresRuntime::resolve(
-        &options.service_name,
-        options.max_connections,
-    )
-    .await?;
-    tracing::info!(database_url = %db_runtime.connection_url, "数据库已就绪");
-    agentdash_infrastructure::migration::run_postgres_migrations(&db_runtime.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    agentdash_infrastructure::migration::assert_postgres_schema_ready(&db_runtime.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (db_ready, db_runtime) = prepare_database(&options, true).await?;
 
     let state = AppState::new_with_integrations(db_runtime.pool.clone(), integrations).await?;
 
@@ -140,10 +158,47 @@ pub async fn build_server(
         ready: ApiServerReady {
             addr,
             origin,
-            database_url: db_runtime.connection_url.clone(),
+            database_url: db_ready.database_url,
         },
         listener,
         app,
         _db_runtime: db_runtime,
     })
+}
+
+async fn prepare_database(
+    options: &ApiServerOptions,
+    run_migrations: bool,
+) -> Result<(
+    DatabaseReady,
+    agentdash_infrastructure::postgres_runtime::PostgresRuntime,
+)> {
+    let db_runtime = agentdash_infrastructure::postgres_runtime::PostgresRuntime::resolve(
+        &options.service_name,
+        options.max_connections,
+    )
+    .await?;
+    tracing::info!(database_url = %db_runtime.connection_url, "数据库已就绪");
+    if run_migrations {
+        agentdash_infrastructure::migration::run_postgres_migrations(&db_runtime.pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+    agentdash_infrastructure::migration::assert_postgres_schema_ready(&db_runtime.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    Ok((
+        DatabaseReady {
+            database_url: db_runtime.connection_url.clone(),
+            schema_version: schema_version(),
+        },
+        db_runtime,
+    ))
+}
+
+fn schema_version() -> i64 {
+    env!("AGENTDASH_SCHEMA_VERSION")
+        .parse::<i64>()
+        .unwrap_or_default()
 }

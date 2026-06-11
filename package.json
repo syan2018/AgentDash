@@ -39,6 +39,8 @@
     "backend:check": "cargo check",
     "backend:clippy": "cargo clippy --workspace -- -D warnings -A clippy::too_many_arguments -A clippy::new_ret_no_self -A clippy::type_complexity -A clippy::collapsible_if -A clippy::collapsible_match -A clippy::redundant_closure -A clippy::map_flatten",
     "backend:test": "cargo test --workspace",
+    "docker:cloud:build": "node scripts/cloud-image-build.js",
+    "release:metadata": "node scripts/release-metadata.js",
     "migration:guard": "node scripts/check-migration-history.js",
     "hooks:install": "node scripts/install-git-hooks.js",
     "contracts:generate": "cargo run -p agentdash-contracts --bin generate_contracts_ts",

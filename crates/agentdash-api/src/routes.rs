@@ -22,6 +22,7 @@ pub mod project_agents;
 pub mod project_extensions;
 pub mod project_vfs_mounts;
 pub mod projects;
+pub mod release_info;
 pub mod routines;
 pub mod sessions;
 pub mod settings;
@@ -37,11 +38,12 @@ pub mod workflows;
 pub mod workspace_module;
 pub mod workspaces;
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use agentdash_mcp::{services::McpServices, transport::McpRouterBuilder};
 use axum::{Router, middleware, routing::get};
 use tower_http::cors::CorsLayer;
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
 use crate::app_state::AppState;
@@ -108,6 +110,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         ));
 
     let api = Router::new()
+        .route("/version", get(release_info::version_info))
         .merge(health::router())
         .merge(auth_routes::public_router())
         .merge(routines::public_router())
@@ -115,13 +118,46 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(secured_api)
         .with_state(state.clone());
 
-    Router::new()
+    let router = Router::new()
         .merge(mcp)
         .nest("/api", api)
+        .route(
+            "/.well-known/agentdash",
+            get(release_info::agentdash_discovery),
+        )
         .route(
             "/ws/backend",
             get(relay::ws_handler::ws_backend_handler).with_state(state),
         )
         .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http());
+
+    with_web_static_fallback(router)
+}
+
+fn with_web_static_fallback(router: Router) -> Router {
+    let Some(web_dist_dir) = std::env::var("AGENTDASH_WEB_DIST_DIR")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    else {
+        return router;
+    };
+
+    if !web_dist_dir.is_dir() {
+        tracing::warn!(
+            path = %web_dist_dir.display(),
+            "AGENTDASH_WEB_DIST_DIR 不存在，跳过 Web Dashboard 静态托管"
+        );
+        return router;
+    }
+
+    let index_file = web_dist_dir.join("index.html");
+    tracing::info!(
+        path = %web_dist_dir.display(),
+        "启用 Web Dashboard 静态托管"
+    );
+    router
+        .fallback_service(ServeDir::new(web_dist_dir).not_found_service(ServeFile::new(index_file)))
 }

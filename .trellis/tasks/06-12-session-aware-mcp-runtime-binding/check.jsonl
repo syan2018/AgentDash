@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查 migration 历史、JSON text 列、repository readiness 和 migration guard。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 Rust contract 与 generated TypeScript 是否同步。"}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "检查所有 MCP 工具暴露入口是否消费 CapabilityState 和统一投影。"}
+{"file": ".trellis/spec/backend/capability/capability-dimension-pipeline.md", "reason": "检查 MCP server set 与 runtime transition/replay 语义是否符合维度管线。"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "检查 final VFS main mount metadata 是否成为 workspace facts 事实源。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "检查 relay/local runtime 协议、session sink 与本机 MCP manager 行为。"}

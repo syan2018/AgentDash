@@ -416,18 +416,21 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
         tools: vec![
             agentdash_spi::RelayMcpToolInfo {
                 server_name: workflow_server.name.clone(),
+                server: workflow_server.clone(),
                 tool_name: "list_workflows".to_string(),
                 description: "list".to_string(),
                 parameters_schema: json!({ "type": "object" }),
             },
             agentdash_spi::RelayMcpToolInfo {
                 server_name: workflow_server.name.clone(),
+                server: workflow_server.clone(),
                 tool_name: "upsert_workflow_tool".to_string(),
                 description: "upsert".to_string(),
                 parameters_schema: json!({ "type": "object" }),
             },
             agentdash_spi::RelayMcpToolInfo {
                 server_name: workflow_server.name.clone(),
+                server: workflow_server.clone(),
                 tool_name: "upsert_lifecycle_tool".to_string(),
                 description: "upsert lifecycle".to_string(),
                 parameters_schema: json!({ "type": "object" }),

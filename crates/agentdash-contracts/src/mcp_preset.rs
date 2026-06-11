@@ -436,6 +436,14 @@ pub struct ListMcpPresetQuery {
     pub source: Option<McpPresetSourceTag>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ProbeMcpPresetRequest {
+    pub transport: McpTransportConfigDto,
+    #[serde(default)]
+    #[ts(optional)]
+    pub runtime_binding: Option<McpRuntimeBindingConfigDto>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ProbeMcpPresetResponse {

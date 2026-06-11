@@ -8,6 +8,10 @@ import type {
   CreateMcpPresetRequest,
   McpPresetDto,
   McpRoutePolicy,
+  McpRuntimeBindingConfig,
+  McpRuntimeBindingRule,
+  McpRuntimeBindingSource,
+  McpRuntimeBindingTarget,
   McpTransportConfig,
   UpdateMcpPresetRequest,
 } from "../../types";
@@ -19,6 +23,7 @@ export interface McpPresetFormState {
   description: string;
   transport: McpTransportConfig;
   route_policy: McpRoutePolicy;
+  runtime_binding: McpRuntimeBindingConfig | null;
 }
 
 export const MCP_ROUTE_POLICY_OPTIONS: ReadonlyArray<{
@@ -38,6 +43,19 @@ export function createDefaultMcpTransportConfig(): McpTransportConfig {
   return { type: "http", url: "", headers: [] };
 }
 
+export function createDefaultMcpRuntimeBindingRule(
+  transportType: McpTransportConfig["type"] = "http",
+): McpRuntimeBindingRule {
+  return {
+    source: { kind: "workspace_detected_fact", path: ["p4", "client_name"] },
+    target:
+      transportType === "stdio"
+        ? { kind: "stdio_env", name: "P4CLIENT" }
+        : { kind: "http_query", name: "p4_client" },
+    required: true,
+  };
+}
+
 export function buildMcpPresetFormState(preset?: McpPresetDto | null): McpPresetFormState {
   if (!preset) {
     return {
@@ -46,6 +64,7 @@ export function buildMcpPresetFormState(preset?: McpPresetDto | null): McpPreset
       description: "",
       transport: createDefaultMcpTransportConfig(),
       route_policy: "auto",
+      runtime_binding: null,
     };
   }
 
@@ -55,6 +74,7 @@ export function buildMcpPresetFormState(preset?: McpPresetDto | null): McpPreset
     description: preset.description ?? "",
     transport: preset.transport,
     route_policy: preset.route_policy,
+    runtime_binding: normalizeMcpRuntimeBindingForForm(preset.runtime_binding),
   };
 }
 
@@ -80,6 +100,9 @@ export function validateMcpPresetForm(form: McpPresetFormState): string | null {
     return "Command 不能为空";
   }
 
+  const runtimeBindingError = validateRuntimeBinding(form);
+  if (runtimeBindingError) return runtimeBindingError;
+
   return null;
 }
 
@@ -95,6 +118,10 @@ export function buildCreateMcpPresetRequest(
   const trimmedDesc = form.description.trim();
   if (trimmedDesc) {
     input.description = trimmedDesc;
+  }
+  const runtimeBinding = normalizeMcpRuntimeBindingForRequest(form.runtime_binding);
+  if (runtimeBinding) {
+    input.runtime_binding = runtimeBinding;
   }
   return input;
 }
@@ -128,6 +155,12 @@ export function buildUpdateMcpPresetPatch(
     patch.route_policy = current.route_policy;
   }
 
+  const currentRuntimeBinding = normalizeMcpRuntimeBindingForRequest(current.runtime_binding);
+  const originalRuntimeBinding = normalizeMcpRuntimeBindingForRequest(original.runtime_binding);
+  if (JSON.stringify(currentRuntimeBinding ?? null) !== JSON.stringify(originalRuntimeBinding ?? null)) {
+    patch.runtime_binding = currentRuntimeBinding ?? null;
+  }
+
   return patch;
 }
 
@@ -137,4 +170,101 @@ export function readMcpRoutePolicy(value: string): McpRoutePolicy {
     throw new Error(`未知 MCP route policy: ${value}`);
   }
   return option.value;
+}
+
+export function hasMcpRuntimeBinding(
+  runtimeBinding: McpRuntimeBindingConfig | null | undefined,
+): boolean {
+  return mcpRuntimeBindingRuleCount(runtimeBinding) > 0;
+}
+
+export function mcpRuntimeBindingRuleCount(
+  runtimeBinding: McpRuntimeBindingConfig | null | undefined,
+): number {
+  return runtimeBinding?.bindings?.length ?? 0;
+}
+
+export function normalizeMcpRuntimeBindingForForm(
+  runtimeBinding: McpRuntimeBindingConfig | null | undefined,
+): McpRuntimeBindingConfig | null {
+  const normalized = normalizeMcpRuntimeBindingForRequest(runtimeBinding);
+  return normalized ?? null;
+}
+
+export function normalizeMcpRuntimeBindingForRequest(
+  runtimeBinding: McpRuntimeBindingConfig | null | undefined,
+): McpRuntimeBindingConfig | undefined {
+  const rawRules = runtimeBinding?.bindings ?? [];
+  const bindings = rawRules.map(normalizeRuntimeBindingRule);
+  if (bindings.length === 0) {
+    return undefined;
+  }
+
+  const mount_id = runtimeBinding?.mount_id?.trim();
+  return mount_id ? { mount_id, bindings } : { bindings };
+}
+
+function normalizeRuntimeBindingRule(rule: McpRuntimeBindingRule): McpRuntimeBindingRule {
+  return {
+    source: normalizeRuntimeBindingSource(rule.source),
+    target: normalizeRuntimeBindingTarget(rule.target),
+    required: rule.required,
+  };
+}
+
+function normalizeRuntimeBindingSource(
+  source: McpRuntimeBindingSource,
+): McpRuntimeBindingSource {
+  if (source.kind === "workspace_identity" || source.kind === "workspace_detected_fact") {
+    return {
+      ...source,
+      path: source.path.map((segment) => segment.trim()).filter(Boolean),
+    };
+  }
+  return source;
+}
+
+function normalizeRuntimeBindingTarget(
+  target: McpRuntimeBindingTarget,
+): McpRuntimeBindingTarget {
+  if (target.kind === "http_query" || target.kind === "http_header" || target.kind === "stdio_env") {
+    return {
+      ...target,
+      name: target.name.trim(),
+    };
+  }
+  return target;
+}
+
+function validateRuntimeBinding(form: McpPresetFormState): string | null {
+  const rules = form.runtime_binding?.bindings ?? [];
+  for (let index = 0; index < rules.length; index += 1) {
+    const rule = normalizeRuntimeBindingRule(rules[index]);
+    const row = `运行时绑定第 ${index + 1} 条`;
+    if (
+      (rule.source.kind === "workspace_identity" ||
+        rule.source.kind === "workspace_detected_fact") &&
+      rule.source.path.length === 0
+    ) {
+      return `${row} 的 source path 不能为空`;
+    }
+
+    if (
+      (rule.target.kind === "http_query" ||
+        rule.target.kind === "http_header" ||
+        rule.target.kind === "stdio_env") &&
+      !rule.target.name
+    ) {
+      return `${row} 的 target 名称不能为空`;
+    }
+
+    if (form.transport.type === "stdio") {
+      if (rule.target.kind === "http_query" || rule.target.kind === "http_header") {
+        return `${row} 的 HTTP target 不能用于 stdio transport`;
+      }
+    } else if (rule.target.kind === "stdio_env" || rule.target.kind === "stdio_cwd") {
+      return `${row} 的 stdio target 不能用于 ${form.transport.type} transport`;
+    }
+  }
+  return null;
 }

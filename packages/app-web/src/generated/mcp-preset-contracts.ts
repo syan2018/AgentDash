@@ -31,6 +31,8 @@ export type McpRuntimeBindingTargetDto = { "kind": "http_query", name: string, }
 
 export type McpTransportConfigDto = { "type": "http", url: string, headers?: Array<McpHttpHeader>, } | { "type": "sse", url: string, headers?: Array<McpHttpHeader>, } | { "type": "stdio", command: string, args?: Array<string>, env?: Array<McpEnvVar>, cwd?: string, };
 
+export type ProbeMcpPresetRequest = { transport: McpTransportConfigDto, runtime_binding?: McpRuntimeBindingConfigDto, };
+
 export type ProbeMcpPresetResponse = { "status": "ok", latency_ms: number, tools: Array<ProbeMcpToolInfo>, } | { "status": "error", error: string, } | { "status": "unsupported", reason: string, };
 
 export type ProbeMcpToolInfo = { name: string, description: string, };

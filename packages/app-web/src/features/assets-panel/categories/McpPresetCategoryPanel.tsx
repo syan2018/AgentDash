@@ -38,6 +38,10 @@ import type {
   LibraryAssetDto,
   McpPresetDto,
   McpRoutePolicy,
+  McpRuntimeBindingConfig,
+  McpRuntimeBindingRule,
+  McpRuntimeBindingSource,
+  McpRuntimeBindingTarget,
   McpTransportConfig,
   ProbeMcpPresetResponse,
   UpdateMcpPresetRequest,
@@ -48,6 +52,8 @@ import {
   buildCreateMcpPresetRequest,
   buildMcpPresetFormState,
   buildUpdateMcpPresetPatch,
+  createDefaultMcpRuntimeBindingRule,
+  mcpRuntimeBindingRuleCount,
   readMcpRoutePolicy,
   validateMcpPresetForm,
   type McpPresetFormState,
@@ -84,6 +90,82 @@ interface FormBaseline {
   /** 编辑模式下为装载时的 Preset（用于 diff）；新建模式为 null */
   original: McpPresetDto | null;
 }
+
+interface RuntimeBindingSourceOption {
+  value: string;
+  label: string;
+  source: McpRuntimeBindingSource;
+}
+
+interface RuntimeBindingTargetOption {
+  kind: McpRuntimeBindingTarget["kind"];
+  label: string;
+}
+
+const RUNTIME_BINDING_SOURCE_OPTIONS = [
+  {
+    value: "workspace_detected_fact:p4.client_name",
+    label: "P4 client",
+    source: { kind: "workspace_detected_fact", path: ["p4", "client_name"] },
+  },
+  {
+    value: "workspace_detected_fact:p4.workspace_root",
+    label: "P4 workspace root",
+    source: { kind: "workspace_detected_fact", path: ["p4", "workspace_root"] },
+  },
+  {
+    value: "workspace_detected_fact:p4.server_address",
+    label: "P4 server",
+    source: { kind: "workspace_detected_fact", path: ["p4", "server_address"] },
+  },
+  {
+    value: "workspace_detected_fact:p4.stream",
+    label: "P4 stream",
+    source: { kind: "workspace_detected_fact", path: ["p4", "stream"] },
+  },
+  {
+    value: "workspace_detected_fact:p4.user_name",
+    label: "P4 user",
+    source: { kind: "workspace_detected_fact", path: ["p4", "user_name"] },
+  },
+  {
+    value: "workspace_id",
+    label: "Workspace id",
+    source: { kind: "workspace_id" },
+  },
+  {
+    value: "workspace_binding_id",
+    label: "Workspace binding id",
+    source: { kind: "workspace_binding_id" },
+  },
+  {
+    value: "vfs_root_ref",
+    label: "VFS root ref",
+    source: { kind: "vfs_root_ref" },
+  },
+  {
+    value: "vfs_backend_id",
+    label: "VFS backend id",
+    source: { kind: "vfs_backend_id" },
+  },
+  {
+    value: "workspace_detected_fact:custom",
+    label: "Detected fact path",
+    source: { kind: "workspace_detected_fact", path: [] },
+  },
+  {
+    value: "workspace_identity:custom",
+    label: "Workspace identity path",
+    source: { kind: "workspace_identity", path: [] },
+  },
+] satisfies ReadonlyArray<RuntimeBindingSourceOption>;
+
+const RUNTIME_BINDING_TARGET_OPTIONS = [
+  { kind: "http_query", label: "HTTP query" },
+  { kind: "http_header", label: "HTTP header" },
+  { kind: "stdio_env", label: "Stdio env" },
+  { kind: "stdio_cwd", label: "Stdio cwd" },
+] satisfies ReadonlyArray<RuntimeBindingTargetOption>;
 
 /* ─── 主面板 ─── */
 
@@ -394,15 +476,17 @@ function McpPresetCard({
   // probe 改为按需：缓存命中直接展示，无缓存只显示"尚未探测"，
   // 仅在用户点击"重新检测"时才真正发请求（避免每次切到 MCP Preset 页就并发 N 个 rmcp client）。
   const probeResult = useMcpProbeStore((state) =>
-    state.getCached(preset.project_id, preset.transport),
+    state.getCached(preset.project_id, preset.transport, preset.runtime_binding ?? null),
   );
   const refreshProbe = useMcpProbeStore((state) => state.refresh);
   const [probing, setProbing] = useState(false);
 
   const handleRecheck = useCallback(() => {
     setProbing(true);
-    void refreshProbe(preset.project_id, preset.transport).finally(() => setProbing(false));
-  }, [refreshProbe, preset.project_id, preset.transport]);
+    void refreshProbe(preset.project_id, preset.transport, preset.runtime_binding ?? null).finally(
+      () => setProbing(false),
+    );
+  }, [refreshProbe, preset.project_id, preset.transport, preset.runtime_binding]);
 
   const menuItems = buildAssetMenuItems({
     primary: { label: isBuiltin ? "查看" : "编辑", onSelect: onEdit },
@@ -429,6 +513,7 @@ function McpPresetCard({
       headerRight={
         <>
           {published && <PublishedBadge version={published.version} />}
+          <RuntimeBindingBadge runtimeBinding={preset.runtime_binding} />
           <RoutePolicyBadge policy={preset.route_policy} />
           <OriginBadge tone={sourceOrigin.tone} label={sourceOrigin.label} />
           <CardMenu items={menuItems} />
@@ -579,7 +664,7 @@ function McpPresetDetailDialog({
   // 不依赖 preset id，因此新建模式也可以预先验证。共享 mcpProbeStore 缓存：
   // 同一 transport 在卡片上点过"重新检测"，进入详情就能直接看到结果。
   const cachedProbeResult = useMcpProbeStore((state) =>
-    currentProjectId ? state.getCached(currentProjectId, form.transport) : null,
+    currentProjectId ? state.getCached(currentProjectId, form.transport, form.runtime_binding) : null,
   );
   const refreshProbe = useMcpProbeStore((state) => state.refresh);
   const [probing, setProbing] = useState(false);
@@ -593,7 +678,7 @@ function McpPresetDetailDialog({
     setProbing(true);
     setLocalProbeResult(null);
     try {
-      const result = await refreshProbe(currentProjectId, form.transport);
+      const result = await refreshProbe(currentProjectId, form.transport, form.runtime_binding);
       setLocalProbeResult(result);
     } finally {
       setProbing(false);
@@ -744,6 +829,13 @@ function McpPresetDetailDialog({
               />
             </div>
 
+            <RuntimeBindingEditor
+              value={form.runtime_binding}
+              transportType={form.transport.type}
+              onChange={(runtime_binding) => patchForm({ runtime_binding })}
+              disabled={isViewOnly}
+            />
+
             {!isCreating && target && (
               <ProbePanel
                 probing={probing}
@@ -786,6 +878,373 @@ function McpPresetDetailDialog({
       </div>
     </>
   );
+}
+
+/* ─── Runtime Binding 编辑器 ─── */
+
+function RuntimeBindingEditor({
+  value,
+  transportType,
+  onChange,
+  disabled,
+}: {
+  value: McpRuntimeBindingConfig | null;
+  transportType: McpTransportConfig["type"];
+  onChange: (value: McpRuntimeBindingConfig | null) => void;
+  disabled?: boolean;
+}) {
+  const config = value ?? { mount_id: "main", bindings: [] };
+  const bindings = config.bindings ?? [];
+  const ruleCount = bindings.length;
+
+  const commit = (next: McpRuntimeBindingConfig) => {
+    const nextBindings = next.bindings ?? [];
+    onChange(nextBindings.length > 0 ? { ...next, bindings: nextBindings } : null);
+  };
+
+  const addRule = () => {
+    commit({
+      mount_id: config.mount_id?.trim() || "main",
+      bindings: [...bindings, createDefaultMcpRuntimeBindingRule(transportType)],
+    });
+  };
+
+  const updateRule = (index: number, nextRule: McpRuntimeBindingRule) => {
+    commit({
+      ...config,
+      bindings: bindings.map((rule, ruleIndex) => (ruleIndex === index ? nextRule : rule)),
+    });
+  };
+
+  const removeRule = (index: number) => {
+    commit({
+      ...config,
+      bindings: bindings.filter((_, ruleIndex) => ruleIndex !== index),
+    });
+  };
+
+  return (
+    <div className="rounded-[8px] border border-border bg-secondary/20 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium text-foreground">会话运行时绑定</p>
+          <p className="mt-0.5 text-[10px] text-muted-foreground/70">
+            从当前 session workspace/VFS 读取变量，并写入 MCP transport。
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <RuntimeBindingBadge runtimeBinding={value} />
+          {!disabled && (
+            <button
+              type="button"
+              onClick={addRule}
+              className="agentdash-button-secondary shrink-0"
+            >
+              添加绑定
+            </button>
+          )}
+        </div>
+      </div>
+
+      {ruleCount === 0 ? (
+        <p className="mt-2 text-[11px] text-muted-foreground/70">未配置会话绑定。</p>
+      ) : (
+        <div className="mt-3 space-y-3">
+          <div>
+            <label className="agentdash-form-label">Mount ID</label>
+            <input
+              value={config.mount_id ?? "main"}
+              onChange={(e) => commit({ ...config, mount_id: e.target.value, bindings })}
+              placeholder="main"
+              disabled={disabled}
+              className="agentdash-form-input"
+            />
+          </div>
+
+          <div className="space-y-2">
+            {bindings.map((rule, index) => (
+              <RuntimeBindingRuleEditor
+                key={index}
+                rule={rule}
+                index={index}
+                disabled={disabled}
+                onChange={(nextRule) => updateRule(index, nextRule)}
+                onRemove={() => removeRule(index)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RuntimeBindingRuleEditor({
+  rule,
+  index,
+  disabled,
+  onChange,
+  onRemove,
+}: {
+  rule: McpRuntimeBindingRule;
+  index: number;
+  disabled?: boolean;
+  onChange: (rule: McpRuntimeBindingRule) => void;
+  onRemove: () => void;
+}) {
+  const sourceValue = runtimeBindingSourceValue(rule.source);
+  const targetKind = rule.target.kind;
+  const sourceNeedsPath = runtimeBindingSourceNeedsPath(rule.source);
+  const targetNeedsName = runtimeBindingTargetNeedsName(rule.target);
+
+  return (
+    <div className="rounded-[8px] border border-border bg-background p-2.5">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-medium text-muted-foreground">Binding {index + 1}</span>
+        {!disabled && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="rounded-[6px] border border-destructive/30 px-2 py-0.5 text-[10px] text-destructive hover:bg-destructive/10"
+          >
+            删除
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div>
+          <label className="agentdash-form-label">Source</label>
+          <select
+            value={sourceValue}
+            onChange={(e) => {
+              onChange({
+                ...rule,
+                source: createRuntimeBindingSource(e.target.value, rule.source),
+              });
+            }}
+            disabled={disabled}
+            className="agentdash-form-select"
+          >
+            {RUNTIME_BINDING_SOURCE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="agentdash-form-label">Target</label>
+          <select
+            value={targetKind}
+            onChange={(e) => {
+              onChange({
+                ...rule,
+                target: createRuntimeBindingTarget(e.target.value, rule.target),
+              });
+            }}
+            disabled={disabled}
+            className="agentdash-form-select"
+          >
+            {RUNTIME_BINDING_TARGET_OPTIONS.map((option) => (
+              <option key={option.kind} value={option.kind}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {(sourceNeedsPath || targetNeedsName) && (
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {sourceNeedsPath && (
+            <div>
+              <label className="agentdash-form-label">Source path</label>
+              <input
+                value={runtimeBindingSourcePathInput(rule.source)}
+                onChange={(e) =>
+                  onChange({
+                    ...rule,
+                    source: updateRuntimeBindingSourcePath(rule.source, e.target.value),
+                  })
+                }
+                placeholder="p4.client_name"
+                disabled={disabled}
+                className="agentdash-form-input"
+              />
+            </div>
+          )}
+          {targetNeedsName && (
+            <div>
+              <label className="agentdash-form-label">Target name</label>
+              <input
+                value={runtimeBindingTargetName(rule.target)}
+                onChange={(e) =>
+                  onChange({
+                    ...rule,
+                    target: updateRuntimeBindingTargetName(rule.target, e.target.value),
+                  })
+                }
+                placeholder={runtimeBindingTargetPlaceholder(rule.target)}
+                disabled={disabled}
+                className="agentdash-form-input"
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      <label className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={rule.required}
+          onChange={(e) => onChange({ ...rule, required: e.target.checked })}
+          disabled={disabled}
+          className="h-3.5 w-3.5 rounded-[4px] border-border"
+        />
+        required
+      </label>
+    </div>
+  );
+}
+
+function RuntimeBindingBadge({
+  runtimeBinding,
+}: {
+  runtimeBinding: McpRuntimeBindingConfig | null | undefined;
+}) {
+  const count = mcpRuntimeBindingRuleCount(runtimeBinding);
+  if (count === 0) {
+    return null;
+  }
+  return (
+    <span className="shrink-0 rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+      会话绑定 {count}
+    </span>
+  );
+}
+
+function runtimeBindingSourceValue(source: McpRuntimeBindingSource): string {
+  const matched = RUNTIME_BINDING_SOURCE_OPTIONS.find((option) =>
+    runtimeBindingSourceEquals(option.source, source),
+  );
+  if (matched) return matched.value;
+  if (source.kind === "workspace_identity") return "workspace_identity:custom";
+  if (source.kind === "workspace_detected_fact") return "workspace_detected_fact:custom";
+  return source.kind;
+}
+
+function runtimeBindingSourceEquals(
+  left: McpRuntimeBindingSource,
+  right: McpRuntimeBindingSource,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function createRuntimeBindingSource(
+  value: string,
+  current: McpRuntimeBindingSource,
+): McpRuntimeBindingSource {
+  const option = RUNTIME_BINDING_SOURCE_OPTIONS.find((item) => item.value === value);
+  if (!option) return current;
+  if (
+    option.value === "workspace_identity:custom" &&
+    current.kind === "workspace_identity"
+  ) {
+    return current;
+  }
+  if (
+    option.value === "workspace_detected_fact:custom" &&
+    current.kind === "workspace_detected_fact"
+  ) {
+    return current;
+  }
+  return option.source;
+}
+
+function runtimeBindingSourceNeedsPath(
+  source: McpRuntimeBindingSource,
+): source is Extract<
+  McpRuntimeBindingSource,
+  { kind: "workspace_identity" | "workspace_detected_fact" }
+> {
+  return source.kind === "workspace_identity" || source.kind === "workspace_detected_fact";
+}
+
+function runtimeBindingSourcePathInput(source: McpRuntimeBindingSource): string {
+  if (!runtimeBindingSourceNeedsPath(source)) return "";
+  return source.path.join(".");
+}
+
+function updateRuntimeBindingSourcePath(
+  source: McpRuntimeBindingSource,
+  value: string,
+): McpRuntimeBindingSource {
+  if (!runtimeBindingSourceNeedsPath(source)) return source;
+  return {
+    ...source,
+    path: value.split(".").map((segment) => segment.trim()).filter(Boolean),
+  };
+}
+
+function createRuntimeBindingTarget(
+  value: string,
+  current: McpRuntimeBindingTarget,
+): McpRuntimeBindingTarget {
+  switch (value) {
+    case "http_query":
+      return {
+        kind: "http_query",
+        name: current.kind === "http_query" ? current.name : "p4_client",
+      };
+    case "http_header":
+      return {
+        kind: "http_header",
+        name: current.kind === "http_header" ? current.name : "X-P4-Client",
+      };
+    case "stdio_env":
+      return {
+        kind: "stdio_env",
+        name: current.kind === "stdio_env" ? current.name : "P4CLIENT",
+      };
+    case "stdio_cwd":
+      return { kind: "stdio_cwd" };
+    default:
+      return current;
+  }
+}
+
+function runtimeBindingTargetNeedsName(
+  target: McpRuntimeBindingTarget,
+): target is Extract<
+  McpRuntimeBindingTarget,
+  { kind: "http_query" | "http_header" | "stdio_env" }
+> {
+  return (
+    target.kind === "http_query" ||
+    target.kind === "http_header" ||
+    target.kind === "stdio_env"
+  );
+}
+
+function runtimeBindingTargetName(target: McpRuntimeBindingTarget): string {
+  if (!runtimeBindingTargetNeedsName(target)) return "";
+  return target.name;
+}
+
+function updateRuntimeBindingTargetName(
+  target: McpRuntimeBindingTarget,
+  value: string,
+): McpRuntimeBindingTarget {
+  if (!runtimeBindingTargetNeedsName(target)) return target;
+  return { ...target, name: value };
+}
+
+function runtimeBindingTargetPlaceholder(target: McpRuntimeBindingTarget): string {
+  if (target.kind === "http_query") return "p4_client";
+  if (target.kind === "http_header") return "X-P4-Client";
+  if (target.kind === "stdio_env") return "P4CLIENT";
+  return "";
 }
 
 /* ─── Probe 面板（Test Connection + 工具列表）─── */

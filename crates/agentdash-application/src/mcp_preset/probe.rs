@@ -8,7 +8,9 @@
 
 use std::time::{Duration, Instant};
 
-use agentdash_domain::mcp_preset::McpTransportConfig;
+use agentdash_domain::mcp_preset::{
+    McpRuntimeBindingConfig, McpRuntimeBindingSource, McpTransportConfig,
+};
 use agentdash_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_spi::platform::mcp_relay::McpRelayProvider;
 use serde::{Deserialize, Serialize};
@@ -59,6 +61,55 @@ pub async fn probe_transport(
                 error: "本机 relay 未连接，无法探测 Stdio transport".to_string(),
             },
         },
+    }
+}
+
+/// 普通 Preset probe 没有 session context；required runtime binding 不能被静态探测伪装成功。
+pub async fn probe_transport_without_session_context(
+    transport: &McpTransportConfig,
+    runtime_binding: Option<&McpRuntimeBindingConfig>,
+    relay: Option<&dyn McpRelayProvider>,
+    http_probe: &dyn McpProbeTransport,
+) -> ProbeResult {
+    if let Some(reason) = required_runtime_binding_unsupported_reason(runtime_binding) {
+        return ProbeResult::Unsupported { reason };
+    }
+
+    probe_transport(transport, relay, http_probe).await
+}
+
+fn required_runtime_binding_unsupported_reason(
+    runtime_binding: Option<&McpRuntimeBindingConfig>,
+) -> Option<String> {
+    let binding = runtime_binding?;
+    let required_sources = binding
+        .bindings
+        .iter()
+        .filter(|rule| rule.required)
+        .map(|rule| runtime_binding_source_path(&rule.source))
+        .collect::<Vec<_>>();
+    if required_sources.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "该 Preset 包含 required runtime_binding，需要 session context 后才能探测：{}",
+        required_sources.join(", ")
+    ))
+}
+
+fn runtime_binding_source_path(source: &McpRuntimeBindingSource) -> String {
+    match source {
+        McpRuntimeBindingSource::VfsRootRef => "vfs.main.root_ref".to_string(),
+        McpRuntimeBindingSource::VfsBackendId => "vfs.main.backend_id".to_string(),
+        McpRuntimeBindingSource::WorkspaceId => "workspace.id".to_string(),
+        McpRuntimeBindingSource::WorkspaceBindingId => "workspace.binding_id".to_string(),
+        McpRuntimeBindingSource::WorkspaceIdentity { path } => {
+            format!("workspace.identity.{}", path.join("."))
+        }
+        McpRuntimeBindingSource::WorkspaceDetectedFact { path } => {
+            format!("workspace.detected_facts.{}", path.join("."))
+        }
     }
 }
 
@@ -121,7 +172,7 @@ async fn probe_http(http_probe: &dyn McpProbeTransport, url: &str) -> ProbeResul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::mcp_preset::McpEnvVar;
+    use agentdash_domain::mcp_preset::{McpEnvVar, McpRuntimeBindingRule, McpRuntimeBindingTarget};
     use agentdash_infrastructure::RmcpProbeTransport;
 
     #[tokio::test]
@@ -190,5 +241,74 @@ mod tests {
         let json = serde_json::to_value(&result).expect("serialize");
         assert_eq!(json["status"], "unsupported");
         assert_eq!(json["reason"], "Stdio 暂不支持");
+    }
+
+    #[tokio::test]
+    async fn required_runtime_binding_without_session_context_returns_unsupported() {
+        let transport = McpTransportConfig::Http {
+            url: "http://127.0.0.1:1/mcp".to_string(),
+            headers: vec![],
+        };
+        let runtime_binding = McpRuntimeBindingConfig {
+            mount_id: Some("main".to_string()),
+            bindings: vec![McpRuntimeBindingRule {
+                source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                    path: vec!["p4".to_string(), "client_name".to_string()],
+                },
+                target: McpRuntimeBindingTarget::HttpQuery {
+                    name: "p4_client".to_string(),
+                },
+                required: true,
+            }],
+        };
+
+        match probe_transport_without_session_context(
+            &transport,
+            Some(&runtime_binding),
+            None,
+            &RmcpProbeTransport::new(),
+        )
+        .await
+        {
+            ProbeResult::Unsupported { reason } => {
+                assert!(reason.contains("session context"));
+                assert!(reason.contains("workspace.detected_facts.p4.client_name"));
+            }
+            other => panic!("expected Unsupported, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn optional_runtime_binding_without_session_context_keeps_static_probe() {
+        let transport = McpTransportConfig::Http {
+            url: "http://127.0.0.1:1/mcp".to_string(),
+            headers: vec![],
+        };
+        let runtime_binding = McpRuntimeBindingConfig {
+            mount_id: Some("main".to_string()),
+            bindings: vec![McpRuntimeBindingRule {
+                source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                    path: vec!["p4".to_string(), "client_name".to_string()],
+                },
+                target: McpRuntimeBindingTarget::HttpQuery {
+                    name: "p4_client".to_string(),
+                },
+                required: false,
+            }],
+        };
+
+        match probe_transport_without_session_context(
+            &transport,
+            Some(&runtime_binding),
+            None,
+            &RmcpProbeTransport::new(),
+        )
+        .await
+        {
+            ProbeResult::Error { error } => {
+                assert!(!error.is_empty(), "应继续执行静态 HTTP probe");
+            }
+            other => panic!("expected Error from static probe, got: {other:?}"),
+        }
     }
 }

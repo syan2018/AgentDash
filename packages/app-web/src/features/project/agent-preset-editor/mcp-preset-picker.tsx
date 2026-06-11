@@ -9,6 +9,7 @@ import {
   MCP_ROUTE_POLICY_OPTIONS,
   buildCreateMcpPresetRequest,
   buildMcpPresetFormState,
+  hasMcpRuntimeBinding,
   readMcpRoutePolicy,
   validateMcpPresetForm,
   type McpPresetFormState,
@@ -116,7 +117,11 @@ export function McpPresetPicker({
           title: p.display_name,
           subtitle: p.key,
           description: p.description?.trim() || undefined,
-          chips: [{ label: p.transport.type }, { label: p.route_policy }],
+          chips: [
+            { label: p.transport.type },
+            { label: p.route_policy },
+            ...(hasMcpRuntimeBinding(p.runtime_binding) ? [{ label: "会话绑定" }] : []),
+          ],
         })}
         onToggle={toggleKey}
         loadingText="正在加载 MCP Preset…"

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use agentdash_domain::mcp_preset::McpTransportConfig;
+use agentdash_domain::mcp_preset::{McpRuntimeBindingConfig, McpTransportConfig};
 use agentdash_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_spi::platform::mcp_relay::McpRelayProvider;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::mcp_preset::probe_transport;
+use crate::mcp_preset::probe_transport_without_session_context;
 use crate::workspace::{WorkspaceDetectionError, detect_workspace_from_backend};
 
 use super::{
@@ -60,6 +60,29 @@ pub struct WorkspaceBrowseDirectoryEntry {
     pub is_dir: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+enum McpProbeTransportInput {
+    Request {
+        transport: McpTransportConfig,
+        #[serde(default)]
+        runtime_binding: Option<McpRuntimeBindingConfig>,
+    },
+    Transport(McpTransportConfig),
+}
+
+impl McpProbeTransportInput {
+    fn into_parts(self) -> (McpTransportConfig, Option<McpRuntimeBindingConfig>) {
+        match self {
+            Self::Request {
+                transport,
+                runtime_binding,
+            } => (transport, runtime_binding),
+            Self::Transport(transport) => (transport, None),
+        }
+    }
+}
+
 pub struct McpProbeTransportProvider {
     action_key: RuntimeActionKey,
     relay: Option<Arc<dyn McpRelayProvider>>,
@@ -105,16 +128,24 @@ impl RuntimeProvider for McpProbeTransportProvider {
         &self,
         request: RuntimeInvocationRequest,
     ) -> Result<RuntimeInvocationOutput, RuntimeInvocationError> {
-        let transport = serde_json::from_value::<McpTransportConfig>(request.input.clone())
+        let input = serde_json::from_value::<McpProbeTransportInput>(request.input.clone())
             .map_err(|error| {
                 RuntimeInvocationError::invalid_request(
-                    format!("mcp.probe_transport 输入必须是 McpTransportConfig: {error}"),
+                    format!(
+                        "mcp.probe_transport 输入必须是 McpTransportConfig 或 ProbeMcpPresetRequest: {error}"
+                    ),
                     Some(request.trace.clone()),
                 )
             })?;
+        let (transport, runtime_binding) = input.into_parts();
 
-        let result =
-            probe_transport(&transport, self.relay.as_deref(), self.http_probe.as_ref()).await;
+        let result = probe_transport_without_session_context(
+            &transport,
+            runtime_binding.as_ref(),
+            self.relay.as_deref(),
+            self.http_probe.as_ref(),
+        )
+        .await;
         let output = serde_json::to_value(result).map_err(|error| {
             RuntimeInvocationError::provider_failed(
                 format!("序列化 mcp.probe_transport 结果失败: {error}"),
@@ -410,7 +441,10 @@ mod tests {
     use agentdash_infrastructure::RmcpProbeTransport;
     use serde_json::json;
 
-    use agentdash_domain::mcp_preset::McpTransportConfig;
+    use agentdash_domain::mcp_preset::{
+        McpRuntimeBindingConfig, McpRuntimeBindingRule, McpRuntimeBindingSource,
+        McpRuntimeBindingTarget, McpTransportConfig,
+    };
 
     use super::*;
     use crate::runtime_gateway::{RuntimeActor, RuntimeContext, RuntimeGateway};
@@ -527,6 +561,55 @@ mod tests {
                 .as_str()
                 .unwrap_or_default()
                 .contains("relay")
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_probe_provider_returns_unsupported_for_required_runtime_binding() {
+        let gateway = RuntimeGateway::new().with_provider(Arc::new(
+            McpProbeTransportProvider::new(None, Arc::new(RmcpProbeTransport::new())),
+        ));
+        let input = json!({
+            "transport": {
+                "type": "http",
+                "url": "http://127.0.0.1:1/mcp"
+            },
+            "runtime_binding": McpRuntimeBindingConfig {
+                mount_id: Some("main".to_string()),
+                bindings: vec![McpRuntimeBindingRule {
+                    source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                        path: vec!["p4".to_string(), "client_name".to_string()],
+                    },
+                    target: McpRuntimeBindingTarget::HttpQuery {
+                        name: "p4_client".to_string(),
+                    },
+                    required: true,
+                }],
+            }
+        });
+        let request = RuntimeInvocationRequest::new(
+            RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION).expect("valid action key"),
+            RuntimeActor::EnvironmentSetup { request_id: None },
+            RuntimeContext::Setup {
+                project_id: None,
+                workspace_id: None,
+                backend_id: None,
+                root_ref: None,
+            },
+            input,
+        );
+
+        let result = gateway
+            .invoke(request)
+            .await
+            .expect("provider should return");
+
+        assert_eq!(result.output.output["status"], "unsupported");
+        assert!(
+            result.output.output["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("workspace.detected_facts.p4.client_name")
         );
     }
 

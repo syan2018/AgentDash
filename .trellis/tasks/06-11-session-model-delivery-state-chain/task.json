@@ -1,0 +1,32 @@
+{
+  "id": "session-model-delivery-state-chain",
+  "name": "session-model-delivery-state-chain",
+  "title": "AgentRun 工作台与投递链路彻底纠偏",
+  "description": "将交互工作台、模型状态、投递命令、frame 提交和 HookRuntime 目标收敛到 AgentRun/AgentFrame 主体；RuntimeSession 保留为 delivery trace。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-06-11",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-11-agentrun-runtime-trace-meta-convergence",
+    "06-11-agentrun-workspace-api-contract",
+    "06-11-agentrun-delivery-command-receipts",
+    "06-11-launch-frame-hook-atomicity",
+    "06-11-agentrun-workspace-frontend-route-state"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

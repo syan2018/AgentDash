@@ -37,10 +37,6 @@ cron = "0.15"
 chrono-tz = "0.10"
 tera = "1"
 
-[dependencies.agentdash-executor]
-workspace = true
-features = ["pi-agent"]
-
 [dev-dependencies]
 tempfile = "3.18"
 tokio-stream = { version = "0.1", features = ["sync"] }

@@ -28,7 +28,6 @@ function backend(id: string, online: boolean, backend_type: "local" | "remote" =
     device_id: null,
     machine_id: null,
     machine_label: null,
-    legacy_machine_ids: [],
     visibility: "private",
     share_scope_kind: "user",
     share_scope_id: null,

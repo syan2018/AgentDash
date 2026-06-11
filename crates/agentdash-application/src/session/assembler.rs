@@ -946,7 +946,7 @@ impl<'a> SessionRequestAssembler<'a> {
             slice_mode: spec.slice_mode,
             companion_executor_config: spec.companion_executor_config,
             dispatch_prompt: spec.dispatch_prompt,
-        });
+        })?;
         Ok(crate::session::assembly_builder::project_assembly_to_frame(
             frame_builder,
             prepared,
@@ -1005,15 +1005,15 @@ impl<'a> SessionRequestAssembler<'a> {
         };
         let parent_capability_state = provider
             .latest_companion_parent_capability_state(parent_session_id)
-            .await;
+            .await
+            .ok_or_else(|| {
+                format!(
+                    "companion parent session `{parent_session_id}` 缺少 capability state，拒绝构造 child session"
+                )
+            })?;
         Ok(CompanionParentFacts {
-            parent_vfs: parent_capability_state
-                .as_ref()
-                .and_then(|state| state.vfs.active.clone()),
-            parent_mcp_servers: parent_capability_state
-                .as_ref()
-                .map(|state| state.tool.mcp_servers.clone())
-                .unwrap_or_default(),
+            parent_vfs: parent_capability_state.vfs.active.clone(),
+            parent_mcp_servers: parent_capability_state.tool.mcp_servers.clone(),
             parent_context_bundle: None,
         })
     }
@@ -1257,8 +1257,10 @@ fn contribute_lifecycle_context(
 /// 在父 session 作用域内即可完成,不需要 assembler 的完整服务依赖)。
 ///
 /// 内部委托给 `SessionAssemblyBuilder::apply_companion_slice`。
-pub(in crate::session) fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
-    SessionAssemblyBuilder::new()
+pub(in crate::session) fn compose_companion(
+    spec: CompanionSpec<'_>,
+) -> Result<SessionAssemblyBuilder, String> {
+    Ok(SessionAssemblyBuilder::new()
         .apply_companion_slice(
             spec.parent_vfs,
             spec.parent_mcp_servers,
@@ -1266,8 +1268,8 @@ pub(in crate::session) fn compose_companion(spec: CompanionSpec<'_>) -> SessionA
             spec.slice_mode,
             spec.companion_executor_config,
             spec.dispatch_prompt,
-        )
-        .build()
+        )?
+        .build())
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1351,7 +1353,7 @@ pub(in crate::session) async fn compose_companion_with_workflow(
 
     // ── 1. Companion VFS slice 作为基础 ──
     let slice =
-        build_companion_execution_slice(comp.parent_vfs, comp.parent_mcp_servers, comp.slice_mode);
+        build_companion_execution_slice(comp.parent_vfs, comp.parent_mcp_servers, comp.slice_mode)?;
 
     // ── 2. Workflow activity activation（产出 lifecycle mount + 能力 + MCP） ──
     let owner_ctx = CapabilityScopeCtx::Project { project_id };
@@ -1425,9 +1427,11 @@ pub(in crate::session) async fn compose_companion_with_workflow(
     let user_input = agentdash_agent_protocol::text_user_input_blocks(comp.dispatch_prompt.clone());
 
     Ok(SessionAssemblyBuilder::new()
-        .with_vfs(slice.vfs.unwrap_or_default())
+        .with_vfs(slice.vfs.ok_or_else(|| {
+            "companion workflow compose 未产出 VFS，拒绝构造 child session".to_string()
+        })?)
         .apply_lifecycle_activation(&activation, Some(comp.companion_executor_config.clone()))
-        .append_mcp_servers(slice.mcp_servers.into_iter())
+        .append_mcp_servers(slice.mcp_servers)
         .with_optional_context_bundle(merged_bundle)
         .with_input(user_input)
         .build())

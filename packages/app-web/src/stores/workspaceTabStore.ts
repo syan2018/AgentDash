@@ -6,7 +6,7 @@
  */
 
 import { create } from "zustand";
-import { tabTypeRegistry, type TabInstance, type SessionTabLayout } from "../features/workspace-panel/tab-type-registry";
+import type { TabInstance, SessionTabLayout } from "../features/workspace-runtime";
 import { saveSessionTabLayout, loadSessionTabLayout } from "../services/session";
 
 let nextTabSeq = 1;
@@ -14,14 +14,46 @@ function generateTabId(): string {
   return `tab_${Date.now()}_${nextTabSeq++}`;
 }
 
+export interface WorkspaceTabTypeLayoutDescriptor {
+  typeId: string;
+  label: string;
+  allowMultiple: boolean;
+  pinned: boolean;
+  defaultUri: string;
+}
+
+export interface WorkspaceTabLayoutOptions {
+  tabTypes: WorkspaceTabTypeLayoutDescriptor[];
+  resolveTitle: (typeId: string, uri: string) => string;
+}
+
+function fallbackTitle(typeId: string, uri: string): string {
+  return uri.trim() || typeId;
+}
+
+function resolveTitle(
+  typeId: string,
+  uri: string,
+  options?: WorkspaceTabLayoutOptions,
+): string {
+  return options?.resolveTitle(typeId, uri) ?? fallbackTitle(typeId, uri);
+}
+
+function findTabType(
+  typeId: string,
+  options?: WorkspaceTabLayoutOptions,
+): WorkspaceTabTypeLayoutDescriptor | null {
+  return options?.tabTypes.find((type) => type.typeId === typeId) ?? null;
+}
+
 // ─── 默认钉选 Tab 生成 ─────────────────────────────────
 
-function createDefaultPinnedTabs(): TabInstance[] {
-  const pinnedTypes = tabTypeRegistry.listTypes().filter((t) => t.pinned);
+function createDefaultPinnedTabs(options?: WorkspaceTabLayoutOptions): TabInstance[] {
+  const pinnedTypes = options?.tabTypes.filter((type) => type.pinned) ?? [];
   return pinnedTypes.map((type) => ({
     id: generateTabId(),
     typeId: type.typeId,
-    uri: type.defaultUri ?? type.buildUri({}),
+    uri: type.defaultUri,
     title: type.label,
     pinned: true,
   }));
@@ -35,19 +67,28 @@ interface WorkspaceTabState {
   sessionId: string | null;
 
   /** 初始化：从后端恢复或生成默认状态 */
-  initialize: (sessionId: string | null, saved?: SessionTabLayout | null) => void;
+  initialize: (
+    sessionId: string | null,
+    saved?: SessionTabLayout | null,
+    options?: WorkspaceTabLayoutOptions,
+  ) => void;
   /** 添加新 Tab 实例，返回实例 ID */
-  addTab: (typeId: string, uri?: string, activate?: boolean) => string;
+  addTab: (
+    typeId: string,
+    uri?: string,
+    activate?: boolean,
+    options?: WorkspaceTabLayoutOptions,
+  ) => string;
   /** 关闭 Tab（钉选 Tab 不可关闭） */
   closeTab: (tabId: string) => void;
   /** 激活 Tab */
   activateTab: (tabId: string) => void;
   /** 按 URI 查找并激活同类型 Tab，不存在则新建 */
-  openOrActivate: (typeId: string, uri: string) => string;
+  openOrActivate: (typeId: string, uri: string, options?: WorkspaceTabLayoutOptions) => string;
   /** 拖拽排序后更新顺序 */
   reorderTabs: (fromIndex: number, toIndex: number) => void;
   /** 更新 Tab 的 URI（导航到新位置） */
-  updateTabUri: (tabId: string, uri: string) => void;
+  updateTabUri: (tabId: string, uri: string, title?: string) => void;
   /** 导出当前布局用于持久化 */
   exportLayout: () => SessionTabLayout;
   /** 防抖持久化到后端 */
@@ -64,13 +105,13 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
   activeTabId: null,
   sessionId: null,
 
-  initialize: (sessionId, saved) => {
+  initialize: (sessionId, saved, options) => {
     // 尝试从后端加载已保存的布局（异步，不阻塞初始化）
     if (!saved && sessionId) {
       void loadSessionTabLayout(sessionId)
         .then((loaded) => {
           if (loaded && get().sessionId === sessionId && get().tabs.every((t) => t.pinned)) {
-            get().initialize(sessionId, loaded);
+            get().initialize(sessionId, loaded, options);
           }
         })
         .catch((error: unknown) => {
@@ -87,13 +128,13 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
         pinned: item.pinned,
       }));
 
-      const pinnedTypes = tabTypeRegistry.listTypes().filter((t) => t.pinned);
+      const pinnedTypes = options?.tabTypes.filter((type) => type.pinned) ?? [];
       for (const type of pinnedTypes) {
         if (!tabs.some((t) => t.typeId === type.typeId)) {
           tabs.unshift({
             id: generateTabId(),
             typeId: type.typeId,
-            uri: type.defaultUri ?? type.buildUri({}),
+            uri: type.defaultUri,
             title: type.label,
             pinned: true,
           });
@@ -110,7 +151,7 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
         sessionId,
       });
     } else {
-      const tabs = createDefaultPinnedTabs();
+      const tabs = createDefaultPinnedTabs(options);
       set({
         tabs,
         activeTabId: tabs[0]?.id ?? null,
@@ -119,18 +160,18 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
     }
   },
 
-  addTab: (typeId, uri, activate = true) => {
-    const type = tabTypeRegistry.getType(typeId);
-    if (!type) return "";
+  addTab: (typeId, uri, activate = true, options) => {
+    const type = findTabType(typeId, options);
+    if (options && !type) return "";
 
-    if (!type.allowMultiple) {
+    if (type && !type.allowMultiple) {
       const existing = get().tabs.find((t) => t.typeId === typeId);
       if (existing) {
         if (uri) {
           set((s) => ({
             tabs: s.tabs.map((t) =>
               t.id === existing.id
-                ? { ...t, uri, title: type.resolveTitle(uri) }
+                ? { ...t, uri, title: resolveTitle(typeId, uri, options) }
                 : t,
             ),
             activeTabId: activate ? existing.id : s.activeTabId,
@@ -142,12 +183,12 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
       }
     }
 
-    const tabUri = uri ?? type.defaultUri ?? type.buildUri({});
+    const tabUri = uri ?? type?.defaultUri ?? "";
     const newTab: TabInstance = {
       id: generateTabId(),
       typeId,
       uri: tabUri,
-      title: type.resolveTitle(tabUri),
+      title: resolveTitle(typeId, tabUri, options),
       pinned: false,
     };
 
@@ -184,7 +225,7 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
     }
   },
 
-  openOrActivate: (typeId, uri) => {
+  openOrActivate: (typeId, uri, options) => {
     const existing = get().tabs.find(
       (t) => t.typeId === typeId && t.uri === uri,
     );
@@ -192,7 +233,7 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
       set({ activeTabId: existing.id });
       return existing.id;
     }
-    return get().addTab(typeId, uri, true);
+    return get().addTab(typeId, uri, true, options);
   },
 
   reorderTabs: (fromIndex, toIndex) => {
@@ -205,15 +246,14 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
     get().schedulePersist();
   },
 
-  updateTabUri: (tabId, uri) => {
+  updateTabUri: (tabId, uri, title) => {
     set((s) => {
       const tab = s.tabs.find((t) => t.id === tabId);
       if (!tab) return s;
-      const type = tabTypeRegistry.getType(tab.typeId);
       return {
         tabs: s.tabs.map((t) =>
           t.id === tabId
-            ? { ...t, uri, title: type?.resolveTitle(uri) ?? t.title }
+            ? { ...t, uri, title: title ?? t.title }
             : t,
         ),
       };

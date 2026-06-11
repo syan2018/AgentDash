@@ -34,6 +34,16 @@ test("validateProject rejects invalid protocol channel declarations", async () =
   assert.match(result.errors.join("\n"), /extension_dependencies\[\]\.alias/);
 });
 
+test("validateProject rejects missing or null runtime schema declarations", async () => {
+  const missing = await fixtureProject({ omitActionSchema: true });
+  const missingResult = await validateProject(missing);
+  assert.match(missingResult.errors.join("\n"), /runtime_actions\[\]\.input_schema 必须存在/);
+
+  const nullSchema = await fixtureProject({ nullActionSchema: true });
+  const nullResult = await validateProject(nullSchema);
+  assert.match(nullResult.errors.join("\n"), /runtime_actions\[\]\.input_schema 必须是 JSON Schema 对象或布尔值/);
+});
+
 test("validateProject rejects lifecycle scripts and package mismatch", async () => {
   const root = await fixtureProject({
     packageName: "@agentdash/other",
@@ -56,7 +66,7 @@ test("validateProject rejects non self-contained dependencies and native constra
 });
 
 /**
- * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel", withProtocol?: boolean, withInvalidProtocol?: boolean }} [options]
+ * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel", withProtocol?: boolean, withInvalidProtocol?: boolean, omitActionSchema?: boolean, nullActionSchema?: boolean }} [options]
  * @returns {Promise<string>}
  */
 async function fixtureProject(options = {}) {
@@ -81,16 +91,7 @@ async function fixtureProject(options = {}) {
       package: { name: "@agentdash/local-hello", version: "0.1.0" },
       asset_version: "0.1.0",
       runtime_actions: [
-        {
-          action_key: "local-hello.profile",
-          kind: "session_runtime",
-          description: "Read profile",
-          input_schema: {},
-          output_schema: {},
-          permissions: options.withProtocol
-            ? ["local.profile.read", "http.fetch:example.com", "env.read:DEMO_TOKEN", "process.execute"]
-            : ["local.profile.read"],
-        },
+        runtimeAction(options),
       ],
       protocol_channels: options.withProtocol
         ? [
@@ -165,4 +166,27 @@ async function fixtureProject(options = {}) {
     }),
   );
   return root;
+}
+
+/**
+ * @param {{ withProtocol?: boolean, omitActionSchema?: boolean, nullActionSchema?: boolean }} options
+ * @returns {Record<string, unknown>}
+ */
+function runtimeAction(options) {
+  const action = {
+    action_key: "local-hello.profile",
+    kind: "session_runtime",
+    description: "Read profile",
+    output_schema: {},
+    permissions: options.withProtocol
+      ? ["local.profile.read", "http.fetch:example.com", "env.read:DEMO_TOKEN", "process.execute"]
+      : ["local.profile.read"],
+  };
+  if (options.nullActionSchema) {
+    return { ...action, input_schema: null };
+  }
+  if (options.omitActionSchema) {
+    return action;
+  }
+  return { ...action, input_schema: {} };
 }

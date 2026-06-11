@@ -19,6 +19,7 @@ use super::persistence::{SessionPersistence, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_supervisor::TurnSupervisor;
 use crate::context::SharedContextAuditBus;
+use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::workflow::{AgentFrameRepository, RuntimeSessionExecutionAnchorRepository};
 use agentdash_spi::AgentConnector;
 use agentdash_spi::hooks::ExecutionHookProvider;
@@ -66,13 +67,14 @@ pub struct SessionRuntimeInner {
     pub(super) context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,
     /// Layer 0 base system prompt（由 factory 从 settings / 常量注入）。
     pub(super) base_system_prompt: String,
-    /// Layer 2 用户偏好提示列表（由 factory 从 settings 注入）。
-    pub(super) user_preferences: Vec<String>,
+    /// 用户偏好设置仓储。每轮按当前 AuthIdentity 读取 user scope。
+    pub(super) settings_repo: Option<Arc<dyn SettingsRepository>>,
     /// 运行时工具构建 provider（由 factory 注入，pipeline 在 prompt 前调用）。
     pub(super) runtime_tool_provider:
         Option<Arc<dyn agentdash_spi::connector::RuntimeToolProvider>>,
-    /// MCP Relay 工具发现 provider（由 factory 注入，pipeline 在 prompt 前调用）。
-    pub(super) mcp_relay_provider: Option<Arc<dyn agentdash_spi::McpRelayProvider>>,
+    /// MCP 工具发现端口（由 factory 注入，pipeline 在 prompt 前调用）。
+    pub(super) mcp_tool_discovery:
+        Option<Arc<dyn agentdash_application_ports::mcp_discovery::McpToolDiscovery>>,
     /// Relay backend execution placement dependencies.
     pub(super) backend_execution_transport:
         Option<Arc<dyn agentdash_application_ports::backend_transport::RelayPromptTransport>>,

@@ -24,11 +24,11 @@ use agentdash_spi::hooks::{
     HookTraceTrigger, HookTrigger, RuntimeEventSource, SessionSnapshotMetadata,
 };
 use agentdash_spi::{
-    AgentConfig, AgentConnector, CapabilityState, CompactionProjectionCommitResult, ConnectorError,
-    ExecutionSessionFrame, MessageRef, NewCompactionProjectionCommit, ProjectionOrigin,
-    PromptPayload, SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord,
-    SessionCompactionStatus, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
-    StopReason,
+    AgentConfig, AgentConnector, AgentTool, AgentToolError, AgentToolResult, CapabilityState,
+    CompactionProjectionCommitResult, ConnectorError, ExecutionSessionFrame, MessageRef,
+    NewCompactionProjectionCommit, ProjectionOrigin, PromptPayload,
+    SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord, SessionCompactionStatus,
+    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, StopReason, ToolUpdateCallback,
 };
 use futures::stream;
 use serde_json::json;
@@ -70,6 +70,9 @@ use agentdash_application_ports::backend_transport::{
     BackendTransport, DirectoryBrowseInfo, GitRepoInfo, RelayPromptRequest, RelayPromptTransport,
     RelaySessionRoute, RelaySessionRouteInfo, RelaySteerRequest, RemoteExecutorInfo,
     TransportError, WorkspaceProbeInfo,
+};
+use agentdash_application_ports::mcp_discovery::{
+    DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryRequest,
 };
 
 fn test_hub(
@@ -268,42 +271,89 @@ impl AgentConnector for EmptyConnector {
 }
 
 #[derive(Clone)]
-struct StaticRelayMcpProvider {
+struct StaticMcpToolDiscovery {
     tools: Vec<agentdash_spi::RelayMcpToolInfo>,
 }
 
+#[derive(Clone)]
+struct StaticMcpTool {
+    name: String,
+    description: String,
+    parameters_schema: serde_json::Value,
+}
+
 #[async_trait::async_trait]
-impl agentdash_spi::McpRelayProvider for StaticRelayMcpProvider {
-    async fn list_relay_tools(
-        &self,
-        _requested_servers: &[String],
-    ) -> Vec<agentdash_spi::RelayMcpToolInfo> {
-        self.tools.clone()
+impl AgentTool for StaticMcpTool {
+    fn name(&self) -> &str {
+        &self.name
     }
 
-    async fn call_relay_tool(
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.parameters_schema.clone()
+    }
+
+    async fn execute(
         &self,
-        _server_name: &str,
-        _tool_name: &str,
-        _arguments: Option<serde_json::Map<String, serde_json::Value>>,
-        _context: Option<agentdash_spi::RelayMcpCallContext>,
-    ) -> Result<agentdash_spi::RelayMcpCallResult, ConnectorError> {
-        Ok(agentdash_spi::RelayMcpCallResult {
-            content: String::new(),
+        _tool_call_id: &str,
+        _args: serde_json::Value,
+        _cancel: tokio_util::sync::CancellationToken,
+        _on_update: Option<ToolUpdateCallback>,
+    ) -> Result<AgentToolResult, AgentToolError> {
+        Ok(AgentToolResult {
+            content: Vec::new(),
             is_error: false,
+            details: None,
         })
     }
+}
 
-    async fn probe_transport(
+#[async_trait::async_trait]
+impl McpToolDiscovery for StaticMcpToolDiscovery {
+    async fn discover_tool_entries(
         &self,
-        _transport: &agentdash_domain::mcp_preset::McpTransportConfig,
-    ) -> Result<agentdash_spi::platform::mcp_relay::RelayProbeResult, ConnectorError> {
-        Ok(agentdash_spi::platform::mcp_relay::RelayProbeResult {
-            status: "ok".to_string(),
-            latency_ms: None,
-            tools: None,
-            error: None,
-        })
+        request: McpToolDiscoveryRequest,
+    ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
+        let requested_servers = request
+            .servers
+            .iter()
+            .map(|server| server.name.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        Ok(self
+            .tools
+            .iter()
+            .filter(|info| requested_servers.contains(info.server_name.as_str()))
+            .filter(|info| {
+                request.capability_state.is_capability_tool_enabled(
+                    "workflow_management",
+                    &info.tool_name,
+                    None,
+                )
+            })
+            .map(|info| {
+                let runtime_name = format!(
+                    "mcp_agentdash_workflow_tools_{}",
+                    info.tool_name.replace('-', "_")
+                );
+                let tool = Arc::new(StaticMcpTool {
+                    name: runtime_name.clone(),
+                    description: info.description.clone(),
+                    parameters_schema: info.parameters_schema.clone(),
+                }) as agentdash_agent_types::DynAgentTool;
+                DiscoveredMcpTool {
+                    runtime_name,
+                    server_name: info.server_name.clone(),
+                    tool_name: info.tool_name.clone(),
+                    uses_relay: true,
+                    description: info.description.clone(),
+                    parameters_schema: info.parameters_schema.clone(),
+                    tool,
+                }
+            })
+            .collect())
     }
 }
 
@@ -362,7 +412,7 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
         },
         uses_relay: true,
     };
-    let relay = Arc::new(StaticRelayMcpProvider {
+    let discovery = Arc::new(StaticMcpToolDiscovery {
         tools: vec![
             agentdash_spi::RelayMcpToolInfo {
                 server_name: workflow_server.name.clone(),
@@ -385,7 +435,7 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
         ],
     });
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None)
-        .with_mcp_relay_provider(relay);
+        .with_mcp_tool_discovery(discovery);
 
     let mut plan_state = CapabilityState::default();
     plan_state

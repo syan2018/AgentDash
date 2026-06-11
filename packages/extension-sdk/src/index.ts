@@ -31,8 +31,8 @@ export interface ExtensionRuntimeActionDefinition<Input extends JsonValue = Json
   action_key: string;
   kind: ExtensionRuntimeActionKind;
   description: string;
-  input_schema?: JsonObject | boolean;
-  output_schema?: JsonObject | boolean;
+  input_schema: JsonObject | boolean;
+  output_schema: JsonObject | boolean;
   permissions?: string[];
   invoke(input: Input): Output | Promise<Output>;
 }
@@ -59,8 +59,8 @@ export interface ExtensionProtocolChannelMethodDefinition<
 > {
   name: string;
   description: string;
-  input_schema?: JsonObject | boolean;
-  output_schema?: JsonObject | boolean;
+  input_schema: JsonObject | boolean;
+  output_schema: JsonObject | boolean;
   permissions?: string[];
   invoke(input: Input): Output | Promise<Output>;
 }
@@ -99,8 +99,8 @@ export interface ExtensionProtocolChannelDefinition {
 export interface ExtensionProtocolChannelMethodManifestDefinition {
   name: string;
   description: string;
-  input_schema?: JsonObject | boolean;
-  output_schema?: JsonObject | boolean;
+  input_schema: JsonObject | boolean;
+  output_schema: JsonObject | boolean;
   permissions?: string[];
 }
 

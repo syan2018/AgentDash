@@ -186,7 +186,6 @@ export function LocalRuntimeView({
         workspaceRoots,
         executorEnabled,
       ),
-      legacy_machine_ids: [],
       auto_start: autoStart,
       backend_id: snapshot?.backend_id ?? null,
     }
@@ -714,7 +713,6 @@ function buildStartRequest(
     profile_id: profileId.trim() || DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
     machine_id: machineId.trim(),
     machine_label: machineLabel.trim() || null,
-    legacy_machine_ids: [],
     name: backendName.trim() || undefined,
     workspace_roots: roots.map((root) => root.trim()).filter(Boolean),
     executor_enabled: executorEnabled,

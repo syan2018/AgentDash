@@ -12,6 +12,7 @@ use super::{
     LocalExtensionHostProfile, LocalExtensionHostWorkspaceRoot,
 };
 use crate::extensions::artifact_cache::ExtensionArtifactCacheEntry;
+use crate::tool_executor::ToolExecutor;
 
 #[derive(Debug, Clone)]
 pub struct LocalTsExtensionHostConfig {
@@ -177,12 +178,13 @@ impl LocalExtensionHostManager {
             .as_mut()
             .ok_or_else(|| LocalExtensionHostError::Process("extension host 尚未启动".into()))?;
         let profile = profile_from_activation(&activation);
+        let tool_executor = tool_executor_for_activation(&activation);
         let active = ActiveExtension {
             extension_key: activation.extension_key,
             manifest: loaded.manifest.clone(),
             profile,
             default_workspace_root: activation.default_workspace_root.clone(),
-            workspace_roots: activation.workspace_roots.clone(),
+            tool_executor,
         };
         process
             .active_extensions
@@ -215,12 +217,13 @@ impl LocalExtensionHostManager {
             .as_mut()
             .ok_or_else(|| LocalExtensionHostError::Process("extension host 尚未启动".into()))?;
         let profile = profile_from_activation(&activation);
+        let tool_executor = tool_executor_for_activation(&activation);
         let active = ActiveExtension {
             extension_key: activation.extension_key,
             manifest: loaded.manifest.clone(),
             profile,
             default_workspace_root: activation.default_workspace_root.clone(),
-            workspace_roots: activation.workspace_roots.clone(),
+            tool_executor,
         };
         process
             .active_extensions
@@ -342,6 +345,16 @@ fn profile_from_activation(activation: &LocalExtensionHostActivation) -> LocalEx
             .map(|(index, root)| workspace_root_summary(index, root))
             .collect(),
     }
+}
+
+fn tool_executor_for_activation(activation: &LocalExtensionHostActivation) -> ToolExecutor {
+    let mut roots = activation.workspace_roots.clone();
+    if let Some(default_root) = activation.default_workspace_root.as_ref()
+        && !roots.iter().any(|root| root == default_root)
+    {
+        roots.push(default_root.clone());
+    }
+    ToolExecutor::new(roots)
 }
 
 fn workspace_root_summary(index: usize, root: &Path) -> LocalExtensionHostWorkspaceRoot {

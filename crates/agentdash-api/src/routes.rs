@@ -11,6 +11,7 @@ pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
 pub mod lifecycle_agents;
+mod lifecycle_contracts;
 pub mod lifecycle_views;
 pub mod llm_providers;
 pub mod marketplace;

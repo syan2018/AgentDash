@@ -2,7 +2,9 @@ import { api, type ApiHttpError } from "../api/client";
 import { requireStringField } from "../api/mappers";
 import { settingsApi } from "../api/settings";
 import type {
+  CancelSessionResponse,
   CreateSessionForkRequest,
+  DeleteSessionResponse,
   RollbackSessionProjectionRequest,
   SessionEventResponse,
   SessionEventsPageResponse,
@@ -13,7 +15,7 @@ import type {
 } from "../generated/session-contracts";
 import type { JsonValue } from "../generated/common-contracts";
 import type { SessionExecutionState, SessionExecutionStatus } from "../types";
-import type { SessionTabLayout } from "../features/workspace-panel/tab-type-registry";
+import type { SessionTabLayout } from "../features/workspace-runtime";
 
 export type TitleSource = "auto" | "source" | "user";
 
@@ -54,8 +56,8 @@ export async function fetchSessionEvents(
   );
 }
 
-export async function deleteSession(id: string): Promise<void> {
-  await api.delete<void>(`/sessions/${encodeURIComponent(id)}`);
+export async function deleteSession(id: string): Promise<DeleteSessionResponse> {
+  return api.delete<DeleteSessionResponse>(`/sessions/${encodeURIComponent(id)}`);
 }
 
 export async function updateSessionTitle(id: string, title: string): Promise<SessionMeta> {
@@ -127,8 +129,8 @@ export async function fetchSessionExecutionState(id: string): Promise<SessionExe
   return mapSessionExecutionState(raw);
 }
 
-export async function cancelSession(id: string): Promise<void> {
-  await api.post<void>(`/sessions/${encodeURIComponent(id)}/cancel`, {});
+export async function cancelSession(id: string): Promise<CancelSessionResponse> {
+  return api.post<CancelSessionResponse>(`/sessions/${encodeURIComponent(id)}/cancel`, {});
 }
 
 // ─── Pending Message Queue ───────────────────────────

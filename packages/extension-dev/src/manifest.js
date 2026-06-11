@@ -19,6 +19,7 @@ const NATIVE_CONSTRAINT_FIELDS = ["gypfile", "binary", "os", "cpu", "libc"];
 /**
  * @typedef {{ [key: string]: unknown }} UnknownRecord
  * @typedef {{ errors: string[], warnings: string[], manifest: UnknownRecord | null, package_json: UnknownRecord | null }} ValidationResult
+ * @typedef {{ runtime_actions?: unknown, protocol_channels?: unknown }} ExtensionContributionsRecord
  */
 
 /**
@@ -80,14 +81,46 @@ export function validateManifest(manifest, errors) {
     requireString(packageInfo, "version", errors, "manifest.package.version");
   }
   requireString(manifest, "asset_version", errors);
-  validateCommandDefs(arrayField(manifest, "commands"), errors);
-  validateFlagDefs(arrayField(manifest, "flags"), errors);
-  validateRuntimeActions(arrayField(manifest, "runtime_actions"), errors);
-  validateProtocolChannels(arrayField(manifest, "protocol_channels"), errors);
-  validateExtensionDependencies(arrayField(manifest, "extension_dependencies"), errors);
-  validateWorkspaceTabs(arrayField(manifest, "workspace_tabs"), errors);
-  validatePermissions(arrayField(manifest, "permissions"), errors);
-  validateBundleDefs(arrayField(manifest, "bundles"), errors);
+  validateCommandDefs(arrayField(manifest, "commands", errors), errors);
+  validateFlagDefs(arrayField(manifest, "flags", errors), errors);
+  validateRuntimeActions(arrayField(manifest, "runtime_actions", errors), errors);
+  validateProtocolChannels(arrayField(manifest, "protocol_channels", errors), errors);
+  validateExtensionDependencies(arrayField(manifest, "extension_dependencies", errors), errors);
+  validateWorkspaceTabs(arrayField(manifest, "workspace_tabs", errors), errors);
+  validatePermissions(arrayField(manifest, "permissions", errors), errors);
+  validateBundleDefs(arrayField(manifest, "bundles", errors), errors);
+}
+
+/**
+ * @param {UnknownRecord} manifest
+ * @param {ExtensionContributionsRecord} contributions
+ * @param {string[]} errors
+ */
+export function validateRuntimeSurfaceParity(manifest, contributions, errors) {
+  const extensionId = stringField(manifest, "extension_id") ?? "";
+  const manifestActions = actionKeySet(arrayField(manifest, "runtime_actions"));
+  const registeredActions = actionKeySet(arrayField(contributions, "runtime_actions"));
+  compareSet("runtime action", manifestActions, registeredActions, errors);
+
+  const manifestMethods = manifestChannelMethodSet(extensionId, arrayField(manifest, "protocol_channels"));
+  const registeredMethods = registeredChannelMethodSet(extensionId, arrayField(contributions, "protocol_channels"));
+  compareSet("protocol channel method", manifestMethods, registeredMethods, errors);
+}
+
+/**
+ * @param {unknown[]} actions
+ * @returns {Set<string>}
+ */
+function actionKeySet(actions) {
+  /** @type {Set<string>} */
+  const result = new Set();
+  for (const action of actions) {
+    const record = asRecord(action);
+    if (!record) continue;
+    const actionKey = stringField(record, "action_key");
+    if (actionKey) result.add(actionKey);
+  }
+  return result;
 }
 
 /**
@@ -522,8 +555,12 @@ function validateMethodNameValue(value, label, errors) {
  * @param {string[]} errors
  */
 function validateJsonSchemaField(record, field, label, errors) {
+  if (!Object.prototype.hasOwnProperty.call(record, field)) {
+    errors.push(`${label} 必须存在`);
+    return;
+  }
   const value = record[field];
-  if (value == null || typeof value === "boolean" || asRecord(value)) return;
+  if (typeof value === "boolean" || asRecord(value)) return;
   errors.push(`${label} 必须是 JSON Schema 对象或布尔值`);
 }
 
@@ -585,11 +622,15 @@ function stringField(record, field) {
 /**
  * @param {UnknownRecord} record
  * @param {string} field
+ * @param {string[]} [errors]
  * @returns {unknown[]}
  */
-function arrayField(record, field) {
+function arrayField(record, field, errors) {
   const value = record[field];
-  return Array.isArray(value) ? value : [];
+  if (value === undefined) return [];
+  if (Array.isArray(value)) return value;
+  errors?.push(`${field} 必须是数组`);
+  return [];
 }
 
 /**
@@ -600,4 +641,76 @@ export function asRecord(value) {
   return value != null && typeof value === "object" && !Array.isArray(value)
     ? /** @type {UnknownRecord} */ (value)
     : null;
+}
+
+/**
+ * @param {string} label
+ * @param {Set<string>} manifestItems
+ * @param {Set<string>} registeredItems
+ * @param {string[]} errors
+ */
+function compareSet(label, manifestItems, registeredItems, errors) {
+  for (const item of registeredItems) {
+    if (!manifestItems.has(item)) {
+      errors.push(`TS 注册了 manifest 未声明的 ${label}: ${item}`);
+    }
+  }
+  for (const item of manifestItems) {
+    if (!registeredItems.has(item)) {
+      errors.push(`manifest 声明了 TS 未注册的 ${label}: ${item}`);
+    }
+  }
+}
+
+/**
+ * @param {string} extensionId
+ * @param {unknown[]} channels
+ * @returns {Set<string>}
+ */
+function manifestChannelMethodSet(extensionId, channels) {
+  /** @type {Set<string>} */
+  const result = new Set();
+  for (const channel of channels) {
+    const record = asRecord(channel);
+    if (!record) continue;
+    const channelKey = stringField(record, "channel_key");
+    if (!channelKey) continue;
+    for (const method of arrayField(record, "methods")) {
+      const methodRecord = asRecord(method);
+      const methodName = methodRecord ? stringField(methodRecord, "name") : null;
+      if (methodName) result.add(`${canonicalChannelKey(extensionId, channelKey)}.${methodName}`);
+    }
+  }
+  return result;
+}
+
+/**
+ * @param {string} extensionId
+ * @param {unknown[]} channels
+ * @returns {Set<string>}
+ */
+function registeredChannelMethodSet(extensionId, channels) {
+  /** @type {Set<string>} */
+  const result = new Set();
+  for (const channel of channels) {
+    const record = asRecord(channel);
+    if (!record) continue;
+    const channelKey = stringField(record, "channel_key");
+    if (!channelKey) continue;
+    for (const method of arrayField(record, "methods")) {
+      const methodRecord = asRecord(method);
+      const methodName = methodRecord ? stringField(methodRecord, "name") : null;
+      if (methodName) result.add(`${canonicalChannelKey(extensionId, channelKey)}.${methodName}`);
+    }
+  }
+  return result;
+}
+
+/**
+ * @param {string} extensionId
+ * @param {string} channelKey
+ * @returns {string}
+ */
+function canonicalChannelKey(extensionId, channelKey) {
+  return channelKey.includes(".") ? channelKey : `${extensionId}.${channelKey}`;
 }

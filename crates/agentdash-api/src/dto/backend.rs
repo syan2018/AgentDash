@@ -24,8 +24,6 @@ pub struct CreateBackendRequest {
 pub struct EnsureLocalRuntimeRequest {
     pub machine_id: String,
     pub machine_label: Option<String>,
-    #[serde(default)]
-    pub legacy_machine_ids: Vec<String>,
     pub profile_id: String,
     #[serde(default)]
     pub scope: Option<LocalRuntimeScopeRequest>,

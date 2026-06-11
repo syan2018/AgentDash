@@ -4,6 +4,18 @@ use agentdash_relay::*;
 use base64::Engine;
 
 use super::CommandHandler;
+use crate::tool_executor::ToolError;
+
+fn tool_error_to_relay_error(error: ToolError) -> RelayError {
+    let message = error.to_string();
+    match error {
+        ToolError::PathNotAccessible(_) => RelayError::new(RelayErrorCode::Forbidden, message),
+        ToolError::InvalidPath(_) => RelayError::invalid_message(message),
+        ToolError::Timeout(_) => RelayError::timeout(message),
+        ToolError::Io(_) => RelayError::io_error(message),
+        ToolError::PatchApply(_) => RelayError::runtime_error(message),
+    }
+}
 
 impl CommandHandler {
     pub(super) async fn handle_tool_file_read(
@@ -28,7 +40,7 @@ impl CommandHandler {
             Err(e) => RelayMessage::ResponseToolFileRead {
                 id,
                 payload: None,
-                error: Some(RelayError::io_error(e.to_string())),
+                error: Some(tool_error_to_relay_error(e)),
             },
         }
     }
@@ -59,7 +71,7 @@ impl CommandHandler {
             Err(e) => RelayMessage::ResponseToolFileReadBinary {
                 id,
                 payload: None,
-                error: Some(RelayError::io_error(e.to_string())),
+                error: Some(tool_error_to_relay_error(e)),
             },
         }
     }
@@ -85,7 +97,7 @@ impl CommandHandler {
             Err(e) => RelayMessage::ResponseToolFileWrite {
                 id,
                 payload: None,
-                error: Some(RelayError::io_error(e.to_string())),
+                error: Some(tool_error_to_relay_error(e)),
             },
         }
     }
@@ -111,7 +123,7 @@ impl CommandHandler {
             Err(e) => RelayMessage::ResponseToolFileDelete {
                 id,
                 payload: None,
-                error: Some(RelayError::io_error(e.to_string())),
+                error: Some(tool_error_to_relay_error(e)),
             },
         }
     }
@@ -141,7 +153,7 @@ impl CommandHandler {
             Err(e) => RelayMessage::ResponseToolFileRename {
                 id,
                 payload: None,
-                error: Some(RelayError::io_error(e.to_string())),
+                error: Some(tool_error_to_relay_error(e)),
             },
         }
     }
@@ -170,7 +182,7 @@ impl CommandHandler {
             Err(e) => RelayMessage::ResponseToolApplyPatch {
                 id,
                 payload: None,
-                error: Some(RelayError::io_error(e.to_string())),
+                error: Some(tool_error_to_relay_error(e)),
             },
         }
     }
@@ -223,7 +235,7 @@ impl CommandHandler {
             Err(e) => RelayMessage::ResponseToolShellExec {
                 id,
                 payload: None,
-                error: Some(RelayError::runtime_error(e.to_string())),
+                error: Some(tool_error_to_relay_error(e)),
             },
         }
     }
@@ -254,7 +266,7 @@ impl CommandHandler {
             Err(e) => RelayMessage::ResponseToolFileList {
                 id,
                 payload: None,
-                error: Some(RelayError::io_error(e.to_string())),
+                error: Some(tool_error_to_relay_error(e)),
             },
         }
     }
@@ -291,8 +303,39 @@ impl CommandHandler {
             Err(e) => RelayMessage::ResponseToolSearch {
                 id,
                 payload: None,
-                error: Some(RelayError::runtime_error(e.to_string())),
+                error: Some(tool_error_to_relay_error(e)),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_tool_error_code(error: ToolError, expected_code: RelayErrorCode) {
+        let relay_error = tool_error_to_relay_error(error);
+        assert_eq!(relay_error.code, expected_code);
+    }
+
+    #[test]
+    fn tool_error_to_relay_error_maps_path_not_accessible_code() {
+        assert_tool_error_code(
+            ToolError::PathNotAccessible("outside-workspace".to_string()),
+            RelayErrorCode::Forbidden,
+        );
+    }
+
+    #[test]
+    fn tool_error_to_relay_error_maps_invalid_path_code() {
+        assert_tool_error_code(
+            ToolError::InvalidPath("bad-path".to_string()),
+            RelayErrorCode::InvalidMessage,
+        );
+    }
+
+    #[test]
+    fn tool_error_to_relay_error_maps_timeout_code() {
+        assert_tool_error_code(ToolError::Timeout(1_000), RelayErrorCode::Timeout);
     }
 }

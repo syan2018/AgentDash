@@ -19,6 +19,7 @@ import { WorkspaceDataProvider, type WorkspaceData } from "./workspace-data-cont
 import { TabBar } from "./TabBar";
 import { AddressBar } from "./AddressBar";
 import type { WorkspacePanelHandle, WorkspacePanelProps } from "./workspace-panel-types";
+import type { WorkspaceTabLayoutOptions } from "../../stores/workspaceTabStore";
 
 registerBuiltinTabTypes();
 
@@ -32,12 +33,26 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     const storeSessionId = useWorkspaceTabStore((s) => s.sessionId);
     const registrySnapshot = useTabTypeRegistrySnapshot();
 
+    const tabLayoutOptions: WorkspaceTabLayoutOptions = useMemo(() => ({
+      tabTypes: registrySnapshot.map((type) => ({
+        typeId: type.typeId,
+        label: type.label,
+        allowMultiple: type.allowMultiple,
+        pinned: type.pinned,
+        defaultUri: type.defaultUri ?? type.buildUri({}),
+      })),
+      resolveTitle: (typeId, uri) => {
+        const type = registrySnapshot.find((descriptor) => descriptor.typeId === typeId);
+        return type?.resolveTitle(uri) ?? uri;
+      },
+    }), [registrySnapshot]);
+
     // 首次挂载或 session 切换时初始化 Tab 状态
     useEffect(() => {
       if (storeSessionId !== sessionId) {
-        useWorkspaceTabStore.getState().initialize(sessionId);
+        useWorkspaceTabStore.getState().initialize(sessionId, null, tabLayoutOptions);
       }
-    }, [sessionId, storeSessionId]);
+    }, [sessionId, storeSessionId, tabLayoutOptions]);
 
     useEffect(() => {
       if (
@@ -59,20 +74,20 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       openTab: (typeId: string, uri?: string) => {
         const s = useWorkspaceTabStore.getState();
         if (uri) {
-          s.openOrActivate(typeId, uri);
+          s.openOrActivate(typeId, uri, tabLayoutOptions);
         } else {
           const type = tabTypeRegistry.getType(typeId);
           if (type) {
             const defaultUri = type.defaultUri ?? type.buildUri({});
-            s.openOrActivate(typeId, defaultUri);
+            s.openOrActivate(typeId, defaultUri, tabLayoutOptions);
           }
         }
       },
-    }), []);
+    }), [tabLayoutOptions]);
 
     const handleAddTab = useCallback((typeId: string) => {
-      useWorkspaceTabStore.getState().addTab(typeId);
-    }, []);
+      useWorkspaceTabStore.getState().addTab(typeId, undefined, true, tabLayoutOptions);
+    }, [tabLayoutOptions]);
 
     const handleActivate = useCallback((tabId: string) => {
       useWorkspaceTabStore.getState().activateTab(tabId);
@@ -118,13 +133,14 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         <div className="flex h-full flex-col bg-background">
           <TabBar
             tabs={tabs}
+            tabTypes={registrySnapshot}
             activeTabId={activeTabId}
             onActivate={handleActivate}
             onClose={handleClose}
             onReorder={handleReorder}
             onAddTab={handleAddTab}
           />
-          <AddressBar tab={activeTab} />
+          <AddressBar tab={activeTab} tabTypes={registrySnapshot} />
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
             {activeContent}
           </div>

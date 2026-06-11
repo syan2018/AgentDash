@@ -8,12 +8,8 @@
 //! - `replace_current_capability_state`：底层热更 primitive，仅供
 //!   `runtime_context_transition` 统一 applier 调用。
 //!
-//! 注：本文件仍依赖 `agentdash_executor::mcp::discover_*`。该依赖早于 PR 6 存在
-//! （application 层直接调用 executor 实现），PRD 允许"通过 tool_builder 间接依赖"，
-//! 不在本 PR 改接口层级。
-
 use agentdash_agent_types::DynAgentTool;
-use agentdash_executor::mcp::DiscoveredMcpTool;
+use agentdash_application_ports::mcp_discovery::{DiscoveredMcpTool, McpToolDiscoveryRequest};
 use agentdash_spi::{ConnectorError, ExecutionContext, SessionMcpServer};
 use uuid::Uuid;
 
@@ -273,8 +269,6 @@ impl SessionRuntimeInner {
         context: &ExecutionContext,
         mcp_servers: &[agentdash_spi::SessionMcpServer],
     ) -> Vec<DynAgentTool> {
-        use agentdash_executor::mcp::{self as mcp_discovery};
-
         let mut all_tools: Vec<DynAgentTool> = Vec::new();
 
         if let Some(provider) = &self.runtime_tool_provider {
@@ -287,19 +281,7 @@ impl SessionRuntimeInner {
             }
         }
 
-        let (relay_names, direct_servers) =
-            agentdash_spi::partition_session_mcp_servers(mcp_servers);
-        match mcp_discovery::discover_mcp_tools(&direct_servers, &context.turn.capability_state)
-            .await
-        {
-            Ok(tools) => all_tools.extend(tools),
-            Err(e) => tracing::warn!(
-                session_id = %session_id,
-                "直连 MCP 工具发现失败: {e}"
-            ),
-        }
-
-        if let Some(relay) = &self.mcp_relay_provider {
+        if let Some(discovery) = &self.mcp_tool_discovery {
             let call_context = agentdash_spi::RelayMcpCallContext {
                 session_id: session_id.to_string(),
                 turn_id: Some(context.session.turn_id.clone()),
@@ -307,14 +289,20 @@ impl SessionRuntimeInner {
                 vfs: context.session.vfs.clone(),
                 identity: context.session.identity.clone(),
             };
-            let tools = mcp_discovery::discover_relay_mcp_tools(
-                relay.clone(),
-                &relay_names,
-                &context.turn.capability_state,
-                Some(call_context),
-            )
-            .await;
-            all_tools.extend(tools);
+            match discovery
+                .discover_tool_entries(McpToolDiscoveryRequest {
+                    servers: mcp_servers.to_vec(),
+                    capability_state: context.turn.capability_state.clone(),
+                    call_context: Some(call_context),
+                })
+                .await
+            {
+                Ok(entries) => all_tools.extend(entries.into_iter().map(|entry| entry.tool)),
+                Err(e) => tracing::warn!(
+                    session_id = %session_id,
+                    "MCP 工具发现失败: {e}"
+                ),
+            }
         }
 
         all_tools
@@ -324,8 +312,6 @@ impl SessionRuntimeInner {
         &self,
         session_id: &str,
     ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
-        use agentdash_executor::mcp::{self as mcp_discovery};
-
         let capability_state = self
             .get_latest_capability_state(session_id)
             .await
@@ -334,29 +320,16 @@ impl SessionRuntimeInner {
                     "session `{session_id}` 当前没有可用 CapabilityState"
                 ))
             })?;
-        let mcp_servers = capability_state.tool.mcp_servers.clone();
-        let (relay_names, direct_servers) =
-            agentdash_spi::partition_session_mcp_servers(&mcp_servers);
-        let mut entries =
-            mcp_discovery::discover_mcp_tool_entries(&direct_servers, &capability_state).await?;
+        let discovery = self.mcp_tool_discovery.as_ref().ok_or_else(|| {
+            ConnectorError::Runtime("SessionRuntimeInner 缺少 mcp_tool_discovery".to_string())
+        })?;
 
-        if let Some(relay) = &self.mcp_relay_provider {
-            entries.extend(
-                mcp_discovery::discover_relay_mcp_tool_entries(
-                    relay.clone(),
-                    &relay_names,
-                    &capability_state,
-                    None,
-                )
-                .await,
-            );
-        } else if !relay_names.is_empty() {
-            tracing::warn!(
-                session_id = %session_id,
-                "Session 声明了 relay MCP server，但当前没有 mcp_relay_provider"
-            );
-        }
-
-        Ok(entries)
+        discovery
+            .discover_tool_entries(McpToolDiscoveryRequest {
+                servers: capability_state.tool.mcp_servers.clone(),
+                capability_state,
+                call_context: None,
+            })
+            .await
     }
 }

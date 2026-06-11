@@ -1,0 +1,33 @@
+{
+  "id": "code-quality-coupling-cleanup",
+  "name": "code-quality-coupling-cleanup",
+  "title": "代码质量与高耦合清理总览",
+  "description": "从全仓 review 中沉淀快清项与架构级高耦合清理任务。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-06-10",
+  "completedAt": "2026-06-11",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-10-architecture-application-boundary-cleanup",
+    "06-10-api-contract-dto-boundary-cleanup",
+    "06-10-extension-manifest-single-source",
+    "06-10-legacy-local-runtime-identity-cleanup",
+    "06-10-workspace-tab-runtime-decoupling",
+    "06-10-relay-protocol-current-model-cleanup"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

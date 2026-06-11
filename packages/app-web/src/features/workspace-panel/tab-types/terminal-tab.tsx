@@ -45,6 +45,11 @@ interface TerminalViewProps {
   tabId?: string;
 }
 
+function resolveTerminalTitle(uri: string): string {
+  const id = uri.replace("terminal://", "");
+  return id && id !== "new" ? `终端: ${id.slice(0, 8)}` : "新终端";
+}
+
 /**
  * 交互式终端视图。
  *
@@ -241,7 +246,8 @@ async function spawnTerminal(
     });
 
     if (tabId) {
-      useWorkspaceTabStore.getState().updateTabUri(tabId, `terminal://${realId}`);
+      const uri = `terminal://${realId}`;
+      useWorkspaceTabStore.getState().updateTabUri(tabId, uri, resolveTerminalTitle(uri));
     }
 
     // setActiveId 放最后：确保 store 已注册终端，useEffect[output] 切换订阅后能立即读到数据
@@ -326,10 +332,7 @@ export const terminalTabType: TabTypeDescriptor = {
     );
   },
 
-  resolveTitle: (uri) => {
-    const id = uri.replace("terminal://", "");
-    return id && id !== "new" ? `终端: ${id.slice(0, 8)}` : "新终端";
-  },
+  resolveTitle: resolveTerminalTitle,
 
   parseUri: (uri) => {
     const terminalId = uri.replace("terminal://", "");

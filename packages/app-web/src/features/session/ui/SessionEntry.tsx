@@ -31,8 +31,6 @@ import type {
   AggregatedEntryGroup,
   AggregatedThinkingGroup,
 } from "../model/types";
-import { extractPlatformEventData } from "../model/platformEvent";
-import { parseContextFrame } from "../model/contextFrame";
 import { ToolCallCardShell } from "./ToolCallCardShell";
 import { renderToolCallCard } from "./toolCardRegistry";
 import { SessionMessageCard } from "./SessionMessageCard";
@@ -166,7 +164,13 @@ export function SingleEntry({
       }
 
       if (isRenderableSystemEventUpdate(event)) {
-        return <SessionSystemEventCard event={event} sessionId={sessionId ?? undefined} />;
+        return (
+          <SessionSystemEventCard
+            event={event}
+            sessionId={sessionId ?? undefined}
+            contextFrame={entry.contextFrame}
+          />
+        );
       }
 
       return null;
@@ -183,10 +187,8 @@ function AggregatedContextFrameGroupEntry({
   group: AggregatedContextFrameGroup;
 }) {
   const frames = group.entries
-    .map((entry) => extractPlatformEventData(entry.event))
-    .filter((data): data is Record<string, unknown> => data != null)
-    .map((data) => parseContextFrame(data))
-    .filter((frame): frame is NonNullable<ReturnType<typeof parseContextFrame>> => frame != null);
+    .map((entry) => entry.contextFrame)
+    .filter((frame): frame is NonNullable<typeof frame> => frame != null);
 
   if (frames.length === 0) {
     return null;

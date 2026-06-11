@@ -8,17 +8,19 @@ use agentdash_domain::workflow::{
     HumanApprovalExecutorSpec, InputPortDefinition, OrchestrationLimits, OrchestrationPlanSnapshot,
     OrchestrationSourceRef, OutputPortDefinition, PlanNode, PlanNodeKind, RuntimeSessionPolicy,
     StandaloneFulfillment, StateExchangeRule, TransitionCondition, ValidationSeverity,
-    WorkflowInjectionSpec,
+    WorkflowInjectionSpec, WorkflowScriptCapabilitySummary,
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use super::runtime::RootInputBinding;
 use crate::workflow::script::{
     WorkflowScriptAgent, WorkflowScriptBuilderDocument, WorkflowScriptEffect,
     WorkflowScriptFunction, WorkflowScriptHumanGate, WorkflowScriptLocalEffect,
     WorkflowScriptPhase, WorkflowScriptPipeline, WorkflowScriptRequest, WorkflowScriptStatement,
+    extract_workflow_script_capability_summary,
 };
 
 pub const WORKFLOW_SCRIPT_COMPILER_SCHEMA_VERSION: u32 = 1;
@@ -29,7 +31,7 @@ pub struct ScriptCompileInput<'a> {
     pub source_ref: OrchestrationSourceRef,
     pub source_digest: String,
     pub source_path: String,
-    pub args: Option<Value>,
+    pub capability_summary: Option<WorkflowScriptCapabilitySummary>,
     pub created_at: DateTime<Utc>,
     pub target_schema_version: u32,
 }
@@ -47,14 +49,17 @@ impl<'a> ScriptCompileInput<'a> {
             source_ref,
             source_digest: source_digest.into(),
             source_path: source_path.into(),
-            args: None,
+            capability_summary: None,
             created_at,
             target_schema_version: WORKFLOW_SCRIPT_COMPILER_SCHEMA_VERSION,
         }
     }
 
-    pub fn with_args(mut self, args: Value) -> Self {
-        self.args = Some(args);
+    pub fn with_capability_summary(
+        mut self,
+        capability_summary: WorkflowScriptCapabilitySummary,
+    ) -> Self {
+        self.capability_summary = Some(capability_summary);
         self
     }
 }
@@ -111,7 +116,8 @@ impl ScriptCompileDiagnostic {
 pub struct ScriptCompileOutput {
     pub plan_snapshot: OrchestrationPlanSnapshot,
     pub diagnostics: Vec<ScriptCompileDiagnostic>,
-    pub capability_summary: Value,
+    pub capability_summary: WorkflowScriptCapabilitySummary,
+    pub root_input_bindings: Vec<RootInputBinding>,
 }
 
 impl ScriptCompileOutput {
@@ -140,12 +146,17 @@ impl crate::workflow::script::WorkflowScriptCompiler for ScriptCompiler {
             source_ref: input.source_ref.clone(),
             source_digest: source_text_digest(input.source_text),
             source_path: "source_text".to_string(),
-            args: input.args.cloned(),
+            capability_summary: Some(input.capability_summary.clone()),
             created_at: input.provenance.created_at,
             target_schema_version: WORKFLOW_SCRIPT_COMPILER_SCHEMA_VERSION,
         });
+        let has_blocking_diagnostics = output.has_blocking_diagnostics();
         crate::workflow::script::WorkflowScriptCompileOutput {
-            plan_snapshot: Some(output.plan_snapshot),
+            plan_snapshot: if has_blocking_diagnostics {
+                None
+            } else {
+                Some(output.plan_snapshot)
+            },
             diagnostics: output
                 .diagnostics
                 .into_iter()
@@ -194,90 +205,6 @@ enum SequenceRequirement {
     PipelineStage,
 }
 
-#[derive(Debug, Default)]
-struct CapabilitySummaryBuilder {
-    node_counts: BTreeMap<String, u32>,
-    agent_procedures: BTreeSet<String>,
-    api_requests: Vec<Value>,
-    bash_execs: Vec<Value>,
-    local_effect_capabilities: BTreeSet<String>,
-    human_gates: Vec<Value>,
-}
-
-impl CapabilitySummaryBuilder {
-    fn increment_node_kind(&mut self, key: &str) {
-        *self.node_counts.entry(key.to_string()).or_default() += 1;
-    }
-
-    fn record_agent(&mut self, procedure_key: &str) {
-        self.increment_node_kind("agent_call");
-        if !procedure_key.trim().is_empty() {
-            self.agent_procedures.insert(procedure_key.to_string());
-        }
-    }
-
-    fn record_api_request(&mut self, method: &str, url: &str) {
-        self.increment_node_kind("function");
-        self.api_requests.push(json!({
-            "method": method,
-            "url": url,
-        }));
-    }
-
-    fn record_bash_exec(
-        &mut self,
-        command: &str,
-        args: &[String],
-        working_directory: Option<&str>,
-    ) {
-        self.increment_node_kind("local_effect");
-        self.bash_execs.push(json!({
-            "command": command,
-            "args": args,
-            "working_directory": working_directory,
-        }));
-    }
-
-    fn record_capability_effect(&mut self, capability_key: &str) {
-        self.increment_node_kind("local_effect");
-        if !capability_key.trim().is_empty() {
-            self.local_effect_capabilities
-                .insert(capability_key.to_string());
-        }
-    }
-
-    fn record_human_gate(&mut self, name: &str, form_schema: &str, decision_port: &str) {
-        self.increment_node_kind("human_gate");
-        self.human_gates.push(json!({
-            "name": name,
-            "form_schema": form_schema,
-            "decision_port": decision_port,
-        }));
-    }
-
-    fn record_phase(&mut self) {
-        self.increment_node_kind("phase");
-    }
-
-    fn to_value(&self) -> Value {
-        let mut api_requests = self.api_requests.clone();
-        api_requests.sort_by_key(stable_json_sort_key);
-        let mut bash_execs = self.bash_execs.clone();
-        bash_execs.sort_by_key(stable_json_sort_key);
-        let mut human_gates = self.human_gates.clone();
-        human_gates.sort_by_key(stable_json_sort_key);
-
-        json!({
-            "node_counts": self.node_counts,
-            "agent_procedures": self.agent_procedures.iter().cloned().collect::<Vec<_>>(),
-            "api_requests": api_requests,
-            "bash_execs": bash_execs,
-            "local_effect_capabilities": self.local_effect_capabilities.iter().cloned().collect::<Vec<_>>(),
-            "human_gates": human_gates,
-        })
-    }
-}
-
 struct Compiler<'a> {
     input: ScriptCompileInput<'a>,
     diagnostics: Vec<ScriptCompileDiagnostic>,
@@ -293,12 +220,16 @@ struct Compiler<'a> {
     transition_index: usize,
     state_exchange_index: usize,
     log_markers: Vec<Value>,
-    root_input_bindings: Vec<Value>,
-    capability_summary: CapabilitySummaryBuilder,
+    root_input_bindings: Vec<RootInputBinding>,
+    capability_summary: WorkflowScriptCapabilitySummary,
 }
 
 impl<'a> Compiler<'a> {
     fn new(input: ScriptCompileInput<'a>) -> Self {
+        let capability_summary = input
+            .capability_summary
+            .clone()
+            .unwrap_or_else(|| extract_workflow_script_capability_summary(input.document));
         Self {
             input,
             diagnostics: Vec::new(),
@@ -315,7 +246,7 @@ impl<'a> Compiler<'a> {
             state_exchange_index: 0,
             log_markers: Vec::new(),
             root_input_bindings: Vec::new(),
-            capability_summary: CapabilitySummaryBuilder::default(),
+            capability_summary,
         }
     }
 
@@ -373,9 +304,9 @@ impl<'a> Compiler<'a> {
         self.state_exchange_rules
             .sort_by(|left, right| left.rule_id.cmp(&right.rule_id));
         self.log_markers.sort_by_key(stable_json_sort_key);
-        self.root_input_bindings.sort_by_key(stable_json_sort_key);
+        self.root_input_bindings.sort();
 
-        let capability_summary = self.capability_summary.to_value();
+        let capability_summary = self.capability_summary.clone();
         let metadata = Some(self.plan_metadata(&capability_summary));
         let plan_digest = plan_digest(PlanDigestContent {
             compiler_schema_version: self.input.target_schema_version,
@@ -404,6 +335,7 @@ impl<'a> Compiler<'a> {
             },
             diagnostics: std::mem::take(&mut self.diagnostics),
             capability_summary,
+            root_input_bindings: std::mem::take(&mut self.root_input_bindings),
         }
     }
 
@@ -530,7 +462,6 @@ impl<'a> Compiler<'a> {
             return StatementFragment::default();
         }
 
-        self.capability_summary.record_phase();
         let mut phase_path = parent_phase_path.to_vec();
         phase_path.push(phase.name.clone());
         self.nodes.push(PlanNode {
@@ -618,7 +549,6 @@ impl<'a> Compiler<'a> {
             .unwrap_or_default();
         let inline_prompt = agent.prompt.as_deref().map(str::trim).unwrap_or_default();
         let executor = if !procedure_key.is_empty() {
-            self.capability_summary.record_agent(procedure_key);
             Some(ExecutorSpec::AgentProcedure {
                 procedure: AgentProcedureExecutionSpec::by_key(procedure_key.to_string()),
                 agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
@@ -707,7 +637,6 @@ impl<'a> Compiler<'a> {
                         format!("{source_path}.request.headers"),
                     ));
                 }
-                self.capability_summary.record_api_request(method, url);
                 Some(ExecutorSpec::Function {
                     spec: FunctionActivityExecutorSpec::ApiRequest(ApiRequestExecutorSpec {
                         method: method.clone(),
@@ -761,11 +690,6 @@ impl<'a> Compiler<'a> {
                         format!("{source_path}.effect.command"),
                     ));
                 }
-                self.capability_summary.record_bash_exec(
-                    command,
-                    args,
-                    working_directory.as_deref(),
-                );
                 Some(ExecutorSpec::Function {
                     spec: FunctionActivityExecutorSpec::BashExec(BashExecExecutorSpec {
                         command: command.clone(),
@@ -774,10 +698,7 @@ impl<'a> Compiler<'a> {
                     }),
                 })
             }
-            WorkflowScriptEffect::CapabilityEffect {
-                capability_key,
-                input,
-            } => {
+            WorkflowScriptEffect::CapabilityEffect { capability_key, .. } => {
                 if capability_key.trim().is_empty() {
                     self.diagnostics.push(ScriptCompileDiagnostic::error(
                         "local_effect_capability_missing",
@@ -785,12 +706,14 @@ impl<'a> Compiler<'a> {
                         format!("{source_path}.effect.capability_key"),
                     ));
                 }
-                self.capability_summary
-                    .record_capability_effect(capability_key);
-                Some(ExecutorSpec::LocalEffect {
-                    capability_key: capability_key.clone(),
-                    input: input.clone(),
-                })
+                self.diagnostics.push(ScriptCompileDiagnostic::error(
+                    "local_effect_capability_not_supported",
+                    format!(
+                        "capability_effect `{capability_key}` is not supported by the workflow script compiler"
+                    ),
+                    format!("{source_path}.effect.capability_key"),
+                ));
+                None
             }
         };
 
@@ -847,21 +770,6 @@ impl<'a> Compiler<'a> {
         } else {
             vec![gate.decision_port.clone()]
         };
-        if !gate.decision_port.trim().is_empty()
-            && !outputs.iter().any(|port| port == &gate.decision_port)
-        {
-            self.diagnostics.push(ScriptCompileDiagnostic::error(
-                "human_gate_decision_port_mismatch",
-                "human_gate decision_port must be declared as an output port",
-                format!("{source_path}.decision_port"),
-            ));
-        }
-        self.capability_summary.record_human_gate(
-            &gate.name,
-            &gate.form_schema,
-            &gate.decision_port,
-        );
-
         self.push_executable_node(ExecutableNodeInput {
             node_id,
             label: gate.name.clone(),
@@ -1066,11 +974,8 @@ impl<'a> Compiler<'a> {
                 }
 
                 if entry_node_ids.contains(&node_id) && arg_keys.contains(&input_port) {
-                    self.root_input_bindings.push(json!({
-                        "node_id": node_id,
-                        "port": input_port,
-                        "source": "args",
-                    }));
+                    self.root_input_bindings
+                        .push(RootInputBinding::new(node_id.clone(), input_port.clone()));
                     continue;
                 }
 
@@ -1132,9 +1037,6 @@ impl<'a> Compiler<'a> {
 
     fn root_arg_keys(&self) -> BTreeSet<String> {
         let mut keys = BTreeSet::new();
-        if let Some(Value::Object(args)) = &self.input.args {
-            keys.extend(args.keys().cloned());
-        }
         if let Some(Value::Object(schema)) = &self.input.document.args_schema {
             if let Some(Value::Object(properties)) = schema.get("properties") {
                 keys.extend(properties.keys().cloned());
@@ -1221,7 +1123,9 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn plan_metadata(&self, capability_summary: &Value) -> Value {
+    fn plan_metadata(&self, capability_summary: &WorkflowScriptCapabilitySummary) -> Value {
+        let capability_summary = serde_json::to_value(capability_summary)
+            .expect("workflow script capability summary should serialize");
         json!({
             "compiler": {
                 "name": "workflow_script_compiler",
@@ -1235,10 +1139,8 @@ impl<'a> Compiler<'a> {
             },
             "script": {
                 "args_schema": self.input.document.args_schema,
-                "args": self.input.args,
                 "raw_limits": self.input.document.limits,
                 "log_markers": self.log_markers,
-                "root_input_bindings": self.root_input_bindings,
                 "capability_summary": capability_summary,
             },
         })
@@ -1486,16 +1388,13 @@ mod tests {
     }
 
     fn compile(document: &WorkflowScriptBuilderDocument) -> ScriptCompileOutput {
-        ScriptCompiler::compile(
-            ScriptCompileInput::new(
-                document,
-                source_ref(),
-                "sha256:script-source",
-                "scripts/fixture.rhai",
-                fixed_time(),
-            )
-            .with_args(json!({"topic": "orchestration"})),
-        )
+        ScriptCompiler::compile(ScriptCompileInput::new(
+            document,
+            source_ref(),
+            "sha256:script-source",
+            "scripts/fixture.rhai",
+            fixed_time(),
+        ))
     }
 
     fn agent(name: &str, outputs: &[&str]) -> WorkflowScriptStatement {
@@ -1592,10 +1491,26 @@ mod tests {
         assert_eq!(node.input_ports[0].key, "topic");
         assert_eq!(node.output_ports[0].key, "result");
         assert_eq!(
-            output.plan_snapshot.metadata.as_ref().expect("metadata")["script"]["root_input_bindings"]
-                [0]["port"],
-            "topic"
+            output.root_input_bindings,
+            vec![RootInputBinding::new("research", "topic")]
         );
+        let script_metadata = output.plan_snapshot.metadata.as_ref().expect("metadata")["script"]
+            .as_object()
+            .expect("script metadata");
+        assert!(!script_metadata.contains_key("args"));
+        assert!(!script_metadata.contains_key("root_input_bindings"));
+    }
+
+    #[test]
+    fn script_compiler_requires_root_args_to_be_declared_in_args_schema() {
+        let mut document = doc(vec![agent_with_inputs("research", &["topic"], &["result"])]);
+        document.args_schema = None;
+
+        let output = compile(&document);
+
+        assert!(output.has_blocking_diagnostics());
+        assert!(diagnostic_codes(&output).contains(&"unresolvable_input"));
+        assert!(output.root_input_bindings.is_empty());
     }
 
     #[test]
@@ -1773,7 +1688,7 @@ mod tests {
     }
 
     #[test]
-    fn script_compiler_maps_local_effect_bash_and_capability() {
+    fn script_compiler_maps_local_effect_bash_and_blocks_capability_effect() {
         let document = doc(vec![WorkflowScriptStatement::Pipeline(
             WorkflowScriptPipeline {
                 stages: vec![
@@ -1803,10 +1718,11 @@ mod tests {
         let output = compile(&document);
 
         assert!(
-            !output.has_blocking_diagnostics(),
+            output.has_blocking_diagnostics(),
             "{:?}",
             output.diagnostics
         );
+        assert!(diagnostic_codes(&output).contains(&"local_effect_capability_not_supported"));
         let bash = output
             .plan_snapshot
             .nodes
@@ -1826,15 +1742,14 @@ mod tests {
             .iter()
             .find(|node| node.node_id == "capability")
             .expect("capability node");
-        assert!(matches!(
-            capability.executor,
-            Some(ExecutorSpec::LocalEffect {
-                ref capability_key,
-                ..
-            }) if capability_key == "workspace.write"
-        ));
+        assert!(capability.executor.is_none());
         assert_eq!(
-            output.capability_summary["local_effect_capabilities"][0],
+            output.capability_summary.local_effect_capabilities,
+            vec!["workspace.write"]
+        );
+        assert_eq!(
+            output.plan_snapshot.metadata.as_ref().expect("metadata")["script"]["capability_summary"]
+                ["local_effect_capabilities"][0],
             "workspace.write"
         );
     }
@@ -2001,10 +1916,14 @@ mod tests {
     fn activation_materializes_root_args_into_entry_node_inputs() {
         let document = doc(vec![agent_with_inputs("research", &["topic"], &["result"])]);
         let output = compile(&document);
-        let orchestration = super::super::runtime::activate_orchestration(
+        let orchestration = super::super::runtime::activate_orchestration_with_input(
             "dynamic_script",
             output.plan_snapshot.source_ref.clone(),
             output.plan_snapshot,
+            super::super::runtime::OrchestrationActivationInput {
+                root_args: Some(json!({"topic": "orchestration"})),
+                root_input_bindings: output.root_input_bindings,
+            },
         );
 
         let node = orchestration

@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useSettingsStore } from "../../../stores/settingsStore";
 import { useCoordinatorStore } from "../../../stores/coordinatorStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
-import { useProjectStore } from "../../../stores/projectStore";
 import type { SettingUpdate, SettingsScopeRequest } from "../../../api/settings";
 import { getStoredToken } from "../../../api/client";
 import { API_ORIGIN } from "../../../api/origin";
@@ -13,14 +12,14 @@ import { DebugPrefsSection } from "./DebugPrefsSection";
 import { UserByokSection } from "./UserByokSection";
 import { SectionCard } from "./primitives";
 import { LlmProvidersSection } from "./LlmProvidersSection";
-import { AgentSection, BackendSection, ExecutorSection } from "./SettingsSystemSections";
+import { BackendSection, ExecutorSection, PiAgentPreferencesSection } from "./SettingsSystemSections";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 type SettingsScopeKind = SettingsScopeRequest["scope"];
-type SettingsPanel = SettingsScopeKind | "local-runtime";
+type SettingsPanel = Exclude<SettingsScopeKind, "project"> | "local-runtime";
 
 interface SettingsNavigationState {
   return_to?: string;
@@ -76,8 +75,8 @@ function ScopeTabs({
   onChange: (scope: SettingsPanel) => void;
 }) {
   const panels: SettingsPanel[] = includeLocalRuntime
-    ? ["system", "user", "project", "local-runtime"]
-    : ["system", "user", "project"];
+    ? ["system", "user", "local-runtime"]
+    : ["system", "user"];
   return (
     <div className="flex flex-wrap gap-2">
       {panels.map((scope) => (
@@ -114,7 +113,6 @@ export function SettingsPage() {
     removeBackend,
   } = useCoordinatorStore();
   const { currentUser } = useCurrentUserStore();
-  const { currentProjectId, projects } = useProjectStore();
   const [activePanel, setActivePanel] = useState<SettingsPanel>("system");
   const [toast, setToast] = useState<string | null>(null);
   const [llmDiscoveryRefreshKey, setLlmDiscoveryRefreshKey] = useState(0);
@@ -122,7 +120,6 @@ export function SettingsPage() {
   const returnTarget = routeState?.return_to?.trim() || "/dashboard/agent";
   const includeLocalRuntime = !!getDesktopLocalRuntimeClient();
 
-  const currentProject = projects.find((project) => project.id === currentProjectId) ?? null;
   const canManageSystemScope = currentUser?.auth_mode === "personal" || currentUser?.is_admin === true;
   const scopeRequest = useMemo<SettingsScopeRequest | null>(() => {
     if (activePanel === "local-runtime") {
@@ -134,11 +131,8 @@ export function SettingsPage() {
     if (activePanel === "user") {
       return { scope: "user" };
     }
-    if (!currentProjectId) {
-      return null;
-    }
-    return { scope: "project", project_id: currentProjectId };
-  }, [activePanel, canManageSystemScope, currentProjectId]);
+    return null;
+  }, [activePanel, canManageSystemScope]);
 
   useEffect(() => {
     void fetchBackends();
@@ -207,7 +201,7 @@ export function SettingsPage() {
           <div>
             <h1 className="text-xl font-semibold text-foreground">设置</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              管理系统级配置、用户偏好和项目设置。
+              管理系统级配置和用户偏好。
             </p>
           </div>
         </div>
@@ -224,12 +218,6 @@ export function SettingsPage() {
             )}
             {activePanel === "user" && (
               <p>用户设置绑定当前登录用户，包含个人偏好和本地调试选项，不会影响其他用户。</p>
-            )}
-            {activePanel === "project" && (
-              <p>
-                project scope 绑定当前选中 Project。
-                {currentProject ? ` 当前项目：${currentProject.name}` : " 请先在侧边栏选择一个 Project。"}
-              </p>
             )}
           </div>
         </SectionCard>
@@ -259,38 +247,16 @@ export function SettingsPage() {
               discoveryRefreshKey={llmDiscoveryRefreshKey}
               onRefreshModels={() => setLlmDiscoveryRefreshKey((k) => k + 1)}
             />
-            <AgentSection settings={settings} saving={saving} onSave={handleSave} />
             <ExecutorSection settings={settings} saving={saving} onSave={handleSave} />
           </>
         )}
 
         {activePanel === "user" && scopeRequest && (
           <>
+            <PiAgentPreferencesSection settings={settings} saving={saving} onSave={handleSave} />
             <UserByokSection onRefreshModels={() => setLlmDiscoveryRefreshKey((k) => k + 1)} />
             <DebugPrefsSection />
           </>
-        )}
-
-        {activePanel === "project" && !scopeRequest && (
-          <div className="rounded-[8px] border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-            还没有选中的 Project，暂时无法进入 project scope。
-          </div>
-        )}
-
-        {activePanel === "project" && scopeRequest && currentProject && (
-          <SectionCard title={`项目设置 · ${currentProject.name}`}>
-            <p className="text-xs text-muted-foreground">
-              项目级配置请前往{" "}
-              <button
-                type="button"
-                className="text-primary underline underline-offset-2 hover:text-primary/80"
-                onClick={() => navigate(`/projects/${currentProject.id}/settings`)}
-              >
-                项目设置页
-              </button>
-              {" "}管理。
-            </p>
-          </SectionCard>
         )}
 
       </div>

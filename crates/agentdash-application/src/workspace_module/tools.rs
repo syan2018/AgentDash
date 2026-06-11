@@ -2055,10 +2055,8 @@ mod tests {
 
     use crate::runtime_gateway::{RuntimeActionKind, RuntimeInvocationOutput, RuntimeProvider};
     use agentdash_application_ports::extension_runtime::{
+        ExtensionChannelInvokeRequest, ExtensionChannelInvokeResponse,
         ExtensionRuntimeActionTransportError, ExtensionRuntimeChannelTransport,
-    };
-    use agentdash_relay::{
-        CommandExtensionChannelInvokePayload, ResponseExtensionChannelInvokePayload,
     };
 
     struct EchoActionProvider {
@@ -2091,9 +2089,8 @@ mod tests {
         async fn invoke_extension_channel(
             &self,
             _backend_id: &str,
-            _payload: CommandExtensionChannelInvokePayload,
-        ) -> Result<ResponseExtensionChannelInvokePayload, ExtensionRuntimeActionTransportError>
-        {
+            _payload: ExtensionChannelInvokeRequest,
+        ) -> Result<ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError> {
             Err(ExtensionRuntimeActionTransportError::Failed(
                 "noop channel transport".to_string(),
             ))

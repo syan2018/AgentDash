@@ -36,6 +36,24 @@ export interface KindMeta {
   summaryVerb: string;
 }
 
+export type DynamicToolFamily =
+  | "read"
+  | "write"
+  | "edit"
+  | "grep"
+  | "glob"
+  | "web_search"
+  | "fetch"
+  | "todo"
+  | "question"
+  | "generic";
+
+export interface DynamicToolMeta {
+  kind: KindMeta;
+  family: DynamicToolFamily;
+  fallbackLabel: string;
+}
+
 export const KIND_REGISTRY: Record<ThreadItemKind, KindMeta> = {
   execute: { kind: "execute", badge: "RUN",  label: "执行",   summaryUnit: "条", summaryVerb: "运行" },
   edit:    { kind: "edit",    badge: "EDIT", label: "编辑",   summaryUnit: "个", summaryVerb: "编辑" },
@@ -76,18 +94,57 @@ export function resolveKind(item: AgentDashThreadItem): KindMeta {
 }
 
 export function resolveDynamicKind(tool: string): KindMeta {
-  switch (tool.toLowerCase()) {
-    case "read":      return KIND_REGISTRY.read;
+  return resolveDynamicToolMeta(tool).kind;
+}
+
+export function resolveDynamicToolMeta(tool: string): DynamicToolMeta {
+  const normalized = tool.toLowerCase();
+  switch (normalized) {
+    case "read":
+      return { kind: KIND_REGISTRY.read, family: "read", fallbackLabel: "Read" };
     case "write":
+      return { kind: KIND_REGISTRY.edit, family: "write", fallbackLabel: "Write" };
     case "edit":
+      return { kind: KIND_REGISTRY.edit, family: "edit", fallbackLabel: "Edit" };
     case "applypatch":
-    case "str_replace_editor": return KIND_REGISTRY.edit;
+      return { kind: KIND_REGISTRY.edit, family: "edit", fallbackLabel: "Edit" };
+    case "str_replace_editor":
+      return { kind: KIND_REGISTRY.edit, family: "edit", fallbackLabel: "Edit" };
     case "grep":
+      return { kind: KIND_REGISTRY.search, family: "grep", fallbackLabel: "Grep" };
     case "glob":
+      return { kind: KIND_REGISTRY.search, family: "glob", fallbackLabel: "Glob" };
     case "websearch":
-    case "search":    return KIND_REGISTRY.search;
+    case "search":
+      return { kind: KIND_REGISTRY.search, family: "web_search", fallbackLabel: "WebSearch" };
     case "webfetch":
-    case "fetch":     return KIND_REGISTRY.fetch;
-    default:          return KIND_REGISTRY.tool;
+    case "fetch":
+      return { kind: KIND_REGISTRY.fetch, family: "fetch", fallbackLabel: "WebFetch" };
+    case "todowrite":
+      return { kind: KIND_REGISTRY.tool, family: "todo", fallbackLabel: "TodoWrite" };
+    case "askquestion":
+    case "askuserquestion":
+      return { kind: KIND_REGISTRY.tool, family: "question", fallbackLabel: "AskQuestion" };
+    default:
+      return { kind: KIND_REGISTRY.tool, family: "generic", fallbackLabel: tool };
+  }
+}
+
+export function isToolBurstEligible(item: AgentDashThreadItem): boolean {
+  switch (item.type) {
+    case "commandExecution":
+    case "fileChange":
+    case "mcpToolCall":
+    case "dynamicToolCall":
+    case "collabAgentToolCall":
+    case "webSearch":
+    case "imageView":
+    case "imageGeneration":
+    case "fsRead":
+    case "fsGrep":
+    case "fsGlob":
+      return true;
+    default:
+      return false;
   }
 }

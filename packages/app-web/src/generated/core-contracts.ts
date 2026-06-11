@@ -15,7 +15,7 @@ export type BackendExecutorCapabilityResponse = { id: string, name: string, vari
 
 export type BackendMcpServerCapabilityResponse = { name: string, transport: string, };
 
-export type BackendResponse = { id: string, name: string, endpoint: string, enabled: boolean, backend_type: BackendType, owner_user_id: string | null, profile_id: string | null, device_id: string | null, machine_id: string | null, machine_label: string | null, legacy_machine_ids: Array<string>, visibility: BackendVisibility, share_scope_kind: BackendShareScopeKind, share_scope_id: string | null, capability_slot: string, device: JsonValue, last_claimed_at: string | null, };
+export type BackendResponse = { id: string, name: string, endpoint: string, enabled: boolean, backend_type: BackendType, owner_user_id: string | null, profile_id: string | null, device_id: string | null, machine_id: string | null, machine_label: string | null, visibility: BackendVisibility, share_scope_kind: BackendShareScopeKind, share_scope_id: string | null, capability_slot: string, device: JsonValue, last_claimed_at: string | null, };
 
 export type BackendRuntimeHealthResponse = { backend_id: string, profile_id: string | null, name: string, status: RuntimeHealthStatus, online: boolean, version: string | null, capabilities: JsonValue, workspace_roots: Array<string>, device: JsonValue, connected_at: string | null, last_seen_at: string | null, disconnected_at: string | null, disconnect_reason: string | null, created_at: string, updated_at: string, };
 
@@ -25,7 +25,7 @@ export type BackendType = "local" | "remote";
 
 export type BackendVisibility = "private" | "shared" | "system";
 
-export type BackendWithStatusResponse = { online: boolean, runtime_health: BackendRuntimeHealthResponse | null, workspace_roots: Array<string> | null, capabilities: BackendCapabilitiesResponse | null, id: string, name: string, endpoint: string, enabled: boolean, backend_type: BackendType, owner_user_id: string | null, profile_id: string | null, device_id: string | null, machine_id: string | null, machine_label: string | null, legacy_machine_ids: Array<string>, visibility: BackendVisibility, share_scope_kind: BackendShareScopeKind, share_scope_id: string | null, capability_slot: string, device: JsonValue, last_claimed_at: string | null, };
+export type BackendWithStatusResponse = { online: boolean, runtime_health: BackendRuntimeHealthResponse | null, workspace_roots: Array<string> | null, capabilities: BackendCapabilitiesResponse | null, id: string, name: string, endpoint: string, enabled: boolean, backend_type: BackendType, owner_user_id: string | null, profile_id: string | null, device_id: string | null, machine_id: string | null, machine_label: string | null, visibility: BackendVisibility, share_scope_kind: BackendShareScopeKind, share_scope_id: string | null, capability_slot: string, device: JsonValue, last_claimed_at: string | null, };
 
 export type ContextContainerDefinition = { mount_id: string, display_name: string, provider: ContextContainerProvider, capabilities: Array<VfsCapabilityDto>, default_write: boolean, };
 

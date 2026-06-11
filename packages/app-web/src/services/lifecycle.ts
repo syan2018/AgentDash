@@ -29,7 +29,7 @@ function sessionCommandPath(runtimeSessionId: string, route: string): string {
 }
 
 export async function fetchLifecycleRun(runId: string): Promise<LifecycleRunView> {
-  return api.get<LifecycleRunView>(`/lifecycle-runs/${encodeURIComponent(runId)}/view`);
+  return api.get<LifecycleRunView>(`/lifecycle-runs/${encodeURIComponent(runId)}`);
 }
 
 export async function fetchSubjectExecution(

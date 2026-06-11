@@ -52,6 +52,19 @@ impl CommandHandler {
             cfg
         });
 
+        let mcp_servers = match parse_relay_mcp_servers(&payload.mcp_servers) {
+            Ok(servers) => servers,
+            Err(error) => {
+                return RelayMessage::ResponsePrompt {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::invalid_message(format!(
+                        "mcp_servers 配置非法: {error}"
+                    ))),
+                };
+            }
+        };
+
         let workspace_root = match self.tool_executor.validate_workspace_root(mount_root_ref) {
             Ok(path) => path,
             Err(error) => {
@@ -131,7 +144,7 @@ impl CommandHandler {
                 executor_config,
                 backend_selection: None,
             },
-            parse_relay_mcp_servers(&payload.mcp_servers),
+            mcp_servers,
             workspace_root,
         )
         .with_follow_up(follow_up.clone());

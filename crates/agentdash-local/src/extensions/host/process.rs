@@ -8,8 +8,10 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
+use crate::tool_executor::ToolExecutor;
+
+use super::host_api::resolve_host_api;
 use super::manager::LocalTsExtensionHostConfig;
-use super::permissions::resolve_host_api;
 use super::protocol::{RunnerHostApiResponse, RunnerMessage, RunnerRequest};
 use super::runner::{EXTENSION_HOST_RUNNER_ENTRY, EXTENSION_HOST_RUNNER_FILES};
 use super::{LocalExtensionHostError, LocalExtensionHostProfile};
@@ -28,7 +30,7 @@ pub(super) struct ActiveExtension {
     pub manifest: ExtensionTemplatePayload,
     pub profile: LocalExtensionHostProfile,
     pub default_workspace_root: Option<PathBuf>,
-    pub workspace_roots: Vec<PathBuf>,
+    pub tool_executor: ToolExecutor,
 }
 
 impl ExtensionHostProcess {

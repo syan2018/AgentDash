@@ -392,7 +392,6 @@ mod tests {
             device_id: None,
             machine_id: None,
             machine_label: None,
-            legacy_machine_ids: Vec::new(),
             visibility: BackendVisibility::Private,
             share_scope_kind: BackendShareScopeKind::User,
             share_scope_id: owner_user_id.map(str::to_string),

@@ -15,7 +15,7 @@ use agentdash_domain::backend::{BackendExecutionLeaseRepository, BackendExecutio
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::{
     AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionStream, PromptPayload,
+    ExecutionStream, McpTransportConfig, PromptPayload, SessionMcpServer,
 };
 
 use agentdash_application_ports::backend_transport::{
@@ -153,7 +153,7 @@ impl AgentConnector for RelayAgentConnector {
                 .session
                 .mcp_servers
                 .iter()
-                .filter_map(|server| serde_json::to_value(server).ok())
+                .map(session_mcp_server_to_relay_prompt_value)
                 .collect(),
         };
 
@@ -384,6 +384,34 @@ fn workspace_identity_payload_from_mount(
     mount: &agentdash_domain::common::Mount,
 ) -> Option<serde_json::Value> {
     mount.metadata.get("workspace_identity_payload").cloned()
+}
+
+/// 把内部 `SessionMcpServer` 投影为 relay prompt 当前消费的扁平 JSON 形态。
+///
+/// relay protocol 仍保留 `Vec<Value>`，这里仅对齐本机 parser 已接受的
+/// `{ name, type, url|command, headers|args|env }` wire shape。
+pub fn session_mcp_server_to_relay_prompt_value(server: &SessionMcpServer) -> serde_json::Value {
+    match &server.transport {
+        McpTransportConfig::Http { url, headers } => serde_json::json!({
+            "name": &server.name,
+            "type": "http",
+            "url": url,
+            "headers": headers,
+        }),
+        McpTransportConfig::Sse { url, headers } => serde_json::json!({
+            "name": &server.name,
+            "type": "sse",
+            "url": url,
+            "headers": headers,
+        }),
+        McpTransportConfig::Stdio { command, args, env } => serde_json::json!({
+            "name": &server.name,
+            "type": "stdio",
+            "command": command,
+            "args": args,
+            "env": env,
+        }),
+    }
 }
 
 /// 把 canonical 用户输入投影为 relay 远程后端可识别的 ACP ContentBlock JSON。
@@ -751,8 +779,11 @@ mod tests {
             name: "third_party_mcp".to_string(),
             transport: agentdash_spi::McpTransportConfig::Stdio {
                 command: "cmd".to_string(),
-                args: Vec::new(),
-                env: Vec::new(),
+                args: vec!["/c".to_string(), "server".to_string()],
+                env: vec![agentdash_spi::McpEnvVar {
+                    name: "TOKEN".to_string(),
+                    value: "secret".to_string(),
+                }],
             },
             uses_relay: false,
         };
@@ -801,6 +832,27 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("third_party_mcp")
         );
+        assert_eq!(
+            payload.mcp_servers[0]
+                .get("type")
+                .and_then(serde_json::Value::as_str),
+            Some("stdio")
+        );
+        assert_eq!(
+            payload.mcp_servers[0]
+                .get("command")
+                .and_then(serde_json::Value::as_str),
+            Some("cmd")
+        );
+        assert_eq!(
+            payload.mcp_servers[0].get("args"),
+            Some(&serde_json::json!(["/c", "server"]))
+        );
+        assert_eq!(
+            payload.mcp_servers[0].get("env"),
+            Some(&serde_json::json!([{ "name": "TOKEN", "value": "secret" }]))
+        );
+        assert!(payload.mcp_servers[0].get("transport").is_none());
     }
 
     #[tokio::test]

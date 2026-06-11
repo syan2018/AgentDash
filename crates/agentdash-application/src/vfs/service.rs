@@ -1,57 +1,17 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::runtime::Mount;
+use crate::vfs::search::{TextSearchParams, format_search_matches, grep_inline};
+use crate::vfs::types::runtime_text_file_attributes;
 use crate::vfs::*;
 use agentdash_spi::{MountCapability, Vfs};
 use async_trait::async_trait;
 
 use super::inline_persistence::InlineContentOverlay;
 
-/// 与 CC GrepTool 一致的 VCS 黑名单（design.md A3：硬编码不可配置）。
-const VCS_EXCLUDE_DIRS: &[&str] = &[".git", ".svn", ".hg", ".bzr", ".jj", ".sl"];
-
-/// CC GrepTool 的 `--max-columns 500` 等价：超长 line trim 到 500 字符 + 后缀。
-const MAX_LINE_LEN: usize = 500;
-const TRUNCATE_SUFFIX: &str = "...(truncated)";
-
-/// 路径段（任一 `/` 分隔的中间段）命中 VCS 黑名单 ⇒ 返回 true。
-pub(crate) fn is_vcs_path(path: &str) -> bool {
-    path.split('/').any(|seg| VCS_EXCLUDE_DIRS.contains(&seg))
-}
-
-/// 超长 line（按 char 数）trim 到 `MAX_LINE_LEN` + 后缀；否则原样返回。
-fn trim_long_line(line: &str) -> String {
-    if line.chars().count() <= MAX_LINE_LEN {
-        line.to_string()
-    } else {
-        let head: String = line.chars().take(MAX_LINE_LEN).collect();
-        format!("{head}{TRUNCATE_SUFFIX}")
-    }
-}
-
-pub struct TextSearchParams<'a> {
-    pub mount_id: &'a str,
-    pub path: &'a str,
-    pub query: &'a str,
-    pub is_regex: bool,
-    pub include_glob: Option<&'a str>,
-    pub max_results: usize,
-    pub context_lines: usize,
-    pub overlay: Option<&'a InlineContentOverlay>,
-    /// `false` ⇒ smart-case；`true` ⇒ 严格大小写。默认 `true`（与历史行为一致）。
-    pub case_sensitive: bool,
-    /// `-B` 等价；与 `context_lines` 同时设置时取 `max(before_lines, context_lines)`。
-    pub before_lines: usize,
-    /// `-A` 等价；与 `context_lines` 同时设置时取 `max(after_lines, context_lines)`。
-    pub after_lines: usize,
-    /// `true` ⇒ pattern `.` 跨行 + `^/$` 匹配每行（ripgrep multiline）。
-    pub multiline: bool,
-    /// 输出形态。默认 `Content`。
-    pub output_mode: agentdash_spi::platform::mount::SearchOutputMode,
-}
+pub(crate) use crate::vfs::search::is_vcs_path;
 
 // ─── Service ────────────────────────────────────────────────
 
@@ -367,10 +327,8 @@ impl VfsService {
                     target.path
                 )));
             }
-            Err(_) => {
-                // 读取失败在 create 语义下按“不存在或不可读”处理；真正的权限、
-                // backend 离线等错误仍会在 write_text 阶段返回。
-            }
+            Err(MountError::NotFound(_)) => {}
+            Err(error) => return Err(error),
         }
 
         self.write_text(vfs, target, content, overlay, identity)
@@ -543,20 +501,9 @@ impl VfsService {
             && let Some(override_state) = ov.read_override(&dispatch.mount.id, &path).await
         {
             return match override_state {
-                Some(content) => {
-                    let mut attrs = serde_json::Map::new();
-                    attrs.insert(
-                        "content_kind".to_string(),
-                        serde_json::Value::String("text".to_string()),
-                    );
-                    attrs.insert(
-                        "mime_type".to_string(),
-                        serde_json::Value::String("text/plain; charset=utf-8".to_string()),
-                    );
-                    Ok(RuntimeFileEntry::file(path)
-                        .with_size(content.len() as u64)
-                        .with_attributes(attrs))
-                }
+                Some(content) => Ok(RuntimeFileEntry::file(path)
+                    .with_size(content.len() as u64)
+                    .with_attributes(runtime_text_file_attributes())),
                 None => Err(MountError::NotFound(target.path.clone())),
             };
         }
@@ -700,9 +647,12 @@ impl VfsService {
         // 按 mount 分组
         let mut grouped: BTreeMap<String, Vec<PatchEntry>> = BTreeMap::new();
         for mut entry in entries {
-            let mount_id = normalize_patch_entry_paths(&mut entry, &fallback_mount_id)
+            let targets = normalize_patch_entry_targets(&mut entry, &fallback_mount_id)
                 .map_err(MountError::OperationFailed)?;
-            grouped.entry(mount_id).or_default().push(entry);
+            grouped
+                .entry(targets.primary.mount_id)
+                .or_default()
+                .push(entry);
         }
 
         let mut result = MultiMountPatchResult::default();
@@ -926,6 +876,7 @@ impl VfsService {
         query: &str,
         max_results: usize,
         overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<Vec<String>, MountError> {
         self.search_text_extended(
             vfs,
@@ -938,6 +889,7 @@ impl VfsService {
                 max_results,
                 context_lines: 0,
                 overlay,
+                identity,
                 case_sensitive: true,
                 before_lines: 0,
                 after_lines: 0,
@@ -960,7 +912,7 @@ impl VfsService {
             MountCapability::Search,
             params.path,
             true,
-            None,
+            params.identity,
         )?;
         let base_path = dispatch.path.clone();
 
@@ -968,7 +920,13 @@ impl VfsService {
             // 通用 inline 搜索复用 grep_inline；当 params 的 grep 字段为空时
             // 行为与 substring 等价（is_regex=false → substring，include_glob/
             // context_lines/multiline 都默认零值）。
-            return self.grep_inline(&dispatch.mount, &base_path, params).await;
+            return grep_inline(
+                &self.mount_provider_registry,
+                &dispatch.mount,
+                &base_path,
+                params,
+            )
+            .await;
         }
 
         // search_text_extended 仅承载通用搜索语义（substring）；grep 字段在
@@ -997,19 +955,7 @@ impl VfsService {
         );
         let result = result?;
         let truncated = result.truncated;
-        let hits: Vec<String> = result
-            .matches
-            .iter()
-            .filter(|m| !is_vcs_path(&m.path))
-            .map(|m| {
-                let trimmed = trim_long_line(&m.content);
-                if let Some(line) = m.line {
-                    format!("{}:{}: {}", m.path, line, trimmed)
-                } else {
-                    format!("{}: {}", m.path, trimmed)
-                }
-            })
-            .collect();
+        let hits = format_search_matches(&result.matches);
         Ok((hits, truncated))
     }
 
@@ -1026,12 +972,18 @@ impl VfsService {
             MountCapability::Search,
             params.path,
             true,
-            None,
+            params.identity,
         )?;
         let base_path = dispatch.path.clone();
 
         if is_inline_mount(&dispatch.mount) {
-            return self.grep_inline(&dispatch.mount, &base_path, params).await;
+            return grep_inline(
+                &self.mount_provider_registry,
+                &dispatch.mount,
+                &base_path,
+                params,
+            )
+            .await;
         }
 
         let gq = GrepQuery {
@@ -1066,155 +1018,7 @@ impl VfsService {
         );
         let result = result?;
         let truncated = result.truncated;
-        let hits: Vec<String> = result
-            .matches
-            .iter()
-            .filter(|m| !is_vcs_path(&m.path))
-            .map(|m| {
-                let trimmed = trim_long_line(&m.content);
-                if let Some(line) = m.line {
-                    format!("{}:{}: {}", m.path, line, trimmed)
-                } else {
-                    format!("{}: {}", m.path, trimmed)
-                }
-            })
-            .collect();
-        Ok((hits, truncated))
-    }
-
-    /// inline mount 的 grep 实现（含 overlay）。当 params.grep 字段全为零时
-    /// 行为退化为 substring，可被 search_text_extended 复用。
-    async fn grep_inline(
-        &self,
-        mount: &Mount,
-        base_path: &str,
-        params: &TextSearchParams<'_>,
-    ) -> Result<(Vec<String>, bool), MountError> {
-        // 从 provider（DB）加载全部文件内容，再合并 overlay 后搜索
-        let provider = self
-            .mount_provider_registry
-            .get(&mount.provider)
-            .ok_or_else(|| MountError::ProviderNotRegistered(mount.provider.clone()))?;
-        let ctx = MountOperationContext::default();
-        let full_opts = ListOptions {
-            path: String::new(),
-            pattern: None,
-            recursive: true,
-        };
-        let full_result = provider.list(mount, &full_opts, &ctx).await?;
-        let mut files = BTreeMap::new();
-        for entry in full_result.entries {
-            if !entry.is_dir {
-                if entry_content_kind(&entry).as_deref() == Some("binary") {
-                    continue;
-                }
-                let read_result = provider.read_text(mount, &entry.path, &ctx).await?;
-                files.insert(entry.path, read_result.content);
-            }
-        }
-        if let Some(ov) = params.overlay {
-            ov.apply_to_files(&mount.id, &mut files).await;
-        }
-
-        let re = if params.is_regex {
-            let mut builder = regex::RegexBuilder::new(params.query);
-            builder
-                .case_insensitive(!params.case_sensitive)
-                .multi_line(params.multiline)
-                .dot_matches_new_line(params.multiline);
-            Some(
-                builder
-                    .build()
-                    .map_err(|e| MountError::OperationFailed(format!("无效正则: {e}")))?,
-            )
-        } else {
-            None
-        };
-
-        let glob_matcher = match params.include_glob {
-            Some(pat) => Some(
-                globset::Glob::new(pat)
-                    .map_err(|e| MountError::OperationFailed(format!("无效 glob: {e}")))?
-                    .compile_matcher(),
-            ),
-            None => None,
-        };
-
-        let before = params.before_lines.max(params.context_lines);
-        let after = params.after_lines.max(params.context_lines);
-
-        let mut hits = Vec::new();
-        let mut truncated = false;
-
-        for (file_path, content) in &files {
-            if is_vcs_path(file_path) {
-                continue;
-            }
-            if !file_path.starts_with(base_path.trim_start_matches("./").trim_start_matches('/'))
-                && !base_path.is_empty()
-                && base_path != "."
-            {
-                continue;
-            }
-            if let Some(matcher) = &glob_matcher
-                && !matcher.is_match(file_path.as_str())
-            {
-                continue;
-            }
-            let lines: Vec<&str> = content.lines().collect();
-            for (idx, line) in lines.iter().enumerate() {
-                let matched = match &re {
-                    Some(re) => re.is_match(line),
-                    None => {
-                        if params.case_sensitive {
-                            line.contains(params.query)
-                        } else {
-                            line.to_lowercase().contains(&params.query.to_lowercase())
-                        }
-                    }
-                };
-                if matched {
-                    let mut formatted =
-                        format!("{}:{}: {}", file_path, idx + 1, trim_long_line(line.trim()));
-                    if before > 0 || after > 0 {
-                        let start = idx.saturating_sub(before);
-                        let end = (idx + 1 + after).min(lines.len());
-                        if start < idx {
-                            let before_lines_fmt: Vec<String> = (start..idx)
-                                .map(|i| {
-                                    format!(
-                                        "{}:{}- {}",
-                                        file_path,
-                                        i + 1,
-                                        trim_long_line(lines[i].trim())
-                                    )
-                                })
-                                .collect();
-                            formatted = format!("{}\n{}", before_lines_fmt.join("\n"), formatted);
-                        }
-                        if idx + 1 < end {
-                            let after_lines_fmt: Vec<String> = (idx + 1..end)
-                                .map(|i| {
-                                    format!(
-                                        "{}:{}- {}",
-                                        file_path,
-                                        i + 1,
-                                        trim_long_line(lines[i].trim())
-                                    )
-                                })
-                                .collect();
-                            formatted = format!("{}\n{}", formatted, after_lines_fmt.join("\n"));
-                        }
-                    }
-                    hits.push(formatted);
-                    if hits.len() >= params.max_results {
-                        truncated = true;
-                        return Ok((hits, truncated));
-                    }
-                }
-            }
-        }
-
+        let hits = format_search_matches(&result.matches);
         Ok((hits, truncated))
     }
 }
@@ -1239,59 +1043,6 @@ fn log_vfs_operation_result(
 
 fn is_inline_mount(mount: &Mount) -> bool {
     mount.provider == PROVIDER_INLINE_FS
-}
-
-/// 从 patch 内的路径拆出 mount 前缀，并规范化 mount 相对路径。
-/// `"main://src/lib.rs"` → `("main", "src/lib.rs")`
-/// `"src/lib.rs"` → `(fallback, "src/lib.rs")`
-fn split_mount_prefix(raw: &str, fallback: &str) -> Result<(String, String), String> {
-    if let Some(pos) = raw.find("://") {
-        let mount_id = &raw[..pos];
-        if mount_id.trim().is_empty() {
-            return Err("patch 路径的 mount ID 不能为空".to_string());
-        }
-        let relative = &raw[pos + 3..];
-        let relative = relative.trim_start_matches('/');
-        Ok((
-            mount_id.to_string(),
-            normalize_mount_relative_path(relative, false)?,
-        ))
-    } else {
-        Ok((
-            fallback.to_string(),
-            normalize_mount_relative_path(raw, false)?,
-        ))
-    }
-}
-
-fn normalize_patch_entry_paths(entry: &mut PatchEntry, fallback: &str) -> Result<String, String> {
-    let raw_path = entry.path().to_string_lossy().to_string();
-    let (mount_id, relative) = split_mount_prefix(&raw_path, fallback)?;
-    entry.set_path(PathBuf::from(&relative));
-
-    if let PatchEntry::UpdateFile { move_path, .. } = entry
-        && let Some(target) = move_path.as_mut()
-    {
-        let raw_move_path = target.to_string_lossy().to_string();
-        let (move_mount_id, move_relative) = split_mount_prefix(&raw_move_path, &mount_id)?;
-        if move_mount_id != mount_id {
-            return Err(format!(
-                "patch 不支持跨 mount move: {mount_id} -> {move_mount_id}"
-            ));
-        }
-        *target = PathBuf::from(move_relative);
-    }
-
-    Ok(mount_id)
-}
-
-fn entry_content_kind(entry: &RuntimeFileEntry) -> Option<String> {
-    entry
-        .attributes
-        .as_ref()
-        .and_then(|attrs| attrs.get("content_kind"))
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string)
 }
 
 struct ProviderPatchTarget<'a> {
@@ -1442,6 +1193,231 @@ impl ApplyPatchTarget for InlineOverlayPatchTarget<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_spi::platform::auth::AuthIdentity;
+    use std::path::PathBuf;
+    use tokio::sync::Mutex;
+
+    struct IdentityCaptureProvider {
+        provider_id: String,
+        calls: Mutex<Vec<(String, Option<String>)>>,
+    }
+
+    impl IdentityCaptureProvider {
+        fn new(provider_id: impl Into<String>) -> Self {
+            Self {
+                provider_id: provider_id.into(),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        async fn record(&self, operation: &str, ctx: &MountOperationContext) {
+            self.calls.lock().await.push((
+                operation.to_string(),
+                ctx.identity
+                    .as_ref()
+                    .map(|identity| identity.user_id.clone()),
+            ));
+        }
+
+        async fn captured_calls(&self) -> Vec<(String, Option<String>)> {
+            self.calls.lock().await.clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MountProvider for IdentityCaptureProvider {
+        fn provider_id(&self) -> &str {
+            &self.provider_id
+        }
+
+        fn supported_capabilities(&self) -> Vec<&str> {
+            vec!["read", "list", "search"]
+        }
+
+        async fn read_text(
+            &self,
+            _mount: &Mount,
+            path: &str,
+            ctx: &MountOperationContext,
+        ) -> Result<ReadResult, MountError> {
+            self.record("read_text", ctx).await;
+            Ok(ReadResult::new(path, "inline search identity\nother"))
+        }
+
+        async fn write_text(
+            &self,
+            _mount: &Mount,
+            _path: &str,
+            _content: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<(), MountError> {
+            Err(MountError::NotSupported(
+                "identity test provider".to_string(),
+            ))
+        }
+
+        async fn list(
+            &self,
+            _mount: &Mount,
+            _options: &ListOptions,
+            ctx: &MountOperationContext,
+        ) -> Result<ListResult, MountError> {
+            self.record("list", ctx).await;
+            Ok(ListResult {
+                entries: vec![RuntimeFileEntry::file("docs/inline.md")],
+            })
+        }
+
+        async fn search_text(
+            &self,
+            _mount: &Mount,
+            _query: &SearchQuery,
+            ctx: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            self.record("search_text", ctx).await;
+            Ok(SearchResult {
+                matches: vec![SearchMatch {
+                    path: "docs/provider.md".to_string(),
+                    line: Some(3),
+                    content: "found provider".to_string(),
+                }],
+                truncated: false,
+            })
+        }
+
+        async fn grep_text(
+            &self,
+            _mount: &Mount,
+            _query: &GrepQuery,
+            ctx: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            self.record("grep_text", ctx).await;
+            Ok(SearchResult {
+                matches: vec![SearchMatch {
+                    path: "docs/provider.md".to_string(),
+                    line: Some(5),
+                    content: "grep provider".to_string(),
+                }],
+                truncated: false,
+            })
+        }
+    }
+
+    fn search_identity_fixture(
+        provider_id: &str,
+    ) -> (VfsService, Vfs, Arc<IdentityCaptureProvider>) {
+        let provider = Arc::new(IdentityCaptureProvider::new(provider_id));
+        let mut registry = MountProviderRegistry::new();
+        registry.register(provider.clone());
+        let service = VfsService::new(Arc::new(registry));
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "main".to_string(),
+                provider: provider_id.to_string(),
+                backend_id: "backend".to_string(),
+                root_ref: "capture://root".to_string(),
+                capabilities: vec![
+                    MountCapability::Read,
+                    MountCapability::List,
+                    MountCapability::Search,
+                ],
+                default_write: false,
+                display_name: "Capture".to_string(),
+                metadata: serde_json::json!({}),
+            }],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        (service, vfs, provider)
+    }
+
+    fn search_identity() -> AuthIdentity {
+        AuthIdentity::system_routine("search-identity")
+    }
+
+    fn search_identity_params<'a>(
+        identity: &'a AuthIdentity,
+        query: &'a str,
+    ) -> TextSearchParams<'a> {
+        TextSearchParams {
+            mount_id: "main",
+            path: ".",
+            query,
+            is_regex: true,
+            include_glob: None,
+            max_results: 10,
+            context_lines: 0,
+            overlay: None,
+            identity: Some(identity),
+            case_sensitive: true,
+            before_lines: 0,
+            after_lines: 0,
+            multiline: false,
+            output_mode: SearchOutputMode::Content,
+        }
+    }
+
+    #[tokio::test]
+    async fn search_identity_provider_search_receives_identity() {
+        let (service, vfs, provider) = search_identity_fixture("search_identity_provider");
+        let identity = search_identity();
+
+        let (hits, truncated) = service
+            .search_text_extended(&vfs, &search_identity_params(&identity, "provider"))
+            .await
+            .expect("search text");
+
+        assert!(!truncated);
+        assert_eq!(hits, vec!["docs/provider.md:3: found provider"]);
+        assert_eq!(
+            provider.captured_calls().await,
+            vec![("search_text".to_string(), Some(identity.user_id.clone()))]
+        );
+    }
+
+    #[tokio::test]
+    async fn search_identity_provider_grep_receives_identity() {
+        let (service, vfs, provider) = search_identity_fixture("search_identity_provider");
+        let identity = search_identity();
+
+        let (hits, truncated) = service
+            .grep_text_extended(&vfs, &search_identity_params(&identity, "provider"))
+            .await
+            .expect("grep text");
+
+        assert!(!truncated);
+        assert_eq!(hits, vec!["docs/provider.md:5: grep provider"]);
+        assert_eq!(
+            provider.captured_calls().await,
+            vec![("grep_text".to_string(), Some(identity.user_id.clone()))]
+        );
+    }
+
+    #[tokio::test]
+    async fn search_identity_inline_grep_receives_identity() {
+        let (service, vfs, provider) = search_identity_fixture(PROVIDER_INLINE_FS);
+        let identity = search_identity();
+
+        let (hits, truncated) = service
+            .grep_text_extended(
+                &vfs,
+                &search_identity_params(&identity, "inline search identity"),
+            )
+            .await
+            .expect("inline grep");
+
+        assert!(!truncated);
+        assert_eq!(hits, vec!["docs/inline.md:1: inline search identity"]);
+        assert_eq!(
+            provider.captured_calls().await,
+            vec![
+                ("list".to_string(), Some(identity.user_id.clone())),
+                ("read_text".to_string(), Some(identity.user_id.clone())),
+            ]
+        );
+    }
 
     #[test]
     fn patch_entry_normalizes_same_mount_move_target() {
@@ -1451,9 +1427,17 @@ mod tests {
             chunks: Vec::new(),
         };
 
-        let mount_id = normalize_patch_entry_paths(&mut entry, "main").expect("normalize");
+        let targets = normalize_patch_entry_targets(&mut entry, "main").expect("normalize");
 
-        assert_eq!(mount_id, "main");
+        assert_eq!(targets.primary.mount_id, "main");
+        assert_eq!(targets.primary.relative_path, "src/old.rs");
+        assert_eq!(
+            targets.move_target,
+            Some(PatchPathTarget {
+                mount_id: "main".to_string(),
+                relative_path: "src/new.rs".to_string(),
+            })
+        );
         assert_eq!(entry.path(), PathBuf::from("src/old.rs").as_path());
         match entry {
             PatchEntry::UpdateFile { move_path, .. } => {
@@ -1471,7 +1455,7 @@ mod tests {
             chunks: Vec::new(),
         };
 
-        let err = normalize_patch_entry_paths(&mut entry, "main").expect_err("cross mount");
+        let err = normalize_patch_entry_targets(&mut entry, "main").expect_err("cross mount");
 
         assert!(err.contains("跨 mount move"));
     }
@@ -1484,7 +1468,7 @@ mod tests {
             chunks: Vec::new(),
         };
 
-        let err = normalize_patch_entry_paths(&mut entry, "main").expect_err("escaping move");
+        let err = normalize_patch_entry_targets(&mut entry, "main").expect_err("escaping move");
 
         assert!(err.contains("路径越界"));
     }

@@ -3,57 +3,17 @@ import {
   createMcpPreset,
   fetchProjectMcpPresets,
 } from "../../../services/mcpPreset";
-import type {
-  CreateMcpPresetRequest,
-  McpPresetDto,
-  McpRoutePolicy,
-  McpTransportConfig,
-} from "../../../types";
+import type { McpPresetDto } from "../../../types";
+import { McpTransportConfigEditor } from "../../mcp-shared";
 import {
-  McpTransportConfigEditor,
-  createDefaultMcpTransportConfig,
-} from "../../mcp-shared";
+  MCP_ROUTE_POLICY_OPTIONS,
+  buildCreateMcpPresetRequest,
+  buildMcpPresetFormState,
+  readMcpRoutePolicy,
+  validateMcpPresetForm,
+  type McpPresetFormState,
+} from "../../mcp-shared/helpers";
 import { CapabilityPicker } from "./capability-picker";
-
-interface QuickCreatePresetFormState {
-  key: string;
-  display_name: string;
-  description: string;
-  transport: McpTransportConfig;
-  route_policy: McpRoutePolicy;
-}
-
-function buildQuickCreatePresetForm(): QuickCreatePresetFormState {
-  return {
-    key: "",
-    display_name: "",
-    description: "",
-    transport: createDefaultMcpTransportConfig(),
-    route_policy: "auto",
-  };
-}
-
-function validateQuickCreatePresetForm(form: QuickCreatePresetFormState): string | null {
-  const key = form.key.trim();
-  const displayName = form.display_name.trim();
-  if (!key) return "工具标识不能为空";
-  if (!displayName) return "显示名称不能为空";
-  if (key.startsWith("agentdash-")) return "工具标识不能使用保留前缀 agentdash-";
-  if (key.includes("::")) return "工具标识不能包含 ::";
-  if (/[\\/:\\s]/.test(key)) return "工具标识不能包含空白、冒号或路径分隔符";
-  if (form.transport.type === "http" || form.transport.type === "sse") {
-    if (!form.transport.url.trim()) return "URL 不能为空";
-    try {
-      new URL(form.transport.url.trim());
-    } catch {
-      return "URL 格式非法";
-    }
-  }
-  if (form.transport.type === "stdio" && !form.transport.command.trim()) {
-    return "Command 不能为空";
-  }
-  return null;
-}
 
 export function McpPresetPicker({
   projectId,
@@ -68,7 +28,7 @@ export function McpPresetPicker({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [createForm, setCreateForm] = useState<QuickCreatePresetFormState>(buildQuickCreatePresetForm);
+  const [createForm, setCreateForm] = useState<McpPresetFormState>(() => buildMcpPresetFormState());
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -102,7 +62,7 @@ export function McpPresetPicker({
 
   const handleCreate = async () => {
     if (!projectId) return;
-    const validationError = validateQuickCreatePresetForm(createForm);
+    const validationError = validateMcpPresetForm(createForm);
     if (validationError) {
       setCreateError(validationError);
       return;
@@ -110,19 +70,11 @@ export function McpPresetPicker({
     setIsCreating(true);
     setCreateError(null);
     try {
-      const input: CreateMcpPresetRequest = {
-        key: createForm.key.trim(),
-        display_name: createForm.display_name.trim(),
-        transport: createForm.transport,
-        route_policy: createForm.route_policy,
-      };
-      const trimmedDesc = createForm.description.trim();
-      if (trimmedDesc) input.description = trimmedDesc;
-      const created = await createMcpPreset(projectId, input);
+      const created = await createMcpPreset(projectId, buildCreateMcpPresetRequest(createForm));
       setPresets((prev) => [...prev, created]);
       onChange(selectedKeys.includes(created.key) ? selectedKeys : [...selectedKeys, created.key]);
       setIsCreateOpen(false);
-      setCreateForm(buildQuickCreatePresetForm());
+      setCreateForm(buildMcpPresetFormState());
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : "创建 MCP Preset 失败");
     } finally {
@@ -140,7 +92,7 @@ export function McpPresetPicker({
       type="button"
       onClick={() => {
         setCreateError(null);
-        setCreateForm(buildQuickCreatePresetForm());
+        setCreateForm(buildMcpPresetFormState());
         setIsCreateOpen(true);
       }}
       className="flex min-h-[96px] flex-col items-center justify-center gap-1 rounded-[12px] border border-dashed border-border px-3 py-3 text-[11px] text-muted-foreground transition-colors hover:border-primary/50 hover:bg-secondary/20 hover:text-foreground"
@@ -219,14 +171,19 @@ export function McpPresetPicker({
             <select
               value={createForm.route_policy}
               onChange={(e) => {
-                setCreateForm((prev) => ({ ...prev, route_policy: e.target.value as McpRoutePolicy }));
+                setCreateForm((prev) => ({
+                  ...prev,
+                  route_policy: readMcpRoutePolicy(e.target.value),
+                }));
                 setCreateError(null);
               }}
               className="agentdash-form-select"
             >
-              <option value="auto">auto（stdio 走 relay，http/sse 直连）</option>
-              <option value="relay">relay（强制经本机）</option>
-              <option value="direct">direct（强制直连）</option>
+              {MCP_ROUTE_POLICY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </div>
           <div>

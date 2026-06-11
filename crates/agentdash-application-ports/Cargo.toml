@@ -6,8 +6,9 @@ license.workspace = true
 
 [dependencies]
 agentdash-agent-protocol = { workspace = true }
+agentdash-agent-types = { workspace = true }
 agentdash-domain = { workspace = true }
-agentdash-relay = { workspace = true }
+agentdash-spi = { workspace = true }
 async-trait = "0.1"
 serde_json = { workspace = true }
 thiserror = { workspace = true }

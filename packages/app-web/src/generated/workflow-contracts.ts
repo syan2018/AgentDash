@@ -4,12 +4,13 @@
 import type { JsonValue } from "./common-contracts";
 import type { UserInput } from "./backbone-protocol";
 import type { AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto } from "./project-agent-contracts";
+import type { InstalledAssetSourceDto } from "./shared-library-contracts";
 
 export type ActiveRuntimeNodeRefDto = { run_id: string, orchestration_id: string, node_path: string, attempt: number, status: string, };
 
 export type ActivityCompletionPolicy = { "kind": "output_ports", required_ports: Array<string>, } | { "kind": "executor_terminal" } | { "kind": "human_decision", decision_port: string, } | { "kind": "hook_gate", hook_key: string, } | { "kind": "open_ended" };
 
-export type ActivityDefinition = { key: string, description: string, executor: ActivityExecutorSpec, input_ports?: Array<InputPortDefinition>, output_ports?: Array<OutputPortDefinition>, completion_policy: ActivityCompletionPolicy, iteration_policy: ActivityIterationPolicy, join_policy: ActivityJoinPolicy, };
+export type ActivityDefinition = { key: string, description: string, executor: ActivityExecutorSpec, input_ports: Array<InputPortDefinition>, output_ports: Array<OutputPortDefinition>, completion_policy: ActivityCompletionPolicy, iteration_policy: ActivityIterationPolicy, join_policy: ActivityJoinPolicy, };
 
 export type ActivityExecutorSpec = { "kind": "agent" } & AgentActivityExecutorSpec | { "kind": "function" } & FunctionActivityExecutorSpec | { "kind": "human" } & HumanActivityExecutorSpec;
 
@@ -17,7 +18,7 @@ export type ActivityIterationPolicy = { max_attempts?: number, artifact_alias: A
 
 export type ActivityJoinPolicy = "all" | "any" | "first" | { "n_of_m": { n: number, } };
 
-export type ActivityTransition = { from: string, to: string, kind: ActivityTransitionKind, condition: TransitionCondition, artifact_bindings?: Array<ArtifactBinding>, max_traversals?: number, };
+export type ActivityTransition = { from: string, to: string, kind: ActivityTransitionKind, condition: TransitionCondition, artifact_bindings: Array<ArtifactBinding>, max_traversals?: number, };
 
 export type ActivityTransitionKind = "flow" | "artifact";
 
@@ -25,7 +26,9 @@ export type AgentActivityExecutorSpec = { procedure_key: string, agent_reuse_pol
 
 export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, };
 
-export type AgentProcedureContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, capability_config?: CapabilityConfig, output_ports?: Array<OutputPortDefinition>, input_ports?: Array<InputPortDefinition>, };
+export type AgentProcedureContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, capability_config: CapabilityConfig, output_ports: Array<OutputPortDefinition>, input_ports: Array<InputPortDefinition>, };
+
+export type AgentProcedureResponse = { id: string, project_id: string, key: string, name: string, description: string, target_kinds: Array<WorkflowTargetKind>, source: DefinitionSource, installed_source?: InstalledAssetSourceDto, version: number, contract: AgentProcedureContract, created_at: string, updated_at: string, };
 
 export type AgentReusePolicy = "create_activity_agent" | "continue_current_agent";
 
@@ -59,7 +62,7 @@ export type ArtifactBinding = { from_activity?: string, from_port: string, to_po
 
 export type BashExecExecutorSpec = { command: string, args?: Array<string>, working_directory?: string, };
 
-export type CapabilityConfig = { tool_directives?: Array<ToolCapabilityDirective>, mount_directives?: Array<unknown>, };
+export type CapabilityConfig = { tool_directives: Array<ToolCapabilityDirective>, mount_directives: Array<unknown>, };
 
 export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
 
@@ -167,6 +170,8 @@ export type ValidationSeverity = "error" | "warning";
 
 export type WorkflowContextBinding = { locator: string, reason: string, required: boolean, title?: string, };
 
+export type WorkflowGraphResponse = { id: string, project_id: string, key: string, name: string, description: string, target_kinds: Array<WorkflowTargetKind>, source: DefinitionSource, installed_source?: InstalledAssetSourceDto, version: number, entry_activity_key: string, activities: Array<ActivityDefinition>, transitions: Array<ActivityTransition>, created_at: string, updated_at: string, };
+
 export type WorkflowHookRuleSpec = { key: string, trigger: WorkflowHookTrigger, description: string, preset?: string, params?: JsonValue, script?: string, enabled: boolean, };
 
 export type WorkflowHookTrigger = "user_prompt_submit" | "before_tool" | "after_tool" | "after_turn" | "before_stop" | "session_terminal" | "before_subagent_dispatch" | "after_subagent_dispatch" | "companion_result" | "before_compact" | "after_compact" | "before_provider_request";
@@ -186,3 +191,5 @@ export type WorkflowScriptPlanPreviewDto = { plan_digest: string, node_count: nu
 export type WorkflowScriptPlanPreviewNodeDto = { node_id: string, node_path: string, kind: string, label?: string, };
 
 export type WorkflowScriptPreflightDiagnosticDto = { code: string, severity: ValidationSeverity, message: string, source_path: string, };
+
+export type WorkflowTargetKind = "project" | "story";

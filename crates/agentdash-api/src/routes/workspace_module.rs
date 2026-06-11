@@ -1,8 +1,7 @@
 //! Project Workspace Module HTTP 路由。
 //!
-//! 暴露 Child 1 的 canonical projection（`build_workspace_modules`）给项目设置页 UI，
-//! 与 Agent 工具复用同一聚合函数（单一 canonical，无第二份 DTO）。
-//! `WorkspaceModuleDescriptor` 本身即 contract 类型，handler 直接序列化，无需 mapper。
+//! 暴露 application workspace module projection 给项目设置页 UI；projection 本身使用
+//! browser-facing contract DTO。
 
 use std::sync::Arc;
 

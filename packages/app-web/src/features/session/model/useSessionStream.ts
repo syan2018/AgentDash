@@ -7,7 +7,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import type { BackboneEvent, BackboneEnvelope, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import {
   cancelSession,
   fetchSessionEvents,
@@ -17,10 +16,14 @@ import type {
   SessionEventEnvelope,
   TokenUsageInfo,
 } from "./types";
-import { extractTextFromUserInputs, extractTokenUsageFromEvent } from "./types";
 import { createSessionStreamTransport, type SessionStreamTransport } from "./streamTransport";
-import { useTerminalStore } from "./useTerminalStore";
-import type { TerminalProcessState } from "../../../types/terminal";
+import {
+  createInitialStreamState,
+  reduceStreamState,
+  shouldFlushStreamEventImmediately,
+  type SessionStreamState,
+} from "./sessionStreamReducer";
+import { dispatchSessionPlatformEvent } from "./sessionPlatformEventDispatcher";
 
 export interface UseSessionStreamOptions {
   sessionId: string;
@@ -28,7 +31,6 @@ export interface UseSessionStreamOptions {
   enabled?: boolean;
   endpoint?: string;
   initialEntries?: SessionDisplayEntry[];
-  onEntry?: (entry: SessionDisplayEntry) => void;
   onConnectionChange?: (connected: boolean) => void;
   onError?: (error: Error) => void;
 }
@@ -51,383 +53,19 @@ const RECEIVING_IDLE_TIMEOUT_MS = 600;
 const HISTORY_PAGE_SIZE = 500;
 const EMPTY_INITIAL_ENTRIES: SessionDisplayEntry[] = [];
 
-interface SessionStreamState {
-  entries: SessionDisplayEntry[];
-  rawEvents: SessionEventEnvelope[];
-  tokenUsage: TokenUsageInfo | null;
-  lastAppliedSeq: number;
-}
-
-type StreamInputEvent = {
-  session_id: string;
-  event_seq: number;
-  notification: BackboneEnvelope;
-  occurred_at_ms?: number | null;
-  committed_at_ms?: number | null;
-  session_update_type?: string | null;
-  turn_id?: string | null;
-  entry_index?: number | null;
-  tool_call_id?: string | null;
-};
-
-function createInitialState(initialEntries: SessionDisplayEntry[]): SessionStreamState {
-  const lastAppliedSeq = initialEntries.reduce((max, entry) => Math.max(max, entry.eventSeq), 0);
-  return {
-    entries: initialEntries,
-    rawEvents: [],
-    tokenUsage: null,
-    lastAppliedSeq,
-  };
-}
-
-function backboneEventTypeName(event: BackboneEvent): string {
-  return event.type;
-}
-
-/** 从 ThreadItem / AgentDashThreadItem 提取 item ID */
-function threadItemId(item: AgentDashThreadItem): string {
-  return item.id;
-}
-
-/** 从 BackboneEvent 提取关联的 item ID（用于合并 item lifecycle） */
-function getItemIdFromEvent(event: BackboneEvent): string | undefined {
-  switch (event.type) {
-    case "item_started":
-    case "item_completed":
-      return threadItemId(event.payload.item);
-    case "command_output_delta":
-    case "file_change_delta":
-    case "mcp_tool_call_progress":
-    case "agent_message_delta":
-    case "reasoning_text_delta":
-    case "reasoning_summary_delta":
-    case "plan_delta":
-      return event.payload.itemId;
-    default:
-      return undefined;
-  }
-}
-
-function toEventEnvelope(event: StreamInputEvent): SessionEventEnvelope {
-  return {
-    session_id: event.session_id,
-    event_seq: event.event_seq,
-    notification: event.notification,
-    occurred_at_ms: event.occurred_at_ms ?? 0,
-    committed_at_ms: event.committed_at_ms ?? 0,
-    session_update_type: event.session_update_type ?? backboneEventTypeName(event.notification.event),
-    turn_id: event.turn_id ?? event.notification.trace?.turnId ?? undefined,
-    entry_index: event.entry_index ?? event.notification.trace?.entryIndex ?? undefined,
-    tool_call_id: event.tool_call_id ?? undefined,
-  };
-}
-
-function buildEntryId(event: SessionEventEnvelope, bbEvent: BackboneEvent): string {
-  const itemId = getItemIdFromEvent(bbEvent);
-  if (itemId) {
-    return `item:${itemId}`;
-  }
-
-  const turnId = event.turn_id;
-  const entryIndex = event.entry_index;
-
-  if (bbEvent.type === "agent_message_delta" || bbEvent.type === "reasoning_text_delta" ||
-      bbEvent.type === "reasoning_summary_delta") {
-    if (turnId && entryIndex != null) {
-      return `delta:${bbEvent.type}:${turnId}:${entryIndex}`;
-    }
-    const payloadItemId = (bbEvent.payload as { itemId?: string }).itemId;
-    if (payloadItemId) {
-      return `delta:${bbEvent.type}:${payloadItemId}`;
-    }
-  }
-
-  if (bbEvent.type === "user_input_submitted") {
-    return `user-input:${bbEvent.payload.turnId}:${bbEvent.payload.itemId}`;
-  }
-
-  return `event:${event.event_seq}`;
-}
-
-function makeDisplayEntry(event: SessionEventEnvelope, bbEvent: BackboneEvent): SessionDisplayEntry {
-  return {
-    id: buildEntryId(event, bbEvent),
-    sessionId: event.notification.sessionId,
-    timestamp: event.committed_at_ms ?? event.occurred_at_ms ?? Date.now(),
-    eventSeq: event.event_seq,
-    event: bbEvent,
-    turnId: event.turn_id ?? undefined,
-    entryIndex: event.entry_index ?? undefined,
-  };
-}
-
-function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnvelope): SessionDisplayEntry[] {
-  const bbEvent: BackboneEvent = event.notification.event;
-
-  // ── agent_message_delta — 累积文本增量 ──
-  if (bbEvent.type === "agent_message_delta") {
-    const entryId = buildEntryId(event, bbEvent);
-    for (let i = prev.length - 1; i >= 0; i -= 1) {
-      if (prev[i]!.id === entryId) {
-        const existing = prev[i]!;
-        const accumulated = (existing.accumulatedText ?? "") + bbEvent.payload.delta;
-        const next = [...prev];
-        next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: accumulated, isStreaming: true };
-        return next;
-      }
-    }
-    return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: bbEvent.payload.delta, isStreaming: true }];
-  }
-
-  // ── reasoning_text_delta — 累积推理文本 ──
-  if (bbEvent.type === "reasoning_text_delta") {
-    const entryId = buildEntryId(event, bbEvent);
-    for (let i = prev.length - 1; i >= 0; i -= 1) {
-      if (prev[i]!.id === entryId) {
-        const existing = prev[i]!;
-        const accumulated = (existing.accumulatedText ?? "") + bbEvent.payload.delta;
-        const next = [...prev];
-        next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: accumulated };
-        return next;
-      }
-    }
-    return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: bbEvent.payload.delta }];
-  }
-
-  // ── reasoning_summary_delta ──
-  if (bbEvent.type === "reasoning_summary_delta") {
-    const entryId = buildEntryId(event, bbEvent);
-    for (let i = prev.length - 1; i >= 0; i -= 1) {
-      if (prev[i]!.id === entryId) {
-        const existing = prev[i]!;
-        const accumulated = (existing.accumulatedText ?? "") + bbEvent.payload.delta;
-        const next = [...prev];
-        next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: accumulated };
-        return next;
-      }
-    }
-    return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: bbEvent.payload.delta }];
-  }
-
-  // ── item_started — 创建工具调用条目 ──
-  if (bbEvent.type === "item_started") {
-    const entryId = buildEntryId(event, bbEvent);
-    for (let i = prev.length - 1; i >= 0; i -= 1) {
-      if (prev[i]!.id === entryId) {
-        const next = [...prev];
-        next[i] = { ...prev[i]!, eventSeq: event.event_seq, event: bbEvent };
-        return next;
-      }
-    }
-    return [...prev, makeDisplayEntry(event, bbEvent)];
-  }
-
-  // ── item_completed — 更新工具调用条目为终态 ──
-  if (bbEvent.type === "item_completed") {
-    const entryId = buildEntryId(event, bbEvent);
-    for (let i = prev.length - 1; i >= 0; i -= 1) {
-      if (prev[i]!.id === entryId) {
-        const next = [...prev];
-        next[i] = {
-          ...prev[i]!,
-          eventSeq: event.event_seq,
-          event: bbEvent,
-          isStreaming: false,
-          isPendingApproval: false,
-        };
-        return next;
-      }
-    }
-    return [...prev, { ...makeDisplayEntry(event, bbEvent), isStreaming: false }];
-  }
-
-  // ── command_output_delta / file_change_delta / mcp_tool_call_progress ──
-  // 关联到已存在的 item 条目，追加输出增量
-  if (bbEvent.type === "command_output_delta" || bbEvent.type === "file_change_delta" ||
-      bbEvent.type === "mcp_tool_call_progress") {
-    const itemId = bbEvent.payload.itemId;
-    const targetId = `item:${itemId}`;
-    for (let i = prev.length - 1; i >= 0; i -= 1) {
-      if (prev[i]!.id === targetId) {
-        const existing = prev[i]!;
-        const deltaText = bbEvent.type === "mcp_tool_call_progress"
-          ? bbEvent.payload.message
-          : bbEvent.payload.delta;
-        const accumulated = (existing.accumulatedText ?? "") + deltaText;
-        const next = [...prev];
-        next[i] = { ...existing, eventSeq: event.event_seq, accumulatedText: accumulated };
-        return next;
-      }
-    }
-    return prev;
-  }
-
-  // ── turn_started / turn_completed — 静默，不创建条目 ──
-  if (bbEvent.type === "turn_started" || bbEvent.type === "turn_completed") {
-    return prev;
-  }
-
-  // ── turn_plan_updated — 计划条目 ──
-  if (bbEvent.type === "turn_plan_updated") {
-    return [...prev, makeDisplayEntry(event, bbEvent)];
-  }
-
-  // ── plan_delta — 计划增量 ──
-  if (bbEvent.type === "plan_delta") {
-    return prev;
-  }
-
-  // ── token_usage_updated — 静默 ──
-  if (bbEvent.type === "token_usage_updated") {
-    return prev;
-  }
-
-  // ── approval_request — 审批请求 ──
-  if (bbEvent.type === "approval_request") {
-    return [...prev, { ...makeDisplayEntry(event, bbEvent), isPendingApproval: true }];
-  }
-
-  // ── user_input_submitted — 已被后端接收的用户输入事实 ──
-  if (bbEvent.type === "user_input_submitted") {
-    const entryId = buildEntryId(event, bbEvent);
-    const text = extractTextFromUserInputs(bbEvent.payload.content);
-    for (let i = prev.length - 1; i >= 0; i -= 1) {
-      if (prev[i]!.id === entryId) {
-        const next = [...prev];
-        next[i] = { ...prev[i]!, eventSeq: event.event_seq, event: bbEvent, accumulatedText: text };
-        return next;
-      }
-    }
-    return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: text }];
-  }
-
-  // ── error — 错误条目 ──
-  if (bbEvent.type === "error") {
-    return [...prev, makeDisplayEntry(event, bbEvent)];
-  }
-
-  // ── platform — 平台事件分发 ──
-  if (bbEvent.type === "platform") {
-    const platform = bbEvent.payload;
-
-    // 终端事件在 enqueueEvent 层拦截（避免 reducer 内副作用被 StrictMode 双重执行）
-    const platformAny = platform as unknown as { kind: string };
-    if (platformAny.kind === "terminal_output" || platformAny.kind === "terminal_state_changed") {
-      return prev;
-    }
-
-    if (platform.kind === "session_meta_update") {
-      const key = platform.data.key;
-
-      // session_meta_updated — 静默
-      if (key === "session_meta_updated" || key === "acp_passthrough") {
-        return prev;
-      }
-
-      // 可渲染的系统/任务/协作事件
-      return [...prev, makeDisplayEntry(event, bbEvent)];
-    }
-
-    // executor_session_bound / hook_trace — 系统事件
-    return [...prev, makeDisplayEntry(event, bbEvent)];
-  }
-
-  // ── thread_status_changed / executor_context_compacted / turn_diff_updated — 静默 ──
-  if (bbEvent.type === "thread_status_changed" || bbEvent.type === "executor_context_compacted" ||
-      bbEvent.type === "turn_diff_updated") {
-    return prev;
-  }
-
-  return [...prev, makeDisplayEntry(event, bbEvent)];
-}
-
-export function reduceStreamState(
-  prev: SessionStreamState,
-  incomingEvents: StreamInputEvent[],
-): SessionStreamState {
-  if (incomingEvents.length === 0) {
-    return prev;
-  }
-
-  const normalized = incomingEvents
-    .map(toEventEnvelope)
-    .sort((a, b) => a.event_seq - b.event_seq);
-
-  let entries = prev.entries;
-  let rawEvents = prev.rawEvents;
-  let tokenUsage = prev.tokenUsage;
-  let lastAppliedSeq = prev.lastAppliedSeq;
-
-  for (const event of normalized) {
-    if (event.event_seq <= lastAppliedSeq) {
-      continue;
-    }
-    rawEvents = [...rawEvents, event];
-    entries = applyEventToEntries(entries, event);
-    const usage = extractTokenUsageFromEvent(event.notification.event);
-    if (usage) {
-      tokenUsage = tokenUsage ? { ...tokenUsage, ...usage } : usage;
-    }
-    lastAppliedSeq = event.event_seq;
-  }
-
-  return {
-    entries,
-    rawEvents,
-    tokenUsage,
-    lastAppliedSeq,
-  };
-}
-
-/**
- * 终端事件拦截：在进入 React state 管道之前直接转发到 TerminalStore。
- * 返回 true 表示已拦截（调用方应跳过后续处理），false 表示非终端事件。
- */
-function interceptTerminalEvent(event: SessionEventEnvelope): boolean {
-  const bbEvent = event.notification.event;
-  if (bbEvent.type !== "platform") return false;
-
-  const p = bbEvent.payload as unknown as { kind: string; data: Record<string, unknown> };
-
-  if (p.kind === "terminal_output") {
-    useTerminalStore
-      .getState()
-      .appendOutput(p.data.terminal_id as string, p.data.data as string);
-    return true;
-  }
-  if (p.kind === "terminal_state_changed") {
-    useTerminalStore
-      .getState()
-      .updateTerminalState(
-        p.data.terminal_id as string,
-        p.data.state as TerminalProcessState,
-        p.data.exit_code as number | undefined,
-      );
-    return true;
-  }
-  return false;
-}
-
-/** 判断事件是否需要立即 flush（item 生命周期事件） */
-function shouldFlushImmediately(event: SessionEventEnvelope): boolean {
-  const t = event.notification.event.type;
-  return t === "item_started" || t === "item_completed" || t === "approval_request";
-}
-
 export function useSessionStream(options: UseSessionStreamOptions): UseSessionStreamResult {
   const {
     sessionId,
     enabled = true,
     endpoint,
     initialEntries,
-    onEntry,
     onConnectionChange,
     onError,
   } = options;
   const normalizedInitialEntries = initialEntries ?? EMPTY_INITIAL_ENTRIES;
 
   const [streamState, setStreamState] = useState<SessionStreamState>(() =>
-    createInitialState(normalizedInitialEntries),
+    createInitialStreamState(normalizedInitialEntries),
   );
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -444,10 +82,10 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
   const sourceKeyRef = useRef<string | null>(null);
   const initialEntriesRef = useRef(normalizedInitialEntries);
 
-  const callbackRefs = useRef({ onEntry, onConnectionChange, onError });
+  const callbackRefs = useRef({ onConnectionChange, onError });
   useEffect(() => {
-    callbackRefs.current = { onEntry, onConnectionChange, onError };
-  }, [onEntry, onConnectionChange, onError]);
+    callbackRefs.current = { onConnectionChange, onError };
+  }, [onConnectionChange, onError]);
 
   useEffect(() => {
     initialEntriesRef.current = normalizedInitialEntries;
@@ -488,12 +126,12 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
   const enqueueEvent = useCallback((event: SessionEventEnvelope) => {
     // 终端事件在此拦截，直接转发到 TerminalStore，不进入 React state 管道
     // （避免 StrictMode 下 reducer 双重执行导致输出重复）
-    if (interceptTerminalEvent(event)) return;
+    if (dispatchSessionPlatformEvent(event, callbackRefs.current.onError)) return;
 
     pendingEventsRef.current.push(event);
     markReceiving();
 
-    if (shouldFlushImmediately(event)) {
+    if (shouldFlushStreamEventImmediately(event)) {
       if (flushTimerRef.current) {
         clearTimeout(flushTimerRef.current);
         flushTimerRef.current = null;
@@ -528,7 +166,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     mountedRef.current = true;
 
     if (!enabled) {
-      setStreamState(createInitialState(initialEntriesRef.current));
+      setStreamState(createInitialStreamState(initialEntriesRef.current));
       setIsLoading(false);
       setError(null);
       setIsConnected(false);
@@ -542,7 +180,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     sourceKeyRef.current = sourceKey;
 
     const baseState = shouldResetState
-      ? createInitialState(initialEntriesRef.current)
+      ? createInitialStreamState(initialEntriesRef.current)
       : stateRef.current;
 
     if (shouldResetState) {

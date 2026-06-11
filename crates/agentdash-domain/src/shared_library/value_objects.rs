@@ -1385,9 +1385,7 @@ pub struct ExtensionRuntimeActionDefinition {
     pub action_key: String,
     pub kind: ExtensionRuntimeActionKind,
     pub description: String,
-    #[serde(default = "empty_json_schema")]
     pub input_schema: Value,
-    #[serde(default = "empty_json_schema")]
     pub output_schema: Value,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub permissions: Vec<String>,
@@ -1460,9 +1458,7 @@ impl ExtensionProtocolChannelDefinition {
 pub struct ExtensionProtocolChannelMethodDefinition {
     pub name: String,
     pub description: String,
-    #[serde(default = "empty_json_schema")]
     pub input_schema: Value,
-    #[serde(default = "empty_json_schema")]
     pub output_schema: Value,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub permissions: Vec<String>,
@@ -1677,10 +1673,6 @@ impl ExtensionBundleRef {
         require_non_empty("extension_template.bundles[].entry", &self.entry)?;
         validate_bundle_digest("extension_template.bundles[].digest", &self.digest)
     }
-}
-
-fn empty_json_schema() -> Value {
-    Value::Object(Default::default())
 }
 
 fn validate_json_schema(field: &str, value: &Value) -> Result<(), DomainError> {
@@ -2300,6 +2292,54 @@ mod tests {
         let result = LibraryAssetPayload::from_value(LibraryAssetType::ExtensionTemplate, payload);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_extension_runtime_schema_missing_or_null() {
+        let missing = LibraryAssetPayload::from_value(
+            LibraryAssetType::ExtensionTemplate,
+            json!({
+                "manifest_version": "2",
+                "extension_id": "bad",
+                "package": {
+                    "name": "bad",
+                    "version": "0.1.0"
+                },
+                "asset_version": "0.1.0",
+                "runtime_actions": [{
+                    "action_key": "bad.run",
+                    "kind": "session_runtime",
+                    "description": "bad",
+                    "output_schema": {}
+                }]
+            }),
+        );
+        assert!(missing.is_err());
+
+        let null_schema = LibraryAssetPayload::from_value(
+            LibraryAssetType::ExtensionTemplate,
+            json!({
+                "manifest_version": "2",
+                "extension_id": "bad",
+                "package": {
+                    "name": "bad",
+                    "version": "0.1.0"
+                },
+                "asset_version": "0.1.0",
+                "protocol_channels": [{
+                    "channel_key": "bad.api",
+                    "version": "1.0.0",
+                    "description": "Bad API",
+                    "methods": [{
+                        "name": "ping",
+                        "description": "Ping",
+                        "input_schema": null,
+                        "output_schema": {}
+                    }]
+                }]
+            }),
+        );
+        assert!(null_schema.is_err());
     }
 
     fn extension_template_from_json(extra: serde_json::Value) -> ExtensionTemplatePayload {

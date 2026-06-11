@@ -18,9 +18,7 @@ export interface InlineModelSelectorProps {
   executorName?: string;
   /** steer 态只读（Phase B 预留） */
   readonly?: boolean;
-  onReset: () => void;
-  onRefetch: () => void;
-  onReconnect: () => void;
+  onRefresh: () => void;
 }
 
 export function InlineModelSelector({
@@ -29,9 +27,7 @@ export function InlineModelSelector({
   isDiscoveredLoading,
   executorName,
   readonly: isReadonly = false,
-  onReset,
-  onRefetch,
-  onReconnect,
+  onRefresh,
 }: InlineModelSelectorProps) {
   const [open, setOpen] = useState(false);
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
@@ -161,10 +157,10 @@ export function InlineModelSelector({
       {open && (
         <div
           ref={popoverRef}
-          className="absolute bottom-full left-0 z-50 mb-2 flex rounded-[12px] border border-border bg-popover shadow-lg"
+          className="absolute bottom-full right-0 z-50 mb-2 flex max-w-[calc(100vw-2rem)] overflow-hidden rounded-[12px] border border-border bg-popover shadow-lg"
         >
           {/* 左列: Reasoning + Provider 入口 */}
-          <div className="w-[180px] border-r border-border p-2">
+          <div className="w-[180px] max-w-[45vw] shrink-0 border-r border-border p-2">
             {/* Reasoning 档位 */}
             {showThinkingSelector && (
               <>
@@ -237,31 +233,17 @@ export function InlineModelSelector({
             <div className="mt-2 flex items-center gap-1 border-t border-border pt-2">
               <button
                 type="button"
-                onClick={() => { onReset(); setOpen(false); }}
-                className="rounded-[6px] px-2 py-1 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-              >
-                重置
-              </button>
-              <button
-                type="button"
-                onClick={onRefetch}
+                onClick={onRefresh}
                 className="rounded-[6px] px-2 py-1 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground"
               >
                 刷新
-              </button>
-              <button
-                type="button"
-                onClick={onReconnect}
-                className="rounded-[6px] px-2 py-1 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-              >
-                重连
               </button>
             </div>
           </div>
 
           {/* 右列: 模型列表 */}
           {activeProvider !== null && modelsByProvider.has(activeProvider) && (
-            <div className="w-[200px] p-2">
+            <div className="w-[200px] max-w-[50vw] p-2">
               <div className="px-2 pb-1 pt-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                 {providersById.get(activeProvider) ?? (activeProvider || "模型")}
               </div>

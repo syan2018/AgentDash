@@ -42,8 +42,6 @@ pub struct PiAgentConnector {
     llm_secret_codec: Option<Arc<dyn LlmSecretCodec>>,
     /// Layer 0: 系统全局 base system prompt。
     system_prompt: String,
-    /// Layer 2: 用户偏好提示列表（每条独立的偏好指令）。
-    user_preferences: Vec<String>,
     agents: Arc<Mutex<HashMap<String, PiAgentSessionRuntime>>>,
 }
 
@@ -91,21 +89,12 @@ impl PiAgentConnector {
             llm_provider_credential_repo: None,
             llm_secret_codec: None,
             system_prompt: system_prompt.into(),
-            user_preferences: Vec::new(),
             agents: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub fn set_user_preferences(&mut self, preferences: Vec<String>) {
-        self.user_preferences = preferences;
-    }
-
     pub fn base_system_prompt(&self) -> &str {
         &self.system_prompt
-    }
-
-    pub fn user_preferences(&self) -> &[String] {
-        &self.user_preferences
     }
 
     pub fn default_bridge(&self) -> Arc<dyn LlmBridge> {

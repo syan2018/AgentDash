@@ -72,6 +72,13 @@ async function fixtureProject() {
       uri_scheme: "server",
       renderer: { kind: "webview", entry: "dist/panel/index.html" },
     }],
+    runtime_actions: [{
+      action_key: "server.greet",
+      kind: "session_runtime",
+      description: "Greet",
+      input_schema: true,
+      output_schema: true,
+    }],
     bundles: [{
       kind: "extension_host",
       entry: "dist/extension.js",
@@ -98,6 +105,8 @@ export default defineExtension({
       action_key: "server.greet",
       kind: "session_runtime",
       description: "Greet",
+      input_schema: true,
+      output_schema: true,
       invoke(input: JsonValue): JsonObject {
         return { message: "Hello " + readName(input) };
       },

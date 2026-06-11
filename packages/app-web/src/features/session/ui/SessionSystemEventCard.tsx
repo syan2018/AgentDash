@@ -17,10 +17,12 @@ import { EventStripCard, EventFullCard } from "./EventCards";
 import { SessionCompanionRequestCard } from "./SessionCompanionRequestCard";
 import { ContextFrameCard } from "./ContextFrameCard";
 import { getDebugPrefs } from "../../../hooks/use-debug-prefs";
+import type { ContextFrame } from "../model/contextFrame";
 
 export interface SessionSystemEventCardProps {
   event: BackboneEvent;
   sessionId?: string;
+  contextFrame?: ContextFrame;
 }
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
@@ -185,7 +187,7 @@ function isHighPriorityHookEvent(
 
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
 
-export function SessionSystemEventCard({ event }: SessionSystemEventCardProps) {
+export function SessionSystemEventCard({ event, contextFrame }: SessionSystemEventCardProps) {
   if (event.type !== "platform") return null;
 
   const eventType = extractPlatformEventType(event) ?? "system";
@@ -197,8 +199,9 @@ export function SessionSystemEventCard({ event }: SessionSystemEventCardProps) {
     return <SessionCompanionRequestCard event={event} />;
   }
 
-  if (eventType === "context_frame" && eventData) {
-    return <ContextFrameCard data={eventData} />;
+  if (eventType === "context_frame") {
+    if (!contextFrame) return null;
+    return <ContextFrameCard frame={contextFrame} />;
   }
 
   // ── hook_event → hook 卡片逻辑 ──

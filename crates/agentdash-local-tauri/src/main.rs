@@ -82,8 +82,6 @@ struct RuntimeStartRequest {
     machine_id: String,
     #[serde(default)]
     machine_label: Option<String>,
-    #[serde(default)]
-    legacy_machine_ids: Vec<String>,
     name: Option<String>,
     #[serde(default)]
     workspace_roots: Vec<PathBuf>,
@@ -102,10 +100,6 @@ struct LocalRuntimeProfile {
     machine_id: String,
     #[serde(default)]
     machine_label: Option<String>,
-    #[serde(default)]
-    legacy_machine_ids: Vec<String>,
-    #[serde(default, alias = "device_id", skip_serializing)]
-    legacy_device_id: String,
     #[serde(default)]
     backend_id: Option<String>,
     #[serde(default)]
@@ -136,7 +130,6 @@ impl From<LocalRuntimeProfile> for RuntimeStartRequest {
             profile_id: profile.profile_id,
             machine_id: profile.machine_id,
             machine_label: profile.machine_label,
-            legacy_machine_ids: profile.legacy_machine_ids,
             name: profile.name,
             workspace_roots: profile.workspace_roots,
             executor_enabled: profile.executor_enabled,
@@ -329,7 +322,6 @@ async fn open_external_url(url: String) -> Result<(), String> {
 struct EnsureLocalRuntimePayload {
     machine_id: String,
     machine_label: Option<String>,
-    legacy_machine_ids: Vec<String>,
     profile_id: String,
     scope: LocalRuntimeScopePayload,
     capability_slot: String,
@@ -441,7 +433,6 @@ async fn claim_local_runtime(
     let payload = EnsureLocalRuntimePayload {
         machine_id: request.machine_id.clone(),
         machine_label: request.machine_label.clone(),
-        legacy_machine_ids: request.legacy_machine_ids.clone(),
         profile_id: request.profile_id.clone(),
         scope: LocalRuntimeScopePayload {
             kind: "user".to_string(),
@@ -544,22 +535,11 @@ async fn post_local_runtime_claim(
 
 fn normalize_profile(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile, String> {
     let identity = load_or_create_machine_identity().map_err(|error| error.to_string())?;
-    let mut legacy_machine_ids = profile.legacy_machine_ids;
-    if let Some(profile_machine_id) = normalize_optional_text(profile.machine_id) {
-        if profile_machine_id != identity.machine_id {
-            legacy_machine_ids.push(profile_machine_id);
-        }
-    }
-    if !profile.legacy_device_id.trim().is_empty() {
-        legacy_machine_ids.push(profile.legacy_device_id);
-    }
-    legacy_machine_ids.extend(identity.legacy_machine_ids.clone());
     let machine_id = identity.machine_id;
     let machine_label = profile
         .machine_label
         .and_then(normalize_optional_text)
         .unwrap_or(identity.machine_label);
-    let legacy_machine_ids = normalize_legacy_machine_ids(legacy_machine_ids, &machine_id);
 
     Ok(LocalRuntimeProfile {
         server_url: normalize_server_origin(&profile.server_url),
@@ -567,8 +547,6 @@ fn normalize_profile(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile
         profile_id: normalize_profile_id(profile.profile_id),
         machine_id,
         machine_label: Some(machine_label),
-        legacy_machine_ids,
-        legacy_device_id: String::new(),
         name: profile.name.and_then(normalize_optional_text),
         workspace_roots: profile.workspace_roots,
         executor_enabled: profile.executor_enabled,
@@ -580,19 +558,11 @@ fn normalize_profile(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile
 
 fn normalize_start_request(request: RuntimeStartRequest) -> Result<RuntimeStartRequest, String> {
     let identity = load_or_create_machine_identity().map_err(|error| error.to_string())?;
-    let mut legacy_machine_ids = request.legacy_machine_ids;
-    if let Some(request_machine_id) = normalize_optional_text(request.machine_id) {
-        if request_machine_id != identity.machine_id {
-            legacy_machine_ids.push(request_machine_id);
-        }
-    }
-    legacy_machine_ids.extend(identity.legacy_machine_ids);
     let machine_id = identity.machine_id;
     let machine_label = request
         .machine_label
         .and_then(normalize_optional_text)
         .unwrap_or(identity.machine_label);
-    let legacy_machine_ids = normalize_legacy_machine_ids(legacy_machine_ids, &machine_id);
 
     Ok(RuntimeStartRequest {
         server_url: normalize_server_origin(&request.server_url),
@@ -600,7 +570,6 @@ fn normalize_start_request(request: RuntimeStartRequest) -> Result<RuntimeStartR
         profile_id: normalize_profile_id(request.profile_id),
         machine_id,
         machine_label: Some(machine_label),
-        legacy_machine_ids,
         name: request.name.and_then(normalize_optional_text),
         workspace_roots: request.workspace_roots,
         executor_enabled: request.executor_enabled,
@@ -623,16 +592,6 @@ fn normalize_profile_id(value: String) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-fn normalize_legacy_machine_ids(values: Vec<String>, machine_id: &str) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    values
-        .into_iter()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty() && value != machine_id)
-        .filter(|value| seen.insert(value.clone()))
-        .collect()
 }
 
 fn normalize_optional_text(value: String) -> Option<String> {

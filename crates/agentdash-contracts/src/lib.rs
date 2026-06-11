@@ -1,3 +1,4 @@
+pub mod canvas;
 pub mod companion;
 pub mod core;
 pub mod extension_management;

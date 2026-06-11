@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { build } from "esbuild";
 import { createExtensionContext } from "@agentdash/extension-sdk";
 
-import { MANIFEST_FILE, asRecord } from "./manifest.js";
+import { MANIFEST_FILE, asRecord, validateRuntimeSurfaceParity } from "./manifest.js";
 import { agentdashSdkPackagesPlugin } from "./pack.js";
 
 const execAsync = promisify(execCommand);
@@ -62,6 +62,12 @@ export class ExtensionDevRuntime {
     const activate = typeof extension.activate === "function" ? extension.activate : null;
     if (activate) {
       await activate(context);
+    }
+    /** @type {string[]} */
+    const parityErrors = [];
+    validateRuntimeSurfaceParity(this.manifest, context.contributions, parityErrors);
+    if (parityErrors.length > 0) {
+      throw new Error(parityErrors.join("\n"));
     }
     return this.status();
   }

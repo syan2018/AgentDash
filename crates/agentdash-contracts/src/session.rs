@@ -113,14 +113,14 @@ pub struct SessionCommandStateResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct DeleteSessionResponse {
     pub deleted: bool,
     pub session_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct CancelSessionResponse {
     pub cancelled: bool,
     pub session_id: String,
@@ -128,7 +128,7 @@ pub struct CancelSessionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct ApproveToolCallResponse {
     pub approved: bool,
     pub session_id: String,
@@ -136,7 +136,7 @@ pub struct ApproveToolCallResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct RejectToolCallResponse {
     pub rejected: bool,
     pub session_id: String,

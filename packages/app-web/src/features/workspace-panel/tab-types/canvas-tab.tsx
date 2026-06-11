@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useCallback } from "react";
-import { CanvasSessionPanel } from "../../canvas-panel";
+import { CanvasRuntimePanel } from "../../canvas-panel";
 import { useWorkspaceData } from "../workspace-data-context";
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
 import type { TabContentRenderProps, TabTypeDescriptor } from "../tab-type-registry";
@@ -39,7 +39,7 @@ function CanvasTabContent({ uri }: TabContentRenderProps) {
   }
 
   return (
-    <CanvasSessionPanel
+    <CanvasRuntimePanel
       canvasId={canvasId}
       sessionId={sessionId}
       onClose={() => {}}

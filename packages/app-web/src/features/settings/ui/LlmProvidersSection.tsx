@@ -2,10 +2,24 @@ import { useCallback, useMemo, useRef, useState } from "react";
 
 import { ConfirmDialog } from "@agentdash/ui";
 
-import { llmProvidersApi } from "../../../api/llmProviders";
-import type { JsonValue, LlmProvider, ProbeModelEntry, UpdateLlmProviderRequest } from "../../../api/llmProviders";
+import type { LlmProvider, ProbeModelEntry, UpdateLlmProviderRequest } from "../../../api/llmProviders";
 import type { ModelInfo } from "../../executor-selector/model/types";
 import { useExecutorDiscoveredOptions } from "../../executor-selector";
+import { createAdminCodexOAuthActions, probeLlmProviderModels } from "../model/llmProviderActions";
+import {
+  CUSTOM_LLM_PROVIDER_PROTOCOLS,
+  LLM_PROVIDER_PRESETS,
+  type LlmProviderPreset,
+  type LlmProviderProtocol,
+} from "../model/llmProviderPresets";
+import {
+  modelBelongsToProviderSlug,
+  parseLlmProviderBlockedModels,
+  parseLlmProviderModelConfigs,
+  serializeLlmProviderBlockedModels,
+  serializeLlmProviderModelConfigs,
+  type LlmProviderModelConfig,
+} from "../model/llmProviderModels";
 import {
   useCreateLlmProviderMutation,
   useDeleteLlmProviderMutation,
@@ -15,86 +29,9 @@ import {
 import { OAuthLoginWizard } from "./OAuthLoginWizard";
 import { btnPrimaryCls, Field, inputCls, SectionCard } from "./primitives";
 
-function parseModelConfigs(value: unknown): ModelConfig[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-    const record = item as Record<string, unknown>;
-    const id = String(record.id ?? "").trim();
-    if (!id) return [];
-    return [{
-      id,
-      name: String(record.name ?? "").trim(),
-      context_window: Number(record.context_window ?? 200000) || 200000,
-      reasoning: record.reasoning !== false,
-      supports_image: record.supports_image !== false,
-    }];
-  });
-}
-
-function parseStringList(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => String(item).trim())
-      .filter((item) => item.length > 0);
-  }
-  if (typeof value === "string") {
-    return value
-      .split(/\r?\n|,/)
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0);
-  }
-  return [];
-}
-
-function modelConfigsToJsonValue(models: ModelConfig[]): JsonValue {
-  return models.map((model): JsonValue => ({
-    id: model.id,
-    name: model.name,
-    context_window: model.context_window,
-    reasoning: model.reasoning,
-    supports_image: model.supports_image,
-  }));
-}
-
 // ---------------------------------------------------------------------------
 // LLM Providers 配置 (data-driven from DB)
 // ---------------------------------------------------------------------------
-
-type ProviderProtocol = "anthropic" | "gemini" | "openai_compatible" | "openai_codex";
-
-interface ProviderPreset {
-  name: string;
-  slug: string;
-  protocol: ProviderProtocol;
-  base_url: string;
-  env_api_key: string;
-  default_model?: string;
-  models?: ModelConfig[];
-}
-
-const PROVIDER_PRESETS: ProviderPreset[] = [
-  { name: "Anthropic Claude", slug: "anthropic", protocol: "anthropic", base_url: "", env_api_key: "ANTHROPIC_API_KEY" },
-  { name: "Google Gemini", slug: "gemini", protocol: "gemini", base_url: "", env_api_key: "GEMINI_API_KEY" },
-  { name: "OpenAI", slug: "openai", protocol: "openai_compatible", base_url: "https://api.openai.com/v1", env_api_key: "OPENAI_API_KEY" },
-  {
-    name: "ChatGPT Codex",
-    slug: "openai-codex",
-    protocol: "openai_codex",
-    base_url: "",
-    env_api_key: "OPENAI_CODEX_OAUTH",
-    default_model: "gpt-5.5",
-    models: [
-      { id: "gpt-5.5", name: "GPT-5.5", context_window: 272000, reasoning: true, supports_image: true },
-      { id: "gpt-5.4", name: "GPT-5.4", context_window: 272000, reasoning: true, supports_image: true },
-      { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", context_window: 272000, reasoning: true, supports_image: true },
-      { id: "gpt-5.3-codex", name: "GPT-5.3 Codex", context_window: 272000, reasoning: true, supports_image: true },
-    ],
-  },
-  { name: "DeepSeek", slug: "deepseek", protocol: "openai_compatible", base_url: "https://api.deepseek.com/v1", env_api_key: "DEEPSEEK_API_KEY" },
-  { name: "Groq", slug: "groq", protocol: "openai_compatible", base_url: "https://api.groq.com/openai/v1", env_api_key: "GROQ_API_KEY" },
-  { name: "xAI (Grok)", slug: "xai", protocol: "openai_compatible", base_url: "https://api.x.ai/v1", env_api_key: "XAI_API_KEY" },
-];
 
 function defaultOpenAiWireApi(baseUrl: string): "responses" | "completions" {
   const normalized = baseUrl.trim().replace(/\/+$/, "").toLowerCase();
@@ -102,15 +39,6 @@ function defaultOpenAiWireApi(baseUrl: string): "responses" | "completions" {
     return "responses";
   }
   return "completions";
-}
-
-/** 模型配置 */
-interface ModelConfig {
-  id: string;
-  name: string;
-  context_window: number;
-  reasoning: boolean;
-  supports_image: boolean;
 }
 
 export function LlmProvidersSection({
@@ -132,13 +60,13 @@ export function LlmProvidersSection({
 
   // 创建流程: null = 未开始, ProviderPreset|null = 选中的模板(null=自定义)
   const [createStep, setCreateStep] = useState<"idle" | "pick" | "form">("idle");
-  const [createPreset, setCreatePreset] = useState<ProviderPreset | null>(null);
+  const [createPreset, setCreatePreset] = useState<LlmProviderPreset | null>(null);
   const [createName, setCreateName] = useState("");
   const [createSlug, setCreateSlug] = useState("");
-  const [createProtocol, setCreateProtocol] = useState<ProviderProtocol>("openai_compatible");
+  const [createProtocol, setCreateProtocol] = useState<LlmProviderProtocol>("openai_compatible");
   const [createError, setCreateError] = useState("");
 
-  const startCreateFromPreset = (preset: ProviderPreset) => {
+  const startCreateFromPreset = (preset: LlmProviderPreset) => {
     setCreatePreset(preset);
     setCreateName(preset.name);
     setCreateSlug(preset.slug);
@@ -147,7 +75,7 @@ export function LlmProvidersSection({
     setCreateStep("form");
   };
 
-  const startCreateCustom = (protocol: ProviderProtocol) => {
+  const startCreateCustom = (protocol: LlmProviderProtocol) => {
     setCreatePreset(null);
     setCreateName("");
     setCreateSlug("");
@@ -181,7 +109,7 @@ export function LlmProvidersSection({
         base_url: createPreset.base_url,
         env_api_key: createPreset.env_api_key,
         default_model: createPreset.default_model,
-        models: createPreset.models ? modelConfigsToJsonValue(createPreset.models) : undefined,
+        models: createPreset.models ? serializeLlmProviderModelConfigs(createPreset.models) : undefined,
       } : {}),
     });
     if (result) {
@@ -203,7 +131,7 @@ export function LlmProvidersSection({
             <LlmProviderRow
               key={provider.id}
               provider={provider}
-              discoveredModels={discoveredModels.filter((m) => (m.provider_id ?? "") === provider.slug)}
+              discoveredModels={discoveredModels.filter((model) => modelBelongsToProviderSlug(model, provider))}
               isLoadingModels={isLoadingModels}
               onRefreshModels={onRefreshModels}
               saving={saving}
@@ -229,7 +157,7 @@ export function LlmProvidersSection({
         {createStep === "pick" && (
           <div className="space-y-1 rounded-[8px] border border-border bg-background/80 p-3">
             <p className="text-xs font-medium text-foreground mb-2">选择预设模板</p>
-            {PROVIDER_PRESETS.map((preset) => (
+            {LLM_PROVIDER_PRESETS.map((preset) => (
               <button
                 key={preset.slug}
                 type="button"
@@ -242,7 +170,7 @@ export function LlmProvidersSection({
             ))}
             <div className="border-t border-border mt-1 pt-2">
               <p className="text-xs text-muted-foreground mb-1.5 px-3">自定义端点</p>
-              {(["openai_compatible", "anthropic", "gemini"] as const).map((proto) => (
+              {CUSTOM_LLM_PROVIDER_PROTOCOLS.map((proto) => (
                 <button
                   key={proto}
                   type="button"
@@ -339,7 +267,7 @@ function LlmProviderRow({
   isLoadingModels: boolean;
   onRefreshModels: () => void;
   saving: boolean;
-  onSave: (req: UpdateLlmProviderRequest) => void;
+  onSave: (req: UpdateLlmProviderRequest) => Promise<void>;
   onDelete: () => void;
   onProviderChanged: () => Promise<void> | void;
 }) {
@@ -418,7 +346,7 @@ function LlmProviderForm({
   isLoadingModels: boolean;
   onRefreshModels: () => void;
   saving: boolean;
-  onSave: (req: UpdateLlmProviderRequest) => void;
+  onSave: (req: UpdateLlmProviderRequest) => Promise<void>;
   onDelete: () => void;
   onProviderChanged: () => Promise<void> | void;
 }) {
@@ -430,11 +358,12 @@ function LlmProviderForm({
   const [wireApi, setWireApi] = useState(provider.wire_api || (provider.protocol === "openai_compatible" ? defaultOpenAiWireApi(provider.base_url) : ""));
   const [credentialMode, setCredentialMode] = useState(provider.credential_mode);
   const [enabled, setEnabled] = useState(provider.enabled);
-  const [models, setModels] = useState<ModelConfig[]>(parseModelConfigs(provider.models));
+  const [models, setModels] = useState<LlmProviderModelConfig[]>(parseLlmProviderModelConfigs(provider.models));
   const [modelsTouched, setModelsTouched] = useState(false);
-  const [blockedModels, setBlockedModels] = useState<string[]>(parseStringList(provider.blocked_models));
+  const [blockedModels, setBlockedModels] = useState<string[]>(parseLlmProviderBlockedModels(provider.blocked_models));
   const [blockedModelsTouched, setBlockedModelsTouched] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // 实时探测状态：用当前表单 credentials 探测到的模型列表
   const [probedModels, setProbedModels] = useState<ProbeModelEntry[] | null>(null);
@@ -500,7 +429,7 @@ function LlmProviderForm({
     setBlockedModelsTouched(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const req: UpdateLlmProviderRequest = {};
     if (name !== provider.name) req.name = name;
     if (enabled !== provider.enabled) req.enabled = enabled;
@@ -509,14 +438,19 @@ function LlmProviderForm({
     if (baseUrl !== provider.base_url) req.base_url = baseUrl;
     if (defaultModel !== provider.default_model) req.default_model = defaultModel;
     if (showWireApi && wireApi !== provider.wire_api) req.wire_api = wireApi;
-    if (modelsTouched) req.models = modelConfigsToJsonValue(models);
-    if (blockedModelsTouched) req.blocked_models = blockedModels;
+    if (modelsTouched) req.models = serializeLlmProviderModelConfigs(models);
+    if (blockedModelsTouched) req.blocked_models = serializeLlmProviderBlockedModels(blockedModels);
 
     if (Object.keys(req).length > 0) {
-      onSave(req);
-      setApiKeyTouched(false);
-      setModelsTouched(false);
-      setBlockedModelsTouched(false);
+      setSaveError(null);
+      try {
+        await onSave(req);
+        setApiKeyTouched(false);
+        setModelsTouched(false);
+        setBlockedModelsTouched(false);
+      } catch (e) {
+        setSaveError(e instanceof Error ? e.message : String(e));
+      }
     }
   };
 
@@ -525,7 +459,7 @@ function LlmProviderForm({
     setIsProbing(true);
     setProbeError(null);
     try {
-      const result = await llmProvidersApi.probeModels({
+      const result = await probeLlmProviderModels({
         protocol: provider.protocol,
         api_key: apiKeyTouched ? apiKey : undefined,
         base_url: baseUrl || undefined,
@@ -546,9 +480,10 @@ function LlmProviderForm({
     await onProviderChanged();
   }, [onProviderChanged]);
 
+  const codexOAuthActions = useMemo(() => createAdminCodexOAuthActions(provider.id), [provider.id]);
 
-  const handleAddModel = (initial?: ModelConfig) => {
-    const newModel: ModelConfig = initial ?? { id: "", name: "", context_window: 200000, reasoning: true, supports_image: true };
+  const handleAddModel = (initial?: LlmProviderModelConfig) => {
+    const newModel: LlmProviderModelConfig = initial ?? { id: "", name: "", context_window: 200000, reasoning: true, supports_image: true };
     setModels([...models, newModel]);
     setModelsTouched(true);
   };
@@ -558,7 +493,7 @@ function LlmProviderForm({
     setModelsTouched(true);
   };
 
-  const handleUpdateModel = (index: number, field: keyof ModelConfig, value: string | number | boolean) => {
+  const handleUpdateModel = (index: number, field: keyof LlmProviderModelConfig, value: string | number | boolean) => {
     setModels(models.map((m, i) => i !== index ? m : { ...m, [field]: value }));
     setModelsTouched(true);
   };
@@ -632,9 +567,9 @@ function LlmProviderForm({
               </p>
             </div>
             <OAuthLoginWizard
-              start={() => llmProvidersApi.startCodexOAuth(provider.id)}
-              getStatus={llmProvidersApi.getCodexOAuthStatus}
-              cancel={llmProvidersApi.cancelCodexOAuth}
+              start={codexOAuthActions.start}
+              getStatus={codexOAuthActions.getStatus}
+              cancel={codexOAuthActions.cancel}
               onCompleted={handleCodexLoginCompleted}
               idleLabel={provider.global_api_key_configured ? "重新验证 ChatGPT" : "通过 ChatGPT 登录"}
               authLinkLabel="打开 ChatGPT 授权页"
@@ -728,6 +663,12 @@ function LlmProviderForm({
         probeError={probeError}
       />
 
+      {saveError && (
+        <p className="rounded-[8px] border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          保存失败: {saveError}
+        </p>
+      )}
+
       <div className="flex justify-between pt-1">
         <button
           type="button"
@@ -736,7 +677,7 @@ function LlmProviderForm({
         >
           删除此 Provider
         </button>
-        <button type="button" disabled={saving} className={btnPrimaryCls} onClick={handleSave}>
+        <button type="button" disabled={saving} className={btnPrimaryCls} onClick={() => void handleSave()}>
           {saving ? "保存中…" : "保存"}
         </button>
       </div>
@@ -770,7 +711,7 @@ function buildModelTooltip(model: ModelInfo): string {
   return lines.join("\n");
 }
 
-function buildCustomModelTooltip(model: ModelConfig): string {
+function buildCustomModelTooltip(model: LlmProviderModelConfig): string {
   const lines = [model.id, "自定义模型"];
   if (model.name && model.name !== model.id) lines.push(`名称: ${model.name}`);
   lines.push(`上下文窗口: ${(model.context_window / 1000).toFixed(0)}k tokens`);
@@ -792,14 +733,14 @@ function ModelManagementSection({
   probeError,
 }: {
   discoveredModels: ModelInfo[];
-  customModels: ModelConfig[];
+  customModels: LlmProviderModelConfig[];
   blockedModels: string[];
   isLoadingModels: boolean;
   onRefreshModels: () => void;
   onToggleBlocked: (modelId: string) => void;
-  onAddModel: (initial?: ModelConfig) => void;
+  onAddModel: (initial?: LlmProviderModelConfig) => void;
   onRemoveModel: (index: number) => void;
-  onUpdateModel: (index: number, field: keyof ModelConfig, value: string | number | boolean) => void;
+  onUpdateModel: (index: number, field: keyof LlmProviderModelConfig, value: string | number | boolean) => void;
   probeError?: string | null;
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
@@ -831,13 +772,13 @@ function ModelManagementSection({
   const findOverrideIndex = (modelId: string) => customModels.findIndex((m) => m.id === modelId);
 
   // 对 discovered model 设置/更新 override
-  const handleDiscoveredOverride = (model: ModelInfo, field: keyof ModelConfig, value: string | number | boolean) => {
+  const handleDiscoveredOverride = (model: ModelInfo, field: keyof LlmProviderModelConfig, value: string | number | boolean) => {
     const existingIdx = findOverrideIndex(model.id);
     if (existingIdx >= 0) {
       onUpdateModel(existingIdx, field, value);
     } else {
       // 首次 override：基于 discovered 属性创建一条配置
-      const newConfig: ModelConfig = {
+      const newConfig: LlmProviderModelConfig = {
         id: model.id,
         name: model.name,
         context_window: model.context_window,
@@ -1086,9 +1027,9 @@ function CustomModelEditRow({
   onDone,
   onRemove,
 }: {
-  model: ModelConfig;
+  model: LlmProviderModelConfig;
   isDiscovered: boolean;
-  onUpdate: (field: keyof ModelConfig, value: string | number | boolean) => void;
+  onUpdate: (field: keyof LlmProviderModelConfig, value: string | number | boolean) => void;
   onDone: () => void;
   onRemove: () => void;
 }) {
@@ -1163,8 +1104,8 @@ function DiscoveredModelEditRow({
   onDone,
 }: {
   model: ModelInfo;
-  override: ModelConfig | null;
-  onOverride: (field: keyof ModelConfig, value: string | number | boolean) => void;
+  override: LlmProviderModelConfig | null;
+  onOverride: (field: keyof LlmProviderModelConfig, value: string | number | boolean) => void;
   onResetOverride: () => void;
   onDone: () => void;
 }) {
@@ -1245,7 +1186,7 @@ function NewCustomModelForm({
   onAdd,
   onCancel,
 }: {
-  onAdd: (model: ModelConfig) => void;
+  onAdd: (model: LlmProviderModelConfig) => void;
   onCancel: () => void;
 }) {
   const [id, setId] = useState("");
@@ -1295,4 +1236,3 @@ function NewCustomModelForm({
     </div>
   );
 }
-

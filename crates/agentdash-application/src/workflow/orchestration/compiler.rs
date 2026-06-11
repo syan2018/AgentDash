@@ -16,7 +16,6 @@ pub const WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkflowGraphCompileMode {
     Strict,
-    LenientDiagnostics,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -405,21 +404,11 @@ impl<'a> Compiler<'a> {
             if transition.kind == ActivityTransitionKind::Artifact
                 && transition.artifact_bindings.is_empty()
             {
-                let diagnostic = match self.input.compile_mode {
-                    WorkflowGraphCompileMode::Strict => WorkflowGraphCompileDiagnostic::error(
-                        "artifact_edge_missing_state_exchange",
-                        "Artifact transition must declare at least one state exchange binding",
-                        &source_path,
-                    ),
-                    WorkflowGraphCompileMode::LenientDiagnostics => {
-                        WorkflowGraphCompileDiagnostic::warning(
-                            "artifact_edge_missing_state_exchange",
-                            "Artifact transition has no state exchange binding",
-                            &source_path,
-                        )
-                    }
-                };
-                self.diagnostics.push(diagnostic);
+                self.diagnostics.push(WorkflowGraphCompileDiagnostic::error(
+                    "artifact_edge_missing_state_exchange",
+                    "Artifact transition must declare at least one state exchange binding",
+                    &source_path,
+                ));
             }
 
             if let Some(target) = to_lookup {

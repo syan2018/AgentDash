@@ -42,10 +42,23 @@ import type {
   ProbeMcpPresetResponse,
   UpdateMcpPresetRequest,
 } from "../../../types";
+import { McpTransportConfigEditor } from "../../mcp-shared";
 import {
-  McpTransportConfigEditor,
-  createDefaultMcpTransportConfig,
-} from "../../mcp-shared";
+  MCP_ROUTE_POLICY_OPTIONS,
+  buildCreateMcpPresetRequest,
+  buildMcpPresetFormState,
+  buildUpdateMcpPresetPatch,
+  readMcpRoutePolicy,
+  validateMcpPresetForm,
+  type McpPresetFormState,
+} from "../../mcp-shared/helpers";
+import {
+  buildMcpProbeViewModel,
+  describeMcpProbeTransport,
+  type McpProbeTone,
+  type McpProbeViewModel,
+  type McpProbeViewStatus,
+} from "../../mcp-shared/probeViewModel";
 import {
   AssetCard,
   CardMenu,
@@ -70,85 +83,6 @@ import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog"
 interface FormBaseline {
   /** 编辑模式下为装载时的 Preset（用于 diff）；新建模式为 null */
   original: McpPresetDto | null;
-}
-
-interface FormState {
-  key: string;
-  display_name: string;
-  /** 直接映射到 <textarea>；空串在 update 时表示"清空"（tombstone）*/
-  description: string;
-  transport: McpTransportConfig;
-  route_policy: McpRoutePolicy;
-}
-
-function buildInitialForm(preset?: McpPresetDto | null): FormState {
-  if (!preset) {
-    return {
-      key: "",
-      display_name: "",
-      description: "",
-      transport: createDefaultMcpTransportConfig(),
-      route_policy: "auto",
-    };
-  }
-  return {
-    key: preset.key,
-    display_name: preset.display_name,
-    description: preset.description ?? "",
-    transport: preset.transport,
-    route_policy: preset.route_policy,
-  };
-}
-
-/** 客户端校验；返回错误信息或 null。 */
-function validateForm(form: FormState): string | null {
-  const trimmedKey = form.key.trim();
-  const trimmedDisplayName = form.display_name.trim();
-  if (!trimmedKey) return "工具标识不能为空";
-  if (!trimmedDisplayName) return "显示名称不能为空";
-  if (trimmedKey.startsWith("agentdash-")) return "工具标识不能使用保留前缀 agentdash-";
-  if (trimmedKey.includes("::")) return "工具标识不能包含 ::";
-  if (/[\\/:\\s]/.test(trimmedKey)) return "工具标识不能包含空白、冒号或路径分隔符";
-  if (form.transport.type === "http" || form.transport.type === "sse") {
-    if (!form.transport.url.trim()) return "URL 不能为空";
-    try {
-      new URL(form.transport.url.trim());
-    } catch {
-      return "URL 格式非法";
-    }
-  }
-  if (form.transport.type === "stdio" && !form.transport.command.trim()) {
-    return "Command 不能为空";
-  }
-  return null;
-}
-
-/** 构造 update patch：仅把发生变化的字段放入；description 支持 null tombstone。 */
-function buildUpdatePatch(current: FormState, original: McpPresetDto): UpdateMcpPresetRequest {
-  const patch: UpdateMcpPresetRequest = {};
-  const trimmedKey = current.key.trim();
-  if (trimmedKey !== original.key) {
-    patch.key = trimmedKey;
-  }
-  const trimmedDisplayName = current.display_name.trim();
-  if (trimmedDisplayName !== original.display_name) {
-    patch.display_name = trimmedDisplayName;
-  }
-  const currentDesc = current.description.trim();
-  const originalDesc = (original.description ?? "").trim();
-  if (currentDesc !== originalDesc) {
-    // 空串 → null（tombstone 清空）；非空 → 字符串
-    patch.description = currentDesc ? currentDesc : null;
-  }
-  // transport：结构化比较用 JSON 序列化，字段顺序受 TS 序列化影响，
-  // 但在受控表单里字段形态稳定；用 JSON.stringify 作 cheap deep equal
-  if (JSON.stringify(current.transport) !== JSON.stringify(original.transport)) {
-    patch.transport = current.transport;
-  }
-  if (current.route_policy !== original.route_policy) {
-    patch.route_policy = current.route_policy;
-  }
-  return patch;
 }
 
 /* ─── 主面板 ─── */
@@ -511,7 +445,7 @@ function McpPresetCard({
   );
 }
 
-/* ─── 工具 capsule 预览：auto-probe 后展示工具列表（带手动重测）─── */
+/* ─── 工具 capsule 预览：按需 probe 后展示工具列表（带手动重测）─── */
 
 function ToolCapsules({
   probing,
@@ -522,16 +456,11 @@ function ToolCapsules({
   result: ProbeMcpPresetResponse | null;
   onRecheck: () => void;
 }) {
+  const probeView = buildMcpProbeViewModel(result);
   return (
     <div className="mt-3 space-y-1.5">
       <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground/70">
-        <span>
-          {probing
-            ? "探测中…"
-            : result?.status === "ok"
-              ? `发现 ${result.tools.length} 个工具（${result.latency_ms} ms）`
-              : "可用工具"}
-        </span>
+        <span>{probing ? "探测中…" : probeView.headerLabel}</span>
         <button
           type="button"
           onClick={(e) => {
@@ -545,65 +474,54 @@ function ToolCapsules({
           {probing ? "…" : "重新检测"}
         </button>
       </div>
-      <ToolCapsulesBody probing={probing} result={result} />
+      <ToolCapsulesBody probing={probing} probeView={probeView} />
     </div>
   );
 }
 
 function ToolCapsulesBody({
   probing,
-  result,
+  probeView,
 }: {
   probing: boolean;
-  result: ProbeMcpPresetResponse | null;
+  probeView: McpProbeViewModel;
 }) {
   const box =
     "flex min-h-[44px] flex-wrap items-center gap-1.5 rounded-[10px] border border-border/70 bg-secondary/20 p-2.5 text-[11px]";
 
-  if (probing && !result) {
+  if (probing && probeView.status === "idle") {
     return (
       <div className={box}>
         <span className="text-muted-foreground">探测中…</span>
       </div>
     );
   }
-  if (!result) {
-    return (
-      <div className={box}>
-        <span className="text-muted-foreground/60">尚未探测</span>
-      </div>
-    );
-  }
-  if (result.status === "unsupported") {
-    return (
-      <div className={box}>
-        <span className="text-muted-foreground" title={result.reason}>
-          ⚠ {result.reason}
-        </span>
-      </div>
-    );
-  }
-  if (result.status === "error") {
-    const short =
-      result.error.length > 80 ? `${result.error.slice(0, 80)}…` : result.error;
-    return (
-      <div className={box}>
-        <span className="text-destructive" title={result.error}>
-          ✗ {short}
-        </span>
-      </div>
-    );
-  }
 
-  const tools = result.tools;
-  if (tools.length === 0) {
+  if (!probeView.showToolGrid) {
     return (
       <div className={box}>
-        <span className="text-muted-foreground">（未返回工具）</span>
+        <span
+          className={probeBodyClassName(probeView.bodyTone, probeView.status)}
+          title={probeView.bodyTitle ?? undefined}
+        >
+          {probeView.bodyMessage}
+        </span>
       </div>
     );
   }
-  return <ToolCapsuleGrid tools={tools} />;
+  return <ToolCapsuleGrid tools={probeView.tools} />;
+}
+
+function probeBodyClassName(tone: McpProbeTone, status: McpProbeViewStatus): string {
+  if (tone === "danger") return "text-destructive";
+  if (status === "idle") return "text-muted-foreground/60";
+  return "text-muted-foreground";
+}
+
+function probeToneClassName(tone: McpProbeTone): string {
+  if (tone === "success") return "text-success";
+  if (tone === "danger") return "text-destructive";
+  return "text-muted-foreground";
 }
 
 /** 通用 capsule 网格：展示全部工具，hover 显示描述。 */
@@ -654,7 +572,7 @@ function McpPresetDetailDialog({
 
   const baseline = useMemo<FormBaseline>(() => ({ original: target }), [target]);
 
-  const [form, setForm] = useState<FormState>(() => buildInitialForm(target));
+  const [form, setForm] = useState<McpPresetFormState>(() => buildMcpPresetFormState(target));
   const [validationError, setValidationError] = useState<string | null>(null);
 
   // Probe 状态：使用当前表单里的 transport（所见即所测），
@@ -689,31 +607,23 @@ function McpPresetDetailDialog({
   const isViewOnly = detail.kind === "view";
   const isEditing = detail.kind === "edit";
 
-  const patchForm = (patch: Partial<FormState>) => {
+  const patchForm = (patch: Partial<McpPresetFormState>) => {
     setForm((prev) => ({ ...prev, ...patch }));
     setValidationError(null);
   };
 
   const handleSave = async () => {
-    const err = validateForm(form);
+    const err = validateMcpPresetForm(form);
     if (err) {
       setValidationError(err);
       return;
     }
     if (isCreating) {
-      const input: CreateMcpPresetRequest = {
-        key: form.key.trim(),
-        display_name: form.display_name.trim(),
-        transport: form.transport,
-        route_policy: form.route_policy,
-      };
-      const trimmedDesc = form.description.trim();
-      if (trimmedDesc) input.description = trimmedDesc;
-      await onCreate(input);
+      await onCreate(buildCreateMcpPresetRequest(form));
       return;
     }
     if (isEditing && baseline.original) {
-      const patch = buildUpdatePatch(form, baseline.original);
+      const patch = buildUpdateMcpPresetPatch(form, baseline.original);
       if (Object.keys(patch).length === 0) {
         setValidationError("未检测到变更，无需保存");
         return;
@@ -795,13 +705,15 @@ function McpPresetDetailDialog({
                 <label className="agentdash-form-label">路由策略</label>
                 <select
                   value={form.route_policy}
-                  onChange={(e) => patchForm({ route_policy: e.target.value as McpRoutePolicy })}
+                  onChange={(e) => patchForm({ route_policy: readMcpRoutePolicy(e.target.value) })}
                   disabled={isViewOnly}
                   className="agentdash-form-select"
                 >
-                  <option value="auto">auto（stdio 走 relay，http/sse 直连）</option>
-                  <option value="relay">relay（强制经本机）</option>
-                  <option value="direct">direct（强制直连）</option>
+                  {MCP_ROUTE_POLICY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -889,10 +801,8 @@ function ProbePanel({
   transportType: McpTransportConfig["type"];
   onProbe: () => void;
 }) {
-  const subtitle =
-    transportType === "stdio"
-      ? "通过本机 relay 连接 stdio MCP Server 并调用 tools/list；15 秒超时"
-      : "实时连接 MCP Server 并调用 tools/list；15 秒超时";
+  const subtitle = describeMcpProbeTransport(transportType);
+  const probeView = buildMcpProbeViewModel(result);
 
   return (
     <div className="rounded-[8px] border border-dashed border-border bg-secondary/30 px-3 py-2.5">
@@ -911,30 +821,15 @@ function ProbePanel({
         </button>
       </div>
 
-      {result && (
+      {probeView.detailMessage && (
         <div className="mt-2.5">
-          {result.status === "ok" && (
-            <div>
-              <p className="text-xs text-success">
-                ✓ 连接成功（{result.latency_ms} ms）·{" "}
-                {result.tools.length > 0
-                  ? `发现 ${result.tools.length} 个工具`
-                  : "未返回工具"}
-              </p>
-              {result.tools.length > 0 && (
-                <div className="mt-1.5 max-h-48 overflow-y-auto">
-                  <ToolCapsuleGrid tools={result.tools} />
-                </div>
-              )}
+          <p className={`text-xs ${probeToneClassName(probeView.detailTone)}`}>
+            {probeView.detailMessage}
+          </p>
+          {probeView.showToolGrid && (
+            <div className="mt-1.5 max-h-48 overflow-y-auto">
+              <ToolCapsuleGrid tools={probeView.tools} />
             </div>
-          )}
-          {result.status === "error" && (
-            <p className="text-xs text-destructive">✗ 探测失败：{result.error}</p>
-          )}
-          {result.status === "unsupported" && (
-            <p className="text-xs text-muted-foreground">
-              ⚠ {result.reason}
-            </p>
           )}
         </div>
       )}

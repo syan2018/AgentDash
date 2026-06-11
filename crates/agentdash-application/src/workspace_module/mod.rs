@@ -1,7 +1,7 @@
 //! Workspace Module 聚合层。
 //!
 //! 把 enabled extension（复用 `ExtensionRuntimeProjection`）+ visible canvas
-//! 聚合为单一 `WorkspaceModuleDescriptor` 契约。该层只做投影转换，不新建业务事实
+//! 聚合为单一 workspace module read model。该层只做投影转换，不新建业务事实
 //! 源——所有数据来自现成的 `extension_runtime` 投影与 `Canvas` 实体。
 //!
 //! 决策对齐：
@@ -408,6 +408,7 @@ fn describe_permission(
 
 #[cfg(test)]
 mod tests {
+    use agentdash_contracts::workspace_module::WorkspaceModuleStatusKind;
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionPermissionAccess,
@@ -600,7 +601,7 @@ mod tests {
         assert_eq!(modules.len(), 1);
         assert_eq!(
             modules[0].summary.status.kind,
-            agentdash_contracts::workspace_module::WorkspaceModuleStatusKind::Unavailable
+            WorkspaceModuleStatusKind::Unavailable
         );
         assert!(modules[0].summary.status.reason.is_some());
     }

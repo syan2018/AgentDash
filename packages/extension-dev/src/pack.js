@@ -4,6 +4,8 @@ import { build, context } from "esbuild";
 import { createRequire } from "node:module";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { createExtensionContext } from "@agentdash/extension-sdk";
 
 import { createTgz } from "./archive.js";
 import {
@@ -13,6 +15,7 @@ import {
   readJsonFile,
   sha256Digest,
   validateProject,
+  validateRuntimeSurfaceParity,
 } from "./manifest.js";
 
 const require = createRequire(import.meta.url);
@@ -54,6 +57,7 @@ export async function packProject(projectRoot, options = {}) {
 
   await copyPanelAssets(root, distDir);
   await buildPanelBundle(root, distDir);
+  await validatePackedRuntimeSurface(root);
   const manifest = await writePackedManifest(root);
   const validation = await validateProject(root, { requireBundles: true });
   if (validation.errors.length > 0) {
@@ -80,6 +84,32 @@ export async function packProject(projectRoot, options = {}) {
     manifest_digest: sha256Digest(Buffer.from(JSON.stringify(manifest))),
     manifest,
   };
+}
+
+/**
+ * @param {string} root
+ * @returns {Promise<void>}
+ */
+async function validatePackedRuntimeSurface(root) {
+  const manifest = asRecord(await readJsonFile(path.join(root, MANIFEST_FILE)));
+  if (!manifest) throw new Error(`${MANIFEST_FILE} 必须是对象`);
+  const bundlePath = path.join(root, "dist", "extension.js");
+  const moduleUrl = `${pathToFileURL(bundlePath).href}?pack-validate=${Date.now()}`;
+  const imported = await import(moduleUrl);
+  const extension = imported.default ?? imported.extension;
+  if (!extension || typeof extension !== "object") {
+    throw new Error("extension package 需要 default export extension object");
+  }
+  const context = createExtensionContext();
+  if (typeof extension.activate === "function") {
+    await extension.activate(context);
+  }
+  /** @type {string[]} */
+  const errors = [];
+  validateRuntimeSurfaceParity(manifest, context.contributions, errors);
+  if (errors.length > 0) {
+    throw new Error(errors.join("\n"));
+  }
 }
 
 /**

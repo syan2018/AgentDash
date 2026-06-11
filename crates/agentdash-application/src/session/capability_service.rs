@@ -324,7 +324,7 @@ impl RuntimeSessionMcpAccess for SessionCapabilityService {
 }
 
 fn runtime_mcp_entry_matches(
-    entry: &agentdash_executor::mcp::DiscoveredMcpTool,
+    entry: &agentdash_application_ports::mcp_discovery::DiscoveredMcpTool,
     input: &McpCallToolInput,
 ) -> bool {
     if let Some(runtime_name) = input.runtime_name.as_deref()

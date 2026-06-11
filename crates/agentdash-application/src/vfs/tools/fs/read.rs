@@ -17,6 +17,7 @@ use crate::vfs::ResourceRef;
 use crate::vfs::inline_persistence::InlineContentOverlay;
 use crate::vfs::service::VfsService;
 use crate::vfs::tools::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
+use crate::vfs::types::{runtime_entry_is_binary, runtime_entry_mime_type};
 
 // ---------------------------------------------------------------------------
 // fs_read
@@ -142,7 +143,7 @@ impl AgentTool for FsReadTool {
                 self.identity.as_ref(),
             )
             .await
-            && entry_content_kind(&entry).as_deref() == Some("binary")
+            && runtime_entry_is_binary(&entry)
         {
             return self.read_binary_entry(&vfs, &target, entry).await;
         }
@@ -301,12 +302,14 @@ impl FsReadTool {
                 target.mount_id, target.path
             )));
         }
-        let mime_type = entry_mime_type(&entry).ok_or_else(|| {
-            AgentToolError::ExecutionFailed(format!(
-                "二进制文件缺少 MIME metadata: {}://{}",
-                target.mount_id, target.path
-            ))
-        })?;
+        let mime_type = runtime_entry_mime_type(&entry)
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed(format!(
+                    "二进制文件缺少 MIME metadata: {}://{}",
+                    target.mount_id, target.path
+                ))
+            })?
+            .to_string();
         if !mime_type.starts_with("image/") {
             return Ok(AgentToolResult {
                 content: vec![ContentPart::text(format!(
@@ -357,27 +360,10 @@ impl FsReadTool {
     }
 }
 
-fn entry_content_kind(entry: &agentdash_spi::platform::mount::RuntimeFileEntry) -> Option<String> {
-    entry
-        .attributes
-        .as_ref()
-        .and_then(|attrs| attrs.get("content_kind"))
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string)
-}
-
-fn entry_mime_type(entry: &agentdash_spi::platform::mount::RuntimeFileEntry) -> Option<String> {
-    entry
-        .attributes
-        .as_ref()
-        .and_then(|attrs| attrs.get("mime_type"))
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string)
-}
-
 #[cfg(test)]
 mod fs_read_tests {
     use super::*;
+    use crate::vfs::types::{RUNTIME_FILE_CONTENT_KIND_ATTR, RUNTIME_FILE_MIME_TYPE_ATTR};
     use crate::vfs::{BinaryReadResult, ListResult, MountProviderRegistry, ReadResult};
     use agentdash_spi::platform::mount::{
         ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions,
@@ -453,11 +439,11 @@ mod fs_read_tests {
     fn attrs(content_kind: &str, mime_type: &str) -> serde_json::Map<String, serde_json::Value> {
         let mut attrs = serde_json::Map::new();
         attrs.insert(
-            "content_kind".to_string(),
+            RUNTIME_FILE_CONTENT_KIND_ATTR.to_string(),
             serde_json::Value::String(content_kind.to_string()),
         );
         attrs.insert(
-            "mime_type".to_string(),
+            RUNTIME_FILE_MIME_TYPE_ATTR.to_string(),
             serde_json::Value::String(mime_type.to_string()),
         );
         attrs

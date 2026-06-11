@@ -55,7 +55,6 @@ async function loadOrCreateAutoStartProfile(
       profile_id: current.profile_id || DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
       machine_id: current.machine_id || '',
       machine_label: current.machine_label ?? null,
-      legacy_machine_ids: current.legacy_machine_ids ?? [],
       auto_start: current.auto_start,
     };
     return client.profileSave(normalized);
@@ -67,7 +66,6 @@ async function loadOrCreateAutoStartProfile(
     profile_id: DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
     machine_id: '',
     machine_label: null,
-    legacy_machine_ids: [],
     name: DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
     workspace_roots: [],
     executor_enabled: true,

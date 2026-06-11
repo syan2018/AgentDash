@@ -12,6 +12,7 @@ pub enum WorkspaceIdentityKindRelay {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommandPromptPayload {
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -48,6 +48,9 @@
 | companion-tools | research | 已归档 | `research/companion-tools-executable-plan.md` |
 | companion-tools Batch 1 | 修复 | 已提交 | `fixes/023-companion-tool-context.md` |
 | companion-tools Batch 2 | 修复 | 已提交 | `fixes/024-companion-sub-dispatch-launch.md` |
+| companion-tools Batch 4 | 修复 | 已提交 | `fixes/025-companion-platform-grant.md` |
+| frontend-canvas-workflow | research | 待重派 | `research/frontend-canvas-workflow-executable-plan.md` |
+| executor-connectors | research | 待重派 | `research/executor-connectors-executable-plan.md` |
 
 ## 已完成模块
 
@@ -114,3 +117,4 @@
 | `41e01337` | workflow-orchestration | 拆分 executor launcher 按 executor kind 的服务边界 |
 | `d64f5fcf` | companion-tools | 收敛 companion 工具 runtime context 与 session services 错误边界 |
 | `f3601887` | companion-tools | 闭合子协作 control-plane 到 child runtime turn 启动链路 |
+| `709ac9a7` | companion-tools | 闭合平台授权假请求链路 |

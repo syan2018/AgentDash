@@ -1,67 +1,24 @@
 /**
  * Session Capabilities 交互卡片
  *
- * 解析 agentdash://session-capabilities/* 资源块，
- * 渲染 skills 的快捷预览面板。
+ * 渲染 session model 解析后的 skills 快捷预览面板。
  */
 
 import { useMemo, useState } from "react";
 import type { ContentBlock } from "../model/types";
 import {
-  isDefaultExposedSkill,
-  isModelInvocationVisibleSkill,
+  buildSessionCapabilitiesBlockViewModel,
+  getDefaultExposedSkills,
+} from "../model/sessionCapabilitiesBlock";
+import {
   skillDisplayLabel,
   skillIdentityKey,
 } from "../../../types/context";
 import type {
-  SessionBaselineCapabilities,
   SkillCapabilityEntry,
   SkillEntry,
   SkillProviderCluster,
 } from "../../../types/context";
-
-const CAPABILITY_URI_PREFIX = "agentdash://session-capabilities/";
-
-function parseCapabilitiesBlock(block: ContentBlock): SessionBaselineCapabilities | null {
-  if (block.type !== "resource") return null;
-  const { uri } = block.resource;
-  if (!uri.startsWith(CAPABILITY_URI_PREFIX)) return null;
-
-  const text =
-    "text" in block.resource && typeof block.resource.text === "string"
-      ? block.resource.text
-      : "";
-  if (!text) return null;
-
-  try {
-    return normalizeCapabilities(JSON.parse(text));
-  } catch {
-    return null;
-  }
-}
-
-function normalizeCapabilities(value: unknown): SessionBaselineCapabilities | null {
-  if (!isRecord(value)) return null;
-  return {
-    skills: Array.isArray(value.skills) ? (value.skills as SkillEntry[]) : [],
-    skill_clusters: Array.isArray(value.skill_clusters)
-      ? (value.skill_clusters as SkillProviderCluster[])
-      : [],
-    skill_diagnostics: Array.isArray(value.skill_diagnostics)
-      ? (value.skill_diagnostics as SessionBaselineCapabilities["skill_diagnostics"])
-      : [],
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value != null && typeof value === "object" && !Array.isArray(value);
-}
-
-// eslint-disable-next-line react-refresh/only-export-components
-export function isSessionCapabilitiesBlock(block: ContentBlock): boolean {
-  if (block.type !== "resource") return false;
-  return block.resource?.uri?.startsWith(CAPABILITY_URI_PREFIX) ?? false;
-}
 
 export interface SessionCapabilityCardProps {
   block: ContentBlock;
@@ -69,23 +26,17 @@ export interface SessionCapabilityCardProps {
 }
 
 export function SessionCapabilityCard({ block, defaultExpanded = false }: SessionCapabilityCardProps) {
-  const caps = useMemo(() => parseCapabilitiesBlock(block), [block]);
+  const viewModel = useMemo(() => buildSessionCapabilitiesBlockViewModel(block), [block]);
   const [expanded, setExpanded] = useState(defaultExpanded);
 
-  if (!caps) return null;
+  if (!viewModel) return null;
 
-  const clusters = visibleClusters(caps);
-  const usesClusters = clusters.length > 0;
-  const visibleSkills = usesClusters ? [] : caps.skills.filter(isModelInvocationVisibleSkill);
-  const skillCount = usesClusters
-    ? clusters.reduce((total, cluster) => total + defaultExposedSkills(cluster).length, 0)
-    : visibleSkills.length;
-
-  if (!usesClusters && skillCount === 0) return null;
-
-  const summaryParts: string[] = [];
-  if (usesClusters) summaryParts.push(`${clusters.length} 个 Provider`);
-  if (skillCount > 0) summaryParts.push(`${skillCount} 个默认暴露 Skill`);
+  const {
+    clusters,
+    usesClusters,
+    visibleSkills,
+    summaryParts,
+  } = viewModel;
 
   return (
     <div className="rounded-[12px] border border-border bg-background overflow-hidden">
@@ -132,7 +83,7 @@ function SkillClustersSection({ clusters }: { clusters: SkillProviderCluster[] }
 }
 
 function SkillClusterBlock({ cluster }: { cluster: SkillProviderCluster }) {
-  const skills = defaultExposedSkills(cluster);
+  const skills = getDefaultExposedSkills(cluster);
   const summary = cluster.ui_summary ?? cluster.model_summary ?? "";
   return (
     <section className="space-y-2 rounded-[8px] border border-border/70 bg-secondary/20 px-2.5 py-2">
@@ -241,20 +192,6 @@ function SkillChip({ label }: { label: string }) {
       {label}
     </span>
   );
-}
-
-function visibleClusters(capabilities: SessionBaselineCapabilities): SkillProviderCluster[] {
-  return (capabilities.skill_clusters ?? []).filter((cluster) => (
-    Boolean(cluster.ui_summary)
-    || Boolean(cluster.model_summary)
-    || Boolean(cluster.inventory_hint)
-    || cluster.inventory_count != null
-    || defaultExposedSkills(cluster).length > 0
-  ));
-}
-
-function defaultExposedSkills(cluster: SkillProviderCluster): SkillCapabilityEntry[] {
-  return (cluster.default_exposed_skills ?? []).filter(isDefaultExposedSkill);
 }
 
 export default SessionCapabilityCard;

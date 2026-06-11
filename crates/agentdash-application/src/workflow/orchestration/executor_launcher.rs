@@ -236,7 +236,7 @@ impl OrchestrationExecutorLauncher {
     ) -> Result<Option<LaunchedAgentNode>, WorkflowApplicationError> {
         match self.agent_node_launcher.launch(&run, &coordinate).await? {
             AgentNodeLaunchOutcome::Launched { launched, event } => {
-                self.apply_event(run, coordinate.orchestration_id, event)
+                self.apply_event(run, coordinate.orchestration_id, *event)
                     .await?;
                 Ok(Some(launched))
             }
@@ -326,7 +326,7 @@ impl OrchestrationExecutorLauncher {
     ) -> Result<Option<OpenedHumanGate>, WorkflowApplicationError> {
         match self.human_gate_launcher.open(&run, &coordinate).await? {
             HumanGateOpenOutcome::Opened { opened, event } => {
-                self.apply_event(run, coordinate.orchestration_id, event)
+                self.apply_event(run, coordinate.orchestration_id, *event)
                     .await?;
                 Ok(Some(opened))
             }

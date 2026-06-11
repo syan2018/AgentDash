@@ -87,14 +87,14 @@ impl HumanGateLauncher {
                 attempt: coordinate.attempt,
                 gate_id,
             },
-            event: OrchestrationRuntimeEvent::NodeStarted {
+            event: Box::new(OrchestrationRuntimeEvent::NodeStarted {
                 node_path: coordinate.node_path.clone(),
                 attempt: coordinate.attempt,
                 executor_run_ref: Some(ExecutorRunRef::HumanDecision {
                     decision_id: gate_id.to_string(),
                 }),
                 timestamp: chrono::Utc::now(),
-            },
+            }),
         })
     }
 
@@ -138,7 +138,7 @@ impl HumanGateLauncher {
 pub(super) enum HumanGateOpenOutcome {
     Opened {
         opened: OpenedHumanGate,
-        event: OrchestrationRuntimeEvent,
+        event: Box<OrchestrationRuntimeEvent>,
     },
     Blocked {
         code: String,

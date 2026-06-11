@@ -143,12 +143,12 @@ impl AgentNodeLauncher {
                 attempt: coordinate.attempt,
                 runtime_session_id: session_id.clone(),
             },
-            event: OrchestrationRuntimeEvent::NodeStarted {
+            event: Box::new(OrchestrationRuntimeEvent::NodeStarted {
                 node_path: coordinate.node_path.clone(),
                 attempt: coordinate.attempt,
                 executor_run_ref: Some(ExecutorRunRef::RuntimeSession { session_id }),
                 timestamp: chrono::Utc::now(),
-            },
+            }),
         })
     }
 
@@ -175,7 +175,7 @@ impl AgentNodeLauncher {
 pub(super) enum AgentNodeLaunchOutcome {
     Launched {
         launched: LaunchedAgentNode,
-        event: OrchestrationRuntimeEvent,
+        event: Box<OrchestrationRuntimeEvent>,
     },
     Blocked {
         code: String,

@@ -51,6 +51,10 @@
 | companion-tools Batch 4 | 修复 | 已提交 | `fixes/025-companion-platform-grant.md` |
 | frontend-canvas-workflow | research | 待重派 | `research/frontend-canvas-workflow-executable-plan.md` |
 | executor-connectors | research | 待重派 | `research/executor-connectors-executable-plan.md` |
+| session-ui-toolcards | research | 已归档 | `research/session-ui-toolcards-executable-plan.md` |
+| mcp-preset-connectors | research | 已归档 | `research/mcp-preset-connectors-executable-plan.md` |
+| session-ui-toolcards Batch A | 修复 | 已提交 | `fixes/026-session-capability-model.md` |
+| mcp-preset-connectors Batch A | 修复 | 已提交 | `fixes/027-mcp-preset-form-helper.md` |
 
 ## 已完成模块
 
@@ -118,3 +122,5 @@
 | `d64f5fcf` | companion-tools | 收敛 companion 工具 runtime context 与 session services 错误边界 |
 | `f3601887` | companion-tools | 闭合子协作 control-plane 到 child runtime turn 启动链路 |
 | `709ac9a7` | companion-tools | 闭合平台授权假请求链路 |
+| `cb9cb9ab` | session-ui-toolcards | 收敛 capability 资源解析边界 |
+| `f797c541` | mcp-preset-connectors | 收敛前端表单 helper |

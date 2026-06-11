@@ -42,10 +42,16 @@ import type {
   ProbeMcpPresetResponse,
   UpdateMcpPresetRequest,
 } from "../../../types";
+import { McpTransportConfigEditor } from "../../mcp-shared";
 import {
-  McpTransportConfigEditor,
-  createDefaultMcpTransportConfig,
-} from "../../mcp-shared";
+  MCP_ROUTE_POLICY_OPTIONS,
+  buildCreateMcpPresetRequest,
+  buildMcpPresetFormState,
+  buildUpdateMcpPresetPatch,
+  readMcpRoutePolicy,
+  validateMcpPresetForm,
+  type McpPresetFormState,
+} from "../../mcp-shared/helpers";
 import {
   AssetCard,
   CardMenu,
@@ -70,85 +76,6 @@ import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog"
 interface FormBaseline {
   /** 编辑模式下为装载时的 Preset（用于 diff）；新建模式为 null */
   original: McpPresetDto | null;
-}
-
-interface FormState {
-  key: string;
-  display_name: string;
-  /** 直接映射到 <textarea>；空串在 update 时表示"清空"（tombstone）*/
-  description: string;
-  transport: McpTransportConfig;
-  route_policy: McpRoutePolicy;
-}
-
-function buildInitialForm(preset?: McpPresetDto | null): FormState {
-  if (!preset) {
-    return {
-      key: "",
-      display_name: "",
-      description: "",
-      transport: createDefaultMcpTransportConfig(),
-      route_policy: "auto",
-    };
-  }
-  return {
-    key: preset.key,
-    display_name: preset.display_name,
-    description: preset.description ?? "",
-    transport: preset.transport,
-    route_policy: preset.route_policy,
-  };
-}
-
-/** 客户端校验；返回错误信息或 null。 */
-function validateForm(form: FormState): string | null {
-  const trimmedKey = form.key.trim();
-  const trimmedDisplayName = form.display_name.trim();
-  if (!trimmedKey) return "工具标识不能为空";
-  if (!trimmedDisplayName) return "显示名称不能为空";
-  if (trimmedKey.startsWith("agentdash-")) return "工具标识不能使用保留前缀 agentdash-";
-  if (trimmedKey.includes("::")) return "工具标识不能包含 ::";
-  if (/[\\/:\\s]/.test(trimmedKey)) return "工具标识不能包含空白、冒号或路径分隔符";
-  if (form.transport.type === "http" || form.transport.type === "sse") {
-    if (!form.transport.url.trim()) return "URL 不能为空";
-    try {
-      new URL(form.transport.url.trim());
-    } catch {
-      return "URL 格式非法";
-    }
-  }
-  if (form.transport.type === "stdio" && !form.transport.command.trim()) {
-    return "Command 不能为空";
-  }
-  return null;
-}
-
-/** 构造 update patch：仅把发生变化的字段放入；description 支持 null tombstone。 */
-function buildUpdatePatch(current: FormState, original: McpPresetDto): UpdateMcpPresetRequest {
-  const patch: UpdateMcpPresetRequest = {};
-  const trimmedKey = current.key.trim();
-  if (trimmedKey !== original.key) {
-    patch.key = trimmedKey;
-  }
-  const trimmedDisplayName = current.display_name.trim();
-  if (trimmedDisplayName !== original.display_name) {
-    patch.display_name = trimmedDisplayName;
-  }
-  const currentDesc = current.description.trim();
-  const originalDesc = (original.description ?? "").trim();
-  if (currentDesc !== originalDesc) {
-    // 空串 → null（tombstone 清空）；非空 → 字符串
-    patch.description = currentDesc ? currentDesc : null;
-  }
-  // transport：结构化比较用 JSON 序列化，字段顺序受 TS 序列化影响，
-  // 但在受控表单里字段形态稳定；用 JSON.stringify 作 cheap deep equal
-  if (JSON.stringify(current.transport) !== JSON.stringify(original.transport)) {
-    patch.transport = current.transport;
-  }
-  if (current.route_policy !== original.route_policy) {
-    patch.route_policy = current.route_policy;
-  }
-  return patch;
 }
 
 /* ─── 主面板 ─── */
@@ -654,7 +581,7 @@ function McpPresetDetailDialog({
 
   const baseline = useMemo<FormBaseline>(() => ({ original: target }), [target]);
 
-  const [form, setForm] = useState<FormState>(() => buildInitialForm(target));
+  const [form, setForm] = useState<McpPresetFormState>(() => buildMcpPresetFormState(target));
   const [validationError, setValidationError] = useState<string | null>(null);
 
   // Probe 状态：使用当前表单里的 transport（所见即所测），
@@ -689,31 +616,23 @@ function McpPresetDetailDialog({
   const isViewOnly = detail.kind === "view";
   const isEditing = detail.kind === "edit";
 
-  const patchForm = (patch: Partial<FormState>) => {
+  const patchForm = (patch: Partial<McpPresetFormState>) => {
     setForm((prev) => ({ ...prev, ...patch }));
     setValidationError(null);
   };
 
   const handleSave = async () => {
-    const err = validateForm(form);
+    const err = validateMcpPresetForm(form);
     if (err) {
       setValidationError(err);
       return;
     }
     if (isCreating) {
-      const input: CreateMcpPresetRequest = {
-        key: form.key.trim(),
-        display_name: form.display_name.trim(),
-        transport: form.transport,
-        route_policy: form.route_policy,
-      };
-      const trimmedDesc = form.description.trim();
-      if (trimmedDesc) input.description = trimmedDesc;
-      await onCreate(input);
+      await onCreate(buildCreateMcpPresetRequest(form));
       return;
     }
     if (isEditing && baseline.original) {
-      const patch = buildUpdatePatch(form, baseline.original);
+      const patch = buildUpdateMcpPresetPatch(form, baseline.original);
       if (Object.keys(patch).length === 0) {
         setValidationError("未检测到变更，无需保存");
         return;
@@ -795,13 +714,15 @@ function McpPresetDetailDialog({
                 <label className="agentdash-form-label">路由策略</label>
                 <select
                   value={form.route_policy}
-                  onChange={(e) => patchForm({ route_policy: e.target.value as McpRoutePolicy })}
+                  onChange={(e) => patchForm({ route_policy: readMcpRoutePolicy(e.target.value) })}
                   disabled={isViewOnly}
                   className="agentdash-form-select"
                 >
-                  <option value="auto">auto（stdio 走 relay，http/sse 直连）</option>
-                  <option value="relay">relay（强制经本机）</option>
-                  <option value="direct">direct（强制直连）</option>
+                  {MCP_ROUTE_POLICY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>

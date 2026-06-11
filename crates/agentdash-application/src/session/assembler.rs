@@ -37,7 +37,7 @@ use agentdash_domain::workflow::{
 };
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{AuthIdentity, CapabilityScope, CapabilityScopeCtx, SkillDiscoveryProvider};
-use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCluster, Vfs};
+use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, ToolCluster, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -816,9 +816,11 @@ impl<'a> SessionRequestAssembler<'a> {
             crate::session::capability_state::project_workspace_module_dimension(
                 spec.visible_workspace_module_refs.as_deref(),
             );
-        let mut session_mcp_servers = spec.request_mcp_servers.clone();
-        session_mcp_servers.extend(cap_output.tool.mcp_servers.iter().cloned());
-        session_mcp_servers.extend(spec.agent_mcp.preset_mcp_servers.iter().cloned());
+        let session_mcp_servers = normalize_owner_bootstrap_mcp_projection(
+            &mut cap_output,
+            &spec.request_mcp_servers,
+            &spec.agent_mcp,
+        );
         let context_bundle = self
             .build_owner_context_bundle(
                 &spec,
@@ -1506,6 +1508,66 @@ async fn resolve_owner_workflow_tool_directives(
     Some(tool_directives_from_active_workflow(&workflow))
 }
 
+fn normalize_owner_bootstrap_mcp_projection(
+    capability_state: &mut CapabilityState,
+    request_mcp_servers: &[agentdash_spi::SessionMcpServer],
+    agent_mcp: &AgentLevelMcp,
+) -> Vec<agentdash_spi::SessionMcpServer> {
+    let mut servers = Vec::new();
+    servers.extend(request_mcp_servers.iter().cloned());
+    servers.extend(capability_state.tool.mcp_servers.iter().cloned());
+    servers.extend(agent_mcp.preset_mcp_servers.iter().cloned());
+    normalize_session_mcp_servers(&mut servers);
+
+    for server in &servers {
+        capability_state
+            .tool
+            .capabilities
+            .insert(capability_for_session_mcp_server(server));
+    }
+    capability_state.tool.mcp_servers = servers.clone();
+    servers
+}
+
+fn normalize_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>) {
+    let mut seen = BTreeSet::<String>::new();
+    servers.retain(|server| seen.insert(server.name.clone()));
+}
+
+fn capability_for_session_mcp_server(server: &agentdash_spi::SessionMcpServer) -> ToolCapability {
+    match agent_facing_mcp_server_name(&server.name).as_str() {
+        "agentdash-relay-tools" => {
+            ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_RELAY_MANAGEMENT)
+        }
+        "agentdash-story-tools" => {
+            ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_STORY_MANAGEMENT)
+        }
+        "agentdash-task-tools" => {
+            ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_TASK_MANAGEMENT)
+        }
+        "agentdash-workflow-tools" => {
+            ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_WORKFLOW_MANAGEMENT)
+        }
+        custom => ToolCapability::custom_mcp(custom),
+    }
+}
+
+fn agent_facing_mcp_server_name(server_name: &str) -> String {
+    const PLATFORM_SCOPED_PREFIXES: &[(&str, &str)] = &[
+        ("agentdash-story-tools-", "agentdash-story-tools"),
+        ("agentdash-task-tools-", "agentdash-task-tools"),
+        ("agentdash-workflow-tools-", "agentdash-workflow-tools"),
+    ];
+
+    for (prefix, stable_name) in PLATFORM_SCOPED_PREFIXES {
+        if server_name.starts_with(prefix) {
+            return (*stable_name).to_string();
+        }
+    }
+
+    server_name.to_string()
+}
+
 #[cfg(test)]
 #[allow(deprecated)]
 mod tests {
@@ -1519,6 +1581,122 @@ mod tests {
     use std::collections::BTreeSet;
 
     // ── companion bundle fragment 裁剪回归（PR 5d · E8①） ──
+
+    fn session_mcp_server(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {
+        agentdash_spi::SessionMcpServer {
+            name: name.to_string(),
+            transport: agentdash_spi::McpTransportConfig::Http {
+                url: url.to_string(),
+                headers: vec![],
+            },
+            uses_relay: false,
+        }
+    }
+
+    fn server_url(server: &agentdash_spi::SessionMcpServer) -> &str {
+        match &server.transport {
+            agentdash_spi::McpTransportConfig::Http { url, .. } => url.as_str(),
+            _ => "",
+        }
+    }
+
+    #[test]
+    fn owner_bootstrap_mcp_projection_grants_agent_preset_without_directive() {
+        let agent_server = session_mcp_server("code_analyzer", "http://agent/mcp");
+        let mut capability_state = CapabilityState::default();
+
+        let servers = normalize_owner_bootstrap_mcp_projection(
+            &mut capability_state,
+            &[],
+            &AgentLevelMcp {
+                preset_mcp_servers: vec![agent_server.clone()],
+            },
+        );
+
+        assert_eq!(servers, vec![agent_server.clone()]);
+        assert_eq!(capability_state.tool.mcp_servers, vec![agent_server]);
+        assert!(
+            capability_state
+                .tool
+                .capabilities
+                .contains(&ToolCapability::custom_mcp("code_analyzer"))
+        );
+        assert!(capability_state.is_capability_tool_enabled(
+            "mcp:code_analyzer",
+            "scan_repo",
+            None
+        ));
+    }
+
+    #[test]
+    fn owner_bootstrap_mcp_projection_dedupes_by_source_priority() {
+        let mut capability_state = CapabilityState::default();
+        capability_state.tool.mcp_servers = vec![
+            session_mcp_server("shared", "http://resolver/mcp"),
+            session_mcp_server("resolver_only", "http://resolver-only/mcp"),
+        ];
+
+        let servers = normalize_owner_bootstrap_mcp_projection(
+            &mut capability_state,
+            &[session_mcp_server("shared", "http://request/mcp")],
+            &AgentLevelMcp {
+                preset_mcp_servers: vec![
+                    session_mcp_server("shared", "http://agent/mcp"),
+                    session_mcp_server("agent_only", "http://agent-only/mcp"),
+                ],
+            },
+        );
+
+        let names = servers
+            .iter()
+            .map(|server| server.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["shared", "resolver_only", "agent_only"]);
+        assert_eq!(server_url(&servers[0]), "http://request/mcp");
+        assert_eq!(capability_state.tool.mcp_servers, servers);
+        assert!(
+            capability_state
+                .tool
+                .capabilities
+                .contains(&ToolCapability::custom_mcp("shared"))
+        );
+        assert!(
+            capability_state
+                .tool
+                .capabilities
+                .contains(&ToolCapability::custom_mcp("agent_only"))
+        );
+    }
+
+    #[test]
+    fn owner_bootstrap_mcp_projection_maps_platform_scoped_server_to_platform_capability() {
+        let mut capability_state = CapabilityState::default();
+        capability_state.tool.mcp_servers = vec![session_mcp_server(
+            "agentdash-workflow-tools-123",
+            "http://workflow/mcp",
+        )];
+
+        normalize_owner_bootstrap_mcp_projection(
+            &mut capability_state,
+            &[],
+            &AgentLevelMcp::default(),
+        );
+
+        assert!(
+            capability_state
+                .tool
+                .capabilities
+                .contains(&ToolCapability::new(
+                    agentdash_spi::platform::tool_capability::CAP_WORKFLOW_MANAGEMENT
+                ))
+        );
+        assert!(
+            !capability_state
+                .tool
+                .capabilities
+                .contains(&ToolCapability::custom_mcp("agentdash-workflow-tools-123"))
+        );
+    }
 
     fn activity_with_agent_executor(executor: AgentActivityExecutorSpec) -> ActivityDefinition {
         ActivityDefinition {

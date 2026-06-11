@@ -228,6 +228,7 @@ export type ProbeMcpPresetResponse =
 - `UpdateMcpPresetRequest.runtime_binding` is tri-state: missing means unchanged, `null` clears the declaration, and an object replaces the declaration.
 - `McpPresetResponse.runtime_binding` mirrors the persisted declaration. The response does not include resolved session values because those belong to `SessionMcpServer`.
 - `ProbeMcpPresetRequest` always sends the edited `transport` and includes optional `runtime_binding` when the edited form or saved preset has one, allowing the probe cache key to fingerprint both values.
+- For HTTP/SSE probes, `ProbeMcpPresetRequest.transport.headers` are part of the connection parameters; backend probe code must pass them into the MCP HTTP client the same way real preset connections do.
 - Ordinary preset probe has no session context. If any binding rule is `required=true`, the response is `Unsupported { reason }` and should be displayed as a diagnostic state, not as a successful connectivity result.
 - If all runtime binding rules are optional, ordinary probe continues with the static transport because no session fact is required to establish a static connection.
 - Project Agent MCP picker preserves the response `runtime_binding` and may show a binding status badge; quick-create or selection flows must not rebuild presets field-by-field in a way that drops the binding declaration.
@@ -260,6 +261,7 @@ export type ProbeMcpPresetResponse =
 - Rust DTO conversion tests assert domain runtime binding and stdio cwd roundtrip through contract DTOs.
 - API route test asserts create/read/update preserve `runtime_binding`, including update unchanged/clear/replace semantics.
 - Probe service tests assert required runtime binding returns `status="unsupported"` and optional runtime binding continues static probe.
+- Probe HTTP/SSE tests assert `transport.headers` are forwarded into the MCP HTTP client for ordinary preset probes, including static headers and optional runtime-binding headers that remain on the static transport.
 - Frontend helper tests assert form state, create payload, update patch, validation, and probe cache key include `runtime_binding`.
 - Frontend picker/component test asserts bound presets are preserved and surfaced as a binding status.
 

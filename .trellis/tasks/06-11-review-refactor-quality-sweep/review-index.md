@@ -3,7 +3,7 @@
 ## 状态
 
 - 分支：`codex/review-refactor-quality-sweep`
-- 当前阶段：收尾验收与存量快速修复派发
+- 当前阶段：存量快速修复完成，架构后续已转入 `06-11-architecture-backlog-followup`，准备归档
 - 主控：`codex-agent`
 
 ## 当前并行队列

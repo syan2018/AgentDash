@@ -1,4 +1,5 @@
 mod agent_repository;
+mod agent_run_delivery_command_receipt_repository;
 mod auth_session_repository;
 mod backend_execution_lease_repository;
 mod backend_repository;
@@ -140,6 +141,7 @@ fn database_constraint_message(
 }
 
 pub use agent_repository::PostgresProjectAgentRepository;
+pub use agent_run_delivery_command_receipt_repository::PostgresAgentRunDeliveryCommandReceiptRepository;
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;
 pub use backend_repository::PostgresBackendRepository;

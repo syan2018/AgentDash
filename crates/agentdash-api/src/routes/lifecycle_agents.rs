@@ -624,12 +624,14 @@ async fn dispatch_message_for_runtime(
         state.repos.lifecycle_agent_repo.as_ref(),
         state.repos.agent_frame_repo.as_ref(),
         state.repos.execution_anchor_repo.as_ref(),
+        state.repos.agent_run_delivery_command_receipt_repo.as_ref(),
         delivery,
     );
     let dispatch = service
         .dispatch_user_message(AgentRunMessageCommand {
             delivery_runtime_session_id: runtime_session_id,
             input: req.input,
+            client_command_id,
             executor_config,
             identity: Some(current_user),
         })
@@ -637,7 +639,7 @@ async fn dispatch_message_for_runtime(
         .map_err(ApiError::from)?;
 
     Ok(Json(AgentRunMessageResponse {
-        command_receipt: accepted_receipt(client_command_id),
+        command_receipt: command_receipt_view(dispatch.command_receipt),
         accepted_refs: accepted_refs(
             dispatch.run_id,
             dispatch.agent_id,
@@ -724,6 +726,17 @@ fn accepted_receipt(client_command_id: String) -> AgentRunCommandReceipt {
         status: "accepted".to_string(),
         duplicate: false,
         message: None,
+    }
+}
+
+fn command_receipt_view(
+    receipt: agentdash_application::workflow::AgentRunCommandReceiptView,
+) -> AgentRunCommandReceipt {
+    AgentRunCommandReceipt {
+        client_command_id: receipt.client_command_id,
+        status: receipt.status,
+        duplicate: receipt.duplicate,
+        message: receipt.message,
     }
 }
 

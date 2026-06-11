@@ -2,19 +2,27 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
-    LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+    AgentFrame, AgentFrameRepository, AgentRunDeliveryAcceptedRefs,
+    AgentRunDeliveryCommandReceiptRepository, LifecycleAgent, LifecycleAgentRepository,
+    LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::AgentConfig;
 use agentdash_spi::platform::auth::AuthIdentity;
 
 use crate::session::{LaunchCommand, SessionLaunchService, UserPromptInput};
-use crate::workflow::WorkflowApplicationError;
+use crate::workflow::{
+    AgentRunCommandReceiptView, WorkflowApplicationError,
+    command_receipt::{
+        accepted_refs_from_record, claim_agent_run_command_receipt, digest_command_request,
+        mark_command_terminal_failed,
+    },
+};
 
 #[derive(Debug, Clone)]
 pub struct AgentRunMessageCommand {
     pub delivery_runtime_session_id: String,
     pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
+    pub client_command_id: String,
     pub executor_config: Option<AgentConfig>,
     pub identity: Option<AuthIdentity>,
 }
@@ -27,6 +35,7 @@ pub struct AgentRunMessageDispatch {
     pub agent_id: Uuid,
     pub frame_id: Uuid,
     pub frame_revision: i32,
+    pub command_receipt: AgentRunCommandReceiptView,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +94,7 @@ pub struct AgentRunMessageService<'a, D> {
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
     execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    command_receipt_repo: &'a dyn AgentRunDeliveryCommandReceiptRepository,
     delivery: D,
 }
 
@@ -97,6 +107,7 @@ where
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         agent_frame_repo: &'a dyn AgentFrameRepository,
         execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+        command_receipt_repo: &'a dyn AgentRunDeliveryCommandReceiptRepository,
         delivery: D,
     ) -> Self {
         Self {
@@ -104,6 +115,7 @@ where
             lifecycle_agent_repo,
             agent_frame_repo,
             execution_anchor_repo,
+            command_receipt_repo,
             delivery,
         }
     }
@@ -122,12 +134,42 @@ where
                 "input 不能为空".to_string(),
             ));
         }
+        if command.client_command_id.trim().is_empty() {
+            return Err(WorkflowApplicationError::BadRequest(
+                "client_command_id 不能为空".to_string(),
+            ));
+        }
 
         let (run, agent, frame) = self
             .resolve_control_plane(&command.delivery_runtime_session_id)
             .await?;
+        let request_digest = digest_command_request(&serde_json::json!({
+            "kind": "agent_run_message",
+            "run_id": run.id,
+            "agent_id": agent.id,
+            "frame_id": frame.id,
+            "frame_revision": frame.revision,
+            "runtime_session_id": command.delivery_runtime_session_id,
+            "input": command.input,
+            "executor_config": command.executor_config,
+        }))?;
+        let claim = claim_agent_run_command_receipt(
+            self.command_receipt_repo,
+            "agent_run_message",
+            format!("{}:{}", run.id, agent.id),
+            command.client_command_id,
+            request_digest,
+        )
+        .await?;
+        if claim.duplicate {
+            let accepted_refs = accepted_refs_from_record(&claim.record)?;
+            return Ok(dispatch_from_accepted_refs(
+                accepted_refs,
+                AgentRunCommandReceiptView::from_record(&claim.record, true),
+            ));
+        }
 
-        let turn_id = self
+        let delivery_result = self
             .delivery
             .deliver_user_message(AgentRunMessageDelivery {
                 delivery_runtime_session_id: command.delivery_runtime_session_id.clone(),
@@ -135,6 +177,26 @@ where
                 executor_config: command.executor_config,
                 identity: command.identity,
             })
+            .await;
+        let turn_id = match delivery_result {
+            Ok(turn_id) => turn_id,
+            Err(error) => {
+                mark_command_terminal_failed(self.command_receipt_repo, claim.record.id, &error)
+                    .await;
+                return Err(error);
+            }
+        };
+        let accepted_refs = AgentRunDeliveryAcceptedRefs {
+            run_id: run.id,
+            agent_id: agent.id,
+            frame_id: Some(frame.id),
+            frame_revision: Some(frame.revision),
+            runtime_session_id: Some(command.delivery_runtime_session_id.clone()),
+            turn_id: Some(turn_id.clone()),
+        };
+        let receipt = self
+            .command_receipt_repo
+            .mark_accepted(claim.record.id, accepted_refs)
             .await?;
 
         Ok(AgentRunMessageDispatch {
@@ -144,6 +206,7 @@ where
             agent_id: agent.id,
             frame_id: frame.id,
             frame_revision: frame.revision,
+            command_receipt: AgentRunCommandReceiptView::from_record(&receipt, false),
         })
     }
 
@@ -218,12 +281,30 @@ where
     }
 }
 
+fn dispatch_from_accepted_refs(
+    refs: AgentRunDeliveryAcceptedRefs,
+    command_receipt: AgentRunCommandReceiptView,
+) -> AgentRunMessageDispatch {
+    let frame_id = refs.frame_id.unwrap_or_else(Uuid::nil);
+    AgentRunMessageDispatch {
+        runtime_session_id: refs.runtime_session_id.unwrap_or_default(),
+        turn_id: refs.turn_id.unwrap_or_default(),
+        run_id: refs.run_id,
+        agent_id: refs.agent_id,
+        frame_id,
+        frame_revision: refs.frame_revision.unwrap_or_default(),
+        command_receipt,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
+        AgentFrameRepository, AgentRunDeliveryCommandClaim, AgentRunDeliveryCommandReceipt,
+        AgentRunDeliveryCommandReceiptRepository, AgentRunDeliveryCommandStatus,
+        LifecycleAgentRepository, LifecycleRunRepository, NewAgentRunDeliveryCommandReceipt,
         RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
     };
     use chrono::Utc;
@@ -478,6 +559,103 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct InMemoryCommandReceiptRepo {
+        items: Mutex<Vec<AgentRunDeliveryCommandReceipt>>,
+    }
+
+    #[async_trait]
+    impl AgentRunDeliveryCommandReceiptRepository for InMemoryCommandReceiptRepo {
+        async fn claim(
+            &self,
+            receipt: NewAgentRunDeliveryCommandReceipt,
+        ) -> Result<AgentRunDeliveryCommandClaim, DomainError> {
+            let mut items = self.items.lock().unwrap();
+            if let Some(existing) = items.iter().find(|item| {
+                item.scope_kind == receipt.scope_kind
+                    && item.scope_key == receipt.scope_key
+                    && item.client_command_id == receipt.client_command_id
+            }) {
+                if existing.request_digest != receipt.request_digest {
+                    return Err(DomainError::Conflict {
+                        entity: "agent_run_delivery_command_receipt",
+                        constraint: "request_digest",
+                        message: "digest mismatch".to_string(),
+                    });
+                }
+                return Ok(AgentRunDeliveryCommandClaim::Duplicate(existing.clone()));
+            }
+            let now = Utc::now();
+            let record = AgentRunDeliveryCommandReceipt {
+                id: Uuid::new_v4(),
+                scope_kind: receipt.scope_kind,
+                scope_key: receipt.scope_key,
+                client_command_id: receipt.client_command_id,
+                request_digest: receipt.request_digest,
+                status: AgentRunDeliveryCommandStatus::Pending,
+                accepted_refs: None,
+                error_message: None,
+                created_at: now,
+                updated_at: now,
+                accepted_at: None,
+                failed_at: None,
+            };
+            items.push(record.clone());
+            Ok(AgentRunDeliveryCommandClaim::Created(record))
+        }
+
+        async fn mark_accepted(
+            &self,
+            id: Uuid,
+            accepted_refs: agentdash_domain::workflow::AgentRunDeliveryAcceptedRefs,
+        ) -> Result<AgentRunDeliveryCommandReceipt, DomainError> {
+            let mut items = self.items.lock().unwrap();
+            let record = items.iter_mut().find(|item| item.id == id).ok_or_else(|| {
+                DomainError::NotFound {
+                    entity: "agent_run_delivery_command_receipt",
+                    id: id.to_string(),
+                }
+            })?;
+            record.status = AgentRunDeliveryCommandStatus::Accepted;
+            record.accepted_refs = Some(accepted_refs);
+            record.updated_at = Utc::now();
+            record.accepted_at = Some(record.updated_at);
+            Ok(record.clone())
+        }
+
+        async fn mark_terminal_failed(
+            &self,
+            id: Uuid,
+            error_message: String,
+        ) -> Result<AgentRunDeliveryCommandReceipt, DomainError> {
+            let mut items = self.items.lock().unwrap();
+            let record = items.iter_mut().find(|item| item.id == id).ok_or_else(|| {
+                DomainError::NotFound {
+                    entity: "agent_run_delivery_command_receipt",
+                    id: id.to_string(),
+                }
+            })?;
+            record.status = AgentRunDeliveryCommandStatus::TerminalFailed;
+            record.error_message = Some(error_message);
+            record.updated_at = Utc::now();
+            record.failed_at = Some(record.updated_at);
+            Ok(record.clone())
+        }
+
+        async fn get(
+            &self,
+            id: Uuid,
+        ) -> Result<Option<AgentRunDeliveryCommandReceipt>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|item| item.id == id)
+                .cloned())
+        }
+    }
+
+    #[derive(Default)]
     struct FakeDelivery {
         calls: Mutex<Vec<AgentRunMessageDelivery>>,
     }
@@ -490,6 +668,24 @@ mod tests {
         ) -> Result<String, WorkflowApplicationError> {
             self.calls.lock().unwrap().push(delivery);
             Ok("turn-1".to_string())
+        }
+    }
+
+    #[derive(Default)]
+    struct FailingDelivery {
+        calls: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl AgentRunMessageDeliveryPort for &FailingDelivery {
+        async fn deliver_user_message(
+            &self,
+            _delivery: AgentRunMessageDelivery,
+        ) -> Result<String, WorkflowApplicationError> {
+            *self.calls.lock().unwrap() += 1;
+            Err(WorkflowApplicationError::Internal(
+                "connector setup failed".to_string(),
+            ))
         }
     }
 
@@ -528,6 +724,7 @@ mod tests {
         let agent_repo = InMemoryAgentRepo::default();
         let frame_repo = InMemoryFrameRepo::default();
         let anchor_repo = InMemoryAnchorRepo::default();
+        let command_receipt_repo = InMemoryCommandReceiptRepo::default();
         let delivery = FakeDelivery::default();
         let (run, agent, frame) = seed_control_plane(
             &run_repo,
@@ -541,6 +738,7 @@ mod tests {
             &agent_repo,
             &frame_repo,
             &anchor_repo,
+            &command_receipt_repo,
             &delivery,
         );
 
@@ -548,6 +746,7 @@ mod tests {
             .dispatch_user_message(AgentRunMessageCommand {
                 delivery_runtime_session_id: "runtime-1".to_string(),
                 input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                client_command_id: "cmd-1".to_string(),
                 executor_config: None,
                 identity: None,
             })
@@ -558,9 +757,155 @@ mod tests {
         assert_eq!(result.agent_id, agent.id);
         assert_eq!(result.frame_id, frame.id);
         assert_eq!(result.runtime_session_id, "runtime-1");
+        assert!(!result.command_receipt.duplicate);
         let calls = delivery.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].delivery_runtime_session_id, "runtime-1");
+    }
+
+    #[tokio::test]
+    async fn duplicate_dispatch_returns_existing_receipt_without_delivery() {
+        let run_repo = InMemoryRunRepo::default();
+        let agent_repo = InMemoryAgentRepo::default();
+        let frame_repo = InMemoryFrameRepo::default();
+        let anchor_repo = InMemoryAnchorRepo::default();
+        let command_receipt_repo = InMemoryCommandReceiptRepo::default();
+        let delivery = FakeDelivery::default();
+        seed_control_plane(
+            &run_repo,
+            &agent_repo,
+            &frame_repo,
+            &anchor_repo,
+            "runtime-1",
+        );
+        let service = AgentRunMessageService::new(
+            &run_repo,
+            &agent_repo,
+            &frame_repo,
+            &anchor_repo,
+            &command_receipt_repo,
+            &delivery,
+        );
+
+        let first = service
+            .dispatch_user_message(AgentRunMessageCommand {
+                delivery_runtime_session_id: "runtime-1".to_string(),
+                input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                client_command_id: "cmd-1".to_string(),
+                executor_config: None,
+                identity: None,
+            })
+            .await
+            .expect("first dispatch");
+        let second = service
+            .dispatch_user_message(AgentRunMessageCommand {
+                delivery_runtime_session_id: "runtime-1".to_string(),
+                input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                client_command_id: "cmd-1".to_string(),
+                executor_config: None,
+                identity: None,
+            })
+            .await
+            .expect("duplicate dispatch");
+
+        assert_eq!(first.turn_id, second.turn_id);
+        assert!(!first.command_receipt.duplicate);
+        assert!(second.command_receipt.duplicate);
+        assert_eq!(delivery.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn duplicate_dispatch_with_different_digest_conflicts() {
+        let run_repo = InMemoryRunRepo::default();
+        let agent_repo = InMemoryAgentRepo::default();
+        let frame_repo = InMemoryFrameRepo::default();
+        let anchor_repo = InMemoryAnchorRepo::default();
+        let command_receipt_repo = InMemoryCommandReceiptRepo::default();
+        let delivery = FakeDelivery::default();
+        seed_control_plane(
+            &run_repo,
+            &agent_repo,
+            &frame_repo,
+            &anchor_repo,
+            "runtime-1",
+        );
+        let service = AgentRunMessageService::new(
+            &run_repo,
+            &agent_repo,
+            &frame_repo,
+            &anchor_repo,
+            &command_receipt_repo,
+            &delivery,
+        );
+
+        service
+            .dispatch_user_message(AgentRunMessageCommand {
+                delivery_runtime_session_id: "runtime-1".to_string(),
+                input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                client_command_id: "cmd-1".to_string(),
+                executor_config: None,
+                identity: None,
+            })
+            .await
+            .expect("first dispatch");
+        let error = service
+            .dispatch_user_message(AgentRunMessageCommand {
+                delivery_runtime_session_id: "runtime-1".to_string(),
+                input: agentdash_agent_protocol::text_user_input_blocks("changed"),
+                client_command_id: "cmd-1".to_string(),
+                executor_config: None,
+                identity: None,
+            })
+            .await
+            .expect_err("digest mismatch");
+
+        assert!(matches!(error, WorkflowApplicationError::Conflict(_)));
+        assert_eq!(delivery.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_dispatch_retry_returns_same_terminal_failure_without_delivery() {
+        let run_repo = InMemoryRunRepo::default();
+        let agent_repo = InMemoryAgentRepo::default();
+        let frame_repo = InMemoryFrameRepo::default();
+        let anchor_repo = InMemoryAnchorRepo::default();
+        let command_receipt_repo = InMemoryCommandReceiptRepo::default();
+        let delivery = FailingDelivery::default();
+        seed_control_plane(
+            &run_repo,
+            &agent_repo,
+            &frame_repo,
+            &anchor_repo,
+            "runtime-1",
+        );
+        let service = AgentRunMessageService::new(
+            &run_repo,
+            &agent_repo,
+            &frame_repo,
+            &anchor_repo,
+            &command_receipt_repo,
+            &delivery,
+        );
+
+        let command = || AgentRunMessageCommand {
+            delivery_runtime_session_id: "runtime-1".to_string(),
+            input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+            client_command_id: "cmd-1".to_string(),
+            executor_config: None,
+            identity: None,
+        };
+        let first = service
+            .dispatch_user_message(command())
+            .await
+            .expect_err("first delivery fails");
+        let second = service
+            .dispatch_user_message(command())
+            .await
+            .expect_err("retry replays failure");
+
+        assert!(matches!(first, WorkflowApplicationError::Internal(_)));
+        assert!(matches!(second, WorkflowApplicationError::Conflict(_)));
+        assert_eq!(*delivery.calls.lock().unwrap(), 1);
     }
 
     #[tokio::test]
@@ -569,12 +914,14 @@ mod tests {
         let agent_repo = InMemoryAgentRepo::default();
         let frame_repo = InMemoryFrameRepo::default();
         let anchor_repo = InMemoryAnchorRepo::default();
+        let command_receipt_repo = InMemoryCommandReceiptRepo::default();
         let delivery = FakeDelivery::default();
         let service = AgentRunMessageService::new(
             &run_repo,
             &agent_repo,
             &frame_repo,
             &anchor_repo,
+            &command_receipt_repo,
             &delivery,
         );
 
@@ -582,6 +929,7 @@ mod tests {
             .dispatch_user_message(AgentRunMessageCommand {
                 delivery_runtime_session_id: "missing".to_string(),
                 input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                client_command_id: "cmd-1".to_string(),
                 executor_config: None,
                 identity: None,
             })

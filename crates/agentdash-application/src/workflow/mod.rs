@@ -2,6 +2,7 @@ pub(crate) mod activity_activation;
 pub mod agent_message;
 pub mod agent_steering;
 mod catalog;
+mod command_receipt;
 mod completion;
 mod definition;
 pub mod dispatch_service;
@@ -44,6 +45,7 @@ pub use agentdash_domain::workflow::{
     AgentReusePolicy, RuntimeSessionPolicy, WorkflowSessionTerminalState,
 };
 pub use catalog::{ActivityLifecycleCatalogService, WorkflowCatalogService};
+pub use command_receipt::AgentRunCommandReceiptView;
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
 pub use definition::{
     BuiltinLifecycleTemplate, BuiltinWorkflowBundle, BuiltinWorkflowTemplate,

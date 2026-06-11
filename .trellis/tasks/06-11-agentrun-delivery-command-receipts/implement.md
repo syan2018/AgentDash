@@ -18,3 +18,23 @@
 - `pnpm run migration:guard`
 - `cargo test -p agentdash-application command_receipt`
 - `cargo test -p agentdash-infrastructure command_receipt`
+
+## Implementation Notes
+
+- Added `AgentRunDeliveryCommandReceipt` domain model, status enum, accepted refs, claim result, and repository trait under the workflow domain.
+- Added forward migration `0011_agent_run_delivery_command_receipts.sql` with an independent receipt table keyed by `(scope_kind, scope_key, client_command_id)`.
+- Added PostgreSQL and application test-support memory implementations for the receipt repository.
+- Wired `ProjectAgentSessionStartService` to claim a `project_agent_start` receipt before materialization; accepted duplicates now reuse the original run / agent / frame / runtime / turn refs.
+- Wired `AgentRunMessageService` to claim an `agent_run_message` receipt before launch delivery; accepted duplicates now return the original turn refs without re-delivery.
+- Request digest uses canonicalized JSON plus SHA-256 over command kind, target refs, input, subject ref, executor config, and relevant frame/runtime refs.
+- Terminal delivery failures mark the receipt `terminal_failed`; retrying the same command id returns the same terminal failure instead of dispatching again.
+
+## Validation Results
+
+- `cargo check -p agentdash-domain -p agentdash-application -p agentdash-infrastructure -p agentdash-api` passed.
+- `cargo test -p agentdash-application agent_message -- --nocapture` passed: 5 tests.
+- `cargo test -p agentdash-application project_agent_session_start -- --nocapture` passed: 2 tests.
+- `cargo test -p agentdash-infrastructure command_receipt -- --nocapture` passed: 2 tests; PostgreSQL roundtrip bodies skipped because `TEST_DATABASE_URL` / `DATABASE_URL` is not configured in this environment.
+- `pnpm run migration:guard` passed.
+- `cargo clippy -p agentdash-domain -p agentdash-application -p agentdash-infrastructure -p agentdash-api -- -D warnings` passed.
+- `pnpm run contracts:check` passed.

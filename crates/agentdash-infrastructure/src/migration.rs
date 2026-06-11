@@ -6,6 +6,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_frames",
     "agent_lineages",
     "agent_procedures",
+    "agent_run_delivery_command_receipts",
     "auth_sessions",
     "backend_execution_leases",
     "backend_workspace_inventory",

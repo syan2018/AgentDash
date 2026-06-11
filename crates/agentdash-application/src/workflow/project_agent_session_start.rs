@@ -2,8 +2,9 @@ use uuid::Uuid;
 
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository,
-    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    AgentFrameRepository, AgentLineageRepository, AgentRunDeliveryAcceptedRefs,
+    AgentRunDeliveryCommandReceiptRepository, LifecycleAgentRepository, LifecycleGateRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
 };
 use agentdash_domain::workflow::{
@@ -17,14 +18,20 @@ use async_trait::async_trait;
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionMeta};
 use crate::workflow::{
-    AgentRunMessageCommand, AgentRunMessageDeliveryPort, AgentRunMessageService,
-    LifecycleDispatchService, RuntimeSessionCreator, WorkflowApplicationError,
+    AgentRunCommandReceiptView, AgentRunMessageCommand, AgentRunMessageDeliveryPort,
+    AgentRunMessageService, LifecycleDispatchService, RuntimeSessionCreator,
+    WorkflowApplicationError,
+    command_receipt::{
+        accepted_refs_from_record, claim_agent_run_command_receipt, digest_command_request,
+        mark_command_terminal_failed,
+    },
 };
 
 pub struct ProjectAgentSessionStartCommand {
     pub project_id: Uuid,
     pub project_agent_id: Uuid,
     pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
+    pub client_command_id: String,
     pub executor_config: Option<AgentConfig>,
     pub subject_ref: Option<SubjectRef>,
     pub identity: Option<AuthIdentity>,
@@ -40,6 +47,7 @@ pub struct ProjectAgentSessionStartDispatch {
     pub frame_id: Uuid,
     pub frame_revision: i32,
     pub subject_ref: Option<SubjectRef>,
+    pub command_receipt: AgentRunCommandReceiptView,
 }
 
 pub struct ProjectAgentSessionStartRepos<'a> {
@@ -52,6 +60,7 @@ pub struct ProjectAgentSessionStartRepos<'a> {
     pub lifecycle_gate_repo: &'a dyn LifecycleGateRepository,
     pub agent_lineage_repo: &'a dyn AgentLineageRepository,
     pub execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    pub command_receipt_repo: &'a dyn AgentRunDeliveryCommandReceiptRepository,
     pub runtime_session_creator: &'a dyn RuntimeSessionCreator,
 }
 
@@ -67,6 +76,7 @@ impl<'a> ProjectAgentSessionStartRepos<'a> {
             lifecycle_gate_repo: repos.lifecycle_gate_repo.as_ref(),
             agent_lineage_repo: repos.agent_lineage_repo.as_ref(),
             execution_anchor_repo: repos.execution_anchor_repo.as_ref(),
+            command_receipt_repo: repos.agent_run_delivery_command_receipt_repo.as_ref(),
             runtime_session_creator: repos.runtime_session_creator.as_ref(),
         }
     }
@@ -137,6 +147,11 @@ impl<'a> ProjectAgentSessionStartService<'a> {
                 "input 不能为空".to_string(),
             ));
         }
+        if command.client_command_id.trim().is_empty() {
+            return Err(WorkflowApplicationError::BadRequest(
+                "client_command_id 不能为空".to_string(),
+            ));
+        }
 
         let project_agent = self
             .repos
@@ -154,6 +169,37 @@ impl<'a> ProjectAgentSessionStartService<'a> {
             .subject_ref
             .unwrap_or_else(|| SubjectRef::new("project", command.project_id));
         validate_project_agent_subject_ref(command.project_id, &subject_ref)?;
+        let request_digest = digest_command_request(&serde_json::json!({
+            "kind": "project_agent_start",
+            "project_id": command.project_id,
+            "project_agent_id": command.project_agent_id,
+            "subject_ref": {
+                "kind": subject_ref.kind,
+                "id": subject_ref.id,
+            },
+            "input": command.input,
+            "executor_config": command.executor_config,
+        }))?;
+        let claim = claim_agent_run_command_receipt(
+            self.repos.command_receipt_repo,
+            "project_agent_start",
+            format!(
+                "{}:{}:{}:{}",
+                command.project_id, command.project_agent_id, subject_ref.kind, subject_ref.id
+            ),
+            command.client_command_id.clone(),
+            request_digest,
+        )
+        .await?;
+        if claim.duplicate {
+            let accepted_refs = accepted_refs_from_record(&claim.record)?;
+            return Ok(project_agent_start_dispatch_from_accepted_refs(
+                project_agent,
+                Some(subject_ref),
+                accepted_refs,
+                AgentRunCommandReceiptView::from_record(&claim.record, true),
+            ));
+        }
         let intent = AgentLaunchIntent {
             project_id: command.project_id,
             source: ExecutionSource::ProjectAgent,
@@ -180,7 +226,18 @@ impl<'a> ProjectAgentSessionStartService<'a> {
         .with_anchor_repo(self.repos.execution_anchor_repo)
         .with_runtime_session_creator(self.repos.runtime_session_creator);
 
-        let dispatch_result = dispatch_service.launch_agent(&intent).await?;
+        let dispatch_result = match dispatch_service.launch_agent(&intent).await {
+            Ok(dispatch_result) => dispatch_result,
+            Err(error) => {
+                mark_command_terminal_failed(
+                    self.repos.command_receipt_repo,
+                    claim.record.id,
+                    &error,
+                )
+                .await;
+                return Err(error);
+            }
+        };
         let runtime_session_id = dispatch_result
             .delivery_runtime_ref
             .ok_or_else(|| {
@@ -211,6 +268,8 @@ impl<'a> ProjectAgentSessionStartService<'a> {
                     "ProjectAgent 绑定失败后的空 runtime/lifecycle 清理失败"
                 );
             }
+            mark_command_terminal_failed(self.repos.command_receipt_repo, claim.record.id, &error)
+                .await;
             return Err(error);
         }
 
@@ -219,6 +278,7 @@ impl<'a> ProjectAgentSessionStartService<'a> {
             self.repos.lifecycle_agent_repo,
             self.repos.agent_frame_repo,
             self.repos.execution_anchor_repo,
+            self.repos.command_receipt_repo,
             delivery,
         );
 
@@ -226,6 +286,7 @@ impl<'a> ProjectAgentSessionStartService<'a> {
             .dispatch_user_message(AgentRunMessageCommand {
                 delivery_runtime_session_id: runtime_session_id.clone(),
                 input: command.input,
+                client_command_id: format!("{}:initial-message", command.client_command_id),
                 executor_config: command.executor_config,
                 identity: command.identity,
             })
@@ -247,9 +308,28 @@ impl<'a> ProjectAgentSessionStartService<'a> {
                         "ProjectAgent 首条消息失败后的空 runtime/lifecycle 清理失败"
                     );
                 }
+                mark_command_terminal_failed(
+                    self.repos.command_receipt_repo,
+                    claim.record.id,
+                    &error,
+                )
+                .await;
                 return Err(error);
             }
         };
+        let accepted_refs = AgentRunDeliveryAcceptedRefs {
+            run_id: message_dispatch.run_id,
+            agent_id: message_dispatch.agent_id,
+            frame_id: Some(message_dispatch.frame_id),
+            frame_revision: Some(message_dispatch.frame_revision),
+            runtime_session_id: Some(runtime_session_id.clone()),
+            turn_id: Some(message_dispatch.turn_id.clone()),
+        };
+        let receipt = self
+            .repos
+            .command_receipt_repo
+            .mark_accepted(claim.record.id, accepted_refs)
+            .await?;
 
         Ok(ProjectAgentSessionStartDispatch {
             project_agent,
@@ -260,6 +340,7 @@ impl<'a> ProjectAgentSessionStartService<'a> {
             frame_id: message_dispatch.frame_id,
             frame_revision: message_dispatch.frame_revision,
             subject_ref: Some(subject_ref),
+            command_receipt: AgentRunCommandReceiptView::from_record(&receipt, false),
         })
     }
 
@@ -309,6 +390,25 @@ impl<'a> ProjectAgentSessionStartService<'a> {
     }
 }
 
+fn project_agent_start_dispatch_from_accepted_refs(
+    project_agent: ProjectAgent,
+    subject_ref: Option<SubjectRef>,
+    refs: AgentRunDeliveryAcceptedRefs,
+    command_receipt: AgentRunCommandReceiptView,
+) -> ProjectAgentSessionStartDispatch {
+    ProjectAgentSessionStartDispatch {
+        project_agent,
+        runtime_session_id: refs.runtime_session_id.unwrap_or_default(),
+        turn_id: refs.turn_id.unwrap_or_default(),
+        run_id: refs.run_id,
+        agent_id: refs.agent_id,
+        frame_id: refs.frame_id.unwrap_or_else(Uuid::nil),
+        frame_revision: refs.frame_revision.unwrap_or_default(),
+        subject_ref,
+        command_receipt,
+    }
+}
+
 fn workflow_graph_ref_for_project_agent(project_agent: &ProjectAgent) -> Option<WorkflowGraphRef> {
     project_agent
         .default_lifecycle_key
@@ -342,6 +442,7 @@ fn validate_project_agent_subject_ref(
 mod tests {
     use super::*;
     use crate::session::{ExecutionStatus, TitleSource};
+    use crate::test_support::MemoryAgentRunDeliveryCommandReceiptRepository;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         AgentFrame, AgentLineage, LifecycleAgent, LifecycleGate, LifecycleRun,
@@ -860,6 +961,81 @@ mod tests {
         }
     }
 
+    struct SuccessfulDelivery;
+
+    #[async_trait]
+    impl AgentRunMessageDeliveryPort for SuccessfulDelivery {
+        async fn deliver_user_message(
+            &self,
+            _delivery: crate::workflow::AgentRunMessageDelivery,
+        ) -> Result<String, WorkflowApplicationError> {
+            Ok("turn-1".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn duplicate_start_command_reuses_accepted_run_without_materializing_again() {
+        let project_id = Uuid::new_v4();
+        let project_agent = ProjectAgent::new(project_id, "agent", "PI_AGENT");
+        let project_agent_repo = ProjectAgentRepo {
+            agent: Mutex::new(Some(project_agent.clone())),
+        };
+        let run_repo = RunRepo::default();
+        let workflow_graph_repo = WorkflowGraphRepo;
+        let agent_repo = AgentRepo::default();
+        let frame_repo = FrameRepo::default();
+        let association_repo = AssociationRepo::default();
+        let gate_repo = GateRepo;
+        let lineage_repo = LineageRepo;
+        let anchor_repo = AnchorRepo::default();
+        let command_receipt_repo = MemoryAgentRunDeliveryCommandReceiptRepository::default();
+        let runtime_creator = RuntimeCreator::default();
+        let service = ProjectAgentSessionStartService::new(
+            ProjectAgentSessionStartRepos {
+                project_agent_repo: &project_agent_repo,
+                lifecycle_run_repo: &run_repo,
+                workflow_graph_repo: &workflow_graph_repo,
+                lifecycle_agent_repo: &agent_repo,
+                agent_frame_repo: &frame_repo,
+                lifecycle_subject_association_repo: &association_repo,
+                lifecycle_gate_repo: &gate_repo,
+                agent_lineage_repo: &lineage_repo,
+                execution_anchor_repo: &anchor_repo,
+                command_receipt_repo: &command_receipt_repo,
+                runtime_session_creator: &runtime_creator,
+            },
+            &runtime_creator,
+        );
+
+        let command = || ProjectAgentSessionStartCommand {
+            project_id,
+            project_agent_id: project_agent.id,
+            input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+            client_command_id: "cmd-start-1".to_string(),
+            executor_config: None,
+            subject_ref: None,
+            identity: None,
+        };
+
+        let first = service
+            .start_session(command(), SuccessfulDelivery)
+            .await
+            .expect("first start");
+        let second = service
+            .start_session(command(), SuccessfulDelivery)
+            .await
+            .expect("duplicate start");
+
+        assert_eq!(first.run_id, second.run_id);
+        assert_eq!(first.agent_id, second.agent_id);
+        assert_eq!(first.runtime_session_id, second.runtime_session_id);
+        assert_eq!(first.turn_id, second.turn_id);
+        assert!(!first.command_receipt.duplicate);
+        assert!(second.command_receipt.duplicate);
+        assert_eq!(run_repo.items.lock().unwrap().len(), 1);
+        assert_eq!(runtime_creator.metas.lock().unwrap().len(), 1);
+    }
+
     #[tokio::test]
     async fn delivery_failure_before_events_cleans_empty_runtime_and_run() {
         let project_id = Uuid::new_v4();
@@ -875,6 +1051,7 @@ mod tests {
         let gate_repo = GateRepo;
         let lineage_repo = LineageRepo;
         let anchor_repo = AnchorRepo::default();
+        let command_receipt_repo = MemoryAgentRunDeliveryCommandReceiptRepository::default();
         let runtime_creator = RuntimeCreator::default();
         let service = ProjectAgentSessionStartService::new(
             ProjectAgentSessionStartRepos {
@@ -887,6 +1064,7 @@ mod tests {
                 lifecycle_gate_repo: &gate_repo,
                 agent_lineage_repo: &lineage_repo,
                 execution_anchor_repo: &anchor_repo,
+                command_receipt_repo: &command_receipt_repo,
                 runtime_session_creator: &runtime_creator,
             },
             &runtime_creator,
@@ -898,6 +1076,7 @@ mod tests {
                     project_id,
                     project_agent_id: project_agent.id,
                     input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                    client_command_id: "cmd-start-1".to_string(),
                     executor_config: None,
                     subject_ref: None,
                     identity: None,

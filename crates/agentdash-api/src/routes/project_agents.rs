@@ -280,6 +280,7 @@ pub async fn create_project_agent_session(
                 project_id,
                 project_agent_id,
                 input: req.input,
+                client_command_id: req.client_command_id,
                 executor_config,
                 subject_ref: parse_subject_ref(req.subject_ref)?,
                 identity: Some(current_user.clone()),
@@ -296,10 +297,10 @@ pub async fn create_project_agent_session(
 
     Ok(Json(ProjectAgentSessionStartResult {
         command_receipt: AgentRunCommandReceipt {
-            client_command_id: req.client_command_id,
-            status: "accepted".to_string(),
-            duplicate: false,
-            message: None,
+            client_command_id: dispatch.command_receipt.client_command_id,
+            status: dispatch.command_receipt.status,
+            duplicate: dispatch.command_receipt.duplicate,
+            message: dispatch.command_receipt.message,
         },
         accepted_refs: AgentRunAcceptedRefs {
             run_ref: LifecycleRunRefDto {

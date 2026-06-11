@@ -10,6 +10,7 @@ import type { SubjectExecutionView, Task } from "../../types";
 import { subjectExecutionKey } from "../../types";
 import { useLifecycleStore } from "../../stores/lifecycleStore";
 import { useStoryStore } from "../../stores/storyStore";
+import { agentRunWorkspacePath } from "../agent/agent-run-paths";
 
 interface TaskSubjectExecutionPanelProps {
   task: Task;
@@ -47,9 +48,10 @@ function SubjectExecutionSummary({ view }: { view: SubjectExecutionView | null }
           {currentAgent ? (
             <button
               type="button"
-              onClick={() => navigate(`/agent/${currentAgent.agent_ref.agent_id}`, {
-                state: { run_id: currentAgent.agent_ref.run_id },
-              })}
+              onClick={() => navigate(agentRunWorkspacePath(
+                currentAgent.agent_ref.run_id,
+                currentAgent.agent_ref.agent_id,
+              ))}
               className="mt-2 block w-full truncate text-left font-mono text-xs text-primary hover:underline"
             >
               {currentAgent.agent_ref.agent_id}
@@ -93,14 +95,12 @@ function SubjectExecutionSummary({ view }: { view: SubjectExecutionView | null }
               {run.runtime_trace_refs.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {run.runtime_trace_refs.map((ref) => (
-                    <button
+                    <span
                       key={ref.runtime_session_id}
-                      type="button"
-                      onClick={() => navigate(`/session/${ref.runtime_session_id}`)}
-                      className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
+                      className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
                     >
-                      trace {ref.runtime_session_id.slice(0, 8)}
-                    </button>
+                      RuntimeSession trace {ref.runtime_session_id.slice(0, 8)}
+                    </span>
                   ))}
                 </div>
               )}

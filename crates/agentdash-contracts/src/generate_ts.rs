@@ -121,24 +121,24 @@ use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse, AgentRunAcceptedRefs,
     AgentRunCommandReceipt, AgentRunMessageRequest, AgentRunMessageResponse, AgentRunRefDto,
-    AgentRunSteeringRequest, AgentRunSteeringResponse, AgentRunView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, DefinitionSource, DeleteAgentProcedureResponse,
-    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
-    EnqueuePendingMessageRequest, EnqueuePendingMessageResponse, HookPresetResponse,
-    HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
-    LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
+    AgentRunSteeringRequest, AgentRunSteeringResponse, AgentRunView, AgentRunWorkspaceListEntry,
+    AgentRunWorkspaceListView, AgentRunWorkspaceShell, AgentRunWorkspaceView, DefinitionSource,
+    DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
+    EffectiveSessionContract, EnqueuePendingMessageRequest, EnqueuePendingMessageResponse,
+    HookPresetResponse, HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto,
+    LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
     OrchestrationInstanceView, PendingMessageView, PreflightWorkflowScriptRequest,
-    PreflightWorkflowScriptResponse, ProjectActiveAgentsView, ProjectSessionListEntry,
-    ProjectSessionListView, RegisterHookPresetResponse, RuntimeNodeView,
-    RuntimeSessionCommandStateDto, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
-    RuntimeSessionTraceMeta, RuntimeSessionTraceView, SessionRuntimeActionAvailabilityView,
-    SessionRuntimeActionSetView, SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView,
-    SessionRuntimeControlView, SessionShellDto, SubjectExecutionView, SubjectRefDto,
-    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
-    ValidateHookScriptResponse, ValidationIssue, WorkflowGraphResponse,
-    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
-    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
-    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
+    PreflightWorkflowScriptResponse, ProjectActiveAgentsView, RegisterHookPresetResponse,
+    RuntimeNodeView, RuntimeSessionCommandStateDto, RuntimeSessionExecutionAnchorDto,
+    RuntimeSessionRefDto, RuntimeSessionTraceMeta, RuntimeSessionTraceView,
+    SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
+    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
+    SessionShellDto, SubjectExecutionView, SubjectRefDto, SubmitOrchestrationHumanDecisionRequest,
+    SubmitOrchestrationHumanDecisionResponse, ValidateHookScriptResponse, ValidationIssue,
+    WorkflowGraphResponse, WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto,
+    WorkflowScriptCapabilitySummaryDto, WorkflowScriptHumanGateCapabilityDto,
+    WorkflowScriptPlanPreviewDto, WorkflowScriptPlanPreviewNodeDto,
+    WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
@@ -431,8 +431,8 @@ fn main() {
             export_all::<PendingMessageView>(dir);
             export_all::<EnqueuePendingMessageRequest>(dir);
             export_all::<EnqueuePendingMessageResponse>(dir);
-            export_all::<ProjectSessionListEntry>(dir);
-            export_all::<ProjectSessionListView>(dir);
+            export_all::<AgentRunWorkspaceListEntry>(dir);
+            export_all::<AgentRunWorkspaceListView>(dir);
             export_all::<DefinitionSource>(dir);
             export_all::<WorkflowTargetKind>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);

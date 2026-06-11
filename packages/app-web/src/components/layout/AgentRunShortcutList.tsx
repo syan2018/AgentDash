@@ -1,18 +1,18 @@
 /**
- * SessionShortcutList — 侧栏会话快捷列表。
+ * AgentRunShortcutList — 侧栏 AgentRun 快捷列表。
  *
- * 展示当前项目的活跃会话，以 session title 为主。
- * 点击跳转到 `/session/:id`，绝不暴露 lifecycle 技术概念。
+ * 展示当前项目的活跃 AgentRun，以 workspace shell title 为主。
+ * 点击跳转到 `/agent-runs/:runId/:agentId`。
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useMatch, useNavigate } from "react-router-dom";
 import { StatusDot, type StatusDotTone } from "@agentdash/ui";
 import type { SessionExecutionStatusValue } from "../../services/session";
-import { fetchProjectSessionList } from "../../services/lifecycle";
-import type { ProjectSessionListEntry } from "../../types";
+import { fetchProjectAgentRuns } from "../../services/lifecycle";
+import type { AgentRunWorkspaceListEntry } from "../../types";
 
-/** 基于 session 执行状态的视觉映射 */
+/** 基于 delivery 执行状态的视觉映射 */
 const EXECUTION_STATUS_TONE: Record<SessionExecutionStatusValue, StatusDotTone> = {
   idle: "muted",
   running: "success",
@@ -50,9 +50,10 @@ function formatUpdatedAt(value: string | number): string {
   }).format(date);
 }
 
-interface SessionShortcutEntry {
-  runtimeSessionId: string;
-  sessionTitle: string;
+interface AgentRunShortcutEntry {
+  runId: string;
+  agentId: string;
+  workspaceTitle: string;
   executionStatus: SessionExecutionStatusValue;
   updatedAt: string | number;
 }
@@ -74,20 +75,21 @@ function normalizeExecutionStatus(status: string): SessionExecutionStatusValue {
   return "idle";
 }
 
-function sessionEntryFromProjectEntry(entry: ProjectSessionListEntry): SessionShortcutEntry {
+function shortcutEntryFromAgentRun(entry: AgentRunWorkspaceListEntry): AgentRunShortcutEntry {
   return {
-    runtimeSessionId: entry.runtime_session_id,
-    sessionTitle: entry.title.trim() || "会话加载中...",
-    executionStatus: normalizeExecutionStatus(entry.delivery_status),
-    updatedAt: entry.updated_at,
+    runId: entry.run_ref.run_id,
+    agentId: entry.agent_ref.agent_id,
+    workspaceTitle: entry.shell.display_title.trim() || "AgentRun 加载中...",
+    executionStatus: normalizeExecutionStatus(entry.shell.delivery_status),
+    updatedAt: entry.shell.last_activity_at,
   };
 }
 
-export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
+export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const sessionRouteMatch = useMatch("/session/:sessionId");
-  const [entries, setEntries] = useState<ProjectSessionListEntry[]>([]);
+  const agentRunRouteMatch = useMatch("/agent-runs/:runId/:agentId");
+  const [entries, setEntries] = useState<AgentRunWorkspaceListEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -97,13 +99,13 @@ export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
     let cancelled = false;
     const load = async () => {
       try {
-        const view = await fetchProjectSessionList(projectId);
+        const view = await fetchProjectAgentRuns(projectId);
         if (!cancelled) {
-          setEntries(view.sessions);
+          setEntries(view.agent_runs);
           setError(null);
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "会话列表加载失败");
+        if (!cancelled) setError(err instanceof Error ? err.message : "AgentRun 列表加载失败");
       }
     };
     void load();
@@ -116,46 +118,48 @@ export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
     };
   }, [projectId]);
 
-  const sessionEntries = useMemo(() => {
+  const agentRunEntries = useMemo(() => {
     if (!projectId) return [];
     return entries
-      .map(sessionEntryFromProjectEntry)
+      .map(shortcutEntryFromAgentRun)
       .sort((a, b) => updatedAtTimestamp(b.updatedAt) - updatedAtTimestamp(a.updatedAt));
   }, [entries, projectId]);
 
-  const activeSessionId = sessionRouteMatch?.params.sessionId ?? null;
+  const activeRunId = agentRunRouteMatch?.params.runId ?? null;
+  const activeAgentId = agentRunRouteMatch?.params.agentId ?? null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col border-b border-border">
       <div className="flex shrink-0 items-center justify-between px-4 pb-1.5 pt-3">
         <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-          会话
+          AgentRun
         </span>
-        {sessionEntries.length > 0 && (
+        {agentRunEntries.length > 0 && (
           <span className="text-[10px] text-muted-foreground/70">
-            {sessionEntries.length}
+            {agentRunEntries.length}
           </span>
         )}
       </div>
 
       {!projectId ? (
         <p className="px-4 pb-3 text-xs text-muted-foreground">未选择项目</p>
-      ) : sessionEntries.length === 0 ? (
+      ) : agentRunEntries.length === 0 ? (
         <div className="px-4 pb-3">
-          <p className="text-xs text-muted-foreground">暂无活跃会话</p>
+          <p className="text-xs text-muted-foreground">暂无活跃 AgentRun</p>
           {error && <p className="mt-1 line-clamp-2 text-[11px] text-destructive">{error}</p>}
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
-          {sessionEntries.map((entry) => {
-            const isActive = activeSessionId === entry.runtimeSessionId;
+          {agentRunEntries.map((entry) => {
+            const isActive = activeRunId === entry.runId && activeAgentId === entry.agentId;
+            const path = `/agent-runs/${encodeURIComponent(entry.runId)}/${encodeURIComponent(entry.agentId)}`;
             return (
               <button
-                key={entry.runtimeSessionId}
+                key={`${entry.runId}:${entry.agentId}`}
                 type="button"
                 onClick={() => {
-                  if (location.pathname !== `/session/${entry.runtimeSessionId}`) {
-                    navigate(`/session/${entry.runtimeSessionId}`);
+                  if (location.pathname !== path) {
+                    navigate(path);
                   }
                 }}
                 className={`mb-0.5 flex w-full flex-col gap-0.5 rounded-[8px] px-2.5 py-2 text-left transition-colors ${
@@ -171,7 +175,7 @@ export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
                     title={EXECUTION_STATUS_LABEL[entry.executionStatus] ?? entry.executionStatus}
                   />
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
-                    {entry.sessionTitle}
+                    {entry.workspaceTitle}
                   </span>
                   <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
                     {formatUpdatedAt(entry.updatedAt)}

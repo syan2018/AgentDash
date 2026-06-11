@@ -72,7 +72,7 @@ interface ContextInspectorPanelProps {
 /**
  * 右侧抽屉中显示 Context Inspector 的单页面板。
  *
- * 调用方（SessionPage / Context Panel 等）负责决定何时挂载；挂载后自动开始轮询。
+ * 调用方（AgentRun workspace / Context Panel 等）负责决定何时挂载；挂载后自动开始轮询。
  */
 export function ContextInspectorPanel({ sessionId }: ContextInspectorPanelProps) {
   const [events, setEvents] = useState<ContextAuditEvent[]>([]);

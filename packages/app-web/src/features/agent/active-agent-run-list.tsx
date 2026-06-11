@@ -1,10 +1,10 @@
 /**
- * ActiveSessionList — 以后端 ProjectSessionListView 展示项目会话。
+ * ActiveAgentRunList — 以后端 AgentRunWorkspaceListView 展示项目 AgentRun。
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { fetchProjectSessionList } from "../../services/lifecycle";
-import type { ProjectSessionListEntry } from "../../types";
+import { fetchProjectAgentRuns } from "../../services/lifecycle";
+import type { AgentRunWorkspaceListEntry } from "../../types";
 import type { SessionExecutionStatusValue } from "../../services/session";
 import { formatRelativeTime } from "../../lib/format";
 
@@ -74,7 +74,7 @@ function StatusDot({ status }: { status: SessionExecutionStatusValue }) {
   );
 }
 
-function SessionSearchBar({
+function AgentRunSearchBar({
   keyword,
   onKeywordChange,
 }: {
@@ -104,7 +104,7 @@ function SessionSearchBar({
           type="text"
           value={keyword}
           onChange={(e) => onKeywordChange(e.target.value)}
-          placeholder="搜索会话..."
+          placeholder="搜索 AgentRun..."
           className="h-7 w-full rounded-md border border-border bg-muted/40 pl-8 pr-7 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary focus:bg-background"
           aria-label="搜索"
         />
@@ -123,16 +123,16 @@ function SessionSearchBar({
   );
 }
 
-interface SessionRowProps {
-  entry: ProjectSessionListEntry;
+interface AgentRunRowProps {
+  entry: AgentRunWorkspaceListEntry;
   isSelected: boolean;
   onSelect: () => void;
 }
 
-function SessionRow({ entry, isSelected, onSelect }: SessionRowProps) {
-  const executionStatus = normalizeExecutionStatus(entry.delivery_status);
-  const updatedAt = updatedAtTimestamp(entry.updated_at);
-  const title = entry.title.trim() || "会话加载中...";
+function AgentRunRow({ entry, isSelected, onSelect }: AgentRunRowProps) {
+  const executionStatus = normalizeExecutionStatus(entry.shell.delivery_status);
+  const updatedAt = updatedAtTimestamp(entry.shell.last_activity_at);
+  const title = entry.shell.display_title.trim() || "AgentRun 加载中...";
   const subjectLabel = entry.subject_label?.trim() || null;
 
   return (
@@ -170,20 +170,20 @@ function SessionRow({ entry, isSelected, onSelect }: SessionRowProps) {
   );
 }
 
-interface ActiveSessionListProps {
+interface ActiveAgentRunListProps {
   projectId: string;
   isLoading: boolean;
   selectedAgentId: string | null;
-  onOpenSession: (runtimeSessionId: string, agentId?: string) => void;
+  onOpenAgentRun: (runId: string, agentId: string) => void;
 }
 
-export function ActiveSessionList({
+export function ActiveAgentRunList({
   projectId,
   isLoading,
   selectedAgentId,
-  onOpenSession,
-}: ActiveSessionListProps) {
-  const [sessions, setSessions] = useState<ProjectSessionListEntry[]>([]);
+  onOpenAgentRun,
+}: ActiveAgentRunListProps) {
+  const [agentRuns, setAgentRuns] = useState<AgentRunWorkspaceListEntry[]>([]);
   const [isFetching, setIsFetching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
@@ -194,14 +194,14 @@ export function ActiveSessionList({
     const load = async () => {
       setIsFetching(true);
       try {
-        const view = await fetchProjectSessionList(projectId);
+        const view = await fetchProjectAgentRuns(projectId);
         if (!cancelled) {
-          setSessions(view.sessions);
+          setAgentRuns(view.agent_runs);
           setError(null);
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "会话列表加载失败");
+          setError(err instanceof Error ? err.message : "AgentRun 列表加载失败");
         }
       } finally {
         if (!cancelled) setIsFetching(false);
@@ -214,27 +214,29 @@ export function ActiveSessionList({
   }, [projectId]);
 
   const filteredEntries = useMemo(() => {
-    let list = sessions;
+    let list = agentRuns;
 
     if (statusFilter !== "all") {
       list = list.filter((entry) =>
-        statusGroupOf(normalizeExecutionStatus(entry.delivery_status)) === statusFilter
+        statusGroupOf(normalizeExecutionStatus(entry.shell.delivery_status)) === statusFilter
       );
     }
 
     const trimmedKeyword = keyword.trim().toLowerCase();
     if (trimmedKeyword) {
       list = list.filter((entry) => {
-        const title = entry.title.toLowerCase();
+        const title = entry.shell.display_title.toLowerCase();
         const subjectLabel = entry.subject_label?.toLowerCase() ?? "";
         return title.includes(trimmedKeyword) || subjectLabel.includes(trimmedKeyword);
       });
     }
 
     return [...list].sort(
-      (a, b) => (updatedAtTimestamp(b.updated_at) ?? 0) - (updatedAtTimestamp(a.updated_at) ?? 0),
+      (a, b) =>
+        (updatedAtTimestamp(b.shell.last_activity_at) ?? 0)
+        - (updatedAtTimestamp(a.shell.last_activity_at) ?? 0),
     );
-  }, [keyword, sessions, statusFilter]);
+  }, [agentRuns, keyword, statusFilter]);
 
   if (isLoading || isFetching) {
     return (
@@ -249,12 +251,12 @@ export function ActiveSessionList({
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-5">
         <div className="flex items-center gap-2.5">
           <span className="inline-flex rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            SESSION
+            AGENT RUN
           </span>
           <div>
-            <p className="text-sm font-semibold tracking-tight text-foreground">活跃会话</p>
+            <p className="text-sm font-semibold tracking-tight text-foreground">活跃 AgentRun</p>
             <p className="text-xs text-muted-foreground">
-              {sessions.length} 个会话
+              {agentRuns.length} 个 AgentRun
             </p>
           </div>
         </div>
@@ -277,29 +279,28 @@ export function ActiveSessionList({
         ))}
       </div>
 
-      {sessions.length > 0 && (
-        <SessionSearchBar keyword={keyword} onKeywordChange={setKeyword} />
+      {agentRuns.length > 0 && (
+        <AgentRunSearchBar keyword={keyword} onKeywordChange={setKeyword} />
       )}
 
       <div className="flex-1 overflow-y-auto">
         {filteredEntries.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-            <p className="text-sm font-medium text-muted-foreground">暂无活跃会话</p>
+            <p className="text-sm font-medium text-muted-foreground">暂无活跃 AgentRun</p>
             <p className="text-xs text-muted-foreground/60">
-              {error ?? "从左侧 Agent 面板发起会话后将在此显示"}
+              {error ?? "从左侧 Agent 面板发起 AgentRun 后将在此显示"}
             </p>
           </div>
         ) : (
           <div className="space-y-0.5 p-1">
             {filteredEntries.map((entry) => (
-              <SessionRow
-                key={entry.runtime_session_id}
+              <AgentRunRow
+                key={`${entry.run_ref.run_id}:${entry.agent_ref.agent_id}`}
                 entry={entry}
-                isSelected={selectedAgentId === entry.agent_ref?.agent_id}
-                onSelect={() => onOpenSession(
-                  entry.runtime_session_id,
-                  entry.agent_ref?.agent_id,
-                )}
+                isSelected={selectedAgentId === entry.agent_ref.agent_id}
+                onSelect={() => {
+                  onOpenAgentRun(entry.run_ref.run_id, entry.agent_ref.agent_id);
+                }}
               />
             ))}
           </div>
@@ -309,4 +310,4 @@ export function ActiveSessionList({
   );
 }
 
-export { ActiveSessionList as ActiveLifecycleList };
+export { ActiveAgentRunList as ActiveLifecycleList };

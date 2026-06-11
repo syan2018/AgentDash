@@ -7,8 +7,9 @@ use agentdash_application::workflow::{
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageRequest,
     AgentRunMessageResponse, AgentRunRefDto, AgentRunSteeringRequest, AgentRunSteeringResponse,
-    AgentRunWorkspaceShell, AgentRunWorkspaceView, EnqueuePendingMessageRequest,
-    EnqueuePendingMessageResponse, LifecycleRunRefDto, PendingMessageView,
+    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
+    AgentRunWorkspaceView, EnqueuePendingMessageRequest, EnqueuePendingMessageResponse,
+    LifecycleRunRefDto, LifecycleSubjectAssociationDto, PendingMessageView,
     RuntimeSessionCommandStateDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
     SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
     SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView,
@@ -39,6 +40,10 @@ struct AgentRunContext {
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .route(
+            "/projects/{project_id}/agent-runs",
+            axum::routing::get(get_project_agent_runs),
+        )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/workspace",
             axum::routing::get(get_agent_run_workspace),
@@ -88,6 +93,59 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             "/sessions/{runtime_session_id}/pending-messages/{message_id}/promote",
             axum::routing::post(promote_pending_message),
         )
+}
+
+pub async fn get_project_agent_runs(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(project_id): Path<String>,
+) -> Result<Json<AgentRunWorkspaceListView>, ApiError> {
+    let project_id = parse_uuid(&project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let runs = state
+        .repos
+        .lifecycle_run_repo
+        .list_by_project(project_id)
+        .await
+        .map_err(ApiError::from)?;
+    let mut entries = Vec::new();
+    for run in runs {
+        let agents = state
+            .repos
+            .lifecycle_agent_repo
+            .list_by_run(run.id)
+            .await
+            .map_err(ApiError::from)?;
+        for agent in agents {
+            let delivery_runtime_session_id = state
+                .repos
+                .execution_anchor_repo
+                .latest_for_agent(agent.id)
+                .await
+                .map_err(ApiError::from)?
+                .map(|anchor| anchor.runtime_session_id);
+            let context = AgentRunContext {
+                run: run.clone(),
+                agent,
+                delivery_runtime_session_id,
+            };
+            let workspace = build_agent_run_workspace_view(&state, &context).await?;
+            entries.push(agent_run_workspace_list_entry(&context.run, workspace));
+        }
+    }
+    entries.sort_by(|a, b| b.shell.last_activity_at.cmp(&a.shell.last_activity_at));
+
+    Ok(Json(AgentRunWorkspaceListView {
+        project_id: project_id.to_string(),
+        agent_runs: entries,
+    }))
 }
 
 pub async fn get_agent_run_workspace(
@@ -578,6 +636,35 @@ fn runtime_trace_meta(
     }
 }
 
+fn agent_run_workspace_list_entry(
+    run: &LifecycleRun,
+    workspace: AgentRunWorkspaceView,
+) -> AgentRunWorkspaceListEntry {
+    let subject_association = workspace.subject_associations.first();
+    AgentRunWorkspaceListEntry {
+        run_ref: workspace.run_ref,
+        agent_ref: workspace.agent_ref,
+        project_id: workspace.project_id,
+        shell: workspace.shell,
+        run_status: lifecycle_run_status_to_contract(run.status),
+        delivery_runtime_ref: workspace.delivery_runtime_ref,
+        delivery_trace_meta: workspace.delivery_trace_meta,
+        frame_ref: workspace.frame_runtime.map(|frame| frame.frame_ref),
+        subject_ref: subject_association.map(|association| association.subject_ref.clone()),
+        subject_label: subject_association.and_then(subject_label_from_metadata),
+    }
+}
+
+fn subject_label_from_metadata(association: &LifecycleSubjectAssociationDto) -> Option<String> {
+    let metadata = association.metadata.as_ref()?;
+    ["label", "title", "name"]
+        .iter()
+        .find_map(|key| metadata.get(key).and_then(|value| value.as_str()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn pending_message_view(
     preview: agentdash_application::session::PendingMessagePreview,
 ) -> PendingMessageView {
@@ -600,6 +687,34 @@ fn disabled_action(reason: impl Into<String>) -> SessionRuntimeActionAvailabilit
     SessionRuntimeActionAvailabilityView {
         enabled: false,
         unavailable_reason: Some(reason.into()),
+    }
+}
+
+fn lifecycle_run_status_to_contract(
+    status: agentdash_domain::workflow::LifecycleRunStatus,
+) -> agentdash_contracts::workflow::LifecycleRunStatus {
+    match status {
+        agentdash_domain::workflow::LifecycleRunStatus::Draft => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Draft
+        }
+        agentdash_domain::workflow::LifecycleRunStatus::Ready => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Ready
+        }
+        agentdash_domain::workflow::LifecycleRunStatus::Running => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Running
+        }
+        agentdash_domain::workflow::LifecycleRunStatus::Blocked => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Blocked
+        }
+        agentdash_domain::workflow::LifecycleRunStatus::Completed => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Completed
+        }
+        agentdash_domain::workflow::LifecycleRunStatus::Failed => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Failed
+        }
+        agentdash_domain::workflow::LifecycleRunStatus::Cancelled => {
+            agentdash_contracts::workflow::LifecycleRunStatus::Cancelled
+        }
     }
 }
 

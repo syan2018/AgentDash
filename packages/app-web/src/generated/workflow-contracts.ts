@@ -54,6 +54,10 @@ delivery_runtime_ref?: RuntimeSessionRefDto,
  */
 last_delivery_status?: string, created_at: string, updated_at: string, };
 
+export type AgentRunWorkspaceListEntry = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, run_status: LifecycleRunStatus, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, };
+
+export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<AgentRunWorkspaceListEntry>, };
+
 export type AgentRunWorkspaceShell = { display_title: string, title_source: string, workspace_status: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
 
 export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: SessionRuntimeControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: SessionRuntimeActionSetView, pending_messages: Array<PendingMessageView>, };
@@ -123,10 +127,6 @@ export type PreflightWorkflowScriptRequest = { project_id: string, source_text: 
 export type PreflightWorkflowScriptResponse = { valid: boolean, source_digest: string, source_ref: JsonValue, raw_builder_document?: JsonValue, plan_snapshot?: JsonValue, plan_preview?: WorkflowScriptPlanPreviewDto, capability_summary: WorkflowScriptCapabilitySummaryDto, diagnostics: Array<WorkflowScriptPreflightDiagnosticDto>, };
 
 export type ProjectActiveAgentsView = { project_id: string, runs: Array<LifecycleRunView>, agents: Array<AgentRunView>, };
-
-export type ProjectSessionListEntry = { runtime_session_id: string, title: string, delivery_status: string, run_status?: LifecycleRunStatus, run_ref?: LifecycleRunRefDto, agent_ref?: AgentRunRefDto, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, updated_at: string, };
-
-export type ProjectSessionListView = { project_id: string, sessions: Array<ProjectSessionListEntry>, };
 
 export type RegisterHookPresetResponse = { registered: boolean, key: string, };
 

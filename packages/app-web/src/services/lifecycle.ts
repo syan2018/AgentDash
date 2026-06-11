@@ -7,9 +7,9 @@
 import { api } from "../api/client";
 import type {
   AgentFrameRuntimeView,
+  AgentRunWorkspaceListView,
   LifecycleRunView,
   ProjectActiveAgentsView,
-  ProjectSessionListView,
   RuntimeSessionTraceView,
   SessionRuntimeControlView,
   SubjectExecutionView,
@@ -17,15 +17,15 @@ import type {
 import type {
   EnqueuePendingMessageRequest,
   EnqueuePendingMessageResponse,
-  PendingMessageView,
   AgentRunMessageRequest,
   AgentRunMessageResponse,
   AgentRunSteeringRequest,
   AgentRunSteeringResponse,
+  AgentRunWorkspaceView,
 } from "../generated/workflow-contracts";
 
-function sessionCommandPath(runtimeSessionId: string, route: string): string {
-  return `/sessions/${encodeURIComponent(runtimeSessionId)}${route}`;
+function agentRunCommandPath(runId: string, agentId: string, route: string): string {
+  return `/agent-runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}${route}`;
 }
 
 export async function fetchLifecycleRun(runId: string): Promise<LifecycleRunView> {
@@ -47,9 +47,9 @@ export async function fetchProjectActiveAgents(projectId: string): Promise<Proje
   );
 }
 
-export async function fetchProjectSessionList(projectId: string): Promise<ProjectSessionListView> {
-  return api.get<ProjectSessionListView>(
-    `/projects/${encodeURIComponent(projectId)}/sessions`,
+export async function fetchProjectAgentRuns(projectId: string): Promise<AgentRunWorkspaceListView> {
+  return api.get<AgentRunWorkspaceListView>(
+    `/projects/${encodeURIComponent(projectId)}/agent-runs`,
   );
 }
 
@@ -71,63 +71,69 @@ export async function fetchRuntimeTrace(runtimeSessionId: string): Promise<Runti
   );
 }
 
-export async function sendAgentRunMessageByRuntimeSession(
-  runtimeSessionId: string,
+export async function fetchAgentRunWorkspace(
+  runId: string,
+  agentId: string,
+): Promise<AgentRunWorkspaceView> {
+  return api.get<AgentRunWorkspaceView>(agentRunCommandPath(runId, agentId, "/workspace"));
+}
+
+export async function sendAgentRunMessage(
+  runId: string,
+  agentId: string,
   request: AgentRunMessageRequest,
 ): Promise<AgentRunMessageResponse> {
   return api.post<AgentRunMessageResponse>(
-    sessionCommandPath(runtimeSessionId, "/messages"),
+    agentRunCommandPath(runId, agentId, "/messages"),
     request,
   );
 }
 
-export async function steerAgentRunByRuntimeSession(
-  runtimeSessionId: string,
+export async function steerAgentRun(
+  runId: string,
+  agentId: string,
   request: AgentRunSteeringRequest,
 ): Promise<AgentRunSteeringResponse> {
   return api.post<AgentRunSteeringResponse>(
-    sessionCommandPath(runtimeSessionId, "/steering"),
+    agentRunCommandPath(runId, agentId, "/steering"),
     request,
   );
 }
 
-export async function listPendingMessages(
-  runtimeSessionId: string,
-): Promise<PendingMessageView[]> {
-  return api.get<PendingMessageView[]>(
-    sessionCommandPath(runtimeSessionId, "/pending-messages"),
-  );
-}
-
-export async function enqueuePendingMessage(
-  runtimeSessionId: string,
+export async function enqueueAgentRunPendingMessage(
+  runId: string,
+  agentId: string,
   body: EnqueuePendingMessageRequest,
 ): Promise<EnqueuePendingMessageResponse> {
   return api.post<EnqueuePendingMessageResponse>(
-    sessionCommandPath(runtimeSessionId, "/pending-messages"),
+    agentRunCommandPath(runId, agentId, "/pending-messages"),
     body,
   );
 }
 
-export async function deletePendingMessage(
-  runtimeSessionId: string,
+export async function deleteAgentRunPendingMessage(
+  runId: string,
+  agentId: string,
   messageId: string,
 ): Promise<void> {
   await api.delete<void>(
-    sessionCommandPath(
-      runtimeSessionId,
+    agentRunCommandPath(
+      runId,
+      agentId,
       `/pending-messages/${encodeURIComponent(messageId)}`,
     ),
   );
 }
 
-export async function promotePendingMessage(
-  runtimeSessionId: string,
+export async function promoteAgentRunPendingMessage(
+  runId: string,
+  agentId: string,
   messageId: string,
 ): Promise<void> {
   await api.post<void>(
-    sessionCommandPath(
-      runtimeSessionId,
+    agentRunCommandPath(
+      runId,
+      agentId,
       `/pending-messages/${encodeURIComponent(messageId)}/promote`,
     ),
     {},

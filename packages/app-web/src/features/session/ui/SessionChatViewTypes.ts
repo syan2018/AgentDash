@@ -71,6 +71,9 @@ export interface SessionChatViewProps {
    */
   agentDefaults?: ProjectAgentExecutor | TaskSessionExecutorSummary | null;
 
+  /** AgentRun/frame scoped executor state key; changes force authoritative hydration. */
+  executorStateKey?: string | null;
+
   /** 隐藏执行器选择器（当外部已确定执行器时，如 Task 场景） */
   showExecutorSelector?: boolean;
 

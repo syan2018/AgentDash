@@ -1141,19 +1141,18 @@ pub struct EnqueuePendingMessageResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ProjectSessionListEntry {
-    pub runtime_session_id: String,
-    pub title: String,
-    pub delivery_status: String,
+pub struct AgentRunWorkspaceListEntry {
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    pub project_id: String,
+    pub shell: AgentRunWorkspaceShell,
+    pub run_status: LifecycleRunStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub run_status: Option<LifecycleRunStatus>,
+    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub run_ref: Option<LifecycleRunRefDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub agent_ref: Option<AgentRunRefDto>,
+    pub delivery_trace_meta: Option<RuntimeSessionTraceMeta>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub frame_ref: Option<AgentFrameRefDto>,
@@ -1163,14 +1162,13 @@ pub struct ProjectSessionListEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub subject_label: Option<String>,
-    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ProjectSessionListView {
+pub struct AgentRunWorkspaceListView {
     pub project_id: String,
-    pub sessions: Vec<ProjectSessionListEntry>,
+    pub agent_runs: Vec<AgentRunWorkspaceListEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

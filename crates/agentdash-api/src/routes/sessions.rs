@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io;
 use std::sync::Arc;
@@ -17,9 +16,7 @@ use uuid::Uuid;
 use crate::routes::lifecycle_contracts::{
     agent_run_to_contract, lifecycle_run_view_to_contract, subject_association_to_contract,
 };
-use crate::routes::lifecycle_views::{
-    agent_frame_ref, agent_frame_runtime_to_view, runtime_refs_for_agent,
-};
+use crate::routes::lifecycle_views::{agent_frame_runtime_to_view, runtime_refs_for_agent};
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::session::{
     ExecutionStatus, SessionExecutionState, SessionForkRequest, SessionMeta,
@@ -34,11 +31,10 @@ use agentdash_contracts::session::{
     SessionNdjsonEnvelope, SessionProjectionRollbackResponse, SessionProjectionViewResponse,
 };
 use agentdash_contracts::workflow::{
-    AgentRunRefDto, LifecycleRunRefDto, PendingMessageView, ProjectSessionListEntry,
-    ProjectSessionListView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
+    PendingMessageView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
     SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
     SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
-    SessionShellDto, SubjectRefDto,
+    SessionShellDto,
 };
 use agentdash_domain::workflow::{LifecycleRun, RuntimeSessionExecutionAnchor};
 
@@ -90,10 +86,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/sessions/{id}/runtime-control",
             axum::routing::get(get_session_runtime_control),
-        )
-        .route(
-            "/projects/{id}/sessions",
-            axum::routing::get(get_project_sessions),
         )
         .route(
             "/sessions/{id}/meta",
@@ -370,74 +362,6 @@ fn disabled_action(reason: impl Into<String>) -> SessionRuntimeActionAvailabilit
     }
 }
 
-pub async fn get_project_sessions(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(project_id): Path<String>,
-) -> Result<Json<ProjectSessionListView>, ApiError> {
-    let project_id = parse_uuid_param(&project_id, "project_id")?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::View,
-    )
-    .await?;
-
-    let metas = state.services.session_core.list_sessions().await?;
-
-    let session_ids = metas.iter().map(|meta| meta.id.clone()).collect::<Vec<_>>();
-    let anchors = state
-        .repos
-        .execution_anchor_repo
-        .list_by_project_session_ids(&session_ids)
-        .await?;
-    let anchors_by_session = anchors
-        .into_iter()
-        .map(|anchor| (anchor.runtime_session_id.clone(), anchor))
-        .collect::<HashMap<_, _>>();
-    let run_ids = anchors_by_session
-        .values()
-        .map(|anchor| anchor.run_id)
-        .collect::<Vec<_>>();
-    let runs_by_id = state
-        .repos
-        .lifecycle_run_repo
-        .list_by_ids(&run_ids)
-        .await?
-        .into_iter()
-        .map(|run| (run.id, run))
-        .collect::<HashMap<_, _>>();
-
-    let metas_by_id = metas
-        .into_iter()
-        .map(|meta| (meta.id.clone(), meta))
-        .collect::<HashMap<_, _>>();
-    let mut sessions = Vec::new();
-    for anchor in anchors_by_session.values() {
-        let Some(run) = runs_by_id.get(&anchor.run_id) else {
-            return Err(ApiError::NotFound(format!(
-                "lifecycle_run 不存在: {}",
-                anchor.run_id
-            )));
-        };
-        if run.project_id != project_id {
-            continue;
-        }
-        let Some(meta) = metas_by_id.get(&anchor.runtime_session_id) else {
-            continue;
-        };
-        let entry = project_session_entry(state.as_ref(), meta, Some(anchor), &runs_by_id).await?;
-        sessions.push(entry);
-    }
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-
-    Ok(Json(ProjectSessionListView {
-        project_id: project_id.to_string(),
-        sessions,
-    }))
-}
-
 fn map_session_event(
     event: agentdash_application::session::PersistedSessionEvent,
 ) -> SessionEventResponse {
@@ -548,73 +472,6 @@ async fn load_lifecycle_run_for_session(
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))
 }
 
-async fn project_session_entry(
-    state: &AppState,
-    meta: &SessionMeta,
-    anchor: Option<&RuntimeSessionExecutionAnchor>,
-    runs_by_id: &HashMap<Uuid, LifecycleRun>,
-) -> Result<ProjectSessionListEntry, ApiError> {
-    let Some(anchor) = anchor else {
-        return Ok(ProjectSessionListEntry {
-            runtime_session_id: meta.id.clone(),
-            title: session_list_title(meta),
-            delivery_status: serialized_string(&meta.last_delivery_status),
-            run_status: None,
-            run_ref: None,
-            agent_ref: None,
-            frame_ref: None,
-            subject_ref: None,
-            subject_label: None,
-            updated_at: meta.updated_at.to_string(),
-        });
-    };
-
-    let run = runs_by_id
-        .get(&anchor.run_id)
-        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {}", anchor.run_id)))?;
-    let agent = state
-        .repos
-        .lifecycle_agent_repo
-        .get(anchor.agent_id)
-        .await?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!("lifecycle_agent 不存在: {}", anchor.agent_id))
-        })?;
-    let frame_ref = state
-        .repos
-        .agent_frame_repo
-        .get_current(agent.id)
-        .await?
-        .map(|frame| agent_frame_ref(&frame));
-    let associations = state
-        .repos
-        .lifecycle_subject_association_repo
-        .list_by_anchor(run.id, Some(agent.id))
-        .await?;
-    let subject = associations.first();
-
-    Ok(ProjectSessionListEntry {
-        runtime_session_id: meta.id.clone(),
-        title: session_list_title(meta),
-        delivery_status: serialized_string(&meta.last_delivery_status),
-        run_status: Some(lifecycle_run_status_to_contract(run.status)),
-        run_ref: Some(LifecycleRunRefDto {
-            run_id: run.id.to_string(),
-        }),
-        agent_ref: Some(AgentRunRefDto {
-            run_id: agent.run_id.to_string(),
-            agent_id: agent.id.to_string(),
-        }),
-        frame_ref,
-        subject_ref: subject.map(|association| SubjectRefDto {
-            kind: association.subject_kind.clone(),
-            id: association.subject_id.to_string(),
-        }),
-        subject_label: subject.and_then(subject_label_from_metadata),
-        updated_at: meta.updated_at.to_string(),
-    })
-}
-
 fn session_shell_dto(meta: &SessionMeta) -> SessionShellDto {
     SessionShellDto {
         id: meta.id.clone(),
@@ -643,55 +500,6 @@ fn anchor_dto(anchor: &RuntimeSessionExecutionAnchor) -> RuntimeSessionExecution
     }
 }
 
-fn lifecycle_run_status_to_contract(
-    status: agentdash_domain::workflow::LifecycleRunStatus,
-) -> agentdash_contracts::workflow::LifecycleRunStatus {
-    match status {
-        agentdash_domain::workflow::LifecycleRunStatus::Draft => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Draft
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Ready => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Ready
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Running => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Running
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Blocked => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Blocked
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Completed => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Completed
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Failed => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Failed
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Cancelled => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Cancelled
-        }
-    }
-}
-
-fn session_list_title(meta: &SessionMeta) -> String {
-    let title = meta.title.trim();
-    if title.is_empty() {
-        "会话加载中...".to_string()
-    } else {
-        title.to_string()
-    }
-}
-
-fn subject_label_from_metadata(
-    association: &agentdash_domain::workflow::LifecycleSubjectAssociation,
-) -> Option<String> {
-    let metadata = association.metadata_json.as_ref()?;
-    ["label", "title", "name"]
-        .iter()
-        .find_map(|key| metadata.get(key).and_then(|value| value.as_str()))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
 fn is_terminal_agent_status(status: &str) -> bool {
     matches!(status, "completed" | "failed" | "cancelled")
 }
@@ -701,10 +509,6 @@ fn serialized_string<T: serde::Serialize>(value: &T) -> String {
         .ok()
         .and_then(|value| value.as_str().map(ToOwned::to_owned))
         .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn parse_uuid_param(raw: &str, field: &str) -> Result<Uuid, ApiError> {
-    Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("无效的 {field}: {raw}")))
 }
 
 pub async fn list_session_events(

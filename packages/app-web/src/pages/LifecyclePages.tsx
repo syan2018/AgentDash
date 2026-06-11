@@ -10,6 +10,7 @@ import type {
 } from "../types";
 import { subjectExecutionKey } from "../types";
 import { useLifecycleStore } from "../stores/lifecycleStore";
+import { agentRunWorkspacePath } from "../features/agent/agent-run-paths";
 
 function Section({
   title,
@@ -158,10 +159,10 @@ function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
               <button
                 key={ref.runtime_session_id}
                 type="button"
-                onClick={() => navigate(`/session/${ref.runtime_session_id}`)}
+                onClick={() => {}}
                 className="rounded-[6px] border border-border bg-secondary/40 px-2 py-1 font-mono text-xs text-muted-foreground hover:text-foreground"
               >
-                {ref.runtime_session_id}
+                trace {ref.runtime_session_id}
               </button>
             ))}
           </div>
@@ -241,10 +242,10 @@ function AgentSummary({
           <p className="text-xs text-muted-foreground">status: {agent.status}</p>
           <button
             type="button"
-            onClick={() => navigate(`/run/${agent.agent_ref.run_id}`)}
+            onClick={() => navigate(agentRunWorkspacePath(agent.agent_ref.run_id, agent.agent_ref.agent_id))}
             className="font-mono text-xs text-primary hover:underline"
           >
-            run {agent.agent_ref.run_id}
+            打开 AgentRun
           </button>
         </div>
       </Section>
@@ -265,7 +266,7 @@ function AgentSummary({
                   <button
                     key={ref.runtime_session_id}
                     type="button"
-                    onClick={() => navigate(`/session/${ref.runtime_session_id}`)}
+                    onClick={() => {}}
                     className="rounded-[6px] border border-border bg-secondary/40 px-2 py-1 font-mono text-xs text-muted-foreground hover:text-foreground"
                   >
                     trace {ref.runtime_session_id.slice(0, 8)}

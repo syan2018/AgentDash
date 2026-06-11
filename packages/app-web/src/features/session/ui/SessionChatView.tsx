@@ -4,7 +4,7 @@
  * 包含完整的会话交互能力：流式输出、富文本输入（@ 文件引用）、
  * 执行器选择、上下文用量指示、发送/取消。
  *
- * SessionPage 等 runtime trace 场景复用此组件，
+ * AgentRun workspace 等 runtime trace 场景复用此组件，
  * 由父组件管理 sessionId 生命周期和外层导航。
  */
 
@@ -67,6 +67,7 @@ export function SessionChatView({
   onSystemEvent,
   executorHint,
   agentDefaults,
+  executorStateKey,
   showExecutorSelector = true,
   controlState,
   onPrimaryAction,
@@ -169,6 +170,7 @@ export function SessionChatView({
     [discovery.executors, executorHint],
   );
   const executorHydrationKey = useMemo(() => {
+    if (executorStateKey) return executorStateKey;
     if (sessionId) return sessionId;
     const source = toExecutorConfigSource(agentDefaults);
     if (source) {
@@ -182,7 +184,7 @@ export function SessionChatView({
       ].join(":");
     }
     return resolvedHint ? `draft:${resolvedHint}` : null;
-  }, [agentDefaults, resolvedHint, sessionId]);
+  }, [agentDefaults, executorStateKey, resolvedHint, sessionId]);
 
   // 每个 session 仅 hydrate 一次（用户手改后切走再切回不会被再次覆盖）。
   // 首帧 agentDefaults 可能还没到，effect 会等 agentDefaults 就绪后再命中条件。

@@ -27,9 +27,9 @@ const StoryPage = lazy(async () => {
   return { default: module.StoryPage };
 });
 
-const SessionPage = lazy(async () => {
-  const module = await import("./pages/SessionPage");
-  return { default: module.SessionPage };
+const AgentRunWorkspacePage = lazy(async () => {
+  const module = await import("./pages/AgentRunWorkspacePage");
+  return { default: module.AgentRunWorkspacePage };
 });
 
 const LifecycleRunPage = lazy(async () => {
@@ -152,17 +152,17 @@ function BootstrapErrorState({
   );
 }
 
-// ─── /session/:sessionId → 会话主视图路由包装器 ──
+// ─── /agent-runs/:runId/:agentId → AgentRun workspace route ──
 
-function SessionRouteWrapper() {
-  const { sessionId } = useParams<{ sessionId: string }>();
-  return <SessionPage sessionId={sessionId} />;
+function AgentRunWorkspaceRouteWrapper() {
+  const { runId, agentId } = useParams<{ runId: string; agentId: string }>();
+  return <AgentRunWorkspacePage runId={runId} agentId={agentId} />;
 }
 
-function DraftSessionRouteWrapper() {
+function DraftAgentRunRouteWrapper() {
   const [searchParams] = useSearchParams();
   return (
-    <SessionPage
+    <AgentRunWorkspacePage
       draftProjectId={searchParams.get("project_id") ?? undefined}
       draftProjectAgentId={searchParams.get("project_agent_id") ?? undefined}
     />
@@ -343,8 +343,8 @@ function AppContent() {
           {/* 统一 Workflow 编辑器路由 */}
           <Route path="/workflow/:id" element={<LifecycleEditorShellPage />} />
 
-          <Route path="/session/new" element={<DraftSessionRouteWrapper />} />
-          <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />
+          <Route path="/agent-runs/new" element={<DraftAgentRunRouteWrapper />} />
+          <Route path="/agent-runs/:runId/:agentId" element={<AgentRunWorkspaceRouteWrapper />} />
           <Route path="/run/:runId" element={<LifecycleRunPage />} />
           <Route path="/subject/:kind/:id" element={<SubjectExecutionPage />} />
           <Route path="/agent/:agentId" element={<LifecycleAgentPage />} />

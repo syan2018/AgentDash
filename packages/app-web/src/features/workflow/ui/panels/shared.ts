@@ -100,7 +100,7 @@ export const CAP_EDITOR_WELL_KNOWN_KEYS = [
   "file_read",
   "file_write",
   "shell_execute",
-  "canvas",
+  "workspace_module",
   "workflow",
   "collaboration",
   "story_management",
@@ -115,7 +115,7 @@ export const WELL_KNOWN_CAPABILITY_LABEL: Record<WellKnownCapabilityKey, string>
   file_read: "文件读取",
   file_write: "文件写入",
   shell_execute: "Shell 执行",
-  canvas: "画布",
+  workspace_module: "Workspace Module",
   workflow: "工作流",
   collaboration: "协作",
   story_management: "Story 管理",
@@ -128,7 +128,7 @@ export const WELL_KNOWN_CAPABILITY_DESCRIPTION: Record<WellKnownCapabilityKey, s
   file_read: "只读文件系统访问（fs_read、fs_glob、fs_grep 等）",
   file_write: "文件写入操作（fs_apply_patch）",
   shell_execute: "执行 shell 命令（shell_exec）",
-  canvas: "画布 / 白板操作",
+  workspace_module: "模块创建、调用与展示，包含 Canvas",
   workflow: "工作流汇报与推进",
   collaboration: "多 agent 协作通道",
   story_management: "创建 / 调整 Story",
@@ -143,7 +143,7 @@ export const WELL_KNOWN_CAPABILITY_DESCRIPTION: Record<WellKnownCapabilityKey, s
  * 若后端 visibility rule 调整，此处需同步更新。
  */
 export const AUTO_GRANTED_BASELINE: Record<WorkflowTargetKind, WellKnownCapabilityKey[]> = {
-  project: ["file_read", "file_write", "shell_execute", "canvas", "collaboration", "relay_management"],
+  project: ["file_read", "file_write", "shell_execute", "workspace_module", "collaboration", "relay_management"],
   story: ["file_read", "file_write", "shell_execute", "story_management"],
 };
 

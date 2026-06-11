@@ -317,8 +317,6 @@ export function InputPortItem({
 export interface PortsPanelProps {
   outputPorts: OutputPortDefinition[];
   inputPorts: InputPortDefinition[];
-  /** @deprecated 视觉语言统一后不再需要；保留 prop 以兼容调用方。 */
-  compact?: boolean;
   onOutputChange: (ports: OutputPortDefinition[]) => void;
   onInputChange: (ports: InputPortDefinition[]) => void;
 }

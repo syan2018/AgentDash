@@ -640,12 +640,6 @@ export interface CapabilityPanelProps {
   projectId: string;
   targetKinds: WorkflowTargetKind[];
   directives: CapabilityDirective[];
-  /**
-   * 紧凑模式：窄侧栏下保留单列，未来若 picker 出现 grid-cols-N 也按此降级。
-   * 当前 CapabilitiesEditor 内部的 capability row 本就是纵向卡片堆叠，
-   * 仅对 picker 展开区做轻量传递（保留入参以备未来调整）。
-   */
-  compact?: boolean;
   onDirectivesChange: (next: CapabilityDirective[]) => void;
 }
 
@@ -653,10 +647,8 @@ export function CapabilityPanel({
   projectId,
   targetKinds,
   directives,
-  compact: _compact = false,
   onDirectivesChange,
 }: CapabilityPanelProps) {
-  void _compact;
   return (
     <section className="space-y-2">
       <label className="agentdash-form-label">Agent 工具能力 ({directives.length})</label>

@@ -965,7 +965,6 @@ export function AgentProcedureContractTabContent({
       </div>
       <InjectionPanel
         injection={procedureDraft.contract.injection}
-        compact
         onGuidanceChange={(guidance) => onUpdateInjection({ guidance: guidance ?? undefined })}
         onBindingChange={onBindingChange}
         onBindingAdd={onBindingAdd}
@@ -975,13 +974,11 @@ export function AgentProcedureContractTabContent({
         projectId={projectId}
         targetKinds={targetKinds}
         directives={procedureDraft.contract.capability_config.tool_directives}
-        compact
         onDirectivesChange={onDirectivesChange}
       />
       <HookRulesPanel
         hookRules={procedureDraft.contract.hook_rules}
         presets={hookPresets}
-        compact
         onAdd={onAddHookRule}
         onToggle={onToggleHookRule}
         onRemove={onRemoveHookRule}
@@ -989,7 +986,6 @@ export function AgentProcedureContractTabContent({
       <PortsPanel
         outputPorts={procedureDraft.contract.output_ports ?? []}
         inputPorts={procedureDraft.contract.input_ports ?? []}
-        compact
         onOutputChange={onContractOutputPortsChange}
         onInputChange={onContractInputPortsChange}
       />

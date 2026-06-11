@@ -29,6 +29,7 @@ import {
   TARGET_KIND_LABEL,
   TARGET_KIND_OPTIONS,
 } from "./shared-labels";
+import { toggleTargetKind } from "./ui/panels/shared";
 
 export interface LifecycleEditorShellProps {
   /** "new" 表示新建；否则是 lifecycle definition id */
@@ -444,13 +445,7 @@ function LifecycleHeader({
   onChange: (patch: Partial<typeof draft>) => void;
 }) {
   const toggleKind = (value: WorkflowTargetKind) => {
-    const cur = draft.target_kinds;
-    if (cur.includes(value)) {
-      const next = cur.filter((k) => k !== value);
-      if (next.length > 0) onChange({ target_kinds: next });
-    } else {
-      onChange({ target_kinds: [...cur, value] });
-    }
+    onChange({ target_kinds: toggleTargetKind(draft.target_kinds, value) });
   };
 
   return (

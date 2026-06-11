@@ -61,6 +61,9 @@
 | session-ui-toolcards Batch B | 修复 | 已提交 | `fixes/028-session-companion-request-view-model.md` |
 | mcp-preset-connectors Batch B | 修复 | 已提交 | `fixes/029-mcp-probe-view-model.md` |
 | workflow-orchestration clippy gate | 修复 | 已提交 | `fixes/030-workflow-launch-outcome-clippy.md` |
+| workflow-binding-panels Batch A | 修复 | 已提交 | `fixes/031-workflow-binding-panels-compact.md` |
+| executor-connector-bridges Batch A/B | 修复 | 已提交 | `fixes/032-executor-mcp-adapter-boundary.md` |
+| canvas-runtime-preview Batch C | 修复 | 已提交 | `fixes/033-canvas-runtime-panel-naming.md` |
 
 ## 已完成模块
 
@@ -133,3 +136,6 @@
 | `d43ce563` | session-ui-toolcards | 收敛 companion 请求视图模型 |
 | `cdd47f46` | mcp-preset-connectors | 收敛 probe 展示模型 |
 | `9be19743` | workflow-orchestration | 修复编排启动结果 large enum clippy 阻塞 |
+| `b0df9ce4` | workflow-binding-panels | 清理 binding panels deprecated compact 链路 |
+| `bc949430` | executor-connector-bridges | 收敛 MCP adapter 共用核心与 naming 归位 |
+| `e2ac5d35` | canvas-runtime-preview | 将 Canvas runtime 面板从 SessionPanel 命名收窄为 RuntimePanel |

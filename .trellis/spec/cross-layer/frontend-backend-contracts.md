@@ -121,6 +121,169 @@ pnpm run frontend:check
 
 当 `agentdash-contracts` 引入后，`contracts:check` 同时运行所有 contract 生成器。
 
+## Scenario: MCP Preset Runtime Binding And Probe Contract
+
+### 1. Scope / Trigger
+
+- Trigger: MCP Preset wire contract now carries runtime binding declarations and stdio cwd; ordinary preset probe accepts the same edited transport plus optional binding declaration.
+- Scope: `agentdash-contracts::mcp_preset`, API routes under `/api/projects/{project_id}/mcp-presets`, generated `packages/app-web/src/generated/mcp-preset-contracts.ts`, frontend MCP preset editor helpers, probe cache keys, and Project Agent MCP picker display.
+
+### 2. Signatures
+
+```rust
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpTransportConfigDto {
+    Http { url: String, headers: Vec<McpHttpHeader> },
+    Sse { url: String, headers: Vec<McpHttpHeader> },
+    Stdio {
+        command: String,
+        args: Vec<String>,
+        env: Vec<McpEnvVar>,
+        cwd: Option<String>,
+    },
+}
+
+pub struct McpRuntimeBindingConfigDto {
+    pub mount_id: Option<String>,
+    pub bindings: Vec<McpRuntimeBindingRuleDto>,
+}
+
+pub struct McpRuntimeBindingRuleDto {
+    pub source: McpRuntimeBindingSourceDto,
+    pub target: McpRuntimeBindingTargetDto,
+    pub required: bool,
+}
+
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum McpRuntimeBindingSourceDto {
+    VfsRootRef,
+    VfsBackendId,
+    WorkspaceId,
+    WorkspaceBindingId,
+    WorkspaceIdentity { path: Vec<String> },
+    WorkspaceDetectedFact { path: Vec<String> },
+}
+
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum McpRuntimeBindingTargetDto {
+    HttpQuery { name: String },
+    HttpHeader { name: String },
+    StdioEnv { name: String },
+    StdioCwd,
+}
+
+pub struct CreateMcpPresetRequest {
+    pub transport: McpTransportConfigDto,
+    pub route_policy: McpRoutePolicy,
+    pub runtime_binding: Option<McpRuntimeBindingConfigDto>,
+    // identity/display fields omitted
+}
+
+pub struct UpdateMcpPresetRequest {
+    pub transport: Option<McpTransportConfigDto>,
+    pub route_policy: Option<McpRoutePolicy>,
+    pub runtime_binding: Option<Option<McpRuntimeBindingConfigDto>>,
+    // other patch fields omitted
+}
+
+pub struct McpPresetResponse {
+    pub transport: McpTransportConfigDto,
+    pub route_policy: McpRoutePolicy,
+    pub runtime_binding: Option<McpRuntimeBindingConfigDto>,
+    // identity/source fields omitted
+}
+
+pub struct ProbeMcpPresetRequest {
+    pub transport: McpTransportConfigDto,
+    pub runtime_binding: Option<McpRuntimeBindingConfigDto>,
+}
+
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ProbeMcpPresetResponse {
+    Ok { latency_ms: u32, tools: Vec<ProbeMcpToolInfo> },
+    Error { error: String },
+    Unsupported { reason: String },
+}
+```
+
+Generated TypeScript shape:
+
+```ts
+export type ProbeMcpPresetRequest = {
+  transport: McpTransportConfigDto;
+  runtime_binding?: McpRuntimeBindingConfigDto;
+};
+
+export type ProbeMcpPresetResponse =
+  | { status: "ok"; latency_ms: number; tools: Array<ProbeMcpToolInfo> }
+  | { status: "error"; error: string }
+  | { status: "unsupported"; reason: string };
+```
+
+### 3. Contracts
+
+- Rust contract types in `agentdash-contracts::mcp_preset` are the wire source; frontend code consumes `generated/mcp-preset-contracts.ts` rather than re-declaring these unions.
+- `McpTransportConfigDto::Http` and `Sse` carry `headers`; `Stdio` carries `command`, `args`, `env`, and optional `cwd`.
+- `CreateMcpPresetRequest.runtime_binding` creates a binding declaration; omission means static preset.
+- `UpdateMcpPresetRequest.runtime_binding` is tri-state: missing means unchanged, `null` clears the declaration, and an object replaces the declaration.
+- `McpPresetResponse.runtime_binding` mirrors the persisted declaration. The response does not include resolved session values because those belong to `SessionMcpServer`.
+- `ProbeMcpPresetRequest` always sends the edited `transport` and includes optional `runtime_binding` when the edited form or saved preset has one, allowing the probe cache key to fingerprint both values.
+- Ordinary preset probe has no session context. If any binding rule is `required=true`, the response is `Unsupported { reason }` and should be displayed as a diagnostic state, not as a successful connectivity result.
+- If all runtime binding rules are optional, ordinary probe continues with the static transport because no session fact is required to establish a static connection.
+- Project Agent MCP picker preserves the response `runtime_binding` and may show a binding status badge; quick-create or selection flows must not rebuild presets field-by-field in a way that drops the binding declaration.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Generated TS differs from Rust contract | `pnpm run contracts:check` fails |
+| Frontend create form has no binding rules | Omit `runtime_binding`; persisted preset remains static |
+| Frontend update leaves binding untouched | Omit `runtime_binding` from patch |
+| Frontend update clears binding | Send `"runtime_binding": null` |
+| Frontend update changes binding | Send full `McpRuntimeBindingConfigDto` object |
+| Probe request includes a required runtime binding | Return `status="unsupported"` with source-path diagnostic |
+| Probe request includes only optional runtime bindings | Execute static transport probe and return `ok` or `error` |
+| HTTP/SSE header or stdio cwd fields are missing from generated TS after Rust change | Contract drift or TypeScript compile failure |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Creating a P4-aware HTTP preset sends `runtime_binding.bindings[0].source.kind="workspace_detected_fact"` and `target.kind="http_query"`.
+- Good: Editing a stdio preset sends `transport.type="stdio"` with optional `cwd` and may bind `workspace.detected_facts.p4.workspace_root` to `stdio_cwd`.
+- Base: A static HTTP preset has no `runtime_binding` and probes using only `transport`.
+- Base: A card-level probe for a required session-bound preset returns `status="unsupported"` with a reason mentioning the required source path.
+- Boundary mismatch: Frontend code treats probe unsupported as a normal error string and hides the binding diagnostic.
+- Canonical flow: Frontend sends generated `ProbeMcpPresetRequest`; backend returns generated `ProbeMcpPresetResponse::Unsupported`; UI renders that status as "needs session context" diagnostic.
+
+### 6. Tests Required
+
+- Contract generation check asserts `McpRuntimeBindingConfigDto`, source/target DTO unions, `runtime_binding` request/response fields, `ProbeMcpPresetRequest`, and `McpTransportConfigDto::Stdio.cwd` are present in `mcp-preset-contracts.ts`.
+- Rust DTO conversion tests assert domain runtime binding and stdio cwd roundtrip through contract DTOs.
+- API route test asserts create/read/update preserve `runtime_binding`, including update unchanged/clear/replace semantics.
+- Probe service tests assert required runtime binding returns `status="unsupported"` and optional runtime binding continues static probe.
+- Frontend helper tests assert form state, create payload, update patch, validation, and probe cache key include `runtime_binding`.
+- Frontend picker/component test asserts bound presets are preserved and surfaced as a binding status.
+
+### 7. Non-canonical / Canonical
+
+#### Non-canonical
+
+```ts
+type LocalMcpPreset = {
+  transport: HandWrittenTransport;
+  runtimeBinding?: unknown;
+};
+```
+
+#### Canonical
+
+```ts
+import type {
+  McpRuntimeBindingConfigDto,
+  ProbeMcpPresetRequest,
+  ProbeMcpPresetResponse,
+} from "@/generated/mcp-preset-contracts";
+```
+
 ## Scenario: Workspace Module Presentation Contract
 
 ### 1. Scope / Trigger

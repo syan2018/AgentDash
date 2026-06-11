@@ -77,6 +77,148 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 - Extension action/channel relay payload 携带 session workspace context 时，`root_ref` 来自当前 session VFS default mount；TS Extension Host 将它作为 workspace/process Host API 的默认 root，原因是插件执行目录必须跟随本次 session 的工作区事实。
 - Relay payload 携带 package artifact 时，CommandHandler 先按 `artifact_id + archive_digest` 准备本机 cache，再用 extension key、backend id、project/session id、session workspace root 与 registered workspace roots 激活 TS Extension Host，原因是 packaged extension 的执行上下文由 Project 安装、session workspace 和本机登记事实共同确定。
 
+## Scenario: Relay And Local MCP Resolved Transport
+
+### 1. Scope / Trigger
+
+- Trigger: Session construction can resolve MCP transport from session VFS facts; relay/direct/local runtime must consume the resolved declaration instead of reconstructing connection parameters from static local config.
+- Scope: cloud `McpRelayProvider`, relay MCP command payloads, local `CommandHandler`, `McpClientManager`, local MCP probe, prompt `mcp_servers` parser, and HTTP/SSE/stdio transport execution.
+
+### 2. Signatures
+
+```rust
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpTransportConfigRelay {
+    Http { url: String, headers: Vec<McpHttpHeaderRelay> },
+    Sse { url: String, headers: Vec<McpHttpHeaderRelay> },
+    Stdio {
+        command: String,
+        args: Vec<String>,
+        env: Vec<McpEnvVarRelay>,
+        cwd: Option<String>,
+    },
+}
+
+pub struct McpServerDeclarationRelay {
+    pub name: String,
+    pub transport: McpTransportConfigRelay,
+}
+
+pub struct CommandMcpListToolsPayload {
+    pub server: McpServerDeclarationRelay,
+}
+
+pub struct CommandMcpCallToolPayload {
+    pub server: McpServerDeclarationRelay,
+    pub tool_name: String,
+    pub arguments: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+pub struct CommandMcpProbeTransportPayload {
+    pub transport: McpTransportConfigRelay,
+}
+
+pub struct ResponseMcpProbeTransportPayload {
+    pub status: String, // "ok" | "error" | "unsupported"
+    pub latency_ms: Option<u64>,
+    pub tools: Option<Vec<McpToolInfoRelay>>,
+    pub error: Option<String>,
+}
+
+pub struct McpProbeResult {
+    pub ok: bool,
+    pub tool_count: usize,
+    pub message: String,
+}
+```
+
+Local manager connection key:
+
+```rust
+fn connection_key(entry: &ResolvedMcpServerEntry) -> Result<String, anyhow::Error> {
+    let raw = serde_json::to_vec(&entry.transport)?;
+    let digest = Sha256::digest(raw);
+    Ok(format!("{}{digest:x}", connection_key_prefix(&entry.name)?))
+}
+```
+
+### 3. Contracts
+
+- Cloud relay MCP list/call sends `McpServerDeclarationRelay { name, transport }` converted from the session-resolved `SessionMcpServer`.
+- Backend selection may still use `server.name` to find a backend that declared the capability; command execution uses the payload `server.transport`.
+- Local `McpClientManager::capability_entries()` reports static configured server names as backend capabilities. It is not the source for session-resolved transport.
+- Local `McpClientManager::list_tools()` and `call_tool()` convert payload `McpServerDeclarationRelay` into a transient resolved entry and connect with that transport.
+- Local manager must reject unknown `server.name` before connecting, because static config remains the backend capability allowlist.
+- Connection pool identity is `server name + stable SHA-256 hash(serialized resolved transport)`. Same-name servers from different sessions must not share a client when URL, headers, env, or cwd differ.
+- `close(server_name)` closes all pooled connections whose exact server-name prefix matches that name.
+- stdio execution applies resolved `env` and `cwd` to the spawned process.
+- HTTP/SSE execution passes resolved `headers` into `StreamableHttpClientTransportConfig::custom_headers`; invalid header names/values fail the connection with a diagnostic.
+- Relay prompt `mcp_servers` parser accepts resolved declarations with HTTP/SSE `headers` and stdio `cwd`, then projects them as `SessionMcpServer`.
+- One-shot relay probe uses the provided transport directly and never enters the manager connection pool.
+- One-shot relay probe failures return `ResponseMcpProbeTransportPayload { status: "error", ... }` with `error: None` at the relay envelope. Local runtime panel probe failures return `McpProbeResult { ok: false, ... }`. Connectivity failure is a probe result, not a command transport failure.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Relay list/call payload lacks server transport | Protocol/serialization test failure |
+| Payload server name is not in local configured MCP capability list | Return runtime error before opening a client |
+| Same server name with different resolved transport | Different connection keys and different clients |
+| Same server name with identical resolved transport | Same connection key and client reuse allowed |
+| HTTP/SSE header name or value is invalid | Connection fails with header diagnostic |
+| stdio cwd is present | Spawned process receives `current_dir(cwd)` |
+| stdio env contains resolved facts | Spawned process receives those env vars |
+| Relay one-shot probe cannot connect or times out | Return payload `status="error"` with diagnostic |
+| Local runtime panel probe cannot connect | Return `{ ok: false, tool_count: 0, message }` |
+| `close("foo")` runs while `foo:child` also has a pooled client | Only exact JSON-string-prefix keys for `foo` are closed |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Session A and Session B both use server name `p4-tools`, but their resolved `x-p4-client` headers differ; local manager creates two connection keys and does not reuse the client.
+- Good: A stdio MCP declaration carries `env=[P4CLIENT=demo]` and `cwd=F:/work/demo`; the local process starts with both values applied.
+- Good: Relay list/call for HTTP MCP sends headers generated by session runtime binding, and local HTTP worker receives those headers.
+- Base: A static local MCP server declaration still reports its name via `capability_entries()` and can be probed through the same manager path.
+- Boundary mismatch: Cloud sends only a server name and expects local config to reconstruct session-specific query/header/env/cwd.
+- Canonical flow: Cloud sends the resolved server declaration; local checks the name is allowed, keys the connection by name plus transport hash, and connects with the payload transport.
+
+### 6. Tests Required
+
+- Relay protocol serialization test asserts `CommandMcpListToolsPayload.server` and `CommandMcpCallToolPayload.server` include name plus full transport.
+- Cloud relay provider test asserts list/call converts `SessionMcpServer` into `McpServerDeclarationRelay`, preserving HTTP/SSE headers and stdio cwd/env.
+- Local manager tests assert connection key uses server name and stable transport hash, same-name/different-transport isolation, exact close prefix behavior, unknown server rejection, header preservation, and stdio env/cwd preservation.
+- Local command handler test asserts relay one-shot probe returns payload `status="error"` rather than relay envelope error for connection failures and timeouts.
+- Prompt parser tests assert `mcp_servers` entries preserve HTTP/SSE headers and stdio cwd.
+- Direct/local HTTP helper tests assert custom headers are passed to rmcp streamable HTTP worker and invalid headers produce diagnostics.
+
+### 7. Non-canonical / Canonical
+
+#### Non-canonical
+
+```json
+{
+  "command": "mcp.list_tools",
+  "payload": { "server_name": "p4-tools" }
+}
+```
+
+#### Canonical
+
+```json
+{
+  "command": "mcp.list_tools",
+  "payload": {
+    "server": {
+      "name": "p4-tools",
+      "transport": {
+        "type": "http",
+        "url": "http://127.0.0.1:7357/mcp?p4_client=demo",
+        "headers": [{ "name": "x-p4-client", "value": "demo" }]
+      }
+    }
+  }
+}
+```
+
 ### 样式与依赖
 
 - `@agentdash/ui/styles.css` 是 Web/Tauri 共享的唯一全局样式入口

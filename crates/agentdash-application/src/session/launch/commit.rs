@@ -8,6 +8,7 @@ use crate::session::hub_support::{
 };
 use crate::session::persistence::SessionRuntimeCommandStore;
 use crate::session::types::{ExecutionStatus, ResolvedPromptPayload, SessionMeta, TitleSource};
+use crate::workflow::{AgentFrameBuilder, resolve_current_frame_for_runtime_session};
 
 pub(in crate::session) struct CommittedTurn {
     pub accepted: ConnectorAcceptedTurn,
@@ -100,6 +101,8 @@ impl TurnCommitter {
                 .await;
         }
 
+        self.commit_accepted_agent_frame(session_id, prepared).await;
+
         Ok(CommittedTurn { accepted })
     }
 
@@ -133,6 +136,70 @@ impl TurnCommitter {
             .eventing
             .persist_notification(session_id, started)
             .await;
+    }
+
+    async fn commit_accepted_agent_frame(
+        &self,
+        session_id: &str,
+        prepared: &super::preparation::PreparedTurn,
+    ) {
+        let (Some(frame_repo), Some(anchor_repo), Some(agent_repo)) = (
+            self.deps.agent_frame_repo.as_ref(),
+            self.deps.execution_anchor_repo.as_ref(),
+            self.deps.lifecycle_agent_repo.as_ref(),
+        ) else {
+            return;
+        };
+
+        match resolve_current_frame_for_runtime_session(
+            session_id,
+            anchor_repo.as_ref(),
+            agent_repo.as_ref(),
+            frame_repo.as_ref(),
+        )
+        .await
+        {
+            Ok(Some((_anchor, _agent, current_frame))) => {
+                let mut builder = AgentFrameBuilder::new(current_frame.agent_id)
+                    .with_capability_state(&prepared.accepted_capability_state)
+                    .with_created_by("session_launch", Some(session_id.to_string()));
+                if let Some(ctx) = current_frame.context_slice_json {
+                    builder = builder.with_context(ctx);
+                }
+                if let Some(profile) = current_frame.execution_profile_json {
+                    builder = builder.with_execution_profile_raw(profile);
+                }
+                match builder.build(frame_repo.as_ref()).await {
+                    Ok(frame) => {
+                        tracing::debug!(
+                            session_id,
+                            agent_id = %frame.agent_id,
+                            revision = frame.revision,
+                            "accepted AgentFrame revision 已写入"
+                        );
+                        if let Ok(Some(mut agent)) = agent_repo.get(frame.agent_id).await {
+                            agent.set_current_frame(frame.id);
+                            if let Err(error) = agent_repo.update(&agent).await {
+                                tracing::warn!(
+                                    session_id,
+                                    "同步 accepted current_frame_id 失败: {error}"
+                                );
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            session_id,
+                            "accepted AgentFrame revision 写入失败: {error}"
+                        );
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(session_id, "查找 session 关联的 AgentFrame 失败: {error}");
+            }
+        }
     }
 }
 

@@ -37,6 +37,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use super::super::MemorySessionPersistence;
 use super::super::construction::{ConstructionResolutionPlan, RuntimeContextInspectionPlan};
+use super::super::construction_provider::SessionConstructionProviderInput;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
     TurnExecution, TurnState, build_user_input_submitted_envelope,
@@ -44,8 +45,9 @@ use super::super::hub_support::{
 };
 use super::super::local_workspace_vfs;
 use super::super::types::{
-    EFFECT_TYPE_APPLY_VFS_OVERLAY, PendingCapabilityStateTransition, RuntimeCapabilityTransition,
-    SessionExecutionState, UserPromptInput,
+    BackendSelectionInput, BackendSelectionInputMode, EFFECT_TYPE_APPLY_VFS_OVERLAY,
+    PendingCapabilityStateTransition, RuntimeCapabilityTransition, SessionExecutionState,
+    UserPromptInput,
 };
 use super::super::{AgentFrameTransitionRecord, RuntimeCommandStatus, RuntimeDeliveryCommand};
 use super::{
@@ -113,6 +115,39 @@ async fn attach_test_frame(hub: &SessionRuntimeInner, session_id: &str) -> Agent
             .expect("test runtime anchor should persist");
     }
     frame
+}
+
+async fn attach_test_lifecycle_frame(hub: &SessionRuntimeInner, session_id: &str) -> AgentFrame {
+    let frame = attach_test_frame(hub, session_id).await;
+    let anchor = hub
+        .execution_anchor_repo
+        .as_ref()
+        .expect("test hub should provide RuntimeSessionExecutionAnchorRepository")
+        .find_by_session(session_id)
+        .await
+        .expect("anchor lookup should succeed")
+        .expect("test frame should attach runtime anchor");
+    let mut agent = LifecycleAgent::new_root(anchor.run_id, uuid::Uuid::new_v4(), "test")
+        .with_bootstrap_status("not_applicable");
+    agent.id = frame.agent_id;
+    agent.set_current_frame(frame.id);
+    hub.lifecycle_agent_repo
+        .as_ref()
+        .expect("test hub should provide LifecycleAgentRepository")
+        .create(&agent)
+        .await
+        .expect("test lifecycle agent should persist");
+    frame
+}
+
+async fn current_frame_id(hub: &SessionRuntimeInner, agent_id: uuid::Uuid) -> Option<uuid::Uuid> {
+    hub.lifecycle_agent_repo
+        .as_ref()
+        .expect("test hub should provide LifecycleAgentRepository")
+        .get(agent_id)
+        .await
+        .expect("agent lookup should succeed")
+        .and_then(|agent| agent.current_frame_id)
 }
 
 async fn register_hook_target(
@@ -249,6 +284,61 @@ impl AgentConnector for EmptyConnector {
         _context: agentdash_spi::ExecutionContext,
     ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
         Ok(Box::pin(stream::empty()))
+    }
+    async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn approve_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn reject_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+        _reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct SetupFailingConnector;
+
+#[async_trait::async_trait]
+impl AgentConnector for SetupFailingConnector {
+    fn connector_id(&self) -> &'static str {
+        "setup-failing"
+    }
+    fn connector_type(&self) -> agentdash_spi::ConnectorType {
+        agentdash_spi::ConnectorType::LocalExecutor
+    }
+    fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+        agentdash_spi::ConnectorCapabilities::default()
+    }
+    fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+        Vec::new()
+    }
+    async fn discover_options_stream(
+        &self,
+        _executor: &str,
+        _working_dir: Option<PathBuf>,
+    ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        Ok(Box::pin(stream::empty()))
+    }
+    async fn prompt(
+        &self,
+        _session_id: &str,
+        _follow_up_session_id: Option<&str>,
+        _prompt: &PromptPayload,
+        _context: agentdash_spi::ExecutionContext,
+    ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+        Err(ConnectorError::Runtime(
+            "connector setup failed".to_string(),
+        ))
     }
     async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
         Ok(())
@@ -1752,6 +1842,71 @@ async fn lazy_hook_runtime_rebuild_loads_snapshot_from_frame_target() {
     );
 }
 
+#[tokio::test]
+async fn hook_runtime_target_switch_replaces_stale_cached_runtime() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let target_by_session = Arc::new(TokioMutex::new(HashMap::new()));
+    let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
+    let hook_provider = Arc::new(SnapshotRecordingHookProvider {
+        target_by_session: target_by_session.clone(),
+        frame_snapshot_queries: frame_snapshot_queries.clone(),
+    });
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(PendingConnector),
+        Some(hook_provider),
+    );
+    let session = hub
+        .create_session("lazy-hook-target-switch")
+        .await
+        .expect("create");
+    let frame1 = attach_test_frame(&hub, &session.id).await;
+    let target1 = register_hook_target(&target_by_session, &session.id, &frame1).await;
+
+    let runtime1 = hub
+        .hook_service()
+        .ensure_hook_runtime_for_target(
+            &AgentFrameRuntimeTarget {
+                frame_id: target1.frame_id,
+                delivery_runtime_session_id: session.id.clone(),
+            },
+            Some("turn-1"),
+        )
+        .await
+        .expect("initial hook runtime should load")
+        .expect("initial hook runtime should exist");
+    assert_eq!(runtime1.control_target(), target1);
+
+    let frame2 = attach_test_frame(&hub, &session.id).await;
+    let target2 = register_hook_target(&target_by_session, &session.id, &frame2).await;
+    let runtime2 = hub
+        .hook_service()
+        .ensure_hook_runtime_for_target(
+            &AgentFrameRuntimeTarget {
+                frame_id: target2.frame_id,
+                delivery_runtime_session_id: session.id.clone(),
+            },
+            Some("turn-2"),
+        )
+        .await
+        .expect("normal frame switch should refresh stale runtime")
+        .expect("refreshed hook runtime should exist");
+
+    assert_eq!(runtime2.control_target(), target2);
+    assert_ne!(runtime2.control_target(), runtime1.control_target());
+    assert_eq!(
+        hub.get_hook_runtime_by_delivery_session(&session.id)
+            .await
+            .expect("cached runtime should exist")
+            .control_target(),
+        target2
+    );
+    let frame_queries = frame_snapshot_queries.lock().await;
+    assert_eq!(frame_queries.len(), 2);
+    assert_eq!(frame_queries[0].target, target1);
+    assert_eq!(frame_queries[1].target, target2);
+}
+
 #[derive(Default)]
 struct NotificationCapturingConnector {
     notifications: Arc<TokioMutex<Vec<(String, String)>>>,
@@ -2971,6 +3126,157 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
         .expect("runtime commands should load");
     assert_eq!(requested_commands.len(), 1);
     assert_eq!(requested_commands[0].frame_transition_id, "transition-fail");
+}
+
+#[tokio::test]
+async fn connector_setup_failure_leaves_current_frame_unchanged() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(SetupFailingConnector),
+        None,
+    )
+    .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
+    let session = hub.create_session("frame-failure").await.expect("create");
+    let launch_frame = attach_test_lifecycle_frame(&hub, &session.id).await;
+
+    let error = hub
+        .start_prompt(&session.id, simple_prompt_request("hello"))
+        .await
+        .expect_err("connector setup should fail");
+    assert!(error.to_string().contains("connector setup failed"));
+
+    assert_eq!(
+        current_frame_id(&hub, launch_frame.agent_id).await,
+        Some(launch_frame.id),
+        "connector accepted 前失败不能推进 current_frame_id"
+    );
+    let frames = hub
+        .agent_frame_repo
+        .as_ref()
+        .expect("test hub should provide frame repo")
+        .list_by_agent(launch_frame.agent_id)
+        .await
+        .expect("frames should load");
+    assert_eq!(
+        frames.len(),
+        1,
+        "connector accepted 前失败不能写入新的 AgentFrame revision"
+    );
+}
+
+#[tokio::test]
+async fn accepted_turn_commits_agent_frame_revision_and_current_frame() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None)
+        .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
+    let session = hub.create_session("frame-success").await.expect("create");
+    let launch_frame = attach_test_lifecycle_frame(&hub, &session.id).await;
+
+    hub.start_prompt(&session.id, simple_prompt_request("hello"))
+        .await
+        .expect("connector accepted turn should commit");
+
+    let current_id = current_frame_id(&hub, launch_frame.agent_id)
+        .await
+        .expect("current frame should exist");
+    assert_ne!(
+        current_id, launch_frame.id,
+        "accepted 后应推进到新的 AgentFrame revision"
+    );
+    let frames = hub
+        .agent_frame_repo
+        .as_ref()
+        .expect("test hub should provide frame repo")
+        .list_by_agent(launch_frame.agent_id)
+        .await
+        .expect("frames should load");
+    assert_eq!(frames.len(), 2);
+    let committed_frame = frames
+        .iter()
+        .find(|frame| frame.id == current_id)
+        .expect("current frame should be persisted");
+    assert_eq!(committed_frame.revision, launch_frame.revision + 1);
+}
+
+#[tokio::test]
+async fn planner_invalid_config_leaves_current_frame_unchanged() {
+    use crate::session::SessionConstructionProvider;
+    use crate::workflow::runtime_launch::FrameLaunchEnvelope;
+
+    struct StaticConstructionProvider;
+
+    #[async_trait::async_trait]
+    impl SessionConstructionProvider for StaticConstructionProvider {
+        async fn build_frame_construction(
+            &self,
+            input: SessionConstructionProviderInput,
+        ) -> Result<FrameLaunchEnvelope, ConnectorError> {
+            let prompt_text = input
+                .command
+                .user_input()
+                .input
+                .as_ref()
+                .and_then(|blocks| blocks.first())
+                .and_then(agentdash_agent_protocol::user_input_text)
+                .unwrap_or("hello");
+            let mut construction = simple_prompt_request(prompt_text);
+            construction.session_id = input.session_id.clone();
+            construction.session.session_id = input.session_id;
+            Ok(super::facade::envelope_from_construction(construction))
+        }
+    }
+
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None)
+        .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
+    hub.set_session_construction_provider(Arc::new(StaticConstructionProvider))
+        .await;
+    let session = hub.create_session("invalid-config").await.expect("create");
+    let launch_frame = attach_test_lifecycle_frame(&hub, &session.id).await;
+    let mut input = UserPromptInput::from_text("hello");
+    input.executor_config = Some(agentdash_spi::AgentConfig::new("PI_AGENT"));
+    input.backend_selection = Some(BackendSelectionInput {
+        mode: BackendSelectionInputMode::Explicit,
+        backend_id: Some("backend-1".to_string()),
+    });
+
+    let error = hub
+        .launch_service()
+        .launch_command(
+            &session.id,
+            super::super::launch::LaunchCommand::http_prompt_input(input, None),
+        )
+        .await
+        .expect_err("backend selection without placement deps should fail");
+    assert!(
+        error.to_string().contains("backend selection 已指定"),
+        "unexpected error: {error}"
+    );
+
+    assert_eq!(
+        current_frame_id(&hub, launch_frame.agent_id).await,
+        Some(launch_frame.id),
+        "planner InvalidConfig 不能推进 current_frame_id"
+    );
+    let history = hub
+        .persistence
+        .list_all_events(&session.id)
+        .await
+        .expect("history should load");
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.notification.event, BackboneEvent::TurnStarted(_))),
+        "planner InvalidConfig 不能写入 turn_started"
+    );
+    assert!(
+        !history.iter().any(|event| matches!(
+            &event.notification.event,
+            BackboneEvent::UserInputSubmitted(_)
+        )),
+        "planner InvalidConfig 不能写入 user input"
+    );
 }
 
 #[tokio::test]

@@ -149,7 +149,9 @@ impl SessionRuntimeInner {
 
 #[cfg(test)]
 #[allow(deprecated)]
-fn envelope_from_construction(construction: RuntimeContextInspectionPlan) -> FrameLaunchEnvelope {
+pub(super) fn envelope_from_construction(
+    construction: RuntimeContextInspectionPlan,
+) -> FrameLaunchEnvelope {
     let executor_config = construction
         .execution_profile
         .executor_config

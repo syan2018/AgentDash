@@ -157,6 +157,21 @@ impl SessionHookService {
         }
 
         if let Some(ref hs) = existing {
+            if let Some(provider) = self.hub.hook_provider.as_ref()
+                && let Some(current_target) =
+                    resolve_runtime_hook_target(provider.as_ref(), session_id).await?
+                && hs.control_target() != current_target
+            {
+                return self
+                    .reload_hook_runtime(
+                        session_id,
+                        turn_id,
+                        executor_config.executor.as_str(),
+                        executor_config.permission_policy.as_deref(),
+                        working_directory,
+                    )
+                    .await;
+            }
             let _ = hs
                 .refresh_from_provenance(HookRuntimeRefreshQuery {
                     provenance: RuntimeAdapterProvenance::runtime_session(

@@ -3,7 +3,7 @@ use agentdash_domain::settings::SettingScope;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SharedHookRuntime,
 };
-use agentdash_spi::{ConnectorError, ExecutionContext};
+use agentdash_spi::{CapabilityState, ConnectorError, ExecutionContext};
 
 use super::deps::TurnPreparationDeps;
 use super::{LaunchFollowUpSource, LaunchPlan};
@@ -37,6 +37,7 @@ pub(in crate::session) struct PreparedTurn {
     pub accepted_context_frames_to_emit: Vec<ContextFrame>,
     pub pending_transition_application: PendingRuntimeContextApplication,
     pub pending_command_ids: Vec<uuid::Uuid>,
+    pub accepted_capability_state: CapabilityState,
     pub is_owner_bootstrap: bool,
     pub hook_runtime: Option<SharedHookRuntime>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
@@ -296,6 +297,7 @@ impl TurnPreparer {
             accepted_context_frames_to_emit,
             pending_transition_application,
             pending_command_ids,
+            accepted_capability_state: capability_state,
             is_owner_bootstrap,
             hook_runtime,
             post_turn_handler,

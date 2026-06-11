@@ -10,6 +10,14 @@
 
 ## Validation
 
-- `cargo test -p agentdash-application launch_frame`
-- `cargo test -p agentdash-application hook_runtime`
-- 必要时运行 `pnpm run backend:clippy`
+- `cargo test -p agentdash-application current_frame -- --nocapture`
+- `cargo test -p agentdash-application hook_runtime_target_switch_replaces_stale_cached_runtime -- --nocapture`
+- `cargo check -p agentdash-application`
+- `cargo clippy -p agentdash-application -- -D warnings`
+
+## Result
+
+- `SessionLaunchOrchestrator` 不再在 connector accepted 前写 AgentFrame revision 或推进 `LifecycleAgent.current_frame_id`。
+- `TurnCommitter` 在 accepted commit 后写入新的 AgentFrame revision，并同步 current frame。
+- `SessionRuntimeRegistry` 提供 `set_or_replace_hook_runtime`，delivery-session adapter 会按当前 `HookControlTarget` 刷新或替换 stale cache。
+- 回归测试覆盖 connector setup failure、planner InvalidConfig、accepted turn frame commit、HookRuntime target switch。

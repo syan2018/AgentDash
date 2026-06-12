@@ -13,6 +13,8 @@ shell_exec
 
 平台 shell 是 application 层解释器，不启动 OS process。它消费当前 session runtime VFS snapshot、InlineContentOverlay、AuthIdentity 和 CapabilityState，按命令语义调用 VFS service。
 
+单行命令的词法拆分复用 `shell-words` crate。该依赖只负责 Unix shell words 层面的 quoting / escape / splitting；平台 shell 不消费完整 shell AST，也不承诺 bash/POSIX 兼容。
+
 ## Execution Boundary
 
 当前 `ShellExecTool` 在执行时先用 `resolve_uri_path(&vfs, params.cwd.unwrap_or("."))` 定位 exec mount，再调用 `VfsService.exec`。本任务需要把分派改为：
@@ -62,6 +64,15 @@ MVP 命令：
 
 Unsupported syntax returns a shell-style error instead of trying to run OS shell.
 
+## Parser Boundary
+
+第一版 parser 分两层：
+
+1. 轻量预检：拒绝 newline、pipe、subshell、glob token、后台任务等不支持语法。
+2. `shell-words::split`：解析单行命令为 argv，复用公开库处理 quote 与 escape。
+
+重定向只支持 `>` 作为独立 token，例如 `echo "done" > lifecycle://records/summary.md` 与 `cat source > dest`。其他重定向形式返回 unsupported syntax。
+
 ## Permission Model
 
 平台 shell 不能只依赖 `shell_execute`。
@@ -104,6 +115,7 @@ copied lifecycle://session/tools/a.json -> lifecycle://artifacts/a.json
 
 - 默认 `cwd` 缺失进入平台 shell 会改变当前默认行为。项目处于预研期，该取舍换来低门槛平台原语入口。
 - 不做完整 shell parser 可以控制范围，但必须给清晰错误，避免 Agent 误以为支持 pipes/globs。
+- 复用 `shell-words` 可以避免自写 quote/split；命令语义仍保留在 VFS application 层，避免引入完整 shell 语义。
 - 不新增 `fs_copy` 等工具减少工具面，但 platform shell 内部需要维护一组命令 handler 和权限矩阵。
 
 ## Rollback

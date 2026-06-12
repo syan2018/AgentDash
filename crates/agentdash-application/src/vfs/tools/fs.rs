@@ -1,6 +1,7 @@
 ﻿mod apply_patch;
 mod glob;
 mod grep;
+mod platform_shell;
 mod read;
 mod shell;
 

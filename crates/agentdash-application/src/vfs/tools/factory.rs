@@ -128,7 +128,8 @@ impl VfsToolFactory {
                     Some(input.turn_id.clone()),
                     input.overlay.clone(),
                     input.identity.clone(),
-                );
+                )
+                .with_capability_state(input.flow.clone());
             if let Some(ref registry) = self.shell_output_registry {
                 shell_tool = shell_tool.with_shell_output_registry(registry.clone());
             }

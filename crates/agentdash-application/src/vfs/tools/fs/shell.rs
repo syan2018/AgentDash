@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
+use agentdash_spi::{
+    AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, ToolUpdateCallback,
+};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
+use super::platform_shell::{PlatformShell, PlatformShellCwd};
 use crate::vfs::inline_persistence::InlineContentOverlay;
 use crate::vfs::rewrite::find_mount_uri_candidates;
 use crate::vfs::service::VfsService;
@@ -30,6 +33,7 @@ pub struct ShellExecTool {
     turn_id: Option<String>,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+    capability_state: CapabilityState,
 }
 impl ShellExecTool {
     pub fn new(service: Arc<VfsService>, vfs: SharedRuntimeVfs) -> Self {
@@ -42,6 +46,7 @@ impl ShellExecTool {
             turn_id: None,
             overlay: None,
             identity: None,
+            capability_state: CapabilityState::default(),
         }
     }
 
@@ -68,11 +73,16 @@ impl ShellExecTool {
         self.identity = identity;
         self
     }
+
+    pub fn with_capability_state(mut self, capability_state: CapabilityState) -> Self {
+        self.capability_state = capability_state;
+        self
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ShellExecParams {
-    /// Working directory in `mount_id://relative/path` format. The mount prefix may be omitted when the session has exactly one mount. Defaults to the mount root.
+    /// Working directory in `mount_id://relative/path` format for OS shell execution. Omit it to use the platform shell; use `platform://` explicitly to force the platform shell.
     pub cwd: Option<String>,
     /// The shell command to execute.
     pub command: String,
@@ -86,15 +96,18 @@ impl AgentTool for ShellExecTool {
         "shell_exec"
     }
     fn description(&self) -> &str {
-        "Execute a shell command on a mount.\n\
+        "Execute a shell command.\n\
          \n\
          Usage:\n\
-         - Commands run in the shell environment of the target mount.\n\
-         - Use the cwd parameter to set the working directory (defaults to mount root).\n\
+         - Omit cwd to run the platform shell: a restricted VFS-backed command set that supports pwd, ls, cat, cp, mv, rm, and echo.\n\
+         - Use cwd=`platform://` to explicitly run the same platform shell.\n\
+         - Use cwd=`mount_id://relative/path` to run the command in the real OS shell environment of an exec-capable mount.\n\
+         - Platform shell commands operate on VFS paths and never start an OS process.\n\
+         - Platform shell supports only single commands plus narrow `>` redirection for `echo` and `cat`; pipes, globbing, subshells, and multi-line scripts are rejected.\n\
          - stdout and stderr are returned separately, labeled as [stdout] and [stderr].\n\
          - The exit code is included in the output; non-zero exit codes are flagged as errors.\n\
-         - Use timeout_secs to limit execution time for long-running commands.\n\
-         - Prefer dedicated tools (fs_read, fs_glob, fs_grep) over shell equivalents when possible."
+         - timeout_secs applies to real OS shell execution; platform shell commands are bounded VFS operations.\n\
+         - Prefer dedicated tools (fs_read, fs_glob, fs_grep) for focused read/search work."
     }
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<ShellExecParams>()
@@ -109,6 +122,31 @@ impl AgentTool for ShellExecTool {
         let params: ShellExecParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
         let vfs = self.vfs.snapshot().await;
+        if let Some(platform_cwd) = PlatformShellCwd::from_param(params.cwd.as_deref())
+            .map_err(AgentToolError::ExecutionFailed)?
+        {
+            let result = PlatformShell::new(
+                self.service.clone(),
+                &vfs,
+                platform_cwd,
+                self.overlay.as_ref().map(|arc| arc.as_ref()),
+                self.identity.as_ref(),
+                &self.capability_state,
+            )
+            .execute(&params.command)
+            .await;
+            return Ok(AgentToolResult {
+                content: vec![ContentPart::text(platform_shell_result_text(
+                    &params.command,
+                    &result.cwd,
+                    result.exit_code,
+                    &result.stdout,
+                    &result.stderr,
+                ))],
+                is_error: result.exit_code != 0,
+                details: Some(result.details),
+            });
+        }
         let target = resolve_uri_path(&vfs, params.cwd.as_deref().unwrap_or("."))
             .map_err(AgentToolError::ExecutionFailed)?;
         let cwd = if target.path.is_empty() {
@@ -311,6 +349,27 @@ fn shell_exec_result_text(
             "command: {original_command}\ncwd: {mount_id}://{cwd}\nexit_code: {exit_code}\n{merged_output}"
         )
     }
+}
+
+fn platform_shell_result_text(
+    command: &str,
+    cwd: &str,
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+) -> String {
+    let mut lines = vec![
+        format!("command: {command}"),
+        format!("cwd: {cwd}"),
+        format!("exit_code: {exit_code}"),
+    ];
+    if !stdout.is_empty() {
+        lines.push(stdout.to_string());
+    }
+    if !stderr.is_empty() {
+        lines.push(format!("[stderr]\n{stderr}"));
+    }
+    lines.join("\n")
 }
 
 fn shell_exec_result_details(

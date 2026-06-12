@@ -5,6 +5,7 @@
 - [ ] 读取相关规范：backend VFS architecture/access/materialization、capability tool pipeline、runtime gateway、cross-layer desktop local runtime。
 - [ ] 定位现有 `shell_exec` 分派、VFS tool factory、CapabilityState tool policy、runtime VFS assembly 注入点。
 - [ ] 设计 platform shell executor 模块位置与 public API。
+- [ ] 引入轻量 shell words 解析依赖，并把完整 shell 语法显式挡在平台 shell 外。
 - [ ] 调整 `ShellExecTool`：保存 platform shell 所需 capability context；`cwd` 缺失或 `platform://` 时进入 platform shell；显式 exec mount 继续现有路径。
 - [ ] 实现 platform shell parser：单行、基础 quoting、窄重定向、明确拒绝 unsupported syntax。
 - [ ] 实现 path resolver：VFS URI 与平台 cwd-relative path。

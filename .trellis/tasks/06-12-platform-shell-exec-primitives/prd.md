@@ -21,6 +21,7 @@ echo "done" > lifecycle://records/summary.md
 - `shell_exec.cwd` 未提供时默认走平台 shell 后端，并在工具描述中明确说明此时可用的是受限 Unix-ish 原语集合。
 - `shell_exec.cwd` 显式指向普通 exec-capable mount 时，继续走现有本机 / relay OS shell 行为。
 - 平台 shell 不启动 OS 进程，不依赖本机 terminal relay；它解释命令并通过 runtime VFS / provider 执行读写。
+- 平台 shell 复用公开 shell words 词法库处理基础 quoting / escape / splitting；平台只实现命令分派、VFS 语义和权限裁决，避免重复造 shell 词法轮子。
 - 平台 shell 必须能访问当前 session 的完整 runtime VFS snapshot，支持跨 mount 操作。
 - MVP 命令集至少覆盖 `pwd`、`ls`、`cat`、`cp`、`mv`、`rm`、`echo`。
 - MVP 支持单行命令、基础 quoted string 参数、VFS URI、以及基于平台 shell cwd 的相对路径。
@@ -43,6 +44,7 @@ echo "done" > lifecycle://records/summary.md
 - [ ] 写入未授权 lifecycle artifact port 时仍返回 provider 层拒绝。
 - [ ] 普通 OS shell 的 VFS URI materialization 行为不被平台 shell 改动破坏。
 - [ ] 第一版明确拒绝 pipe、glob、subshell、多行 script、目录递归等未支持语法，并给出可理解错误。
+- [ ] 平台 shell 的单行解析复用轻量 shell words 库，不手写完整 quote/split 逻辑。
 
 ## Notes
 
@@ -59,4 +61,4 @@ echo "done" > lifecycle://records/summary.md
 
 ## Open Questions
 
-- 未提供 `cwd` 时是否无条件进入平台 shell，还是仅当命令匹配平台原语时进入平台 shell、其他命令回落到 workspace OS shell？
+- 已定：未提供 `cwd` 时无条件进入平台 shell；真实 OS shell 必须显式提供普通 exec mount `cwd`。

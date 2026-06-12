@@ -6,6 +6,8 @@ import type {
 } from "../generated/workflow-contracts";
 import type { ProjectAgentSummary } from "../types";
 import type { SessionChatCommandState } from "../features/session";
+import type { ExecutorConfig } from "../services/executor";
+import type { ConversationEffectiveExecutorConfigView } from "../generated/project-agent-contracts";
 
 function unavailableCommand(
   kind: ConversationCommandView["kind"],
@@ -35,8 +37,92 @@ function readonlyCommandSet(reason: string): ConversationCommandSetView {
   };
 }
 
-function modelConfigForDraft(agent: ProjectAgentSummary | null): ConversationModelConfigView {
-  const effective = agent?.effective_executor_config;
+function optionalTrimmed(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function baseExecutorConfigForDraft(
+  agent: ProjectAgentSummary | null,
+): ConversationEffectiveExecutorConfigView | undefined {
+  if (agent?.effective_executor_config) return agent.effective_executor_config;
+  const executor = optionalTrimmed(agent?.executor.executor);
+  if (!executor) return undefined;
+  return {
+    executor,
+    provider_id: optionalTrimmed(agent?.executor.provider_id),
+    model_id: optionalTrimmed(agent?.executor.model_id),
+    agent_id: optionalTrimmed(agent?.executor.agent_id),
+    thinking_level: optionalTrimmed(agent?.executor.thinking_level),
+    permission_policy: optionalTrimmed(agent?.executor.permission_policy),
+    source: "project_agent_preset",
+  };
+}
+
+function effectiveExecutorConfigForDraft(input: {
+  agent: ProjectAgentSummary | null;
+  explicitExecutorConfigOverride?: ExecutorConfig | null;
+}): ConversationEffectiveExecutorConfigView | undefined {
+  const base = baseExecutorConfigForDraft(input.agent);
+  const override = input.explicitExecutorConfigOverride;
+  if (!override) return base;
+  const executor = optionalTrimmed(override.executor) ?? base?.executor;
+  if (!executor) return base;
+  return {
+    executor,
+    provider_id: optionalTrimmed(override.provider_id) ?? base?.provider_id,
+    model_id: optionalTrimmed(override.model_id) ?? base?.model_id,
+    agent_id: optionalTrimmed(override.agent_id) ?? base?.agent_id,
+    thinking_level: optionalTrimmed(override.thinking_level) ?? base?.thinking_level,
+    permission_policy: optionalTrimmed(override.permission_policy) ?? base?.permission_policy,
+    source: "user_override",
+  };
+}
+
+export function isCompleteExecutorConfig(config: ExecutorConfig | undefined): boolean {
+  return Boolean(
+    config?.executor?.trim() &&
+    config.provider_id?.trim() &&
+    config.model_id?.trim(),
+  );
+}
+
+export function executorConfigFromConversationModel(
+  modelConfig: ConversationModelConfigView,
+): ExecutorConfig | undefined {
+  const effective = modelConfig.effective_executor_config;
+  if (!effective?.executor.trim()) return undefined;
+  return {
+    executor: effective.executor,
+    provider_id: effective.provider_id,
+    model_id: effective.model_id,
+    agent_id: effective.agent_id,
+    thinking_level: effective.thinking_level as ExecutorConfig["thinking_level"],
+    permission_policy: effective.permission_policy as ExecutorConfig["permission_policy"],
+  };
+}
+
+export function resolveExecutorConfigForConversationCommand(input: {
+  command: ConversationCommandView;
+  modelConfig: ConversationModelConfigView;
+  explicitExecutorConfigOverride?: ExecutorConfig;
+}): ExecutorConfig | undefined {
+  const effectiveConfig = executorConfigFromConversationModel(input.modelConfig);
+  const overrideConfig = input.explicitExecutorConfigOverride;
+  if (input.modelConfig.status === "model_required" && isCompleteExecutorConfig(overrideConfig)) {
+    return overrideConfig;
+  }
+  if (input.command.executor_config_policy === "required") {
+    return effectiveConfig ?? overrideConfig;
+  }
+  return overrideConfig ?? effectiveConfig;
+}
+
+function modelConfigForDraft(input: {
+  agent: ProjectAgentSummary | null;
+  explicitExecutorConfigOverride?: ExecutorConfig | null;
+}): ConversationModelConfigView {
+  const effective = effectiveExecutorConfigForDraft(input);
   const missingFields: string[] = [];
   if (!effective?.executor?.trim()) missingFields.push("executor");
   if (!effective?.provider_id?.trim()) missingFields.push("provider_id");
@@ -96,8 +182,12 @@ export function buildDraftSessionCommandState(input: {
   agentKey: string | null;
   agent: ProjectAgentSummary | null;
   projectionReady: boolean;
+  explicitExecutorConfigOverride?: ExecutorConfig | null;
 }): SessionChatCommandState {
-  const modelConfig = modelConfigForDraft(input.agent);
+  const modelConfig = modelConfigForDraft({
+    agent: input.agent,
+    explicitExecutorConfigOverride: input.explicitExecutorConfigOverride,
+  });
   const command = draftStartCommand({ ...input, modelConfig });
   const commands: ConversationCommandSetView = {
     commands: [command],

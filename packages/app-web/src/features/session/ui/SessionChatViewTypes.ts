@@ -83,6 +83,9 @@ export interface SessionChatViewProps {
 
   onCancelAction?: () => Promise<void>;
 
+  /** 用户在模型选择器中显式选择的本地 override；仅作为 command input，不作为 ProjectAgent 默认值。 */
+  onExecutorConfigOverrideChange?: (config: ExecutorConfig | null) => void;
+
   // ─── Pending Queue ─────────────────────────────────
 
   /** 排队中的消息列表（来自 runtimeControl.pending_messages） */

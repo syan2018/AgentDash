@@ -7,7 +7,10 @@ import {
   collectAllPlatformEvents,
   collectRenderableSystemEvents,
 } from "./SessionChatViewModel";
-import { isSessionComposerSubmitDisabled } from "./SessionChatComposerState";
+import {
+  isSessionComposerSubmitDisabled,
+  isSessionModelRequirementSatisfied,
+} from "./SessionChatComposerState";
 
 const completedTurn: Turn = {
   id: "turn-1",
@@ -206,5 +209,31 @@ describe("isSessionComposerSubmitDisabled", () => {
       isCancelling: false,
       isSending: false,
     })).toBe(false);
+  });
+});
+
+describe("isSessionModelRequirementSatisfied", () => {
+  it("keeps model_required blocked without a complete explicit override", () => {
+    expect(isSessionModelRequirementSatisfied("model_required", {
+      executor: "PI_AGENT",
+      provider_id: "openai",
+    })).toBe(false);
+  });
+
+  it("allows model_required to be satisfied by explicit provider and model selection", () => {
+    expect(isSessionModelRequirementSatisfied("model_required", {
+      executor: "PI_AGENT",
+      provider_id: "openai",
+      model_id: "gpt-5.4-mini",
+    })).toBe(true);
+  });
+
+  it("allows model_required when the selected model has reasoning even if thinking level is unset", () => {
+    expect(isSessionModelRequirementSatisfied("model_required", {
+      executor: "PI_AGENT",
+      provider_id: "openai",
+      model_id: "reasoning-model",
+      thinking_level: "",
+    })).toBe(true);
   });
 });

@@ -44,6 +44,7 @@ import {
 import type { SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
 import { PendingMessageList } from "./composer/PendingMessageRow";
+import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 
 // eslint-disable-next-line react-refresh/only-export-components
 export { collectNewSystemEvents, computeProjectionRefreshKey } from "./SessionChatViewModel";
@@ -72,6 +73,7 @@ export function SessionChatView({
   commandState,
   onCommand,
   onCancelAction,
+  onExecutorConfigOverrideChange,
   pendingMessages,
   pendingSnapshot,
   onPromotePending,
@@ -249,6 +251,26 @@ export function SessionChatView({
     execConfig.permissionPolicy,
   ]);
 
+  const emitExplicitExecutorOverride = useCallback((config: {
+    providerId: string;
+    modelId: string;
+    thinkingLevel: string;
+    permissionPolicy: string;
+  }) => {
+    const executor = execConfig.executor.trim();
+    if (!executor) {
+      onExecutorConfigOverrideChange?.(null);
+      return;
+    }
+    onExecutorConfigOverrideChange?.({
+      executor,
+      provider_id: config.providerId.trim() || undefined,
+      model_id: config.modelId.trim() || undefined,
+      thinking_level: (config.thinkingLevel.trim() as ExecutorConfig["thinking_level"]) || undefined,
+      permission_policy: (config.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
+    });
+  }, [execConfig.executor, onExecutorConfigOverrideChange]);
+
   // ─── 会话流 ──────────────────────────────────────────
 
   const streamSessionId = sessionId ?? "__placeholder__";
@@ -395,7 +417,7 @@ export function SessionChatView({
       return;
     }
     if (isSending) return;
-    if (commandState.modelConfig.status === "model_required") {
+    if (!isSessionModelRequirementSatisfied(commandState.modelConfig.status, executorConfig)) {
       setSendError(commandState.modelConfig.message ?? "请选择模型配置后再发送。");
       return;
     }
@@ -682,6 +704,7 @@ export function SessionChatView({
           onKeyDown={handleKeyDown}
           onCancelAction={() => { void handleCancel(); }}
           onCommandAction={(command) => { void handleSubmit(command); }}
+          onExecutorConfigExplicitChange={emitExplicitExecutorOverride}
           onPlusMenuFiles={handlePlusMenuFiles}
           onRemoveImage={imageAttach.removeAttachment}
         />

@@ -19,6 +19,12 @@ export interface InlineModelSelectorProps {
   readonly?: boolean;
   status?: "resolved" | "model_required";
   message?: string;
+  onExplicitChange?: (config: {
+    providerId: string;
+    modelId: string;
+    thinkingLevel: string;
+    permissionPolicy: string;
+  }) => void;
   onRefresh: () => void;
 }
 
@@ -30,6 +36,7 @@ export function InlineModelSelector({
   readonly: isReadonly = false,
   status = "resolved",
   message,
+  onExplicitChange,
   onRefresh,
 }: InlineModelSelectorProps) {
   const [open, setOpen] = useState(false);
@@ -107,17 +114,35 @@ export function InlineModelSelector({
     (providerId: string, modelId: string) => {
       execConfig.setProviderId(providerId);
       execConfig.setModelId(modelId);
+      const reasoning = (modelSelector?.models ?? []).find(
+        (m) => m.id === modelId && (m.provider_id ?? "") === providerId,
+      )?.reasoning;
+      onExplicitChange?.({
+        providerId,
+        modelId,
+        thinkingLevel: reasoning ? execConfig.thinkingLevel : "",
+        permissionPolicy: execConfig.permissionPolicy,
+      });
       setOpen(false);
       setHoveredProvider(null);
     },
-    [execConfig],
+    [execConfig, modelSelector?.models, onExplicitChange],
   );
 
   const handleSelectThinking = useCallback(
     (value: string) => {
       execConfig.setThinkingLevel(value);
+      const modelId = execConfig.modelId.trim();
+      if (modelId) {
+        onExplicitChange?.({
+          providerId: execConfig.providerId,
+          modelId,
+          thinkingLevel: value,
+          permissionPolicy: execConfig.permissionPolicy,
+        });
+      }
     },
-    [execConfig],
+    [execConfig, onExplicitChange],
   );
 
   const providerEntries = useMemo(

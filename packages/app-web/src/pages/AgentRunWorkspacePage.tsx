@@ -46,10 +46,11 @@ import { workspaceModulePresentedTabTarget } from "./AgentRunWorkspacePage.works
 import {
   buildDraftSessionCommandState,
   buildRuntimeSessionCommandState,
+  isCompleteExecutorConfig,
   pendingSnapshotFromConversation,
+  resolveExecutorConfigForConversationCommand,
 } from "./AgentRunWorkspacePage.conversationCommandState";
 import type { ConversationCommandView } from "../generated/workflow-contracts";
-import type { ConversationEffectiveExecutorConfigView } from "../generated/project-agent-contracts";
 import type {
   RuntimeTraceAgentContext,
   SessionNavigationState,
@@ -73,25 +74,6 @@ interface AgentRunWorkspacePageProps {
 
 function newClientCommandId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `cmd-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function executorConfigFromEffective(
-  effective: ConversationEffectiveExecutorConfigView | undefined,
-): ExecutorConfig | undefined {
-  if (!effective?.executor.trim()) return undefined;
-  const permissionPolicy = effective.permission_policy === "AUTO" ||
-    effective.permission_policy === "SUPERVISED" ||
-    effective.permission_policy === "PLAN"
-    ? effective.permission_policy
-    : undefined;
-  return {
-    executor: effective.executor,
-    provider_id: effective.provider_id,
-    model_id: effective.model_id,
-    agent_id: effective.agent_id,
-    thinking_level: effective.thinking_level as ExecutorConfig["thinking_level"],
-    permission_policy: permissionPolicy,
-  };
 }
 
 export function AgentRunWorkspacePage({
@@ -118,6 +100,7 @@ export function AgentRunWorkspacePage({
     story_id: string;
     story: Story | null;
   } | null>(null);
+  const [explicitExecutorConfigOverride, setExplicitExecutorConfigOverride] = useState<ExecutorConfig | null>(null);
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
 
@@ -186,6 +169,10 @@ export function AgentRunWorkspacePage({
     agentId: currentAgentId,
     sourceKey: agentRunSourceKey,
   });
+
+  useEffect(() => {
+    setExplicitExecutorConfigOverride(null);
+  }, [currentAgentId, currentRunId, draftProjectAgentKey, draftProjectIdValue]);
 
   const scheduleHookRuntimeRefresh = useCallback((_reason: string, immediate = false) => {
     if (!currentRunId || !currentAgentId) return;
@@ -356,6 +343,7 @@ export function AgentRunWorkspacePage({
           agentKey: draftProjectAgentKey,
           agent: draftProjectAgent,
           projectionReady: Boolean(draftProjectIdValue && draftProjectAgentKey && draftProjectAgent),
+          explicitExecutorConfigOverride,
         })
       : buildRuntimeSessionCommandState({
           conversation: runtimeControl?.conversation,
@@ -368,6 +356,7 @@ export function AgentRunWorkspacePage({
       draftProjectAgent,
       draftProjectAgentKey,
       draftProjectIdValue,
+      explicitExecutorConfigOverride,
       isProjectAgentDraft,
       runtimeControl?.conversation,
     ],
@@ -389,9 +378,6 @@ export function AgentRunWorkspacePage({
     if (!command.enabled) {
       throw new Error(command.unavailable_reason ?? "当前 AgentRun 不可执行该命令。");
     }
-    if (chatCommandState.modelConfig.status === "model_required") {
-      throw new Error(chatCommandState.modelConfig.message ?? "请选择模型配置后再发送。");
-    }
 
     const inputBlocks: UserInput[] = [];
     if (trimmed) {
@@ -402,9 +388,17 @@ export function AgentRunWorkspacePage({
         inputBlocks.push({ type: "image" as const, url: img.dataUrl });
       }
     }
-    const commandExecutorConfig = executorConfigFromEffective(
-      chatCommandState.modelConfig.effective_executor_config,
-    ) ?? executorConfig;
+    const commandExecutorConfig = resolveExecutorConfigForConversationCommand({
+      command,
+      modelConfig: chatCommandState.modelConfig,
+      explicitExecutorConfigOverride: executorConfig,
+    });
+    if (
+      chatCommandState.modelConfig.status === "model_required" &&
+      !isCompleteExecutorConfig(commandExecutorConfig)
+    ) {
+      throw new Error(chatCommandState.modelConfig.message ?? "请选择模型配置后再发送。");
+    }
     if (command.executor_config_policy === "required" && !commandExecutorConfig?.executor?.trim()) {
       throw new Error("请选择模型配置后再发送。");
     }
@@ -507,9 +501,7 @@ export function AgentRunWorkspacePage({
     }
     throw new Error(command.unavailable_reason ?? "当前 AgentRun 不可执行该控制动作。");
   }, [
-    chatCommandState.modelConfig.effective_executor_config,
-    chatCommandState.modelConfig.message,
-    chatCommandState.modelConfig.status,
+    chatCommandState.modelConfig,
     createProjectAgentRun,
     currentAgentId,
     currentRunId,
@@ -873,6 +865,7 @@ export function AgentRunWorkspacePage({
               commandState={chatCommandState}
               onCommand={handleAgentRunCommand}
               onCancelAction={handleCancelAgentRun}
+              onExecutorConfigOverrideChange={setExplicitExecutorConfigOverride}
               pendingMessages={runtimeControl?.pending_messages}
               pendingSnapshot={conversationPending}
               onPromotePending={(id) => { void handlePromotePending(id); }}

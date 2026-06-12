@@ -287,6 +287,7 @@ export function SessionChatComposer({
   onKeyDown,
   onCancelAction,
   onCommandAction,
+  onExecutorConfigExplicitChange,
   onPlusMenuFiles,
   onRemoveImage,
 }: {
@@ -313,6 +314,12 @@ export function SessionChatComposer({
   onKeyDown: (event: KeyboardEvent) => void;
   onCancelAction: () => void;
   onCommandAction: (command: ConversationCommandView) => void;
+  onExecutorConfigExplicitChange?: (config: {
+    providerId: string;
+    modelId: string;
+    thinkingLevel: string;
+    permissionPolicy: string;
+  }) => void;
   onPlusMenuFiles: (files: FileList) => void;
   onRemoveImage: (id: string) => void;
 }) {
@@ -477,6 +484,7 @@ export function SessionChatComposer({
                 readonly={isModelReadonly}
                 status={commandState.modelConfig.status}
                 message={commandState.modelConfig.message}
+                onExplicitChange={onExecutorConfigExplicitChange}
                 onRefresh={() => {
                   discovery.refetch();
                   discovered.reconnect();

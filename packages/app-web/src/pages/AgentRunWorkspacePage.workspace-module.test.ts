@@ -5,6 +5,7 @@ import { useWorkspaceTabStore, type WorkspaceTabLayoutOptions } from "../stores/
 import {
   buildDraftSessionCommandState,
   buildRuntimeSessionCommandState,
+  resolveExecutorConfigForConversationCommand,
 } from "./AgentRunWorkspacePage.conversationCommandState";
 import type { WorkspaceModuleDescriptor } from "../generated/workspace-module-contracts";
 import type { ConversationCommandView, ConversationKeyboardMapView } from "../generated/workflow-contracts";
@@ -191,6 +192,117 @@ describe("AgentRun workspace conversation command authority", () => {
     expect(state.commands.keyboard.enter).toBeUndefined();
     expect(state.commands.commands[0]?.enabled).toBe(false);
     expect(state.commands.commands[0]?.disabled_code).toBe("model_required");
+  });
+
+  it("enables draft submit after an explicit complete model override", () => {
+    const agent: ProjectAgentSummary = {
+      key: "agent-1",
+      display_name: "Agent",
+      description: "",
+      executor: {
+        executor: "PI_AGENT",
+        provider_id: null,
+        model_id: null,
+      },
+      source: "project_agent",
+    };
+    const state = buildDraftSessionCommandState({
+      projectId: "project-1",
+      agentKey: "agent-1",
+      agent,
+      projectionReady: true,
+      explicitExecutorConfigOverride: {
+        executor: "PI_AGENT",
+        provider_id: "openai",
+        model_id: "gpt-5.4-mini",
+      },
+    });
+
+    const command = state.commands.commands[0];
+    expect(state.executionStatus).toBe("draft");
+    expect(state.modelConfig.status).toBe("resolved");
+    expect(state.modelConfig.effective_executor_config).toMatchObject({
+      executor: "PI_AGENT",
+      provider_id: "openai",
+      model_id: "gpt-5.4-mini",
+      source: "user_override",
+    });
+    expect(command?.enabled).toBe(true);
+    expect(state.commands.keyboard.enter).toBe(command?.command_id);
+  });
+
+  it("keeps reasoning-capable model selection valid even without thinking level", () => {
+    expect(buildDraftSessionCommandState({
+      projectId: "project-1",
+      agentKey: "agent-1",
+      agent: {
+        key: "agent-1",
+        display_name: "Agent",
+        description: "",
+        executor: {
+          executor: "PI_AGENT",
+          provider_id: null,
+          model_id: null,
+        },
+        source: "project_agent",
+      },
+      projectionReady: true,
+      explicitExecutorConfigOverride: {
+        executor: "PI_AGENT",
+        provider_id: "openai",
+        model_id: "reasoning-model",
+      },
+    }).modelConfig.status).toBe("resolved");
+  });
+
+  it("resolves start_draft payload executor_config from the explicit override", () => {
+    const agent: ProjectAgentSummary = {
+      key: "agent-1",
+      display_name: "Agent",
+      description: "",
+      executor: {
+        executor: "PI_AGENT",
+        provider_id: null,
+        model_id: null,
+      },
+      source: "project_agent",
+    };
+    const state = buildDraftSessionCommandState({
+      projectId: "project-1",
+      agentKey: "agent-1",
+      agent,
+      projectionReady: true,
+      explicitExecutorConfigOverride: {
+        executor: "PI_AGENT",
+        provider_id: "openai",
+        model_id: "gpt-5.4-mini",
+      },
+    });
+    const command = state.commands.commands[0];
+    expect(command).toBeDefined();
+    if (!command) return;
+
+    const executorConfig = resolveExecutorConfigForConversationCommand({
+      command,
+      modelConfig: state.modelConfig,
+      explicitExecutorConfigOverride: {
+        executor: "PI_AGENT",
+        provider_id: "openai",
+        model_id: "gpt-5.4-mini",
+      },
+    });
+
+    expect({
+      input: [],
+      client_command_id: "cmd-1",
+      executor_config: executorConfig,
+    }).toMatchObject({
+      executor_config: {
+        executor: "PI_AGENT",
+        provider_id: "openai",
+        model_id: "gpt-5.4-mini",
+      },
+    });
   });
 
   it("uses snapshot keyboard mapping for ready Ctrl/Cmd+Enter send_next", () => {

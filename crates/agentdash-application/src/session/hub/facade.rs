@@ -15,6 +15,8 @@ use super::super::types::{SessionExecutionState, SessionMeta};
 use super::super::{AgentFrameTransitionRecord, RuntimeDeliveryCommand};
 use super::SessionRuntimeInner;
 #[cfg(test)]
+use crate::workflow::frame_surface::FrameSurfaceDraft;
+#[cfg(test)]
 use crate::workflow::runtime_launch::{
     FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
 };
@@ -165,6 +167,21 @@ pub(super) fn envelope_from_construction(
         .workspace
         .working_directory
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    let surface_draft = construction
+        .projections
+        .frame_surface_draft
+        .clone()
+        .unwrap_or_else(|| FrameSurfaceDraft {
+            capability_state: Some(capability_state.clone()),
+            vfs: Some(vfs.clone()),
+            mcp_servers: construction.projections.mcp_servers.clone(),
+            context_bundle_summary: construction
+                .context
+                .bundle
+                .as_ref()
+                .map(crate::workflow::frame_surface::FrameContextBundleSummary::from_bundle),
+            execution_profile: Some(executor_config.clone()),
+        });
 
     FrameLaunchEnvelope {
         surface: FrameRuntimeSurface {
@@ -177,6 +194,7 @@ pub(super) fn envelope_from_construction(
             mcp_surface: serde_json::Value::Null,
             runtime_session_id: Some(construction.session_id.clone()),
         },
+        surface_draft,
         pending_frame: None,
         intent: FrameLaunchIntent {
             input: construction.prompt.input,

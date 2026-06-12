@@ -30,6 +30,7 @@ use crate::session::{
 use crate::vfs::VfsService;
 use crate::workflow::frame_builder::AgentFrameBuilder;
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
+use crate::workflow::frame_surface::FrameSurfaceDraft;
 use crate::workflow::runtime_launch::{
     FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
 };
@@ -308,10 +309,11 @@ pub(crate) fn build_envelope_from_frame(
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let surface = FrameRuntimeSurface::from_frame(frame, Some(runtime_session_id.to_string()));
 
-    let mut vfs = frame.typed_vfs().unwrap_or_default();
-    let mut executor_config = frame.typed_execution_profile();
-    let mut capability_state = frame.typed_capability_state();
-    let mut mcp_servers = frame.typed_mcp_servers();
+    let mut surface_draft = FrameSurfaceDraft::from_frame(frame);
+    let mut vfs = surface_draft.vfs.clone().unwrap_or_default();
+    let mut executor_config = surface_draft.execution_profile.clone();
+    let mut capability_state = surface_draft.capability_state.clone();
+    let mut mcp_servers = surface_draft.mcp_servers.clone();
     let mut context_bundle = None;
 
     if let Some(config) = command.user_input().executor_config.clone() {
@@ -322,22 +324,31 @@ pub(crate) fn build_envelope_from_frame(
     let mut environment_variables = command.user_input().env.clone();
 
     if let Some(extras) = extras {
+        surface_draft = extras.frame_surface_draft;
         if extras.input.is_some() {
             input = extras.input;
         }
         if !extras.environment_variables.is_empty() {
             environment_variables = extras.environment_variables;
         }
-        if let Some(config) = extras.executor_config {
+        if let Some(config) = surface_draft
+            .execution_profile
+            .clone()
+            .or(extras.executor_config)
+        {
             executor_config = Some(config);
         }
         if let Some(bundle) = extras.context_bundle {
             context_bundle = Some(bundle);
         }
-        if let Some(cs) = extras.capability_state {
+        if let Some(cs) = surface_draft
+            .capability_state
+            .clone()
+            .or(extras.capability_state)
+        {
             capability_state = Some(cs);
         }
-        if let Some(v) = extras.vfs {
+        if let Some(v) = surface_draft.vfs.clone().or(extras.vfs) {
             let override_wd = v
                 .default_mount()
                 .map(|m| PathBuf::from(m.root_ref.trim()))
@@ -346,7 +357,9 @@ pub(crate) fn build_envelope_from_frame(
                 vfs = v;
             }
         }
-        if !extras.mcp_servers.is_empty() {
+        if !surface_draft.mcp_servers.is_empty() {
+            mcp_servers = surface_draft.mcp_servers.clone();
+        } else if !extras.mcp_servers.is_empty() {
             mcp_servers = extras.mcp_servers;
         }
     }
@@ -375,6 +388,7 @@ pub(crate) fn build_envelope_from_frame(
 
     Ok(FrameLaunchEnvelope {
         surface,
+        surface_draft,
         pending_frame: None,
         intent: FrameLaunchIntent {
             input,

@@ -59,6 +59,7 @@ Routine source metadata 只表达触发来源与当前 execution facts。`routin
 
 `FrameLaunchEnvelope` 至少覆盖：
 
+- `FrameSurfaceDraft`，由 construction pipeline 汇总 capability、VFS、MCP、context bundle summary 与 execution profile surface，并作为写入 `AgentFrame` revision 的 typed handoff。
 - `FrameRuntimeSurface`，只来自 `AgentFrame` 持久化 surface。
 - `FrameLaunchIntent`，只来自 `LaunchCommand` / composer launch extras。
 - workspace 与 typed working directory。`working_directory` 必须在进入 launch planner 前解析完成。
@@ -96,7 +97,8 @@ Contract:
 - `CapabilityState.vfs.active` 必须等于 final envelope `vfs`。
 - `CapabilityState.tool.mcp_servers` 必须等于 final envelope `mcp_servers`。
 - `runtime_surface` 是 query DTO，只从 final envelope `vfs` / `AgentFrame.vfs_surface_json` 生成。
-- `AgentFrame` 的 VFS / MCP / capability surface 通过 `AgentFrameBuilder::with_surface_input` 集中写入，原因是 launch 装配面、query DTO 面和 capability replay 必须跟随 effective capability VFS 保持一致。
+- `AgentFrame` 的 VFS / MCP / capability surface 通过 `AgentFrameBuilder::with_surface_draft` 集中写入，原因是 launch 装配面、query DTO 面和 capability replay 必须跟随 effective capability VFS 保持一致。
+- `FrameSurfaceDraft` 是 construction 到 `AgentFrameBuilder` 的显式交接结构。过渡期内 `SessionConstructionPlan.projections` 可以继续保留 `mcp_servers` / `capability_state` 等旧字段，但这些字段应从同一份 draft 派生，原因是 Phase 2 只固定 draft handoff，不切换 runtime launch 的读取事实源。
 
 ## Scenario: MCP Runtime Binding During Frame Construction
 

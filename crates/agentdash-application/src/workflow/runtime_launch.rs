@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! FrameRuntimeSurface  ← 只来自 AgentFrame 持久化 surface
+//! FrameSurfaceDraft    ← construction 产出的 typed surface handoff
 //! FrameLaunchIntent    ← 只来自 command/prompt intent
 //! FrameLaunchEnvelope  ← Frame construction 输出，字段 non-optional
 //! ```
@@ -21,6 +22,7 @@ use agentdash_spi::{
 use uuid::Uuid;
 
 use crate::session::post_turn_handler::TerminalHookEffectBinding;
+use crate::workflow::frame_surface::FrameSurfaceDraft;
 
 // ─── FrameRuntimeSurface: 只来自 AgentFrame 持久化 surface ───
 
@@ -85,6 +87,7 @@ pub struct FrameLaunchIntent {
 #[derive(Debug, Clone)]
 pub struct FrameLaunchEnvelope {
     pub surface: FrameRuntimeSurface,
+    pub surface_draft: FrameSurfaceDraft,
     pub pending_frame: Option<AgentFrame>,
     pub intent: FrameLaunchIntent,
     pub working_directory: PathBuf,

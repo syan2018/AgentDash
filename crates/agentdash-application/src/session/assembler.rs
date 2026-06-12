@@ -2161,6 +2161,41 @@ mod tests {
         }
 
         #[test]
+        fn prepared_surface_is_handed_off_as_frame_surface_draft() {
+            let base = base_plan();
+            let mut capability_state =
+                agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Read]);
+            let vfs = Vfs {
+                mounts: Vec::new(),
+                default_mount_id: Some("prepared-mount".to_string()),
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            };
+            capability_state.vfs.active = Some(vfs.clone());
+            let mcp_servers = vec![runtime_mcp_declaration("compose_a", "http://a")];
+            let prepared = SessionAssemblyBuilder {
+                vfs: Some(vfs),
+                capability_state: Some(capability_state),
+                mcp_servers,
+                ..Default::default()
+            };
+
+            let result = apply_session_assembly(base, prepared);
+            let draft = result
+                .projections
+                .frame_surface_draft
+                .expect("frame surface draft");
+
+            assert_eq!(
+                draft.vfs.and_then(|vfs| vfs.default_mount_id).as_deref(),
+                Some("prepared-mount")
+            );
+            assert_eq!(draft.mcp_servers[0].name, "compose_a");
+            assert!(draft.capability_state.is_some());
+        }
+
+        #[test]
         fn mcp_servers_prepared_empty_still_replaces() {
             let mut base = base_plan();
             base.projections.mcp_servers =

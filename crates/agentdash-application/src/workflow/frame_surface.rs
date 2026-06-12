@@ -5,7 +5,9 @@
 //! 避免每个消费者各自 parse，替代此前散落在各处的 JSON 反序列化逻辑。
 
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::{AgentConfig, CapabilityState, RuntimeMcpServerDeclaration, Vfs};
+use agentdash_spi::{
+    AgentConfig, CapabilityState, RuntimeMcpServerDeclaration, SessionContextBundle, Vfs,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -13,12 +15,55 @@ use uuid::Uuid;
 ///
 /// 对应 `AgentFrameBuilder::with_context_bundle_summary` 写入的 JSON 结构，
 /// 只保留 bundle 元信息，不含完整 `SessionContextBundle` 的 fragment 列表。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FrameContextBundleSummary {
     pub bundle_id: Uuid,
     pub session_id: String,
     pub phase_tag: String,
     pub fragment_count: usize,
+}
+
+impl FrameContextBundleSummary {
+    pub fn from_bundle(bundle: &SessionContextBundle) -> Self {
+        Self {
+            bundle_id: bundle.bundle_id,
+            session_id: bundle.session_id.to_string(),
+            phase_tag: bundle.phase_tag.clone(),
+            fragment_count: bundle.bootstrap_fragments.len(),
+        }
+    }
+}
+
+/// Frame construction 产出的可执行 surface 草稿。
+///
+/// Draft 是写入 `AgentFrame` revision 前的 typed handoff，承载 capability、
+/// VFS、MCP、context bundle summary 与 execution profile surface。过渡期内
+/// launch 仍读取 `FrameLaunchEnvelope` 上的既有字段，但这些字段应从同一份
+/// draft 派生，避免 construction pipeline 继续维护隐式并列 projection。
+#[derive(Debug, Clone, Default)]
+pub struct FrameSurfaceDraft {
+    pub capability_state: Option<CapabilityState>,
+    pub vfs: Option<Vfs>,
+    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
+    pub context_bundle_summary: Option<FrameContextBundleSummary>,
+    pub execution_profile: Option<AgentConfig>,
+}
+
+impl FrameSurfaceDraft {
+    pub fn from_frame(frame: &AgentFrame) -> Self {
+        Self {
+            capability_state: frame.typed_capability_state(),
+            vfs: frame.typed_vfs(),
+            mcp_servers: frame.typed_mcp_servers(),
+            context_bundle_summary: frame.context_bundle_summary(),
+            execution_profile: frame.typed_execution_profile(),
+        }
+    }
+
+    pub fn with_context_bundle_summary(mut self, bundle: &SessionContextBundle) -> Self {
+        self.context_bundle_summary = Some(FrameContextBundleSummary::from_bundle(bundle));
+        self
+    }
 }
 
 /// AgentFrame 的 typed surface 读取扩展。
@@ -174,12 +219,8 @@ mod tests {
     #[test]
     fn context_bundle_summary_from_builder_format() {
         let bundle = SessionContextBundle::new(Uuid::new_v4(), "lifecycle_node");
-        let summary_json = serde_json::json!({
-            "bundle_id": bundle.bundle_id,
-            "session_id": bundle.session_id,
-            "phase_tag": bundle.phase_tag,
-            "fragment_count": bundle.bootstrap_fragments.len(),
-        });
+        let summary_json = serde_json::to_value(FrameContextBundleSummary::from_bundle(&bundle))
+            .expect("summary json");
 
         let mut frame = test_frame();
         frame.context_slice_json = Some(summary_json);
@@ -224,5 +265,54 @@ mod tests {
         let mut frame = test_frame();
         frame.context_slice_json = Some(serde_json::json!({"project": "test"}));
         assert!(frame.context_bundle_summary().is_none());
+    }
+
+    #[test]
+    fn frame_surface_draft_reads_all_typed_frame_surfaces() {
+        let mut frame = test_frame();
+        let capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
+        let vfs = Vfs {
+            mounts: vec![test_mount("workspace")],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let mcp_servers = vec![RuntimeMcpServerDeclaration {
+            name: "workflow-tools".to_string(),
+            transport: McpTransportConfig::Http {
+                url: "http://localhost/mcp".to_string(),
+                headers: Vec::new(),
+            },
+            uses_relay: false,
+        }];
+        let execution_profile = AgentConfig::new("PI_AGENT");
+        let bundle = SessionContextBundle::new(Uuid::new_v4(), "owner_bootstrap");
+
+        frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
+        frame.vfs_surface_json = Some(serde_json::to_value(&vfs).unwrap());
+        frame.mcp_surface_json = Some(serde_json::to_value(&mcp_servers).unwrap());
+        frame.execution_profile_json = Some(serde_json::to_value(&execution_profile).unwrap());
+        frame.context_slice_json =
+            Some(serde_json::to_value(FrameContextBundleSummary::from_bundle(&bundle)).unwrap());
+
+        let draft = FrameSurfaceDraft::from_frame(&frame);
+
+        assert_eq!(draft.capability_state, Some(capability_state));
+        assert_eq!(draft.vfs, Some(vfs));
+        assert_eq!(draft.mcp_servers, mcp_servers);
+        assert_eq!(
+            draft
+                .execution_profile
+                .as_ref()
+                .map(|profile| profile.executor.as_str()),
+            Some(execution_profile.executor.as_str())
+        );
+        assert_eq!(
+            draft
+                .context_bundle_summary
+                .map(|summary| summary.bundle_id),
+            Some(bundle.bundle_id)
+        );
     }
 }

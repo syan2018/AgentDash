@@ -231,6 +231,9 @@ impl SessionLaunchOrchestrator {
         final_capability_state.tool.mcp_servers = effective_mcp_servers;
         envelope.capability_state = final_capability_state;
         envelope.base_capability_state = Some(base_capability_state);
+        envelope.surface_draft.capability_state = Some(envelope.capability_state.clone());
+        envelope.surface_draft.vfs = Some(envelope.vfs.clone());
+        envelope.surface_draft.mcp_servers = envelope.mcp_servers.clone();
         if requested_runtime_commands.is_empty() {
             envelope.resolution_trace.pending_overlay_applied = false;
         } else {

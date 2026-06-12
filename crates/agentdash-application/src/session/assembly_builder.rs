@@ -18,6 +18,7 @@ use crate::session::context::apply_workspace_defaults;
 use crate::session::types::UserPromptInput;
 use crate::vfs::build_lifecycle_mount_with_ports;
 use crate::workflow::LifecycleMountSurface;
+use crate::workflow::frame_surface::{FrameContextBundleSummary, FrameSurfaceDraft};
 
 /// 把 `SessionAssemblyBuilder` 的累积声明合并进 frame construction handoff。
 ///
@@ -62,6 +63,17 @@ pub(crate) fn apply_session_assembly(
     let active_vfs = prepared.vfs.or_else(|| plan.surface.vfs.clone());
     plan.projections.mcp_servers = prepared.mcp_servers;
     plan.projections.capability_state = prepared.capability_state;
+    plan.projections.frame_surface_draft = Some(FrameSurfaceDraft {
+        capability_state: plan.projections.capability_state.clone(),
+        vfs: active_vfs.clone(),
+        mcp_servers: plan.projections.mcp_servers.clone(),
+        context_bundle_summary: plan
+            .context
+            .bundle
+            .as_ref()
+            .map(FrameContextBundleSummary::from_bundle),
+        execution_profile: plan.execution_profile.executor_config.clone(),
+    });
     if let Some(vfs) = active_vfs {
         plan.set_active_vfs(vfs);
     } else {
@@ -319,9 +331,10 @@ impl SessionAssemblyBuilder {
                 inherit_skills_from: None,
             },
         );
-        self.vfs = Some(surface.vfs);
-        self.capability_state = Some(surface.capability_state);
-        self.mcp_servers = surface.mcp_servers;
+        let surface_draft = surface.to_surface_draft();
+        self.vfs = surface_draft.vfs;
+        self.capability_state = surface_draft.capability_state;
+        self.mcp_servers = surface_draft.mcp_servers;
         self.input = Some(agentdash_agent_protocol::text_user_input_blocks(
             "请执行当前 lifecycle 节点。",
         ));
@@ -332,6 +345,19 @@ impl SessionAssemblyBuilder {
     /// 结束 builder 链；保留该方法只为让既有 compose 代码保持声明式尾部。
     pub(super) fn build(self) -> SessionAssemblyBuilder {
         self
+    }
+
+    pub(super) fn to_surface_draft(&self) -> FrameSurfaceDraft {
+        FrameSurfaceDraft {
+            capability_state: self.capability_state.clone(),
+            vfs: self.vfs.clone(),
+            mcp_servers: self.mcp_servers.clone(),
+            context_bundle_summary: self
+                .context_bundle
+                .as_ref()
+                .map(FrameContextBundleSummary::from_bundle),
+            execution_profile: self.executor_config.clone(),
+        }
     }
 }
 
@@ -381,15 +407,10 @@ pub(super) fn project_assembly_to_frame(
     crate::workflow::frame_builder::AgentFrameBuilder,
     AssemblyLaunchExtras,
 ) {
-    let frame_builder =
-        frame_builder.with_surface_input(crate::workflow::frame_builder::AgentFrameSurfaceInput {
-            capability_state: prepared.capability_state.as_ref(),
-            vfs: prepared.vfs.as_ref(),
-            mcp_servers: &prepared.mcp_servers,
-            execution_profile: prepared.executor_config.as_ref(),
-            context_bundle: prepared.context_bundle.as_ref(),
-        });
+    let surface_draft = prepared.to_surface_draft();
+    let frame_builder = frame_builder.with_surface_draft(&surface_draft);
     let extras = AssemblyLaunchExtras {
+        frame_surface_draft: surface_draft,
         context_bundle: prepared.context_bundle,
         input: prepared.input,
         executor_config: prepared.executor_config,
@@ -403,10 +424,12 @@ pub(super) fn project_assembly_to_frame(
     (frame_builder, extras)
 }
 
-/// `project_assembly_to_frame` 的 launch-only 输出。
+/// `project_assembly_to_frame` 的 frame surface draft 与 launch-only 输出。
 ///
-/// 这些数据不写入 AgentFrame，而是传递给 FrameLaunchEnvelope 或 launch pipeline。
+/// `frame_surface_draft` 写入 AgentFrame revision 并传递给 FrameLaunchEnvelope；
+/// 其余字段只服务 prompt、env、context bundle 等 launch pipeline 投影。
 pub struct AssemblyLaunchExtras {
+    pub frame_surface_draft: FrameSurfaceDraft,
     pub context_bundle: Option<SessionContextBundle>,
     pub input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
     pub executor_config: Option<AgentConfig>,

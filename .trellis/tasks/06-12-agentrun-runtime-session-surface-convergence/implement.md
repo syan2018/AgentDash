@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Phase 0 evidence refresh 已完成，Phase 1 MCP declaration naming convergence 已实现并进入检查收口。Phase 2+ 尚未开始；本任务后续仍需按阶段推进 FrameSurfaceDraft、runtime launch surface 读取、AgentRun workspace API/UI 与持久化清理。
+Phase 0 evidence refresh 已完成，Phase 1 MCP declaration naming convergence 已实现并进入检查收口。Phase 2 FrameSurfaceDraft handoff 已完成；后续仍需按阶段推进 runtime launch surface 读取、AgentRun workspace API/UI 与持久化清理。
 
 ## Phase 0: Evidence Refresh
 
@@ -38,12 +38,21 @@ Status: completed. Evidence captured in `research/phase-0-surface-fact-source-au
 
 ## Phase 2: FrameSurfaceDraft Introduction
 
+Status: completed. `FrameSurfaceDraft` 已作为 construction pipeline 到 `AgentFrameBuilder` / `FrameLaunchEnvelope` 的 typed handoff；runtime launch 仍沿用 envelope 上既有 capability/VFS/MCP/execution fields，不在本阶段切到 AgentFrame surface 读取。
+
 目标：把 construction pipeline 的输出从 session projections 逐步收束为 AgentFrame surface draft。
 
-- [ ] 设计 `FrameSurfaceDraft` 或等价结构，承载 capability、VFS、MCP、context、execution profile surface。
-- [ ] 让 capability resolver、workspace facts、context builder、execution profile 输出汇入 draft。
-- [ ] 让 `AgentFrameBuilder` 从 draft 写入 AgentFrame revision。
-- [ ] 将 `SessionConstructionPlan.projections` 的职责改为持有或转交 draft。
+- [x] 设计 `FrameSurfaceDraft` 或等价结构，承载 capability、VFS、MCP、context、execution profile surface。
+- [x] 让 capability resolver、workspace facts、context builder、execution profile 输出汇入 draft。
+- [x] 让 `AgentFrameBuilder` 从 draft 写入 AgentFrame revision。
+- [x] 将 `SessionConstructionPlan.projections` 的职责改为持有或转交 draft。
+
+已落地契约：
+
+- `FrameSurfaceDraft` 持有 `CapabilityState`、`Vfs`、`Vec<RuntimeMcpServerDeclaration>`、`FrameContextBundleSummary` 与 `AgentConfig`。
+- `AgentFrameBuilder::with_surface_draft` 是写入 frame revision 的入口，construction pipeline 不再保留并列的 frame surface input 入口。
+- `SessionAssemblyBuilder` 产出同一份 draft，并转交给 `AssemblyLaunchExtras.frame_surface_draft` 与 `SessionConstructionPlan.projections.frame_surface_draft`。
+- `FrameLaunchEnvelope.surface_draft` 记录 construction handoff；Phase 2 不改变 launch planner / connector 对 envelope 既有字段的读取。
 
 验证重点：
 

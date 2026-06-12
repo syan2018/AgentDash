@@ -61,6 +61,7 @@ impl ResolvedSessionOwner {
     }
 }
 use crate::vfs::ResolvedVfsSurface;
+use crate::workflow::frame_surface::FrameSurfaceDraft;
 
 /// 测试 fixture：launch envelope 测试所需的完整投影形态。
 #[derive(Debug, Clone)]
@@ -137,6 +138,7 @@ pub struct ConstructionEffectPlan {
 
 #[derive(Debug, Clone, Default)]
 pub struct ConstructionProjections {
+    pub frame_surface_draft: Option<FrameSurfaceDraft>,
     pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
     pub capability_state: Option<CapabilityState>,
     pub session_capabilities: Option<SessionBaselineCapabilities>,

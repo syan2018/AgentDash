@@ -64,7 +64,7 @@ pub use execution_log::{
 pub use frame_builder::AgentFrameBuilder;
 pub use frame_construction::FrameConstructionService;
 pub use frame_hook_runtime::AgentFrameHookRuntime;
-pub use frame_surface::{AgentFrameSurfaceExt, FrameContextBundleSummary};
+pub use frame_surface::{AgentFrameSurfaceExt, FrameContextBundleSummary, FrameSurfaceDraft};
 pub use graph_resolver::{ResolvedWorkflowGraph, WorkflowGraphResolver};
 pub use lifecycle::mount::{
     LifecycleMountSurface, append_active_workflow_lifecycle_mount,

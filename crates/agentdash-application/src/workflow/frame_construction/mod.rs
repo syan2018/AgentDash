@@ -353,12 +353,12 @@ pub(crate) fn build_envelope_from_frame(
 
     let executor_config = executor_config.ok_or_else(|| {
         ConnectorError::InvalidConfig(
-            "FrameLaunchEnvelope: executor_config 未在 construction 阶段解析".into(),
+            "FrameLaunchEnvelope: executor_config 未在 frame construction 阶段解析".into(),
         )
     })?;
     let capability_state = capability_state.ok_or_else(|| {
         ConnectorError::InvalidConfig(
-            "FrameLaunchEnvelope: capability_state 未在 construction 阶段解析".into(),
+            "FrameLaunchEnvelope: capability_state 未在 frame construction 阶段解析".into(),
         )
     })?;
     // Workspace module 可见性已收口进 base CapabilityState.workspace_module（经
@@ -369,7 +369,7 @@ pub(crate) fn build_envelope_from_frame(
         .filter(|p| !p.as_os_str().is_empty())
         .ok_or_else(|| {
             ConnectorError::InvalidConfig(
-                "FrameLaunchEnvelope: working_directory 未在 construction 阶段解析".into(),
+                "FrameLaunchEnvelope: working_directory 未在 frame construction 阶段解析".into(),
             )
         })?;
 

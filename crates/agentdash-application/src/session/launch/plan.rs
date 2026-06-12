@@ -235,7 +235,7 @@ impl LaunchPlan {
         let trace = LaunchPlanTrace {
             entries: vec![
                 LaunchPlanTraceEntry {
-                    stage: "construction",
+                    stage: "frame_launch_envelope",
                     source: "FrameLaunchEnvelope".to_string(),
                 },
                 LaunchPlanTraceEntry {

@@ -1,7 +1,6 @@
-//! `SessionConstructionProvider` 的 API 层实现。
+//! `SessionConstructionProvider` 的 API 层薄委托。
 //!
-//! 自 Phase 3B 重构后，所有 compose 逻辑已下沉至 application 层的
-//! `FrameConstructionService`，此文件仅保留：
+//! 所有 compose 逻辑由 application 层的 `FrameConstructionService` 承接，此文件仅保留：
 //! 1. `AppStateSessionConstructionProvider` — 实现 trait 的薄委托层
 //! 2. test-only 的 API error encode/decode 辅助（供集成测试使用）
 
@@ -22,7 +21,7 @@ use crate::app_state::AppState;
 #[cfg(test)]
 use crate::rpc::ApiError;
 
-/// 使用 `Arc<AppState>` 的主通道 construction provider。
+/// 使用 `Arc<AppState>` 的主通道 launch envelope provider。
 ///
 /// 内部持有 `FrameConstructionService`（application 层），将所有 compose 路由
 /// 和 frame 持久化委托给该 service，自身不再包含任何业务分支。
@@ -79,7 +78,7 @@ pub(crate) fn decode_construction_runtime_error(message: &str) -> Option<ApiErro
         "unprocessable_entity" => Some(ApiError::UnprocessableEntity(detail.to_string())),
         "service_unavailable" => Some(ApiError::ServiceUnavailable(detail.to_string())),
         "internal" => {
-            tracing::error!(detail, "session construction internal error");
+            tracing::error!(detail, "frame launch envelope internal error");
             Some(ApiError::Internal(String::from("内部 session 构建错误")))
         }
         _ => None,

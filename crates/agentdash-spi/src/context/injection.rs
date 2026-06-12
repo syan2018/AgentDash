@@ -191,10 +191,10 @@ pub struct ContextFragment {
     /// 产出来源标记（吸收原 `HookInjection.source`）。
     ///
     /// 约定前缀：
-    /// - `legacy:session_plan` — `build_session_plan_fragments` 产出
-    /// - `legacy:contributor:<name>` — 内置 Contributor 产出
-    /// - `legacy:workspace_source` — 工作空间声明式来源
-    /// - `legacy:source_resolver:<kind>` — 声明式来源解析器
+    /// - `session_plan` — `build_session_plan_fragments` 产出
+    /// - `context_contributor:<name>` — 内置 Contributor 产出
+    /// - `workspace_source:<kind>` — 工作空间声明式来源
+    /// - `source_resolver:<kind>` — 声明式来源解析器
     /// - `hook:<trigger>` — 后续 Hook 注入路径使用
     pub source: String,
     pub content: String,

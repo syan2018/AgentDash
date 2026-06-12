@@ -1,12 +1,11 @@
-//! Session construction provider 契约。
+//! Session launch envelope provider 契约。
 //!
 //! Session 的主通道（用户 HTTP prompt）和 auto-resume 通道都必须通过同一份
-//! construction 逻辑才能拿到 owner context / MCP server 绑定 / flow capabilities /
-//! context bundle 等运行时字段，否则会出现"通道漂移"——auto-resume 拿到
-//! 的是一个未补齐 owner 的 prompt，Agent 丢失工作流背景后容易复读。
+//! frame construction 逻辑才能拿到 context / MCP server 绑定 / flow capabilities /
+//! context bundle 等运行时字段，否则会出现"通道漂移"。
 //!
 //! API 层实现此 trait，在 AppState 初始化时通过 `SessionRuntimeInner::set_session_construction_provider`
-//! 注入。SessionRuntimeInner 内部 follow-up 一律先经过 construction provider，与 HTTP 主通道对齐。
+//! 注入。SessionRuntimeInner 内部 follow-up 一律先经过 provider，与 HTTP 主通道对齐。
 
 use std::sync::Arc;
 
@@ -57,10 +56,10 @@ pub struct SessionConstructionProviderInput {
     pub agent_needs_bootstrap: bool,
 }
 
-/// Session launch 的 construction provider 契约。
+/// Session launch 的 envelope provider 契约。
 ///
-/// 实现方负责从 session 元数据推断 owner / workspace / capability / context 等
-/// 运行时字段，产出 `FrameLaunchEnvelope` 驱动 connector 启动。
+/// 实现方负责从 runtime trace、AgentFrame、workspace、capability 与 context facts
+/// 产出 `FrameLaunchEnvelope` 驱动 connector 启动。
 #[async_trait]
 pub trait SessionConstructionProvider: Send + Sync {
     /// 产出 FrameLaunchEnvelope —— session launch 的唯一输入。

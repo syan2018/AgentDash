@@ -1,9 +1,7 @@
 use agentdash_domain::{project::Project, workspace::Workspace};
 use agentdash_spi::{ContextFragment, MergeStrategy};
 
-use crate::context::{
-    Contribution, WorkspaceFragmentMode, trim_or_dash, workspace_context_fragment,
-};
+use crate::context::{Contribution, trim_or_dash, workspace_context_fragment};
 
 pub struct ProjectContextBuildInput<'a> {
     pub project: &'a Project,
@@ -14,7 +12,7 @@ pub struct ProjectContextBuildInput<'a> {
 
 /// 把 Project owner session 的业务上下文聚合为一个 `Contribution`。
 ///
-/// 不包含 SessionPlan fragments —— PR 5b 起所有 compose_* 在外层显式 push。
+/// 不包含 SessionPlan fragments；运行时画像由外层 composer 显式追加。
 pub fn contribute_project_context(input: ProjectContextBuildInput<'_>) -> Contribution {
     let mut fragments = Vec::new();
 
@@ -24,7 +22,7 @@ pub fn contribute_project_context(input: ProjectContextBuildInput<'_>) -> Contri
         order: 10,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:project_context".to_string(),
+        source: "project_context".to_string(),
         content: format!(
             "## Project\n- id: {}\n- name: {}\n- description: {}",
             input.project.id,
@@ -39,7 +37,7 @@ pub fn contribute_project_context(input: ProjectContextBuildInput<'_>) -> Contri
         order: 20,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:project_context".to_string(),
+        source: "project_context".to_string(),
         content: format!(
             "## Project Agent\n- display_name: {}\n- preset_name: {}\n- default_agent_type: {}",
             trim_or_dash(input.agent_display_name),
@@ -56,10 +54,7 @@ pub fn contribute_project_context(input: ProjectContextBuildInput<'_>) -> Contri
     });
 
     if let Some(workspace) = input.workspace {
-        fragments.push(workspace_context_fragment(
-            workspace,
-            WorkspaceFragmentMode::Owner,
-        ));
+        fragments.push(workspace_context_fragment(workspace));
     }
 
     Contribution::fragments_only(fragments)

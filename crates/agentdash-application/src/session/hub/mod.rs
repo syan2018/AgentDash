@@ -58,8 +58,8 @@ pub struct SessionRuntimeInner {
     pub(super) hook_effect_handler_registry: Arc<
         tokio::sync::RwLock<Option<super::post_turn_handler::DynTerminalHookEffectHandlerRegistry>>,
     >,
-    /// 将来源 command 构建成与 HTTP 主通道一致的完整 launch request。
-    /// Hub 内部的 auto-resume 等场景必须经它补齐 owner/mcp/flow 上下文，
+    /// 将来源 command 构建成与 HTTP 主通道一致的 `FrameLaunchEnvelope`。
+    /// Hub 内部的 auto-resume 等场景必须经它补齐 frame/MCP/flow 上下文，
     /// 避免与主通道漂移。用 `Arc<RwLock<...>>` 以便延迟注入（循环依赖场景）。
     pub(super) session_construction_provider:
         Arc<tokio::sync::RwLock<Option<SharedSessionConstructionProvider>>>,

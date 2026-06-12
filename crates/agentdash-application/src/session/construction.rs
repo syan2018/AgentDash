@@ -62,7 +62,7 @@ impl ResolvedSessionOwner {
 }
 use crate::vfs::ResolvedVfsSurface;
 
-/// 测试 fixture：旧 construction plan 的完整投影形态。
+/// 测试 fixture：launch envelope 测试所需的完整投影形态。
 #[derive(Debug, Clone)]
 pub struct RuntimeContextInspectionPlan {
     pub session_id: String,

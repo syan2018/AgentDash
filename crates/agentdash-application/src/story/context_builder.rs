@@ -3,8 +3,7 @@ use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
 use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
 
 use crate::context::{
-    Contribution, WorkspaceFragmentMode, resolve_declared_sources, trim_or_dash,
-    workspace_context_fragment,
+    Contribution, resolve_declared_sources, trim_or_dash, workspace_context_fragment,
 };
 
 /// Story Owner Session 的上下文构建输入
@@ -20,8 +19,8 @@ pub struct StoryContextBuildInput<'a> {
 /// 把 Story owner session 的业务上下文聚合为一个 `Contribution`，供
 /// `build_session_context_bundle` 消费。
 ///
-/// 不包含 SessionPlan fragments —— PR 5b 起所有 compose_* 在外层显式 push
-/// SessionPlan，保持 contributor 单一职责且与 lifecycle / task 路径一致。
+/// 不包含 SessionPlan fragments；运行时画像由外层 composer 显式追加，
+/// 保持 contributor 单一职责且与 lifecycle / task 路径一致。
 pub fn contribute_story_context(input: StoryContextBuildInput<'_>) -> Contribution {
     let mut fragments = Vec::new();
 
@@ -31,7 +30,7 @@ pub fn contribute_story_context(input: StoryContextBuildInput<'_>) -> Contributi
         order: 10,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:story_context".to_string(),
+        source: "story_context".to_string(),
         content: format!(
             "## Story\n- id: {}\n- title: {}\n- description: {}\n- status: {:?}",
             input.story.id,
@@ -46,7 +45,7 @@ pub fn contribute_story_context(input: StoryContextBuildInput<'_>) -> Contributi
         order: 20,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:story_context".to_string(),
+        source: "story_context".to_string(),
         content: format!(
             "## Project\n- id: {}\n- name: {}",
             input.project.id,
@@ -54,10 +53,7 @@ pub fn contribute_story_context(input: StoryContextBuildInput<'_>) -> Contributi
         ),
     });
     if let Some(workspace) = input.workspace {
-        fragments.push(workspace_context_fragment(
-            workspace,
-            WorkspaceFragmentMode::Owner,
-        ));
+        fragments.push(workspace_context_fragment(workspace));
     }
 
     let resolvable_sources = input
@@ -86,7 +82,7 @@ pub fn contribute_story_context(input: StoryContextBuildInput<'_>) -> Contributi
                 order: 59,
                 strategy: MergeStrategy::Append,
                 scope: ContextFragment::default_scope(),
-                source: "legacy:story_context".to_string(),
+                source: "story_context".to_string(),
                 content: format!(
                     "## Injection Notes\n{}",
                     resolved

@@ -211,7 +211,7 @@ impl AgentFrameBuilder {
         Ok(frame)
     }
 
-    /// 构建新 revision 但不写入仓储。Session launch construction 用它把完整
+    /// 构建新 revision 但不写入仓储。Frame construction 用它把完整
     /// runtime surface 传给 connector，等 connector accepted 后再提交。
     pub(crate) async fn build_uncommitted(
         &self,

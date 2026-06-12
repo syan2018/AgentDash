@@ -3432,7 +3432,7 @@ async fn launch_prompt_strict_requires_session_construction_provider() {
     match error {
         ConnectorError::Runtime(message) => {
             assert!(
-                message.contains("session_construction_provider 未注入"),
+                message.contains("session_launch_envelope_provider 未注入"),
                 "错误信息应提示 provider 缺失，实际为: {message}"
             );
         }
@@ -3463,7 +3463,7 @@ async fn local_relay_prompt_requires_session_construction_provider() {
     match error {
         ConnectorError::Runtime(message) => {
             assert!(
-                message.contains("session_construction_provider 未注入")
+                message.contains("session_launch_envelope_provider 未注入")
                     && message.contains("local_relay_prompt"),
                 "错误信息应提示 local relay prompt 被拒绝，实际为: {message}"
             );

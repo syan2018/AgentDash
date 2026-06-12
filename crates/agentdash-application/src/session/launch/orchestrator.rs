@@ -35,7 +35,7 @@ impl SessionLaunchOrchestrator {
         let reason = command.reason_tag();
         let Some(provider) = self.deps.current_session_construction_provider().await else {
             return Err(ConnectorError::Runtime(format!(
-                "session_construction_provider 未注入，拒绝 session launch: {reason}"
+                "session_launch_envelope_provider 未注入，拒绝 session launch: {reason}"
             )));
         };
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());

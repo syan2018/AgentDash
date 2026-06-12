@@ -175,7 +175,7 @@ use agentdash_spi::Vfs;
 
 use crate::vfs::build_workspace_vfs;
 
-/// 将 workspace 相关的默认 VFS 注入到 construction request 的可变字段中。
+/// 将 workspace 相关的默认 VFS 注入到测试 fixture 的可变字段中。
 /// 仅在字段为 None 时填充，不覆盖已有值。
 pub fn apply_workspace_defaults(vfs: &mut Option<Vfs>, workspace: Option<&Workspace>) {
     if vfs.is_none()

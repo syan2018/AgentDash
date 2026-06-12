@@ -232,11 +232,11 @@ impl SessionRuntimeInner {
         *self.hook_effect_handler_registry.write().await = Some(registry);
     }
 
-    /// 注入 session construction provider（owner / MCP / flow capabilities / system context 等）。
+    /// 注入 session launch envelope provider（frame / MCP / flow capabilities / context 等）。
     ///
     /// **何时必须注入**：只要 SessionRuntimeInner 会在内部发起 strict launch（如
-    /// hook auto-resume、未来可能的其他系统驱动续跑），就必须注入此 construction provider——否则
-    /// auto-resume 的 prompt 与 HTTP 主通道漂移，Agent 会失去工作流背景并倾向复读。
+    /// hook auto-resume、未来可能的其他系统驱动续跑），就必须注入此 provider，
+    /// 让 auto-resume 的 prompt 与 HTTP 主通道使用同一份 envelope。
     ///
     /// 延迟注入设计：用 `Arc<RwLock<...>>` 以便在 AppState 构造完成后再绑定到 hub。
     pub async fn set_session_construction_provider(
@@ -273,7 +273,7 @@ impl SessionRuntimeInner {
             return Err("SessionRuntimeInner 缺少 hook_effect_handler_registry".to_string());
         }
         if self.session_construction_provider.read().await.is_none() {
-            return Err("SessionRuntimeInner 缺少 session_construction_provider".to_string());
+            return Err("SessionRuntimeInner 缺少 session_launch_envelope_provider".to_string());
         }
         if self.context_audit_bus.read().await.is_none() {
             return Err("SessionRuntimeInner 缺少 context_audit_bus".to_string());

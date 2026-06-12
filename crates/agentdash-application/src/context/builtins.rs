@@ -30,24 +30,9 @@ pub(crate) fn trim_or_dash(text: &str) -> &str {
 
 // ─── Workspace Context Fragment ──────────────────────────────
 
-/// Workspace context fragment 渲染模式。
-///
-/// PR 5 前：task 路径（`contribute_core_context`）与 owner 路径
-/// （`workspace_context_fragment`）各维护一份几乎相同的 workspace 渲染逻辑，
-/// 唯一差异是 task 路径额外附带 `status` 字段。PR 5 把两路合并到同一 helper，
-/// 视图差异由 `WorkspaceFragmentMode` 控制。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkspaceFragmentMode {
-    /// Owner 视图（order=30，不含 status）。
-    Owner,
-    /// Task 视图（order=50，含 status）。
-    Task,
-}
-
-/// 构建 workspace context fragment —— task / owner 两路共享单源渲染。
+/// 构建 owner workspace context fragment。
 pub(crate) fn workspace_context_fragment(
     workspace: &agentdash_domain::workspace::Workspace,
-    mode: WorkspaceFragmentMode,
 ) -> ContextFragment {
     let binding_summary = selected_workspace_binding(workspace)
         .map(|binding| {
@@ -59,40 +44,20 @@ pub(crate) fn workspace_context_fragment(
         })
         .unwrap_or_else(|| "-".to_string());
 
-    let (order, source, content) = match mode {
-        WorkspaceFragmentMode::Owner => (
-            30,
-            "legacy:contributor:workspace",
-            format!(
-                "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- binding: {}\n- working_dir: .",
-                workspace.id,
-                workspace.identity_kind,
-                trim_or_dash(&workspace.name),
-                binding_summary,
-            ),
-        ),
-        WorkspaceFragmentMode::Task => (
-            50,
-            "legacy:contributor:core",
-            format!(
-                "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- working_dir: .\n- binding: {}\n- status: {:?}",
-                workspace.id,
-                workspace.identity_kind,
-                trim_or_dash(&workspace.name),
-                binding_summary,
-                workspace.status,
-            ),
-        ),
-    };
-
     ContextFragment {
         slot: "workspace".to_string(),
         label: "workspace_context".to_string(),
-        order,
+        order: 30,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: source.to_string(),
-        content,
+        source: "context_contributor:workspace".to_string(),
+        content: format!(
+            "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- binding: {}\n- working_dir: .",
+            workspace.id,
+            workspace.identity_kind,
+            trim_or_dash(&workspace.name),
+            binding_summary,
+        ),
     }
 }
 
@@ -191,9 +156,8 @@ fn render_template(template: &str, vars: &HashMap<&'static str, String>) -> Stri
 /// project / workspace 由调用方通过 `contribute_story_context`（owner 路径）
 /// 或其他 contributor 独立产出。
 ///
-/// PR 5d 前 task 路径走 `contribute_core_context` 一次性产出 task/story/project/
-/// workspace 四条 fragment，导致 story 领域字段在 owner 与 task 两路各自独立
-/// 维护。此函数让 task 路径与 owner 路径共享同一套 story/project/workspace 渲染。
+/// Task contributor 只维护 task 自身字段；story / project / workspace fragment
+/// 分别由对应领域 contributor 产出，保证字段归属单一。
 pub fn contribute_task_binding(task: &agentdash_domain::task::Task) -> Contribution {
     let fragment = ContextFragment {
         slot: "task".to_string(),
@@ -201,7 +165,7 @@ pub fn contribute_task_binding(task: &agentdash_domain::task::Task) -> Contribut
         order: 10,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:contributor:task_binding".to_string(),
+        source: "context_contributor:task_binding".to_string(),
         content: format!(
             "## Task\n- id: {}\n- title: {}\n- description: {}\n- status: {:?}",
             task.id,
@@ -211,74 +175,6 @@ pub fn contribute_task_binding(task: &agentdash_domain::task::Task) -> Contribut
         ),
     };
     Contribution::fragments_only(vec![fragment])
-}
-
-/// Task / Story / Project / Workspace 的核心业务上下文。
-///
-/// **已过时**：PR 5d 起 task 路径应走 `contribute_task_binding` + `contribute_story_context`
-/// 的组合；本函数仅作为尚未迁移路径的过渡实现保留，长期应删除。
-pub fn contribute_core_context(
-    task: &agentdash_domain::task::Task,
-    story: &agentdash_domain::story::Story,
-    project: &agentdash_domain::project::Project,
-    workspace: Option<&agentdash_domain::workspace::Workspace>,
-) -> Contribution {
-    let mut fragments = Vec::new();
-
-    fragments.push(ContextFragment {
-        slot: "task".to_string(),
-        label: "task_core".to_string(),
-        order: 10,
-        strategy: MergeStrategy::Append,
-        scope: ContextFragment::default_scope(),
-        source: "legacy:contributor:core".to_string(),
-        content: format!(
-            "## Task\n- id: {}\n- title: {}\n- description: {}\n- status: {:?}",
-            task.id,
-            trim_or_dash(&task.title),
-            trim_or_dash(&task.description),
-            task.status()
-        ),
-    });
-
-    fragments.push(ContextFragment {
-        slot: "story".to_string(),
-        label: "story_core".to_string(),
-        order: 20,
-        strategy: MergeStrategy::Append,
-        scope: ContextFragment::default_scope(),
-        source: "legacy:contributor:core".to_string(),
-        content: format!(
-            "## Story\n- id: {}\n- title: {}\n- description: {}",
-            story.id,
-            trim_or_dash(&story.title),
-            trim_or_dash(&story.description),
-        ),
-    });
-
-    fragments.push(ContextFragment {
-        slot: "project".to_string(),
-        label: "project_config".to_string(),
-        order: 40,
-        strategy: MergeStrategy::Append,
-        scope: ContextFragment::default_scope(),
-        source: "legacy:contributor:core".to_string(),
-        content: format!(
-            "## Project\n- id: {}\n- name: {}\n- default_agent_type: {}",
-            project.id,
-            trim_or_dash(&project.name),
-            project.config.default_agent_type.as_deref().unwrap_or("-")
-        ),
-    });
-
-    if let Some(workspace) = workspace {
-        fragments.push(workspace_context_fragment(
-            workspace,
-            WorkspaceFragmentMode::Task,
-        ));
-    }
-
-    Contribution::fragments_only(fragments)
 }
 
 /// Agent 绑定的 initial_context 片段。
@@ -291,7 +187,7 @@ pub fn contribute_binding_initial_context(task: &agentdash_domain::task::Task) -
             order: 80,
             strategy: MergeStrategy::Append,
             scope: ContextFragment::default_scope(),
-            source: "legacy:contributor:binding".to_string(),
+            source: "context_contributor:binding".to_string(),
             content: format!("## Initial Context\n{initial_context}"),
         });
     }
@@ -335,7 +231,7 @@ pub fn contribute_declared_sources(
                     order: 89,
                     strategy: MergeStrategy::Append,
                     scope: ContextFragment::default_scope(),
-                    source: "legacy:contributor:declared_source".to_string(),
+                    source: "context_contributor:declared_source".to_string(),
                     content: format!(
                         "## Injection Notes\n{}",
                         result
@@ -356,7 +252,7 @@ pub fn contribute_declared_sources(
                 order: 89,
                 strategy: MergeStrategy::Append,
                 scope: ContextFragment::default_scope(),
-                source: "legacy:contributor:declared_source".to_string(),
+                source: "context_contributor:declared_source".to_string(),
                 content: format!("## Injection Error\n- 声明式上下文来源解析失败：{}", err),
             });
             Contribution::fragments_only(fragments)
@@ -392,7 +288,7 @@ pub fn contribute_instruction(
         order: 90,
         strategy: MergeStrategy::Override,
         scope: ContextFragment::default_scope(),
-        source: "legacy:contributor:instruction".to_string(),
+        source: "context_contributor:instruction".to_string(),
         content: format!("## Instruction\n{rendered}"),
     });
 
@@ -405,7 +301,7 @@ pub fn contribute_instruction(
             order: 100,
             strategy: MergeStrategy::Append,
             scope: ContextFragment::default_scope(),
-            source: "legacy:contributor:instruction".to_string(),
+            source: "context_contributor:instruction".to_string(),
             content: format!("## Additional Prompt\n{additional}"),
         });
     }
@@ -432,7 +328,7 @@ pub fn contribute_mcp(config: &agentdash_spi::McpInjectionConfig) -> Contributio
             order: 85,
             strategy: MergeStrategy::Append,
             scope: ContextFragment::default_scope(),
-            source: "legacy:contributor:mcp".to_string(),
+            source: "context_contributor:mcp".to_string(),
             content: config.to_context_content(),
         }],
         mcp_servers: vec![runtime_server],

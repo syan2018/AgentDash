@@ -19,7 +19,7 @@ use crate::session::types::UserPromptInput;
 use crate::vfs::build_lifecycle_mount_with_ports;
 use crate::workflow::LifecycleMountSurface;
 
-/// 把 `SessionAssemblyBuilder` 的累积声明合并进 construction provider handoff。
+/// 把 `SessionAssemblyBuilder` 的累积声明合并进 frame construction handoff。
 ///
 /// ## 合并语义（2026-04-30 对称化后）
 ///
@@ -76,7 +76,8 @@ pub(crate) fn apply_session_assembly(
 /// 声明式 session 装配 builder。
 ///
 /// 将 session 启动拆为 6 个正交关注点（VFS / 能力 / MCP / 系统上下文 / Prompt / 工作流），
-/// 每个关注点通过独立的 `with_*` 方法注入，最终投影到分组后的 launch request。
+/// 每个关注点通过独立的 `with_*` 方法注入，最终投影到 `FrameLaunchEnvelope`
+/// 构造输入。
 ///
 /// ## 设计原则
 ///
@@ -269,10 +270,10 @@ impl SessionAssemblyBuilder {
     /// 保留 `self` 上预先设置的 `env` 等字段
     /// （用 `..self` 叠加语法），只覆盖 companion slice 涉及的关注点。
     ///
-    /// PR 5d（E8①）起，`parent_context_bundle` 会按 `mode` 进行 **fragment 级**
-    /// 裁剪（而不是 Full 直接克隆）：`ConstraintsOnly` 只留 constraint 相关 slot，
-    /// `WorkflowOnly` 只留 workflow 相关 slot，`Compact` 剔除运行时 vfs/tools
-    /// 摘要类 slot 保留业务上下文，`Full` 维持完整继承。
+    /// `parent_context_bundle` 会按 `mode` 进行 fragment 级裁剪：
+    /// `ConstraintsOnly` 只留 constraint 相关 slot，`WorkflowOnly` 只留 workflow
+    /// 相关 slot，`Compact` 剔除运行时 vfs/tools 摘要类 slot 保留业务上下文，
+    /// `Full` 维持完整继承。
     pub(super) fn apply_companion_slice(
         self,
         parent_vfs: Option<&Vfs>,
@@ -371,7 +372,6 @@ pub(super) fn slice_companion_bundle(
 
 /// 将 `SessionAssemblyBuilder` 投影到 `AgentFrameBuilder`，同时提取 launch 数据。
 ///
-/// 替代 `apply_session_assembly`（合入 RuntimeContextInspectionPlan）的新路径。
 /// frame builder 接收 surface 数据（capability/VFS/MCP），
 /// 返回的 launch extras 包含 context bundle / prompt / executor config 等 launch-only 数据。
 pub(super) fn project_assembly_to_frame(

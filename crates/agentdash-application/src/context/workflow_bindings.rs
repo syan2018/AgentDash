@@ -18,7 +18,7 @@ pub fn contribute_workflow_binding(
         order: 83,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:contributor:workflow_bindings".to_string(),
+        source: "context_contributor:workflow_bindings".to_string(),
         content: format!(
             "## Workflow Projection Snapshot\n- lifecycle: {} (`{}`)\n- step: `{}`\n- primary_workflow: {}\n- run_status: `{}`\n- binding_count: {}\n- resolved_binding_count: {}",
             workflow.lifecycle_name,
@@ -48,7 +48,7 @@ pub fn contribute_workflow_binding(
             order: 84 + index as i32,
             strategy: MergeStrategy::Append,
             scope: ContextFragment::default_scope(),
-            source: "legacy:contributor:workflow_bindings".to_string(),
+            source: "context_contributor:workflow_bindings".to_string(),
             content: section,
         });
     }
@@ -60,7 +60,7 @@ pub fn contribute_workflow_binding(
             order: 89,
             strategy: MergeStrategy::Append,
             scope: ContextFragment::default_scope(),
-            source: "legacy:contributor:workflow_bindings".to_string(),
+            source: "context_contributor:workflow_bindings".to_string(),
             content: warning_section,
         });
     }

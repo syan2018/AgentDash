@@ -1,7 +1,7 @@
 # Execution Context Frames
 
 `agentdash-spi::ExecutionContext` 是 connector 边界的投影。Application 层事实来自
-`SessionConstructionPlan` 和 `LaunchPlan`；connector 只接收本次 prompt 所需的
+`AgentFrame`、`FrameLaunchEnvelope` 和 `LaunchPlan`；connector 只接收本次 prompt 所需的
 `ExecutionSessionFrame` 与 `ExecutionTurnFrame`。
 
 ## Top-level Shape
@@ -41,12 +41,12 @@ pub struct ExecutionSessionFrame {
 | 字段 | 来源 | 消费者 |
 |---|---|---|
 | `turn_id` | Launch preparation claim/activation | connector trace、hook 审计 |
-| `working_directory` | `SessionConstructionPlan.workspace.working_directory` | Relay、vibe_kanban、PiAgent tools |
+| `working_directory` | `FrameLaunchEnvelope.working_directory` | Relay、vibe_kanban、PiAgent tools |
 | `environment_variables` | launch prompt payload / executor policy | Relay、vibe_kanban |
-| `executor_config` | construction execution profile + launch override | 所有 connector |
+| `executor_config` | `FrameLaunchEnvelope` execution profile + launch override | 所有 connector |
 | `mcp_servers` | capability projection | Relay 透传；PiAgent 通过 assembled tools 消费 |
-| `vfs` | construction VFS projection | Relay、vibe_kanban、PiAgent tools |
-| `identity` | construction identity projection | Relay、审计、permission 决策 |
+| `vfs` | `FrameLaunchEnvelope` VFS projection | Relay、vibe_kanban、PiAgent tools |
+| `identity` | `FrameLaunchEnvelope` identity projection | Relay、审计、permission 决策 |
 
 一次 `connector.prompt(...)` 调用期间，session frame 不变；下一 turn 需要新的投影时由
 launch stages 重新生成。
@@ -67,10 +67,10 @@ pub struct ExecutionTurnFrame {
 | 字段 | 来源 | 消费者 |
 |---|---|---|
 | `hook_session` | session runtime shared hook handle | hook trace、runtime injection、capability 追踪 |
-| `capability_state` | construction capability projection + runtime command apply result | runtime tools、MCP/VFS diff |
+| `capability_state` | `FrameLaunchEnvelope` capability projection + runtime command apply result | runtime tools、MCP/VFS diff |
 | `runtime_delegate` | launch hook plan | agent loop hook callbacks |
 | `restored_session_state` | restore plan | 支持 repository restore 的 connector |
-| `context_frames` | construction context projection | connector context 消费（按 kind 分类或渲染为文本） |
+| `context_frames` | `FrameLaunchEnvelope` context projection | connector context 消费（按 kind 分类或渲染为文本） |
 | `assembled_tools` | runtime tool provider + MCP tools projection | in-process connector tool execution |
 
 `TurnExecution` 在 active turn 内保存 session frame、capability state、context bundle、
@@ -101,7 +101,7 @@ active TurnExecution
 ```
 
 该流程只服务 live connector 的工具集替换；下一轮 prompt 仍通过
-`LaunchCommand -> SessionConstructionPlan -> LaunchPlan -> PreparedTurn` 重新投影完整
+`LaunchCommand -> FrameLaunchEnvelope -> LaunchPlan -> PreparedTurn` 重新投影完整
 `ExecutionContext`。
 
 ## PiAgent Bundle Handling

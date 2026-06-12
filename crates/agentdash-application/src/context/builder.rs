@@ -138,9 +138,9 @@ pub fn build_session_context_bundle(
 /// 产出的 Bundle 含单条 fragment：slot=`static_fragment`、scope=默认、
 /// source=`session:continuation`。
 ///
-/// **PR 5d 注记**：仅用于"完全没有 owner/task bundle"的场景（owner bootstrap /
-/// routine continuation）。Task continuation 路径改为直接把 transcript fragment
-/// 追加到原 task bundle 上，保留原有的 task/story/project slot 分区。
+/// 仅用于"完全没有 owner/task bundle"的场景（owner bootstrap / routine continuation）。
+/// Task continuation 路径直接把 transcript fragment 追加到原 task bundle 上，
+/// 保留原有的 task/story/project slot 分区。
 pub fn build_continuation_bundle_from_markdown(
     session_id: Uuid,
     markdown: String,
@@ -182,7 +182,7 @@ pub fn build_declared_source_warning_fragment(
         order,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:declared_source_warning".to_string(),
+        source: "declared_source_warning".to_string(),
         content: format!(
             "## Injection Notes\n{}",
             warnings
@@ -286,10 +286,9 @@ mod bundle_tests {
         assert!(f.scope.contains(FragmentScope::TitleGen));
     }
 
-    /// 回归固化：`bce0825` 场景 —— title generator 不应看到 RuntimeAgent scope 的 agent context
-    /// fragment。换言之，所有 `legacy:session_plan` / `legacy:contributor:*` / `contribute_*`
-    /// 产出 fragment 的 scope 必须是 `RuntimeAgent | Audit`（**不含** `TitleGen`），
-    /// 从协议层防止 agent 指令泄漏到 title 生成路径。
+    /// Title generator 不应看到 RuntimeAgent scope 的 agent context fragment。
+    /// session plan 与 context contributor 产出的 fragment scope 必须是
+    /// `RuntimeAgent | Audit`（不含 `TitleGen`），从协议层防止 agent 指令泄漏到标题生成路径。
     #[test]
     fn title_gen_scope_excludes_agent_context() {
         let config = SessionContextConfig {

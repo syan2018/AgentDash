@@ -180,7 +180,7 @@ async fn resolve_workspace_file_source(
         order,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:workspace_source:file".to_string(),
+        source: "workspace_source:file".to_string(),
         content: render_source_section(
             source,
             truncate_text(
@@ -222,7 +222,7 @@ async fn resolve_workspace_snapshot_source(
         order,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:workspace_source:snapshot".to_string(),
+        source: "workspace_source:snapshot".to_string(),
         content: render_source_section(
             source,
             build_workspace_snapshot_from_entries(

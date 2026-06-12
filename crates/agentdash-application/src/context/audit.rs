@@ -288,7 +288,7 @@ mod tests {
     fn filter_by_slot_and_source_prefix() {
         let bus = InMemoryContextAuditBus::new(100);
         let mut bundle = SessionContextBundle::new(Uuid::new_v4(), "task_start");
-        bundle.upsert_by_slot(frag("task", "legacy:session_plan", "alpha"));
+        bundle.upsert_by_slot(frag("task", "session_plan", "alpha"));
         bundle.upsert_by_slot(frag("story", "hook:UserPromptSubmit", "beta"));
 
         emit_bundle_fragments(&bus, &bundle, SESSION_KEY, AuditTrigger::ComposerRebuild);

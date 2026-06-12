@@ -1,6 +1,6 @@
-//! Declared source 渲染共享 helper（PR 5c）。
+//! Declared source 渲染共享 helper。
 //!
-//! 声明式上下文来源（`ContextSourceRef`）的 fragment 构造在历史上有两处独立实现：
+//! 声明式上下文来源（`ContextSourceRef`）的 fragment 构造由两类 resolver 共享：
 //! - `context/source_resolver.rs` 处理 `ManualText` / `HttpFetch` 等非 workspace kind。
 //! - `context/workspace_sources.rs` 处理 `File` / `ProjectSnapshot`（需要 VFS）。
 //!

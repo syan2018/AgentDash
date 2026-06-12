@@ -252,7 +252,7 @@ Update:
 - Project Assets 展示来源状态。
 - 用户手动重装/覆盖。
 
-ExtensionTemplate 安装后，`LibraryAsset` 本身不直接影响会话；只有安装成 Project extension installation 后才可能被 session construction 读取。
+ExtensionTemplate 安装后，`LibraryAsset` 本身不直接影响会话；只有安装成 Project extension installation 后才可能被 frame construction 读取。
 
 Packaged Extension 安装以平台 artifact 为事实源。`ExtensionPackageArtifact` 使用 `owner_kind + owner_id` 表达归属：本地导入保存为 Project-owned artifact，发布到 Marketplace 后保存为 LibraryAsset-owned artifact。Marketplace packaged install 写入 `installed_source + package_artifact`；本地包导入写入 Project-owned `package_artifact` 且 `installed_source = None`。Shared Library source-status 只比较 `InstalledAssetSource` 的版本与 digest，包完整性由 install/publish/runtime download contract 负责。
 

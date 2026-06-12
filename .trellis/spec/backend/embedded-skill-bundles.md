@@ -75,7 +75,7 @@ ensure_embedded_skill_bundle(files, &CANVAS_SYSTEM_BUNDLE)
 
 Routine 信息管理使用同一条项目级内嵌 Skill 路径：`routine-memory` 先通过
 `SkillAssetService::bootstrap_builtins(project_id, Some(key))` 同步到项目 SkillAsset，
-再在 Routine Session construction 中通过 lifecycle VFS projection 注入。这样 Routine
+再在 Routine frame construction 中通过 lifecycle VFS projection 注入。这样 Routine
 Session 默认具备 memory 协议说明，而 skill 内容仍由 embedded bundle 与 SkillAsset
 管理；`routine_vfs` 只负责 Routine state projection。
 

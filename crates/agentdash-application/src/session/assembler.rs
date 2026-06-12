@@ -2,7 +2,7 @@
 //!
 //! ## 设计
 //!
-//! 代码库里一共有 5 条 session 启动路径,此前各自手写 bootstrap 逻辑:
+//! 代码库里一共有 5 条 session 启动路径:
 //!
 //! | 路径 | 实现入口 |
 //! |---|---|
@@ -14,11 +14,11 @@
 //! 5 条路径共享 4 个"策略轴":owner scope mount / context bundle 生成 /
 //! prompt 来源 / 能力裁剪 / 父 session 继承。但字段形状不相交(Task 有
 //! `ActiveWorkflowProjection`,Companion 有 parent 继承,AgentNode 有 step),
-//! 因此设计上采用**组合器内部草稿**收束各轴字段，公共入口合入当前 construction
-//! provider handoff:
+//! 因此设计上采用**组合器内部草稿**收束各轴字段，公共入口合入 frame
+//! construction handoff:
 //!
 //! ```text
-//! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → construction facts
+//! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → AgentFrame / FrameLaunchEnvelope
 //! ```
 //!
 //! compose 函数内部共享 building blocks(`load_available_presets` /
@@ -380,10 +380,9 @@ fn resolve_owner_audit_trigger(
 
 /// Owner 级 session 的上下文 Contribution 组装 —— Story 与 Project 各走自己的 contribute_*。
 ///
-/// 不再内联 SessionPlan / VFS / MCP 这些"运行时画像"字段 —— 调用方在外层
-/// （`compose_owner_bootstrap`）显式 push SessionPlan contribution，保证三条
-/// compose 路径（owner / lifecycle_node）的 SessionPlan 产出
-/// 节拍一致（PR 5b）。
+/// 不内联 SessionPlan / VFS / MCP 这些"运行时画像"字段；调用方在外层
+/// （`compose_owner_bootstrap`）显式 push SessionPlan contribution，保证 owner /
+/// lifecycle_node 路径的 SessionPlan 产出节拍一致。
 fn build_owner_context_contribution(
     owner: &OwnerScope<'_>,
     workspace_source_fragments: Vec<agentdash_spi::ContextFragment>,
@@ -418,8 +417,8 @@ fn build_owner_context_contribution(
 
 /// Owner 路径的 SessionPlan contribution 构建（外挂到 compose_owner_bootstrap 顶层）。
 ///
-/// PR 5b 把 SessionPlan fragments 从 `contribute_story_context` / `contribute_project_context`
-/// 内部迁出到此函数，与 lifecycle / companion 路径保持一致的外挂节拍。
+/// Story / Project contributor 只维护业务字段；SessionPlan 运行时画像在 composer
+/// 顶层追加，与 lifecycle / companion 路径保持一致。
 fn build_owner_session_plan_contribution(
     owner: &OwnerScope<'_>,
     vfs: Option<&Vfs>,
@@ -1101,10 +1100,8 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
         .await
         .map_err(|error| error.to_string())?;
 
-    // SessionPlan 在 PR 5b 前 lifecycle node 路径完全不产出，导致 lifecycle agent
-    // 的 bundle 相比 owner / task 路径最薄。此处补上 SessionPlan contribution，
-    // 让 lifecycle node 与其余两路都有 vfs / tools / persona / workflow /
-    // runtime_policy 的统一画像。
+    // Lifecycle node 与 owner 路径都追加 SessionPlan contribution，保持 vfs /
+    // tools / persona / workflow / runtime_policy 的统一画像。
     let lifecycle_mcp_runtime: Vec<RuntimeMcpServer> = activation
         .mcp_servers
         .iter()
@@ -1593,7 +1590,7 @@ mod tests {
     };
     use std::collections::BTreeSet;
 
-    // ── companion bundle fragment 裁剪回归（PR 5d · E8①） ──
+    // ── companion bundle fragment 裁剪回归 ──
 
     fn session_mcp_server(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {
         agentdash_spi::SessionMcpServer {

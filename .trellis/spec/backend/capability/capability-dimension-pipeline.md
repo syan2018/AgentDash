@@ -40,7 +40,7 @@ RuntimeCapabilityTransition {
 
 payload 不保存完整 `CapabilityState`、`ToolDimension`、`CompanionDimension`、runtime surface、Skill baseline 或 guidelines projection。Skill baseline、guidelines 与 runtime surface 从 replay 后的 effective VFS / MCP / capability facts 派生。
 
-多个 requested runtime command 按 store 返回顺序 fold replay 到 construction base projection。VFS/mount operation 是有序 effect；construction、context query、next-turn launch 与 pending apply event 共用同一个 transition fold replay 入口。
+多个 requested runtime command 按 store 返回顺序 fold replay 到 frame runtime surface。VFS/mount operation 是有序 effect；frame construction、context query、next-turn launch 与 pending apply event 共用同一个 transition fold replay 入口。
 
 ## Module Interface
 

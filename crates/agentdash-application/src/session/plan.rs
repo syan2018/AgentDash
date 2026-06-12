@@ -83,6 +83,8 @@ pub struct SessionPlanFragments {
     pub fragments: Vec<ContextFragment>,
 }
 
+const SESSION_PLAN_SOURCE: &str = "session_plan";
+
 pub fn resolve_story_session_composition(story: Option<&Story>) -> Option<SessionComposition> {
     story.and_then(|item| item.context.session_composition.clone())
 }
@@ -98,7 +100,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
             order: 35,
             strategy: MergeStrategy::Append,
             scope: FragmentScopeSet::only(FragmentScope::Audit),
-            source: "legacy:session_plan".to_string(),
+            source: SESSION_PLAN_SOURCE.to_string(),
             content: summary.markdown,
         });
     }
@@ -112,7 +114,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
         order: 36,
         strategy: MergeStrategy::Append,
         scope: FragmentScopeSet::only(FragmentScope::Audit),
-        source: "legacy:session_plan".to_string(),
+        source: SESSION_PLAN_SOURCE.to_string(),
         content: tool_visibility.markdown,
     });
 
@@ -122,7 +124,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
         order: 37,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:session_plan".to_string(),
+        source: SESSION_PLAN_SOURCE.to_string(),
         content: build_persona_markdown(&input),
     });
 
@@ -139,7 +141,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
             order: 38 + index as i32,
             strategy: MergeStrategy::Append,
             scope: ContextFragment::default_scope(),
-            source: "legacy:session_plan".to_string(),
+            source: SESSION_PLAN_SOURCE.to_string(),
             content: build_required_context_block_markdown(block),
         });
     }
@@ -150,7 +152,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
         order: 48,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:session_plan".to_string(),
+        source: SESSION_PLAN_SOURCE.to_string(),
         content: build_workflow_markdown(&input),
     });
 
@@ -166,7 +168,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
         order: 49,
         strategy: MergeStrategy::Append,
         scope: FragmentScopeSet::only(FragmentScope::Audit),
-        source: "legacy:session_plan".to_string(),
+        source: SESSION_PLAN_SOURCE.to_string(),
         content: runtime_policy.markdown,
     });
 

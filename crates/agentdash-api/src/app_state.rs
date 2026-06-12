@@ -66,9 +66,9 @@ pub struct ServiceSet {
     pub vfs_service: Arc<VfsService>,
     /// VFS 写入分发器 — 统一 surface/tool mutation 与 inline_fs storage 坐标解析。
     pub vfs_mutation_dispatcher: Arc<VfsMutationDispatcher>,
-    /// Host Integration 额外 skill 目录 — construction 阶段统一 discovery 后进入 session capabilities。
+    /// Host Integration 额外 skill 目录 — frame construction 阶段统一 discovery 后进入 session capabilities。
     pub extra_skill_dirs: Vec<std::path::PathBuf>,
-    /// Host Integration 动态 skill discovery providers — construction 阶段统一聚合。
+    /// Host Integration 动态 skill discovery providers — frame construction 阶段统一聚合。
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
     /// Host Integration Marketplace Source providers — 后续 external marketplace API 统一从这里读取来源。
     pub marketplace_source_providers: Vec<Arc<dyn MarketplaceSourceProvider>>,

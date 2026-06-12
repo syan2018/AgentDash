@@ -6,7 +6,7 @@
 //! FrameLaunchEnvelope  ← Frame construction 输出，字段 non-optional
 //! ```
 //!
-//! `FrameLaunchEnvelope` 是 session construction 到 planner 的唯一传递形式，
+//! `FrameLaunchEnvelope` 是 FrameConstructionService 到 planner 的唯一传递形式，
 //! 让"缺字段"在构造边界暴露而不是到 planner 才兜底检查。
 
 use std::collections::HashMap;
@@ -77,7 +77,7 @@ pub struct FrameLaunchIntent {
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
 }
 
-// ─── FrameLaunchEnvelope: construction 输出，字段 non-optional ───
+// ─── FrameLaunchEnvelope: frame construction 输出，字段 non-optional ───
 
 /// Frame construction 到 planner 的传递物。
 /// `working_directory`、`executor_config`、`capability_state` 在此保证 non-optional,

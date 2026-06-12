@@ -1,4 +1,4 @@
-//! Context fragment slot 的默认 order 集中常量（PR 5c）。
+//! Context fragment slot 的默认 order 集中常量。
 //!
 //! 历史上 slot order 数字（10/20/30/35/36/37/38/40/48/49/50/60/80/82/83/84/85/
 //! 86/89/90/96/100/200）直接硬编码在各 contributor 内；`HOOK_SLOT_ORDERS`

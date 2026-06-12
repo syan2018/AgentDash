@@ -94,7 +94,7 @@ pub(super) async fn compose(
                 executor_config,
                 user_input,
                 agent_mcp: AgentLevelMcp {
-                    preset_mcp_servers: agent_context.preset_mcp_servers.clone(),
+                    preset_mcp_presets: agent_context.preset_mcp_presets.clone(),
                 },
                 agent_tool_directives: agent_context
                     .preset_config

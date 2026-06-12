@@ -790,6 +790,7 @@ mod tests {
                 owner_ctx: agentdash_spi::CapabilityScopeCtx::Project { project_id },
                 contributions,
                 mcp_candidates: Default::default(),
+                mcp_runtime_context: None,
                 capability_context: None,
             },
             &platform,

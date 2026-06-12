@@ -19,9 +19,10 @@ use agentdash_application::runtime_gateway::{
 };
 use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, DeleteMcpPresetResponse, ListMcpPresetQuery,
-    McpPresetResponse, McpPresetSourceTag, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
+    McpPresetResponse, McpPresetSourceTag, ProbeMcpPresetRequest, ProbeMcpPresetResponse,
+    UpdateMcpPresetRequest,
 };
-use agentdash_domain::mcp_preset::{McpPreset, McpTransportConfig};
+use agentdash_domain::mcp_preset::McpPreset;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
@@ -118,6 +119,7 @@ pub async fn create_mcp_preset(
             description: req.description,
             transport: req.transport.into(),
             route_policy: req.route_policy.into(),
+            runtime_binding: req.runtime_binding.map(Into::into),
         })
         .await?;
     Ok(Json(preset.into()))
@@ -167,6 +169,9 @@ pub async fn update_mcp_preset(
                 description: req.description,
                 transport: req.transport.map(Into::into),
                 route_policy: req.route_policy.map(Into::into),
+                runtime_binding: req
+                    .runtime_binding
+                    .map(|runtime_binding| runtime_binding.map(Into::into)),
             },
         )
         .await?;
@@ -259,7 +264,7 @@ pub async fn probe_mcp_transport_handler(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<ProjectMcpPresetsPath>,
-    Json(transport): Json<McpTransportConfig>,
+    Json(req): Json<ProbeMcpPresetRequest>,
 ) -> Result<Json<ProbeMcpPresetResponse>, ApiError> {
     let project_id = parse_project_id(&path.project_id)?;
     load_project_with_permission(
@@ -270,8 +275,8 @@ pub async fn probe_mcp_transport_handler(
     )
     .await?;
 
-    let input = serde_json::to_value(transport)
-        .map_err(|error| ApiError::BadRequest(format!("MCP transport 配置非法: {error}")))?;
+    let input = serde_json::to_value(req)
+        .map_err(|error| ApiError::BadRequest(format!("MCP probe 请求非法: {error}")))?;
     let request = RuntimeInvocationRequest::new(
         RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION).map_err(|error| {
             ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))

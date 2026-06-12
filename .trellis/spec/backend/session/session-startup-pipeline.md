@@ -97,6 +97,149 @@ Contract:
 - `runtime_surface` 是 query DTO，只从 final `plan.surface.vfs` 生成。
 - `SessionConstructionPlan` 的 VFS 投影写入通过 plan helper 集中同步，原因是 `surface.vfs` 服务 launch 装配面，`context_projection.vfs` 服务 query DTO 面，而二者必须跟随 effective capability VFS 保持一致。
 
+## Scenario: MCP Runtime Binding During Construction
+
+### 1. Scope / Trigger
+
+- Trigger: MCP Preset 可以声明运行时绑定；construction、capability resolver、direct/relay/local MCP runtime 都必须消费同一份已解析 MCP server declaration。
+- Scope: Project `McpPreset.runtime_binding`、final VFS `main` mount metadata、`mcp_preset_keys`、`mcp:<preset>` capability directive、`SessionConstructionPlan.projections.mcp_servers` 与 `CapabilityState.tool.mcp_servers`。
+
+### 2. Signatures
+
+```rust
+pub struct McpRuntimeBindingConfig {
+    pub mount_id: Option<String>, // default: "main"
+    pub bindings: Vec<McpRuntimeBindingRule>,
+}
+
+pub struct McpRuntimeBindingRule {
+    pub source: McpRuntimeBindingSource,
+    pub target: McpRuntimeBindingTarget,
+    pub required: bool,
+}
+
+pub enum McpRuntimeBindingSource {
+    VfsRootRef,
+    VfsBackendId,
+    WorkspaceId,
+    WorkspaceBindingId,
+    WorkspaceIdentity { path: Vec<String> },
+    WorkspaceDetectedFact { path: Vec<String> },
+}
+
+pub enum McpRuntimeBindingTarget {
+    HttpQuery { name: String },
+    HttpHeader { name: String },
+    StdioEnv { name: String },
+    StdioCwd,
+}
+
+pub struct SessionRuntimeMcpContext<'a> {
+    pub vfs: Option<&'a Vfs>,
+}
+
+pub fn resolve_preset_mcp_server(
+    preset: &McpPreset,
+    context: Option<&SessionRuntimeMcpContext<'_>>,
+) -> Result<SessionMcpServer, McpRuntimeBindingError>;
+
+pub struct CapabilityResolverInput<'a> {
+    pub mcp_candidates: McpCandidates,
+    pub mcp_runtime_context: Option<SessionRuntimeMcpContext<'a>>,
+    // other capability inputs omitted
+}
+```
+
+Workspace mount metadata consumed by the resolver:
+
+```json
+{
+  "workspace_id": "...",
+  "workspace_identity_kind": "p4_workspace",
+  "workspace_identity_payload": {},
+  "workspace_binding_id": "...",
+  "workspace_detected_facts": {
+    "p4": {
+      "client_name": "...",
+      "server_address": "...",
+      "stream": "...",
+      "workspace_root": "...",
+      "user_name": "..."
+    }
+  }
+}
+```
+
+### 3. Contracts
+
+- `McpPreset.runtime_binding` stores only the reusable binding declaration. It never stores resolved workspace values.
+- The final VFS mount metadata is the canonical source for workspace/binding/detected facts. Runtime binding reads the mount selected by `mount_id.unwrap_or("main")`.
+- `workspace_mount()` must write selected binding facts into metadata using `workspace_id`, `workspace_identity_payload`, `workspace_binding_id`, and `workspace_detected_facts`. The selected binding is the construction fact source because future workspace resolution changes should not require MCP resolver changes.
+- `resolve_preset_mcp_server()` returns the runtime result: `SessionMcpServer { name: preset.key, transport: resolved_transport, uses_relay }`.
+- `mcp_preset_keys` and `mcp:<preset>` must both resolve through `resolve_preset_mcp_server()` with the same `SessionRuntimeMcpContext` after final VFS exists.
+- Request/relay-provided already-resolved `SessionMcpServer` entries are runtime results and must not be re-resolved as presets.
+- Projection normalization must keep `CapabilityState.tool.mcp_servers == SessionConstructionPlan.projections.mcp_servers`.
+- Duplicate MCP servers are de-duplicated by agent-facing server name after request MCP, capability MCP, and agent preset MCP are merged.
+- HTTP/SSE query binding uses a URL parser and replaces existing same-name query values with the runtime fact.
+- HTTP/SSE header binding replaces an existing same-name header case-insensitively; final reserved-header validation stays in the rmcp HTTP client layer.
+- stdio env binding replaces an existing same-name env var; stdio cwd binding writes `McpTransportConfig::Stdio.cwd`.
+- `route_policy.uses_relay(&resolved_transport)` runs after binding so the runtime decision observes the resolved transport.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Runtime binding exists but runtime context is missing | `McpRuntimeBindingError::MissingSessionContext` with preset key |
+| Runtime binding exists but `context.vfs` is missing | `McpRuntimeBindingError::MissingSessionContext` with preset key |
+| `mount_id` cannot be found in final VFS | `McpRuntimeBindingError::MissingMount` with preset key and mount id |
+| Required source path is absent or empty | `McpRuntimeBindingError::MissingRequiredSource` with preset key, rule index, and source path |
+| Optional source path is absent or empty | Skip that rule and keep the current transport field |
+| Source path resolves to object or array | `McpRuntimeBindingError::InvalidSourceValue` |
+| HTTP target is applied to stdio, or stdio target is applied to HTTP/SSE | `McpRuntimeBindingError::TransportMismatch` with target path and transport kind |
+| HTTP query target name, header target name, or stdio env target name is blank | `McpRuntimeBindingError::InvalidTarget` |
+| HTTP/SSE URL cannot be parsed while applying query binding | `McpRuntimeBindingError::InvalidTarget` |
+| stdio cwd binding resolves to blank value | `McpRuntimeBindingError::InvalidTarget` |
+| `SessionConstructionPlan::validate_for_launch()` sees MCP projection mismatch | Reject launch before connector prompt |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `workspace.detected_facts.p4.client_name -> http_query.p4_client` resolves from final `main` mount and the direct/relay runtime receives the URL with that query value.
+- Good: `workspace.detected_facts.p4.workspace_root -> stdio_cwd` resolves to a non-empty cwd and the local runtime spawns the stdio MCP process in that directory.
+- Base: `runtime_binding = None` produces a static `SessionMcpServer` from preset transport and route policy.
+- Base: An optional binding source is unavailable during construction; the remaining rules apply and the static value for that target is preserved.
+- Boundary mismatch: resolving a runtime-bound preset before final VFS exists gives a declaration without the runtime fact surface.
+- Canonical flow: keep preset declarations through owner bootstrap, build final VFS, create runtime MCP context, then resolve all preset-backed MCP servers and normalize capability projection.
+
+### 6. Tests Required
+
+- Domain serialization test covers `McpRuntimeBindingConfig`, source/target tagged unions, and `McpTransportConfig::Stdio.cwd`.
+- VFS mount test asserts `workspace_mount()` metadata includes selected binding `workspace_detected_facts` and P4 fields.
+- Runtime resolver tests assert HTTP query/header binding, stdio env/cwd binding, optional missing source skip, missing required source diagnostic, non-scalar source failure, transport mismatch, blank target name, invalid URL, and blank cwd.
+- Capability resolver test asserts `mcp:<preset>` receives `CapabilityResolverInput.mcp_runtime_context` and resolves the same transport as the agent preset path.
+- Session assembler test asserts `mcp_preset_keys` and `mcp:<preset>` for the same preset produce identical resolved `SessionMcpServer`.
+- Construction validation test asserts `CapabilityState.tool.mcp_servers == plan.projections.mcp_servers`.
+- Direct/relay/local integration tests assert resolved query/header/env/cwd values are the values consumed by runtime clients, not the preset declaration.
+
+### 7. Non-canonical / Canonical
+
+#### Non-canonical
+
+```text
+McpPreset(runtime_binding + static transport)
+  -> static SessionMcpServer before final VFS
+  -> later layers infer workspace facts again
+```
+
+#### Canonical
+
+```text
+McpPreset(runtime_binding + static transport)
+  + SessionRuntimeMcpContext(final VFS main mount)
+  -> resolve_preset_mcp_server(...)
+  -> SessionMcpServer(resolved transport)
+  -> CapabilityState.tool.mcp_servers == plan.projections.mcp_servers
+```
+
 ## LaunchPlan And Stage Contracts
 
 `LaunchPlanner::plan` 返回 `LaunchPlan`。planner 输入由 `LaunchPlanningDeps`、`LaunchCommand`、`SessionConstructionPlan` 与 runtime facts 组成。

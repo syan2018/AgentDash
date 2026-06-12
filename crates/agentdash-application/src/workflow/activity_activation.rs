@@ -46,6 +46,9 @@ pub struct ActivityActivationInput<'a> {
     pub active_activity: &'a ActivityDefinition,
     /// activity 绑定的 AgentProcedure 执行合同(若有);提供 capability baseline 与 mount overlay。
     pub workflow_contract: Option<&'a AgentProcedureContract>,
+    /// AgentFrame 当前 revision 的 VFS。运行时 MCP binding 以 base VFS + lifecycle overlay
+    /// 组成的有效 VFS 为事实源，而不是以 RuntimeSession 记录作为事实源。
+    pub base_vfs: Option<&'a Vfs>,
     /// lifecycle 的 run_id,用于构建 `lifecycle://<run_id>/artifacts/...` mount。
     pub run_id: Uuid,
     /// 当前 Activity 所属 orchestration instance，用于把 lifecycle VFS 绑定到运行态事实源。
@@ -110,7 +113,7 @@ pub struct ActivityActivation {
 pub fn activate_activity_with_platform(
     input: &ActivityActivationInput<'_>,
     platform: &PlatformConfig,
-) -> ActivityActivation {
+) -> Result<ActivityActivation, String> {
     // ── 1. baseline + override + directive → 合并 directive 序列 ──
     //
     // 合并策略：baseline (workflow contract 或 override) 在前，运行时 delta 在后；
@@ -128,43 +131,7 @@ pub fn activate_activity_with_platform(
 
     let has_active_workflow = input.workflow_contract.is_some();
 
-    // ── 2. 调 Resolver ──
-    let mut contributions = Vec::new();
-    contributions.push(ContextContributions {
-        source: ContextContributionSource::Workflow,
-        tool: Some(ToolContribution {
-            directives: combined_directives.clone(),
-            has_active_workflow,
-        }),
-        companion: if !input.available_companions.is_empty() {
-            Some(CompanionContribution {
-                available: input.available_companions.clone(),
-            })
-        } else {
-            None
-        },
-    });
-    let cap_input = CapabilityResolverInput {
-        owner_ctx: input.owner_ctx.clone(),
-        contributions,
-        mcp_candidates: McpCandidates {
-            presets: input.available_presets.clone(),
-            agent_servers: input.agent_mcp_servers.clone(),
-        },
-        capability_context: None,
-    };
-    let mut cap_output = CapabilityResolver::resolve(&cap_input, platform);
-    if let Some(slice_mode) = input.companion_slice_mode {
-        cap_output = CapabilityResolver::apply_companion_slice(cap_output, slice_mode);
-    }
-
-    // ── 3. 汇总 MCP server 列表(platform + custom),去重 ──
-    let mut mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output.tool.mcp_servers.clone();
-    dedupe_session_mcp_servers(&mut mcp_servers);
-
-    let capability_keys = cap_output.capability_keys();
-
-    // ── 4. lifecycle mount + Vfs ──
+    // ── 2. 先构造本次 AgentRun/AgentFrame 有效 VFS,再调 Resolver ──
     let writable_port_keys: Vec<String> = input
         .active_activity
         .output_ports
@@ -191,11 +158,55 @@ pub fn activate_activity_with_platform(
         .workflow_contract
         .map(|contract| contract.capability_config.mount_directives.clone())
         .unwrap_or_default();
+    let effective_vfs = crate::session::capability_state::compose_vfs_with_overlay_and_directives(
+        input.base_vfs,
+        &lifecycle_vfs,
+        &mount_directives,
+    );
+
+    // ── 3. 调 Resolver ──
+    let mut contributions = Vec::new();
+    contributions.push(ContextContributions {
+        source: ContextContributionSource::Workflow,
+        tool: Some(ToolContribution {
+            directives: combined_directives.clone(),
+            has_active_workflow,
+        }),
+        companion: if !input.available_companions.is_empty() {
+            Some(CompanionContribution {
+                available: input.available_companions.clone(),
+            })
+        } else {
+            None
+        },
+    });
+    let cap_input = CapabilityResolverInput {
+        owner_ctx: input.owner_ctx.clone(),
+        contributions,
+        mcp_candidates: McpCandidates {
+            presets: input.available_presets.clone(),
+            agent_servers: input.agent_mcp_servers.clone(),
+        },
+        mcp_runtime_context: Some(crate::mcp_preset::SessionRuntimeMcpContext {
+            vfs: Some(&effective_vfs),
+        }),
+        capability_context: None,
+    };
+    let mut cap_output = CapabilityResolver::resolve_checked(&cap_input, platform)?;
+    if let Some(slice_mode) = input.companion_slice_mode {
+        cap_output = CapabilityResolver::apply_companion_slice(cap_output, slice_mode);
+    }
+
+    // ── 4. 汇总 MCP server 列表(platform + custom),去重 ──
+    let mut mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output.tool.mcp_servers.clone();
+    dedupe_session_mcp_servers(&mut mcp_servers);
+
+    let capability_keys = cap_output.capability_keys();
 
     // ── 5. kickoff prompt fragment ──
     let kickoff_prompt = build_kickoff_prompt_fragment(input);
 
-    ActivityActivation {
+    Ok(ActivityActivation {
         capability_state: cap_output,
         mcp_servers,
         capability_keys,
@@ -203,7 +214,7 @@ pub fn activate_activity_with_platform(
         lifecycle_mount,
         lifecycle_vfs,
         mount_directives,
-    }
+    })
 }
 
 fn build_kickoff_prompt_fragment(input: &ActivityActivationInput<'_>) -> KickoffPromptFragment {
@@ -377,6 +388,7 @@ mod tests {
             },
             active_activity: &step,
             workflow_contract: None,
+            base_vfs: None,
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -391,7 +403,7 @@ mod tests {
             available_companions: Vec::new(),
         };
 
-        let out = activate_activity_with_platform(&input, &test_platform());
+        let out = activate_activity_with_platform(&input, &test_platform()).expect("activate");
         // 无 workflow,走默认 visibility —— task scope 至少能拿到 Read/Write/Execute
         assert!(
             !out.capability_keys.is_empty(),
@@ -414,6 +426,7 @@ mod tests {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow_contract: Some(&workflow.contract),
+            base_vfs: None,
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -428,7 +441,7 @@ mod tests {
             available_companions: Vec::new(),
         };
 
-        let out = activate_activity_with_platform(&input, &test_platform());
+        let out = activate_activity_with_platform(&input, &test_platform()).expect("activate");
         assert!(out.capability_keys.contains("workflow_management"));
         // file_read/write/shell_execute 现在是独立 directive
         assert!(out.capability_keys.contains("file_read"));
@@ -448,6 +461,7 @@ mod tests {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow_contract: Some(&workflow.contract),
+            base_vfs: None,
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -462,7 +476,7 @@ mod tests {
             available_companions: Vec::new(),
         };
 
-        let out = activate_activity_with_platform(&input, &test_platform());
+        let out = activate_activity_with_platform(&input, &test_platform()).expect("activate");
 
         assert!(out.capability_keys.contains("workflow_management"));
         assert!(out.capability_keys.contains("file_read"));
@@ -488,6 +502,7 @@ mod tests {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow_contract: Some(&full_read_workflow.contract),
+            base_vfs: None,
             run_id,
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -506,8 +521,9 @@ mod tests {
             ..base_input.clone()
         };
 
-        let base = activate_activity_with_platform(&base_input, &test_platform());
-        let restricted = activate_activity_with_platform(&restricted_input, &test_platform());
+        let base = activate_activity_with_platform(&base_input, &test_platform()).expect("activate");
+        let restricted =
+            activate_activity_with_platform(&restricted_input, &test_platform()).expect("activate");
 
         assert_eq!(base.capability_keys, restricted.capability_keys);
         assert!(
@@ -557,6 +573,7 @@ mod tests {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow_contract: Some(&workflow.contract),
+            base_vfs: None,
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -570,7 +587,8 @@ mod tests {
             ready_port_keys: BTreeSet::new(),
             available_companions: Vec::new(),
         };
-        let activation = activate_activity_with_platform(&input, &test_platform());
+        let activation =
+            activate_activity_with_platform(&input, &test_platform()).expect("activate");
         let base_surface = {
             let mut state = activation.capability_state.clone();
             state.tool.mcp_servers = activation.mcp_servers.clone();
@@ -620,6 +638,7 @@ mod tests {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow_contract: Some(&workflow.contract),
+            base_vfs: None,
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -639,7 +658,7 @@ mod tests {
             available_companions: Vec::new(),
         };
 
-        let out = activate_activity_with_platform(&input, &test_platform());
+        let out = activate_activity_with_platform(&input, &test_platform()).expect("activate");
         // baseline_override = workspace_module + collaboration + Remove(file_read),
         // directive = +workflow_management
         // workflow.contract.capability_config.tool_directives = file_read 被 override 替代
@@ -666,6 +685,7 @@ mod tests {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow_contract: None,
+            base_vfs: None,
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -680,7 +700,7 @@ mod tests {
             available_companions: Vec::new(),
         };
 
-        let out = activate_activity_with_platform(&input, &test_platform());
+        let out = activate_activity_with_platform(&input, &test_platform()).expect("activate");
         assert!(
             out.kickoff_prompt
                 .output_section
@@ -725,6 +745,7 @@ mod tests {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow_contract: None,
+            base_vfs: None,
             run_id: Uuid::new_v4(),
             orchestration_id: Uuid::new_v4(),
             node_path: "implement",
@@ -739,7 +760,7 @@ mod tests {
             available_companions: Vec::new(),
         };
 
-        let out = activate_activity_with_platform(&input, &test_platform());
+        let out = activate_activity_with_platform(&input, &test_platform()).expect("activate");
         assert!(out.kickoff_prompt.input_section.contains("ctx"));
     }
 }

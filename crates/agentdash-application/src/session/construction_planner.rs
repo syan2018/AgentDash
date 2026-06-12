@@ -5,7 +5,7 @@ use agentdash_domain::{
     workspace::Workspace,
 };
 
-use crate::{mcp_preset::resolve_preset_mcp_refs, repository_set::RepositorySet};
+use crate::{mcp_preset::resolve_preset_mcp_presets, repository_set::RepositorySet};
 
 pub const PROJECT_AGENT_BINDING_LABEL_PREFIX: &str = "project_agent:";
 
@@ -18,7 +18,7 @@ pub struct ResolvedProjectAgentContext {
     pub preset_config: AgentPresetConfig,
     pub preset_name: Option<String>,
     pub source: String,
-    pub preset_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub preset_mcp_presets: Vec<agentdash_domain::mcp_preset::McpPreset>,
     pub project_agent: ProjectAgent,
 }
 
@@ -56,7 +56,7 @@ pub async fn build_project_agent_context(
         .filter(|value| !value.is_empty())
         .map(String::from)
         .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
-    let preset_mcp_servers = resolve_preset_mcp_refs(
+    let preset_mcp_presets = resolve_preset_mcp_presets(
         repos.mcp_preset_repo.as_ref(),
         agent.project_id,
         preset.mcp_preset_keys.as_deref().unwrap_or_default(),
@@ -77,7 +77,7 @@ pub async fn build_project_agent_context(
         preset_config: preset,
         preset_name: Some(agent.name.clone()),
         source: format!("project_agents[{}]", agent.id),
-        preset_mcp_servers,
+        preset_mcp_presets,
         project_agent: agent.clone(),
     })
 }

@@ -123,7 +123,7 @@ agent.pi.system_prompt       # PiAgent 系统提示词
 ## 数据流
 
 ```
-SessionPage / Agent 入口 → LifecycleAgent message command { prompt_blocks, executor_config }
+AgentRunWorkspacePage / Agent 入口 → LifecycleAgent message command { prompt_blocks, executor_config }
   → AgentFrame / LifecycleAgent 解析 delivery RuntimeSession
   → Runtime delivery pipeline 按 model_id 选择 provider bridge
   → agent.set_thinking_level(thinking_level)

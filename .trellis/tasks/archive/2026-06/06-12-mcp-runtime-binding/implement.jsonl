@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "约束云端/本机职责、crate 分层和 API/application/domain/infrastructure 边界。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新增 mcp_presets runtime_binding migration 与 JSON text 列命名必须遵守。"}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "MCP server set 属于 session capability 投影，不能绕过 CapabilityResolver。"}
+{"file": ".trellis/spec/backend/capability/capability-dimension-pipeline.md", "reason": "确认 MCP dimension 与 runtime transition / projection 的积累语义。"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "runtime binding 的 workspace facts 来自 final VFS mount metadata。"}
+{"file": ".trellis/spec/backend/vfs/vfs-materialization.md", "reason": "relay MCP 与 VFS/runtime context 的边界需要与 materialization 契约一致。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "MCP Preset DTO 变更必须走 agentdash-contracts 与 generated TS。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "relay protocol、本机 runtime MCP、AgentRun workspace root 的跨层边界约束。"}

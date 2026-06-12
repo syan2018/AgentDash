@@ -4,7 +4,9 @@ import type {
   CreateMcpPresetRequest,
   ListMcpPresetQuery,
   McpPresetDto,
+  McpRuntimeBindingConfig,
   McpTransportConfig,
+  ProbeMcpPresetRequest,
   ProbeMcpPresetResponse,
   UpdateMcpPresetRequest,
 } from "../types";
@@ -85,9 +87,14 @@ export async function cloneMcpPreset(
 export async function probeMcpTransport(
   projectId: string,
   transport: McpTransportConfig,
+  runtimeBinding?: McpRuntimeBindingConfig | null,
 ): Promise<ProbeMcpPresetResponse> {
+  const input: ProbeMcpPresetRequest = { transport };
+  if (runtimeBinding) {
+    input.runtime_binding = runtimeBinding;
+  }
   return await api.post<ProbeMcpPresetResponse>(
     `/projects/${encodeURIComponent(projectId)}/mcp-presets/probe`,
-    transport,
+    input,
   );
 }

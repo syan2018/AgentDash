@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
-- **Last Active**: 2026-06-07
+- **Total Sessions**: 7
+- **Last Active**: 2026-06-12
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~215 | Active |
+| `journal-1.md` | ~256 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-06-12 | AgentRun MCP 运行时绑定 | `29fcefe5`, `c0f3ad72`, `9c8f11fa`, `53b541b4`, `8df8fae1`, `0de3adbb`, `1e26582a`, `a8efcbee`, `37fa68ee` | `codex/session-aware-mcp-runtime-binding` |
 | 6 | 2026-06-07 | 动态脚本编译前端收口 | `94829759` | `codex/dynamic-workflow-lifecycle-migration` |
 | 5 | 2026-06-06 | Marketplace 后端 MVP 收束 | `b6c27b3f`, `abac9f16` | `codex/marketplace-intergration` |
 | 4 | 2026-06-04 | 接通 Codex 协议化 Steer 控制面 | `9fa958b5` | `codex/session-runtime-control-actions` |

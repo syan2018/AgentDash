@@ -108,6 +108,7 @@ fn parse_relay_mcp_server(
             command: parse_required_string_field(index, &name, obj, "command")?,
             args: parse_args(index, &name, obj)?,
             env: parse_env(index, &name, obj)?,
+            cwd: parse_optional_string_field(index, &name, obj, "cwd")?,
         },
         other => {
             return Err(RelayMcpServerParseError::UnknownType {
@@ -197,6 +198,32 @@ fn parse_required_string_field(
         });
     }
     Ok(text.to_string())
+}
+
+fn parse_optional_string_field(
+    index: usize,
+    server_name: &str,
+    obj: &Map<String, Value>,
+    field: &'static str,
+) -> Result<Option<String>, RelayMcpServerParseError> {
+    let Some(value) = obj.get(field) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let text = value
+        .as_str()
+        .ok_or_else(|| RelayMcpServerParseError::InvalidField {
+            index,
+            server_name: server_name.to_string(),
+            field,
+            expected: "字符串",
+        })?;
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(text.to_string()))
 }
 
 fn parse_optional_array_field<'a>(
@@ -450,6 +477,7 @@ mod tests {
                     name: "TOKEN".to_string(),
                     value: "secret".to_string(),
                 }],
+                cwd: Some("/workspace/demo".to_string()),
             },
             uses_relay: false,
         });
@@ -461,6 +489,10 @@ mod tests {
         assert_eq!(
             value.get("command").and_then(serde_json::Value::as_str),
             Some("npx")
+        );
+        assert_eq!(
+            value.get("cwd").and_then(serde_json::Value::as_str),
+            Some("/workspace/demo")
         );
         assert!(value.get("transport").is_none());
 
@@ -478,6 +510,7 @@ mod tests {
                     name: "TOKEN".to_string(),
                     value: "secret".to_string(),
                 }],
+                cwd: Some("/workspace/demo".to_string()),
             }
         );
     }
@@ -531,11 +564,19 @@ mod tests {
             "type": "stdio",
             "command": "npx",
             "args": ["-y", "server"],
-            "env": [{ "name": "TOKEN", "value": "" }]
+            "env": [{ "name": "TOKEN", "value": "" }],
+            "cwd": "/workspace/demo"
         })])
         .expect("合法 stdio MCP server 应被解析");
 
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].name, "stdio-server");
+        assert_eq!(
+            match &servers[0].transport {
+                McpTransportConfig::Stdio { cwd, .. } => cwd.as_deref(),
+                _ => None,
+            },
+            Some("/workspace/demo")
+        );
     }
 }

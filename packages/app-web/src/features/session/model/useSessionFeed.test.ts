@@ -143,7 +143,7 @@ function mkObservedHookTraceEntry(id: string): SessionDisplayEntry {
           diagnostics: [
             {
               code: "session_binding_found",
-              message: "命中会话绑定",
+              message: "命中运行时绑定",
             },
           ],
           injections: [],

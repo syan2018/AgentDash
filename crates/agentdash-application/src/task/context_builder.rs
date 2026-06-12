@@ -98,6 +98,7 @@ pub async fn build_task_session_context(
             presets: load_available_presets(repos, task.project_id).await,
             agent_servers: vec![],
         },
+        mcp_runtime_context: None,
         capability_context: None,
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, platform_config);

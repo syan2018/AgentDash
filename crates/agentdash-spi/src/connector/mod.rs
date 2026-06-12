@@ -519,20 +519,20 @@ pub use agentdash_domain::mcp_preset::{McpEnvVar, McpHttpHeader, McpTransportCon
 
 impl SessionMcpServer {}
 
-/// 按 relay 标记分组：返回 (relay_server_names, direct_servers)。
+/// 按 relay 标记分组：返回 (relay_servers, direct_servers)。
 pub fn partition_session_mcp_servers(
     servers: &[SessionMcpServer],
-) -> (Vec<String>, Vec<SessionMcpServer>) {
-    let mut relay_names = Vec::new();
+) -> (Vec<SessionMcpServer>, Vec<SessionMcpServer>) {
+    let mut relay = Vec::new();
     let mut direct = Vec::new();
     for s in servers {
         if s.uses_relay {
-            relay_names.push(s.name.clone());
+            relay.push(s.clone());
         } else {
             direct.push(s.clone());
         }
     }
-    (relay_names, direct)
+    (relay, direct)
 }
 
 #[derive(Debug, Clone)]

@@ -144,7 +144,7 @@ describe("collectRenderableSystemEvents", () => {
               block_reason: null,
               completion: null,
               diagnostic_codes: ["session_binding_found"],
-              diagnostics: [{ code: "session_binding_found", message: "命中会话绑定" }],
+              diagnostics: [{ code: "session_binding_found", message: "命中运行时绑定" }],
               injections: [],
             },
           },

@@ -88,6 +88,7 @@ pub(super) async fn compose(
         .executor_config
         .clone()
         .or_else(|| frame.typed_execution_profile());
+    let base_vfs = frame.typed_vfs();
     let builder =
         frame_builder_from_existing(frame, input.session_id.as_str(), command.reason_tag())?;
     let (builder, extras) = compose_lifecycle_node_to_frame_with_audit(
@@ -102,6 +103,7 @@ pub(super) async fn compose(
             lifecycle_key: &lifecycle_identity.key,
             activity: &activity,
             workflow_contract,
+            base_vfs: base_vfs.as_ref(),
             workflow_label: workflow_label.as_deref(),
             inherited_executor_config,
         },

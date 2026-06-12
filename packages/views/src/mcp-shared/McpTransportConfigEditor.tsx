@@ -149,7 +149,7 @@ export function McpTransportConfigEditor({
           onChange={(e) => {
             const t = e.target.value as McpTransportConfig['type']
             if (t === 'stdio') {
-              onChange({ type: 'stdio', command: '', args: [], env: [] })
+              onChange({ type: 'stdio', command: '', args: [], env: [], cwd: '' })
             } else {
               onChange({ type: t, url: '', headers: [] })
             }
@@ -196,6 +196,16 @@ export function McpTransportConfigEditor({
               value={value.command}
               onChange={(e) => onChange({ ...value, command: e.target.value })}
               placeholder="npx / python / /path/to/binary"
+              disabled={disabled}
+              className="agentdash-form-input"
+            />
+          </div>
+          <div>
+            <label className="agentdash-form-label">CWD</label>
+            <input
+              value={value.cwd ?? ''}
+              onChange={(e) => onChange({ ...value, cwd: e.target.value })}
+              placeholder="/workspace/project"
               disabled={disabled}
               className="agentdash-form-input"
             />

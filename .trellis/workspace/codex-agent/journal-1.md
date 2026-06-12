@@ -213,3 +213,44 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: AgentRun MCP 运行时绑定
+
+**Date**: 2026-06-12
+**Task**: AgentRun MCP 运行时绑定
+**Branch**: `codex/session-aware-mcp-runtime-binding`
+
+### Summary
+
+完成 MCP Preset runtime_binding 从配置、DB、contract、session construction、capability resolver、direct/relay/local runtime、ordinary probe 到前端编辑面的端到端实现；补充 Trellis spec 契约并通过关键前后端/Rust 验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `29fcefe5` | (see git log) |
+| `c0f3ad72` | (see git log) |
+| `9c8f11fa` | (see git log) |
+| `53b541b4` | (see git log) |
+| `8df8fae1` | (see git log) |
+| `0de3adbb` | (see git log) |
+| `1e26582a` | (see git log) |
+| `a8efcbee` | (see git log) |
+| `37fa68ee` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

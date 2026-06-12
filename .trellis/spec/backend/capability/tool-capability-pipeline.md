@@ -36,6 +36,8 @@
 
 格式 `mcp:<server_name>`，Resolver 在 agent config 的 `mcp_servers` 中按 name 查找并注入。
 
+当 `mcp:<server_name>` 命中 Project MCP Preset 时，Resolver 必须通过 `CapabilityResolverInput.mcp_runtime_context` 调用 `resolve_preset_mcp_server()`，产出带 runtime-resolved transport 的 `SessionMcpServer`。这个 context 来自 construction final VFS，原因是 custom MCP directive 是运行时 capability projection，不是静态 preset 展示字段。命中 agent 内联 `mcp_servers` 时直接消费已解析的 `SessionMcpServer`，不再按 preset runtime binding 重写。
+
 ## Visibility Rule
 
 仅适用于平台 well-known 能力。`mcp:*` 不受 visibility rule 限制。

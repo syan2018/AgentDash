@@ -702,6 +702,7 @@ mod tests {
                     command: "npx".to_string(),
                     args: vec!["@mcp/server".to_string()],
                     env: vec![],
+                    cwd: None,
                 },
             },
         };
@@ -751,6 +752,53 @@ mod tests {
         let json = serde_json::to_value(&msg).expect("serialize");
         assert_eq!(json["payload"]["status"], "error");
         assert_eq!(json["payload"]["error"], "进程启动失败");
+    }
+
+    #[test]
+    fn mcp_list_and_call_commands_carry_resolved_server_declaration() {
+        let server = McpServerDeclarationRelay {
+            name: "p4-tools".to_string(),
+            transport: McpTransportConfigRelay::Http {
+                url: "http://127.0.0.1:8999/mcp?p4_client=demo".to_string(),
+                headers: vec![McpHttpHeaderRelay {
+                    name: "x-p4-client".to_string(),
+                    value: "demo".to_string(),
+                }],
+            },
+        };
+        let list = RelayMessage::CommandMcpListTools {
+            id: "mcp-list-1".to_string(),
+            payload: CommandMcpListToolsPayload {
+                server: server.clone(),
+            },
+        };
+        let json = serde_json::to_value(&list).expect("serialize list");
+        assert_eq!(json["type"], "command.mcp_list_tools");
+        assert_eq!(json["payload"]["server"]["name"], "p4-tools");
+        assert_eq!(json["payload"]["server"]["transport"]["type"], "http");
+        assert_eq!(
+            json["payload"]["server"]["transport"]["headers"][0]["value"],
+            "demo"
+        );
+
+        let call = RelayMessage::CommandMcpCallTool {
+            id: "mcp-call-1".to_string(),
+            payload: CommandMcpCallToolPayload {
+                server,
+                tool_name: "workspace_status".to_string(),
+                arguments: Some(serde_json::Map::from_iter([(
+                    "detail".to_string(),
+                    serde_json::json!(true),
+                )])),
+            },
+        };
+        let json = serde_json::to_value(&call).expect("serialize call");
+        assert_eq!(json["type"], "command.mcp_call_tool");
+        assert_eq!(json["payload"]["server"]["name"], "p4-tools");
+        assert_eq!(json["payload"]["tool_name"], "workspace_status");
+
+        let deser: RelayMessage = serde_json::from_value(json).expect("deserialize call");
+        assert_eq!(deser.id(), "mcp-call-1");
     }
 
     #[test]

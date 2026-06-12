@@ -59,6 +59,7 @@ use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     build_session_context_bundle, emit_bundle_fragments, resolve_workspace_declared_sources,
 };
+use crate::mcp_preset::{SessionRuntimeMcpContext, resolve_preset_mcp_server};
 use crate::platform_config::PlatformConfig;
 use crate::project::context_builder::{ProjectContextBuildInput, contribute_project_context};
 use crate::repository_set::RepositorySet;
@@ -275,7 +276,7 @@ impl<'a> OwnerScope<'a> {
 /// agent 级 MCP 配置(来自 project_agent / routine agent context)。
 #[derive(Default, Clone)]
 pub struct AgentLevelMcp {
-    pub preset_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub preset_mcp_presets: Vec<agentdash_domain::mcp_preset::McpPreset>,
 }
 
 /// Owner bootstrap compose 的完整输入。
@@ -684,11 +685,13 @@ impl<'a> SessionRequestAssembler<'a> {
             contributions,
             mcp_candidates: McpCandidates {
                 presets: load_available_presets(self.repos, project_id).await,
-                agent_servers: extract_agent_mcp_entries(&spec.agent_mcp.preset_mcp_servers),
+                agent_servers: Vec::new(),
             },
+            mcp_runtime_context: Some(SessionRuntimeMcpContext { vfs }),
             capability_context: None,
         };
-        let mut capability_state = CapabilityResolver::resolve(&cap_input, self.platform_config);
+        let mut capability_state =
+            CapabilityResolver::resolve_checked(&cap_input, self.platform_config)?;
         self.apply_skill_baseline(&mut capability_state, vfs, spec.identity, "owner_bootstrap")
             .await;
         Ok(capability_state)
@@ -816,11 +819,13 @@ impl<'a> SessionRequestAssembler<'a> {
             crate::session::capability_state::project_workspace_module_dimension(
                 spec.visible_workspace_module_refs.as_deref(),
             );
+        let mcp_runtime_context = SessionRuntimeMcpContext { vfs: vfs.as_ref() };
         let session_mcp_servers = normalize_owner_bootstrap_mcp_projection(
             &mut cap_output,
             &spec.request_mcp_servers,
             &spec.agent_mcp,
-        );
+            &mcp_runtime_context,
+        )?;
         let context_bundle = self
             .build_owner_context_bundle(
                 &spec,
@@ -1076,6 +1081,7 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
             owner_ctx,
             active_activity: spec.activity,
             workflow_contract: spec.workflow_contract,
+            base_vfs: spec.base_vfs,
             run_id: spec.run.id,
             orchestration_id: spec.orchestration_id,
             node_path: spec.node_path,
@@ -1090,7 +1096,7 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
             available_companions: Vec::new(),
         },
         platform_config,
-    );
+    )?;
     project_companion_system_skill_to_activation(repos, spec.run.project_id, &mut activation)
         .await
         .map_err(|error| error.to_string())?;
@@ -1287,6 +1293,7 @@ pub struct LifecycleNodeSpec<'a> {
     pub lifecycle_key: &'a str,
     pub activity: &'a ActivityDefinition,
     pub workflow_contract: Option<&'a AgentProcedureContract>,
+    pub base_vfs: Option<&'a Vfs>,
     pub workflow_label: Option<&'a str>,
     pub inherited_executor_config: Option<AgentConfig>,
 }
@@ -1374,6 +1381,7 @@ pub(in crate::session) async fn compose_companion_with_workflow(
             owner_ctx,
             active_activity: spec.activity,
             workflow_contract: spec.workflow.map(|workflow| &workflow.contract),
+            base_vfs: slice.vfs.as_ref(),
             run_id: spec.run.id,
             orchestration_id: spec.orchestration_id,
             node_path: spec.node_path,
@@ -1388,7 +1396,7 @@ pub(in crate::session) async fn compose_companion_with_workflow(
             available_companions: Vec::new(),
         },
         platform_config,
-    );
+    )?;
 
     // ── 3. 用 builder 组合 companion + workflow 两个层 ──
     //
@@ -1512,11 +1520,16 @@ fn normalize_owner_bootstrap_mcp_projection(
     capability_state: &mut CapabilityState,
     request_mcp_servers: &[agentdash_spi::SessionMcpServer],
     agent_mcp: &AgentLevelMcp,
-) -> Vec<agentdash_spi::SessionMcpServer> {
+    runtime_context: &SessionRuntimeMcpContext<'_>,
+) -> Result<Vec<agentdash_spi::SessionMcpServer>, String> {
     let mut servers = Vec::new();
     servers.extend(request_mcp_servers.iter().cloned());
     servers.extend(capability_state.tool.mcp_servers.iter().cloned());
-    servers.extend(agent_mcp.preset_mcp_servers.iter().cloned());
+    for preset in &agent_mcp.preset_mcp_presets {
+        let server = resolve_preset_mcp_server(preset, Some(runtime_context))
+            .map_err(|error| error.to_string())?;
+        servers.push(server);
+    }
     normalize_session_mcp_servers(&mut servers);
 
     for server in &servers {
@@ -1526,7 +1539,7 @@ fn normalize_owner_bootstrap_mcp_projection(
             .insert(capability_for_session_mcp_server(server));
     }
     capability_state.tool.mcp_servers = servers.clone();
-    servers
+    Ok(servers)
 }
 
 fn normalize_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>) {
@@ -1593,6 +1606,20 @@ mod tests {
         }
     }
 
+    fn session_mcp_preset(name: &str, url: &str) -> agentdash_domain::mcp_preset::McpPreset {
+        agentdash_domain::mcp_preset::McpPreset::new_user(
+            Uuid::new_v4(),
+            name,
+            name,
+            None,
+            agentdash_domain::mcp_preset::McpTransportConfig::Http {
+                url: url.to_string(),
+                headers: vec![],
+            },
+            agentdash_domain::mcp_preset::McpRoutePolicy::Direct,
+        )
+    }
+
     fn server_url(server: &agentdash_spi::SessionMcpServer) -> &str {
         match &server.transport {
             agentdash_spi::McpTransportConfig::Http { url, .. } => url.as_str(),
@@ -1609,9 +1636,11 @@ mod tests {
             &mut capability_state,
             &[],
             &AgentLevelMcp {
-                preset_mcp_servers: vec![agent_server.clone()],
+                preset_mcp_presets: vec![session_mcp_preset("code_analyzer", "http://agent/mcp")],
             },
-        );
+            &SessionRuntimeMcpContext { vfs: None },
+        )
+        .expect("static agent preset should resolve");
 
         assert_eq!(servers, vec![agent_server.clone()]);
         assert_eq!(capability_state.tool.mcp_servers, vec![agent_server]);
@@ -1640,12 +1669,14 @@ mod tests {
             &mut capability_state,
             &[session_mcp_server("shared", "http://request/mcp")],
             &AgentLevelMcp {
-                preset_mcp_servers: vec![
-                    session_mcp_server("shared", "http://agent/mcp"),
-                    session_mcp_server("agent_only", "http://agent-only/mcp"),
+                preset_mcp_presets: vec![
+                    session_mcp_preset("shared", "http://agent/mcp"),
+                    session_mcp_preset("agent_only", "http://agent-only/mcp"),
                 ],
             },
-        );
+            &SessionRuntimeMcpContext { vfs: None },
+        )
+        .expect("static agent presets should resolve");
 
         let names = servers
             .iter()
@@ -1680,7 +1711,9 @@ mod tests {
             &mut capability_state,
             &[],
             &AgentLevelMcp::default(),
-        );
+            &SessionRuntimeMcpContext { vfs: None },
+        )
+        .expect("platform scoped server should normalize");
 
         assert!(
             capability_state
@@ -2035,6 +2068,7 @@ mod tests {
             lifecycle_key: &lifecycle.key,
             activity: &activity,
             workflow_contract: Some(&workflow.contract),
+            base_vfs: None,
             workflow_label: Some("`wf_impl` (Implementation)"),
             inherited_executor_config: None,
         };

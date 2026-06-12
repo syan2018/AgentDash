@@ -1039,9 +1039,9 @@ mod tests {
     // apply_session_assembly 合并语义回归测试
     // ═══════════════════════════════════════════════════════════
     //
-    // 这些测试锁定 `apply_session_assembly` 对称化后的行为（2026-04-30）：
-    // - frame surface draft 整体替换旧 projection fixture；
-    // - vfs 语义三分支等价于"prepared 非空则覆盖"；
+    // 这些测试锁定 `apply_session_assembly` 的 frame surface handoff 行为：
+    // - frame surface draft 承载 capability / VFS / MCP；
+    // - prepared VFS 优先表达 compose 后的最终 mount 组合；
     // - workspace_defaults 顺序保持"先回填、再被 prepared.vfs 覆盖"。
 
     mod apply_session_assembly_tests {

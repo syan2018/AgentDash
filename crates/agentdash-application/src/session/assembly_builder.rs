@@ -33,8 +33,8 @@ use crate::workflow::frame_surface::{FrameContextBundleSummary, FrameSurfaceDraf
 /// | `frame_surface_draft` | 整体替换为 prepared 生成的 launch surface draft |
 /// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
 ///
-/// **注**：MCP / capability / VFS 都收束在 `FrameSurfaceDraft` 内，不再写回
-/// `ConstructionProjections` 的并列 projection 字段。
+/// **注**：MCP / capability / VFS 都收束在 `FrameSurfaceDraft` 内，原因是
+/// AgentFrame revision、launch envelope 与测试构造需要消费同一份 typed handoff。
 #[cfg(test)]
 #[allow(deprecated)]
 pub(crate) fn apply_session_assembly(
@@ -58,8 +58,8 @@ pub(crate) fn apply_session_assembly(
 
     apply_workspace_defaults(&mut plan.surface.vfs, prepared.workspace_defaults.as_ref());
     // vfs 覆盖规则：prepared 非空则覆盖，否则保留（含 workspace_defaults 回填结果）。
-    // 语义等价于旧的三重分支，但表达更直接；compose 产出的 workspace/canvas/lifecycle
-    // mount 组合会覆盖前端透传的 vfs，是刻意为之。
+    // prepared VFS 代表 compose 后的最终 workspace/canvas/lifecycle mount 组合，
+    // 因此优先于 source 输入中的 VFS。
     let active_vfs = prepared.vfs.or_else(|| plan.surface.vfs.clone());
     plan.projections.frame_surface_draft = Some(FrameSurfaceDraft {
         capability_state: prepared.capability_state,

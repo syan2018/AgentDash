@@ -132,7 +132,7 @@ Commit target:
 
 ## Phase 4: Cross-Boundary Review And Spec Convergence
 
-Status: pending
+Status: completed
 
 Owner: `trellis-check` subagent.
 
@@ -140,28 +140,35 @@ Goal: verify hard cutover across runtime gateway, AgentRun workspace, persistenc
 
 Tasks:
 
-- [ ] Check no public AgentRun workspace DTO regressed to SessionRuntime control DTO.
-- [ ] Check SessionRuntime control remains runtime trace/detail only.
-- [ ] Check runtime gateway MCP source reads active execution snapshot or current AgentFrame.
-- [ ] Check RuntimeSession persistence remains trace/delivery only.
-- [ ] Update specs with target-state wording only.
-- [ ] Delete stale task/research comments that describe transition fields as current behavior.
+- [x] Check no public AgentRun workspace DTO regressed to SessionRuntime control DTO.
+- [x] Check SessionRuntime control remains runtime trace/detail only.
+- [x] Check runtime gateway MCP source reads active execution snapshot or current AgentFrame.
+- [x] Check RuntimeSession persistence remains trace/delivery only.
+- [x] Update specs with target-state wording only.
+- [x] Keep specs/task summary in target-state wording; research notes remain as dated audit evidence.
 
 Validation:
 
-- [ ] `git diff --check`
-- [ ] `pnpm run backend:clippy`
-- [ ] `cargo check -p agentdash-application`
-- [ ] `pnpm run contracts:check`
-- [ ] `pnpm run migration:guard`
-- [ ] `cargo test -p agentdash-application session::launch`
-- [ ] `cargo test -p agentdash-application session::hub`
-- [ ] `cargo test -p agentdash-application runtime_gateway`
-- [ ] `cargo test -p agentdash-application capability`
-- [ ] `cargo test -p agentdash-application mcp_preset`
-- [ ] `cargo test -p agentdash-application mcp`
-- [ ] `cargo test -p agentdash-executor mcp`
-- [ ] `cargo test -p agentdash-local relay_mcp_servers`
+- [x] `git diff --check`
+- [x] `pnpm run backend:clippy`
+- [x] `cargo check -p agentdash-application`
+- [x] `pnpm run contracts:check`
+- [x] `pnpm run migration:guard`
+- [x] `cargo test -p agentdash-application session::launch`
+- [x] `cargo test -p agentdash-application session::hub`
+- [x] `cargo test -p agentdash-application runtime_gateway`
+- [x] `cargo test -p agentdash-application capability`
+- [x] `cargo test -p agentdash-application mcp_preset`
+- [x] `cargo test -p agentdash-application mcp`
+- [x] `cargo test -p agentdash-executor mcp`
+- [x] `cargo test -p agentdash-local relay_mcp_servers`
+
+Result:
+
+- Hard cutover review passed: old launch fallback/projection fields are absent from source/spec,
+  owner bootstrap composition belongs to workflow frame construction, and remaining
+  `RuntimeSession` naming is confined to runtime trace/action access rather than AgentRun control
+  ownership.
 
 ## Parallelization Strategy
 

@@ -30,16 +30,16 @@
 
 ## Acceptance Criteria
 
-- [ ] `FrameLaunchEnvelope` 不再包含 `executor_config`、`capability_state`、`vfs`、`mcp_servers` 四个并列 surface 字段。
-- [ ] 生产 launch planner、turn preparation、connector context、MCP discovery 只读取 typed launch surface / AgentFrame surface / active execution snapshot。
-- [ ] `RuntimeContextInspectionPlan.projections` 不再保留 `mcp_servers` / `capability_state` 旧 fixture 字段。
-- [ ] `surface_draft_or_fixture_projection` 不存在；旧测试 fixture 要么删除，要么改为真实 `FrameSurfaceDraft` / AgentFrame 构造。
-- [ ] `session::assembler` 不再作为 owner bootstrap composition 的归属模块；frame construction 负责业务 surface composition，session 模块只保留 runtime launch/delivery/event/persistence 边界。
-- [ ] `rg` 检查确认旧 fixture/fallback 命名无生产残留：`surface_draft_or_fixture_projection`、`sync_transitional_fields_from_surface_draft`、`projections.mcp_servers`、`projections.capability_state`。
-- [ ] AgentRun workspace API/UI 仍使用 AgentRun command/control 模型，SessionRuntime control 仍只在 runtime trace/detail 入口。
-- [ ] RuntimeSession persistence 边界保持 trace / event / command / terminal effect / projection / lineage，不引入 current surface 字段。
-- [ ] Specs 与实现一致，文档写目标状态和原因，不保留迁移期说明。
-- [ ] 验证通过：`git diff --check`、`pnpm run backend:clippy`、`cargo check -p agentdash-application`、`pnpm run contracts:check`、`pnpm run migration:guard`、session launch / hub / runtime gateway / capability / MCP targeted tests。
+- [x] `FrameLaunchEnvelope` 不再包含 `executor_config`、`capability_state`、`vfs`、`mcp_servers` 四个并列 surface 字段。
+- [x] 生产 launch planner、turn preparation、connector context、MCP discovery 只读取 typed launch surface / AgentFrame surface / active execution snapshot。
+- [x] `RuntimeContextInspectionPlan.projections` 不再保留 `mcp_servers` / `capability_state` 旧 fixture 字段。
+- [x] `surface_draft_or_fixture_projection` 不存在；旧测试 fixture 要么删除，要么改为真实 `FrameSurfaceDraft` / AgentFrame 构造。
+- [x] `session::assembler` 不再作为 owner bootstrap composition 的归属模块；frame construction 负责业务 surface composition，session 模块只保留 runtime launch/delivery/event/persistence 边界。
+- [x] `rg` 检查确认旧 fixture/fallback 命名无生产残留：`surface_draft_or_fixture_projection`、`sync_transitional_fields_from_surface_draft`、`projections.mcp_servers`、`projections.capability_state`。
+- [x] AgentRun workspace API/UI 仍使用 AgentRun command/control 模型，SessionRuntime control 仍只在 runtime trace/detail 入口。
+- [x] RuntimeSession persistence 边界保持 trace / event / command / terminal effect / projection / lineage，不引入 current surface 字段。
+- [x] Specs 与实现一致，文档写目标状态和原因，不保留迁移期说明。
+- [x] 验证通过：`git diff --check`、`pnpm run backend:clippy`、`cargo check -p agentdash-application`、`pnpm run contracts:check`、`pnpm run migration:guard`、session launch / hub / runtime gateway / capability / MCP targeted tests。
 
 ## Out Of Scope
 

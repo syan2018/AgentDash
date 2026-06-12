@@ -449,8 +449,11 @@ pub async fn start_lifecycle_run(
                 dispatch_result.run_ref
             ))
         })?;
-    let launcher = OrchestrationExecutorLauncher::new(state.repos.clone())
-        .with_function_runner(state.services.function_runner.clone());
+    let launcher = OrchestrationExecutorLauncher::new_with_platform_config(
+        state.repos.clone(),
+        state.config.platform_config.clone(),
+    )
+    .with_function_runner(state.services.function_runner.clone());
     launcher.drain_ready_nodes(run.id).await?;
     let latest_run = state
         .repos
@@ -497,8 +500,11 @@ pub async fn submit_orchestration_human_decision(
     )
     .await?;
 
-    let launcher = OrchestrationExecutorLauncher::new(state.repos.clone())
-        .with_function_runner(state.services.function_runner.clone());
+    let launcher = OrchestrationExecutorLauncher::new_with_platform_config(
+        state.repos.clone(),
+        state.config.platform_config.clone(),
+    )
+    .with_function_runner(state.services.function_runner.clone());
     let result = launcher
         .submit_human_gate_decision(SubmitHumanGateDecisionInput {
             run_id,

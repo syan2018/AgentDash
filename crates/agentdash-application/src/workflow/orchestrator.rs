@@ -19,6 +19,7 @@ use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, Sh
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::platform_config::{PlatformConfig, SharedPlatformConfig};
 use crate::repository_set::RepositorySet;
 
 use super::session_association::resolve_activity_session_association;
@@ -79,13 +80,22 @@ pub struct AdvanceCurrentNodeResult {
 
 pub struct LifecycleOrchestrator {
     repos: RepositorySet,
+    platform_config: SharedPlatformConfig,
     function_runner: Option<Arc<dyn FunctionRunner>>,
 }
 
 impl LifecycleOrchestrator {
     pub fn new(repos: RepositorySet) -> Self {
+        Self::new_with_platform_config(repos, Arc::new(PlatformConfig { mcp_base_url: None }))
+    }
+
+    pub fn new_with_platform_config(
+        repos: RepositorySet,
+        platform_config: SharedPlatformConfig,
+    ) -> Self {
         Self {
             repos,
+            platform_config,
             function_runner: None,
         }
     }
@@ -299,7 +309,10 @@ impl LifecycleOrchestrator {
         &self,
         run_id: Uuid,
     ) -> Result<crate::workflow::OrchestrationExecutorDrainResult, String> {
-        let mut launcher = OrchestrationExecutorLauncher::new(self.repos.clone());
+        let mut launcher = OrchestrationExecutorLauncher::new_with_platform_config(
+            self.repos.clone(),
+            self.platform_config.clone(),
+        );
         if let Some(function_runner) = &self.function_runner {
             launcher = launcher.with_function_runner(function_runner.clone());
         }

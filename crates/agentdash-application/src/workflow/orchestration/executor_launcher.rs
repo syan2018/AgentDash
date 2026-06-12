@@ -9,10 +9,14 @@ use agentdash_spi::FunctionRunner;
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::platform_config::{PlatformConfig, SharedPlatformConfig};
 use crate::repository_set::RepositorySet;
 use crate::workflow::{RuntimeSessionCreator, WorkflowApplicationError};
 
-use super::agent_node_launcher::{AgentNodeLaunchOutcome, AgentNodeLauncher};
+use super::agent_node_launcher::{
+    AgentNodeFrameComposer, AgentNodeLaunchOutcome, AgentNodeLauncher,
+    RepositoryAgentNodeFrameComposer,
+};
 use super::function_node_runner::FunctionNodeRunner;
 use super::human_gate_launcher::{HumanGateLauncher, HumanGateOpenOutcome};
 use super::ready_node::{ReadyNodeView, RuntimeNodeCoordinate};
@@ -98,21 +102,39 @@ impl From<RepositorySet> for OrchestrationExecutorRepositories {
 
 impl OrchestrationExecutorLauncher {
     pub fn new(repos: RepositorySet) -> Self {
-        Self::from_executor_repositories(repos.into())
+        Self::new_with_platform_config(repos, Arc::new(PlatformConfig { mcp_base_url: None }))
+    }
+
+    pub fn new_with_platform_config(
+        repos: RepositorySet,
+        platform_config: SharedPlatformConfig,
+    ) -> Self {
+        let frame_composer = Arc::new(RepositoryAgentNodeFrameComposer::new(
+            repos.clone(),
+            platform_config,
+        ));
+        Self::from_executor_repositories(repos.into(), frame_composer)
     }
 
     #[cfg(test)]
-    fn from_repositories(repos: OrchestrationExecutorRepositories) -> Self {
-        Self::from_executor_repositories(repos)
+    fn from_repositories(
+        repos: OrchestrationExecutorRepositories,
+        frame_composer: Arc<dyn AgentNodeFrameComposer>,
+    ) -> Self {
+        Self::from_executor_repositories(repos, frame_composer)
     }
 
-    fn from_executor_repositories(repos: OrchestrationExecutorRepositories) -> Self {
+    fn from_executor_repositories(
+        repos: OrchestrationExecutorRepositories,
+        frame_composer: Arc<dyn AgentNodeFrameComposer>,
+    ) -> Self {
         let agent_node_launcher = AgentNodeLauncher::new(
             repos.agent_procedure_repo.clone(),
             repos.lifecycle_agent_repo.clone(),
             repos.agent_frame_repo.clone(),
             repos.execution_anchor_repo.clone(),
             repos.runtime_session_creator.clone(),
+            frame_composer,
         );
         let human_gate_launcher = HumanGateLauncher::new(repos.lifecycle_gate_repo.clone());
         Self {
@@ -449,13 +471,17 @@ mod launcher_drain_tests {
         RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
         RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy, RuntimeTraceRef,
     };
+    use agentdash_spi::Vfs;
     use agentdash_spi::{ApiRequestOutcome, BashExecOutcome};
     use async_trait::async_trait;
     use chrono::Utc;
     use serde_json::json;
 
+    use crate::vfs::build_lifecycle_mount_with_node_scope;
     use crate::workflow::orchestration::runtime::activate_root_orchestration;
-    use crate::workflow::{RuntimeSessionCreationRequest, RuntimeSessionCreator};
+    use crate::workflow::{
+        AgentFrameBuilder, RuntimeSessionCreationRequest, RuntimeSessionCreator,
+    };
 
     use super::*;
 
@@ -685,24 +711,57 @@ mod launcher_drain_tests {
     }
 
     #[derive(Default)]
-    struct EmptyFrameRepo;
+    struct InMemoryFrameRepo {
+        items: Mutex<Vec<AgentFrame>>,
+    }
+
+    impl InMemoryFrameRepo {
+        fn latest(&self) -> AgentFrame {
+            self.items
+                .lock()
+                .unwrap()
+                .last()
+                .cloned()
+                .expect("frame persisted")
+        }
+    }
 
     #[async_trait]
-    impl AgentFrameRepository for EmptyFrameRepo {
-        async fn create(&self, _frame: &AgentFrame) -> Result<(), DomainError> {
+    impl AgentFrameRepository for InMemoryFrameRepo {
+        async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
+            self.items.lock().unwrap().push(frame.clone());
             Ok(())
         }
 
-        async fn get(&self, _frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(None)
+        async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|frame| frame.id == frame_id)
+                .cloned())
         }
 
-        async fn get_current(&self, _agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(None)
+        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            let items = self.items.lock().unwrap();
+            let mut frames: Vec<_> = items
+                .iter()
+                .filter(|frame| frame.agent_id == agent_id)
+                .collect();
+            frames.sort_by_key(|frame| frame.revision);
+            Ok(frames.last().cloned().cloned())
         }
 
-        async fn list_by_agent(&self, _agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
-            Ok(Vec::new())
+        async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|frame| frame.agent_id == agent_id)
+                .cloned()
+                .collect())
         }
 
         async fn append_visible_canvas_mount(
@@ -711,6 +770,44 @@ mod launcher_drain_tests {
             _mount_id: &str,
         ) -> Result<(), DomainError> {
             Ok(())
+        }
+    }
+
+    struct TestLifecycleFrameComposer;
+
+    #[async_trait]
+    impl AgentNodeFrameComposer for TestLifecycleFrameComposer {
+        async fn compose_frame(
+            &self,
+            builder: AgentFrameBuilder,
+            run: &LifecycleRun,
+            coordinate: &RuntimeNodeCoordinate,
+            plan_node: &PlanNode,
+            _workflow_contract: Option<&AgentProcedureContract>,
+            _workflow_label: Option<&str>,
+            _runtime_session_id: Option<&str>,
+        ) -> Result<AgentFrameBuilder, WorkflowApplicationError> {
+            let writable_port_keys = plan_node
+                .output_ports
+                .iter()
+                .map(|port| port.key.clone())
+                .collect::<Vec<_>>();
+            let mount = build_lifecycle_mount_with_node_scope(
+                run.id,
+                coordinate.orchestration_id,
+                &coordinate.node_path,
+                "test_lifecycle",
+                &writable_port_keys,
+                Some(coordinate.attempt),
+            );
+            let vfs = Vfs {
+                mounts: vec![mount],
+                default_mount_id: None,
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            };
+            Ok(builder.with_vfs_typed(&vfs))
         }
     }
 
@@ -868,15 +965,28 @@ mod launcher_drain_tests {
         gate_repo: Arc<InMemoryGateRepo>,
         procedure_repo: Arc<dyn AgentProcedureRepository>,
     ) -> OrchestrationExecutorLauncher {
-        OrchestrationExecutorLauncher::from_repositories(OrchestrationExecutorRepositories {
-            lifecycle_run_repo: run_repo,
-            agent_procedure_repo: procedure_repo,
-            lifecycle_agent_repo: Arc::new(EmptyAgentRepo),
-            agent_frame_repo: Arc::new(EmptyFrameRepo),
-            lifecycle_gate_repo: gate_repo,
-            execution_anchor_repo: Arc::new(EmptyAnchorRepo),
-            runtime_session_creator: Arc::new(EmptyRuntimeSessionCreator),
-        })
+        launcher_with_procedure_and_frame_repo(run_repo, gate_repo, procedure_repo).0
+    }
+
+    fn launcher_with_procedure_and_frame_repo(
+        run_repo: Arc<InMemoryRunRepo>,
+        gate_repo: Arc<InMemoryGateRepo>,
+        procedure_repo: Arc<dyn AgentProcedureRepository>,
+    ) -> (OrchestrationExecutorLauncher, Arc<InMemoryFrameRepo>) {
+        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let launcher = OrchestrationExecutorLauncher::from_repositories(
+            OrchestrationExecutorRepositories {
+                lifecycle_run_repo: run_repo,
+                agent_procedure_repo: procedure_repo,
+                lifecycle_agent_repo: Arc::new(EmptyAgentRepo),
+                agent_frame_repo: frame_repo.clone(),
+                lifecycle_gate_repo: gate_repo,
+                execution_anchor_repo: Arc::new(EmptyAnchorRepo),
+                runtime_session_creator: Arc::new(EmptyRuntimeSessionCreator),
+            },
+            Arc::new(TestLifecycleFrameComposer),
+        );
+        (launcher, frame_repo)
     }
 
     fn workflow_source(graph_id: Uuid) -> OrchestrationSourceRef {
@@ -1121,7 +1231,7 @@ mod launcher_drain_tests {
         run_repo.insert(run);
         let procedure_repo = Arc::new(InMemoryProcedureRepo::default());
         procedure_repo.insert(procedure(project_id, procedure_key));
-        let launcher = launcher_with_procedure_repo(
+        let (launcher, frame_repo) = launcher_with_procedure_and_frame_repo(
             run_repo.clone(),
             Arc::new(InMemoryGateRepo::default()),
             procedure_repo,
@@ -1151,6 +1261,19 @@ mod launcher_drain_tests {
             }]
         );
         assert!(latest.orchestrations[0].dispatch.ready_node_ids.is_empty());
+
+        let frame = frame_repo.latest();
+        let mounts = frame
+            .vfs_surface_json
+            .as_ref()
+            .and_then(|surface| surface.get("mounts"))
+            .and_then(serde_json::Value::as_array)
+            .expect("agent call frame should persist lifecycle VFS mounts");
+        assert!(mounts.iter().any(|mount| {
+            mount.get("id").and_then(serde_json::Value::as_str) == Some("lifecycle")
+                && mount.get("provider").and_then(serde_json::Value::as_str)
+                    == Some("lifecycle_vfs")
+        }));
     }
 
     #[tokio::test]

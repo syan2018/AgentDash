@@ -77,7 +77,7 @@ pub(crate) async fn build_session_runtime(
         runtime_tool_provider,
         mcp_tool_discovery,
         function_runner,
-        platform_config: _platform_config,
+        platform_config,
         integration_connectors,
         extra_skill_dirs,
         skill_discovery_providers,
@@ -165,8 +165,11 @@ pub(crate) async fn build_session_runtime(
     let session_title = session_runtime_builder.title_service();
 
     let orchestrator = Arc::new(
-        agentdash_application::workflow::LifecycleOrchestrator::new(repos.clone())
-            .with_function_runner(function_runner),
+        agentdash_application::workflow::LifecycleOrchestrator::new_with_platform_config(
+            repos.clone(),
+            platform_config.clone(),
+        )
+        .with_function_runner(function_runner),
     );
     let pending_drainer = Arc::new(AgentRunPendingDrainer {
         repos: repos.clone(),

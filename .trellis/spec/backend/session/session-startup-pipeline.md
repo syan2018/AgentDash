@@ -55,7 +55,7 @@ Routine source metadata 只表达触发来源与当前 execution facts。`routin
 
 `SessionConstructionProvider::build_frame_construction` 直接输出 launch-ready `FrameLaunchEnvelope`，不是 seed、partial plan 或等待 planner 补齐的中间形态。生产实现是 `FrameConstructionService::construct_launch_envelope`。
 
-`FrameConstructionService` 通过 `RuntimeSessionExecutionAnchor` 反查 `LifecycleRun` / `LifecycleAgent` / current `AgentFrame`，再按 companion、lifecycle node、ProjectAgent 或 existing frame surface 路径生成 envelope。业务模块不得绕过该服务自行组装 connector facts。
+`FrameConstructionService` 通过 `RuntimeSessionExecutionAnchor` 反查 `LifecycleRun` / `LifecycleAgent` / current `AgentFrame`，再按 companion、lifecycle node、ProjectAgent 或 existing frame surface 路径生成 envelope。ProjectAgent / owner bootstrap 路径由 `workflow::frame_construction::owner_bootstrap` 组合 owner surface，原因是该路径产出写入 `AgentFrame` 的 VFS、MCP、capability、context bundle 与 execution profile。业务模块不得绕过该服务自行组装 connector facts。
 
 `FrameLaunchEnvelope` 至少覆盖：
 

@@ -96,7 +96,7 @@ pub(crate) fn apply_session_assembly(
 /// - **复合便利**：`apply_companion_slice` / `apply_lifecycle_activation` 封装常见组合
 /// - **新组合无需新函数**：companion + workflow 只需叠加对应层
 #[derive(Clone, Default)]
-pub(super) struct SessionAssemblyBuilder {
+pub(crate) struct SessionAssemblyBuilder {
     // ── VFS 层 ──
     pub(super) vfs: Option<Vfs>,
 
@@ -122,12 +122,12 @@ pub(super) struct SessionAssemblyBuilder {
 
 #[allow(dead_code)]
 impl SessionAssemblyBuilder {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// 直接设置完整 VFS（owner 构建 / lifecycle 激活产出等场景）。
-    pub(super) fn with_vfs(mut self, vfs: Vfs) -> Self {
+    pub(crate) fn with_vfs(mut self, vfs: Vfs) -> Self {
         self.vfs = Some(vfs);
         self
     }
@@ -179,7 +179,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 设置已解析的能力输出（由外部 CapabilityResolver 产出）。
-    pub(super) fn with_resolved_capabilities(mut self, capability_state: CapabilityState) -> Self {
+    pub(crate) fn with_resolved_capabilities(mut self, capability_state: CapabilityState) -> Self {
         self.capability_state = Some(capability_state);
         self
     }
@@ -192,7 +192,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 设置 MCP server 列表（覆盖）。
-    pub(super) fn with_mcp_servers(
+    pub(crate) fn with_mcp_servers(
         mut self,
         servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
     ) -> Self {
@@ -216,7 +216,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 可选设置 Bundle；为 `None` 时不覆盖已有值（用于 continuation 路径按条件注入）。
-    pub(super) fn with_optional_context_bundle(
+    pub(crate) fn with_optional_context_bundle(
         mut self,
         bundle: Option<SessionContextBundle>,
     ) -> Self {
@@ -227,7 +227,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 设置 canonical 用户输入。
-    pub(super) fn with_input(
+    pub(crate) fn with_input(
         mut self,
         input: Vec<agentdash_agent_protocol::UserInputBlock>,
     ) -> Self {
@@ -236,7 +236,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 设置执行器配置。
-    pub(super) fn with_executor_config(mut self, config: AgentConfig) -> Self {
+    pub(crate) fn with_executor_config(mut self, config: AgentConfig) -> Self {
         self.executor_config = Some(config);
         self
     }
@@ -248,7 +248,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 可选设置 workspace 默认值。
-    pub(super) fn with_optional_workspace_defaults(mut self, workspace: Option<Workspace>) -> Self {
+    pub(crate) fn with_optional_workspace_defaults(mut self, workspace: Option<Workspace>) -> Self {
         self.workspace_defaults = workspace;
         self
     }
@@ -341,7 +341,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 结束 builder 链；保留该方法只为让既有 compose 代码保持声明式尾部。
-    pub(super) fn build(self) -> SessionAssemblyBuilder {
+    pub(crate) fn build(self) -> SessionAssemblyBuilder {
         self
     }
 
@@ -398,7 +398,7 @@ pub(super) fn slice_companion_bundle(
 ///
 /// frame builder 接收 surface 数据（capability/VFS/MCP），
 /// 返回的 launch extras 包含 context bundle / prompt / executor config 等 launch-only 数据。
-pub(super) fn project_assembly_to_frame(
+pub(crate) fn project_assembly_to_frame(
     frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
     prepared: SessionAssemblyBuilder,
 ) -> (

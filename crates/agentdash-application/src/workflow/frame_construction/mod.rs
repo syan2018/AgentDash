@@ -8,6 +8,7 @@ mod classify;
 mod composer_companion;
 mod composer_lifecycle_node;
 mod composer_project_agent;
+mod owner_bootstrap;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,8 +25,7 @@ use crate::session::types::{
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
 };
 use crate::session::{
-    AssemblyLaunchExtras, LaunchCommand, OwnerPromptLifecycle, SessionRequestAssembler,
-    TerminalHookEffectBinding,
+    AssemblyLaunchExtras, LaunchCommand, SessionRequestAssembler, TerminalHookEffectBinding,
 };
 use crate::vfs::VfsService;
 use crate::workflow::frame_builder::AgentFrameBuilder;
@@ -66,6 +66,10 @@ pub struct FrameConstructionDeps {
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
 }
+
+pub(crate) use owner_bootstrap::{
+    AgentLevelMcp, OwnerBootstrapComposer, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
+};
 
 impl FrameConstructionService {
     pub fn new(deps: FrameConstructionDeps) -> Self {
@@ -175,6 +179,18 @@ impl FrameConstructionService {
         )
         .with_audit_bus(self.audit_bus.clone())
         .with_companion_parent_facts_provider(self.companion_facts.as_ref())
+        .with_skill_discovery(&self.extra_skill_dirs, &self.skill_discovery_providers)
+    }
+
+    pub(crate) fn owner_bootstrap_composer(&self) -> OwnerBootstrapComposer<'_> {
+        OwnerBootstrapComposer::new(
+            self.vfs_service.as_ref(),
+            self.repos.canvas_repo.as_ref(),
+            self.availability.as_ref(),
+            &self.repos,
+            self.platform_config.as_ref(),
+        )
+        .with_audit_bus(self.audit_bus.clone())
         .with_skill_discovery(&self.extra_skill_dirs, &self.skill_discovery_providers)
     }
 

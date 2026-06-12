@@ -4,8 +4,8 @@
 
 Phase 1 implementation complete. Launch planning now reads a non-optional `FrameLaunchSurface`
 from `FrameLaunchEnvelope`; the old parallel envelope surface fields and transition sync helper
-are removed. Phase 2/3 remain pending for projection-field cleanup and owner composition
-relocation.
+are removed. Phase 2 projection fixture cleanup and Phase 3 owner composition relocation are
+complete.
 
 ## Phase 0: Context And Specs
 
@@ -79,7 +79,7 @@ Tasks:
 
 Validation:
 
-- [x] `cargo fmt`
+- [x] `rustfmt --edition 2024` on Phase 3 Rust files
 - [x] `cargo check -p agentdash-application`
 - [x] `cargo test -p agentdash-application session::hub`
 - [x] `cargo test -p agentdash-application session::launch`
@@ -97,7 +97,7 @@ Commit target:
 
 ## Phase 3: Move Owner Composition Out Of Session Layer
 
-Status: pending
+Status: completed
 
 Owner: third `trellis-implement` subagent after Phase 1/2 land.
 
@@ -105,20 +105,26 @@ Goal: remove session module ownership of owner bootstrap surface composition.
 
 Tasks:
 
-- [ ] Move owner bootstrap-facing types/functions from `session::assembler` into workflow/frame construction composer ownership.
-- [ ] Keep session module focused on launch stages, runtime registry, eventing, persistence and delivery.
-- [ ] Ensure `FrameConstructionService` calls the new composer directly instead of returning through session-owned owner composition APIs.
-- [ ] Remove or shrink `SessionRequestAssembler` so it no longer owns Project/Story owner bootstrap composition.
-- [ ] Keep behavior for owner bootstrap, lifecycle node, companion and routine launch intact.
-- [ ] Update module docs/specs to describe frame construction ownership.
+- [x] Move owner bootstrap-facing types/functions from `session::assembler` into workflow/frame construction composer ownership.
+- [x] Keep session module focused on launch stages, runtime registry, eventing, persistence and delivery.
+- [x] Ensure `FrameConstructionService` calls the new composer directly instead of returning through session-owned owner composition APIs.
+- [x] Remove or shrink `SessionRequestAssembler` so it no longer owns Project/Story owner bootstrap composition.
+- [x] Keep behavior for owner bootstrap, lifecycle node, companion and routine launch intact.
+- [x] Update module docs/specs to describe frame construction ownership.
 
 Validation:
 
-- [ ] `cargo check -p agentdash-application`
-- [ ] `cargo test -p agentdash-application session::launch`
-- [ ] `cargo test -p agentdash-application workflow::frame`
-- [ ] `cargo test -p agentdash-application agent_message`
-- [ ] `rg -n "compose_owner_bootstrap|OwnerBootstrapSpec|OwnerScope|SessionRequestAssembler" crates/agentdash-application/src/session crates/agentdash-application/src/workflow`
+- [x] `cargo fmt`
+- [x] `cargo check -p agentdash-application`
+- [x] `cargo test -p agentdash-application frame_construction`
+- [x] `cargo test -p agentdash-application session::launch`
+- [x] `cargo test -p agentdash-application agent_message`
+- [x] `rg -n "compose_owner_bootstrap|OwnerBootstrapSpec|OwnerScope|SessionRequestAssembler" crates/agentdash-application/src/session crates/agentdash-application/src/workflow`
+- [x] `git diff --check`
+
+Notes:
+
+- Owner bootstrap API hits from the grep are under `workflow/frame_construction`; session hits are limited to `SessionRequestAssembler` itself for companion/lifecycle service assembly.
 
 Commit target:
 

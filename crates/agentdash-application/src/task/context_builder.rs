@@ -4,12 +4,14 @@ use uuid::Uuid;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
     CapabilityResolver, CapabilityResolverInput, ContextContributionSource, ContextContributions,
-    McpCandidates, ToolContribution, tool_directives_from_active_workflow_projection,
+    McpCandidates, ToolContribution, load_available_presets,
+    tool_directives_from_active_workflow_projection,
 };
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::runtime::Vfs as RuntimeVfs;
 use crate::runtime_bridge::mcp_declarations_to_runtime_servers;
+use crate::session::ExecutorResolution;
 use crate::session::bootstrap::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
@@ -17,7 +19,6 @@ use crate::session::bootstrap::{
 use crate::session::context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
-use crate::session::{ExecutorResolution, load_available_presets};
 use crate::task::config::{resolve_task_executor_config, resolve_task_executor_source};
 use crate::vfs::{SessionMountTarget, VfsService};
 use crate::workflow::{

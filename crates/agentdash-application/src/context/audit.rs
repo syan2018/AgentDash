@@ -27,7 +27,7 @@ pub type AuditSessionKey = String;
 /// 审计事件的触发源。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuditTrigger {
-    /// Owner bootstrap 路径产出的 Bundle（compose_owner_bootstrap）。
+    /// Owner bootstrap composer 产出的 Bundle。
     SessionBootstrap,
     /// Compose 路径产出的 Bundle（story step / lifecycle / companion 等常规 rebuild）。
     ComposerRebuild,

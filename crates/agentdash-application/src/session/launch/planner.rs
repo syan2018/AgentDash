@@ -118,6 +118,7 @@ impl<'a> LaunchPlanner<'a> {
                 input.session_id,
                 input.turn_id,
                 input.launch_envelope.surface.frame_id,
+                input.launch_envelope.pending_frame.as_ref(),
                 &executor_config,
                 &working_directory,
                 is_owner_bootstrap,

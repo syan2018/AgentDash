@@ -3730,6 +3730,151 @@ async fn accepted_turn_commits_hook_runtime_target_to_new_frame() {
 }
 
 #[tokio::test]
+async fn launch_hook_runtime_accepts_pending_agent_frame_target() {
+    use crate::session::SessionConstructionProvider;
+    use crate::workflow::runtime_launch::FrameLaunchEnvelope;
+    use crate::workflow::{
+        AgentFrameBuilder, frame_construction::build_envelope_from_frame,
+        resolve_current_frame_for_runtime_session,
+    };
+
+    struct PendingFrameConstructionProvider {
+        hub: SessionRuntimeInner,
+    }
+
+    #[async_trait::async_trait]
+    impl SessionConstructionProvider for PendingFrameConstructionProvider {
+        async fn build_frame_construction(
+            &self,
+            input: SessionConstructionProviderInput,
+        ) -> Result<FrameLaunchEnvelope, ConnectorError> {
+            let (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) = (
+                self.hub.execution_anchor_repo.as_ref(),
+                self.hub.lifecycle_agent_repo.as_ref(),
+                self.hub.agent_frame_repo.as_ref(),
+            ) else {
+                return Err(ConnectorError::Runtime(
+                    "test hub missing frame construction repositories".to_string(),
+                ));
+            };
+            let (_anchor, _agent, current_frame) = resolve_current_frame_for_runtime_session(
+                &input.session_id,
+                anchor_repo.as_ref(),
+                agent_repo.as_ref(),
+                frame_repo.as_ref(),
+            )
+            .await
+            .map_err(|error| ConnectorError::Runtime(error.to_string()))?
+            .expect("test runtime session should resolve current frame");
+            let surface = FrameSurfaceDraft::from_frame(&current_frame);
+            let pending_frame = AgentFrameBuilder::new(current_frame.agent_id)
+                .with_surface_draft(&surface)
+                .with_created_by("test_pending_launch", Some(input.session_id.clone()))
+                .build_uncommitted(frame_repo.as_ref())
+                .await
+                .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
+            let mut envelope = build_envelope_from_frame(
+                &pending_frame,
+                None,
+                &input.command,
+                None,
+                &input.session_id,
+            )?;
+            envelope.pending_frame = Some(pending_frame);
+            Ok(envelope)
+        }
+    }
+
+    let base = tempfile::tempdir().expect("tempdir");
+    let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
+    let hook_provider = Arc::new(SnapshotRecordingHookProvider {
+        frame_snapshot_queries: frame_snapshot_queries.clone(),
+    });
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(EmptyConnector),
+        Some(hook_provider),
+    )
+    .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
+    let session = hub
+        .create_session("pending-frame-hook-target")
+        .await
+        .expect("create session");
+    let seed = simple_prompt_request("seed");
+    let seed_surface = seed
+        .projections
+        .frame_surface_draft
+        .as_ref()
+        .expect("seed construction should carry frame surface");
+    let frame_repo = hub
+        .agent_frame_repo
+        .as_ref()
+        .expect("test hub should provide AgentFrameRepository");
+    let agent_id = uuid::Uuid::new_v4();
+    let launch_frame = AgentFrameBuilder::new(agent_id)
+        .with_surface_draft(seed_surface)
+        .with_created_by("test_launch_frame", Some(session.id.clone()))
+        .build(frame_repo.as_ref())
+        .await
+        .expect("launch frame should persist");
+    let run_id = uuid::Uuid::new_v4();
+    hub.execution_anchor_repo
+        .as_ref()
+        .expect("test hub should provide anchor repo")
+        .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
+            &session.id,
+            run_id,
+            launch_frame.id,
+            agent_id,
+        ))
+        .await
+        .expect("anchor should persist");
+    let mut agent = LifecycleAgent::new_root(run_id, uuid::Uuid::new_v4(), "test")
+        .with_bootstrap_status("not_applicable");
+    agent.id = agent_id;
+    agent.set_current_frame(launch_frame.id);
+    hub.lifecycle_agent_repo
+        .as_ref()
+        .expect("test hub should provide lifecycle agent repo")
+        .create(&agent)
+        .await
+        .expect("agent should persist");
+    hub.set_session_construction_provider(Arc::new(PendingFrameConstructionProvider {
+        hub: hub.clone(),
+    }))
+    .await;
+
+    hub.launch_service()
+        .launch_command(
+            &session.id,
+            super::super::launch::LaunchCommand::http_prompt_input(
+                UserPromptInput::from_text("hello"),
+                None,
+            ),
+        )
+        .await
+        .expect("pending frame hook runtime should not block launch");
+
+    let frame_queries = frame_snapshot_queries.lock().await;
+    assert_eq!(frame_queries.len(), 2);
+    let pending_frame_id = frame_queries[0].target.frame_id;
+    assert_ne!(pending_frame_id, launch_frame.id);
+    assert_eq!(frame_queries[1].target.frame_id, pending_frame_id);
+    drop(frame_queries);
+
+    let current_id = current_frame_id(&hub, agent_id)
+        .await
+        .expect("current frame should exist after accepted launch");
+    assert_eq!(current_id, pending_frame_id);
+    let persisted_pending = frame_repo
+        .get(pending_frame_id)
+        .await
+        .expect("frame lookup should succeed")
+        .expect("accepted pending frame should persist");
+    assert_eq!(persisted_pending.agent_id, agent_id);
+}
+
+#[tokio::test]
 async fn planner_invalid_config_leaves_current_frame_unchanged() {
     use crate::session::SessionConstructionProvider;
     use crate::workflow::runtime_launch::FrameLaunchEnvelope;

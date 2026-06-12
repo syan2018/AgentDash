@@ -68,7 +68,7 @@ export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<
 
 export type AgentRunWorkspaceShell = { display_title: string, title_source: string, workspace_status: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
 
-export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: AgentRunWorkspaceActionSetView, pending_messages: Array<PendingMessageView>, };
+export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: AgentRunWorkspaceActionSetView, pending_queue: PendingQueueStateView, pending_messages: Array<PendingMessageView>, };
 
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
 
@@ -130,6 +130,10 @@ export type OutputPortDefinition = { key: string, description: string, gate_stra
 
 export type PendingMessageView = { id: string, preview: string, has_images: boolean, created_at: string, };
 
+export type PendingQueuePauseReasonDto = "turn_failed" | "turn_interrupted";
+
+export type PendingQueueStateView = { paused: boolean, pause_reason?: PendingQueuePauseReasonDto, message?: string, can_resume: boolean, };
+
 export type PreflightWorkflowScriptRequest = { project_id: string, source_text: string, args?: JsonValue, ctx?: JsonValue, runtime_session_id?: string, };
 
 export type PreflightWorkflowScriptResponse = { valid: boolean, source_digest: string, source_ref: JsonValue, raw_builder_document?: JsonValue, plan_snapshot?: JsonValue, plan_preview?: WorkflowScriptPlanPreviewDto, capability_summary: WorkflowScriptCapabilitySummaryDto, diagnostics: Array<WorkflowScriptPreflightDiagnosticDto>, };
@@ -137,6 +141,8 @@ export type PreflightWorkflowScriptResponse = { valid: boolean, source_digest: s
 export type ProjectActiveAgentsView = { project_id: string, runs: Array<LifecycleRunView>, agents: Array<AgentRunView>, };
 
 export type RegisterHookPresetResponse = { registered: boolean, key: string, };
+
+export type ResumePendingQueueResponse = { resumed: boolean, dispatched: boolean, accepted_refs?: AgentRunAcceptedRefs, };
 
 export type RuntimeNodeView = { node_id: string, node_path: string, kind: string, status: string, attempt: number, executor_run_ref?: ExecutorRunRef, started_at?: string, completed_at?: string, children: Array<RuntimeNodeView>, };
 
@@ -158,7 +164,7 @@ export type SessionRuntimeControlPlaneStatus = "unbound_trace" | "anchored_idle"
 
 export type SessionRuntimeControlPlaneView = { status: SessionRuntimeControlPlaneStatus, reason?: string, };
 
-export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, control_plane: SessionRuntimeControlPlaneView, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: SessionRuntimeActionSetView, pending_messages: Array<PendingMessageView>, };
+export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, control_plane: SessionRuntimeControlPlaneView, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: SessionRuntimeActionSetView, pending_queue: PendingQueueStateView, pending_messages: Array<PendingMessageView>, };
 
 export type SessionShellDto = { id: string, title: string, title_source: string, created_at: bigint, updated_at: bigint, last_event_seq: bigint, last_turn_id?: string, last_delivery_status: string, };
 

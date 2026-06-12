@@ -129,8 +129,9 @@ use agentdash_contracts::workflow::{
     EnqueuePendingMessageRequest, EnqueuePendingMessageResponse, HookPresetResponse,
     HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
     LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
-    OrchestrationInstanceView, PendingMessageView, PreflightWorkflowScriptRequest,
-    PreflightWorkflowScriptResponse, ProjectActiveAgentsView, RegisterHookPresetResponse,
+    OrchestrationInstanceView, PendingMessageView, PendingQueuePauseReasonDto,
+    PendingQueueStateView, PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse,
+    ProjectActiveAgentsView, RegisterHookPresetResponse, ResumePendingQueueResponse,
     RuntimeNodeView, RuntimeSessionCommandStateDto, RuntimeSessionExecutionAnchorDto,
     RuntimeSessionRefDto, RuntimeSessionTraceMeta, RuntimeSessionTraceView,
     SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
@@ -436,8 +437,11 @@ fn main() {
             export_all::<SessionRuntimeActionSetView>(dir);
             export_all::<SessionRuntimeControlView>(dir);
             export_all::<PendingMessageView>(dir);
+            export_all::<PendingQueuePauseReasonDto>(dir);
+            export_all::<PendingQueueStateView>(dir);
             export_all::<EnqueuePendingMessageRequest>(dir);
             export_all::<EnqueuePendingMessageResponse>(dir);
+            export_all::<ResumePendingQueueResponse>(dir);
             export_all::<AgentRunWorkspaceListEntry>(dir);
             export_all::<AgentRunWorkspaceListView>(dir);
             export_all::<DefinitionSource>(dir);

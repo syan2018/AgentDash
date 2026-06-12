@@ -73,8 +73,10 @@ export function SessionChatView({
   onPrimaryAction,
   onCancelAction,
   pendingMessages,
+  pendingQueue,
   onPromotePending,
   onDeletePending,
+  onResumePendingQueue,
   headerSlot,
   inputPrefix,
   streamPrefixContent,
@@ -648,12 +650,14 @@ export function SessionChatView({
 
       {/* 排队消息 + 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
-        {pendingMessages && pendingMessages.length > 0 && (
+        {pendingMessages && (pendingMessages.length > 0 || pendingQueue?.paused) && (
           <PendingMessageList
             messages={pendingMessages}
-            canSteer={Boolean(controlState.secondaryAction?.enabled)}
+            queue={pendingQueue}
+            canPromote={Boolean(controlState.secondaryAction?.enabled) && !pendingQueue?.paused}
             onPromote={onPromotePending ?? (() => {})}
             onDelete={onDeletePending ?? (() => {})}
+            onResume={onResumePendingQueue}
           />
         )}
 

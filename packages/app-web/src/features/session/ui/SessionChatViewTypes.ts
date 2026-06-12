@@ -1,7 +1,10 @@
 import type { ReactNode } from "react";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import type { PendingMessageView } from "../../../generated/workflow-contracts";
+import type {
+  PendingMessageView,
+  PendingQueueStateView,
+} from "../../../generated/workflow-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
@@ -95,10 +98,14 @@ export interface SessionChatViewProps {
 
   /** 排队中的消息列表（来自 runtimeControl.pending_messages） */
   pendingMessages?: PendingMessageView[];
+  /** Pending 队列状态（来自 runtimeControl.pending_queue） */
+  pendingQueue?: PendingQueueStateView;
   /** 引导排队消息（promote to steer） */
   onPromotePending?: (messageId: string) => void;
   /** 删除排队消息 */
   onDeletePending?: (messageId: string) => void;
+  /** 恢复暂停的 pending 队列 */
+  onResumePendingQueue?: () => void;
 
   // ─── 布局插槽 ────────────────────────────────────────
 

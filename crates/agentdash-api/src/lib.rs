@@ -1,3 +1,4 @@
+mod agent_run_pending;
 pub mod app_state;
 pub mod auth;
 pub mod bootstrap;

@@ -284,6 +284,12 @@ POST /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}/promot
 - `pending-messages` enqueue 只接受 `SessionExecutionState::Running`。
 - `pending-messages/{id}/promote` 只接受 `SessionExecutionState::Running { turn_id: Some(_) }`。
 - `pending-messages/{id}/promote` 在取出消息后若 steering 投递失败，必须把消息放回队首。
+- failed / interrupted terminal 会把 pending queue 标记为 paused，并在 workspace/runtime-control
+  view 的 `pending_queue` 字段暴露 `pause_reason`、`message` 与 `can_resume`。
+- `POST /agent-runs/{run_id}/agents/{agent_id}/pending-messages/resume` 会清除 paused 状态；若
+  runtime 已静默且 AgentRun 仍可继续，会立即通过同一个 pending dispatcher 投递队首。
+- resume 触发的派发失败时，队首消息会放回队列，并恢复进入 resume 前的 paused 状态，原因是
+  用户显式恢复只有在下一轮命令被接受后才算完成。
 - `messages` 下一轮发送入口拒绝 running / cancelling，接受 idle、completed、failed、interrupted
   runtime state，并由 AgentRun terminal status 决定是否还能继续。
 - completed terminal 后的 pending drain 使用同一个 `PendingQueueService` 实例和
@@ -304,6 +310,9 @@ POST /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}/promot
 | completed terminal 且队列非空 | 后端自动取队首并发起下一轮 `AgentRunMessageCommand` |
 | 自动 dispatch 失败 | pending message 回到队首 |
 | failed / interrupted terminal | pending queue 暂停，不自动续跑 |
+| 用户恢复 paused queue 且 runtime 静默 | 清除暂停状态并立即尝试投递队首 |
+| 用户恢复 paused queue 但 dispatch 失败 | 队首消息保留，paused 状态保持可见 |
+| 用户恢复 paused queue 且 runtime running/cancelling | 只清除暂停状态，等待当前 turn terminal 后继续 drain |
 
 ### 5. Good/Base/Bad Cases
 
@@ -319,8 +328,12 @@ POST /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}/promot
 - AgentRun pending promote route / helper 测试覆盖 running without turn 不消费 pending。
 - Terminal callback / bootstrap 测试覆盖 completed drain 调用 `AgentRunMessageService`，dispatch
   失败时 `requeue_front`。
+- Workspace / runtime-control projection 测试覆盖 paused queue 的 `pause_reason`、`message` 和
+  `can_resume`。
+- Resume endpoint 测试覆盖静默 runtime 恢复后触发队首 dispatch，running/cancelling 恢复后不并发
+  dispatch。
 - Frontend chat control 测试覆盖 ready / completed 状态使用 `send_next`，running 状态才暴露
-  `enqueue` / `steer`。
+  `enqueue` / `steer`，paused pending queue 持续展示并提供恢复命令。
 
 ### 7. Wrong vs Correct
 

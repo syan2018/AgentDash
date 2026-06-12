@@ -6,31 +6,57 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { PendingMessageView } from "../../../../generated/workflow-contracts";
+import type {
+  PendingMessageView,
+  PendingQueueStateView,
+} from "../../../../generated/workflow-contracts";
 
 interface PendingMessageListProps {
   messages: PendingMessageView[];
-  canSteer: boolean;
+  queue?: PendingQueueStateView;
+  canPromote: boolean;
   onPromote: (messageId: string) => void;
   onDelete: (messageId: string) => void;
+  onResume?: () => void;
 }
 
 export function PendingMessageList({
   messages,
-  canSteer,
+  queue,
+  canPromote,
   onPromote,
   onDelete,
+  onResume,
 }: PendingMessageListProps) {
-  if (messages.length === 0) return null;
+  if (messages.length === 0 && !queue?.paused) return null;
 
   return (
     <div className="shrink-0 pb-2">
       <div className="mx-auto w-full max-w-4xl space-y-1 px-5">
+        {queue?.paused && (
+          <div className="flex items-center justify-between gap-3 rounded-[12px] border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
+            <div className="min-w-0">
+              <div className="font-medium">Pending 队列已暂停</div>
+              <div className="truncate text-warning/80">
+                {queue.message ?? "等待用户恢复后继续投递排队消息。"}
+              </div>
+            </div>
+            {queue.can_resume && onResume && (
+              <button
+                type="button"
+                onClick={onResume}
+                className="shrink-0 rounded-[8px] border border-warning/30 bg-background px-2.5 py-1 text-xs font-medium text-warning transition-colors hover:bg-warning/10"
+              >
+                恢复
+              </button>
+            )}
+          </div>
+        )}
         {messages.map((msg) => (
           <PendingMessageRow
             key={msg.id}
             message={msg}
-            canSteer={canSteer}
+            canPromote={canPromote}
             onPromote={onPromote}
             onDelete={onDelete}
           />
@@ -42,12 +68,12 @@ export function PendingMessageList({
 
 function PendingMessageRow({
   message,
-  canSteer,
+  canPromote,
   onPromote,
   onDelete,
 }: {
   message: PendingMessageView;
-  canSteer: boolean;
+  canPromote: boolean;
   onPromote: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
@@ -96,7 +122,7 @@ function PendingMessageRow({
 
       {/* 行内操作 — hover 显示 */}
       <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-        {canSteer && (
+        {canPromote && (
           <button
             type="button"
             onClick={handlePromote}

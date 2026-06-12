@@ -47,6 +47,10 @@ const workspace: AgentRunWorkspaceView = {
     steer: { enabled: true },
     cancel: { enabled: true },
   },
+  pending_queue: {
+    paused: false,
+    can_resume: false,
+  },
   pending_messages: [],
 };
 

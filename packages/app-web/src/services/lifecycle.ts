@@ -22,6 +22,7 @@ import type {
   AgentRunSteeringRequest,
   AgentRunSteeringResponse,
   AgentRunWorkspaceView,
+  ResumePendingQueueResponse,
 } from "../generated/workflow-contracts";
 
 function agentRunCommandPath(runId: string, agentId: string, route: string): string {
@@ -136,6 +137,16 @@ export async function promoteAgentRunPendingMessage(
       agentId,
       `/pending-messages/${encodeURIComponent(messageId)}/promote`,
     ),
+    {},
+  );
+}
+
+export async function resumeAgentRunPendingQueue(
+  runId: string,
+  agentId: string,
+): Promise<ResumePendingQueueResponse> {
+  return api.post<ResumePendingQueueResponse>(
+    agentRunCommandPath(runId, agentId, "/pending-messages/resume"),
     {},
   );
 }

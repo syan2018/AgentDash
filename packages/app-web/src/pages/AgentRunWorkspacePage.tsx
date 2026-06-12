@@ -31,6 +31,7 @@ import {
   deleteAgentRunPendingMessage,
   enqueueAgentRunPendingMessage,
   promoteAgentRunPendingMessage,
+  resumeAgentRunPendingQueue,
   sendAgentRunMessage,
   steerAgentRun,
 } from "../services/lifecycle";
@@ -520,14 +521,17 @@ export function AgentRunWorkspacePage({
   const handlePromotePending = useCallback(async (messageId: string) => {
     if (!currentRunId || !currentAgentId) return;
     if (agentRunWorkspaceState.status !== "ready") return;
+    if (!chatControlState.secondaryAction?.enabled || runtimeControl?.pending_queue.paused) return;
     await promoteAgentRunPendingMessage(currentRunId, currentAgentId, messageId);
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("pending_message_promoted", true);
   }, [
     agentRunWorkspaceState.status,
+    chatControlState.secondaryAction?.enabled,
     currentAgentId,
     currentRunId,
     refreshAgentRunWorkspaceState,
+    runtimeControl?.pending_queue.paused,
     scheduleHookRuntimeRefresh,
   ]);
 
@@ -542,6 +546,27 @@ export function AgentRunWorkspacePage({
     currentAgentId,
     currentRunId,
     refreshAgentRunWorkspaceState,
+    scheduleHookRuntimeRefresh,
+  ]);
+
+  const handleResumePendingQueue = useCallback(async () => {
+    if (!currentRunId || !currentAgentId) return;
+    if (agentRunWorkspaceState.status !== "ready") return;
+    if (!runtimeControl?.pending_queue.can_resume) return;
+    const response = await resumeAgentRunPendingQueue(currentRunId, currentAgentId);
+    const acceptedRunId = response.accepted_refs?.run_ref.run_id;
+    if (acceptedRunId) {
+      void fetchAndIngestLifecycleRun(acceptedRunId);
+    }
+    void refreshAgentRunWorkspaceState().catch(() => {});
+    scheduleHookRuntimeRefresh("pending_queue_resumed", true);
+  }, [
+    agentRunWorkspaceState.status,
+    currentAgentId,
+    currentRunId,
+    fetchAndIngestLifecycleRun,
+    refreshAgentRunWorkspaceState,
+    runtimeControl?.pending_queue.can_resume,
     scheduleHookRuntimeRefresh,
   ]);
 
@@ -823,13 +848,11 @@ export function AgentRunWorkspacePage({
               controlState={chatControlState}
               onPrimaryAction={handleAgentRunPrimaryAction}
               onCancelAction={handleCancelAgentRun}
-              pendingMessages={
-                chatControlState.primaryAction.kind === "enqueue"
-                  ? runtimeControl?.pending_messages
-                  : undefined
-              }
+              pendingMessages={runtimeControl?.pending_messages}
+              pendingQueue={runtimeControl?.pending_queue}
               onPromotePending={(id) => { void handlePromotePending(id); }}
               onDeletePending={(id) => { void handleDeletePending(id); }}
+              onResumePendingQueue={() => { void handleResumePendingQueue(); }}
               inputPrefix={ownerBindingBar ?? draftBindingBar}
             />
           </div>

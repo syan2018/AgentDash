@@ -814,6 +814,26 @@ pub struct AgentRunWorkspaceActionSetView {
     pub cancel: AgentRunWorkspaceActionAvailabilityView,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingQueuePauseReasonDto {
+    TurnFailed,
+    TurnInterrupted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct PendingQueueStateView {
+    pub paused: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pause_reason: Option<PendingQueuePauseReasonDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub message: Option<String>,
+    pub can_resume: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunCommandReceipt {
@@ -864,6 +884,7 @@ pub struct AgentRunWorkspaceView {
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
     pub actions: AgentRunWorkspaceActionSetView,
+    pub pending_queue: PendingQueueStateView,
     #[serde(default)]
     pub pending_messages: Vec<PendingMessageView>,
 }
@@ -1148,6 +1169,7 @@ pub struct SessionRuntimeControlView {
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
     pub actions: SessionRuntimeActionSetView,
+    pub pending_queue: PendingQueueStateView,
     #[serde(default)]
     pub pending_messages: Vec<PendingMessageView>,
 }
@@ -1176,6 +1198,16 @@ pub struct EnqueuePendingMessageRequest {
 pub struct EnqueuePendingMessageResponse {
     pub command_receipt: AgentRunCommandReceipt,
     pub message: PendingMessageView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ResumePendingQueueResponse {
+    pub resumed: bool,
+    pub dispatched: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub accepted_refs: Option<AgentRunAcceptedRefs>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -32,6 +32,10 @@ function workspaceView(
     control_plane: { status: controlStatus },
     subject_associations: [],
     actions,
+    pending_queue: {
+      paused: false,
+      can_resume: false,
+    },
     pending_messages: [],
   };
 }

@@ -13,6 +13,7 @@ use agentdash_contracts::workflow::{
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
     AgentRunWorkspaceView, EnqueuePendingMessageRequest, EnqueuePendingMessageResponse,
     LifecycleRunRefDto, LifecycleSubjectAssociationDto, PendingMessageView,
+    PendingQueuePauseReasonDto, PendingQueueStateView, ResumePendingQueueResponse,
     RuntimeSessionCommandStateDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
 };
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
@@ -23,6 +24,7 @@ use axum::{
 };
 use uuid::Uuid;
 
+use crate::agent_run_pending::AgentRunPendingDispatcher;
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
@@ -72,6 +74,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             "/agent-runs/{run_id}/agents/{agent_id}/pending-messages",
             axum::routing::get(list_agent_run_pending_messages)
                 .post(enqueue_agent_run_pending_message),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/pending-messages/resume",
+            axum::routing::post(resume_agent_run_pending_queue),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}",
@@ -323,6 +329,83 @@ async fn delete_agent_run_pending_message(
         )));
     }
     Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+async fn resume_agent_run_pending_queue(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<ResumePendingQueueResponse>, ApiError> {
+    let context = resolve_agent_run_context(
+        &state,
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let runtime_session_id = context.delivery_runtime_session_id.ok_or_else(|| {
+        ApiError::Conflict(format!(
+            "AgentRun {} / {} 缺少 delivery runtime",
+            context.run.id, context.agent.id
+        ))
+    })?;
+    let execution_state = state
+        .services
+        .session_core
+        .inspect_session_execution_state(&runtime_session_id)
+        .await?;
+    if matches!(
+        execution_state,
+        SessionExecutionState::Running { .. } | SessionExecutionState::Cancelling { .. }
+    ) {
+        state
+            .services
+            .pending_queue
+            .resume(&runtime_session_id)
+            .await;
+        return Ok(Json(ResumePendingQueueResponse {
+            resumed: true,
+            dispatched: false,
+            accepted_refs: None,
+        }));
+    }
+    if is_terminal_agent_status(&context.agent.status) {
+        state
+            .services
+            .pending_queue
+            .resume(&runtime_session_id)
+            .await;
+        return Ok(Json(ResumePendingQueueResponse {
+            resumed: true,
+            dispatched: false,
+            accepted_refs: None,
+        }));
+    }
+
+    let dispatcher = AgentRunPendingDispatcher::new(
+        state.repos.clone(),
+        state.services.pending_queue.clone(),
+        state.services.session_launch.clone(),
+    );
+    let dispatch = dispatcher
+        .resume_queue(&runtime_session_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(ResumePendingQueueResponse {
+        resumed: true,
+        dispatched: dispatch.is_some(),
+        accepted_refs: dispatch.map(|dispatch| {
+            accepted_refs(
+                dispatch.run_id,
+                dispatch.agent_id,
+                Some(dispatch.frame_id),
+                Some(dispatch.frame_revision),
+                Some(dispatch.runtime_session_id),
+                Some(dispatch.turn_id),
+            )
+        }),
+    }))
 }
 
 async fn promote_agent_run_pending_message(
@@ -620,6 +703,13 @@ async fn build_agent_run_workspace_view(
             .collect(),
         None => Vec::new(),
     };
+    let pending_queue = match runtime_session_id.as_deref() {
+        Some(session_id) => pending_queue_state_view(
+            state.services.pending_queue.is_paused(session_id).await,
+            has_delivery_runtime && !terminal_agent,
+        ),
+        None => pending_queue_state_view(None, false),
+    };
     let shell_title = match meta.as_ref() {
         Some(meta) => {
             select_workspace_shell_title(WorkspaceShellTitleCandidate::DeliveryMeta(meta))
@@ -657,6 +747,7 @@ async fn build_agent_run_workspace_view(
         frame_runtime,
         subject_associations,
         actions,
+        pending_queue,
         pending_messages,
     })
 }
@@ -746,6 +837,30 @@ fn pending_message_view(
         preview: preview.preview,
         has_images: preview.has_images,
         created_at: preview.created_at.to_rfc3339(),
+    }
+}
+
+pub(crate) fn pending_queue_state_view(
+    pause_reason: Option<agentdash_application::session::QueuePauseReason>,
+    can_resume: bool,
+) -> PendingQueueStateView {
+    let pause_reason_dto = pause_reason.map(|reason| match reason {
+        agentdash_application::session::QueuePauseReason::TurnFailed => {
+            PendingQueuePauseReasonDto::TurnFailed
+        }
+        agentdash_application::session::QueuePauseReason::TurnInterrupted => {
+            PendingQueuePauseReasonDto::TurnInterrupted
+        }
+    });
+    let message = pause_reason_dto.as_ref().map(|reason| match reason {
+        PendingQueuePauseReasonDto::TurnFailed => "上一轮失败，pending 队列已暂停。",
+        PendingQueuePauseReasonDto::TurnInterrupted => "上一轮已中断，pending 队列已暂停。",
+    });
+    PendingQueueStateView {
+        paused: pause_reason_dto.is_some(),
+        pause_reason: pause_reason_dto,
+        message: message.map(str::to_string),
+        can_resume: can_resume && pause_reason.is_some(),
     }
 }
 
@@ -1301,6 +1416,7 @@ mod tests {
                 steer: disabled_action("not running"),
                 cancel: disabled_action("not running"),
             },
+            pending_queue: pending_queue_state_view(None, true),
             pending_messages: Vec::new(),
         };
 
@@ -1335,5 +1451,24 @@ mod tests {
             reason,
             "当前 AgentRun 正在执行但缺少 active turn，不能投递 pending 消息。"
         );
+    }
+
+    #[test]
+    fn pending_queue_state_view_exposes_pause_reason_and_resume() {
+        let view = pending_queue_state_view(
+            Some(agentdash_application::session::QueuePauseReason::TurnInterrupted),
+            true,
+        );
+
+        assert!(view.paused);
+        assert_eq!(
+            view.pause_reason,
+            Some(PendingQueuePauseReasonDto::TurnInterrupted)
+        );
+        assert_eq!(
+            view.message.as_deref(),
+            Some("上一轮已中断，pending 队列已暂停。")
+        );
+        assert!(view.can_resume);
     }
 }

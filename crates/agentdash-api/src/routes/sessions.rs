@@ -13,6 +13,7 @@ use axum::{
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
+use crate::routes::lifecycle_agents::pending_queue_state_view;
 use crate::routes::lifecycle_contracts::{
     agent_run_to_contract, lifecycle_run_view_to_contract, subject_association_to_contract,
 };
@@ -183,6 +184,7 @@ pub async fn get_session_runtime_control(
                 steer: disabled_action("当前 Session 没有绑定 Agent 控制面，不能运行中 steer。"),
                 cancel: disabled_action("当前 Session 没有正在执行的 turn。"),
             },
+            pending_queue: pending_queue_state_view(None, false),
             pending_messages: Vec::new(),
         }));
     };
@@ -344,6 +346,14 @@ pub async fn get_session_runtime_control(
             created_at: p.created_at.to_rfc3339(),
         })
         .collect();
+    let pending_queue = pending_queue_state_view(
+        state
+            .services
+            .pending_queue
+            .is_paused(&runtime_session_id)
+            .await,
+        !terminal_agent,
+    );
 
     Ok(Json(SessionRuntimeControlView {
         runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
@@ -360,6 +370,7 @@ pub async fn get_session_runtime_control(
             steer,
             cancel,
         },
+        pending_queue,
         pending_messages,
     }))
 }

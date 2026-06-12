@@ -18,6 +18,7 @@ import {
   deleteAgentRunPendingMessage,
   enqueueAgentRunPendingMessage,
   promoteAgentRunPendingMessage,
+  resumeAgentRunPendingQueue,
   sendAgentRunMessage,
   steerAgentRun,
 } from "./lifecycle";
@@ -108,6 +109,15 @@ describe("lifecycle message service", () => {
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/pending-messages/message%2F1/promote",
+      {},
+    );
+  });
+
+  it("resumes pending queues through the AgentRun pending resume endpoint", async () => {
+    await resumeAgentRunPendingQueue("run/1", "agent/1");
+
+    expect(mocks.apiPostMock).toHaveBeenCalledWith(
+      "/agent-runs/run%2F1/agents/agent%2F1/pending-messages/resume",
       {},
     );
   });

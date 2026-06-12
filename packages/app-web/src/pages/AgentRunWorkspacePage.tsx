@@ -376,7 +376,7 @@ export function AgentRunWorkspacePage({
     ) {
       return readonlyChatControlState("正在解析当前 AgentRun 的工作台状态。");
     }
-    if (agentRunWorkspaceState.error) {
+    if (agentRunWorkspaceState.error && !runtimeControl) {
       return readonlyChatControlState(agentRunWorkspaceState.error);
     }
     if (!runtimeControl) {

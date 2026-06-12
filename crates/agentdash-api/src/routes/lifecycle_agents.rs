@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_application::session::SessionMeta;
 use agentdash_application::workflow::{
     AgentRunMessageCommand, AgentRunMessageLaunchDeliveryPort, AgentRunMessageService,
     AgentRunSteeringCommand, AgentRunSteeringService, lifecycle_run_view_builder,
@@ -36,6 +37,17 @@ struct AgentRunContext {
     run: LifecycleRun,
     agent: LifecycleAgent,
     delivery_runtime_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkspaceShellTitle {
+    display_title: String,
+    title_source: String,
+}
+
+enum WorkspaceShellTitleCandidate<'a> {
+    DeliveryMeta(&'a SessionMeta),
+    WorkspaceFallback(String),
 }
 
 pub fn router() -> axum::Router<Arc<AppState>> {
@@ -567,7 +579,17 @@ async fn build_agent_run_workspace_view(
             .collect(),
         None => Vec::new(),
     };
-    let display_title = resolve_workspace_title(state, context).await?;
+    let shell_title = match meta.as_ref() {
+        Some(meta) => {
+            select_workspace_shell_title(WorkspaceShellTitleCandidate::DeliveryMeta(meta))
+        }
+        None => {
+            let display_title = resolve_workspace_title(state, context).await?;
+            select_workspace_shell_title(WorkspaceShellTitleCandidate::WorkspaceFallback(
+                display_title,
+            ))
+        }
+    };
     let delivery_status = workspace_delivery_status(&execution_state, &context.agent.status);
     Ok(AgentRunWorkspaceView {
         run_ref: LifecycleRunRefDto {
@@ -579,8 +601,8 @@ async fn build_agent_run_workspace_view(
         },
         project_id: context.run.project_id.to_string(),
         shell: AgentRunWorkspaceShell {
-            display_title,
-            title_source: "agentrun_workspace".to_string(),
+            display_title: shell_title.display_title,
+            title_source: shell_title.title_source,
             workspace_status: context.agent.status.clone(),
             delivery_status,
             last_turn_id: execution_state_turn_id(&execution_state),
@@ -615,9 +637,22 @@ async fn resolve_workspace_title(
     Ok(format!("AgentRun {}", context.agent.id))
 }
 
-fn runtime_trace_meta(
-    meta: &agentdash_application::session::SessionMeta,
-) -> RuntimeSessionTraceMeta {
+fn select_workspace_shell_title(
+    candidate: WorkspaceShellTitleCandidate<'_>,
+) -> WorkspaceShellTitle {
+    match candidate {
+        WorkspaceShellTitleCandidate::DeliveryMeta(meta) => WorkspaceShellTitle {
+            display_title: meta.title.clone(),
+            title_source: serialized_string(&meta.title_source),
+        },
+        WorkspaceShellTitleCandidate::WorkspaceFallback(display_title) => WorkspaceShellTitle {
+            display_title,
+            title_source: "agentrun_workspace".to_string(),
+        },
+    }
+}
+
+fn runtime_trace_meta(meta: &SessionMeta) -> RuntimeSessionTraceMeta {
     RuntimeSessionTraceMeta {
         runtime_session_ref: RuntimeSessionRefDto {
             runtime_session_id: meta.id.clone(),
@@ -1010,5 +1045,97 @@ fn execution_state_turn_id(
             Some(turn_id.clone())
         }
         agentdash_application::session::SessionExecutionState::Idle => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_application::session::{ExecutionStatus, TitleSource};
+    use agentdash_domain::workflow::LifecycleRun;
+
+    use super::*;
+
+    fn test_session_meta(title: &str, title_source: TitleSource) -> SessionMeta {
+        SessionMeta {
+            id: "runtime-session-1".to_string(),
+            title: title.to_string(),
+            title_source,
+            created_at: 1,
+            updated_at: 2,
+            last_event_seq: 3,
+            last_delivery_status: ExecutionStatus::Idle,
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_session_id: None,
+        }
+    }
+
+    fn test_shell(display_title: &str, title_source: &str) -> AgentRunWorkspaceShell {
+        AgentRunWorkspaceShell {
+            display_title: display_title.to_string(),
+            title_source: title_source.to_string(),
+            workspace_status: "running".to_string(),
+            delivery_status: "idle".to_string(),
+            last_turn_id: None,
+            last_activity_at: "2026-06-12T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn workspace_shell_title_uses_delivery_session_meta_when_present() {
+        let meta = test_session_meta("Session meta title", TitleSource::Source);
+
+        let shell_title =
+            select_workspace_shell_title(WorkspaceShellTitleCandidate::DeliveryMeta(&meta));
+
+        assert_eq!(shell_title.display_title, "Session meta title");
+        assert_eq!(shell_title.title_source, "source");
+    }
+
+    #[test]
+    fn workspace_shell_title_uses_workspace_fallback_without_delivery_meta() {
+        let shell_title = select_workspace_shell_title(
+            WorkspaceShellTitleCandidate::WorkspaceFallback("AgentRun fallback".to_string()),
+        );
+
+        assert_eq!(shell_title.display_title, "AgentRun fallback");
+        assert_eq!(shell_title.title_source, "agentrun_workspace");
+    }
+
+    #[test]
+    fn list_entry_inherits_workspace_shell_title() {
+        let run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let run_id = run.id.to_string();
+        let agent_id = Uuid::new_v4().to_string();
+        let project_id = run.project_id.to_string();
+        let workspace = AgentRunWorkspaceView {
+            run_ref: LifecycleRunRefDto {
+                run_id: run_id.clone(),
+            },
+            agent_ref: AgentRunRefDto { run_id, agent_id },
+            project_id,
+            shell: test_shell("Session meta title", "source"),
+            delivery_runtime_ref: None,
+            delivery_trace_meta: None,
+            control_plane: AgentRunWorkspaceControlPlaneView {
+                status: AgentRunWorkspaceControlPlaneStatus::Ready,
+                reason: None,
+            },
+            agent: None,
+            frame_runtime: None,
+            subject_associations: Vec::new(),
+            actions: AgentRunWorkspaceActionSetView {
+                send_next: enabled_action(),
+                enqueue: disabled_action("not running"),
+                steer: disabled_action("not running"),
+                cancel: disabled_action("not running"),
+            },
+            pending_messages: Vec::new(),
+        };
+
+        let entry = agent_run_workspace_list_entry(&run, workspace);
+
+        assert_eq!(entry.shell.display_title, "Session meta title");
+        assert_eq!(entry.shell.title_source, "source");
     }
 }

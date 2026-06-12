@@ -2104,7 +2104,7 @@ mod tests {
     // ═══════════════════════════════════════════════════════════
     //
     // 这些测试锁定 `apply_session_assembly` 对称化后的行为（2026-04-30）：
-    // - mcp_servers (Vec<RuntimeMcpServerDeclaration>) 统一整体替换；
+    // - frame surface draft 整体替换旧 projection fixture；
     // - vfs 语义三分支等价于"prepared 非空则覆盖"；
     // - workspace_defaults 顺序保持"先回填、再被 prepared.vfs 覆盖"。
 
@@ -2134,30 +2134,6 @@ mod tests {
                 },
                 uses_relay: false,
             }
-        }
-
-        #[test]
-        fn mcp_servers_prepared_overrides_base() {
-            let mut base = base_plan();
-            base.projections.mcp_servers =
-                vec![runtime_mcp_declaration("base_only", "http://base")];
-
-            let prepared = SessionAssemblyBuilder {
-                mcp_servers: vec![
-                    runtime_mcp_declaration("compose_a", "http://a"),
-                    runtime_mcp_declaration("compose_b", "http://b"),
-                ],
-                ..Default::default()
-            };
-
-            let result = apply_session_assembly(base, prepared);
-            let names: Vec<&str> = result
-                .projections
-                .mcp_servers
-                .iter()
-                .map(|s| s.name.as_str())
-                .collect();
-            assert_eq!(names, vec!["compose_a", "compose_b"]);
         }
 
         #[test]
@@ -2193,17 +2169,6 @@ mod tests {
             );
             assert_eq!(draft.mcp_servers[0].name, "compose_a");
             assert!(draft.capability_state.is_some());
-        }
-
-        #[test]
-        fn mcp_servers_prepared_empty_still_replaces() {
-            let mut base = base_plan();
-            base.projections.mcp_servers =
-                vec![runtime_mcp_declaration("base_only", "http://base")];
-            let prepared = SessionAssemblyBuilder::default();
-
-            let result = apply_session_assembly(base, prepared);
-            assert!(result.projections.mcp_servers.is_empty());
         }
 
         #[test]

@@ -1144,6 +1144,7 @@ mod tests {
     };
     use crate::vfs::tools::SessionToolServices;
     use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
+    use crate::workflow::frame_surface::FrameSurfaceDraft;
 
     fn manifest(extension_id: &str) -> ExtensionTemplatePayload {
         ExtensionTemplatePayload {
@@ -1482,8 +1483,14 @@ mod tests {
         capability_state.vfs.active = Some(vfs.clone());
         construction.workspace.working_directory = Some(working_dir.to_path_buf());
         construction.execution_profile.executor_config = user_input.executor_config;
-        construction.surface.vfs = Some(vfs);
-        construction.projections.capability_state = Some(capability_state);
+        construction.surface.vfs = Some(vfs.clone());
+        construction.projections.frame_surface_draft = Some(FrameSurfaceDraft {
+            capability_state: Some(capability_state),
+            vfs: Some(vfs),
+            mcp_servers: Vec::new(),
+            context_bundle_summary: None,
+            execution_profile: construction.execution_profile.executor_config.clone(),
+        });
         construction.resolution = ConstructionResolutionPlan {
             vfs_source: Some("test.local_workspace_vfs".to_string()),
             mcp_source: Some("test.empty".to_string()),

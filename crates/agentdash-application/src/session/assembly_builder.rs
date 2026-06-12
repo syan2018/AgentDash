@@ -28,13 +28,13 @@ use crate::workflow::frame_surface::{FrameContextBundleSummary, FrameSurfaceDraf
 /// |---|---|
 /// | `prompt_blocks` | `Option`：prepared 非空覆盖；否则保留 base |
 /// | `executor_config` | `Option`：prepared 非空覆盖；否则保留 base |
-/// | `context_bundle` / `capability_state` | 整体替换为 prepared 值 |
+/// | `context_bundle` | 整体替换为 prepared 值 |
 /// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
-/// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
+/// | `frame_surface_draft` | 整体替换为 prepared 生成的 launch surface draft |
 /// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
 ///
-/// **注**：`mcp_servers` 已迁移为 `Vec<RuntimeMcpServerDeclaration>` 内部类型，relay 标记
-/// 内嵌于每个 server 实例，不再作为独立字段传递。
+/// **注**：MCP / capability / VFS 都收束在 `FrameSurfaceDraft` 内，不再写回
+/// `ConstructionProjections` 的并列 projection 字段。
 #[cfg(test)]
 #[allow(deprecated)]
 pub(crate) fn apply_session_assembly(
@@ -61,12 +61,10 @@ pub(crate) fn apply_session_assembly(
     // 语义等价于旧的三重分支，但表达更直接；compose 产出的 workspace/canvas/lifecycle
     // mount 组合会覆盖前端透传的 vfs，是刻意为之。
     let active_vfs = prepared.vfs.or_else(|| plan.surface.vfs.clone());
-    plan.projections.mcp_servers = prepared.mcp_servers;
-    plan.projections.capability_state = prepared.capability_state;
     plan.projections.frame_surface_draft = Some(FrameSurfaceDraft {
-        capability_state: plan.projections.capability_state.clone(),
+        capability_state: prepared.capability_state,
         vfs: active_vfs.clone(),
-        mcp_servers: plan.projections.mcp_servers.clone(),
+        mcp_servers: prepared.mcp_servers,
         context_bundle_summary: plan
             .context
             .bundle

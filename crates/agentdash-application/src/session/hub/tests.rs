@@ -68,6 +68,7 @@ use crate::vfs::{
     MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
     VfsService,
 };
+use crate::workflow::frame_surface::FrameSurfaceDraft;
 use agentdash_application_ports::backend_transport::{
     BackendTransport, DirectoryBrowseInfo, GitRepoInfo, RelayPromptRequest, RelayPromptTransport,
     RelaySessionRoute, RelaySessionRouteInfo, RelaySteerRequest, RemoteExecutorInfo,
@@ -211,6 +212,7 @@ fn simple_prompt_request(prompt: &str) -> RuntimeContextInspectionPlan {
         executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
         ..UserPromptInput::from_text(prompt)
     };
+    let executor_config = user_input.executor_config.clone();
     let owner = crate::session::construction::ResolvedSessionOwner {
         owner_type: agentdash_spi::CapabilityScope::Project,
         project_id: Some(uuid::Uuid::new_v4()),
@@ -226,7 +228,13 @@ fn simple_prompt_request(prompt: &str) -> RuntimeContextInspectionPlan {
     capability_state.vfs.active = Some(vfs.clone());
     construction.workspace.working_directory = Some(root);
     construction.surface.vfs = Some(vfs.clone());
-    construction.projections.capability_state = Some(capability_state);
+    construction.projections.frame_surface_draft = Some(FrameSurfaceDraft {
+        capability_state: Some(capability_state),
+        vfs: Some(vfs),
+        mcp_servers: Vec::new(),
+        context_bundle_summary: None,
+        execution_profile: executor_config,
+    });
     construction.resolution = ConstructionResolutionPlan {
         vfs_source: Some("test.local_workspace_vfs".to_string()),
         mcp_source: Some("test.empty".to_string()),
@@ -465,9 +473,17 @@ async fn start_prompt_records_current_turn_state() {
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Workflow]);
 
     let mut req = simple_prompt_request("hello");
-    req.surface.vfs = Some(local_workspace_vfs(workspace.path()));
-    req.projections.mcp_servers = vec![runtime_mcp_declaration.clone()];
-    req.projections.capability_state = Some(flow_caps.clone());
+    let vfs = local_workspace_vfs(workspace.path());
+    req.surface.vfs = Some(vfs.clone());
+    let mut launch_caps = flow_caps.clone();
+    launch_caps.vfs.active = Some(vfs.clone());
+    req.projections.frame_surface_draft = Some(FrameSurfaceDraft {
+        capability_state: Some(launch_caps),
+        vfs: Some(vfs),
+        mcp_servers: vec![runtime_mcp_declaration.clone()],
+        context_bundle_summary: None,
+        execution_profile: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
+    });
 
     hub.start_prompt(&session.id, req)
         .await
@@ -1052,8 +1068,17 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
     let initial_flow =
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Read]);
     let mut req = simple_prompt_request("hello");
-    req.surface.vfs = Some(local_workspace_vfs(workspace.path()));
-    req.projections.capability_state = Some(initial_flow);
+    let vfs = local_workspace_vfs(workspace.path());
+    req.surface.vfs = Some(vfs.clone());
+    let mut launch_flow = initial_flow;
+    launch_flow.vfs.active = Some(vfs.clone());
+    req.projections.frame_surface_draft = Some(FrameSurfaceDraft {
+        capability_state: Some(launch_flow),
+        vfs: Some(vfs),
+        mcp_servers: Vec::new(),
+        context_bundle_summary: None,
+        execution_profile: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
+    });
 
     hub.start_prompt(&session.id, req)
         .await

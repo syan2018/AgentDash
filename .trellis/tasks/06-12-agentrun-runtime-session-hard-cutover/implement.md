@@ -61,7 +61,7 @@ Commit target:
 
 ## Phase 2: Delete Old Projection Fixtures
 
-Status: pending
+Status: completed
 
 Owner: second `trellis-implement` subagent after Phase 1 lands.
 
@@ -69,20 +69,27 @@ Goal: remove `RuntimeContextInspectionPlan` projection compatibility and old tes
 
 Tasks:
 
-- [ ] Remove `ConstructionProjections.mcp_servers`.
-- [ ] Remove `ConstructionProjections.capability_state`.
+- [x] Remove `ConstructionProjections.mcp_servers`.
+- [x] Remove `ConstructionProjections.capability_state`.
 - [x] Remove `RuntimeContextInspectionPlan::surface_draft_or_fixture_projection`.
-- [ ] Update `apply_session_assembly` to write only `frame_surface_draft`.
-- [ ] Rewrite behavior tests to construct real `FrameSurfaceDraft` / launch surface directly.
-- [ ] Delete tests that only assert fixture fallback or stale projection compatibility.
-- [ ] Update specs to describe direct typed handoff only.
+- [x] Update `apply_session_assembly` to write only `frame_surface_draft`.
+- [x] Rewrite behavior tests to construct real `FrameSurfaceDraft` / launch surface directly.
+- [x] Delete tests that only assert fixture fallback or stale projection compatibility.
+- [x] Update specs to describe direct typed handoff only.
 
 Validation:
 
-- [ ] `cargo check -p agentdash-application`
-- [ ] `cargo test -p agentdash-application session::hub`
-- [ ] `cargo test -p agentdash-application session::launch`
-- [ ] `rg -n "surface_draft_or_fixture_projection|projections\\.mcp_servers|projections\\.capability_state" crates .trellis/spec`
+- [x] `cargo fmt`
+- [x] `cargo check -p agentdash-application`
+- [x] `cargo test -p agentdash-application session::hub`
+- [x] `cargo test -p agentdash-application session::launch`
+- [x] `cargo test -p agentdash-application workspace_module`
+- [x] `rg -n "surface_draft_or_fixture_projection|projections\\.mcp_servers|projections\\.capability_state" crates .trellis/spec`
+
+Notes:
+
+- Session specs already described direct `FrameSurfaceDraft` / `FrameLaunchSurface` handoff; no spec file needed a content change.
+- The broad validation grep only reports task/research notes outside `.trellis/spec`; application source and specs have no old projection fixture references.
 
 Commit target:
 

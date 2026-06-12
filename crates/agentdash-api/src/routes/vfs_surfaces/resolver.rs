@@ -6,6 +6,7 @@ use agentdash_application::vfs::{
     build_project_agent_knowledge_vfs, build_project_skill_asset_management_mount,
     build_project_vfs_mount_mount,
 };
+use agentdash_application::workflow::AgentFrameSurfaceExt;
 use agentdash_spi::Vfs;
 
 use crate::{
@@ -205,6 +206,9 @@ pub(crate) async fn resolve_surface_bundle(
                 .vfs
                 .unwrap_or_default()
         }
+        ResolvedVfsSurfaceSource::AgentRun { run_id, agent_id } => {
+            resolve_agent_run_frame_vfs(state, current_user, *run_id, *agent_id, permission).await?
+        }
     };
 
     let surface = build_surface_summary(state, source, &vfs).await;
@@ -223,8 +227,63 @@ async fn load_project_vfs_mounts(
         .map_err(ApiError::from)
 }
 
-pub(crate) async fn build_surface_summary(
+async fn resolve_agent_run_frame_vfs(
     state: &Arc<AppState>,
+    current_user: &agentdash_integration_api::AuthIdentity,
+    run_id: uuid::Uuid,
+    agent_id: uuid::Uuid,
+    permission: ProjectPermission,
+) -> Result<Vfs, ApiError> {
+    let run = state
+        .repos
+        .lifecycle_run_repo
+        .get_by_id(run_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))?;
+    load_project_with_permission(state.as_ref(), current_user, run.project_id, permission).await?;
+
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(agent_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_agent 不存在: {agent_id}")))?;
+    if agent.run_id != run.id || agent.project_id != run.project_id {
+        return Err(ApiError::Conflict(
+            "agent_id 与 run_id 不属于同一 AgentRun".to_string(),
+        ));
+    }
+
+    let anchor_frame_id = state
+        .repos
+        .execution_anchor_repo
+        .list_by_run(run.id)
+        .await
+        .map_err(ApiError::from)?
+        .into_iter()
+        .filter(|anchor| anchor.agent_id == agent.id)
+        .max_by_key(|anchor| anchor.updated_at)
+        .map(|anchor| anchor.launch_frame_id);
+    let frame = state
+        .repos
+        .agent_frame_repo
+        .get_current(agent.id)
+        .await
+        .map_err(ApiError::from)?
+        .or(match anchor_frame_id {
+            Some(frame_id) => state.repos.agent_frame_repo.get(frame_id).await?,
+            None => None,
+        })
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("lifecycle_agent {} 没有可用 AgentFrame", agent.id))
+        })?;
+    Ok(frame.typed_vfs().unwrap_or_default())
+}
+
+pub(crate) async fn build_surface_summary(
+    state: &AppState,
     source: &ResolvedVfsSurfaceSource,
     vfs: &Vfs,
 ) -> ResolvedVfsSurface {

@@ -28,7 +28,7 @@ export type ResolvedMountSummary = { id: string, display_name: string, provider:
 
 export type ResolvedVfsSurface = { surface_ref: string, source: ResolvedVfsSurfaceSource, mounts: Array<ResolvedMountSummary>, default_mount_id?: string, };
 
-export type ResolvedVfsSurfaceSource = { "source_type": "project_preview", project_id: string, } | { "source_type": "story_preview", project_id: string, story_id: string, } | { "source_type": "task_preview", project_id: string, task_id: string, } | { "source_type": "session_runtime", session_id: string, } | { "source_type": "project_skill_assets", project_id: string, } | { "source_type": "project_vfs_mount", project_id: string, mount_id: string, } | { "source_type": "project_agent_knowledge", project_id: string, project_agent_id: string, };
+export type ResolvedVfsSurfaceSource = { "source_type": "project_preview", project_id: string, } | { "source_type": "story_preview", project_id: string, story_id: string, } | { "source_type": "task_preview", project_id: string, task_id: string, } | { "source_type": "session_runtime", session_id: string, } | { "source_type": "agent_run", run_id: string, agent_id: string, } | { "source_type": "project_skill_assets", project_id: string, } | { "source_type": "project_vfs_mount", project_id: string, mount_id: string, } | { "source_type": "project_agent_knowledge", project_id: string, project_agent_id: string, };
 
 export type SelectorHint = { trigger?: string, placeholder: string, result_item_type: string, };
 

@@ -7,14 +7,15 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import type {
+  ConversationCommandView,
+  ConversationPendingSnapshotView,
   PendingMessageView,
-  PendingQueueStateView,
 } from "../../../../generated/workflow-contracts";
 
 interface PendingMessageListProps {
   messages: PendingMessageView[];
-  queue?: PendingQueueStateView;
-  canPromote: boolean;
+  pending?: ConversationPendingSnapshotView;
+  promoteCommand?: ConversationCommandView;
   onPromote: (messageId: string) => void;
   onDelete: (messageId: string) => void;
   onResume?: () => void;
@@ -22,26 +23,28 @@ interface PendingMessageListProps {
 
 export function PendingMessageList({
   messages,
-  queue,
-  canPromote,
+  pending,
+  promoteCommand,
   onPromote,
   onDelete,
   onResume,
 }: PendingMessageListProps) {
-  if (messages.length === 0 && !queue?.paused) return null;
+  if (messages.length === 0 && !pending?.user_attention) return null;
+  const resumeCommand = pending?.resume_command;
+  const showBanner = Boolean(pending?.user_attention && (pending.paused || resumeCommand));
 
   return (
     <div className="shrink-0 pb-2">
       <div className="mx-auto w-full max-w-4xl space-y-1 px-5">
-        {queue?.paused && (
+        {showBanner && (
           <div className="flex items-center justify-between gap-3 rounded-[12px] border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
             <div className="min-w-0">
               <div className="font-medium">Pending 队列已暂停</div>
               <div className="truncate text-warning/80">
-                {queue.message ?? "等待用户恢复后继续投递排队消息。"}
+                {resumeCommand?.unavailable_reason ?? "等待用户恢复后继续投递排队消息。"}
               </div>
             </div>
-            {queue.can_resume && onResume && (
+            {resumeCommand?.enabled && onResume && (
               <button
                 type="button"
                 onClick={onResume}
@@ -56,7 +59,7 @@ export function PendingMessageList({
           <PendingMessageRow
             key={msg.id}
             message={msg}
-            canPromote={canPromote}
+            promoteCommand={promoteCommand}
             onPromote={onPromote}
             onDelete={onDelete}
           />
@@ -68,12 +71,12 @@ export function PendingMessageList({
 
 function PendingMessageRow({
   message,
-  canPromote,
+  promoteCommand,
   onPromote,
   onDelete,
 }: {
   message: PendingMessageView;
-  canPromote: boolean;
+  promoteCommand?: ConversationCommandView;
   onPromote: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
@@ -122,11 +125,11 @@ function PendingMessageRow({
 
       {/* 行内操作 — hover 显示 */}
       <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-        {canPromote && (
+        {promoteCommand?.enabled && (
           <button
             type="button"
             onClick={handlePromote}
-            title="引导（promote to steer）"
+            title="引导"
             className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
           >
             <SteerArrowIcon />

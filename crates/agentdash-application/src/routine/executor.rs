@@ -370,6 +370,9 @@ fn map_routine_dispatch_error(error: WorkflowApplicationError) -> ApplicationErr
         WorkflowApplicationError::BadRequest(message) => {
             ApplicationError::BadRequest(format!("Routine dispatch 失败: {message}"))
         }
+        WorkflowApplicationError::ModelRequired(message) => {
+            ApplicationError::BadRequest(format!("Routine dispatch 失败: {message}"))
+        }
         WorkflowApplicationError::NotFound(message) => {
             ApplicationError::NotFound(format!("Routine dispatch 失败: {message}"))
         }

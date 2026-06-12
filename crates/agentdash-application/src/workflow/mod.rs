@@ -4,6 +4,7 @@ pub mod agent_steering;
 mod catalog;
 mod command_receipt;
 mod completion;
+mod conversation_snapshot;
 mod definition;
 pub mod dispatch_service;
 mod error;
@@ -47,6 +48,11 @@ pub use agentdash_domain::workflow::{
 pub use catalog::{ActivityLifecycleCatalogService, WorkflowCatalogService};
 pub use command_receipt::AgentRunCommandReceiptView;
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
+pub use conversation_snapshot::{
+    AgentConversationSnapshotInput, AgentConversationSnapshotResolver,
+    ConversationModelConfigInput, ConversationModelConfigResolution,
+    ConversationModelConfigResolver, merge_executor_config_fields,
+};
 pub use definition::{
     BuiltinLifecycleTemplate, BuiltinWorkflowBundle, BuiltinWorkflowTemplate,
     BuiltinWorkflowTemplateBundle, TRELLIS_DAG_TASK_TEMPLATE_KEY, build_builtin_workflow_bundle,

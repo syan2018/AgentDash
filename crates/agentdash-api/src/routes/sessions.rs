@@ -184,7 +184,7 @@ pub async fn get_session_runtime_control(
                 steer: disabled_action("当前 Session 没有绑定 Agent 控制面，不能运行中 steer。"),
                 cancel: disabled_action("当前 Session 没有正在执行的 turn。"),
             },
-            pending_queue: pending_queue_state_view(None, false),
+            pending_queue: pending_queue_state_view(None, false, 0),
             pending_messages: Vec::new(),
         }));
     };
@@ -353,6 +353,7 @@ pub async fn get_session_runtime_control(
             .is_paused(&runtime_session_id)
             .await,
         !terminal_agent,
+        pending_messages.len(),
     );
 
     Ok(Json(SessionRuntimeControlView {

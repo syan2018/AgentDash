@@ -7,7 +7,10 @@ import {
   collectAllPlatformEvents,
   collectRenderableSystemEvents,
 } from "./SessionChatViewModel";
-import { isSessionComposerPrimaryDisabled } from "./SessionChatComposerState";
+import {
+  isSessionComposerSubmitDisabled,
+  isSessionModelRequirementSatisfied,
+} from "./SessionChatComposerState";
 
 const completedTurn: Turn = {
   id: "turn-1",
@@ -177,10 +180,10 @@ describe("collectRenderableSystemEvents", () => {
   });
 });
 
-describe("isSessionComposerPrimaryDisabled", () => {
-  it("primary action 不可用时即使有输入也不可提交", () => {
-    expect(isSessionComposerPrimaryDisabled({
-      primaryActionEnabled: false,
+describe("isSessionComposerSubmitDisabled", () => {
+  it("command 不可用时即使有输入也不可提交", () => {
+    expect(isSessionComposerSubmitDisabled({
+      commandEnabled: false,
       requirePromptText: true,
       inputValue: "hello",
       isCancelling: false,
@@ -188,9 +191,9 @@ describe("isSessionComposerPrimaryDisabled", () => {
     })).toBe(true);
   });
 
-  it("primary action 可用但需要输入时空文本不可提交", () => {
-    expect(isSessionComposerPrimaryDisabled({
-      primaryActionEnabled: true,
+  it("command 可用但需要输入时空文本不可提交", () => {
+    expect(isSessionComposerSubmitDisabled({
+      commandEnabled: true,
       requirePromptText: true,
       inputValue: "",
       isCancelling: false,
@@ -198,13 +201,39 @@ describe("isSessionComposerPrimaryDisabled", () => {
     })).toBe(true);
   });
 
-  it("primary action 可用且有输入时允许提交", () => {
-    expect(isSessionComposerPrimaryDisabled({
-      primaryActionEnabled: true,
+  it("command 可用且有输入时允许提交", () => {
+    expect(isSessionComposerSubmitDisabled({
+      commandEnabled: true,
       requirePromptText: true,
       inputValue: "hello",
       isCancelling: false,
       isSending: false,
     })).toBe(false);
+  });
+});
+
+describe("isSessionModelRequirementSatisfied", () => {
+  it("keeps model_required blocked without a complete explicit override", () => {
+    expect(isSessionModelRequirementSatisfied("model_required", {
+      executor: "PI_AGENT",
+      provider_id: "openai",
+    })).toBe(false);
+  });
+
+  it("allows model_required to be satisfied by explicit provider and model selection", () => {
+    expect(isSessionModelRequirementSatisfied("model_required", {
+      executor: "PI_AGENT",
+      provider_id: "openai",
+      model_id: "gpt-5.4-mini",
+    })).toBe(true);
+  });
+
+  it("allows model_required when the selected model has reasoning even if thinking level is unset", () => {
+    expect(isSessionModelRequirementSatisfied("model_required", {
+      executor: "PI_AGENT",
+      provider_id: "openai",
+      model_id: "reasoning-model",
+      thinking_level: undefined,
+    })).toBe(true);
   });
 });

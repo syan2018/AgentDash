@@ -82,8 +82,7 @@ use agentdash_contracts::permission::{
 };
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent, ProjectAgentExecutor,
-    ProjectAgentLaunchResult, ProjectAgentRunStartResult, ProjectAgentSummary,
-    UpdateProjectAgentRequest,
+    ProjectAgentRunStartResult, ProjectAgentSummary, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::session::{
     ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
@@ -117,14 +116,20 @@ use agentdash_contracts::vfs::{
     UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
-    ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentFrameRefDto,
+    ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentConversationIdentity,
+    AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse, AgentRunAcceptedRefs,
     AgentRunCommandReceipt, AgentRunMessageRequest, AgentRunMessageResponse, AgentRunRefDto,
     AgentRunSteeringRequest, AgentRunSteeringResponse, AgentRunView,
     AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
     AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, DefinitionSource, DeleteAgentProcedureResponse,
+    AgentRunWorkspaceView, ConversationCommandKind, ConversationCommandPlacement,
+    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
+    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
+    ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
+    ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
+    ConversationPendingSnapshotView, DefinitionSource, DeleteAgentProcedureResponse,
     DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
     EnqueuePendingMessageRequest, EnqueuePendingMessageResponse, HookPresetResponse,
     HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
@@ -183,7 +188,6 @@ fn main() {
             export_all::<ProjectAgent>(dir);
             export_all::<ProjectAgentExecutor>(dir);
             export_all::<ProjectAgentSummary>(dir);
-            export_all::<ProjectAgentLaunchResult>(dir);
             export_all::<CreateProjectAgentRunRequest>(dir);
             export_all::<ProjectAgentRunStartResult>(dir);
             export_all::<CreateProjectAgentRequest>(dir);
@@ -381,6 +385,42 @@ fn main() {
         },
     );
 
+    // --- vfs-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "vfs-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<ListVfssResponse>(dir);
+            export_all::<ListEntriesResponse>(dir);
+            export_all::<ConfigurableProviderInfo>(dir);
+            export_all::<ResolvedVfsSurface>(dir);
+            export_all::<ResolveSurfaceRequest>(dir);
+            export_all::<SurfaceEntriesResponse>(dir);
+            export_all::<SurfaceReadFileRequest>(dir);
+            export_all::<SurfaceReadFileResponse>(dir);
+            export_all::<SurfaceReadBinaryFileRequest>(dir);
+            export_all::<SurfaceWriteFileRequest>(dir);
+            export_all::<SurfaceWriteFileResponse>(dir);
+            export_all::<SurfaceCreateFileRequest>(dir);
+            export_all::<SurfaceCreateFileResponse>(dir);
+            export_all::<SurfaceDeleteFileRequest>(dir);
+            export_all::<SurfaceDeleteFileResponse>(dir);
+            export_all::<SurfaceRenameFileRequest>(dir);
+            export_all::<SurfaceRenameFileResponse>(dir);
+            export_all::<SurfaceStatFileRequest>(dir);
+            export_all::<SurfaceStatFileResponse>(dir);
+            export_all::<SurfaceApplyPatchRequest>(dir);
+            export_all::<SurfaceApplyPatchResponse>(dir);
+            export_all::<SurfaceUploadBinaryFileResponse>(dir);
+            export_all::<CreateProjectVfsMountRequest>(dir);
+            export_all::<UpdateProjectVfsMountRequest>(dir);
+            export_all::<ProjectVfsMountResponse>(dir);
+            export_all::<DeleteProjectVfsMountResponse>(dir);
+        },
+    );
+
     // --- workflow-contracts.ts ---
     emit_domain(
         &generated_dir,
@@ -427,6 +467,23 @@ fn main() {
             export_all::<AgentRunWorkspaceControlPlaneView>(dir);
             export_all::<AgentRunWorkspaceActionAvailabilityView>(dir);
             export_all::<AgentRunWorkspaceActionSetView>(dir);
+            export_all::<ConversationExecutionStatus>(dir);
+            export_all::<ConversationModelConfigStatus>(dir);
+            export_all::<ConversationModelConfigSource>(dir);
+            export_all::<ConversationEffectiveExecutorConfigView>(dir);
+            export_all::<ConversationModelConfigView>(dir);
+            export_all::<ConversationCommandKind>(dir);
+            export_all::<ConversationCommandPlacement>(dir);
+            export_all::<ConversationCommandStaleGuardView>(dir);
+            export_all::<ConversationCommandView>(dir);
+            export_all::<ConversationKeyboardMapView>(dir);
+            export_all::<ConversationCommandSetView>(dir);
+            export_all::<ConversationExecutionView>(dir);
+            export_all::<ConversationPendingSnapshotView>(dir);
+            export_all::<ConversationDiagnosticView>(dir);
+            export_all::<AgentConversationIdentity>(dir);
+            export_all::<AgentConversationLifecycleContext>(dir);
+            export_all::<AgentConversationSnapshot>(dir);
             export_all::<AgentRunWorkspaceView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
@@ -485,42 +542,6 @@ fn main() {
             export_all::<RuntimeTraceDto>(dir);
             export_all::<RuntimeInvocationOutputDto>(dir);
             export_all::<RuntimeInvocationResultDto>(dir);
-        },
-    );
-
-    // --- vfs-contracts.ts ---
-    emit_domain(
-        &generated_dir,
-        "vfs-contracts.ts",
-        &mut upstream,
-        check,
-        |dir| {
-            export_all::<ListVfssResponse>(dir);
-            export_all::<ListEntriesResponse>(dir);
-            export_all::<ConfigurableProviderInfo>(dir);
-            export_all::<ResolvedVfsSurface>(dir);
-            export_all::<ResolveSurfaceRequest>(dir);
-            export_all::<SurfaceEntriesResponse>(dir);
-            export_all::<SurfaceReadFileRequest>(dir);
-            export_all::<SurfaceReadFileResponse>(dir);
-            export_all::<SurfaceReadBinaryFileRequest>(dir);
-            export_all::<SurfaceWriteFileRequest>(dir);
-            export_all::<SurfaceWriteFileResponse>(dir);
-            export_all::<SurfaceCreateFileRequest>(dir);
-            export_all::<SurfaceCreateFileResponse>(dir);
-            export_all::<SurfaceDeleteFileRequest>(dir);
-            export_all::<SurfaceDeleteFileResponse>(dir);
-            export_all::<SurfaceRenameFileRequest>(dir);
-            export_all::<SurfaceRenameFileResponse>(dir);
-            export_all::<SurfaceStatFileRequest>(dir);
-            export_all::<SurfaceStatFileResponse>(dir);
-            export_all::<SurfaceApplyPatchRequest>(dir);
-            export_all::<SurfaceApplyPatchResponse>(dir);
-            export_all::<SurfaceUploadBinaryFileResponse>(dir);
-            export_all::<CreateProjectVfsMountRequest>(dir);
-            export_all::<UpdateProjectVfsMountRequest>(dir);
-            export_all::<ProjectVfsMountResponse>(dir);
-            export_all::<DeleteProjectVfsMountResponse>(dir);
         },
     );
 

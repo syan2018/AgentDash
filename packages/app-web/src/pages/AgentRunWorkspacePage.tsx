@@ -16,7 +16,6 @@ import { SessionChatView } from "../features/session";
 import { extractPlatformEventData } from "../features/session/model/platformEvent";
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import {
-  executorSourceFromExecutionProfile,
   resolveAgentRunClientCommandId,
   type InFlightAgentRunCommand,
 } from "../features/agent-run-workspace/model/workspaceCommandState";
@@ -44,7 +43,14 @@ import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
 import { useWorkspaceModuleStore } from "../features/workspace-module";
 import { workspaceModulePresentedTabTarget } from "./AgentRunWorkspacePage.workspaceModulePresentation";
-import { deriveAgentRunWorkspaceChatControlState } from "./AgentRunWorkspacePage.chatControlState";
+import {
+  buildDraftSessionCommandState,
+  buildRuntimeSessionCommandState,
+  isCompleteExecutorConfig,
+  pendingSnapshotFromConversation,
+  resolveExecutorConfigForConversationCommand,
+} from "./AgentRunWorkspacePage.conversationCommandState";
+import type { ConversationCommandView } from "../generated/workflow-contracts";
 import type {
   RuntimeTraceAgentContext,
   SessionNavigationState,
@@ -54,10 +60,7 @@ import type {
   Story,
   StoryNavigationState,
 } from "../types";
-import type {
-  SessionChatControlState,
-  SessionChatPrimaryActionKind,
-} from "../features/session";
+import type { SessionChatCommandState } from "../features/session";
 import type { ImageAttachment } from "../features/session/ui/composer/useImageAttachments";
 
 // ─── AgentRunWorkspacePage ────────────────────────────────────────
@@ -97,6 +100,7 @@ export function AgentRunWorkspacePage({
     story_id: string;
     story: Story | null;
   } | null>(null);
+  const [explicitExecutorConfigOverride, setExplicitExecutorConfigOverride] = useState<ExecutorConfig | null>(null);
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
 
@@ -165,6 +169,10 @@ export function AgentRunWorkspacePage({
     agentId: currentAgentId,
     sourceKey: agentRunSourceKey,
   });
+
+  useEffect(() => {
+    setExplicitExecutorConfigOverride(null);
+  }, [currentAgentId, currentRunId, draftProjectAgentKey, draftProjectIdValue]);
 
   const scheduleHookRuntimeRefresh = useCallback((_reason: string, immediate = false) => {
     if (!currentRunId || !currentAgentId) return;
@@ -287,10 +295,6 @@ export function AgentRunWorkspacePage({
   const executorHint = draftProjectAgent?.executor.executor
     ?? traceAgentContext?.executor_hint
     ?? null;
-  const frameExecutorDefaults = useMemo(
-    () => executorSourceFromExecutionProfile(runtimeControl?.frame_runtime?.execution_profile),
-    [runtimeControl?.frame_runtime?.execution_profile],
-  );
   const executorStateKey = useMemo(() => {
     if (isProjectAgentDraft) {
       return draftProjectIdValue && draftProjectAgentKey
@@ -332,33 +336,35 @@ export function AgentRunWorkspacePage({
     scheduleHookRuntimeRefresh("message_sent", true);
   }, [deliveryRuntimeSessionId, scheduleHookRuntimeRefresh]);
 
-  const chatControlState = useMemo<SessionChatControlState>(
-    () => deriveAgentRunWorkspaceChatControlState({
-      isProjectAgentDraft,
-      draftProjectIdValue,
-      draftProjectAgentKey,
-      draftProjectAgent,
-      currentRunId,
-      currentAgentId,
-      projectionStatus: agentRunWorkspaceState.status,
-      projectionError: agentRunWorkspaceState.error,
-      workspace: runtimeControl,
-    }),
+  const chatCommandState = useMemo<SessionChatCommandState>(
+    () => isProjectAgentDraft
+      ? buildDraftSessionCommandState({
+          projectId: draftProjectIdValue,
+          agentKey: draftProjectAgentKey,
+          agent: draftProjectAgent,
+          projectionReady: Boolean(draftProjectIdValue && draftProjectAgentKey && draftProjectAgent),
+          explicitExecutorConfigOverride,
+        })
+      : buildRuntimeSessionCommandState({
+          conversation: runtimeControl?.conversation,
+          projectionStatus: agentRunWorkspaceState.status,
+          projectionError: agentRunWorkspaceState.error,
+        }),
     [
       agentRunWorkspaceState.error,
       agentRunWorkspaceState.status,
-      currentAgentId,
-      currentRunId,
       draftProjectAgent,
       draftProjectAgentKey,
       draftProjectIdValue,
+      explicitExecutorConfigOverride,
       isProjectAgentDraft,
-      runtimeControl,
+      runtimeControl?.conversation,
     ],
   );
+  const conversationPending = pendingSnapshotFromConversation(runtimeControl?.conversation?.pending);
 
-  const handleAgentRunPrimaryAction = useCallback(async (
-    action: SessionChatPrimaryActionKind,
+  const handleAgentRunCommand = useCallback(async (
+    command: ConversationCommandView,
     sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
@@ -368,6 +374,9 @@ export function AgentRunWorkspacePage({
     const hasImages = (imageAttachments?.length ?? 0) > 0;
     if (!trimmed && !hasImages) {
       throw new Error("请输入要发送的消息。");
+    }
+    if (!command.enabled) {
+      throw new Error(command.unavailable_reason ?? "当前 AgentRun 不可执行该命令。");
     }
 
     const inputBlocks: UserInput[] = [];
@@ -379,17 +388,30 @@ export function AgentRunWorkspacePage({
         inputBlocks.push({ type: "image" as const, url: img.dataUrl });
       }
     }
-    if (!executorConfig?.executor?.trim()) {
+    const commandExecutorConfig = resolveExecutorConfigForConversationCommand({
+      command,
+      modelConfig: chatCommandState.modelConfig,
+      explicitExecutorConfigOverride: executorConfig,
+    });
+    if (
+      chatCommandState.modelConfig.status === "model_required" &&
+      !isCompleteExecutorConfig(commandExecutorConfig)
+    ) {
+      throw new Error(chatCommandState.modelConfig.message ?? "请选择模型配置后再发送。");
+    }
+    if (command.executor_config_policy === "required" && !commandExecutorConfig?.executor?.trim()) {
       throw new Error("请选择模型配置后再发送。");
     }
-    if (action === "start_draft") {
+    if (command.kind === "start_draft") {
       if (!draftProjectIdValue || !draftProjectAgentKey || !draftProjectAgent) {
-        throw new Error(chatControlState.primaryAction.unavailableReason ?? "当前 Draft 尚未就绪。");
+        throw new Error(command.unavailable_reason ?? "当前 Draft 尚未就绪。");
       }
       const commandKey = JSON.stringify({
-        action,
+        command_id: command.command_id,
+        kind: command.kind,
+        stale_guard: command.stale_guard,
         input: inputBlocks,
-        executor_config: executorConfig ?? null,
+        executor_config: commandExecutorConfig ?? null,
       });
       const resolvedCommand = resolveAgentRunClientCommandId(
         inFlightCommandRef.current,
@@ -401,11 +423,8 @@ export function AgentRunWorkspacePage({
       const response = await createProjectAgentRun(draftProjectIdValue, draftProjectAgentKey, {
         input: inputBlocks,
         client_command_id: clientCommandId,
-        executor_config: executorConfig as unknown as JsonValue | undefined,
+        executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
       });
-      if (!response) {
-        throw new Error("创建 ProjectAgent AgentRun 失败。");
-      }
       void fetchAndIngestLifecycleRun(response.run_ref.run_id);
       inFlightCommandRef.current = null;
       navigate(`/agent-runs/${encodeURIComponent(response.run_ref.run_id)}/${encodeURIComponent(response.agent_ref.agent_id)}`, {
@@ -426,18 +445,16 @@ export function AgentRunWorkspacePage({
       throw new Error("当前 AgentRun 尚未就绪，无法执行控制动作。");
     }
 
-    // enqueue 和 steer 在 running 态可同时可用（主/辅动作），需分别校验
-    const { primaryAction: csPrimary, secondaryAction: csSecondary } = chatControlState;
-    const isPrimaryMatch = csPrimary.enabled && action === csPrimary.kind;
-    const isSecondaryMatch = csSecondary?.enabled && action === csSecondary.kind;
-    if (!isPrimaryMatch && !isSecondaryMatch) {
-      throw new Error(csPrimary.unavailableReason ?? "当前 AgentRun 不可执行该控制动作。");
+    if (command.stale_guard.runtime_session_id && command.stale_guard.runtime_session_id !== sessionId) {
+      throw new Error("当前 AgentRun 命令已过期，请刷新后重试。");
     }
 
     const commandKey = JSON.stringify({
-      action,
+      command_id: command.command_id,
+      kind: command.kind,
+      stale_guard: command.stale_guard,
       input: inputBlocks,
-      executor_config: executorConfig ?? null,
+      executor_config: commandExecutorConfig ?? null,
     });
     const resolvedCommand = resolveAgentRunClientCommandId(
       inFlightCommandRef.current,
@@ -447,11 +464,11 @@ export function AgentRunWorkspacePage({
     const clientCommandId = resolvedCommand.clientCommandId;
     inFlightCommandRef.current = resolvedCommand.inFlightCommand;
 
-    if (action === "send_next") {
+    if (command.kind === "send_next") {
       const response = await sendAgentRunMessage(currentRunId, currentAgentId, {
         input: inputBlocks,
         client_command_id: clientCommandId,
-        executor_config: executorConfig as unknown as JsonValue | undefined,
+        executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
       });
       void fetchAndIngestLifecycleRun(response.accepted_refs.run_ref.run_id);
       inFlightCommandRef.current = null;
@@ -459,32 +476,32 @@ export function AgentRunWorkspacePage({
       scheduleHookRuntimeRefresh("agent_message_sent", true);
       return;
     }
-    if (action === "steer") {
+    if (command.kind === "steer") {
       await steerAgentRun(currentRunId, currentAgentId, {
         input: inputBlocks,
         client_command_id: clientCommandId,
-        expected_runtime_session_id: sessionId,
-        expected_turn_id: runtimeControl?.delivery_trace_meta?.last_turn_id,
+        expected_runtime_session_id: command.stale_guard.runtime_session_id ?? sessionId ?? undefined,
+        expected_turn_id: command.stale_guard.active_turn_id,
       });
       inFlightCommandRef.current = null;
       void refreshAgentRunWorkspaceState().catch(() => {});
       scheduleHookRuntimeRefresh("agent_message_steered", true);
       return;
     }
-    if (action === "enqueue") {
+    if (command.kind === "enqueue") {
       await enqueueAgentRunPendingMessage(currentRunId, currentAgentId, {
         input: inputBlocks,
         client_command_id: clientCommandId,
-        executor_config: executorConfig as unknown as JsonValue | undefined,
+        executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
       });
       inFlightCommandRef.current = null;
       void refreshAgentRunWorkspaceState().catch(() => {});
       scheduleHookRuntimeRefresh("pending_message_enqueued", true);
       return;
     }
-    throw new Error(csPrimary.unavailableReason ?? "当前 AgentRun 不可执行该控制动作。");
+    throw new Error(command.unavailable_reason ?? "当前 AgentRun 不可执行该控制动作。");
   }, [
-    chatControlState,
+    chatCommandState.modelConfig,
     createProjectAgentRun,
     currentAgentId,
     currentRunId,
@@ -495,7 +512,6 @@ export function AgentRunWorkspacePage({
     fetchAndIngestLifecycleRun,
     navigate,
     refreshAgentRunWorkspaceState,
-    runtimeControl?.delivery_trace_meta?.last_turn_id,
     scheduleHookRuntimeRefresh,
     agentRunWorkspaceState.status,
   ]);
@@ -521,17 +537,19 @@ export function AgentRunWorkspacePage({
   const handlePromotePending = useCallback(async (messageId: string) => {
     if (!currentRunId || !currentAgentId) return;
     if (agentRunWorkspaceState.status !== "ready") return;
-    if (!chatControlState.secondaryAction?.enabled || runtimeControl?.pending_queue.paused) return;
+    const promoteCommand = chatCommandState.commands.commands.find(
+      (command) => command.kind === "promote_pending" && command.placement.includes("pending_row"),
+    );
+    if (!promoteCommand?.enabled) return;
     await promoteAgentRunPendingMessage(currentRunId, currentAgentId, messageId);
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("pending_message_promoted", true);
   }, [
     agentRunWorkspaceState.status,
-    chatControlState.secondaryAction?.enabled,
+    chatCommandState.commands.commands,
     currentAgentId,
     currentRunId,
     refreshAgentRunWorkspaceState,
-    runtimeControl?.pending_queue.paused,
     scheduleHookRuntimeRefresh,
   ]);
 
@@ -552,7 +570,7 @@ export function AgentRunWorkspacePage({
   const handleResumePendingQueue = useCallback(async () => {
     if (!currentRunId || !currentAgentId) return;
     if (agentRunWorkspaceState.status !== "ready") return;
-    if (!runtimeControl?.pending_queue.can_resume) return;
+    if (!conversationPending?.resume_command?.enabled) return;
     const response = await resumeAgentRunPendingQueue(currentRunId, currentAgentId);
     const acceptedRunId = response.accepted_refs?.run_ref.run_id;
     if (acceptedRunId) {
@@ -564,9 +582,9 @@ export function AgentRunWorkspacePage({
     agentRunWorkspaceState.status,
     currentAgentId,
     currentRunId,
+    conversationPending?.resume_command?.enabled,
     fetchAndIngestLifecycleRun,
     refreshAgentRunWorkspaceState,
-    runtimeControl?.pending_queue.can_resume,
     scheduleHookRuntimeRefresh,
   ]);
 
@@ -686,7 +704,6 @@ export function AgentRunWorkspacePage({
           created_at: runtimeControl.delivery_trace_meta.updated_at,
           updated_at: runtimeControl.delivery_trace_meta.updated_at,
           last_event_seq: runtimeControl.delivery_trace_meta.last_event_seq,
-          last_turn_id: runtimeControl.delivery_trace_meta.last_turn_id,
           last_delivery_status: runtimeControl.delivery_trace_meta.delivery_status,
         }
       : null,
@@ -843,13 +860,14 @@ export function AgentRunWorkspacePage({
               onTurnEnd={handleTurnEnd}
               onSystemEvent={handleSystemEvent}
               executorHint={executorHint}
-              agentDefaults={frameExecutorDefaults ?? draftProjectAgent?.executor ?? taskExecutorSummary}
+              agentDefaults={draftProjectAgent?.effective_executor_config ?? runtimeControl?.conversation?.model_config.effective_executor_config ?? taskExecutorSummary}
               executorStateKey={executorStateKey}
-              controlState={chatControlState}
-              onPrimaryAction={handleAgentRunPrimaryAction}
+              commandState={chatCommandState}
+              onCommand={handleAgentRunCommand}
               onCancelAction={handleCancelAgentRun}
+              onExecutorConfigOverrideChange={setExplicitExecutorConfigOverride}
               pendingMessages={runtimeControl?.pending_messages}
-              pendingQueue={runtimeControl?.pending_queue}
+              pendingSnapshot={conversationPending}
               onPromotePending={(id) => { void handlePromotePending(id); }}
               onDeletePending={(id) => { void handleDeletePending(id); }}
               onResumePendingQueue={() => { void handleResumePendingQueue(); }}

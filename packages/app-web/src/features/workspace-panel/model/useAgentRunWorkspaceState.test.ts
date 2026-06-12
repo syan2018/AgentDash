@@ -6,6 +6,7 @@ import type {
   AgentRunWorkspaceView,
 } from "../../../types";
 import {
+  agentRunWorkspaceResourceSurface,
   beginAgentRunWorkspaceStateLoad,
   emptyAgentRunWorkspaceState,
   failAgentRunWorkspaceStateLoad,
@@ -55,8 +56,8 @@ const workspace: AgentRunWorkspaceView = {
 };
 
 const runtimeSurface: ResolvedVfsSurface = {
-  surface_ref: "session-runtime:session-1",
-  source: { source_type: "session_runtime", session_id: "session-1" },
+  surface_ref: "agent-run:run-1:agent-1",
+  source: { source_type: "agent_run", run_id: "run-1", agent_id: "agent-1" },
   mounts: [
     {
       id: "main",
@@ -92,6 +93,53 @@ function loadedState(): AgentRunWorkspaceProjectionState {
 }
 
 describe("AgentRun workspace refresh state", () => {
+  it("直接使用 AgentRun workspace snapshot resource_surface", () => {
+    const snapshotWorkspace: AgentRunWorkspaceView = {
+      ...workspace,
+      resource_surface: runtimeSurface,
+      conversation: {
+        identity: {
+          run_ref: { run_id: "run-1" },
+          agent_ref: { run_id: "run-1", agent_id: "agent-1" },
+          project_id: "project-1",
+        },
+        lifecycle_context: {
+          frame_ref: {
+            agent_id: "agent-1",
+            frame_id: "frame-1",
+          },
+          delivery_runtime_ref: { runtime_session_id: "session-1" },
+          subject_associations: [],
+        },
+        execution: {
+          status: "running_active",
+          runtime_session_ref: { runtime_session_id: "session-1" },
+          active_turn_id: "turn-1",
+        },
+        model_config: {
+          status: "resolved",
+          missing_fields: [],
+        },
+        commands: {
+          keyboard: {
+            enter: "enqueue",
+            ctrl_enter: "steer",
+          },
+          commands: [],
+        },
+        pending: {
+          visible_message_count: 0,
+          paused: false,
+          user_attention: false,
+        },
+        resource_surface: runtimeSurface,
+        diagnostics: [],
+      },
+    };
+
+    expect(agentRunWorkspaceResourceSurface(snapshotWorkspace)).toBe(runtimeSurface);
+  });
+
   it("初始加载成功后触发 refresh 时 pending 期间保留 runtime identity 与 workspace", () => {
     const refreshing = beginAgentRunWorkspaceStateLoad(
       loadedState(),

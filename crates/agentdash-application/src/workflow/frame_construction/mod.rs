@@ -31,6 +31,7 @@ use crate::vfs::VfsService;
 use crate::workflow::frame_builder::AgentFrameBuilder;
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
 use crate::workflow::frame_surface::FrameSurfaceDraft;
+use crate::workflow::merge_executor_config_fields;
 use crate::workflow::runtime_launch::{
     FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
     LaunchResolutionTrace,
@@ -278,15 +279,7 @@ pub(crate) fn merge_user_executor_config(
     preset_config: &AgentConfig,
 ) -> AgentConfig {
     match user_config {
-        Some(mut user_ec) => {
-            if user_ec.system_prompt.is_none() {
-                user_ec.system_prompt = preset_config.system_prompt.clone();
-            }
-            if user_ec.system_prompt_mode.is_none() {
-                user_ec.system_prompt_mode = preset_config.system_prompt_mode;
-            }
-            user_ec
-        }
+        Some(user_ec) => merge_executor_config_fields(preset_config.clone(), &user_ec),
         None => preset_config.clone(),
     }
 }
@@ -334,7 +327,10 @@ pub(crate) fn build_envelope_from_frame(
     let mut context_bundle = None;
 
     if let Some(config) = command.user_input().executor_config.clone() {
-        executor_config = Some(config);
+        executor_config = Some(match executor_config {
+            Some(base) => merge_executor_config_fields(base, &config),
+            None => config,
+        });
     }
 
     let mut input = command.user_input().input.clone();

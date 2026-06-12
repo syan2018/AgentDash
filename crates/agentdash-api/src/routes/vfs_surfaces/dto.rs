@@ -37,6 +37,10 @@ pub fn surface_source_to_application(
         ResolvedVfsSurfaceSource::SessionRuntime { session_id } => Ok(AppSource::SessionRuntime {
             session_id: session_id.trim().to_string(),
         }),
+        ResolvedVfsSurfaceSource::AgentRun { run_id, agent_id } => Ok(AppSource::AgentRun {
+            run_id: parse_uuid(run_id, "run_id")?,
+            agent_id: parse_uuid(agent_id, "agent_id")?,
+        }),
         ResolvedVfsSurfaceSource::ProjectSkillAssets { project_id } => {
             Ok(AppSource::ProjectSkillAssets {
                 project_id: parse_uuid(project_id, "project_id")?,
@@ -85,6 +89,10 @@ pub fn surface_source_from_application(
         AppSource::SessionRuntime { session_id } => {
             ResolvedVfsSurfaceSource::SessionRuntime { session_id }
         }
+        AppSource::AgentRun { run_id, agent_id } => ResolvedVfsSurfaceSource::AgentRun {
+            run_id: run_id.to_string(),
+            agent_id: agent_id.to_string(),
+        },
         AppSource::ProjectSkillAssets { project_id } => {
             ResolvedVfsSurfaceSource::ProjectSkillAssets {
                 project_id: project_id.to_string(),

@@ -5,7 +5,7 @@ use ts_rs::TS;
 
 use crate::workflow::{
     AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto,
-    LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
+    ConversationEffectiveExecutorConfigView, LifecycleRunRefDto, SubjectRefDto,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -47,23 +47,11 @@ pub struct ProjectAgentSummary {
     pub executor: ProjectAgentExecutor,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub effective_executor_config: Option<ConversationEffectiveExecutorConfigView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub preset_name: Option<String>,
     pub source: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ProjectAgentLaunchResult {
-    pub created: bool,
-    pub agent: ProjectAgentSummary,
-    pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: AgentRunRefDto,
-    pub frame_ref: AgentFrameRefDto,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub subject_ref: Option<SubjectRefDto>,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -83,6 +71,9 @@ pub struct CreateProjectAgentRunRequest {
 pub struct ProjectAgentRunStartResult {
     pub command_receipt: AgentRunCommandReceipt,
     pub accepted_refs: AgentRunAcceptedRefs,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effective_executor_config: Option<ConversationEffectiveExecutorConfigView>,
     pub runtime_session_id: String,
     pub turn_id: String,
     pub agent: ProjectAgentSummary,

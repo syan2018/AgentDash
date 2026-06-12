@@ -76,18 +76,19 @@ pub(crate) async fn resolve_session_frame_vfs(
     let frame = state
         .repos
         .agent_frame_repo
-        .get_current(agent.id)
+        .get(anchor.launch_frame_id)
         .await
         .map_err(ApiError::from)?
         .or(state
             .repos
             .agent_frame_repo
-            .get(anchor.launch_frame_id)
-            .await?)
+            .get_current(agent.id)
+            .await
+            .map_err(ApiError::from)?)
         .ok_or_else(|| {
             ApiError::NotFound(format!(
-                "lifecycle_agent {} 没有 current AgentFrame",
-                agent.id
+                "runtime session anchor {} 绑定的 AgentFrame 不存在",
+                session_id
             ))
         })?;
 

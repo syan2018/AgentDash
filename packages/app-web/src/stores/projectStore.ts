@@ -3,7 +3,6 @@ import type {
   ContextContainerDefinition,
   CreateProjectAgentRunRequest,
   ProjectAgent,
-  ProjectAgentLaunchResult,
   ProjectAgentRunStartResult,
   ProjectRole,
   ProjectSubjectGrant,
@@ -29,14 +28,14 @@ interface ProjectState {
     agent_type: string;
     config?: Record<string, unknown>;
     default_lifecycle_key?: string;
-  }) => Promise<ProjectAgent | null>;
+  }) => Promise<ProjectAgent>;
   updateProjectAgent: (projectId: string, agentId: string, payload: {
     name?: string;
     agent_type?: string;
     config?: Record<string, unknown>;
     default_lifecycle_key?: string;
     knowledge_enabled?: boolean;
-  }) => Promise<ProjectAgent | null>;
+  }) => Promise<ProjectAgent>;
   deleteProjectAgent: (projectId: string, agentId: string) => Promise<boolean>;
 
   // Project VFS Mount Binding 失效信号：UI 操作后 bump 版本号，
@@ -46,7 +45,7 @@ interface ProjectState {
 
   // 既有接口
   fetchProjects: () => Promise<void>;
-  createProject: (name: string, description: string, config?: Partial<ProjectConfig>) => Promise<Project | null>;
+  createProject: (name: string, description: string, config?: Partial<ProjectConfig>) => Promise<Project>;
   updateProject: (id: string, payload: {
     name?: string;
     description?: string;
@@ -54,21 +53,20 @@ interface ProjectState {
     context_containers?: ContextContainerDefinition[];
     visibility?: Project["visibility"];
     is_template?: boolean;
-  }) => Promise<Project | null>;
-  updateProjectConfig: (id: string, config: Partial<ProjectConfig>) => Promise<Project | null>;
+  }) => Promise<Project>;
+  updateProjectConfig: (id: string, config: Partial<ProjectConfig>) => Promise<Project>;
   fetchProjectGrants: (projectId: string) => Promise<ProjectSubjectGrant[]>;
-  grantProjectUser: (projectId: string, userId: string, role: ProjectRole) => Promise<ProjectSubjectGrant | null>;
+  grantProjectUser: (projectId: string, userId: string, role: ProjectRole) => Promise<ProjectSubjectGrant>;
   revokeProjectUser: (projectId: string, userId: string) => Promise<boolean>;
-  grantProjectGroup: (projectId: string, groupId: string, role: ProjectRole) => Promise<ProjectSubjectGrant | null>;
+  grantProjectGroup: (projectId: string, groupId: string, role: ProjectRole) => Promise<ProjectSubjectGrant>;
   revokeProjectGroup: (projectId: string, groupId: string) => Promise<boolean>;
-  cloneProject: (projectId: string, payload?: { name?: string; description?: string }) => Promise<Project | null>;
+  cloneProject: (projectId: string, payload?: { name?: string; description?: string }) => Promise<Project>;
   fetchProjectAgents: (projectId: string) => Promise<ProjectAgentSummary[]>;
-  launchProjectAgent: (projectId: string, agentKey: string) => Promise<ProjectAgentLaunchResult | null>;
   createProjectAgentRun: (
     projectId: string,
     agentKey: string,
     payload: CreateProjectAgentRunRequest,
-  ) => Promise<ProjectAgentRunStartResult | null>;
+  ) => Promise<ProjectAgentRunStartResult>;
   selectProject: (id: string | null) => void;
   deleteProject: (id: string) => Promise<boolean>;
 }
@@ -134,7 +132,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return projectAgent;
     } catch (e) {
       set({ error: (e as Error).message });
-      return null;
+      throw e;
     }
   },
 
@@ -154,7 +152,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return projectAgent;
     } catch (e) {
       set({ error: (e as Error).message });
-      return null;
+      throw e;
     }
   },
 
@@ -203,7 +201,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return project;
     } catch (e) {
       set({ error: (e as Error).message });
-      return null;
+      throw e;
     }
   },
 
@@ -216,7 +214,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return project;
     } catch (e) {
       set({ error: (e as Error).message });
-      return null;
+      throw e;
     }
   },
 
@@ -229,7 +227,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return project;
     } catch (e) {
       set({ error: (e as Error).message });
-      return null;
+      throw e;
     }
   },
 
@@ -269,7 +267,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return grant;
     } catch (e) {
       set({ error: (e as Error).message });
-      return null;
+      throw e;
     }
   },
 
@@ -311,7 +309,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return grant;
     } catch (e) {
       set({ error: (e as Error).message });
-      return null;
+      throw e;
     }
   },
 
@@ -345,7 +343,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return project;
     } catch (e) {
       set({ error: (e as Error).message });
-      return null;
+      throw e;
     }
   },
 
@@ -366,23 +364,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  launchProjectAgent: async (projectId, agentKey) => {
-    try {
-      const result = await projectService.launchProjectAgent(projectId, agentKey);
-      set((state) => ({
-        agentsByProjectId: {
-          ...state.agentsByProjectId,
-          [projectId]: upsertAgentSummary(state.agentsByProjectId[projectId] ?? [], result.agent),
-        },
-        error: null,
-      }));
-      return result;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
   createProjectAgentRun: async (projectId, agentKey, payload) => {
     try {
       const result = await projectService.createProjectAgentRun(projectId, agentKey, payload);
@@ -396,7 +377,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return result;
     } catch (e) {
       set({ error: (e as Error).message });
-      return null;
+      throw e;
     }
   },
 

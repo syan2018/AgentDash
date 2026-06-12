@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionFeed } from "../model";
 import { extractPlatformEventType } from "../model/platformEvent";
 import type { ExecutorConfig } from "../../../services/executor";
+import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import {
   useExecutorDiscovery,
   useExecutorConfig,
@@ -48,8 +49,7 @@ import { PendingMessageList } from "./composer/PendingMessageRow";
 export { collectNewSystemEvents, computeProjectionRefreshKey } from "./SessionChatViewModel";
 export type {
   PromptTemplate,
-  SessionChatControlState,
-  SessionChatPrimaryActionKind,
+  SessionChatCommandState,
   SessionChatViewProps,
 } from "./SessionChatViewTypes";
 
@@ -69,11 +69,11 @@ export function SessionChatView({
   agentDefaults,
   executorStateKey,
   showExecutorSelector = true,
-  controlState,
-  onPrimaryAction,
+  commandState,
+  onCommand,
   onCancelAction,
   pendingMessages,
-  pendingQueue,
+  pendingSnapshot,
   onPromotePending,
   onDeletePending,
   onResumePendingQueue,
@@ -154,8 +154,9 @@ export function SessionChatView({
   const discovery = useExecutorDiscovery();
 
   // 仅挂载时读一次 agentDefaults，作为 useExecutorConfig 的 initialSource
+  const snapshotExecutorDefaults = commandState.modelConfig.effective_executor_config ?? null;
   const initialExecutorSource = useMemo<ExecutorConfigSource | null>(
-    () => toExecutorConfigSource(agentDefaults),
+    () => toExecutorConfigSource(snapshotExecutorDefaults ?? agentDefaults),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
@@ -175,7 +176,7 @@ export function SessionChatView({
   const executorHydrationKey = useMemo(() => {
     if (executorStateKey) return executorStateKey;
     if (sessionId) return sessionId;
-    const source = toExecutorConfigSource(agentDefaults);
+    const source = toExecutorConfigSource(snapshotExecutorDefaults ?? agentDefaults);
     if (source) {
       return [
         "draft",
@@ -212,7 +213,7 @@ export function SessionChatView({
         setExecutor(resolvedHint);
       }
     }
-  }, [executorHydrationKey, agentDefaults, resolvedHint, hydrateExecutor, setExecutor]);
+  }, [executorHydrationKey, agentDefaults, resolvedHint, hydrateExecutor, setExecutor, snapshotExecutorDefaults]);
 
   useEffect(() => {
     if (execProviderId.trim() || !execModelId.trim()) return;
@@ -380,40 +381,39 @@ export function SessionChatView({
 
   // ─── 控制动作 ───────────────────────────────────────
 
-  const primaryActionRef = useRef(onPrimaryAction);
-  useEffect(() => { primaryActionRef.current = onPrimaryAction; }, [onPrimaryAction]);
+  const commandActionRef = useRef(onCommand);
+  useEffect(() => { commandActionRef.current = onCommand; }, [onCommand]);
 
-  /**
-   * 通用提交，actionOverride 可指定动作类型（用于键盘分流 steer 等场景）
-   */
-  const handleSubmit = useCallback(async (actionOverride?: "steer" | "enqueue") => {
+  const handleSubmit = useCallback(async (command: ConversationCommandView | undefined) => {
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
     const images = imageAttach.attachments;
 
-    // 确定要执行的动作
-    const targetAction = actionOverride ?? controlState.primaryAction.kind;
-    const isValidPrimary = controlState.primaryAction.enabled && targetAction === controlState.primaryAction.kind;
-    const isValidSecondary = controlState.secondaryAction?.enabled && targetAction === controlState.secondaryAction?.kind;
-    if (!isValidPrimary && !isValidSecondary) return;
-    if (targetAction === "none") return;
+    if (!command) return;
+    if (!command.enabled) {
+      setSendError(command.unavailable_reason ?? "当前 AgentRun 不可执行该命令。");
+      return;
+    }
     if (isSending) return;
-    if (!trimmed && images.length === 0) {
+    if (commandState.modelConfig.status === "model_required") {
+      setSendError(commandState.modelConfig.message ?? "请选择模型配置后再发送。");
+      return;
+    }
+    if (command.requires_input && !trimmed && images.length === 0) {
       setSendError("请输入要发送的消息。");
       return;
     }
 
     setSendError(null);
-    // enqueue 不触发 optimistic running（排队不会立即执行）
-    if (targetAction !== "enqueue") {
+    if (command.kind !== "enqueue") {
       setOptimisticRunning(true);
       optimisticRunningUntilRef.current = Date.now() + 2500;
     }
     setIsSending(true);
 
     try {
-      await primaryActionRef.current(
-        targetAction,
+      await commandActionRef.current(
+        command,
         sessionId,
         trimmed,
         executorConfig,
@@ -422,7 +422,7 @@ export function SessionChatView({
 
       execConfig.recordUsage();
       clearInput();
-      if (targetAction !== "enqueue") {
+      if (command.kind !== "enqueue") {
         void refreshExecutionState().catch(() => {});
       }
       onMessageSent?.();
@@ -435,10 +435,8 @@ export function SessionChatView({
     }
   }, [
     clearInput,
-    controlState.primaryAction.enabled,
-    controlState.primaryAction.kind,
-    controlState.secondaryAction?.enabled,
-    controlState.secondaryAction?.kind,
+    commandState.modelConfig.message,
+    commandState.modelConfig.status,
     execConfig,
     executorConfig,
     imageAttach.attachments,
@@ -448,10 +446,14 @@ export function SessionChatView({
     sessionId,
   ]);
 
-  const handlePrimarySubmit = useCallback(async () => handleSubmit(), [handleSubmit]);
+  const commandById = useCallback((commandId: string | undefined): ConversationCommandView | undefined => {
+    if (!commandId) return undefined;
+    return commandState.commands.commands.find((command) => command.command_id === commandId);
+  }, [commandState.commands.commands]);
 
   const handleCancel = useCallback(async () => {
-    if (!controlState.cancelAction.enabled) return;
+    const cancelCommand = commandState.commands.commands.find((command) => command.kind === "cancel");
+    if (!cancelCommand?.enabled) return;
     if (!hasSession || !sessionId) return;
     if (cancelInFlightRef.current) return;
     cancelInFlightRef.current = true;
@@ -479,7 +481,7 @@ export function SessionChatView({
       cancelInFlightRef.current = false;
       setIsCancelling(false);
     }
-  }, [controlState.cancelAction.enabled, hasSession, onCancelAction, refreshExecutionState, sendCancel, sessionId]);
+  }, [commandState.commands.commands, hasSession, onCancelAction, refreshExecutionState, sendCancel, sessionId]);
 
   // ─── 文件引用 & 键盘 ─────────────────────────────────
 
@@ -496,19 +498,12 @@ export function SessionChatView({
       if (e.shiftKey) return; // Shift+Enter = 换行
 
       e.preventDefault();
-      if (
-        (e.ctrlKey || e.metaKey) &&
-        controlState.primaryAction.kind === "enqueue" &&
-        controlState.secondaryAction?.enabled
-      ) {
-        // Running+enqueue 态 Ctrl/Cmd+Enter → steer（辅助动作）
-        void handleSubmit("steer");
-      } else {
-        // 裸 Enter / Ctrl+Enter（非 steer 场景）→ 主动作
-        void handlePrimarySubmit();
-      }
+      const keyboardCommandId = (e.ctrlKey || e.metaKey)
+        ? commandState.commands.keyboard.ctrl_enter
+        : commandState.commands.keyboard.enter;
+      void handleSubmit(commandById(keyboardCommandId));
     },
-    [controlState.primaryAction.kind, controlState.secondaryAction?.enabled, fileRef, handlePrimarySubmit, handleSubmit],
+    [commandById, commandState.commands.keyboard.ctrl_enter, commandState.commands.keyboard.enter, fileRef, handleSubmit],
   );
 
   // 图片粘贴（Ctrl+V 含图片时拦截）
@@ -650,11 +645,13 @@ export function SessionChatView({
 
       {/* 排队消息 + 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
-        {pendingMessages && (pendingMessages.length > 0 || pendingQueue?.paused) && (
+        {pendingMessages && (pendingMessages.length > 0 || pendingSnapshot?.user_attention) && (
           <PendingMessageList
             messages={pendingMessages}
-            queue={pendingQueue}
-            canPromote={Boolean(controlState.secondaryAction?.enabled) && !pendingQueue?.paused}
+            pending={pendingSnapshot}
+            promoteCommand={commandState.commands.commands.find(
+              (command) => command.kind === "promote_pending" && command.placement.includes("pending_row"),
+            )}
             onPromote={onPromotePending ?? (() => {})}
             onDelete={onDeletePending ?? (() => {})}
             onResume={onResumePendingQueue}
@@ -662,7 +659,7 @@ export function SessionChatView({
         )}
 
         <SessionChatComposer
-          controlState={controlState}
+          commandState={commandState}
           discovery={discovery}
           discovered={discovered}
           execConfig={execConfig}
@@ -684,8 +681,7 @@ export function SessionChatView({
           onInputChange={setInputValue}
           onKeyDown={handleKeyDown}
           onCancelAction={() => { void handleCancel(); }}
-          onPrimaryAction={() => { void handlePrimarySubmit(); }}
-          onSteerAction={() => { void handleSubmit("steer"); }}
+          onCommandAction={(command) => { void handleSubmit(command); }}
           onPlusMenuFiles={handlePlusMenuFiles}
           onRemoveImage={imageAttach.removeAttachment}
         />

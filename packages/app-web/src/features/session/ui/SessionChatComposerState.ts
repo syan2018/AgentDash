@@ -1,14 +1,14 @@
 export interface SessionComposerActionState {
-  primaryActionEnabled: boolean;
+  commandEnabled: boolean;
   requirePromptText: boolean;
   isCancelling: boolean;
   isSending: boolean;
   inputValue: string;
 }
 
-export function isSessionComposerPrimaryDisabled(state: SessionComposerActionState): boolean {
+export function isSessionComposerSubmitDisabled(state: SessionComposerActionState): boolean {
   return state.isSending ||
     state.isCancelling ||
-    !state.primaryActionEnabled ||
+    !state.commandEnabled ||
     (state.requirePromptText && !state.inputValue.trim());
 }

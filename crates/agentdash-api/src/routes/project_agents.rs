@@ -20,8 +20,8 @@ use uuid::Uuid;
 use agentdash_contracts::core::DeletedFlagResponse;
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent as ProjectAgentResponse,
-    ProjectAgentExecutor, ProjectAgentLaunchResult, ProjectAgentRunStartResult,
-    ProjectAgentSummary, ThinkingLevel, UpdateProjectAgentRequest,
+    ProjectAgentExecutor, ProjectAgentRunStartResult, ProjectAgentSummary, ThinkingLevel,
+    UpdateProjectAgentRequest,
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto,
@@ -80,10 +80,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::put(update_project_agent).delete(delete_project_agent),
         )
         .route(
-            "/projects/{id}/agents/{project_agent_id}/launch",
-            axum::routing::post(launch_project_agent),
-        )
-        .route(
             "/projects/{id}/agents/{project_agent_id}/agent-runs",
             axum::routing::post(create_project_agent_run),
         )
@@ -120,124 +116,6 @@ pub async fn list_project_agents(
 
     response.sort_by(|a, b| a.display_name.cmp(&b.display_name));
     Ok(Json(response))
-}
-
-pub async fn launch_project_agent(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((project_id, agent_key)): Path<(String, String)>,
-) -> Result<Json<ProjectAgentLaunchResult>, ApiError> {
-    use agentdash_application::workflow::LifecycleDispatchService;
-    use agentdash_domain::workflow::{
-        AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource,
-        RunPolicy, RuntimePolicy, SubjectRef, WorkflowGraphRef,
-    };
-
-    let project_id = parse_project_id(&project_id)?;
-    let project = load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-
-    let project_agent_id = parse_project_agent_id(&agent_key)?;
-    let project_agent = state
-        .repos
-        .project_agent_repo
-        .get_by_project_and_id(project_id, project_agent_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
-    let agent_context = build_project_agent_context(&state.repos, &project_agent)
-        .await
-        .map_err(ApiError::Internal)?;
-
-    let workflow_graph_ref = project_agent
-        .default_lifecycle_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-        .map(|key| WorkflowGraphRef::ByKey {
-            project_id: project.id,
-            key: key.to_string(),
-        });
-
-    // 构造 AgentLaunchIntent 并通过 dispatch service 创建 lifecycle 实体
-    let intent = AgentLaunchIntent {
-        project_id: project.id,
-        source: ExecutionSource::ProjectAgent,
-        subject_ref: Some(SubjectRef::new("project", project.id)),
-        parent_run_id: None,
-        parent_agent_id: None,
-        workflow_graph_ref,
-        run_policy: RunPolicy::CreateLinkedRun,
-        agent_policy: AgentPolicy::Create,
-        context_policy: ContextPolicy::Isolated,
-        capability_policy: CapabilityPolicy::Baseline,
-        runtime_policy: RuntimePolicy::CreateRuntimeSession,
-    };
-
-    let dispatch_service = LifecycleDispatchService::new(
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.workflow_graph_repo.as_ref(),
-        state.repos.lifecycle_agent_repo.as_ref(),
-        state.repos.agent_frame_repo.as_ref(),
-        state.repos.lifecycle_subject_association_repo.as_ref(),
-        state.repos.lifecycle_gate_repo.as_ref(),
-        state.repos.agent_lineage_repo.as_ref(),
-    )
-    .with_anchor_repo(state.repos.execution_anchor_repo.as_ref())
-    .with_runtime_session_creator(state.repos.runtime_session_creator.as_ref());
-
-    let dispatch_result = dispatch_service
-        .launch_agent(&intent)
-        .await
-        .map_err(|err| ApiError::Internal(format!("Lifecycle dispatch 失败: {err}")))?;
-    if let Some(mut lifecycle_agent) = state
-        .repos
-        .lifecycle_agent_repo
-        .get(dispatch_result.runtime_refs.agent_ref)
-        .await
-        .map_err(ApiError::from)?
-    {
-        lifecycle_agent.project_agent_id = Some(project_agent.id);
-        state
-            .repos
-            .lifecycle_agent_repo
-            .update(&lifecycle_agent)
-            .await
-            .map_err(ApiError::from)?;
-    }
-
-    let summary = build_project_agent_summary(&project, &agent_context);
-
-    Ok(Json(ProjectAgentLaunchResult {
-        created: true,
-        agent: summary,
-        run_ref: LifecycleRunRefDto {
-            run_id: dispatch_result.runtime_refs.run_ref.to_string(),
-        },
-        agent_ref: AgentRunRefDto {
-            run_id: dispatch_result.runtime_refs.run_ref.to_string(),
-            agent_id: dispatch_result.runtime_refs.agent_ref.to_string(),
-        },
-        frame_ref: AgentFrameRefDto {
-            agent_id: dispatch_result.runtime_refs.agent_ref.to_string(),
-            frame_id: dispatch_result.runtime_refs.frame_ref.to_string(),
-            revision: None,
-        },
-        delivery_runtime_ref: dispatch_result
-            .delivery_runtime_ref
-            .map(|runtime_session_id| RuntimeSessionRefDto {
-                runtime_session_id: runtime_session_id.to_string(),
-            }),
-        subject_ref: intent.subject_ref.as_ref().map(|subject| SubjectRefDto {
-            kind: subject.kind.clone(),
-            id: subject.id.to_string(),
-        }),
-    }))
 }
 
 pub async fn create_project_agent_run(

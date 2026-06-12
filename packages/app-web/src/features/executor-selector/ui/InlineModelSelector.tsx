@@ -16,8 +16,9 @@ export interface InlineModelSelectorProps {
   discoveredOptions: ExecutorDiscoveredOptions | null;
   isDiscoveredLoading: boolean;
   executorName?: string;
-  /** steer 态只读（Phase B 预留） */
   readonly?: boolean;
+  status?: "resolved" | "model_required";
+  message?: string;
   onRefresh: () => void;
 }
 
@@ -27,6 +28,8 @@ export function InlineModelSelector({
   isDiscoveredLoading,
   executorName,
   readonly: isReadonly = false,
+  status = "resolved",
+  message,
   onRefresh,
 }: InlineModelSelectorProps) {
   const [open, setOpen] = useState(false);
@@ -89,6 +92,7 @@ export function InlineModelSelector({
 
   // Chip 文案
   const chipLabel = useMemo(() => {
+    if (status === "model_required") return "选择模型…";
     if (!execConfig.executor) return "选择模型…";
     const modelName = selectedModel?.name ?? execConfig.modelId.trim();
     const thinkingLabel = THINKING_LEVEL_OPTIONS.find(
@@ -97,7 +101,7 @@ export function InlineModelSelector({
     if (modelName && thinkingLabel) return `${modelName} ${thinkingLabel}`;
     if (modelName) return modelName;
     return executorName ?? execConfig.executor;
-  }, [execConfig.executor, execConfig.modelId, execConfig.thinkingLevel, executorName, selectedModel]);
+  }, [execConfig.executor, execConfig.modelId, execConfig.thinkingLevel, executorName, selectedModel, status]);
 
   const handleSelectModel = useCallback(
     (providerId: string, modelId: string) => {
@@ -137,10 +141,13 @@ export function InlineModelSelector({
         className={`flex items-center gap-1 rounded-[8px] px-2.5 py-1.5 text-xs transition-colors ${
           isReadonly
             ? "cursor-default text-muted-foreground opacity-60"
+            : status === "model_required"
+              ? "bg-warning/10 text-warning hover:bg-warning/15"
             : open
               ? "bg-secondary text-foreground"
               : "text-muted-foreground hover:bg-secondary hover:text-foreground"
         }`}
+        title={status === "model_required" ? message : undefined}
       >
         {isDiscoveredLoading ? (
           <span className="inline-block h-3 w-3 animate-spin rounded-[8px] border border-muted-foreground border-t-transparent" />

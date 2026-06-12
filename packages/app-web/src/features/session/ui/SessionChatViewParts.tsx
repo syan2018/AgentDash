@@ -16,9 +16,10 @@ import {
 } from "../../file-reference";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
 import type { SessionDisplayItem, TokenUsageInfo } from "../model/types";
-import { isSessionComposerPrimaryDisabled } from "./SessionChatComposerState";
+import { isSessionComposerSubmitDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
-import type { SessionChatControlState } from "./SessionChatViewTypes";
+import type { SessionChatCommandState } from "./SessionChatViewTypes";
+import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import type { ImageAttachment } from "./composer/useImageAttachments";
 import { ImageAttachmentPreview } from "./composer/ImageAttachmentPreview";
 import { ComposerSendButton } from "./composer/ComposerSendButton";
@@ -263,7 +264,7 @@ export function SessionChatStream({
 }
 
 export function SessionChatComposer({
-  controlState,
+  commandState,
   discovery,
   discovered,
   execConfig,
@@ -285,12 +286,11 @@ export function SessionChatComposer({
   onInputChange,
   onKeyDown,
   onCancelAction,
-  onPrimaryAction,
-  onSteerAction,
+  onCommandAction,
   onPlusMenuFiles,
   onRemoveImage,
 }: {
-  controlState: SessionChatControlState;
+  commandState: SessionChatCommandState;
   discovery: ExecutorDiscoveryState;
   discovered: ExecutorDiscoveredState;
   execConfig: ExecutorConfigState;
@@ -312,50 +312,54 @@ export function SessionChatComposer({
   onInputChange: (value: string) => void;
   onKeyDown: (event: KeyboardEvent) => void;
   onCancelAction: () => void;
-  onPrimaryAction: () => void;
-  onSteerAction?: () => void;
+  onCommandAction: (command: ConversationCommandView) => void;
   onPlusMenuFiles: (files: FileList) => void;
   onRemoveImage: (id: string) => void;
 }) {
-  const { primaryAction, cancelAction, secondaryAction } = controlState;
-  const isEnqueueMode = primaryAction.kind === "enqueue";
-  const inputDisabled = isSending || !primaryAction.enabled;
+  const submitCommand = commandState.commands.commands.find(
+    (command) => command.placement.includes("composer_primary"),
+  );
+  const alternateCommand = commandState.commands.commands.find(
+    (command) => command.placement.includes("composer_secondary"),
+  );
+  const cancelCommand = commandState.commands.commands.find((command) => command.kind === "cancel");
+  const inputDisabled = isSending || !submitCommand?.enabled;
 
   const hasContent = Boolean(inputValue.trim()) || imageAttachments.length > 0;
   // 展开条件：有效多行（trim 后仍含换行） OR 有附件 OR 有文件引用
   const isExpanded = inputValue.trim().includes("\n") || imageAttachments.length > 0 || fileRef.references.length > 0;
-  const sendDisabled = isSessionComposerPrimaryDisabled({
-    primaryActionEnabled: primaryAction.enabled,
+  const sendDisabled = isSessionComposerSubmitDisabled({
+    commandEnabled: Boolean(submitCommand?.enabled),
     requirePromptText: false,
     inputValue: hasContent ? "has_content" : "",
     isCancelling,
     isSending,
   });
-  const cancelDisabled = isCancelling || !cancelAction.enabled;
+  const cancelDisabled = isCancelling || !cancelCommand?.enabled;
 
   const executorName = discovery.executors.find((e) => e.id === execConfig.executor)?.name;
   const isDiscoveredLoading = Boolean(execConfig.executor.trim()) &&
     (!discovered.isInitialized || (discovered.options?.loading_models ?? false));
 
-  // Steer 态模型选择器只读（FR5）
-  const isSteerReadonly = isEnqueueMode;
+  const modelRequired = commandState.modelConfig.status === "model_required";
+  const isModelReadonly = Boolean(
+    submitCommand && submitCommand.executor_config_policy === "forbidden",
+  );
 
-  const actionReason = primaryAction.enabled
+  const actionReason = submitCommand?.enabled
     ? undefined
-    : primaryAction.unavailableReason ?? controlState.helperText;
-  const helperText = primaryAction.enabled
-    ? controlState.helperText ?? (
-        isEnqueueMode
-          ? `Enter 排队${secondaryAction?.enabled ? " · Ctrl+Enter steer" : ""} · ${workspaceId ? "@ 引用文件" : "@ 文件引用不可用"}`
-          : `Ctrl+Enter 提交 · ${workspaceId ? "@ 引用文件" : "@ 文件引用不可用"}`
-      )
-    : actionReason ?? "当前 Session 只能查看 runtime trace。";
+    : submitCommand?.unavailable_reason
+      ?? commandState.modelConfig.message
+      ?? commandState.helperText;
+  const helperText = submitCommand?.enabled
+    ? commandState.helperText ?? `Enter 提交 · ${workspaceId ? "@ 引用文件" : "@ 文件引用不可用"}`
+    : actionReason ?? "当前 AgentRun 只能查看。";
 
   return (
     <div className="shrink-0 pb-4 pt-2">
       <div className="mx-auto w-full max-w-4xl px-5">
         {/* Prompt 模板（无 session + draft 模式） */}
-        {!hasSession && !primaryAction.enabled && promptTemplates && promptTemplates.length > 0 && (
+        {!hasSession && !submitCommand?.enabled && promptTemplates && promptTemplates.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {promptTemplates.map((tpl) => (
               <button
@@ -431,7 +435,7 @@ export function SessionChatComposer({
               />
               <RichInput
                 ref={richInputRef}
-                placeholder={primaryAction.placeholder ?? "Send follow-up"}
+                placeholder={modelRequired ? "请选择模型后继续" : "Send follow-up"}
                 onChange={onInputChange}
                 onKeyDown={onKeyDown}
                 onAtTrigger={onAtTrigger}
@@ -460,7 +464,9 @@ export function SessionChatComposer({
                 discoveredOptions={discovered.options}
                 isDiscoveredLoading={isDiscoveredLoading}
                 executorName={executorName}
-                readonly={isSteerReadonly}
+                readonly={isModelReadonly}
+                status={commandState.modelConfig.status}
+                message={commandState.modelConfig.message}
                 onRefresh={() => {
                   discovery.refetch();
                   discovered.reconnect();
@@ -476,12 +482,10 @@ export function SessionChatComposer({
               hasInput={hasContent}
               isSending={isSending}
               isCancelling={isCancelling}
-              sendDisabled={sendDisabled}
               cancelDisabled={cancelDisabled}
-              primaryKind={primaryAction.kind}
-              canSteer={Boolean(secondaryAction?.enabled)}
-              onSend={onPrimaryAction}
-              onSteer={onSteerAction}
+              submitCommand={sendDisabled ? undefined : submitCommand}
+              alternateCommand={alternateCommand}
+              onSubmit={onCommandAction}
               onCancel={onCancelAction}
             />
           </div>

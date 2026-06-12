@@ -82,8 +82,7 @@ use agentdash_contracts::permission::{
 };
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent, ProjectAgentExecutor,
-    ProjectAgentLaunchResult, ProjectAgentRunStartResult, ProjectAgentSummary,
-    UpdateProjectAgentRequest,
+    ProjectAgentRunStartResult, ProjectAgentSummary, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::session::{
     ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
@@ -189,7 +188,6 @@ fn main() {
             export_all::<ProjectAgent>(dir);
             export_all::<ProjectAgentExecutor>(dir);
             export_all::<ProjectAgentSummary>(dir);
-            export_all::<ProjectAgentLaunchResult>(dir);
             export_all::<CreateProjectAgentRunRequest>(dir);
             export_all::<ProjectAgentRunStartResult>(dir);
             export_all::<CreateProjectAgentRequest>(dir);

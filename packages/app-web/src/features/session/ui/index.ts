@@ -5,8 +5,7 @@
 export {
   SessionChatView,
   type PromptTemplate,
-  type SessionChatControlState,
-  type SessionChatPrimaryActionKind,
+  type SessionChatCommandState,
   type SessionChatViewProps,
 } from "./SessionChatView";
 export { SessionList, type SessionListProps } from "./SessionList";

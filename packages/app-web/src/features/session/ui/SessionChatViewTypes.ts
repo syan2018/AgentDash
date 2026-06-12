@@ -2,9 +2,13 @@ import type { ReactNode } from "react";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type {
+  ConversationCommandSetView,
+  ConversationCommandView,
+  ConversationModelConfigView,
+  ConversationPendingSnapshotView,
   PendingMessageView,
-  PendingQueueStateView,
 } from "../../../generated/workflow-contracts";
+import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
@@ -16,26 +20,11 @@ export interface PromptTemplate {
   content: string;
 }
 
-export type SessionChatPrimaryActionKind = "start_draft" | "send_next" | "steer" | "enqueue" | "none";
-
-export interface SessionChatActionState {
-  enabled: boolean;
-  label: string;
-  unavailableReason?: string;
-}
-
-export interface SessionChatPrimaryActionState extends SessionChatActionState {
-  kind: SessionChatPrimaryActionKind;
-  placeholder: string;
-}
-
-export interface SessionChatControlState {
+export interface SessionChatCommandState {
   mode: "draft" | "runtime";
-  controlPlaneStatus: string;
-  primaryAction: SessionChatPrimaryActionState;
-  cancelAction: SessionChatActionState;
-  /** running 态可用的辅助动作（如 steer 可用时键盘/按钮分流） */
-  secondaryAction?: SessionChatPrimaryActionState;
+  executionStatus: string;
+  commands: ConversationCommandSetView;
+  modelConfig: ConversationModelConfigView;
   helperText?: string;
 }
 
@@ -72,7 +61,7 @@ export interface SessionChatViewProps {
    * 进入会话 / 切换会话时会被用来 hydrate 本地 executor 状态，避免默认显示"选择模型…"。
    * 用户手动改过之后不会被再次覆盖（按 sessionId 计一次）。
    */
-  agentDefaults?: ProjectAgentExecutor | TaskSessionExecutorSummary | null;
+  agentDefaults?: ProjectAgentExecutor | TaskSessionExecutorSummary | ConversationEffectiveExecutorConfigView | null;
 
   /** AgentRun/frame scoped executor state key; changes force authoritative hydration. */
   executorStateKey?: string | null;
@@ -82,10 +71,10 @@ export interface SessionChatViewProps {
 
   // ─── 控制动作 ────────────────────────────────────────
 
-  controlState: SessionChatControlState;
+  commandState: SessionChatCommandState;
 
-  onPrimaryAction: (
-    action: SessionChatPrimaryActionKind,
+  onCommand: (
+    command: ConversationCommandView,
     sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
@@ -98,8 +87,8 @@ export interface SessionChatViewProps {
 
   /** 排队中的消息列表（来自 runtimeControl.pending_messages） */
   pendingMessages?: PendingMessageView[];
-  /** Pending 队列状态（来自 runtimeControl.pending_queue） */
-  pendingQueue?: PendingQueueStateView;
+  /** Pending 队列展示状态（来自 conversation.pending） */
+  pendingSnapshot?: ConversationPendingSnapshotView;
   /** 引导排队消息（promote to steer） */
   onPromotePending?: (messageId: string) => void;
   /** 删除排队消息 */

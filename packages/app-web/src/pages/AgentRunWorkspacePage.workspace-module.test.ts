@@ -2,8 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AgentRunWorkspaceView } from "../types";
 import { useWorkspaceTabStore, type WorkspaceTabLayoutOptions } from "../stores/workspaceTabStore";
-import { deriveAgentRunWorkspaceChatControlState } from "./AgentRunWorkspacePage.chatControlState";
+import {
+  buildDraftSessionCommandState,
+  buildRuntimeSessionCommandState,
+} from "./AgentRunWorkspacePage.conversationCommandState";
 import type { WorkspaceModuleDescriptor } from "../generated/workspace-module-contracts";
+import type { ConversationCommandView, ConversationKeyboardMapView } from "../generated/workflow-contracts";
+import type { ProjectAgentSummary } from "../types";
 import {
   openUserCanvasModule,
   selectCanvasModuleOpenOptions,
@@ -16,6 +21,8 @@ import {
 function workspaceView(
   controlStatus: AgentRunWorkspaceView["control_plane"]["status"],
   actions: AgentRunWorkspaceView["actions"],
+  commands: ConversationCommandView[] = [],
+  keyboard: ConversationKeyboardMapView = {},
 ): AgentRunWorkspaceView {
   return {
     run_ref: { run_id: "run-1" },
@@ -37,6 +44,34 @@ function workspaceView(
       can_resume: false,
     },
     pending_messages: [],
+    conversation: {
+      identity: {
+        run_ref: { run_id: "run-1" },
+        agent_ref: { run_id: "run-1", agent_id: "agent-1" },
+        project_id: "project-1",
+      },
+      lifecycle_context: {
+        delivery_runtime_ref: { runtime_session_id: "session-1" },
+        subject_associations: [],
+      },
+      execution: {
+        status: controlStatus === "running" ? "running_active" : controlStatus === "ready" ? "ready" : "terminal",
+      },
+      model_config: {
+        status: "resolved",
+        missing_fields: [],
+      },
+      commands: {
+        commands,
+        keyboard,
+      },
+      pending: {
+        visible_message_count: 0,
+        paused: false,
+        user_attention: false,
+      },
+      diagnostics: [],
+    },
   };
 }
 
@@ -54,28 +89,32 @@ const terminalActionsWithStaleRunningBits: AgentRunWorkspaceView["actions"] = {
   cancel: { enabled: false, unavailable_reason: "terminal" },
 };
 
-const cancellingActions: AgentRunWorkspaceView["actions"] = {
-  send_next: { enabled: false, unavailable_reason: "cancelling" },
-  enqueue: { enabled: false, unavailable_reason: "cancelling" },
-  steer: { enabled: false, unavailable_reason: "cancelling" },
-  cancel: { enabled: true },
-};
-
-function deriveControl(
+function commandState(
   projectionStatus: "ready" | "refreshing" | "error" | "idle" | "loading",
   workspace: AgentRunWorkspaceView | null,
 ) {
-  return deriveAgentRunWorkspaceChatControlState({
-    isProjectAgentDraft: false,
-    draftProjectIdValue: null,
-    draftProjectAgentKey: null,
-    draftProjectAgent: null,
-    currentRunId: "run-1",
-    currentAgentId: "agent-1",
+  return buildRuntimeSessionCommandState({
     projectionStatus,
     projectionError: projectionStatus === "error" ? "refresh failed" : null,
-    workspace,
+    conversation: workspace?.conversation,
   });
+}
+
+function command(kind: ConversationCommandView["kind"], commandId: string): ConversationCommandView {
+  return {
+    kind,
+    command_id: commandId,
+    enabled: true,
+    requires_input: true,
+    executor_config_policy: "required",
+    placement: kind === "steer" ? ["composer_secondary"] : ["composer_primary"],
+    stale_guard: {
+      run_id: "run-1",
+      agent_id: "agent-1",
+      runtime_session_id: "session-1",
+      active_turn_id: kind === "steer" ? "turn-1" : undefined,
+    },
+  };
 }
 
 describe("workspaceModulePresentedTabTarget", () => {
@@ -128,55 +167,72 @@ describe("workspaceModulePresentedTabTarget", () => {
   });
 });
 
-describe("AgentRun workspace chat control authority", () => {
-  it("uses running ready projection for enqueue and Ctrl/Cmd+Enter steer", () => {
-    const control = deriveControl("ready", workspaceView("running", runningActions));
+describe("AgentRun workspace conversation command authority", () => {
+  it("disables draft submit when model is required", () => {
+    const agent: ProjectAgentSummary = {
+      key: "agent-1",
+      display_name: "Agent",
+      description: "",
+      executor: {
+        executor: "PI_AGENT",
+        provider_id: null,
+        model_id: null,
+      },
+      source: "project_agent",
+    };
+    const state = buildDraftSessionCommandState({
+      projectId: "project-1",
+      agentKey: "agent-1",
+      agent,
+      projectionReady: true,
+    });
 
-    expect(control.primaryAction.kind).toBe("enqueue");
-    expect(control.primaryAction.enabled).toBe(true);
-    expect(control.secondaryAction?.kind).toBe("steer");
-    expect(control.secondaryAction?.enabled).toBe(true);
+    expect(state.executionStatus).toBe("model_required");
+    expect(state.commands.keyboard.enter).toBeUndefined();
+    expect(state.commands.commands[0]?.enabled).toBe(false);
+    expect(state.commands.commands[0]?.disabled_code).toBe("model_required");
   });
 
-  it("makes a refreshing projection read-only even when the retained workspace has running actions", () => {
-    const control = deriveControl("refreshing", workspaceView("running", runningActions));
+  it("uses snapshot keyboard mapping for ready Ctrl/Cmd+Enter send_next", () => {
+    const sendNext = command("send_next", "cmd-send-next");
+    const state = commandState("ready", workspaceView("ready", runningActions, [sendNext], {
+      enter: "cmd-send-next",
+      ctrl_enter: "cmd-send-next",
+    }));
 
-    expect(control.primaryAction.kind).toBe("none");
-    expect(control.primaryAction.enabled).toBe(false);
-    expect(control.secondaryAction).toBeUndefined();
-    expect(control.cancelAction.enabled).toBe(false);
+    expect(state.commands.keyboard.ctrl_enter).toBe("cmd-send-next");
+    expect(state.commands.commands.find((item) => item.command_id === "cmd-send-next")?.kind).toBe("send_next");
   });
 
-  it("does not expose steer or enqueue from a terminal projection with stale action bits", () => {
-    const control = deriveControl(
-      "ready",
-      workspaceView("terminal", terminalActionsWithStaleRunningBits),
-    );
+  it("exposes running steer only when snapshot maps it", () => {
+    const enqueue = command("enqueue", "cmd-enqueue");
+    const steer = command("steer", "cmd-steer");
+    const state = commandState("ready", workspaceView("running", runningActions, [enqueue, steer], {
+      enter: "cmd-enqueue",
+      ctrl_enter: "cmd-steer",
+    }));
 
-    expect(control.controlPlaneStatus).toBe("terminal");
-    expect(control.primaryAction.kind).toBe("none");
-    expect(control.primaryAction.enabled).toBe(false);
-    expect(control.secondaryAction).toBeUndefined();
+    expect(state.commands.keyboard.enter).toBe("cmd-enqueue");
+    expect(state.commands.keyboard.ctrl_enter).toBe("cmd-steer");
+    expect(state.commands.commands.find((item) => item.command_id === "cmd-steer")?.stale_guard.active_turn_id).toBe("turn-1");
   });
 
-  it("keeps cancelling projection read-only for user input while cancel remains available", () => {
-    const control = deriveControl("ready", workspaceView("cancelling", cancellingActions));
+  it("makes a refreshing projection read-only even when retained workspace has commands", () => {
+    const state = commandState("refreshing", workspaceView("running", runningActions, [
+      command("enqueue", "cmd-enqueue"),
+    ], { enter: "cmd-enqueue" }));
 
-    expect(control.controlPlaneStatus).toBe("cancelling");
-    expect(control.primaryAction.kind).toBe("none");
-    expect(control.primaryAction.enabled).toBe(false);
-    expect(control.secondaryAction).toBeUndefined();
-    expect(control.cancelAction.enabled).toBe(true);
+    expect(state.commands.keyboard.enter).toBeUndefined();
+    expect(state.commands.commands.every((item) => !item.enabled)).toBe(true);
   });
 
-  it("keeps error and stale projection states read-only", () => {
-    const errorControl = deriveControl("error", workspaceView("running", runningActions));
-    const staleControl = deriveControl("idle", workspaceView("running", runningActions));
+  it("requires conversation snapshot instead of falling back to stale action bits", () => {
+    const workspace = workspaceView("terminal", terminalActionsWithStaleRunningBits);
+    workspace.conversation = undefined;
+    const state = commandState("ready", workspace);
 
-    expect(errorControl.primaryAction.kind).toBe("none");
-    expect(errorControl.primaryAction.enabled).toBe(false);
-    expect(staleControl.primaryAction.kind).toBe("none");
-    expect(staleControl.primaryAction.enabled).toBe(false);
+    expect(state.executionStatus).toBe("delivery_missing");
+    expect(state.commands.commands.every((item) => !item.enabled)).toBe(true);
   });
 });
 

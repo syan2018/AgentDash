@@ -5,8 +5,7 @@ use ts_rs::TS;
 
 use crate::workflow::{
     AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto,
-    ConversationEffectiveExecutorConfigView, LifecycleRunRefDto, RuntimeSessionRefDto,
-    SubjectRefDto,
+    ConversationEffectiveExecutorConfigView, LifecycleRunRefDto, SubjectRefDto,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -53,21 +52,6 @@ pub struct ProjectAgentSummary {
     #[ts(optional)]
     pub preset_name: Option<String>,
     pub source: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ProjectAgentLaunchResult {
-    pub created: bool,
-    pub agent: ProjectAgentSummary,
-    pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: AgentRunRefDto,
-    pub frame_ref: AgentFrameRefDto,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub subject_ref: Option<SubjectRefDto>,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]

@@ -1,24 +1,37 @@
-/**
- * Morphing 发送/停止按钮 — 常驻显示
- *
- * 状态机:
- * - running + 无内容 → stop 按钮
- * - running + 有内容 + enqueue → 排队按钮 + 可选 steer
- * - 其它 → 发送按钮（无内容时 disabled 半透明）
- */
+import type { ConversationCommandView } from "../../../../generated/workflow-contracts";
 
 interface ComposerSendButtonProps {
   isRunning: boolean;
   hasInput: boolean;
   isSending: boolean;
   isCancelling: boolean;
-  sendDisabled: boolean;
   cancelDisabled: boolean;
-  primaryKind?: string;
-  canSteer?: boolean;
-  onSend: () => void;
-  onSteer?: () => void;
+  submitCommand?: ConversationCommandView;
+  alternateCommand?: ConversationCommandView;
+  onSubmit: (command: ConversationCommandView) => void;
   onCancel: () => void;
+}
+
+function commandTitle(command: ConversationCommandView, fallback: string): string {
+  if (!command.enabled) return command.unavailable_reason ?? fallback;
+  switch (command.kind) {
+    case "enqueue":
+      return "排队";
+    case "steer":
+      return "Steer";
+    case "send_next":
+    case "start_draft":
+      return "发送";
+    default:
+      return fallback;
+  }
+}
+
+function optionalCommandTitle(
+  command: ConversationCommandView | undefined,
+  fallback: string,
+): string {
+  return command ? commandTitle(command, fallback) : fallback;
 }
 
 export function ComposerSendButton({
@@ -26,16 +39,14 @@ export function ComposerSendButton({
   hasInput,
   isSending,
   isCancelling,
-  sendDisabled,
   cancelDisabled,
-  primaryKind,
-  canSteer,
-  onSend,
-  onSteer,
+  submitCommand,
+  alternateCommand,
+  onSubmit,
   onCancel,
 }: ComposerSendButtonProps) {
   const showStop = isRunning && !hasInput;
-  const isEnqueueMode = primaryKind === "enqueue";
+  const submitDisabled = isSending || !submitCommand?.enabled;
 
   // Running + 无内容 → Stop
   if (showStop) {
@@ -52,16 +63,15 @@ export function ComposerSendButton({
     );
   }
 
-  // Running + 有内容 + enqueue → 排队 + 可选 steer
-  if (isEnqueueMode && isRunning && hasInput) {
+  if (isRunning && hasInput && submitCommand?.kind === "enqueue") {
     return (
       <div className="flex items-center gap-1.5">
-        {canSteer && onSteer && (
+        {alternateCommand?.kind === "steer" && (
           <button
             type="button"
-            disabled={isSending}
-            onClick={onSteer}
-            title="立即 Steer (Ctrl+Enter)"
+            disabled={isSending || !alternateCommand.enabled}
+            onClick={() => onSubmit(alternateCommand)}
+            title={commandTitle(alternateCommand, "立即 Steer")}
             className="flex h-7 items-center gap-1 rounded-[12px] bg-primary/10 px-2.5 text-xs text-primary transition-colors hover:bg-primary/20 disabled:opacity-40"
           >
             <SteerIcon />
@@ -70,9 +80,9 @@ export function ComposerSendButton({
         )}
         <button
           type="button"
-          disabled={sendDisabled}
-          onClick={onSend}
-          title={isSending ? "排队中…" : "排队 (Enter)"}
+          disabled={submitDisabled}
+          onClick={() => { if (submitCommand) onSubmit(submitCommand); }}
+          title={isSending ? "排队中…" : optionalCommandTitle(submitCommand, "排队")}
           className="flex h-8 w-8 items-center justify-center rounded-[50%] bg-foreground text-background transition-opacity hover:opacity-80 disabled:opacity-30"
         >
           {isSending ? <Spinner /> : <QueueIcon />}
@@ -85,9 +95,9 @@ export function ComposerSendButton({
   return (
     <button
       type="button"
-      disabled={sendDisabled}
-      onClick={onSend}
-      title={isSending ? "发送中…" : "发送"}
+      disabled={submitDisabled}
+      onClick={() => { if (submitCommand) onSubmit(submitCommand); }}
+      title={isSending ? "发送中…" : optionalCommandTitle(submitCommand, "发送")}
       className="flex h-8 w-8 items-center justify-center rounded-[50%] bg-foreground text-background transition-opacity hover:opacity-80 disabled:opacity-30"
     >
       {isSending ? <Spinner /> : <ArrowUpIcon />}

@@ -24,7 +24,6 @@ import type {
   CreateProjectAgentRunRequest as GeneratedCreateProjectAgentRunRequest,
   ProjectAgent as GeneratedProjectAgent,
   ProjectAgentExecutor as GeneratedProjectAgentExecutor,
-  ProjectAgentLaunchResult as GeneratedProjectAgentLaunchResult,
   ProjectAgentRunStartResult as GeneratedProjectAgentRunStartResult,
   ProjectAgentSummary as GeneratedProjectAgentSummary,
 } from "../generated/project-agent-contracts";
@@ -270,13 +269,6 @@ export type ProjectAgentSummary = Omit<
 > & {
   executor: ProjectAgentExecutor;
   preset_name?: string | null;
-};
-
-export type ProjectAgentLaunchResult = Omit<
-  GeneratedProjectAgentLaunchResult,
-  "agent"
-> & {
-  agent: ProjectAgentSummary;
 };
 
 export type CreateProjectAgentRunRequest = GeneratedCreateProjectAgentRunRequest;

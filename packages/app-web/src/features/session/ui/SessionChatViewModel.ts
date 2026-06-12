@@ -1,4 +1,5 @@
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type { ExecutorConfigSource } from "../../executor-selector/model/types";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
@@ -7,7 +8,7 @@ import { extractPlatformEventType } from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
 
 export function toExecutorConfigSource(
-  defaults: ProjectAgentExecutor | TaskSessionExecutorSummary | null | undefined,
+  defaults: ProjectAgentExecutor | TaskSessionExecutorSummary | ConversationEffectiveExecutorConfigView | null | undefined,
 ): ExecutorConfigSource | null {
   if (!defaults) return null;
   const source: ExecutorConfigSource = {};

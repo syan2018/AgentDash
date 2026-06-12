@@ -30,8 +30,6 @@ export type ProjectAgent = { id: string, project_id: string, name: string, agent
 
 export type ProjectAgentExecutor = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, permission_policy?: string, };
 
-export type ProjectAgentLaunchResult = { created: boolean, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_ref?: SubjectRefDto, };
-
 export type ProjectAgentRunStartResult = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, effective_executor_config?: ConversationEffectiveExecutorConfigView, runtime_session_id: string, turn_id: string, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
 
 export type ProjectAgentSummary = { key: string, display_name: string, description: string, executor: ProjectAgentExecutor, effective_executor_config?: ConversationEffectiveExecutorConfigView, preset_name?: string, source: string, };

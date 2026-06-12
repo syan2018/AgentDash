@@ -35,7 +35,9 @@ pub struct InstallLibraryAssetInput {
 
 #[derive(Debug, Clone)]
 pub enum InstallLibraryAssetOptions {
-    McpServerTemplate { parameters: Value },
+    McpServerTemplate {
+        parameters: Value,
+    },
     AgentTemplate {
         dependency_mode: AgentTemplateDependencyMode,
         dependency_parameters: BTreeMap<String, Value>,
@@ -229,12 +231,16 @@ fn reject_install_options_for_non_mcp_or_agent(
     ))
 }
 
-fn reject_install_options_for_non_agent(input: &InstallLibraryAssetInput) -> Result<(), DomainError> {
+fn reject_install_options_for_non_agent(
+    input: &InstallLibraryAssetInput,
+) -> Result<(), DomainError> {
     match &input.install_options {
         None | Some(InstallLibraryAssetOptions::AgentTemplate { .. }) => Ok(()),
-        Some(InstallLibraryAssetOptions::McpServerTemplate { .. }) => Err(
-            DomainError::InvalidConfig("agent_template 不支持 mcp_server_template install_options".to_string()),
-        ),
+        Some(InstallLibraryAssetOptions::McpServerTemplate { .. }) => {
+            Err(DomainError::InvalidConfig(
+                "agent_template 不支持 mcp_server_template install_options".to_string(),
+            ))
+        }
     }
 }
 
@@ -553,9 +559,11 @@ fn agent_template_install_options(
             dependency_mode: *dependency_mode,
             dependency_parameters,
         }),
-        Some(InstallLibraryAssetOptions::McpServerTemplate { .. }) => Err(DomainError::InvalidConfig(
-            "agent_template 不支持 mcp_server_template install_options".to_string(),
-        )),
+        Some(InstallLibraryAssetOptions::McpServerTemplate { .. }) => {
+            Err(DomainError::InvalidConfig(
+                "agent_template 不支持 mcp_server_template install_options".to_string(),
+            ))
+        }
     }
 }
 
@@ -593,7 +601,8 @@ fn resolve_agent_mcp_dependency_asset(
     let same_scope = candidates
         .iter()
         .filter(|asset| {
-            asset.scope == agent_asset.scope && asset.owner_id.as_deref() == agent_asset.owner_id.as_deref()
+            asset.scope == agent_asset.scope
+                && asset.owner_id.as_deref() == agent_asset.owner_id.as_deref()
         })
         .cloned()
         .collect::<Vec<_>>();

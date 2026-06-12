@@ -317,7 +317,10 @@ pub struct AgentTemplateConfig {
 impl AgentTemplateConfig {
     pub fn validate(&self) -> Result<(), DomainError> {
         for (index, slot) in self.mcp_slots.iter().enumerate() {
-            require_non_empty(&format!("agent_template.config.mcp_slots[{index}].key"), &slot.key)?;
+            require_non_empty(
+                &format!("agent_template.config.mcp_slots[{index}].key"),
+                &slot.key,
+            )?;
         }
         for (index, dependency) in self.mcp_dependencies.iter().enumerate() {
             dependency.validate(index)?;
@@ -2087,7 +2090,7 @@ mod tests {
                     "workspace": "acme",
                     "shard": "one"
                 })))
-            .is_err()
+                .is_err()
         );
     }
 

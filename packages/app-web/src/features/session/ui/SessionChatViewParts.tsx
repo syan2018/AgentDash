@@ -162,12 +162,12 @@ export function SessionChatStatusBar({
   return (
     <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-background px-5 py-2">
       <span className="flex items-center gap-1.5 rounded-[8px] border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground">
-        <span className={`inline-block h-1.5 w-1.5 rounded-full ${connectionColor}`} />
+        <span className={`inline-block h-1.5 w-1.5 rounded-[8px] ${connectionColor}`} />
         {connectionLabel}
       </span>
       {isActionRunning && (
         <span className="flex items-center gap-1 rounded-[8px] border border-primary/20 bg-primary/8 px-2.5 py-1 text-xs text-primary">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
+          <span className="inline-block h-1.5 w-1.5 rounded-[8px] bg-primary" />
           {isConnected ? "接收中" : "执行中"}
         </span>
       )}
@@ -226,7 +226,7 @@ export function SessionChatStream({
       {hasSession && isLoading && displayItems.length === 0 && !streamPrefixContent ? (
         <div className="flex h-full items-center justify-center">
           <div className="text-center">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <div className="mx-auto h-8 w-8 animate-spin rounded-[12px] border-2 border-primary border-t-transparent" />
             <p className="mt-2 text-sm text-muted-foreground">正在连接…</p>
           </div>
         </div>

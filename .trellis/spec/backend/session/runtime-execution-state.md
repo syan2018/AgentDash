@@ -14,6 +14,14 @@
 | Active turn | `TurnState::Active(TurnExecution)` | 当前进程内是否有正在执行的 turn |
 | Backend execution lease | `BackendExecutionLeaseRepository` | relay turn 对本机 backend 的执行占用与释放事实 |
 
+`SessionRuntimeRegistry` 内的 hook runtime 字段是 delivery binding cache：
+`delivery RuntimeSession id -> AgentFrameHookRuntime(control_target)`。它存在的原因是
+同一个执行器会话需要在 turn、event adapter、trace 和 live connector 同步路径复用 runtime
+对象；业务 owner 始终是 `HookControlTarget { run_id, agent_id, frame_id }`。业务路径应先持有
+`AgentFrameRuntimeTarget`，再通过 `SessionHookService::ensure_hook_runtime_for_target` 校验或
+重建绑定；裸 delivery session lookup 只属于 hub adapter / trace 场景，不能决定 hook policy、
+capability、context、VFS 或 MCP 的生效 owner。
+
 三个查询语义保持分离：
 
 - `has_live_executor_session(session_id)`：connector 层是否持有 live executor session。

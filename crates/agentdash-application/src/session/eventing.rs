@@ -104,12 +104,42 @@ impl SessionEventingService {
         session_id: &str,
         envelope: BackboneEnvelope,
     ) -> io::Result<PersistedSessionEvent> {
+        self.persist_notification_inner(session_id, envelope, true)
+            .await
+    }
+
+    pub(crate) async fn persist_notification_deferred_broadcast(
+        &self,
+        session_id: &str,
+        envelope: BackboneEnvelope,
+    ) -> io::Result<PersistedSessionEvent> {
+        self.persist_notification_inner(session_id, envelope, false)
+            .await
+    }
+
+    pub(crate) async fn broadcast_persisted_event(
+        &self,
+        session_id: &str,
+        event: PersistedSessionEvent,
+    ) {
+        let tx = self.runtime_registry.touch_and_sender(session_id).await;
+        let _ = tx.send(event);
+    }
+
+    async fn persist_notification_inner(
+        &self,
+        session_id: &str,
+        envelope: BackboneEnvelope,
+        broadcast: bool,
+    ) -> io::Result<PersistedSessionEvent> {
         if let Some(result) = self
             .maybe_commit_compaction_projection(session_id, envelope.clone())
             .await?
         {
-            let tx = self.runtime_registry.touch_and_sender(session_id).await;
-            let _ = tx.send(result.event.clone());
+            if broadcast {
+                self.broadcast_persisted_event(session_id, result.event.clone())
+                    .await;
+            }
             if let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) =
                 &result.event.notification.event
                 && key == "context_compacted"
@@ -134,8 +164,10 @@ impl SessionEventingService {
             .await?;
         self.advance_model_projection_head(session_id, &persisted)
             .await?;
-        let tx = self.runtime_registry.touch_and_sender(session_id).await;
-        let _ = tx.send(persisted.clone());
+        if broadcast {
+            self.broadcast_persisted_event(session_id, persisted.clone())
+                .await;
+        }
         if let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) =
             &persisted.notification.event
             && key == "context_compacted"

@@ -51,6 +51,7 @@ describe("PendingMessageList", () => {
         executor_config_policy: "forbidden",
         placement: ["pending_row"],
         stale_guard: {
+          snapshot_id: "snapshot-promote",
           run_id: "run-1",
           agent_id: "agent-1",
           runtime_session_id: "session-1",
@@ -91,6 +92,7 @@ describe("PendingMessageList", () => {
           executor_config_policy: "forbidden",
           placement: ["pending_banner"],
           stale_guard: {
+            snapshot_id: "snapshot-resume",
             run_id: "run-1",
             agent_id: "agent-1",
             runtime_session_id: "session-1",

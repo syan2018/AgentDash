@@ -48,6 +48,7 @@ Tool module baseline：
 - Routine memory 使用 session-scoped `routine` runtime mount 承载当前触发投影和长期工作记忆，原因是 Routine 的跨轮次上下文应脱离 prompt template 与 session history，并通过 VFS 的路径级能力边界管理读写。
 - AgentRun workspace 的 resource browser 使用 conversation snapshot 中的 `resource_surface`，该 surface 从当前 `AgentFrame` typed VFS surface 摘要生成。这样做的原因是 AgentRun 的资源 owner 是 run / agent / frame，RuntimeSession 只是 delivery / trace identity；前端 workspace panel 与 Agent connector launch 因此看到同一组 mount。
 - 显式 lifecycle runtime 的 `lifecycle_vfs` mount 是 AgentRun resource surface 的一等 mount。ProjectAgent explicit lifecycle 和 Workflow AgentCall 都通过 frame construction / lifecycle activation 把 lifecycle projection 写入 frame VFS，原因是 lifecycle run、node、artifact 和 record 需要以统一 VFS 地址模型暴露给 Agent 和 workspace panel。
+- AgentRun surface resolver 在读取当前/anchor frame typed VFS 后会用 active workflow projection 补齐 lifecycle mount，原因是 resource browser、Agent connector launch 和 conversation snapshot 都需要消费同一份已闭包的 AgentRun resource surface。
 
 ## Contract Appendices
 

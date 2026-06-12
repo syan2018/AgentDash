@@ -11,6 +11,7 @@ import { formatRelativeTime } from "../../lib/format";
 const executionStatusLabel: Record<SessionExecutionStatusValue, string> = {
   idle: "就绪",
   running: "执行中",
+  cancelling: "取消中",
   completed: "已完成",
   failed: "失败",
   interrupted: "已中断",
@@ -19,6 +20,7 @@ const executionStatusLabel: Record<SessionExecutionStatusValue, string> = {
 const executionStatusDotColor: Record<SessionExecutionStatusValue, string> = {
   idle: "bg-gray-400",
   running: "bg-emerald-500 animate-pulse",
+  cancelling: "bg-amber-500 animate-pulse",
   completed: "bg-blue-500",
   failed: "bg-red-500",
   interrupted: "bg-amber-500",
@@ -37,6 +39,7 @@ function normalizeExecutionStatus(status: string): SessionExecutionStatusValue {
   if (
     status === "idle"
     || status === "running"
+    || status === "cancelling"
     || status === "completed"
     || status === "failed"
     || status === "interrupted"
@@ -49,6 +52,7 @@ function normalizeExecutionStatus(status: string): SessionExecutionStatusValue {
 function statusGroupOf(status: SessionExecutionStatusValue): Exclude<StatusFilterGroup, "all"> {
   switch (status) {
     case "running": return "running";
+    case "cancelling": return "running";
     case "idle": return "idle";
     case "completed":
     case "failed":

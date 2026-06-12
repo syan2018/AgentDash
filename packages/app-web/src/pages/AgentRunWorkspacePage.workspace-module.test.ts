@@ -46,6 +46,7 @@ function workspaceView(
     },
     pending_messages: [],
     conversation: {
+      snapshot_id: "snapshot-1",
       identity: {
         run_ref: { run_id: "run-1" },
         agent_ref: { run_id: "run-1", agent_id: "agent-1" },
@@ -110,6 +111,7 @@ function command(kind: ConversationCommandView["kind"], commandId: string): Conv
     executor_config_policy: "required",
     placement: kind === "steer" ? ["composer_secondary"] : ["composer_primary"],
     stale_guard: {
+      snapshot_id: `snapshot-${commandId}`,
       run_id: "run-1",
       agent_id: "agent-1",
       runtime_session_id: "session-1",

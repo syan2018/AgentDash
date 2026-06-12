@@ -34,6 +34,7 @@ import {
   sendAgentRunMessage,
   steerAgentRun,
 } from "../services/lifecycle";
+import type { ApiHttpError } from "../api/client";
 import type { ExecutorConfig } from "../services/executor";
 import type { JsonValue } from "../generated/common-contracts";
 import type { UserInput } from "../generated/backbone-protocol";
@@ -50,7 +51,10 @@ import {
   pendingSnapshotFromConversation,
   resolveExecutorConfigForConversationCommand,
 } from "./AgentRunWorkspacePage.conversationCommandState";
-import type { ConversationCommandView } from "../generated/workflow-contracts";
+import type {
+  AgentRunCommandPreconditionView,
+  ConversationCommandView,
+} from "../generated/workflow-contracts";
 import type {
   RuntimeTraceAgentContext,
   SessionNavigationState,
@@ -74,6 +78,34 @@ interface AgentRunWorkspacePageProps {
 
 function newClientCommandId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `cmd-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function commandPrecondition(command: ConversationCommandView): AgentRunCommandPreconditionView {
+  return {
+    command_id: command.command_id,
+    command_kind: command.kind,
+    stale_guard: command.stale_guard,
+  };
+}
+
+function isAgentRunCommandStaleError(error: unknown): error is ApiHttpError {
+  const apiError = error as ApiHttpError;
+  return apiError?.status === 409
+    && (
+      apiError.errorCode === "stale_command"
+      || apiError.errorCode === "stale_runtime_session"
+      || apiError.errorCode === "stale_turn"
+    );
+}
+
+function replacementCommandFromWorkspace(
+  workspace: AgentRunWorkspaceView | null,
+  replacementCommandId: string | undefined,
+): ConversationCommandView | undefined {
+  if (!replacementCommandId) return undefined;
+  return workspace?.conversation?.commands.commands.find(
+    (command) => command.command_id === replacementCommandId && command.enabled,
+  );
 }
 
 export function AgentRunWorkspacePage({
@@ -100,7 +132,10 @@ export function AgentRunWorkspacePage({
     story_id: string;
     story: Story | null;
   } | null>(null);
-  const [explicitExecutorConfigOverride, setExplicitExecutorConfigOverride] = useState<ExecutorConfig | null>(null);
+  const [explicitExecutorConfigOverrideState, setExplicitExecutorConfigOverrideState] = useState<{
+    scopeKey: string | null;
+    config: ExecutorConfig | null;
+  }>({ scopeKey: null, config: null });
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
 
@@ -135,6 +170,21 @@ export function AgentRunWorkspacePage({
   const draftProjectAgentKey = !currentRunId ? draftProjectAgentId?.trim() || null : null;
   const draftProjectIdValue = !currentRunId ? draftProjectId?.trim() || null : null;
   const isProjectAgentDraft = Boolean(draftProjectIdValue && draftProjectAgentKey);
+  const executorOverrideScopeKey = isProjectAgentDraft
+    ? `draft:${draftProjectIdValue ?? ""}:${draftProjectAgentKey ?? ""}`
+    : currentRunId && currentAgentId
+      ? `agentrun:${currentRunId}:${currentAgentId}`
+      : null;
+  const explicitExecutorConfigOverride =
+    explicitExecutorConfigOverrideState.scopeKey === executorOverrideScopeKey
+      ? explicitExecutorConfigOverrideState.config
+      : null;
+  const setExplicitExecutorConfigOverride = useCallback((config: ExecutorConfig | null) => {
+    setExplicitExecutorConfigOverrideState({
+      scopeKey: executorOverrideScopeKey,
+      config,
+    });
+  }, [executorOverrideScopeKey]);
   const draftProjectAgent: ProjectAgentSummary | null = useMemo(() => {
     if (!draftProjectIdValue || !draftProjectAgentKey) return null;
     return (agentsByProjectId[draftProjectIdValue] ?? [])
@@ -169,10 +219,6 @@ export function AgentRunWorkspacePage({
     agentId: currentAgentId,
     sourceKey: agentRunSourceKey,
   });
-
-  useEffect(() => {
-    setExplicitExecutorConfigOverride(null);
-  }, [currentAgentId, currentRunId, draftProjectAgentKey, draftProjectIdValue]);
 
   const scheduleHookRuntimeRefresh = useCallback((_reason: string, immediate = false) => {
     if (!currentRunId || !currentAgentId) return;
@@ -445,61 +491,99 @@ export function AgentRunWorkspacePage({
       throw new Error("当前 AgentRun 尚未就绪，无法执行控制动作。");
     }
 
-    if (command.stale_guard.runtime_session_id && command.stale_guard.runtime_session_id !== sessionId) {
-      throw new Error("当前 AgentRun 命令已过期，请刷新后重试。");
-    }
-
-    const commandKey = JSON.stringify({
-      command_id: command.command_id,
-      kind: command.kind,
-      stale_guard: command.stale_guard,
+    const commandKeyFor = (candidate: ConversationCommandView) => JSON.stringify({
+      command_id: candidate.command_id,
+      kind: candidate.kind,
+      stale_guard: candidate.stale_guard,
       input: inputBlocks,
       executor_config: commandExecutorConfig ?? null,
     });
+    const submitAgentRunCommand = async (
+      candidate: ConversationCommandView,
+      clientCommandId: string,
+    ) => {
+      if (candidate.kind === "send_next") {
+        const response = await sendAgentRunMessage(currentRunId, currentAgentId, {
+          input: inputBlocks,
+          client_command_id: clientCommandId,
+          command: commandPrecondition(candidate),
+          executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
+        });
+        void fetchAndIngestLifecycleRun(response.accepted_refs.run_ref.run_id);
+        void refreshAgentRunWorkspaceState().catch(() => {});
+        scheduleHookRuntimeRefresh("agent_message_sent", true);
+        return;
+      }
+      if (candidate.kind === "steer") {
+        await steerAgentRun(currentRunId, currentAgentId, {
+          input: inputBlocks,
+          client_command_id: clientCommandId,
+          command: commandPrecondition(candidate),
+          expected_runtime_session_id: candidate.stale_guard.runtime_session_id ?? sessionId ?? undefined,
+          expected_turn_id: candidate.stale_guard.active_turn_id,
+        });
+        void refreshAgentRunWorkspaceState().catch(() => {});
+        scheduleHookRuntimeRefresh("agent_message_steered", true);
+        return;
+      }
+      if (candidate.kind === "enqueue") {
+        await enqueueAgentRunPendingMessage(currentRunId, currentAgentId, {
+          input: inputBlocks,
+          client_command_id: clientCommandId,
+          command: commandPrecondition(candidate),
+          expected_runtime_session_id: candidate.stale_guard.runtime_session_id ?? sessionId ?? undefined,
+          expected_turn_id: candidate.stale_guard.active_turn_id,
+          executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
+        });
+        void refreshAgentRunWorkspaceState().catch(() => {});
+        scheduleHookRuntimeRefresh("pending_message_enqueued", true);
+        return;
+      }
+      throw new Error(candidate.unavailable_reason ?? "当前 AgentRun 不可执行该控制动作。");
+    };
+
     const resolvedCommand = resolveAgentRunClientCommandId(
       inFlightCommandRef.current,
-      commandKey,
+      commandKeyFor(command),
       newClientCommandId,
     );
-    const clientCommandId = resolvedCommand.clientCommandId;
     inFlightCommandRef.current = resolvedCommand.inFlightCommand;
 
-    if (command.kind === "send_next") {
-      const response = await sendAgentRunMessage(currentRunId, currentAgentId, {
-        input: inputBlocks,
-        client_command_id: clientCommandId,
-        executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
-      });
-      void fetchAndIngestLifecycleRun(response.accepted_refs.run_ref.run_id);
+    try {
+      await submitAgentRunCommand(command, resolvedCommand.clientCommandId);
       inFlightCommandRef.current = null;
-      void refreshAgentRunWorkspaceState().catch(() => {});
-      scheduleHookRuntimeRefresh("agent_message_sent", true);
       return;
-    }
-    if (command.kind === "steer") {
-      await steerAgentRun(currentRunId, currentAgentId, {
-        input: inputBlocks,
-        client_command_id: clientCommandId,
-        expected_runtime_session_id: command.stale_guard.runtime_session_id ?? sessionId ?? undefined,
-        expected_turn_id: command.stale_guard.active_turn_id,
-      });
+    } catch (error) {
       inFlightCommandRef.current = null;
-      void refreshAgentRunWorkspaceState().catch(() => {});
-      scheduleHookRuntimeRefresh("agent_message_steered", true);
-      return;
+      if (!isAgentRunCommandStaleError(error)) {
+        throw error;
+      }
+      const refreshedWorkspace = await refreshAgentRunWorkspaceState();
+      scheduleHookRuntimeRefresh("stale_agent_run_command", true);
+      const replacement = replacementCommandFromWorkspace(
+        refreshedWorkspace,
+        error.replacementCommand,
+      );
+      if (!replacement?.enabled) {
+        throw Object.assign(new Error("AgentRun command snapshot 已刷新。"), {
+          silentCommandRefresh: true,
+        });
+      }
+      const retryCommand = resolveAgentRunClientCommandId(
+        null,
+        commandKeyFor(replacement),
+        newClientCommandId,
+      );
+      inFlightCommandRef.current = retryCommand.inFlightCommand;
+      try {
+        await submitAgentRunCommand(replacement, retryCommand.clientCommandId);
+        inFlightCommandRef.current = null;
+        return;
+      } catch (retryError) {
+        inFlightCommandRef.current = null;
+        throw retryError;
+      }
     }
-    if (command.kind === "enqueue") {
-      await enqueueAgentRunPendingMessage(currentRunId, currentAgentId, {
-        input: inputBlocks,
-        client_command_id: clientCommandId,
-        executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
-      });
-      inFlightCommandRef.current = null;
-      void refreshAgentRunWorkspaceState().catch(() => {});
-      scheduleHookRuntimeRefresh("pending_message_enqueued", true);
-      return;
-    }
-    throw new Error(command.unavailable_reason ?? "当前 AgentRun 不可执行该控制动作。");
   }, [
     chatCommandState.modelConfig,
     createProjectAgentRun,
@@ -523,11 +607,18 @@ export function AgentRunWorkspacePage({
     if (agentRunWorkspaceState.status !== "ready") {
       throw new Error("当前 AgentRun 工作台投影正在刷新，无法执行控制动作。");
     }
-    await cancelAgentRun(currentRunId, currentAgentId);
+    const cancelCommand = chatCommandState.commands.commands.find((command) => command.kind === "cancel");
+    if (!cancelCommand?.enabled) {
+      throw new Error(cancelCommand?.unavailable_reason ?? "当前 AgentRun 没有可取消的运行。");
+    }
+    await cancelAgentRun(currentRunId, currentAgentId, {
+      command: commandPrecondition(cancelCommand),
+    });
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("agent_run_cancelled", true);
   }, [
     agentRunWorkspaceState.status,
+    chatCommandState.commands.commands,
     currentAgentId,
     currentRunId,
     refreshAgentRunWorkspaceState,
@@ -541,7 +632,9 @@ export function AgentRunWorkspacePage({
       (command) => command.kind === "promote_pending" && command.placement.includes("pending_row"),
     );
     if (!promoteCommand?.enabled) return;
-    await promoteAgentRunPendingMessage(currentRunId, currentAgentId, messageId);
+    await promoteAgentRunPendingMessage(currentRunId, currentAgentId, messageId, {
+      command: commandPrecondition(promoteCommand),
+    });
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("pending_message_promoted", true);
   }, [
@@ -570,8 +663,11 @@ export function AgentRunWorkspacePage({
   const handleResumePendingQueue = useCallback(async () => {
     if (!currentRunId || !currentAgentId) return;
     if (agentRunWorkspaceState.status !== "ready") return;
-    if (!conversationPending?.resume_command?.enabled) return;
-    const response = await resumeAgentRunPendingQueue(currentRunId, currentAgentId);
+    const resumeCommand = conversationPending?.resume_command;
+    if (!resumeCommand?.enabled) return;
+    const response = await resumeAgentRunPendingQueue(currentRunId, currentAgentId, {
+      command: commandPrecondition(resumeCommand),
+    });
     const acceptedRunId = response.accepted_refs?.run_ref.run_id;
     if (acceptedRunId) {
       void fetchAndIngestLifecycleRun(acceptedRunId);
@@ -582,7 +678,7 @@ export function AgentRunWorkspacePage({
     agentRunWorkspaceState.status,
     currentAgentId,
     currentRunId,
-    conversationPending?.resume_command?.enabled,
+    conversationPending?.resume_command,
     fetchAndIngestLifecycleRun,
     refreshAgentRunWorkspaceState,
     scheduleHookRuntimeRefresh,

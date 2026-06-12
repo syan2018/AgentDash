@@ -271,7 +271,20 @@ impl AgentConversationSnapshotResolver {
     pub fn resolve(input: AgentConversationSnapshotInput) -> AgentConversationSnapshot {
         let active_turn_id = active_turn_id(&input.execution_state);
         let execution = conversation_execution_view(&input, active_turn_id.clone());
-        let commands = conversation_commands(&input, execution.status, active_turn_id.as_deref());
+        let snapshot_id = conversation_snapshot_id(
+            input.run_id,
+            input.agent_id,
+            input.frame_ref,
+            input.delivery_runtime_session_id.as_deref(),
+            &input.execution_state,
+            input.terminal_agent,
+        );
+        let commands = conversation_commands(
+            &input,
+            execution.status,
+            active_turn_id.as_deref(),
+            &snapshot_id,
+        );
         let resume_command = commands
             .commands
             .iter()
@@ -281,6 +294,7 @@ impl AgentConversationSnapshotResolver {
         let diagnostics = conversation_diagnostics(&input.model_config, input.resource_diagnostics);
 
         AgentConversationSnapshot {
+            snapshot_id: snapshot_id.clone(),
             identity: AgentConversationIdentity {
                 run_ref: LifecycleRunRefDto {
                     run_id: input.run_id.to_string(),
@@ -376,6 +390,7 @@ fn conversation_commands(
     input: &AgentConversationSnapshotInput,
     status: ConversationExecutionStatus,
     active_turn_id: Option<&str>,
+    snapshot_id: &str,
 ) -> ConversationCommandSetView {
     let model_ready = input.model_config.status == ConversationModelConfigStatus::Resolved;
     let send_next = status == ConversationExecutionStatus::Ready && model_ready;
@@ -393,6 +408,7 @@ fn conversation_commands(
         command_view(
             input,
             ConversationCommandKind::StartDraft,
+            snapshot_id,
             status == ConversationExecutionStatus::Draft && model_ready,
             "当前 workspace 不是 draft start 状态。",
             Some("command_unavailable"),
@@ -404,6 +420,7 @@ fn conversation_commands(
         command_view(
             input,
             ConversationCommandKind::SendNext,
+            snapshot_id,
             send_next,
             unavailable_reason_for_ready(status, model_ready),
             Some(disabled_code_for_status(status)),
@@ -415,6 +432,7 @@ fn conversation_commands(
         command_view(
             input,
             ConversationCommandKind::Enqueue,
+            snapshot_id,
             running_active,
             "当前 AgentRun 不在可排队新消息的运行状态。",
             Some(if status == ConversationExecutionStatus::StartingClaimed {
@@ -430,6 +448,7 @@ fn conversation_commands(
         command_view(
             input,
             ConversationCommandKind::Steer,
+            snapshot_id,
             steer,
             "当前 AgentRun 没有可用 steer intent。",
             Some(if running_active {
@@ -447,6 +466,7 @@ fn conversation_commands(
         command_view(
             input,
             ConversationCommandKind::PromotePending,
+            snapshot_id,
             running_active && input.supports_steering,
             "当前 AgentRun 不在可投递 pending 消息的运行状态。",
             Some(if status == ConversationExecutionStatus::StartingClaimed {
@@ -464,6 +484,7 @@ fn conversation_commands(
         command_view(
             input,
             ConversationCommandKind::ResumePendingQueue,
+            snapshot_id,
             input.pending_paused && input.pending_visible_message_count > 0,
             "当前没有需要用户恢复的 pending 队列。",
             Some("command_unavailable"),
@@ -475,6 +496,7 @@ fn conversation_commands(
         command_view(
             input,
             ConversationCommandKind::Cancel,
+            snapshot_id,
             cancel,
             "当前 AgentRun 没有正在执行的 turn。",
             Some("command_unavailable"),
@@ -511,6 +533,7 @@ fn conversation_commands(
 fn command_view(
     input: &AgentConversationSnapshotInput,
     kind: ConversationCommandKind,
+    snapshot_id: &str,
     enabled: bool,
     unavailable_reason: impl Into<String>,
     disabled_code: Option<&str>,
@@ -538,12 +561,44 @@ fn command_view(
         executor_config_policy: executor_config_policy.into(),
         placement,
         stale_guard: ConversationCommandStaleGuardView {
+            snapshot_id: snapshot_id.to_string(),
             run_id: input.run_id.to_string(),
             agent_id: input.agent_id.to_string(),
             frame_id: input.frame_ref.map(|(frame_id, _)| frame_id.to_string()),
             runtime_session_id: input.delivery_runtime_session_id.clone(),
             active_turn_id: active_turn_id(&input.execution_state),
         },
+    }
+}
+
+pub fn conversation_snapshot_id(
+    run_id: Uuid,
+    agent_id: Uuid,
+    frame_ref: Option<(Uuid, i32)>,
+    delivery_runtime_session_id: Option<&str>,
+    execution_state: &SessionExecutionState,
+    terminal_agent: bool,
+) -> String {
+    let frame = frame_ref
+        .map(|(frame_id, revision)| format!("{frame_id}:{revision}"))
+        .unwrap_or_else(|| "none".to_string());
+    let runtime = delivery_runtime_session_id.unwrap_or("none");
+    let turn = active_turn_id(execution_state).unwrap_or_else(|| "none".to_string());
+    format!(
+        "agentrun:{run_id}:{agent_id}:frame:{frame}:runtime:{runtime}:state:{}:turn:{turn}:terminal:{terminal_agent}",
+        execution_state_snapshot_code(execution_state)
+    )
+}
+
+fn execution_state_snapshot_code(execution_state: &SessionExecutionState) -> &'static str {
+    match execution_state {
+        SessionExecutionState::Idle => "idle",
+        SessionExecutionState::Running { turn_id: None } => "starting_claimed",
+        SessionExecutionState::Running { turn_id: Some(_) } => "running_active",
+        SessionExecutionState::Cancelling { .. } => "cancelling",
+        SessionExecutionState::Completed { .. } => "completed",
+        SessionExecutionState::Failed { .. } => "failed",
+        SessionExecutionState::Interrupted { .. } => "interrupted",
     }
 }
 
@@ -883,6 +938,49 @@ mod tests {
         );
         assert_eq!(
             snapshot.commands.keyboard.ctrl_enter.as_deref(),
+            Some("send_next")
+        );
+    }
+
+    #[test]
+    fn command_guards_share_snapshot_id() {
+        let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
+            SessionExecutionState::Running {
+                turn_id: Some("turn-1".to_string()),
+            },
+        ));
+
+        assert!(!snapshot.snapshot_id.is_empty());
+        assert!(
+            snapshot
+                .commands
+                .commands
+                .iter()
+                .all(|command| { command.stale_guard.snapshot_id == snapshot.snapshot_id })
+        );
+    }
+
+    #[test]
+    fn completed_turn_changes_snapshot_and_keyboard_to_send_next() {
+        let running = AgentConversationSnapshotResolver::resolve(snapshot_input(
+            SessionExecutionState::Running {
+                turn_id: Some("turn-1".to_string()),
+            },
+        ));
+        let completed = AgentConversationSnapshotResolver::resolve(snapshot_input(
+            SessionExecutionState::Completed {
+                turn_id: "turn-1".to_string(),
+            },
+        ));
+
+        assert_ne!(running.snapshot_id, completed.snapshot_id);
+        assert_eq!(running.commands.keyboard.enter.as_deref(), Some("enqueue"));
+        assert_eq!(
+            completed.commands.keyboard.enter.as_deref(),
+            Some("send_next")
+        );
+        assert_eq!(
+            completed.commands.keyboard.ctrl_enter.as_deref(),
             Some("send_next")
         );
     }

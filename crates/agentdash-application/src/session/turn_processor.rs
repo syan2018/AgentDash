@@ -131,7 +131,7 @@ impl SessionTurnProcessor {
         );
         let terminal_event = deps
             .eventing
-            .persist_notification(&session_id, terminal_notification)
+            .persist_notification_deferred_broadcast(&session_id, terminal_notification)
             .await;
 
         // 清理 turn 状态 — 回到 Idle。
@@ -141,7 +141,13 @@ impl SessionTurnProcessor {
         deps.turn_supervisor.clear_active_turn(&session_id).await;
 
         let terminal_event_seq = match terminal_event {
-            Ok(event) => event.event_seq,
+            Ok(event) => {
+                let event_seq = event.event_seq;
+                deps.eventing
+                    .broadcast_persisted_event(&session_id, event)
+                    .await;
+                event_seq
+            }
             Err(error) => {
                 tracing::error!(
                     session_id = %session_id,

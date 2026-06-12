@@ -907,6 +907,7 @@ pub enum ConversationCommandPlacement {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct ConversationCommandStaleGuardView {
+    pub snapshot_id: String,
     pub run_id: String,
     pub agent_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -918,6 +919,14 @@ pub struct ConversationCommandStaleGuardView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub active_turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunCommandPreconditionView {
+    pub command_id: String,
+    pub command_kind: ConversationCommandKind,
+    pub stale_guard: ConversationCommandStaleGuardView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -1022,6 +1031,7 @@ pub struct AgentConversationLifecycleContext {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentConversationSnapshot {
+    pub snapshot_id: String,
     pub identity: AgentConversationIdentity,
     pub lifecycle_context: AgentConversationLifecycleContext,
     pub execution: ConversationExecutionView,
@@ -1122,6 +1132,7 @@ pub struct AgentRunMessageRequest {
     /// canonical 用户输入，与 steer（`AgentRunSteeringRequest.input`）同形。
     pub input: Vec<codex::UserInput>,
     pub client_command_id: String,
+    pub command: AgentRunCommandPreconditionView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
     pub executor_config: Option<Value>,
@@ -1139,6 +1150,7 @@ pub struct AgentRunMessageResponse {
 pub struct AgentRunSteeringRequest {
     pub input: Vec<codex::UserInput>,
     pub client_command_id: String,
+    pub command: AgentRunCommandPreconditionView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub expected_turn_id: Option<String>,
@@ -1418,9 +1430,22 @@ pub struct PendingMessageView {
 pub struct EnqueuePendingMessageRequest {
     pub input: Vec<codex::UserInput>,
     pub client_command_id: String,
+    pub command: AgentRunCommandPreconditionView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub expected_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub expected_runtime_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
     pub executor_config: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunCommandOnlyRequest {
+    pub command: AgentRunCommandPreconditionView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

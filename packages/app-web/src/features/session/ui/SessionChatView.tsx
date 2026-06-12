@@ -60,6 +60,14 @@ export type {
 
 const ACTION_RUNNING_RELEASE_DELAY_MS = 300;
 
+function isSilentCommandRefreshError(error: unknown): boolean {
+  return Boolean(
+    error
+      && typeof error === "object"
+      && (error as { silentCommandRefresh?: unknown }).silentCommandRefresh === true,
+  );
+}
+
 export function SessionChatView({
   sessionId,
   workspaceId,
@@ -199,14 +207,14 @@ export function SessionChatView({
     if (!executorHydrationKey) return;
     if (hydratedSessionRef.current === executorHydrationKey) return;
 
-    const source = toExecutorConfigSource(agentDefaults);
+    const source = toExecutorConfigSource(snapshotExecutorDefaults ?? agentDefaults);
     const hasSource = source && Object.keys(source).length > 0;
     if (hasSource) {
       hydratedSessionRef.current = executorHydrationKey;
       hydrateExecutor(source);
       return;
     }
-    // 无 agentDefaults 时回退到 hint（保持旧行为）
+    // 无 snapshot/agentDefaults 时回退到 hint。
     if (resolvedHint) {
       const marker = `${executorHydrationKey}:${resolvedHint}`;
       if (appliedHintRef.current !== marker) {
@@ -451,6 +459,10 @@ export function SessionChatView({
     } catch (e) {
       optimisticRunningUntilRef.current = 0;
       setOptimisticRunning(false);
+      if (isSilentCommandRefreshError(e)) {
+        setSendError(null);
+        return;
+      }
       setSendError(e instanceof Error ? e.message : "发送失败，请重试。");
     } finally {
       setIsSending(false);

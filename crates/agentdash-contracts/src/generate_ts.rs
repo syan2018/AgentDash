@@ -119,14 +119,14 @@ use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentConversationIdentity,
     AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse, AgentRunAcceptedRefs,
-    AgentRunCommandReceipt, AgentRunMessageRequest, AgentRunMessageResponse, AgentRunRefDto,
-    AgentRunSteeringRequest, AgentRunSteeringResponse, AgentRunView,
-    AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
-    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
-    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, ConversationCommandKind, ConversationCommandPlacement,
-    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
-    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
+    AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView, AgentRunCommandReceipt,
+    AgentRunMessageRequest, AgentRunMessageResponse, AgentRunRefDto, AgentRunSteeringRequest,
+    AgentRunSteeringResponse, AgentRunView, AgentRunWorkspaceActionAvailabilityView,
+    AgentRunWorkspaceActionSetView, AgentRunWorkspaceControlPlaneStatus,
+    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
+    AgentRunWorkspaceShell, AgentRunWorkspaceView, ConversationCommandKind,
+    ConversationCommandPlacement, ConversationCommandSetView, ConversationCommandStaleGuardView,
+    ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
     ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
     ConversationPendingSnapshotView, DefinitionSource, DeleteAgentProcedureResponse,
@@ -445,6 +445,8 @@ fn main() {
             export_all::<RuntimeSessionRefDto>(dir);
             export_all::<SessionShellDto>(dir);
             export_all::<RuntimeSessionExecutionAnchorDto>(dir);
+            export_all::<AgentRunCommandPreconditionView>(dir);
+            export_all::<AgentRunCommandOnlyRequest>(dir);
             export_all::<AgentRunMessageRequest>(dir);
             export_all::<AgentRunMessageResponse>(dir);
             export_all::<AgentRunSteeringRequest>(dir);

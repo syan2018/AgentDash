@@ -22,6 +22,21 @@ import {
   sendAgentRunMessage,
   steerAgentRun,
 } from "./lifecycle";
+import type { AgentRunCommandPreconditionView } from "../generated/workflow-contracts";
+
+function command(kind: AgentRunCommandPreconditionView["command_kind"]): AgentRunCommandPreconditionView {
+  return {
+    command_id: kind,
+    command_kind: kind,
+    stale_guard: {
+      snapshot_id: `snapshot-${kind}`,
+      run_id: "run/1",
+      agent_id: "agent/1",
+      runtime_session_id: "session-1",
+      active_turn_id: kind === "send_next" ? undefined : "turn-1",
+    },
+  };
+}
 
 describe("lifecycle message service", () => {
   beforeEach(() => {
@@ -43,6 +58,7 @@ describe("lifecycle message service", () => {
     await sendAgentRunMessage("run/1", "agent/1", {
       input: [{ type: "text", text: "hello", text_elements: [] }],
       client_command_id: "command-1",
+      command: command("send_next"),
       executor_config: {
         executor: "PI_AGENT",
         model_id: "gpt-test",
@@ -55,6 +71,7 @@ describe("lifecycle message service", () => {
       {
         input: [{ type: "text", text: "hello", text_elements: [] }],
         client_command_id: "command-1",
+        command: command("send_next"),
         executor_config: {
           executor: "PI_AGENT",
           model_id: "gpt-test",
@@ -68,6 +85,7 @@ describe("lifecycle message service", () => {
     await steerAgentRun("run/1", "agent/1", {
       input: [{ type: "text", text: "adjust course", text_elements: [] }],
       client_command_id: "command-2",
+      command: command("steer"),
     });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
@@ -75,6 +93,7 @@ describe("lifecycle message service", () => {
       {
         input: [{ type: "text", text: "adjust course", text_elements: [] }],
         client_command_id: "command-2",
+        command: command("steer"),
       },
     );
   });
@@ -83,6 +102,7 @@ describe("lifecycle message service", () => {
     await enqueueAgentRunPendingMessage("run/1", "agent/1", {
       input: [{ type: "text", text: "next", text_elements: [] }],
       client_command_id: "command-3",
+      command: command("enqueue"),
       executor_config: { model_id: "gpt-test" },
     });
 
@@ -91,6 +111,7 @@ describe("lifecycle message service", () => {
       {
         input: [{ type: "text", text: "next", text_elements: [] }],
         client_command_id: "command-3",
+        command: command("enqueue"),
         executor_config: { model_id: "gpt-test" },
       },
     );
@@ -105,20 +126,24 @@ describe("lifecycle message service", () => {
   });
 
   it("promotes pending messages through the AgentRun pending endpoint", async () => {
-    await promoteAgentRunPendingMessage("run/1", "agent/1", "message/1");
+    await promoteAgentRunPendingMessage("run/1", "agent/1", "message/1", {
+      command: command("promote_pending"),
+    });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/pending-messages/message%2F1/promote",
-      {},
+      { command: command("promote_pending") },
     );
   });
 
   it("resumes pending queues through the AgentRun pending resume endpoint", async () => {
-    await resumeAgentRunPendingQueue("run/1", "agent/1");
+    await resumeAgentRunPendingQueue("run/1", "agent/1", {
+      command: command("resume_pending_queue"),
+    });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/pending-messages/resume",
-      {},
+      { command: command("resume_pending_queue") },
     );
   });
 });

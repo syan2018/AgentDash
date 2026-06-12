@@ -145,6 +145,9 @@ command id、enabled/disabled reason、executor config policy、placement、shor
 `ConversationKeyboardMapView` 把 Enter / Ctrl-Enter 映射到同一组 command id。这样做的原因是
 lifecycle 控制面、frame runtime、当前 turn、用户命令回执、pending queue、模型解析与 connector
 live session 是不同事实源，必须在同一个 snapshot 中合并成可提交的 command precondition。
+stale guard 包含 snapshot id，AgentRun command route 用当前 run / agent / frame / runtime /
+active turn 事实重新计算并校验该 id，原因是 terminal 收口、turn 变更和 workspace refresh 存在
+异步边界，旧投影必须表现为结构化 stale conflict，而不是进入具体业务命令分支。
 
 `SessionExecutionState::Running { turn_id: None }` 投影为 `starting_claimed`，表示 runtime 已被
 claim 但 active turn 尚未建立；`Running { turn_id: Some(_) }` 投影为 `running_active`，是 steer、

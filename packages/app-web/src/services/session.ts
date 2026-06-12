@@ -21,6 +21,7 @@ export type TitleSource = "auto" | "source" | "user";
 export type SessionExecutionStatusValue =
   | "idle"
   | "running"
+  | "cancelling"
   | "completed"
   | "failed"
   | "interrupted";
@@ -105,6 +106,7 @@ function normalizeSessionExecutionStatus(value: unknown): SessionExecutionStatus
   switch (value) {
     case "idle":
     case "running":
+    case "cancelling":
     case "completed":
     case "failed":
     case "interrupted":

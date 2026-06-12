@@ -16,6 +16,7 @@ import type { AgentRunWorkspaceListEntry } from "../../types";
 const EXECUTION_STATUS_TONE: Record<SessionExecutionStatusValue, StatusDotTone> = {
   idle: "muted",
   running: "success",
+  cancelling: "warning",
   completed: "info",
   failed: "danger",
   interrupted: "warning",
@@ -24,6 +25,7 @@ const EXECUTION_STATUS_TONE: Record<SessionExecutionStatusValue, StatusDotTone> 
 const EXECUTION_STATUS_LABEL: Record<SessionExecutionStatusValue, string> = {
   idle: "就绪",
   running: "执行中",
+  cancelling: "取消中",
   completed: "已完成",
   failed: "失败",
   interrupted: "已中断",
@@ -66,6 +68,7 @@ function normalizeExecutionStatus(status: string): SessionExecutionStatusValue {
   if (
     status === "idle"
     || status === "running"
+    || status === "cancelling"
     || status === "completed"
     || status === "failed"
     || status === "interrupted"

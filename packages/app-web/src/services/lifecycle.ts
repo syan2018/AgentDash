@@ -15,6 +15,7 @@ import type {
   SubjectExecutionView,
 } from "../types";
 import type {
+  AgentRunCommandOnlyRequest,
   EnqueuePendingMessageRequest,
   EnqueuePendingMessageResponse,
   AgentRunMessageRequest,
@@ -130,6 +131,7 @@ export async function promoteAgentRunPendingMessage(
   runId: string,
   agentId: string,
   messageId: string,
+  request: AgentRunCommandOnlyRequest,
 ): Promise<void> {
   await api.post<void>(
     agentRunCommandPath(
@@ -137,20 +139,25 @@ export async function promoteAgentRunPendingMessage(
       agentId,
       `/pending-messages/${encodeURIComponent(messageId)}/promote`,
     ),
-    {},
+    request,
   );
 }
 
 export async function resumeAgentRunPendingQueue(
   runId: string,
   agentId: string,
+  request: AgentRunCommandOnlyRequest,
 ): Promise<ResumePendingQueueResponse> {
   return api.post<ResumePendingQueueResponse>(
     agentRunCommandPath(runId, agentId, "/pending-messages/resume"),
-    {},
+    request,
   );
 }
 
-export async function cancelAgentRun(runId: string, agentId: string): Promise<void> {
-  await api.post<void>(agentRunCommandPath(runId, agentId, "/cancel"), {});
+export async function cancelAgentRun(
+  runId: string,
+  agentId: string,
+  request: AgentRunCommandOnlyRequest,
+): Promise<void> {
+  await api.post<void>(agentRunCommandPath(runId, agentId, "/cancel"), request);
 }

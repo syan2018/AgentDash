@@ -29,7 +29,7 @@ export type AgentConversationIdentity = { run_ref: LifecycleRunRefDto, agent_ref
 
 export type AgentConversationLifecycleContext = { frame_ref?: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_associations: Array<LifecycleSubjectAssociationDto>, };
 
-export type AgentConversationSnapshot = { identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, pending: ConversationPendingSnapshotView, resource_surface?: ResolvedVfsSurface, diagnostics: Array<ConversationDiagnosticView>, };
+export type AgentConversationSnapshot = { snapshot_id: string, identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, pending: ConversationPendingSnapshotView, resource_surface?: ResolvedVfsSurface, diagnostics: Array<ConversationDiagnosticView>, };
 
 export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, effective_executor_config?: ConversationEffectiveExecutorConfigView, };
 
@@ -39,15 +39,19 @@ export type AgentProcedureResponse = { id: string, project_id: string, key: stri
 
 export type AgentReusePolicy = "create_activity_agent" | "continue_current_agent";
 
+export type AgentRunCommandOnlyRequest = { command: AgentRunCommandPreconditionView, };
+
+export type AgentRunCommandPreconditionView = { command_id: string, command_kind: ConversationCommandKind, stale_guard: ConversationCommandStaleGuardView, };
+
 export type AgentRunMessageRequest = {
 /**
  * canonical 用户输入，与 steer（`AgentRunSteeringRequest.input`）同形。
  */
-input: Array<UserInput>, client_command_id: string, executor_config?: JsonValue, };
+input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue, };
 
 export type AgentRunMessageResponse = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, };
 
-export type AgentRunSteeringRequest = { input: Array<UserInput>, client_command_id: string, expected_turn_id?: string, expected_runtime_session_id?: string, };
+export type AgentRunSteeringRequest = { input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, expected_turn_id?: string, expected_runtime_session_id?: string, };
 
 export type AgentRunSteeringResponse = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, state: RuntimeSessionCommandStateDto, };
 
@@ -95,7 +99,7 @@ export type ConversationCommandPlacement = "composer_primary" | "composer_second
 
 export type ConversationCommandSetView = { commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView, };
 
-export type ConversationCommandStaleGuardView = { run_id: string, agent_id: string, frame_id?: string, runtime_session_id?: string, active_turn_id?: string, };
+export type ConversationCommandStaleGuardView = { snapshot_id: string, run_id: string, agent_id: string, frame_id?: string, runtime_session_id?: string, active_turn_id?: string, };
 
 export type ConversationCommandView = { kind: ConversationCommandKind, command_id: string, enabled: boolean, unavailable_reason?: string, disabled_code?: string, shortcut?: string, requires_input: boolean, executor_config_policy: string, placement: Array<ConversationCommandPlacement>, stale_guard: ConversationCommandStaleGuardView, };
 
@@ -123,7 +127,7 @@ export type DeleteWorkflowGraphResponse = { deleted: boolean, };
 
 export type EffectiveSessionContract = { lifecycle_key?: string, active_activity_key?: string, injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, };
 
-export type EnqueuePendingMessageRequest = { input: Array<UserInput>, client_command_id: string, executor_config?: JsonValue, };
+export type EnqueuePendingMessageRequest = { input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, expected_turn_id?: string, expected_runtime_session_id?: string, executor_config?: JsonValue, };
 
 export type EnqueuePendingMessageResponse = { command_receipt: AgentRunCommandReceipt, message: PendingMessageView, };
 

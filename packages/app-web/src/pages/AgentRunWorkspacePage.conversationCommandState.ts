@@ -24,6 +24,7 @@ function unavailableCommand(
     executor_config_policy: "required",
     placement: ["composer_primary"],
     stale_guard: {
+      snapshot_id: `local:${commandId}`,
       run_id: commandId,
       agent_id: commandId,
     },
@@ -171,6 +172,9 @@ function draftStartCommand(input: {
     placement: ["composer_primary"],
     shortcut: "enter",
     stale_guard: {
+      snapshot_id: input.modelConfig.status === "resolved"
+        ? `draft:${input.projectId ?? "draft"}:${input.agentKey ?? "draft"}:resolved`
+        : `draft:${input.projectId ?? "draft"}:${input.agentKey ?? "draft"}:model_required`,
       run_id: input.projectId ?? "draft",
       agent_id: input.agentKey ?? "draft",
     },

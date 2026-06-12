@@ -69,7 +69,13 @@ export interface HookPendingAction {
   injections: HookInjection[];
 }
 
-export type SessionExecutionStatus = "idle" | "running" | "completed" | "failed" | "interrupted";
+export type SessionExecutionStatus =
+  | "idle"
+  | "running"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "interrupted";
 
 export interface SessionExecutionState {
   session_id: string;

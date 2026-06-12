@@ -98,6 +98,7 @@ describe("AgentRun workspace refresh state", () => {
       ...workspace,
       resource_surface: runtimeSurface,
       conversation: {
+        snapshot_id: "snapshot-1",
         identity: {
           run_ref: { run_id: "run-1" },
           agent_ref: { run_id: "run-1", agent_id: "agent-1" },

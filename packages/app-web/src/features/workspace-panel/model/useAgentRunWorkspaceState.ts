@@ -130,9 +130,9 @@ export function useAgentRunWorkspaceState({
     skey: string,
     canCommit: () => boolean = () => true,
     mode: AgentRunWorkspaceLoadMode = "replace",
-  ) => {
+  ): Promise<AgentRunWorkspaceView | null> => {
     await Promise.resolve();
-    if (!canCommit()) return;
+    if (!canCommit()) return null;
     setState((current) => beginAgentRunWorkspaceStateLoad(current, rid, aid, skey, mode));
 
     try {
@@ -140,7 +140,7 @@ export function useAgentRunWorkspaceState({
       const runtimeSessionId = workspace.delivery_runtime_ref?.runtime_session_id ?? null;
       const runtimeSurface = agentRunWorkspaceResourceSurface(workspace);
 
-      if (!canCommit()) return;
+      if (!canCommit()) return workspace;
       if (workspace.agent) {
         setAgent(workspace.agent);
       }
@@ -160,10 +160,12 @@ export function useAgentRunWorkspaceState({
         runtime_surface_error: null,
         error: null,
       });
+      return workspace;
     } catch (error: unknown) {
-      if (!canCommit()) return;
+      if (!canCommit()) return null;
       const message = errorMessage(error);
       setState((current) => failAgentRunWorkspaceStateLoad(current, rid, aid, skey, mode, message));
+      return null;
     }
   }, [setAgent, setFrame]);
 
@@ -180,8 +182,8 @@ export function useAgentRunWorkspaceState({
   }, [agentId, loadWorkspaceState, runId, sourceKey]);
 
   const refreshWorkspaceState = useCallback(async () => {
-    if (!runId || !agentId || !sourceKey) return;
-    await loadWorkspaceState(runId, agentId, sourceKey, () => true, "refresh");
+    if (!runId || !agentId || !sourceKey) return null;
+    return loadWorkspaceState(runId, agentId, sourceKey, () => true, "refresh");
   }, [agentId, loadWorkspaceState, runId, sourceKey]);
 
   const activeState = useMemo(() => {

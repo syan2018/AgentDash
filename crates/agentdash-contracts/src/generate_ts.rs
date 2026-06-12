@@ -125,27 +125,29 @@ use agentdash_contracts::workflow::{
     AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
     AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, ConversationCommandKind, ConversationCommandSetView,
-    ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
-    ConversationExecutionStatus, ConversationExecutionView, ConversationModelConfigSource,
-    ConversationModelConfigStatus, ConversationModelConfigView, ConversationPendingSnapshotView,
-    DefinitionSource, DeleteAgentProcedureResponse, DeleteHookPresetResponse,
-    DeleteWorkflowGraphResponse, EffectiveSessionContract, EnqueuePendingMessageRequest,
-    EnqueuePendingMessageResponse, HookPresetResponse, HookPresetsResponse,
-    LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology,
-    LifecycleRunView, LifecycleSubjectAssociationDto, OrchestrationInstanceView,
-    PendingMessageView, PendingQueuePauseReasonDto, PendingQueueStateView,
-    PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
-    RegisterHookPresetResponse, ResumePendingQueueResponse, RuntimeNodeView,
-    RuntimeSessionCommandStateDto, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
-    RuntimeSessionTraceMeta, RuntimeSessionTraceView, SessionRuntimeActionAvailabilityView,
-    SessionRuntimeActionSetView, SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView,
-    SessionRuntimeControlView, SessionShellDto, SubjectExecutionView, SubjectRefDto,
-    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
-    ValidateHookScriptResponse, ValidationIssue, WorkflowGraphResponse,
-    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
-    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
-    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
+    AgentRunWorkspaceView, ConversationCommandKind, ConversationCommandPlacement,
+    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
+    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
+    ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
+    ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
+    ConversationPendingSnapshotView, DefinitionSource, DeleteAgentProcedureResponse,
+    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
+    EnqueuePendingMessageRequest, EnqueuePendingMessageResponse, HookPresetResponse,
+    HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
+    LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
+    OrchestrationInstanceView, PendingMessageView, PendingQueuePauseReasonDto,
+    PendingQueueStateView, PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse,
+    ProjectActiveAgentsView, RegisterHookPresetResponse, ResumePendingQueueResponse,
+    RuntimeNodeView, RuntimeSessionCommandStateDto, RuntimeSessionExecutionAnchorDto,
+    RuntimeSessionRefDto, RuntimeSessionTraceMeta, RuntimeSessionTraceView,
+    SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
+    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
+    SessionShellDto, SubjectExecutionView, SubjectRefDto, SubmitOrchestrationHumanDecisionRequest,
+    SubmitOrchestrationHumanDecisionResponse, ValidateHookScriptResponse, ValidationIssue,
+    WorkflowGraphResponse, WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto,
+    WorkflowScriptCapabilitySummaryDto, WorkflowScriptHumanGateCapabilityDto,
+    WorkflowScriptPlanPreviewDto, WorkflowScriptPlanPreviewNodeDto,
+    WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
@@ -437,7 +439,10 @@ fn main() {
             export_all::<ConversationEffectiveExecutorConfigView>(dir);
             export_all::<ConversationModelConfigView>(dir);
             export_all::<ConversationCommandKind>(dir);
+            export_all::<ConversationCommandPlacement>(dir);
+            export_all::<ConversationCommandStaleGuardView>(dir);
             export_all::<ConversationCommandView>(dir);
+            export_all::<ConversationKeyboardMapView>(dir);
             export_all::<ConversationCommandSetView>(dir);
             export_all::<ConversationExecutionView>(dir);
             export_all::<ConversationPendingSnapshotView>(dir);

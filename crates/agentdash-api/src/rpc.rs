@@ -2,6 +2,7 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use serde::Serialize;
+use serde_json::Value;
 
 /// 统一 API 错误类型
 ///
@@ -9,11 +10,20 @@ use serde::Serialize;
 #[derive(Debug)]
 pub enum ApiError {
     BadRequest(String),
-    BadRequestWithCode { message: String, error_code: String },
+    BadRequestWithCode {
+        message: String,
+        error_code: String,
+    },
     Unauthorized(String),
     Forbidden(String),
     NotFound(String),
     Conflict(String),
+    ConflictWithCode {
+        message: String,
+        error_code: String,
+        replacement_command: Option<String>,
+        detail: Option<Value>,
+    },
     UnprocessableEntity(String),
     ServiceUnavailable(String),
     Internal(String),
@@ -25,29 +35,57 @@ struct ErrorResponse {
     code: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replacement_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<Value>,
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
-        let (status, message, error_code) = match self {
-            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg, None),
+        let (status, message, error_code, replacement_command, detail) = match self {
+            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg, None, None, None),
             ApiError::BadRequestWithCode {
                 message,
                 error_code,
-            } => (StatusCode::BAD_REQUEST, message, Some(error_code)),
-            ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg, None),
-            ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg, None),
-            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg, None),
-            ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg, None),
-            ApiError::UnprocessableEntity(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg, None),
-            ApiError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg, None),
-            ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg, None),
+            } => (
+                StatusCode::BAD_REQUEST,
+                message,
+                Some(error_code),
+                None,
+                None,
+            ),
+            ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg, None, None, None),
+            ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg, None, None, None),
+            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg, None, None, None),
+            ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg, None, None, None),
+            ApiError::ConflictWithCode {
+                message,
+                error_code,
+                replacement_command,
+                detail,
+            } => (
+                StatusCode::CONFLICT,
+                message,
+                Some(error_code),
+                replacement_command,
+                detail,
+            ),
+            ApiError::UnprocessableEntity(msg) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, msg, None, None, None)
+            }
+            ApiError::ServiceUnavailable(msg) => {
+                (StatusCode::SERVICE_UNAVAILABLE, msg, None, None, None)
+            }
+            ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg, None, None, None),
         };
 
         let body = Json(ErrorResponse {
             error: message,
             code: status.as_u16(),
             error_code,
+            replacement_command,
+            detail,
         });
 
         (status, body).into_response()
@@ -246,5 +284,35 @@ impl From<agentdash_application::task::execution::TaskExecutionError> for ApiErr
             E::UnprocessableEntity(message) => ApiError::UnprocessableEntity(message),
             E::Internal(message) => ApiError::Internal(message),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::to_bytes;
+    use axum::response::IntoResponse;
+    use serde_json::Value;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn conflict_with_code_serializes_structured_command_error() {
+        let response = ApiError::ConflictWithCode {
+            message: "当前状态下新输入应作为下一轮消息发送。".to_string(),
+            error_code: "command_unavailable".to_string(),
+            replacement_command: Some("send_next".to_string()),
+            detail: Some(serde_json::json!({ "state": "completed" })),
+        }
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        let value: Value = serde_json::from_slice(&body).expect("json body");
+
+        assert_eq!(value["error_code"], "command_unavailable");
+        assert_eq!(value["replacement_command"], "send_next");
+        assert_eq!(value["detail"]["state"], "completed");
     }
 }

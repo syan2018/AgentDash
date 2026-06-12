@@ -143,12 +143,12 @@ impl<'a> AgentRunSteeringService<'a> {
             } => turn_id,
             SessionExecutionState::Running { turn_id: None } => {
                 return Err(WorkflowApplicationError::Conflict(
-                    "当前 Session 正在执行但缺少 active turn，不能运行中 steer".to_string(),
+                    "当前 AgentRun 正在启动中，等待 active turn 建立后才能 steer。".to_string(),
                 ));
             }
             _ => {
                 return Err(WorkflowApplicationError::Conflict(
-                    "当前 Session 未在执行中，不能运行中 steer".to_string(),
+                    "当前 AgentRun 不在可 steer 的运行状态。".to_string(),
                 ));
             }
         };
@@ -158,7 +158,7 @@ impl<'a> AgentRunSteeringService<'a> {
             .await
         {
             return Err(WorkflowApplicationError::Conflict(
-                "当前执行器不支持对该运行中 Session steer".to_string(),
+                "当前执行器不支持对该 AgentRun 进行运行中 steer。".to_string(),
             ));
         }
         let input = command.input.clone();

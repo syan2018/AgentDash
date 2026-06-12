@@ -820,7 +820,8 @@ pub enum ConversationExecutionStatus {
     Draft,
     ModelRequired,
     Ready,
-    Running,
+    StartingClaimed,
+    RunningActive,
     Cancelling,
     Terminal,
     FrameMissing,
@@ -892,19 +893,63 @@ pub enum ConversationCommandKind {
     Cancel,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationCommandPlacement {
+    ComposerPrimary,
+    ComposerSecondary,
+    PendingRow,
+    PendingBanner,
+    Header,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ConversationCommandStaleGuardView {
+    pub run_id: String,
+    pub agent_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub frame_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub active_turn_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct ConversationCommandView {
     pub kind: ConversationCommandKind,
+    pub command_id: String,
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub unavailable_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub disabled_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub shortcut: Option<String>,
     pub requires_input: bool,
     pub executor_config_policy: String,
+    #[serde(default)]
+    pub placement: Vec<ConversationCommandPlacement>,
+    pub stale_guard: ConversationCommandStaleGuardView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ConversationKeyboardMapView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub enter: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ctrl_enter: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -912,9 +957,12 @@ pub struct ConversationCommandView {
 pub struct ConversationCommandSetView {
     #[serde(default)]
     pub commands: Vec<ConversationCommandView>,
+    pub keyboard: ConversationKeyboardMapView,
+    /// Legacy derived composer primary command. New UI should use `commands` and `keyboard`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub primary: Option<ConversationCommandKind>,
+    /// Legacy derived composer secondary command. New UI should use `commands` and `keyboard`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub secondary: Option<ConversationCommandKind>,
@@ -941,6 +989,9 @@ pub struct ConversationPendingSnapshotView {
     pub visible_message_count: usize,
     pub paused: bool,
     pub user_attention: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resume_command: Option<ConversationCommandView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]

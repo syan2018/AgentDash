@@ -196,7 +196,13 @@ pub async fn send_agent_run_message(
             "当前 AgentRun 已结束，不能继续发送消息。".to_string(),
         ));
     }
-    ensure_send_next_allowed(state.as_ref(), &runtime_session_id).await?;
+    ensure_agent_run_command_allowed(
+        state.as_ref(),
+        &context,
+        &runtime_session_id,
+        AgentRunCommandPrecondition::SendNext,
+    )
+    .await?;
     dispatch_message_for_runtime(state, current_user, runtime_session_id, req).await
 }
 
@@ -225,6 +231,16 @@ pub async fn steer_agent_run(
             context.run.id, context.agent.id
         ))
     })?;
+    ensure_agent_run_command_allowed(
+        state.as_ref(),
+        &context,
+        &runtime_session_id,
+        AgentRunCommandPrecondition::Steer {
+            expected_runtime_session_id: req.expected_runtime_session_id.clone(),
+            expected_turn_id: req.expected_turn_id.clone(),
+        },
+    )
+    .await?;
     steer_runtime_session(state, runtime_session_id, req).await
 }
 
@@ -277,13 +293,19 @@ async fn enqueue_agent_run_pending_message(
         ProjectPermission::Edit,
     )
     .await?;
-    let runtime_session_id = context.delivery_runtime_session_id.ok_or_else(|| {
+    let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
         ApiError::Conflict(format!(
             "AgentRun {} / {} 缺少 delivery runtime",
             context.run.id, context.agent.id
         ))
     })?;
-    ensure_pending_enqueue_allowed(state.as_ref(), &runtime_session_id).await?;
+    ensure_agent_run_command_allowed(
+        state.as_ref(),
+        &context,
+        &runtime_session_id,
+        AgentRunCommandPrecondition::EnqueuePending,
+    )
+    .await?;
     let executor_config = body
         .executor_config
         .map(serde_json::from_value::<AgentConfig>)
@@ -313,7 +335,7 @@ async fn delete_agent_run_pending_message(
         ProjectPermission::Edit,
     )
     .await?;
-    let runtime_session_id = context.delivery_runtime_session_id.ok_or_else(|| {
+    let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
         ApiError::Conflict(format!(
             "AgentRun {} / {} 缺少 delivery runtime",
             context.run.id, context.agent.id
@@ -346,12 +368,19 @@ async fn resume_agent_run_pending_queue(
         ProjectPermission::Edit,
     )
     .await?;
-    let runtime_session_id = context.delivery_runtime_session_id.ok_or_else(|| {
+    let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
         ApiError::Conflict(format!(
             "AgentRun {} / {} 缺少 delivery runtime",
             context.run.id, context.agent.id
         ))
     })?;
+    ensure_agent_run_command_allowed(
+        state.as_ref(),
+        &context,
+        &runtime_session_id,
+        AgentRunCommandPrecondition::ResumePendingQueue,
+    )
+    .await?;
     let execution_state = state
         .services
         .session_core
@@ -423,12 +452,19 @@ async fn promote_agent_run_pending_message(
         ProjectPermission::Edit,
     )
     .await?;
-    let runtime_session_id = context.delivery_runtime_session_id.ok_or_else(|| {
+    let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
         ApiError::Conflict(format!(
             "AgentRun {} / {} 缺少 delivery runtime",
             context.run.id, context.agent.id
         ))
     })?;
+    ensure_agent_run_command_allowed(
+        state.as_ref(),
+        &context,
+        &runtime_session_id,
+        AgentRunCommandPrecondition::PromotePending,
+    )
+    .await?;
     promote_pending_message_for_runtime(state, runtime_session_id, message_id).await
 }
 
@@ -445,12 +481,19 @@ async fn cancel_agent_run(
         ProjectPermission::Edit,
     )
     .await?;
-    let runtime_session_id = context.delivery_runtime_session_id.ok_or_else(|| {
+    let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
         ApiError::Conflict(format!(
             "AgentRun {} / {} 缺少 delivery runtime",
             context.run.id, context.agent.id
         ))
     })?;
+    ensure_agent_run_command_allowed(
+        state.as_ref(),
+        &context,
+        &runtime_session_id,
+        AgentRunCommandPrecondition::Cancel,
+    )
+    .await?;
     state
         .services
         .session_runtime
@@ -594,6 +637,14 @@ async fn build_agent_run_workspace_view(
         execution_state,
         agentdash_application::session::SessionExecutionState::Running { .. }
     );
+    let delivery_running_active = matches!(
+        execution_state,
+        agentdash_application::session::SessionExecutionState::Running { turn_id: Some(_) }
+    );
+    let delivery_starting_claimed = matches!(
+        execution_state,
+        agentdash_application::session::SessionExecutionState::Running { turn_id: None }
+    );
     let delivery_cancelling = matches!(
         execution_state,
         agentdash_application::session::SessionExecutionState::Cancelling { .. }
@@ -602,7 +653,7 @@ async fn build_agent_run_workspace_view(
     let has_frame = frame_runtime.is_some();
     let has_delivery_runtime = runtime_session_id.is_some();
     let supports_steering = match runtime_session_id.as_deref() {
-        Some(session_id) if delivery_running => {
+        Some(session_id) if delivery_running_active => {
             state
                 .services
                 .session_control
@@ -634,7 +685,11 @@ async fn build_agent_run_workspace_view(
     } else if delivery_running {
         AgentRunWorkspaceControlPlaneView {
             status: AgentRunWorkspaceControlPlaneStatus::Running,
-            reason: Some("当前 AgentRun 正在执行中。".to_string()),
+            reason: Some(if delivery_starting_claimed {
+                "当前 AgentRun 正在启动中，等待 active turn 建立。".to_string()
+            } else {
+                "当前 AgentRun 正在执行中。".to_string()
+            }),
         }
     } else {
         AgentRunWorkspaceControlPlaneView {
@@ -661,12 +716,15 @@ async fn build_agent_run_workspace_view(
         } else {
             disabled_action("当前 AgentRun 没有可投递的 runtime frame。")
         },
-        enqueue: if has_delivery_runtime && has_frame && !terminal_agent && delivery_running {
+        enqueue: if has_delivery_runtime && has_frame && !terminal_agent && delivery_running_active
+        {
             enabled_action()
         } else if !has_delivery_runtime {
             disabled_action("当前 AgentRun 缺少可投递的 runtime 通道。")
         } else if delivery_cancelling {
             disabled_action("当前 AgentRun 正在取消中，不能排队新消息。")
+        } else if delivery_starting_claimed {
+            disabled_action("当前 AgentRun 正在启动中，等待 active turn 建立后才能排队。")
         } else if !delivery_running {
             disabled_action("当前 AgentRun 未在执行中，直接发送即可。")
         } else if terminal_agent {
@@ -677,7 +735,7 @@ async fn build_agent_run_workspace_view(
         steer: if has_delivery_runtime
             && has_frame
             && !terminal_agent
-            && delivery_running
+            && delivery_running_active
             && !delivery_cancelling
             && supports_steering
         {
@@ -686,6 +744,8 @@ async fn build_agent_run_workspace_view(
             disabled_action("当前 AgentRun 缺少可投递的 runtime 通道。")
         } else if delivery_cancelling {
             disabled_action("当前 AgentRun 正在取消中，不能运行中 steer。")
+        } else if delivery_starting_claimed {
+            disabled_action("当前 AgentRun 正在启动中，等待 active turn 建立后才能 steer。")
         } else if !delivery_running {
             disabled_action("当前 AgentRun 未在执行中，不需要运行中 steer。")
         } else if !supports_steering {
@@ -716,9 +776,14 @@ async fn build_agent_run_workspace_view(
         Some(session_id) => state.services.pending_queue.is_paused(session_id).await,
         None => None,
     };
+    let pending_visible_message_count = pending_messages.len();
     let pending_queue = match runtime_session_id.as_deref() {
-        Some(_) => pending_queue_state_view(pause_reason, has_delivery_runtime && !terminal_agent),
-        None => pending_queue_state_view(None, false),
+        Some(_) => pending_queue_state_view(
+            pause_reason,
+            has_delivery_runtime && !terminal_agent,
+            pending_visible_message_count,
+        ),
+        None => pending_queue_state_view(None, false, 0),
     };
     let project_agent_preset_config = match context.agent.project_agent_id {
         Some(project_agent_id) => state
@@ -752,8 +817,8 @@ async fn build_agent_run_workspace_view(
         execution_state: execution_state.clone(),
         terminal_agent,
         supports_steering,
-        pending_paused: pending_queue.paused,
-        pending_visible_message_count: pending_messages.len(),
+        pending_paused: pause_reason.is_some(),
+        pending_visible_message_count,
         resource_surface,
         model_config,
     });
@@ -891,6 +956,7 @@ fn pending_message_view(
 pub(crate) fn pending_queue_state_view(
     pause_reason: Option<agentdash_application::session::QueuePauseReason>,
     can_resume: bool,
+    visible_message_count: usize,
 ) -> PendingQueueStateView {
     let pause_reason_dto = pause_reason.map(|reason| match reason {
         agentdash_application::session::QueuePauseReason::TurnFailed => {
@@ -905,10 +971,10 @@ pub(crate) fn pending_queue_state_view(
         PendingQueuePauseReasonDto::TurnInterrupted => "上一轮已中断，pending 队列已暂停。",
     });
     PendingQueueStateView {
-        paused: pause_reason_dto.is_some(),
+        paused: pause_reason_dto.is_some() && visible_message_count > 0,
         pause_reason: pause_reason_dto,
         message: message.map(str::to_string),
-        can_resume: can_resume && pause_reason.is_some(),
+        can_resume: can_resume && pause_reason.is_some() && visible_message_count > 0,
     }
 }
 
@@ -1010,30 +1076,6 @@ async fn steer_runtime_session(
     if req.input.is_empty() {
         return Err(ApiError::BadRequest("input 不能为空".to_string()));
     }
-    if let Some(expected_runtime_session_id) = req.expected_runtime_session_id.as_deref()
-        && expected_runtime_session_id != runtime_session_id
-    {
-        return Err(ApiError::Conflict(format!(
-            "expected_runtime_session_id 不匹配: {expected_runtime_session_id}"
-        )));
-    }
-    if let Some(expected_turn_id) = req.expected_turn_id.as_deref() {
-        match state
-            .services
-            .session_core
-            .inspect_session_execution_state(&runtime_session_id)
-            .await?
-        {
-            agentdash_application::session::SessionExecutionState::Running {
-                turn_id: Some(active_turn_id),
-            } if active_turn_id == expected_turn_id => {}
-            _ => {
-                return Err(ApiError::Conflict(format!(
-                    "expected_turn_id 不匹配: {expected_turn_id}"
-                )));
-            }
-        }
-    }
     let client_command_id = req.client_command_id;
     let service = AgentRunSteeringService::new(
         state.repos.lifecycle_run_repo.as_ref(),
@@ -1123,7 +1165,6 @@ async fn promote_pending_message_for_runtime(
     runtime_session_id: String,
     message_id: String,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    ensure_pending_promote_allowed(state.as_ref(), &runtime_session_id).await?;
     let msg = state
         .services
         .pending_queue
@@ -1217,111 +1258,285 @@ fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("无效的 {field}: {raw}")))
 }
 
-async fn ensure_pending_enqueue_allowed(
+enum AgentRunCommandPrecondition {
+    SendNext,
+    EnqueuePending,
+    Steer {
+        expected_runtime_session_id: Option<String>,
+        expected_turn_id: Option<String>,
+    },
+    PromotePending,
+    ResumePendingQueue,
+    Cancel,
+}
+
+async fn ensure_agent_run_command_allowed(
     state: &AppState,
+    context: &AgentRunContext,
     runtime_session_id: &str,
+    command: AgentRunCommandPrecondition,
 ) -> Result<(), ApiError> {
     let execution_state = state
         .services
         .session_core
         .inspect_session_execution_state(runtime_session_id)
         .await?;
-    if matches!(execution_state, SessionExecutionState::Running { .. }) {
-        return Ok(());
+    let state_code = conversation_state_code(&execution_state);
+    let detail = || {
+        serde_json::json!({
+            "run_id": context.run.id.to_string(),
+            "agent_id": context.agent.id.to_string(),
+            "runtime_session_id": runtime_session_id,
+            "state": state_code,
+            "active_turn_id": execution_state_active_turn_id(&execution_state),
+        })
+    };
+
+    if is_terminal_agent_status(&context.agent.status)
+        && !matches!(&command, AgentRunCommandPrecondition::Cancel)
+    {
+        return Err(command_conflict(
+            "当前 AgentRun 已结束，不能执行该命令。",
+            "command_unavailable",
+            None,
+            detail(),
+        ));
     }
 
-    Err(ApiError::Conflict(pending_enqueue_unavailable_reason(
-        &execution_state,
-    )))
-}
-
-async fn ensure_send_next_allowed(
-    state: &AppState,
-    runtime_session_id: &str,
-) -> Result<(), ApiError> {
-    let execution_state = state
-        .services
-        .session_core
-        .inspect_session_execution_state(runtime_session_id)
-        .await?;
-    match execution_state {
-        SessionExecutionState::Running { .. } => Err(ApiError::Conflict(
-            "当前 AgentRun 正在执行中，不能并发发送下一轮消息。".to_string(),
-        )),
-        SessionExecutionState::Cancelling { .. } => Err(ApiError::Conflict(
-            "当前 AgentRun 正在取消中，等待执行器收口后再发送下一轮消息。".to_string(),
-        )),
-        SessionExecutionState::Idle
-        | SessionExecutionState::Completed { .. }
-        | SessionExecutionState::Failed { .. }
-        | SessionExecutionState::Interrupted { .. } => Ok(()),
+    match command {
+        AgentRunCommandPrecondition::SendNext => match &execution_state {
+            SessionExecutionState::Idle
+            | SessionExecutionState::Completed { .. }
+            | SessionExecutionState::Failed { .. }
+            | SessionExecutionState::Interrupted { .. } => Ok(()),
+            SessionExecutionState::Running { turn_id: None } => Err(command_conflict(
+                "当前 AgentRun 正在启动中，等待 active turn 建立。",
+                "starting_claimed",
+                None,
+                detail(),
+            )),
+            SessionExecutionState::Running { turn_id: Some(_) } => Err(command_conflict(
+                "当前 AgentRun 正在执行中，不能并发发送下一轮消息。",
+                "command_unavailable",
+                Some("enqueue"),
+                detail(),
+            )),
+            SessionExecutionState::Cancelling { .. } => Err(command_conflict(
+                "当前 AgentRun 正在取消中，等待执行器收口。",
+                "command_unavailable",
+                None,
+                detail(),
+            )),
+        },
+        AgentRunCommandPrecondition::EnqueuePending => match &execution_state {
+            SessionExecutionState::Running { turn_id: Some(_) } => Ok(()),
+            SessionExecutionState::Running { turn_id: None } => Err(command_conflict(
+                "当前 AgentRun 正在启动中，等待 active turn 建立后才能排队。",
+                "starting_claimed",
+                None,
+                detail(),
+            )),
+            SessionExecutionState::Idle
+            | SessionExecutionState::Completed { .. }
+            | SessionExecutionState::Failed { .. }
+            | SessionExecutionState::Interrupted { .. } => Err(command_conflict(
+                "当前状态下新输入应作为下一轮消息发送。",
+                "command_unavailable",
+                Some("send_next"),
+                detail(),
+            )),
+            SessionExecutionState::Cancelling { .. } => Err(command_conflict(
+                "当前 AgentRun 正在取消中，不能排队新消息。",
+                "command_unavailable",
+                None,
+                detail(),
+            )),
+        },
+        AgentRunCommandPrecondition::Steer {
+            expected_runtime_session_id,
+            expected_turn_id,
+        } => {
+            if let Some(expected_runtime_session_id) = expected_runtime_session_id.as_deref()
+                && expected_runtime_session_id != runtime_session_id
+            {
+                return Err(command_conflict(
+                    "提交的 runtime session 已过期，请刷新后重试。",
+                    "stale_runtime_session",
+                    None,
+                    serde_json::json!({
+                        "expected_runtime_session_id": expected_runtime_session_id,
+                        "runtime_session_id": runtime_session_id,
+                        "run_id": context.run.id.to_string(),
+                        "agent_id": context.agent.id.to_string(),
+                    }),
+                ));
+            }
+            let active_turn_id = match &execution_state {
+                SessionExecutionState::Running {
+                    turn_id: Some(turn_id),
+                } => turn_id,
+                SessionExecutionState::Running { turn_id: None } => {
+                    return Err(command_conflict(
+                        "当前 AgentRun 正在启动中，等待 active turn 建立后才能 steer。",
+                        "starting_claimed",
+                        None,
+                        detail(),
+                    ));
+                }
+                _ => {
+                    return Err(command_conflict(
+                        "当前 AgentRun 不在可 steer 的运行状态。",
+                        "command_unavailable",
+                        None,
+                        detail(),
+                    ));
+                }
+            };
+            if let Some(expected_turn_id) = expected_turn_id.as_deref()
+                && expected_turn_id != active_turn_id.as_str()
+            {
+                return Err(command_conflict(
+                    "提交的 turn 已过期，请刷新后重试。",
+                    "stale_turn",
+                    None,
+                    serde_json::json!({
+                        "expected_turn_id": expected_turn_id,
+                        "active_turn_id": active_turn_id,
+                        "runtime_session_id": runtime_session_id,
+                        "run_id": context.run.id.to_string(),
+                        "agent_id": context.agent.id.to_string(),
+                    }),
+                ));
+            }
+            if !state
+                .services
+                .session_control
+                .supports_session_steering(runtime_session_id)
+                .await
+            {
+                return Err(command_conflict(
+                    "当前执行器不支持对该 AgentRun 进行运行中 steer。",
+                    "connector_steer_unsupported",
+                    None,
+                    detail(),
+                ));
+            }
+            Ok(())
+        }
+        AgentRunCommandPrecondition::PromotePending => {
+            match &execution_state {
+                SessionExecutionState::Running { turn_id: Some(_) } => {}
+                SessionExecutionState::Running { turn_id: None } => {
+                    return Err(command_conflict(
+                        "当前 AgentRun 正在启动中，等待 active turn 建立后才能投递 pending 消息。",
+                        "starting_claimed",
+                        None,
+                        detail(),
+                    ));
+                }
+                _ => {
+                    return Err(command_conflict(
+                        "当前 AgentRun 不在可投递 pending 消息的运行状态。",
+                        "command_unavailable",
+                        None,
+                        detail(),
+                    ));
+                }
+            }
+            if !state
+                .services
+                .session_control
+                .supports_session_steering(runtime_session_id)
+                .await
+            {
+                return Err(command_conflict(
+                    "当前执行器不支持对该 AgentRun 投递 pending steer。",
+                    "connector_steer_unsupported",
+                    None,
+                    detail(),
+                ));
+            }
+            Ok(())
+        }
+        AgentRunCommandPrecondition::ResumePendingQueue => {
+            let visible_message_count = state
+                .services
+                .pending_queue
+                .list(runtime_session_id)
+                .await
+                .len();
+            let paused = state
+                .services
+                .pending_queue
+                .is_paused(runtime_session_id)
+                .await;
+            if paused.is_some() && visible_message_count > 0 {
+                Ok(())
+            } else {
+                Err(command_conflict(
+                    "当前没有需要用户恢复的 pending 队列。",
+                    "command_unavailable",
+                    None,
+                    serde_json::json!({
+                        "run_id": context.run.id.to_string(),
+                        "agent_id": context.agent.id.to_string(),
+                        "runtime_session_id": runtime_session_id,
+                        "state": state_code,
+                        "visible_message_count": visible_message_count,
+                        "paused": paused.is_some(),
+                    }),
+                ))
+            }
+        }
+        AgentRunCommandPrecondition::Cancel => match &execution_state {
+            SessionExecutionState::Running { .. } | SessionExecutionState::Cancelling { .. } => {
+                Ok(())
+            }
+            _ => Err(command_conflict(
+                "当前 AgentRun 没有正在执行的 turn。",
+                "command_unavailable",
+                None,
+                detail(),
+            )),
+        },
     }
 }
 
-async fn ensure_pending_promote_allowed(
-    state: &AppState,
-    runtime_session_id: &str,
-) -> Result<(), ApiError> {
-    let execution_state = state
-        .services
-        .session_core
-        .inspect_session_execution_state(runtime_session_id)
-        .await?;
-    match execution_state {
-        SessionExecutionState::Running { turn_id: Some(_) } => Ok(()),
-        SessionExecutionState::Running { turn_id: None } => Err(ApiError::Conflict(
-            "当前 AgentRun 正在执行但缺少 active turn，不能投递 pending 消息。".to_string(),
-        )),
-        _ => Err(ApiError::Conflict(pending_promote_unavailable_reason(
-            &execution_state,
-        ))),
+fn command_conflict(
+    message: impl Into<String>,
+    error_code: impl Into<String>,
+    replacement_command: Option<&str>,
+    detail: serde_json::Value,
+) -> ApiError {
+    ApiError::ConflictWithCode {
+        message: message.into(),
+        error_code: error_code.into(),
+        replacement_command: replacement_command.map(str::to_string),
+        detail: Some(detail),
     }
 }
 
-fn pending_enqueue_unavailable_reason(execution_state: &SessionExecutionState) -> String {
+fn conversation_state_code(execution_state: &SessionExecutionState) -> &'static str {
     match execution_state {
-        SessionExecutionState::Idle => {
-            "当前 AgentRun 未在执行中，请直接发送下一轮消息。".to_string()
-        }
-        SessionExecutionState::Cancelling { .. } => {
-            "当前 AgentRun 正在取消中，不能排队新消息。".to_string()
-        }
-        SessionExecutionState::Completed { .. } => {
-            "当前 AgentRun 上一轮已完成，请直接发送下一轮消息。".to_string()
-        }
-        SessionExecutionState::Failed { .. } => {
-            "当前 AgentRun 上一轮已失败，请直接发送下一轮消息。".to_string()
-        }
-        SessionExecutionState::Interrupted { .. } => {
-            "当前 AgentRun 上一轮已中断，请直接发送下一轮消息。".to_string()
-        }
-        SessionExecutionState::Running { .. } => "当前 AgentRun 可以排队新消息。".to_string(),
+        SessionExecutionState::Idle => "ready",
+        SessionExecutionState::Running { turn_id: None } => "starting_claimed",
+        SessionExecutionState::Running { turn_id: Some(_) } => "running_active",
+        SessionExecutionState::Cancelling { .. } => "cancelling",
+        SessionExecutionState::Completed { .. } => "completed",
+        SessionExecutionState::Failed { .. } => "failed",
+        SessionExecutionState::Interrupted { .. } => "interrupted",
     }
 }
 
-fn pending_promote_unavailable_reason(execution_state: &SessionExecutionState) -> String {
+fn execution_state_active_turn_id(execution_state: &SessionExecutionState) -> Option<String> {
     match execution_state {
-        SessionExecutionState::Idle => {
-            "当前 AgentRun 未在执行中，不能投递 pending 消息。".to_string()
+        SessionExecutionState::Running {
+            turn_id: Some(turn_id),
         }
-        SessionExecutionState::Cancelling { .. } => {
-            "当前 AgentRun 正在取消中，不能投递 pending 消息。".to_string()
-        }
-        SessionExecutionState::Completed { .. } => {
-            "当前 AgentRun 上一轮已完成，不能投递 pending 消息。".to_string()
-        }
-        SessionExecutionState::Failed { .. } => {
-            "当前 AgentRun 上一轮已失败，不能投递 pending 消息。".to_string()
-        }
-        SessionExecutionState::Interrupted { .. } => {
-            "当前 AgentRun 上一轮已中断，不能投递 pending 消息。".to_string()
-        }
-        SessionExecutionState::Running { turn_id: None } => {
-            "当前 AgentRun 正在执行但缺少 active turn，不能投递 pending 消息。".to_string()
-        }
-        SessionExecutionState::Running { turn_id: Some(_) } => {
-            "当前 AgentRun 可以投递 pending 消息。".to_string()
-        }
+        | SessionExecutionState::Cancelling {
+            turn_id: Some(turn_id),
+        } => Some(turn_id.clone()),
+        _ => None,
     }
 }
 
@@ -1464,7 +1679,7 @@ mod tests {
                 steer: disabled_action("not running"),
                 cancel: disabled_action("not running"),
             },
-            pending_queue: pending_queue_state_view(None, true),
+            pending_queue: pending_queue_state_view(None, true, 0),
             pending_messages: Vec::new(),
             conversation: None,
         };
@@ -1476,37 +1691,11 @@ mod tests {
     }
 
     #[test]
-    fn pending_enqueue_completed_state_points_to_send_next() {
-        let reason = pending_enqueue_unavailable_reason(&SessionExecutionState::Completed {
-            turn_id: "t-completed".to_string(),
-        });
-
-        assert_eq!(reason, "当前 AgentRun 上一轮已完成，请直接发送下一轮消息。");
-    }
-
-    #[test]
-    fn pending_enqueue_idle_state_points_to_send_next() {
-        let reason = pending_enqueue_unavailable_reason(&SessionExecutionState::Idle);
-
-        assert_eq!(reason, "当前 AgentRun 未在执行中，请直接发送下一轮消息。");
-    }
-
-    #[test]
-    fn pending_promote_running_without_turn_is_rejected_before_dequeue() {
-        let reason =
-            pending_promote_unavailable_reason(&SessionExecutionState::Running { turn_id: None });
-
-        assert_eq!(
-            reason,
-            "当前 AgentRun 正在执行但缺少 active turn，不能投递 pending 消息。"
-        );
-    }
-
-    #[test]
     fn pending_queue_state_view_exposes_pause_reason_and_resume() {
         let view = pending_queue_state_view(
             Some(agentdash_application::session::QueuePauseReason::TurnInterrupted),
             true,
+            1,
         );
 
         assert!(view.paused);
@@ -1519,5 +1708,21 @@ mod tests {
             Some("上一轮已中断，pending 队列已暂停。")
         );
         assert!(view.can_resume);
+    }
+
+    #[test]
+    fn pending_queue_state_view_hides_empty_paused_prompt() {
+        let view = pending_queue_state_view(
+            Some(agentdash_application::session::QueuePauseReason::TurnInterrupted),
+            true,
+            0,
+        );
+
+        assert!(!view.paused);
+        assert!(!view.can_resume);
+        assert_eq!(
+            view.pause_reason,
+            Some(PendingQueuePauseReasonDto::TurnInterrupted)
+        );
     }
 }

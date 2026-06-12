@@ -90,21 +90,35 @@ export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
 
 export type ConversationCommandKind = "start_draft" | "send_next" | "enqueue" | "steer" | "promote_pending" | "resume_pending_queue" | "cancel";
 
-export type ConversationCommandSetView = { commands: Array<ConversationCommandView>, primary?: ConversationCommandKind, secondary?: ConversationCommandKind, };
+export type ConversationCommandPlacement = "composer_primary" | "composer_secondary" | "pending_row" | "pending_banner" | "header";
 
-export type ConversationCommandView = { kind: ConversationCommandKind, enabled: boolean, unavailable_reason?: string, shortcut?: string, requires_input: boolean, executor_config_policy: string, };
+export type ConversationCommandSetView = { commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView,
+/**
+ * Legacy derived composer primary command. New UI should use `commands` and `keyboard`.
+ */
+primary?: ConversationCommandKind,
+/**
+ * Legacy derived composer secondary command. New UI should use `commands` and `keyboard`.
+ */
+secondary?: ConversationCommandKind, };
+
+export type ConversationCommandStaleGuardView = { run_id: string, agent_id: string, frame_id?: string, runtime_session_id?: string, active_turn_id?: string, };
+
+export type ConversationCommandView = { kind: ConversationCommandKind, command_id: string, enabled: boolean, unavailable_reason?: string, disabled_code?: string, shortcut?: string, requires_input: boolean, executor_config_policy: string, placement: Array<ConversationCommandPlacement>, stale_guard: ConversationCommandStaleGuardView, };
 
 export type ConversationDiagnosticView = { code: string, severity: ValidationSeverity, message: string, detail?: JsonValue, };
 
-export type ConversationExecutionStatus = "draft" | "model_required" | "ready" | "running" | "cancelling" | "terminal" | "frame_missing" | "delivery_missing";
+export type ConversationExecutionStatus = "draft" | "model_required" | "ready" | "starting_claimed" | "running_active" | "cancelling" | "terminal" | "frame_missing" | "delivery_missing";
 
 export type ConversationExecutionView = { status: ConversationExecutionStatus, runtime_session_ref?: RuntimeSessionRefDto, active_turn_id?: string, reason?: string, };
+
+export type ConversationKeyboardMapView = { enter?: string, ctrl_enter?: string, };
 
 export type ConversationModelConfigStatus = "resolved" | "model_required";
 
 export type ConversationModelConfigView = { status: ConversationModelConfigStatus, effective_executor_config?: ConversationEffectiveExecutorConfigView, missing_fields: Array<string>, message?: string, };
 
-export type ConversationPendingSnapshotView = { visible_message_count: number, paused: boolean, user_attention: boolean, };
+export type ConversationPendingSnapshotView = { visible_message_count: number, paused: boolean, user_attention: boolean, resume_command?: ConversationCommandView, };
 
 export type DefinitionSource = "builtin_seed" | "user_authored" | "cloned";
 

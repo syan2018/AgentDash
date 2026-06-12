@@ -104,6 +104,14 @@ impl AgentFrameBuilder {
         }
     }
 
+    /// 构造 dispatch 阶段的 launch evidence frame。
+    ///
+    /// 该 revision 只负责稳定记录 run / agent / frame / runtime-session anchor，
+    /// 后续 runtime surface 必须由 frame construction / lifecycle composer 写入。
+    pub fn new_launch_anchor(agent_id: Uuid, created_by_id: Option<String>) -> Self {
+        Self::new(agent_id).with_created_by("dispatch_launch_anchor", created_by_id)
+    }
+
     pub fn with_context(mut self, context_slice: serde_json::Value) -> Self {
         self.context_slice = Some(context_slice);
         self
@@ -357,6 +365,23 @@ mod tests {
         assert_eq!(frame.created_by_kind, "dispatch");
         assert!(frame.effective_capability_json.is_some());
         assert!(frame.context_slice_json.is_some());
+    }
+
+    #[tokio::test]
+    async fn build_launch_anchor_marks_dispatch_evidence_revision() {
+        let repo = InMemoryFrameRepo::default();
+        let agent_id = Uuid::new_v4();
+
+        let frame = AgentFrameBuilder::new_launch_anchor(agent_id, Some("runtime-1".to_string()))
+            .build(&repo)
+            .await
+            .expect("launch anchor");
+
+        assert_eq!(frame.agent_id, agent_id);
+        assert_eq!(frame.created_by_kind, "dispatch_launch_anchor");
+        assert_eq!(frame.created_by_id.as_deref(), Some("runtime-1"));
+        assert!(frame.vfs_surface_json.is_none());
+        assert!(frame.effective_capability_json.is_none());
     }
 
     #[tokio::test]

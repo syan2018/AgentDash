@@ -658,7 +658,10 @@ impl<'a> LifecycleDispatchService<'a> {
         agent: &LifecycleAgent,
         runtime_session_ref: Option<Uuid>,
     ) -> Result<AgentFrame, WorkflowApplicationError> {
-        let mut builder = AgentFrameBuilder::new(agent.id).with_created_by("dispatch", None);
+        let mut builder = AgentFrameBuilder::new_launch_anchor(
+            agent.id,
+            runtime_session_ref.map(|session_id| session_id.to_string()),
+        );
         if let Some(session_id) = runtime_session_ref {
             builder = builder.with_runtime_session(session_id.to_string());
         }
@@ -671,7 +674,10 @@ impl<'a> LifecycleDispatchService<'a> {
         agent: &LifecycleAgent,
         runtime_session_ref: Option<Uuid>,
     ) -> Result<AgentFrame, WorkflowApplicationError> {
-        let mut builder = AgentFrameBuilder::new(agent.id).with_created_by("dispatch", None);
+        let mut builder = AgentFrameBuilder::new_launch_anchor(
+            agent.id,
+            runtime_session_ref.map(|session_id| session_id.to_string()),
+        );
         if let Some(session_id) = runtime_session_ref {
             builder = builder.with_runtime_session(session_id.to_string());
         }

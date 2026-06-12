@@ -19,7 +19,7 @@ use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, Sh
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::platform_config::{PlatformConfig, SharedPlatformConfig};
+use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 
 use super::session_association::resolve_activity_session_association;
@@ -85,10 +85,6 @@ pub struct LifecycleOrchestrator {
 }
 
 impl LifecycleOrchestrator {
-    pub fn new(repos: RepositorySet) -> Self {
-        Self::new_with_platform_config(repos, Arc::new(PlatformConfig { mcp_base_url: None }))
-    }
-
     pub fn new_with_platform_config(
         repos: RepositorySet,
         platform_config: SharedPlatformConfig,

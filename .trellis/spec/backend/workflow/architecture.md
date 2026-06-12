@@ -38,6 +38,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 - Function executor 即使立即完成，也必须产出 runtime node terminal event，而不是直接修改 run state。
 - Agent node execution identity 使用 `AgentInvocation(lifecycle_run_id, orchestration_id, node_path, attempt, agent_run_id, frame_id)` 定位当前 work；RuntimeSession 只作为 terminal/runtime evidence。
 - 通过 `RuntimeSession` 反查 Lifecycle node 时，必须使用 runtime trace anchor，再进入 `LifecycleRun -> OrchestrationInstance -> RuntimeNodeState` 的证据链。
+- `AgentFrame` revision 分为 dispatch launch evidence 与 runtime surface 两类生产角色。dispatch launch evidence 记录 run / agent / frame / runtime session anchor；capability、context、VFS、MCP 和 execution profile 的生效 surface 由 frame construction / lifecycle node composer 写入后续 runtime surface revision。读取 workspace/VFS 时从 runtime session anchor 进入 agent current frame，再消费 frame 上的 typed surface。
 - `LifecycleSubjectAssociation` 是 Task / Story / Routine / Project 等业务 subject 的归属入口；业务状态不能由 `RuntimeSession` title、存在性或 trace 内容推断。
 - Lifecycle edge 只有 `flow` 和 `artifact` 两类；artifact edge 隐含 node-level flow dependency。
 - 多 activity lifecycle 必须显式声明 edges；运行时不按数组顺序推断推进路径。

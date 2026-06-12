@@ -9,7 +9,7 @@ use agentdash_spi::FunctionRunner;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::platform_config::{PlatformConfig, SharedPlatformConfig};
+use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::workflow::{RuntimeSessionCreator, WorkflowApplicationError};
 
@@ -101,10 +101,6 @@ impl From<RepositorySet> for OrchestrationExecutorRepositories {
 }
 
 impl OrchestrationExecutorLauncher {
-    pub fn new(repos: RepositorySet) -> Self {
-        Self::new_with_platform_config(repos, Arc::new(PlatformConfig { mcp_base_url: None }))
-    }
-
     pub fn new_with_platform_config(
         repos: RepositorySet,
         platform_config: SharedPlatformConfig,
@@ -857,51 +853,115 @@ mod launcher_drain_tests {
     }
 
     #[derive(Default)]
-    struct EmptyAnchorRepo;
+    struct InMemoryAnchorRepo {
+        items: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
+    }
+
+    impl InMemoryAnchorRepo {
+        fn find(&self, runtime_session_id: &str) -> RuntimeSessionExecutionAnchor {
+            self.items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|anchor| anchor.runtime_session_id == runtime_session_id)
+                .cloned()
+                .expect("runtime session execution anchor persisted")
+        }
+    }
 
     #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for EmptyAnchorRepo {
-        async fn upsert(&self, _anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+    impl RuntimeSessionExecutionAnchorRepository for InMemoryAnchorRepo {
+        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+            let mut items = self.items.lock().unwrap();
+            if let Some(existing) = items
+                .iter_mut()
+                .find(|existing| existing.runtime_session_id == anchor.runtime_session_id)
+            {
+                *existing = anchor.clone();
+            } else {
+                items.push(anchor.clone());
+            }
             Ok(())
         }
 
-        async fn delete_by_session(&self, _runtime_session_id: &str) -> Result<(), DomainError> {
+        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+            self.items
+                .lock()
+                .unwrap()
+                .retain(|anchor| anchor.runtime_session_id != runtime_session_id);
             Ok(())
         }
 
         async fn find_by_session(
             &self,
-            _runtime_session_id: &str,
+            runtime_session_id: &str,
         ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(None)
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|anchor| anchor.runtime_session_id == runtime_session_id)
+                .cloned())
         }
 
         async fn list_by_run(
             &self,
-            _run_id: Uuid,
+            run_id: Uuid,
         ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(Vec::new())
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| anchor.run_id == run_id)
+                .cloned()
+                .collect())
         }
 
         async fn list_by_agent(
             &self,
-            _agent_id: Uuid,
+            agent_id: Uuid,
         ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(Vec::new())
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .cloned()
+                .collect())
         }
 
         async fn list_by_project_session_ids(
             &self,
-            _runtime_session_ids: &[String],
+            runtime_session_ids: &[String],
         ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(Vec::new())
+            Ok(runtime_session_ids
+                .iter()
+                .filter_map(|id| {
+                    self.items
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|anchor| anchor.runtime_session_id == *id)
+                        .cloned()
+                })
+                .collect())
         }
 
         async fn latest_for_agent(
             &self,
-            _agent_id: Uuid,
+            agent_id: Uuid,
         ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(None)
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .max_by_key(|anchor| anchor.updated_at)
+                .cloned())
         }
     }
 
@@ -972,8 +1032,13 @@ mod launcher_drain_tests {
         run_repo: Arc<InMemoryRunRepo>,
         gate_repo: Arc<InMemoryGateRepo>,
         procedure_repo: Arc<dyn AgentProcedureRepository>,
-    ) -> (OrchestrationExecutorLauncher, Arc<InMemoryFrameRepo>) {
+    ) -> (
+        OrchestrationExecutorLauncher,
+        Arc<InMemoryFrameRepo>,
+        Arc<InMemoryAnchorRepo>,
+    ) {
         let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let anchor_repo = Arc::new(InMemoryAnchorRepo::default());
         let launcher = OrchestrationExecutorLauncher::from_repositories(
             OrchestrationExecutorRepositories {
                 lifecycle_run_repo: run_repo,
@@ -981,12 +1046,12 @@ mod launcher_drain_tests {
                 lifecycle_agent_repo: Arc::new(EmptyAgentRepo),
                 agent_frame_repo: frame_repo.clone(),
                 lifecycle_gate_repo: gate_repo,
-                execution_anchor_repo: Arc::new(EmptyAnchorRepo),
+                execution_anchor_repo: anchor_repo.clone(),
                 runtime_session_creator: Arc::new(EmptyRuntimeSessionCreator),
             },
             Arc::new(TestLifecycleFrameComposer),
         );
-        (launcher, frame_repo)
+        (launcher, frame_repo, anchor_repo)
     }
 
     fn workflow_source(graph_id: Uuid) -> OrchestrationSourceRef {
@@ -1231,7 +1296,7 @@ mod launcher_drain_tests {
         run_repo.insert(run);
         let procedure_repo = Arc::new(InMemoryProcedureRepo::default());
         procedure_repo.insert(procedure(project_id, procedure_key));
-        let (launcher, frame_repo) = launcher_with_procedure_and_frame_repo(
+        let (launcher, frame_repo, anchor_repo) = launcher_with_procedure_and_frame_repo(
             run_repo.clone(),
             Arc::new(InMemoryGateRepo::default()),
             procedure_repo,
@@ -1263,6 +1328,16 @@ mod launcher_drain_tests {
         assert!(latest.orchestrations[0].dispatch.ready_node_ids.is_empty());
 
         let frame = frame_repo.latest();
+        let anchor = anchor_repo.find(&result.launched_agent_nodes[0].runtime_session_id);
+        assert_eq!(anchor.launch_frame_id, frame.id);
+        assert_eq!(anchor.run_id, run_id);
+        assert_eq!(
+            anchor.orchestration_id,
+            Some(latest.orchestrations[0].orchestration_id)
+        );
+        assert_eq!(anchor.node_path.as_deref(), Some("agent"));
+        assert_eq!(anchor.node_attempt, Some(1));
+
         let mounts = frame
             .vfs_surface_json
             .as_ref()

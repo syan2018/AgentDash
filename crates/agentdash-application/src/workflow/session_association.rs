@@ -253,8 +253,14 @@ pub async fn resolve_activity_session_association(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vfs::build_lifecycle_mount_with_node_scope;
+    use crate::workflow::frame_surface::AgentFrameSurfaceExt;
     use agentdash_domain::DomainError;
-    use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, LifecycleRunRepository};
+    use agentdash_domain::workflow::{
+        AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository,
+        LifecycleRunRepository,
+    };
+    use agentdash_spi::Vfs;
     use std::collections::HashMap;
 
     #[derive(Default)]
@@ -295,6 +301,35 @@ mod tests {
             _frame_id: Uuid,
             _mount_id: &str,
         ) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct TestAgentRepo {
+        agents: HashMap<Uuid, LifecycleAgent>,
+    }
+
+    #[async_trait::async_trait]
+    impl LifecycleAgentRepository for TestAgentRepo {
+        async fn create(&self, _agent: &LifecycleAgent) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
+            Ok(self.agents.get(&id).cloned())
+        }
+
+        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
+            Ok(self
+                .agents
+                .values()
+                .filter(|agent| agent.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, _agent: &LifecycleAgent) -> Result<(), DomainError> {
             Ok(())
         }
     }
@@ -528,6 +563,76 @@ mod tests {
         assert_eq!(association.orchestration_id, orchestration_id);
         assert_eq!(association.node_path, "custom_main");
         assert_eq!(association.attempt, 3);
+    }
+
+    #[tokio::test]
+    async fn runtime_session_current_frame_exposes_lifecycle_vfs_surface() {
+        let project_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let orchestration_id = Uuid::new_v4();
+        let mut agent = LifecycleAgent::new_root(run_id, project_id, "workflow_agent");
+        agent.set_current_frame(Uuid::new_v4());
+
+        let launch_frame = AgentFrame::new_revision(agent.id, 1, "launch");
+        let lifecycle_mount = build_lifecycle_mount_with_node_scope(
+            run_id,
+            orchestration_id,
+            "agent",
+            "test_lifecycle",
+            &["result".to_string()],
+            Some(1),
+        );
+        let lifecycle_vfs = Vfs {
+            mounts: vec![lifecycle_mount],
+            default_mount_id: None,
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let mut current_frame = AgentFrame::new_revision(agent.id, 2, "lifecycle_surface");
+        current_frame.vfs_surface_json = serde_json::to_value(&lifecycle_vfs).ok();
+
+        let frame_repo = TestFrameRepo {
+            frames: [
+                (launch_frame.id, launch_frame.clone()),
+                (current_frame.id, current_frame.clone()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let agent_repo = TestAgentRepo {
+            agents: [(agent.id, agent)].into_iter().collect(),
+        };
+        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
+            "sess-vfs",
+            run_id,
+            launch_frame.id,
+            current_frame.agent_id,
+            orchestration_id,
+            "agent",
+            1,
+        );
+        let anchor_repo = TestAnchorRepo {
+            anchors: [("sess-vfs".to_string(), anchor)].into_iter().collect(),
+        };
+
+        let (_anchor, _agent, frame) = resolve_current_frame_for_runtime_session(
+            "sess-vfs",
+            &anchor_repo,
+            &agent_repo,
+            &frame_repo,
+        )
+        .await
+        .expect("current frame lookup should not error")
+        .expect("runtime session should resolve to current frame");
+
+        assert_eq!(frame.id, current_frame.id);
+        let vfs = frame.typed_vfs().expect("current frame should expose VFS");
+        assert!(
+            vfs.mounts
+                .iter()
+                .any(|mount| { mount.id == "lifecycle" && mount.provider == "lifecycle_vfs" })
+        );
     }
 
     #[tokio::test]

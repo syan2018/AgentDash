@@ -146,7 +146,7 @@ pub(super) fn build_session_runtime(
 ) -> SessionRuntime {
     SessionRuntime {
         tx,
-        hook_runtime_delivery_binding: None,
+        hook_runtime_target_cache: None,
         turn_state: TurnState::Idle,
         session_profile: None,
         hook_auto_resume_count: 0,
@@ -206,11 +206,11 @@ impl TurnState {
 /// [`TurnExecution`]；`SessionRuntime` 只持 session 级信息。
 pub(super) struct SessionRuntime {
     pub tx: broadcast::Sender<PersistedSessionEvent>,
-    /// Delivery session 到当前 `HookControlTarget` runtime 的进程内绑定缓存。
+    /// 当前 delivery RuntimeSession 复用的 Hook runtime target cache。
     ///
-    /// 业务 owner 是 `AgentFrameHookRuntime.control_target()`；此字段只让同一个
-    /// delivery RuntimeSession 在 turn / event adapter 路径上复用 runtime。
-    pub hook_runtime_delivery_binding: Option<SharedHookRuntime>,
+    /// 业务 owner 是 `AgentFrameHookRuntime.control_target()`；此字段保存的 runtime
+    /// 只能由 target-first service 校验后进入业务路径。
+    pub hook_runtime_target_cache: Option<SharedHookRuntime>,
     /// Turn 状态机：Idle → Claimed → Active → Idle。
     pub turn_state: TurnState,
     /// Session 的内禀运行时配置；Init 时写入，Continue 时复用。

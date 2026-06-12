@@ -951,14 +951,6 @@ pub enum HookError {
 
 #[async_trait]
 pub trait ExecutionHookProvider: Send + Sync {
-    async fn resolve_runtime_hook_target(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<Option<HookControlTarget>, HookError> {
-        let _ = runtime_session_id;
-        Ok(None)
-    }
-
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,

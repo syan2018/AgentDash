@@ -15,12 +15,6 @@ pub(crate) struct MemoryAgentFrameRepository {
     frames: Mutex<Vec<AgentFrame>>,
 }
 
-impl MemoryAgentFrameRepository {
-    pub(crate) async fn first_frame(&self) -> Option<AgentFrame> {
-        self.frames.lock().await.iter().next().cloned()
-    }
-}
-
 #[async_trait::async_trait]
 impl AgentFrameRepository for MemoryAgentFrameRepository {
     async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {

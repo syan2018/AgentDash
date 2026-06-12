@@ -137,7 +137,10 @@ impl SessionRuntimeInner {
             .unwrap_or_else(|| hook_runtime.clone());
 
         let injections = self
-            .collect_runtime_context_update_injections(&input.delivery_runtime_session_id)
+            .collect_runtime_context_update_injections(
+                &input.delivery_runtime_session_id,
+                &effective_hook_runtime,
+            )
             .await;
         let state_delta = compute_capability_state_delta(
             input.before_state.as_ref(),
@@ -325,9 +328,12 @@ impl SessionRuntimeInner {
             });
             application.context_frames.push(notice);
 
-            let injections = self
-                .collect_runtime_context_update_injections(input.session_id)
-                .await;
+            let injections = if let Some(hook_runtime) = input.hook_runtime {
+                self.collect_runtime_context_update_injections(input.session_id, hook_runtime)
+                    .await
+            } else {
+                Vec::new()
+            };
             if let Some(workflow_frame) = build_workflow_assignment_context_frame(
                 &pending.phase_node,
                 "applied_on_next_turn",
@@ -346,7 +352,10 @@ impl SessionRuntimeInner {
         input: &LiveRuntimeContextTransitionInput,
     ) {
         let injections = self
-            .collect_runtime_context_update_injections(&input.delivery_runtime_session_id)
+            .collect_runtime_context_update_injections(
+                &input.delivery_runtime_session_id,
+                hook_runtime,
+            )
             .await;
         if let Some(notice) = build_workflow_assignment_context_frame(
             &input.phase_node,

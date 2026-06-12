@@ -70,49 +70,6 @@ impl WorkflowSnapshotBuilder {
         .map_err(HookError::Runtime)
     }
 
-    pub async fn resolve_hook_control_target_for_runtime_session(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<HookControlTarget>, HookError> {
-        let Some(anchor) = self
-            .execution_anchor_repo
-            .find_by_session(session_id)
-            .await
-            .map_err(map_hook_error)?
-        else {
-            return Ok(None);
-        };
-        let Some(agent) = self
-            .lifecycle_agent_repo
-            .get(anchor.agent_id)
-            .await
-            .map_err(map_hook_error)?
-        else {
-            return Ok(None);
-        };
-        if agent.run_id != anchor.run_id {
-            return Ok(None);
-        }
-        let Some(frame) = self
-            .agent_frame_repo
-            .get_current(agent.id)
-            .await
-            .map_err(map_hook_error)?
-            .or(self
-                .agent_frame_repo
-                .get(anchor.launch_frame_id)
-                .await
-                .map_err(map_hook_error)?)
-        else {
-            return Ok(None);
-        };
-        Ok(Some(HookControlTarget {
-            run_id: agent.run_id,
-            agent_id: agent.id,
-            frame_id: frame.id,
-        }))
-    }
-
     pub async fn resolve_active_workflow_for_target(
         &self,
         target: &HookControlTarget,

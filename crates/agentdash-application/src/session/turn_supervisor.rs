@@ -90,7 +90,7 @@ impl TurnSupervisor {
                         Self::abort_stream_adapter(turn);
                     }
                     runtime.turn_state = TurnState::Idle;
-                    runtime.hook_runtime_delivery_binding = None;
+                    runtime.hook_runtime_target_cache = None;
                 }
             })
             .await;

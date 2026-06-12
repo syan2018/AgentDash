@@ -1420,8 +1420,6 @@ mod tests {
 
     struct EmptyHookProvider {
         active_run_id: Uuid,
-        frame_repo: Arc<MemoryAgentFrameRepository>,
-        agent_id: Uuid,
     }
 
     impl EmptyHookProvider {
@@ -1442,23 +1440,6 @@ mod tests {
 
     #[async_trait]
     impl ExecutionHookProvider for EmptyHookProvider {
-        async fn resolve_runtime_hook_target(
-            &self,
-            _runtime_session_id: &str,
-        ) -> Result<Option<agentdash_spi::hooks::HookControlTarget>, agentdash_spi::hooks::HookError>
-        {
-            let frame = self
-                .frame_repo
-                .get_current(self.agent_id)
-                .await
-                .map_err(|e| agentdash_spi::hooks::HookError::Runtime(e.to_string()))?;
-            Ok(frame.map(|f| agentdash_spi::hooks::HookControlTarget {
-                run_id: self.active_run_id,
-                agent_id: f.agent_id,
-                frame_id: f.id,
-            }))
-        }
-
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
@@ -1777,11 +1758,7 @@ mod tests {
         agent_repo.create(&agent).await.expect("agent should save");
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
             Arc::new(PendingConnector),
-            Some(Arc::new(EmptyHookProvider {
-                active_run_id,
-                frame_repo: frame_repo.clone(),
-                agent_id,
-            })),
+            Some(Arc::new(EmptyHookProvider { active_run_id })),
             Arc::new(MemorySessionPersistence::default()),
         )
         .with_vfs_service(vfs_service)
@@ -1810,14 +1787,18 @@ mod tests {
             )
             .await
             .expect("prompt should start");
-        hub.hook_service()
-            .reload_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
-            .await
-            .expect("hook runtime should reload");
         let stale_runtime = hub
-            .get_hook_runtime_by_delivery_session(&session.id)
+            .hook_service()
+            .ensure_hook_runtime_for_target(
+                &crate::session::types::AgentFrameRuntimeTarget {
+                    frame_id,
+                    delivery_runtime_session_id: session.id.clone(),
+                },
+                Some(&turn_id),
+            )
             .await
-            .expect("hook runtime should be cached");
+            .expect("hook runtime should reload")
+            .expect("hook runtime should exist");
         let stale_target = stale_runtime.control_target();
         let switched_frame = AgentFrameBuilder::new(agent_id)
             .with_created_by("test_frame_switch", Some("canvas_create".to_string()))
@@ -1892,9 +1873,14 @@ mod tests {
             .expect("frame query should succeed")
             .expect("frame should exist");
         let refreshed_runtime = hub
-            .get_hook_runtime_by_delivery_session(&session.id)
+            .hook_service()
+            .get_hook_runtime_for_target(&crate::session::types::AgentFrameRuntimeTarget {
+                frame_id: updated_frame.id,
+                delivery_runtime_session_id: session.id.clone(),
+            })
             .await
-            .expect("hook runtime should still be cached");
+            .expect("hook runtime lookup should succeed")
+            .expect("hook runtime should exist for updated frame");
         assert_eq!(
             refreshed_runtime.control_target().frame_id,
             updated_frame.id,
@@ -2021,11 +2007,7 @@ mod tests {
         agent_repo.create(&agent).await.expect("agent should save");
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
             Arc::new(PendingConnector),
-            Some(Arc::new(EmptyHookProvider {
-                active_run_id,
-                frame_repo: frame_repo.clone(),
-                agent_id,
-            })),
+            Some(Arc::new(EmptyHookProvider { active_run_id })),
             Arc::new(MemorySessionPersistence::default()),
         )
         .with_vfs_service(vfs_service)
@@ -2054,14 +2036,18 @@ mod tests {
             )
             .await
             .expect("prompt should start");
-        hub.hook_service()
-            .reload_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
-            .await
-            .expect("hook runtime should reload");
         let stale_runtime = hub
-            .get_hook_runtime_by_delivery_session(&session.id)
+            .hook_service()
+            .ensure_hook_runtime_for_target(
+                &crate::session::types::AgentFrameRuntimeTarget {
+                    frame_id,
+                    delivery_runtime_session_id: session.id.clone(),
+                },
+                Some(&turn_id),
+            )
             .await
-            .expect("hook runtime should be cached");
+            .expect("hook runtime should reload")
+            .expect("hook runtime should exist");
         let stale_target = stale_runtime.control_target();
         let switched_frame = AgentFrameBuilder::new(agent_id)
             .with_created_by("test_frame_switch", Some("canvas_present".to_string()))
@@ -2117,9 +2103,14 @@ mod tests {
             .expect("frame query should succeed")
             .expect("frame should exist");
         let refreshed_runtime = hub
-            .get_hook_runtime_by_delivery_session(&session.id)
+            .hook_service()
+            .get_hook_runtime_for_target(&crate::session::types::AgentFrameRuntimeTarget {
+                frame_id: updated_frame.id,
+                delivery_runtime_session_id: session.id.clone(),
+            })
             .await
-            .expect("hook runtime should still be cached");
+            .expect("hook runtime lookup should succeed")
+            .expect("hook runtime should exist for updated frame");
         assert_eq!(
             refreshed_runtime.control_target().frame_id,
             updated_frame.id,

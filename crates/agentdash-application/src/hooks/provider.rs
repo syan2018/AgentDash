@@ -12,8 +12,8 @@ use agentdash_domain::workflow::{
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
-    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, HookControlTarget, HookDiagnosticEntry,
-    HookError, HookResolution, HookScriptEvaluator, HookTrigger, SessionSnapshotMetadata,
+    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, HookDiagnosticEntry, HookError,
+    HookResolution, HookScriptEvaluator, HookTrigger, SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
 
@@ -260,15 +260,6 @@ impl AppExecutionHookProvider {
 
 #[async_trait]
 impl ExecutionHookProvider for AppExecutionHookProvider {
-    async fn resolve_runtime_hook_target(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<Option<HookControlTarget>, HookError> {
-        self.workflow_builder
-            .resolve_hook_control_target_for_runtime_session(runtime_session_id)
-            .await
-    }
-
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,

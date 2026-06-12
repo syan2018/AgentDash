@@ -250,7 +250,7 @@ impl SessionRuntimeInner {
         );
 
         // === Phase 2: 内存 cache 更新 + connector 同步 ===
-        let (turn_snapshot, hook_runtime) = self
+        let turn_snapshot = self
             .runtime_registry
             .with_runtime(session_id, |runtime| {
                 let runtime = runtime.ok_or_else(|| {
@@ -263,8 +263,18 @@ impl SessionRuntimeInner {
                         "session `{session_id}` 没有活跃 turn，无法热更新能力状态"
                     ))
                 })?;
-                Ok::<_, ConnectorError>((turn, runtime.hook_runtime_delivery_binding.clone()))
+                Ok::<_, ConnectorError>(turn)
             })
+            .await?;
+        let hook_runtime = self
+            .hook_service()
+            .ensure_hook_runtime_for_target(
+                &AgentFrameRuntimeTarget {
+                    frame_id: new_frame.id,
+                    delivery_runtime_session_id: session_id.to_string(),
+                },
+                Some(&turn_snapshot.turn_id),
+            )
             .await?;
 
         let mut session_frame = turn_snapshot.session_frame.clone();

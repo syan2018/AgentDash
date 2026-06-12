@@ -24,8 +24,6 @@ use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::ContextFrame;
 #[cfg(test)]
-use agentdash_spi::hooks::SharedHookRuntime;
-#[cfg(test)]
 use agentdash_spi::session_persistence::SessionStoreResult;
 
 impl SessionRuntimeInner {
@@ -48,22 +46,6 @@ impl SessionRuntimeInner {
     #[cfg(test)]
     pub async fn ensure_session(&self, session_id: &str) {
         let _ = self.eventing_service().ensure_session(session_id).await;
-    }
-
-    /// Delivery adapter cache lookup: 根据 RuntimeSession id 查找已绑定的 hook runtime。
-    ///
-    /// 业务控制路径应使用 `SessionHookService::get_hook_runtime_for_target`，
-    /// 此方法仅供 hub 内部 adapter / trace 场景使用。返回值的
-    /// `control_target()` 才是业务 owner，调用方不得把 delivery session 命中
-    /// 当作 hook runtime 的权威归属。
-    #[cfg(test)]
-    pub(crate) async fn get_hook_runtime_by_delivery_session(
-        &self,
-        session_id: &str,
-    ) -> Option<SharedHookRuntime> {
-        self.runtime_registry
-            .hook_runtime_delivery_binding(session_id)
-            .await
     }
 
     pub(crate) async fn emit_context_frame(
@@ -123,8 +105,10 @@ impl SessionRuntimeInner {
     pub(crate) async fn start_prompt(
         &self,
         session_id: &str,
-        construction: RuntimeContextInspectionPlan,
+        mut construction: RuntimeContextInspectionPlan,
     ) -> Result<String, ConnectorError> {
+        construction.session_id = session_id.to_string();
+        construction.session.session_id = session_id.to_string();
         let envelope = envelope_from_construction(self, construction).await;
         SessionLaunchOrchestrator::new(SessionLaunchDeps::from_inner(self))
             .launch_with_envelope_for_test(session_id, envelope)

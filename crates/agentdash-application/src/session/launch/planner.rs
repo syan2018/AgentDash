@@ -117,7 +117,7 @@ impl<'a> LaunchPlanner<'a> {
             .resolve_hook_runtime(
                 input.session_id,
                 input.turn_id,
-                Some(input.launch_envelope.surface.frame_id),
+                input.launch_envelope.surface.frame_id,
                 &executor_config,
                 &working_directory,
                 is_owner_bootstrap,

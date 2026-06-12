@@ -14,14 +14,14 @@ use agentdash_domain::backend::{
     BackendExecutionTerminalKind,
 };
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
-    LifecycleRunRepository, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    AgentFrame, LifecycleAgent, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::hooks::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
     AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, ContextFrame, ContextFrameSection,
     ExecutionHookProvider, HookControlTarget, HookEvaluationQuery, HookInjection, HookResolution,
-    HookTraceTrigger, HookTrigger, RuntimeEventSource, SessionSnapshotMetadata,
+    HookTraceTrigger, HookTrigger, RuntimeEventSource, SessionSnapshotMetadata, SharedHookRuntime,
 };
 use agentdash_spi::{
     AgentConfig, AgentConnector, AgentTool, AgentToolError, AgentToolResult, CapabilityState,
@@ -215,25 +215,6 @@ impl LifecycleRunRepository for InMemoryLifecycleRunRepo {
     }
 }
 
-async fn register_hook_target(
-    targets: &Arc<TokioMutex<HashMap<String, HookControlTarget>>>,
-    session_id: &str,
-    frame: &AgentFrame,
-) -> HookControlTarget {
-    let mut targets = targets.lock().await;
-    let run_id = targets
-        .get(session_id)
-        .map(|target| target.run_id)
-        .unwrap_or_else(uuid::Uuid::new_v4);
-    let target = HookControlTarget {
-        run_id,
-        agent_id: frame.agent_id,
-        frame_id: frame.id,
-    };
-    targets.insert(session_id.to_string(), target.clone());
-    target
-}
-
 async fn control_target_from_anchor_frame(
     hub: &SessionRuntimeInner,
     session_id: &str,
@@ -252,6 +233,25 @@ async fn control_target_from_anchor_frame(
         agent_id: frame.agent_id,
         frame_id: frame.id,
     }
+}
+
+async fn ensure_hook_runtime_for_frame(
+    hub: &SessionRuntimeInner,
+    session_id: &str,
+    frame_id: uuid::Uuid,
+    turn_id: &str,
+) -> SharedHookRuntime {
+    hub.hook_service()
+        .ensure_hook_runtime_for_target(
+            &AgentFrameRuntimeTarget {
+                frame_id,
+                delivery_runtime_session_id: session_id.to_string(),
+            },
+            Some(turn_id),
+        )
+        .await
+        .expect("target-first hook runtime ensure should succeed")
+        .expect("hook runtime should exist for target")
 }
 
 fn test_hook_snapshot(session_id: String) -> AgentFrameHookSnapshot {
@@ -1548,10 +1548,8 @@ async fn replace_current_capability_state_requires_matching_frame_target() {
 async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs() {
     let base = tempfile::tempdir().expect("tempdir");
     let queries = Arc::new(TokioMutex::new(Vec::new()));
-    let hook_targets = Arc::new(TokioMutex::new(HashMap::new()));
     let hook_provider = Arc::new(StaticResolutionHookProvider {
         queries,
-        target_by_session: hook_targets.clone(),
         resolution: HookResolution::default(),
     });
     let hub = test_hub(
@@ -1559,18 +1557,16 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
         Arc::new(PendingConnector),
         Some(hook_provider),
     )
-    .with_vfs_service(skill_fixture_vfs_service());
+    .with_vfs_service(skill_fixture_vfs_service())
+    .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
     let session = hub
         .create_session("canvas-skill-capability")
         .await
         .expect("create");
-    let frame = attach_test_frame(&hub, &session.id).await;
-    register_hook_target(&hook_targets, &session.id, &frame).await;
+    let frame = attach_test_lifecycle_frame(&hub, &session.id).await;
     let _rx = hub.ensure_session(&session.id).await;
-    hub.hook_service()
-        .reload_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
-        .await
-        .expect("hook runtime should load");
+    let hook_runtime =
+        ensure_hook_runtime_for_frame(&hub, &session.id, frame.id, "turn-canvas").await;
 
     let mut before_state = CapabilityState::default();
     before_state.vfs.active = Some(agentdash_spi::Vfs::default());
@@ -1625,10 +1621,6 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
 
     let active_vfs = canvas_skill_vfs();
     let skills = vec![canvas_skill_entry()];
-    let hook_runtime = hub
-        .get_hook_runtime_by_delivery_session(&session.id)
-        .await
-        .expect("hook runtime should exist");
     let mut after_state = before_state.clone();
     after_state.vfs.active = Some(active_vfs.clone());
     let capability_keys = after_state.capability_keys();
@@ -2050,26 +2042,10 @@ impl AgentConnector for SessionStartAwareConnector {
 
 struct RecordingHookProvider {
     queries: Arc<TokioMutex<Vec<HookEvaluationQuery>>>,
-    frame_repo: Option<Arc<MemoryAgentFrameRepository>>,
 }
 
 #[async_trait::async_trait]
 impl ExecutionHookProvider for RecordingHookProvider {
-    async fn resolve_runtime_hook_target(
-        &self,
-        _runtime_session_id: &str,
-    ) -> Result<Option<HookControlTarget>, agentdash_spi::hooks::HookError> {
-        let Some(ref repo) = self.frame_repo else {
-            return Ok(None);
-        };
-        let frame = repo.first_frame().await;
-        Ok(frame.map(|f| HookControlTarget {
-            run_id: uuid::Uuid::new_v4(),
-            agent_id: f.agent_id,
-            frame_id: f.id,
-        }))
-    }
-
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,
@@ -2107,58 +2083,10 @@ impl ExecutionHookProvider for RecordingHookProvider {
     }
 }
 
-struct CurrentFrameHookProvider {
-    frame_repo: Arc<dyn AgentFrameRepository>,
-    agent_repo: Arc<dyn LifecycleAgentRepository>,
-    anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-}
+struct CurrentFrameHookProvider;
 
 #[async_trait::async_trait]
 impl ExecutionHookProvider for CurrentFrameHookProvider {
-    async fn resolve_runtime_hook_target(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<Option<HookControlTarget>, agentdash_spi::hooks::HookError> {
-        let Some(anchor) = self
-            .anchor_repo
-            .find_by_session(runtime_session_id)
-            .await
-            .map_err(|error| agentdash_spi::hooks::HookError::Runtime(error.to_string()))?
-        else {
-            return Ok(None);
-        };
-        let Some(agent) = self
-            .agent_repo
-            .get(anchor.agent_id)
-            .await
-            .map_err(|error| agentdash_spi::hooks::HookError::Runtime(error.to_string()))?
-        else {
-            return Ok(None);
-        };
-        let frame = if let Some(current_frame_id) = agent.current_frame_id {
-            self.frame_repo
-                .get(current_frame_id)
-                .await
-                .map_err(|error| agentdash_spi::hooks::HookError::Runtime(error.to_string()))?
-        } else {
-            None
-        };
-        let Some(frame) = frame.or(self
-            .frame_repo
-            .get_current(agent.id)
-            .await
-            .map_err(|error| agentdash_spi::hooks::HookError::Runtime(error.to_string()))?)
-        else {
-            return Ok(None);
-        };
-
-        Ok(Some(HookControlTarget {
-            run_id: anchor.run_id,
-            agent_id: agent.id,
-            frame_id: frame.id,
-        }))
-    }
-
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,
@@ -2187,24 +2115,11 @@ impl ExecutionHookProvider for CurrentFrameHookProvider {
 
 struct StaticResolutionHookProvider {
     queries: Arc<TokioMutex<Vec<HookEvaluationQuery>>>,
-    target_by_session: Arc<TokioMutex<HashMap<String, HookControlTarget>>>,
     resolution: HookResolution,
 }
 
 #[async_trait::async_trait]
 impl ExecutionHookProvider for StaticResolutionHookProvider {
-    async fn resolve_runtime_hook_target(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<Option<HookControlTarget>, agentdash_spi::hooks::HookError> {
-        Ok(self
-            .target_by_session
-            .lock()
-            .await
-            .get(runtime_session_id)
-            .cloned())
-    }
-
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,
@@ -2243,24 +2158,11 @@ impl ExecutionHookProvider for StaticResolutionHookProvider {
 }
 
 struct SnapshotRecordingHookProvider {
-    target_by_session: Arc<TokioMutex<HashMap<String, HookControlTarget>>>,
     frame_snapshot_queries: Arc<TokioMutex<Vec<AgentFrameHookSnapshotQuery>>>,
 }
 
 #[async_trait::async_trait]
 impl ExecutionHookProvider for SnapshotRecordingHookProvider {
-    async fn resolve_runtime_hook_target(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<Option<HookControlTarget>, agentdash_spi::hooks::HookError> {
-        Ok(self
-            .target_by_session
-            .lock()
-            .await
-            .get(runtime_session_id)
-            .cloned())
-    }
-
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,
@@ -2304,10 +2206,8 @@ impl ExecutionHookProvider for SnapshotRecordingHookProvider {
 #[tokio::test]
 async fn lazy_hook_runtime_rebuild_loads_snapshot_from_frame_target() {
     let base = tempfile::tempdir().expect("tempdir");
-    let target_by_session = Arc::new(TokioMutex::new(HashMap::new()));
     let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
     let hook_provider = Arc::new(SnapshotRecordingHookProvider {
-        target_by_session: target_by_session.clone(),
         frame_snapshot_queries: frame_snapshot_queries.clone(),
     });
     let hub = test_hub(
@@ -2320,12 +2220,19 @@ async fn lazy_hook_runtime_rebuild_loads_snapshot_from_frame_target() {
         .await
         .expect("create");
     let frame = attach_test_frame(&hub, &session.id).await;
-    let target = register_hook_target(&target_by_session, &session.id, &frame).await;
+    let target = control_target_from_anchor_frame(&hub, &session.id, &frame).await;
 
     let runtime = hub
-        .ensure_hook_runtime_for_delivery_session(&session.id, Some("turn-lazy"))
+        .hook_service()
+        .ensure_hook_runtime_for_target(
+            &AgentFrameRuntimeTarget {
+                frame_id: frame.id,
+                delivery_runtime_session_id: session.id.clone(),
+            },
+            Some("turn-lazy"),
+        )
         .await
-        .expect("lazy hook runtime rebuild should not fail")
+        .expect("target-first hook runtime rebuild should not fail")
         .expect("hook runtime should be rebuilt");
 
     assert_eq!(runtime.control_target(), target);
@@ -2338,17 +2245,15 @@ async fn lazy_hook_runtime_rebuild_loads_snapshot_from_frame_target() {
     );
     assert_eq!(
         frame_queries[0].provenance.source,
-        "hook_runtime_lazy_rebuild"
+        "hook_runtime_target_rebuild"
     );
 }
 
 #[tokio::test]
 async fn hook_runtime_target_switch_replaces_stale_cached_runtime() {
     let base = tempfile::tempdir().expect("tempdir");
-    let target_by_session = Arc::new(TokioMutex::new(HashMap::new()));
     let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
     let hook_provider = Arc::new(SnapshotRecordingHookProvider {
-        target_by_session: target_by_session.clone(),
         frame_snapshot_queries: frame_snapshot_queries.clone(),
     });
     let hub = test_hub(
@@ -2361,7 +2266,6 @@ async fn hook_runtime_target_switch_replaces_stale_cached_runtime() {
         .await
         .expect("create");
     let frame1 = attach_test_frame(&hub, &session.id).await;
-    register_hook_target(&target_by_session, &session.id, &frame1).await;
     let target1 = control_target_from_anchor_frame(&hub, &session.id, &frame1).await;
 
     let runtime1 = hub
@@ -2379,7 +2283,6 @@ async fn hook_runtime_target_switch_replaces_stale_cached_runtime() {
     assert_eq!(runtime1.control_target(), target1);
 
     let frame2 = attach_test_frame(&hub, &session.id).await;
-    register_hook_target(&target_by_session, &session.id, &frame2).await;
     let target2 = control_target_from_anchor_frame(&hub, &session.id, &frame2).await;
     let runtime2 = hub
         .hook_service()
@@ -2396,13 +2299,6 @@ async fn hook_runtime_target_switch_replaces_stale_cached_runtime() {
 
     assert_eq!(runtime2.control_target(), target2);
     assert_ne!(runtime2.control_target(), runtime1.control_target());
-    assert_eq!(
-        hub.get_hook_runtime_by_delivery_session(&session.id)
-            .await
-            .expect("cached runtime should exist")
-            .control_target(),
-        target2
-    );
     let frame_queries = frame_snapshot_queries.lock().await;
     assert_eq!(frame_queries.len(), 2);
     assert_eq!(frame_queries[0].target, target1);
@@ -2410,12 +2306,10 @@ async fn hook_runtime_target_switch_replaces_stale_cached_runtime() {
 }
 
 #[tokio::test]
-async fn target_first_hook_runtime_ensure_ignores_stale_delivery_resolution() {
+async fn target_first_hook_runtime_ensure_rebuilds_from_requested_frame() {
     let base = tempfile::tempdir().expect("tempdir");
-    let target_by_session = Arc::new(TokioMutex::new(HashMap::new()));
     let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
     let hook_provider = Arc::new(SnapshotRecordingHookProvider {
-        target_by_session: target_by_session.clone(),
         frame_snapshot_queries: frame_snapshot_queries.clone(),
     });
     let hub = test_hub(
@@ -2424,12 +2318,10 @@ async fn target_first_hook_runtime_ensure_ignores_stale_delivery_resolution() {
         Some(hook_provider),
     );
     let session = hub
-        .create_session("target-first-stale-delivery-resolution")
+        .create_session("target-first-requested-frame")
         .await
         .expect("create");
     let frame1 = attach_test_frame(&hub, &session.id).await;
-    let stale_provider_target =
-        register_hook_target(&target_by_session, &session.id, &frame1).await;
     let target1 = control_target_from_anchor_frame(&hub, &session.id, &frame1).await;
 
     let runtime1 = hub
@@ -2464,21 +2356,6 @@ async fn target_first_hook_runtime_ensure_ignores_stale_delivery_resolution() {
 
     assert_eq!(runtime2.control_target(), target2);
     assert_ne!(runtime2.control_target(), target1);
-    assert_eq!(
-        hub.get_hook_runtime_by_delivery_session(&session.id)
-            .await
-            .expect("delivery binding cache should exist")
-            .control_target(),
-        target2
-    );
-    assert_eq!(
-        target_by_session
-            .lock()
-            .await
-            .get(&session.id)
-            .expect("provider resolution should remain stale"),
-        &stale_provider_target
-    );
     let frame_queries = frame_snapshot_queries.lock().await;
     assert_eq!(frame_queries.len(), 2);
     assert_eq!(frame_queries[0].target, target1);
@@ -2488,6 +2365,14 @@ async fn target_first_hook_runtime_ensure_ignores_stale_delivery_resolution() {
 #[test]
 fn hook_business_paths_do_not_use_delivery_session_runtime_lookup() {
     let hook_service = include_str!("../hooks_service.rs");
+    assert!(
+        !hook_service.contains("reload_hook_runtime("),
+        "SessionHookService must not expose a session-first hook runtime reload fallback"
+    );
+    assert!(
+        !hook_service.contains("resolve_runtime_hook_target("),
+        "SessionHookService must not resolve hook owner from naked RuntimeSession id"
+    );
     assert!(
         !hook_service.contains("ensure_hook_runtime_for_delivery_session"),
         "SessionHookService target-first entry must not depend on delivery-session target resolution"
@@ -2579,10 +2464,8 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         content: "请使用 phase B 的工具约束继续推进。".to_string(),
         source: "workflow:phase_b".to_string(),
     };
-    let hook_targets = Arc::new(TokioMutex::new(HashMap::new()));
     let provider = Arc::new(StaticResolutionHookProvider {
         queries: queries.clone(),
-        target_by_session: hook_targets.clone(),
         resolution: HookResolution::default(),
     });
     let connector = Arc::new(NotificationCapturingConnector::default());
@@ -2593,13 +2476,9 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         .await
         .expect("create");
     let frame = attach_test_frame(&hub, &session.id).await;
-    register_hook_target(&hook_targets, &session.id, &frame).await;
     let _rx = hub.ensure_session(&session.id).await;
 
-    hub.hook_service()
-        .reload_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
-        .await
-        .expect("hook runtime should load");
+    let hook_runtime = ensure_hook_runtime_for_frame(&hub, &session.id, frame.id, "turn-cap").await;
     let bundle_session_uuid = uuid::Uuid::new_v4();
     hub.runtime_registry
         .with_runtime_mut(&session.id, |runtime| {
@@ -2623,16 +2502,12 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         })
         .await;
 
-    let hook_runtime = hub
-        .get_hook_runtime_by_delivery_session(&session.id)
-        .await
-        .expect("hook runtime should remain available");
     let mut snapshot = hook_runtime.snapshot();
     snapshot.injections = vec![injection.clone()];
     hook_runtime.replace_snapshot(snapshot);
 
     let result = hub
-        .collect_runtime_context_update_injections(&session.id)
+        .collect_runtime_context_update_injections(&session.id, &hook_runtime)
         .await;
     assert_eq!(result, vec![injection.clone()]);
 
@@ -2838,7 +2713,6 @@ async fn start_prompt_triggers_session_start_before_connector_prompt() {
     let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
     let hook_provider = Arc::new(RecordingHookProvider {
         queries: queries.clone(),
-        frame_repo: Some(frame_repo.clone()),
     });
     let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
     let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
@@ -3801,11 +3675,7 @@ async fn accepted_turn_commits_hook_runtime_target_to_new_frame() {
     let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
     let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
     let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
-    let hook_provider = Arc::new(CurrentFrameHookProvider {
-        frame_repo: frame_repo.clone(),
-        agent_repo: agent_repo.clone(),
-        anchor_repo: anchor_repo.clone(),
-    });
+    let hook_provider = Arc::new(CurrentFrameHookProvider);
     let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
         Arc::new(EmptyConnector),
         Some(hook_provider),
@@ -3843,9 +3713,14 @@ async fn accepted_turn_commits_hook_runtime_target_to_new_frame() {
         .expect("current frame should exist");
 
     let runtime = hub
-        .get_hook_runtime_by_delivery_session(&session.id)
+        .hook_service()
+        .get_hook_runtime_for_target(&AgentFrameRuntimeTarget {
+            frame_id: current_id,
+            delivery_runtime_session_id: session.id.clone(),
+        })
         .await
-        .expect("hook runtime should remain cached");
+        .expect("current target hook runtime lookup should succeed")
+        .expect("hook runtime should exist for current frame");
     assert_eq!(runtime.control_target().frame_id, current_id);
     assert_ne!(
         runtime.control_target().frame_id,

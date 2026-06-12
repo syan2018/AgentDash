@@ -20,17 +20,21 @@ impl McpRelayProvider for BackendRegistry {
     async fn list_relay_tools(
         &self,
         requested_servers: &[RuntimeMcpServerDeclaration],
+        context: Option<RelayMcpCallContext>,
     ) -> Vec<RelayMcpToolInfo> {
         let mut result = Vec::new();
 
         for server in requested_servers {
             let server_name = &server.name;
-            let backend_id = match self.find_backend_for_mcp_server(server_name).await {
+            let backend_id = match self
+                .resolve_backend_for_relay_mcp(server_name, context.as_ref())
+                .await
+            {
                 Some(id) => id,
                 None => {
                     tracing::debug!(
                         server = %server_name,
-                        "无在线 backend 提供该 MCP server，跳过"
+                        "无在线 backend 可执行该 relay MCP server，跳过"
                     );
                     continue;
                 }
@@ -95,15 +99,15 @@ impl McpRelayProvider for BackendRegistry {
         server: &RuntimeMcpServerDeclaration,
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
-        _context: Option<RelayMcpCallContext>,
+        context: Option<RelayMcpCallContext>,
     ) -> Result<RelayMcpCallResult, ConnectorError> {
         let server_name = server.name.as_str();
         let backend_id = self
-            .find_backend_for_mcp_server(server_name)
+            .resolve_backend_for_relay_mcp(server_name, context.as_ref())
             .await
             .ok_or_else(|| {
                 ConnectorError::ConnectionFailed(format!(
-                    "无在线 backend 提供 MCP server '{server_name}'"
+                    "无在线 backend 可执行 relay MCP server '{server_name}'"
                 ))
             })?;
 

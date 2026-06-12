@@ -21,6 +21,7 @@ use crate::local_backend_config::McpLocalServerEntry;
 
 pub struct McpClientManager {
     config: Vec<McpLocalServerEntry>,
+    protect_mode: bool,
     clients: RwLock<HashMap<String, RunningService<RoleClient, ()>>>,
 }
 
@@ -31,9 +32,10 @@ struct ResolvedMcpServerEntry {
 }
 
 impl McpClientManager {
-    pub fn new(config: Vec<McpLocalServerEntry>) -> Self {
+    pub fn new(config: Vec<McpLocalServerEntry>, protect_mode: bool) -> Self {
         Self {
             config,
+            protect_mode,
             clients: RwLock::new(HashMap::new()),
         }
     }
@@ -140,8 +142,11 @@ impl McpClientManager {
         &self,
         entry: &ResolvedMcpServerEntry,
     ) -> Result<String, anyhow::Error> {
-        if !self.config.iter().any(|server| server.name == entry.name) {
-            anyhow::bail!("未知的 MCP server: {}", entry.name);
+        if self.protect_mode && !self.is_preconfigured_server(entry) {
+            anyhow::bail!(
+                "local_policy_denied: MCP protect mode 已开启，server `{}` 未在本机预配置中声明相同 transport",
+                entry.name
+            );
         }
         let key = connection_key(entry)?;
         {
@@ -184,6 +189,12 @@ impl McpClientManager {
         clients.insert(key.clone(), client);
         tracing::info!(server = %entry.name, transport = %transport_kind, "MCP client 已连接");
         Ok(key)
+    }
+
+    fn is_preconfigured_server(&self, entry: &ResolvedMcpServerEntry) -> bool {
+        self.config
+            .iter()
+            .any(|server| server.name == entry.name && server.transport == entry.transport)
     }
 }
 
@@ -446,14 +457,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_tools_rejects_undeclared_server_name_before_connecting() {
-        let manager = McpClientManager::new(vec![McpLocalServerEntry {
-            name: "declared".to_string(),
-            transport: McpTransportConfig::Http {
-                url: "http://127.0.0.1:8999/mcp".to_string(),
-                headers: vec![],
-            },
-        }]);
+    async fn protect_mode_rejects_undeclared_server_name_before_connecting() {
+        let manager = McpClientManager::new(
+            vec![McpLocalServerEntry {
+                name: "declared".to_string(),
+                transport: McpTransportConfig::Http {
+                    url: "http://127.0.0.1:8999/mcp".to_string(),
+                    headers: vec![],
+                },
+            }],
+            true,
+        );
         let undeclared = McpServerDeclarationRelay {
             name: "undeclared".to_string(),
             transport: McpTransportConfigRelay::Http {
@@ -465,7 +479,51 @@ mod tests {
         let error = manager
             .list_tools(&undeclared)
             .await
-            .expect_err("undeclared server should fail");
-        assert!(error.to_string().contains("未知的 MCP server"));
+            .expect_err("undeclared server should fail in protect mode");
+        assert!(error.to_string().contains("local_policy_denied"));
+    }
+
+    #[tokio::test]
+    async fn protect_mode_rejects_changed_transport_before_connecting() {
+        let manager = McpClientManager::new(
+            vec![McpLocalServerEntry {
+                name: "declared".to_string(),
+                transport: McpTransportConfig::Http {
+                    url: "http://127.0.0.1:8999/mcp".to_string(),
+                    headers: vec![],
+                },
+            }],
+            true,
+        );
+        let changed_transport = McpServerDeclarationRelay {
+            name: "declared".to_string(),
+            transport: McpTransportConfigRelay::Http {
+                url: "http://127.0.0.1:8998/mcp".to_string(),
+                headers: vec![],
+            },
+        };
+
+        let error = manager
+            .list_tools(&changed_transport)
+            .await
+            .expect_err("changed transport should fail in protect mode");
+        assert!(error.to_string().contains("local_policy_denied"));
+    }
+
+    #[test]
+    fn unprotected_manager_accepts_project_scoped_declaration_policy() {
+        let manager = McpClientManager::new(Vec::new(), false);
+        let entry = resolved_server_entry(&McpServerDeclarationRelay {
+            name: "project-tools".to_string(),
+            transport: McpTransportConfigRelay::Http {
+                url: "http://127.0.0.1:8999/mcp".to_string(),
+                headers: vec![],
+            },
+        });
+
+        assert!(
+            !manager.protect_mode && !manager.is_preconfigured_server(&entry),
+            "默认关闭 protect mode 时，项目级 declaration 不需要命中本机静态 catalog"
+        );
     }
 }

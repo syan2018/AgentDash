@@ -197,8 +197,11 @@ impl McpRelayProvider for MaterializingMcpRelayProvider {
     async fn list_relay_tools(
         &self,
         requested_servers: &[RuntimeMcpServerDeclaration],
+        context: Option<RelayMcpCallContext>,
     ) -> Vec<RelayMcpToolInfo> {
-        self.backends.list_relay_tools(requested_servers).await
+        self.backends
+            .list_relay_tools(requested_servers, context)
+            .await
     }
 
     async fn call_relay_tool(
@@ -211,11 +214,11 @@ impl McpRelayProvider for MaterializingMcpRelayProvider {
         let server_name = server.name.as_str();
         let backend_id = self
             .backends
-            .find_backend_for_mcp_server(server_name)
+            .resolve_backend_for_relay_mcp(server_name, context.as_ref())
             .await
             .ok_or_else(|| {
                 ConnectorError::ConnectionFailed(format!(
-                    "无在线 backend 提供 MCP server '{server_name}'"
+                    "无在线 backend 可执行 relay MCP server '{server_name}'"
                 ))
             })?;
 

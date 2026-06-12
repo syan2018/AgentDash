@@ -122,7 +122,9 @@ pub async fn discover_relay_mcp_tool_entries(
         .iter()
         .map(|server| server.name.as_str())
         .collect::<BTreeSet<_>>();
-    let tools = provider.list_relay_tools(servers).await;
+    let tools = provider
+        .list_relay_tools(servers, call_context.clone())
+        .await;
     tools
         .iter()
         .filter(|info| {
@@ -161,6 +163,7 @@ mod tests {
         async fn list_relay_tools(
             &self,
             _requested_servers: &[RuntimeMcpServerDeclaration],
+            _context: Option<RelayMcpCallContext>,
         ) -> Vec<RelayMcpToolInfo> {
             self.tools.clone()
         }

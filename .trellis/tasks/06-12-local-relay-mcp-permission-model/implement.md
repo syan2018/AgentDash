@@ -3,21 +3,21 @@
 ## Checklist
 
 - [x] 确认 protect mode 默认关闭。
-- [ ] 确认 protect mode 配置入口。
-- [ ] 梳理现有 relay MCP discovery 路由点，移除普通 Project relay MCP 对 `backend.capabilities.mcp_servers` 的准入依赖。
-- [ ] 为 relay MCP discovery / call 引入 session-bound backend 路由，优先使用当前 session 的 backend execution placement 或 default VFS backend。
-- [ ] 调整 local `McpClientManager`，允许 project-scoped declaration 按 transport 惰性连接。
-- [ ] 增加 local protect mode policy：关闭时允许 project declaration，开启时按 allowlist / origin 拒绝。
-- [ ] 将 relay MCP discovery 失败转换为结构化诊断，覆盖 backend offline、policy denied、transport failure、handshake failure。
-- [ ] 增加针对 Hoyo `abc-copilot-tool` 的回归验证：local static MCP catalog 为空时也能发现工具；protect mode 开启且未允许时产生明确拒绝。
-- [ ] 更新相关 spec / docs，记录 Project MCP Preset、local static MCP catalog、protect mode 的职责分工。
+- [x] 确认 protect mode 配置入口：`local-backend.json` 的 `mcp_protect_mode`，默认关闭。
+- [x] 梳理现有 relay MCP discovery 路由点，移除普通 Project relay MCP 对 `backend.capabilities.mcp_servers` 的准入依赖。
+- [x] 为 relay MCP discovery / call 引入 session-bound backend 路由，优先使用当前 session 的 backend execution placement 或 default VFS backend。
+- [x] 调整 local `McpClientManager`，允许 project-scoped declaration 按 transport 惰性连接。
+- [x] 增加 local protect mode policy：关闭时允许 project declaration，开启时按 allowlist / origin 拒绝。
+- [x] 将 local policy denied 转换为可诊断错误信息；backend offline、transport failure、handshake failure 继续沿现有 relay/runtime error path 返回。
+- [x] 增加针对 Hoyo `abc-copilot-tool` 断点的回归验证：local static MCP catalog 为空时云端仍能按 session route 发现 relay MCP；protect mode 开启且未允许时产生明确拒绝。
+- [x] 更新相关 spec / docs，记录 Project MCP Preset、local static MCP catalog、protect mode 的职责分工。
 
 ## Validation
 
-- `pnpm run backend:clippy`
-- 针对 MCP discovery / relay provider / local MCP manager 的 Rust 单元测试。
-- Hoyo 手工或集成验证：`abc-copilot-tool` 出现在 PI_AGENT 工具目录中，工具名形如 `mcp_abc_copilot_tool_*`。
-- protect mode 验证：相同 Project Preset 在策略拒绝时不会静默消失，而是输出可诊断原因。
+- `cargo test -p agentdash-local mcp_client_manager -- --nocapture` 通过。
+- `cargo test -p agentdash-api relay::registry -- --nocapture` 通过。
+- `cargo test -p agentdash-executor mcp::relay -- --nocapture` 通过。
+- `pnpm run backend:clippy` 未运行，本轮按用户要求控制验证范围。
 
 ## Risk Points
 

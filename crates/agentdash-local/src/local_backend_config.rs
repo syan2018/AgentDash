@@ -10,6 +10,8 @@ pub struct LocalBackendConfigFile {
     #[serde(default)]
     pub mcp_servers: Vec<McpLocalServerEntry>,
     #[serde(default)]
+    pub mcp_protect_mode: bool,
+    #[serde(default)]
     pub workspace_contract: WorkspaceContractRuntimeConfig,
 }
 
@@ -75,6 +77,7 @@ pub fn load_local_backend_config_for_root(root: &std::path::Path) -> LocalBacken
                 tracing::info!(
                     path = %config_path.display(),
                     mcp_server_count = config.mcp_servers.len(),
+                    mcp_protect_mode = config.mcp_protect_mode,
                     contract_enabled = config.workspace_contract.enabled,
                     prepare_on_first_prompt = config.workspace_contract.prepare_on_first_prompt,
                     "已加载 local backend 配置"
@@ -114,6 +117,7 @@ pub fn save_local_backend_config_for_root(
     tracing::info!(
         path = %config_path.display(),
         mcp_server_count = config.mcp_servers.len(),
+        mcp_protect_mode = config.mcp_protect_mode,
         "已保存 local backend 配置"
     );
     Ok(())
@@ -131,6 +135,7 @@ mod tests {
     fn default_local_backend_config_is_disabled() {
         let config = LocalBackendConfigFile::default();
         assert!(config.mcp_servers.is_empty());
+        assert!(!config.mcp_protect_mode);
         assert!(!config.workspace_contract.enabled);
         assert!(!config.workspace_contract.prepare_on_first_prompt);
         assert!(!config.workspace_contract.git.enabled);
@@ -159,6 +164,7 @@ mod tests {
                     cwd: Some(temp.path().to_string_lossy().to_string()),
                 },
             }],
+            mcp_protect_mode: true,
             workspace_contract: WorkspaceContractRuntimeConfig {
                 enabled: true,
                 prepare_on_first_prompt: true,
@@ -176,6 +182,7 @@ mod tests {
 
         let loaded = load_local_backend_config_for_root(temp.path());
         assert_eq!(loaded.mcp_servers.len(), 1);
+        assert!(loaded.mcp_protect_mode);
         assert_eq!(loaded.mcp_servers[0].name, "filesystem");
         assert_eq!(loaded.mcp_servers[0].transport.transport_kind(), "stdio");
         match &loaded.mcp_servers[0].transport {

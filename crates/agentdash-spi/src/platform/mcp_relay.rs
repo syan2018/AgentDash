@@ -58,6 +58,7 @@ pub trait McpRelayProvider: Send + Sync {
     async fn list_relay_tools(
         &self,
         requested_servers: &[RuntimeMcpServerDeclaration],
+        context: Option<RelayMcpCallContext>,
     ) -> Vec<RelayMcpToolInfo>;
 
     /// 调用指定 MCP server 上的工具

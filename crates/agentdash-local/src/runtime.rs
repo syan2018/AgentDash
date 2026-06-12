@@ -406,7 +406,7 @@ pub async fn probe_mcp_server(server: McpLocalServerEntry) -> McpProbeResult {
         };
     }
 
-    let manager = McpClientManager::new(vec![server.clone()]);
+    let manager = McpClientManager::new(vec![server.clone()], true);
     let declaration = local_server_to_relay_declaration(&server);
     match manager.list_tools(&declaration).await {
         Ok(tools) => {
@@ -443,13 +443,10 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
     let local_backend_config =
         local_backend_config::load_local_backend_config(&config.workspace_roots);
 
-    let mcp_manager = if local_backend_config.mcp_servers.is_empty() {
-        None
-    } else {
-        Some(Arc::new(McpClientManager::new(
-            local_backend_config.mcp_servers.clone(),
-        )))
-    };
+    let mcp_manager = Some(Arc::new(McpClientManager::new(
+        local_backend_config.mcp_servers.clone(),
+        local_backend_config.mcp_protect_mode,
+    )));
 
     let (session_runtime, connector, session_db_runtime) = if config.executor_enabled {
         let sub_connectors: Vec<Arc<dyn AgentConnector>> =

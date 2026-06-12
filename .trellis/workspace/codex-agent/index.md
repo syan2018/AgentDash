@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
+- **Total Sessions**: 10
 - **Last Active**: 2026-06-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~326 | Active |
+| `journal-1.md` | ~365 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-06-12 | Hook runtime ownership 模型收敛 | `f0659dcd`, `e89c5758`, `e0839267`, `73998a0c`, `68e25761`, `2f2086f8`, `30263333` | `main` |
 | 9 | 2026-06-12 | AgentRun 会话重连与标题回归修复 | `6db97154` | `codex/agentrun-runtime-session-surface-convergence` |
 | 8 | 2026-06-12 | AgentRun 与 RuntimeSession 运行面收束 | `f3dadeef`, `bdf88bee`, `fc49bd78`, `7f926660`, `d76fca39` | `codex/agentrun-runtime-session-surface-convergence` |
 | 7 | 2026-06-12 | AgentRun MCP 运行时绑定 | `29fcefe5`, `c0f3ad72`, `9c8f11fa`, `53b541b4`, `8df8fae1`, `0de3adbb`, `1e26582a`, `a8efcbee`, `37fa68ee` | `codex/session-aware-mcp-runtime-binding` |

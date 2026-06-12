@@ -324,3 +324,42 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Hook runtime ownership 模型收敛
+
+**Date**: 2026-06-12
+**Task**: Hook runtime ownership 模型收敛
+**Branch**: `main`
+
+### Summary
+
+收敛 Hook runtime 到 AgentFrameRuntimeTarget / HookControlTarget target-first 模型，补齐 Canvas presentation 主动打开链路、current frame 回归测试、Architecture Cutover Gate 文档，并独立提交格式化与 lint 样式清理。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f0659dcd` | (see git log) |
+| `e89c5758` | (see git log) |
+| `e0839267` | (see git log) |
+| `73998a0c` | (see git log) |
+| `68e25761` | (see git log) |
+| `2f2086f8` | (see git log) |
+| `30263333` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

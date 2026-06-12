@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use agentdash_application::session::{SessionExecutionState, SessionMeta};
 use agentdash_application::workflow::{
+    AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
     AgentRunMessageCommand, AgentRunMessageLaunchDeliveryPort, AgentRunMessageService,
-    AgentRunSteeringCommand, AgentRunSteeringService, lifecycle_run_view_builder,
+    AgentRunSteeringCommand, AgentRunSteeringService, ConversationModelConfigInput,
+    ConversationModelConfigResolver, lifecycle_run_view_builder,
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageRequest,
@@ -546,10 +548,17 @@ async fn build_agent_run_workspace_view(
             Some(frame_id) => state.repos.agent_frame_repo.get(frame_id).await?,
             None => None,
         });
-    let frame_runtime = match frame {
+    let frame_ref = frame.as_ref().map(|frame| (frame.id, frame.revision));
+    let frame_execution_profile = frame
+        .as_ref()
+        .and_then(|frame| frame.typed_execution_profile());
+    let resource_surface = frame
+        .as_ref()
+        .and_then(|frame| frame.vfs_surface_json.clone());
+    let frame_runtime = match frame.as_ref() {
         Some(frame) => {
             let runtime_refs = runtime_refs_for_agent(state, context.agent.id).await?;
-            Some(agent_frame_runtime_to_view(&frame, runtime_refs))
+            Some(agent_frame_runtime_to_view(frame, runtime_refs))
         }
         None => None,
     };
@@ -703,13 +712,51 @@ async fn build_agent_run_workspace_view(
             .collect(),
         None => Vec::new(),
     };
+    let pause_reason = match runtime_session_id.as_deref() {
+        Some(session_id) => state.services.pending_queue.is_paused(session_id).await,
+        None => None,
+    };
     let pending_queue = match runtime_session_id.as_deref() {
-        Some(session_id) => pending_queue_state_view(
-            state.services.pending_queue.is_paused(session_id).await,
-            has_delivery_runtime && !terminal_agent,
-        ),
+        Some(_) => pending_queue_state_view(pause_reason, has_delivery_runtime && !terminal_agent),
         None => pending_queue_state_view(None, false),
     };
+    let project_agent_preset_config = match context.agent.project_agent_id {
+        Some(project_agent_id) => state
+            .repos
+            .project_agent_repo
+            .get_by_project_and_id(context.run.project_id, project_agent_id)
+            .await
+            .map_err(ApiError::from)?
+            .map(|project_agent| {
+                project_agent
+                    .preset_config()
+                    .map(|preset| preset.to_agent_config(&project_agent.agent_type))
+            })
+            .transpose()
+            .map_err(ApiError::from)?,
+        None => None,
+    };
+    let model_config = ConversationModelConfigResolver::resolve(ConversationModelConfigInput {
+        project_agent_preset: project_agent_preset_config.as_ref(),
+        frame_execution_profile: frame_execution_profile.as_ref(),
+        ..Default::default()
+    })
+    .view;
+    let conversation = AgentConversationSnapshotResolver::resolve(AgentConversationSnapshotInput {
+        project_id: context.run.project_id,
+        run_id: context.run.id,
+        agent_id: context.agent.id,
+        frame_ref,
+        delivery_runtime_session_id: runtime_session_id.clone(),
+        subject_associations: subject_associations.clone(),
+        execution_state: execution_state.clone(),
+        terminal_agent,
+        supports_steering,
+        pending_paused: pending_queue.paused,
+        pending_visible_message_count: pending_messages.len(),
+        resource_surface,
+        model_config,
+    });
     let shell_title = match meta.as_ref() {
         Some(meta) => {
             select_workspace_shell_title(WorkspaceShellTitleCandidate::DeliveryMeta(meta))
@@ -749,6 +796,7 @@ async fn build_agent_run_workspace_view(
         actions,
         pending_queue,
         pending_messages,
+        conversation: Some(conversation),
     })
 }
 
@@ -1418,6 +1466,7 @@ mod tests {
             },
             pending_queue: pending_queue_state_view(None, true),
             pending_messages: Vec::new(),
+            conversation: None,
         };
 
         let entry = agent_run_workspace_list_entry(&run, workspace);

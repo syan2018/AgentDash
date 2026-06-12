@@ -9,6 +9,7 @@ use serde::Serialize;
 #[derive(Debug)]
 pub enum ApiError {
     BadRequest(String),
+    BadRequestWithCode { message: String, error_code: String },
     Unauthorized(String),
     Forbidden(String),
     NotFound(String),
@@ -22,24 +23,31 @@ pub enum ApiError {
 struct ErrorResponse {
     error: String,
     code: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
-        let (status, message) = match self {
-            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
-            ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
-            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
-            ApiError::UnprocessableEntity(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg),
-            ApiError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
-            ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+        let (status, message, error_code) = match self {
+            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg, None),
+            ApiError::BadRequestWithCode {
+                message,
+                error_code,
+            } => (StatusCode::BAD_REQUEST, message, Some(error_code)),
+            ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg, None),
+            ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg, None),
+            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg, None),
+            ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg, None),
+            ApiError::UnprocessableEntity(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg, None),
+            ApiError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg, None),
+            ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg, None),
         };
 
         let body = Json(ErrorResponse {
             error: message,
             code: status.as_u16(),
+            error_code,
         });
 
         (status, body).into_response()
@@ -129,6 +137,12 @@ impl From<agentdash_application::workflow::WorkflowApplicationError> for ApiErro
         match err {
             agentdash_application::workflow::WorkflowApplicationError::BadRequest(message) => {
                 ApiError::BadRequest(message)
+            }
+            agentdash_application::workflow::WorkflowApplicationError::ModelRequired(message) => {
+                ApiError::BadRequestWithCode {
+                    message,
+                    error_code: "model_required".to_string(),
+                }
             }
             agentdash_application::workflow::WorkflowApplicationError::NotFound(message) => {
                 ApiError::NotFound(message)

@@ -814,6 +814,183 @@ pub struct AgentRunWorkspaceActionSetView {
     pub cancel: AgentRunWorkspaceActionAvailabilityView,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationExecutionStatus {
+    Draft,
+    ModelRequired,
+    Ready,
+    Running,
+    Cancelling,
+    Terminal,
+    FrameMissing,
+    DeliveryMissing,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationModelConfigStatus {
+    Resolved,
+    ModelRequired,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationModelConfigSource {
+    ProjectAgentPreset,
+    FrameExecutionProfile,
+    UserOverride,
+    ExecutorDiscoveryDefault,
+    Unspecified,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ConversationEffectiveExecutorConfigView {
+    pub executor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub thinking_level: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub permission_policy: Option<String>,
+    pub source: ConversationModelConfigSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ConversationModelConfigView {
+    pub status: ConversationModelConfigStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effective_executor_config: Option<ConversationEffectiveExecutorConfigView>,
+    #[serde(default)]
+    pub missing_fields: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationCommandKind {
+    StartDraft,
+    SendNext,
+    Enqueue,
+    Steer,
+    PromotePending,
+    ResumePendingQueue,
+    Cancel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ConversationCommandView {
+    pub kind: ConversationCommandKind,
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unavailable_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub shortcut: Option<String>,
+    pub requires_input: bool,
+    pub executor_config_policy: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ConversationCommandSetView {
+    #[serde(default)]
+    pub commands: Vec<ConversationCommandView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub primary: Option<ConversationCommandKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub secondary: Option<ConversationCommandKind>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ConversationExecutionView {
+    pub status: ConversationExecutionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_session_ref: Option<RuntimeSessionRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub active_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ConversationPendingSnapshotView {
+    pub visible_message_count: usize,
+    pub paused: bool,
+    pub user_attention: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct ConversationDiagnosticView {
+    pub code: String,
+    pub severity: ValidationSeverity,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub detail: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationIdentity {
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    pub project_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationLifecycleContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub frame_ref: Option<AgentFrameRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
+    #[serde(default)]
+    pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationSnapshot {
+    pub identity: AgentConversationIdentity,
+    pub lifecycle_context: AgentConversationLifecycleContext,
+    pub execution: ConversationExecutionView,
+    pub model_config: ConversationModelConfigView,
+    pub commands: ConversationCommandSetView,
+    pub pending: ConversationPendingSnapshotView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub resource_surface: Option<Value>,
+    #[serde(default)]
+    pub diagnostics: Vec<ConversationDiagnosticView>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingQueuePauseReasonDto {
@@ -887,6 +1064,9 @@ pub struct AgentRunWorkspaceView {
     pub pending_queue: PendingQueueStateView,
     #[serde(default)]
     pub pending_messages: Vec<PendingMessageView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub conversation: Option<AgentConversationSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1077,6 +1257,9 @@ pub struct AgentFrameRuntimeView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub execution_profile: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effective_executor_config: Option<ConversationEffectiveExecutorConfigView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

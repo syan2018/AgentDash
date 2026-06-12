@@ -10,9 +10,10 @@ use uuid::Uuid;
 use agentdash_application::workflow::lifecycle_run_view_builder::{
     self, SubjectExecutionView as SubjectExecutionReadModel,
 };
+use agentdash_application::workflow::{AgentFrameSurfaceExt, ConversationModelConfigResolver};
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentFrameRuntimeView, LifecycleRunView, ProjectActiveAgentsView,
-    RuntimeSessionRefDto, RuntimeSessionTraceView, SubjectExecutionView,
+    AgentFrameRefDto, AgentFrameRuntimeView, ConversationModelConfigSource, LifecycleRunView,
+    ProjectActiveAgentsView, RuntimeSessionRefDto, RuntimeSessionTraceView, SubjectExecutionView,
 };
 use agentdash_domain::workflow::{
     AgentFrame, LifecycleRun, RuntimeSessionExecutionAnchor, SubjectRef,
@@ -356,6 +357,12 @@ pub(crate) fn agent_frame_runtime_to_view(
         mcp_surface: frame.mcp_surface_json.clone().unwrap_or(Value::Null),
         runtime_session_refs,
         execution_profile: frame.execution_profile_json.clone(),
+        effective_executor_config: frame.typed_execution_profile().map(|config| {
+            ConversationModelConfigResolver::view_for_config(
+                &config,
+                ConversationModelConfigSource::FrameExecutionProfile,
+            )
+        }),
     }
 }
 

@@ -4,8 +4,8 @@ use agentdash_application::session::construction_planner::{
     ResolvedProjectAgentContext, build_project_agent_context,
 };
 use agentdash_application::workflow::{
-    AgentRunMessageLaunchDeliveryPort, ProjectAgentRunStartCommand, ProjectAgentRunStartRepos,
-    ProjectAgentRunStartService,
+    AgentRunMessageLaunchDeliveryPort, ConversationModelConfigResolver,
+    ProjectAgentRunStartCommand, ProjectAgentRunStartRepos, ProjectAgentRunStartService,
 };
 use agentdash_domain::{
     agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project, workflow::SubjectRef,
@@ -25,7 +25,7 @@ use agentdash_contracts::project_agent::{
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto,
-    LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
+    ConversationModelConfigSource, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
 };
 
 use crate::{
@@ -52,6 +52,7 @@ mod tests {
                 thinking_level: None,
                 permission_policy: Some("AUTO".to_string()),
             },
+            effective_executor_config: None,
             preset_name: Some("preset".to_string()),
             source: "project.config.default_agent_type".to_string(),
         })
@@ -290,6 +291,7 @@ pub async fn create_project_agent_run(
         .await
         .map_err(ApiError::Internal)?;
     let summary = build_project_agent_summary(&project, &agent_context);
+    let effective_executor_config = Some(dispatch.effective_executor_config.clone());
 
     Ok(Json(ProjectAgentRunStartResult {
         command_receipt: AgentRunCommandReceipt {
@@ -316,6 +318,7 @@ pub async fn create_project_agent_run(
             }),
             turn_id: Some(dispatch.turn_id.clone()),
         },
+        effective_executor_config,
         runtime_session_id: dispatch.runtime_session_id,
         turn_id: dispatch.turn_id,
         agent: summary,
@@ -357,6 +360,10 @@ fn build_project_agent_summary(
                 .map(thinking_level_response),
             permission_policy: agent.executor_config.permission_policy.clone(),
         },
+        effective_executor_config: Some(ConversationModelConfigResolver::view_for_config(
+            &agent.executor_config,
+            ConversationModelConfigSource::ProjectAgentPreset,
+        )),
         preset_name: agent.preset_name.clone(),
         source: agent.source.clone(),
     }

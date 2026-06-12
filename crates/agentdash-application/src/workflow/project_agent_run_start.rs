@@ -1,5 +1,8 @@
 use uuid::Uuid;
 
+use agentdash_contracts::workflow::{
+    ConversationEffectiveExecutorConfigView, ConversationModelConfigSource,
+};
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentRunDeliveryAcceptedRefs,
@@ -19,8 +22,8 @@ use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionMeta};
 use crate::workflow::{
     AgentRunCommandReceiptView, AgentRunMessageCommand, AgentRunMessageDeliveryPort,
-    AgentRunMessageService, LifecycleDispatchService, RuntimeSessionCreator,
-    WorkflowApplicationError,
+    AgentRunMessageService, ConversationModelConfigResolver, LifecycleDispatchService,
+    RuntimeSessionCreator, WorkflowApplicationError,
     command_receipt::{
         accepted_refs_from_record, claim_agent_run_command_receipt, digest_command_request,
         mark_command_terminal_failed,
@@ -40,6 +43,7 @@ pub struct ProjectAgentRunStartCommand {
 #[derive(Debug, Clone)]
 pub struct ProjectAgentRunStartDispatch {
     pub project_agent: ProjectAgent,
+    pub effective_executor_config: ConversationEffectiveExecutorConfigView,
     pub runtime_session_id: String,
     pub turn_id: String,
     pub run_id: Uuid,
@@ -136,7 +140,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
 
     pub async fn start_run<D>(
         &self,
-        command: ProjectAgentRunStartCommand,
+        mut command: ProjectAgentRunStartCommand,
         delivery: D,
     ) -> Result<ProjectAgentRunStartDispatch, WorkflowApplicationError>
     where
@@ -164,6 +168,22 @@ impl<'a> ProjectAgentRunStartService<'a> {
                     command.project_agent_id
                 ))
             })?;
+
+        let model_resolution = ConversationModelConfigResolver::resolve_project_agent_start(
+            &project_agent,
+            command.executor_config.as_ref(),
+        )?;
+        let effective_executor_config = model_resolution
+            .view
+            .effective_executor_config
+            .clone()
+            .unwrap_or_else(|| {
+                ConversationModelConfigResolver::view_for_config(
+                    &model_resolution.config,
+                    ConversationModelConfigSource::ProjectAgentPreset,
+                )
+            });
+        command.executor_config = Some(model_resolution.config.clone());
 
         let subject_ref = command
             .subject_ref
@@ -197,6 +217,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 project_agent,
                 Some(subject_ref),
                 accepted_refs,
+                effective_executor_config,
                 AgentRunCommandReceiptView::from_record(&claim.record, true),
             ));
         }
@@ -333,6 +354,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
 
         Ok(ProjectAgentRunStartDispatch {
             project_agent,
+            effective_executor_config,
             runtime_session_id,
             turn_id: message_dispatch.turn_id,
             run_id: message_dispatch.run_id,
@@ -394,10 +416,12 @@ fn project_agent_start_dispatch_from_accepted_refs(
     project_agent: ProjectAgent,
     subject_ref: Option<SubjectRef>,
     refs: AgentRunDeliveryAcceptedRefs,
+    effective_executor_config: ConversationEffectiveExecutorConfigView,
     command_receipt: AgentRunCommandReceiptView,
 ) -> ProjectAgentRunStartDispatch {
     ProjectAgentRunStartDispatch {
         project_agent,
+        effective_executor_config,
         runtime_session_id: refs.runtime_session_id.unwrap_or_default(),
         turn_id: refs.turn_id.unwrap_or_default(),
         run_id: refs.run_id,
@@ -449,7 +473,7 @@ mod tests {
         LifecycleSubjectAssociation, RuntimeSessionExecutionAnchor, WorkflowGraph,
     };
     use std::collections::HashMap;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
     struct ProjectAgentRepo {
@@ -973,10 +997,34 @@ mod tests {
         }
     }
 
+    struct CapturingDelivery {
+        captured: Arc<Mutex<Option<AgentConfig>>>,
+    }
+
+    #[async_trait]
+    impl AgentRunMessageDeliveryPort for CapturingDelivery {
+        async fn deliver_user_message(
+            &self,
+            delivery: crate::workflow::AgentRunMessageDelivery,
+        ) -> Result<String, WorkflowApplicationError> {
+            *self.captured.lock().unwrap() = delivery.executor_config;
+            Ok("turn-1".to_string())
+        }
+    }
+
+    fn runnable_project_agent(project_id: Uuid) -> ProjectAgent {
+        let mut project_agent = ProjectAgent::new(project_id, "agent", "PI_AGENT");
+        project_agent.config = serde_json::json!({
+            "provider_id": "openai",
+            "model_id": "gpt-5",
+        });
+        project_agent
+    }
+
     #[tokio::test]
     async fn duplicate_start_command_reuses_accepted_run_without_materializing_again() {
         let project_id = Uuid::new_v4();
-        let project_agent = ProjectAgent::new(project_id, "agent", "PI_AGENT");
+        let project_agent = runnable_project_agent(project_id);
         let project_agent_repo = ProjectAgentRepo {
             agent: Mutex::new(Some(project_agent.clone())),
         };
@@ -1039,7 +1087,7 @@ mod tests {
     #[tokio::test]
     async fn delivery_failure_before_events_cleans_empty_runtime_and_run() {
         let project_id = Uuid::new_v4();
-        let project_agent = ProjectAgent::new(project_id, "agent", "PI_AGENT");
+        let project_agent = runnable_project_agent(project_id);
         let project_agent_repo = ProjectAgentRepo {
             agent: Mutex::new(Some(project_agent.clone())),
         };
@@ -1089,6 +1137,135 @@ mod tests {
         assert!(matches!(error, WorkflowApplicationError::Internal(_)));
         assert!(runtime_creator.metas.lock().unwrap().is_empty());
         assert!(run_repo.items.lock().unwrap().is_empty());
+        assert!(anchor_repo.items.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn draft_start_delivery_receives_resolved_executor_provider_and_model() {
+        let project_id = Uuid::new_v4();
+        let project_agent = runnable_project_agent(project_id);
+        let project_agent_repo = ProjectAgentRepo {
+            agent: Mutex::new(Some(project_agent.clone())),
+        };
+        let run_repo = RunRepo::default();
+        let workflow_graph_repo = WorkflowGraphRepo;
+        let agent_repo = AgentRepo::default();
+        let frame_repo = FrameRepo::default();
+        let association_repo = AssociationRepo::default();
+        let gate_repo = GateRepo;
+        let lineage_repo = LineageRepo;
+        let anchor_repo = AnchorRepo::default();
+        let command_receipt_repo = MemoryAgentRunDeliveryCommandReceiptRepository::default();
+        let runtime_creator = RuntimeCreator::default();
+        let service = ProjectAgentRunStartService::new(
+            ProjectAgentRunStartRepos {
+                project_agent_repo: &project_agent_repo,
+                lifecycle_run_repo: &run_repo,
+                workflow_graph_repo: &workflow_graph_repo,
+                lifecycle_agent_repo: &agent_repo,
+                agent_frame_repo: &frame_repo,
+                lifecycle_subject_association_repo: &association_repo,
+                lifecycle_gate_repo: &gate_repo,
+                agent_lineage_repo: &lineage_repo,
+                execution_anchor_repo: &anchor_repo,
+                command_receipt_repo: &command_receipt_repo,
+                runtime_session_creator: &runtime_creator,
+            },
+            &runtime_creator,
+        );
+        let captured = Arc::new(Mutex::new(None));
+
+        let dispatch = service
+            .start_run(
+                ProjectAgentRunStartCommand {
+                    project_id,
+                    project_agent_id: project_agent.id,
+                    input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                    client_command_id: "cmd-start-1".to_string(),
+                    executor_config: Some(AgentConfig::new("PI_AGENT")),
+                    subject_ref: None,
+                    identity: None,
+                },
+                CapturingDelivery {
+                    captured: captured.clone(),
+                },
+            )
+            .await
+            .expect("resolved draft start");
+
+        let config = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("delivery executor config");
+        assert_eq!(config.executor, "PI_AGENT");
+        assert_eq!(config.provider_id.as_deref(), Some("openai"));
+        assert_eq!(config.model_id.as_deref(), Some("gpt-5"));
+        assert_eq!(
+            dispatch.effective_executor_config.provider_id.as_deref(),
+            Some("openai")
+        );
+        assert_eq!(
+            dispatch.effective_executor_config.model_id.as_deref(),
+            Some("gpt-5")
+        );
+    }
+
+    #[tokio::test]
+    async fn model_required_stops_before_materializing_runtime() {
+        let project_id = Uuid::new_v4();
+        let project_agent = ProjectAgent::new(project_id, "agent", "PI_AGENT");
+        let project_agent_repo = ProjectAgentRepo {
+            agent: Mutex::new(Some(project_agent.clone())),
+        };
+        let run_repo = RunRepo::default();
+        let workflow_graph_repo = WorkflowGraphRepo;
+        let agent_repo = AgentRepo::default();
+        let frame_repo = FrameRepo::default();
+        let association_repo = AssociationRepo::default();
+        let gate_repo = GateRepo;
+        let lineage_repo = LineageRepo;
+        let anchor_repo = AnchorRepo::default();
+        let command_receipt_repo = MemoryAgentRunDeliveryCommandReceiptRepository::default();
+        let runtime_creator = RuntimeCreator::default();
+        let service = ProjectAgentRunStartService::new(
+            ProjectAgentRunStartRepos {
+                project_agent_repo: &project_agent_repo,
+                lifecycle_run_repo: &run_repo,
+                workflow_graph_repo: &workflow_graph_repo,
+                lifecycle_agent_repo: &agent_repo,
+                agent_frame_repo: &frame_repo,
+                lifecycle_subject_association_repo: &association_repo,
+                lifecycle_gate_repo: &gate_repo,
+                agent_lineage_repo: &lineage_repo,
+                execution_anchor_repo: &anchor_repo,
+                command_receipt_repo: &command_receipt_repo,
+                runtime_session_creator: &runtime_creator,
+            },
+            &runtime_creator,
+        );
+
+        let error = service
+            .start_run(
+                ProjectAgentRunStartCommand {
+                    project_id,
+                    project_agent_id: project_agent.id,
+                    input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                    client_command_id: "cmd-start-1".to_string(),
+                    executor_config: None,
+                    subject_ref: None,
+                    identity: None,
+                },
+                SuccessfulDelivery,
+            )
+            .await
+            .expect_err("missing model should stop start");
+
+        assert!(matches!(error, WorkflowApplicationError::ModelRequired(_)));
+        assert!(run_repo.items.lock().unwrap().is_empty());
+        assert!(agent_repo.items.lock().unwrap().is_empty());
+        assert!(frame_repo.items.lock().unwrap().is_empty());
+        assert!(runtime_creator.metas.lock().unwrap().is_empty());
         assert!(anchor_repo.items.lock().unwrap().is_empty());
     }
 }

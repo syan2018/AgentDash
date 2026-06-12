@@ -3,7 +3,7 @@
 
 import type { JsonValue } from "./common-contracts";
 import type { UserInput } from "./backbone-protocol";
-import type { AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto } from "./project-agent-contracts";
+import type { AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto, ConversationEffectiveExecutorConfigView, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto } from "./project-agent-contracts";
 import type { InstalledAssetSourceDto } from "./shared-library-contracts";
 
 export type ActiveRuntimeNodeRefDto = { run_id: string, orchestration_id: string, node_path: string, attempt: number, status: string, };
@@ -24,7 +24,13 @@ export type ActivityTransitionKind = "flow" | "artifact";
 
 export type AgentActivityExecutorSpec = { procedure_key: string, agent_reuse_policy: AgentReusePolicy, runtime_session_policy: RuntimeSessionPolicy, };
 
-export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, };
+export type AgentConversationIdentity = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, };
+
+export type AgentConversationLifecycleContext = { frame_ref?: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_associations: Array<LifecycleSubjectAssociationDto>, };
+
+export type AgentConversationSnapshot = { identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, pending: ConversationPendingSnapshotView, resource_surface?: JsonValue, diagnostics: Array<ConversationDiagnosticView>, };
+
+export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, effective_executor_config?: ConversationEffectiveExecutorConfigView, };
 
 export type AgentProcedureContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, capability_config: CapabilityConfig, output_ports: Array<OutputPortDefinition>, input_ports: Array<InputPortDefinition>, };
 
@@ -68,7 +74,7 @@ export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<
 
 export type AgentRunWorkspaceShell = { display_title: string, title_source: string, workspace_status: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
 
-export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: AgentRunWorkspaceActionSetView, pending_queue: PendingQueueStateView, pending_messages: Array<PendingMessageView>, };
+export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: AgentRunWorkspaceActionSetView, pending_queue: PendingQueueStateView, pending_messages: Array<PendingMessageView>, conversation?: AgentConversationSnapshot, };
 
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
 
@@ -81,6 +87,24 @@ export type BashExecExecutorSpec = { command: string, args?: Array<string>, work
 export type CapabilityConfig = { tool_directives: Array<ToolCapabilityDirective>, mount_directives: Array<unknown>, };
 
 export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
+
+export type ConversationCommandKind = "start_draft" | "send_next" | "enqueue" | "steer" | "promote_pending" | "resume_pending_queue" | "cancel";
+
+export type ConversationCommandSetView = { commands: Array<ConversationCommandView>, primary?: ConversationCommandKind, secondary?: ConversationCommandKind, };
+
+export type ConversationCommandView = { kind: ConversationCommandKind, enabled: boolean, unavailable_reason?: string, shortcut?: string, requires_input: boolean, executor_config_policy: string, };
+
+export type ConversationDiagnosticView = { code: string, severity: ValidationSeverity, message: string, detail?: JsonValue, };
+
+export type ConversationExecutionStatus = "draft" | "model_required" | "ready" | "running" | "cancelling" | "terminal" | "frame_missing" | "delivery_missing";
+
+export type ConversationExecutionView = { status: ConversationExecutionStatus, runtime_session_ref?: RuntimeSessionRefDto, active_turn_id?: string, reason?: string, };
+
+export type ConversationModelConfigStatus = "resolved" | "model_required";
+
+export type ConversationModelConfigView = { status: ConversationModelConfigStatus, effective_executor_config?: ConversationEffectiveExecutorConfigView, missing_fields: Array<string>, message?: string, };
+
+export type ConversationPendingSnapshotView = { visible_message_count: number, paused: boolean, user_attention: boolean, };
 
 export type DefinitionSource = "builtin_seed" | "user_authored" | "cloned";
 

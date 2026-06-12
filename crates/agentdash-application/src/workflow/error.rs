@@ -6,6 +6,8 @@ pub enum WorkflowApplicationError {
     #[error("{0}")]
     BadRequest(String),
     #[error("{0}")]
+    ModelRequired(String),
+    #[error("{0}")]
     NotFound(String),
     #[error("{0}")]
     Conflict(String),

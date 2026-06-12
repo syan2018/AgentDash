@@ -28,6 +28,8 @@ interface UseAgentRunWorkspaceStateInput {
   sourceKey: string | null;
 }
 
+type AgentRunWorkspaceLoadMode = "replace" | "refresh";
+
 export function emptyAgentRunWorkspaceState(): AgentRunWorkspaceProjectionState {
   return {
     run_id: null,
@@ -57,6 +59,57 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "AgentRun workspace state 加载失败";
 }
 
+export function beginAgentRunWorkspaceStateLoad(
+  current: AgentRunWorkspaceProjectionState,
+  runId: string,
+  agentId: string,
+  sourceKey: string,
+  mode: AgentRunWorkspaceLoadMode,
+): AgentRunWorkspaceProjectionState {
+  if (mode === "refresh" && stateMatches(current, runId, agentId, sourceKey)) {
+    return {
+      ...current,
+      status: current.frame ? "refreshing" : "loading",
+      error: null,
+      runtime_surface_error: null,
+    };
+  }
+
+  return {
+    ...emptyAgentRunWorkspaceState(),
+    run_id: runId,
+    agent_id: agentId,
+    source_key: sourceKey,
+    status: "loading",
+  };
+}
+
+export function failAgentRunWorkspaceStateLoad(
+  current: AgentRunWorkspaceProjectionState,
+  runId: string,
+  agentId: string,
+  sourceKey: string,
+  mode: AgentRunWorkspaceLoadMode,
+  message: string,
+): AgentRunWorkspaceProjectionState {
+  if (mode === "refresh" && stateMatches(current, runId, agentId, sourceKey)) {
+    return {
+      ...current,
+      status: "error",
+      error: message,
+    };
+  }
+
+  return {
+    ...emptyAgentRunWorkspaceState(),
+    run_id: runId,
+    agent_id: agentId,
+    source_key: sourceKey,
+    status: "error",
+    error: message,
+  };
+}
+
 export function useAgentRunWorkspaceState({
   runId,
   agentId,
@@ -71,16 +124,11 @@ export function useAgentRunWorkspaceState({
     aid: string,
     skey: string,
     canCommit: () => boolean = () => true,
+    mode: AgentRunWorkspaceLoadMode = "replace",
   ) => {
     await Promise.resolve();
     if (!canCommit()) return;
-    setState({
-      ...emptyAgentRunWorkspaceState(),
-      run_id: rid,
-      agent_id: aid,
-      source_key: skey,
-      status: "loading",
-    });
+    setState((current) => beginAgentRunWorkspaceStateLoad(current, rid, aid, skey, mode));
 
     try {
       const workspace = await fetchAgentRunWorkspace(rid, aid);
@@ -119,14 +167,8 @@ export function useAgentRunWorkspaceState({
       });
     } catch (error: unknown) {
       if (!canCommit()) return;
-      setState({
-        ...emptyAgentRunWorkspaceState(),
-        run_id: rid,
-        agent_id: aid,
-        source_key: skey,
-        status: "error",
-        error: errorMessage(error),
-      });
+      const message = errorMessage(error);
+      setState((current) => failAgentRunWorkspaceStateLoad(current, rid, aid, skey, mode, message));
     }
   }, [setAgent, setFrame]);
 
@@ -144,13 +186,7 @@ export function useAgentRunWorkspaceState({
 
   const refreshWorkspaceState = useCallback(async () => {
     if (!runId || !agentId || !sourceKey) return;
-    setState((current) => ({
-      ...current,
-      status: current.frame ? "refreshing" : "loading",
-      error: null,
-      runtime_surface_error: null,
-    }));
-    await loadWorkspaceState(runId, agentId, sourceKey);
+    await loadWorkspaceState(runId, agentId, sourceKey, () => true, "refresh");
   }, [agentId, loadWorkspaceState, runId, sourceKey]);
 
   const activeState = useMemo(() => {
@@ -166,4 +202,3 @@ export function useAgentRunWorkspaceState({
     refreshHookRuntime: refreshWorkspaceState,
   };
 }
-

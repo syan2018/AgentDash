@@ -291,3 +291,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: AgentRun 会话重连与标题回归修复
+
+**Date**: 2026-06-12
+**Task**: AgentRun 会话重连与标题回归修复
+**Branch**: `codex/agentrun-runtime-session-surface-convergence`
+
+### Summary
+
+修复 AgentRun workspace refresh 清空 runtime identity 导致 SessionChatView 反复重连的问题，并让 delivery-backed workspace shell 标题承接 RuntimeSession SessionMeta title/source。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6db97154` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

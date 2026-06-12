@@ -2,18 +2,23 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
+use async_trait::async_trait;
 
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::{
-    SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
-    SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
-    SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService, SessionTitleService,
+    PendingMessage, PendingQueueService, SessionBranchingService, SessionCapabilityService,
+    SessionControlService, SessionCoreService, SessionEffectsService, SessionEventingService,
+    SessionHookService, SessionLaunchService, SessionPersistence, SessionRuntimeBuilder,
+    SessionRuntimeService, SessionTerminalCallback, SessionTitleService,
 };
 use agentdash_application::vfs::VfsService;
 use agentdash_application::vfs::tools::provider::{
     SessionToolServices, SharedSessionToolServicesHandle,
+};
+use agentdash_application::workflow::{
+    AgentRunMessageCommand, AgentRunMessageLaunchDeliveryPort, AgentRunMessageService,
 };
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
@@ -27,6 +32,7 @@ use crate::relay::registry::BackendRegistry;
 pub(crate) struct SessionBootstrapInput {
     pub repos: RepositorySet,
     pub session_persistence: Arc<dyn SessionPersistence>,
+    pub pending_queue: PendingQueueService,
     pub backend_registry: Arc<BackendRegistry>,
     pub vfs_service: Arc<VfsService>,
     pub session_services_handle: SharedSessionToolServicesHandle,
@@ -64,6 +70,7 @@ pub(crate) async fn build_session_runtime(
     let SessionBootstrapInput {
         repos,
         session_persistence,
+        pending_queue,
         backend_registry,
         vfs_service,
         session_services_handle,
@@ -158,11 +165,18 @@ pub(crate) async fn build_session_runtime(
     let session_title = session_runtime_builder.title_service();
 
     let orchestrator = Arc::new(
-        agentdash_application::workflow::LifecycleOrchestrator::new(repos)
+        agentdash_application::workflow::LifecycleOrchestrator::new(repos.clone())
             .with_function_runner(function_runner),
     );
+    let pending_drainer = Arc::new(AgentRunPendingDrainer {
+        repos: repos.clone(),
+        pending_queue: pending_queue.clone(),
+        session_launch: session_launch.clone(),
+    });
     session_runtime_builder
-        .set_terminal_callback(orchestrator)
+        .set_terminal_callback(Arc::new(CompositeSessionTerminalCallback {
+            callbacks: vec![orchestrator, pending_drainer],
+        }))
         .await;
 
     session_services_handle
@@ -193,6 +207,91 @@ pub(crate) async fn build_session_runtime(
         extra_skill_dirs,
         skill_discovery_providers,
     })
+}
+
+struct CompositeSessionTerminalCallback {
+    callbacks: Vec<Arc<dyn SessionTerminalCallback>>,
+}
+
+#[async_trait]
+impl SessionTerminalCallback for CompositeSessionTerminalCallback {
+    async fn on_session_terminal(&self, session_id: &str, terminal_state: &str) {
+        for callback in &self.callbacks {
+            callback
+                .on_session_terminal(session_id, terminal_state)
+                .await;
+        }
+    }
+}
+
+struct AgentRunPendingDrainer {
+    repos: RepositorySet,
+    pending_queue: PendingQueueService,
+    session_launch: SessionLaunchService,
+}
+
+#[async_trait]
+impl SessionTerminalCallback for AgentRunPendingDrainer {
+    async fn on_session_terminal(&self, session_id: &str, terminal_state: &str) {
+        match terminal_state {
+            "completed" => self.dispatch_next_pending(session_id).await,
+            "failed" => {
+                self.pending_queue
+                    .pause(
+                        session_id,
+                        agentdash_application::session::QueuePauseReason::TurnFailed,
+                    )
+                    .await;
+            }
+            "interrupted" => {
+                self.pending_queue
+                    .pause(
+                        session_id,
+                        agentdash_application::session::QueuePauseReason::TurnInterrupted,
+                    )
+                    .await;
+            }
+            _ => {}
+        }
+    }
+}
+
+impl AgentRunPendingDrainer {
+    async fn dispatch_next_pending(&self, session_id: &str) {
+        let Some(message) = self.pending_queue.dequeue_front(session_id).await else {
+            return;
+        };
+        let delivery = AgentRunMessageLaunchDeliveryPort::new(self.session_launch.clone());
+        let service = AgentRunMessageService::new(
+            self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.lifecycle_agent_repo.as_ref(),
+            self.repos.agent_frame_repo.as_ref(),
+            self.repos.execution_anchor_repo.as_ref(),
+            self.repos.agent_run_delivery_command_receipt_repo.as_ref(),
+            delivery,
+        );
+        let message_id = message.id.clone();
+        let command = pending_message_command(session_id, message.clone());
+        if let Err(error) = service.dispatch_user_message(command).await {
+            self.pending_queue.requeue_front(session_id, message).await;
+            tracing::warn!(
+                runtime_session_id = %session_id,
+                pending_message_id = %message_id,
+                error = %error,
+                "AgentRun pending message 自动派发失败，已放回队首"
+            );
+        }
+    }
+}
+
+fn pending_message_command(session_id: &str, message: PendingMessage) -> AgentRunMessageCommand {
+    AgentRunMessageCommand {
+        delivery_runtime_session_id: session_id.to_string(),
+        input: message.input,
+        client_command_id: format!("pending:{}:{}", message.id, uuid::Uuid::new_v4()),
+        executor_config: message.executor_config,
+        identity: None,
+    }
 }
 
 struct PiAgentConnectorDeps {

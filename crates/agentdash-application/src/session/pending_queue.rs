@@ -141,6 +141,16 @@ impl PendingQueueService {
         }
     }
 
+    /// 将消息放回队首，用于自动派发失败后的无损恢复。
+    pub async fn requeue_front(&self, runtime_session_id: &str, message: PendingMessage) {
+        let mut queues = self.queues.write().await;
+        queues
+            .entry(runtime_session_id.to_string())
+            .or_default()
+            .messages
+            .insert(0, message);
+    }
+
     /// 取出指定消息用于 promote-to-steer
     pub async fn take(&self, runtime_session_id: &str, message_id: &str) -> Option<PendingMessage> {
         let mut queues = self.queues.write().await;
@@ -232,6 +242,26 @@ mod tests {
                 .any(|b| matches!(b, UserInputBlock::Text { text, .. } if text == "first"))
         );
         assert_eq!(svc.len("s1").await, 1);
+    }
+
+    #[tokio::test]
+    async fn requeue_front_restores_message_order() {
+        let svc = PendingQueueService::new();
+        svc.enqueue("s1", text_user_input_blocks("first"), None)
+            .await;
+        svc.enqueue("s1", text_user_input_blocks("second"), None)
+            .await;
+        let first = svc.dequeue_front("s1").await.unwrap();
+
+        svc.requeue_front("s1", first).await;
+
+        let restored = svc.dequeue_front("s1").await.unwrap();
+        assert!(
+            restored
+                .input
+                .iter()
+                .any(|b| matches!(b, UserInputBlock::Text { text, .. } if text == "first"))
+        );
     }
 
     #[tokio::test]

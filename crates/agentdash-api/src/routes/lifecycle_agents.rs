@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_application::session::SessionMeta;
+use agentdash_application::session::{SessionExecutionState, SessionMeta};
 use agentdash_application::workflow::{
     AgentRunMessageCommand, AgentRunMessageLaunchDeliveryPort, AgentRunMessageService,
     AgentRunSteeringCommand, AgentRunSteeringService, lifecycle_run_view_builder,
@@ -183,6 +183,12 @@ pub async fn send_agent_run_message(
             context.run.id, context.agent.id
         ))
     })?;
+    if is_terminal_agent_status(&context.agent.status) {
+        return Err(ApiError::Conflict(
+            "当前 AgentRun 已结束，不能继续发送消息。".to_string(),
+        ));
+    }
+    ensure_send_next_allowed(state.as_ref(), &runtime_session_id).await?;
     dispatch_message_for_runtime(state, current_user, runtime_session_id, req).await
 }
 
@@ -269,6 +275,7 @@ async fn enqueue_agent_run_pending_message(
             context.run.id, context.agent.id
         ))
     })?;
+    ensure_pending_enqueue_allowed(state.as_ref(), &runtime_session_id).await?;
     let executor_config = body
         .executor_config
         .map(serde_json::from_value::<AgentConfig>)
@@ -953,6 +960,7 @@ async fn promote_pending_message_for_runtime(
     runtime_session_id: String,
     message_id: String,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_pending_promote_allowed(state.as_ref(), &runtime_session_id).await?;
     let msg = state
         .services
         .pending_queue
@@ -969,13 +977,23 @@ async fn promote_pending_message_for_runtime(
         state.services.session_control.clone(),
         state.services.session_eventing.clone(),
     );
-    let dispatch = service
+    let dispatch_result = service
         .steer(AgentRunSteeringCommand {
             delivery_runtime_session_id: runtime_session_id.clone(),
-            input: msg.input,
+            input: msg.input.clone(),
         })
-        .await
-        .map_err(ApiError::from)?;
+        .await;
+    let dispatch = match dispatch_result {
+        Ok(dispatch) => dispatch,
+        Err(error) => {
+            state
+                .services
+                .pending_queue
+                .requeue_front(&runtime_session_id, msg)
+                .await;
+            return Err(ApiError::from(error));
+        }
+    };
 
     Ok(Json(serde_json::json!({
         "promoted": true,
@@ -1034,6 +1052,114 @@ fn runtime_command_state_dto(
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("无效的 {field}: {raw}")))
+}
+
+async fn ensure_pending_enqueue_allowed(
+    state: &AppState,
+    runtime_session_id: &str,
+) -> Result<(), ApiError> {
+    let execution_state = state
+        .services
+        .session_core
+        .inspect_session_execution_state(runtime_session_id)
+        .await?;
+    if matches!(execution_state, SessionExecutionState::Running { .. }) {
+        return Ok(());
+    }
+
+    Err(ApiError::Conflict(pending_enqueue_unavailable_reason(
+        &execution_state,
+    )))
+}
+
+async fn ensure_send_next_allowed(
+    state: &AppState,
+    runtime_session_id: &str,
+) -> Result<(), ApiError> {
+    let execution_state = state
+        .services
+        .session_core
+        .inspect_session_execution_state(runtime_session_id)
+        .await?;
+    match execution_state {
+        SessionExecutionState::Running { .. } => Err(ApiError::Conflict(
+            "当前 AgentRun 正在执行中，不能并发发送下一轮消息。".to_string(),
+        )),
+        SessionExecutionState::Cancelling { .. } => Err(ApiError::Conflict(
+            "当前 AgentRun 正在取消中，等待执行器收口后再发送下一轮消息。".to_string(),
+        )),
+        SessionExecutionState::Idle
+        | SessionExecutionState::Completed { .. }
+        | SessionExecutionState::Failed { .. }
+        | SessionExecutionState::Interrupted { .. } => Ok(()),
+    }
+}
+
+async fn ensure_pending_promote_allowed(
+    state: &AppState,
+    runtime_session_id: &str,
+) -> Result<(), ApiError> {
+    let execution_state = state
+        .services
+        .session_core
+        .inspect_session_execution_state(runtime_session_id)
+        .await?;
+    match execution_state {
+        SessionExecutionState::Running { turn_id: Some(_) } => Ok(()),
+        SessionExecutionState::Running { turn_id: None } => Err(ApiError::Conflict(
+            "当前 AgentRun 正在执行但缺少 active turn，不能投递 pending 消息。".to_string(),
+        )),
+        _ => Err(ApiError::Conflict(pending_promote_unavailable_reason(
+            &execution_state,
+        ))),
+    }
+}
+
+fn pending_enqueue_unavailable_reason(execution_state: &SessionExecutionState) -> String {
+    match execution_state {
+        SessionExecutionState::Idle => {
+            "当前 AgentRun 未在执行中，请直接发送下一轮消息。".to_string()
+        }
+        SessionExecutionState::Cancelling { .. } => {
+            "当前 AgentRun 正在取消中，不能排队新消息。".to_string()
+        }
+        SessionExecutionState::Completed { .. } => {
+            "当前 AgentRun 上一轮已完成，请直接发送下一轮消息。".to_string()
+        }
+        SessionExecutionState::Failed { .. } => {
+            "当前 AgentRun 上一轮已失败，请直接发送下一轮消息。".to_string()
+        }
+        SessionExecutionState::Interrupted { .. } => {
+            "当前 AgentRun 上一轮已中断，请直接发送下一轮消息。".to_string()
+        }
+        SessionExecutionState::Running { .. } => "当前 AgentRun 可以排队新消息。".to_string(),
+    }
+}
+
+fn pending_promote_unavailable_reason(execution_state: &SessionExecutionState) -> String {
+    match execution_state {
+        SessionExecutionState::Idle => {
+            "当前 AgentRun 未在执行中，不能投递 pending 消息。".to_string()
+        }
+        SessionExecutionState::Cancelling { .. } => {
+            "当前 AgentRun 正在取消中，不能投递 pending 消息。".to_string()
+        }
+        SessionExecutionState::Completed { .. } => {
+            "当前 AgentRun 上一轮已完成，不能投递 pending 消息。".to_string()
+        }
+        SessionExecutionState::Failed { .. } => {
+            "当前 AgentRun 上一轮已失败，不能投递 pending 消息。".to_string()
+        }
+        SessionExecutionState::Interrupted { .. } => {
+            "当前 AgentRun 上一轮已中断，不能投递 pending 消息。".to_string()
+        }
+        SessionExecutionState::Running { turn_id: None } => {
+            "当前 AgentRun 正在执行但缺少 active turn，不能投递 pending 消息。".to_string()
+        }
+        SessionExecutionState::Running { turn_id: Some(_) } => {
+            "当前 AgentRun 可以投递 pending 消息。".to_string()
+        }
+    }
 }
 
 fn serialized_string<T: serde::Serialize>(value: &T) -> String {
@@ -1182,5 +1308,32 @@ mod tests {
 
         assert_eq!(entry.shell.display_title, "Session meta title");
         assert_eq!(entry.shell.title_source, "source");
+    }
+
+    #[test]
+    fn pending_enqueue_completed_state_points_to_send_next() {
+        let reason = pending_enqueue_unavailable_reason(&SessionExecutionState::Completed {
+            turn_id: "t-completed".to_string(),
+        });
+
+        assert_eq!(reason, "当前 AgentRun 上一轮已完成，请直接发送下一轮消息。");
+    }
+
+    #[test]
+    fn pending_enqueue_idle_state_points_to_send_next() {
+        let reason = pending_enqueue_unavailable_reason(&SessionExecutionState::Idle);
+
+        assert_eq!(reason, "当前 AgentRun 未在执行中，请直接发送下一轮消息。");
+    }
+
+    #[test]
+    fn pending_promote_running_without_turn_is_rejected_before_dequeue() {
+        let reason =
+            pending_promote_unavailable_reason(&SessionExecutionState::Running { turn_id: None });
+
+        assert_eq!(
+            reason,
+            "当前 AgentRun 正在执行但缺少 active turn，不能投递 pending 消息。"
+        );
     }
 }

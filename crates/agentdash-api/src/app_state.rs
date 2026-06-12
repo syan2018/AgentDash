@@ -197,11 +197,13 @@ impl AppState {
             Some(mcp_relay_provider.clone()),
         ));
         let runtime_gateway_handle = vfs_bootstrap.runtime_gateway_handle;
+        let pending_queue = PendingQueueService::new();
 
         let session_bootstrap = crate::bootstrap::session::build_session_runtime(
             crate::bootstrap::session::SessionBootstrapInput {
                 repos: repos.clone(),
                 session_persistence: session_persistence.clone(),
+                pending_queue: pending_queue.clone(),
                 backend_registry: backend_registry.clone(),
                 vfs_service: vfs_service.clone(),
                 session_services_handle,
@@ -317,7 +319,7 @@ impl AppState {
                 session_capability,
                 session_effects,
                 session_title,
-                pending_queue: PendingQueueService::new(),
+                pending_queue,
                 connector,
                 vfs_service,
                 vfs_mutation_dispatcher,

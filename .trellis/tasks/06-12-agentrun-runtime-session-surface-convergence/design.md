@@ -117,6 +117,30 @@ flowchart TD
 | `RuntimeSessionExecutionAnchor` | runtime trace 到 AgentRun/Frame 的 backlink | 支持从 trace 反查 control-plane context。 |
 | `RuntimeGateway` | runtime action provider 编排 | action 可按 AgentRun 或 RuntimeSession 入口分流，但事实读取应回到目标 surface。 |
 
+## Phase 5 Cleanup Decision
+
+Phase 5 后，生产 frame construction 的 surface handoff 以 `FrameSurfaceDraft` 为准。
+`AssemblyLaunchExtras` 不再保留与 draft 并列的 `mcp_servers` / `vfs` / `capability_state`
+字段，原因是这些值已经包含在 `frame_surface_draft` 中，重复携带会让 launch path 重新出现
+多个事实入口。
+
+`CapabilityState.tool.mcp_servers` 暂时保留，但角色降级为 capability/draft projection。它仍
+服务三类当前路径：
+
+- capability resolver 和 `mcp:<server>` directive 需要把 MCP declaration 与 tool policy 放在同一个运行态能力闭包中。
+- runtime command replay 需要从 `SetMcpServerSetEffect` 折叠出最终 capability projection。
+- active turn / runtime gateway tool assembly 需要读取 capability policy 与 MCP declaration 的同轮快照。
+
+`SessionConstructionPlan.projections.mcp_servers` / `capability_state` 暂时保留在
+`RuntimeContextInspectionPlan` 测试/inspection 形态中，但进入 launch 前必须通过
+`frame_surface_draft` 合并。它们不是 AgentRun executable surface truth，也不是生产
+FrameLaunchEnvelope 的并列输入。
+
+Session persistence 不需要 schema 变化。现有 store 边界已经表达 runtime trace、event、
+delivery command outbox、terminal effect、model-context projection checkpoint 和 runtime trace
+lineage；这些结构不保存 AgentRun 当前 surface truth。当前 surface truth 继续落在 AgentFrame
+revision。
+
 ## MCP Model
 
 MCP 不是单独的最终目标，但它是最清楚暴露层级问题的切口。

@@ -97,6 +97,11 @@ Resolver 在 agent baseline（auto_granted）上应用 reduction：
 - `FullCapability` / `ToolWhitelist` → 加入 effective_caps
 - `ToolWhitelist` 与工具级 Remove 编译到 `CapabilityState.tool_policy`
 
+`CapabilityState.tool.mcp_servers` 保留为 MCP 维度的 capability/draft projection。它承接
+`mcp:<server>` directive 解析、runtime command replay 和工具装配快照，并必须与
+`FrameSurfaceDraft.mcp_servers` 同源；AgentRun 当前可执行 MCP surface 的事实源是
+AgentFrame revision 的 MCP surface。
+
 ## 运行态工具策略
 
 运行态唯一工具级策略字段是 `CapabilityState.tool_policy`。

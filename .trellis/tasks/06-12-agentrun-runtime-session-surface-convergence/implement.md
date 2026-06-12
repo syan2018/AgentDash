@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Phase 0 evidence refresh 已完成，Phase 1 MCP declaration naming convergence 已实现并进入检查收口。Phase 2 FrameSurfaceDraft handoff 已完成。Phase 3 runtime launch surface 读取已完成。Phase 4 AgentRun Workspace API/UI model 已完成；后续仍需按阶段推进持久化长期结构清理。
+Phase 0 evidence refresh 已完成，Phase 1 MCP declaration naming convergence 已实现并进入检查收口。Phase 2 FrameSurfaceDraft handoff 已完成。Phase 3 runtime launch surface 读取已完成。Phase 4 AgentRun Workspace API/UI model 已完成。Phase 5 persistence and long-term state cleanup 已完成最终收束；建议进入最终检查阶段。
 
 ## Phase 0: Evidence Refresh
 
@@ -121,18 +121,55 @@ RuntimeSession trace，但主控制状态由 AgentRun workspace command projecti
 
 ## Phase 5: Persistence And Long-Term State Cleanup
 
+Status: completed. 生产 frame construction 不再通过 `AssemblyLaunchExtras` 携带与
+`FrameSurfaceDraft` 并列的 `mcp_servers` / `vfs` / `capability_state` surface 字段。
+`CapabilityState.tool.mcp_servers` 保留为 capability/draft projection；
+`SessionConstructionPlan.projections` 的旧字段保留为测试/inspection 输入，进入 launch 前必须
+合并到 `frame_surface_draft`。Session persistence 审核结果为 no migration needed。
+
 目标：完成事实源迁移后的长期结构整理。
 
-- [ ] 评估 `CapabilityState.tool.mcp_servers` 是否继续作为 draft 中间结构，或从长期 state 中移除。
-- [ ] 评估 `SessionConstructionPlan.projections` 是否被 `FrameSurfaceDraft` 完全取代。
-- [ ] 审核 session persistence 中 runtime command、event、projection、lineage 的边界。
-- [ ] 如 schema 需要调整，编写 migration 并更新 migration guard。
+- [x] 评估 `CapabilityState.tool.mcp_servers` 是否继续作为 draft 中间结构，或从长期 state 中移除。
+- [x] 评估 `SessionConstructionPlan.projections` 是否被 `FrameSurfaceDraft` 完全取代。
+- [x] 审核 session persistence 中 runtime command、event、projection、lineage 的边界。
+- [x] 如 schema 需要调整，编写 migration 并更新 migration guard。
+
+清理/保留决策：
+
+- 已清理：`AssemblyLaunchExtras` 移除 `mcp_servers` / `vfs` / `capability_state`，生产
+  `build_envelope_from_frame` 只从 `frame_surface_draft` 合并 surface。
+- 已清理：测试 helper 的旧 projection 到 draft 合并逻辑集中到
+  `RuntimeContextInspectionPlan::surface_draft_or_fixture_projection`。
+- 有意保留：`CapabilityState.tool.mcp_servers` 仍服务 `mcp:<server>` directive、runtime
+  command replay、tool policy 关联、active turn / runtime gateway tool assembly；它是
+  capability/draft projection，不是 AgentRun 当前 executable surface truth。
+- 有意保留：`RuntimeContextInspectionPlan.projections.mcp_servers` /
+  `capability_state` 仍服务旧测试和 inspection fixture；它们进入 launch 前必须合并为
+  `FrameSurfaceDraft`。
+- 有意保留：session persistence 的 event、runtime command、terminal effect、
+  projection、lineage store；它们表达 runtime trace / delivery outbox / checkpoint /
+  trace lineage，不承载 AgentRun 当前 surface truth。
+- No migration needed：本阶段没有数据库 schema 改动。
 
 验证重点：
 
 - 长期事实源指向 AgentFrame revision。
 - RuntimeSession persistence 聚焦 trace / event / command / terminal effect / lineage。
 - migration guard 通过。
+
+本阶段验证：
+
+- [x] `cargo check -p agentdash-application`
+- [x] `cargo test -p agentdash-application session::launch`
+- [x] `cargo test -p agentdash-application session::hub`
+- [x] `cargo test -p agentdash-application runtime_gateway`
+- [x] `cargo test -p agentdash-application capability`
+- [x] `cargo test -p agentdash-application mcp_preset`
+- [x] `cargo test -p agentdash-application mcp`
+- [x] `cargo test -p agentdash-executor mcp`
+- [x] `cargo test -p agentdash-local relay_mcp_servers`
+- [x] `pnpm run migration:guard`
+- [x] `git diff --check`
 
 ## Cross-Phase Validation
 

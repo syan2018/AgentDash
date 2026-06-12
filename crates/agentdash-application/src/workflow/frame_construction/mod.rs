@@ -341,14 +341,10 @@ pub(crate) fn build_envelope_from_frame(
         if let Some(bundle) = extras.context_bundle {
             context_bundle = Some(bundle);
         }
-        if let Some(cs) = surface_draft
-            .capability_state
-            .clone()
-            .or(extras.capability_state)
-        {
+        if let Some(cs) = surface_draft.capability_state.clone() {
             capability_state = Some(cs);
         }
-        if let Some(v) = surface_draft.vfs.clone().or(extras.vfs) {
+        if let Some(v) = surface_draft.vfs.clone() {
             let override_wd = v
                 .default_mount()
                 .map(|m| PathBuf::from(m.root_ref.trim()))
@@ -359,8 +355,6 @@ pub(crate) fn build_envelope_from_frame(
         }
         if !surface_draft.mcp_servers.is_empty() {
             mcp_servers = surface_draft.mcp_servers.clone();
-        } else if !extras.mcp_servers.is_empty() {
-            mcp_servers = extras.mcp_servers;
         }
     }
 

@@ -61,7 +61,7 @@ impl ResolvedSessionOwner {
     }
 }
 use crate::vfs::ResolvedVfsSurface;
-use crate::workflow::frame_surface::FrameSurfaceDraft;
+use crate::workflow::frame_surface::{FrameContextBundleSummary, FrameSurfaceDraft};
 
 /// 测试 fixture：launch envelope 测试所需的完整投影形态。
 #[derive(Debug, Clone)]
@@ -138,8 +138,11 @@ pub struct ConstructionEffectPlan {
 
 #[derive(Debug, Clone, Default)]
 pub struct ConstructionProjections {
+    /// Construction 到 AgentFrame / FrameLaunchEnvelope 的唯一 surface handoff。
     pub frame_surface_draft: Option<FrameSurfaceDraft>,
+    /// 过渡 fixture 字段：仅用于旧测试/inspection 构造 draft，不作为 launch 事实源。
     pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
+    /// 过渡 fixture 字段：仅用于旧测试/inspection 构造 draft，不作为长期 state。
     pub capability_state: Option<CapabilityState>,
     pub session_capabilities: Option<SessionBaselineCapabilities>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
@@ -282,6 +285,42 @@ impl RuntimeContextInspectionPlan {
         } else if let Some(vfs) = self.surface.vfs.clone() {
             self.context_projection.vfs = Some(vfs);
         }
+    }
+
+    pub fn surface_draft_or_fixture_projection(
+        &self,
+        capability_state: &CapabilityState,
+        vfs: &Vfs,
+        executor_config: &AgentConfig,
+    ) -> FrameSurfaceDraft {
+        let mut surface_draft = self
+            .projections
+            .frame_surface_draft
+            .clone()
+            .unwrap_or_else(|| FrameSurfaceDraft {
+                capability_state: Some(capability_state.clone()),
+                vfs: Some(vfs.clone()),
+                mcp_servers: self.projections.mcp_servers.clone(),
+                context_bundle_summary: self
+                    .context
+                    .bundle
+                    .as_ref()
+                    .map(FrameContextBundleSummary::from_bundle),
+                execution_profile: Some(executor_config.clone()),
+            });
+        if surface_draft.capability_state.is_none() {
+            surface_draft.capability_state = Some(capability_state.clone());
+        }
+        if surface_draft.vfs.is_none() {
+            surface_draft.vfs = Some(vfs.clone());
+        }
+        if surface_draft.execution_profile.is_none() {
+            surface_draft.execution_profile = Some(executor_config.clone());
+        }
+        if surface_draft.mcp_servers.is_empty() && !self.projections.mcp_servers.is_empty() {
+            surface_draft.mcp_servers = self.projections.mcp_servers.clone();
+        }
+        surface_draft
     }
 }
 

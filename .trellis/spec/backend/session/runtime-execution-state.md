@@ -270,6 +270,8 @@ Outbox 状态为 `pending / running / succeeded / failed / dead-letter`。effect
 | `SessionEventStore` | append/read/list session events |
 | `SessionTerminalEffectStore` | terminal effect outbox 写入、状态迁移和查询 |
 | `SessionRuntimeCommandStore` | runtime delivery command request upsert、requested 查询、applied/failed 状态迁移 |
+| `SessionProjectionStore` | 模型上下文等 runtime projection head/segment 的 checkpoint，不表达 AgentRun 当前 surface |
+| `SessionLineageStore` | runtime trace fork/rollback lineage，不替代 AgentLineage 或 subject/control tree |
 
 `SessionPersistence` 可以作为装配层组合接口存在；runtime、effects、pending 的业务逻辑
 依赖对应 store 边界。

@@ -233,7 +233,7 @@ impl ToolCapabilityFilter {
     }
 }
 
-/// 工具 + MCP 维度的运行态。
+/// 工具 + MCP 维度的运行态投影。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolDimension {
     /// 最终生效的能力全集（well-known + custom MCP）。
@@ -242,7 +242,10 @@ pub struct ToolDimension {
     pub enabled_clusters: BTreeSet<ToolCluster>,
     /// 运行态唯一工具级过滤表；key 是 capability key，value 是该 capability 下的工具策略。
     pub tool_policy: BTreeMap<String, ToolCapabilityFilter>,
-    /// 平台 + 自定义 MCP server 完整列表。
+    /// MCP declaration 的 capability/draft 投影。
+    ///
+    /// AgentRun 当前可执行 MCP surface 的权威来源是 AgentFrame revision；
+    /// 此列表服务 capability replay、tool policy 关联和 runtime 工具装配快照。
     pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
 }
 

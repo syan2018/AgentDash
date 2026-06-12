@@ -414,9 +414,6 @@ pub(super) fn project_assembly_to_frame(
         context_bundle: prepared.context_bundle,
         input: prepared.input,
         executor_config: prepared.executor_config,
-        mcp_servers: prepared.mcp_servers,
-        vfs: prepared.vfs,
-        capability_state: prepared.capability_state,
         environment_variables: prepared.env,
         workspace_defaults: prepared.workspace_defaults,
     };
@@ -427,16 +424,12 @@ pub(super) fn project_assembly_to_frame(
 /// `project_assembly_to_frame` 的 frame surface draft 与 launch-only 输出。
 ///
 /// `frame_surface_draft` 写入 AgentFrame revision 并传递给 FrameLaunchEnvelope；
-/// `mcp_servers` / `vfs` / `capability_state` 保留为过渡输出并应从 draft 派生；
 /// 其余字段只服务 prompt、env、context bundle 等 launch pipeline 投影。
 pub struct AssemblyLaunchExtras {
     pub frame_surface_draft: FrameSurfaceDraft,
     pub context_bundle: Option<SessionContextBundle>,
     pub input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
     pub executor_config: Option<AgentConfig>,
-    pub mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
-    pub vfs: Option<Vfs>,
-    pub capability_state: Option<CapabilityState>,
     pub environment_variables: HashMap<String, String>,
     pub workspace_defaults: Option<Workspace>,
 }

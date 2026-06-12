@@ -326,7 +326,6 @@ mod tests {
     use crate::session::types::{
         RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, UserPromptInput,
     };
-    use crate::workflow::frame_surface::{FrameContextBundleSummary, FrameSurfaceDraft};
     use crate::workflow::runtime_launch::{
         FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
     };
@@ -431,44 +430,24 @@ mod tests {
         let executor_config = construction
             .execution_profile
             .executor_config
+            .clone()
             .unwrap_or_else(|| AgentConfig::new("test"));
         let capability_state = construction
             .projections
             .capability_state
+            .clone()
             .unwrap_or_default();
-        let vfs = construction.surface.vfs.unwrap_or_default();
+        let vfs = construction.surface.vfs.clone().unwrap_or_default();
         let working_directory = construction
             .workspace
             .working_directory
-            .unwrap_or_else(|| PathBuf::from("/tmp"));
-        let projection_mcp_servers = construction.projections.mcp_servers.clone();
-        let mut surface_draft = construction
-            .projections
-            .frame_surface_draft
             .clone()
-            .unwrap_or_else(|| FrameSurfaceDraft {
-                capability_state: Some(capability_state.clone()),
-                vfs: Some(vfs.clone()),
-                mcp_servers: projection_mcp_servers.clone(),
-                context_bundle_summary: construction
-                    .context
-                    .bundle
-                    .as_ref()
-                    .map(FrameContextBundleSummary::from_bundle),
-                execution_profile: Some(executor_config.clone()),
-            });
-        if surface_draft.capability_state.is_none() {
-            surface_draft.capability_state = Some(capability_state.clone());
-        }
-        if surface_draft.vfs.is_none() {
-            surface_draft.vfs = Some(vfs.clone());
-        }
-        if surface_draft.execution_profile.is_none() {
-            surface_draft.execution_profile = Some(executor_config.clone());
-        }
-        if surface_draft.mcp_servers.is_empty() && !projection_mcp_servers.is_empty() {
-            surface_draft.mcp_servers = projection_mcp_servers;
-        }
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        let surface_draft = construction.surface_draft_or_fixture_projection(
+            &capability_state,
+            &vfs,
+            &executor_config,
+        );
         let mut envelope = FrameLaunchEnvelope {
             surface: FrameRuntimeSurface {
                 agent_id: uuid::Uuid::new_v4(),

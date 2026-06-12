@@ -76,7 +76,7 @@ pub fn project_capability_state_from_frame(frame: &AgentFrame) -> CapabilityStat
 /// 这是 `project_capability_state_from_frame` 的逆操作：
 /// - `effective_capability_json`: 完整 `CapabilityState` 序列化
 /// - `vfs_surface_json`: `state.vfs.active` 单独提取
-/// - `mcp_surface_json`: `state.tool.mcp_servers` 单独提取
+/// - `mcp_surface_json`: 从 capability/draft 投影中提取本次 MCP executable surface
 pub fn capability_state_to_frame_surfaces(state: &CapabilityState) -> FrameCapabilitySurfaces {
     FrameCapabilitySurfaces {
         effective_capability_json: serde_json::to_value(state).ok(),

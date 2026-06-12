@@ -120,12 +120,15 @@ use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse, AgentRunAcceptedRefs,
     AgentRunCommandReceipt, AgentRunMessageRequest, AgentRunMessageResponse, AgentRunRefDto,
-    AgentRunSteeringRequest, AgentRunSteeringResponse, AgentRunView, AgentRunWorkspaceListEntry,
-    AgentRunWorkspaceListView, AgentRunWorkspaceShell, AgentRunWorkspaceView, DefinitionSource,
-    DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
-    EffectiveSessionContract, EnqueuePendingMessageRequest, EnqueuePendingMessageResponse,
-    HookPresetResponse, HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto,
-    LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
+    AgentRunSteeringRequest, AgentRunSteeringResponse, AgentRunView,
+    AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
+    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
+    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
+    AgentRunWorkspaceView, DefinitionSource, DeleteAgentProcedureResponse,
+    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
+    EnqueuePendingMessageRequest, EnqueuePendingMessageResponse, HookPresetResponse,
+    HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
+    LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
     OrchestrationInstanceView, PendingMessageView, PreflightWorkflowScriptRequest,
     PreflightWorkflowScriptResponse, ProjectActiveAgentsView, RegisterHookPresetResponse,
     RuntimeNodeView, RuntimeSessionCommandStateDto, RuntimeSessionExecutionAnchorDto,
@@ -418,6 +421,10 @@ fn main() {
             export_all::<AgentFrameRuntimeView>(dir);
             export_all::<RuntimeSessionTraceMeta>(dir);
             export_all::<AgentRunWorkspaceShell>(dir);
+            export_all::<AgentRunWorkspaceControlPlaneStatus>(dir);
+            export_all::<AgentRunWorkspaceControlPlaneView>(dir);
+            export_all::<AgentRunWorkspaceActionAvailabilityView>(dir);
+            export_all::<AgentRunWorkspaceActionSetView>(dir);
             export_all::<AgentRunWorkspaceView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);

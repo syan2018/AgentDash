@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Phase 0 evidence refresh 已完成，Phase 1 MCP declaration naming convergence 已实现并进入检查收口。Phase 2 FrameSurfaceDraft handoff 已完成。Phase 3 runtime launch surface 读取已完成；后续仍需按阶段推进 AgentRun workspace API/UI 与持久化清理。
+Phase 0 evidence refresh 已完成，Phase 1 MCP declaration naming convergence 已实现并进入检查收口。Phase 2 FrameSurfaceDraft handoff 已完成。Phase 3 runtime launch surface 读取已完成。Phase 4 AgentRun Workspace API/UI model 已完成；后续仍需按阶段推进持久化长期结构清理。
 
 ## Phase 0: Evidence Refresh
 
@@ -93,12 +93,25 @@ Status: completed. Runtime launch planner、turn preparation、tool assembly 与
 
 ## Phase 4: AgentRun Workspace API And UI Model
 
+Status: completed. `AgentRunWorkspaceView.control_plane` / `actions` 已切换为 AgentRun workspace
+命名的 DTO；`SessionRuntimeControl*` 保留给 `/sessions/{id}/runtime-control` 与 RuntimeSession
+detail 边界。Workspace 仍展示 `delivery_runtime_ref` / `delivery_trace_meta` 并允许复制或下钻
+RuntimeSession trace，但主控制状态由 AgentRun workspace command projection 表达。
+
 目标：用户侧工作台表达 AgentRun command/control，而 runtime session 作为详情和 trace 信息呈现。
 
-- [ ] 引入或调整 `AgentRunWorkspaceControlPlaneView` / `AgentRunWorkspaceActionSetView`。
-- [ ] 让 AgentRun workspace 页面以 AgentRun command model 为主。
-- [ ] 将 RuntimeSession ID、trace meta、delivery status 放在详情或运行证据区域。
-- [ ] 评估 `SessionChatView` 复用边界，必要时抽出 AgentRun chat/control facade。
+- [x] 引入或调整 `AgentRunWorkspaceControlPlaneView` / `AgentRunWorkspaceActionSetView`。
+- [x] 让 AgentRun workspace 页面以 AgentRun command model 为主。
+- [x] 将 RuntimeSession ID、trace meta、delivery status 放在详情或运行证据区域。
+- [x] 评估 `SessionChatView` 复用边界，必要时抽出 AgentRun chat/control facade。
+
+已落地契约：
+
+- `AgentRunWorkspaceControlPlaneStatus` 使用 `ready | running | terminal | frame_missing | delivery_missing` 表达工作台状态。
+- `AgentRunWorkspaceActionAvailabilityView` / `AgentRunWorkspaceActionSetView` 表达 `send_next`、`enqueue`、`steer`、`cancel` 的 AgentRun command 可用性。
+- AgentRun workspace route 从 run / agent identity 构建 workspace projection；缺少 delivery runtime 时返回 `delivery_missing` 并禁用投递动作。
+- `/sessions/{id}/runtime-control` 继续返回 `SessionRuntimeControlView`、`SessionRuntimeControlPlaneView` 与 `SessionRuntimeActionSetView`，用于 runtime trace/detail 入口。
+- 前端 `AgentRunWorkspacePage` 从 generated `AgentRunWorkspaceView` 消费新 control/action 类型，并继续把 `delivery_trace_meta` 投影给 WorkspacePanel / trace link / RuntimeSession ID 复制。
 
 验证重点：
 

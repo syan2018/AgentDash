@@ -127,14 +127,25 @@ trace head；分层后，trace 恢复、事件流展示、workspace action enabl
 
 用户可见执行工作台的 shell 与 action set 由 `AgentRunWorkspaceView` 表达。
 `AgentRunWorkspaceShell` 承载 display title、title source、workspace/list status、last activity
-和 last visible turn；`actions.send_next`、`actions.steer`、`actions.cancel` 分别描述下一轮
-prompt、运行中用户 steer、运行中取消这三个命令是否可执行。
+和 last visible turn；`AgentRunWorkspaceControlPlaneView` 与
+`AgentRunWorkspaceActionSetView` 承载工作台可执行状态。`actions.send_next`、
+`actions.enqueue`、`actions.steer`、`actions.cancel` 分别描述下一轮 prompt、运行中排队、
+运行中用户 steer、运行中取消这些 AgentRun command 是否可执行。
 
 这些 action 来自 LifecycleAgent、AgentFrame、active turn、command receipt、delivery summary
 和 connector live session 能力的联合投影，原因是 lifecycle 控制面、frame runtime、当前 turn、
 用户命令回执与 connector live session 是不同事实源。`RuntimeSessionTraceMeta` 可以作为
 `AgentRunWorkspaceView.delivery_trace_meta` 被引用，用于展示 trace ref、event seq、executor
 continuation 和 terminal summary；它不决定 workspace title、list entry、status 或按钮 enablement。
+`delivery_runtime_ref` 仍可出现在 workspace view 中，原因是 AgentRun command 需要一个实际
+delivery runtime 通道完成投递，而用户也需要能从工作台下钻到 runtime trace/detail。
+
+`SessionRuntimeControlPlaneView`、`SessionRuntimeActionSetView` 与
+`SessionRuntimeControlView` 保留给 `/sessions/{id}/runtime-control` 和 RuntimeSession detail
+入口。该入口从 runtime trace identity 出发，经 `RuntimeSessionExecutionAnchor` 反查 run /
+agent / frame；AgentRun workspace 入口则从 run / agent identity 出发，返回
+`AgentRunWorkspaceControlPlaneView` / `AgentRunWorkspaceActionSetView`，原因是用户侧工作台的
+主模型应表达 AgentRun command/control，而不是 runtime trace control。
 
 AgentRun delivery/control command 使用 AgentRun Workspace public identity：
 
@@ -189,6 +200,10 @@ POST   /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}/prom
 
 - `workspace` response: `AgentRunWorkspaceView`，包含 `shell`、`actions`、frame/runtime refs
   和可选 `delivery_trace_meta: RuntimeSessionTraceMeta`。
+- `workspace.control_plane` 使用 `AgentRunWorkspaceControlPlaneView`，status 表达
+  `ready | running | terminal | frame_missing | delivery_missing`。
+- `workspace.actions` 使用 `AgentRunWorkspaceActionSetView`，action availability 表达
+  AgentRun workspace command 的可执行性。
 - `messages` request: `AgentRunMessageRequest`，包含 non-empty `input`、`client_command_id`
   与可选 `executor_config`。
 - `messages` response: `AgentRunMessageResponse`，返回 command receipt、runtime session ref、

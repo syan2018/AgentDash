@@ -2,241 +2,281 @@
 
 ## Architecture Goal
 
-目标是建立一条明确的 AgentRun launch lifecycle：
+目标不是继续给 `start_draft`、`send_next`、`enqueue`、`steer`、pending queue、resource browser 各自补判断，而是建立一套 AgentRun conversation control model：
 
-1. 启动入口声明 owner 和 source intent。
-2. 后端生成统一 launch plan。
-3. dispatch 只 materialize control-plane evidence。
-4. frame construction 按 launch plan 选择 composer 并写 runtime surface。
-5. session launch 负责 connector delivery 和 turn commit。
-6. AgentRun workspace projection 把 launch/control state 投影给前端。
-7. 前端只消费 workspace contract 驱动 draft、send、enqueue、steer、cancel 和 retry。
+1. 后端用同一个 resolver 读取 run / agent / frame / runtime session / active turn / pending queue / model config / resource surface。
+2. resolver 生成一份 `AgentConversationSnapshot`。
+3. 前端只渲染 snapshot，不再本地解释业务状态。
+4. 每次提交都带明确 `ConversationCommandIntent`，并由后端用 snapshot precondition 校验。
+5. 模型配置和 resource surface 都是 snapshot 的一等字段。
 
 ## Current State
 
 ```mermaid
 flowchart TD
-  FE_Draft["AgentRunWorkspacePage draft start"] --> API_Start["POST /projects/{project}/agents/{agent}/agent-runs"]
-  API_Start --> StartSvc["ProjectAgentRunStartService"]
-  StartSvc --> ReceiptStart["claim project_agent_start receipt"]
-  StartSvc --> Dispatch["LifecycleDispatchService.launch_agent"]
-  Dispatch --> RunAgent["LifecycleRun + LifecycleAgent"]
-  Dispatch --> LaunchFrame["AgentFrame launch evidence"]
-  Dispatch --> Runtime["RuntimeSession"]
-  Dispatch --> Anchor{"RuntimeSessionExecutionAnchor"}
-  Anchor --> PlainAnchor["graphless dispatch anchor"]
-  Anchor --> OrchAnchor["orchestration dispatch anchor"]
-  StartSvc --> BindProjectAgent["bind LifecycleAgent.project_agent_id"]
-  BindProjectAgent --> MessageSvc["AgentRunMessageService.dispatch_user_message"]
-  MessageSvc --> SessionLaunch["SessionLaunchService.launch_command"]
-  SessionLaunch --> FrameConstruction["FrameConstructionService.construct_launch_envelope"]
-  FrameConstruction --> Classify{"classify composer"}
-  Classify --> CompanionComposer["companion composer"]
-  Classify --> ProjectComposer["ProjectAgent owner composer"]
-  Classify --> LifecycleComposer["lifecycle node composer"]
-  Classify --> ExistingSurface["existing frame surface"]
-  ProjectComposer --> PendingFrame["pending runtime surface AgentFrame"]
-  LifecycleComposer --> PendingFrame
-  CompanionComposer --> PendingFrame
-  ExistingSurface --> Envelope["FrameLaunchEnvelope"]
-  PendingFrame --> Envelope
-  Envelope --> Connector["connector start / follow-up"]
-  Connector --> TurnCommit["turn commit + session events"]
-  TurnCommit --> WorkspaceAPI["GET /agent-runs/{run}/agents/{agent}/workspace"]
-  WorkspaceAPI --> WorkspaceView["AgentRunWorkspaceView: shell/actions/frame/runtime"]
-  WorkspaceView --> FE_Runtime["AgentRunWorkspacePage runtime controls"]
+  DraftRoute["/agent-runs/new"] --> AgentPage["AgentRunWorkspacePage"]
+  AgentPage --> ExecHydrate["SessionChatView local executor hydrate"]
+  ExecHydrate --> LocalStorage["localStorage executor config"]
+  ExecHydrate --> AgentDefaults["ProjectAgent executor defaults"]
+  ExecHydrate --> FrameProfile["frame execution_profile"]
+  ExecHydrate --> Hint["executor hint"]
+  ExecHydrate --> Discovery["discovered options default_model"]
+  Discovery -. "not authoritative write-back" .-> ExecConfig["executorConfig sent by UI"]
+  AgentDefaults -. "may arrive async" .-> ExecConfig
+  LocalStorage --> ExecConfig
+
+  ExecConfig --> StartReq["POST /projects/{project}/agents/{agent}/agent-runs"]
+  StartReq --> StartSvc["ProjectAgentRunStartService"]
+  StartSvc --> Dispatch["LifecycleDispatchService materializes run/agent/frame/session"]
+  Dispatch --> Bind["bind LifecycleAgent.project_agent_id"]
+  Bind --> MessageSvc["AgentRunMessageService initial message"]
+  MessageSvc --> FrameConstruction["FrameConstructionService"]
+  FrameConstruction --> Merge["merge_user_executor_config"]
+  Merge --> Connector["connector delivery"]
+  Merge -. "executor-only user config can replace preset provider/model" .-> MissingModel["missing model/provider failure"]
+  MissingModel --> Toast["UI shows create ProjectAgent AgentRun failed / send error"]
+
+  RunRoute["/agent-runs/:runId/:agentId"] --> WorkspaceFetch["GET AgentRunWorkspaceView"]
+  WorkspaceFetch --> Actions["actions send_next/enqueue/steer/cancel"]
+  WorkspaceFetch --> Control["control_plane status"]
+  WorkspaceFetch --> PendingQueue["pending_queue paused"]
+  WorkspaceFetch --> FrameRuntime["frame_runtime"]
+  WorkspaceFetch --> DeliveryRef["delivery_runtime_ref"]
+
+  AgentPage --> ChatControl["deriveAgentRunWorkspaceChatControlState"]
+  Control --> ChatControl
+  Actions --> ChatControl
+  ChatControl --> Composer["SessionChatView composer"]
+  Composer --> Keydown["Enter/Ctrl+Enter local keydown"]
+  Keydown -->|primaryAction enqueue + secondary steer| SteerReq["POST /steering with last_turn_id"]
+  Keydown -->|primary action| SendOrEnqueue["POST /messages or /pending-messages"]
+
+  SteerReq --> ExpectedTurn["API expected_turn_id check"]
+  ExpectedTurn --> Mismatch["expected_turn_id mismatch when snapshot/key state stale"]
+  SendOrEnqueue --> PendingConflict["pending enqueue conflict when session completed/idle"]
+
+  PendingQueue --> PendingBanner["PendingMessageList displays paused even with no messages"]
+
+  DeliveryRef --> ResolveSessionSurface["resolveVfsSurface(session_runtime)"]
+  FrameRuntime -. "stored but not resource source" .-> WorkspacePanel["workspace panel/resource browser"]
+  ResolveSessionSurface --> WorkspacePanel
+  FrameConstruction --> LifecycleMount["lifecycle mount in AgentFrame vfs_surface_json"]
+  LifecycleMount -. "not guaranteed visible through frontend path" .-> WorkspacePanel
 ```
 
-### Current Coupling Points
+### Current Entry Inventory
 
-| Coupling | Current shape | Consequence |
-| --- | --- | --- |
-| owner/source intent | 分散在 `ExecutionSource`、`LifecycleAgent.project_agent_id`、`LaunchCommand.source`、anchor shape | composer 需要从多个事实猜启动意图 |
-| dispatch evidence vs runtime surface | launch frame 已独立为 evidence revision | 需要统一 contract 保证后续 surface composer 一定接手 |
-| active workflow | graph-backed anchor 和 active workflow projection 都存在 | ProjectAgent owner surface 与 lifecycle mount 需要明确组合方式 |
-| workspace readiness | workspace API 通过 runtime/session/frame/action 现场聚合 | 前端拿到的是状态结果，但后端缺少 launch 阶段可观测状态 |
-| tests | ProjectAgent start tests 使用 fake delivery | 真实 frame construction path 覆盖不足 |
+| Entry | Current backend path | Current frontend path | Primary risk |
+| --- | --- | --- | --- |
+| ProjectAgent draft start | `project_agents.rs -> ProjectAgentRunStartService -> AgentRunMessageService` | `AgentRunWorkspacePage -> createProjectAgentRun` | executor-only config drops preset model/provider |
+| Send next | `lifecycle_agents.rs /messages -> ensure_send_next_allowed` | primary action `send_next` | readiness split across workspace status and execution state |
+| Enqueue | `/pending-messages -> ensure_pending_enqueue_allowed` | primary action `enqueue` when running | stale running state tries enqueue after completed/idle |
+| Steer | `/steering -> expected_turn_id -> AgentRunSteeringService` | Ctrl/Cmd+Enter secondary action | stale turn id or idle state becomes steer |
+| Promote pending | `/pending-messages/{id}/promote` | pending row action | depends on running active turn |
+| Resume pending | `/pending-messages/resume` | pending queue banner action | pause visible even without visible pending work |
+| Cancel | `/cancel` | cancel action | cancelling and terminal cleanup not part of one command state machine |
+| Workspace resources | `session_runtime -> AgentFrame vfs` resolver | `resolveVfsSurface(session_runtime)` | AgentRun workspace and panel consume different resource facts |
 
 ## Target State
 
 ```mermaid
 flowchart TD
-  subgraph Entry["Launch Entries"]
-    E1["ProjectAgent draft start"]
-    E2["AgentRun send_next"]
-    E3["Workflow AgentCall"]
-    E4["Routine dispatch"]
-    E5["Companion child"]
-    E6["Hook auto-resume / pending drain"]
+  subgraph Facts["Control Facts"]
+    Run["LifecycleRun"]
+    Agent["LifecycleAgent"]
+    Frame["current AgentFrame"]
+    Anchor["RuntimeSessionExecutionAnchor"]
+    Runtime["RuntimeSession execution state"]
+    Turn["active turn / last terminal turn"]
+    Pending["PendingQueue state + visible messages"]
+    ProjectAgent["ProjectAgent preset"]
+    Discovery["Executor discovery"]
   end
 
-  Entry --> PlanBuilder["AgentLaunchPlanBuilder"]
-  PlanBuilder --> Plan["AgentLaunchPlan"]
+  Facts --> Resolver["AgentConversationSnapshotResolver"]
 
-  Plan --> Owner["owner_kind: project_agent | workflow_node | routine | companion | existing"]
-  Plan --> Delivery["delivery: create | attach | continue"]
-  Plan --> Surface["surface_kind: owner_bootstrap | lifecycle_node | companion | reuse"]
-  Plan --> ActiveWorkflow["active_workflow: none | projection"]
-  Plan --> Cleanup["cleanup_policy"]
-  Plan --> Receipt["command_receipt_scope"]
+  Resolver --> ModelResolver["ModelConfigResolver"]
+  Resolver --> CommandResolver["CommandIntentResolver"]
+  Resolver --> ResourceResolver["ResourceSurfaceResolver"]
+  Resolver --> LifecycleResolver["LifecycleContextResolver"]
 
-  Plan --> Dispatch["ControlPlaneMaterializer"]
-  Dispatch --> Evidence["run + agent + launch frame + runtime session + anchor"]
-  Evidence --> Construction["FrameConstructionService"]
-  Construction --> Router["compose by AgentLaunchPlan"]
-  Router --> OwnerSurface["OwnerBootstrapComposer"]
-  Router --> NodeSurface["LifecycleNodeComposer"]
-  Router --> CompanionSurface["CompanionComposer"]
-  Router --> ReuseSurface["ExistingSurfaceReuse"]
+  ModelResolver --> ModelState["model_config: resolved | model_required"]
+  CommandResolver --> Commands["commands: start_draft/send_next/enqueue/steer/promote/resume/cancel"]
+  ResourceResolver --> Surface["resource_surface: AgentFrame VFS + lifecycle mount + browsing policy"]
+  LifecycleResolver --> Context["run/agent/frame/runtime/subject refs"]
 
-  OwnerSurface --> RuntimeFrame["AgentFrame runtime surface revision"]
-  NodeSurface --> RuntimeFrame
-  CompanionSurface --> RuntimeFrame
-  ReuseSurface --> RuntimeFrame
+  ModelState --> Snapshot["AgentConversationSnapshot"]
+  Commands --> Snapshot
+  Surface --> Snapshot
+  Context --> Snapshot
+  Pending --> Snapshot
 
-  RuntimeFrame --> LaunchEnvelope["FrameLaunchEnvelope"]
-  LaunchEnvelope --> SessionLaunch["SessionLaunchOrchestrator"]
-  SessionLaunch --> DeliveryResult["turn accepted | terminal failed | cleanup"]
+  Snapshot --> FEPage["AgentRunWorkspacePage"]
+  FEPage --> Composer["SessionChatComposer"]
+  FEPage --> ModelSelector["Model selector"]
+  FEPage --> PendingUI["Pending queue UI"]
+  FEPage --> WorkspacePanel["Workspace panel/resource browser"]
 
-  DeliveryResult --> WorkspaceProjection["AgentRunWorkspaceProjection"]
-  Evidence --> WorkspaceProjection
-  RuntimeFrame --> WorkspaceProjection
-  Receipt --> WorkspaceProjection
-
-  WorkspaceProjection --> FEState["Frontend AgentRun command state"]
-  FEState --> UI["draft / ready / running / queue / steer / cancelling / terminal"]
+  Composer --> Intent["ConversationCommandIntent"]
+  ModelSelector --> ModelOverride["explicit model override"]
+  PendingUI --> PendingIntent["resume/promote/delete intent"]
+  Intent --> CommandAPI["single command handler or shared precondition layer"]
+  ModelOverride --> CommandAPI
+  PendingIntent --> CommandAPI
+  CommandAPI --> Resolver
 ```
 
-## Target Backend Contract
+## Target Snapshot Contract
 
-### AgentLaunchPlan
-
-`AgentLaunchPlan` 是 application 层 launch contract。第一阶段建议作为 transient value object，由启动入口构造并传递给 dispatch/frame construction；后续若需要跨进程诊断或恢复，再投影为 read model。
+`AgentConversationSnapshot` can be implemented by extending `AgentRunWorkspaceView` first, but the contract should be modeled as a full conversation snapshot:
 
 ```rust
-pub struct AgentLaunchPlan {
-    pub owner_kind: LaunchOwnerKind,
-    pub source_kind: LaunchSourceKind,
-    pub project_id: Uuid,
-    pub subject_ref: Option<SubjectRef>,
-    pub project_agent_id: Option<Uuid>,
-    pub workflow_binding: Option<LaunchWorkflowBinding>,
-    pub delivery_policy: LaunchDeliveryPolicy,
-    pub frame_surface_kind: FrameSurfaceKind,
-    pub command_scope: AgentRunCommandScope,
-    pub cleanup_policy: LaunchCleanupPolicy,
+pub struct AgentConversationSnapshot {
+    pub identity: AgentConversationIdentity,
+    pub lifecycle_context: AgentConversationLifecycleContext,
+    pub execution: ConversationExecutionView,
+    pub model_config: ConversationModelConfigView,
+    pub commands: ConversationCommandSetView,
+    pub pending: ConversationPendingQueueView,
+    pub resource_surface: ConversationResourceSurfaceView,
+    pub diagnostics: Vec<ConversationDiagnosticView>,
 }
 ```
 
-| Field | Purpose |
-| --- | --- |
-| `owner_kind` | 决定 owner bootstrap 语义和前端 workspace identity |
-| `source_kind` | 保留 ProjectAgent、Routine、Companion、Workflow node、pending drain 等来源 |
-| `workflow_binding` | 显式 lifecycle / node binding，供 lifecycle mount 和 node composer 消费 |
-| `frame_surface_kind` | 明确选择 owner bootstrap、lifecycle node、companion 或 reuse |
-| `command_scope` | 统一 receipt 幂等 scope |
-| `cleanup_policy` | 首轮失败、surface composition failure、delivery failure 的清理策略 |
+### Command View
 
-### Surface Composition Rules
+Each user-visible command should be projected as data rather than inferred by components:
 
-| Entry | Owner kind | Surface kind | Active workflow behavior |
-| --- | --- | --- | --- |
-| ProjectAgent graphless draft | `ProjectAgent` | `OwnerBootstrap` | none |
-| ProjectAgent explicit lifecycle draft | `ProjectAgent` | `OwnerBootstrap` | attach lifecycle mount from active workflow projection |
-| AgentRun send_next | existing agent owner | `Reuse` or owner rehydrate | reuse current frame unless bootstrap/rehydrate requires owner composer |
-| Workflow AgentCall | `WorkflowNode` | `LifecycleNode` | node-scoped lifecycle mount |
-| Routine dispatch | `Routine` | `OwnerBootstrap` | routine VFS + optional workflow projection |
-| Companion child | `Companion` | `Companion` | parent slice + optional workflow projection |
-| Pending queue drain | existing agent owner | same as AgentRun send_next | uses accepted command scope from pending message |
-
-### RuntimeSessionExecutionAnchor Role
-
-`RuntimeSessionExecutionAnchor` remains the authoritative reverse index:
-
-```text
-RuntimeSession -> run / agent / launch_frame / optional orchestration node
+```rust
+pub struct ConversationCommandView {
+    pub kind: ConversationCommandKind,
+    pub enabled: bool,
+    pub unavailable_reason: Option<String>,
+    pub placement: ConversationCommandPlacement,
+    pub shortcut: Option<ConversationShortcut>,
+    pub requires_input: bool,
+    pub executor_config_policy: ExecutorConfigPolicy,
+    pub precondition: ConversationCommandPrecondition,
+}
 ```
 
-It should not be the primary composer classifier. Composer selection should come from `AgentLaunchPlan` or a deterministic projection from owner/source facts.
+The frontend may map labels/icons locally, but `kind`, `enabled`, `shortcut`, `executor_config_policy`, and `precondition` come from the snapshot adapter.
 
-### Launch State Machine
-
-```mermaid
-stateDiagram-v2
-  [*] --> DraftRequested
-  DraftRequested --> ReceiptClaimed
-  ReceiptClaimed --> ControlPlaneMaterialized
-  ControlPlaneMaterialized --> SurfaceComposing
-  SurfaceComposing --> SurfaceReady
-  SurfaceComposing --> SurfaceFailed
-  SurfaceReady --> DeliveryStarting
-  DeliveryStarting --> TurnAccepted
-  DeliveryStarting --> DeliveryFailed
-  TurnAccepted --> Running
-  Running --> Ready: terminal completed
-  Running --> Cancelling: cancel requested
-  Cancelling --> Ready: connector idle + terminal fact
-  Running --> TerminalFailed: failed/interrupted terminal
-  SurfaceFailed --> CleanupPending
-  DeliveryFailed --> CleanupPending
-  CleanupPending --> Cleaned
-  ReceiptClaimed --> DuplicateAccepted: same digest accepted refs
-```
-
-## Target Frontend Contract
-
-Frontend keeps route and command ownership:
-
-```text
-/agent-runs/new?projectId=&projectAgentId=
-/agent-runs/:runId/:agentId
-```
-
-Backend workspace projection owns readiness:
-
-| Workspace field | Frontend responsibility |
-| --- | --- |
-| `control_plane.status` | pick draft/runtime mode and disable/enable command surfaces |
-| `actions` | choose primary/secondary/cancel commands |
-| `frame_runtime.execution_profile` | hydrate executor selector for this AgentRun frame |
-| `delivery_runtime_ref` | command transport target only |
-| `delivery_trace_meta` | display trace facts and expected turn/runtime ids |
-| `pending_queue` | show resume/pause semantics |
-| `runtime_surface` / VFS surface | resource browser and workspace panel data |
-
-Target frontend behavior:
+### Model Config
 
 ```mermaid
 flowchart LR
-  Route["Route: draft or run/agent"] --> Fetch["fetch AgentRunWorkspaceView"]
-  Fetch --> State{"control_plane.status"}
-  State --> Draft["draft: start_draft"]
-  State --> Ready["ready: send_next"]
-  State --> Running["running: enqueue + optional steer + cancel"]
-  State --> Cancelling["cancelling: cancel visible, input disabled"]
-  State --> Terminal["terminal: readonly trace/workspace"]
-  Ready --> Command["command with client_command_id"]
-  Running --> Command
-  Draft --> Command
-  Command --> Receipt["accepted refs / receipt"]
-  Receipt --> Refresh["refresh workspace projection"]
+  Preset["ProjectAgent preset AgentConfig"] --> Merge["field-level merge"]
+  Frame["current frame execution_profile"] --> Merge
+  User["explicit user override"] --> Merge
+  Discovery["executor discovery default_model"] --> Resolve["model requirement resolver"]
+  Merge --> Resolve
+  Resolve -->|complete| Resolved["resolved executor/provider/model"]
+  Resolve -->|missing required fields| Required["model_required command state"]
 ```
 
-## Migration Shape
+Rules:
 
-1. Introduce launch plan value objects and adapters without changing public endpoints.
-2. Make ProjectAgent start build and pass launch plan through dispatch/message delivery.
-3. Make frame construction consume launch plan or launch-plan projection before falling back to existing classification.
-4. Extend workspace projection with launch readiness details once backend state exists.
-5. Tighten frontend command state to consume new readiness fields.
-6. Remove redundant classification helpers after all entry points use launch plan.
+- Preset and frame defaults are authoritative persisted defaults.
+- User override is field-level: executor/provider/model/thinking/permission replace only the fields supplied by the user.
+- An executor-only override keeps preset provider/model when they are still valid for that executor.
+- Discovery `default_model` may fill a missing model only when the backend marks it as valid for the selected executor/provider.
+- If the selected executor requires explicit model selection and no valid model exists, snapshot enters `model_required` and command submission is disabled with a precise reason.
+- ProjectAgent summary exposes `effective_executor_config` with `source` and `validity`; localStorage may provide recent choices, but not a ProjectAgent default.
+- Command stores propagate API errors instead of converting command failure into `null`.
 
-## Trade-offs
+## Command State Machine
 
-- Transient launch plan is faster and keeps migration small; persistent read model improves diagnostics but adds migration and recovery semantics.
-- Keeping `RuntimeSessionExecutionAnchor` as reverse index preserves trace lookup and existing APIs; making it a composer classifier again would blur owner/source intent.
-- ProjectAgent explicit lifecycle should compose owner surface plus lifecycle mount; treating it as pure lifecycle node loses ProjectAgent preset/workspace identity.
+```mermaid
+stateDiagram-v2
+  [*] --> Draft
+  Draft --> ModelRequired: no resolved model
+  Draft --> ReadyToStart: model resolved
+  ModelRequired --> ReadyToStart: user selects model
+  ReadyToStart --> StartingClaimed: start_draft accepted
+  StartingClaimed --> RunningActive: turn activated
+  StartingClaimed --> Failed: launch/model/surface/delivery failed
+  RunningActive --> RunningActive: enqueue accepted
+  RunningActive --> RunningActive: steer accepted with active_turn guard
+  RunningActive --> Cancelling: cancel accepted
+  RunningActive --> Ready: turn completed
+  RunningActive --> ReadyWithPausedQueue: turn failed/interrupted and visible pending work exists
+  ReadyWithPausedQueue --> Ready: resume/delete drains pending work
+  ReadyWithPausedQueue --> StartingClaimed: auto-drain pending after completed turn
+  Ready --> StartingClaimed: send_next accepted
+  Cancelling --> Ready: executor stops without terminal agent
+  Cancelling --> Terminal: agent/run terminal
+  Ready --> Terminal: agent/run terminal
+  Failed --> Ready: recoverable command surface exists
+```
+
+`StartingClaimed` maps to the existing session `TurnState::Claimed`: the session is reserved, but there is not yet an active turn that can accept steer/promote. `RunningActive` maps to `TurnState::Active(turn_id)` and is the only state that may expose steer or promote-to-steer.
+
+### Keyboard Mapping
+
+| Snapshot command mode | Enter | Ctrl/Cmd+Enter | Notes |
+| --- | --- | --- | --- |
+| `draft.ready_to_start` | `start_draft` | `start_draft` | model must be resolved |
+| `model_required` | none | none | selector focused/displayed |
+| `starting_claimed` | none | none | no active turn for steer/promote |
+| `ready` | `send_next` | `send_next` | never steer when not running |
+| `running_active.enqueue_only` | `enqueue` | `enqueue` | no hidden steer |
+| `running_active.enqueue_and_steer` | `enqueue` | `steer` | steer command carries snapshot active turn token |
+| `cancelling` | none | none | cancel/stop controls only |
+| `terminal` | none | none | readonly |
+
+The frontend should receive this mapping from snapshot, not reconstruct it from `primaryAction.kind`.
+
+## Pending Queue Projection
+
+```rust
+pub struct ConversationPendingQueueView {
+    pub visible_messages: Vec<PendingMessageView>,
+    pub paused: bool,
+    pub user_attention: bool,
+    pub resume_command: Option<ConversationCommandAvailabilityView>,
+    pub message: Option<String>,
+}
+```
+
+Rules:
+
+- `paused` records queue mechanics.
+- `visible_messages` records user-visible queued work.
+- `user_attention` is true only when the UI should render a banner.
+- A terminal or stopped session with no visible pending messages does not show a pending banner.
+- Resume is a command availability, not a direct function of paused.
+
+## Resource Surface Projection
+
+```mermaid
+flowchart TD
+  Frame["current AgentFrame"] --> FrameVfs["typed vfs_surface_json"]
+  ActiveWorkflow["active workflow/lifecycle projection"] --> LifecycleMount["lifecycle_vfs mount"]
+  FrameVfs --> ResourceResolver["ConversationResourceSurfaceResolver"]
+  LifecycleMount --> ResourceResolver
+  ResourceResolver --> SurfaceView["resource_surface in snapshot"]
+  SurfaceView --> Agent["connector/session launch"]
+  SurfaceView --> Frontend["workspace panel/resource browser"]
+```
+
+Rules:
+
+- Agent execution and frontend workspace panel consume the same resource surface projection.
+- `session_runtime` may remain a lookup key, but it is not the frontend's resource truth source.
+- ProjectAgent explicit lifecycle uses ProjectAgent owner surface plus lifecycle mount.
+- Workflow AgentCall uses node-scoped lifecycle surface plus node mount policy.
+- The resolver validates three facts together: active workflow projection, persisted `AgentFrame.vfs_surface_json`, and resolved `ResolvedVfsSurface`. If active workflow exists but `lifecycle_vfs` is absent from persisted/resolved surface, the snapshot reports a resource diagnostic.
+- For a delivery runtime session, `session_runtime` VFS resolution should use the delivery/accepted frame for that session, not an ambiguous `current_frame.or(anchor_frame)` choice unless the resolver proves they are the same resource surface.
+
+## Implementation Shape
+
+1. Add resolvers as application/domain services while keeping public endpoints in place.
+2. Extend generated contracts to carry model state, command modes, pending user attention, and resource surface.
+3. Route every command endpoint through the shared resolver/precondition checker.
+4. Refactor frontend composer/model selector/pending/resource browser to consume snapshot.
+5. Remove duplicate local inference after tests prove all entry points use snapshot.
 
 ## Review Question
 
-The remaining product/architecture decision is whether launch readiness should become a persisted read model. Recommended answer: keep launch plan transient for the first implementation round, then add persistence only if UI recovery or diagnostics need it.
+唯一需要用户确认的产品命名决策：URL 和侧边栏是否继续叫 AgentRun。推荐保留 `AgentRun` 作为产品 identity，内部 contract 使用 conversation snapshot 来表达完整会话状态。

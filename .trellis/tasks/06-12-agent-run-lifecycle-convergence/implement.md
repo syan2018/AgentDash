@@ -1,114 +1,152 @@
 # 实施计划
 
-## Phase 0: Planning Review
+## Phase 0: Evidence Lock
 
 - [ ] 用户审阅 `prd.md`、`design.md`、`implement.md`。
-- [ ] 决定 `AgentLaunchPlan` 第一阶段是 transient contract 还是 persisted read model。
-- [ ] 通过 `task.py start 06-12-agent-run-lifecycle-convergence` 进入实现阶段。
+- [ ] 将本任务从 planning 转入 implementation 前，确认 `AgentRun` 是否继续作为 URL/product identity。
+- [ ] 为后续 sub-agent 固定 research manifest：启动/模型、消息命令、前端交互、resource surface 四个切片各自独立可验证。
 
-## Phase 1: Launch Contract Skeleton
+## Phase 1: Conversation Snapshot Skeleton
 
-- [ ] 新增 `workflow/launch_plan.rs` 或等价模块，定义 `AgentLaunchPlan`、`LaunchOwnerKind`、`FrameSurfaceKind`、`LaunchCleanupPolicy`。
-- [ ] 为 ProjectAgent start、AgentRun message、Workflow AgentCall、Routine、Companion、pending drain 列出 adapter function。
-- [ ] 保持 public API 不变，先让 plan 在 application 层传递或可从现有 facts 确定生成。
-- [ ] 单测覆盖 plan builder：
-  - ProjectAgent graphless -> owner bootstrap
-  - ProjectAgent explicit lifecycle -> owner bootstrap + active workflow binding
-  - workflow AgentCall -> lifecycle node
-  - companion -> companion surface
+- [ ] 在 backend contracts 中扩展或引入 `AgentConversationSnapshot` 相关 DTO。
+- [ ] 在 application 层新增 `AgentConversationSnapshotResolver`，集中读取 run / agent / current frame / execution anchor / runtime execution state / pending queue / ProjectAgent preset。
+- [ ] 保持现有 AgentRun routes，但所有 workspace projection 先经 resolver。
+- [ ] 增加 focused tests：
+  - no delivery runtime -> delivery missing
+  - no current frame -> frame missing
+  - running with active turn -> running command set
+  - completed/idle -> ready send_next command set
+  - terminal agent -> readonly terminal snapshot
 
-## Phase 2: Dispatch And Frame Construction Convergence
+## Phase 2: Model Config Resolver
 
-- [ ] 调整 `LifecycleDispatchService` 返回的 facts/refs，使 launch plan 能稳定关联 run / agent / frame / runtime session / orchestration binding。
-- [ ] 让 `ProjectAgentRunStartService` 在 materialization 前确定 ProjectAgent owner plan，减少“dispatch 后补写 project_agent_id”的时序风险。
-- [ ] 让 `FrameConstructionService` 优先消费 launch plan 或 launch-plan projection。
-- [ ] 收紧 `classify.rs`：分类函数只作为 plan projection 兼容层存在，最终由 owner/surface kind 决策。
-- [ ] 确认 ProjectAgent explicit lifecycle 仍通过 owner bootstrap composer 挂 lifecycle mount。
-- [ ] 确认 Workflow AgentCall 仍通过 lifecycle node composer 挂 node-scoped lifecycle mount。
+- [ ] 新增 `ConversationModelConfigResolver` 或等价模块，定义 resolved/model_required 状态。
+- [ ] ProjectAgent summary / draft AgentRun / AgentFrame runtime view 暴露同形 `effective_executor_config`，包含 source 与 validity。
+- [ ] ProjectAgent 创建/编辑保存路径对可运行 Agent 执行模型解析：动态 Pi Agent 必须有 provider/model，或明确进入未配置状态。
+- [ ] 修改 ProjectAgent executor config 合并：用户 override 按字段级合并 preset/frame defaults。
+- [ ] 明确 executor-only override 保留合法 preset provider/model。
+- [ ] 后端 workspace snapshot 返回当前权威 model config 和 selector default source。
+- [ ] 前端 model selector 只显示并编辑 snapshot model config；localStorage 仅作为最近选择提示，不作为 ProjectAgent 默认来源。
+- [ ] `createProjectAgentRun` 这类命令 store 改为传递真实错误，不再用 `null` 泛化 command failure。
+- [ ] Tests:
+  - ProjectAgent preset provider/model 在用户只传 executor 时保留。
+  - 用户显式 provider/model override 覆盖 preset。
+  - dynamic/default model 缺失时 snapshot 为 `model_required`。
+  - `start_draft` 在 `model_required` 下不可发送且不进入 ProjectAgent materialization。
+  - 后端“缺少模型选择”错误能被前端原样展示。
 
-## Phase 3: Workspace Projection And Frontend Contract
+## Phase 3: Command Intent Resolver
 
-- [ ] 扩展 `AgentRunWorkspaceControlPlaneView` 或增加 launch readiness 子对象，表达 surface composing / surface failed / cleanup pending / delivery failed 等状态。
-- [ ] Workspace projection 从统一 launch/control facts 生成 `control_plane` 和 `actions`。
-- [ ] 前端 `deriveAgentRunWorkspaceChatControlState` 只消费 workspace status/actions，不补后端启动推断。
-- [ ] `useAgentRunWorkspaceState` 将 runtime surface 解析错误纳入 workspace panel 状态展示，不影响 command readiness 的后端权威判断。
-- [ ] Draft start transport failure 复用 command id，并通过 receipt/workspace refresh 恢复 accepted refs。
+- [ ] 新增 `ConversationCommandIntent` / `ConversationCommandSetView`，把 allowed command、keyboard mapping、precondition token 合并成一份 contract。
+- [ ] 将 `/messages`、`/steering`、`/pending-messages`、`promote`、`resume`、`cancel` 入口统一经过 command precondition checker。
+- [ ] 将 delivery state 显式拆成 `Ready.NoTurn`、`Starting.Claimed`、`Running.Active(turn_id)`、`Cancelling`、`Terminal.*`。
+- [ ] `steer` 和 `promote_pending_to_steer` 只允许 `Running.Active(turn_id)` 的 command token；idle/ready/completed/claimed 状态没有 steer intent。
+- [ ] `enqueue` 只允许 `Running.Active(turn_id)`，或产品明确允许 `Starting.Claimed` 队列时单独建语义；completed/idle snapshot 的 primary intent 是 `send_next`。
+- [ ] pending auto-drain 和 hook auto-resume 都表现为系统 source 的 `Terminal.Completed -> Starting.Claimed`，避免前端同时看到 completed 可 send_next 与 pending 正在自动发送。
+- [ ] Tests:
+  - idle Ctrl/Cmd+Enter maps to send_next, not steer。
+  - completed last turn maps to send_next, not enqueue。
+  - `Starting.Claimed` 不暴露 steer/promote。
+  - running with steer support maps Ctrl/Cmd+Enter to steer and validates active turn token。
+  - running without steer support maps Ctrl/Cmd+Enter to enqueue or no secondary intent。
+  - stale expected_turn_id returns structured stale snapshot conflict, not generic mismatch-only UX。
 
-## Phase 4: Tests And Regression Matrix
+## Phase 4: Pending Queue Projection
 
-### Backend Application
+- [ ] 将 pending queue view 升级为 queue mechanics + visible work + user attention。
+- [ ] 后端只在有可见 pending work 或可恢复动作需要用户处理时设置 `user_attention`。
+- [ ] 前端 `PendingMessageList` 只根据 snapshot pending display contract 渲染。
+- [ ] Tests:
+  - paused + no visible messages + terminal/ready cleanup -> no banner。
+  - paused + visible messages -> banner with resume/delete controls。
+  - interrupted/failed turn with queued messages -> user_attention true。
+  - resume/delete 后 snapshot 不再保留误导性 paused banner。
 
-- [ ] `ProjectAgentRunStartService` 使用真实 `AgentRunMessageLaunchDeliveryPort` 或等价 integration harness 覆盖 `SessionLaunchService -> FrameConstructionService`。
-- [ ] ProjectAgent graphless start produces owner surface frame.
-- [ ] ProjectAgent explicit lifecycle start produces owner surface frame and lifecycle mount.
-- [ ] Workflow AgentCall produces lifecycle node surface and lifecycle mount.
-- [ ] AgentRun send_next reuses current surface or rehydrates by plan.
-- [ ] First message surface failure cleans empty runtime/run/anchor per cleanup policy.
-- [ ] Duplicate `project_agent_start` returns same accepted refs.
+## Phase 5: Resource Surface Resolver
 
-### Backend API / Contracts
+- [ ] 在 AgentRun workspace snapshot 中加入 `resource_surface`，直接来自 current AgentFrame typed VFS surface。
+- [ ] 合并 active workflow/lifecycle mount projection 到 resource surface。
+- [ ] 增加资源一致性校验：active workflow projection、最终 persisted `AgentFrame.vfs_surface_json`、`resolveVfsSurface(session_runtime)` 必须同时包含相同 lifecycle mount。
+- [ ] 修正 `session_runtime` VFS resolver 的 frame 选择策略，使 delivery runtime session 绑定到 delivery/accepted frame surface。
+- [ ] 前端 `useAgentRunWorkspaceState` 停止把 `session_runtime` surface 作为 workspace panel 的事实源，改为消费 snapshot `resource_surface`。
+- [ ] 保留 `session_runtime` resolver 作为 API 支撑能力或诊断路径，而非前端主路径。
+- [ ] Tests:
+  - ProjectAgent graphless run shows owner surface mounts。
+  - ProjectAgent explicit lifecycle run shows owner surface plus lifecycle mount。
+  - Workflow AgentCall shows node-scoped lifecycle mount。
+  - workspace panel/resource browser and connector launch use matching mount ids。
 
-- [ ] `cargo check -p agentdash-contracts -p agentdash-api`
-- [ ] `pnpm run contracts:check`
-- [ ] Workspace projection tests cover ready/running/cancelling/terminal/frame missing/delivery missing/surface failure if added.
+## Phase 6: Frontend Integration
 
-### Frontend
+- [ ] `AgentRunWorkspacePage` 只把 snapshot 传给 chat/view/panel，不再组装业务状态。
+- [ ] `SessionChatView` 接收 command model 和 keyboard mapping；移除本地 `primaryAction.kind === "enqueue"` 的 steer 推断。
+- [ ] Model selector 展示 snapshot resolved/default/model_required 状态；localStorage 只作为用户最近选择提示，不作为权威默认。
+- [ ] Pending UI 根据 `pending.user_attention` 和 `pending.visible_messages` 渲染。
+- [ ] Workspace panel 直接消费 snapshot resource surface。
+- [ ] Frontend focused tests:
+  - draft model_required disables submit。
+  - draft resolved model starts run with full executor/provider/model。
+  - ready Ctrl/Cmd+Enter sends `send_next`。
+  - running Ctrl/Cmd+Enter sends `steer` only when snapshot says so。
+  - terminal with stale running bits remains readonly。
+  - no pending visible work means no pending paused banner。
+  - lifecycle mount appears in VFS tab for explicit lifecycle AgentRun。
 
-- [ ] `pnpm --filter app-web run typecheck`
-- [ ] Focused vitest:
-  - draft -> accepted -> route `/agent-runs/:runId/:agentId`
-  - ready -> send_next
-  - running -> enqueue + optional steer
-  - cancelling -> input disabled
-  - surface failed / frame missing -> readonly with backend reason
-  - transport retry reuses `client_command_id`
+## Phase 7: Cleanup And Specs
 
-### Grep Checks
-
-- [ ] `rg -n "SessionPage|/session/new|/session/:sessionId" packages/app-web/src`
-- [ ] `rg -n "FrameConstructionService|route_and_compose|RuntimeSessionExecutionAnchor" crates/agentdash-application/src/workflow`
-- [ ] `rg -n "created_by_kind|dispatch_launch_anchor" crates/agentdash-application/src crates/agentdash-domain/src`
-
-## Phase 5: Spec And Cleanup
-
-- [ ] Update `.trellis/spec/backend/workflow/architecture.md` with launch plan / composer ownership contract.
-- [ ] Update `.trellis/spec/backend/session/runtime-execution-state.md` if workspace readiness grows new states.
-- [ ] Update frontend spec if AgentRun workspace control state gets new generated fields.
-- [ ] Remove temporary compatibility-only helpers after every entry point consumes launch plan.
+- [ ] Remove duplicated action derivation helpers after frontend consumes command model.
+- [ ] Remove executor config merge behavior that replaces preset defaults wholesale.
+- [ ] Update `.trellis/spec/backend/workflow/architecture.md` with conversation snapshot and command intent ownership.
+- [ ] Update `.trellis/spec/backend/session/runtime-execution-state.md` with ready/running/pending/cancelling command semantics.
+- [ ] Update `.trellis/spec/backend/vfs/architecture.md` with AgentRun resource surface projection.
+- [ ] Update frontend spec with snapshot-driven UI and model selector ownership.
 
 ## Risky Files
 
+- `crates/agentdash-contracts/src/workflow.rs`
+- `crates/agentdash-api/src/routes/lifecycle_agents.rs`
+- `crates/agentdash-api/src/routes/project_agents.rs`
+- `crates/agentdash-api/src/session_construction.rs`
 - `crates/agentdash-application/src/workflow/project_agent_run_start.rs`
-- `crates/agentdash-application/src/workflow/dispatch_service.rs`
+- `crates/agentdash-application/src/workflow/agent_message.rs`
+- `crates/agentdash-application/src/workflow/agent_steering.rs`
 - `crates/agentdash-application/src/workflow/frame_construction/mod.rs`
-- `crates/agentdash-application/src/workflow/frame_construction/classify.rs`
 - `crates/agentdash-application/src/workflow/frame_construction/composer_project_agent.rs`
 - `crates/agentdash-application/src/workflow/frame_construction/composer_lifecycle_node.rs`
-- `crates/agentdash-application/src/session/launch/orchestrator.rs`
-- `crates/agentdash-api/src/routes/lifecycle_agents.rs`
-- `crates/agentdash-contracts/src/workflow.rs`
+- `crates/agentdash-application/src/session/pending_queue.rs`
 - `packages/app-web/src/pages/AgentRunWorkspacePage.tsx`
 - `packages/app-web/src/pages/AgentRunWorkspacePage.chatControlState.ts`
+- `packages/app-web/src/features/session/ui/SessionChatView.tsx`
+- `packages/app-web/src/features/session/ui/SessionChatViewParts.tsx`
+- `packages/app-web/src/features/session/ui/composer/PendingMessageRow.tsx`
+- `packages/app-web/src/features/executor-selector/model/useExecutorConfig.ts`
+- `packages/app-web/src/features/executor-selector/ui/InlineModelSelector.tsx`
 - `packages/app-web/src/features/workspace-panel/model/useAgentRunWorkspaceState.ts`
+- `packages/app-web/src/stores/projectStore.ts`
+- `packages/app-web/src/features/project/agent-preset-editor/form-state.ts`
+- `packages/app-web/src/features/project/agent-preset-editor/preset-form-fields.tsx`
 
 ## Validation Commands
 
 ```powershell
 cargo test -p agentdash-application project_agent_run_start
-cargo test -p agentdash-application workflow::frame_construction
-cargo test -p agentdash-application orchestration
-cargo check -p agentdash-application
-cargo check -p agentdash-api
-cargo check -p agentdash-contracts
+cargo test -p agentdash-application workflow::agent_message
+cargo test -p agentdash-application workflow::agent_steering
+cargo test -p agentdash-api lifecycle_agents
+cargo check -p agentdash-contracts -p agentdash-application -p agentdash-api
 pnpm run contracts:check
 pnpm --filter app-web run typecheck
-pnpm --filter app-web run lint
+pnpm --filter app-web run test -- AgentRunWorkspacePage
+pnpm --filter app-web run test -- SessionChatView
+pnpm --filter app-web run test -- PendingMessageRow
+pnpm --filter app-web run test -- useAgentRunWorkspaceState
 git diff --check
 ```
 
-## Rollback Points
+## Implementation Notes For Sub-agents
 
-- After Phase 1, launch plan types can be removed without behavior changes.
-- After Phase 2, keep old classification tests green before deleting compatibility classification.
-- After Phase 3, generated contract changes should be isolated in one commit with frontend consumption.
-- Before any migration, run `pnpm run migration:guard` and verify migration history.
+- 启动/模型切片负责 ProjectAgent start、executor merge、model_required contract。
+- 消息命令切片负责 send_next/enqueue/steer/promote/resume/cancel 的 shared precondition。
+- 前端交互切片负责 composer keyboard/model selector/pending UI。
+- resource surface 切片负责 AgentFrame VFS/lifecycle mount/workspace panel。
+- 各切片必须写明依赖的 generated contract 字段，不能靠父任务隐含上下文。

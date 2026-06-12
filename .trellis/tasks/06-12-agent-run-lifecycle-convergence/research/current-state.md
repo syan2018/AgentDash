@@ -1,66 +1,57 @@
 # 当前状态证据
 
-## 历史任务
+## 启动与模型配置入口
 
-- `.trellis/tasks/06-11-agentrun-workspace-api-contract/` 已定义 AgentRun workspace API：`GET /agent-runs/{run_id}/agents/{agent_id}/workspace`、messages、steering、pending、cancel，以及 ProjectAgent `/agent-runs` materialization endpoint。
-- `.trellis/tasks/06-11-agentrun-workspace-frontend-route-state/` 已把前端交互入口迁到 `/agent-runs/new` 与 `/agent-runs/:runId/:agentId`，并让 draft start accepted 后跳转正式 AgentRun route。
-- `.trellis/tasks/06-11-agentrun-delivery-command-receipts/` 已定义 command receipt 幂等和 duplicate/retry 语义。
-- `.trellis/tasks/06-11-agentrun-runtime-trace-meta-convergence/` 已将 RuntimeSession trace meta 与 AgentRun workspace shell 分边界。
+- `packages/app-web/src/pages/AgentRunWorkspacePage.tsx:382` 只检查 `executorConfig.executor` 非空；`provider_id/model_id` 可以为空。
+- `packages/app-web/src/features/session/ui/SessionChatView.tsx:156` 将 `agentDefaults` 作为初始 source，但只在组件生命周期与 hydration key 中生效。
+- `packages/app-web/src/features/session/ui/SessionChatView.tsx:232` 构造发送给后端的 `executorConfig`，provider/model 为空时直接省略。
+- `packages/app-web/src/features/executor-selector/model/useExecutorConfig.ts:113` 说明当前优先级是 initialSource > localStorage > 空值；这是前端本地状态，不是后端权威会话事实。
+- `packages/app-web/src/features/executor-selector/model/useExecutorDiscoveredOptions.ts:12` 初始 discovered options 包含 `default_model`，但当前没有作为发送前权威 resolved model 写回。
+- `packages/app-web/src/features/project/agent-preset-editor/preset-form-fields.tsx:241` ProjectAgent preset 表单提供“不指定模型”选项。
+- `packages/app-web/src/features/project/agent-preset-editor/form-state.ts:73` `formToPreset` 只在 provider/model 非空时写入 config。
+- `packages/app-web/src/stores/projectStore.ts:386` `createProjectAgentRun` catch 后返回 `null`，页面随后用泛化文案覆盖真实 API 错误。
+- `crates/agentdash-api/src/routes/project_agents.rs:262` 将 request executor_config 反序列化后交给 `ProjectAgentRunStartService`。
+- `crates/agentdash-application/src/workflow/project_agent_run_start.rs:285` 首轮消息把 command executor_config 传入 `AgentRunMessageService`。
+- `crates/agentdash-application/src/workflow/frame_construction/composer_project_agent.rs:70` ProjectAgent composer 调用 `merge_user_executor_config(user_config, preset_config)`。
+- `crates/agentdash-application/src/workflow/frame_construction/mod.rs:276` 当前 merge 只补 system prompt/mode，不补 preset provider/model；executor-only user config 会覆盖掉 preset model/provider。
 
-## 后端启动链路
+## 消息命令入口
 
-- `crates/agentdash-application/src/workflow/project_agent_run_start.rs`
-  - `ProjectAgentRunStartService::start_run` 校验 input/client command，claim `project_agent_start` receipt。
-  - 通过 `LifecycleDispatchService::launch_agent` materialize `LifecycleRun` / `LifecycleAgent` / `AgentFrame` / `RuntimeSession`。
-  - 之后调用 `bind_project_agent_to_lifecycle_agent` 写入 `LifecycleAgent.project_agent_id`。
-  - 再通过 `AgentRunMessageService::dispatch_user_message` 投递首条消息。
-  - 首条消息失败且 runtime session 无事件时，会删除 anchor、runtime session 与 run。
+- `crates/agentdash-api/src/routes/lifecycle_agents.rs:55` 注册 AgentRun workspace、messages、steering、pending、resume、delete、promote、cancel routes。
+- `crates/agentdash-api/src/routes/lifecycle_agents.rs:1190` `ensure_send_next_allowed` 允许 idle/completed/failed/interrupted 发送下一轮，拒绝 running/cancelling。
+- `crates/agentdash-api/src/routes/lifecycle_agents.rs:1172` `ensure_pending_enqueue_allowed` 只允许 running。
+- `crates/agentdash-api/src/routes/lifecycle_agents.rs:1233` pending enqueue 在 completed/idle 等状态下返回“请直接发送下一轮消息”类 conflict。
+- `crates/agentdash-api/src/routes/lifecycle_agents.rs:957` `steer_runtime_session` 校验 expected runtime session 与 expected turn；snapshot/前端状态过期时会触发 mismatch。
+- `crates/agentdash-application/src/workflow/agent_steering.rs:135` steering service 再次检查 runtime execution state 必须是 running 且有 active turn。
+- `crates/agentdash-application/src/session/hub_support.rs:168` runtime turn state 已区分 `Idle`、`Claimed`、`Active`、`Cancelling`；AgentRun projection 当前没有把 `Claimed` 与 `Active(turn_id)` 作为 command state 区分。
 
-- `crates/agentdash-application/src/workflow/dispatch_service.rs`
-  - `dispatch_common` 处理 graph-backed dispatch：resolve workflow graph，创建/复用 run，确保 orchestration，创建 agent/runtime/frame，写 `RuntimeSessionExecutionAnchor::new_orchestration_dispatch`，并发送 `NodeStarted` runtime event。
-  - `dispatch_graphless` 处理 graphless dispatch：创建 graphless run / agent / frame / runtime session，写普通 `RuntimeSessionExecutionAnchor::new_dispatch`。
-  - `create_initial_frame` 和 `create_graphless_initial_frame` 均使用 `AgentFrameBuilder::new_launch_anchor`，表达 launch evidence revision。
+## 前端交互入口
 
-- `crates/agentdash-application/src/session/launch/orchestrator.rs`
-  - `SessionLaunchOrchestrator::launch` 从 `SessionMeta` 与 runtime command store 读取 trace facts。
-  - 调用 construction provider 生成 `FrameLaunchEnvelope`。
-  - envelope 后续进入 connector start、stream ingestion、turn commit 与 pending frame commit。
+- `packages/app-web/src/pages/AgentRunWorkspacePage.chatControlState.ts:90` 前端从 workspace actions/control_plane 派生 `primaryAction/secondaryAction`。
+- `packages/app-web/src/pages/AgentRunWorkspacePage.chatControlState.ts:93` running + enqueue enabled 时把 enqueue 设为 primary，并把 steer 设为 secondary。
+- `packages/app-web/src/features/session/ui/SessionChatView.tsx:486` 键盘事件本地处理 Enter/Ctrl+Enter。
+- `packages/app-web/src/features/session/ui/SessionChatView.tsx:499` 当 primary 是 enqueue 且 secondary enabled 时，Ctrl/Cmd+Enter 直接提交 steer。
+- `packages/app-web/src/pages/AgentRunWorkspacePage.tsx:462` steer request 携带 `runtimeControl.delivery_trace_meta.last_turn_id` 作为 expected turn。
 
-- `crates/agentdash-application/src/workflow/frame_construction/mod.rs`
-  - `construct_launch_envelope` 通过 `RuntimeSessionExecutionAnchor` 反查 agent/run/current frame。
-  - frame surface ready 且 prompt lifecycle 为 plain 时直接复用 frame surface。
-  - 其他情况进入 `classify::route_and_compose`。
+## Pending queue 入口
 
-- `crates/agentdash-application/src/workflow/frame_construction/classify.rs`
-  - 当前分类顺序为 companion hint、ProjectAgent、lifecycle node、existing frame surface。
-  - ProjectAgent identity 已优先于 orchestration anchor，防止 ProjectAgent explicit lifecycle 被 lifecycle node composer 抢占。
+- `crates/agentdash-api/src/routes/lifecycle_agents.rs:706` workspace projection 调用 `pending_queue.is_paused(session_id)`。
+- `crates/agentdash-api/src/routes/lifecycle_agents.rs:843` `pending_queue_state_view` 只要有 pause reason 就设置 paused。
+- `packages/app-web/src/features/session/ui/SessionChatView.tsx:653` 前端在 `pendingMessages.length > 0 || pendingQueue?.paused` 时展示 pending list。
+- `packages/app-web/src/features/session/ui/composer/PendingMessageRow.tsx:31` `messages.length === 0 && !queue?.paused` 才不渲染；因此 paused 且无消息仍会展示“Pending 队列已暂停”。
 
-- `crates/agentdash-application/src/workflow/frame_construction/composer_project_agent.rs`
-  - ProjectAgent composer 读取 ProjectAgent preset、project workspace、subject context，并合并 executor config。
-  - 当前会解析 active workflow projection，并传入 owner bootstrap composer 以保留 lifecycle mount。
+## Resource surface 与 lifecycle mount 入口
 
-## 前端交互链路
+- `crates/agentdash-api/src/session_construction.rs:12` 已有从 runtime session anchor 到 AgentFrame typed VFS 的 resolver。
+- `crates/agentdash-api/src/routes/lifecycle_agents.rs:540` AgentRun workspace projection 读取 current AgentFrame，并返回 frame runtime view。
+- `packages/app-web/src/features/workspace-panel/model/useAgentRunWorkspaceState.ts:134` 前端先 fetch AgentRun workspace。
+- `packages/app-web/src/features/workspace-panel/model/useAgentRunWorkspaceState.ts:136` 前端再用 `delivery_runtime_ref.runtime_session_id` 调 `resolveVfsSurface({ source_type: "session_runtime" })`。
+- `crates/agentdash-application/src/workflow/frame_construction/composer_project_agent.rs:77` ProjectAgent composer 会解析 active workflow projection；但前端 workspace panel 是否可见 lifecycle mount 取决于 session_runtime surface 解析路径，而不是 AgentRun workspace snapshot 直接声明。
+- `crates/agentdash-application/src/session/launch/commit.rs:157` pending frame commit 会用 `accepted_capability_state` 重写 `vfs_surface_json`；如果 accepted capability state 未同步 lifecycle VFS，最终 frame surface 会丢 mount。
 
-- `packages/app-web/src/pages/AgentRunWorkspacePage.tsx`
-  - draft 页面由 project id + project agent key 进入。
-  - `start_draft` 调用 `createProjectAgentRun`，传 `client_command_id`、input、executor_config。
-  - accepted 后跳转 `/agent-runs/{runId}/{agentId}`，后续 command 使用 run/agent public identity。
-  - executor selector state key 包含 draft key 或 AgentRun frame id。
+## Architecture Assessment
 
-- `packages/app-web/src/features/workspace-panel/model/useAgentRunWorkspaceState.ts`
-  - 通过 `fetchAgentRunWorkspace(runId, agentId)` 获取 workspace。
-  - 从 `delivery_runtime_ref` 取 runtime session id，再解析 `session_runtime` VFS surface。
-  - state 中保存 workspace、runtime session id、runtime surface、frame runtime 和 error。
-
-- `packages/app-web/src/pages/AgentRunWorkspacePage.chatControlState.ts`
-  - draft 状态暴露 `start_draft`。
-  - workspace ready 且 actions.send_next enabled 时暴露 `send_next`。
-  - running 且 enqueue enabled 时暴露 `enqueue`，steer 可作为 secondary action。
-  - cancel 可用性来自 workspace actions。
-
-## 关键架构缺口
-
-- 后端启动入口共享 run / agent / frame / runtime session / anchor，但缺少一个显式 launch plan contract 统一表达 owner、composer、active workflow、cleanup 和前端 readiness。
-- `RuntimeSessionExecutionAnchor` 是稳定反查索引，但当前 frame construction 仍使用它参与 composer 决策；这会让 owner identity 与 workflow node binding 混在同一判断层。
-- ProjectAgent start 的 application tests 使用 fake delivery，覆盖 receipt/cleanup，但不覆盖真实 `SessionLaunchService -> FrameConstructionService` 路径。
-- 前端 workspace 状态已经 AgentRun 化，但仍要额外解析 `session_runtime` surface 并把 projection status、control plane、actions 拼成聊天可用状态；后端应提供更强的 launch/control readiness 语义。
+- `RuntimeSession` 仍应是 delivery/trace substrate；AgentRun conversation state 应由 lifecycle run/agent/frame/anchor/runtime/pending/model/resource facts 投影。
+- 当前最大问题是同一事实被多处推断：模型默认值、命令可用性、keyboard mapping、pending attention、resource surface 都缺少一个后端权威 snapshot。
+- 正确收束点不是单个 route，而是 shared resolver + generated contract + frontend snapshot consumption。
+- 会话状态 resolver 需要保留 runtime 内部 `Claimed`/`Active` 差异；resource resolver 需要同时验证 active workflow、persisted frame VFS、resolved VFS 三者一致。

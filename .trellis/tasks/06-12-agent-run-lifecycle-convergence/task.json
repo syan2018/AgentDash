@@ -1,8 +1,8 @@
 {
   "id": "agent-run-lifecycle-convergence",
   "name": "agent-run-lifecycle-convergence",
-  "title": "收束 AgentRun 启动生命周期与前端交互契约",
-  "description": "",
+  "title": "重建 AgentRun 会话生命周期与前端交互体系",
+  "description": "完整重新建模 AgentRun 会话启动、模型配置、消息命令、pending 队列与 workspace resource surface 的统一契约",
   "status": "planning",
   "dev_type": null,
   "scope": null,

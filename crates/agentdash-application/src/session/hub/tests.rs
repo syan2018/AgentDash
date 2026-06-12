@@ -14,8 +14,8 @@ use agentdash_domain::backend::{
     BackendExecutionTerminalKind,
 };
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository,
-    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
+    LifecycleRunRepository, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::hooks::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
@@ -53,12 +53,12 @@ use super::super::{AgentFrameTransitionRecord, RuntimeCommandStatus, RuntimeDeli
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
 };
-use crate::session::SetToolAccessEffect;
 use crate::session::capability_state::{
     CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
     ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
 };
 use crate::session::types::AgentFrameRuntimeTarget;
+use crate::session::{PendingQueueService, SetToolAccessEffect};
 use crate::test_support::{
     MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,
     MemoryRuntimeSessionExecutionAnchorRepository,
@@ -68,6 +68,7 @@ use crate::vfs::{
     MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
     VfsService,
 };
+use crate::workflow::AgentRunSteeringService;
 use crate::workflow::frame_surface::FrameSurfaceDraft;
 use agentdash_application_ports::backend_transport::{
     BackendTransport, DirectoryBrowseInfo, GitRepoInfo, RelayPromptRequest, RelayPromptTransport,
@@ -151,21 +152,106 @@ async fn current_frame_id(hub: &SessionRuntimeInner, agent_id: uuid::Uuid) -> Op
         .and_then(|agent| agent.current_frame_id)
 }
 
+#[derive(Default)]
+struct InMemoryLifecycleRunRepo {
+    items: TokioMutex<Vec<LifecycleRun>>,
+}
+
+#[async_trait::async_trait]
+impl LifecycleRunRepository for InMemoryLifecycleRunRepo {
+    async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+        self.items.lock().await.push(run.clone());
+        Ok(())
+    }
+
+    async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<LifecycleRun>, DomainError> {
+        Ok(self
+            .items
+            .lock()
+            .await
+            .iter()
+            .find(|run| run.id == id)
+            .cloned())
+    }
+
+    async fn list_by_ids(&self, ids: &[uuid::Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
+        Ok(self
+            .items
+            .lock()
+            .await
+            .iter()
+            .filter(|run| ids.contains(&run.id))
+            .cloned()
+            .collect())
+    }
+
+    async fn list_by_project(
+        &self,
+        project_id: uuid::Uuid,
+    ) -> Result<Vec<LifecycleRun>, DomainError> {
+        Ok(self
+            .items
+            .lock()
+            .await
+            .iter()
+            .filter(|run| run.project_id == project_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+        let mut items = self.items.lock().await;
+        if let Some(existing) = items.iter_mut().find(|existing| existing.id == run.id) {
+            *existing = run.clone();
+        } else {
+            items.push(run.clone());
+        }
+        Ok(())
+    }
+
+    async fn delete(&self, id: uuid::Uuid) -> Result<(), DomainError> {
+        self.items.lock().await.retain(|run| run.id != id);
+        Ok(())
+    }
+}
+
 async fn register_hook_target(
     targets: &Arc<TokioMutex<HashMap<String, HookControlTarget>>>,
     session_id: &str,
     frame: &AgentFrame,
 ) -> HookControlTarget {
+    let mut targets = targets.lock().await;
+    let run_id = targets
+        .get(session_id)
+        .map(|target| target.run_id)
+        .unwrap_or_else(uuid::Uuid::new_v4);
     let target = HookControlTarget {
-        run_id: uuid::Uuid::new_v4(),
+        run_id,
         agent_id: frame.agent_id,
         frame_id: frame.id,
     };
-    targets
-        .lock()
-        .await
-        .insert(session_id.to_string(), target.clone());
+    targets.insert(session_id.to_string(), target.clone());
     target
+}
+
+async fn control_target_from_anchor_frame(
+    hub: &SessionRuntimeInner,
+    session_id: &str,
+    frame: &AgentFrame,
+) -> HookControlTarget {
+    let anchor = hub
+        .execution_anchor_repo
+        .as_ref()
+        .expect("test hub should provide RuntimeSessionExecutionAnchorRepository")
+        .find_by_session(session_id)
+        .await
+        .expect("anchor lookup should succeed")
+        .expect("test frame should attach runtime anchor");
+    HookControlTarget {
+        run_id: anchor.run_id,
+        agent_id: frame.agent_id,
+        frame_id: frame.id,
+    }
 }
 
 fn test_hook_snapshot(session_id: String) -> AgentFrameHookSnapshot {
@@ -681,6 +767,283 @@ impl AgentConnector for PendingConnector {
     ) -> Result<(), ConnectorError> {
         Ok(())
     }
+}
+
+#[derive(Default)]
+struct SteerCapturingConnector {
+    calls: Arc<TokioMutex<Vec<CapturedSteerCall>>>,
+}
+
+#[derive(Debug, Clone)]
+struct CapturedSteerCall {
+    session_id: String,
+    expected_turn_id: String,
+    input_text: Option<String>,
+}
+
+#[async_trait::async_trait]
+impl AgentConnector for SteerCapturingConnector {
+    fn connector_id(&self) -> &'static str {
+        "steer-capturing"
+    }
+    fn connector_type(&self) -> agentdash_spi::ConnectorType {
+        agentdash_spi::ConnectorType::LocalExecutor
+    }
+    fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+        agentdash_spi::ConnectorCapabilities {
+            supports_steering: true,
+            ..agentdash_spi::ConnectorCapabilities::default()
+        }
+    }
+    fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+        Vec::new()
+    }
+    async fn discover_options_stream(
+        &self,
+        _executor: &str,
+        _working_dir: Option<PathBuf>,
+    ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        Ok(Box::pin(stream::empty()))
+    }
+    async fn has_live_session(&self, _session_id: &str) -> bool {
+        true
+    }
+    async fn prompt(
+        &self,
+        _session_id: &str,
+        _follow_up_session_id: Option<&str>,
+        _prompt: &PromptPayload,
+        _context: agentdash_spi::ExecutionContext,
+    ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+        Ok(Box::pin(stream::pending()))
+    }
+    async fn steer_session(
+        &self,
+        session_id: &str,
+        expected_turn_id: &str,
+        input: Vec<agentdash_agent_protocol::UserInputBlock>,
+    ) -> Result<(), ConnectorError> {
+        self.calls.lock().await.push(CapturedSteerCall {
+            session_id: session_id.to_string(),
+            expected_turn_id: expected_turn_id.to_string(),
+            input_text: input
+                .first()
+                .and_then(agentdash_agent_protocol::user_input_text)
+                .map(str::to_string),
+        });
+        Ok(())
+    }
+    async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn approve_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn reject_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+        _reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+async fn seed_refreshed_agent_run_for_command_test(
+    hub: &SessionRuntimeInner,
+    run_repo: &InMemoryLifecycleRunRepo,
+    session_id: &str,
+    workspace_root: &std::path::Path,
+) -> (LifecycleRun, AgentFrame, AgentFrame) {
+    let launch_frame = attach_test_lifecycle_frame(hub, session_id).await;
+    let anchor = hub
+        .execution_anchor_repo
+        .as_ref()
+        .expect("test hub should provide anchor repo")
+        .find_by_session(session_id)
+        .await
+        .expect("anchor lookup should succeed")
+        .expect("session should have anchor");
+    let mut run = LifecycleRun::new_graphless(uuid::Uuid::new_v4());
+    run.id = anchor.run_id;
+    run_repo.create(&run).await.expect("seed lifecycle run");
+
+    let current_frame =
+        AgentFrame::new_revision(launch_frame.agent_id, launch_frame.revision + 1, "current");
+    hub.agent_frame_repo
+        .as_ref()
+        .expect("test hub should provide frame repo")
+        .create(&current_frame)
+        .await
+        .expect("seed current frame");
+    let mut agent = hub
+        .lifecycle_agent_repo
+        .as_ref()
+        .expect("test hub should provide agent repo")
+        .get(launch_frame.agent_id)
+        .await
+        .expect("agent lookup should succeed")
+        .expect("agent should exist");
+    agent.set_current_frame(current_frame.id);
+    hub.lifecycle_agent_repo
+        .as_ref()
+        .expect("test hub should provide agent repo")
+        .update(&agent)
+        .await
+        .expect("update current frame");
+
+    let _rx = hub.ensure_session(session_id).await;
+    hub.runtime_registry
+        .with_runtime_mut(session_id, |runtime| {
+            let runtime = runtime.expect("session runtime should exist");
+            runtime.turn_state = TurnState::Active(Box::new(TurnExecution::new(
+                "turn-current".to_string(),
+                ExecutionSessionFrame {
+                    turn_id: "turn-current".to_string(),
+                    working_directory: workspace_root.to_path_buf(),
+                    environment_variables: HashMap::new(),
+                    executor_config: AgentConfig::new("PI_AGENT"),
+                    mcp_servers: vec![],
+                    vfs: Some(local_workspace_vfs(workspace_root)),
+                    backend_execution: None,
+                    identity: None,
+                },
+                CapabilityState::default(),
+                uuid::Uuid::new_v4(),
+                uuid::Uuid::new_v4(),
+            )));
+        })
+        .await;
+
+    (run, launch_frame, current_frame)
+}
+
+#[tokio::test]
+async fn agent_run_steer_uses_current_agent_frame_after_frame_refresh() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let connector = Arc::new(SteerCapturingConnector::default());
+    let calls = connector.calls.clone();
+    let connector_for_hub: Arc<dyn AgentConnector> = connector;
+    let hub = test_hub(base.path().to_path_buf(), connector_for_hub, None)
+        .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
+    let session = hub
+        .create_session("agent-run-steer-current-frame")
+        .await
+        .expect("create session");
+    let run_repo = InMemoryLifecycleRunRepo::default();
+    let (run, launch_frame, current_frame) =
+        seed_refreshed_agent_run_for_command_test(&hub, &run_repo, &session.id, base.path()).await;
+    let service = AgentRunSteeringService::new(
+        &run_repo,
+        hub.lifecycle_agent_repo
+            .as_ref()
+            .expect("test hub should provide agent repo")
+            .as_ref(),
+        hub.agent_frame_repo
+            .as_ref()
+            .expect("test hub should provide frame repo")
+            .as_ref(),
+        hub.execution_anchor_repo
+            .as_ref()
+            .expect("test hub should provide anchor repo")
+            .as_ref(),
+        hub.core_service(),
+        hub.control_service(),
+        hub.eventing_service(),
+    );
+
+    let dispatch = service
+        .steer(crate::workflow::AgentRunSteeringCommand {
+            delivery_runtime_session_id: session.id.clone(),
+            input: agentdash_agent_protocol::text_user_input_blocks("live steer"),
+        })
+        .await
+        .expect("steer should dispatch");
+
+    assert_eq!(dispatch.run_id, run.id);
+    assert_eq!(dispatch.agent_id, launch_frame.agent_id);
+    assert_eq!(dispatch.frame_id, current_frame.id);
+    assert_ne!(
+        dispatch.frame_id, launch_frame.id,
+        "steer must use current AgentFrame, not the launch-frame anchor"
+    );
+    assert_eq!(dispatch.active_turn_id, "turn-current");
+    let captured = calls.lock().await;
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].session_id, session.id);
+    assert_eq!(captured[0].expected_turn_id, "turn-current");
+    assert_eq!(captured[0].input_text.as_deref(), Some("live steer"));
+}
+
+#[tokio::test]
+async fn pending_promote_uses_current_agent_frame_after_frame_refresh() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let connector = Arc::new(SteerCapturingConnector::default());
+    let calls = connector.calls.clone();
+    let connector_for_hub: Arc<dyn AgentConnector> = connector;
+    let hub = test_hub(base.path().to_path_buf(), connector_for_hub, None)
+        .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
+    let session = hub
+        .create_session("agent-run-promote-current-frame")
+        .await
+        .expect("create session");
+    let run_repo = InMemoryLifecycleRunRepo::default();
+    let (_run, launch_frame, current_frame) =
+        seed_refreshed_agent_run_for_command_test(&hub, &run_repo, &session.id, base.path()).await;
+    let pending_queue = PendingQueueService::new();
+    let preview = pending_queue
+        .enqueue(
+            &session.id,
+            agentdash_agent_protocol::text_user_input_blocks("queued steer"),
+            None,
+        )
+        .await;
+    let pending = pending_queue
+        .take(&session.id, &preview.id)
+        .await
+        .expect("pending message should be promotable");
+    let service = AgentRunSteeringService::new(
+        &run_repo,
+        hub.lifecycle_agent_repo
+            .as_ref()
+            .expect("test hub should provide agent repo")
+            .as_ref(),
+        hub.agent_frame_repo
+            .as_ref()
+            .expect("test hub should provide frame repo")
+            .as_ref(),
+        hub.execution_anchor_repo
+            .as_ref()
+            .expect("test hub should provide anchor repo")
+            .as_ref(),
+        hub.core_service(),
+        hub.control_service(),
+        hub.eventing_service(),
+    );
+
+    let dispatch = service
+        .steer(crate::workflow::AgentRunSteeringCommand {
+            delivery_runtime_session_id: session.id.clone(),
+            input: pending.input,
+        })
+        .await
+        .expect("pending promote should steer");
+
+    assert_eq!(dispatch.frame_id, current_frame.id);
+    assert_ne!(
+        dispatch.frame_id, launch_frame.id,
+        "pending promote must resolve current AgentFrame through AgentRun steering"
+    );
+    assert_eq!(dispatch.active_turn_id, "turn-current");
+    let captured = calls.lock().await;
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].session_id, session.id);
+    assert_eq!(captured[0].expected_turn_id, "turn-current");
+    assert_eq!(captured[0].input_text.as_deref(), Some("queued steer"));
 }
 
 #[derive(Default)]
@@ -1772,11 +2135,19 @@ impl ExecutionHookProvider for CurrentFrameHookProvider {
         else {
             return Ok(None);
         };
-        let Some(frame) = self
+        let frame = if let Some(current_frame_id) = agent.current_frame_id {
+            self.frame_repo
+                .get(current_frame_id)
+                .await
+                .map_err(|error| agentdash_spi::hooks::HookError::Runtime(error.to_string()))?
+        } else {
+            None
+        };
+        let Some(frame) = frame.or(self
             .frame_repo
             .get_current(agent.id)
             .await
-            .map_err(|error| agentdash_spi::hooks::HookError::Runtime(error.to_string()))?
+            .map_err(|error| agentdash_spi::hooks::HookError::Runtime(error.to_string()))?)
         else {
             return Ok(None);
         };
@@ -1990,7 +2361,8 @@ async fn hook_runtime_target_switch_replaces_stale_cached_runtime() {
         .await
         .expect("create");
     let frame1 = attach_test_frame(&hub, &session.id).await;
-    let target1 = register_hook_target(&target_by_session, &session.id, &frame1).await;
+    register_hook_target(&target_by_session, &session.id, &frame1).await;
+    let target1 = control_target_from_anchor_frame(&hub, &session.id, &frame1).await;
 
     let runtime1 = hub
         .hook_service()
@@ -2007,7 +2379,8 @@ async fn hook_runtime_target_switch_replaces_stale_cached_runtime() {
     assert_eq!(runtime1.control_target(), target1);
 
     let frame2 = attach_test_frame(&hub, &session.id).await;
-    let target2 = register_hook_target(&target_by_session, &session.id, &frame2).await;
+    register_hook_target(&target_by_session, &session.id, &frame2).await;
+    let target2 = control_target_from_anchor_frame(&hub, &session.id, &frame2).await;
     let runtime2 = hub
         .hook_service()
         .ensure_hook_runtime_for_target(
@@ -2034,6 +2407,101 @@ async fn hook_runtime_target_switch_replaces_stale_cached_runtime() {
     assert_eq!(frame_queries.len(), 2);
     assert_eq!(frame_queries[0].target, target1);
     assert_eq!(frame_queries[1].target, target2);
+}
+
+#[tokio::test]
+async fn target_first_hook_runtime_ensure_ignores_stale_delivery_resolution() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let target_by_session = Arc::new(TokioMutex::new(HashMap::new()));
+    let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
+    let hook_provider = Arc::new(SnapshotRecordingHookProvider {
+        target_by_session: target_by_session.clone(),
+        frame_snapshot_queries: frame_snapshot_queries.clone(),
+    });
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(PendingConnector),
+        Some(hook_provider),
+    );
+    let session = hub
+        .create_session("target-first-stale-delivery-resolution")
+        .await
+        .expect("create");
+    let frame1 = attach_test_frame(&hub, &session.id).await;
+    let stale_provider_target =
+        register_hook_target(&target_by_session, &session.id, &frame1).await;
+    let target1 = control_target_from_anchor_frame(&hub, &session.id, &frame1).await;
+
+    let runtime1 = hub
+        .hook_service()
+        .ensure_hook_runtime_for_target(
+            &AgentFrameRuntimeTarget {
+                frame_id: target1.frame_id,
+                delivery_runtime_session_id: session.id.clone(),
+            },
+            Some("turn-1"),
+        )
+        .await
+        .expect("initial hook runtime should load")
+        .expect("initial hook runtime should exist");
+    assert_eq!(runtime1.control_target(), target1);
+
+    let frame2 = attach_test_frame(&hub, &session.id).await;
+    let target2 = control_target_from_anchor_frame(&hub, &session.id, &frame2).await;
+
+    let runtime2 = hub
+        .hook_service()
+        .ensure_hook_runtime_for_target(
+            &AgentFrameRuntimeTarget {
+                frame_id: target2.frame_id,
+                delivery_runtime_session_id: session.id.clone(),
+            },
+            Some("turn-2"),
+        )
+        .await
+        .expect("target-first ensure should rebuild from requested frame")
+        .expect("rebuilt hook runtime should exist");
+
+    assert_eq!(runtime2.control_target(), target2);
+    assert_ne!(runtime2.control_target(), target1);
+    assert_eq!(
+        hub.get_hook_runtime_by_delivery_session(&session.id)
+            .await
+            .expect("delivery binding cache should exist")
+            .control_target(),
+        target2
+    );
+    assert_eq!(
+        target_by_session
+            .lock()
+            .await
+            .get(&session.id)
+            .expect("provider resolution should remain stale"),
+        &stale_provider_target
+    );
+    let frame_queries = frame_snapshot_queries.lock().await;
+    assert_eq!(frame_queries.len(), 2);
+    assert_eq!(frame_queries[0].target, target1);
+    assert_eq!(frame_queries[1].target, target2);
+}
+
+#[test]
+fn hook_business_paths_do_not_use_delivery_session_runtime_lookup() {
+    let hook_service = include_str!("../hooks_service.rs");
+    assert!(
+        !hook_service.contains("ensure_hook_runtime_for_delivery_session"),
+        "SessionHookService target-first entry must not depend on delivery-session target resolution"
+    );
+
+    let transition = include_str!("runtime_context_transition.rs");
+    assert!(
+        !transition.contains("get_hook_runtime_by_delivery_session"),
+        "runtime context transition should receive or ensure a target-bound hook runtime"
+    );
+    assert!(
+        !transition.contains("ensure_hook_runtime_for_delivery_session"),
+        "runtime context transition must not rebuild hook runtime from naked delivery session"
+    );
 }
 
 #[derive(Default)]
@@ -3391,7 +3859,9 @@ async fn planner_invalid_config_leaves_current_frame_unchanged() {
     use crate::session::SessionConstructionProvider;
     use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
-    struct StaticConstructionProvider;
+    struct StaticConstructionProvider {
+        hub: SessionRuntimeInner,
+    }
 
     #[async_trait::async_trait]
     impl SessionConstructionProvider for StaticConstructionProvider {
@@ -3410,17 +3880,19 @@ async fn planner_invalid_config_leaves_current_frame_unchanged() {
             let mut construction = simple_prompt_request(prompt_text);
             construction.session_id = input.session_id.clone();
             construction.session.session_id = input.session_id;
-            Ok(super::facade::envelope_from_construction(construction))
+            Ok(super::facade::envelope_from_construction(&self.hub, construction).await)
         }
     }
 
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None)
         .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
-    hub.set_session_construction_provider(Arc::new(StaticConstructionProvider))
-        .await;
     let session = hub.create_session("invalid-config").await.expect("create");
     let launch_frame = attach_test_lifecycle_frame(&hub, &session.id).await;
+    hub.set_session_construction_provider(Arc::new(StaticConstructionProvider {
+        hub: hub.clone(),
+    }))
+    .await;
     let mut input = UserPromptInput::from_text("hello");
     input.executor_config = Some(agentdash_spi::AgentConfig::new("PI_AGENT"));
     input.backend_selection = Some(BackendSelectionInput {

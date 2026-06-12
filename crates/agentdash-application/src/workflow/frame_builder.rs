@@ -264,9 +264,9 @@ impl AgentFrameBuilder {
         frame.visible_canvas_mount_ids_json = current
             .as_ref()
             .and_then(|frame| frame.visible_canvas_mount_ids_json.clone());
-        // Workspace module 声明式可见性已收口到 base CapabilityState.workspace_module
-        // （经 effective_capability_json）。`visible_workspace_module_refs_json` 不再被写入
-        // （恒 None），仅作为运行时 Accumulate grant 预留列。
+        frame.visible_workspace_module_refs_json = current
+            .as_ref()
+            .and_then(|frame| frame.visible_workspace_module_refs_json.clone());
         frame.created_by_id = self.created_by_id.clone();
 
         Ok(frame)
@@ -424,19 +424,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_never_writes_visible_workspace_module_refs_json() {
-        // workspace_module 声明式可见性已收口到 base CapabilityState，旁路列恒为 None。
+    async fn build_revision_carries_forward_visible_workspace_module_refs() {
         let repo = InMemoryFrameRepo::default();
         let agent_id = Uuid::new_v4();
 
-        let frame = AgentFrameBuilder::new(agent_id)
+        let mut frame1 = AgentFrameBuilder::new(agent_id)
+            .build(&repo)
+            .await
+            .expect("frame1");
+        frame1.append_visible_workspace_module_ref("canvas:dashboard-a");
+        repo.items.lock().unwrap()[0] = frame1.clone();
+
+        let frame2 = AgentFrameBuilder::new(agent_id)
             .with_capability(serde_json::json!({"tools": []}))
             .build(&repo)
             .await
-            .expect("frame");
+            .expect("frame2");
 
-        assert!(frame.visible_workspace_module_refs_json.is_none());
-        assert!(frame.visible_workspace_module_refs().is_empty());
+        assert_eq!(
+            frame2.visible_workspace_module_refs(),
+            vec!["canvas:dashboard-a".to_string()]
+        );
     }
 
     #[tokio::test]

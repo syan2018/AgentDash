@@ -105,29 +105,33 @@ impl SessionRuntimeInner {
     ) -> Result<RuntimeContextTransitionOutcome, String> {
         let state_changed = input.before_state.as_ref() != Some(&input.after_state);
         if input.key_delta.is_empty() && !state_changed {
-            self.emit_runtime_context_changed_notice(&input).await;
+            self.emit_runtime_context_changed_notice(hook_runtime, &input)
+                .await;
             return Ok(RuntimeContextTransitionOutcome {
                 capability_delta: None,
                 emitted_capability_change: false,
             });
         }
 
+        let runtime_target = AgentFrameRuntimeTarget {
+            frame_id: input.target_frame_id,
+            delivery_runtime_session_id: input.delivery_runtime_session_id.clone(),
+        };
         let tools = self
-            .replace_current_capability_state(
-                AgentFrameRuntimeTarget {
-                    frame_id: input.target_frame_id,
-                    delivery_runtime_session_id: input.delivery_runtime_session_id.clone(),
-                },
-                input.after_state.clone(),
-            )
+            .replace_current_capability_state(runtime_target.clone(), input.after_state.clone())
             .await
             .map_err(|error| format!("Phase node 能力状态热更新失败: {error}"))?;
+        let effective_runtime_target = AgentFrameRuntimeTarget {
+            frame_id: self
+                .resolve_runtime_session_frame_id(&input.delivery_runtime_session_id)
+                .await
+                .map_err(|error| format!("Phase node 当前 AgentFrame target 解析失败: {error}"))?,
+            delivery_runtime_session_id: input.delivery_runtime_session_id.clone(),
+        };
 
         let effective_hook_runtime = self
-            .ensure_hook_runtime_for_delivery_session(
-                &input.delivery_runtime_session_id,
-                input.turn_id.as_deref(),
-            )
+            .hook_service()
+            .ensure_hook_runtime_for_target(&effective_runtime_target, input.turn_id.as_deref())
             .await
             .map_err(|error| format!("Phase node Hook runtime target 对齐失败: {error}"))?
             .unwrap_or_else(|| hook_runtime.clone());
@@ -336,7 +340,11 @@ impl SessionRuntimeInner {
         application
     }
 
-    async fn emit_runtime_context_changed_notice(&self, input: &LiveRuntimeContextTransitionInput) {
+    async fn emit_runtime_context_changed_notice(
+        &self,
+        hook_runtime: &SharedHookRuntime,
+        input: &LiveRuntimeContextTransitionInput,
+    ) {
         let injections = self
             .collect_runtime_context_update_injections(&input.delivery_runtime_session_id)
             .await;
@@ -352,12 +360,7 @@ impl SessionRuntimeInner {
                     &notice,
                 )
                 .await;
-            if let Some(hook_runtime) = self
-                .get_hook_runtime_by_delivery_session(&input.delivery_runtime_session_id)
-                .await
-            {
-                let _ = context_frame::enqueue_context_frame(&hook_runtime, &notice);
-            }
+            let _ = context_frame::enqueue_context_frame(hook_runtime, &notice);
         }
     }
 }

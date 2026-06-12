@@ -12,6 +12,7 @@ use super::super::hook_delegate::{
 };
 use super::super::hook_events::build_hook_trace_envelope;
 use super::super::hook_messages as msg;
+#[cfg(test)]
 use super::super::hooks_service::{build_frame_hook_runtime, resolve_runtime_hook_target};
 use super::super::hub_support::session_hook_trace_decision;
 use super::super::launch::LaunchCommand;
@@ -21,12 +22,14 @@ use super::super::terminal_effects::{
 use super::super::types::UserPromptInput;
 use super::SessionRuntimeInner;
 use agentdash_agent_protocol::SourceInfo;
+#[cfg(test)]
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
-    AgentFrameHookSnapshotQuery, HookEffect, HookInjection, HookRuntimeAccess,
-    HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookTraceEntry, HookTrigger,
-    RuntimeAdapterProvenance, SharedHookRuntime,
+    HookEffect, HookInjection, HookRuntimeAccess, HookRuntimeEvaluationQuery,
+    HookRuntimeRefreshQuery, HookTraceEntry, HookTrigger, RuntimeAdapterProvenance,
 };
+#[cfg(test)]
+use agentdash_spi::hooks::{AgentFrameHookSnapshotQuery, SharedHookRuntime};
 
 /// `emit_session_hook_trigger` 的入参（在 hub 内部多处构造，故暴露给 super）。
 pub(crate) struct HookTriggerInput<'a> {
@@ -161,7 +164,11 @@ impl SessionRuntimeInner {
         &self,
         session_id: &str,
     ) -> Vec<HookInjection> {
-        let Some(hook_runtime) = self.runtime_registry.hook_runtime(session_id).await else {
+        let Some(hook_runtime) = self
+            .runtime_registry
+            .hook_runtime_delivery_binding(session_id)
+            .await
+        else {
             return Vec::new();
         };
 
@@ -187,6 +194,7 @@ impl SessionRuntimeInner {
     ///
     /// 业务控制路径应使用 `SessionHookService::ensure_hook_runtime_for_target`，
     /// 此方法仅供 hub 内部从 delivery session 反查 frame target 的 adapter 场景。
+    #[cfg(test)]
     pub(crate) async fn ensure_hook_runtime_for_delivery_session(
         &self,
         session_id: &str,
@@ -210,7 +218,10 @@ impl SessionRuntimeInner {
             return Ok(None);
         };
 
-        if let Some(runtime) = self.runtime_registry.hook_runtime(session_id).await
+        if let Some(runtime) = self
+            .runtime_registry
+            .hook_runtime_delivery_binding(session_id)
+            .await
             && runtime.control_target() == target
         {
             let _ = runtime
@@ -248,7 +259,7 @@ impl SessionRuntimeInner {
 
         let runtime = self
             .runtime_registry
-            .set_or_replace_hook_runtime(session_id, rebuilt_runtime)
+            .set_or_replace_hook_runtime_delivery_binding(session_id, rebuilt_runtime)
             .await;
         Ok(Some(runtime))
     }

@@ -905,6 +905,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dispatch_user_message_uses_current_frame_when_anchor_launch_frame_is_stale() {
+        let run_repo = InMemoryRunRepo::default();
+        let agent_repo = InMemoryAgentRepo::default();
+        let frame_repo = InMemoryFrameRepo::default();
+        let anchor_repo = InMemoryAnchorRepo::default();
+        let command_receipt_repo = InMemoryCommandReceiptRepo::default();
+        let delivery = FakeDelivery::default();
+        let (_run, mut agent, launch_frame) = seed_control_plane(
+            &run_repo,
+            &agent_repo,
+            &frame_repo,
+            &anchor_repo,
+            "runtime-1",
+        );
+        let current_frame =
+            AgentFrame::new_revision(agent.id, launch_frame.revision + 1, "current");
+        agent.set_current_frame(current_frame.id);
+        frame_repo.items.lock().unwrap().push(current_frame.clone());
+        if let Some(stored_agent) = agent_repo
+            .items
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .find(|item| item.id == agent.id)
+        {
+            *stored_agent = agent.clone();
+        }
+        let service = AgentRunMessageService::new(
+            &run_repo,
+            &agent_repo,
+            &frame_repo,
+            &anchor_repo,
+            &command_receipt_repo,
+            &delivery,
+        );
+
+        let result = service
+            .dispatch_user_message(AgentRunMessageCommand {
+                delivery_runtime_session_id: "runtime-1".to_string(),
+                input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                client_command_id: "cmd-current-frame".to_string(),
+                executor_config: None,
+                identity: None,
+            })
+            .await
+            .expect("dispatch");
+
+        assert_eq!(result.frame_id, current_frame.id);
+        assert_eq!(result.frame_revision, current_frame.revision);
+        assert_ne!(
+            result.frame_id, launch_frame.id,
+            "message dispatch must record current AgentFrame, not stale launch-frame anchor"
+        );
+        assert_eq!(delivery.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
     async fn duplicate_dispatch_with_different_digest_conflicts() {
         let run_repo = InMemoryRunRepo::default();
         let agent_repo = InMemoryAgentRepo::default();

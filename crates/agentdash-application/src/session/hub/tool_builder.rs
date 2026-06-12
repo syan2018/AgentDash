@@ -263,7 +263,7 @@ impl SessionRuntimeInner {
                         "session `{session_id}` 没有活跃 turn，无法热更新能力状态"
                     ))
                 })?;
-                Ok::<_, ConnectorError>((turn, runtime.hook_runtime.clone()))
+                Ok::<_, ConnectorError>((turn, runtime.hook_runtime_delivery_binding.clone()))
             })
             .await?;
 

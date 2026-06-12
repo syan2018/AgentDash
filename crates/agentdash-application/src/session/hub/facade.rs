@@ -22,7 +22,9 @@ use crate::workflow::runtime_launch::{
 use agentdash_agent_protocol::BackboneEnvelope;
 #[cfg(test)]
 use agentdash_spi::ConnectorError;
-use agentdash_spi::hooks::{ContextFrame, SharedHookRuntime};
+use agentdash_spi::hooks::ContextFrame;
+#[cfg(test)]
+use agentdash_spi::hooks::SharedHookRuntime;
 #[cfg(test)]
 use agentdash_spi::session_persistence::SessionStoreResult;
 
@@ -48,15 +50,20 @@ impl SessionRuntimeInner {
         let _ = self.eventing_service().ensure_session(session_id).await;
     }
 
-    /// Delivery adapter: 根据 RuntimeSession id 查找已缓存的 hook runtime。
+    /// Delivery adapter cache lookup: 根据 RuntimeSession id 查找已绑定的 hook runtime。
     ///
     /// 业务控制路径应使用 `SessionHookService::get_hook_runtime_for_target`，
-    /// 此方法仅供 hub 内部 adapter 场景使用。
+    /// 此方法仅供 hub 内部 adapter / trace 场景使用。返回值的
+    /// `control_target()` 才是业务 owner，调用方不得把 delivery session 命中
+    /// 当作 hook runtime 的权威归属。
+    #[cfg(test)]
     pub(crate) async fn get_hook_runtime_by_delivery_session(
         &self,
         session_id: &str,
     ) -> Option<SharedHookRuntime> {
-        self.runtime_registry.hook_runtime(session_id).await
+        self.runtime_registry
+            .hook_runtime_delivery_binding(session_id)
+            .await
     }
 
     pub(crate) async fn emit_context_frame(
@@ -118,7 +125,7 @@ impl SessionRuntimeInner {
         session_id: &str,
         construction: RuntimeContextInspectionPlan,
     ) -> Result<String, ConnectorError> {
-        let envelope = envelope_from_construction(construction);
+        let envelope = envelope_from_construction(self, construction).await;
         SessionLaunchOrchestrator::new(SessionLaunchDeps::from_inner(self))
             .launch_with_envelope_for_test(session_id, envelope)
             .await
@@ -150,7 +157,8 @@ impl SessionRuntimeInner {
 
 #[cfg(test)]
 #[allow(deprecated)]
-pub(super) fn envelope_from_construction(
+pub(super) async fn envelope_from_construction(
+    hub: &SessionRuntimeInner,
     construction: RuntimeContextInspectionPlan,
 ) -> FrameLaunchEnvelope {
     let working_directory = construction
@@ -165,12 +173,32 @@ pub(super) fn envelope_from_construction(
         .expect("session hub tests must provide complete FrameSurfaceDraft");
     let launch_surface = FrameLaunchSurface::from_surface_draft(&surface_draft)
         .expect("session hub tests must provide launch-ready typed surface");
+    let (agent_id, frame_id, frame_revision) = match (
+        hub.execution_anchor_repo.as_ref(),
+        hub.lifecycle_agent_repo.as_ref(),
+        hub.agent_frame_repo.as_ref(),
+    ) {
+        (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) => {
+            match crate::workflow::resolve_current_frame_for_runtime_session(
+                &construction.session_id,
+                anchor_repo.as_ref(),
+                agent_repo.as_ref(),
+                frame_repo.as_ref(),
+            )
+            .await
+            {
+                Ok(Some((_anchor, agent, frame))) => (agent.id, frame.id, frame.revision),
+                _ => (uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), 1),
+            }
+        }
+        _ => (uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), 1),
+    };
 
     FrameLaunchEnvelope {
         surface: FrameRuntimeSurface {
-            agent_id: uuid::Uuid::new_v4(),
-            frame_id: uuid::Uuid::new_v4(),
-            frame_revision: 1,
+            agent_id,
+            frame_id,
+            frame_revision,
             capability_surface: serde_json::Value::Null,
             context_slice: serde_json::Value::Null,
             vfs_surface: serde_json::Value::Null,

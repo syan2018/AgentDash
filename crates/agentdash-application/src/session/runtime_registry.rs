@@ -90,14 +90,22 @@ impl SessionRuntimeRegistry {
             .unwrap_or((false, None))
     }
 
-    pub async fn hook_runtime(&self, session_id: &str) -> Option<SharedHookRuntime> {
+    /// Return the hook runtime currently bound to a delivery RuntimeSession.
+    ///
+    /// This is an adapter cache lookup. The returned runtime's
+    /// `control_target()` remains the business owner and must be validated by
+    /// target-first service methods before use in business paths.
+    pub async fn hook_runtime_delivery_binding(
+        &self,
+        session_id: &str,
+    ) -> Option<SharedHookRuntime> {
         let runtimes = self.runtimes.lock().await;
         runtimes
             .get(session_id)
-            .and_then(|runtime| runtime.hook_runtime.clone())
+            .and_then(|runtime| runtime.hook_runtime_delivery_binding.clone())
     }
 
-    pub async fn set_or_replace_hook_runtime(
+    pub async fn set_or_replace_hook_runtime_delivery_binding(
         &self,
         session_id: &str,
         hook_runtime: SharedHookRuntime,
@@ -107,7 +115,7 @@ impl SessionRuntimeRegistry {
             let (tx, _rx) = broadcast::channel(1024);
             build_session_runtime(tx)
         });
-        runtime.hook_runtime = Some(hook_runtime.clone());
+        runtime.hook_runtime_delivery_binding = Some(hook_runtime.clone());
         hook_runtime
     }
 

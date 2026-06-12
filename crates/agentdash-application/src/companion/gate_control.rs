@@ -824,7 +824,8 @@ mod tests {
                 .lock()
                 .unwrap()
                 .values()
-                .find(|frame| frame.agent_id == agent_id)
+                .filter(|frame| frame.agent_id == agent_id)
+                .max_by_key(|frame| frame.revision)
                 .cloned())
         }
 
@@ -1431,6 +1432,102 @@ mod tests {
                 .get("parent_frame_id")
                 .and_then(serde_json::Value::as_str),
             Some(parent_frame_id.to_string().as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn open_parent_request_uses_parent_current_frame_after_delivery_refresh() {
+        let run_id = Uuid::new_v4();
+        let parent_agent_id = Uuid::new_v4();
+        let child_agent_id = Uuid::new_v4();
+
+        let parent_launch_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent-launch");
+        let parent_current_frame = AgentFrame::new_revision(parent_agent_id, 2, "parent-current");
+        let child_frame = AgentFrame::new_revision(child_agent_id, 1, "child");
+        let lineage = AgentLineage::new(
+            run_id,
+            Some(parent_agent_id),
+            child_agent_id,
+            "companion",
+            Some(child_frame.id),
+            None,
+        );
+
+        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        frame_repo
+            .create(&parent_launch_frame)
+            .await
+            .expect("seed parent launch frame");
+        frame_repo
+            .create(&parent_current_frame)
+            .await
+            .expect("seed parent current frame");
+        frame_repo.seed_runtime_sessions(parent_current_frame.id, ["parent-current-session"]);
+        frame_repo
+            .create(&child_frame)
+            .await
+            .expect("seed child frame");
+        frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
+        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        lineage_repo.create(&lineage).await.expect("seed lineage");
+        let delivery = Arc::new(CapturingDelivery::default());
+        let service = service_for_test(
+            gate_repo.clone(),
+            frame_repo,
+            lineage_repo,
+            delivery.clone(),
+            run_id,
+        );
+
+        let result = service
+            .open_parent_request(OpenCompanionParentRequestCommand {
+                child_runtime_session_id: "child-session".to_string(),
+                turn_id: "turn-child-1".to_string(),
+                wait: false,
+                payload: serde_json::json!({ "prompt": "please review latest frame" }),
+            })
+            .await
+            .expect("open parent request");
+
+        assert_eq!(result.parent_frame_id, parent_current_frame.id);
+        assert_ne!(
+            result.parent_frame_id, parent_launch_frame.id,
+            "parent request gate must bind to parent AgentRun current frame"
+        );
+        assert_eq!(
+            result.parent_delivery_runtime_session_id,
+            "parent-current-session"
+        );
+
+        let stored = gate_repo
+            .get(result.gate_id)
+            .await
+            .expect("load gate")
+            .expect("gate exists");
+        assert_eq!(stored.agent_id, Some(parent_agent_id));
+        assert_eq!(stored.frame_id, Some(parent_current_frame.id));
+        assert_eq!(
+            stored
+                .payload_json
+                .as_ref()
+                .and_then(|payload| payload.get("parent_frame_id"))
+                .and_then(serde_json::Value::as_str),
+            Some(parent_current_frame.id.to_string().as_str())
+        );
+
+        let event_notifications = delivery.event_notifications.lock().unwrap();
+        assert_eq!(event_notifications.len(), 1);
+        assert_eq!(
+            event_notifications[0].delivery_runtime_session_id,
+            "parent-current-session"
+        );
+        assert_eq!(
+            event_notifications[0]
+                .payload
+                .get("parent_frame_id")
+                .and_then(serde_json::Value::as_str),
+            Some(parent_current_frame.id.to_string().as_str())
         );
     }
 

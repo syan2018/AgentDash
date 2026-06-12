@@ -427,6 +427,7 @@ pub(super) fn project_assembly_to_frame(
 /// `project_assembly_to_frame` 的 frame surface draft 与 launch-only 输出。
 ///
 /// `frame_surface_draft` 写入 AgentFrame revision 并传递给 FrameLaunchEnvelope；
+/// `mcp_servers` / `vfs` / `capability_state` 保留为过渡输出并应从 draft 派生；
 /// 其余字段只服务 prompt、env、context bundle 等 launch pipeline 投影。
 pub struct AssemblyLaunchExtras {
     pub frame_surface_draft: FrameSurfaceDraft,

@@ -51,8 +51,8 @@ impl<'a> LaunchPlanner<'a> {
         let command = input.command;
 
         let working_directory = input.launch_envelope.working_directory.clone();
-        let executor_config = input.launch_envelope.executor_config.clone();
-        let capability_state = input.launch_envelope.capability_state.clone();
+        let executor_config = input.launch_envelope.launch_executor_config().clone();
+        let capability_state = input.launch_envelope.launch_capability_state().clone();
 
         let mut context_bundle = input.launch_envelope.context_bundle.clone();
         let terminal_hook_effect_binding = input
@@ -60,8 +60,7 @@ impl<'a> LaunchPlanner<'a> {
             .intent
             .terminal_hook_effect_binding
             .clone();
-        let typed_vfs = input.launch_envelope.vfs.clone();
-        let _mcp_servers = input.launch_envelope.mcp_servers.clone();
+        let typed_vfs = input.launch_envelope.launch_vfs().clone();
         let environment_variables = input.launch_envelope.intent.environment_variables.clone();
         let input_blocks = input.launch_envelope.intent.input.clone();
         let base_capability_override = input.launch_envelope.base_capability_state.clone();

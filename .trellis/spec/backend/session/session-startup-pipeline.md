@@ -73,6 +73,7 @@ Launch 前必须在 `FrameLaunchEnvelope` 构造边界完成等价 gate：
 - 缺少 `working_directory`、`executor_config`、`vfs`、`capability_state` 时拒绝 launch。
 - `capability_state.vfs.active` 必须等于 envelope `vfs`。
 - `capability_state.tool.mcp_servers` 必须等于 envelope `mcp_servers`。
+- `FrameLaunchEnvelope` 上的 `capability_state` / `vfs` / `mcp_servers` / `executor_config` 是过渡字段，必须从 `surface_draft` 派生；launch planner、turn preparation 与 MCP tool assembly 读取 typed surface accessor，原因是 AgentFrame revision 与 construction draft 应成为 launch 面的同一事实闭包。
 - pending runtime command 的 overlay 由 frame construction 形成 final capability projection；`requested -> applied` 副作用只能在 connector prompt accepted 后提交。
 
 Frame construction 可以消费 runtime facts，但这些 facts 一旦进入 `FrameLaunchEnvelope` 就必须体现在 `resolution_trace` 中。LaunchPlanner 不允许再读取 cached profile、hub default VFS、local relay workspace root 或 source MCP declaration 来补齐 VFS/MCP/capability/executor facts。
@@ -98,7 +99,7 @@ Contract:
 - `CapabilityState.tool.mcp_servers` 必须等于 final envelope `mcp_servers`。
 - `runtime_surface` 是 query DTO，只从 final envelope `vfs` / `AgentFrame.vfs_surface_json` 生成。
 - `AgentFrame` 的 VFS / MCP / capability surface 通过 `AgentFrameBuilder::with_surface_draft` 集中写入，原因是 launch 装配面、query DTO 面和 capability replay 必须跟随 effective capability VFS 保持一致。
-- `FrameSurfaceDraft` 是 construction 到 `AgentFrameBuilder` 的显式交接结构。过渡期内 `SessionConstructionPlan.projections` 可以继续保留 `mcp_servers` / `capability_state` 等旧字段，但这些字段应从同一份 draft 派生，原因是 Phase 2 只固定 draft handoff，不切换 runtime launch 的读取事实源。
+- `FrameSurfaceDraft` 是 construction 到 `AgentFrameBuilder` / `FrameLaunchEnvelope` 的显式交接结构。过渡期内 `SessionConstructionPlan.projections` 可以继续保留 `mcp_servers` / `capability_state` 等旧字段，但这些字段应从同一份 draft 派生，原因是 construction validation、launch planning、connector projection 和 query surface 必须观察同一份 typed handoff。
 
 ## Scenario: MCP Runtime Binding During Frame Construction
 
@@ -257,7 +258,7 @@ McpPreset(runtime_binding + static transport)
 - connector input projection
 - launch trace
 
-Connector input 的 working directory、executor config、MCP、VFS、identity、capability state 和 context frame 都从 `FrameLaunchEnvelope` 与 `LaunchPlan` 投影生成。launch stages 执行计划时沿用 envelope 事实，保持 context、VFS、MCP 与 capability 的单一来源。
+Connector input 的 working directory、executor config、MCP、VFS、identity、capability state 和 context frame 都从 `FrameLaunchEnvelope.surface_draft` / `FrameRuntimeSurface` 与 `LaunchPlan` 投影生成。launch stages 执行计划时沿用 frame surface handoff，保持 context、VFS、MCP 与 capability 的单一来源。
 
 `PreparedTurn` 汇总 connector accepted 前的 turn runtime projection、tools、context frames、hook runtime handle 与 connector-facing `ExecutionContext`。
 

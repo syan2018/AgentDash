@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Phase 0 evidence refresh 已完成，Phase 1 MCP declaration naming convergence 已实现并进入检查收口。Phase 2 FrameSurfaceDraft handoff 已完成；后续仍需按阶段推进 runtime launch surface 读取、AgentRun workspace API/UI 与持久化清理。
+Phase 0 evidence refresh 已完成，Phase 1 MCP declaration naming convergence 已实现并进入检查收口。Phase 2 FrameSurfaceDraft handoff 已完成。Phase 3 runtime launch surface 读取已完成；后续仍需按阶段推进 AgentRun workspace API/UI 与持久化清理。
 
 ## Phase 0: Evidence Refresh
 
@@ -62,12 +62,28 @@ Status: completed. `FrameSurfaceDraft` 已作为 construction pipeline 到 `Agen
 
 ## Phase 3: Runtime Launch Reads AgentFrame Surface
 
+Status: completed. Runtime launch planner、turn preparation、tool assembly 与 runtime gateway MCP discovery 已优先消费 `FrameLaunchEnvelope.surface_draft` / active `ExecutionSessionFrame` / current AgentFrame typed surface；`RuntimeSessionExecutionAnchor` 继续只作为 delivery runtime session 到 current AgentFrame 的 trace backlink。
+
 目标：让 RuntimeSession 从 AgentFrame surface 启动和发现能力。
 
-- [ ] 梳理 runtime launch 对 `CapabilityState`、`SessionConstructionPlan.projections`、session runtime state 的读取。
-- [ ] 将 launch-time MCP/VFS/capability/context 读取切到 AgentFrame surface。
-- [ ] 保留 `RuntimeSessionExecutionAnchor` 作为 trace backlink。
-- [ ] 调整 `SessionRuntimeInner`，使其更像执行适配器和 trace coordinator。
+- [x] 梳理 runtime launch 对 `CapabilityState`、`SessionConstructionPlan.projections`、session runtime state 的读取。
+- [x] 将 launch-time MCP/VFS/capability/context 读取切到 AgentFrame surface。
+- [x] 保留 `RuntimeSessionExecutionAnchor` 作为 trace backlink。
+- [x] 调整 `SessionRuntimeInner`，使其更像执行适配器和 trace coordinator。
+
+已落地契约：
+
+- `FrameLaunchEnvelope::launch_capability_state` / `launch_vfs` / `launch_mcp_servers` / `launch_executor_config` 是 launch planner 与 connector projection 的读取入口。
+- `FrameLaunchEnvelope.capability_state` / `vfs` / `mcp_servers` / `executor_config` 仍作为过渡字段保留，但构造边界通过 `sync_transitional_fields_from_surface_draft` 从 `surface_draft` 派生。
+- `TurnPreparationDeps::build_tools_for_execution_context` 与 `SessionRuntimeInner::build_tools_for_execution_context` 从 `ExecutionContext.session.mcp_servers` 读取 MCP declaration，`CapabilityState` 继续承担 tool policy 裁决。
+- `SessionRuntimeInner::get_latest_capability_state` 与 `get_runtime_mcp_servers` 在没有 active turn/cache 时通过 `RuntimeSessionExecutionAnchor -> current AgentFrame` 读取 typed surface，anchor 不承载 surface truth。
+- live runtime context transition 先写入 AgentFrame revision，再从新 revision 投影 capability/VFS/MCP 到内存缓存和 connector tools。
+
+剩余过渡字段：
+
+- `SessionConstructionPlan.projections.mcp_servers` / `capability_state` 仍存在，作为 construction 测试和旧 helper 的过渡投影；它们应继续从 `FrameSurfaceDraft` 派生。
+- `FrameLaunchEnvelope.mcp_servers` 等并列字段仍存在，服务旧调用面和诊断；新 launch read path 应使用 `launch_*` accessor。
+- `CapabilityState.tool.mcp_servers` 仍保存 MCP 维度投影和 tool policy 关联，是否从长期 state 移除留到 Phase 5。
 
 验证重点：
 

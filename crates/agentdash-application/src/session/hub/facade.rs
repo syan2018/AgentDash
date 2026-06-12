@@ -167,14 +167,15 @@ pub(super) fn envelope_from_construction(
         .workspace
         .working_directory
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-    let surface_draft = construction
+    let projection_mcp_servers = construction.projections.mcp_servers.clone();
+    let mut surface_draft = construction
         .projections
         .frame_surface_draft
         .clone()
         .unwrap_or_else(|| FrameSurfaceDraft {
             capability_state: Some(capability_state.clone()),
             vfs: Some(vfs.clone()),
-            mcp_servers: construction.projections.mcp_servers.clone(),
+            mcp_servers: projection_mcp_servers.clone(),
             context_bundle_summary: construction
                 .context
                 .bundle
@@ -182,8 +183,20 @@ pub(super) fn envelope_from_construction(
                 .map(crate::workflow::frame_surface::FrameContextBundleSummary::from_bundle),
             execution_profile: Some(executor_config.clone()),
         });
+    if surface_draft.capability_state.is_none() {
+        surface_draft.capability_state = Some(capability_state.clone());
+    }
+    if surface_draft.vfs.is_none() {
+        surface_draft.vfs = Some(vfs.clone());
+    }
+    if surface_draft.execution_profile.is_none() {
+        surface_draft.execution_profile = Some(executor_config.clone());
+    }
+    if surface_draft.mcp_servers.is_empty() && !projection_mcp_servers.is_empty() {
+        surface_draft.mcp_servers = projection_mcp_servers;
+    }
 
-    FrameLaunchEnvelope {
+    let mut envelope = FrameLaunchEnvelope {
         surface: FrameRuntimeSurface {
             agent_id: uuid::Uuid::new_v4(),
             frame_id: uuid::Uuid::new_v4(),
@@ -207,7 +220,7 @@ pub(super) fn envelope_from_construction(
         executor_config,
         capability_state,
         vfs,
-        mcp_servers: construction.projections.mcp_servers,
+        mcp_servers: Vec::new(),
         context_bundle: construction.context.bundle,
         continuation_context_frame: None,
         base_capability_state: construction.resolution.runtime_base_capability_state,
@@ -217,5 +230,7 @@ pub(super) fn envelope_from_construction(
             capability_source: construction.resolution.capability_source,
             pending_overlay_applied: construction.resolution.pending_overlay_applied,
         },
-    }
+    };
+    envelope.sync_transitional_fields_from_surface_draft();
+    envelope
 }

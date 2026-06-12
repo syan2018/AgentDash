@@ -369,7 +369,7 @@ pub(crate) fn build_envelope_from_frame(
             "FrameLaunchEnvelope: executor_config 未在 frame construction 阶段解析".into(),
         )
     })?;
-    let capability_state = capability_state.ok_or_else(|| {
+    let mut capability_state = capability_state.ok_or_else(|| {
         ConnectorError::InvalidConfig(
             "FrameLaunchEnvelope: capability_state 未在 frame construction 阶段解析".into(),
         )
@@ -385,8 +385,14 @@ pub(crate) fn build_envelope_from_frame(
                 "FrameLaunchEnvelope: working_directory 未在 frame construction 阶段解析".into(),
             )
         })?;
+    capability_state.vfs.active = Some(vfs.clone());
+    capability_state.tool.mcp_servers = mcp_servers.clone();
+    surface_draft.capability_state = Some(capability_state.clone());
+    surface_draft.vfs = Some(vfs.clone());
+    surface_draft.mcp_servers = mcp_servers.clone();
+    surface_draft.execution_profile = Some(executor_config.clone());
 
-    Ok(FrameLaunchEnvelope {
+    let mut envelope = FrameLaunchEnvelope {
         surface,
         surface_draft,
         pending_frame: None,
@@ -406,5 +412,7 @@ pub(crate) fn build_envelope_from_frame(
         continuation_context_frame: None,
         base_capability_state: None,
         resolution_trace: LaunchResolutionTrace::default(),
-    })
+    };
+    envelope.sync_transitional_fields_from_surface_draft();
+    Ok(envelope)
 }

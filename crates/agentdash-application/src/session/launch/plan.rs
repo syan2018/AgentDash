@@ -152,9 +152,9 @@ impl LaunchPlan {
     pub fn build(input: LaunchPlanInput) -> Self {
         let pending_frame = input.launch_envelope.pending_frame.clone();
         let working_directory = input.launch_envelope.working_directory.clone();
-        let executor_config = input.launch_envelope.executor_config.clone();
-        let mcp_servers = input.launch_envelope.mcp_servers.clone();
-        let vfs = input.launch_envelope.vfs.clone();
+        let executor_config = input.launch_envelope.launch_executor_config().clone();
+        let mcp_servers = input.launch_envelope.launch_mcp_servers().to_vec();
+        let vfs = input.launch_envelope.launch_vfs().clone();
         let has_vfs = !vfs.mounts.is_empty();
         let identity = input.launch_envelope.intent.identity.clone();
         let title_hint = input
@@ -441,14 +441,15 @@ mod tests {
             .workspace
             .working_directory
             .unwrap_or_else(|| PathBuf::from("/tmp"));
-        let surface_draft = construction
+        let projection_mcp_servers = construction.projections.mcp_servers.clone();
+        let mut surface_draft = construction
             .projections
             .frame_surface_draft
             .clone()
             .unwrap_or_else(|| FrameSurfaceDraft {
                 capability_state: Some(capability_state.clone()),
                 vfs: Some(vfs.clone()),
-                mcp_servers: construction.projections.mcp_servers.clone(),
+                mcp_servers: projection_mcp_servers.clone(),
                 context_bundle_summary: construction
                     .context
                     .bundle
@@ -456,7 +457,19 @@ mod tests {
                     .map(FrameContextBundleSummary::from_bundle),
                 execution_profile: Some(executor_config.clone()),
             });
-        FrameLaunchEnvelope {
+        if surface_draft.capability_state.is_none() {
+            surface_draft.capability_state = Some(capability_state.clone());
+        }
+        if surface_draft.vfs.is_none() {
+            surface_draft.vfs = Some(vfs.clone());
+        }
+        if surface_draft.execution_profile.is_none() {
+            surface_draft.execution_profile = Some(executor_config.clone());
+        }
+        if surface_draft.mcp_servers.is_empty() && !projection_mcp_servers.is_empty() {
+            surface_draft.mcp_servers = projection_mcp_servers;
+        }
+        let mut envelope = FrameLaunchEnvelope {
             surface: FrameRuntimeSurface {
                 agent_id: uuid::Uuid::new_v4(),
                 frame_id: uuid::Uuid::new_v4(),
@@ -480,7 +493,7 @@ mod tests {
             executor_config,
             capability_state,
             vfs,
-            mcp_servers: construction.projections.mcp_servers,
+            mcp_servers: Vec::new(),
             context_bundle: construction.context.bundle,
             continuation_context_frame: None,
             base_capability_state: construction.resolution.runtime_base_capability_state,
@@ -490,7 +503,9 @@ mod tests {
                 capability_source: construction.resolution.capability_source,
                 pending_overlay_applied: construction.resolution.pending_overlay_applied,
             },
-        }
+        };
+        envelope.sync_transitional_fields_from_surface_draft();
+        envelope
     }
 
     #[test]

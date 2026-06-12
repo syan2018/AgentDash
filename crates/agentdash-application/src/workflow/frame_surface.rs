@@ -37,9 +37,9 @@ impl FrameContextBundleSummary {
 /// Frame construction 产出的可执行 surface 草稿。
 ///
 /// Draft 是写入 `AgentFrame` revision 前的 typed handoff，承载 capability、
-/// VFS、MCP、context bundle summary 与 execution profile surface。过渡期内
-/// launch 仍读取 `FrameLaunchEnvelope` 上的既有字段，但这些字段应从同一份
-/// draft 派生，避免 construction pipeline 继续维护隐式并列 projection。
+/// VFS、MCP、context bundle summary 与 execution profile surface。Runtime launch
+/// 通过 `FrameLaunchEnvelope` 的 surface accessor 优先读取这份 draft；迁移期保留
+/// 的 envelope 并列字段必须从同一份 draft 派生。
 #[derive(Debug, Clone, Default)]
 pub struct FrameSurfaceDraft {
     pub capability_state: Option<CapabilityState>,

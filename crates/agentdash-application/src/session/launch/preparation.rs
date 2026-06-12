@@ -97,11 +97,7 @@ impl TurnPreparer {
         let mut context = launch_plan.context;
 
         context.turn.assembled_tools = deps
-            .build_tools_for_execution_context(
-                &session_id,
-                &context,
-                &capability_state.tool.mcp_servers,
-            )
+            .build_tools_for_execution_context(&session_id, &context)
             .await;
 
         let include_connector_startup_context = should_include_connector_startup_context(

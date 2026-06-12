@@ -43,9 +43,9 @@ pub struct ExecutionSessionFrame {
 | `turn_id` | Launch preparation claim/activation | connector trace、hook 审计 |
 | `working_directory` | `FrameLaunchEnvelope.working_directory` | Relay、vibe_kanban、PiAgent tools |
 | `environment_variables` | launch prompt payload / executor policy | Relay、vibe_kanban |
-| `executor_config` | `FrameLaunchEnvelope` execution profile + launch override | 所有 connector |
-| `mcp_servers` | capability projection | Relay 透传；PiAgent 通过 assembled tools 消费 |
-| `vfs` | `FrameLaunchEnvelope` VFS projection | Relay、vibe_kanban、PiAgent tools |
+| `executor_config` | `FrameLaunchEnvelope.surface_draft.execution_profile` + launch override | 所有 connector |
+| `mcp_servers` | `FrameLaunchEnvelope.surface_draft.mcp_servers` | Relay 透传；PiAgent 通过 assembled tools 消费 |
+| `vfs` | `FrameLaunchEnvelope.surface_draft.vfs` | Relay、vibe_kanban、PiAgent tools |
 | `identity` | `FrameLaunchEnvelope` identity projection | Relay、审计、permission 决策 |
 
 一次 `connector.prompt(...)` 调用期间，session frame 不变；下一 turn 需要新的投影时由
@@ -67,7 +67,7 @@ pub struct ExecutionTurnFrame {
 | 字段 | 来源 | 消费者 |
 |---|---|---|
 | `hook_session` | session runtime shared hook handle | hook trace、runtime injection、capability 追踪 |
-| `capability_state` | `FrameLaunchEnvelope` capability projection + runtime command apply result | runtime tools、MCP/VFS diff |
+| `capability_state` | `FrameLaunchEnvelope.surface_draft.capability_state` + runtime command apply result | runtime tools、MCP/VFS diff |
 | `runtime_delegate` | launch hook plan | agent loop hook callbacks |
 | `restored_session_state` | restore plan | 支持 repository restore 的 connector |
 | `context_frames` | `FrameLaunchEnvelope` context projection | connector context 消费（按 kind 分类或渲染为文本） |
@@ -95,12 +95,15 @@ MCP 或 capability 热更新流程：
 ```text
 active TurnExecution
   -> clone ExecutionSessionFrame + CapabilityState
+  -> persist AgentFrame revision for the updated surface
   -> build tools
   -> connector.update_session_tools(session_id, tools)
   -> update active turn projection
 ```
 
-该流程只服务 live connector 的工具集替换；下一轮 prompt 仍通过
+该流程只服务 live connector 的工具集替换；active turn 的 `ExecutionSessionFrame.mcp_servers`
+是当前 frame surface 的执行快照，工具发现从该快照读取 MCP declaration，并用
+`CapabilityState.tool_policy` 做工具级裁决。下一轮 prompt 仍通过
 `LaunchCommand -> FrameLaunchEnvelope -> LaunchPlan -> PreparedTurn` 重新投影完整
 `ExecutionContext`。
 

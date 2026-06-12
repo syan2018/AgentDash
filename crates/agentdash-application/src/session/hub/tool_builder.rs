@@ -14,24 +14,51 @@ use agentdash_spi::{ConnectorError, ExecutionContext, RuntimeMcpServerDeclaratio
 use uuid::Uuid;
 
 use super::SessionRuntimeInner;
+use crate::session::capability_state::project_capability_state_from_frame;
 use crate::session::types::{AgentFrameRuntimeTarget, CapabilityState};
 use crate::workflow::AgentFrameBuilder;
+use crate::workflow::frame_surface::AgentFrameSurfaceExt;
 use crate::workflow::resolve_current_frame_for_runtime_session;
 
 impl SessionRuntimeInner {
-    /// 读取 session 当前 turn 生效的 MCP server 列表（由 prompt pipeline 维护）。
+    /// 读取 delivery RuntimeSession 当前生效的 MCP server 列表。
+    ///
+    /// Active turn 返回 connector session frame 的执行快照；idle 时通过
+    /// `RuntimeSessionExecutionAnchor` 反查当前 AgentFrame surface。
     pub async fn get_runtime_mcp_servers(
         &self,
         session_id: &str,
     ) -> Vec<RuntimeMcpServerDeclaration> {
-        self.runtime_registry
+        let active = self
+            .runtime_registry
             .with_runtime(session_id, |runtime| {
                 runtime
                     .and_then(|runtime| runtime.turn_state.active_turn())
                     .map(|turn| turn.session_frame.mcp_servers.clone())
-                    .unwrap_or_default()
             })
-            .await
+            .await;
+        if let Some(servers) = active {
+            return servers;
+        }
+
+        let (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) = (
+            self.execution_anchor_repo.as_ref(),
+            self.lifecycle_agent_repo.as_ref(),
+            self.agent_frame_repo.as_ref(),
+        ) else {
+            return Vec::new();
+        };
+        resolve_current_frame_for_runtime_session(
+            session_id,
+            anchor_repo.as_ref(),
+            agent_repo.as_ref(),
+            frame_repo.as_ref(),
+        )
+        .await
+        .ok()
+        .flatten()
+        .map(|(_anchor, _agent, frame)| frame.typed_mcp_servers())
+        .unwrap_or_default()
     }
 
     /// 读取 session 当前 turn 生效的能力状态（AgentFrame 投影缓存）。
@@ -54,7 +81,8 @@ impl SessionRuntimeInner {
     /// 两级缓存均为 AgentFrame revision 的投影，写入路径统一经
     /// `replace_current_capability_state` → AgentFrame revision → 内存同步。
     pub async fn get_latest_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
-        self.runtime_registry
+        let cached = self
+            .runtime_registry
             .with_runtime(session_id, |runtime| {
                 let runtime = runtime?;
                 if let Some(turn) = runtime.turn_state.active_turn() {
@@ -65,7 +93,28 @@ impl SessionRuntimeInner {
                     .as_ref()
                     .map(|profile| profile.capability_state.clone())
             })
-            .await
+            .await;
+        if cached.is_some() {
+            return cached;
+        }
+
+        let (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) = (
+            self.execution_anchor_repo.as_ref(),
+            self.lifecycle_agent_repo.as_ref(),
+            self.agent_frame_repo.as_ref(),
+        ) else {
+            return None;
+        };
+        resolve_current_frame_for_runtime_session(
+            session_id,
+            anchor_repo.as_ref(),
+            agent_repo.as_ref(),
+            frame_repo.as_ref(),
+        )
+        .await
+        .ok()
+        .flatten()
+        .map(|(_anchor, _agent, frame)| project_capability_state_from_frame(&frame))
     }
 
     /// Runtime adapter 边界使用的 lookup：把 delivery RuntimeSession 解析为当前 AgentFrame。
@@ -190,6 +239,8 @@ impl SessionRuntimeInner {
                 "AgentFrame revision 写入失败，拒绝热更新能力状态: {error}"
             ))
         })?;
+        state = project_capability_state_from_frame(&new_frame);
+        let mcp_servers = new_frame.typed_mcp_servers();
         tracing::debug!(
             session_id,
             target_frame_id = %target.frame_id,
@@ -218,7 +269,7 @@ impl SessionRuntimeInner {
 
         let mut session_frame = turn_snapshot.session_frame.clone();
         session_frame.turn_id = turn_snapshot.turn_id.clone();
-        session_frame.mcp_servers = state.tool.mcp_servers.clone();
+        session_frame.mcp_servers = mcp_servers.clone();
         session_frame.vfs = state.vfs.active.clone();
         let context = ExecutionContext {
             session: session_frame,
@@ -229,7 +280,7 @@ impl SessionRuntimeInner {
             },
         };
         let all_tools = self
-            .build_tools_for_execution_context(session_id, &context, &state.tool.mcp_servers)
+            .build_tools_for_execution_context(session_id, &context)
             .await;
 
         self.connector
@@ -256,7 +307,7 @@ impl SessionRuntimeInner {
                         capability_state: state.clone(),
                     });
                     if let Some(turn) = runtime.turn_state.active_turn_mut() {
-                        turn.session_frame.mcp_servers = state.tool.mcp_servers.clone();
+                        turn.session_frame.mcp_servers = mcp_servers.clone();
                         turn.session_frame.vfs = state.vfs.active.clone();
                         turn.capability_state = state;
                     }
@@ -270,7 +321,6 @@ impl SessionRuntimeInner {
         &self,
         session_id: &str,
         context: &ExecutionContext,
-        mcp_servers: &[agentdash_spi::RuntimeMcpServerDeclaration],
     ) -> Vec<DynAgentTool> {
         let mut all_tools: Vec<DynAgentTool> = Vec::new();
 
@@ -294,7 +344,7 @@ impl SessionRuntimeInner {
             };
             match discovery
                 .discover_tool_entries(McpToolDiscoveryRequest {
-                    servers: mcp_servers.to_vec(),
+                    servers: context.session.mcp_servers.clone(),
                     capability_state: context.turn.capability_state.clone(),
                     call_context: Some(call_context),
                 })
@@ -315,21 +365,60 @@ impl SessionRuntimeInner {
         &self,
         session_id: &str,
     ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
-        let capability_state = self
-            .get_latest_capability_state(session_id)
+        let active_surface = self
+            .runtime_registry
+            .with_runtime(session_id, |runtime| {
+                runtime
+                    .and_then(|runtime| runtime.turn_state.active_turn())
+                    .map(|turn| {
+                        (
+                            turn.session_frame.mcp_servers.clone(),
+                            turn.capability_state.clone(),
+                        )
+                    })
+            })
+            .await;
+        let (servers, capability_state) = if let Some(surface) = active_surface {
+            surface
+        } else {
+            let (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) = (
+                self.execution_anchor_repo.as_ref(),
+                self.lifecycle_agent_repo.as_ref(),
+                self.agent_frame_repo.as_ref(),
+            ) else {
+                return Err(ConnectorError::Runtime(format!(
+                    "session `{session_id}` 缺少 AgentFrame surface repository，无法发现 MCP 工具"
+                )));
+            };
+            let (_anchor, _agent, frame) = resolve_current_frame_for_runtime_session(
+                session_id,
+                anchor_repo.as_ref(),
+                agent_repo.as_ref(),
+                frame_repo.as_ref(),
+            )
             .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!(
+                    "通过 anchor 查找 session `{session_id}` 当前 AgentFrame surface 失败: {error}"
+                ))
+            })?
             .ok_or_else(|| {
                 ConnectorError::Runtime(format!(
-                    "session `{session_id}` 当前没有可用 CapabilityState"
+                    "session `{session_id}` 未关联当前 AgentFrame surface，无法发现 MCP 工具"
                 ))
             })?;
+            (
+                frame.typed_mcp_servers(),
+                project_capability_state_from_frame(&frame),
+            )
+        };
         let discovery = self.mcp_tool_discovery.as_ref().ok_or_else(|| {
             ConnectorError::Runtime("SessionRuntimeInner 缺少 mcp_tool_discovery".to_string())
         })?;
 
         discovery
             .discover_tool_entries(McpToolDiscoveryRequest {
-                servers: capability_state.tool.mcp_servers.clone(),
+                servers,
                 capability_state,
                 call_context: None,
             })

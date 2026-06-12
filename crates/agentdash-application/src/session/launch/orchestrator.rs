@@ -141,7 +141,7 @@ impl SessionLaunchOrchestrator {
         let user_input = UserPromptInput {
             input: envelope.intent.input.clone(),
             env: envelope.intent.environment_variables.clone(),
-            executor_config: Some(envelope.executor_config.clone()),
+            executor_config: Some(envelope.launch_executor_config().clone()),
             backend_selection: None,
         };
         let command = LaunchCommand::http_prompt_input(user_input, None);
@@ -189,9 +189,9 @@ impl SessionLaunchOrchestrator {
     ) -> FrameLaunchEnvelope {
         use crate::workflow::runtime_launch::LaunchResolutionTrace;
 
-        let mut base_capability_state = envelope.capability_state.clone();
-        base_capability_state.vfs.active = Some(envelope.vfs.clone());
-        base_capability_state.tool.mcp_servers = envelope.mcp_servers.clone();
+        let mut base_capability_state = envelope.launch_capability_state().clone();
+        base_capability_state.vfs.active = Some(envelope.launch_vfs().clone());
+        base_capability_state.tool.mcp_servers = envelope.launch_mcp_servers().to_vec();
 
         let requested_transitions = requested_runtime_commands
             .iter()
@@ -213,7 +213,7 @@ impl SessionLaunchOrchestrator {
         let effective_vfs = replay
             .as_ref()
             .and_then(|replay| replay.effective_vfs.clone())
-            .unwrap_or_else(|| envelope.vfs.clone());
+            .unwrap_or_else(|| envelope.launch_vfs().clone());
         if let Some(mount) = effective_vfs.default_mount() {
             let wd = std::path::PathBuf::from(mount.root_ref.trim());
             if !wd.as_os_str().is_empty() {
@@ -226,14 +226,14 @@ impl SessionLaunchOrchestrator {
         let effective_mcp_servers = replay
             .as_ref()
             .and_then(|replay| replay.effective_mcp_servers.clone())
-            .unwrap_or_else(|| envelope.mcp_servers.clone());
-        envelope.mcp_servers = effective_mcp_servers.clone();
+            .unwrap_or_else(|| envelope.launch_mcp_servers().to_vec());
         final_capability_state.tool.mcp_servers = effective_mcp_servers;
         envelope.capability_state = final_capability_state;
         envelope.base_capability_state = Some(base_capability_state);
         envelope.surface_draft.capability_state = Some(envelope.capability_state.clone());
         envelope.surface_draft.vfs = Some(envelope.vfs.clone());
-        envelope.surface_draft.mcp_servers = envelope.mcp_servers.clone();
+        envelope.surface_draft.mcp_servers = envelope.capability_state.tool.mcp_servers.clone();
+        envelope.sync_transitional_fields_from_surface_draft();
         if requested_runtime_commands.is_empty() {
             envelope.resolution_trace.pending_overlay_applied = false;
         } else {

@@ -177,7 +177,6 @@ impl TurnPreparationDeps {
         &self,
         session_id: &str,
         context: &agentdash_spi::ExecutionContext,
-        mcp_servers: &[agentdash_spi::RuntimeMcpServerDeclaration],
     ) -> Vec<agentdash_agent_types::DynAgentTool> {
         let mut all_tools = Vec::new();
 
@@ -201,7 +200,7 @@ impl TurnPreparationDeps {
             };
             match discovery
                 .discover_tool_entries(McpToolDiscoveryRequest {
-                    servers: mcp_servers.to_vec(),
+                    servers: context.session.mcp_servers.clone(),
                     capability_state: context.turn.capability_state.clone(),
                     call_context: Some(call_context),
                 })

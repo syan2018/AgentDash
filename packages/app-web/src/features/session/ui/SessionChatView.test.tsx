@@ -233,7 +233,7 @@ describe("isSessionModelRequirementSatisfied", () => {
       executor: "PI_AGENT",
       provider_id: "openai",
       model_id: "reasoning-model",
-      thinking_level: "",
+      thinking_level: undefined,
     })).toBe(true);
   });
 });

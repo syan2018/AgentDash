@@ -8,7 +8,9 @@ use crate::session::hub_support::{
     build_user_input_submitted_envelope,
 };
 use crate::session::persistence::SessionRuntimeCommandStore;
-use crate::session::types::{ExecutionStatus, ResolvedPromptPayload, SessionMeta, TitleSource};
+use crate::session::types::{
+    AgentFrameRuntimeTarget, ExecutionStatus, ResolvedPromptPayload, SessionMeta, TitleSource,
+};
 use crate::workflow::{AgentFrameBuilder, resolve_current_frame_for_runtime_session};
 
 pub(in crate::session) struct CommittedTurn {
@@ -172,6 +174,13 @@ impl TurnCommitter {
                                 session_id,
                                 "同步 accepted pending current_frame_id 失败: {error}"
                             );
+                        } else {
+                            self.sync_hook_runtime_target(
+                                session_id,
+                                &prepared.turn_id,
+                                pending_frame.id,
+                            )
+                            .await;
                         }
                     }
                 }
@@ -218,6 +227,13 @@ impl TurnCommitter {
                                     session_id,
                                     "同步 accepted current_frame_id 失败: {error}"
                                 );
+                            } else {
+                                self.sync_hook_runtime_target(
+                                    session_id,
+                                    &prepared.turn_id,
+                                    frame.id,
+                                )
+                                .await;
                             }
                         }
                     }
@@ -233,6 +249,32 @@ impl TurnCommitter {
             Err(error) => {
                 tracing::warn!(session_id, "查找 session 关联的 AgentFrame 失败: {error}");
             }
+        }
+    }
+
+    async fn sync_hook_runtime_target(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        frame_id: uuid::Uuid,
+    ) {
+        if let Err(error) = self
+            .deps
+            .hooks
+            .ensure_hook_runtime_for_target(
+                &AgentFrameRuntimeTarget {
+                    frame_id,
+                    delivery_runtime_session_id: session_id.to_string(),
+                },
+                Some(turn_id),
+            )
+            .await
+        {
+            tracing::warn!(
+                session_id,
+                %frame_id,
+                "同步 accepted AgentFrame Hook runtime target 失败: {error}"
+            );
         }
     }
 }

@@ -14,8 +14,8 @@ use agentdash_domain::backend::{
     BackendExecutionTerminalKind,
 };
 use agentdash_domain::workflow::{
-    AgentFrame, LifecycleAgent, LifecycleAgentRepository, RuntimeSessionExecutionAnchor,
-    RuntimeSessionExecutionAnchorRepository,
+    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository,
+    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::hooks::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
@@ -1705,6 +1705,76 @@ impl ExecutionHookProvider for RecordingHookProvider {
     }
 }
 
+struct CurrentFrameHookProvider {
+    frame_repo: Arc<dyn AgentFrameRepository>,
+    agent_repo: Arc<dyn LifecycleAgentRepository>,
+    anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+}
+
+#[async_trait::async_trait]
+impl ExecutionHookProvider for CurrentFrameHookProvider {
+    async fn resolve_runtime_hook_target(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<Option<HookControlTarget>, agentdash_spi::hooks::HookError> {
+        let Some(anchor) = self
+            .anchor_repo
+            .find_by_session(runtime_session_id)
+            .await
+            .map_err(|error| agentdash_spi::hooks::HookError::Runtime(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let Some(agent) = self
+            .agent_repo
+            .get(anchor.agent_id)
+            .await
+            .map_err(|error| agentdash_spi::hooks::HookError::Runtime(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let Some(frame) = self
+            .frame_repo
+            .get_current(agent.id)
+            .await
+            .map_err(|error| agentdash_spi::hooks::HookError::Runtime(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(HookControlTarget {
+            run_id: anchor.run_id,
+            agent_id: agent.id,
+            frame_id: frame.id,
+        }))
+    }
+
+    async fn load_frame_snapshot(
+        &self,
+        query: AgentFrameHookSnapshotQuery,
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
+        Ok(test_hook_snapshot(
+            query.provenance.runtime_session_id.unwrap_or_default(),
+        ))
+    }
+
+    async fn refresh_frame_snapshot(
+        &self,
+        query: AgentFrameHookRefreshQuery,
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
+        Ok(test_hook_snapshot(
+            query.provenance.runtime_session_id.unwrap_or_default(),
+        ))
+    }
+
+    async fn evaluate_frame_hook(
+        &self,
+        _query: AgentFrameHookEvaluationQuery,
+    ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
+        Ok(HookResolution::default())
+    }
+}
+
 struct StaticResolutionHookProvider {
     queries: Arc<TokioMutex<Vec<HookEvaluationQuery>>>,
     target_by_session: Arc<TokioMutex<HashMap<String, HookControlTarget>>>,
@@ -3217,6 +3287,64 @@ async fn accepted_turn_commits_agent_frame_revision_and_current_frame() {
         .find(|frame| frame.id == current_id)
         .expect("current frame should be persisted");
     assert_eq!(committed_frame.revision, launch_frame.revision + 1);
+}
+
+#[tokio::test]
+async fn accepted_turn_commits_hook_runtime_target_to_new_frame() {
+    let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+    let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
+    let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
+    let hook_provider = Arc::new(CurrentFrameHookProvider {
+        frame_repo: frame_repo.clone(),
+        agent_repo: agent_repo.clone(),
+        anchor_repo: anchor_repo.clone(),
+    });
+    let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
+        Arc::new(EmptyConnector),
+        Some(hook_provider),
+        Arc::new(MemorySessionPersistence::default()),
+    )
+    .with_agent_frame_repo(frame_repo)
+    .with_lifecycle_agent_repo(agent_repo)
+    .with_execution_anchor_repo(anchor_repo)
+    .with_lifecycle_gate_repo(Arc::new(MemoryLifecycleGateRepository::default()));
+    let session = hub
+        .create_session("frame-hook-target-sync")
+        .await
+        .expect("create");
+    let launch_frame = attach_test_lifecycle_frame(&hub, &session.id).await;
+
+    let initial_runtime = hub
+        .hook_service()
+        .ensure_hook_runtime_for_target(
+            &AgentFrameRuntimeTarget {
+                frame_id: launch_frame.id,
+                delivery_runtime_session_id: session.id.clone(),
+            },
+            Some("turn-before"),
+        )
+        .await
+        .expect("initial hook runtime should load")
+        .expect("initial hook runtime should exist");
+    assert_eq!(initial_runtime.control_target().frame_id, launch_frame.id);
+
+    hub.start_prompt(&session.id, simple_prompt_request("hello"))
+        .await
+        .expect("connector accepted turn should commit");
+    let current_id = current_frame_id(&hub, launch_frame.agent_id)
+        .await
+        .expect("current frame should exist");
+
+    let runtime = hub
+        .get_hook_runtime_by_delivery_session(&session.id)
+        .await
+        .expect("hook runtime should remain cached");
+    assert_eq!(runtime.control_target().frame_id, current_id);
+    assert_ne!(
+        runtime.control_target().frame_id,
+        launch_frame.id,
+        "accepted frame 推进后 hook runtime target 应同步到新 frame"
+    );
 }
 
 #[tokio::test]

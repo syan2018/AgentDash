@@ -617,8 +617,9 @@ export function AgentRunWorkspacePage({
   }, [currentAgentId, currentRunId, refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh]);
 
   const handleTurnEnd = useCallback(() => {
+    void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("turn_end", true);
-  }, [scheduleHookRuntimeRefresh]);
+  }, [refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh]);
 
   const handleSystemEvent = useCallback((eventType: string, _event: BackboneEvent) => {
     switch (eventType) {

@@ -125,6 +125,7 @@ impl SessionLaunchDeps {
             stores: self.stores.clone(),
             eventing: self.eventing.clone(),
             core: self.core.clone(),
+            hooks: self.hooks.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
             agent_frame_repo: self.agent_frame_repo.clone(),
             execution_anchor_repo: self.execution_anchor_repo.clone(),
@@ -234,6 +235,7 @@ pub(super) struct TurnCommitDeps {
     pub(super) execution_anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
     pub(super) lifecycle_agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
     core: SessionCoreService,
+    pub(super) hooks: SessionHookService,
 }
 
 impl TurnCommitDeps {

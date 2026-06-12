@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/06-12-agent-run-lifecycle-convergence/research/current-state.md", "reason": "Check implementation against the current-state evidence and target planning"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Verify workflow control-plane invariants remain intact"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Verify AgentRun workspace command and runtime execution state semantics"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "Verify lifecycle and runtime VFS surface behavior"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify frontend state remains server-contract driven"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify generated contract usage and frontend type safety"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify focused frontend tests and quality gates"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify backend/frontend contract alignment"}

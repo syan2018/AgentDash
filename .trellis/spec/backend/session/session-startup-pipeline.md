@@ -60,6 +60,7 @@ Routine source metadata 只表达触发来源与当前 execution facts。`routin
 `FrameLaunchEnvelope` 至少覆盖：
 
 - `FrameSurfaceDraft`，由 construction pipeline 汇总 capability、VFS、MCP、context bundle summary 与 execution profile surface，并作为写入 `AgentFrame` revision 的 typed handoff。
+- `FrameLaunchSurface`，由 `FrameSurfaceDraft` 在 envelope 构造边界校验生成，字段为 non-optional，是 launch planner、turn preparation 与 connector projection 的唯一 runtime surface 读取入口。
 - `FrameRuntimeSurface`，只来自 `AgentFrame` 持久化 surface。
 - `FrameLaunchIntent`，只来自 `LaunchCommand` / composer launch extras。
 - workspace 与 typed working directory。`working_directory` 必须在进入 launch planner 前解析完成。
@@ -71,9 +72,9 @@ Routine source metadata 只表达触发来源与当前 execution facts。`routin
 Launch 前必须在 `FrameLaunchEnvelope` 构造边界完成等价 gate：
 
 - 缺少 `working_directory`、`executor_config`、`vfs`、`capability_state` 时拒绝 launch。
-- `capability_state.vfs.active` 必须等于 envelope `vfs`。
-- `capability_state.tool.mcp_servers` 必须等于 envelope `mcp_servers`。
-- `FrameLaunchEnvelope` 上的 `capability_state` / `vfs` / `mcp_servers` / `executor_config` 是过渡字段，必须从 `surface_draft` 派生；launch planner、turn preparation 与 MCP tool assembly 读取 typed surface accessor，原因是 AgentFrame revision 与 construction draft 应成为 launch 面的同一事实闭包。
+- `launch_surface.capability_state.vfs.active` 必须等于 `launch_surface.vfs`。
+- `launch_surface.capability_state.tool.mcp_servers` 必须等于 `launch_surface.mcp_servers`。
+- `FrameLaunchEnvelope` 不保留与 typed surface 并列的 executor/capability/VFS/MCP 字段；launch planner、turn preparation 与 MCP tool assembly 只读取 `FrameLaunchSurface`，原因是 AgentFrame revision 与 construction draft 应成为 launch 面的同一事实闭包。
 - `CapabilityState.tool.mcp_servers` 是 capability/draft projection，用于 runtime command replay、tool policy 关联和工具装配快照；AgentRun 当前可执行 MCP surface 的事实源仍是 `AgentFrame.mcp_surface_json` / `FrameSurfaceDraft.mcp_servers`。
 - pending runtime command 的 overlay 由 frame construction 形成 final capability projection；`requested -> applied` 副作用只能在 connector prompt accepted 后提交。
 
@@ -96,18 +97,18 @@ Contract:
 - `CapabilityResolver` 只解析 tool / MCP / companion 维度。
 - Effective VFS 由 frame construction 合并 frame/session/runtime-command facts 后确定。
 - Skill baseline 与 guidelines 从 effective VFS 派生。
-- `CapabilityState.vfs.active` 必须等于 final envelope `vfs`。
-- `CapabilityState.tool.mcp_servers` 必须等于 final envelope `mcp_servers`。
-- `runtime_surface` 是 query DTO，只从 final envelope `vfs` / `AgentFrame.vfs_surface_json` 生成。
+- `CapabilityState.vfs.active` 必须等于 `FrameLaunchEnvelope.launch_surface.vfs`。
+- `CapabilityState.tool.mcp_servers` 必须等于 `FrameLaunchEnvelope.launch_surface.mcp_servers`。
+- `runtime_surface` 是 query DTO，只从 `FrameLaunchEnvelope.launch_surface.vfs` / `AgentFrame.vfs_surface_json` 生成。
 - `AgentFrame` 的 VFS / MCP / capability surface 通过 `AgentFrameBuilder::with_surface_draft` 集中写入，原因是 launch 装配面、query DTO 面和 capability replay 必须跟随 effective capability VFS 保持一致。
-- `FrameSurfaceDraft` 是 construction 到 `AgentFrameBuilder` / `FrameLaunchEnvelope` 的显式交接结构。`SessionConstructionPlan.projections.frame_surface_draft` 是该 handoff 的目标形态；`mcp_servers` / `capability_state` 等旧 projection 字段只作为测试 fixture、inspection 输入和诊断兼容面保留，进入 launch 前必须转成同一份 draft，原因是 construction validation、launch planning、connector projection 和 query surface 必须观察同一份 typed handoff。
+- `FrameSurfaceDraft` 是 construction 到 `AgentFrameBuilder` / `FrameLaunchEnvelope` 的显式交接结构。`FrameLaunchSurface` 是从该 draft 校验得到的 launch-ready typed surface，原因是 construction validation、launch planning、connector projection 和 query surface 必须观察同一份 typed handoff，且 planner 不应读取 optional draft 字段。
 
 ## Scenario: MCP Runtime Binding During Frame Construction
 
 ### 1. Scope / Trigger
 
 - Trigger: MCP Preset 可以声明运行时绑定；frame construction、capability resolver、direct/relay/local MCP runtime 都必须消费同一份已解析 MCP server declaration。
-- Scope: Project `McpPreset.runtime_binding`、final VFS `main` mount metadata、`mcp_preset_keys`、`mcp:<preset>` capability directive、`FrameLaunchEnvelope.mcp_servers` 与 `CapabilityState.tool.mcp_servers`。
+- Scope: Project `McpPreset.runtime_binding`、final VFS `main` mount metadata、`mcp_preset_keys`、`mcp:<preset>` capability directive、`FrameLaunchEnvelope.launch_surface.mcp_servers` 与 `CapabilityState.tool.mcp_servers`。
 
 ### 2. Signatures
 
@@ -183,7 +184,7 @@ Workspace mount metadata consumed by the resolver:
 - `resolve_preset_mcp_declaration()` returns the runtime result: `RuntimeMcpServerDeclaration { name: preset.key, transport: resolved_transport, uses_relay }`.
 - `mcp_preset_keys` and `mcp:<preset>` must both resolve through `resolve_preset_mcp_declaration()` with the same `McpRuntimeBindingContext` after final VFS exists.
 - Request/relay-provided already-resolved `RuntimeMcpServerDeclaration` entries are runtime results and must not be re-resolved as presets.
-- Projection normalization must keep `CapabilityState.tool.mcp_servers == FrameLaunchEnvelope.mcp_servers`.
+- Projection normalization must keep `CapabilityState.tool.mcp_servers == FrameLaunchEnvelope.launch_surface.mcp_servers`.
 - Duplicate MCP servers are de-duplicated by agent-facing server name after request MCP, capability MCP, and agent preset MCP are merged.
 - HTTP/SSE query binding uses a URL parser and replaces existing same-name query values with the runtime fact.
 - HTTP/SSE header binding replaces an existing same-name header case-insensitively; final reserved-header validation stays in the rmcp HTTP client layer.
@@ -222,7 +223,7 @@ Workspace mount metadata consumed by the resolver:
 - Runtime resolver tests assert HTTP query/header binding, stdio env/cwd binding, optional missing source skip, missing required source diagnostic, non-scalar source failure, transport mismatch, blank target name, invalid URL, and blank cwd.
 - Capability resolver test asserts `mcp:<preset>` receives `CapabilityResolverInput.mcp_runtime_context` and resolves the same transport as the agent preset path.
 - Session assembler test asserts `mcp_preset_keys` and `mcp:<preset>` for the same preset produce identical resolved `RuntimeMcpServerDeclaration`.
-- Frame construction validation test asserts `CapabilityState.tool.mcp_servers == FrameLaunchEnvelope.mcp_servers`.
+- Frame construction validation test asserts `CapabilityState.tool.mcp_servers == FrameLaunchEnvelope.launch_surface.mcp_servers`.
 - Direct/relay/local integration tests assert resolved query/header/env/cwd values are the values consumed by runtime clients, not the preset declaration.
 
 ### 7. Non-canonical / Canonical
@@ -242,7 +243,7 @@ McpPreset(runtime_binding + static transport)
   + McpRuntimeBindingContext(final VFS main mount)
   -> resolve_preset_mcp_declaration(...)
   -> RuntimeMcpServerDeclaration(resolved transport)
-  -> CapabilityState.tool.mcp_servers == FrameLaunchEnvelope.mcp_servers
+  -> CapabilityState.tool.mcp_servers == FrameLaunchEnvelope.launch_surface.mcp_servers
 ```
 
 ## LaunchPlan And Stage Contracts
@@ -259,7 +260,7 @@ McpPreset(runtime_binding + static transport)
 - connector input projection
 - launch trace
 
-Connector input 的 working directory、executor config、MCP、VFS、identity、capability state 和 context frame 都从 `FrameLaunchEnvelope.surface_draft` / `FrameRuntimeSurface` 与 `LaunchPlan` 投影生成。launch stages 执行计划时沿用 frame surface handoff，保持 context、VFS、MCP 与 capability 的单一来源。
+Connector input 的 working directory、executor config、MCP、VFS、identity、capability state 和 context frame 都从 `FrameLaunchEnvelope.launch_surface` / `FrameRuntimeSurface` 与 `LaunchPlan` 投影生成。launch stages 执行计划时沿用 frame surface handoff，保持 context、VFS、MCP 与 capability 的单一来源。
 
 `PreparedTurn` 汇总 connector accepted 前的 turn runtime projection、tools、context frames、hook runtime handle 与 connector-facing `ExecutionContext`。
 

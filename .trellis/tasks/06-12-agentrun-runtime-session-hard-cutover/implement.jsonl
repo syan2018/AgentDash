@@ -1,0 +1,14 @@
+{"file": ".trellis/tasks/06-12-agentrun-runtime-session-hard-cutover/prd.md", "reason": "Hard cutover requirements and acceptance criteria."}
+{"file": ".trellis/tasks/06-12-agentrun-runtime-session-hard-cutover/design.md", "reason": "Target model, boundary changes, data flow and test strategy."}
+{"file": ".trellis/tasks/06-12-agentrun-runtime-session-hard-cutover/implement.md", "reason": "Ordered implementation plan and validation gates."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "RuntimeSession trace/delivery boundary and AgentFrame fact-source contract."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "FrameLaunchEnvelope, FrameSurfaceDraft and launch pipeline contract to hard-cut."}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "Connector-facing ExecutionContext surface projection contract."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Runtime registry, AgentRun workspace action and persistence boundary contract."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "LifecycleRun / LifecycleAgent / AgentFrame / RuntimeSession target model."}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Runtime gateway Session action and MCP source boundary."}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "CapabilityState MCP projection and tool policy contract."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Generated DTO and AgentRun workspace contract boundary."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Generated DTO consumption and frontend runtime surface state rules."}
+{"file": ".trellis/tasks/archive/2026-06/06-12-agentrun-runtime-session-surface-convergence/design.md", "reason": "Previous standard convergence design and remaining hard-cutover targets."}
+{"file": ".trellis/tasks/archive/2026-06/06-12-agentrun-runtime-session-surface-convergence/implement.md", "reason": "Previous phase notes that identify remaining transition fields and fixture compatibility."}

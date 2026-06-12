@@ -1,0 +1,11 @@
+{"file": ".trellis/tasks/06-12-agentrun-runtime-session-hard-cutover/prd.md", "reason": "Acceptance criteria for final hard cutover review."}
+{"file": ".trellis/tasks/06-12-agentrun-runtime-session-hard-cutover/design.md", "reason": "Target-state architecture and boundaries to verify."}
+{"file": ".trellis/tasks/06-12-agentrun-runtime-session-hard-cutover/implement.md", "reason": "Phase checklist and validation commands."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Check launch surface single-source contract after implementation."}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "Check connector projection still reads typed surface."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Check RuntimeSession persistence and AgentRun action boundaries."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Check target model remains LifecycleRun -> LifecycleAgent -> AgentFrame -> RuntimeSession."}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Check runtime gateway MCP action source boundaries."}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Check CapabilityState MCP projection remains derived and policy-scoped."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check AgentRun workspace DTO and generated contract boundaries."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Check frontend generated DTO consumption and runtime surface state."}

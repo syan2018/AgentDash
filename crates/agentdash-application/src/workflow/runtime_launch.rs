@@ -79,6 +79,65 @@ pub struct FrameLaunchIntent {
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
 }
 
+// ─── FrameLaunchSurface: planner-facing launch surface，字段 non-optional ───
+
+/// Launch planner / preparation 消费的 typed surface。
+///
+/// `FrameSurfaceDraft` 仍是 frame construction 写入 `AgentFrame` revision 的草稿形态，
+/// 因此部分字段保持 optional。进入 `FrameLaunchEnvelope` 时必须通过本结构完成
+/// launch-ready gate，让 planner 不需要 fallback 读取。
+#[derive(Debug, Clone)]
+pub struct FrameLaunchSurface {
+    pub capability_state: CapabilityState,
+    pub vfs: Vfs,
+    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
+    pub execution_profile: AgentConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrameLaunchSurfaceError {
+    MissingField(&'static str),
+}
+
+impl std::fmt::Display for FrameLaunchSurfaceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingField(field) => {
+                write!(f, "FrameLaunchSurface 缺少 launch 必需字段 `{field}`")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FrameLaunchSurfaceError {}
+
+impl FrameLaunchSurface {
+    pub fn from_surface_draft(draft: &FrameSurfaceDraft) -> Result<Self, FrameLaunchSurfaceError> {
+        Ok(Self {
+            capability_state: draft
+                .capability_state
+                .clone()
+                .ok_or(FrameLaunchSurfaceError::MissingField("capability_state"))?,
+            vfs: draft
+                .vfs
+                .clone()
+                .ok_or(FrameLaunchSurfaceError::MissingField("vfs"))?,
+            mcp_servers: draft.mcp_servers.clone(),
+            execution_profile: draft
+                .execution_profile
+                .clone()
+                .ok_or(FrameLaunchSurfaceError::MissingField("execution_profile"))?,
+        })
+    }
+
+    pub fn write_back_to_surface_draft(&self, draft: &mut FrameSurfaceDraft) {
+        draft.capability_state = Some(self.capability_state.clone());
+        draft.vfs = Some(self.vfs.clone());
+        draft.mcp_servers = self.mcp_servers.clone();
+        draft.execution_profile = Some(self.execution_profile.clone());
+    }
+}
+
 // ─── FrameLaunchEnvelope: frame construction 输出，字段 non-optional ───
 
 /// Frame construction 到 planner 的传递物。
@@ -87,23 +146,13 @@ pub struct FrameLaunchIntent {
 #[derive(Debug, Clone)]
 pub struct FrameLaunchEnvelope {
     pub surface: FrameRuntimeSurface,
-    /// Launch planner / preparation 的 typed surface handoff。
-    ///
-    /// Phase 3 后，launch-time VFS / MCP / capability / execution profile 读取优先从这里进入。
-    /// 下方 `capability_state` / `vfs` / `mcp_servers` 仍保留为过渡字段，构造边界必须
-    /// 从这份 draft 派生并保持一致。
+    /// 写入 AgentFrame revision 的 construction draft。
     pub surface_draft: FrameSurfaceDraft,
+    /// Launch planner / preparation 的 non-optional typed surface。
+    pub launch_surface: FrameLaunchSurface,
     pub pending_frame: Option<AgentFrame>,
     pub intent: FrameLaunchIntent,
     pub working_directory: PathBuf,
-    /// 过渡字段：由 `surface_draft.execution_profile` 派生，保留给旧调用面和诊断。
-    pub executor_config: AgentConfig,
-    /// 过渡字段：由 `surface_draft.capability_state` 派生，保留给旧调用面和诊断。
-    pub capability_state: CapabilityState,
-    /// 过渡字段：由 `surface_draft.vfs` 派生，保留给旧调用面和诊断。
-    pub vfs: Vfs,
-    /// 过渡字段：由 `surface_draft.mcp_servers` 派生，保留给旧调用面和诊断。
-    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
     pub context_bundle: Option<SessionContextBundle>,
     pub continuation_context_frame: Option<ContextFrame>,
     pub base_capability_state: Option<CapabilityState>,
@@ -120,51 +169,29 @@ pub struct LaunchResolutionTrace {
 }
 
 impl FrameLaunchEnvelope {
-    /// Launch-time capability surface。优先使用 `FrameSurfaceDraft`，过渡期在缺失时
-    /// 回退到 envelope 字段。
+    /// Launch-time capability surface。
     pub fn launch_capability_state(&self) -> &CapabilityState {
-        self.surface_draft
-            .capability_state
-            .as_ref()
-            .unwrap_or(&self.capability_state)
+        &self.launch_surface.capability_state
     }
 
-    /// Launch-time VFS surface。优先使用 `FrameSurfaceDraft`，过渡期在缺失时回退到
-    /// envelope 字段。
+    /// Launch-time VFS surface。
     pub fn launch_vfs(&self) -> &Vfs {
-        self.surface_draft.vfs.as_ref().unwrap_or(&self.vfs)
+        &self.launch_surface.vfs
     }
 
-    /// Launch-time MCP surface。MCP draft 使用空列表表达“无 MCP server”，因此读取时
-    /// 直接以 `surface_draft.mcp_servers` 为准。
+    /// Launch-time MCP surface。
     pub fn launch_mcp_servers(&self) -> &[RuntimeMcpServerDeclaration] {
-        &self.surface_draft.mcp_servers
+        &self.launch_surface.mcp_servers
     }
 
-    /// Launch-time execution profile。优先使用 `FrameSurfaceDraft`，过渡期在缺失时
-    /// 回退到 envelope 字段。
+    /// Launch-time execution profile。
     pub fn launch_executor_config(&self) -> &AgentConfig {
-        self.surface_draft
-            .execution_profile
-            .as_ref()
-            .unwrap_or(&self.executor_config)
+        &self.launch_surface.execution_profile
     }
 
-    /// 将过渡字段重新派生自 typed surface draft。
-    ///
-    /// 该方法只服务迁移期的旧字段同步；新的 launch read path 应调用
-    /// `launch_*` accessor。
-    pub fn sync_transitional_fields_from_surface_draft(&mut self) {
-        if let Some(capability_state) = self.surface_draft.capability_state.clone() {
-            self.capability_state = capability_state;
-        }
-        if let Some(vfs) = self.surface_draft.vfs.clone() {
-            self.vfs = vfs;
-        }
-        if let Some(execution_profile) = self.surface_draft.execution_profile.clone() {
-            self.executor_config = execution_profile;
-        }
-        self.mcp_servers = self.surface_draft.mcp_servers.clone();
+    pub fn replace_launch_surface(&mut self, launch_surface: FrameLaunchSurface) {
+        launch_surface.write_back_to_surface_draft(&mut self.surface_draft);
+        self.launch_surface = launch_surface;
     }
 }
 

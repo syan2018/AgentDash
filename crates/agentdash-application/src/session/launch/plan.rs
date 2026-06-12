@@ -326,8 +326,10 @@ mod tests {
     use crate::session::types::{
         RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, UserPromptInput,
     };
+    use crate::workflow::FrameSurfaceDraft;
     use crate::workflow::runtime_launch::{
-        FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
+        FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
+        LaunchResolutionTrace,
     };
     use std::path::{Path, PathBuf};
 
@@ -363,9 +365,16 @@ mod tests {
             SessionConstructionContextProjection::default(),
         );
         construction.workspace.working_directory = Some(PathBuf::from("/workspace/project"));
-        construction.execution_profile.executor_config = Some(AgentConfig::new("PI_AGENT"));
-        construction.surface.vfs = Some(vfs);
-        construction.projections.capability_state = Some(capability_state);
+        let executor_config = AgentConfig::new("PI_AGENT");
+        construction.surface.vfs = Some(vfs.clone());
+        construction.projections.frame_surface_draft = Some(FrameSurfaceDraft {
+            capability_state: Some(capability_state.clone()),
+            vfs: Some(vfs),
+            mcp_servers: Vec::new(),
+            context_bundle_summary: None,
+            execution_profile: Some(executor_config.clone()),
+        });
+        construction.execution_profile.executor_config = Some(executor_config);
         construction.resolution = ConstructionResolutionPlan {
             vfs_source: Some("construction.test".to_string()),
             mcp_source: Some("construction.test".to_string()),
@@ -427,28 +436,19 @@ mod tests {
     fn envelope_from_construction(
         construction: RuntimeContextInspectionPlan,
     ) -> FrameLaunchEnvelope {
-        let executor_config = construction
-            .execution_profile
-            .executor_config
-            .clone()
-            .unwrap_or_else(|| AgentConfig::new("test"));
-        let capability_state = construction
-            .projections
-            .capability_state
-            .clone()
-            .unwrap_or_default();
-        let vfs = construction.surface.vfs.clone().unwrap_or_default();
         let working_directory = construction
             .workspace
             .working_directory
             .clone()
             .unwrap_or_else(|| PathBuf::from("/tmp"));
-        let surface_draft = construction.surface_draft_or_fixture_projection(
-            &capability_state,
-            &vfs,
-            &executor_config,
-        );
-        let mut envelope = FrameLaunchEnvelope {
+        let surface_draft = construction
+            .projections
+            .frame_surface_draft
+            .clone()
+            .expect("launch plan tests must provide complete FrameSurfaceDraft");
+        let launch_surface = FrameLaunchSurface::from_surface_draft(&surface_draft)
+            .expect("launch plan tests must provide launch-ready typed surface");
+        FrameLaunchEnvelope {
             surface: FrameRuntimeSurface {
                 agent_id: uuid::Uuid::new_v4(),
                 frame_id: uuid::Uuid::new_v4(),
@@ -460,6 +460,7 @@ mod tests {
                 runtime_session_id: Some("sess-launch".to_string()),
             },
             surface_draft,
+            launch_surface,
             pending_frame: None,
             intent: FrameLaunchIntent {
                 input: None,
@@ -469,10 +470,6 @@ mod tests {
                 discovered_guidelines: construction.projections.discovered_guidelines,
             },
             working_directory,
-            executor_config,
-            capability_state,
-            vfs,
-            mcp_servers: Vec::new(),
             context_bundle: construction.context.bundle,
             continuation_context_frame: None,
             base_capability_state: construction.resolution.runtime_base_capability_state,
@@ -482,9 +479,7 @@ mod tests {
                 capability_source: construction.resolution.capability_source,
                 pending_overlay_applied: construction.resolution.pending_overlay_applied,
             },
-        };
-        envelope.sync_transitional_fields_from_surface_draft();
-        envelope
+        }
     }
 
     #[test]

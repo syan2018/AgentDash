@@ -187,6 +187,7 @@ impl SessionLaunchOrchestrator {
         mut envelope: FrameLaunchEnvelope,
         requested_runtime_commands: &[crate::session::runtime_commands::RuntimeCommandRecord],
     ) -> FrameLaunchEnvelope {
+        use crate::workflow::runtime_launch::FrameLaunchSurface;
         use crate::workflow::runtime_launch::LaunchResolutionTrace;
 
         let mut base_capability_state = envelope.launch_capability_state().clone();
@@ -221,19 +222,20 @@ impl SessionLaunchOrchestrator {
             }
         }
         final_capability_state.vfs.active = Some(effective_vfs.clone());
-        envelope.vfs = effective_vfs;
 
         let effective_mcp_servers = replay
             .as_ref()
             .and_then(|replay| replay.effective_mcp_servers.clone())
             .unwrap_or_else(|| envelope.launch_mcp_servers().to_vec());
-        final_capability_state.tool.mcp_servers = effective_mcp_servers;
-        envelope.capability_state = final_capability_state;
+        final_capability_state.tool.mcp_servers = effective_mcp_servers.clone();
+        let execution_profile = envelope.launch_executor_config().clone();
+        envelope.replace_launch_surface(FrameLaunchSurface {
+            capability_state: final_capability_state,
+            vfs: effective_vfs,
+            mcp_servers: effective_mcp_servers,
+            execution_profile,
+        });
         envelope.base_capability_state = Some(base_capability_state);
-        envelope.surface_draft.capability_state = Some(envelope.capability_state.clone());
-        envelope.surface_draft.vfs = Some(envelope.vfs.clone());
-        envelope.surface_draft.mcp_servers = envelope.capability_state.tool.mcp_servers.clone();
-        envelope.sync_transitional_fields_from_surface_draft();
         if requested_runtime_commands.is_empty() {
             envelope.resolution_trace.pending_overlay_applied = false;
         } else {

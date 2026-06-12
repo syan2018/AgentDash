@@ -32,7 +32,8 @@ use crate::workflow::frame_builder::AgentFrameBuilder;
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
 use crate::workflow::frame_surface::FrameSurfaceDraft;
 use crate::workflow::runtime_launch::{
-    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
+    LaunchResolutionTrace,
 };
 use crate::workspace::resolution::BackendAvailability;
 
@@ -385,10 +386,13 @@ pub(crate) fn build_envelope_from_frame(
     surface_draft.vfs = Some(vfs.clone());
     surface_draft.mcp_servers = mcp_servers.clone();
     surface_draft.execution_profile = Some(executor_config.clone());
+    let launch_surface = FrameLaunchSurface::from_surface_draft(&surface_draft)
+        .map_err(|error| ConnectorError::InvalidConfig(format!("FrameLaunchEnvelope: {error}")))?;
 
-    let mut envelope = FrameLaunchEnvelope {
+    Ok(FrameLaunchEnvelope {
         surface,
         surface_draft,
+        launch_surface,
         pending_frame: None,
         intent: FrameLaunchIntent {
             input,
@@ -398,15 +402,9 @@ pub(crate) fn build_envelope_from_frame(
             discovered_guidelines: Vec::new(),
         },
         working_directory,
-        executor_config,
-        capability_state,
-        vfs,
-        mcp_servers,
         context_bundle,
         continuation_context_frame: None,
         base_capability_state: None,
         resolution_trace: LaunchResolutionTrace::default(),
-    };
-    envelope.sync_transitional_fields_from_surface_draft();
-    Ok(envelope)
+    })
 }

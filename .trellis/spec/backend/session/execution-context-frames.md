@@ -43,9 +43,9 @@ pub struct ExecutionSessionFrame {
 | `turn_id` | Launch preparation claim/activation | connector trace、hook 审计 |
 | `working_directory` | `FrameLaunchEnvelope.working_directory` | Relay、vibe_kanban、PiAgent tools |
 | `environment_variables` | launch prompt payload / executor policy | Relay、vibe_kanban |
-| `executor_config` | `FrameLaunchEnvelope.surface_draft.execution_profile` + launch override | 所有 connector |
-| `mcp_servers` | `FrameLaunchEnvelope.surface_draft.mcp_servers` | Relay 透传；PiAgent 通过 assembled tools 消费 |
-| `vfs` | `FrameLaunchEnvelope.surface_draft.vfs` | Relay、vibe_kanban、PiAgent tools |
+| `executor_config` | `FrameLaunchEnvelope.launch_surface.execution_profile` | 所有 connector |
+| `mcp_servers` | `FrameLaunchEnvelope.launch_surface.mcp_servers` | Relay 透传；PiAgent 通过 assembled tools 消费 |
+| `vfs` | `FrameLaunchEnvelope.launch_surface.vfs` | Relay、vibe_kanban、PiAgent tools |
 | `identity` | `FrameLaunchEnvelope` identity projection | Relay、审计、permission 决策 |
 
 一次 `connector.prompt(...)` 调用期间，session frame 不变；下一 turn 需要新的投影时由
@@ -67,7 +67,7 @@ pub struct ExecutionTurnFrame {
 | 字段 | 来源 | 消费者 |
 |---|---|---|
 | `hook_session` | session runtime shared hook handle | hook trace、runtime injection、capability 追踪 |
-| `capability_state` | `FrameLaunchEnvelope.surface_draft.capability_state` + runtime command apply result | runtime tools、MCP/VFS diff |
+| `capability_state` | `FrameLaunchEnvelope.launch_surface.capability_state` + runtime command apply result | runtime tools、MCP/VFS diff |
 | `runtime_delegate` | launch hook plan | agent loop hook callbacks |
 | `restored_session_state` | restore plan | 支持 repository restore 的 connector |
 | `context_frames` | `FrameLaunchEnvelope` context projection | connector context 消费（按 kind 分类或渲染为文本） |

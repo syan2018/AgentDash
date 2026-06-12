@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
-use agentdash_spi::{McpTransportConfig, SessionMcpServer};
+use agentdash_spi::{McpTransportConfig, RuntimeMcpServerDeclaration};
 
 use crate::runtime::RuntimeMcpServer;
 
-pub fn session_mcp_server_to_runtime(server: &SessionMcpServer) -> RuntimeMcpServer {
+pub fn mcp_declaration_to_runtime_server(server: &RuntimeMcpServerDeclaration) -> RuntimeMcpServer {
     match &server.transport {
         McpTransportConfig::Http { url, .. } => RuntimeMcpServer::Http {
             name: server.name.clone(),
@@ -32,13 +32,20 @@ pub fn session_mcp_server_to_runtime(server: &SessionMcpServer) -> RuntimeMcpSer
     }
 }
 
-pub fn session_mcp_servers_to_runtime(servers: &[SessionMcpServer]) -> Vec<RuntimeMcpServer> {
-    servers.iter().map(session_mcp_server_to_runtime).collect()
+pub fn mcp_declarations_to_runtime_servers(
+    servers: &[RuntimeMcpServerDeclaration],
+) -> Vec<RuntimeMcpServer> {
+    servers
+        .iter()
+        .map(mcp_declaration_to_runtime_server)
+        .collect()
 }
 
-pub fn runtime_mcp_server_to_session(server: &RuntimeMcpServer) -> Option<SessionMcpServer> {
+pub fn runtime_server_to_mcp_declaration(
+    server: &RuntimeMcpServer,
+) -> Option<RuntimeMcpServerDeclaration> {
     match server {
-        RuntimeMcpServer::Http { name, url } => Some(SessionMcpServer {
+        RuntimeMcpServer::Http { name, url } => Some(RuntimeMcpServerDeclaration {
             name: name.clone(),
             transport: McpTransportConfig::Http {
                 url: url.clone(),
@@ -46,7 +53,7 @@ pub fn runtime_mcp_server_to_session(server: &RuntimeMcpServer) -> Option<Sessio
             },
             uses_relay: false,
         }),
-        RuntimeMcpServer::Sse { name, url } => Some(SessionMcpServer {
+        RuntimeMcpServer::Sse { name, url } => Some(RuntimeMcpServerDeclaration {
             name: name.clone(),
             transport: McpTransportConfig::Sse {
                 url: url.clone(),
@@ -61,7 +68,7 @@ pub fn runtime_mcp_server_to_session(server: &RuntimeMcpServer) -> Option<Sessio
             env,
             cwd,
             ..
-        } => Some(SessionMcpServer {
+        } => Some(RuntimeMcpServerDeclaration {
             name: name.clone(),
             transport: McpTransportConfig::Stdio {
                 command: command.clone(),
@@ -81,9 +88,11 @@ pub fn runtime_mcp_server_to_session(server: &RuntimeMcpServer) -> Option<Sessio
     }
 }
 
-pub fn runtime_mcp_servers_to_session(servers: &[RuntimeMcpServer]) -> Vec<SessionMcpServer> {
+pub fn runtime_servers_to_mcp_declarations(
+    servers: &[RuntimeMcpServer],
+) -> Vec<RuntimeMcpServerDeclaration> {
     servers
         .iter()
-        .filter_map(runtime_mcp_server_to_session)
+        .filter_map(runtime_server_to_mcp_declaration)
         .collect()
 }

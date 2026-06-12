@@ -85,7 +85,7 @@ Session runtime surface、VFS、MCP、Skill baseline 与 `CapabilityState` 是�
 Core entries:
 
 - `derive_session_capability_projection(SessionCapabilityProjectionInput) -> SessionCapabilityProjection`
-- `normalize_capability_state_dimensions(&mut CapabilityState, Option<Vfs>, Vec<SessionMcpServer>, &SessionBaselineCapabilities)`
+- `normalize_capability_state_dimensions(&mut CapabilityState, Option<Vfs>, Vec<RuntimeMcpServerDeclaration>, &SessionBaselineCapabilities)`
 - `FrameConstructionService::construct_launch_envelope(...) -> FrameLaunchEnvelope`
 
 Contract:
@@ -135,18 +135,18 @@ pub enum McpRuntimeBindingTarget {
     StdioCwd,
 }
 
-pub struct SessionRuntimeMcpContext<'a> {
+pub struct McpRuntimeBindingContext<'a> {
     pub vfs: Option<&'a Vfs>,
 }
 
-pub fn resolve_preset_mcp_server(
+pub fn resolve_preset_mcp_declaration(
     preset: &McpPreset,
-    context: Option<&SessionRuntimeMcpContext<'_>>,
-) -> Result<SessionMcpServer, McpRuntimeBindingError>;
+    context: Option<&McpRuntimeBindingContext<'_>>,
+) -> Result<RuntimeMcpServerDeclaration, McpRuntimeBindingError>;
 
 pub struct CapabilityResolverInput<'a> {
     pub mcp_candidates: McpCandidates,
-    pub mcp_runtime_context: Option<SessionRuntimeMcpContext<'a>>,
+    pub mcp_runtime_context: Option<McpRuntimeBindingContext<'a>>,
     // other capability inputs omitted
 }
 ```
@@ -176,9 +176,9 @@ Workspace mount metadata consumed by the resolver:
 - `McpPreset.runtime_binding` stores only the reusable binding declaration. It never stores resolved workspace values.
 - The final VFS mount metadata is the canonical source for workspace/binding/detected facts. Runtime binding reads the mount selected by `mount_id.unwrap_or("main")`.
 - `workspace_mount()` must write selected binding facts into metadata using `workspace_id`, `workspace_identity_payload`, `workspace_binding_id`, and `workspace_detected_facts`. The selected binding is the frame construction fact source because future workspace resolution changes should not require MCP resolver changes.
-- `resolve_preset_mcp_server()` returns the runtime result: `SessionMcpServer { name: preset.key, transport: resolved_transport, uses_relay }`.
-- `mcp_preset_keys` and `mcp:<preset>` must both resolve through `resolve_preset_mcp_server()` with the same `SessionRuntimeMcpContext` after final VFS exists.
-- Request/relay-provided already-resolved `SessionMcpServer` entries are runtime results and must not be re-resolved as presets.
+- `resolve_preset_mcp_declaration()` returns the runtime result: `RuntimeMcpServerDeclaration { name: preset.key, transport: resolved_transport, uses_relay }`.
+- `mcp_preset_keys` and `mcp:<preset>` must both resolve through `resolve_preset_mcp_declaration()` with the same `McpRuntimeBindingContext` after final VFS exists.
+- Request/relay-provided already-resolved `RuntimeMcpServerDeclaration` entries are runtime results and must not be re-resolved as presets.
 - Projection normalization must keep `CapabilityState.tool.mcp_servers == FrameLaunchEnvelope.mcp_servers`.
 - Duplicate MCP servers are de-duplicated by agent-facing server name after request MCP, capability MCP, and agent preset MCP are merged.
 - HTTP/SSE query binding uses a URL parser and replaces existing same-name query values with the runtime fact.
@@ -190,8 +190,8 @@ Workspace mount metadata consumed by the resolver:
 
 | Condition | Required behavior |
 | --- | --- |
-| Runtime binding exists but runtime context is missing | `McpRuntimeBindingError::MissingSessionContext` with preset key |
-| Runtime binding exists but `context.vfs` is missing | `McpRuntimeBindingError::MissingSessionContext` with preset key |
+| Runtime binding exists but runtime binding context is missing | `McpRuntimeBindingError::MissingRuntimeBindingContext` with preset key |
+| Runtime binding exists but `context.vfs` is missing | `McpRuntimeBindingError::MissingRuntimeBindingContext` with preset key |
 | `mount_id` cannot be found in final VFS | `McpRuntimeBindingError::MissingMount` with preset key and mount id |
 | Required source path is absent or empty | `McpRuntimeBindingError::MissingRequiredSource` with preset key, rule index, and source path |
 | Optional source path is absent or empty | Skip that rule and keep the current transport field |
@@ -206,7 +206,7 @@ Workspace mount metadata consumed by the resolver:
 
 - Good: `workspace.detected_facts.p4.client_name -> http_query.p4_client` resolves from final `main` mount and the direct/relay runtime receives the URL with that query value.
 - Good: `workspace.detected_facts.p4.workspace_root -> stdio_cwd` resolves to a non-empty cwd and the local runtime spawns the stdio MCP process in that directory.
-- Base: `runtime_binding = None` produces a static `SessionMcpServer` from preset transport and route policy.
+- Base: `runtime_binding = None` produces a static `RuntimeMcpServerDeclaration` from preset transport and route policy.
 - Base: An optional binding source is unavailable during frame construction; the remaining rules apply and the static value for that target is preserved.
 - Boundary mismatch: resolving a runtime-bound preset before final VFS exists gives a declaration without the runtime fact surface.
 - Canonical flow: keep preset declarations through owner bootstrap, build final VFS, create runtime MCP context, then resolve all preset-backed MCP servers and normalize capability projection.
@@ -217,7 +217,7 @@ Workspace mount metadata consumed by the resolver:
 - VFS mount test asserts `workspace_mount()` metadata includes selected binding `workspace_detected_facts` and P4 fields.
 - Runtime resolver tests assert HTTP query/header binding, stdio env/cwd binding, optional missing source skip, missing required source diagnostic, non-scalar source failure, transport mismatch, blank target name, invalid URL, and blank cwd.
 - Capability resolver test asserts `mcp:<preset>` receives `CapabilityResolverInput.mcp_runtime_context` and resolves the same transport as the agent preset path.
-- Session assembler test asserts `mcp_preset_keys` and `mcp:<preset>` for the same preset produce identical resolved `SessionMcpServer`.
+- Session assembler test asserts `mcp_preset_keys` and `mcp:<preset>` for the same preset produce identical resolved `RuntimeMcpServerDeclaration`.
 - Frame construction validation test asserts `CapabilityState.tool.mcp_servers == FrameLaunchEnvelope.mcp_servers`.
 - Direct/relay/local integration tests assert resolved query/header/env/cwd values are the values consumed by runtime clients, not the preset declaration.
 
@@ -227,7 +227,7 @@ Workspace mount metadata consumed by the resolver:
 
 ```text
 McpPreset(runtime_binding + static transport)
-  -> static SessionMcpServer before final VFS
+  -> static RuntimeMcpServerDeclaration before final VFS
   -> later layers infer workspace facts again
 ```
 
@@ -235,9 +235,9 @@ McpPreset(runtime_binding + static transport)
 
 ```text
 McpPreset(runtime_binding + static transport)
-  + SessionRuntimeMcpContext(final VFS main mount)
-  -> resolve_preset_mcp_server(...)
-  -> SessionMcpServer(resolved transport)
+  + McpRuntimeBindingContext(final VFS main mount)
+  -> resolve_preset_mcp_declaration(...)
+  -> RuntimeMcpServerDeclaration(resolved transport)
   -> CapabilityState.tool.mcp_servers == FrameLaunchEnvelope.mcp_servers
 ```
 

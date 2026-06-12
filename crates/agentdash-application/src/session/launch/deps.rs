@@ -177,7 +177,7 @@ impl TurnPreparationDeps {
         &self,
         session_id: &str,
         context: &agentdash_spi::ExecutionContext,
-        mcp_servers: &[agentdash_spi::SessionMcpServer],
+        mcp_servers: &[agentdash_spi::RuntimeMcpServerDeclaration],
     ) -> Vec<agentdash_agent_types::DynAgentTool> {
         let mut all_tools = Vec::new();
 

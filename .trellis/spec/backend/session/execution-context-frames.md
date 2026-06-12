@@ -32,7 +32,7 @@ pub struct ExecutionSessionFrame {
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: AgentConfig,
-    pub mcp_servers: Vec<SessionMcpServer>,
+    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
     pub vfs: Option<Vfs>,
     pub identity: Option<AuthIdentity>,
 }

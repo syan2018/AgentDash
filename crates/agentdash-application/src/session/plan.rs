@@ -37,7 +37,7 @@ pub struct SessionVfsSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct SessionMcpServerSummary {
+pub struct RuntimeMcpServerSummary {
     pub name: String,
     pub transport: String,
     pub target: String,
@@ -49,7 +49,7 @@ pub struct SessionToolVisibilitySummary {
     pub resolved: bool,
     pub toolset_label: String,
     pub tool_names: Vec<String>,
-    pub mcp_servers: Vec<SessionMcpServerSummary>,
+    pub mcp_servers: Vec<RuntimeMcpServerSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -562,10 +562,10 @@ fn runtime_vfs_tools(_vfs: &Vfs) -> Vec<String> {
     ]
 }
 
-fn summarize_mcp_servers(mcp_servers: &[RuntimeMcpServer]) -> Vec<SessionMcpServerSummary> {
+fn summarize_mcp_servers(mcp_servers: &[RuntimeMcpServer]) -> Vec<RuntimeMcpServerSummary> {
     mcp_servers
         .iter()
-        .map(|server| SessionMcpServerSummary {
+        .map(|server| RuntimeMcpServerSummary {
             name: server.name().to_string(),
             transport: server.transport_label().to_string(),
             target: server.target(),
@@ -573,7 +573,7 @@ fn summarize_mcp_servers(mcp_servers: &[RuntimeMcpServer]) -> Vec<SessionMcpServ
         .collect()
 }
 
-fn render_mcp_server_summary(server: &SessionMcpServerSummary) -> String {
+fn render_mcp_server_summary(server: &RuntimeMcpServerSummary) -> String {
     format!("- `{}`: {}", server.name, server.transport)
 }
 

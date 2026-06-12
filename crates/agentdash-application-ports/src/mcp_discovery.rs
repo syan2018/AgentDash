@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 
 use agentdash_agent_types::DynAgentTool;
-use agentdash_spi::{CapabilityState, ConnectorError, RelayMcpCallContext, SessionMcpServer};
+use agentdash_spi::{
+    CapabilityState, ConnectorError, RelayMcpCallContext, RuntimeMcpServerDeclaration,
+};
 
 #[derive(Clone)]
 pub struct DiscoveredMcpTool {
@@ -15,7 +17,7 @@ pub struct DiscoveredMcpTool {
 }
 
 pub struct McpToolDiscoveryRequest {
-    pub servers: Vec<SessionMcpServer>,
+    pub servers: Vec<RuntimeMcpServerDeclaration>,
     pub capability_state: CapabilityState,
     pub call_context: Option<RelayMcpCallContext>,
 }

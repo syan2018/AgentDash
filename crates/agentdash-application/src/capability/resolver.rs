@@ -88,8 +88,8 @@ pub struct CapabilityResolverInput<'a> {
     pub contributions: Vec<ContextContributions>,
     /// MCP server 候选数据源。
     pub mcp_candidates: McpCandidates,
-    /// session final VFS 派生的 MCP runtime binding 上下文。
-    pub mcp_runtime_context: Option<crate::mcp_preset::SessionRuntimeMcpContext<'a>>,
+    /// frame construction final VFS 派生的 MCP runtime binding 上下文。
+    pub mcp_runtime_context: Option<crate::mcp_preset::McpRuntimeBindingContext<'a>>,
     /// LifecycleSubjectAssociation-based 解析上下文（可选，新路径）。
     #[allow(dead_code)]
     pub capability_context: Option<CapabilityContext>,
@@ -99,7 +99,7 @@ pub struct CapabilityResolverInput<'a> {
 #[derive(Debug, Clone)]
 pub struct AgentMcpServerEntry {
     pub name: String,
-    pub server: agentdash_spi::SessionMcpServer,
+    pub server: agentdash_spi::RuntimeMcpServerDeclaration,
 }
 
 // ── Resolver 内部合并中间态 ──────────────────────────────────────────
@@ -234,7 +234,7 @@ impl CapabilityResolver {
         let mut effective_caps =
             default_visible_capabilities(&input.owner_ctx, &merged, granted_keys);
 
-        let mut resolved_mcp_servers = Vec::<agentdash_spi::SessionMcpServer>::new();
+        let mut resolved_mcp_servers = Vec::<agentdash_spi::RuntimeMcpServerDeclaration>::new();
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
 
         // ── 按 directive 序列执行 slot 归约 ──
@@ -262,7 +262,7 @@ impl CapabilityResolver {
                         if let Some(preset) = input.mcp_candidates.presets.get(&server_name) {
                             effective_caps.insert(cap.clone());
                             if seen_custom_mcp_names.insert(server_name.clone()) {
-                                let server = crate::mcp_preset::resolve_preset_mcp_server(
+                                let server = crate::mcp_preset::resolve_preset_mcp_declaration(
                                     preset,
                                     input.mcp_runtime_context.as_ref(),
                                 )
@@ -305,7 +305,7 @@ impl CapabilityResolver {
                     &input.owner_ctx,
                 )
             {
-                resolved_mcp_servers.push(config.to_session_mcp_server());
+                resolved_mcp_servers.push(config.to_runtime_mcp_declaration());
             }
         }
 
@@ -495,8 +495,11 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    fn test_session_mcp(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {
-        agentdash_spi::SessionMcpServer {
+    fn test_runtime_mcp_declaration(
+        name: &str,
+        url: &str,
+    ) -> agentdash_spi::RuntimeMcpServerDeclaration {
+        agentdash_spi::RuntimeMcpServerDeclaration {
             name: name.to_string(),
             transport: agentdash_spi::McpTransportConfig::Http {
                 url: url.to_string(),
@@ -580,7 +583,7 @@ mod tests {
     fn state_mcp_server<'a>(
         output: &'a CapabilityResolverOutput,
         name: &str,
-    ) -> Option<&'a agentdash_spi::SessionMcpServer> {
+    ) -> Option<&'a agentdash_spi::RuntimeMcpServerDeclaration> {
         output
             .tool
             .mcp_servers
@@ -766,7 +769,7 @@ mod tests {
         );
         input.mcp_candidates.agent_servers = vec![AgentMcpServerEntry {
             name: "code_analyzer".to_string(),
-            server: test_session_mcp("code_analyzer", "http://external:8080/mcp"),
+            server: test_runtime_mcp_declaration("code_analyzer", "http://external:8080/mcp"),
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -851,7 +854,7 @@ mod tests {
         };
 
         let vfs = test_runtime_vfs();
-        let runtime_context = crate::mcp_preset::SessionRuntimeMcpContext { vfs: Some(&vfs) };
+        let runtime_context = crate::mcp_preset::McpRuntimeBindingContext { vfs: Some(&vfs) };
         let mut input = base_input();
         input.mcp_runtime_context = Some(runtime_context);
         with_workflow_directives(
@@ -929,7 +932,7 @@ mod tests {
         );
         input.mcp_candidates.agent_servers = vec![AgentMcpServerEntry {
             name: "shared".to_string(),
-            server: test_session_mcp("shared", "http://inline/mcp"),
+            server: test_runtime_mcp_declaration("shared", "http://inline/mcp"),
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -997,7 +1000,7 @@ mod tests {
         );
         input.mcp_candidates.agent_servers = vec![AgentMcpServerEntry {
             name: "code_analyzer".to_string(),
-            server: test_session_mcp("code_analyzer", "http://external:8080/mcp"),
+            server: test_runtime_mcp_declaration("code_analyzer", "http://external:8080/mcp"),
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -1129,7 +1132,7 @@ mod tests {
         );
         input.mcp_candidates.agent_servers = vec![AgentMcpServerEntry {
             name: "code_analyzer".to_string(),
-            server: test_session_mcp("code_analyzer", "http://external:8080/mcp"),
+            server: test_runtime_mcp_declaration("code_analyzer", "http://external:8080/mcp"),
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());

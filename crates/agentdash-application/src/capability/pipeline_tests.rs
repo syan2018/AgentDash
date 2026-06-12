@@ -33,7 +33,7 @@ fn platform() -> PlatformConfig {
 fn mcp_entry(name: &str, url: &str) -> AgentMcpServerEntry {
     AgentMcpServerEntry {
         name: name.to_string(),
-        server: agentdash_spi::SessionMcpServer {
+        server: agentdash_spi::RuntimeMcpServerDeclaration {
             name: name.to_string(),
             transport: agentdash_spi::McpTransportConfig::Http {
                 url: url.to_string(),

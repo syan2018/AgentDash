@@ -144,7 +144,7 @@ fn connection_key(entry: &ResolvedMcpServerEntry) -> Result<String, anyhow::Erro
 
 ### 3. Contracts
 
-- Cloud relay MCP list/call sends `McpServerDeclarationRelay { name, transport }` converted from the runtime-resolved `SessionMcpServer`.
+- Cloud relay MCP list/call sends `McpServerDeclarationRelay { name, transport }` converted from the runtime-resolved `RuntimeMcpServerDeclaration`.
 - Backend selection may still use `server.name` to find a backend that declared the capability; command execution uses the payload `server.transport`.
 - Local `McpClientManager::capability_entries()` reports static configured server names as backend capabilities. It is not the source for runtime-resolved transport.
 - Local `McpClientManager::list_tools()` and `call_tool()` convert payload `McpServerDeclarationRelay` into a transient resolved entry and connect with that transport.
@@ -153,7 +153,7 @@ fn connection_key(entry: &ResolvedMcpServerEntry) -> Result<String, anyhow::Erro
 - `close(server_name)` closes all pooled connections whose exact server-name prefix matches that name.
 - stdio execution applies resolved `env` and `cwd` to the spawned process.
 - HTTP/SSE execution passes resolved `headers` into `StreamableHttpClientTransportConfig::custom_headers`; invalid header names/values fail the connection with a diagnostic.
-- Relay prompt `mcp_servers` parser accepts resolved declarations with HTTP/SSE `headers` and stdio `cwd`, then projects them as `SessionMcpServer`.
+- Relay prompt `mcp_servers` parser accepts resolved declarations with HTTP/SSE `headers` and stdio `cwd`, then projects them as `RuntimeMcpServerDeclaration`.
 - One-shot relay probe uses the provided transport directly and never enters the manager connection pool.
 - One-shot relay probe failures return `ResponseMcpProbeTransportPayload { status: "error", ... }` with `error: None` at the relay envelope. Local runtime panel probe failures return `McpProbeResult { ok: false, ... }`. Connectivity failure is a probe result, not a command transport failure.
 
@@ -184,7 +184,7 @@ fn connection_key(entry: &ResolvedMcpServerEntry) -> Result<String, anyhow::Erro
 ### 6. Tests Required
 
 - Relay protocol serialization test asserts `CommandMcpListToolsPayload.server` and `CommandMcpCallToolPayload.server` include name plus full transport.
-- Cloud relay provider test asserts list/call converts `SessionMcpServer` into `McpServerDeclarationRelay`, preserving HTTP/SSE headers and stdio cwd/env.
+- Cloud relay provider test asserts list/call converts `RuntimeMcpServerDeclaration` into `McpServerDeclarationRelay`, preserving HTTP/SSE headers and stdio cwd/env.
 - Local manager tests assert connection key uses server name and stable transport hash, same-name/different-transport isolation, exact close prefix behavior, unknown server rejection, header preservation, and stdio env/cwd preservation.
 - Local command handler test asserts relay one-shot probe returns payload `status="error"` rather than relay envelope error for connection failures and timeouts.
 - Prompt parser tests assert `mcp_servers` entries preserve HTTP/SSE headers and stdio cwd.

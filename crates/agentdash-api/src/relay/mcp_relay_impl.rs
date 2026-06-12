@@ -7,7 +7,7 @@ use agentdash_relay::{
     RelayMessage,
 };
 use agentdash_spi::ConnectorError;
-use agentdash_spi::SessionMcpServer;
+use agentdash_spi::RuntimeMcpServerDeclaration;
 use agentdash_spi::platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo, RelayProbeResult,
     RelayProbeTool,
@@ -19,7 +19,7 @@ use super::registry::BackendRegistry;
 impl McpRelayProvider for BackendRegistry {
     async fn list_relay_tools(
         &self,
-        requested_servers: &[SessionMcpServer],
+        requested_servers: &[RuntimeMcpServerDeclaration],
     ) -> Vec<RelayMcpToolInfo> {
         let mut result = Vec::new();
 
@@ -39,7 +39,7 @@ impl McpRelayProvider for BackendRegistry {
             let cmd = RelayMessage::CommandMcpListTools {
                 id: RelayMessage::new_id("mcp-list"),
                 payload: agentdash_relay::CommandMcpListToolsPayload {
-                    server: session_mcp_server_to_relay(server),
+                    server: mcp_declaration_to_relay(server),
                 },
             };
 
@@ -92,7 +92,7 @@ impl McpRelayProvider for BackendRegistry {
 
     async fn call_relay_tool(
         &self,
-        server: &SessionMcpServer,
+        server: &RuntimeMcpServerDeclaration,
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
         _context: Option<RelayMcpCallContext>,
@@ -110,7 +110,7 @@ impl McpRelayProvider for BackendRegistry {
         let cmd = RelayMessage::CommandMcpCallTool {
             id: RelayMessage::new_id("mcp-call"),
             payload: agentdash_relay::CommandMcpCallToolPayload {
-                server: session_mcp_server_to_relay(server),
+                server: mcp_declaration_to_relay(server),
                 tool_name: tool_name.to_string(),
                 arguments,
             },
@@ -241,7 +241,7 @@ fn mcp_transport_to_relay(
     }
 }
 
-fn session_mcp_server_to_relay(server: &SessionMcpServer) -> McpServerDeclarationRelay {
+fn mcp_declaration_to_relay(server: &RuntimeMcpServerDeclaration) -> McpServerDeclarationRelay {
     McpServerDeclarationRelay {
         name: server.name.clone(),
         transport: mcp_transport_to_relay(&server.transport),

@@ -5,7 +5,7 @@
 //! 避免每个消费者各自 parse，替代此前散落在各处的 JSON 反序列化逻辑。
 
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::{AgentConfig, CapabilityState, SessionMcpServer, Vfs};
+use agentdash_spi::{AgentConfig, CapabilityState, RuntimeMcpServerDeclaration, Vfs};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -28,7 +28,7 @@ pub struct FrameContextBundleSummary {
 pub trait AgentFrameSurfaceExt {
     fn typed_capability_state(&self) -> Option<CapabilityState>;
     fn typed_vfs(&self) -> Option<Vfs>;
-    fn typed_mcp_servers(&self) -> Vec<SessionMcpServer>;
+    fn typed_mcp_servers(&self) -> Vec<RuntimeMcpServerDeclaration>;
     fn typed_execution_profile(&self) -> Option<AgentConfig>;
     /// 原始 context_slice JSON value，缺失返回 `Value::Null`。
     fn context_slice_value(&self) -> serde_json::Value;
@@ -52,7 +52,7 @@ impl AgentFrameSurfaceExt for AgentFrame {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 
-    fn typed_mcp_servers(&self) -> Vec<SessionMcpServer> {
+    fn typed_mcp_servers(&self) -> Vec<RuntimeMcpServerDeclaration> {
         self.mcp_surface_json
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn typed_mcp_servers_deserializes_correctly() {
-        let servers = vec![SessionMcpServer {
+        let servers = vec![RuntimeMcpServerDeclaration {
             name: "workflow-tools".to_string(),
             transport: McpTransportConfig::Http {
                 url: "http://localhost/mcp".to_string(),

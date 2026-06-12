@@ -12,7 +12,9 @@
 
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository};
-use agentdash_spi::{AgentConfig, CapabilityState, SessionContextBundle, SessionMcpServer, Vfs};
+use agentdash_spi::{
+    AgentConfig, CapabilityState, RuntimeMcpServerDeclaration, SessionContextBundle, Vfs,
+};
 use uuid::Uuid;
 
 use crate::session::capability_state::{
@@ -24,7 +26,7 @@ use super::activity_activation::ActivityActivation;
 pub(crate) struct AgentFrameSurfaceInput<'a> {
     pub capability_state: Option<&'a CapabilityState>,
     pub vfs: Option<&'a Vfs>,
-    pub mcp_servers: &'a [SessionMcpServer],
+    pub mcp_servers: &'a [RuntimeMcpServerDeclaration],
     pub execution_profile: Option<&'a AgentConfig>,
     pub context_bundle: Option<&'a SessionContextBundle>,
 }
@@ -41,7 +43,7 @@ pub(crate) struct AgentFrameActivationSurfaceInput<'a> {
 pub(crate) struct AgentFrameActivationSurface {
     pub capability_state: CapabilityState,
     pub vfs: Vfs,
-    pub mcp_servers: Vec<SessionMcpServer>,
+    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
 }
 
 pub(crate) fn build_lifecycle_activation_surface(
@@ -138,8 +140,8 @@ impl AgentFrameBuilder {
         self
     }
 
-    /// 从结构化 `Vec<SessionMcpServer>` 填充 mcp_surface。
-    pub fn with_mcp_servers(mut self, servers: &[SessionMcpServer]) -> Self {
+    /// 从结构化 `Vec<RuntimeMcpServerDeclaration>` 填充 mcp_surface。
+    pub fn with_mcp_servers(mut self, servers: &[RuntimeMcpServerDeclaration]) -> Self {
         if servers.is_empty() {
             self.mcp_surface = None;
         } else {
@@ -434,7 +436,7 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let activation = ActivityActivation {
             capability_state: CapabilityState::from_clusters([ToolCluster::Read]),
-            mcp_servers: vec![SessionMcpServer {
+            mcp_servers: vec![RuntimeMcpServerDeclaration {
                 name: "workflow-tools".to_string(),
                 transport: McpTransportConfig::Http {
                     url: "http://localhost/mcp".to_string(),

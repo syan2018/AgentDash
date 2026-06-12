@@ -10,7 +10,7 @@
 //!
 use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::mcp_discovery::{DiscoveredMcpTool, McpToolDiscoveryRequest};
-use agentdash_spi::{ConnectorError, ExecutionContext, SessionMcpServer};
+use agentdash_spi::{ConnectorError, ExecutionContext, RuntimeMcpServerDeclaration};
 use uuid::Uuid;
 
 use super::SessionRuntimeInner;
@@ -20,7 +20,10 @@ use crate::workflow::resolve_current_frame_for_runtime_session;
 
 impl SessionRuntimeInner {
     /// 读取 session 当前 turn 生效的 MCP server 列表（由 prompt pipeline 维护）。
-    pub async fn get_runtime_mcp_servers(&self, session_id: &str) -> Vec<SessionMcpServer> {
+    pub async fn get_runtime_mcp_servers(
+        &self,
+        session_id: &str,
+    ) -> Vec<RuntimeMcpServerDeclaration> {
         self.runtime_registry
             .with_runtime(session_id, |runtime| {
                 runtime
@@ -267,7 +270,7 @@ impl SessionRuntimeInner {
         &self,
         session_id: &str,
         context: &ExecutionContext,
-        mcp_servers: &[agentdash_spi::SessionMcpServer],
+        mcp_servers: &[agentdash_spi::RuntimeMcpServerDeclaration],
     ) -> Vec<DynAgentTool> {
         let mut all_tools: Vec<DynAgentTool> = Vec::new();
 

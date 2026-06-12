@@ -32,7 +32,7 @@ use crate::workflow::LifecycleMountSurface;
 /// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
 /// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
 ///
-/// **注**：`mcp_servers` 已迁移为 `Vec<SessionMcpServer>` 内部类型，relay 标记
+/// **注**：`mcp_servers` 已迁移为 `Vec<RuntimeMcpServerDeclaration>` 内部类型，relay 标记
 /// 内嵌于每个 server 实例，不再作为独立字段传递。
 #[cfg(test)]
 #[allow(deprecated)]
@@ -94,7 +94,7 @@ pub(super) struct SessionAssemblyBuilder {
     pub(super) capability_state: Option<CapabilityState>,
 
     // ── MCP 层 ──
-    pub(super) mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub(super) mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
 
     // ── 系统上下文层 ──
     pub(super) context_bundle: Option<SessionContextBundle>,
@@ -184,7 +184,7 @@ impl SessionAssemblyBuilder {
     /// 设置 MCP server 列表（覆盖）。
     pub(super) fn with_mcp_servers(
         mut self,
-        servers: Vec<agentdash_spi::SessionMcpServer>,
+        servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
     ) -> Self {
         self.mcp_servers = servers;
         self
@@ -193,7 +193,7 @@ impl SessionAssemblyBuilder {
     /// 追加 MCP server 到列表。
     pub(super) fn append_mcp_servers(
         mut self,
-        servers: impl IntoIterator<Item = agentdash_spi::SessionMcpServer>,
+        servers: impl IntoIterator<Item = agentdash_spi::RuntimeMcpServerDeclaration>,
     ) -> Self {
         self.mcp_servers.extend(servers);
         self
@@ -277,7 +277,7 @@ impl SessionAssemblyBuilder {
     pub(super) fn apply_companion_slice(
         self,
         parent_vfs: Option<&Vfs>,
-        parent_mcp_servers: &[agentdash_spi::SessionMcpServer],
+        parent_mcp_servers: &[agentdash_spi::RuntimeMcpServerDeclaration],
         parent_context_bundle: Option<&SessionContextBundle>,
         mode: CompanionSliceMode,
         executor_config: AgentConfig,
@@ -410,7 +410,7 @@ pub struct AssemblyLaunchExtras {
     pub context_bundle: Option<SessionContextBundle>,
     pub input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
     pub executor_config: Option<AgentConfig>,
-    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
     pub vfs: Option<Vfs>,
     pub capability_state: Option<CapabilityState>,
     pub environment_variables: HashMap<String, String>,

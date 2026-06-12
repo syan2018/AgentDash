@@ -52,7 +52,7 @@ export interface ExecutionVfs {
   default_mount_id?: string | null;
 }
 
-export interface TaskSessionMcpServerSummary {
+export interface TaskRuntimeMcpServerSummary {
   name: string;
   transport: string;
   target: string;
@@ -63,7 +63,7 @@ export interface TaskSessionToolVisibilitySummary {
   resolved: boolean;
   toolset_label: string;
   tool_names: string[];
-  mcp_servers: TaskSessionMcpServerSummary[];
+  mcp_servers: TaskRuntimeMcpServerSummary[];
 }
 
 export interface TaskSessionRuntimePolicySummary {

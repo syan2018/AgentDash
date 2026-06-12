@@ -15,7 +15,7 @@ use agentdash_domain::backend::{BackendExecutionLeaseRepository, BackendExecutio
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::{
     AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionStream, McpTransportConfig, PromptPayload, SessionMcpServer,
+    ExecutionStream, McpTransportConfig, PromptPayload, RuntimeMcpServerDeclaration,
 };
 
 use agentdash_application_ports::backend_transport::{
@@ -153,7 +153,7 @@ impl AgentConnector for RelayAgentConnector {
                 .session
                 .mcp_servers
                 .iter()
-                .map(session_mcp_server_to_relay_prompt_value)
+                .map(mcp_declaration_to_relay_prompt_value)
                 .collect(),
         };
 
@@ -386,11 +386,13 @@ fn workspace_identity_payload_from_mount(
     mount.metadata.get("workspace_identity_payload").cloned()
 }
 
-/// 把内部 `SessionMcpServer` 投影为 relay prompt 当前消费的扁平 JSON 形态。
+/// 把内部 `RuntimeMcpServerDeclaration` 投影为 relay prompt 当前消费的扁平 JSON 形态。
 ///
 /// relay protocol 仍保留 `Vec<Value>`，这里仅对齐本机 parser 已接受的
 /// `{ name, type, url|command, headers|args|env }` wire shape。
-pub fn session_mcp_server_to_relay_prompt_value(server: &SessionMcpServer) -> serde_json::Value {
+pub fn mcp_declaration_to_relay_prompt_value(
+    server: &RuntimeMcpServerDeclaration,
+) -> serde_json::Value {
     match &server.transport {
         McpTransportConfig::Http { url, headers } => serde_json::json!({
             "name": &server.name,
@@ -781,7 +783,7 @@ mod tests {
         register_executor(&transport, "local", "REMOTE_EXECUTOR");
         let connector = RelayAgentConnector::new(transport.clone(), memory_lease_repo());
         let root = tempfile::tempdir().expect("workspace");
-        let mcp_server = agentdash_spi::SessionMcpServer {
+        let mcp_server = agentdash_spi::RuntimeMcpServerDeclaration {
             name: "third_party_mcp".to_string(),
             transport: agentdash_spi::McpTransportConfig::Stdio {
                 command: "cmd".to_string(),

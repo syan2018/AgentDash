@@ -5,8 +5,8 @@ use agentdash_domain::common::AgentConfig;
 use agentdash_domain::task::TaskDispatchPreference;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
-    AuthIdentity, CapabilityState, DiscoveredGuideline, SessionBaselineCapabilities,
-    SessionContextBundle, SessionMcpServer, Vfs,
+    AuthIdentity, CapabilityState, DiscoveredGuideline, RuntimeMcpServerDeclaration,
+    SessionBaselineCapabilities, SessionContextBundle, Vfs,
 };
 use uuid::Uuid;
 
@@ -137,7 +137,7 @@ pub struct ConstructionEffectPlan {
 
 #[derive(Debug, Clone, Default)]
 pub struct ConstructionProjections {
-    pub mcp_servers: Vec<SessionMcpServer>,
+    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
     pub capability_state: Option<CapabilityState>,
     pub session_capabilities: Option<SessionBaselineCapabilities>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,

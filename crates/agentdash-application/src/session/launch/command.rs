@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use agentdash_spi::SessionMcpServer;
+use agentdash_spi::RuntimeMcpServerDeclaration;
 
 use crate::session::construction_provider::{CompanionLaunchSource, RoutineLaunchSource};
 use crate::session::types::UserPromptInput;
@@ -24,7 +24,7 @@ pub struct LaunchCommand {
     identity: Option<agentdash_spi::AuthIdentity>,
     routine: Option<RoutineLaunchSource>,
     companion: Option<CompanionLaunchSource>,
-    local_relay_mcp_declarations: Vec<SessionMcpServer>,
+    local_relay_mcp_declarations: Vec<RuntimeMcpServerDeclaration>,
     local_relay_workspace_root: Option<PathBuf>,
 }
 
@@ -69,7 +69,7 @@ impl LaunchCommand {
         self.routine.clone()
     }
 
-    pub fn local_relay_mcp_declarations(&self) -> &[SessionMcpServer] {
+    pub fn local_relay_mcp_declarations(&self) -> &[RuntimeMcpServerDeclaration] {
         &self.local_relay_mcp_declarations
     }
 
@@ -177,7 +177,7 @@ impl LaunchCommand {
 
     pub fn local_relay_prompt_input(
         input: UserPromptInput,
-        mcp_declarations: Vec<SessionMcpServer>,
+        mcp_declarations: Vec<RuntimeMcpServerDeclaration>,
         workspace_root: PathBuf,
     ) -> Self {
         let mut command = Self::new(input, LaunchSource::LocalRelayPrompt);

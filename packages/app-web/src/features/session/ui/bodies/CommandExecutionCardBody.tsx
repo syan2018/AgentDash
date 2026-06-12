@@ -5,11 +5,13 @@
  */
 
 import { memo, useEffect, useRef, useState, useCallback } from "react";
-import type { ThreadItem } from "../../../../generated/backbone-protocol";
+import type { AgentDashThreadItem, ThreadItem } from "../../../../generated/backbone-protocol";
 import { useWorkspaceTabStore } from "../../../../stores/workspaceTabStore";
 import { useTerminalStore } from "../../model/useTerminalStore";
 
-type CommandItem = Extract<ThreadItem, { type: "commandExecution" }>;
+type CommandItem =
+  | Extract<ThreadItem, { type: "commandExecution" }>
+  | Extract<AgentDashThreadItem, { type: "shellExec" }>;
 
 export interface CommandExecutionCardBodyProps {
   item: CommandItem;
@@ -26,18 +28,19 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
   const [collapsed, setCollapsed] = useState(false);
   const status = item.status;
   const isRunning = status === "inProgress";
+  const renderedOutput = outputText ?? ("aggregatedOutput" in item ? item.aggregatedOutput ?? undefined : undefined);
 
   const handlePromote = useCallback(() => {
     const promoteId = `promote-${item.id}`;
     const store = useTerminalStore.getState();
-    if (!store.getOutput(promoteId) && outputText) {
-      store.appendOutput(promoteId, outputText);
+    if (!store.getOutput(promoteId) && renderedOutput) {
+      store.appendOutput(promoteId, renderedOutput);
     }
     if (sessionId) {
       store.registerTerminal({
         id: promoteId,
         sessionId,
-        cwd: item.cwd ?? ".",
+        cwd: item.cwd ?? "platform://",
         state: isRunning ? "running" : "exited",
         exitCode: item.exitCode ?? undefined,
         createdAt: Date.now(),
@@ -46,15 +49,15 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
     useWorkspaceTabStore
       .getState()
       .openOrActivate("terminal", `terminal://${promoteId}`);
-  }, [item.id, item.cwd, item.exitCode, outputText, sessionId, isRunning]);
+  }, [item.id, item.cwd, item.exitCode, renderedOutput, sessionId, isRunning]);
 
   useEffect(() => {
     if (outputRef.current && isRunning) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
-  }, [outputText, isRunning]);
+  }, [renderedOutput, isRunning]);
 
-  const lineCount = outputText ? outputText.split("\n").length - 1 : 0;
+  const lineCount = renderedOutput ? renderedOutput.split("\n").length - 1 : 0;
   const shouldCollapse = lineCount > 80;
   const maxH = collapsed ? "max-h-16" : shouldCollapse ? "max-h-96" : "max-h-64";
 
@@ -66,13 +69,13 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
         </div>
       )}
 
-      {(outputText || isRunning) && (
+      {(renderedOutput || isRunning) && (
         <div className="relative mt-1.5">
           <pre
             ref={outputRef}
             className={`overflow-auto rounded-[6px] bg-muted/30 px-2.5 py-2 font-mono text-xs leading-relaxed text-foreground/80 transition-[max-height] ${maxH}`}
           >
-            {outputText || (
+            {renderedOutput || (
               <span className="animate-pulse text-muted-foreground/40">
                 等待输出...
               </span>

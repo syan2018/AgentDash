@@ -52,6 +52,7 @@ export function renderToolCallCard(
 
   switch (item.type) {
     case "commandExecution":
+    case "shellExec":
       return {
         kind,
         header: {
@@ -64,7 +65,7 @@ export function renderToolCallCard(
           sessionId: ctx.sessionId,
         }),
         status,
-        durationMs: item.durationMs ?? undefined,
+        durationMs: "durationMs" in item ? item.durationMs ?? undefined : undefined,
       };
 
     case "fileChange": {
@@ -353,6 +354,7 @@ function formatArgValue(value: unknown): string | null {
 function getItemDisplayStatus(item: AgentDashThreadItem): DisplayStatus {
   switch (item.type) {
     case "commandExecution":
+    case "shellExec":
     case "fileChange":
     case "mcpToolCall":
     case "dynamicToolCall":

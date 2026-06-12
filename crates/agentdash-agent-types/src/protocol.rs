@@ -27,6 +27,19 @@ pub enum AgentDashThreadItem {
 pub enum AgentDashNativeThreadItem {
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
+    ShellExec {
+        id: String,
+        command: String,
+        cwd: Option<String>,
+        execution_mode: ShellExecExecutionMode,
+        arguments: serde_json::Value,
+        status: codex::DynamicToolCallStatus,
+        aggregated_output: Option<String>,
+        exit_code: Option<i32>,
+        success: Option<bool>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
     FsRead {
         id: String,
         path: String,
@@ -67,6 +80,14 @@ pub enum AgentDashNativeThreadItem {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "agentdash/")]
+pub enum ShellExecExecutionMode {
+    Platform,
+    MountExec,
+}
+
 impl AgentDashThreadItem {
     pub fn id(&self) -> &str {
         match self {
@@ -100,7 +121,8 @@ impl AgentDashThreadItem {
 impl AgentDashNativeThreadItem {
     pub fn id(&self) -> &str {
         match self {
-            AgentDashNativeThreadItem::FsRead { id, .. }
+            AgentDashNativeThreadItem::ShellExec { id, .. }
+            | AgentDashNativeThreadItem::FsRead { id, .. }
             | AgentDashNativeThreadItem::FsGrep { id, .. }
             | AgentDashNativeThreadItem::FsGlob { id, .. } => id,
         }
@@ -108,6 +130,7 @@ impl AgentDashNativeThreadItem {
 
     pub fn tool_name(&self) -> &'static str {
         match self {
+            AgentDashNativeThreadItem::ShellExec { .. } => "shell_exec",
             AgentDashNativeThreadItem::FsRead { .. } => "fs_read",
             AgentDashNativeThreadItem::FsGrep { .. } => "fs_grep",
             AgentDashNativeThreadItem::FsGlob { .. } => "fs_glob",
@@ -116,7 +139,8 @@ impl AgentDashNativeThreadItem {
 
     pub fn arguments(&self) -> &serde_json::Value {
         match self {
-            AgentDashNativeThreadItem::FsRead { arguments, .. }
+            AgentDashNativeThreadItem::ShellExec { arguments, .. }
+            | AgentDashNativeThreadItem::FsRead { arguments, .. }
             | AgentDashNativeThreadItem::FsGrep { arguments, .. }
             | AgentDashNativeThreadItem::FsGlob { arguments, .. } => arguments,
         }
@@ -124,7 +148,8 @@ impl AgentDashNativeThreadItem {
 
     pub fn status(&self) -> &codex::DynamicToolCallStatus {
         match self {
-            AgentDashNativeThreadItem::FsRead { status, .. }
+            AgentDashNativeThreadItem::ShellExec { status, .. }
+            | AgentDashNativeThreadItem::FsRead { status, .. }
             | AgentDashNativeThreadItem::FsGrep { status, .. }
             | AgentDashNativeThreadItem::FsGlob { status, .. } => status,
         }
@@ -135,14 +160,25 @@ impl AgentDashNativeThreadItem {
             AgentDashNativeThreadItem::FsRead { content_items, .. }
             | AgentDashNativeThreadItem::FsGrep { content_items, .. }
             | AgentDashNativeThreadItem::FsGlob { content_items, .. } => content_items.as_ref(),
+            AgentDashNativeThreadItem::ShellExec { .. } => None,
         }
     }
 
     pub fn success(&self) -> Option<bool> {
         match self {
-            AgentDashNativeThreadItem::FsRead { success, .. }
+            AgentDashNativeThreadItem::ShellExec { success, .. }
+            | AgentDashNativeThreadItem::FsRead { success, .. }
             | AgentDashNativeThreadItem::FsGrep { success, .. }
             | AgentDashNativeThreadItem::FsGlob { success, .. } => *success,
+        }
+    }
+
+    pub fn shell_output(&self) -> Option<&str> {
+        match self {
+            AgentDashNativeThreadItem::ShellExec {
+                aggregated_output, ..
+            } => aggregated_output.as_deref(),
+            _ => None,
         }
     }
 }

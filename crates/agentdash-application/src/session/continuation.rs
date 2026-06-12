@@ -750,7 +750,11 @@ fn extract_tool_call_from_agentdash_thread_item(
     let content_parts = item
         .content_items()
         .map(|items| codex_content_items_to_parts(items))
-        .unwrap_or_default();
+        .unwrap_or_else(|| {
+            item.shell_output()
+                .map(|output| vec![ContentPart::text(output)])
+                .unwrap_or_default()
+        });
     Some(ExtractedToolCall {
         id: item.id().to_string(),
         name: item.tool_name().to_string(),

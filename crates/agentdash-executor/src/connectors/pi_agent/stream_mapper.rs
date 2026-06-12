@@ -5,7 +5,9 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
     PlatformEvent, SourceInfo, TraceInfo, backbone::thread_item,
 };
-use agentdash_agent_types::{AgentDashNativeThreadItem, AgentDashThreadItem};
+use agentdash_agent_types::{
+    AgentDashNativeThreadItem, AgentDashThreadItem, ShellExecExecutionMode,
+};
 use codex_app_server_protocol as codex;
 
 fn make_envelope(
@@ -122,25 +124,44 @@ fn upsert_state_from_message(
     )
 }
 
-/// 判断是否为 shell_exec 工具调用（应映射为 CommandExecution 而非 DynamicToolCall）
+/// 判断是否为 shell_exec 工具调用（映射为 AgentDash native shellExec）。
 fn is_shell_exec(tool_name: &str) -> bool {
     tool_name == "shell_exec"
 }
 
 /// 从 shell_exec 的 args JSON 中提取 command / cwd。
-/// cwd 的绝对路径解析交给 `agentdash_agent_protocol::backbone::thread_item::command_execution` 处理。
-fn extract_shell_args(args: &serde_json::Value) -> (String, String) {
+/// cwd 保持 Agent-facing 语义：缺省/空值表示 platform shell，非空值必须由执行层校验为
+/// platform:// 或 mount_id://relative/path。
+fn extract_shell_args(
+    args: &serde_json::Value,
+) -> (String, Option<String>, ShellExecExecutionMode) {
     let command = args
         .get("command")
         .and_then(|v| v.as_str())
         .unwrap_or("(unknown)")
         .to_string();
-    let cwd = args
+    let raw_cwd = args
         .get("cwd")
         .and_then(|v| v.as_str())
-        .unwrap_or(".")
-        .to_string();
-    (command, cwd)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match raw_cwd {
+        None => (
+            command,
+            Some("platform://".to_string()),
+            ShellExecExecutionMode::Platform,
+        ),
+        Some(cwd) if cwd.starts_with("platform://") => (
+            command,
+            Some(cwd.to_string()),
+            ShellExecExecutionMode::Platform,
+        ),
+        Some(cwd) => (
+            command,
+            Some(cwd.to_string()),
+            ShellExecExecutionMode::MountExec,
+        ),
+    }
 }
 
 fn partial_result_details_type(partial_result: &serde_json::Value) -> Option<&str> {
@@ -161,9 +182,19 @@ fn partial_result_text(partial_result: &serde_json::Value) -> String {
         .to_string()
 }
 
-/// 通过共享 builder 构造 CommandExecution ThreadItem。
-/// AbsolutePathBuf 限制（cwd 必须绝对）由 builder 内部处理。
-fn make_command_execution_item(
+fn command_status_to_dynamic(
+    status: &codex::CommandExecutionStatus,
+) -> codex::DynamicToolCallStatus {
+    match status {
+        codex::CommandExecutionStatus::InProgress => codex::DynamicToolCallStatus::InProgress,
+        codex::CommandExecutionStatus::Completed => codex::DynamicToolCallStatus::Completed,
+        codex::CommandExecutionStatus::Failed | codex::CommandExecutionStatus::Declined => {
+            codex::DynamicToolCallStatus::Failed
+        }
+    }
+}
+
+fn make_shell_exec_item(
     item_id: &str,
     state: &ToolCallEmitState,
     status: codex::CommandExecutionStatus,
@@ -174,30 +205,22 @@ fn make_command_execution_item(
         .raw_input
         .clone()
         .unwrap_or(serde_json::Value::Object(Default::default()));
-    let (command, cwd) = extract_shell_args(&args);
-    let item = agentdash_agent_protocol::backbone::thread_item::command_execution(
-        item_id,
+    let (command, cwd, execution_mode) = extract_shell_args(&args);
+    AgentDashNativeThreadItem::ShellExec {
+        id: item_id.to_string(),
         command,
         cwd,
-        status,
+        execution_mode,
+        arguments: args,
+        status: command_status_to_dynamic(&status),
         aggregated_output,
         exit_code,
-    )
-    .unwrap_or_else(|e| {
-        tracing::warn!("Failed to build CommandExecution: {e}; falling back to dynamic_tool_call");
-        thread_item::dynamic_tool_call(
-            item_id,
-            state.tool_name.clone(),
-            state
-                .raw_input
-                .clone()
-                .unwrap_or(serde_json::Value::Object(Default::default())),
-            codex::DynamicToolCallStatus::InProgress,
-            None,
-            None,
-        )
-    });
-    item.into()
+        success: Some(!matches!(
+            status,
+            codex::CommandExecutionStatus::Failed | codex::CommandExecutionStatus::Declined
+        )),
+    }
+    .into()
 }
 
 /// 构造通用工具 ThreadItem。Codex 已有的语义用 Codex variant；AgentDash 自有
@@ -442,7 +465,7 @@ pub(super) fn convert_event_to_envelopes(
                 }
                 let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
                 let item = if is_shell_exec(&state.tool_name) {
-                    make_command_execution_item(
+                    make_shell_exec_item(
                         &item_id,
                         &state,
                         codex::CommandExecutionStatus::InProgress,
@@ -618,13 +641,23 @@ pub(super) fn convert_event_to_envelopes(
                     );
                     if created {
                         let item_id = synth_item_id(turn_id, _state.entry_index, &tool_call.id);
-                        let item = make_dynamic_tool_item(
-                            &item_id,
-                            &_state,
-                            codex::DynamicToolCallStatus::InProgress,
-                            None,
-                            None,
-                        );
+                        let item = if is_shell_exec(&_state.tool_name) {
+                            make_shell_exec_item(
+                                &item_id,
+                                &_state,
+                                codex::CommandExecutionStatus::InProgress,
+                                None,
+                                None,
+                            )
+                        } else {
+                            make_dynamic_tool_item(
+                                &item_id,
+                                &_state,
+                                codex::DynamicToolCallStatus::InProgress,
+                                None,
+                                None,
+                            )
+                        };
                         envelopes.push(wrap(
                             BackboneEvent::ItemStarted(ItemStartedNotification::new(
                                 item,
@@ -750,7 +783,7 @@ pub(super) fn convert_event_to_envelopes(
             );
             let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
             let item = if is_shell_exec(tool_name) {
-                make_command_execution_item(
+                make_shell_exec_item(
                     &item_id,
                     &state,
                     codex::CommandExecutionStatus::InProgress,
@@ -918,8 +951,10 @@ pub(super) fn convert_event_to_envelopes(
                     .and_then(|text| {
                         // exit code 通常作为 "Exit code: N" 出现在输出末尾
                         text.lines().rev().find_map(|line| {
-                            line.trim()
-                                .strip_prefix("Exit code: ")
+                            let trimmed = line.trim();
+                            trimmed
+                                .strip_prefix("exit_code: ")
+                                .or_else(|| trimmed.strip_prefix("Exit code: "))
                                 .and_then(|s| s.parse::<i32>().ok())
                         })
                     });
@@ -935,7 +970,7 @@ pub(super) fn convert_event_to_envelopes(
                 } else {
                     codex::CommandExecutionStatus::Completed
                 };
-                make_command_execution_item(&item_id, &state, status, aggregated_output, exit_code)
+                make_shell_exec_item(&item_id, &state, status, aggregated_output, exit_code)
             } else {
                 let content_items = decode_tool_result_to_content_items(result);
                 let success = Some(!is_error);

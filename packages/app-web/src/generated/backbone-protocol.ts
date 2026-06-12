@@ -32,7 +32,7 @@ export type AdditionalPermissionProfile = {
  */
 network: AdditionalNetworkPermissions | null, fileSystem: AdditionalFileSystemPermissions | null, };
 
-export type AgentDashNativeThreadItem = { "type": "fsRead", id: string, path: string, offset: number | null, limit: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGrep", id: string, pattern: string, path: string | null, glob: string | null, fileType: string | null, outputMode: string | null, headLimit: number | null, offset: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGlob", id: string, pattern: string, path: string | null, maxResults: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, };
+export type AgentDashNativeThreadItem = { "type": "shellExec", id: string, command: string, cwd: string | null, executionMode: ShellExecExecutionMode, arguments: JsonValue, status: DynamicToolCallStatus, aggregatedOutput: string | null, exitCode: number | null, success: boolean | null, } | { "type": "fsRead", id: string, path: string, offset: number | null, limit: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGrep", id: string, pattern: string, path: string | null, glob: string | null, fileType: string | null, outputMode: string | null, headLimit: number | null, offset: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGlob", id: string, pattern: string, path: string | null, maxResults: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, };
 
 export type AgentDashThreadItem = ThreadItem | AgentDashNativeThreadItem;
 
@@ -280,6 +280,8 @@ export type ReasoningTextDeltaNotification = { threadId: string, turnId: string,
 export type RequestId = string | number;
 
 export type RequestPermissionProfile = { network: AdditionalNetworkPermissions | null, fileSystem: AdditionalFileSystemPermissions | null, };
+
+export type ShellExecExecutionMode = "platform" | "mountExec";
 
 /**
  * 事件来源标识。

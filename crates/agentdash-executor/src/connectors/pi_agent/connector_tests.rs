@@ -687,11 +687,15 @@ fn tool_call_stream_events_map_to_pending_start_and_updates() {
             let item = serde_json::to_value(&n.item).expect("thread item should serialize");
             assert_eq!(
                 item.get("type").and_then(|value| value.as_str()),
-                Some("commandExecution")
+                Some("shellExec")
             );
             assert_eq!(
                 item.get("command").and_then(|value| value.as_str()),
                 Some("echo he")
+            );
+            assert_eq!(
+                item.get("cwd").and_then(|value| value.as_str()),
+                Some("platform://")
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -782,6 +786,57 @@ fn message_end_without_streamed_tool_call_emits_pending_tool_call() {
             assert!(
                 matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. }) if tool == "read_file" && *arguments == serde_json::json!({ "path": "README.md" }))
             );
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn message_end_shell_exec_emits_native_shell_exec_item() {
+    let event = AgentEvent::MessageEnd {
+        message: AgentMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![agentdash_agent::ToolCallInfo {
+                id: "tool-shell-1".to_string(),
+                call_id: Some("tool-shell-1".to_string()),
+                name: "shell_exec".to_string(),
+                arguments: serde_json::json!({ "command": "pwd" }),
+            }],
+            stop_reason: Some(StopReason::ToolUse),
+            error_message: None,
+            usage: None,
+            timestamp: Some(agentdash_agent::types::now_millis()),
+        },
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            assert!(matches!(
+                &n.item,
+                agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                    agentdash_agent_protocol::AgentDashNativeThreadItem::ShellExec {
+                        command,
+                        cwd: Some(cwd),
+                        execution_mode: agentdash_agent_protocol::ShellExecExecutionMode::Platform,
+                        status: codex_app_server_protocol::DynamicToolCallStatus::InProgress,
+                        ..
+                    }
+                ) if command == "pwd" && cwd == "platform://"
+            ));
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
@@ -1044,11 +1099,15 @@ fn execution_start_after_pending_tool_call_emits_in_progress_update() {
             let item = serde_json::to_value(&n.item).expect("thread item should serialize");
             assert_eq!(
                 item.get("type").and_then(|value| value.as_str()),
-                Some("commandExecution")
+                Some("shellExec")
             );
             assert_eq!(
                 item.get("command").and_then(|value| value.as_str()),
                 Some("cargo test")
+            );
+            assert_eq!(
+                item.get("cwd").and_then(|value| value.as_str()),
+                Some("platform://")
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),

@@ -253,6 +253,13 @@ fn build_agentdash_thread_item_patch(
             json!(preview_value(&content_value)),
         );
     }
+    if let Some(output) = item.shell_output() {
+        patch.insert("raw_output".to_string(), json!(output));
+        patch.insert(
+            "output_preview".to_string(),
+            json!(preview_value(&json!(output))),
+        );
+    }
     if let Some(success) = item.success() {
         patch.insert("success".to_string(), json!(success));
     }
@@ -261,6 +268,7 @@ fn build_agentdash_thread_item_patch(
 
 fn agentdash_item_title(item: &AgentDashNativeThreadItem) -> String {
     match item {
+        AgentDashNativeThreadItem::ShellExec { command, .. } => command.clone(),
         AgentDashNativeThreadItem::FsRead { path, .. } => path.clone(),
         AgentDashNativeThreadItem::FsGrep { pattern, path, .. } => path
             .as_ref()

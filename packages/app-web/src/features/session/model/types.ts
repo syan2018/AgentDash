@@ -423,6 +423,7 @@ export function extractTextFromEvent(event: BackboneEvent): string {
 export function getThreadItemTitle(item: AgentDashThreadItem): string {
   switch (item.type) {
     case "commandExecution":
+    case "shellExec":
       return item.command;
     case "fileChange":
       return item.changes.length > 0 ? item.changes[0]!.path : "文件变更";
@@ -459,6 +460,7 @@ export function getThreadItemTitle(item: AgentDashThreadItem): string {
 export function getThreadItemStatus(item: AgentDashThreadItem): string {
   switch (item.type) {
     case "commandExecution":
+    case "shellExec":
     case "fileChange":
     case "mcpToolCall":
     case "dynamicToolCall":

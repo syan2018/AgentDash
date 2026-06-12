@@ -16,7 +16,7 @@ use crate::vfs::service::VfsService;
 use crate::vfs::tools::common::{SharedRuntimeVfs, resolve_uri_path};
 use crate::vfs::{
     ExecRequest, MaterializationRewrite, RewriteShellCommandOutput, VfsMaterializationService,
-    resolve_mount,
+    format_mount_uri, resolve_mount,
 };
 
 // ---------------------------------------------------------------------------
@@ -147,13 +147,29 @@ impl AgentTool for ShellExecTool {
                 details: Some(result.details),
             });
         }
-        let target = resolve_uri_path(&vfs, params.cwd.as_deref().unwrap_or("."))
-            .map_err(AgentToolError::ExecutionFailed)?;
+        let cwd_param = params
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed(
+                    "shell_exec.cwd 留空时应进入 platform shell；真实 OS shell cwd 必须显式使用 mount_id://relative/path"
+                        .to_string(),
+                )
+            })?;
+        if !cwd_param.contains("://") {
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "shell_exec.cwd 必须留空使用 platform shell，或显式使用 mount_id://relative/path 指向 exec mount；收到 `{cwd_param}`"
+            )));
+        }
+        let target = resolve_uri_path(&vfs, cwd_param).map_err(AgentToolError::ExecutionFailed)?;
         let cwd = if target.path.is_empty() {
             ".".to_string()
         } else {
             target.path
         };
+        let display_cwd = format_mount_uri(&target.mount_id, &cwd_for_display(&cwd));
         let exec_mount =
             resolve_mount(&vfs, &target.mount_id, agentdash_spi::MountCapability::Exec)
                 .map_err(AgentToolError::ExecutionFailed)?;
@@ -261,8 +277,7 @@ impl AgentTool for ShellExecTool {
             content: vec![ContentPart::text(shell_exec_result_text(
                 &params.command,
                 &rewritten_command,
-                &target.mount_id,
-                &cwd,
+                &display_cwd,
                 result.exit_code,
                 &merged,
                 !rewrite_output.rewrites.is_empty(),
@@ -334,20 +349,27 @@ fn vfs_uri_rewrite_details(
 fn shell_exec_result_text(
     original_command: &str,
     rewritten_command: &str,
-    mount_id: &str,
-    cwd: &str,
+    display_cwd: &str,
     exit_code: i32,
     merged_output: &str,
     has_rewrite: bool,
 ) -> String {
     if has_rewrite {
         format!(
-            "command: {original_command}\nexecuted_command: {rewritten_command}\ncwd: {mount_id}://{cwd}\nexit_code: {exit_code}\n{merged_output}"
+            "command: {original_command}\nexecuted_command: {rewritten_command}\ncwd: {display_cwd}\nexit_code: {exit_code}\n{merged_output}"
         )
     } else {
         format!(
-            "command: {original_command}\ncwd: {mount_id}://{cwd}\nexit_code: {exit_code}\n{merged_output}"
+            "command: {original_command}\ncwd: {display_cwd}\nexit_code: {exit_code}\n{merged_output}"
         )
+    }
+}
+
+fn cwd_for_display(cwd: &str) -> String {
+    if cwd == "." {
+        String::new()
+    } else {
+        cwd.to_string()
     }
 }
 
@@ -428,7 +450,36 @@ fn unresolved_reserved_vfs_uris(command: &str) -> Vec<String> {
 #[cfg(test)]
 mod shell_exec_rewrite_tests {
     use super::*;
+    use crate::vfs::MountProviderRegistryBuilder;
     use agentdash_spi::{Mount, Vfs};
+
+    fn test_shell_tool() -> ShellExecTool {
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "main".to_string(),
+                provider: crate::vfs::PROVIDER_RELAY_FS.to_string(),
+                backend_id: "local-dev-1".to_string(),
+                root_ref: "D:\\workspace".to_string(),
+                capabilities: vec![
+                    agentdash_spi::MountCapability::Read,
+                    agentdash_spi::MountCapability::Exec,
+                ],
+                default_write: true,
+                display_name: "main".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        ShellExecTool::new(
+            Arc::new(VfsService::new(Arc::new(
+                MountProviderRegistryBuilder::new().build(),
+            ))),
+            SharedRuntimeVfs::new(vfs),
+        )
+    }
 
     fn rewrite() -> MaterializationRewrite {
         MaterializationRewrite {
@@ -469,16 +520,62 @@ mod shell_exec_rewrite_tests {
         let rewritten = shell_exec_result_text(
             "python skill-assets://skills/foo/scripts/run.py",
             "python \"C:\\agentdash\\materialized\\readonly\\skill-assets\\skills\\foo\\scripts\\run.py\"",
-            "main",
-            ".",
+            "main://",
             0,
             "ok",
             true,
         );
         assert!(rewritten.contains("executed_command:"));
 
-        let plain = shell_exec_result_text("echo ok", "echo ok", "main", ".", 0, "ok", false);
+        let plain = shell_exec_result_text("echo ok", "echo ok", "main://", 0, "ok", false);
         assert!(!plain.contains("executed_command:"));
+    }
+
+    #[tokio::test]
+    async fn shell_exec_empty_cwd_uses_platform_shell() {
+        let result = test_shell_tool()
+            .execute(
+                "tool-1",
+                serde_json::json!({ "command": "pwd", "cwd": "" }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("platform shell should run");
+
+        assert!(!result.is_error);
+        let text = result.content[0].extract_text().expect("text content");
+        assert!(text.contains("cwd: platform://"));
+    }
+
+    #[tokio::test]
+    async fn shell_exec_rejects_local_relative_cwd() {
+        let error = test_shell_tool()
+            .execute(
+                "tool-1",
+                serde_json::json!({ "command": "pwd", "cwd": "." }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect_err("relative cwd should be rejected");
+
+        assert!(error.to_string().contains("mount_id://relative/path"));
+    }
+
+    #[tokio::test]
+    async fn shell_exec_rejects_pseudo_mount_cwd_without_uri_separator() {
+        let error = test_shell_tool()
+            .execute(
+                "tool-1",
+                serde_json::json!({ "command": "pwd", "cwd": "main:" }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect_err("pseudo mount cwd should be rejected");
+
+        assert!(error.to_string().contains("mount_id://relative/path"));
     }
 
     #[test]

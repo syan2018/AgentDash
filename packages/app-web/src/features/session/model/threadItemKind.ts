@@ -78,6 +78,7 @@ export const KIND_REGISTRY: Record<ThreadItemKind, KindMeta> = {
 export function resolveKind(item: AgentDashThreadItem): KindMeta {
   switch (item.type) {
     case "commandExecution":    return KIND_REGISTRY.execute;
+    case "shellExec":           return KIND_REGISTRY.execute;
     case "fileChange":          return KIND_REGISTRY.edit;
     case "mcpToolCall":         return KIND_REGISTRY.mcp;
     case "webSearch":           return KIND_REGISTRY.search;
@@ -133,6 +134,7 @@ export function resolveDynamicToolMeta(tool: string): DynamicToolMeta {
 export function isToolBurstEligible(item: AgentDashThreadItem): boolean {
   switch (item.type) {
     case "commandExecution":
+    case "shellExec":
     case "fileChange":
     case "mcpToolCall":
     case "dynamicToolCall":

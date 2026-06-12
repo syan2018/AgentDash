@@ -554,6 +554,10 @@ fn thread_item_target(item: &AgentDashThreadItem) -> String {
             _ => item.id().to_string(),
         },
         AgentDashThreadItem::AgentDash(item) => match item {
+            AgentDashNativeThreadItem::ShellExec { command, cwd, .. } => cwd
+                .as_ref()
+                .map(|cwd| format!("{cwd} {command}"))
+                .unwrap_or_else(|| command.clone()),
             AgentDashNativeThreadItem::FsRead { path, .. } => path.clone(),
             AgentDashNativeThreadItem::FsGrep { pattern, path, .. } => path
                 .as_ref()

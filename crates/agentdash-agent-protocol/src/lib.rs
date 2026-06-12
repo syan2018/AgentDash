@@ -23,7 +23,9 @@ pub use backbone::user_input::{
 
 pub use codex_app_server_protocol;
 
-pub use agentdash_agent_types::{AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem};
+pub use agentdash_agent_types::{
+    AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, ShellExecExecutionMode,
+};
 
 pub use agent_client_protocol::{ContentBlock, EmbeddedResourceResource, TextContent};
 

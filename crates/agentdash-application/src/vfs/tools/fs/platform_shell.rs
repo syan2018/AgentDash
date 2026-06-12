@@ -21,6 +21,9 @@ impl PlatformShellCwd {
             return Ok(Some(Self::Root));
         };
         let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Ok(Some(Self::Root));
+        }
         if !trimmed.starts_with("platform://") {
             return Ok(None);
         }

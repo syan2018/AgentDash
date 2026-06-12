@@ -188,7 +188,7 @@ export function SessionChatView({
       ].join(":");
     }
     return resolvedHint ? `draft:${resolvedHint}` : null;
-  }, [agentDefaults, executorStateKey, resolvedHint, sessionId]);
+  }, [agentDefaults, executorStateKey, resolvedHint, sessionId, snapshotExecutorDefaults]);
 
   // 每个 session 仅 hydrate 一次（用户手改后切走再切回不会被再次覆盖）。
   // 首帧 agentDefaults 可能还没到，effect 会等 agentDefaults 就绪后再命中条件。

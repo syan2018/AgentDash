@@ -125,8 +125,6 @@ describe("AgentRun workspace refresh state", () => {
             enter: "enqueue",
             ctrl_enter: "steer",
           },
-          primary: "enqueue",
-          secondary: "steer",
           commands: [],
         },
         pending: {

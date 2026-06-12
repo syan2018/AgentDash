@@ -93,15 +93,7 @@ export type ConversationCommandKind = "start_draft" | "send_next" | "enqueue" | 
 
 export type ConversationCommandPlacement = "composer_primary" | "composer_secondary" | "pending_row" | "pending_banner" | "header";
 
-export type ConversationCommandSetView = { commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView,
-/**
- * Legacy derived composer primary command. New UI should use `commands` and `keyboard`.
- */
-primary?: ConversationCommandKind,
-/**
- * Legacy derived composer secondary command. New UI should use `commands` and `keyboard`.
- */
-secondary?: ConversationCommandKind, };
+export type ConversationCommandSetView = { commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView, };
 
 export type ConversationCommandStaleGuardView = { run_id: string, agent_id: string, frame_id?: string, runtime_session_id?: string, active_turn_id?: string, };
 

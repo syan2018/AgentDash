@@ -959,14 +959,6 @@ pub struct ConversationCommandSetView {
     #[serde(default)]
     pub commands: Vec<ConversationCommandView>,
     pub keyboard: ConversationKeyboardMapView,
-    /// Legacy derived composer primary command. New UI should use `commands` and `keyboard`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub primary: Option<ConversationCommandKind>,
-    /// Legacy derived composer secondary command. New UI should use `commands` and `keyboard`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub secondary: Option<ConversationCommandKind>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

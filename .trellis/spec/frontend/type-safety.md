@@ -62,6 +62,13 @@ Project / Story / Task / Agent knowledge 等预览入口使用 `ResolvedVfsSurfa
 
 Session 右侧 WorkspacePanel 消费 current runtime projection state。该 state 以 `runtime_session_id + frame/runtime projection key` 为边界，携带 loading / ready / refreshing / error 状态；key 不匹配时不暴露上一份 runtime surface、capabilities 或 context snapshot。`workspace_module_presented`、`capability_state_changed` 等事件只触发当前 state 的 invalidate/refetch，界面不创建新的长期快照事实源。Canvas 打开动作读取 generated event payload 的 `presentation_uri`，值为 `canvas://{mount_id}`；前端不从 `view_key`、`module_id` 或 `cvs-<mount_id>://...` 推断 tab URI。
 
+## AgentRun Conversation DTO
+
+AgentRun workspace 消费 `AgentConversationSnapshot` / `AgentRunWorkspaceView.conversation` 的 generated DTO。输入区、pending row、model selector 与 keyboard submit 使用 `ConversationCommandSetView.commands`、
+`ConversationKeyboardMapView`、`ConversationModelConfigView` 和 `ConversationPendingSnapshotView`，原因是这些字段携带后端同一轮 snapshot 的 command id、stale guard、模型解析和用户注意力语义。
+
+AgentRun 右侧 WorkspacePanel 使用 snapshot `resource_surface: ResolvedVfsSurface`。该 surface 来自 AgentRun 当前 frame 的 typed VFS surface，并可带 lifecycle mount 诊断；RuntimeSession detail 仍可以用 `ResolvedVfsSurfaceSource::SessionRuntime` 展示 trace/detail 视角。两条入口共享 browser 组件，但 AgentRun producer 是 snapshot resource surface，原因是 AgentRun 的业务 owner 是 run / agent / frame，而 RuntimeSession 是 delivery/trace identity。
+
 ---
 
 ## 禁止模式

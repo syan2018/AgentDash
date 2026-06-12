@@ -504,18 +504,6 @@ fn conversation_commands(
                 None
             },
         },
-        primary: if send_next {
-            Some(ConversationCommandKind::SendNext)
-        } else if running_active {
-            Some(ConversationCommandKind::Enqueue)
-        } else {
-            None
-        },
-        secondary: if steer {
-            Some(ConversationCommandKind::Steer)
-        } else {
-            None
-        },
         commands,
     }
 }

@@ -59,28 +59,42 @@
 - `lifecycleStore` 只缓存后端 lifecycle view，不作为 command input；写命令应从 SubjectRef、run/graph/agent/frame refs 或明确的 API intent 发起。
 - Session UI 可以消费 `RuntimeSessionTraceView` 与 frame runtime projection，但不能从 session title、session 存在性或 trace 内容推导 Task / Story / Lifecycle 状态。
 
-## AgentRun Workspace 控制动作状态
+## AgentRun Workspace Conversation Snapshot
 
-执行工作台输入区的可执行状态来自后端 `AgentRunWorkspaceView.control_plane` 与
-`AgentRunWorkspaceView.actions`。页面层把 draft 启动态或 workspace action set 翻译成
-`SessionChatControlState`，聊天组件只渲染当前 `primaryAction` 与独立 `cancelAction`。
+执行工作台输入区的可执行状态来自后端 `AgentConversationSnapshot.commands` 与
+`ConversationKeyboardMapView`。页面层可以把 snapshot 转成组件 view model，但 command kind、
+command id、keyboard mapping、stale guard、model policy 与 disabled reason 都保持后端生成的
+generated DTO 形状。这样做的原因是 AgentRun 命令可用性同时依赖 run / agent / frame、delivery
+runtime、active turn、pending queue、模型解析和 connector capability；这些事实只能由后端在同一
+个 snapshot 中一致投影。
 
-`start_draft`、`send_next`、`enqueue`、`steer`、`cancel` 是不同用户意图：draft 首条消息
-materialize runtime/lifecycle，ready `send_next` 启动下一轮 prompt，running `enqueue` 进入
-待投递队列，running `steer` 注入当前 turn，running `cancel` 中断当前 turn。用 action model
-承载这些意图的原因是前端不能从 stream 连接、session 是否存在、或“下一轮不可发送”推导
-lifecycle 控制面状态；后端 AgentRun Workspace projection 已经合并 run / agent / frame、active
-turn、command receipt、delivery summary 与 connector live-session capability，才是输入区展示和
-命令分派的事实源。
+`start_draft`、`send_next`、`enqueue`、`steer`、`promote_pending`、`resume_pending_queue`、
+`cancel` 是不同用户意图：draft 首条消息 materialize runtime/lifecycle，ready `send_next` 启动
+下一轮 prompt，running `enqueue` 进入待投递队列，running `steer` 注入当前 active turn，
+`promote_pending` 把一条 pending message 投递到当前 turn，`resume_pending_queue` 恢复需要用户
+处理的暂停队列，`cancel` 中断当前 turn。前端按 snapshot command id 提交命令，原因是按钮、键盘
+和 pending row 必须共享同一份 precondition token，才能让刷新滞后、completed/idle 状态和
+active-turn 变化表现为结构化 command conflict。
+
+模型选择显示来自 `AgentConversationSnapshot.model_config`。ProjectAgent preset、当前 frame
+execution profile、用户显式 override 与后端认可的 discovery default 在后端解析成同形
+`effective_executor_config` 或 `model_required`。前端 selector 可以维护用户正在编辑的 override，
+但输入区提交能力由 snapshot command 和 model policy 决定，原因是 ProjectAgent 默认模型与运行中
+frame 模型必须在同一层完成字段级合并。
+
+pending UI 消费 `AgentConversationSnapshot.pending` 的 `visible_message_count`、
+`user_attention` 与 `resume_command`。队列是否暂停是机制事实，是否渲染提示是用户注意力事实；把
+两者分开可以让 terminal/ready 状态下的历史暂停不变成新的用户工作。
 
 `AgentRunWorkspaceControlPlaneView.status` 使用 AgentRun workspace 语义：
 `ready | running | terminal | frame_missing | delivery_missing`。RuntimeSession detail 使用
 `SessionRuntimeControlView`，原因是 runtime trace/detail 从 runtime session identity 出发，而
 AgentRun workspace 从 run / agent identity 出发。
 
-SessionChatView 的职责是执行传入 action，不持有业务分派规则。Ctrl+Enter 触发当前
-primary action；cancel 作为独立按钮展示。这样 running workspace 可以同时显示排队、运行中 steer
-和取消，ready workspace 显示下一轮发送，只读 trace 展示后端 reason。
+SessionChatView 的职责是执行传入 command，不持有业务分派规则。Enter、Ctrl/Cmd+Enter 与按钮点击
+都从 snapshot keyboard/command list 选择 command id；cancel 作为独立命令展示。这样 running
+workspace 可以同时显示排队、运行中 steer 和取消，ready workspace 显示下一轮发送，只读 trace
+展示后端 reason。
 
 ## AgentRun Workspace 状态来源
 
@@ -101,11 +115,10 @@ runtime trace 视角。Workspace route 可以展示关联的 `delivery_trace_met
 `AgentRunWorkspaceView.actions` 为准。
 
 同一 `run_id + agent_id + source_key` 的 AgentRun Workspace refresh 保留上一帧 `workspace`、
-`runtime_session_id`、runtime surface 与 frame，原因是 `SessionChatView` 的 NDJSON stream
-生命周期绑定 runtime session identity，右侧 runtime surface 也需要展示连续性。输入区命令
-authority 只在当前 projection `status="ready"` 时消费 `AgentRunWorkspaceView.actions`；
-`loading` / `refreshing` / `error` / stale projection 状态下上一帧 actions 只能用于展示诊断，
-不得执行 `send_next`、`enqueue` 或 `steer`。
+`runtime_session_id`、resource surface 与 frame，原因是 `SessionChatView` 的 NDJSON stream
+生命周期绑定 runtime session identity，右侧 resource browser 也需要展示连续性。输入区 command
+authority 只在当前 projection `status="ready"` 时消费最新 `AgentConversationSnapshot.commands`；
+`loading` / `refreshing` / `error` / stale projection 状态下上一帧 snapshot 只能用于展示诊断。
 
 `session_meta_updated`、`Platform(SessionMetaUpdate)` 与 RuntimeSession event stream 仍是 feed
 和 debug 面板可渲染的事实。工作台标题编辑和状态刷新通过 AgentRun Workspace shell 刷新或后续

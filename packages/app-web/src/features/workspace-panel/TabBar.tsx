@@ -26,6 +26,7 @@ import {
   type TabTypeDescriptor,
 } from "./tab-type-registry";
 import { AddTabMenu } from "./AddTabMenu";
+import type { CanvasModuleOpenOption } from "./model/canvasModuleOpen";
 
 // ─── Props ──────────────────────────────────────────────
 
@@ -37,6 +38,11 @@ interface TabBarProps {
   onClose: (tabId: string) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   onAddTab: (typeId: string) => void;
+  canvasOptions: CanvasModuleOpenOption[];
+  canvasOptionsStatus: "idle" | "loading" | "ready" | "refreshing" | "error";
+  canvasOpenBusyKey: string | null;
+  canvasOpenError: string | null;
+  onOpenCanvasModule: (option: CanvasModuleOpenOption) => Promise<boolean>;
 }
 
 // ─── TabBar ─────────────────────────────────────────────
@@ -49,6 +55,11 @@ export function TabBar({
   onClose,
   onReorder,
   onAddTab,
+  canvasOptions,
+  canvasOptionsStatus,
+  canvasOpenBusyKey,
+  canvasOpenError,
+  onOpenCanvasModule,
 }: TabBarProps) {
   const pinnedTabs = useMemo(() => tabs.filter((t) => t.pinned), [tabs]);
   const dynamicTabs = useMemo(() => tabs.filter((t) => !t.pinned), [tabs]);
@@ -111,7 +122,15 @@ export function TabBar({
       </div>
 
       {/* "+" 新建菜单（放在 overflow 容器之外，避免下拉被裁剪） */}
-      <AddTabMenu tabTypes={tabTypes} onAddTab={onAddTab} />
+      <AddTabMenu
+        tabTypes={tabTypes}
+        onAddTab={onAddTab}
+        canvasOptions={canvasOptions}
+        canvasOptionsStatus={canvasOptionsStatus}
+        canvasOpenBusyKey={canvasOpenBusyKey}
+        canvasOpenError={canvasOpenError}
+        onOpenCanvasModule={onOpenCanvasModule}
+      />
     </div>
   );
 }

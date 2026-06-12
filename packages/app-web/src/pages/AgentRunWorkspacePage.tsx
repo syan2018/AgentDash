@@ -615,6 +615,11 @@ export function AgentRunWorkspacePage({
     });
   }, [agentRunDetailTarget, deliveryRuntimeSessionId, navigate]);
 
+  const handleWorkspaceModuleOpened = useCallback(() => {
+    void refreshAgentRunWorkspaceState();
+    scheduleHookRuntimeRefresh("workspace_module_user_opened");
+  }, [refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh]);
+
   const backButtonLabel = effectiveReturnTarget?.owner_type === "project"
     ? "返回项目"
     : effectiveReturnTarget?.owner_type === "task"
@@ -823,6 +828,7 @@ export function AgentRunWorkspacePage({
           <WorkspacePanel
             ref={workspacePanelRef}
             runtimeData={workspaceRuntimeData}
+            onWorkspaceModuleOpened={handleWorkspaceModuleOpened}
           />
         </Panel>
       </Group>

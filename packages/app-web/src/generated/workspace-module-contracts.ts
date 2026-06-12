@@ -46,6 +46,26 @@ dispatch: WorkspaceModuleOperationDispatch, };
 export type WorkspaceModuleOperationDispatch = { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_channel", channel_key: string, method_name: string, } | { "kind": "host_canvas", canvas_action: WorkspaceModuleCanvasHostAction, } | { "kind": "builtin", builtin_key: string, };
 
 /**
+ * 用户或 Agent 请求展示某个 workspace module UI entry。
+ */
+export type WorkspaceModulePresentRequest = { module_id: string, view_key: string,
+/**
+ * 有 delivery RuntimeSession 时，后端会先把 Canvas 暴露给该 session。
+ */
+runtime_session_id?: string | null,
+/**
+ * 可选 delivery trace context；HTTP user-open 不依赖它写事件。
+ */
+turn_id?: string | null, payload?: JsonValue | null, };
+
+/**
+ * canonical workspace module presentation payload。
+ *
+ * Agent tool event、tool result details 与 HTTP user-open response 共用该形状。
+ */
+export type WorkspaceModulePresentation = { module_id: string, view_key: string, renderer_kind: string, presentation_uri: string, title: string, payload?: JsonValue | null, diagnostics?: JsonValue | null, };
+
+/**
  * Module 状态 + 不可用原因。
  */
 export type WorkspaceModuleStatus = { kind: WorkspaceModuleStatusKind, reason?: string | null, };

@@ -147,3 +147,34 @@ pub struct WorkspaceModuleDescriptor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_backing: Option<String>,
 }
+
+/// 用户或 Agent 请求展示某个 workspace module UI entry。
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+pub struct WorkspaceModulePresentRequest {
+    pub module_id: String,
+    pub view_key: String,
+    /// 有 delivery RuntimeSession 时，后端会先把 Canvas 暴露给该 session。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_session_id: Option<String>,
+    /// 可选 delivery trace context；HTTP user-open 不依赖它写事件。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<Value>,
+}
+
+/// canonical workspace module presentation payload。
+///
+/// Agent tool event、tool result details 与 HTTP user-open response 共用该形状。
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+pub struct WorkspaceModulePresentation {
+    pub module_id: String,
+    pub view_key: String,
+    pub renderer_kind: String,
+    pub presentation_uri: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<Value>,
+}

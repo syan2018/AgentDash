@@ -20,6 +20,7 @@ export interface WorkspaceTabTypeLayoutDescriptor {
   allowMultiple: boolean;
   pinned: boolean;
   defaultUri: string;
+  canCreateUri?: (uri: string) => boolean;
 }
 
 export interface WorkspaceTabLayoutOptions {
@@ -184,6 +185,9 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
     }
 
     const tabUri = uri ?? type?.defaultUri ?? "";
+    if (type?.canCreateUri && !type.canCreateUri(tabUri)) {
+      return "";
+    }
     const newTab: TabInstance = {
       id: generateTabId(),
       typeId,
@@ -226,6 +230,10 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
   },
 
   openOrActivate: (typeId, uri, options) => {
+    const type = findTabType(typeId, options);
+    if (type?.canCreateUri && !type.canCreateUri(uri)) {
+      return "";
+    }
     const existing = get().tabs.find(
       (t) => t.typeId === typeId && t.uri === uri,
     );

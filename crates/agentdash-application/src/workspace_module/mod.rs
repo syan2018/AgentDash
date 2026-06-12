@@ -15,8 +15,8 @@ mod tools;
 
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
-    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleStatus,
-    WorkspaceModuleSummary, WorkspaceModuleUiEntry,
+    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModulePresentation,
+    WorkspaceModuleStatus, WorkspaceModuleSummary, WorkspaceModuleUiEntry,
 };
 use agentdash_domain::canvas::Canvas;
 use agentdash_domain::shared_library::{
@@ -26,6 +26,7 @@ use agentdash_domain::shared_library::{
 use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::runtime_gateway::ExtensionInvocationWorkspaceContext;
 use agentdash_domain::common::Vfs;
+use thiserror::Error;
 
 pub use tools::{
     WorkspaceModuleCreateTool, WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool,
@@ -185,6 +186,100 @@ pub fn build_workspace_modules(
     modules.extend(build_extension_modules(ext));
     modules.extend(canvases.iter().map(build_canvas_module));
     modules
+}
+
+pub fn build_canvas_workspace_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
+    build_canvas_module(canvas)
+}
+
+#[derive(Debug, Error)]
+pub enum WorkspaceModulePresentationError {
+    #[error("module `{module_id}` 无名为 `{view_key}` 的 UI view")]
+    ViewNotFound {
+        module_id: String,
+        view_key: String,
+        available_views: Vec<String>,
+    },
+    #[error("module `{module_id}` view `{view_key}` 没有 canonical presentation_uri")]
+    MissingPresentationUri {
+        module_id: String,
+        view_key: String,
+        renderer_kind: String,
+    },
+}
+
+impl WorkspaceModulePresentationError {
+    pub fn diagnostics(&self) -> serde_json::Value {
+        match self {
+            Self::ViewNotFound {
+                module_id,
+                view_key,
+                available_views,
+            } => serde_json::json!({
+                "module_id": module_id,
+                "view_key": view_key,
+                "reason": "no_matching_ui_entry",
+                "available_views": available_views,
+            }),
+            Self::MissingPresentationUri {
+                module_id,
+                view_key,
+                renderer_kind,
+            } => serde_json::json!({
+                "module_id": module_id,
+                "view_key": view_key,
+                "renderer_kind": renderer_kind,
+                "reason": "missing_presentation_uri",
+            }),
+        }
+    }
+}
+
+pub fn build_workspace_module_presentation(
+    module: &WorkspaceModuleDescriptor,
+    view_key: &str,
+    payload: Option<serde_json::Value>,
+    diagnostics: Option<serde_json::Value>,
+) -> Result<WorkspaceModulePresentation, WorkspaceModulePresentationError> {
+    let Some(ui_entry) = module
+        .ui_entries
+        .iter()
+        .find(|entry| entry.view_key == view_key)
+    else {
+        return Err(WorkspaceModulePresentationError::ViewNotFound {
+            module_id: module.summary.module_id.clone(),
+            view_key: view_key.to_string(),
+            available_views: module
+                .ui_entries
+                .iter()
+                .map(|entry| entry.view_key.clone())
+                .collect(),
+        });
+    };
+
+    let presentation_uri = ui_entry.presentation_uri.clone().or_else(|| {
+        ui_entry
+            .uri_scheme
+            .as_ref()
+            .map(|scheme| format!("{scheme}://panel"))
+    });
+    let Some(presentation_uri) = presentation_uri else {
+        return Err(WorkspaceModulePresentationError::MissingPresentationUri {
+            module_id: module.summary.module_id.clone(),
+            view_key: view_key.to_string(),
+            renderer_kind: ui_entry.renderer_kind.clone(),
+        });
+    };
+
+    Ok(WorkspaceModulePresentation {
+        module_id: module.summary.module_id.clone(),
+        view_key: ui_entry.view_key.clone(),
+        renderer_kind: ui_entry.renderer_kind.clone(),
+        presentation_uri,
+        title: ui_entry.title.clone(),
+        payload,
+        diagnostics,
+    })
 }
 
 fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceModuleDescriptor> {

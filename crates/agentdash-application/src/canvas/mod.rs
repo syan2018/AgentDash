@@ -17,8 +17,9 @@ pub use runtime::{
     CanvasRuntimeBinding, CanvasRuntimeBridgeSnapshot, CanvasRuntimeFile, CanvasRuntimeSnapshot,
     build_runtime_snapshot, build_runtime_snapshot_with_bindings,
 };
+pub use tools::expose_existing_canvas_for_session;
 pub(crate) use tools::{
     BindCanvasDataParams, StartCanvasParams, bind_canvas_data_for_project,
-    create_or_attach_canvas_for_session, expose_existing_canvas_for_session,
+    create_or_attach_canvas_for_session,
 };
 pub use visibility::append_visible_canvas_mounts;

@@ -14,6 +14,10 @@ function parseCanvasUri(uri: string): { canvasId: string } | null {
   return canvasId ? { canvasId } : null;
 }
 
+function isConcreteCanvasUri(uri: string): boolean {
+  return parseCanvasUri(uri) !== null;
+}
+
 function CanvasTabContent({ uri }: TabContentRenderProps) {
   const { sessionId } = useWorkspaceData();
   const parsed = parseCanvasUri(uri);
@@ -71,6 +75,7 @@ export const canvasTabType: TabTypeDescriptor = {
     const parsed = parseCanvasUri(uri);
     return parsed ? { canvasId: parsed.canvasId } : null;
   },
+  canCreateUri: isConcreteCanvasUri,
 
   buildUri: (params) => {
     const canvasId = params?.canvasId;

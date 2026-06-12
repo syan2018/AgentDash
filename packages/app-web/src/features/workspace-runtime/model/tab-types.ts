@@ -19,6 +19,7 @@ export interface TabTypeDescriptor {
   resolveTitle: (uri: string) => string;
   parseUri: (uri: string) => Record<string, string> | null;
   buildUri: (params: Record<string, string>) => string;
+  canCreateUri?: (uri: string) => boolean;
   defaultUri?: string;
   menuOrder?: number;
 }

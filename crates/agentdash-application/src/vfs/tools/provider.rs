@@ -286,13 +286,16 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                     "workspace_module_create",
                     Some(ToolCluster::WorkspaceModule),
                 ) {
-                    tools.push(Arc::new(WorkspaceModuleCreateTool::new(
-                        self.repos.canvas_repo.clone(),
-                        project_id,
-                        shared_vfs.clone(),
-                        self.session_services_handle.clone(),
-                        Some(session_id.clone()),
-                    )));
+                    tools.push(Arc::new(
+                        WorkspaceModuleCreateTool::new(
+                            self.repos.canvas_repo.clone(),
+                            project_id,
+                            shared_vfs.clone(),
+                            self.session_services_handle.clone(),
+                            Some(session_id.clone()),
+                        )
+                        .with_turn_id(context.session.turn_id.clone()),
+                    ));
                 }
 
                 // invoke：需 RuntimeGateway + channel transport 注入齐全才装配。

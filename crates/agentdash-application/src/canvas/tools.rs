@@ -191,7 +191,7 @@ pub(crate) async fn bind_canvas_data_for_project(
     })
 }
 
-pub(crate) async fn expose_existing_canvas_for_session(
+pub async fn expose_existing_canvas_for_session(
     canvas_repo: &dyn CanvasRepository,
     project_id: Uuid,
     canvas_id: &str,
@@ -259,13 +259,6 @@ pub(crate) async fn expose_canvas_to_session(
                 "Canvas mount 写入 AgentFrame 失败: {error}"
             )));
         }
-        sync_canvas_mount_capability_state_for_runtime_delivery(
-            vfs,
-            &session_services,
-            session_id,
-            canvas,
-        )
-        .await?;
         let module_ref = format!("canvas:{}", canvas.mount_id);
         if let Err(error) = session_services
             .capability
@@ -276,6 +269,13 @@ pub(crate) async fn expose_canvas_to_session(
                 "Canvas module ref 写入 AgentFrame 失败: {error}"
             )));
         }
+        sync_canvas_mount_capability_state_for_runtime_delivery(
+            vfs,
+            &session_services,
+            session_id,
+            canvas,
+        )
+        .await?;
     }
     Ok(())
 }

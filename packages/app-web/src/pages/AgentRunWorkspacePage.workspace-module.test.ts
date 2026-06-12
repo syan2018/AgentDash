@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AgentRunWorkspaceView } from "../types";
 import { useWorkspaceTabStore, type WorkspaceTabLayoutOptions } from "../stores/workspaceTabStore";
 import { deriveAgentRunWorkspaceChatControlState } from "./AgentRunWorkspacePage.chatControlState";
+import type { WorkspaceModuleDescriptor } from "../generated/workspace-module-contracts";
+import {
+  openUserCanvasModule,
+  selectCanvasModuleOpenOptions,
+} from "../features/workspace-panel/model/canvasModuleOpen";
 import {
   isConcreteCanvasPresentationUri,
   workspaceModulePresentedTabTarget,
@@ -162,6 +167,7 @@ describe("workspaceTabStore Canvas tab identity", () => {
       allowMultiple: true,
       pinned: false,
       defaultUri: "canvas://",
+      canCreateUri: (uri) => isConcreteCanvasPresentationUri(uri),
     }],
     resolveTitle: (_typeId, uri) => uri,
   };
@@ -185,5 +191,134 @@ describe("workspaceTabStore Canvas tab identity", () => {
     expect(tabs.map((tab) => tab.uri)).toEqual(["canvas://mount-a", "canvas://mount-b"]);
 
     useWorkspaceTabStore.getState().reset();
+  });
+
+  it("rejects default empty canvas:// creation through add/open flows", () => {
+    useWorkspaceTabStore.getState().reset();
+
+    const addId = useWorkspaceTabStore
+      .getState()
+      .addTab("canvas", undefined, true, canvasLayoutOptions);
+    const openId = useWorkspaceTabStore
+      .getState()
+      .openOrActivate("canvas", "canvas://", canvasLayoutOptions);
+
+    expect(addId).toBe("");
+    expect(openId).toBe("");
+    expect(useWorkspaceTabStore.getState().tabs).toEqual([]);
+
+    useWorkspaceTabStore.getState().reset();
+  });
+});
+
+function canvasModule(
+  moduleId: string,
+  presentationUri: string | null,
+  status: "ready" | "unavailable" = "ready",
+): WorkspaceModuleDescriptor {
+  return {
+    summary: {
+      module_id: moduleId,
+      kind: "canvas",
+      title: `Canvas ${moduleId}`,
+      description: "",
+      source: moduleId.replace("canvas:", ""),
+      ui_summary: "preview",
+      operation_summary: [],
+      permission_summary: [],
+      status: status === "ready"
+        ? { kind: "ready" }
+        : { kind: "unavailable", reason: "disabled" },
+    },
+    ui_entries: [{
+      view_key: "preview",
+      renderer_kind: "canvas",
+      presentation_uri: presentationUri,
+      title: `Preview ${moduleId}`,
+    }],
+    operations: [],
+    runtime_backing: null,
+  };
+}
+
+describe("Canvas workspace module selector and user-open flow", () => {
+  it("selects only ready Canvas modules with concrete canonical presentation URIs", () => {
+    const options = selectCanvasModuleOpenOptions([
+      canvasModule("canvas:mount-a", "canvas://mount-a"),
+      canvasModule("canvas:empty", "canvas://"),
+      canvasModule("canvas:missing", null),
+      canvasModule("canvas:disabled", "canvas://disabled", "unavailable"),
+    ]);
+
+    expect(options).toEqual([{
+      module_id: "canvas:mount-a",
+      view_key: "preview",
+      title: "Preview canvas:mount-a",
+      presentation_uri: "canvas://mount-a",
+    }]);
+  });
+
+  it("opens Canvas from the backend user-open presentation, not the project candidate URI", async () => {
+    const presentWorkspaceModule = vi.fn().mockResolvedValue({
+      module_id: "canvas:mount-a",
+      view_key: "preview",
+      renderer_kind: "canvas",
+      presentation_uri: "canvas://canonical-from-backend",
+      title: "Canvas A",
+    });
+    const openOrActivate = vi.fn();
+
+    await openUserCanvasModule({
+      projectId: "project-1",
+      runtimeSessionId: "session-1",
+      option: {
+        module_id: "canvas:mount-a",
+        view_key: "preview",
+        title: "Canvas A",
+        presentation_uri: "canvas://candidate",
+      },
+      presentWorkspaceModule,
+      openOrActivate,
+    });
+
+    expect(presentWorkspaceModule).toHaveBeenCalledWith("project-1", {
+      module_id: "canvas:mount-a",
+      view_key: "preview",
+      runtime_session_id: "session-1",
+    });
+    expect(openOrActivate).toHaveBeenCalledWith("canvas", "canvas://canonical-from-backend");
+  });
+
+  it("does not open a tab when user-open fails or returns no concrete Canvas presentation", async () => {
+    const openOrActivate = vi.fn();
+    const option = {
+      module_id: "canvas:mount-a",
+      view_key: "preview",
+      title: "Canvas A",
+      presentation_uri: "canvas://candidate",
+    };
+
+    await expect(openUserCanvasModule({
+      projectId: "project-1",
+      runtimeSessionId: "session-1",
+      option,
+      presentWorkspaceModule: vi.fn().mockRejectedValue(new Error("backend failed")),
+      openOrActivate,
+    })).rejects.toThrow("backend failed");
+    expect(openOrActivate).not.toHaveBeenCalled();
+
+    await expect(openUserCanvasModule({
+      projectId: "project-1",
+      runtimeSessionId: "session-1",
+      option,
+      presentWorkspaceModule: vi.fn().mockResolvedValue({
+        module_id: "canvas:mount-a",
+        view_key: "preview",
+        renderer_kind: "canvas",
+        presentation_uri: "canvas://",
+      }),
+      openOrActivate,
+    })).rejects.toThrow("后端未返回可打开的 Canvas presentation。");
+    expect(openOrActivate).not.toHaveBeenCalled();
   });
 });

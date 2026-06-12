@@ -7,7 +7,7 @@
  * 内容区根据 TabTypeDescriptor 渲染对应组件。
  */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useWorkspaceTabStore } from "../../stores/workspaceTabStore";
 import {
   tabTypeRegistry,
@@ -20,18 +20,34 @@ import { TabBar } from "./TabBar";
 import { AddressBar } from "./AddressBar";
 import type { WorkspacePanelHandle, WorkspacePanelProps } from "./workspace-panel-types";
 import type { WorkspaceTabLayoutOptions } from "../../stores/workspaceTabStore";
+import {
+  selectCanvasModuleOpenOptions,
+  openUserCanvasModule,
+  type CanvasModuleOpenOption,
+} from "./model/canvasModuleOpen";
+import {
+  useWorkspaceModuleStore,
+} from "../workspace-module/model/workspaceModuleStore";
+import { idleProjectWorkspaceModulesState } from "../workspace-module/model/types";
+import { presentWorkspaceModule } from "../../services/workspaceModule";
 
 registerBuiltinTabTypes();
 
 export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelProps>(
   function WorkspacePanel(props, ref) {
-    const { runtimeData } = props;
+    const { runtimeData, onWorkspaceModuleOpened } = props;
     const { projectId, sessionId, extensionRuntime } = runtimeData;
 
     const tabs = useWorkspaceTabStore((s) => s.tabs);
     const activeTabId = useWorkspaceTabStore((s) => s.activeTabId);
     const storeSessionId = useWorkspaceTabStore((s) => s.sessionId);
     const registrySnapshot = useTabTypeRegistrySnapshot();
+    const fetchWorkspaceModules = useWorkspaceModuleStore((s) => s.fetchProject);
+    const storedWorkspaceModuleState = useWorkspaceModuleStore(
+      useCallback((s) => projectId ? s.byProjectId[projectId] ?? null : null, [projectId]),
+    );
+    const [canvasOpenBusyKey, setCanvasOpenBusyKey] = useState<string | null>(null);
+    const [canvasOpenError, setCanvasOpenError] = useState<string | null>(null);
 
     const tabLayoutOptions: WorkspaceTabLayoutOptions = useMemo(() => ({
       tabTypes: registrySnapshot.map((type) => ({
@@ -40,6 +56,7 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         allowMultiple: type.allowMultiple,
         pinned: type.pinned,
         defaultUri: type.defaultUri ?? type.buildUri({}),
+        canCreateUri: type.canCreateUri,
       })),
       resolveTitle: (typeId, uri) => {
         const type = registrySnapshot.find((descriptor) => descriptor.typeId === typeId);
@@ -53,6 +70,23 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         useWorkspaceTabStore.getState().initialize(sessionId, null, tabLayoutOptions);
       }
     }, [sessionId, storeSessionId, tabLayoutOptions]);
+
+    const workspaceModuleState = useMemo(() => {
+      if (storedWorkspaceModuleState) return storedWorkspaceModuleState;
+      if (!projectId) return idleProjectWorkspaceModulesState();
+      return {
+        project_id: projectId,
+        status: "idle" as const,
+        modules: [],
+        error: null,
+      };
+    }, [projectId, storedWorkspaceModuleState]);
+
+    useEffect(() => {
+      if (!projectId) return;
+      if (workspaceModuleState.status !== "idle") return;
+      void fetchWorkspaceModules(projectId);
+    }, [fetchWorkspaceModules, projectId, workspaceModuleState.status]);
 
     useEffect(() => {
       if (
@@ -88,6 +122,40 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     const handleAddTab = useCallback((typeId: string) => {
       useWorkspaceTabStore.getState().addTab(typeId, undefined, true, tabLayoutOptions);
     }, [tabLayoutOptions]);
+
+    const canvasOptions = useMemo(
+      () => selectCanvasModuleOpenOptions(workspaceModuleState.modules),
+      [workspaceModuleState.modules],
+    );
+
+    const handleOpenCanvasModule = useCallback(async (option: CanvasModuleOpenOption) => {
+      const busyKey = `${option.module_id}:${option.view_key}`;
+      setCanvasOpenBusyKey(busyKey);
+      setCanvasOpenError(null);
+      try {
+        await openUserCanvasModule({
+          projectId,
+          runtimeSessionId: sessionId,
+          option,
+          presentWorkspaceModule,
+          openOrActivate: (typeId, uri) => {
+            useWorkspaceTabStore.getState().openOrActivate(typeId, uri, tabLayoutOptions);
+          },
+        });
+        onWorkspaceModuleOpened?.();
+        return true;
+      } catch (error: unknown) {
+        setCanvasOpenError(error instanceof Error ? error.message : "Canvas 打开失败。");
+        return false;
+      } finally {
+        setCanvasOpenBusyKey(null);
+      }
+    }, [
+      onWorkspaceModuleOpened,
+      projectId,
+      sessionId,
+      tabLayoutOptions,
+    ]);
 
     const handleActivate = useCallback((tabId: string) => {
       useWorkspaceTabStore.getState().activateTab(tabId);
@@ -139,6 +207,11 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
             onClose={handleClose}
             onReorder={handleReorder}
             onAddTab={handleAddTab}
+            canvasOptions={canvasOptions}
+            canvasOptionsStatus={workspaceModuleState.status}
+            canvasOpenBusyKey={canvasOpenBusyKey}
+            canvasOpenError={canvasOpenError}
+            onOpenCanvasModule={handleOpenCanvasModule}
           />
           <AddressBar tab={activeTab} tabTypes={registrySnapshot} />
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">

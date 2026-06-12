@@ -144,8 +144,9 @@ use agentdash_contracts::workflow::{
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
-    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleStatus,
-    WorkspaceModuleStatusKind, WorkspaceModuleSummary, WorkspaceModuleUiEntry,
+    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModulePresentRequest,
+    WorkspaceModulePresentation, WorkspaceModuleStatus, WorkspaceModuleStatusKind,
+    WorkspaceModuleSummary, WorkspaceModuleUiEntry,
 };
 use ts_rs::TS;
 
@@ -576,6 +577,8 @@ fn main() {
             export_all::<WorkspaceModuleOperationDispatch>(dir);
             export_all::<WorkspaceModuleOperation>(dir);
             export_all::<WorkspaceModuleDescriptor>(dir);
+            export_all::<WorkspaceModulePresentRequest>(dir);
+            export_all::<WorkspaceModulePresentation>(dir);
         },
     );
 

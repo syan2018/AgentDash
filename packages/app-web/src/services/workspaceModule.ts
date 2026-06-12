@@ -1,5 +1,9 @@
 import { api } from "../api/client";
-import type { WorkspaceModuleDescriptor } from "../generated/workspace-module-contracts";
+import type {
+  WorkspaceModuleDescriptor,
+  WorkspaceModulePresentRequest,
+  WorkspaceModulePresentation,
+} from "../generated/workspace-module-contracts";
 
 /**
  * 拉取项目层 WorkspaceModule 合并认知（Canvas + Extension 贡献）。
@@ -12,5 +16,15 @@ export async function fetchProjectWorkspaceModules(
 ): Promise<WorkspaceModuleDescriptor[]> {
   return api.get<WorkspaceModuleDescriptor[]>(
     `/projects/${encodeURIComponent(projectId)}/workspace-modules`,
+  );
+}
+
+export async function presentWorkspaceModule(
+  projectId: string,
+  request: WorkspaceModulePresentRequest,
+): Promise<WorkspaceModulePresentation> {
+  return api.post<WorkspaceModulePresentation>(
+    `/projects/${encodeURIComponent(projectId)}/workspace-modules/present`,
+    request,
   );
 }

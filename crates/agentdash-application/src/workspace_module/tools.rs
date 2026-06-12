@@ -40,7 +40,8 @@ use crate::runtime_gateway::{
 };
 use crate::vfs::tools::SharedSessionToolServicesHandle;
 use crate::workspace_module::{
-    ResolvedInvocationBackend, build_workspace_modules, validate_input_against_schema,
+    ResolvedInvocationBackend, build_workspace_module_presentation, build_workspace_modules,
+    validate_input_against_schema,
 };
 
 /// 现取现算：拉 enabled extension projection + visible canvas，聚合 + capability 过滤。
@@ -355,6 +356,7 @@ pub struct WorkspaceModuleCreateTool {
     vfs: crate::vfs::tools::fs::SharedRuntimeVfs,
     session_services_handle: SharedSessionToolServicesHandle,
     session_id: Option<String>,
+    turn_id: Option<String>,
 }
 
 impl WorkspaceModuleCreateTool {
@@ -371,7 +373,13 @@ impl WorkspaceModuleCreateTool {
             vfs,
             session_services_handle,
             session_id,
+            turn_id: None,
         }
+    }
+
+    pub fn with_turn_id(mut self, turn_id: impl Into<String>) -> Self {
+        self.turn_id = Some(turn_id.into());
+        self
     }
 }
 
@@ -437,6 +445,38 @@ impl AgentTool for WorkspaceModuleCreateTool {
             )
         })?;
         let module_id = descriptor.summary.module_id.clone();
+        let presentation = build_workspace_module_presentation(
+            &descriptor,
+            "preview",
+            None,
+            Some(serde_json::json!({
+                "source": "workspace_module_create",
+                "canvas_action": canvas_result.action.clone(),
+            })),
+        )
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        if let (Some(session_id), Some(turn_id)) =
+            (self.session_id.as_deref(), self.turn_id.as_deref())
+        {
+            if let Some(session_services) = self.session_services_handle.get().await {
+                let value = serde_json::to_value(&presentation).map_err(|error| {
+                    AgentToolError::ExecutionFailed(format!(
+                        "failed to serialize workspace module presentation: {error}"
+                    ))
+                })?;
+                let notification = build_present_notification(
+                    session_id,
+                    turn_id,
+                    "workspace_module_presented",
+                    value,
+                );
+                session_services
+                    .eventing
+                    .inject_notification(session_id, notification)
+                    .await
+                    .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+            }
+        }
         let content = format!(
             "created workspace module\nmodule_id={module_id}\ncanvas_id={}\nmount={}://\nskill_path={}",
             canvas.mount_id, canvas_result.mount_id, canvas_result.skill_path
@@ -445,6 +485,7 @@ impl AgentTool for WorkspaceModuleCreateTool {
             "kind": kind,
             "module_id": module_id,
             "descriptor": descriptor,
+            "presentation": presentation,
             "canvas": canvas_result,
         });
 
@@ -979,31 +1020,21 @@ impl AgentTool for WorkspaceModulePresentTool {
             ));
         };
 
-        let Some(ui_entry) = module
-            .ui_entries
-            .iter()
-            .find(|entry| entry.view_key == view_key)
-        else {
-            // 无可展示目标 → 可操作诊断（R4），仍 inject 一条诊断事件，不静默。
-            let diagnostic = serde_json::json!({
-                "module_id": module_id,
-                "view_key": view_key,
-                "reason": "no_matching_ui_entry",
-                "available_views": module
-                    .ui_entries
-                    .iter()
-                    .map(|entry| entry.view_key.clone())
-                    .collect::<Vec<_>>(),
-            });
-            self.inject_present_diagnostic(&diagnostic).await;
-            return Ok(structured_tool_error(
-                "view_not_found",
-                format!("module `{module_id}` 无名为 `{view_key}` 的 UI view"),
-                diagnostic,
-            ));
-        };
+        let presentation =
+            match build_workspace_module_presentation(module, view_key, params.payload, None) {
+                Ok(presentation) => presentation,
+                Err(error) => {
+                    let diagnostic = error.diagnostics();
+                    self.inject_present_diagnostic(&diagnostic).await;
+                    return Ok(structured_tool_error(
+                        "view_not_found",
+                        error.to_string(),
+                        diagnostic,
+                    ));
+                }
+            };
 
-        if ui_entry.renderer_kind == "canvas" {
+        if presentation.renderer_kind == "canvas" {
             expose_existing_canvas_for_session(
                 self.canvas_repo.as_ref(),
                 self.project_id,
@@ -1015,21 +1046,11 @@ impl AgentTool for WorkspaceModulePresentTool {
             .await?;
         }
 
-        let presentation_uri = ui_entry.presentation_uri.clone().or_else(|| {
-            ui_entry
-                .uri_scheme
-                .as_ref()
-                .map(|scheme| format!("{scheme}://panel"))
-        });
-        let value = serde_json::json!({
-            "module_id": module_id,
-            "view_key": view_key,
-            "renderer_kind": ui_entry.renderer_kind,
-            "presentation_uri": presentation_uri.clone(),
-            "uri": presentation_uri,
-            "title": ui_entry.title,
-            "payload": params.payload,
-        });
+        let value = serde_json::to_value(&presentation).map_err(|error| {
+            AgentToolError::ExecutionFailed(format!(
+                "failed to serialize workspace module presentation: {error}"
+            ))
+        })?;
 
         let notification = build_present_notification(
             &self.session_id,
@@ -1049,7 +1070,7 @@ impl AgentTool for WorkspaceModulePresentTool {
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
                 "presented module={module_id} view={view_key} renderer={}",
-                ui_entry.renderer_kind
+                presentation.renderer_kind
             ))],
             is_error: false,
             details: Some(value),
@@ -1713,6 +1734,18 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("canvas://sales-board")
         );
+        assert_eq!(
+            details
+                .pointer("/presentation/presentation_uri")
+                .and_then(serde_json::Value::as_str),
+            Some("canvas://sales-board")
+        );
+        assert_eq!(
+            details
+                .pointer("/presentation/module_id")
+                .and_then(serde_json::Value::as_str),
+            Some("canvas:sales-board")
+        );
 
         let vfs = shared_vfs.snapshot().await;
         assert!(
@@ -1816,7 +1849,8 @@ mod tests {
             shared_vfs,
             handle.clone(),
             Some(session.id.clone()),
-        );
+        )
+        .with_turn_id(turn_id.clone());
 
         let result = create_tool
             .execute(
@@ -1842,6 +1876,14 @@ mod tests {
                 .and_then(|details| details.get("module_id"))
                 .and_then(serde_json::Value::as_str),
             Some("canvas:sales-board")
+        );
+        assert_eq!(
+            result
+                .details
+                .as_ref()
+                .and_then(|details| details.pointer("/presentation/presentation_uri"))
+                .and_then(serde_json::Value::as_str),
+            Some("canvas://sales-board")
         );
 
         let updated_frame = frame_repo
@@ -1878,6 +1920,49 @@ mod tests {
                 .mounts
                 .iter()
                 .any(|mount| mount.id == "cvs-sales-board")
+        );
+        let events = hub
+            .eventing_service()
+            .list_event_page(&session.id, 0, 100)
+            .await
+            .expect("events should list")
+            .events;
+        let capability_index = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    &event.notification.event,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value }
+                    ) if key == "context_frame"
+                        && value.get("kind").and_then(|v| v.as_str()) == Some("capability_state_update")
+                )
+            })
+            .expect("should write capability_state_update context_frame");
+        let presented = events
+            .iter()
+            .enumerate()
+            .find_map(|(index, event)| {
+                let agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value },
+                ) = &event.notification.event
+                else {
+                    return None;
+                };
+                if key == "workspace_module_presented" {
+                    Some((index, value))
+                } else {
+                    None
+                }
+            })
+            .expect("workspace_module_create should write workspace_module_presented event");
+        assert!(capability_index < presented.0);
+        assert_eq!(
+            presented
+                .1
+                .get("presentation_uri")
+                .and_then(serde_json::Value::as_str),
+            Some("canvas://sales-board")
         );
 
         let describe_visibility = WorkspaceModuleDimension {

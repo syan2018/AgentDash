@@ -123,8 +123,14 @@ impl SessionRuntimeInner {
             .await
             .map_err(|error| format!("Phase node 能力状态热更新失败: {error}"))?;
 
-        let delta = hook_runtime.update_capabilities(input.capability_keys.clone());
-        let notification_delta = delta.clone().unwrap_or_else(|| input.key_delta.clone());
+        let effective_hook_runtime = self
+            .ensure_hook_runtime_for_delivery_session(
+                &input.delivery_runtime_session_id,
+                input.turn_id.as_deref(),
+            )
+            .await
+            .map_err(|error| format!("Phase node Hook runtime target 对齐失败: {error}"))?
+            .unwrap_or_else(|| hook_runtime.clone());
 
         let injections = self
             .collect_runtime_context_update_injections(&input.delivery_runtime_session_id)
@@ -134,6 +140,12 @@ impl SessionRuntimeInner {
             &input.after_state,
             &input.capability_keys,
         );
+        let notification_delta = SetDelta {
+            added: state_delta.tool_capabilities.added.clone(),
+            removed: state_delta.tool_capabilities.removed.clone(),
+        };
+        let _cache_delta =
+            effective_hook_runtime.update_capabilities(input.capability_keys.clone());
         let notice = build_live_context_frame(&input, &notification_delta, &state_delta, &tools);
         self.emit_context_frame(
             &input.delivery_runtime_session_id,
@@ -142,7 +154,7 @@ impl SessionRuntimeInner {
         )
         .await
         .map_err(|error| format!("Phase node runtime context notice 持久化失败: {error}"))?;
-        let _ = context_frame::enqueue_context_frame(hook_runtime, &notice);
+        let _ = context_frame::enqueue_context_frame(&effective_hook_runtime, &notice);
 
         // assignment_context 作为独立 frame 一职一责地发出，不再和能力/工具 delta 混装。
         if let Some(workflow_frame) = build_workflow_assignment_context_frame(
@@ -157,11 +169,15 @@ impl SessionRuntimeInner {
             )
             .await
             .map_err(|error| format!("Phase node mission context frame 持久化失败: {error}"))?;
-            let _ = context_frame::enqueue_context_frame(hook_runtime, &workflow_frame);
+            let _ = context_frame::enqueue_context_frame(&effective_hook_runtime, &workflow_frame);
         }
 
         Ok(RuntimeContextTransitionOutcome {
-            capability_delta: delta,
+            capability_delta: if notification_delta.is_empty() {
+                None
+            } else {
+                Some(notification_delta)
+            },
             emitted_capability_change: true,
         })
     }

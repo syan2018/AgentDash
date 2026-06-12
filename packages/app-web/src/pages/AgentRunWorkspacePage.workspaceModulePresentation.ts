@@ -4,6 +4,13 @@ export interface WorkspaceModulePresentedTabTarget {
   refreshRuntime: boolean;
 }
 
+const CANVAS_PRESENTATION_SCHEME = "canvas://";
+
+export function isConcreteCanvasPresentationUri(uri: string): boolean {
+  if (!uri.startsWith(CANVAS_PRESENTATION_SCHEME)) return false;
+  return uri.slice(CANVAS_PRESENTATION_SCHEME.length).trim().length > 0;
+}
+
 export function workspaceModulePresentedTabTarget(
   data: Record<string, unknown> | null,
 ): WorkspaceModulePresentedTabTarget | null {
@@ -15,7 +22,7 @@ export function workspaceModulePresentedTabTarget(
   const fallbackUri = typeof data?.uri === "string" ? (data.uri as string).trim() : "";
 
   if (rendererKind === "canvas") {
-    if (!presentationUri) return null;
+    if (!isConcreteCanvasPresentationUri(presentationUri)) return null;
     return {
       typeId: "canvas",
       uri: presentationUri,

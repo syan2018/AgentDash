@@ -102,8 +102,10 @@ runtime trace 视角。Workspace route 可以展示关联的 `delivery_trace_met
 
 同一 `run_id + agent_id + source_key` 的 AgentRun Workspace refresh 保留上一帧 `workspace`、
 `runtime_session_id`、runtime surface 与 frame，原因是 `SessionChatView` 的 NDJSON stream
-生命周期绑定 runtime session identity；projection 刷新失败时，页面仍可继续消费上一帧
-`AgentRunWorkspaceView.actions`，并把错误作为 workspace/runtime 诊断展示。
+生命周期绑定 runtime session identity，右侧 runtime surface 也需要展示连续性。输入区命令
+authority 只在当前 projection `status="ready"` 时消费 `AgentRunWorkspaceView.actions`；
+`loading` / `refreshing` / `error` / stale projection 状态下上一帧 actions 只能用于展示诊断，
+不得执行 `send_next`、`enqueue` 或 `steer`。
 
 `session_meta_updated`、`Platform(SessionMetaUpdate)` 与 RuntimeSession event stream 仍是 feed
 和 debug 面板可渲染的事实。工作台标题编辑和状态刷新通过 AgentRun Workspace shell 刷新或后续

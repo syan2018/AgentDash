@@ -65,7 +65,6 @@ type EntryClassification =
   | "tool_like"
   | "active_tool"
   | "hard_boundary"
-  | "soft_boundary"
   | "neutral";
 
 function isEffectivelyEmptyTextEntry(entry: SessionDisplayEntry): boolean {
@@ -130,7 +129,7 @@ function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
   if (event.type === "platform") {
     const boundary = getPlatformEventPolicy(event).feedBoundary;
     if (boundary === "hard") return "hard_boundary";
-    if (boundary === "soft") return "soft_boundary";
+    if (boundary === "soft") return "hard_boundary";
     return "neutral";
   }
 
@@ -172,7 +171,7 @@ function pushToolGroup(
   return null;
 }
 
-// ── side group：context_frame 内部聚合，但**不**与工具组合并 ──
+// ── side group：context_frame 内部聚合，并作为运行期上下文硬边界截断工具 burst ──
 //
 // 注：reasoning_text_delta/summary 同 itemId 已在 useSessionStream 层累积为单条
 // entry，因此 thinking 没有"连续多条"场景，无需聚合。
@@ -211,13 +210,12 @@ function pushCtxSideGroup(
  *
  * **关键约定：合并只覆盖同类内部，绝不跨类。**
  * - tool_like：连续工具调用合并为 tool burst
- * - context_frame：连续 CTX 合并为 CTX group（soft boundary，**不** flush tool）
+ * - context_frame：连续 CTX 合并为 CTX group，并作为 hard boundary flush tool group
  * - 其他（agent message / reasoning / approval / error / 可渲染 hook）：
  *   hard boundary，自身单 entry，flush tool group
  * - neutral：完全透明
  *
- * CTX 是 soft boundary 的关键：它出现在工具序列中间时，不会把工具组打散，
- * 仅独立成自己的 CTX group 与工具组并存。
+ * CTX 表达 Agent 可见上下文已经改变，工具 burst 不能跨过 CTX 合并。
  *
  * Reasoning 不参与聚合 —— 同 itemId 已在 useSessionStream 层累积成一条，
  * 不会出现"连续多条 thinking entry"的场景。
@@ -263,17 +261,10 @@ function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] 
 
       case "hard_boundary": {
         flushToolGroup();
-        flushCtxGroup();
-        result.push(entry);
-        break;
-      }
-
-      case "soft_boundary": {
-        // CTX：不 flush tool group，进 CTX side group 内部聚合
         if (isContextFrameEvent(entry.event)) {
           joinCtxGroup(entry);
         } else {
-          // 防御：当前 soft_boundary 只覆盖 context_frame
+          flushCtxGroup();
           result.push(entry);
         }
         break;

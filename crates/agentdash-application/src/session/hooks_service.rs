@@ -38,20 +38,15 @@ impl SessionHookService {
         Ok(Some(runtime))
     }
 
-    /// 基于 `AgentFrameRuntimeTarget` 查找已缓存的 hook runtime 并校验 target 一致性。
+    /// 基于 `AgentFrameRuntimeTarget` 获取 hook runtime。
+    ///
+    /// 语义与 `ensure_hook_runtime_for_target` 收敛：delivery-session 缓存只是
+    /// adapter binding，命中 stale target 时由 ensure 路径重建后再返回。
     pub async fn get_hook_runtime_for_target(
         &self,
         target: &AgentFrameRuntimeTarget,
     ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
-        let Some(runtime) = self
-            .hub
-            .get_hook_runtime_by_delivery_session(&target.delivery_runtime_session_id)
-            .await
-        else {
-            return Ok(None);
-        };
-        validate_hook_runtime_target(runtime.as_ref(), target)?;
-        Ok(Some(runtime))
+        self.ensure_hook_runtime_for_target(target, None).await
     }
 
     pub async fn reload_hook_runtime(

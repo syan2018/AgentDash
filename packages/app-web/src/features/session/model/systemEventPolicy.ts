@@ -124,7 +124,7 @@ export function getPlatformEventPolicy(event: BackboneEvent): PlatformEventPolic
 
   const isRenderablePlatformEvent = isTaskEvent || isRenderableSystemEvent;
   const feedBoundary: PlatformFeedBoundary = isContextFrameEvent(event)
-    ? "soft"
+    ? "hard"
     : isRenderablePlatformEvent
       ? "hard"
       : "neutral";

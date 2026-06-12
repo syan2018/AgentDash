@@ -1144,6 +1144,7 @@ mod tests {
     };
     use crate::vfs::tools::SessionToolServices;
     use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
+    use crate::workflow::frame_builder::AgentFrameBuilder;
     use crate::workflow::frame_surface::FrameSurfaceDraft;
 
     fn manifest(extension_id: &str) -> ExtensionTemplatePayload {
@@ -1780,6 +1781,20 @@ mod tests {
             .reload_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
             .await
             .expect("hook runtime should reload");
+        let stale_runtime = hub
+            .get_hook_runtime_by_delivery_session(&session.id)
+            .await
+            .expect("hook runtime should be cached");
+        let stale_target = stale_runtime.control_target();
+        let switched_frame = AgentFrameBuilder::new(agent_id)
+            .with_created_by("test_frame_switch", Some("canvas_create".to_string()))
+            .build(frame_repo.as_ref())
+            .await
+            .expect("test frame switch should save");
+        assert_ne!(
+            stale_target.frame_id, switched_frame.id,
+            "test setup should leave the cached hook runtime on a stale frame"
+        );
 
         let handle = SharedSessionToolServicesHandle::default();
         handle
@@ -1834,6 +1849,20 @@ mod tests {
             .await
             .expect("frame query should succeed")
             .expect("frame should exist");
+        let refreshed_runtime = hub
+            .get_hook_runtime_by_delivery_session(&session.id)
+            .await
+            .expect("hook runtime should still be cached");
+        assert_eq!(
+            refreshed_runtime.control_target().frame_id,
+            updated_frame.id,
+            "workspace_module_create should align hook runtime to the AgentFrame revision produced by Canvas capability sync"
+        );
+        assert_ne!(
+            refreshed_runtime.control_target().frame_id,
+            stale_target.frame_id,
+            "workspace_module_create should not keep using the stale cached hook runtime target"
+        );
         assert_eq!(
             updated_frame.visible_workspace_module_refs(),
             vec!["canvas:sales-board".to_string()]
@@ -1944,6 +1973,20 @@ mod tests {
             .reload_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
             .await
             .expect("hook runtime should reload");
+        let stale_runtime = hub
+            .get_hook_runtime_by_delivery_session(&session.id)
+            .await
+            .expect("hook runtime should be cached");
+        let stale_target = stale_runtime.control_target();
+        let switched_frame = AgentFrameBuilder::new(agent_id)
+            .with_created_by("test_frame_switch", Some("canvas_present".to_string()))
+            .build(frame_repo.as_ref())
+            .await
+            .expect("test frame switch should save");
+        assert_ne!(
+            stale_target.frame_id, switched_frame.id,
+            "test setup should leave the cached hook runtime on a stale frame"
+        );
 
         let handle = SharedSessionToolServicesHandle::default();
         handle
@@ -1988,6 +2031,20 @@ mod tests {
             .await
             .expect("frame query should succeed")
             .expect("frame should exist");
+        let refreshed_runtime = hub
+            .get_hook_runtime_by_delivery_session(&session.id)
+            .await
+            .expect("hook runtime should still be cached");
+        assert_eq!(
+            refreshed_runtime.control_target().frame_id,
+            updated_frame.id,
+            "workspace_module_present should align hook runtime to the AgentFrame revision produced by Canvas capability sync"
+        );
+        assert_ne!(
+            refreshed_runtime.control_target().frame_id,
+            stale_target.frame_id,
+            "workspace_module_present should not keep using the stale cached hook runtime target"
+        );
         assert_eq!(
             updated_frame.visible_canvas_mount_ids(),
             vec!["dashboard-a".to_string()]

@@ -42,6 +42,7 @@ import { useProjectStore } from "../stores/projectStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
 import { workspaceModulePresentedTabTarget } from "./AgentRunWorkspacePage.workspaceModulePresentation";
+import { deriveAgentRunWorkspaceChatControlState } from "./AgentRunWorkspacePage.chatControlState";
 import type {
   RuntimeTraceAgentContext,
   SessionNavigationState,
@@ -64,26 +65,6 @@ interface AgentRunWorkspacePageProps {
   agentId?: string;
   draftProjectId?: string;
   draftProjectAgentId?: string;
-}
-
-function readonlyChatControlState(reason: string): SessionChatControlState {
-  return {
-    mode: "runtime",
-    controlPlaneStatus: "unavailable",
-    primaryAction: {
-      kind: "none",
-      enabled: false,
-      label: "发送",
-      placeholder: "当前 AgentRun 只能查看 runtime trace。",
-      unavailableReason: reason,
-    },
-    cancelAction: {
-      enabled: false,
-      label: "取消",
-      unavailableReason: "当前 AgentRun 没有正在执行的 turn。",
-    },
-    helperText: reason,
-  };
 }
 
 function newClientCommandId(): string {
@@ -340,131 +321,30 @@ export function AgentRunWorkspacePage({
     scheduleHookRuntimeRefresh("message_sent", true);
   }, [deliveryRuntimeSessionId, scheduleHookRuntimeRefresh]);
 
-  const chatControlState = useMemo<SessionChatControlState>(() => {
-    if (isProjectAgentDraft) {
-      const enabled = Boolean(draftProjectIdValue && draftProjectAgentKey && draftProjectAgent);
-      const unavailableReason = !draftProjectIdValue || !draftProjectAgentKey
-        ? "Draft AgentRun 缺少 ProjectAgent 参数。"
-        : !draftProjectAgent
-          ? "正在加载 ProjectAgent 配置。"
-          : undefined;
-      return {
-        mode: "draft",
-        controlPlaneStatus: "draft",
-        primaryAction: {
-          kind: "start_draft",
-          enabled,
-          label: "开始",
-          placeholder: "输入首条消息，Ctrl+Enter 开始…",
-          unavailableReason,
-        },
-        cancelAction: {
-          enabled: false,
-          label: "取消",
-          unavailableReason: "Draft AgentRun 尚未启动。",
-        },
-        helperText: enabled ? undefined : unavailableReason,
-      };
-    }
-
-    if (!currentRunId || !currentAgentId) {
-      return readonlyChatControlState("当前没有可控制的 AgentRun。");
-    }
-    if (
-      agentRunWorkspaceState.status === "loading" ||
-      (agentRunWorkspaceState.status === "refreshing" && !runtimeControl)
-    ) {
-      return readonlyChatControlState("正在解析当前 AgentRun 的工作台状态。");
-    }
-    if (agentRunWorkspaceState.error && !runtimeControl) {
-      return readonlyChatControlState(agentRunWorkspaceState.error);
-    }
-    if (!runtimeControl) {
-      return readonlyChatControlState("当前 AgentRun 工作台状态尚未返回。");
-    }
-
-    const actions = runtimeControl.actions;
-    const isRunning = runtimeControl.control_plane.status === "running";
-
-    // Running 态：主动作=enqueue（排队），辅助动作=steer
-    if (isRunning && actions.enqueue.enabled) {
-      const steerSecondary: SessionChatControlState["secondaryAction"] = actions.steer.enabled
-        ? {
-            kind: "steer" as const,
-            enabled: true,
-            label: "Steer",
-            placeholder: "Ctrl+Enter 立即注入 steer 指令…",
-            unavailableReason: undefined,
-          }
-        : undefined;
-
-      return {
-        mode: "runtime",
-        controlPlaneStatus: runtimeControl.control_plane.status,
-        primaryAction: {
-          kind: "enqueue" as const,
-          enabled: true,
-          label: "排队",
-          placeholder: steerSecondary
-            ? "Enter 排队，Ctrl+Enter steer，@ 引用文件…"
-            : "Enter 排队发送，@ 引用文件…",
-          unavailableReason: undefined,
-        },
-        secondaryAction: steerSecondary,
-        cancelAction: {
-          enabled: actions.cancel.enabled,
-          label: "取消",
-          unavailableReason: actions.cancel.unavailable_reason,
-        },
-        helperText: runtimeControl.control_plane.reason ?? undefined,
-      };
-    }
-
-    // Idle 态或非 running 态
-    const primary = actions.send_next.enabled
-      ? {
-          kind: "send_next" as const,
-          enabled: true,
-          label: "发送",
-          placeholder: "继续对话，@ 引用文件，Ctrl+Enter 发送…",
-          unavailableReason: undefined,
-        }
-      : {
-          kind: "none" as const,
-          enabled: false,
-          label: "发送",
-          placeholder: isRunning
-            ? "当前 AgentRun 正在执行，等待可用或取消。"
-            : "当前 AgentRun 只能查看 runtime trace。",
-          unavailableReason: isRunning
-            ? actions.steer.unavailable_reason ?? runtimeControl.control_plane.reason
-            : actions.send_next.unavailable_reason ?? runtimeControl.control_plane.reason,
-        };
-
-    return {
-      mode: "runtime",
-      controlPlaneStatus: runtimeControl.control_plane.status,
-      primaryAction: primary,
-      cancelAction: {
-        enabled: actions.cancel.enabled,
-        label: "取消",
-        unavailableReason: actions.cancel.unavailable_reason,
-      },
-      helperText: primary.enabled
-        ? runtimeControl.control_plane.reason ?? undefined
-        : primary.unavailableReason,
-    };
-  }, [
-    currentAgentId,
-    currentRunId,
-    draftProjectAgent,
-    draftProjectAgentKey,
-    draftProjectIdValue,
-    isProjectAgentDraft,
-    runtimeControl,
-    agentRunWorkspaceState.error,
-    agentRunWorkspaceState.status,
-  ]);
+  const chatControlState = useMemo<SessionChatControlState>(
+    () => deriveAgentRunWorkspaceChatControlState({
+      isProjectAgentDraft,
+      draftProjectIdValue,
+      draftProjectAgentKey,
+      draftProjectAgent,
+      currentRunId,
+      currentAgentId,
+      projectionStatus: agentRunWorkspaceState.status,
+      projectionError: agentRunWorkspaceState.error,
+      workspace: runtimeControl,
+    }),
+    [
+      agentRunWorkspaceState.error,
+      agentRunWorkspaceState.status,
+      currentAgentId,
+      currentRunId,
+      draftProjectAgent,
+      draftProjectAgentKey,
+      draftProjectIdValue,
+      isProjectAgentDraft,
+      runtimeControl,
+    ],
+  );
 
   const handleAgentRunPrimaryAction = useCallback(async (
     action: SessionChatPrimaryActionKind,
@@ -491,23 +371,22 @@ export function AgentRunWorkspacePage({
     if (!executorConfig?.executor?.trim()) {
       throw new Error("请选择模型配置后再发送。");
     }
-    const commandKey = JSON.stringify({
-      action,
-      input: inputBlocks,
-      executor_config: executorConfig ?? null,
-    });
-    const resolvedCommand = resolveAgentRunClientCommandId(
-      inFlightCommandRef.current,
-      commandKey,
-      newClientCommandId,
-    );
-    const clientCommandId = resolvedCommand.clientCommandId;
-    inFlightCommandRef.current = resolvedCommand.inFlightCommand;
-
     if (action === "start_draft") {
       if (!draftProjectIdValue || !draftProjectAgentKey || !draftProjectAgent) {
         throw new Error(chatControlState.primaryAction.unavailableReason ?? "当前 Draft 尚未就绪。");
       }
+      const commandKey = JSON.stringify({
+        action,
+        input: inputBlocks,
+        executor_config: executorConfig ?? null,
+      });
+      const resolvedCommand = resolveAgentRunClientCommandId(
+        inFlightCommandRef.current,
+        commandKey,
+        newClientCommandId,
+      );
+      const clientCommandId = resolvedCommand.clientCommandId;
+      inFlightCommandRef.current = resolvedCommand.inFlightCommand;
       const response = await createProjectAgentRun(draftProjectIdValue, draftProjectAgentKey, {
         input: inputBlocks,
         client_command_id: clientCommandId,
@@ -529,6 +408,9 @@ export function AgentRunWorkspacePage({
       });
       return;
     }
+    if (agentRunWorkspaceState.status !== "ready") {
+      throw new Error("当前 AgentRun 工作台投影正在刷新，无法执行控制动作。");
+    }
     if (!currentRunId || !currentAgentId || !sessionId || sessionId !== deliveryRuntimeSessionId) {
       throw new Error("当前 AgentRun 尚未就绪，无法执行控制动作。");
     }
@@ -540,6 +422,19 @@ export function AgentRunWorkspacePage({
     if (!isPrimaryMatch && !isSecondaryMatch) {
       throw new Error(csPrimary.unavailableReason ?? "当前 AgentRun 不可执行该控制动作。");
     }
+
+    const commandKey = JSON.stringify({
+      action,
+      input: inputBlocks,
+      executor_config: executorConfig ?? null,
+    });
+    const resolvedCommand = resolveAgentRunClientCommandId(
+      inFlightCommandRef.current,
+      commandKey,
+      newClientCommandId,
+    );
+    const clientCommandId = resolvedCommand.clientCommandId;
+    inFlightCommandRef.current = resolvedCommand.inFlightCommand;
 
     if (action === "send_next") {
       const response = await sendAgentRunMessage(currentRunId, currentAgentId, {
@@ -591,30 +486,54 @@ export function AgentRunWorkspacePage({
     refreshAgentRunWorkspaceState,
     runtimeControl?.delivery_trace_meta?.last_turn_id,
     scheduleHookRuntimeRefresh,
+    agentRunWorkspaceState.status,
   ]);
 
   const handleCancelAgentRun = useCallback(async () => {
     if (!currentRunId || !currentAgentId) {
       throw new Error("当前 AgentRun 尚未就绪。");
     }
+    if (agentRunWorkspaceState.status !== "ready") {
+      throw new Error("当前 AgentRun 工作台投影正在刷新，无法执行控制动作。");
+    }
     await cancelAgentRun(currentRunId, currentAgentId);
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("agent_run_cancelled", true);
-  }, [currentAgentId, currentRunId, refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh]);
+  }, [
+    agentRunWorkspaceState.status,
+    currentAgentId,
+    currentRunId,
+    refreshAgentRunWorkspaceState,
+    scheduleHookRuntimeRefresh,
+  ]);
 
   const handlePromotePending = useCallback(async (messageId: string) => {
     if (!currentRunId || !currentAgentId) return;
+    if (agentRunWorkspaceState.status !== "ready") return;
     await promoteAgentRunPendingMessage(currentRunId, currentAgentId, messageId);
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("pending_message_promoted", true);
-  }, [currentAgentId, currentRunId, refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh]);
+  }, [
+    agentRunWorkspaceState.status,
+    currentAgentId,
+    currentRunId,
+    refreshAgentRunWorkspaceState,
+    scheduleHookRuntimeRefresh,
+  ]);
 
   const handleDeletePending = useCallback(async (messageId: string) => {
     if (!currentRunId || !currentAgentId) return;
+    if (agentRunWorkspaceState.status !== "ready") return;
     await deleteAgentRunPendingMessage(currentRunId, currentAgentId, messageId);
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("pending_message_deleted", true);
-  }, [currentAgentId, currentRunId, refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh]);
+  }, [
+    agentRunWorkspaceState.status,
+    currentAgentId,
+    currentRunId,
+    refreshAgentRunWorkspaceState,
+    scheduleHookRuntimeRefresh,
+  ]);
 
   const handleTurnEnd = useCallback(() => {
     void refreshAgentRunWorkspaceState().catch(() => {});
@@ -876,7 +795,11 @@ export function AgentRunWorkspacePage({
               controlState={chatControlState}
               onPrimaryAction={handleAgentRunPrimaryAction}
               onCancelAction={handleCancelAgentRun}
-              pendingMessages={runtimeControl?.pending_messages}
+              pendingMessages={
+                chatControlState.primaryAction.kind === "enqueue"
+                  ? runtimeControl?.pending_messages
+                  : undefined
+              }
               onPromotePending={(id) => { void handlePromotePending(id); }}
               onDeletePending={(id) => { void handleDeletePending(id); }}
               inputPrefix={ownerBindingBar ?? draftBindingBar}

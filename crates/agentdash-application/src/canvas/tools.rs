@@ -255,12 +255,9 @@ pub(crate) async fn expose_canvas_to_session(
             .append_visible_canvas_mount_to_frame(session_id, &mount_id)
             .await
         {
-            tracing::warn!(
-                session_id = %session_id,
-                mount_id = %mount_id,
-                %error,
-                "Canvas mount 写入 AgentFrame 失败，降级为仅 VFS 可见"
-            );
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "Canvas mount 写入 AgentFrame 失败: {error}"
+            )));
         }
         sync_canvas_mount_capability_state_for_runtime_delivery(
             vfs,
@@ -275,12 +272,9 @@ pub(crate) async fn expose_canvas_to_session(
             .append_visible_workspace_module_ref_to_frame(session_id, &module_ref)
             .await
         {
-            tracing::warn!(
-                session_id = %session_id,
-                module_ref = %module_ref,
-                %error,
-                "Canvas module ref 写入 AgentFrame 失败，降级为仅 workspace_module base 可见"
-            );
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "Canvas module ref 写入 AgentFrame 失败: {error}"
+            )));
         }
     }
     Ok(())

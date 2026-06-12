@@ -1211,6 +1211,10 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
 
     let mut before_state = CapabilityState::default();
     before_state.vfs.active = Some(agentdash_spi::Vfs::default());
+    before_state
+        .tool
+        .capabilities
+        .insert(agentdash_spi::ToolCapability::new("workflow_management"));
     let local_skill = agentdash_spi::context::capability::SkillEntry {
         name: "local-review".to_string(),
         capability_key: "integration-static/local-review".to_string(),
@@ -1288,6 +1292,10 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
         .expect("live vfs capability update should apply");
 
     assert!(outcome.emitted_capability_change);
+    assert_eq!(
+        outcome.capability_delta, None,
+        "hook runtime cache sync must not turn an unchanged base capability key into a user-visible delta"
+    );
     let (turn, profile) = hub
         .runtime_registry
         .with_runtime(&session.id, |runtime| {
@@ -1324,12 +1332,43 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
         .expect("capability state update frame should exist");
     match &context_frame.notification.event {
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
+            let capability_key_section = value["sections"]
+                .as_array()
+                .and_then(|sections| {
+                    sections.iter().find(|section| {
+                        section.get("kind").and_then(serde_json::Value::as_str)
+                            == Some("capability_key_delta")
+                    })
+                })
+                .expect("capability key delta section should exist");
+            assert_eq!(
+                capability_key_section
+                    .get("added_capabilities")
+                    .and_then(serde_json::Value::as_array)
+                    .map(Vec::len),
+                Some(0),
+                "Capability Keys 增量必须来自 CapabilityState before/after，而不是 hook runtime cache"
+            );
+            assert_eq!(
+                capability_key_section
+                    .get("effective_capabilities")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|values| values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()),
+                Some(vec!["workflow_management"]),
+            );
             let rendered = value
                 .get("rendered_text")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
             assert!(rendered.contains("Skill Delta"));
             assert!(rendered.contains("canvas-system"));
+            assert!(
+                !rendered.contains("Added Capabilities"),
+                "unchanged base capability key should not be rendered as newly added"
+            );
         }
         other => panic!("unexpected event: {other:?}"),
     }

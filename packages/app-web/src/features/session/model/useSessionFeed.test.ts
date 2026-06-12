@@ -390,20 +390,20 @@ describe("aggregateEntries — tool burst", () => {
     expect((result[2] as SessionDisplayEntry).id).toBe("c2");
   });
 
-  it("T15: context_frame is a soft boundary — tools merge across it, single CTX flattened", () => {
+  it("T15: context_frame is a hard boundary — tools do not merge across it, single CTX flattened", () => {
     const entries = [
       mkCmdEntry("c1", "ls"),
       mkContextFrameEntry("ctx1"),
       mkCmdEntry("c2", "pwd"),
     ];
     const result = aggregateEntries(entries);
-    // tool burst 合并为一组（c1+c2），单 CTX 被扁平化为单 entry（不成 group）
+    // CTX 截断工具 burst，单 CTX 被扁平化为单 entry（不成 group）
     const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
-    expect(toolGroups).toHaveLength(1);
-    expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual(["c1", "c2"]);
+    expect(toolGroups).toHaveLength(0);
     expect(
       result.some((item) => (item as SessionDisplayEntry)?.id === "ctx1"),
     ).toBe(true);
+    expect(result.map((item) => (item as SessionDisplayEntry).id)).toEqual(["c1", "ctx1", "c2"]);
   });
 
   it("T16: agent message stays as hard boundary across context_frame", () => {
@@ -423,7 +423,7 @@ describe("aggregateEntries — tool burst", () => {
     expect(cmdEntries).toHaveLength(2);
   });
 
-  it("T17: consecutive context_frames fold into one CTX group, tools merge separately", () => {
+  it("T17: consecutive context_frames fold into one CTX group and split surrounding tool bursts", () => {
     const entries = [
       mkCmdEntry("c1", "ls"),
       mkContextFrameEntry("ctx1"),
@@ -433,15 +433,16 @@ describe("aggregateEntries — tool burst", () => {
       mkCmdEntry("c3", "echo"),
     ];
     const result = aggregateEntries(entries);
-    // CTX 内部合并为一个 group；tool 自己合并；两类互不混
+    // CTX 内部合并为一个 group；CTX 前后的工具不能跨上下文合并
     const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
     expect(toolGroups).toHaveLength(1);
-    expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual(["c1", "c2", "c3"]);
+    expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual(["c2", "c3"]);
     const ctxGroups = result.filter(isContextFrameGroup);
     expect(ctxGroups).toHaveLength(1);
+    expect((result[0] as SessionDisplayEntry).id).toBe("c1");
   });
 
-  it("T18: real-world scenario — tools, ctx, more tools all merge into one burst", () => {
+  it("T18: real-world scenario — capability CTX splits tool bursts", () => {
     // 模拟用户截图: mounts_list → ctx × 3 → Read → workspace_module_create
     const entries = [
       mkCmdEntry("mounts_list", "mounts"),
@@ -455,10 +456,11 @@ describe("aggregateEntries — tool burst", () => {
     const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
     expect(toolGroups).toHaveLength(1);
     expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual([
-      "mounts_list",
       "read",
       "workspace_module_create",
     ]);
+    expect((result[0] as SessionDisplayEntry).id).toBe("mounts_list");
+    expect(result.filter(isContextFrameGroup)).toHaveLength(1);
   });
 
   it("T19: observed hook trace is silent and does not split tool bursts", () => {

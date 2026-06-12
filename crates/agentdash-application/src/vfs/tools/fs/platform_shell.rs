@@ -28,10 +28,7 @@ impl PlatformShellCwd {
         if rest.is_empty() || rest == "." {
             return Ok(Some(Self::Root));
         }
-        let (mount_id, path) = rest
-            .split_once('/')
-            .map(|(mount, path)| (mount, path))
-            .unwrap_or((rest, ""));
+        let (mount_id, path) = rest.split_once('/').unwrap_or((rest, ""));
         if mount_id.trim().is_empty() {
             return Err("platform cwd 缺少 mount ID".to_string());
         }

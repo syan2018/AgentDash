@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_agent_protocol::UserInputBlock;
 use agentdash_application::session::{SessionExecutionState, SessionMeta};
 use agentdash_application::vfs::ResolvedVfsSurfaceSource as AppResolvedVfsSurfaceSource;
 use agentdash_application::workflow::{
@@ -11,16 +12,15 @@ use agentdash_application::workflow::{
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandOnlyRequest,
-    AgentRunCommandPreconditionView, AgentRunCommandReceipt, AgentRunMessageRequest,
-    AgentRunMessageResponse, AgentRunRefDto, AgentRunSteeringRequest, AgentRunSteeringResponse,
-    AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
-    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
-    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, ConversationCommandKind, ConversationDiagnosticView,
-    EnqueuePendingMessageRequest, EnqueuePendingMessageResponse, LifecycleRunRefDto,
-    LifecycleSubjectAssociationDto, PendingMessageView, PendingQueuePauseReasonDto,
-    PendingQueueStateView, ResumePendingQueueResponse, RuntimeSessionCommandStateDto,
-    RuntimeSessionRefDto, RuntimeSessionTraceMeta, ValidationSeverity,
+    AgentRunCommandPreconditionView, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
+    AgentRunComposerSubmitResponse, AgentRunRefDto, AgentRunWorkspaceActionAvailabilityView,
+    AgentRunWorkspaceActionSetView, AgentRunWorkspaceControlPlaneStatus,
+    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
+    AgentRunWorkspaceShell, AgentRunWorkspaceView, ConversationCommandKind,
+    ConversationDiagnosticView, LifecycleRunRefDto, LifecycleSubjectAssociationDto,
+    PendingMessageView, PendingQueuePauseReasonDto, PendingQueueStateView,
+    ResumePendingQueueResponse, RuntimeSessionCommandStateDto, RuntimeSessionRefDto,
+    RuntimeSessionTraceMeta, ValidationSeverity,
 };
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use agentdash_spi::AgentConfig;
@@ -73,17 +73,12 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_agent_run_workspace),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/messages",
-            axum::routing::post(send_agent_run_message),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/steering",
-            axum::routing::post(steer_agent_run),
+            "/agent-runs/{run_id}/agents/{agent_id}/composer-submit",
+            axum::routing::post(submit_agent_run_composer_input),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/pending-messages",
-            axum::routing::get(list_agent_run_pending_messages)
-                .post(enqueue_agent_run_pending_message),
+            axum::routing::get(list_agent_run_pending_messages),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/pending-messages/resume",
@@ -174,17 +169,21 @@ pub async fn get_agent_run_workspace(
     ))
 }
 
-pub async fn send_agent_run_message(
+pub async fn submit_agent_run_composer_input(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-    Json(req): Json<AgentRunMessageRequest>,
-) -> Result<Json<AgentRunMessageResponse>, ApiError> {
+    Json(req): Json<AgentRunComposerSubmitRequest>,
+) -> Result<Json<AgentRunComposerSubmitResponse>, ApiError> {
     if req.client_command_id.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "client_command_id 不能为空".to_string(),
         ));
     }
+    if req.input.is_empty() {
+        return Err(ApiError::BadRequest("input 不能为空".to_string()));
+    }
+
     let context = resolve_agent_run_context(
         &state,
         &current_user,
@@ -204,55 +203,121 @@ pub async fn send_agent_run_message(
             "当前 AgentRun 已结束，不能继续发送消息。".to_string(),
         ));
     }
-    ensure_agent_run_command_allowed(
-        state.as_ref(),
-        &context,
-        &runtime_session_id,
-        AgentRunCommandPrecondition::SendNext {
-            command: req.command.clone(),
-        },
-    )
-    .await?;
-    dispatch_message_for_runtime(state, current_user, runtime_session_id, req).await
-}
 
-pub async fn steer_agent_run(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Json(req): Json<AgentRunSteeringRequest>,
-) -> Result<Json<AgentRunSteeringResponse>, ApiError> {
-    if req.client_command_id.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "client_command_id 不能为空".to_string(),
-        ));
-    }
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Edit,
+    let execution_state = state
+        .services
+        .session_core
+        .inspect_session_execution_state(&runtime_session_id)
+        .await?;
+    let supports_steering = match &execution_state {
+        SessionExecutionState::Running { turn_id: Some(_) } => {
+            state
+                .services
+                .session_control
+                .supports_session_steering(&runtime_session_id)
+                .await
+        }
+        _ => false,
+    };
+    let accepted_kind = classify_composer_submit_kind(
+        &execution_state,
+        req.command.command_kind,
+        supports_steering,
     )
-    .await?;
-    let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
-        ApiError::Conflict(format!(
-            "AgentRun {} / {} 缺少 delivery runtime",
-            context.run.id, context.agent.id
-        ))
+    .map_err(|code| {
+        command_conflict(
+            composer_submit_unavailable_message(code),
+            code,
+            replacement_command_for_state(&execution_state, false),
+            serde_json::json!({
+                "run_id": context.run.id.to_string(),
+                "agent_id": context.agent.id.to_string(),
+                "runtime_session_id": runtime_session_id,
+                "state": conversation_state_code(&execution_state),
+                "submitted_command_kind": req.command.command_kind,
+            }),
+        )
     })?;
-    ensure_agent_run_command_allowed(
-        state.as_ref(),
-        &context,
-        &runtime_session_id,
-        AgentRunCommandPrecondition::Steer {
-            command: req.command.clone(),
-            expected_runtime_session_id: req.expected_runtime_session_id.clone(),
-            expected_turn_id: req.expected_turn_id.clone(),
-        },
-    )
-    .await?;
-    steer_runtime_session(state, runtime_session_id, req).await
+
+    match accepted_kind {
+        ConversationCommandKind::SendNext => {
+            let response = dispatch_message_for_runtime(
+                state,
+                current_user,
+                runtime_session_id,
+                AgentRunMessageDispatchInput {
+                    input: req.input,
+                    client_command_id: req.client_command_id,
+                    executor_config: req.executor_config,
+                },
+            )
+            .await?;
+            Ok(Json(AgentRunComposerSubmitResponse {
+                accepted_kind,
+                command_receipt: response.command_receipt,
+                accepted_refs: Some(response.accepted_refs),
+                pending_message: None,
+                state: None,
+            }))
+        }
+        ConversationCommandKind::Enqueue => {
+            let executor_config = req
+                .executor_config
+                .map(serde_json::from_value::<AgentConfig>)
+                .transpose()
+                .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
+            let preview = state
+                .services
+                .pending_queue
+                .enqueue(&runtime_session_id, req.input, executor_config)
+                .await;
+            let active_turn_id = execution_state_active_turn_id(&execution_state);
+            Ok(Json(AgentRunComposerSubmitResponse {
+                accepted_kind,
+                command_receipt: accepted_receipt(req.client_command_id),
+                accepted_refs: Some(accepted_refs(
+                    context.run.id,
+                    context.agent.id,
+                    None,
+                    None,
+                    Some(runtime_session_id),
+                    active_turn_id,
+                )),
+                pending_message: Some(pending_message_view(preview)),
+                state: Some(runtime_command_state_dto(execution_state)),
+            }))
+        }
+        ConversationCommandKind::Steer => {
+            let response = steer_runtime_session(
+                state,
+                runtime_session_id,
+                AgentRunSteeringDispatchInput {
+                    input: req.input,
+                    client_command_id: req.client_command_id,
+                },
+            )
+            .await?;
+            Ok(Json(AgentRunComposerSubmitResponse {
+                accepted_kind,
+                command_receipt: response.command_receipt,
+                accepted_refs: Some(response.accepted_refs),
+                pending_message: None,
+                state: Some(response.state),
+            }))
+        }
+        _ => Err(command_conflict(
+            "当前输入提交无法映射到可执行的 AgentRun 文本命令。",
+            "command_unavailable",
+            replacement_command_for_state(&execution_state, false),
+            serde_json::json!({
+                "run_id": context.run.id.to_string(),
+                "agent_id": context.agent.id.to_string(),
+                "runtime_session_id": runtime_session_id,
+                "state": conversation_state_code(&execution_state),
+                "accepted_kind": accepted_kind,
+            }),
+        )),
+    }
 }
 
 async fn list_agent_run_pending_messages(
@@ -280,61 +345,6 @@ async fn list_agent_run_pending_messages(
         .map(pending_message_view)
         .collect();
     Ok(Json(views))
-}
-
-async fn enqueue_agent_run_pending_message(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Json(body): Json<EnqueuePendingMessageRequest>,
-) -> Result<Json<EnqueuePendingMessageResponse>, ApiError> {
-    if body.client_command_id.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "client_command_id 不能为空".to_string(),
-        ));
-    }
-    if body.input.is_empty() {
-        return Err(ApiError::BadRequest("input 不能为空".to_string()));
-    }
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
-        ApiError::Conflict(format!(
-            "AgentRun {} / {} 缺少 delivery runtime",
-            context.run.id, context.agent.id
-        ))
-    })?;
-    ensure_agent_run_command_allowed(
-        state.as_ref(),
-        &context,
-        &runtime_session_id,
-        AgentRunCommandPrecondition::EnqueuePending {
-            command: body.command.clone(),
-            expected_runtime_session_id: body.expected_runtime_session_id.clone(),
-            expected_turn_id: body.expected_turn_id.clone(),
-        },
-    )
-    .await?;
-    let executor_config = body
-        .executor_config
-        .map(serde_json::from_value::<AgentConfig>)
-        .transpose()
-        .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
-    let preview = state
-        .services
-        .pending_queue
-        .enqueue(&runtime_session_id, body.input, executor_config)
-        .await;
-    Ok(Json(EnqueuePendingMessageResponse {
-        command_receipt: accepted_receipt(body.client_command_id),
-        message: pending_message_view(preview),
-    }))
 }
 
 async fn delete_agent_run_pending_message(
@@ -1119,8 +1129,8 @@ async fn dispatch_message_for_runtime(
     state: Arc<AppState>,
     current_user: agentdash_integration_api::AuthIdentity,
     runtime_session_id: String,
-    req: AgentRunMessageRequest,
-) -> Result<Json<AgentRunMessageResponse>, ApiError> {
+    req: AgentRunMessageDispatchInput,
+) -> Result<AgentRunMessageDispatchResponse, ApiError> {
     if req.input.is_empty() {
         return Err(ApiError::BadRequest("input 不能为空".to_string()));
     }
@@ -1150,7 +1160,7 @@ async fn dispatch_message_for_runtime(
         .await
         .map_err(ApiError::from)?;
 
-    Ok(Json(AgentRunMessageResponse {
+    Ok(AgentRunMessageDispatchResponse {
         command_receipt: command_receipt_view(dispatch.command_receipt),
         accepted_refs: accepted_refs(
             dispatch.run_id,
@@ -1160,14 +1170,14 @@ async fn dispatch_message_for_runtime(
             Some(dispatch.runtime_session_id),
             Some(dispatch.turn_id),
         ),
-    }))
+    })
 }
 
 async fn steer_runtime_session(
     state: Arc<AppState>,
     runtime_session_id: String,
-    req: AgentRunSteeringRequest,
-) -> Result<Json<AgentRunSteeringResponse>, ApiError> {
+    req: AgentRunSteeringDispatchInput,
+) -> Result<AgentRunSteeringDispatchResponse, ApiError> {
     if req.input.is_empty() {
         return Err(ApiError::BadRequest("input 不能为空".to_string()));
     }
@@ -1194,7 +1204,7 @@ async fn steer_runtime_session(
         .inspect_session_execution_state(&runtime_session_id)
         .await?;
 
-    Ok(Json(AgentRunSteeringResponse {
+    Ok(AgentRunSteeringDispatchResponse {
         command_receipt: accepted_receipt(client_command_id),
         accepted_refs: accepted_refs(
             dispatch.run_id,
@@ -1205,7 +1215,29 @@ async fn steer_runtime_session(
             Some(dispatch.active_turn_id),
         ),
         state: runtime_command_state_dto(execution_state),
-    }))
+    })
+}
+
+struct AgentRunMessageDispatchInput {
+    input: Vec<UserInputBlock>,
+    client_command_id: String,
+    executor_config: Option<serde_json::Value>,
+}
+
+struct AgentRunMessageDispatchResponse {
+    command_receipt: AgentRunCommandReceipt,
+    accepted_refs: AgentRunAcceptedRefs,
+}
+
+struct AgentRunSteeringDispatchInput {
+    input: Vec<UserInputBlock>,
+    client_command_id: String,
+}
+
+struct AgentRunSteeringDispatchResponse {
+    command_receipt: AgentRunCommandReceipt,
+    accepted_refs: AgentRunAcceptedRefs,
+    state: RuntimeSessionCommandStateDto,
 }
 
 fn accepted_receipt(client_command_id: String) -> AgentRunCommandReceipt {
@@ -1354,19 +1386,6 @@ fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
 }
 
 enum AgentRunCommandPrecondition {
-    SendNext {
-        command: AgentRunCommandPreconditionView,
-    },
-    EnqueuePending {
-        command: AgentRunCommandPreconditionView,
-        expected_runtime_session_id: Option<String>,
-        expected_turn_id: Option<String>,
-    },
-    Steer {
-        command: AgentRunCommandPreconditionView,
-        expected_runtime_session_id: Option<String>,
-        expected_turn_id: Option<String>,
-    },
     PromotePending {
         command: AgentRunCommandPreconditionView,
     },
@@ -1426,139 +1445,6 @@ async fn ensure_agent_run_command_allowed(
     }
 
     match command {
-        AgentRunCommandPrecondition::SendNext { .. } => match &execution_state {
-            SessionExecutionState::Idle
-            | SessionExecutionState::Completed { .. }
-            | SessionExecutionState::Failed { .. }
-            | SessionExecutionState::Interrupted { .. } => Ok(()),
-            SessionExecutionState::Running { turn_id: None } => Err(command_conflict(
-                "当前 AgentRun 正在启动中，等待 active turn 建立。",
-                "starting_claimed",
-                None,
-                detail(),
-            )),
-            SessionExecutionState::Running { turn_id: Some(_) } => Err(command_conflict(
-                "当前 AgentRun 正在执行中，不能并发发送下一轮消息。",
-                "command_unavailable",
-                Some("enqueue"),
-                detail(),
-            )),
-            SessionExecutionState::Cancelling { .. } => Err(command_conflict(
-                "当前 AgentRun 正在取消中，等待执行器收口。",
-                "command_unavailable",
-                None,
-                detail(),
-            )),
-        },
-        AgentRunCommandPrecondition::EnqueuePending {
-            expected_runtime_session_id,
-            expected_turn_id,
-            ..
-        } => match &execution_state {
-            SessionExecutionState::Running {
-                turn_id: Some(turn_id),
-            } => ensure_expected_runtime_and_turn(
-                context,
-                runtime_session_id,
-                Some(turn_id),
-                expected_runtime_session_id.as_deref(),
-                expected_turn_id.as_deref(),
-                detail(),
-            ),
-            SessionExecutionState::Running { turn_id: None } => Err(command_conflict(
-                "当前 AgentRun 正在启动中，等待 active turn 建立后才能排队。",
-                "starting_claimed",
-                None,
-                detail(),
-            )),
-            SessionExecutionState::Idle
-            | SessionExecutionState::Completed { .. }
-            | SessionExecutionState::Failed { .. }
-            | SessionExecutionState::Interrupted { .. } => Err(command_conflict(
-                "当前状态下新输入应作为下一轮消息发送。",
-                "command_unavailable",
-                Some("send_next"),
-                detail(),
-            )),
-            SessionExecutionState::Cancelling { .. } => Err(command_conflict(
-                "当前 AgentRun 正在取消中，不能排队新消息。",
-                "command_unavailable",
-                None,
-                detail(),
-            )),
-        },
-        AgentRunCommandPrecondition::Steer {
-            expected_runtime_session_id,
-            expected_turn_id,
-            ..
-        } => {
-            if let Some(expected_runtime_session_id) = expected_runtime_session_id.as_deref()
-                && expected_runtime_session_id != runtime_session_id
-            {
-                return Err(command_conflict(
-                    "提交的 runtime session 已过期，请刷新后重试。",
-                    "stale_runtime_session",
-                    None,
-                    serde_json::json!({
-                        "expected_runtime_session_id": expected_runtime_session_id,
-                        "runtime_session_id": runtime_session_id,
-                        "run_id": context.run.id.to_string(),
-                        "agent_id": context.agent.id.to_string(),
-                    }),
-                ));
-            }
-            let active_turn_id = match &execution_state {
-                SessionExecutionState::Running {
-                    turn_id: Some(turn_id),
-                } => turn_id,
-                SessionExecutionState::Running { turn_id: None } => {
-                    return Err(command_conflict(
-                        "当前 AgentRun 正在启动中，等待 active turn 建立后才能 steer。",
-                        "starting_claimed",
-                        None,
-                        detail(),
-                    ));
-                }
-                _ => {
-                    return Err(command_conflict(
-                        "当前 AgentRun 不在可 steer 的运行状态。",
-                        "command_unavailable",
-                        None,
-                        detail(),
-                    ));
-                }
-            };
-            if let Some(expected_turn_id) = expected_turn_id.as_deref()
-                && expected_turn_id != active_turn_id.as_str()
-            {
-                return Err(command_conflict(
-                    "提交的 turn 已过期，请刷新后重试。",
-                    "stale_turn",
-                    None,
-                    serde_json::json!({
-                        "expected_turn_id": expected_turn_id,
-                        "active_turn_id": active_turn_id,
-                        "runtime_session_id": runtime_session_id,
-                        "run_id": context.run.id.to_string(),
-                        "agent_id": context.agent.id.to_string(),
-                    }),
-                ));
-            }
-            if !state
-                .services
-                .session_control
-                .supports_session_steering(runtime_session_id)
-                .await
-            {
-                return Err(command_conflict(
-                    "当前执行器不支持对该 AgentRun 进行运行中 steer。",
-                    "connector_steer_unsupported",
-                    None,
-                    detail(),
-                ));
-            }
-            Ok(())
-        }
         AgentRunCommandPrecondition::PromotePending { .. } => {
             match &execution_state {
                 SessionExecutionState::Running { turn_id: Some(_) } => {}
@@ -1641,9 +1527,6 @@ async fn ensure_agent_run_command_allowed(
 impl AgentRunCommandPrecondition {
     fn expected_kind(&self) -> ConversationCommandKind {
         match self {
-            AgentRunCommandPrecondition::SendNext { .. } => ConversationCommandKind::SendNext,
-            AgentRunCommandPrecondition::EnqueuePending { .. } => ConversationCommandKind::Enqueue,
-            AgentRunCommandPrecondition::Steer { .. } => ConversationCommandKind::Steer,
             AgentRunCommandPrecondition::PromotePending { .. } => {
                 ConversationCommandKind::PromotePending
             }
@@ -1656,12 +1539,9 @@ impl AgentRunCommandPrecondition {
 
     fn command_precondition(&self) -> &AgentRunCommandPreconditionView {
         match self {
-            AgentRunCommandPrecondition::SendNext { command }
-            | AgentRunCommandPrecondition::PromotePending { command }
+            AgentRunCommandPrecondition::PromotePending { command }
             | AgentRunCommandPrecondition::ResumePendingQueue { command }
-            | AgentRunCommandPrecondition::Cancel { command }
-            | AgentRunCommandPrecondition::EnqueuePending { command, .. }
-            | AgentRunCommandPrecondition::Steer { command, .. } => command,
+            | AgentRunCommandPrecondition::Cancel { command } => command,
         }
     }
 }
@@ -1761,51 +1641,6 @@ fn ensure_command_submission_matches_snapshot(
     Ok(())
 }
 
-fn ensure_expected_runtime_and_turn(
-    context: &AgentRunContext,
-    runtime_session_id: &str,
-    active_turn_id: Option<&String>,
-    expected_runtime_session_id: Option<&str>,
-    expected_turn_id: Option<&str>,
-    detail: serde_json::Value,
-) -> Result<(), ApiError> {
-    if let Some(expected_runtime_session_id) = expected_runtime_session_id
-        && expected_runtime_session_id != runtime_session_id
-    {
-        return Err(command_conflict(
-            "提交的 runtime session 已过期，请刷新后重试。",
-            "stale_runtime_session",
-            None,
-            serde_json::json!({
-                "expected_runtime_session_id": expected_runtime_session_id,
-                "runtime_session_id": runtime_session_id,
-                "run_id": context.run.id.to_string(),
-                "agent_id": context.agent.id.to_string(),
-                "snapshot_refresh_required": true,
-            }),
-        ));
-    }
-    if let Some(expected_turn_id) = expected_turn_id
-        && Some(expected_turn_id) != active_turn_id.map(String::as_str)
-    {
-        return Err(command_conflict(
-            "提交的 turn 已过期，请刷新后重试。",
-            "stale_turn",
-            None,
-            serde_json::json!({
-                "expected_turn_id": expected_turn_id,
-                "active_turn_id": active_turn_id,
-                "runtime_session_id": runtime_session_id,
-                "run_id": context.run.id.to_string(),
-                "agent_id": context.agent.id.to_string(),
-                "snapshot_refresh_required": true,
-            }),
-        ));
-    }
-    let _ = detail;
-    Ok(())
-}
-
 fn stale_command_conflict(
     execution_state: &SessionExecutionState,
     terminal_agent: bool,
@@ -1817,6 +1652,36 @@ fn stale_command_conflict(
         replacement_command_for_state(execution_state, terminal_agent),
         detail,
     )
+}
+
+fn classify_composer_submit_kind(
+    execution_state: &SessionExecutionState,
+    requested_kind: ConversationCommandKind,
+    supports_steering: bool,
+) -> Result<ConversationCommandKind, &'static str> {
+    match execution_state {
+        SessionExecutionState::Idle
+        | SessionExecutionState::Completed { .. }
+        | SessionExecutionState::Failed { .. }
+        | SessionExecutionState::Interrupted { .. } => Ok(ConversationCommandKind::SendNext),
+        SessionExecutionState::Running { turn_id: Some(_) } => {
+            if requested_kind == ConversationCommandKind::Steer && supports_steering {
+                Ok(ConversationCommandKind::Steer)
+            } else {
+                Ok(ConversationCommandKind::Enqueue)
+            }
+        }
+        SessionExecutionState::Running { turn_id: None } => Err("starting_claimed"),
+        SessionExecutionState::Cancelling { .. } => Err("cancelling"),
+    }
+}
+
+fn composer_submit_unavailable_message(code: &str) -> &'static str {
+    match code {
+        "starting_claimed" => "当前 AgentRun 正在启动中，等待 active turn 建立。",
+        "cancelling" => "当前 AgentRun 正在取消中，等待执行器收口。",
+        _ => "当前 AgentRun 暂时不能接收新的输入。",
+    }
 }
 
 fn replacement_command_for_state(
@@ -1951,8 +1816,7 @@ mod tests {
         ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary,
         ResolvedVfsSurface, ResolvedVfsSurfaceSource,
     };
-    use agentdash_contracts::workflow::ConversationCommandStaleGuardView;
-    use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
+    use agentdash_domain::workflow::LifecycleRun;
 
     use super::*;
 
@@ -2009,47 +1873,6 @@ mod tests {
         }
     }
 
-    fn test_agent_run_context() -> AgentRunContext {
-        let run = LifecycleRun::new_graphless(Uuid::new_v4());
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, "PI_AGENT");
-        AgentRunContext {
-            run,
-            agent,
-            delivery_runtime_session_id: Some("runtime-1".to_string()),
-        }
-    }
-
-    fn command_precondition(
-        context: &AgentRunContext,
-        kind: ConversationCommandKind,
-        execution_state: &SessionExecutionState,
-        frame_ref: Option<(Uuid, i32)>,
-    ) -> AgentRunCommandPreconditionView {
-        let runtime_session_id = context
-            .delivery_runtime_session_id
-            .as_deref()
-            .unwrap_or("runtime-1");
-        AgentRunCommandPreconditionView {
-            command_id: command_id_for_kind(kind).to_string(),
-            command_kind: kind,
-            stale_guard: ConversationCommandStaleGuardView {
-                snapshot_id: conversation_snapshot_id(
-                    context.run.id,
-                    context.agent.id,
-                    frame_ref,
-                    Some(runtime_session_id),
-                    execution_state,
-                    false,
-                ),
-                run_id: context.run.id.to_string(),
-                agent_id: context.agent.id.to_string(),
-                frame_id: frame_ref.map(|(frame_id, _)| frame_id.to_string()),
-                runtime_session_id: Some(runtime_session_id.to_string()),
-                active_turn_id: execution_state_active_turn_id(execution_state),
-            },
-        }
-    }
-
     #[test]
     fn workspace_shell_title_uses_delivery_session_meta_when_present() {
         let meta = test_session_meta("Session meta title", TitleSource::Source);
@@ -2062,52 +1885,36 @@ mod tests {
     }
 
     #[test]
-    fn stale_running_enqueue_precondition_returns_refreshable_send_next_conflict() {
-        let context = test_agent_run_context();
-        let frame_ref = Some((Uuid::new_v4(), 1));
-        let running = SessionExecutionState::Running {
-            turn_id: Some("turn-1".to_string()),
-        };
+    fn composer_submit_reclassifies_stale_running_input_after_terminal() {
         let completed = SessionExecutionState::Completed {
             turn_id: "turn-1".to_string(),
         };
-        let stale_enqueue = command_precondition(
-            &context,
-            ConversationCommandKind::Enqueue,
-            &running,
-            frame_ref,
+
+        let kind =
+            classify_composer_submit_kind(&completed, ConversationCommandKind::Enqueue, true)
+                .expect("terminal follow-up should start next turn");
+
+        assert_eq!(kind, ConversationCommandKind::SendNext);
+    }
+
+    #[test]
+    fn composer_submit_maps_running_input_to_current_runtime_capability() {
+        let running = SessionExecutionState::Running {
+            turn_id: Some("turn-1".to_string()),
+        };
+
+        assert_eq!(
+            classify_composer_submit_kind(&running, ConversationCommandKind::SendNext, false),
+            Ok(ConversationCommandKind::Enqueue)
         );
-
-        let err = ensure_command_submission_matches_snapshot(
-            &stale_enqueue,
-            ConversationCommandKind::Enqueue,
-            &context,
-            "runtime-1",
-            frame_ref,
-            &completed,
-            false,
-        )
-        .expect_err("stale enqueue should be rejected before business command handling");
-
-        match err {
-            ApiError::ConflictWithCode {
-                error_code,
-                replacement_command,
-                detail,
-                ..
-            } => {
-                assert_eq!(error_code, "stale_command");
-                assert_eq!(replacement_command.as_deref(), Some("send_next"));
-                assert_eq!(
-                    detail
-                        .and_then(|value| value.get("reason").cloned())
-                        .and_then(|value| value.as_str().map(str::to_string))
-                        .as_deref(),
-                    Some("active_turn_mismatch")
-                );
-            }
-            other => panic!("expected structured stale command conflict, got {other:?}"),
-        }
+        assert_eq!(
+            classify_composer_submit_kind(&running, ConversationCommandKind::Steer, true),
+            Ok(ConversationCommandKind::Steer)
+        );
+        assert_eq!(
+            classify_composer_submit_kind(&running, ConversationCommandKind::Steer, false),
+            Ok(ConversationCommandKind::Enqueue)
+        );
     }
 
     #[test]

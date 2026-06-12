@@ -28,13 +28,10 @@ import { useAgentRunWorkspaceState } from "../features/workspace-panel/model/use
 import {
   cancelAgentRun,
   deleteAgentRunPendingMessage,
-  enqueueAgentRunPendingMessage,
   promoteAgentRunPendingMessage,
   resumeAgentRunPendingQueue,
-  sendAgentRunMessage,
-  steerAgentRun,
+  submitAgentRunComposerInput,
 } from "../services/lifecycle";
-import type { ApiHttpError } from "../api/client";
 import type { ExecutorConfig } from "../services/executor";
 import type { JsonValue } from "../generated/common-contracts";
 import type { UserInput } from "../generated/backbone-protocol";
@@ -86,26 +83,6 @@ function commandPrecondition(command: ConversationCommandView): AgentRunCommandP
     command_kind: command.kind,
     stale_guard: command.stale_guard,
   };
-}
-
-function isAgentRunCommandStaleError(error: unknown): error is ApiHttpError {
-  const apiError = error as ApiHttpError;
-  return apiError?.status === 409
-    && (
-      apiError.errorCode === "stale_command"
-      || apiError.errorCode === "stale_runtime_session"
-      || apiError.errorCode === "stale_turn"
-    );
-}
-
-function replacementCommandFromWorkspace(
-  workspace: AgentRunWorkspaceView | null,
-  replacementCommandId: string | undefined,
-): ConversationCommandView | undefined {
-  if (!replacementCommandId) return undefined;
-  return workspace?.conversation?.commands.commands.find(
-    (command) => command.command_id === replacementCommandId && command.enabled,
-  );
 }
 
 export function AgentRunWorkspacePage({
@@ -411,7 +388,7 @@ export function AgentRunWorkspacePage({
 
   const handleAgentRunCommand = useCallback(async (
     command: ConversationCommandView,
-    sessionId: string | null,
+    _sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
     imageAttachments?: ImageAttachment[],
@@ -487,109 +464,54 @@ export function AgentRunWorkspacePage({
     if (agentRunWorkspaceState.status !== "ready") {
       throw new Error("当前 AgentRun 工作台投影正在刷新，无法执行控制动作。");
     }
-    if (!currentRunId || !currentAgentId || !sessionId || sessionId !== deliveryRuntimeSessionId) {
+    if (!currentRunId || !currentAgentId) {
       throw new Error("当前 AgentRun 尚未就绪，无法执行控制动作。");
     }
 
-    const commandKeyFor = (candidate: ConversationCommandView) => JSON.stringify({
-      command_id: candidate.command_id,
-      kind: candidate.kind,
-      stale_guard: candidate.stale_guard,
+    const commandKey = JSON.stringify({
+      command_id: command.command_id,
+      kind: command.kind,
+      stale_guard: command.stale_guard,
       input: inputBlocks,
       executor_config: commandExecutorConfig ?? null,
     });
-    const submitAgentRunCommand = async (
-      candidate: ConversationCommandView,
-      clientCommandId: string,
-    ) => {
-      if (candidate.kind === "send_next") {
-        const response = await sendAgentRunMessage(currentRunId, currentAgentId, {
-          input: inputBlocks,
-          client_command_id: clientCommandId,
-          command: commandPrecondition(candidate),
-          executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
-        });
-        void fetchAndIngestLifecycleRun(response.accepted_refs.run_ref.run_id);
-        void refreshAgentRunWorkspaceState().catch(() => {});
-        scheduleHookRuntimeRefresh("agent_message_sent", true);
-        return;
-      }
-      if (candidate.kind === "steer") {
-        await steerAgentRun(currentRunId, currentAgentId, {
-          input: inputBlocks,
-          client_command_id: clientCommandId,
-          command: commandPrecondition(candidate),
-          expected_runtime_session_id: candidate.stale_guard.runtime_session_id ?? sessionId ?? undefined,
-          expected_turn_id: candidate.stale_guard.active_turn_id,
-        });
-        void refreshAgentRunWorkspaceState().catch(() => {});
-        scheduleHookRuntimeRefresh("agent_message_steered", true);
-        return;
-      }
-      if (candidate.kind === "enqueue") {
-        await enqueueAgentRunPendingMessage(currentRunId, currentAgentId, {
-          input: inputBlocks,
-          client_command_id: clientCommandId,
-          command: commandPrecondition(candidate),
-          expected_runtime_session_id: candidate.stale_guard.runtime_session_id ?? sessionId ?? undefined,
-          expected_turn_id: candidate.stale_guard.active_turn_id,
-          executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
-        });
-        void refreshAgentRunWorkspaceState().catch(() => {});
-        scheduleHookRuntimeRefresh("pending_message_enqueued", true);
-        return;
-      }
-      throw new Error(candidate.unavailable_reason ?? "当前 AgentRun 不可执行该控制动作。");
-    };
 
     const resolvedCommand = resolveAgentRunClientCommandId(
       inFlightCommandRef.current,
-      commandKeyFor(command),
+      commandKey,
       newClientCommandId,
     );
     inFlightCommandRef.current = resolvedCommand.inFlightCommand;
 
     try {
-      await submitAgentRunCommand(command, resolvedCommand.clientCommandId);
+      const response = await submitAgentRunComposerInput(currentRunId, currentAgentId, {
+        input: inputBlocks,
+        client_command_id: resolvedCommand.clientCommandId,
+        command: commandPrecondition(command),
+        executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
+      });
+      if (response.accepted_refs?.run_ref.run_id) {
+        void fetchAndIngestLifecycleRun(response.accepted_refs.run_ref.run_id);
+      }
+      void refreshAgentRunWorkspaceState().catch(() => {});
+      if (response.accepted_kind === "steer") {
+        scheduleHookRuntimeRefresh("agent_message_steered", true);
+      } else if (response.accepted_kind === "enqueue") {
+        scheduleHookRuntimeRefresh("pending_message_enqueued", true);
+      } else {
+        scheduleHookRuntimeRefresh("agent_message_sent", true);
+      }
       inFlightCommandRef.current = null;
       return;
     } catch (error) {
       inFlightCommandRef.current = null;
-      if (!isAgentRunCommandStaleError(error)) {
-        throw error;
-      }
-      const refreshedWorkspace = await refreshAgentRunWorkspaceState();
-      scheduleHookRuntimeRefresh("stale_agent_run_command", true);
-      const replacement = replacementCommandFromWorkspace(
-        refreshedWorkspace,
-        error.replacementCommand,
-      );
-      if (!replacement?.enabled) {
-        throw Object.assign(new Error("AgentRun command snapshot 已刷新。"), {
-          silentCommandRefresh: true,
-        });
-      }
-      const retryCommand = resolveAgentRunClientCommandId(
-        null,
-        commandKeyFor(replacement),
-        newClientCommandId,
-      );
-      inFlightCommandRef.current = retryCommand.inFlightCommand;
-      try {
-        await submitAgentRunCommand(replacement, retryCommand.clientCommandId);
-        inFlightCommandRef.current = null;
-        return;
-      } catch (retryError) {
-        inFlightCommandRef.current = null;
-        throw retryError;
-      }
+      throw error;
     }
   }, [
     chatCommandState.modelConfig,
     createProjectAgentRun,
     currentAgentId,
     currentRunId,
-    deliveryRuntimeSessionId,
     draftProjectAgent,
     draftProjectAgentKey,
     draftProjectIdValue,

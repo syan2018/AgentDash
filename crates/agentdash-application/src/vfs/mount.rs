@@ -832,6 +832,27 @@ pub fn build_lifecycle_mount(
     build_lifecycle_mount_with_ports(run_id, orchestration_id, node_path, lifecycle_key, &[])
 }
 
+pub fn build_lifecycle_run_mount(run_id: Uuid) -> Mount {
+    Mount {
+        id: "lifecycle".to_string(),
+        provider: PROVIDER_LIFECYCLE_VFS.to_string(),
+        backend_id: String::new(),
+        root_ref: format!("lifecycle://run/{run_id}"),
+        capabilities: vec![
+            MountCapability::Read,
+            MountCapability::List,
+            MountCapability::Search,
+        ],
+        default_write: false,
+        display_name: "Lifecycle 执行记录".to_string(),
+        metadata: serde_json::json!({
+            "run_id": run_id.to_string(),
+            "scope": "run",
+            "directory_hint": lifecycle_directory_hint()
+        }),
+    }
+}
+
 pub fn build_routine_mount(
     routine_id: Uuid,
     execution_id: Uuid,

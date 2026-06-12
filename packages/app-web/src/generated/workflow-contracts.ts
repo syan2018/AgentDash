@@ -43,17 +43,13 @@ export type AgentRunCommandOnlyRequest = { command: AgentRunCommandPreconditionV
 
 export type AgentRunCommandPreconditionView = { command_id: string, command_kind: ConversationCommandKind, stale_guard: ConversationCommandStaleGuardView, };
 
-export type AgentRunMessageRequest = {
+export type AgentRunComposerSubmitRequest = {
 /**
- * canonical 用户输入，与 steer（`AgentRunSteeringRequest.input`）同形。
+ * canonical 用户输入，由后端按当前 AgentRun workspace state 归类为 send_next / enqueue / steer。
  */
 input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue, };
 
-export type AgentRunMessageResponse = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, };
-
-export type AgentRunSteeringRequest = { input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, expected_turn_id?: string, expected_runtime_session_id?: string, };
-
-export type AgentRunSteeringResponse = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, state: RuntimeSessionCommandStateDto, };
+export type AgentRunComposerSubmitResponse = { accepted_kind: ConversationCommandKind, command_receipt: AgentRunCommandReceipt, accepted_refs?: AgentRunAcceptedRefs, pending_message?: PendingMessageView, state?: RuntimeSessionCommandStateDto, };
 
 export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string, agent_kind: string, agent_role: string, project_agent_id?: string, status: string, current_frame_id?: string,
 /**
@@ -126,10 +122,6 @@ export type DeleteHookPresetResponse = { removed: boolean, key: string, };
 export type DeleteWorkflowGraphResponse = { deleted: boolean, };
 
 export type EffectiveSessionContract = { lifecycle_key?: string, active_activity_key?: string, injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, };
-
-export type EnqueuePendingMessageRequest = { input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, expected_turn_id?: string, expected_runtime_session_id?: string, executor_config?: JsonValue, };
-
-export type EnqueuePendingMessageResponse = { command_receipt: AgentRunCommandReceipt, message: PendingMessageView, };
 
 export type ExecutorRunRef = { "kind": "runtime_session", session_id: string, } | { "kind": "function_run", run_id: string, } | { "kind": "human_decision", decision_id: string, };
 

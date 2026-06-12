@@ -73,6 +73,10 @@ struct LifecycleMountContext {
     attempt: u32,
 }
 
+struct LifecycleRunMountContext {
+    run: LifecycleRun,
+}
+
 fn map_domain_err(error: agentdash_domain::common::error::DomainError) -> MountError {
     MountError::OperationFailed(error.to_string())
 }
@@ -120,6 +124,12 @@ fn parse_attempt_from_metadata(mount: &Mount) -> Result<u32, MountError> {
         .ok_or_else(|| MountError::OperationFailed("mount metadata 缺少 attempt".to_string()))
 }
 
+fn mount_has_node_scope(mount: &Mount) -> bool {
+    mount.metadata.get("orchestration_id").is_some()
+        && mount.metadata.get("node_path").is_some()
+        && mount.metadata.get("attempt").is_some()
+}
+
 fn runtime_scope_from_mount(mount: &Mount) -> Result<RuntimeNodeArtifactScope, MountError> {
     Ok(RuntimeNodeArtifactScope {
         run_id: parse_run_id_from_metadata(mount)?,
@@ -127,6 +137,19 @@ fn runtime_scope_from_mount(mount: &Mount) -> Result<RuntimeNodeArtifactScope, M
         node_path: parse_node_path_from_metadata(mount)?,
         attempt: parse_attempt_from_metadata(mount)?,
     })
+}
+
+async fn load_run_context(
+    run_repo: &Arc<dyn LifecycleRunRepository>,
+    mount: &Mount,
+) -> Result<LifecycleRunMountContext, MountError> {
+    let run_id = parse_run_id_from_metadata(mount)?;
+    let run = run_repo
+        .get_by_id(run_id)
+        .await
+        .map_err(map_domain_err)?
+        .ok_or_else(|| MountError::NotFound(format!("lifecycle run 不存在: {run_id}")))?;
+    Ok(LifecycleRunMountContext { run })
 }
 
 async fn load_active_context(
@@ -295,6 +318,23 @@ fn records_prefix(node_path: &str) -> String {
     crate::workflow::execution_log::encode_node_path_segment(node_path)
 }
 
+fn lifecycle_root_entries_for_scope(
+    include_skills: bool,
+    node_scoped: bool,
+) -> Vec<RuntimeFileEntry> {
+    if node_scoped {
+        return lifecycle_root_entries(include_skills);
+    }
+    let mut entries = vec![
+        RuntimeFileEntry::file("state").as_virtual(),
+        RuntimeFileEntry::dir("runs").as_virtual(),
+    ];
+    if include_skills {
+        entries.push(RuntimeFileEntry::dir("skills").as_virtual());
+    }
+    entries
+}
+
 #[async_trait]
 impl MountProvider for LifecycleMountProvider {
     fn provider_id(&self) -> &str {
@@ -316,7 +356,52 @@ impl MountProvider for LifecycleMountProvider {
                 .await;
         }
 
+        let run_ctx = load_run_context(&self.lifecycle_run_repo, mount).await?;
+        let node_scoped = mount_has_node_scope(mount);
         let content = match segs.as_slice() {
+            [] => to_json_pretty(&run_overview(&run_ctx.run)).map_err(map_journey_err)?,
+            ["state"] if !node_scoped => {
+                to_json_pretty(&run_overview(&run_ctx.run)).map_err(map_journey_err)?
+            }
+            ["runs"] => {
+                let source_ref = if node_scoped {
+                    Some(
+                        load_active_context(&self.lifecycle_run_repo, mount)
+                            .await?
+                            .orchestration
+                            .source_ref,
+                    )
+                } else {
+                    None
+                };
+                let runs = self
+                    .lifecycle_run_repo
+                    .list_by_project(run_ctx.run.project_id)
+                    .await
+                    .map_err(map_domain_err)?;
+                let summaries = runs
+                    .iter()
+                    .filter(|run| {
+                        source_ref
+                            .as_ref()
+                            .is_none_or(|source| run_has_source_family(run, source))
+                    })
+                    .map(run_overview)
+                    .collect::<Vec<_>>();
+                to_json_pretty(&summaries).map_err(map_journey_err)?
+            }
+            ["runs", id_str] => {
+                let run_id = Uuid::parse_str(id_str).map_err(|error| {
+                    MountError::OperationFailed(format!("run id 无效: {error}"))
+                })?;
+                let run = self
+                    .lifecycle_run_repo
+                    .get_by_id(run_id)
+                    .await
+                    .map_err(map_domain_err)?
+                    .ok_or_else(|| MountError::NotFound(format!("run 不存在: {run_id}")))?;
+                to_json_pretty(&run_overview(&run)).map_err(map_journey_err)?
+            }
             ["artifacts"] | ["active", "artifacts"] => {
                 let scope = runtime_scope_from_mount(mount)?;
                 let map = self
@@ -334,6 +419,11 @@ impl MountProvider for LifecycleMountProvider {
                     .map_err(map_journey_err)?
             }
             _ => {
+                if !node_scoped {
+                    return Err(MountError::NotFound(format!(
+                        "lifecycle_vfs run scope 不支持 node 路径: `{path_norm}`"
+                    )));
+                }
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 let run_id = active.run.id;
                 match segs.as_slice() {
@@ -372,33 +462,6 @@ impl MountProvider for LifecycleMountProvider {
                         .read_record(run_id, &records_prefix(&active.node_path), rest)
                         .await
                         .map_err(map_journey_err)?,
-                    ["runs"] => {
-                        let runs = self
-                            .lifecycle_run_repo
-                            .list_by_project(active.run.project_id)
-                            .await
-                            .map_err(map_domain_err)?;
-                        let summaries = runs
-                            .iter()
-                            .filter(|run| {
-                                run_has_source_family(run, &active.orchestration.source_ref)
-                            })
-                            .map(run_overview)
-                            .collect::<Vec<_>>();
-                        to_json_pretty(&summaries).map_err(map_journey_err)?
-                    }
-                    ["runs", id_str] => {
-                        let run_id = Uuid::parse_str(id_str).map_err(|error| {
-                            MountError::OperationFailed(format!("run id 无效: {error}"))
-                        })?;
-                        let run = self
-                            .lifecycle_run_repo
-                            .get_by_id(run_id)
-                            .await
-                            .map_err(map_domain_err)?
-                            .ok_or_else(|| MountError::NotFound(format!("run 不存在: {run_id}")))?;
-                        to_json_pretty(&run_overview(&run)).map_err(map_journey_err)?
-                    }
                     ["nodes", key, "records"] => {
                         find_node(&active.orchestration, key, None)?;
                         self.journey
@@ -521,14 +584,31 @@ impl MountProvider for LifecycleMountProvider {
                 .await;
         }
         let segs = segments_from_path(&path_norm);
-        let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+        let node_scoped = mount_has_node_scope(mount);
         let mut entries = match segs.as_slice() {
-            [] => lifecycle_root_entries(lifecycle_mount_has_skills(mount)),
-            ["active"] => lifecycle_active_entries(active.run.execution_log.len() as u64),
-            ["active", "steps"] | ["nodes"] => all_nodes(&active.orchestration)
-                .into_iter()
-                .map(|node| RuntimeFileEntry::file(node.node_path.clone()).as_virtual())
-                .collect(),
+            [] => lifecycle_root_entries_for_scope(lifecycle_mount_has_skills(mount), node_scoped),
+            ["runs"] => {
+                let run_ctx = load_run_context(&self.lifecycle_run_repo, mount).await?;
+                self.lifecycle_run_repo
+                    .list_by_project(run_ctx.run.project_id)
+                    .await
+                    .map_err(map_domain_err)?
+                    .into_iter()
+                    .map(|run| RuntimeFileEntry::file(format!("runs/{}", run.id)).as_virtual())
+                    .collect()
+            }
+            _ if !node_scoped => Vec::new(),
+            ["active"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                lifecycle_active_entries(active.run.execution_log.len() as u64)
+            }
+            ["active", "steps"] | ["nodes"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                all_nodes(&active.orchestration)
+                    .into_iter()
+                    .map(|node| RuntimeFileEntry::file(node.node_path.clone()).as_virtual())
+                    .collect()
+            }
             ["artifacts"] | ["active", "artifacts"] => {
                 let scope = runtime_scope_from_mount(mount)?;
                 self.journey
@@ -540,6 +620,7 @@ impl MountProvider for LifecycleMountProvider {
                     .collect()
             }
             ["records"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 let map = self
                     .journey
                     .records_map(active.run.id, &records_prefix(&active.node_path))
@@ -554,6 +635,7 @@ impl MountProvider for LifecycleMountProvider {
                     .collect()
             }
             ["session", "items"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id_for_node(current_node(&active)?)?,
@@ -563,6 +645,7 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["session", "messages"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id_for_node(current_node(&active)?)?,
@@ -572,6 +655,7 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["session", "tools"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id_for_node(current_node(&active)?)?,
@@ -581,6 +665,7 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["session", "writes"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id_for_node(current_node(&active)?)?,
@@ -590,6 +675,7 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["session", "summaries"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 list_session_summary_entries(
                     &self.journey,
                     &session_id_for_node(current_node(&active)?)?,

@@ -16,11 +16,9 @@ vi.mock("../api/client", () => ({
 
 import {
   deleteAgentRunPendingMessage,
-  enqueueAgentRunPendingMessage,
   promoteAgentRunPendingMessage,
   resumeAgentRunPendingQueue,
-  sendAgentRunMessage,
-  steerAgentRun,
+  submitAgentRunComposerInput,
 } from "./lifecycle";
 import type { AgentRunCommandPreconditionView } from "../generated/workflow-contracts";
 
@@ -54,63 +52,19 @@ describe("lifecycle message service", () => {
     });
   });
 
-  it("sends user messages through the AgentRun command endpoint", async () => {
-    await sendAgentRunMessage("run/1", "agent/1", {
-      input: [{ type: "text", text: "hello", text_elements: [] }],
-      client_command_id: "command-1",
-      command: command("send_next"),
-      executor_config: {
-        executor: "PI_AGENT",
-        model_id: "gpt-test",
-        thinking_level: "low",
-      },
-    });
-
-    expect(mocks.apiPostMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/messages",
-      {
-        input: [{ type: "text", text: "hello", text_elements: [] }],
-        client_command_id: "command-1",
-        command: command("send_next"),
-        executor_config: {
-          executor: "PI_AGENT",
-          model_id: "gpt-test",
-          thinking_level: "low",
-        },
-      },
-    );
-  });
-
-  it("sends steering input through the AgentRun steering endpoint", async () => {
-    await steerAgentRun("run/1", "agent/1", {
-      input: [{ type: "text", text: "adjust course", text_elements: [] }],
-      client_command_id: "command-2",
-      command: command("steer"),
-    });
-
-    expect(mocks.apiPostMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/steering",
-      {
-        input: [{ type: "text", text: "adjust course", text_elements: [] }],
-        client_command_id: "command-2",
-        command: command("steer"),
-      },
-    );
-  });
-
-  it("enqueues pending messages through the AgentRun pending endpoint", async () => {
-    await enqueueAgentRunPendingMessage("run/1", "agent/1", {
-      input: [{ type: "text", text: "next", text_elements: [] }],
-      client_command_id: "command-3",
+  it("submits composer input through the AgentRun composer endpoint", async () => {
+    await submitAgentRunComposerInput("run/1", "agent/1", {
+      input: [{ type: "text", text: "follow up", text_elements: [] }],
+      client_command_id: "command-composer",
       command: command("enqueue"),
       executor_config: { model_id: "gpt-test" },
     });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/pending-messages",
+      "/agent-runs/run%2F1/agents/agent%2F1/composer-submit",
       {
-        input: [{ type: "text", text: "next", text_elements: [] }],
-        client_command_id: "command-3",
+        input: [{ type: "text", text: "follow up", text_elements: [] }],
+        client_command_id: "command-composer",
         command: command("enqueue"),
         executor_config: { model_id: "gpt-test" },
       },

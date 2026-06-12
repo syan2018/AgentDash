@@ -10,7 +10,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionFeed } from "../model";
-import { extractPlatformEventType } from "../model/platformEvent";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import {
@@ -24,10 +23,6 @@ import {
   type RichInputRef,
 } from "../../file-reference";
 import type { FileEntry } from "../../../services/filePicker";
-import {
-  fetchSessionExecutionState,
-} from "../../../services/session";
-import type { SessionExecutionState } from "../../../types";
 import { SessionProjectionView } from "./SessionProjectionView";
 import { SessionLineageView } from "./SessionLineageView";
 import {
@@ -38,6 +33,7 @@ import {
 import {
   collectNewSystemEvents,
   computeProjectionRefreshKey,
+  extractTurnLifecycleEventType,
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
@@ -99,7 +95,6 @@ export function SessionChatView({
   const [inputValue, setInputValue] = useState("");
   const [optimisticRunning, setOptimisticRunning] = useState(false);
   const [stableActionRunning, setStableActionRunning] = useState(false);
-  const [executionState, setExecutionState] = useState<SessionExecutionState | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [showProjectionView, setShowProjectionView] = useState(false);
   const [showLineageView, setShowLineageView] = useState(false);
@@ -134,25 +129,9 @@ export function SessionChatView({
   // sessionId 变更时重置内部状态
   useEffect(() => {
     setSendError(null);
-    setExecutionState(null);
     setIsCancelling(false);
     cancelInFlightRef.current = false;
   }, [sessionId]);
-
-  const refreshExecutionState = useCallback(async () => {
-    if (!sessionId) {
-      setExecutionState(null);
-      return null;
-    }
-    const next = await fetchSessionExecutionState(sessionId);
-    setExecutionState(next);
-    return next;
-  }, [sessionId]);
-
-  useEffect(() => {
-    if (!sessionId) return;
-    void refreshExecutionState().catch(() => {});
-  }, [sessionId, refreshExecutionState]);
 
   useEffect(() => {
     setShowProjectionView(false);
@@ -302,19 +281,13 @@ export function SessionChatView({
     [rawEvents],
   );
 
-  useEffect(() => {
-    if (!hasSession || executionState?.status !== "running") return;
-    const timer = window.setInterval(() => {
-      void refreshExecutionState().catch(() => {});
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [executionState?.status, hasSession, refreshExecutionState]);
-
   // ─── Action running 检测 ──────────────────────────────
 
-  const streamRunning = executionState?.status === "running";
+  const snapshotExecutionActive = commandState.executionStatus === "starting_claimed" ||
+    commandState.executionStatus === "running_active" ||
+    commandState.executionStatus === "cancelling";
 
-  const targetActionRunning = hasSession && (streamRunning || optimisticRunning);
+  const targetActionRunning = hasSession && (snapshotExecutionActive || optimisticRunning);
 
   useEffect(() => {
     if (targetActionRunning) {
@@ -352,6 +325,12 @@ export function SessionChatView({
     return () => window.clearTimeout(timer);
   }, [optimisticRunning]);
 
+  useEffect(() => {
+    if (snapshotExecutionActive) return;
+    optimisticRunningUntilRef.current = 0;
+    setOptimisticRunning(false);
+  }, [snapshotExecutionActive]);
+
   const onTurnEndRef = useRef(onTurnEnd);
   useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
   const onSystemEventRef = useRef(onSystemEvent);
@@ -367,24 +346,19 @@ export function SessionChatView({
       const event = rawEvents[i];
       if (!event) continue;
       const bbEvent = event.notification.event;
-      const eventType = bbEvent.type === "turn_started" ? "turn_started"
-        : bbEvent.type === "turn_completed" ? "turn_completed"
-        : bbEvent.type === "platform" ? extractPlatformEventType(bbEvent)
-        : null;
+      const eventType = extractTurnLifecycleEventType(bbEvent);
       if (eventType === "turn_started") {
         setOptimisticRunning(false);
-        void refreshExecutionState().catch(() => {});
         return;
       }
       if (eventType === "turn_completed" || eventType === "turn_failed" || eventType === "turn_interrupted") {
         optimisticRunningUntilRef.current = 0;
         setOptimisticRunning(false);
-        void refreshExecutionState().catch(() => {});
         onTurnEndRef.current?.();
         return;
       }
     }
-  }, [hasSession, rawEvents, refreshExecutionState]);
+  }, [hasSession, rawEvents]);
 
   useEffect(() => {
     if (!hasSession || rawEvents.length === 0) return;
@@ -452,9 +426,6 @@ export function SessionChatView({
 
       execConfig.recordUsage();
       clearInput();
-      if (command.kind !== "enqueue") {
-        void refreshExecutionState().catch(() => {});
-      }
       onMessageSent?.();
     } catch (e) {
       optimisticRunningUntilRef.current = 0;
@@ -476,7 +447,6 @@ export function SessionChatView({
     imageAttach.attachments,
     isSending,
     onMessageSent,
-    refreshExecutionState,
     sessionId,
   ]);
 
@@ -499,23 +469,13 @@ export function SessionChatView({
       } else {
         await sendCancel();
       }
-      // 不 await 状态刷新，避免 UI 卡在"取消中…"；
-      // 1.5s 轮询 + 流事件会自然驱动 executionState 更新。
-      void refreshExecutionState()
-        .then((next) => {
-          if (next?.status === "interrupted" || next?.status === "idle") {
-            optimisticRunningUntilRef.current = 0;
-            setOptimisticRunning(false);
-          }
-        })
-        .catch(() => {});
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "取消失败，请重试。");
     } finally {
       cancelInFlightRef.current = false;
       setIsCancelling(false);
     }
-  }, [commandState.commands.commands, hasSession, onCancelAction, refreshExecutionState, sendCancel, sessionId]);
+  }, [commandState.commands.commands, hasSession, onCancelAction, sendCancel, sessionId]);
 
   // ─── 文件引用 & 键盘 ─────────────────────────────────
 

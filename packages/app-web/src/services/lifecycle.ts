@@ -16,12 +16,8 @@ import type {
 } from "../types";
 import type {
   AgentRunCommandOnlyRequest,
-  EnqueuePendingMessageRequest,
-  EnqueuePendingMessageResponse,
-  AgentRunMessageRequest,
-  AgentRunMessageResponse,
-  AgentRunSteeringRequest,
-  AgentRunSteeringResponse,
+  AgentRunComposerSubmitRequest,
+  AgentRunComposerSubmitResponse,
   AgentRunWorkspaceView,
   ResumePendingQueueResponse,
 } from "../generated/workflow-contracts";
@@ -80,36 +76,14 @@ export async function fetchAgentRunWorkspace(
   return api.get<AgentRunWorkspaceView>(agentRunCommandPath(runId, agentId, "/workspace"));
 }
 
-export async function sendAgentRunMessage(
+export async function submitAgentRunComposerInput(
   runId: string,
   agentId: string,
-  request: AgentRunMessageRequest,
-): Promise<AgentRunMessageResponse> {
-  return api.post<AgentRunMessageResponse>(
-    agentRunCommandPath(runId, agentId, "/messages"),
+  request: AgentRunComposerSubmitRequest,
+): Promise<AgentRunComposerSubmitResponse> {
+  return api.post<AgentRunComposerSubmitResponse>(
+    agentRunCommandPath(runId, agentId, "/composer-submit"),
     request,
-  );
-}
-
-export async function steerAgentRun(
-  runId: string,
-  agentId: string,
-  request: AgentRunSteeringRequest,
-): Promise<AgentRunSteeringResponse> {
-  return api.post<AgentRunSteeringResponse>(
-    agentRunCommandPath(runId, agentId, "/steering"),
-    request,
-  );
-}
-
-export async function enqueueAgentRunPendingMessage(
-  runId: string,
-  agentId: string,
-  body: EnqueuePendingMessageRequest,
-): Promise<EnqueuePendingMessageResponse> {
-  return api.post<EnqueuePendingMessageResponse>(
-    agentRunCommandPath(runId, agentId, "/pending-messages"),
-    body,
   );
 }
 

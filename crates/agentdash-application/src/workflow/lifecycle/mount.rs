@@ -7,7 +7,7 @@ use agentdash_spi::Vfs;
 
 use uuid::Uuid;
 
-use crate::vfs::build_lifecycle_mount_with_node_scope;
+use crate::vfs::{build_lifecycle_mount_with_node_scope, build_lifecycle_run_mount};
 use crate::workflow::projection::ActiveWorkflowProjection;
 
 fn empty_vfs() -> Vfs {
@@ -71,6 +71,22 @@ pub fn append_active_workflow_lifecycle_mount(vfs: &mut Vfs, workflow: &ActiveWo
     } else {
         vfs.mounts.push(mount);
     }
+}
+
+pub fn append_lifecycle_run_mount_if_missing(vfs: &mut Vfs, run_id: Uuid) {
+    if vfs
+        .mounts
+        .iter()
+        .any(|candidate| candidate.id == "lifecycle")
+    {
+        return;
+    }
+    vfs.mounts.push(build_lifecycle_run_mount(run_id));
+}
+
+pub fn ensure_agent_run_lifecycle_mount(mut vfs: Vfs, run_id: Uuid) -> Vfs {
+    append_lifecycle_run_mount_if_missing(&mut vfs, run_id);
+    vfs
 }
 
 pub fn ensure_active_workflow_lifecycle_mount(
@@ -247,5 +263,68 @@ mod tests {
             )
         );
         assert_eq!(vfs.default_mount_id.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn ensure_agent_run_lifecycle_mount_adds_run_scoped_mount() {
+        let run_id = Uuid::new_v4();
+        let vfs = ensure_agent_run_lifecycle_mount(workflow_vfs(), run_id);
+
+        let lifecycle = vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == "lifecycle")
+            .expect("lifecycle mount");
+
+        assert_eq!(lifecycle.provider, "lifecycle_vfs");
+        assert_eq!(lifecycle.root_ref, format!("lifecycle://run/{run_id}"));
+        assert_eq!(
+            lifecycle
+                .metadata
+                .get("scope")
+                .and_then(serde_json::Value::as_str),
+            Some("run")
+        );
+    }
+
+    #[test]
+    fn ensure_agent_run_lifecycle_mount_preserves_node_scoped_mount() {
+        let workflow = active_workflow_projection();
+        let vfs = ensure_active_workflow_lifecycle_mount(Some(workflow_vfs()), Some(&workflow))
+            .expect("vfs");
+
+        let vfs = ensure_agent_run_lifecycle_mount(vfs, Uuid::new_v4());
+        let lifecycle_mounts = vfs
+            .mounts
+            .iter()
+            .filter(|mount| mount.id == "lifecycle")
+            .collect::<Vec<_>>();
+
+        assert_eq!(lifecycle_mounts.len(), 1);
+        assert_eq!(
+            lifecycle_mounts[0]
+                .metadata
+                .get("scope")
+                .and_then(serde_json::Value::as_str),
+            None
+        );
+        assert_eq!(
+            lifecycle_mounts[0]
+                .metadata
+                .get("orchestration_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some(),
+            true
+        );
+    }
+
+    fn workflow_vfs() -> Vfs {
+        Vfs {
+            mounts: vec![workspace_mount()],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        }
     }
 }

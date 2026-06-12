@@ -74,8 +74,8 @@ pub use frame_surface::{AgentFrameSurfaceExt, FrameContextBundleSummary, FrameSu
 pub use graph_resolver::{ResolvedWorkflowGraph, WorkflowGraphResolver};
 pub use lifecycle::mount::{
     LifecycleMountSurface, append_active_workflow_lifecycle_mount,
-    ensure_active_workflow_lifecycle_mount, lifecycle_mount_surface_for_active_workflow,
-    writable_port_keys_for_active_workflow,
+    ensure_active_workflow_lifecycle_mount, ensure_agent_run_lifecycle_mount,
+    lifecycle_mount_surface_for_active_workflow, writable_port_keys_for_active_workflow,
 };
 pub use lifecycle_gate_service::LifecycleGateService;
 pub use orchestration::{

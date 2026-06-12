@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../../../generated/common-contracts";
 import type { BackboneEvent, Turn } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "../model/types";
-import { computeProjectionRefreshKey } from "./SessionChatView";
+import { computeProjectionRefreshKey, extractTurnLifecycleEventType } from "./SessionChatViewModel";
 import {
   collectAllPlatformEvents,
   collectRenderableSystemEvents,
@@ -69,6 +69,13 @@ function platformMetaEvent(key: string, value: Record<string, JsonValue>): Backb
   };
 }
 
+function turnTerminalMetaEvent(terminalType: "turn_completed" | "turn_failed" | "turn_interrupted"): BackboneEvent {
+  return platformMetaEvent("turn_terminal", {
+    terminal_type: terminalType,
+    message: null,
+  });
+}
+
 describe("computeProjectionRefreshKey", () => {
   it("普通 delta event 不推进 projection refresh key", () => {
     const events = [
@@ -119,6 +126,23 @@ describe("computeProjectionRefreshKey", () => {
     ];
 
     expect(computeProjectionRefreshKey(events)).toBe(2);
+  });
+
+  it("platform turn_terminal meta event 会推进 projection refresh key", () => {
+    const events = [
+      eventEnvelope(1, agentDeltaEvent("assistant-1")),
+      eventEnvelope(7, turnTerminalMetaEvent("turn_completed")),
+    ];
+
+    expect(computeProjectionRefreshKey(events)).toBe(7);
+  });
+});
+
+describe("extractTurnLifecycleEventType", () => {
+  it("从 turn_terminal platform 事件提取终态类型", () => {
+    expect(extractTurnLifecycleEventType(turnTerminalMetaEvent("turn_completed"))).toBe("turn_completed");
+    expect(extractTurnLifecycleEventType(turnTerminalMetaEvent("turn_failed"))).toBe("turn_failed");
+    expect(extractTurnLifecycleEventType(turnTerminalMetaEvent("turn_interrupted"))).toBe("turn_interrupted");
   });
 });
 

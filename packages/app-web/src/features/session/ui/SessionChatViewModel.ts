@@ -7,6 +7,12 @@ import type { SessionEventEnvelope } from "../model/types";
 import { extractPlatformEventType } from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
 
+export type SessionTurnLifecycleEventType =
+  | "turn_started"
+  | "turn_completed"
+  | "turn_failed"
+  | "turn_interrupted";
+
 export function toExecutorConfigSource(
   defaults: ProjectAgentExecutor | TaskSessionExecutorSummary | ConversationEffectiveExecutorConfigView | null | undefined,
 ): ExecutorConfigSource | null {
@@ -35,6 +41,31 @@ export function resolveExecutorFromHint(
   const normalized = normalizeExecutorToken(trimmed);
   const matched = executors.find((item) => normalizeExecutorToken(item.id) === normalized);
   return matched?.id ?? trimmed;
+}
+
+function isTurnTerminalType(value: unknown): value is Exclude<SessionTurnLifecycleEventType, "turn_started"> {
+  return value === "turn_completed" ||
+    value === "turn_failed" ||
+    value === "turn_interrupted";
+}
+
+export function extractTurnLifecycleEventType(event: BackboneEvent): SessionTurnLifecycleEventType | null {
+  if (event.type === "turn_started" || event.type === "turn_completed") {
+    return event.type;
+  }
+  if (
+    event.type !== "platform" ||
+    event.payload.kind !== "session_meta_update" ||
+    event.payload.data.key !== "turn_terminal"
+  ) {
+    return null;
+  }
+  const value = event.payload.data.value;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const terminalType = (value as { terminal_type?: unknown }).terminal_type;
+  return isTurnTerminalType(terminalType) ? terminalType : null;
 }
 
 export function collectRenderableSystemEvents(
@@ -122,7 +153,8 @@ function isCompactionSummaryFrame(event: BackboneEvent): boolean {
 }
 
 function isProjectionRefreshEvent(event: BackboneEvent): boolean {
-  if (event.type === "turn_completed") {
+  const turnLifecycleType = extractTurnLifecycleEventType(event);
+  if (turnLifecycleType && turnLifecycleType !== "turn_started") {
     return true;
   }
   if (event.type !== "platform") {

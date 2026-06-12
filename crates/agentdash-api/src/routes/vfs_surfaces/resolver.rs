@@ -8,7 +8,8 @@ use agentdash_application::vfs::{
 };
 use agentdash_application::workflow::AgentFrameSurfaceExt;
 use agentdash_application::workflow::{
-    ensure_active_workflow_lifecycle_mount, resolve_active_workflow_projection_for_session,
+    ensure_active_workflow_lifecycle_mount, ensure_agent_run_lifecycle_mount,
+    resolve_active_workflow_projection_for_session,
 };
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::Vfs;
@@ -325,8 +326,11 @@ pub(crate) async fn resolve_agent_run_frame_vfs_for_agent(
         })?,
         None => None,
     };
-    let vfs = ensure_active_workflow_lifecycle_mount(frame.typed_vfs(), active_workflow.as_ref())
-        .unwrap_or_default();
+    let vfs = ensure_agent_run_lifecycle_mount(
+        ensure_active_workflow_lifecycle_mount(frame.typed_vfs(), active_workflow.as_ref())
+            .unwrap_or_default(),
+        run.id,
+    );
 
     Ok(Some(AgentRunFrameVfsResolution { frame, vfs }))
 }

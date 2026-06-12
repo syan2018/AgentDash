@@ -120,20 +120,19 @@ use agentdash_contracts::workflow::{
     AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse, AgentRunAcceptedRefs,
     AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView, AgentRunCommandReceipt,
-    AgentRunMessageRequest, AgentRunMessageResponse, AgentRunRefDto, AgentRunSteeringRequest,
-    AgentRunSteeringResponse, AgentRunView, AgentRunWorkspaceActionAvailabilityView,
-    AgentRunWorkspaceActionSetView, AgentRunWorkspaceControlPlaneStatus,
-    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
-    AgentRunWorkspaceShell, AgentRunWorkspaceView, ConversationCommandKind,
-    ConversationCommandPlacement, ConversationCommandSetView, ConversationCommandStaleGuardView,
-    ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
+    AgentRunComposerSubmitRequest, AgentRunComposerSubmitResponse, AgentRunRefDto, AgentRunView,
+    AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
+    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
+    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
+    AgentRunWorkspaceView, ConversationCommandKind, ConversationCommandPlacement,
+    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
+    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
     ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
     ConversationPendingSnapshotView, DefinitionSource, DeleteAgentProcedureResponse,
     DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
-    EnqueuePendingMessageRequest, EnqueuePendingMessageResponse, HookPresetResponse,
-    HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
-    LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
+    HookPresetResponse, HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto,
+    LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
     OrchestrationInstanceView, PendingMessageView, PendingQueuePauseReasonDto,
     PendingQueueStateView, PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse,
     ProjectActiveAgentsView, RegisterHookPresetResponse, ResumePendingQueueResponse,
@@ -447,11 +446,9 @@ fn main() {
             export_all::<RuntimeSessionExecutionAnchorDto>(dir);
             export_all::<AgentRunCommandPreconditionView>(dir);
             export_all::<AgentRunCommandOnlyRequest>(dir);
-            export_all::<AgentRunMessageRequest>(dir);
-            export_all::<AgentRunMessageResponse>(dir);
-            export_all::<AgentRunSteeringRequest>(dir);
+            export_all::<AgentRunComposerSubmitRequest>(dir);
+            export_all::<AgentRunComposerSubmitResponse>(dir);
             export_all::<RuntimeSessionCommandStateDto>(dir);
-            export_all::<AgentRunSteeringResponse>(dir);
             export_all::<AgentRunCommandReceipt>(dir);
             export_all::<AgentRunAcceptedRefs>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
@@ -498,8 +495,6 @@ fn main() {
             export_all::<PendingMessageView>(dir);
             export_all::<PendingQueuePauseReasonDto>(dir);
             export_all::<PendingQueueStateView>(dir);
-            export_all::<EnqueuePendingMessageRequest>(dir);
-            export_all::<EnqueuePendingMessageResponse>(dir);
             export_all::<ResumePendingQueueResponse>(dir);
             export_all::<AgentRunWorkspaceListEntry>(dir);
             export_all::<AgentRunWorkspaceListView>(dir);

@@ -46,19 +46,18 @@ fetchAgentFrameRuntime(frameId): Promise<AgentFrameRuntimeView>
 fetchRuntimeTrace(runtimeSessionId): Promise<RuntimeSessionTraceView>
 ```
 
-Session command APIs use runtime session as the delivery/control entrypoint:
+AgentRun command APIs use AgentRun workspace identity as the delivery/control entrypoint:
 
 ```ts
-sendAgentRunMessageByRuntimeSession(runtimeSessionId, request: AgentRunMessageRequest)
-steerAgentRunByRuntimeSession(runtimeSessionId, request: AgentRunSteeringRequest)
-listPendingMessages(runtimeSessionId)
-enqueuePendingMessage(runtimeSessionId, request)
-deletePendingMessage(runtimeSessionId, messageId)
-promotePendingMessage(runtimeSessionId, messageId)
+submitAgentRunComposerInput(runId, agentId, request: AgentRunComposerSubmitRequest)
+listAgentRunPendingMessages(runId, agentId)
+deleteAgentRunPendingMessage(runId, agentId, messageId)
+promoteAgentRunPendingMessage(runId, agentId, messageId, request)
+resumeAgentRunPendingQueue(runId, agentId, request)
 ```
 
-These calls target `/sessions/{runtimeSessionId}/...`; run / agent / frame refs are resolved
-by backend anchors and should not be encoded into the frontend route.
+These calls target `/agent-runs/{runId}/agents/{agentId}/...`; runtime session remains a delivery ref
+inside the workspace snapshot and is not a frontend command owner.
 
 ## Definition Contract
 

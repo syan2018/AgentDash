@@ -1128,8 +1128,8 @@ pub struct AgentRunWorkspaceView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRunMessageRequest {
-    /// canonical 用户输入，与 steer（`AgentRunSteeringRequest.input`）同形。
+pub struct AgentRunComposerSubmitRequest {
+    /// canonical 用户输入，由后端按当前 AgentRun workspace state 归类为 send_next / enqueue / steer。
     pub input: Vec<codex::UserInput>,
     pub client_command_id: String,
     pub command: AgentRunCommandPreconditionView,
@@ -1140,23 +1140,18 @@ pub struct AgentRunMessageRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRunMessageResponse {
+pub struct AgentRunComposerSubmitResponse {
+    pub accepted_kind: ConversationCommandKind,
     pub command_receipt: AgentRunCommandReceipt,
-    pub accepted_refs: AgentRunAcceptedRefs,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunSteeringRequest {
-    pub input: Vec<codex::UserInput>,
-    pub client_command_id: String,
-    pub command: AgentRunCommandPreconditionView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub expected_turn_id: Option<String>,
+    pub accepted_refs: Option<AgentRunAcceptedRefs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub expected_runtime_session_id: Option<String>,
+    pub pending_message: Option<PendingMessageView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub state: Option<RuntimeSessionCommandStateDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1169,14 +1164,6 @@ pub struct RuntimeSessionCommandStateDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunSteeringResponse {
-    pub command_receipt: AgentRunCommandReceipt,
-    pub accepted_refs: AgentRunAcceptedRefs,
-    pub state: RuntimeSessionCommandStateDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1427,32 +1414,8 @@ pub struct PendingMessageView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct EnqueuePendingMessageRequest {
-    pub input: Vec<codex::UserInput>,
-    pub client_command_id: String,
-    pub command: AgentRunCommandPreconditionView,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub expected_turn_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub expected_runtime_session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "JsonValue")]
-    pub executor_config: Option<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct AgentRunCommandOnlyRequest {
     pub command: AgentRunCommandPreconditionView,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct EnqueuePendingMessageResponse {
-    pub command_receipt: AgentRunCommandReceipt,
-    pub message: PendingMessageView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

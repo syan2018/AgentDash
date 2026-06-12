@@ -31,9 +31,7 @@ impl TurnSupervisor {
             let (tx, _rx) = broadcast::channel(1024);
             super::hub_support::build_session_runtime(tx)
         });
-        if let Some(turn) = runtime.turn_state.active_turn_mut() {
-            turn.cancel_requested = true;
-        }
+        runtime.turn_state.request_cancel();
         let (current_turn_id, processor_tx) = runtime
             .turn_state
             .active_turn()
@@ -218,6 +216,34 @@ mod tests {
             Uuid::new_v4(),
             Uuid::new_v4(),
         )
+    }
+
+    #[tokio::test]
+    async fn request_cancel_keeps_runtime_running_as_cancelling() {
+        let (registry, supervisor) = test_supervisor();
+
+        supervisor
+            .claim_prompt("session-1")
+            .await
+            .expect("claim should succeed");
+        supervisor
+            .activate_turn(
+                "session-1",
+                SessionProfile {
+                    capability_state: CapabilityState::default(),
+                },
+                test_turn("turn-1"),
+            )
+            .await;
+
+        let snapshot = supervisor.request_cancel("session-1").await;
+
+        assert!(snapshot.running);
+        assert_eq!(snapshot.current_turn_id.as_deref(), Some("turn-1"));
+        let (running, turn_id, cancelling) = registry.execution_state_snapshot("session-1").await;
+        assert!(running);
+        assert_eq!(turn_id.as_deref(), Some("turn-1"));
+        assert!(cancelling);
     }
 
     #[tokio::test]

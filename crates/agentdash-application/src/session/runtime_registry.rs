@@ -74,7 +74,7 @@ impl SessionRuntimeRegistry {
             .collect()
     }
 
-    pub async fn execution_state_snapshot(&self, session_id: &str) -> (bool, Option<String>) {
+    pub async fn execution_state_snapshot(&self, session_id: &str) -> (bool, Option<String>, bool) {
         let runtimes = self.runtimes.lock().await;
         runtimes
             .get(session_id)
@@ -85,9 +85,10 @@ impl SessionRuntimeRegistry {
                         .turn_state
                         .active_turn()
                         .map(|turn| turn.turn_id.clone()),
+                    runtime.turn_state.is_cancelling(),
                 )
             })
-            .unwrap_or((false, None))
+            .unwrap_or((false, None, false))
     }
 
     /// Return the cached hook runtime for a delivery RuntimeSession adapter.

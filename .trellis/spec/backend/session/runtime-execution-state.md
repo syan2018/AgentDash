@@ -256,6 +256,92 @@ POST   /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}/prom
 - `pnpm --filter app-web test -- lifecycle` 覆盖 service 调用面。
 - grep 检查产品代码和 session specs 中 AgentRun Workspace route names 与 generated DTO names 一致。
 
+## Scenario: Cancelled Turn Closing State
+
+### 1. Scope / Trigger
+
+AgentRun workspace、RuntimeSession runtime-control 和 Pi Agent connector 都需要区分
+“取消请求已发出”与“执行器已可复用”。取消请求到 terminal / idle 收口之间的运行态使用
+`Cancelling` 表达，原因是用户命令的可执行性必须同时观察 platform turn、connector live session
+和 terminal trace facts。
+
+### 2. Signatures
+
+Application execution state:
+
+```rust
+pub enum SessionExecutionState {
+    Idle,
+    Running { turn_id: Option<String> },
+    Cancelling { turn_id: Option<String> },
+    Completed { turn_id: String },
+    Failed { turn_id: String, message: Option<String> },
+    Interrupted { turn_id: Option<String>, message: Option<String> },
+}
+```
+
+Workspace control status values:
+
+```text
+AgentRunWorkspaceControlPlaneStatus::Cancelling -> "cancelling"
+SessionRuntimeControlPlaneStatus::AnchoredCancelling -> "anchored_cancelling"
+```
+
+### 3. Contracts
+
+- `TurnSupervisor::request_cancel(session_id)` keeps the active turn reference and moves the
+  runtime snapshot into cancelling state.
+- `SessionCoreService::inspect_session_execution_state(session_id)` returns
+  `SessionExecutionState::Cancelling { turn_id }` while the in-memory turn is cancelling.
+- AgentRun workspace `actions.send_next`、`actions.enqueue` 和 `actions.steer` are disabled while
+  cancelling; `actions.cancel` can remain enabled as an idempotent cancel command.
+- `PiAgentConnector::cancel(session_id)` aborts the agent and waits for the in-process Agent loop
+  to become idle before the connector reports cancel completion.
+- RuntimeSession detail maps cancelling state to command state `status="cancelling"` with the active
+  `turn_id` when available.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Active turn receives cancel request | Runtime state becomes `Cancelling { turn_id }` |
+| Workspace is cancelling | `send_next=false`, `enqueue=false`, `steer=false` |
+| Workspace is cancelling and cancel is requested again | Cancel is idempotent and keeps cancelling state |
+| Pi Agent provider stream is pending when abort arrives | Agent loop emits aborted assistant terminal and reaches idle |
+| Next prompt starts after Pi Agent cancel completion | Prompt does not fail with stale `is_streaming` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: User cancels a running Pi Agent turn, workspace shows cancelling, then ready only after
+  terminal facts and connector idle are aligned.
+- Base: User opens RuntimeSession detail during cancelling and sees `anchored_cancelling` instead
+  of idle.
+- Bad: Workspace enables `send_next` from platform idle while connector agent is still streaming.
+
+### 6. Tests Required
+
+- `TurnSupervisor` test asserts `request_cancel` keeps runtime running as cancelling with the same
+  turn id.
+- Agent loop test asserts abort interrupts a pending provider stream and `wait_for_idle` completes.
+- Pi Agent connector test asserts cancel waits for agent idle and the next prompt reuses the same
+  runtime without stale processing errors.
+- Frontend chat control test asserts cancelling projection exposes no send / enqueue / steer user
+  input path.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+cancel requested -> clear_active_turn -> workspace ready -> next prompt reaches busy connector
+```
+
+#### Correct
+
+```text
+cancel requested -> runtime cancelling -> connector idle confirmed -> terminal fact visible -> workspace ready
+```
+
 ## Terminal Effects
 
 `turn_terminal` event 先持久化，`SessionMeta.last_delivery_status` 由事件投影更新。

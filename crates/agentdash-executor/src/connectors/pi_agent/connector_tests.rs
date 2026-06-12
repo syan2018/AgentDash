@@ -9,7 +9,11 @@ use agentdash_domain::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
 use agentdash_spi::{Mount, MountCapability};
 use chrono::Utc;
-use std::sync::{Mutex as StdMutex, RwLock};
+use std::sync::{
+    Mutex as StdMutex, RwLock,
+    atomic::{AtomicUsize, Ordering},
+};
+use std::time::Duration;
 
 fn test_source() -> SourceInfo {
     SourceInfo {
@@ -92,6 +96,34 @@ impl LlmBridge for ModelRecordingBridge {
             agentdash_agent::BridgeResponse {
                 message: agentdash_agent::AgentMessage::assistant("done"),
                 raw_content: vec![agentdash_agent::ContentPart::text("done")],
+                usage: agentdash_agent::TokenUsage::default(),
+            },
+        )))
+    }
+}
+
+#[derive(Default)]
+struct CancelThenDoneBridge {
+    calls: AtomicUsize,
+    first_provider_started: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl LlmBridge for CancelThenDoneBridge {
+    async fn stream_complete(
+        &self,
+        _request: agentdash_agent::BridgeRequest,
+    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = agentdash_agent::StreamChunk> + Send>> {
+        let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call_index == 0 {
+            self.first_provider_started.notify_waiters();
+            return Box::pin(futures::stream::pending());
+        }
+
+        Box::pin(tokio_stream::once(agentdash_agent::StreamChunk::Done(
+            agentdash_agent::BridgeResponse {
+                message: agentdash_agent::AgentMessage::assistant("second done"),
+                raw_content: vec![agentdash_agent::ContentPart::text("second done")],
                 usage: agentdash_agent::TokenUsage::default(),
             },
         )))
@@ -2407,6 +2439,50 @@ async fn prompt_rebuilds_live_agent_when_model_selection_changes() {
         vec![("model-a".to_string(), 1), ("model-b".to_string(), 3)],
         "切换模型后应使用新 bridge，同时保留上一轮会话消息"
     );
+}
+
+#[tokio::test]
+async fn cancel_waits_for_agent_idle_before_next_prompt() {
+    let bridge = Arc::new(CancelThenDoneBridge::default());
+    let connector = PiAgentConnector::new(bridge.clone(), "系统提示");
+    let session_id = "session-cancel-idle";
+
+    let first_provider_started = bridge.first_provider_started.notified();
+    tokio::pin!(first_provider_started);
+    let _first_stream = connector
+        .prompt(
+            session_id,
+            None,
+            &PromptPayload::Text("first".to_string()),
+            execution_context_with_config(agentdash_spi::AgentConfig::new("PI_AGENT")),
+        )
+        .await
+        .expect("first prompt should start");
+    first_provider_started.await;
+
+    tokio::time::timeout(Duration::from_secs(1), connector.cancel(session_id))
+        .await
+        .expect("cancel should wait for provider cancellation and agent idle")
+        .expect("cancel should succeed");
+
+    let mut second_stream = connector
+        .prompt(
+            session_id,
+            None,
+            &PromptPayload::Text("second".to_string()),
+            execution_context_with_config(agentdash_spi::AgentConfig::new("PI_AGENT")),
+        )
+        .await
+        .expect("second prompt should not hit stale Pi Agent is_streaming");
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while let Some(next) = second_stream.next().await {
+            next.expect("second stream item should succeed");
+        }
+    })
+    .await
+    .expect("second stream should complete");
+    assert_eq!(bridge.calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

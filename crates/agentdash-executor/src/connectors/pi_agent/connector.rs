@@ -790,8 +790,17 @@ impl AgentConnector for PiAgentConnector {
     }
 
     async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
-        if let Some(runtime) = self.agents.lock().await.get(session_id) {
+        let runtime = {
+            let mut agents = self.agents.lock().await;
+            agents.remove(session_id)
+        };
+        if let Some(runtime) = runtime {
             runtime.agent.abort();
+            runtime.agent.wait_for_idle().await;
+            self.agents
+                .lock()
+                .await
+                .insert(session_id.to_string(), runtime);
         }
         Ok(())
     }

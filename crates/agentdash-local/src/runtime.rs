@@ -358,7 +358,12 @@ async fn count_active_sessions(
     let states = session_core.inspect_execution_states_bulk(&ids).await?;
     Ok(states
         .values()
-        .filter(|state| matches!(state, SessionExecutionState::Running { .. }))
+        .filter(|state| {
+            matches!(
+                state,
+                SessionExecutionState::Running { .. } | SessionExecutionState::Cancelling { .. }
+            )
+        })
         .count())
 }
 

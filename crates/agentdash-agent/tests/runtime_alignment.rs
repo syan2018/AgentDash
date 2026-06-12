@@ -4,6 +4,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
+use std::time::Duration;
 
 use agentdash_agent::agent_loop::AgentLoopConfig;
 use agentdash_agent::types::TokenUsage;
@@ -809,6 +810,62 @@ async fn abort_becomes_aborted_assistant_message() {
             ..
         })
     ));
+}
+
+#[tokio::test]
+async fn abort_interrupts_pending_provider_stream_and_waits_for_idle() {
+    let provider_stream_started = Arc::new(Notify::new());
+    let release_provider_task = Arc::new(Notify::new());
+    let bridge = ScriptedBridge::new(vec![
+        vec![
+            ScriptStep::Signal(provider_stream_started.clone()),
+            ScriptStep::Wait(release_provider_task.clone()),
+            ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(bridge_response(
+                assistant_text("ignored after cancel"),
+            ))),
+        ],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("second turn")),
+        ))],
+    ]);
+    let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
+
+    let provider_started = provider_stream_started.notified();
+    tokio::pin!(provider_started);
+    let (_rx, first_handle) = agent
+        .prompt(AgentMessage::user("first"))
+        .expect("first prompt should start");
+    provider_started.await;
+
+    agent.abort();
+    tokio::time::timeout(Duration::from_secs(1), agent.wait_for_idle())
+        .await
+        .expect("wait_for_idle should complete after aborting a pending provider stream");
+    release_provider_task.notify_waiters();
+
+    let first_messages = first_handle
+        .await
+        .expect("first task should not panic")
+        .expect("first run should resolve as aborted assistant message");
+    assert!(matches!(
+        first_messages.last(),
+        Some(AgentMessage::Assistant {
+            stop_reason: Some(StopReason::Aborted),
+            ..
+        })
+    ));
+
+    let (_rx, second_handle) = agent
+        .prompt(AgentMessage::user("second"))
+        .expect("second prompt should not see stale is_streaming");
+    let second_messages = second_handle
+        .await
+        .expect("second task should not panic")
+        .expect("second run should succeed");
+    assert_eq!(
+        second_messages.last().and_then(AgentMessage::first_text),
+        Some("second turn")
+    );
 }
 
 #[test]

@@ -781,6 +781,7 @@ pub struct AgentRunWorkspaceShell {
 pub enum AgentRunWorkspaceControlPlaneStatus {
     Ready,
     Running,
+    Cancelling,
     Terminal,
     FrameMissing,
     DeliveryMissing,
@@ -1094,6 +1095,7 @@ pub enum SessionRuntimeControlPlaneStatus {
     UnboundTrace,
     AnchoredIdle,
     AnchoredRunning,
+    AnchoredCancelling,
     Terminal,
     FrameMissing,
 }

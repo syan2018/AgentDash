@@ -50,6 +50,13 @@ const terminalActionsWithStaleRunningBits: AgentRunWorkspaceView["actions"] = {
   cancel: { enabled: false, unavailable_reason: "terminal" },
 };
 
+const cancellingActions: AgentRunWorkspaceView["actions"] = {
+  send_next: { enabled: false, unavailable_reason: "cancelling" },
+  enqueue: { enabled: false, unavailable_reason: "cancelling" },
+  steer: { enabled: false, unavailable_reason: "cancelling" },
+  cancel: { enabled: true },
+};
+
 function deriveControl(
   projectionStatus: "ready" | "refreshing" | "error" | "idle" | "loading",
   workspace: AgentRunWorkspaceView | null,
@@ -146,6 +153,16 @@ describe("AgentRun workspace chat control authority", () => {
     expect(control.primaryAction.kind).toBe("none");
     expect(control.primaryAction.enabled).toBe(false);
     expect(control.secondaryAction).toBeUndefined();
+  });
+
+  it("keeps cancelling projection read-only for user input while cancel remains available", () => {
+    const control = deriveControl("ready", workspaceView("cancelling", cancellingActions));
+
+    expect(control.controlPlaneStatus).toBe("cancelling");
+    expect(control.primaryAction.kind).toBe("none");
+    expect(control.primaryAction.enabled).toBe(false);
+    expect(control.secondaryAction).toBeUndefined();
+    expect(control.cancelAction.enabled).toBe(true);
   });
 
   it("keeps error and stale projection states read-only", () => {

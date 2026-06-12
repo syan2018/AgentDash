@@ -325,9 +325,13 @@ impl Agent {
 
     /// 等待当前 agent loop 完成 — 对齐 Pi `waitForIdle()`
     pub async fn wait_for_idle(&self) {
-        let is_streaming = self.state.lock().await.is_streaming;
-        if is_streaming {
-            self.idle_notify.notified().await;
+        loop {
+            let notified = self.idle_notify.notified();
+            tokio::pin!(notified);
+            if !self.state.lock().await.is_streaming {
+                return;
+            }
+            notified.await;
         }
     }
 
@@ -336,12 +340,7 @@ impl Agent {
     /// 重置全部状态 — 对齐 Pi `reset()`
     pub async fn reset(&mut self) {
         self.abort();
-        {
-            let is_streaming = self.state.lock().await.is_streaming;
-            if is_streaming {
-                self.idle_notify.notified().await;
-            }
-        }
+        self.wait_for_idle().await;
         {
             let mut s = self.state.lock().await;
             s.messages.clear();

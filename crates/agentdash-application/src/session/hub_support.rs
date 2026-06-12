@@ -177,24 +177,44 @@ pub(super) enum TurnState {
     Idle,
     Claimed,
     Active(Box<TurnExecution>),
+    Cancelling(Box<TurnExecution>),
 }
 
 impl TurnState {
     pub fn is_running(&self) -> bool {
-        matches!(self, Self::Claimed | Self::Active(_))
+        matches!(self, Self::Claimed | Self::Active(_) | Self::Cancelling(_))
+    }
+
+    pub fn is_cancelling(&self) -> bool {
+        matches!(self, Self::Cancelling(_))
     }
 
     pub fn active_turn(&self) -> Option<&TurnExecution> {
         match self {
-            Self::Active(turn) => Some(turn.as_ref()),
+            Self::Active(turn) | Self::Cancelling(turn) => Some(turn.as_ref()),
             _ => None,
         }
     }
 
     pub fn active_turn_mut(&mut self) -> Option<&mut TurnExecution> {
         match self {
-            Self::Active(turn) => Some(turn.as_mut()),
+            Self::Active(turn) | Self::Cancelling(turn) => Some(turn.as_mut()),
             _ => None,
+        }
+    }
+
+    pub fn request_cancel(&mut self) {
+        let previous = std::mem::replace(self, Self::Idle);
+        match previous {
+            Self::Active(mut turn) => {
+                turn.cancel_requested = true;
+                *self = Self::Cancelling(turn);
+            }
+            Self::Cancelling(mut turn) => {
+                turn.cancel_requested = true;
+                *self = Self::Cancelling(turn);
+            }
+            other => *self = other,
         }
     }
 }

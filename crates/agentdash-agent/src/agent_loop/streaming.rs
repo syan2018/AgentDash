@@ -265,11 +265,26 @@ pub(super) async fn stream_assistant_response(
     }
 
     let mut partial = PartialAssistantState::new();
-    let mut stream = bridge.stream_complete(request).await;
+    let mut stream = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+        stream = bridge.stream_complete(request) => stream,
+    };
     let mut response = None;
     let mut stream_failure = None;
 
-    while let Some(chunk) = stream.next().await {
+    loop {
+        let chunk = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                stream_failure = Some(AgentMessage::error_assistant("Agent run aborted", true));
+                break;
+            }
+            chunk = stream.next() => chunk,
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
         if cancel.is_cancelled() {
             stream_failure = Some(AgentMessage::error_assistant("Agent run aborted", true));
             break;

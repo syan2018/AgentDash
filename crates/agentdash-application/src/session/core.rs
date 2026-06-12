@@ -151,12 +151,17 @@ impl SessionCoreService {
         &self,
         session_id: &str,
     ) -> SessionStoreResult<SessionExecutionState> {
-        let (running, live_turn_id) = self
+        let (running, live_turn_id, cancelling) = self
             .runtime_registry
             .execution_state_snapshot(session_id)
             .await;
 
         if running {
+            if cancelling {
+                return Ok(SessionExecutionState::Cancelling {
+                    turn_id: live_turn_id,
+                });
+            }
             return Ok(SessionExecutionState::Running {
                 turn_id: live_turn_id,
             });

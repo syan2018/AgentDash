@@ -58,7 +58,7 @@ export type AgentRunWorkspaceActionAvailabilityView = { enabled: boolean, unavai
 
 export type AgentRunWorkspaceActionSetView = { send_next: AgentRunWorkspaceActionAvailabilityView, enqueue: AgentRunWorkspaceActionAvailabilityView, steer: AgentRunWorkspaceActionAvailabilityView, cancel: AgentRunWorkspaceActionAvailabilityView, };
 
-export type AgentRunWorkspaceControlPlaneStatus = "ready" | "running" | "terminal" | "frame_missing" | "delivery_missing";
+export type AgentRunWorkspaceControlPlaneStatus = "ready" | "running" | "cancelling" | "terminal" | "frame_missing" | "delivery_missing";
 
 export type AgentRunWorkspaceControlPlaneView = { status: AgentRunWorkspaceControlPlaneStatus, reason?: string, };
 
@@ -154,7 +154,7 @@ export type SessionRuntimeActionAvailabilityView = { enabled: boolean, unavailab
 
 export type SessionRuntimeActionSetView = { send_next: SessionRuntimeActionAvailabilityView, enqueue: SessionRuntimeActionAvailabilityView, steer: SessionRuntimeActionAvailabilityView, cancel: SessionRuntimeActionAvailabilityView, };
 
-export type SessionRuntimeControlPlaneStatus = "unbound_trace" | "anchored_idle" | "anchored_running" | "terminal" | "frame_missing";
+export type SessionRuntimeControlPlaneStatus = "unbound_trace" | "anchored_idle" | "anchored_running" | "anchored_cancelling" | "terminal" | "frame_missing";
 
 export type SessionRuntimeControlPlaneView = { status: SessionRuntimeControlPlaneStatus, reason?: string, };
 

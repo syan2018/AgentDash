@@ -3,7 +3,7 @@
   "name": "session-cancel-runtime-state-convergence",
   "title": "取消后会话运行态模型收敛",
   "description": "修复 AgentRun / RuntimeSession 在取消、打断和下一轮发送之间的运行态事实源漂移，建立统一 Runtime Execution State，避免取消后误 ready、误 steer、Pi Agent already processing 和偶发 Failed to fetch。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

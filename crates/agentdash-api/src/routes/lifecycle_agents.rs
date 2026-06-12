@@ -396,18 +396,31 @@ async fn resolve_agent_run_context(
             "LifecycleAgent {agent_id} 不属于 LifecycleRun {run_id}"
         )));
     }
-    let delivery_runtime_session_id = state
-        .repos
-        .execution_anchor_repo
-        .latest_for_agent(agent.id)
-        .await
-        .map_err(ApiError::from)?
-        .map(|anchor| anchor.runtime_session_id);
+    let delivery_runtime_session_id =
+        delivery_runtime_session_for_agent_run(state, run.id, agent.id).await?;
     Ok(AgentRunContext {
         run,
         agent,
         delivery_runtime_session_id,
     })
+}
+
+async fn delivery_runtime_session_for_agent_run(
+    state: &AppState,
+    run_id: Uuid,
+    agent_id: Uuid,
+) -> Result<Option<String>, ApiError> {
+    let anchors = state
+        .repos
+        .execution_anchor_repo
+        .list_by_run(run_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(anchors
+        .into_iter()
+        .filter(|anchor| anchor.agent_id == agent_id)
+        .max_by_key(|anchor| anchor.updated_at)
+        .map(|anchor| anchor.runtime_session_id))
 }
 
 async fn build_agent_run_workspace_view(
@@ -482,6 +495,10 @@ async fn build_agent_run_workspace_view(
         execution_state,
         agentdash_application::session::SessionExecutionState::Running { .. }
     );
+    let delivery_cancelling = matches!(
+        execution_state,
+        agentdash_application::session::SessionExecutionState::Cancelling { .. }
+    );
     let terminal_agent = is_terminal_agent_status(&context.agent.status);
     let has_frame = frame_runtime.is_some();
     let has_delivery_runtime = runtime_session_id.is_some();
@@ -510,6 +527,11 @@ async fn build_agent_run_workspace_view(
             status: AgentRunWorkspaceControlPlaneStatus::FrameMissing,
             reason: Some("当前 AgentRun 没有可投递的 runtime frame。".to_string()),
         }
+    } else if delivery_cancelling {
+        AgentRunWorkspaceControlPlaneView {
+            status: AgentRunWorkspaceControlPlaneStatus::Cancelling,
+            reason: Some("当前 AgentRun 正在取消中，等待执行器收口。".to_string()),
+        }
     } else if delivery_running {
         AgentRunWorkspaceControlPlaneView {
             status: AgentRunWorkspaceControlPlaneStatus::Running,
@@ -522,10 +544,17 @@ async fn build_agent_run_workspace_view(
         }
     };
     let actions = AgentRunWorkspaceActionSetView {
-        send_next: if has_delivery_runtime && has_frame && !terminal_agent && !delivery_running {
+        send_next: if has_delivery_runtime
+            && has_frame
+            && !terminal_agent
+            && !delivery_running
+            && !delivery_cancelling
+        {
             enabled_action()
         } else if !has_delivery_runtime {
             disabled_action("当前 AgentRun 缺少可投递的 runtime 通道。")
+        } else if delivery_cancelling {
+            disabled_action("当前 AgentRun 正在取消中，等待执行器收口后再发送下一轮消息。")
         } else if delivery_running {
             disabled_action("当前 AgentRun 正在执行中，不能并发发送下一轮消息。")
         } else if terminal_agent {
@@ -537,6 +566,8 @@ async fn build_agent_run_workspace_view(
             enabled_action()
         } else if !has_delivery_runtime {
             disabled_action("当前 AgentRun 缺少可投递的 runtime 通道。")
+        } else if delivery_cancelling {
+            disabled_action("当前 AgentRun 正在取消中，不能排队新消息。")
         } else if !delivery_running {
             disabled_action("当前 AgentRun 未在执行中，直接发送即可。")
         } else if terminal_agent {
@@ -548,11 +579,14 @@ async fn build_agent_run_workspace_view(
             && has_frame
             && !terminal_agent
             && delivery_running
+            && !delivery_cancelling
             && supports_steering
         {
             enabled_action()
         } else if !has_delivery_runtime {
             disabled_action("当前 AgentRun 缺少可投递的 runtime 通道。")
+        } else if delivery_cancelling {
+            disabled_action("当前 AgentRun 正在取消中，不能运行中 steer。")
         } else if !delivery_running {
             disabled_action("当前 AgentRun 未在执行中，不需要运行中 steer。")
         } else if !supports_steering {
@@ -562,7 +596,7 @@ async fn build_agent_run_workspace_view(
         } else {
             disabled_action("当前 AgentRun 没有可投递的 runtime frame。")
         },
-        cancel: if delivery_running {
+        cancel: if delivery_running || delivery_cancelling {
             enabled_action()
         } else {
             disabled_action("当前 AgentRun 没有正在执行的 turn。")
@@ -967,6 +1001,13 @@ fn runtime_command_state_dto(
                 message: None,
             }
         }
+        agentdash_application::session::SessionExecutionState::Cancelling { turn_id } => {
+            RuntimeSessionCommandStateDto {
+                status: "cancelling".to_string(),
+                turn_id,
+                message: Some("当前执行正在取消中。".to_string()),
+            }
+        }
         agentdash_application::session::SessionExecutionState::Completed { turn_id } => {
             RuntimeSessionCommandStateDto {
                 status: "completed".to_string(),
@@ -1014,6 +1055,9 @@ fn workspace_delivery_status(
         agentdash_application::session::SessionExecutionState::Running { .. } => {
             "running".to_string()
         }
+        agentdash_application::session::SessionExecutionState::Cancelling { .. } => {
+            "cancelling".to_string()
+        }
         agentdash_application::session::SessionExecutionState::Completed { .. } => {
             "completed".to_string()
         }
@@ -1037,6 +1081,7 @@ fn execution_state_turn_id(
 ) -> Option<String> {
     match execution_state {
         agentdash_application::session::SessionExecutionState::Running { turn_id }
+        | agentdash_application::session::SessionExecutionState::Cancelling { turn_id }
         | agentdash_application::session::SessionExecutionState::Interrupted { turn_id, .. } => {
             turn_id.clone()
         }

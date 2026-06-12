@@ -249,6 +249,7 @@ pub async fn get_session_runtime_control(
         .await?;
     let delivery_running = meta.last_delivery_status == ExecutionStatus::Running
         || matches!(execution_state, SessionExecutionState::Running { .. });
+    let delivery_cancelling = matches!(execution_state, SessionExecutionState::Cancelling { .. });
     let terminal_agent = is_terminal_agent_status(&agent.status);
     let has_frame = frame_runtime.is_some();
     let supports_steering = if delivery_running {
@@ -270,6 +271,11 @@ pub async fn get_session_runtime_control(
             status: SessionRuntimeControlPlaneStatus::FrameMissing,
             reason: Some("当前 Agent 没有可投递的 runtime frame。".to_string()),
         }
+    } else if delivery_cancelling {
+        SessionRuntimeControlPlaneView {
+            status: SessionRuntimeControlPlaneStatus::AnchoredCancelling,
+            reason: Some("当前 Session 正在取消中，等待执行器收口。".to_string()),
+        }
     } else if delivery_running {
         SessionRuntimeControlPlaneView {
             status: SessionRuntimeControlPlaneStatus::AnchoredRunning,
@@ -281,8 +287,10 @@ pub async fn get_session_runtime_control(
             reason: None,
         }
     };
-    let send_next = if has_frame && !terminal_agent && !delivery_running {
+    let send_next = if has_frame && !terminal_agent && !delivery_running && !delivery_cancelling {
         enabled_action()
+    } else if delivery_cancelling {
+        disabled_action("当前 Session 正在取消中，等待执行器收口后再发送下一轮消息。")
     } else if delivery_running {
         disabled_action("当前 Session 正在执行中，不能并发发送下一轮消息。")
     } else if terminal_agent {
@@ -290,8 +298,15 @@ pub async fn get_session_runtime_control(
     } else {
         disabled_action("当前 Agent 没有可投递的 runtime frame。")
     };
-    let steer = if has_frame && !terminal_agent && delivery_running && supports_steering {
+    let steer = if has_frame
+        && !terminal_agent
+        && delivery_running
+        && !delivery_cancelling
+        && supports_steering
+    {
         enabled_action()
+    } else if delivery_cancelling {
+        disabled_action("当前 Session 正在取消中，不能运行中 steer。")
     } else if !delivery_running {
         disabled_action("当前 Session 未在执行中，不需要运行中 steer。")
     } else if !supports_steering {
@@ -301,14 +316,16 @@ pub async fn get_session_runtime_control(
     } else {
         disabled_action("当前 Agent 没有可投递的 runtime frame。")
     };
-    let cancel = if delivery_running {
+    let cancel = if delivery_running || delivery_cancelling {
         enabled_action()
     } else {
         disabled_action("当前 Session 没有正在执行的 turn。")
     };
     // enqueue: running 且有 frame 且未终止时可排队
-    let enqueue = if has_frame && !terminal_agent && delivery_running {
+    let enqueue = if has_frame && !terminal_agent && delivery_running && !delivery_cancelling {
         enabled_action()
+    } else if delivery_cancelling {
+        disabled_action("当前 Session 正在取消中，不能排队新消息。")
     } else if !delivery_running {
         disabled_action("当前 Session 未在执行中，直接发送即可。")
     } else if terminal_agent {
@@ -403,6 +420,12 @@ pub async fn get_session_state(
             status: "running".to_string(),
             turn_id,
             message: None,
+        },
+        SessionExecutionState::Cancelling { turn_id } => SessionExecutionStateResponse {
+            session_id,
+            status: "cancelling".to_string(),
+            turn_id,
+            message: Some("当前执行正在取消中。".to_string()),
         },
         SessionExecutionState::Completed { turn_id } => SessionExecutionStateResponse {
             session_id,

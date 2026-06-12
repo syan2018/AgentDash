@@ -222,6 +222,9 @@ pub enum SessionExecutionState {
     Running {
         turn_id: Option<String>,
     },
+    Cancelling {
+        turn_id: Option<String>,
+    },
     Completed {
         turn_id: String,
     },

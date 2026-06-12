@@ -17,9 +17,9 @@ use crate::{
     rpc::ApiError,
 };
 
-mod dto;
+pub(crate) mod dto;
 mod helpers;
-mod resolver;
+pub(crate) mod resolver;
 
 pub use dto::*;
 use helpers::{

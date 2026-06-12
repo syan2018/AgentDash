@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
 use agentdash_application::session::{SessionExecutionState, SessionMeta};
+use agentdash_application::vfs::ResolvedVfsSurfaceSource as AppResolvedVfsSurfaceSource;
 use agentdash_application::workflow::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
     AgentRunMessageCommand, AgentRunMessageLaunchDeliveryPort, AgentRunMessageService,
     AgentRunSteeringCommand, AgentRunSteeringService, ConversationModelConfigInput,
     ConversationModelConfigResolver, lifecycle_run_view_builder,
+    resolve_active_workflow_projection_for_session,
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageRequest,
@@ -13,10 +15,11 @@ use agentdash_contracts::workflow::{
     AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
     AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, EnqueuePendingMessageRequest, EnqueuePendingMessageResponse,
-    LifecycleRunRefDto, LifecycleSubjectAssociationDto, PendingMessageView,
-    PendingQueuePauseReasonDto, PendingQueueStateView, ResumePendingQueueResponse,
-    RuntimeSessionCommandStateDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
+    AgentRunWorkspaceView, ConversationDiagnosticView, EnqueuePendingMessageRequest,
+    EnqueuePendingMessageResponse, LifecycleRunRefDto, LifecycleSubjectAssociationDto,
+    PendingMessageView, PendingQueuePauseReasonDto, PendingQueueStateView,
+    ResumePendingQueueResponse, RuntimeSessionCommandStateDto, RuntimeSessionRefDto,
+    RuntimeSessionTraceMeta, ValidationSeverity,
 };
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use agentdash_spi::AgentConfig;
@@ -33,6 +36,7 @@ use crate::{
     routes::{
         lifecycle_contracts::{agent_run_to_contract, subject_association_to_contract},
         lifecycle_views::{agent_frame_runtime_to_view, runtime_refs_for_agent},
+        vfs_surfaces::{dto as vfs_surface_dto, resolver::build_surface_summary},
     },
     rpc::ApiError,
 };
@@ -595,9 +599,17 @@ async fn build_agent_run_workspace_view(
     let frame_execution_profile = frame
         .as_ref()
         .and_then(|frame| frame.typed_execution_profile());
-    let resource_surface = frame
-        .as_ref()
-        .and_then(|frame| frame.vfs_surface_json.clone());
+    let resource_surface = match frame.as_ref().and_then(|frame| frame.typed_vfs()) {
+        Some(vfs) => {
+            let source = AppResolvedVfsSurfaceSource::AgentRun {
+                run_id: context.run.id,
+                agent_id: context.agent.id,
+            };
+            let surface = build_surface_summary(state, &source, &vfs).await;
+            Some(vfs_surface_dto::surface_from_application(surface))
+        }
+        None => None,
+    };
     let frame_runtime = match frame.as_ref() {
         Some(frame) => {
             let runtime_refs = runtime_refs_for_agent(state, context.agent.id).await?;
@@ -807,6 +819,12 @@ async fn build_agent_run_workspace_view(
         ..Default::default()
     })
     .view;
+    let resource_diagnostics = workspace_resource_diagnostics(
+        state,
+        runtime_session_id.as_deref(),
+        resource_surface.as_ref(),
+    )
+    .await;
     let conversation = AgentConversationSnapshotResolver::resolve(AgentConversationSnapshotInput {
         project_id: context.run.project_id,
         run_id: context.run.id,
@@ -820,6 +838,7 @@ async fn build_agent_run_workspace_view(
         pending_paused: pause_reason.is_some(),
         pending_visible_message_count,
         resource_surface,
+        resource_diagnostics,
         model_config,
     });
     let shell_title = match meta.as_ref() {
@@ -861,8 +880,77 @@ async fn build_agent_run_workspace_view(
         actions,
         pending_queue,
         pending_messages,
+        resource_surface: conversation.resource_surface.clone(),
         conversation: Some(conversation),
     })
+}
+
+async fn workspace_resource_diagnostics(
+    state: &AppState,
+    runtime_session_id: Option<&str>,
+    resource_surface: Option<&agentdash_contracts::vfs::ResolvedVfsSurface>,
+) -> Vec<ConversationDiagnosticView> {
+    let Some(session_id) = runtime_session_id else {
+        return Vec::new();
+    };
+
+    let active_workflow = match resolve_active_workflow_projection_for_session(
+        session_id,
+        state.repos.agent_procedure_repo.as_ref(),
+        state.repos.agent_frame_repo.as_ref(),
+        state.repos.lifecycle_agent_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.execution_anchor_repo.as_ref(),
+    )
+    .await
+    {
+        Ok(active_workflow) => active_workflow.is_some(),
+        Err(error) => {
+            return vec![ConversationDiagnosticView {
+                code: "resource_active_workflow_projection_unavailable".to_string(),
+                severity: ValidationSeverity::Warning,
+                message: "当前 AgentRun 无法校验 active workflow lifecycle mount。".to_string(),
+                detail: Some(serde_json::json!({ "error": error })),
+            }];
+        }
+    };
+    if !active_workflow {
+        return Vec::new();
+    }
+
+    lifecycle_resource_surface_diagnostics(session_id, active_workflow, resource_surface)
+}
+
+fn lifecycle_resource_surface_diagnostics(
+    session_id: &str,
+    active_workflow: bool,
+    resource_surface: Option<&agentdash_contracts::vfs::ResolvedVfsSurface>,
+) -> Vec<ConversationDiagnosticView> {
+    if !active_workflow {
+        return Vec::new();
+    }
+
+    let has_lifecycle_mount = resource_surface
+        .map(|surface| {
+            surface
+                .mounts
+                .iter()
+                .any(|mount| mount.id == "lifecycle" && mount.provider == "lifecycle_vfs")
+        })
+        .unwrap_or(false);
+    if has_lifecycle_mount {
+        return Vec::new();
+    }
+
+    vec![ConversationDiagnosticView {
+        code: "resource_surface_lifecycle_mount_missing".to_string(),
+        severity: ValidationSeverity::Error,
+        message: "当前 AgentRun 存在 active workflow，但 workspace resource_surface 缺少 lifecycle_vfs mount。"
+            .to_string(),
+        detail: Some(serde_json::json!({
+            "runtime_session_id": session_id,
+        })),
+    }]
 }
 
 async fn resolve_workspace_title(
@@ -1600,6 +1688,10 @@ fn execution_state_turn_id(
 #[cfg(test)]
 mod tests {
     use agentdash_application::session::{ExecutionStatus, TitleSource};
+    use agentdash_contracts::vfs::{
+        ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary,
+        ResolvedVfsSurface, ResolvedVfsSurfaceSource,
+    };
     use agentdash_domain::workflow::LifecycleRun;
 
     use super::*;
@@ -1627,6 +1719,33 @@ mod tests {
             delivery_status: "idle".to_string(),
             last_turn_id: None,
             last_activity_at: "2026-06-12T00:00:00Z".to_string(),
+        }
+    }
+
+    fn test_surface(mounts: Vec<ResolvedMountSummary>) -> ResolvedVfsSurface {
+        ResolvedVfsSurface {
+            surface_ref: "agent-run:run-1:agent-1".to_string(),
+            source: ResolvedVfsSurfaceSource::AgentRun {
+                run_id: "run-1".to_string(),
+                agent_id: "agent-1".to_string(),
+            },
+            mounts,
+            default_mount_id: None,
+        }
+    }
+
+    fn test_mount(id: &str, provider: &str, purpose: ResolvedMountPurpose) -> ResolvedMountSummary {
+        ResolvedMountSummary {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            provider: provider.to_string(),
+            backend_id: provider.to_string(),
+            capabilities: vec!["read".to_string(), "list".to_string()],
+            default_write: false,
+            purpose,
+            backend_online: None,
+            file_count: None,
+            edit_capabilities: ResolvedMountEditCapabilities::default(),
         }
     }
 
@@ -1681,6 +1800,7 @@ mod tests {
             },
             pending_queue: pending_queue_state_view(None, true, 0),
             pending_messages: Vec::new(),
+            resource_surface: None,
             conversation: None,
         };
 
@@ -1724,5 +1844,37 @@ mod tests {
             view.pause_reason,
             Some(PendingQueuePauseReasonDto::TurnInterrupted)
         );
+    }
+
+    #[test]
+    fn lifecycle_resource_diagnostic_reports_missing_mount() {
+        let surface = test_surface(vec![test_mount(
+            "main",
+            "relay_fs",
+            ResolvedMountPurpose::Workspace,
+        )]);
+
+        let diagnostics = lifecycle_resource_surface_diagnostics("session-1", true, Some(&surface));
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "resource_surface_lifecycle_mount_missing"
+                && diagnostic.severity == ValidationSeverity::Error
+        }));
+    }
+
+    #[test]
+    fn lifecycle_resource_diagnostic_accepts_lifecycle_mount() {
+        let surface = test_surface(vec![
+            test_mount("main", "relay_fs", ResolvedMountPurpose::Workspace),
+            test_mount(
+                "lifecycle",
+                "lifecycle_vfs",
+                ResolvedMountPurpose::Lifecycle,
+            ),
+        ]);
+
+        let diagnostics = lifecycle_resource_surface_diagnostics("session-1", true, Some(&surface));
+
+        assert!(diagnostics.is_empty());
     }
 }

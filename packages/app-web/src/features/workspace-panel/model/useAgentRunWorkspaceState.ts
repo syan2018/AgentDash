@@ -5,7 +5,6 @@ import type { AgentFrameHookRuntimeInfo } from "../../../types";
 import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { fetchAgentRunWorkspace } from "../../../services/lifecycle";
-import { resolveVfsSurface } from "../../../services/vfs";
 import type { SessionRuntimeStateStatus } from "../../workspace-runtime";
 
 export interface AgentRunWorkspaceProjectionState {
@@ -57,6 +56,12 @@ function stateMatches(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "AgentRun workspace state 加载失败";
+}
+
+export function agentRunWorkspaceResourceSurface(
+  workspace: AgentRunWorkspaceView,
+): ResolvedVfsSurface | null {
+  return workspace.conversation?.resource_surface ?? workspace.resource_surface ?? null;
 }
 
 export function beginAgentRunWorkspaceStateLoad(
@@ -133,17 +138,7 @@ export function useAgentRunWorkspaceState({
     try {
       const workspace = await fetchAgentRunWorkspace(rid, aid);
       const runtimeSessionId = workspace.delivery_runtime_ref?.runtime_session_id ?? null;
-      const runtimeSurfaceResult = runtimeSessionId
-        ? await Promise.allSettled([
-            resolveVfsSurface({ source_type: "session_runtime", session_id: runtimeSessionId }),
-          ])
-        : [];
-      const runtimeSurface = runtimeSurfaceResult[0]?.status === "fulfilled"
-        ? runtimeSurfaceResult[0].value
-        : null;
-      const runtimeSurfaceError = runtimeSurfaceResult[0]?.status === "rejected"
-        ? errorMessage(runtimeSurfaceResult[0].reason)
-        : null;
+      const runtimeSurface = agentRunWorkspaceResourceSurface(workspace);
 
       if (!canCommit()) return;
       if (workspace.agent) {
@@ -162,7 +157,7 @@ export function useAgentRunWorkspaceState({
         runtime_surface: runtimeSurface,
         hook_runtime: null,
         frame: workspace.frame_runtime ?? null,
-        runtime_surface_error: runtimeSurfaceError,
+        runtime_surface_error: null,
         error: null,
       });
     } catch (error: unknown) {

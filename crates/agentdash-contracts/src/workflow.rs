@@ -7,6 +7,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::shared_library::InstalledAssetSourceDto;
+use crate::vfs::ResolvedVfsSurface;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1036,8 +1037,8 @@ pub struct AgentConversationSnapshot {
     pub commands: ConversationCommandSetView,
     pub pending: ConversationPendingSnapshotView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "JsonValue")]
-    pub resource_surface: Option<Value>,
+    #[ts(optional)]
+    pub resource_surface: Option<ResolvedVfsSurface>,
     #[serde(default)]
     pub diagnostics: Vec<ConversationDiagnosticView>,
 }
@@ -1115,6 +1116,9 @@ pub struct AgentRunWorkspaceView {
     pub pending_queue: PendingQueueStateView,
     #[serde(default)]
     pub pending_messages: Vec<PendingMessageView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resource_surface: Option<ResolvedVfsSurface>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub conversation: Option<AgentConversationSnapshot>,

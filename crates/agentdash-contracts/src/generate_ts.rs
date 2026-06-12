@@ -387,6 +387,42 @@ fn main() {
         },
     );
 
+    // --- vfs-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "vfs-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<ListVfssResponse>(dir);
+            export_all::<ListEntriesResponse>(dir);
+            export_all::<ConfigurableProviderInfo>(dir);
+            export_all::<ResolvedVfsSurface>(dir);
+            export_all::<ResolveSurfaceRequest>(dir);
+            export_all::<SurfaceEntriesResponse>(dir);
+            export_all::<SurfaceReadFileRequest>(dir);
+            export_all::<SurfaceReadFileResponse>(dir);
+            export_all::<SurfaceReadBinaryFileRequest>(dir);
+            export_all::<SurfaceWriteFileRequest>(dir);
+            export_all::<SurfaceWriteFileResponse>(dir);
+            export_all::<SurfaceCreateFileRequest>(dir);
+            export_all::<SurfaceCreateFileResponse>(dir);
+            export_all::<SurfaceDeleteFileRequest>(dir);
+            export_all::<SurfaceDeleteFileResponse>(dir);
+            export_all::<SurfaceRenameFileRequest>(dir);
+            export_all::<SurfaceRenameFileResponse>(dir);
+            export_all::<SurfaceStatFileRequest>(dir);
+            export_all::<SurfaceStatFileResponse>(dir);
+            export_all::<SurfaceApplyPatchRequest>(dir);
+            export_all::<SurfaceApplyPatchResponse>(dir);
+            export_all::<SurfaceUploadBinaryFileResponse>(dir);
+            export_all::<CreateProjectVfsMountRequest>(dir);
+            export_all::<UpdateProjectVfsMountRequest>(dir);
+            export_all::<ProjectVfsMountResponse>(dir);
+            export_all::<DeleteProjectVfsMountResponse>(dir);
+        },
+    );
+
     // --- workflow-contracts.ts ---
     emit_domain(
         &generated_dir,
@@ -508,42 +544,6 @@ fn main() {
             export_all::<RuntimeTraceDto>(dir);
             export_all::<RuntimeInvocationOutputDto>(dir);
             export_all::<RuntimeInvocationResultDto>(dir);
-        },
-    );
-
-    // --- vfs-contracts.ts ---
-    emit_domain(
-        &generated_dir,
-        "vfs-contracts.ts",
-        &mut upstream,
-        check,
-        |dir| {
-            export_all::<ListVfssResponse>(dir);
-            export_all::<ListEntriesResponse>(dir);
-            export_all::<ConfigurableProviderInfo>(dir);
-            export_all::<ResolvedVfsSurface>(dir);
-            export_all::<ResolveSurfaceRequest>(dir);
-            export_all::<SurfaceEntriesResponse>(dir);
-            export_all::<SurfaceReadFileRequest>(dir);
-            export_all::<SurfaceReadFileResponse>(dir);
-            export_all::<SurfaceReadBinaryFileRequest>(dir);
-            export_all::<SurfaceWriteFileRequest>(dir);
-            export_all::<SurfaceWriteFileResponse>(dir);
-            export_all::<SurfaceCreateFileRequest>(dir);
-            export_all::<SurfaceCreateFileResponse>(dir);
-            export_all::<SurfaceDeleteFileRequest>(dir);
-            export_all::<SurfaceDeleteFileResponse>(dir);
-            export_all::<SurfaceRenameFileRequest>(dir);
-            export_all::<SurfaceRenameFileResponse>(dir);
-            export_all::<SurfaceStatFileRequest>(dir);
-            export_all::<SurfaceStatFileResponse>(dir);
-            export_all::<SurfaceApplyPatchRequest>(dir);
-            export_all::<SurfaceApplyPatchResponse>(dir);
-            export_all::<SurfaceUploadBinaryFileResponse>(dir);
-            export_all::<CreateProjectVfsMountRequest>(dir);
-            export_all::<UpdateProjectVfsMountRequest>(dir);
-            export_all::<ProjectVfsMountResponse>(dir);
-            export_all::<DeleteProjectVfsMountResponse>(dir);
         },
     );
 

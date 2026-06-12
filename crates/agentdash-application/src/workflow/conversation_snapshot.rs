@@ -1,18 +1,20 @@
 use uuid::Uuid;
 
-use agentdash_contracts::workflow::{
-    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
-    AgentFrameRefDto, AgentRunRefDto, ConversationCommandKind, ConversationCommandPlacement,
-    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
-    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
-    ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
-    ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
-    ConversationPendingSnapshotView, LifecycleRunRefDto, LifecycleSubjectAssociationDto,
-    RuntimeSessionRefDto, ValidationSeverity,
+use agentdash_contracts::{
+    vfs::ResolvedVfsSurface,
+    workflow::{
+        AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
+        AgentFrameRefDto, AgentRunRefDto, ConversationCommandKind, ConversationCommandPlacement,
+        ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
+        ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
+        ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
+        ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
+        ConversationPendingSnapshotView, LifecycleRunRefDto, LifecycleSubjectAssociationDto,
+        RuntimeSessionRefDto, ValidationSeverity,
+    },
 };
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_spi::{AgentConfig, ThinkingLevel};
-use serde_json::Value;
 
 use crate::session::SessionExecutionState;
 use crate::workflow::WorkflowApplicationError;
@@ -258,7 +260,8 @@ pub struct AgentConversationSnapshotInput {
     pub supports_steering: bool,
     pub pending_paused: bool,
     pub pending_visible_message_count: usize,
-    pub resource_surface: Option<Value>,
+    pub resource_surface: Option<ResolvedVfsSurface>,
+    pub resource_diagnostics: Vec<ConversationDiagnosticView>,
     pub model_config: ConversationModelConfigView,
 }
 
@@ -275,7 +278,7 @@ impl AgentConversationSnapshotResolver {
             .find(|command| command.kind == ConversationCommandKind::ResumePendingQueue)
             .cloned()
             .filter(|command| command.enabled);
-        let diagnostics = conversation_diagnostics(&input.model_config);
+        let diagnostics = conversation_diagnostics(&input.model_config, input.resource_diagnostics);
 
         AgentConversationSnapshot {
             identity: AgentConversationIdentity {
@@ -623,26 +626,31 @@ fn active_turn_id(execution_state: &SessionExecutionState) -> Option<String> {
 
 fn conversation_diagnostics(
     model_config: &ConversationModelConfigView,
+    mut resource_diagnostics: Vec<ConversationDiagnosticView>,
 ) -> Vec<ConversationDiagnosticView> {
-    if model_config.status != ConversationModelConfigStatus::ModelRequired {
-        return Vec::new();
+    if model_config.status == ConversationModelConfigStatus::ModelRequired {
+        resource_diagnostics.push(ConversationDiagnosticView {
+            code: "model_required".to_string(),
+            severity: ValidationSeverity::Error,
+            message: model_config
+                .message
+                .clone()
+                .unwrap_or_else(|| "当前 AgentRun 缺少模型选择。".to_string()),
+            detail: Some(serde_json::json!({
+                "missing_fields": model_config.missing_fields,
+            })),
+        });
     }
-    vec![ConversationDiagnosticView {
-        code: "model_required".to_string(),
-        severity: ValidationSeverity::Error,
-        message: model_config
-            .message
-            .clone()
-            .unwrap_or_else(|| "当前 AgentRun 缺少模型选择。".to_string()),
-        detail: Some(serde_json::json!({
-            "missing_fields": model_config.missing_fields,
-        })),
-    }]
+    resource_diagnostics
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_contracts::vfs::{
+        ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary,
+        ResolvedVfsSurfaceSource,
+    };
 
     fn resolved_model_config() -> ConversationModelConfigView {
         ConversationModelConfigView {
@@ -667,7 +675,31 @@ mod tests {
             pending_paused: false,
             pending_visible_message_count: 0,
             resource_surface: None,
+            resource_diagnostics: Vec::new(),
             model_config: resolved_model_config(),
+        }
+    }
+
+    fn lifecycle_surface() -> ResolvedVfsSurface {
+        ResolvedVfsSurface {
+            surface_ref: "agent-run:run-1:agent-1".to_string(),
+            source: ResolvedVfsSurfaceSource::AgentRun {
+                run_id: "run-1".to_string(),
+                agent_id: "agent-1".to_string(),
+            },
+            mounts: vec![ResolvedMountSummary {
+                id: "lifecycle".to_string(),
+                display_name: "Lifecycle".to_string(),
+                provider: "lifecycle_vfs".to_string(),
+                backend_id: "lifecycle".to_string(),
+                capabilities: vec!["read".to_string(), "list".to_string()],
+                default_write: false,
+                purpose: ResolvedMountPurpose::Lifecycle,
+                backend_online: None,
+                file_count: None,
+                edit_capabilities: ResolvedMountEditCapabilities::default(),
+            }],
+            default_mount_id: Some("lifecycle".to_string()),
         }
     }
 
@@ -878,5 +910,43 @@ mod tests {
         assert!(snapshot.pending.paused);
         assert!(!snapshot.pending.user_attention);
         assert!(snapshot.pending.resume_command.is_none());
+    }
+
+    #[test]
+    fn snapshot_preserves_typed_resource_surface() {
+        let mut input = snapshot_input(SessionExecutionState::Idle);
+        input.resource_surface = Some(lifecycle_surface());
+
+        let snapshot = AgentConversationSnapshotResolver::resolve(input);
+
+        let surface = snapshot.resource_surface.expect("resource surface");
+        assert!(matches!(
+            surface.source,
+            ResolvedVfsSurfaceSource::AgentRun { .. }
+        ));
+        assert!(
+            surface
+                .mounts
+                .iter()
+                .any(|mount| mount.id == "lifecycle" && mount.provider == "lifecycle_vfs")
+        );
+    }
+
+    #[test]
+    fn snapshot_includes_resource_diagnostics() {
+        let mut input = snapshot_input(SessionExecutionState::Idle);
+        input.resource_diagnostics = vec![ConversationDiagnosticView {
+            code: "resource_surface_lifecycle_mount_missing".to_string(),
+            severity: ValidationSeverity::Error,
+            message: "missing lifecycle mount".to_string(),
+            detail: None,
+        }];
+
+        let snapshot = AgentConversationSnapshotResolver::resolve(input);
+
+        assert!(snapshot.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "resource_surface_lifecycle_mount_missing"
+                && diagnostic.severity == ValidationSeverity::Error
+        }));
     }
 }

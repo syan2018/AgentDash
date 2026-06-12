@@ -71,6 +71,10 @@ pub enum ResolvedVfsSurfaceSource {
     SessionRuntime {
         session_id: String,
     },
+    AgentRun {
+        run_id: String,
+        agent_id: String,
+    },
     ProjectSkillAssets {
         project_id: String,
     },

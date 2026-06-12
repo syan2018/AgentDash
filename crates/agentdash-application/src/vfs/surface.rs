@@ -32,6 +32,10 @@ pub enum ResolvedVfsSurfaceSource {
     SessionRuntime {
         session_id: String,
     },
+    AgentRun {
+        run_id: Uuid,
+        agent_id: Uuid,
+    },
     ProjectSkillAssets {
         project_id: Uuid,
     },
@@ -60,6 +64,9 @@ impl ResolvedVfsSurfaceSource {
             } => format!("task-preview:{project_id}:{task_id}"),
             Self::SessionRuntime { session_id } => {
                 format!("session-runtime:{}", session_id.trim())
+            }
+            Self::AgentRun { run_id, agent_id } => {
+                format!("agent-run:{run_id}:{agent_id}")
             }
             Self::ProjectSkillAssets { project_id } => {
                 format!("project-skill-assets:{project_id}")
@@ -125,6 +132,24 @@ impl ResolvedVfsSurfaceSource {
             }
             return Ok(Self::SessionRuntime {
                 session_id: session_id.to_string(),
+            });
+        }
+        if let Some(rest) = trimmed.strip_prefix("agent-run:") {
+            let mut parts = rest.split(':');
+            let run_id = parts
+                .next()
+                .ok_or_else(|| format!("无效的 agent run surface_ref: {trimmed}"))?;
+            let agent_id = parts
+                .next()
+                .ok_or_else(|| format!("无效的 agent run surface_ref: {trimmed}"))?;
+            if parts.next().is_some() {
+                return Err(format!("无效的 agent run surface_ref: {trimmed}"));
+            }
+            return Ok(Self::AgentRun {
+                run_id: Uuid::parse_str(run_id)
+                    .map_err(|_| format!("无效的 agent run run_id: {run_id}"))?,
+                agent_id: Uuid::parse_str(agent_id)
+                    .map_err(|_| format!("无效的 agent run agent_id: {agent_id}"))?,
             });
         }
         if let Some(rest) = trimmed.strip_prefix("project-skill-assets:") {

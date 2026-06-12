@@ -629,13 +629,11 @@ impl VfsService {
 
     /// 跨 mount apply_patch —— 解析 patch 条目中的路径前缀，按 mount 分组独立执行。
     ///
-    /// patch 中的文件路径支持 `mount_id://relative/path` 格式；
-    /// 不含前缀的路径使用 `default_mount_id`（或 VFS 默认 mount）。
+    /// patch 中的文件路径必须使用 `mount_id://relative/path` 格式。
     /// 每个 mount 组独立执行，支持 partial success。
     pub async fn apply_patch_multi(
         &self,
         vfs: &Vfs,
-        default_mount_id: Option<&str>,
         patch: &str,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
@@ -648,16 +646,11 @@ impl VfsService {
             ));
         }
 
-        let fallback_mount_id = match default_mount_id {
-            Some(id) if !id.trim().is_empty() => id.to_string(),
-            _ => resolve_mount_id(vfs, None).map_err(MountError::OperationFailed)?,
-        };
-
         // 按 mount 分组
         let mut grouped: BTreeMap<String, Vec<PatchEntry>> = BTreeMap::new();
         for mut entry in entries {
-            let targets = normalize_patch_entry_targets(&mut entry, &fallback_mount_id)
-                .map_err(MountError::OperationFailed)?;
+            let targets =
+                normalize_patch_entry_targets(&mut entry).map_err(MountError::OperationFailed)?;
             grouped
                 .entry(targets.primary.mount_id)
                 .or_default()
@@ -1431,7 +1424,7 @@ mod tests {
             chunks: Vec::new(),
         };
 
-        let targets = normalize_patch_entry_targets(&mut entry, "main").expect("normalize");
+        let targets = normalize_patch_entry_targets(&mut entry).expect("normalize");
 
         assert_eq!(targets.primary.mount_id, "main");
         assert_eq!(targets.primary.relative_path, "src/old.rs");
@@ -1459,7 +1452,7 @@ mod tests {
             chunks: Vec::new(),
         };
 
-        let err = normalize_patch_entry_targets(&mut entry, "main").expect_err("cross mount");
+        let err = normalize_patch_entry_targets(&mut entry).expect_err("cross mount");
 
         assert!(err.contains("跨 mount move"));
     }
@@ -1472,7 +1465,7 @@ mod tests {
             chunks: Vec::new(),
         };
 
-        let err = normalize_patch_entry_targets(&mut entry, "main").expect_err("escaping move");
+        let err = normalize_patch_entry_targets(&mut entry).expect_err("escaping move");
 
         assert!(err.contains("路径越界"));
     }

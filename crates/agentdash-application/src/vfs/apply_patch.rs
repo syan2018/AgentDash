@@ -91,14 +91,9 @@ pub struct NormalizedPatchEntryTargets {
     pub move_target: Option<PatchPathTarget>,
 }
 
-/// Parses a patch path into its target mount and normalized mount-relative path.
-///
-/// Paths can either be explicit (`main://src/lib.rs`) or bare (`src/lib.rs`),
-/// in which case `fallback_mount_id` supplies the target mount.
-pub fn parse_patch_path_target(
-    raw: &str,
-    fallback_mount_id: &str,
-) -> Result<PatchPathTarget, String> {
+/// Parses an explicit patch path into its target mount and normalized
+/// mount-relative path.
+pub fn parse_patch_path_target(raw: &str) -> Result<PatchPathTarget, String> {
     let raw = raw.trim();
     if let Some(pos) = raw.find("://") {
         let mount_id = raw[..pos].trim();
@@ -112,22 +107,16 @@ pub fn parse_patch_path_target(
         });
     }
 
-    let fallback_mount_id = fallback_mount_id.trim();
-    if fallback_mount_id.is_empty() {
-        return Err("patch 路径的 fallback mount ID 不能为空".to_string());
-    }
-    Ok(PatchPathTarget {
-        mount_id: fallback_mount_id.to_string(),
-        relative_path: normalize_mount_relative_path(raw, false)?,
-    })
+    Err(format!(
+        "patch 路径 `{raw}` 缺少 mount 前缀；请使用 `mount_id://relative/path`"
+    ))
 }
 
 pub fn normalize_patch_entry_targets(
     entry: &mut PatchEntry,
-    fallback_mount_id: &str,
 ) -> Result<NormalizedPatchEntryTargets, String> {
     let raw_path = entry.path().to_string_lossy();
-    let primary = parse_patch_path_target(&raw_path, fallback_mount_id)?;
+    let primary = parse_patch_path_target(&raw_path)?;
     entry.set_path(PathBuf::from(&primary.relative_path));
 
     let mut move_target = None;
@@ -137,7 +126,7 @@ pub fn normalize_patch_entry_targets(
     } = entry
     {
         let raw_move_path = target.to_string_lossy();
-        let parsed_move = parse_patch_path_target(&raw_move_path, &primary.mount_id)?;
+        let parsed_move = parse_patch_path_target(&raw_move_path)?;
         if parsed_move.mount_id != primary.mount_id {
             return Err(format!(
                 "patch 不支持跨 mount move: {} -> {}",

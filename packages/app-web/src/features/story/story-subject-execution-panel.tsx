@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { Story, SubjectExecutionView } from "../../types";
 import { subjectExecutionKey } from "../../types";
 import { useLifecycleStore } from "../../stores/lifecycleStore";
+import { agentRunWorkspacePath } from "../agent/agent-run-paths";
 
 interface StorySubjectExecutionPanelProps {
   story: Story;
@@ -34,6 +35,7 @@ function SubjectExecutionContent({ view }: { view: SubjectExecutionView | null }
   }
 
   const latestRuntimeNode = view.latest_runtime_node;
+  const currentAgent = view.current_agent;
 
   return (
     <div className="space-y-4 p-4">
@@ -46,15 +48,16 @@ function SubjectExecutionContent({ view }: { view: SubjectExecutionView | null }
         </div>
         <div className="rounded-[8px] border border-border bg-background p-3">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Current Agent</p>
-          {view.current_agent ? (
+          {currentAgent ? (
             <button
               type="button"
-              onClick={() => navigate(`/agent/${view.current_agent?.agent_ref.agent_id}`, {
-                state: { run_id: view.current_agent?.agent_ref.run_id },
-              })}
+              onClick={() => navigate(agentRunWorkspacePath(
+                currentAgent.agent_ref.run_id,
+                currentAgent.agent_ref.agent_id,
+              ))}
               className="mt-2 block w-full truncate text-left font-mono text-xs text-primary hover:underline"
             >
-              {view.current_agent.agent_ref.agent_id}
+              {currentAgent.agent_ref.agent_id}
             </button>
           ) : (
             <p className="mt-2 text-xs text-muted-foreground">未分配</p>
@@ -98,23 +101,19 @@ function SubjectExecutionContent({ view }: { view: SubjectExecutionView | null }
                   <button
                     key={agent.agent_ref.agent_id}
                     type="button"
-                    onClick={() => navigate(`/agent/${agent.agent_ref.agent_id}`, {
-                      state: { run_id: run.run_ref.run_id },
-                    })}
+                    onClick={() => navigate(agentRunWorkspacePath(run.run_ref.run_id, agent.agent_ref.agent_id))}
                     className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
                   >
                     agent {agent.agent_ref.agent_id.slice(0, 8)}
                   </button>
                 ))}
                 {run.runtime_trace_refs.map((ref) => (
-                  <button
+                  <span
                     key={ref.runtime_session_id}
-                    type="button"
-                    onClick={() => navigate(`/session/${ref.runtime_session_id}`)}
-                    className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
+                    className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
                   >
-                    trace {ref.runtime_session_id.slice(0, 8)}
-                  </button>
+                    RuntimeSession trace {ref.runtime_session_id.slice(0, 8)}
+                  </span>
                 ))}
               </div>
             </div>

@@ -1,5 +1,6 @@
 mod agent_frame;
 mod agent_lineage;
+mod command_receipt;
 pub mod dispatch;
 mod entity;
 mod lifecycle_agent;
@@ -12,6 +13,11 @@ mod value_objects;
 
 pub use agent_frame::AgentFrame;
 pub use agent_lineage::AgentLineage;
+pub use command_receipt::{
+    AgentRunDeliveryAcceptedRefs, AgentRunDeliveryCommandClaim, AgentRunDeliveryCommandReceipt,
+    AgentRunDeliveryCommandReceiptRepository, AgentRunDeliveryCommandStatus,
+    NewAgentRunDeliveryCommandReceipt,
+};
 pub use dispatch::{
     AgentLaunchDispatchResult, AgentLaunchIntent, AgentPolicy, AgentRuntimeRefs, CapabilityPolicy,
     ContextPolicy, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, GatePolicy,

@@ -126,6 +126,9 @@ impl SessionLaunchDeps {
             eventing: self.eventing.clone(),
             core: self.core.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
+            agent_frame_repo: self.agent_frame_repo.clone(),
+            execution_anchor_repo: self.execution_anchor_repo.clone(),
+            lifecycle_agent_repo: self.lifecycle_agent_repo.clone(),
         }
     }
 
@@ -228,6 +231,9 @@ pub(super) struct TurnCommitDeps {
     pub(super) stores: SessionStoreSet,
     pub(super) eventing: SessionEventingService,
     pub(super) turn_supervisor: TurnSupervisor,
+    pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
+    pub(super) execution_anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
+    pub(super) lifecycle_agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
     core: SessionCoreService,
 }
 

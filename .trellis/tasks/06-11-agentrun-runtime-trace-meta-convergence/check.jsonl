@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-11-agentrun-runtime-trace-meta-convergence/prd.md", "reason": "Requirements and acceptance for SessionMeta boundary"}
+{"file": ".trellis/tasks/06-11-agentrun-runtime-trace-meta-convergence/design.md", "reason": "DTO and ownership split to verify before API contract child"}
+{"file": ".trellis/tasks/06-11-session-model-delivery-state-chain/review.md", "reason": "Cross-task live findings and final drift checks"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Final spec must reflect AgentRun Workspace public command identity"}

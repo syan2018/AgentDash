@@ -745,9 +745,97 @@ pub struct RuntimeSessionExecutionAnchorDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct RuntimeSessionTraceMeta {
+    pub runtime_session_ref: RuntimeSessionRefDto,
+    pub last_event_seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub executor_session_id: Option<String>,
+    pub trace_title: String,
+    pub trace_title_source: String,
+    pub delivery_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub terminal_summary: Option<String>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunWorkspaceShell {
+    pub display_title: String,
+    pub title_source: String,
+    pub workspace_status: String,
+    pub delivery_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_turn_id: Option<String>,
+    pub last_activity_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunCommandReceipt {
+    pub client_command_id: String,
+    pub status: String,
+    pub duplicate: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunAcceptedRefs {
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub frame_ref: Option<AgentFrameRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_session_ref: Option<RuntimeSessionRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunWorkspaceView {
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    pub project_id: String,
+    pub shell: AgentRunWorkspaceShell,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub delivery_trace_meta: Option<RuntimeSessionTraceMeta>,
+    pub control_plane: SessionRuntimeControlPlaneView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent: Option<AgentRunView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub frame_runtime: Option<AgentFrameRuntimeView>,
+    #[serde(default)]
+    pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
+    pub actions: SessionRuntimeActionSetView,
+    #[serde(default)]
+    pub pending_messages: Vec<PendingMessageView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct AgentRunMessageRequest {
     /// canonical 用户输入，与 steer（`AgentRunSteeringRequest.input`）同形。
     pub input: Vec<codex::UserInput>,
+    pub client_command_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
     pub executor_config: Option<Value>,
@@ -756,17 +844,21 @@ pub struct AgentRunMessageRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunMessageResponse {
-    pub runtime_session_id: String,
-    pub turn_id: String,
-    pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: AgentRunRefDto,
-    pub frame_ref: AgentFrameRefDto,
+    pub command_receipt: AgentRunCommandReceipt,
+    pub accepted_refs: AgentRunAcceptedRefs,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunSteeringRequest {
     pub input: Vec<codex::UserInput>,
+    pub client_command_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub expected_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub expected_runtime_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -784,8 +876,8 @@ pub struct RuntimeSessionCommandStateDto {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunSteeringResponse {
-    pub runtime_session_id: String,
-    pub accepted: bool,
+    pub command_receipt: AgentRunCommandReceipt,
+    pub accepted_refs: AgentRunAcceptedRefs,
     pub state: RuntimeSessionCommandStateDto,
 }
 
@@ -1034,6 +1126,7 @@ pub struct PendingMessageView {
 #[serde(rename_all = "snake_case")]
 pub struct EnqueuePendingMessageRequest {
     pub input: Vec<codex::UserInput>,
+    pub client_command_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
     pub executor_config: Option<Value>,
@@ -1042,24 +1135,24 @@ pub struct EnqueuePendingMessageRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct EnqueuePendingMessageResponse {
+    pub command_receipt: AgentRunCommandReceipt,
     pub message: PendingMessageView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ProjectSessionListEntry {
-    pub runtime_session_id: String,
-    pub title: String,
-    pub delivery_status: String,
+pub struct AgentRunWorkspaceListEntry {
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    pub project_id: String,
+    pub shell: AgentRunWorkspaceShell,
+    pub run_status: LifecycleRunStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub run_status: Option<LifecycleRunStatus>,
+    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub run_ref: Option<LifecycleRunRefDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub agent_ref: Option<AgentRunRefDto>,
+    pub delivery_trace_meta: Option<RuntimeSessionTraceMeta>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub frame_ref: Option<AgentFrameRefDto>,
@@ -1069,14 +1162,13 @@ pub struct ProjectSessionListEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub subject_label: Option<String>,
-    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ProjectSessionListView {
+pub struct AgentRunWorkspaceListView {
     pub project_id: String,
-    pub sessions: Vec<ProjectSessionListEntry>,
+    pub agent_runs: Vec<AgentRunWorkspaceListEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -15,12 +15,11 @@ vi.mock("../api/client", () => ({
 }));
 
 import {
-  deletePendingMessage,
-  enqueuePendingMessage,
-  listPendingMessages,
-  promotePendingMessage,
-  sendAgentRunMessageByRuntimeSession,
-  steerAgentRunByRuntimeSession,
+  deleteAgentRunPendingMessage,
+  enqueueAgentRunPendingMessage,
+  promoteAgentRunPendingMessage,
+  sendAgentRunMessage,
+  steerAgentRun,
 } from "./lifecycle";
 
 describe("lifecycle message service", () => {
@@ -39,9 +38,10 @@ describe("lifecycle message service", () => {
     });
   });
 
-  it("sends user messages through the session command endpoint", async () => {
-    await sendAgentRunMessageByRuntimeSession("runtime/1", {
+  it("sends user messages through the AgentRun command endpoint", async () => {
+    await sendAgentRunMessage("run/1", "agent/1", {
       input: [{ type: "text", text: "hello", text_elements: [] }],
+      client_command_id: "command-1",
       executor_config: {
         executor: "PI_AGENT",
         model_id: "gpt-test",
@@ -50,9 +50,10 @@ describe("lifecycle message service", () => {
     });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
-      "/sessions/runtime%2F1/messages",
+      "/agent-runs/run%2F1/agents/agent%2F1/messages",
       {
         input: [{ type: "text", text: "hello", text_elements: [] }],
+        client_command_id: "command-1",
         executor_config: {
           executor: "PI_AGENT",
           model_id: "gpt-test",
@@ -62,55 +63,51 @@ describe("lifecycle message service", () => {
     );
   });
 
-  it("sends steering input through the session steering endpoint", async () => {
-    await steerAgentRunByRuntimeSession("runtime/1", {
+  it("sends steering input through the AgentRun steering endpoint", async () => {
+    await steerAgentRun("run/1", "agent/1", {
       input: [{ type: "text", text: "adjust course", text_elements: [] }],
+      client_command_id: "command-2",
     });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
-      "/sessions/runtime%2F1/steering",
+      "/agent-runs/run%2F1/agents/agent%2F1/steering",
       {
         input: [{ type: "text", text: "adjust course", text_elements: [] }],
+        client_command_id: "command-2",
       },
     );
   });
 
-  it("lists pending messages through the session pending endpoint", async () => {
-    await listPendingMessages("runtime/1");
-
-    expect(mocks.apiGetMock).toHaveBeenCalledWith(
-      "/sessions/runtime%2F1/pending-messages",
-    );
-  });
-
-  it("enqueues pending messages through the session pending endpoint", async () => {
-    await enqueuePendingMessage("runtime/1", {
+  it("enqueues pending messages through the AgentRun pending endpoint", async () => {
+    await enqueueAgentRunPendingMessage("run/1", "agent/1", {
       input: [{ type: "text", text: "next", text_elements: [] }],
+      client_command_id: "command-3",
       executor_config: { model_id: "gpt-test" },
     });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
-      "/sessions/runtime%2F1/pending-messages",
+      "/agent-runs/run%2F1/agents/agent%2F1/pending-messages",
       {
         input: [{ type: "text", text: "next", text_elements: [] }],
+        client_command_id: "command-3",
         executor_config: { model_id: "gpt-test" },
       },
     );
   });
 
-  it("deletes pending messages through the session pending endpoint", async () => {
-    await deletePendingMessage("runtime/1", "message/1");
+  it("deletes pending messages through the AgentRun pending endpoint", async () => {
+    await deleteAgentRunPendingMessage("run/1", "agent/1", "message/1");
 
     expect(mocks.apiDeleteMock).toHaveBeenCalledWith(
-      "/sessions/runtime%2F1/pending-messages/message%2F1",
+      "/agent-runs/run%2F1/agents/agent%2F1/pending-messages/message%2F1",
     );
   });
 
-  it("promotes pending messages through the session pending endpoint", async () => {
-    await promotePendingMessage("runtime/1", "message/1");
+  it("promotes pending messages through the AgentRun pending endpoint", async () => {
+    await promoteAgentRunPendingMessage("run/1", "agent/1", "message/1");
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
-      "/sessions/runtime%2F1/pending-messages/message%2F1/promote",
+      "/agent-runs/run%2F1/agents/agent%2F1/pending-messages/message%2F1/promote",
       {},
     );
   });

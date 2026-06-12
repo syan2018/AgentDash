@@ -192,10 +192,6 @@ impl SessionRuntimeInner {
         session_id: &str,
         turn_id: Option<&str>,
     ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
-        if let Some(runtime) = self.runtime_registry.hook_runtime(session_id).await {
-            return Ok(Some(runtime));
-        }
-
         if self
             .persistence
             .get_session_meta(session_id)
@@ -213,6 +209,23 @@ impl SessionRuntimeInner {
         let Some(target) = resolve_runtime_hook_target(provider.as_ref(), session_id).await? else {
             return Ok(None);
         };
+
+        if let Some(runtime) = self.runtime_registry.hook_runtime(session_id).await
+            && runtime.control_target() == target
+        {
+            let _ = runtime
+                .refresh_from_provenance(HookRuntimeRefreshQuery {
+                    provenance: RuntimeAdapterProvenance::runtime_session(
+                        session_id.to_string(),
+                        turn_id.map(ToString::to_string),
+                        "hook_runtime_lazy_refresh",
+                    ),
+                    reason: Some("hook_runtime_lazy_refresh".to_string()),
+                })
+                .await;
+            return Ok(Some(runtime));
+        }
+
         let snapshot = provider
             .load_frame_snapshot(AgentFrameHookSnapshotQuery {
                 target: target.clone(),
@@ -233,10 +246,11 @@ impl SessionRuntimeInner {
             return Ok(None);
         };
 
-        Ok(self
+        let runtime = self
             .runtime_registry
-            .set_hook_runtime_if_absent(session_id, rebuilt_runtime)
-            .await)
+            .set_or_replace_hook_runtime(session_id, rebuilt_runtime)
+            .await;
+        Ok(Some(runtime))
     }
 
     /// Processor 请求的 auto-resume 入口。

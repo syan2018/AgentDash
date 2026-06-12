@@ -1,9 +1,12 @@
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
-    LifecycleGateRepository, RuntimeSessionExecutionAnchor,
+    AgentFrame, AgentFrameRepository, AgentRunDeliveryCommandClaim, AgentRunDeliveryCommandReceipt,
+    AgentRunDeliveryCommandReceiptRepository, AgentRunDeliveryCommandStatus, LifecycleAgent,
+    LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository,
+    NewAgentRunDeliveryCommandReceipt, RuntimeSessionExecutionAnchor,
     RuntimeSessionExecutionAnchorRepository,
 };
+use chrono::Utc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -186,6 +189,108 @@ impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAn
             .iter()
             .filter(|anchor| anchor.agent_id == agent_id)
             .max_by_key(|anchor| anchor.created_at)
+            .cloned())
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct MemoryAgentRunDeliveryCommandReceiptRepository {
+    receipts: Mutex<Vec<AgentRunDeliveryCommandReceipt>>,
+}
+
+#[async_trait::async_trait]
+impl AgentRunDeliveryCommandReceiptRepository for MemoryAgentRunDeliveryCommandReceiptRepository {
+    async fn claim(
+        &self,
+        receipt: NewAgentRunDeliveryCommandReceipt,
+    ) -> Result<AgentRunDeliveryCommandClaim, DomainError> {
+        let mut receipts = self.receipts.lock().await;
+        if let Some(existing) = receipts.iter().find(|item| {
+            item.scope_kind == receipt.scope_kind
+                && item.scope_key == receipt.scope_key
+                && item.client_command_id == receipt.client_command_id
+        }) {
+            if existing.request_digest != receipt.request_digest {
+                return Err(DomainError::Conflict {
+                    entity: "agent_run_delivery_command_receipt",
+                    constraint: "request_digest",
+                    message: format!(
+                        "client_command_id `{}` 已用于不同请求",
+                        receipt.client_command_id
+                    ),
+                });
+            }
+            return Ok(AgentRunDeliveryCommandClaim::Duplicate(existing.clone()));
+        }
+
+        let now = Utc::now();
+        let record = AgentRunDeliveryCommandReceipt {
+            id: Uuid::new_v4(),
+            scope_kind: receipt.scope_kind,
+            scope_key: receipt.scope_key,
+            client_command_id: receipt.client_command_id,
+            request_digest: receipt.request_digest,
+            status: AgentRunDeliveryCommandStatus::Pending,
+            accepted_refs: None,
+            error_message: None,
+            created_at: now,
+            updated_at: now,
+            accepted_at: None,
+            failed_at: None,
+        };
+        receipts.push(record.clone());
+        Ok(AgentRunDeliveryCommandClaim::Created(record))
+    }
+
+    async fn mark_accepted(
+        &self,
+        id: Uuid,
+        accepted_refs: agentdash_domain::workflow::AgentRunDeliveryAcceptedRefs,
+    ) -> Result<AgentRunDeliveryCommandReceipt, DomainError> {
+        let mut receipts = self.receipts.lock().await;
+        let record = receipts
+            .iter_mut()
+            .find(|item| item.id == id)
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "agent_run_delivery_command_receipt",
+                id: id.to_string(),
+            })?;
+        record.status = AgentRunDeliveryCommandStatus::Accepted;
+        record.accepted_refs = Some(accepted_refs);
+        record.error_message = None;
+        record.updated_at = Utc::now();
+        record.accepted_at = Some(record.updated_at);
+        record.failed_at = None;
+        Ok(record.clone())
+    }
+
+    async fn mark_terminal_failed(
+        &self,
+        id: Uuid,
+        error_message: String,
+    ) -> Result<AgentRunDeliveryCommandReceipt, DomainError> {
+        let mut receipts = self.receipts.lock().await;
+        let record = receipts
+            .iter_mut()
+            .find(|item| item.id == id)
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "agent_run_delivery_command_receipt",
+                id: id.to_string(),
+            })?;
+        record.status = AgentRunDeliveryCommandStatus::TerminalFailed;
+        record.error_message = Some(error_message);
+        record.updated_at = Utc::now();
+        record.failed_at = Some(record.updated_at);
+        Ok(record.clone())
+    }
+
+    async fn get(&self, id: Uuid) -> Result<Option<AgentRunDeliveryCommandReceipt>, DomainError> {
+        Ok(self
+            .receipts
+            .lock()
+            .await
+            .iter()
+            .find(|item| item.id == id)
             .cloned())
     }
 }

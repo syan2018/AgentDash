@@ -14,7 +14,7 @@ use super::{FrameConstructionService, frame_builder_from_existing};
 pub(super) async fn compose(
     svc: &FrameConstructionService,
     frame: &AgentFrame,
-    mut agent: LifecycleAgent,
+    _agent: LifecycleAgent,
     companion: CompanionLaunchSource,
     input: &SessionConstructionProviderInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
@@ -57,13 +57,6 @@ pub(super) async fn compose(
     }
     .map_err(ConnectorError::InvalidConfig)?;
 
-    svc.persist_composed_frame(
-        builder,
-        &mut agent,
-        extras,
-        command,
-        input.session_id.as_str(),
-        None,
-    )
-    .await
+    svc.compose_pending_frame(builder, extras, command, input.session_id.as_str(), None)
+        .await
 }

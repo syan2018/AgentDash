@@ -2,6 +2,7 @@ pub(crate) mod activity_activation;
 pub mod agent_message;
 pub mod agent_steering;
 mod catalog;
+mod command_receipt;
 mod completion;
 mod definition;
 pub mod dispatch_service;
@@ -17,7 +18,7 @@ pub mod lifecycle_gate_service;
 pub mod lifecycle_run_view_builder;
 pub mod orchestration;
 pub mod orchestrator;
-mod project_agent_session_start;
+mod project_agent_run_start;
 pub mod projection;
 pub(crate) mod run;
 pub mod runtime_launch;
@@ -44,6 +45,7 @@ pub use agentdash_domain::workflow::{
     AgentReusePolicy, RuntimeSessionPolicy, WorkflowSessionTerminalState,
 };
 pub use catalog::{ActivityLifecycleCatalogService, WorkflowCatalogService};
+pub use command_receipt::AgentRunCommandReceiptView;
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
 pub use definition::{
     BuiltinLifecycleTemplate, BuiltinWorkflowBundle, BuiltinWorkflowTemplate,
@@ -87,9 +89,9 @@ pub use orchestrator::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
-pub use project_agent_session_start::{
-    ProjectAgentSessionStartCommand, ProjectAgentSessionStartDispatch,
-    ProjectAgentSessionStartRepos, ProjectAgentSessionStartService,
+pub use project_agent_run_start::{
+    ProjectAgentRunStartCommand, ProjectAgentRunStartDispatch, ProjectAgentRunStartRepos,
+    ProjectAgentRunStartService,
 };
 #[cfg(test)]
 pub(crate) use projection::activity_projection;

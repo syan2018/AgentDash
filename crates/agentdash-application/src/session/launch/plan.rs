@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 use agentdash_domain::common::AgentConfig;
+use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{
@@ -106,6 +107,7 @@ pub struct LaunchPlanTraceEntry {
 }
 
 pub struct LaunchPlan {
+    pub pending_frame: Option<AgentFrame>,
     pub resolved_payload: ResolvedPromptPayload,
     pub title_hint: String,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
@@ -148,6 +150,7 @@ pub struct LaunchPlanInput {
 
 impl LaunchPlan {
     pub fn build(input: LaunchPlanInput) -> Self {
+        let pending_frame = input.launch_envelope.pending_frame.clone();
         let working_directory = input.launch_envelope.working_directory.clone();
         let executor_config = input.launch_envelope.executor_config.clone();
         let mcp_servers = input.launch_envelope.mcp_servers.clone();
@@ -276,6 +279,7 @@ impl LaunchPlan {
         let context_bundle = input.launch_envelope.context_bundle.clone();
         let continuation_context_frame = input.launch_envelope.continuation_context_frame.clone();
         Self {
+            pending_frame,
             resolved_payload: input.resolved_payload,
             title_hint,
             discovered_guidelines: input.launch_envelope.intent.discovered_guidelines.clone(),
@@ -447,6 +451,7 @@ mod tests {
                 mcp_surface: serde_json::Value::Null,
                 runtime_session_id: Some("sess-launch".to_string()),
             },
+            pending_frame: None,
             intent: FrameLaunchIntent {
                 input: None,
                 environment_variables: HashMap::new(),

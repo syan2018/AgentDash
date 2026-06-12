@@ -121,14 +121,6 @@ pub struct DeleteSessionResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct CancelSessionResponse {
-    pub cancelled: bool,
-    pub session_id: String,
-    pub state: SessionCommandStateResponse,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct ApproveToolCallResponse {
     pub approved: bool,
     pub session_id: String,

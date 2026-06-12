@@ -9,7 +9,7 @@ import { useCurrentUserStore } from "../../stores/currentUserStore";
 import { ProjectCreateDrawer } from "../../features/project/project-selector";
 import type { Project } from "../../types";
 import { SidebarFooter, type FooterPanelKey } from "./SidebarFooter";
-import { SessionShortcutList } from "./SessionShortcutList";
+import { AgentRunShortcutList } from "./AgentRunShortcutList";
 import { AppErrorBoundary } from "../error/AppErrorBoundary";
 
 // ─── 视图导航定义 ──────────────────────────────────────────
@@ -33,7 +33,7 @@ const NAV_ITEMS: NavItem[] = [
     key: "agent",
     label: "Agent",
     defaultPath: "/dashboard/agent",
-    pathPrefixes: ["/dashboard/agent", "/agent/", "/run/", "/subject/", "/session/"],
+    pathPrefixes: ["/dashboard/agent", "/agent/", "/run/", "/subject/", "/agent-runs/"],
     icon: (
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 8V4H8" />
@@ -114,7 +114,7 @@ export function WorkspaceLayout() {
   const agentRouteMatch = useMatch("/agent/:agentId");
   const runRouteMatch = useMatch("/run/:runId");
   const subjectRouteMatch = useMatch("/subject/:kind/:id");
-  const sessionRouteMatch = useMatch("/session/:sessionId");
+  const agentRunRouteMatch = useMatch("/agent-runs/:runId/:agentId");
   const storyDashboardMatch = useMatch("/dashboard/story");
   const storyRouteMatch = useMatch("/story/:storyId");
   const assetsDashboardMatch = useMatch("/dashboard/assets/*");
@@ -122,7 +122,7 @@ export function WorkspaceLayout() {
   const routineDashboardMatch = useMatch("/dashboard/routine");
 
   const activeMap: Record<NavKey, boolean> = {
-    agent: !!agentDashboardMatch || !!agentRouteMatch || !!runRouteMatch || !!subjectRouteMatch || !!sessionRouteMatch,
+    agent: !!agentDashboardMatch || !!agentRouteMatch || !!runRouteMatch || !!subjectRouteMatch || !!agentRunRouteMatch,
     story: !!storyDashboardMatch || !!storyRouteMatch,
     assets: !!assetsDashboardMatch || !!unifiedWorkflowEditorMatch,
     routine: !!routineDashboardMatch,
@@ -188,8 +188,8 @@ export function WorkspaceLayout() {
           })}
         </div>
 
-        {/* 会话快捷列表 */}
-        <SessionShortcutList projectId={currentProjectId} />
+        {/* AgentRun 快捷列表 */}
+        <AgentRunShortcutList projectId={currentProjectId} />
 
         {/* 底栏 */}
         <SidebarFooter

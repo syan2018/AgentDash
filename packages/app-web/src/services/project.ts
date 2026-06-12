@@ -13,9 +13,9 @@ import type {
   Project,
   ProjectAgent,
   ProjectAgentLaunchResult,
-  ProjectAgentSessionStartResult,
+  ProjectAgentRunStartResult,
   ProjectAgentSummary,
-  CreateProjectAgentSessionRequest,
+  CreateProjectAgentRunRequest,
   ProjectConfig,
   ProjectRole,
   ProjectSubjectGrant,
@@ -181,7 +181,7 @@ export async function deleteProjectAgent(projectId: string, agentId: string): Pr
   await api.delete(`/projects/${projectId}/agents/${agentId}`);
 }
 
-// ─── Project Agent Summary / Session API ─────────────────
+// ─── Project Agent Summary / AgentRun API ─────────────────
 
 export async function fetchProjectAgents(projectId: string): Promise<ProjectAgentSummary[]> {
   const response = await api.get<Record<string, unknown>[]>(`/projects/${projectId}/agents/summary`);
@@ -199,13 +199,13 @@ export async function launchProjectAgent(
   return mapProjectAgentLaunchResult(response);
 }
 
-export async function createProjectAgentRuntimeSession(
+export async function createProjectAgentRun(
   projectId: string,
   agentKey: string,
-  payload: CreateProjectAgentSessionRequest,
-): Promise<ProjectAgentSessionStartResult> {
-  return api.post<ProjectAgentSessionStartResult>(
-    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/sessions`,
+  payload: CreateProjectAgentRunRequest,
+): Promise<ProjectAgentRunStartResult> {
+  return api.post<ProjectAgentRunStartResult>(
+    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/agent-runs`,
     payload,
   );
 }

@@ -81,20 +81,19 @@ use agentdash_contracts::permission::{
     PermissionGrantStatusDto,
 };
 use agentdash_contracts::project_agent::{
-    CreateProjectAgentRequest, CreateProjectAgentSessionRequest, ProjectAgent,
-    ProjectAgentExecutor, ProjectAgentLaunchResult, ProjectAgentSessionStartResult,
-    ProjectAgentSummary, UpdateProjectAgentRequest,
+    CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent, ProjectAgentExecutor,
+    ProjectAgentLaunchResult, ProjectAgentRunStartResult, ProjectAgentSummary,
+    UpdateProjectAgentRequest,
 };
 use agentdash_contracts::session::{
-    ApproveToolCallResponse, CancelSessionResponse, CreateSessionForkRequest,
-    DeleteSessionResponse, RejectToolCallResponse, RollbackSessionProjectionRequest,
-    SessionCommandStateResponse, SessionEventResponse, SessionEventsPageResponse,
-    SessionForkChildSessionResponse, SessionForkResponse, SessionLineageRecordResponse,
-    SessionLineageRelationKindDto, SessionLineageStatusDto, SessionLineageViewResponse,
-    SessionMessageRefDto, SessionNdjsonEnvelope, SessionProjectionMessageRefResponse,
-    SessionProjectionRollbackResponse, SessionProjectionSegmentProvenanceResponse,
-    SessionProjectionSegmentViewResponse, SessionProjectionSourceRangeResponse,
-    SessionProjectionViewResponse,
+    ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
+    RejectToolCallResponse, RollbackSessionProjectionRequest, SessionCommandStateResponse,
+    SessionEventResponse, SessionEventsPageResponse, SessionForkChildSessionResponse,
+    SessionForkResponse, SessionLineageRecordResponse, SessionLineageRelationKindDto,
+    SessionLineageStatusDto, SessionLineageViewResponse, SessionMessageRefDto,
+    SessionNdjsonEnvelope, SessionProjectionMessageRefResponse, SessionProjectionRollbackResponse,
+    SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
+    SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
 };
 use agentdash_contracts::settings::{
     SettingResponse, SettingUpdate, SettingsScopeKind, SettingsScopeQuery, UpdateSettingsRequest,
@@ -119,17 +118,18 @@ use agentdash_contracts::vfs::{
 };
 use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentFrameRefDto,
-    AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse, AgentRunMessageRequest,
-    AgentRunMessageResponse, AgentRunRefDto, AgentRunSteeringRequest, AgentRunSteeringResponse,
-    AgentRunView, DefinitionSource, DeleteAgentProcedureResponse, DeleteHookPresetResponse,
-    DeleteWorkflowGraphResponse, EffectiveSessionContract, EnqueuePendingMessageRequest,
-    EnqueuePendingMessageResponse, HookPresetResponse, HookPresetsResponse,
-    LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology,
-    LifecycleRunView, LifecycleSubjectAssociationDto, OrchestrationInstanceView,
-    PendingMessageView, PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse,
-    ProjectActiveAgentsView, ProjectSessionListEntry, ProjectSessionListView,
-    RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionCommandStateDto,
-    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, RuntimeSessionTraceView,
+    AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse, AgentRunAcceptedRefs,
+    AgentRunCommandReceipt, AgentRunMessageRequest, AgentRunMessageResponse, AgentRunRefDto,
+    AgentRunSteeringRequest, AgentRunSteeringResponse, AgentRunView, AgentRunWorkspaceListEntry,
+    AgentRunWorkspaceListView, AgentRunWorkspaceShell, AgentRunWorkspaceView, DefinitionSource,
+    DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
+    EffectiveSessionContract, EnqueuePendingMessageRequest, EnqueuePendingMessageResponse,
+    HookPresetResponse, HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto,
+    LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
+    OrchestrationInstanceView, PendingMessageView, PreflightWorkflowScriptRequest,
+    PreflightWorkflowScriptResponse, ProjectActiveAgentsView, RegisterHookPresetResponse,
+    RuntimeNodeView, RuntimeSessionCommandStateDto, RuntimeSessionExecutionAnchorDto,
+    RuntimeSessionRefDto, RuntimeSessionTraceMeta, RuntimeSessionTraceView,
     SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
     SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
     SessionShellDto, SubjectExecutionView, SubjectRefDto, SubmitOrchestrationHumanDecisionRequest,
@@ -179,8 +179,8 @@ fn main() {
             export_all::<ProjectAgentExecutor>(dir);
             export_all::<ProjectAgentSummary>(dir);
             export_all::<ProjectAgentLaunchResult>(dir);
-            export_all::<CreateProjectAgentSessionRequest>(dir);
-            export_all::<ProjectAgentSessionStartResult>(dir);
+            export_all::<CreateProjectAgentRunRequest>(dir);
+            export_all::<ProjectAgentRunStartResult>(dir);
             export_all::<CreateProjectAgentRequest>(dir);
             export_all::<UpdateProjectAgentRequest>(dir);
         },
@@ -290,7 +290,6 @@ fn main() {
             export_all::<SessionNdjsonEnvelope>(dir);
             export_all::<SessionCommandStateResponse>(dir);
             export_all::<DeleteSessionResponse>(dir);
-            export_all::<CancelSessionResponse>(dir);
             export_all::<ApproveToolCallResponse>(dir);
             export_all::<RejectToolCallResponse>(dir);
             export_all::<SessionProjectionSourceRangeResponse>(dir);
@@ -405,6 +404,8 @@ fn main() {
             export_all::<AgentRunSteeringRequest>(dir);
             export_all::<RuntimeSessionCommandStateDto>(dir);
             export_all::<AgentRunSteeringResponse>(dir);
+            export_all::<AgentRunCommandReceipt>(dir);
+            export_all::<AgentRunAcceptedRefs>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
             export_all::<RuntimeNodeView>(dir);
             export_all::<ActiveRuntimeNodeRefDto>(dir);
@@ -414,6 +415,9 @@ fn main() {
             export_all::<SubmitOrchestrationHumanDecisionResponse>(dir);
             export_all::<AgentRunView>(dir);
             export_all::<AgentFrameRuntimeView>(dir);
+            export_all::<RuntimeSessionTraceMeta>(dir);
+            export_all::<AgentRunWorkspaceShell>(dir);
+            export_all::<AgentRunWorkspaceView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
             export_all::<RuntimeSessionTraceView>(dir);
@@ -425,8 +429,8 @@ fn main() {
             export_all::<PendingMessageView>(dir);
             export_all::<EnqueuePendingMessageRequest>(dir);
             export_all::<EnqueuePendingMessageResponse>(dir);
-            export_all::<ProjectSessionListEntry>(dir);
-            export_all::<ProjectSessionListView>(dir);
+            export_all::<AgentRunWorkspaceListEntry>(dir);
+            export_all::<AgentRunWorkspaceListView>(dir);
             export_all::<DefinitionSource>(dir);
             export_all::<WorkflowTargetKind>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);

@@ -1,4 +1,5 @@
 use agentdash_domain::DomainError;
+use agentdash_spi::ConnectorError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkflowApplicationError {
@@ -26,6 +27,23 @@ impl From<DomainError> for WorkflowApplicationError {
             DomainError::Serialization(error) => Self::Internal(error.to_string()),
             DomainError::InvalidConfig(message) => Self::Internal(message),
             DomainError::Database { .. } => Self::Internal("内部数据库错误".to_string()),
+        }
+    }
+}
+
+impl From<ConnectorError> for WorkflowApplicationError {
+    fn from(value: ConnectorError) -> Self {
+        match value {
+            ConnectorError::InvalidConfig(message) => Self::BadRequest(message),
+            ConnectorError::ConnectionFailed(message) => Self::Internal(message),
+            ConnectorError::SpawnFailed(message) | ConnectorError::Runtime(message) => {
+                Self::Internal(message)
+            }
+            ConnectorError::Io(error) => {
+                tracing::error!(error = %error, "workflow connector IO error");
+                Self::Internal("内部连接器 IO 错误".to_string())
+            }
+            ConnectorError::Json(error) => Self::BadRequest(error.to_string()),
         }
     }
 }

@@ -149,7 +149,9 @@ impl SessionRuntimeInner {
 
 #[cfg(test)]
 #[allow(deprecated)]
-fn envelope_from_construction(construction: RuntimeContextInspectionPlan) -> FrameLaunchEnvelope {
+pub(super) fn envelope_from_construction(
+    construction: RuntimeContextInspectionPlan,
+) -> FrameLaunchEnvelope {
     let executor_config = construction
         .execution_profile
         .executor_config
@@ -175,6 +177,7 @@ fn envelope_from_construction(construction: RuntimeContextInspectionPlan) -> Fra
             mcp_surface: serde_json::Value::Null,
             runtime_session_id: Some(construction.session_id.clone()),
         },
+        pending_frame: None,
         intent: FrameLaunchIntent {
             input: construction.prompt.input,
             environment_variables: construction.prompt.environment_variables,

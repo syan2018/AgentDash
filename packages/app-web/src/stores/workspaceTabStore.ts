@@ -1,7 +1,7 @@
 /**
  * 工作空间 Tab 状态管理
  *
- * 管理 SessionPage 右栏动态 Tab 实例的生命周期：
+ * 管理 AgentRun workspace 右栏动态 Tab 实例的生命周期：
  * 增/删/激活/排序/URI 更新，以及从后端 session meta 恢复/持久化。
  */
 

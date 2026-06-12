@@ -4,8 +4,8 @@ use agentdash_application::session::construction_planner::{
     ResolvedProjectAgentContext, build_project_agent_context,
 };
 use agentdash_application::workflow::{
-    AgentRunMessageLaunchDeliveryPort, ProjectAgentSessionStartCommand,
-    ProjectAgentSessionStartRepos, ProjectAgentSessionStartService,
+    AgentRunMessageLaunchDeliveryPort, ProjectAgentRunStartCommand, ProjectAgentRunStartRepos,
+    ProjectAgentRunStartService,
 };
 use agentdash_domain::{
     agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project, workflow::SubjectRef,
@@ -19,12 +19,13 @@ use uuid::Uuid;
 
 use agentdash_contracts::core::DeletedFlagResponse;
 use agentdash_contracts::project_agent::{
-    CreateProjectAgentRequest, CreateProjectAgentSessionRequest,
-    ProjectAgent as ProjectAgentResponse, ProjectAgentExecutor, ProjectAgentLaunchResult,
-    ProjectAgentSessionStartResult, ProjectAgentSummary, ThinkingLevel, UpdateProjectAgentRequest,
+    CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent as ProjectAgentResponse,
+    ProjectAgentExecutor, ProjectAgentLaunchResult, ProjectAgentRunStartResult,
+    ProjectAgentSummary, ThinkingLevel, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
+    AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto,
+    LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
 };
 
 use crate::{
@@ -82,8 +83,8 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::post(launch_project_agent),
         )
         .route(
-            "/projects/{id}/agents/{project_agent_id}/sessions",
-            axum::routing::post(create_project_agent_session),
+            "/projects/{id}/agents/{project_agent_id}/agent-runs",
+            axum::routing::post(create_project_agent_run),
         )
 }
 
@@ -238,12 +239,17 @@ pub async fn launch_project_agent(
     }))
 }
 
-pub async fn create_project_agent_session(
+pub async fn create_project_agent_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((project_id, agent_key)): Path<(String, String)>,
-    Json(req): Json<CreateProjectAgentSessionRequest>,
-) -> Result<Json<ProjectAgentSessionStartResult>, ApiError> {
+    Json(req): Json<CreateProjectAgentRunRequest>,
+) -> Result<Json<ProjectAgentRunStartResult>, ApiError> {
+    if req.client_command_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "client_command_id 不能为空".to_string(),
+        ));
+    }
     let project_id = parse_project_id(&project_id)?;
     let project = load_project_with_permission(
         state.as_ref(),
@@ -259,17 +265,18 @@ pub async fn create_project_agent_session(
         .transpose()
         .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
 
-    let service = ProjectAgentSessionStartService::new(
-        ProjectAgentSessionStartRepos::from_repository_set(&state.repos),
+    let service = ProjectAgentRunStartService::new(
+        ProjectAgentRunStartRepos::from_repository_set(&state.repos),
         &state.services.session_core,
     );
     let delivery = AgentRunMessageLaunchDeliveryPort::new(state.services.session_launch.clone());
     let dispatch = service
-        .start_session(
-            ProjectAgentSessionStartCommand {
+        .start_run(
+            ProjectAgentRunStartCommand {
                 project_id,
                 project_agent_id,
                 input: req.input,
+                client_command_id: req.client_command_id,
                 executor_config,
                 subject_ref: parse_subject_ref(req.subject_ref)?,
                 identity: Some(current_user.clone()),
@@ -284,7 +291,31 @@ pub async fn create_project_agent_session(
         .map_err(ApiError::Internal)?;
     let summary = build_project_agent_summary(&project, &agent_context);
 
-    Ok(Json(ProjectAgentSessionStartResult {
+    Ok(Json(ProjectAgentRunStartResult {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id: dispatch.command_receipt.client_command_id,
+            status: dispatch.command_receipt.status,
+            duplicate: dispatch.command_receipt.duplicate,
+            message: dispatch.command_receipt.message,
+        },
+        accepted_refs: AgentRunAcceptedRefs {
+            run_ref: LifecycleRunRefDto {
+                run_id: dispatch.run_id.to_string(),
+            },
+            agent_ref: AgentRunRefDto {
+                run_id: dispatch.run_id.to_string(),
+                agent_id: dispatch.agent_id.to_string(),
+            },
+            frame_ref: Some(AgentFrameRefDto {
+                agent_id: dispatch.agent_id.to_string(),
+                frame_id: dispatch.frame_id.to_string(),
+                revision: Some(dispatch.frame_revision),
+            }),
+            runtime_session_ref: Some(RuntimeSessionRefDto {
+                runtime_session_id: dispatch.runtime_session_id.clone(),
+            }),
+            turn_id: Some(dispatch.turn_id.clone()),
+        },
         runtime_session_id: dispatch.runtime_session_id,
         turn_id: dispatch.turn_id,
         agent: summary,

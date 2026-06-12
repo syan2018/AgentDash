@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { workspaceModulePresentedTabTarget } from "./SessionPage.workspaceModulePresentation";
+import { workspaceModulePresentedTabTarget } from "./AgentRunWorkspacePage.workspaceModulePresentation";
 
 describe("workspaceModulePresentedTabTarget", () => {
   it("opens Canvas tabs from presentation_uri", () => {

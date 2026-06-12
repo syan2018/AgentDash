@@ -97,20 +97,18 @@ impl SessionRuntimeRegistry {
             .and_then(|runtime| runtime.hook_runtime.clone())
     }
 
-    pub async fn set_hook_runtime_if_absent(
+    pub async fn set_or_replace_hook_runtime(
         &self,
         session_id: &str,
         hook_runtime: SharedHookRuntime,
-    ) -> Option<SharedHookRuntime> {
+    ) -> SharedHookRuntime {
         let mut runtimes = self.runtimes.lock().await;
         let runtime = runtimes.entry(session_id.to_string()).or_insert_with(|| {
             let (tx, _rx) = broadcast::channel(1024);
             build_session_runtime(tx)
         });
-        if runtime.hook_runtime.is_none() {
-            runtime.hook_runtime = Some(hook_runtime);
-        }
-        runtime.hook_runtime.clone()
+        runtime.hook_runtime = Some(hook_runtime.clone());
+        hook_runtime
     }
 
     pub async fn increment_auto_resume_if_allowed(&self, session_id: &str, max: u32) -> bool {

@@ -135,7 +135,7 @@ const hookRuntime: AgentFrameHookRuntimeInfo = {
   ],
 };
 
-describe("SessionPage hook runtime cards", () => {
+describe("AgentRunWorkspacePage hook runtime cards", () => {
   it("渲染 runtime surface 中的 workflow / step metadata", () => {
     const html = renderToStaticMarkup(<HookRuntimeSurfaceCard hookRuntime={hookRuntime} />);
 

@@ -90,111 +90,148 @@ LaunchCommand -> SessionConstructionPlan -> LaunchPlan
 follow-up 来源只表达 resume intent、parent/session 引用和 source policy。owner、
 VFS、MCP、capability、context、identity 由 construction 重新投影。
 
-## Runtime Control Actions
+## RuntimeSession Trace Metadata
 
-Session 页面控制面由 `GET /sessions/{id}/runtime-control` 返回的 action set 表达。
-`control_plane.status` 描述 RuntimeSessionExecutionAnchor、LifecycleAgent、AgentFrame 与
-当前 turn 的组合状态；`actions.send_next`、`actions.steer`、`actions.cancel` 分别描述
-下一轮 prompt、运行中用户 steer、运行中取消这三个命令是否可执行。
+`SessionMeta` 是 RuntimeSession repository 内部保存的 trace-head metadata。浏览器合同以
+`RuntimeSessionTraceMeta` 暴露这组 trace facts，记录当前 runtime trace 的事件游标、
+connector continuation、trace 标题来源、delivery 摘要和终态摘要，服务于 trace/feed/debug
+展示、runtime repository rehydrate、connector follow-up、branch/rollback projection 以及
+进程重启后的 execution state recovery projection。
 
-这些 action 来自 runtime meta、execution state、anchor、agent/frame 和 connector live
-session 能力的联合投影，原因是 session trace、lifecycle 控制面、active turn 与 connector
-live session 是不同事实源。`send_next` 只代表 idle 时可启动下一轮消息；`steer` 只代表
-当前 live executor session 可以接收运行中用户输入；`cancel` 只代表当前运行可中断。前端消费
-action set 后可以准确展示只读 trace、anchored idle、anchored running、terminal 和 frame
-missing，而不会把“正在执行不能发下一轮”误读为“控制面缺失”。
+RuntimeSession trace metadata 的职责边界：
 
-AgentRun 的 session delivery/control command 统一挂在 runtime session 入口：
+| 字段 / 概念 | RuntimeSession 语义 |
+| --- | --- |
+| `runtime_session_id` | runtime trace identity；通过 `RuntimeSessionExecutionAnchor` 反查 Lifecycle control-plane identity |
+| `last_event_seq` | session event log head 与 projection checkpoint |
+| `executor_session_id` | connector-native follow-up / restore handle |
+| trace title / `title_source` | trace/feed/debug 的标题 provenance，来源优先级仍由 session title policy 管控 |
+| `last_delivery_status` | 从 runtime session events 投影出的 delivery 摘要，用于 trace 状态与 recovery |
+| `last_turn_id` | trace-head 当前或最近 turn 指针，用于 recovery、feed 定位和 runtime control 聚合 |
+| `last_terminal_message` | terminal trace summary，用于诊断与只读 trace 展示 |
+
+AgentRun Workspace 的 public shell 由 `AgentRunWorkspaceShell` / `AgentRunWorkspaceView`
+表达：display title、title source、list entry、workspace status、last activity、last visible
+turn，以及 command action availability。该 projection 可以引用 runtime trace ref 或 delivery
+trace metadata，但它的事实来源是 ProjectAgent / Subject association / LifecycleAgent /
+AgentFrame / active turn / command receipt 等 AgentRun 控制面事实。
+
+用户 command receipt 属于 AgentRun command projection。client command identity、request
+digest、duplicate/conflict 判定、accepted result 和 command-scoped terminal result 都按
+command scope 记录，并以 run / agent / frame / runtime session / turn refs 表达已接受结果。
+这些事实描述的是一次用户命令的幂等与回放边界，而 `SessionMeta` 描述的是 RuntimeSession
+trace head；分层后，trace 恢复、事件流展示、workspace action enablement 和 command retry
+可以各自消费对应 projection。
+
+## AgentRun Workspace Control Actions
+
+用户可见执行工作台的 shell 与 action set 由 `AgentRunWorkspaceView` 表达。
+`AgentRunWorkspaceShell` 承载 display title、title source、workspace/list status、last activity
+和 last visible turn；`actions.send_next`、`actions.steer`、`actions.cancel` 分别描述下一轮
+prompt、运行中用户 steer、运行中取消这三个命令是否可执行。
+
+这些 action 来自 LifecycleAgent、AgentFrame、active turn、command receipt、delivery summary
+和 connector live session 能力的联合投影，原因是 lifecycle 控制面、frame runtime、当前 turn、
+用户命令回执与 connector live session 是不同事实源。`RuntimeSessionTraceMeta` 可以作为
+`AgentRunWorkspaceView.delivery_trace_meta` 被引用，用于展示 trace ref、event seq、executor
+continuation 和 terminal summary；它不决定 workspace title、list entry、status 或按钮 enablement。
+
+AgentRun delivery/control command 使用 AgentRun Workspace public identity：
 
 ```text
-POST   /sessions/{runtime_session_id}/messages
-POST   /sessions/{runtime_session_id}/steering
-GET    /sessions/{runtime_session_id}/pending-messages
-POST   /sessions/{runtime_session_id}/pending-messages
-DELETE /sessions/{runtime_session_id}/pending-messages/{message_id}
-POST   /sessions/{runtime_session_id}/pending-messages/{message_id}/promote
+GET    /agent-runs/{run_id}/agents/{agent_id}/workspace
+POST   /agent-runs/{run_id}/agents/{agent_id}/messages
+POST   /agent-runs/{run_id}/agents/{agent_id}/steering
+GET    /agent-runs/{run_id}/agents/{agent_id}/pending-messages
+POST   /agent-runs/{run_id}/agents/{agent_id}/pending-messages
+DELETE /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}
+POST   /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}/promote
 ```
 
-这些入口表达用户正在操作当前 runtime session 的投递与控制面。handler 先解析
-`RuntimeSessionExecutionAnchor`，再校验 run / agent / frame 与 Project 权限；这样 URL 层
-保持 session command 语义，授权和业务归属仍落回 Lifecycle control-plane identity。
+这些入口表达用户正在操作某个 AgentRun workspace。handler 以 Project 权限、run / agent
+ownership、当前 AgentFrame、active turn 和 command receipt 为校验事实源，并在 accepted result
+中返回 runtime session ref、turn ref、frame ref 等 delivery refs。RuntimeSession trace endpoint
+使用 `RuntimeSessionTraceMeta` 提供只读 trace/feed/debug 能力；follow-up 与 repository rehydrate
+仍通过 trace metadata 保存的 `executor_session_id` 与 `last_event_seq` 衔接。
 
-`POST /sessions/{runtime_session_id}/messages` 代表 idle session 的下一轮用户消息，继续沿
-`AgentRunMessageService` 进入 session launch / prompt claim 主数据流。
+`POST /agent-runs/{run_id}/agents/{agent_id}/messages` 代表 workspace idle 时的下一轮用户消息，
+沿 `AgentRunMessageService` 进入 launch / prompt claim 主数据流。
 
-`POST /sessions/{runtime_session_id}/steering` 代表 running session 的运行中用户输入，要求
-connector 对该 live session 支持 steering，然后调用 `SessionControlService` 的
-`steer_session`。运行中输入保持 prompt block 语义，并沿 connector / relay / executor
-控制路径注入当前 turn。
+`POST /agent-runs/{run_id}/agents/{agent_id}/steering` 代表 workspace running 时的运行中用户输入，
+要求当前 active turn 的 connector live session 支持 steering，然后调用 `SessionControlService`
+的 `steer_session` 注入当前 turn。运行中输入保持 prompt block 语义，并沿 connector / relay /
+executor 控制路径投递。
 
-`pending-messages` 队列属于同一 session command surface：空闲前可排队、删除或列出待投递输入；
-`promote` 会把指定 pending message 取出并作为当前 running session 的 steering 输入投递。
+`pending-messages` 队列属于同一 AgentRun command surface：空闲前可排队、删除或列出待投递输入；
+`promote` 会把指定 pending message 取出并作为当前 running workspace 的 steering 输入投递。
 
-### Scenario: Session-scoped AgentRun Commands
+### Scenario: AgentRun Workspace Commands
 
 #### 1. Scope / Trigger
 
-这些 command 是跨层 API 签名。前端只持有 runtime session id，后端必须通过
-`RuntimeSessionExecutionAnchor` 回到 Lifecycle control-plane identity；因此 URL 表达
-session delivery/control surface，业务校验仍落到 run / agent / frame。
+这些 command 是跨层 API 签名。浏览器持有 AgentRun workspace identity，后端以 run / agent /
+frame / active turn / command receipt 聚合当前 delivery control state，并把 RuntimeSession 作为
+accepted delivery ref 或 trace ref 返回。
 
 #### 2. Signatures
 
 ```text
-POST   /sessions/{runtime_session_id}/messages
-POST   /sessions/{runtime_session_id}/steering
-GET    /sessions/{runtime_session_id}/pending-messages
-POST   /sessions/{runtime_session_id}/pending-messages
-DELETE /sessions/{runtime_session_id}/pending-messages/{message_id}
-POST   /sessions/{runtime_session_id}/pending-messages/{message_id}/promote
+GET    /agent-runs/{run_id}/agents/{agent_id}/workspace
+POST   /agent-runs/{run_id}/agents/{agent_id}/messages
+POST   /agent-runs/{run_id}/agents/{agent_id}/steering
+GET    /agent-runs/{run_id}/agents/{agent_id}/pending-messages
+POST   /agent-runs/{run_id}/agents/{agent_id}/pending-messages
+DELETE /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}
+POST   /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}/promote
 ```
 
 #### 3. Contracts
 
-- `messages` request: `AgentRunMessageRequest`，包含 non-empty `input`，可带
-  `executor_config`。
-- `messages` response: `AgentRunMessageResponse`，返回 runtime session、turn id、run ref、agent ref、frame ref。
-- `steering` request: `AgentRunSteeringRequest`，包含 non-empty `input`。
-- `steering` response: `AgentRunSteeringResponse`，返回 runtime session、accepted、runtime command state。
-- `pending-messages` POST request: `EnqueuePendingMessageRequest`，包含 non-empty
-  `input`，可带 `executor_config`。
+- `workspace` response: `AgentRunWorkspaceView`，包含 `shell`、`actions`、frame/runtime refs
+  和可选 `delivery_trace_meta: RuntimeSessionTraceMeta`。
+- `messages` request: `AgentRunMessageRequest`，包含 non-empty `input`、`client_command_id`
+  与可选 `executor_config`。
+- `messages` response: `AgentRunMessageResponse`，返回 command receipt、runtime session ref、
+  turn ref、run ref、agent ref 和 frame ref。
+- `steering` request: `AgentRunSteeringRequest`，包含 non-empty `input`、`client_command_id`
+  与 expected turn/runtime refs。
+- `steering` response: `AgentRunSteeringResponse`，返回 command receipt、accepted state、
+  runtime session ref 和 runtime command state。
+- `pending-messages` POST request: `EnqueuePendingMessageRequest`，包含 non-empty `input`、
+  `client_command_id` 与可选 `executor_config`。
 - `pending-messages` GET response: `PendingMessageView[]`。
-- `pending-messages/{message_id}/promote` response: `{ promoted: true, turn_id }`。
+- `pending-messages/{message_id}/promote` response: command receipt、`promoted: true` 和
+  accepted turn/runtime refs。
 
 #### 4. Validation & Error Matrix
 
 | 条件 | 结果 |
 | --- | --- |
 | `input` 为空 | `400 BadRequest` |
-| runtime session 没有 anchor | `404 NotFound` |
-| anchor 指向的 run / agent 不存在 | `404 NotFound` |
-| anchor agent 与 run 不一致 | `409 Conflict` |
+| run / agent 不存在 | `404 NotFound` |
+| agent 不属于 run | `409 Conflict` |
 | 当前用户无 project edit 权限 | permission error |
+| `client_command_id` 重放且 request digest 一致 | 返回既有 command receipt |
+| `client_command_id` 重放但 request digest 不一致 | `409 Conflict` |
 | `executor_config` JSON 不合法 | `400 BadRequest` |
+| running command 缺少 active turn 或 expected ref 不匹配 | `409 Conflict` |
 | pending message 不存在 | `404 NotFound` |
 
-#### 5. Good / Base / Bad Cases
+#### 5. Examples
 
-- Good: idle anchored session 调用 `messages` 创建下一轮 turn，并返回 run/agent/frame refs。
-- Base: running anchored session 调用 `steering`，connector 支持 steer 时注入当前 turn。
-- Bad: 无 anchor 的 trace-only session 调用任一 command，返回 `404`，不会创建 lifecycle 事实。
+- Idle workspace 调用 `messages` 创建下一轮 turn，并返回 command receipt 与
+  run/agent/frame/runtime refs。
+- Running workspace 调用 `steering`，connector 支持 steer 时注入当前 turn。
+- Trace-only RuntimeSession 不具备 AgentRun workspace identity，只提供只读 trace view。
 
 #### 6. Tests Required
 
-- Backend route registration 覆盖六个 session-scoped endpoint。
-- Frontend service test 断言 URL 编码后的 `/sessions/{id}/...` 与 `AgentRun*` generated DTO。
+- Backend route registration 覆盖 AgentRun Workspace command endpoints。
+- Frontend service test 断言 URL 编码后的 `/agent-runs/{run_id}/agents/{agent_id}/...` 与
+  `AgentRun*` generated DTO。
 - `cargo check -p agentdash-api` 保证 handler path extractor 与 response types 对齐。
 - `pnpm --filter app-web test -- lifecycle` 覆盖 service 调用面。
-- grep 检查产品代码和 session specs 中 session-scoped route names 与 generated DTO names 一致。
-
-#### 7. Route Shape
-
-```text
-POST /sessions/{runtime_session_id}/steering
-```
-
-该路径保留 session delivery/control 入口语义；handler 内部解析 anchor 后再进入
-Lifecycle / AgentRun 权限与状态校验。
+- grep 检查产品代码和 session specs 中 AgentRun Workspace route names 与 generated DTO names 一致。
 
 ## Terminal Effects
 

@@ -8,7 +8,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
-  cancelSession,
   fetchSessionEvents,
 } from "../../../services/session";
 import type {
@@ -152,15 +151,11 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
   }, [enqueueEvent]);
 
   const sendCancel = useCallback(async () => {
-    try {
-      await cancelSession(sessionId);
-    } catch (e) {
-      const err = e instanceof Error ? e : new Error("取消执行失败");
-      setError(err);
-      callbackRefs.current.onError?.(err);
-      throw err;
-    }
-  }, [sessionId]);
+    const err = new Error("RuntimeSession trace 不提供取消入口。");
+    setError(err);
+    callbackRefs.current.onError?.(err);
+    throw err;
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;

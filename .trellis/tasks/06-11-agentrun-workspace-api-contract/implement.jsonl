@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "RuntimeSession 作为 delivery trace 的边界"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "workspace actions 和 execution state 来源"}
+{"file": ".trellis/spec/backend/capability/llm-model-config.md", "reason": "AgentConfig execution_profile 合同"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "generated DTO 是前端唯一合同来源"}
+{"file": ".trellis/tasks/06-11-session-model-delivery-state-chain/design.md", "reason": "父任务 AgentRun Workspace API 目标"}
+{"file": ".trellis/tasks/06-11-session-model-delivery-state-chain/review.md", "reason": "live review 证据"}
+{"file": ".trellis/tasks/06-11-session-model-delivery-state-chain/research/api-contract.md", "reason": "current API/DTO/contract generation paths and SessionMeta split"}
+{"file": ".trellis/tasks/06-11-agentrun-runtime-trace-meta-convergence/design.md", "reason": "AgentRunWorkspaceShell and RuntimeSessionTraceMeta boundary"}

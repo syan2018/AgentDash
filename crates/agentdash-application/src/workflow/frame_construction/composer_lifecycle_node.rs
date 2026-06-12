@@ -19,7 +19,7 @@ use super::{FrameConstructionService, connector_internal, frame_builder_from_exi
 pub(super) async fn compose(
     svc: &FrameConstructionService,
     frame: &AgentFrame,
-    mut agent: LifecycleAgent,
+    _agent: LifecycleAgent,
     run: LifecycleRun,
     input: &SessionConstructionProviderInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
@@ -111,15 +111,8 @@ pub(super) async fn compose(
     .await
     .map_err(ConnectorError::InvalidConfig)?;
 
-    svc.persist_composed_frame(
-        builder,
-        &mut agent,
-        extras,
-        command,
-        input.session_id.as_str(),
-        None,
-    )
-    .await
+    svc.compose_pending_frame(builder, extras, command, input.session_id.as_str(), None)
+        .await
 }
 
 async fn load_workflow_for_plan_node(

@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "检查 RuntimeSession 仅承担 delivery trace 职责"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "检查 accepted boundary 后才提交 turn/frame 事实"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查 command actions 以 AgentRun control plane 为准"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "检查 HookRuntime target 与 current frame 一致"}
+{"file": ".trellis/spec/backend/capability/llm-model-config.md", "reason": "检查模型选择错误语义和 execution profile 来源"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查前端不以本地推断替代 workspace state"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查 DTO 生成和命名一致"}
+{"file": ".trellis/tasks/06-11-session-model-delivery-state-chain/review.md", "reason": "检查 live review 中的故障链路均被覆盖"}
+{"file": ".trellis/tasks/06-11-session-model-delivery-state-chain/design.md", "reason": "检查 child task 合并后符合目标架构"}

@@ -83,14 +83,17 @@ function persistRecentEntry(entry: RecentExecutorEntry): RecentExecutorEntry[] {
   }
 }
 
-function normalizeSource(source: ExecutorConfigSource | null | undefined): Partial<PersistedExecutorConfig> {
+function normalizeSource(
+  source: ExecutorConfigSource | null | undefined,
+  includeEmpty = false,
+): Partial<PersistedExecutorConfig> {
   if (!source) return {};
   const out: Partial<PersistedExecutorConfig> = {};
-  if (typeof source.executor === "string" && source.executor.trim()) out.executor = source.executor.trim();
-  if (typeof source.providerId === "string" && source.providerId.trim()) out.providerId = source.providerId.trim();
-  if (typeof source.modelId === "string" && source.modelId.trim()) out.modelId = source.modelId.trim();
-  if (typeof source.thinkingLevel === "string" && source.thinkingLevel.trim()) out.thinkingLevel = source.thinkingLevel.trim();
-  if (typeof source.permissionPolicy === "string" && source.permissionPolicy.trim()) out.permissionPolicy = source.permissionPolicy.trim();
+  if (typeof source.executor === "string" && (includeEmpty || source.executor.trim())) out.executor = source.executor.trim();
+  if (typeof source.providerId === "string" && (includeEmpty || source.providerId.trim())) out.providerId = source.providerId.trim();
+  if (typeof source.modelId === "string" && (includeEmpty || source.modelId.trim())) out.modelId = source.modelId.trim();
+  if (typeof source.thinkingLevel === "string" && (includeEmpty || source.thinkingLevel.trim())) out.thinkingLevel = source.thinkingLevel.trim();
+  if (typeof source.permissionPolicy === "string" && (includeEmpty || source.permissionPolicy.trim())) out.permissionPolicy = source.permissionPolicy.trim();
   return out;
 }
 
@@ -257,7 +260,7 @@ export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecut
 
   const hydrate = useCallback(
     (source: ExecutorConfigSource | null | undefined) => {
-      const normalized = normalizeSource(source);
+      const normalized = normalizeSource(source, true);
       if (Object.keys(normalized).length === 0) return;
 
       // 原子写入：跳过 setExecutor 的副作用，仅覆盖非空字段

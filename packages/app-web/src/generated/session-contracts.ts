@@ -6,8 +6,6 @@ import type { BackboneEnvelope } from "./backbone-protocol";
 
 export type ApproveToolCallResponse = { approved: boolean, session_id: string, tool_call_id: string, };
 
-export type CancelSessionResponse = { cancelled: boolean, session_id: string, state: SessionCommandStateResponse, };
-
 export type CreateSessionForkRequest = { title?: string, fork_point_ref?: SessionMessageRefDto, fork_point_compaction_id?: string, metadata_json?: JsonValue, };
 
 export type DeleteSessionResponse = { deleted: boolean, session_id: string, };

@@ -112,7 +112,15 @@ task_id → SubjectRef(kind=Task, id=task_id)
         → SubjectExecutionView.task_projection
 ```
 
-### 查找 Project 下所有 RuntimeSessions
+### 查找 Project 下所有 AgentRun Workspaces
+
+```text
+project_id → LifecycleRun(project_id)
+           → LifecycleAgent / AgentFrame
+           → AgentRunWorkspaceView(shell, actions, delivery_trace_meta?)
+```
+
+### 查找 Project 下所有 RuntimeSession traces
 
 ```text
 project_id → RuntimeSessionExecutionAnchor

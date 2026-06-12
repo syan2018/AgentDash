@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "核验统一状态契约是否被代码实现消费"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "核验前端 chat control 不维护平行状态推断"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "核验 generated DTO 与 frontend service 类型消费"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "核验 Rust contract 到 TypeScript generated contract 无漂移"}

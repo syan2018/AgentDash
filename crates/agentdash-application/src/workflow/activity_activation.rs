@@ -95,7 +95,7 @@ pub struct ActivityActivation {
     /// 内置工具簇(PiAgent 内部使用)。
     pub capability_state: CapabilityState,
     /// 合并并去重后的 MCP server 列表(platform + custom)。
-    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
     /// 已解析通过的 capability key 集合(供 hook runtime 初始化、日志、delta 对比)。
     pub capability_keys: BTreeSet<String>,
     /// kickoff prompt 结构化片段;若 activity 没有 port/workflow,字段可能全为空。
@@ -187,7 +187,7 @@ pub fn activate_activity_with_platform(
             presets: input.available_presets.clone(),
             agent_servers: input.agent_mcp_servers.clone(),
         },
-        mcp_runtime_context: Some(crate::mcp_preset::SessionRuntimeMcpContext {
+        mcp_runtime_context: Some(crate::mcp_preset::McpRuntimeBindingContext {
             vfs: Some(&effective_vfs),
         }),
         capability_context: None,
@@ -198,8 +198,9 @@ pub fn activate_activity_with_platform(
     }
 
     // ── 4. 汇总 MCP server 列表(platform + custom),去重 ──
-    let mut mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output.tool.mcp_servers.clone();
-    dedupe_session_mcp_servers(&mut mcp_servers);
+    let mut mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration> =
+        cap_output.tool.mcp_servers.clone();
+    dedupe_runtime_mcp_declarations(&mut mcp_servers);
 
     let capability_keys = cap_output.capability_keys();
 
@@ -279,7 +280,7 @@ fn render_input_section(
     )
 }
 
-fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>) {
+fn dedupe_runtime_mcp_declarations(servers: &mut Vec<agentdash_spi::RuntimeMcpServerDeclaration>) {
     let mut seen = BTreeSet::<String>::new();
     servers.retain(|server| seen.insert(server.name.clone()));
 }
@@ -521,7 +522,8 @@ mod tests {
             ..base_input.clone()
         };
 
-        let base = activate_activity_with_platform(&base_input, &test_platform()).expect("activate");
+        let base =
+            activate_activity_with_platform(&base_input, &test_platform()).expect("activate");
         let restricted =
             activate_activity_with_platform(&restricted_input, &test_platform()).expect("activate");
 

@@ -5,7 +5,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayMcpCallContext, RelayMcpToolInfo};
 use agentdash_spi::{
     AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, DynAgentTool,
-    SessionMcpServer, ToolUpdateCallback,
+    RuntimeMcpServerDeclaration, ToolUpdateCallback,
 };
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
@@ -23,7 +23,7 @@ use super::{
 #[derive(Clone)]
 pub struct RelayMcpToolAdapter {
     surface: McpToolSurface,
-    server: SessionMcpServer,
+    server: RuntimeMcpServerDeclaration,
     provider: Arc<dyn McpRelayProvider>,
     call_context: Option<RelayMcpCallContext>,
 }
@@ -98,7 +98,7 @@ impl AgentTool for RelayMcpToolAdapter {
 /// `servers` 是 Agent 配置中声明且匹配 backend 能力的 resolved server 列表。
 pub async fn discover_relay_mcp_tools(
     provider: Arc<dyn McpRelayProvider>,
-    servers: &[SessionMcpServer],
+    servers: &[RuntimeMcpServerDeclaration],
     capability_state: &CapabilityState,
     call_context: Option<RelayMcpCallContext>,
 ) -> Vec<DynAgentTool> {
@@ -111,7 +111,7 @@ pub async fn discover_relay_mcp_tools(
 
 pub async fn discover_relay_mcp_tool_entries(
     provider: Arc<dyn McpRelayProvider>,
-    servers: &[SessionMcpServer],
+    servers: &[RuntimeMcpServerDeclaration],
     capability_state: &CapabilityState,
     call_context: Option<RelayMcpCallContext>,
 ) -> Vec<DiscoveredMcpTool> {
@@ -160,14 +160,14 @@ mod tests {
     impl McpRelayProvider for FakeRelayProvider {
         async fn list_relay_tools(
             &self,
-            _requested_servers: &[SessionMcpServer],
+            _requested_servers: &[RuntimeMcpServerDeclaration],
         ) -> Vec<RelayMcpToolInfo> {
             self.tools.clone()
         }
 
         async fn call_relay_tool(
             &self,
-            _server: &SessionMcpServer,
+            _server: &RuntimeMcpServerDeclaration,
             _tool_name: &str,
             _arguments: Option<serde_json::Map<String, serde_json::Value>>,
             _context: Option<RelayMcpCallContext>,
@@ -191,8 +191,8 @@ mod tests {
         }
     }
 
-    fn relay_server(name: &str) -> SessionMcpServer {
-        SessionMcpServer {
+    fn relay_server(name: &str) -> RuntimeMcpServerDeclaration {
+        RuntimeMcpServerDeclaration {
             name: name.to_string(),
             transport: agentdash_spi::McpTransportConfig::Http {
                 url: format!("http://localhost/{name}"),

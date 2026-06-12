@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use agentdash_domain::common::{MountLink, Vfs};
 use agentdash_domain::workflow::{AgentFrame, MountDirective, ToolCapabilityDirective};
-use agentdash_spi::SessionMcpServer;
+use agentdash_spi::RuntimeMcpServerDeclaration;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use uuid::Uuid;
@@ -62,11 +62,9 @@ pub fn project_capability_state_from_frame(frame: &AgentFrame) -> CapabilityStat
         state.vfs.active = Some(vfs);
     }
 
-    if let Some(servers) = frame
-        .mcp_surface_json
-        .as_ref()
-        .and_then(|json| serde_json::from_value::<Vec<SessionMcpServer>>(json.clone()).ok())
-    {
+    if let Some(servers) = frame.mcp_surface_json.as_ref().and_then(|json| {
+        serde_json::from_value::<Vec<RuntimeMcpServerDeclaration>>(json.clone()).ok()
+    }) {
         state.tool.mcp_servers = servers;
     }
 
@@ -78,7 +76,7 @@ pub fn project_capability_state_from_frame(frame: &AgentFrame) -> CapabilityStat
 /// 这是 `project_capability_state_from_frame` 的逆操作：
 /// - `effective_capability_json`: 完整 `CapabilityState` 序列化
 /// - `vfs_surface_json`: `state.vfs.active` 单独提取
-/// - `mcp_surface_json`: `state.tool.mcp_servers` 单独提取
+/// - `mcp_surface_json`: 从 capability/draft 投影中提取本次 MCP executable surface
 pub fn capability_state_to_frame_surfaces(state: &CapabilityState) -> FrameCapabilitySurfaces {
     FrameCapabilitySurfaces {
         effective_capability_json: serde_json::to_value(state).ok(),
@@ -260,13 +258,13 @@ pub fn apply_runtime_capability_transition(
 pub struct RuntimeCapabilityReplay {
     pub capability_state: CapabilityState,
     pub effective_vfs: Option<Vfs>,
-    pub effective_mcp_servers: Option<Vec<SessionMcpServer>>,
+    pub effective_mcp_servers: Option<Vec<RuntimeMcpServerDeclaration>>,
 }
 
 #[derive(Debug, Default)]
 pub struct RuntimeCapabilityReplayContext {
     pub effective_vfs: Option<Vfs>,
-    pub effective_mcp_servers: Option<Vec<SessionMcpServer>>,
+    pub effective_mcp_servers: Option<Vec<RuntimeMcpServerDeclaration>>,
 }
 
 #[derive(Debug, Default)]
@@ -456,7 +454,7 @@ impl ToolCapabilityDimensionModule {
 
 impl McpCapabilityDimensionModule {
     pub fn set_server_set_effect(
-        servers: Vec<SessionMcpServer>,
+        servers: Vec<RuntimeMcpServerDeclaration>,
     ) -> Result<RuntimeCapabilityEffectRecord, String> {
         RuntimeCapabilityEffectRecord::typed(
             CAPABILITY_DIMENSION_MCP,
@@ -888,7 +886,7 @@ mod tests {
             source_story_id: None,
             links: Vec::new(),
         });
-        state.tool.mcp_servers = vec![agentdash_spi::SessionMcpServer {
+        state.tool.mcp_servers = vec![agentdash_spi::RuntimeMcpServerDeclaration {
             name: "test-server".to_string(),
             transport: agentdash_spi::McpTransportConfig::Http {
                 url: "http://localhost:3000".to_string(),

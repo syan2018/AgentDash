@@ -1621,7 +1621,7 @@ pub struct CompanionDispatchPlan {
 #[derive(Debug, Clone)]
 pub struct CompanionExecutionSlice {
     pub vfs: Option<Vfs>,
-    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
 }
 
 pub fn build_companion_dispatch_prompt(plan: &CompanionDispatchPlan, user_prompt: &str) -> String {
@@ -1824,7 +1824,7 @@ pub fn build_companion_dispatch_slice(
 
 pub fn build_companion_execution_slice(
     vfs: Option<&Vfs>,
-    mcp_servers: &[agentdash_spi::SessionMcpServer],
+    mcp_servers: &[agentdash_spi::RuntimeMcpServerDeclaration],
     mode: CompanionSliceMode,
 ) -> Result<CompanionExecutionSlice, String> {
     match mode {
@@ -1981,7 +1981,7 @@ mod companion_tests {
     };
     use agentdash_spi::CapabilityScope;
     use agentdash_spi::action_type as at;
-    use agentdash_spi::{McpTransportConfig, MountCapability, SessionMcpServer, Vfs};
+    use agentdash_spi::{McpTransportConfig, MountCapability, RuntimeMcpServerDeclaration, Vfs};
     use uuid::Uuid;
 
     use crate::vfs::tools::SharedSessionToolServicesHandle;
@@ -2126,7 +2126,7 @@ mod companion_tests {
 
         let slice = build_companion_execution_slice(
             Some(&vfs),
-            &[SessionMcpServer {
+            &[RuntimeMcpServerDeclaration {
                 name: "test-mcp".to_string(),
                 transport: McpTransportConfig::Stdio {
                     command: "cmd".to_string(),
@@ -2175,7 +2175,7 @@ mod companion_tests {
 
         let slice = build_companion_execution_slice(
             Some(&vfs),
-            &[SessionMcpServer {
+            &[RuntimeMcpServerDeclaration {
                 name: "test-mcp".to_string(),
                 transport: McpTransportConfig::Stdio {
                     command: "cmd".to_string(),

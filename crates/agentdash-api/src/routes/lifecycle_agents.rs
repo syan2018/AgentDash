@@ -7,12 +7,12 @@ use agentdash_application::workflow::{
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageRequest,
     AgentRunMessageResponse, AgentRunRefDto, AgentRunSteeringRequest, AgentRunSteeringResponse,
+    AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
+    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
     AgentRunWorkspaceView, EnqueuePendingMessageRequest, EnqueuePendingMessageResponse,
     LifecycleRunRefDto, LifecycleSubjectAssociationDto, PendingMessageView,
     RuntimeSessionCommandStateDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
-    SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
-    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView,
 };
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use agentdash_spi::AgentConfig;
@@ -472,6 +472,7 @@ async fn build_agent_run_workspace_view(
     );
     let terminal_agent = is_terminal_agent_status(&context.agent.status);
     let has_frame = frame_runtime.is_some();
+    let has_delivery_runtime = runtime_session_id.is_some();
     let supports_steering = match runtime_session_id.as_deref() {
         Some(session_id) if delivery_running => {
             state
@@ -483,29 +484,36 @@ async fn build_agent_run_workspace_view(
         _ => false,
     };
     let control_plane = if terminal_agent {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::Terminal,
+        AgentRunWorkspaceControlPlaneView {
+            status: AgentRunWorkspaceControlPlaneStatus::Terminal,
             reason: Some("当前 AgentRun 已结束。".to_string()),
         }
+    } else if !has_delivery_runtime {
+        AgentRunWorkspaceControlPlaneView {
+            status: AgentRunWorkspaceControlPlaneStatus::DeliveryMissing,
+            reason: Some("当前 AgentRun 缺少可投递的 runtime 通道。".to_string()),
+        }
     } else if !has_frame {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::FrameMissing,
+        AgentRunWorkspaceControlPlaneView {
+            status: AgentRunWorkspaceControlPlaneStatus::FrameMissing,
             reason: Some("当前 AgentRun 没有可投递的 runtime frame。".to_string()),
         }
     } else if delivery_running {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::AnchoredRunning,
+        AgentRunWorkspaceControlPlaneView {
+            status: AgentRunWorkspaceControlPlaneStatus::Running,
             reason: Some("当前 AgentRun 正在执行中。".to_string()),
         }
     } else {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::AnchoredIdle,
+        AgentRunWorkspaceControlPlaneView {
+            status: AgentRunWorkspaceControlPlaneStatus::Ready,
             reason: None,
         }
     };
-    let actions = SessionRuntimeActionSetView {
-        send_next: if has_frame && !terminal_agent && !delivery_running {
+    let actions = AgentRunWorkspaceActionSetView {
+        send_next: if has_delivery_runtime && has_frame && !terminal_agent && !delivery_running {
             enabled_action()
+        } else if !has_delivery_runtime {
+            disabled_action("当前 AgentRun 缺少可投递的 runtime 通道。")
         } else if delivery_running {
             disabled_action("当前 AgentRun 正在执行中，不能并发发送下一轮消息。")
         } else if terminal_agent {
@@ -513,8 +521,10 @@ async fn build_agent_run_workspace_view(
         } else {
             disabled_action("当前 AgentRun 没有可投递的 runtime frame。")
         },
-        enqueue: if has_frame && !terminal_agent && delivery_running {
+        enqueue: if has_delivery_runtime && has_frame && !terminal_agent && delivery_running {
             enabled_action()
+        } else if !has_delivery_runtime {
+            disabled_action("当前 AgentRun 缺少可投递的 runtime 通道。")
         } else if !delivery_running {
             disabled_action("当前 AgentRun 未在执行中，直接发送即可。")
         } else if terminal_agent {
@@ -522,8 +532,15 @@ async fn build_agent_run_workspace_view(
         } else {
             disabled_action("当前 AgentRun 没有可投递的 runtime frame。")
         },
-        steer: if has_frame && !terminal_agent && delivery_running && supports_steering {
+        steer: if has_delivery_runtime
+            && has_frame
+            && !terminal_agent
+            && delivery_running
+            && supports_steering
+        {
             enabled_action()
+        } else if !has_delivery_runtime {
+            disabled_action("当前 AgentRun 缺少可投递的 runtime 通道。")
         } else if !delivery_running {
             disabled_action("当前 AgentRun 未在执行中，不需要运行中 steer。")
         } else if !supports_steering {
@@ -656,15 +673,15 @@ fn pending_message_view(
     }
 }
 
-fn enabled_action() -> SessionRuntimeActionAvailabilityView {
-    SessionRuntimeActionAvailabilityView {
+fn enabled_action() -> AgentRunWorkspaceActionAvailabilityView {
+    AgentRunWorkspaceActionAvailabilityView {
         enabled: true,
         unavailable_reason: None,
     }
 }
 
-fn disabled_action(reason: impl Into<String>) -> SessionRuntimeActionAvailabilityView {
-    SessionRuntimeActionAvailabilityView {
+fn disabled_action(reason: impl Into<String>) -> AgentRunWorkspaceActionAvailabilityView {
+    AgentRunWorkspaceActionAvailabilityView {
         enabled: false,
         unavailable_reason: Some(reason.into()),
     }

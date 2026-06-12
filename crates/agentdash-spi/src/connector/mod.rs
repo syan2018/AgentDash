@@ -71,7 +71,7 @@ pub struct ExecutionSessionFrame {
     /// 云端内嵌 connector 不自行处理这里的 MCP，而是消费 Application 已经预构建好的
     /// `turn.assembled_tools`。Relay/remote transport connector 可将该结构原样下发给
     /// 远端 agent，由远端 agent 自行建联。
-    pub mcp_servers: Vec<SessionMcpServer>,
+    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
     pub vfs: Option<Vfs>,
     /// Relay/backend execution placement resolved during session launch.
     ///
@@ -233,7 +233,7 @@ impl ToolCapabilityFilter {
     }
 }
 
-/// 工具 + MCP 维度的运行态。
+/// 工具 + MCP 维度的运行态投影。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolDimension {
     /// 最终生效的能力全集（well-known + custom MCP）。
@@ -242,8 +242,11 @@ pub struct ToolDimension {
     pub enabled_clusters: BTreeSet<ToolCluster>,
     /// 运行态唯一工具级过滤表；key 是 capability key，value 是该 capability 下的工具策略。
     pub tool_policy: BTreeMap<String, ToolCapabilityFilter>,
-    /// 平台 + 自定义 MCP server 完整列表。
-    pub mcp_servers: Vec<SessionMcpServer>,
+    /// MCP declaration 的 capability/draft 投影。
+    ///
+    /// AgentRun 当前可执行 MCP surface 的权威来源是 AgentFrame revision；
+    /// 此列表服务 capability replay、tool policy 关联和 runtime 工具装配快照。
+    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
 }
 
 /// Companion 维度的运行态。
@@ -501,13 +504,13 @@ fn merge_tool_policy_for_intersection(
     merged
 }
 
-// ── Session 级 MCP Server 声明 ─────────────────────────────────
+// ── Runtime MCP Declaration ─────────────────────────────────
 
-/// Session 级 MCP server — 内部统一类型，通过 `uses_relay` 标记区分直连与中继。
+/// Runtime-resolved MCP server declaration for the executable surface.
 ///
 /// relay 标记是 server 的内禀属性，不应作为独立的 `HashSet<String>` 旁路传递。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SessionMcpServer {
+pub struct RuntimeMcpServerDeclaration {
     pub name: String,
     pub transport: McpTransportConfig,
     /// 是否通过 relay backend 代理而非云端直连。
@@ -517,12 +520,15 @@ pub struct SessionMcpServer {
 // MCP transport 配置统一归 domain，spi 直接复用，避免领域/SPI 两份等价定义漂移。
 pub use agentdash_domain::mcp_preset::{McpEnvVar, McpHttpHeader, McpTransportConfig};
 
-impl SessionMcpServer {}
+impl RuntimeMcpServerDeclaration {}
 
 /// 按 relay 标记分组：返回 (relay_servers, direct_servers)。
-pub fn partition_session_mcp_servers(
-    servers: &[SessionMcpServer],
-) -> (Vec<SessionMcpServer>, Vec<SessionMcpServer>) {
+pub fn partition_runtime_mcp_declarations(
+    servers: &[RuntimeMcpServerDeclaration],
+) -> (
+    Vec<RuntimeMcpServerDeclaration>,
+    Vec<RuntimeMcpServerDeclaration>,
+) {
     let mut relay = Vec::new();
     let mut direct = Vec::new();
     for s in servers {

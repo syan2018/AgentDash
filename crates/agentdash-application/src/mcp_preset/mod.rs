@@ -11,8 +11,9 @@ pub use definition::{
 pub use error::McpPresetApplicationError;
 pub use probe::{ProbeResult, ProbeTool, probe_transport, probe_transport_without_runtime_context};
 pub use runtime::{
-    SessionRuntimeMcpContext, preset_to_session_mcp_server, preset_uses_relay,
-    resolve_preset_mcp_presets, resolve_preset_mcp_refs, resolve_preset_mcp_server,
+    McpRuntimeBindingContext, preset_to_runtime_mcp_declaration, preset_uses_relay,
+    resolve_preset_mcp_declaration, resolve_preset_mcp_declaration_refs,
+    resolve_preset_mcp_presets,
 };
 pub use service::{
     CloneMcpPresetInput, CreateMcpPresetInput, McpPresetService, UpdateMcpPresetInput,

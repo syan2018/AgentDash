@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{McpTransportConfig, SessionMcpServer};
+use crate::{McpTransportConfig, RuntimeMcpServerDeclaration};
 
 /// MCP 工具层级。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -117,8 +117,8 @@ impl McpInjectionConfig {
         )
     }
 
-    pub fn to_session_mcp_server(&self) -> SessionMcpServer {
-        SessionMcpServer {
+    pub fn to_runtime_mcp_declaration(&self) -> RuntimeMcpServerDeclaration {
+        RuntimeMcpServerDeclaration {
             name: self.server_name(),
             transport: McpTransportConfig::Http {
                 url: self.endpoint_url(),

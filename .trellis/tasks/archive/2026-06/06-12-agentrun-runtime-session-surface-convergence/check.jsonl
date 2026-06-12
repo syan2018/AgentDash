@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Check implementation against current startup and MCP runtime binding contracts."}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "Check AgentFrame surface behavior and execution frame boundaries."}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Check runtime gateway action semantics after RuntimeSession adapter changes."}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Check capability resolver and MCP declaration propagation."}
+{"file": ".trellis/tasks/archive/2026-06/06-12-mcp-runtime-binding/design.md", "reason": "Regression reference for MCP runtime binding behavior and final VFS facts."}
+{"file": ".trellis/tasks/archive/2026-06/06-01-session-lifecycle-control-plane-refactor/target-state-blueprint.md", "reason": "Review against the broader lifecycle control-plane target state."}
+{"file": ".trellis/tasks/archive/2026-06/06-02-lifecycle-control-plane-frame-convergence/research/session-frame-launch-boundary.md", "reason": "Review against known session/frame launch-boundary findings."}
+{"file": ".trellis/tasks/06-12-agentrun-runtime-session-surface-convergence/research/phase-0-surface-fact-source-audit.md", "reason": "Check future implementation against Phase 0 surface fact-source audit"}

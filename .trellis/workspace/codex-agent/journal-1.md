@@ -254,3 +254,40 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: AgentRun 与 RuntimeSession 运行面收束
+
+**Date**: 2026-06-12
+**Task**: AgentRun 与 RuntimeSession 运行面收束
+**Branch**: `codex/agentrun-runtime-session-surface-convergence`
+
+### Summary
+
+按阶段推进 AgentRun 与 RuntimeSession 层级收束：MCP declaration 命名、FrameSurfaceDraft 交接、runtime launch 读取 AgentFrame surface、AgentRun workspace DTO 收束，以及长期状态/persistence 边界清理；最终检查通过后归档任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f3dadeef` | (see git log) |
+| `bdf88bee` | (see git log) |
+| `fc49bd78` | (see git log) |
+| `7f926660` | (see git log) |
+| `d76fca39` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -18,6 +18,7 @@ use crate::session::context::apply_workspace_defaults;
 use crate::session::types::UserPromptInput;
 use crate::vfs::build_lifecycle_mount_with_ports;
 use crate::workflow::LifecycleMountSurface;
+use crate::workflow::frame_surface::{FrameContextBundleSummary, FrameSurfaceDraft};
 
 /// 把 `SessionAssemblyBuilder` 的累积声明合并进 frame construction handoff。
 ///
@@ -27,13 +28,13 @@ use crate::workflow::LifecycleMountSurface;
 /// |---|---|
 /// | `prompt_blocks` | `Option`：prepared 非空覆盖；否则保留 base |
 /// | `executor_config` | `Option`：prepared 非空覆盖；否则保留 base |
-/// | `context_bundle` / `capability_state` | 整体替换为 prepared 值 |
+/// | `context_bundle` | 整体替换为 prepared 值 |
 /// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
-/// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
+/// | `frame_surface_draft` | 整体替换为 prepared 生成的 launch surface draft |
 /// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
 ///
-/// **注**：`mcp_servers` 已迁移为 `Vec<SessionMcpServer>` 内部类型，relay 标记
-/// 内嵌于每个 server 实例，不再作为独立字段传递。
+/// **注**：MCP / capability / VFS 都收束在 `FrameSurfaceDraft` 内，原因是
+/// AgentFrame revision、launch envelope 与测试构造需要消费同一份 typed handoff。
 #[cfg(test)]
 #[allow(deprecated)]
 pub(crate) fn apply_session_assembly(
@@ -57,11 +58,20 @@ pub(crate) fn apply_session_assembly(
 
     apply_workspace_defaults(&mut plan.surface.vfs, prepared.workspace_defaults.as_ref());
     // vfs 覆盖规则：prepared 非空则覆盖，否则保留（含 workspace_defaults 回填结果）。
-    // 语义等价于旧的三重分支，但表达更直接；compose 产出的 workspace/canvas/lifecycle
-    // mount 组合会覆盖前端透传的 vfs，是刻意为之。
+    // prepared VFS 代表 compose 后的最终 workspace/canvas/lifecycle mount 组合，
+    // 因此优先于 source 输入中的 VFS。
     let active_vfs = prepared.vfs.or_else(|| plan.surface.vfs.clone());
-    plan.projections.mcp_servers = prepared.mcp_servers;
-    plan.projections.capability_state = prepared.capability_state;
+    plan.projections.frame_surface_draft = Some(FrameSurfaceDraft {
+        capability_state: prepared.capability_state,
+        vfs: active_vfs.clone(),
+        mcp_servers: prepared.mcp_servers,
+        context_bundle_summary: plan
+            .context
+            .bundle
+            .as_ref()
+            .map(FrameContextBundleSummary::from_bundle),
+        execution_profile: plan.execution_profile.executor_config.clone(),
+    });
     if let Some(vfs) = active_vfs {
         plan.set_active_vfs(vfs);
     } else {
@@ -86,7 +96,7 @@ pub(crate) fn apply_session_assembly(
 /// - **复合便利**：`apply_companion_slice` / `apply_lifecycle_activation` 封装常见组合
 /// - **新组合无需新函数**：companion + workflow 只需叠加对应层
 #[derive(Clone, Default)]
-pub(super) struct SessionAssemblyBuilder {
+pub(crate) struct SessionAssemblyBuilder {
     // ── VFS 层 ──
     pub(super) vfs: Option<Vfs>,
 
@@ -94,7 +104,7 @@ pub(super) struct SessionAssemblyBuilder {
     pub(super) capability_state: Option<CapabilityState>,
 
     // ── MCP 层 ──
-    pub(super) mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub(super) mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
 
     // ── 系统上下文层 ──
     pub(super) context_bundle: Option<SessionContextBundle>,
@@ -112,12 +122,12 @@ pub(super) struct SessionAssemblyBuilder {
 
 #[allow(dead_code)]
 impl SessionAssemblyBuilder {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// 直接设置完整 VFS（owner 构建 / lifecycle 激活产出等场景）。
-    pub(super) fn with_vfs(mut self, vfs: Vfs) -> Self {
+    pub(crate) fn with_vfs(mut self, vfs: Vfs) -> Self {
         self.vfs = Some(vfs);
         self
     }
@@ -169,7 +179,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 设置已解析的能力输出（由外部 CapabilityResolver 产出）。
-    pub(super) fn with_resolved_capabilities(mut self, capability_state: CapabilityState) -> Self {
+    pub(crate) fn with_resolved_capabilities(mut self, capability_state: CapabilityState) -> Self {
         self.capability_state = Some(capability_state);
         self
     }
@@ -182,9 +192,9 @@ impl SessionAssemblyBuilder {
     }
 
     /// 设置 MCP server 列表（覆盖）。
-    pub(super) fn with_mcp_servers(
+    pub(crate) fn with_mcp_servers(
         mut self,
-        servers: Vec<agentdash_spi::SessionMcpServer>,
+        servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
     ) -> Self {
         self.mcp_servers = servers;
         self
@@ -193,7 +203,7 @@ impl SessionAssemblyBuilder {
     /// 追加 MCP server 到列表。
     pub(super) fn append_mcp_servers(
         mut self,
-        servers: impl IntoIterator<Item = agentdash_spi::SessionMcpServer>,
+        servers: impl IntoIterator<Item = agentdash_spi::RuntimeMcpServerDeclaration>,
     ) -> Self {
         self.mcp_servers.extend(servers);
         self
@@ -206,7 +216,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 可选设置 Bundle；为 `None` 时不覆盖已有值（用于 continuation 路径按条件注入）。
-    pub(super) fn with_optional_context_bundle(
+    pub(crate) fn with_optional_context_bundle(
         mut self,
         bundle: Option<SessionContextBundle>,
     ) -> Self {
@@ -217,7 +227,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 设置 canonical 用户输入。
-    pub(super) fn with_input(
+    pub(crate) fn with_input(
         mut self,
         input: Vec<agentdash_agent_protocol::UserInputBlock>,
     ) -> Self {
@@ -226,7 +236,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 设置执行器配置。
-    pub(super) fn with_executor_config(mut self, config: AgentConfig) -> Self {
+    pub(crate) fn with_executor_config(mut self, config: AgentConfig) -> Self {
         self.executor_config = Some(config);
         self
     }
@@ -238,7 +248,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 可选设置 workspace 默认值。
-    pub(super) fn with_optional_workspace_defaults(mut self, workspace: Option<Workspace>) -> Self {
+    pub(crate) fn with_optional_workspace_defaults(mut self, workspace: Option<Workspace>) -> Self {
         self.workspace_defaults = workspace;
         self
     }
@@ -277,7 +287,7 @@ impl SessionAssemblyBuilder {
     pub(super) fn apply_companion_slice(
         self,
         parent_vfs: Option<&Vfs>,
-        parent_mcp_servers: &[agentdash_spi::SessionMcpServer],
+        parent_mcp_servers: &[agentdash_spi::RuntimeMcpServerDeclaration],
         parent_context_bundle: Option<&SessionContextBundle>,
         mode: CompanionSliceMode,
         executor_config: AgentConfig,
@@ -319,9 +329,10 @@ impl SessionAssemblyBuilder {
                 inherit_skills_from: None,
             },
         );
-        self.vfs = Some(surface.vfs);
-        self.capability_state = Some(surface.capability_state);
-        self.mcp_servers = surface.mcp_servers;
+        let surface_draft = surface.to_surface_draft();
+        self.vfs = surface_draft.vfs;
+        self.capability_state = surface_draft.capability_state;
+        self.mcp_servers = surface_draft.mcp_servers;
         self.input = Some(agentdash_agent_protocol::text_user_input_blocks(
             "请执行当前 lifecycle 节点。",
         ));
@@ -330,8 +341,21 @@ impl SessionAssemblyBuilder {
     }
 
     /// 结束 builder 链；保留该方法只为让既有 compose 代码保持声明式尾部。
-    pub(super) fn build(self) -> SessionAssemblyBuilder {
+    pub(crate) fn build(self) -> SessionAssemblyBuilder {
         self
+    }
+
+    pub(super) fn to_surface_draft(&self) -> FrameSurfaceDraft {
+        FrameSurfaceDraft {
+            capability_state: self.capability_state.clone(),
+            vfs: self.vfs.clone(),
+            mcp_servers: self.mcp_servers.clone(),
+            context_bundle_summary: self
+                .context_bundle
+                .as_ref()
+                .map(FrameContextBundleSummary::from_bundle),
+            execution_profile: self.executor_config.clone(),
+        }
     }
 }
 
@@ -374,28 +398,20 @@ pub(super) fn slice_companion_bundle(
 ///
 /// frame builder 接收 surface 数据（capability/VFS/MCP），
 /// 返回的 launch extras 包含 context bundle / prompt / executor config 等 launch-only 数据。
-pub(super) fn project_assembly_to_frame(
+pub(crate) fn project_assembly_to_frame(
     frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
     prepared: SessionAssemblyBuilder,
 ) -> (
     crate::workflow::frame_builder::AgentFrameBuilder,
     AssemblyLaunchExtras,
 ) {
-    let frame_builder =
-        frame_builder.with_surface_input(crate::workflow::frame_builder::AgentFrameSurfaceInput {
-            capability_state: prepared.capability_state.as_ref(),
-            vfs: prepared.vfs.as_ref(),
-            mcp_servers: &prepared.mcp_servers,
-            execution_profile: prepared.executor_config.as_ref(),
-            context_bundle: prepared.context_bundle.as_ref(),
-        });
+    let surface_draft = prepared.to_surface_draft();
+    let frame_builder = frame_builder.with_surface_draft(&surface_draft);
     let extras = AssemblyLaunchExtras {
+        frame_surface_draft: surface_draft,
         context_bundle: prepared.context_bundle,
         input: prepared.input,
         executor_config: prepared.executor_config,
-        mcp_servers: prepared.mcp_servers,
-        vfs: prepared.vfs,
-        capability_state: prepared.capability_state,
         environment_variables: prepared.env,
         workspace_defaults: prepared.workspace_defaults,
     };
@@ -403,16 +419,15 @@ pub(super) fn project_assembly_to_frame(
     (frame_builder, extras)
 }
 
-/// `project_assembly_to_frame` 的 launch-only 输出。
+/// `project_assembly_to_frame` 的 frame surface draft 与 launch-only 输出。
 ///
-/// 这些数据不写入 AgentFrame，而是传递给 FrameLaunchEnvelope 或 launch pipeline。
+/// `frame_surface_draft` 写入 AgentFrame revision 并传递给 FrameLaunchEnvelope；
+/// 其余字段只服务 prompt、env、context bundle 等 launch pipeline 投影。
 pub struct AssemblyLaunchExtras {
+    pub frame_surface_draft: FrameSurfaceDraft,
     pub context_bundle: Option<SessionContextBundle>,
     pub input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
     pub executor_config: Option<AgentConfig>,
-    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    pub vfs: Option<Vfs>,
-    pub capability_state: Option<CapabilityState>,
     pub environment_variables: HashMap<String, String>,
     pub workspace_defaults: Option<Workspace>,
 }

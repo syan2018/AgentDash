@@ -31,3 +31,26 @@ pub use session_workflow_context::{
     tool_directives_from_active_workflow, tool_directives_from_active_workflow_projection,
 };
 pub use tool_catalog::query_tool_catalog;
+
+use crate::repository_set::RepositorySet;
+
+/// 加载 project 级 MCP Preset 并展开为 resolver 消费的 map。
+///
+/// 能力解析调用方共享同一份 project preset 视图，避免 session / workflow /
+/// task 各自维护不同的 MCP preset 查询路径。
+pub async fn load_available_presets(
+    repos: &RepositorySet,
+    project_id: uuid::Uuid,
+) -> AvailableMcpPresets {
+    match repos.mcp_preset_repo.list_by_project(project_id).await {
+        Ok(presets) => presets.into_iter().map(|p| (p.key.clone(), p)).collect(),
+        Err(error) => {
+            tracing::warn!(
+                project_id = %project_id,
+                error = %error,
+                "加载 project MCP Preset 列表失败,mcp:<X> 能力将退化到 inline agent_mcp_servers"
+            );
+            Default::default()
+        }
+    }
+}

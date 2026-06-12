@@ -16,7 +16,8 @@ use super::super::{AgentFrameTransitionRecord, RuntimeDeliveryCommand};
 use super::SessionRuntimeInner;
 #[cfg(test)]
 use crate::workflow::runtime_launch::{
-    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
+    LaunchResolutionTrace,
 };
 use agentdash_agent_protocol::BackboneEnvelope;
 #[cfg(test)]
@@ -152,19 +153,18 @@ impl SessionRuntimeInner {
 pub(super) fn envelope_from_construction(
     construction: RuntimeContextInspectionPlan,
 ) -> FrameLaunchEnvelope {
-    let executor_config = construction
-        .execution_profile
-        .executor_config
-        .unwrap_or_else(|| agentdash_spi::AgentConfig::new("test"));
-    let capability_state = construction
-        .projections
-        .capability_state
-        .unwrap_or_default();
-    let vfs = construction.surface.vfs.unwrap_or_default();
     let working_directory = construction
         .workspace
         .working_directory
+        .clone()
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    let surface_draft = construction
+        .projections
+        .frame_surface_draft
+        .clone()
+        .expect("session hub tests must provide complete FrameSurfaceDraft");
+    let launch_surface = FrameLaunchSurface::from_surface_draft(&surface_draft)
+        .expect("session hub tests must provide launch-ready typed surface");
 
     FrameLaunchEnvelope {
         surface: FrameRuntimeSurface {
@@ -177,6 +177,8 @@ pub(super) fn envelope_from_construction(
             mcp_surface: serde_json::Value::Null,
             runtime_session_id: Some(construction.session_id.clone()),
         },
+        surface_draft,
+        launch_surface,
         pending_frame: None,
         intent: FrameLaunchIntent {
             input: construction.prompt.input,
@@ -186,10 +188,6 @@ pub(super) fn envelope_from_construction(
             discovered_guidelines: construction.projections.discovered_guidelines,
         },
         working_directory,
-        executor_config,
-        capability_state,
-        vfs,
-        mcp_servers: construction.projections.mcp_servers,
         context_bundle: construction.context.bundle,
         continuation_context_frame: None,
         base_capability_state: construction.resolution.runtime_base_capability_state,

@@ -117,8 +117,11 @@ task_id → SubjectRef(kind=Task, id=task_id)
 ```text
 project_id → LifecycleRun(project_id)
            → LifecycleAgent / AgentFrame
-           → AgentRunWorkspaceView(shell, actions, delivery_trace_meta?)
+           → AgentRunWorkspaceView(shell, control_plane, actions, delivery_trace_meta?)
 ```
+
+`control_plane` 与 `actions` 使用 AgentRun workspace DTO，原因是 Project/Story/Task 页面打开的是
+可继续交互的 AgentRun 工作台；`delivery_trace_meta` 只提供 RuntimeSession trace/detail 下钻。
 
 ### 查找 Project 下所有 RuntimeSession traces
 

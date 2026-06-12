@@ -8,6 +8,7 @@ mod classify;
 mod composer_companion;
 mod composer_lifecycle_node;
 mod composer_project_agent;
+mod owner_bootstrap;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,14 +25,15 @@ use crate::session::types::{
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
 };
 use crate::session::{
-    AssemblyLaunchExtras, LaunchCommand, OwnerPromptLifecycle, SessionRequestAssembler,
-    TerminalHookEffectBinding,
+    AssemblyLaunchExtras, LaunchCommand, SessionRequestAssembler, TerminalHookEffectBinding,
 };
 use crate::vfs::VfsService;
 use crate::workflow::frame_builder::AgentFrameBuilder;
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
+use crate::workflow::frame_surface::FrameSurfaceDraft;
 use crate::workflow::runtime_launch::{
-    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
+    LaunchResolutionTrace,
 };
 use crate::workspace::resolution::BackendAvailability;
 
@@ -64,6 +66,10 @@ pub struct FrameConstructionDeps {
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
 }
+
+pub(crate) use owner_bootstrap::{
+    AgentLevelMcp, OwnerBootstrapComposer, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
+};
 
 impl FrameConstructionService {
     pub fn new(deps: FrameConstructionDeps) -> Self {
@@ -173,6 +179,18 @@ impl FrameConstructionService {
         )
         .with_audit_bus(self.audit_bus.clone())
         .with_companion_parent_facts_provider(self.companion_facts.as_ref())
+        .with_skill_discovery(&self.extra_skill_dirs, &self.skill_discovery_providers)
+    }
+
+    pub(crate) fn owner_bootstrap_composer(&self) -> OwnerBootstrapComposer<'_> {
+        OwnerBootstrapComposer::new(
+            self.vfs_service.as_ref(),
+            self.repos.canvas_repo.as_ref(),
+            self.availability.as_ref(),
+            &self.repos,
+            self.platform_config.as_ref(),
+        )
+        .with_audit_bus(self.audit_bus.clone())
         .with_skill_discovery(&self.extra_skill_dirs, &self.skill_discovery_providers)
     }
 
@@ -308,10 +326,11 @@ pub(crate) fn build_envelope_from_frame(
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let surface = FrameRuntimeSurface::from_frame(frame, Some(runtime_session_id.to_string()));
 
-    let mut vfs = frame.typed_vfs().unwrap_or_default();
-    let mut executor_config = frame.typed_execution_profile();
-    let mut capability_state = frame.typed_capability_state();
-    let mut mcp_servers = frame.typed_mcp_servers();
+    let mut surface_draft = FrameSurfaceDraft::from_frame(frame);
+    let mut vfs = surface_draft.vfs.clone().unwrap_or_default();
+    let mut executor_config = surface_draft.execution_profile.clone();
+    let mut capability_state = surface_draft.capability_state.clone();
+    let mut mcp_servers = surface_draft.mcp_servers.clone();
     let mut context_bundle = None;
 
     if let Some(config) = command.user_input().executor_config.clone() {
@@ -322,22 +341,27 @@ pub(crate) fn build_envelope_from_frame(
     let mut environment_variables = command.user_input().env.clone();
 
     if let Some(extras) = extras {
+        surface_draft = extras.frame_surface_draft;
         if extras.input.is_some() {
             input = extras.input;
         }
         if !extras.environment_variables.is_empty() {
             environment_variables = extras.environment_variables;
         }
-        if let Some(config) = extras.executor_config {
+        if let Some(config) = surface_draft
+            .execution_profile
+            .clone()
+            .or(extras.executor_config)
+        {
             executor_config = Some(config);
         }
         if let Some(bundle) = extras.context_bundle {
             context_bundle = Some(bundle);
         }
-        if let Some(cs) = extras.capability_state {
+        if let Some(cs) = surface_draft.capability_state.clone() {
             capability_state = Some(cs);
         }
-        if let Some(v) = extras.vfs {
+        if let Some(v) = surface_draft.vfs.clone() {
             let override_wd = v
                 .default_mount()
                 .map(|m| PathBuf::from(m.root_ref.trim()))
@@ -346,8 +370,8 @@ pub(crate) fn build_envelope_from_frame(
                 vfs = v;
             }
         }
-        if !extras.mcp_servers.is_empty() {
-            mcp_servers = extras.mcp_servers;
+        if !surface_draft.mcp_servers.is_empty() {
+            mcp_servers = surface_draft.mcp_servers.clone();
         }
     }
 
@@ -356,7 +380,7 @@ pub(crate) fn build_envelope_from_frame(
             "FrameLaunchEnvelope: executor_config 未在 frame construction 阶段解析".into(),
         )
     })?;
-    let capability_state = capability_state.ok_or_else(|| {
+    let mut capability_state = capability_state.ok_or_else(|| {
         ConnectorError::InvalidConfig(
             "FrameLaunchEnvelope: capability_state 未在 frame construction 阶段解析".into(),
         )
@@ -372,9 +396,19 @@ pub(crate) fn build_envelope_from_frame(
                 "FrameLaunchEnvelope: working_directory 未在 frame construction 阶段解析".into(),
             )
         })?;
+    capability_state.vfs.active = Some(vfs.clone());
+    capability_state.tool.mcp_servers = mcp_servers.clone();
+    surface_draft.capability_state = Some(capability_state.clone());
+    surface_draft.vfs = Some(vfs.clone());
+    surface_draft.mcp_servers = mcp_servers.clone();
+    surface_draft.execution_profile = Some(executor_config.clone());
+    let launch_surface = FrameLaunchSurface::from_surface_draft(&surface_draft)
+        .map_err(|error| ConnectorError::InvalidConfig(format!("FrameLaunchEnvelope: {error}")))?;
 
     Ok(FrameLaunchEnvelope {
         surface,
+        surface_draft,
+        launch_surface,
         pending_frame: None,
         intent: FrameLaunchIntent {
             input,
@@ -384,10 +418,6 @@ pub(crate) fn build_envelope_from_frame(
             discovered_guidelines: Vec::new(),
         },
         working_directory,
-        executor_config,
-        capability_state,
-        vfs,
-        mcp_servers,
         context_bundle,
         continuation_context_frame: None,
         base_capability_state: None,

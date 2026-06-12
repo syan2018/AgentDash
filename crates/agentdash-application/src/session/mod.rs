@@ -1,5 +1,5 @@
 pub mod assembler;
-mod assembly_builder;
+pub(crate) mod assembly_builder;
 mod assignment_context_frame;
 mod auto_resume_context_frame;
 pub mod baseline_capabilities;
@@ -58,10 +58,8 @@ pub mod types;
 
 pub use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 pub use assembler::{
-    AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, CompanionSpec,
-    CompanionWorkflowSpec, LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
-    SessionRequestAssembler, compose_lifecycle_node_to_frame_with_audit, extract_agent_mcp_entries,
-    load_available_presets,
+    CompanionParentSpec, CompanionParentWorkflowSpec, CompanionSpec, CompanionWorkflowSpec,
+    LifecycleNodeSpec, SessionRequestAssembler, compose_lifecycle_node_to_frame_with_audit,
 };
 pub use assembly_builder::AssemblyLaunchExtras;
 pub use branching::{

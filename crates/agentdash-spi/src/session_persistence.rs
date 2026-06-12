@@ -8,7 +8,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::context::capability::CompanionAgentEntry;
-use crate::{SessionMcpServer, ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs};
+use crate::{RuntimeMcpServerDeclaration, ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs};
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum SessionStoreError {
@@ -221,7 +221,7 @@ pub struct SetToolAccessEffect {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetMcpServerSetEffect {
-    pub servers: Vec<SessionMcpServer>,
+    pub servers: Vec<RuntimeMcpServerDeclaration>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

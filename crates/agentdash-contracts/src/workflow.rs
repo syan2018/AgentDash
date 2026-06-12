@@ -776,6 +776,43 @@ pub struct AgentRunWorkspaceShell {
     pub last_activity_at: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunWorkspaceControlPlaneStatus {
+    Ready,
+    Running,
+    Terminal,
+    FrameMissing,
+    DeliveryMissing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunWorkspaceControlPlaneView {
+    pub status: AgentRunWorkspaceControlPlaneStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunWorkspaceActionAvailabilityView {
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunWorkspaceActionSetView {
+    pub send_next: AgentRunWorkspaceActionAvailabilityView,
+    pub enqueue: AgentRunWorkspaceActionAvailabilityView,
+    pub steer: AgentRunWorkspaceActionAvailabilityView,
+    pub cancel: AgentRunWorkspaceActionAvailabilityView,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunCommandReceipt {
@@ -816,7 +853,7 @@ pub struct AgentRunWorkspaceView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub delivery_trace_meta: Option<RuntimeSessionTraceMeta>,
-    pub control_plane: SessionRuntimeControlPlaneView,
+    pub control_plane: AgentRunWorkspaceControlPlaneView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub agent: Option<AgentRunView>,
@@ -825,7 +862,7 @@ pub struct AgentRunWorkspaceView {
     pub frame_runtime: Option<AgentFrameRuntimeView>,
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
-    pub actions: SessionRuntimeActionSetView,
+    pub actions: AgentRunWorkspaceActionSetView,
     #[serde(default)]
     pub pending_messages: Vec<PendingMessageView>,
 }

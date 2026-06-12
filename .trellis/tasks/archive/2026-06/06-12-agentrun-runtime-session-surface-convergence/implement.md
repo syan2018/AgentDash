@@ -1,0 +1,194 @@
+# AgentRun 与 RuntimeSession 层级关系收束执行计划
+
+## Current Status
+
+Phase 0 evidence refresh 已完成，Phase 1 MCP declaration naming convergence 已实现并进入检查收口。Phase 2 FrameSurfaceDraft handoff 已完成。Phase 3 runtime launch surface 读取已完成。Phase 4 AgentRun Workspace API/UI model 已完成。Phase 5 persistence and long-term state cleanup 已完成最终收束；建议进入最终检查阶段。
+
+## Phase 0: Evidence Refresh
+
+Status: completed. Evidence captured in `research/phase-0-surface-fact-source-audit.md`.
+
+目标：在实现前刷新当前代码事实，确保设计与最新 main 对齐。
+
+- [x] 复查 `RuntimeMcpServerDeclaration`、`RuntimeMcpServer`、`McpRuntimeBindingContext`、`RuntimeSessionMcpAccess` 的当前引用分布。
+- [x] 复查 AgentRun workspace API、`AgentFrame.mcp_surface_json`、`RuntimeSessionExecutionAnchor` 的读写路径。
+- [x] 复查 session startup、capability resolver、runtime gateway、frame construction 的 Trellis spec。
+- [x] 补充一份 research note，记录当前事实源写入和读取路径。
+
+验证重点：
+
+- 引用扫描覆盖 `crates/`、`packages/app-web/src/`、`.trellis/spec/`。
+- research note 能回答 “当前谁写入 surface，谁读取 surface，谁负责同步”。
+
+## Phase 1: MCP Declaration Naming Convergence
+
+目标：先移除最误导的 Session 命名，为后续事实源迁移建立正确词汇。
+
+- [x] 以 `RuntimeMcpServerDeclaration` 作为 canonical runtime-resolved declaration。
+- [x] 以 `McpRuntimeBindingContext` 作为 MCP runtime binding resolver context。
+- [x] 将相关 helper 命名改为 declaration / binding context 语义。
+- [x] 更新 MCP runtime binding、session startup、capability pipeline 相关 spec。
+- [x] 保持 wire DTO `McpServerDeclarationRelay` 的 relay 边界语义。
+
+验证重点：
+
+- Rust compile / clippy 覆盖重命名后的跨 crate 引用。
+- MCP preset runtime binding tests 继续证明 preset key 与 `mcp:<preset>` 产出一致 declaration。
+- relay/direct MCP 测试证明 resolved declaration 仍正确投影到执行层。
+
+## Phase 2: FrameSurfaceDraft Introduction
+
+Status: completed. `FrameSurfaceDraft` 已作为 construction pipeline 到 `AgentFrameBuilder` / `FrameLaunchEnvelope` 的 typed handoff；runtime launch 仍沿用 envelope 上既有 capability/VFS/MCP/execution fields，不在本阶段切到 AgentFrame surface 读取。
+
+目标：把 construction pipeline 的输出从 session projections 逐步收束为 AgentFrame surface draft。
+
+- [x] 设计 `FrameSurfaceDraft` 或等价结构，承载 capability、VFS、MCP、context、execution profile surface。
+- [x] 让 capability resolver、workspace facts、context builder、execution profile 输出汇入 draft。
+- [x] 让 `AgentFrameBuilder` 从 draft 写入 AgentFrame revision。
+- [x] 将 `SessionConstructionPlan.projections` 的职责改为持有或转交 draft。
+
+已落地契约：
+
+- `FrameSurfaceDraft` 持有 `CapabilityState`、`Vfs`、`Vec<RuntimeMcpServerDeclaration>`、`FrameContextBundleSummary` 与 `AgentConfig`。
+- `AgentFrameBuilder::with_surface_draft` 是写入 frame revision 的入口，construction pipeline 不再保留并列的 frame surface input 入口。
+- `SessionAssemblyBuilder` 产出同一份 draft，并转交给 `AssemblyLaunchExtras.frame_surface_draft` 与 `SessionConstructionPlan.projections.frame_surface_draft`。
+- `FrameLaunchEnvelope.surface_draft` 记录 construction handoff；Phase 2 不改变 launch planner / connector 对 envelope 既有字段的读取。
+
+验证重点：
+
+- AgentFrame revision 中 surface 字段完整且可反序列化。
+- construction validation 能证明 draft 与最终 AgentFrame surface 一致。
+- 现有 launch path 在过渡期仍能取得执行所需 surface。
+
+## Phase 3: Runtime Launch Reads AgentFrame Surface
+
+Status: completed. Runtime launch planner、turn preparation、tool assembly 与 runtime gateway MCP discovery 已优先消费 `FrameLaunchEnvelope.surface_draft` / active `ExecutionSessionFrame` / current AgentFrame typed surface；`RuntimeSessionExecutionAnchor` 继续只作为 delivery runtime session 到 current AgentFrame 的 trace backlink。
+
+目标：让 RuntimeSession 从 AgentFrame surface 启动和发现能力。
+
+- [x] 梳理 runtime launch 对 `CapabilityState`、`SessionConstructionPlan.projections`、session runtime state 的读取。
+- [x] 将 launch-time MCP/VFS/capability/context 读取切到 AgentFrame surface。
+- [x] 保留 `RuntimeSessionExecutionAnchor` 作为 trace backlink。
+- [x] 调整 `SessionRuntimeInner`，使其更像执行适配器和 trace coordinator。
+
+已落地契约：
+
+- `FrameLaunchEnvelope::launch_capability_state` / `launch_vfs` / `launch_mcp_servers` / `launch_executor_config` 是 launch planner 与 connector projection 的读取入口。
+- `FrameLaunchEnvelope.capability_state` / `vfs` / `mcp_servers` / `executor_config` 仍作为过渡字段保留，但构造边界通过 `sync_transitional_fields_from_surface_draft` 从 `surface_draft` 派生。
+- `TurnPreparationDeps::build_tools_for_execution_context` 与 `SessionRuntimeInner::build_tools_for_execution_context` 从 `ExecutionContext.session.mcp_servers` 读取 MCP declaration，`CapabilityState` 继续承担 tool policy 裁决。
+- `SessionRuntimeInner::get_latest_capability_state` 与 `get_runtime_mcp_servers` 在没有 active turn/cache 时通过 `RuntimeSessionExecutionAnchor -> current AgentFrame` 读取 typed surface，anchor 不承载 surface truth。
+- live runtime context transition 先写入 AgentFrame revision，再从新 revision 投影 capability/VFS/MCP 到内存缓存和 connector tools。
+
+剩余过渡字段：
+
+- `SessionConstructionPlan.projections.mcp_servers` / `capability_state` 仍存在，作为 construction 测试和旧 helper 的过渡投影；它们应继续从 `FrameSurfaceDraft` 派生。
+- `FrameLaunchEnvelope.mcp_servers` 等并列字段仍存在，服务旧调用面和诊断；新 launch read path 应使用 `launch_*` accessor。
+- `CapabilityState.tool.mcp_servers` 仍保存 MCP 维度投影和 tool policy 关联，是否从长期 state 移除留到 Phase 5。
+
+验证重点：
+
+- AgentRun send/steer/enqueue/cancel 流程仍能正确投递。
+- MCP discovery 与 tool call 使用 AgentFrame surface 中的 declaration。
+- runtime session trace 能反查 AgentRun、AgentFrame 和 LifecycleRun。
+
+## Phase 4: AgentRun Workspace API And UI Model
+
+Status: completed. `AgentRunWorkspaceView.control_plane` / `actions` 已切换为 AgentRun workspace
+命名的 DTO；`SessionRuntimeControl*` 保留给 `/sessions/{id}/runtime-control` 与 RuntimeSession
+detail 边界。Workspace 仍展示 `delivery_runtime_ref` / `delivery_trace_meta` 并允许复制或下钻
+RuntimeSession trace，但主控制状态由 AgentRun workspace command projection 表达。
+
+目标：用户侧工作台表达 AgentRun command/control，而 runtime session 作为详情和 trace 信息呈现。
+
+- [x] 引入或调整 `AgentRunWorkspaceControlPlaneView` / `AgentRunWorkspaceActionSetView`。
+- [x] 让 AgentRun workspace 页面以 AgentRun command model 为主。
+- [x] 将 RuntimeSession ID、trace meta、delivery status 放在详情或运行证据区域。
+- [x] 评估 `SessionChatView` 复用边界，必要时抽出 AgentRun chat/control facade。
+
+已落地契约：
+
+- `AgentRunWorkspaceControlPlaneStatus` 使用 `ready | running | terminal | frame_missing | delivery_missing` 表达工作台状态。
+- `AgentRunWorkspaceActionAvailabilityView` / `AgentRunWorkspaceActionSetView` 表达 `send_next`、`enqueue`、`steer`、`cancel` 的 AgentRun command 可用性。
+- AgentRun workspace route 从 run / agent identity 构建 workspace projection；缺少 delivery runtime 时返回 `delivery_missing` 并禁用投递动作。
+- `/sessions/{id}/runtime-control` 继续返回 `SessionRuntimeControlView`、`SessionRuntimeControlPlaneView` 与 `SessionRuntimeActionSetView`，用于 runtime trace/detail 入口。
+- 前端 `AgentRunWorkspacePage` 从 generated `AgentRunWorkspaceView` 消费新 control/action 类型，并继续把 `delivery_trace_meta` 投影给 WorkspacePanel / trace link / RuntimeSession ID 复制。
+
+验证重点：
+
+- AgentRun workspace 首屏不要求用户理解 SessionRuntime 控制面。
+- 继续支持查看 runtime trace 和复制 RuntimeSession ID。
+- 前端 typecheck、相关 vitest 通过。
+
+## Phase 5: Persistence And Long-Term State Cleanup
+
+Status: completed. 生产 frame construction 不再通过 `AssemblyLaunchExtras` 携带与
+`FrameSurfaceDraft` 并列的 `mcp_servers` / `vfs` / `capability_state` surface 字段。
+`CapabilityState.tool.mcp_servers` 保留为 capability/draft projection；
+`SessionConstructionPlan.projections` 的旧字段保留为测试/inspection 输入，进入 launch 前必须
+合并到 `frame_surface_draft`。Session persistence 审核结果为 no migration needed。
+
+目标：完成事实源迁移后的长期结构整理。
+
+- [x] 评估 `CapabilityState.tool.mcp_servers` 是否继续作为 draft 中间结构，或从长期 state 中移除。
+- [x] 评估 `SessionConstructionPlan.projections` 是否被 `FrameSurfaceDraft` 完全取代。
+- [x] 审核 session persistence 中 runtime command、event、projection、lineage 的边界。
+- [x] 如 schema 需要调整，编写 migration 并更新 migration guard。
+
+清理/保留决策：
+
+- 已清理：`AssemblyLaunchExtras` 移除 `mcp_servers` / `vfs` / `capability_state`，生产
+  `build_envelope_from_frame` 只从 `frame_surface_draft` 合并 surface。
+- 已清理：测试 helper 的旧 projection 到 draft 合并逻辑集中到
+  `RuntimeContextInspectionPlan::surface_draft_or_fixture_projection`。
+- 有意保留：`CapabilityState.tool.mcp_servers` 仍服务 `mcp:<server>` directive、runtime
+  command replay、tool policy 关联、active turn / runtime gateway tool assembly；它是
+  capability/draft projection，不是 AgentRun 当前 executable surface truth。
+- 有意保留：`RuntimeContextInspectionPlan.projections.mcp_servers` /
+  `capability_state` 仍服务旧测试和 inspection fixture；它们进入 launch 前必须合并为
+  `FrameSurfaceDraft`。
+- 有意保留：session persistence 的 event、runtime command、terminal effect、
+  projection、lineage store；它们表达 runtime trace / delivery outbox / checkpoint /
+  trace lineage，不承载 AgentRun 当前 surface truth。
+- No migration needed：本阶段没有数据库 schema 改动。
+
+验证重点：
+
+- 长期事实源指向 AgentFrame revision。
+- RuntimeSession persistence 聚焦 trace / event / command / terminal effect / lineage。
+- migration guard 通过。
+
+本阶段验证：
+
+- [x] `cargo check -p agentdash-application`
+- [x] `cargo test -p agentdash-application session::launch`
+- [x] `cargo test -p agentdash-application session::hub`
+- [x] `cargo test -p agentdash-application runtime_gateway`
+- [x] `cargo test -p agentdash-application capability`
+- [x] `cargo test -p agentdash-application mcp_preset`
+- [x] `cargo test -p agentdash-application mcp`
+- [x] `cargo test -p agentdash-executor mcp`
+- [x] `cargo test -p agentdash-local relay_mcp_servers`
+- [x] `pnpm run migration:guard`
+- [x] `git diff --check`
+
+## Cross-Phase Validation
+
+- [ ] `pnpm run backend:clippy`
+- [ ] `pnpm --dir packages/app-web run typecheck`
+- [ ] 相关 Rust tests：session startup、capability resolver、runtime gateway、workflow frame surface、MCP direct/relay。
+- [ ] 相关 frontend tests：AgentRun workspace、workspace-panel runtime state、lifecycle services。
+- [ ] `pnpm run migration:guard` 在涉及 schema 或 generated contracts 时执行。
+- [ ] 必要时用 `pnpm dev` 做启动证明。
+
+## Risk Areas
+
+- `SessionRuntimeInner` 当前同时连接 execution、events、capability、commands，阶段 3 需要控制改动面。
+- `AgentFrame.mcp_surface_json` 是 JSON surface，目标收束需要避免每个消费者各自 parse。
+- generated contracts 与 frontend hand-written types 需要一起更新。
+- MCP direct / relay / local prompt wire shape 有独立边界，重命名时要保留 wire DTO 语义。
+
+## Review Gate Before Start
+
+- [ ] 用户确认长期目标采用目标收束。
+- [ ] 用户确认第一批实现范围是否限定为 MCP declaration / runtime binding context 命名收束。
+- [ ] 用户确认是否需要拆父子任务：命名收束、FrameSurfaceDraft、runtime launch、AgentRun workspace、persistence cleanup 可独立验证。

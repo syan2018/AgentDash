@@ -73,6 +73,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `workflow/value_objects/run_state.rs` | Lifecycle execution ledger 与 executor refs |
 | `workflow/value_objects/orchestration.rs` | Lifecycle-owned orchestration contract、plan snapshot、runtime node state、dispatch/state exchange/journal fact value types |
 | `workflow/validation.rs` | Workflow contract validation、Lifecycle DAG validation、Activity lifecycle transition/port/policy validation |
+| `workflow/frame_construction/owner_bootstrap.rs` | Project / Story / Routine owner surface composition，产出写入 `AgentFrame` 的 VFS、MCP、capability、context bundle 与 execution profile |
 | `agentdash-spi::workflow::script` | Workflow script evaluator port；application 只消费脚本校验与 builder document 输出，不依赖具体脚本引擎 |
 | `agentdash-infrastructure::workflow_scripts` | Rhai workflow builder adapter；只注册 workflow helper surface，并复用公共 `RhaiScriptRuntime` |
 | `agentdash-application::workflow::script` | typed workflow script builder document、preflight service 与 pathful diagnostics |

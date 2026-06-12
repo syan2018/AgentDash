@@ -61,20 +61,26 @@
 
 ## AgentRun Workspace 控制动作状态
 
-执行工作台输入区的可执行状态来自后端 `AgentRunWorkspaceView.actions`。页面层把 draft
-启动态或 workspace action set 翻译成 `SessionChatControlState`，聊天组件只渲染当前
-`primaryAction` 与独立 `cancelAction`。
+执行工作台输入区的可执行状态来自后端 `AgentRunWorkspaceView.control_plane` 与
+`AgentRunWorkspaceView.actions`。页面层把 draft 启动态或 workspace action set 翻译成
+`SessionChatControlState`，聊天组件只渲染当前 `primaryAction` 与独立 `cancelAction`。
 
-`start_draft`、`send_next`、`steer`、`cancel` 是不同用户意图：draft 首条消息 materialize
-runtime/lifecycle，idle `send_next` 启动下一轮 prompt，running `steer` 注入当前 turn，running
-`cancel` 中断当前 turn。用 action model 承载这些意图的原因是前端不能从 stream 连接、session
-是否存在、或“下一轮不可发送”推导 lifecycle 控制面状态；后端 AgentRun Workspace projection
-已经合并 run / agent / frame、active turn、command receipt、delivery summary 与 connector
-live-session capability，才是输入区展示和命令分派的事实源。
+`start_draft`、`send_next`、`enqueue`、`steer`、`cancel` 是不同用户意图：draft 首条消息
+materialize runtime/lifecycle，ready `send_next` 启动下一轮 prompt，running `enqueue` 进入
+待投递队列，running `steer` 注入当前 turn，running `cancel` 中断当前 turn。用 action model
+承载这些意图的原因是前端不能从 stream 连接、session 是否存在、或“下一轮不可发送”推导
+lifecycle 控制面状态；后端 AgentRun Workspace projection 已经合并 run / agent / frame、active
+turn、command receipt、delivery summary 与 connector live-session capability，才是输入区展示和
+命令分派的事实源。
+
+`AgentRunWorkspaceControlPlaneView.status` 使用 AgentRun workspace 语义：
+`ready | running | terminal | frame_missing | delivery_missing`。RuntimeSession detail 使用
+`SessionRuntimeControlView`，原因是 runtime trace/detail 从 runtime session identity 出发，而
+AgentRun workspace 从 run / agent identity 出发。
 
 SessionChatView 的职责是执行传入 action，不持有业务分派规则。Ctrl+Enter 触发当前
-primary action；cancel 作为独立按钮展示。这样 anchored running 可以同时显示运行中 steer 和取消，
-anchored idle 显示下一轮发送，只读 trace 展示后端 reason。
+primary action；cancel 作为独立按钮展示。这样 running workspace 可以同时显示排队、运行中 steer
+和取消，ready workspace 显示下一轮发送，只读 trace 展示后端 reason。
 
 ## AgentRun Workspace 状态来源
 

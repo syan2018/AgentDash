@@ -141,7 +141,7 @@ impl SessionLaunchOrchestrator {
         let user_input = UserPromptInput {
             input: envelope.intent.input.clone(),
             env: envelope.intent.environment_variables.clone(),
-            executor_config: Some(envelope.executor_config.clone()),
+            executor_config: Some(envelope.launch_executor_config().clone()),
             backend_selection: None,
         };
         let command = LaunchCommand::http_prompt_input(user_input, None);
@@ -187,11 +187,12 @@ impl SessionLaunchOrchestrator {
         mut envelope: FrameLaunchEnvelope,
         requested_runtime_commands: &[crate::session::runtime_commands::RuntimeCommandRecord],
     ) -> FrameLaunchEnvelope {
+        use crate::workflow::runtime_launch::FrameLaunchSurface;
         use crate::workflow::runtime_launch::LaunchResolutionTrace;
 
-        let mut base_capability_state = envelope.capability_state.clone();
-        base_capability_state.vfs.active = Some(envelope.vfs.clone());
-        base_capability_state.tool.mcp_servers = envelope.mcp_servers.clone();
+        let mut base_capability_state = envelope.launch_capability_state().clone();
+        base_capability_state.vfs.active = Some(envelope.launch_vfs().clone());
+        base_capability_state.tool.mcp_servers = envelope.launch_mcp_servers().to_vec();
 
         let requested_transitions = requested_runtime_commands
             .iter()
@@ -213,7 +214,7 @@ impl SessionLaunchOrchestrator {
         let effective_vfs = replay
             .as_ref()
             .and_then(|replay| replay.effective_vfs.clone())
-            .unwrap_or_else(|| envelope.vfs.clone());
+            .unwrap_or_else(|| envelope.launch_vfs().clone());
         if let Some(mount) = effective_vfs.default_mount() {
             let wd = std::path::PathBuf::from(mount.root_ref.trim());
             if !wd.as_os_str().is_empty() {
@@ -221,15 +222,19 @@ impl SessionLaunchOrchestrator {
             }
         }
         final_capability_state.vfs.active = Some(effective_vfs.clone());
-        envelope.vfs = effective_vfs;
 
         let effective_mcp_servers = replay
             .as_ref()
             .and_then(|replay| replay.effective_mcp_servers.clone())
-            .unwrap_or_else(|| envelope.mcp_servers.clone());
-        envelope.mcp_servers = effective_mcp_servers.clone();
-        final_capability_state.tool.mcp_servers = effective_mcp_servers;
-        envelope.capability_state = final_capability_state;
+            .unwrap_or_else(|| envelope.launch_mcp_servers().to_vec());
+        final_capability_state.tool.mcp_servers = effective_mcp_servers.clone();
+        let execution_profile = envelope.launch_executor_config().clone();
+        envelope.replace_launch_surface(FrameLaunchSurface {
+            capability_state: final_capability_state,
+            vfs: effective_vfs,
+            mcp_servers: effective_mcp_servers,
+            execution_profile,
+        });
         envelope.base_capability_state = Some(base_capability_state);
         if requested_runtime_commands.is_empty() {
             envelope.resolution_trace.pending_overlay_applied = false;

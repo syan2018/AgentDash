@@ -22,7 +22,7 @@ use super::bridges::provider_registry::{
     CONTEXT_WINDOW_STANDARD, EffectiveLlmProviderProfile, ProviderEntry, ProviderModelResolveError,
     ProviderUnavailableReason, build_effective_profile_catalog_from_db,
 };
-use crate::hook_events::build_hook_trace_envelope;
+use agentdash_spi::hooks::trace::build_hook_trace_envelope;
 use agentdash_spi::hooks::{ContextFrame, ContextFrameSection};
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,

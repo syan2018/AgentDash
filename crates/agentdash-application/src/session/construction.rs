@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -6,7 +8,7 @@ use agentdash_domain::task::TaskDispatchPreference;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
     AuthIdentity, CapabilityState, DiscoveredGuideline, SessionBaselineCapabilities,
-    SessionContextBundle, SessionMcpServer, Vfs,
+    SessionContextBundle, Vfs,
 };
 use uuid::Uuid;
 
@@ -61,6 +63,7 @@ impl ResolvedSessionOwner {
     }
 }
 use crate::vfs::ResolvedVfsSurface;
+use crate::workflow::frame_surface::FrameSurfaceDraft;
 
 /// 测试 fixture：launch envelope 测试所需的完整投影形态。
 #[derive(Debug, Clone)]
@@ -137,8 +140,8 @@ pub struct ConstructionEffectPlan {
 
 #[derive(Debug, Clone, Default)]
 pub struct ConstructionProjections {
-    pub mcp_servers: Vec<SessionMcpServer>,
-    pub capability_state: Option<CapabilityState>,
+    /// Construction 到 AgentFrame / FrameLaunchEnvelope 的唯一 surface handoff。
+    pub frame_surface_draft: Option<FrameSurfaceDraft>,
     pub session_capabilities: Option<SessionBaselineCapabilities>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
 }
@@ -249,9 +252,16 @@ impl RuntimeContextInspectionPlan {
 
     pub fn active_vfs(&self) -> Option<&Vfs> {
         self.projections
-            .capability_state
+            .frame_surface_draft
             .as_ref()
-            .and_then(|state| state.vfs.active.as_ref())
+            .and_then(|draft| draft.vfs.as_ref())
+            .or_else(|| {
+                self.projections
+                    .frame_surface_draft
+                    .as_ref()
+                    .and_then(|draft| draft.capability_state.as_ref())
+                    .and_then(|state| state.vfs.active.as_ref())
+            })
             .or(self.surface.vfs.as_ref())
             .or(self.context_projection.vfs.as_ref())
     }
@@ -261,8 +271,11 @@ impl RuntimeContextInspectionPlan {
     }
 
     pub fn set_active_vfs(&mut self, vfs: Vfs) {
-        if let Some(capability_state) = self.projections.capability_state.as_mut() {
-            capability_state.vfs.active = Some(vfs.clone());
+        if let Some(draft) = self.projections.frame_surface_draft.as_mut() {
+            draft.vfs = Some(vfs.clone());
+            if let Some(capability_state) = draft.capability_state.as_mut() {
+                capability_state.vfs.active = Some(vfs.clone());
+            }
         }
         self.surface.vfs = Some(vfs.clone());
         self.context_projection.vfs = Some(vfs);
@@ -271,9 +284,16 @@ impl RuntimeContextInspectionPlan {
     pub fn sync_vfs_projection_from_capability(&mut self) {
         if let Some(vfs) = self
             .projections
-            .capability_state
+            .frame_surface_draft
             .as_ref()
-            .and_then(|state| state.vfs.active.clone())
+            .and_then(|draft| {
+                draft.vfs.clone().or_else(|| {
+                    draft
+                        .capability_state
+                        .as_ref()
+                        .and_then(|state| state.vfs.active.clone())
+                })
+            })
         {
             self.surface.vfs = Some(vfs.clone());
             self.context_projection.vfs = Some(vfs);

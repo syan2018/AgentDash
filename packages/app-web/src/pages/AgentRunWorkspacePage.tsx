@@ -384,7 +384,7 @@ export function AgentRunWorkspacePage({
     }
 
     const actions = runtimeControl.actions;
-    const isRunning = runtimeControl.control_plane.status === "anchored_running";
+    const isRunning = runtimeControl.control_plane.status === "running";
 
     // Running 态：主动作=enqueue（排队），辅助动作=steer
     if (isRunning && actions.enqueue.enabled) {

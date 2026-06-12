@@ -3,7 +3,7 @@
 /// relay-specific 的 FileEntry 转换逻辑放在 API adapter 层，
 /// 避免 Application 层直接依赖 `agentdash-relay` 类型。
 pub use agentdash_application::runtime_bridge::{
-    session_mcp_server_to_runtime, session_mcp_servers_to_runtime,
+    mcp_declaration_to_runtime_server, mcp_declarations_to_runtime_servers,
 };
 
 use agentdash_application::runtime::RuntimeFileEntry;

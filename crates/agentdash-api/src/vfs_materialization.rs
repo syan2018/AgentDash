@@ -8,7 +8,7 @@ use agentdash_application_ports::vfs_materialization::{
 };
 use agentdash_relay::{RelayMessage, VfsMaterializePayload};
 use agentdash_spi::ConnectorError;
-use agentdash_spi::SessionMcpServer;
+use agentdash_spi::RuntimeMcpServerDeclaration;
 use agentdash_spi::platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo, RelayProbeResult,
 };
@@ -196,14 +196,14 @@ impl MaterializingMcpRelayProvider {
 impl McpRelayProvider for MaterializingMcpRelayProvider {
     async fn list_relay_tools(
         &self,
-        requested_servers: &[SessionMcpServer],
+        requested_servers: &[RuntimeMcpServerDeclaration],
     ) -> Vec<RelayMcpToolInfo> {
         self.backends.list_relay_tools(requested_servers).await
     }
 
     async fn call_relay_tool(
         &self,
-        server: &SessionMcpServer,
+        server: &RuntimeMcpServerDeclaration,
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
         context: Option<RelayMcpCallContext>,

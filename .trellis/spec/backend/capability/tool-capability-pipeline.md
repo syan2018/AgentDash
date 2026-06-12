@@ -36,7 +36,7 @@
 
 格式 `mcp:<server_name>`，Resolver 在 agent config 的 `mcp_servers` 中按 name 查找并注入。
 
-当 `mcp:<server_name>` 命中 Project MCP Preset 时，Resolver 必须通过 `CapabilityResolverInput.mcp_runtime_context` 调用 `resolve_preset_mcp_server()`，产出带 runtime-resolved transport 的 `SessionMcpServer`。这个 context 来自 frame construction final VFS，原因是 custom MCP directive 是运行时 capability projection，不是静态 preset 展示字段。命中 agent 内联 `mcp_servers` 时直接消费已解析的 `SessionMcpServer`，不再按 preset runtime binding 重写。
+当 `mcp:<server_name>` 命中 Project MCP Preset 时，Resolver 必须通过 `CapabilityResolverInput.mcp_runtime_context` 调用 `resolve_preset_mcp_declaration()`，产出带 runtime-resolved transport 的 `RuntimeMcpServerDeclaration`。这个 context 来自 frame construction final VFS，原因是 custom MCP directive 是运行时 capability projection，不是静态 preset 展示字段。命中 agent 内联 `mcp_servers` 时直接消费已解析的 `RuntimeMcpServerDeclaration`，不再按 preset runtime binding 重写。
 
 ## Visibility Rule
 
@@ -96,6 +96,11 @@ Resolver 在 agent baseline（auto_granted）上应用 reduction：
 - `Blocked` → 即便 auto_granted=true 也被移除
 - `FullCapability` / `ToolWhitelist` → 加入 effective_caps
 - `ToolWhitelist` 与工具级 Remove 编译到 `CapabilityState.tool_policy`
+
+`CapabilityState.tool.mcp_servers` 保留为 MCP 维度的 capability/draft projection。它承接
+`mcp:<server>` directive 解析、runtime command replay 和工具装配快照，并必须与
+`FrameSurfaceDraft.mcp_servers` 同源；AgentRun 当前可执行 MCP surface 的事实源是
+AgentFrame revision 的 MCP surface。
 
 ## 运行态工具策略
 

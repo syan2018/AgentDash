@@ -12,7 +12,9 @@
 
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository};
-use agentdash_spi::{AgentConfig, CapabilityState, SessionContextBundle, SessionMcpServer, Vfs};
+use agentdash_spi::{
+    AgentConfig, CapabilityState, RuntimeMcpServerDeclaration, SessionContextBundle, Vfs,
+};
 use uuid::Uuid;
 
 use crate::session::capability_state::{
@@ -20,14 +22,7 @@ use crate::session::capability_state::{
 };
 
 use super::activity_activation::ActivityActivation;
-
-pub(crate) struct AgentFrameSurfaceInput<'a> {
-    pub capability_state: Option<&'a CapabilityState>,
-    pub vfs: Option<&'a Vfs>,
-    pub mcp_servers: &'a [SessionMcpServer],
-    pub execution_profile: Option<&'a AgentConfig>,
-    pub context_bundle: Option<&'a SessionContextBundle>,
-}
+use super::frame_surface::{FrameContextBundleSummary, FrameSurfaceDraft};
 
 pub(crate) struct AgentFrameActivationSurfaceInput<'a> {
     pub activation: &'a ActivityActivation,
@@ -41,7 +36,19 @@ pub(crate) struct AgentFrameActivationSurfaceInput<'a> {
 pub(crate) struct AgentFrameActivationSurface {
     pub capability_state: CapabilityState,
     pub vfs: Vfs,
-    pub mcp_servers: Vec<SessionMcpServer>,
+    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
+}
+
+impl AgentFrameActivationSurface {
+    pub(crate) fn to_surface_draft(&self) -> FrameSurfaceDraft {
+        FrameSurfaceDraft {
+            capability_state: Some(self.capability_state.clone()),
+            vfs: Some(self.vfs.clone()),
+            mcp_servers: self.mcp_servers.clone(),
+            context_bundle_summary: None,
+            execution_profile: None,
+        }
+    }
 }
 
 pub(crate) fn build_lifecycle_activation_surface(
@@ -138,8 +145,8 @@ impl AgentFrameBuilder {
         self
     }
 
-    /// 从结构化 `Vec<SessionMcpServer>` 填充 mcp_surface。
-    pub fn with_mcp_servers(mut self, servers: &[SessionMcpServer]) -> Self {
+    /// 从结构化 `Vec<RuntimeMcpServerDeclaration>` 填充 mcp_surface。
+    pub fn with_mcp_servers(mut self, servers: &[RuntimeMcpServerDeclaration]) -> Self {
         if servers.is_empty() {
             self.mcp_surface = None;
         } else {
@@ -164,30 +171,34 @@ impl AgentFrameBuilder {
     }
 
     pub fn with_context_bundle_summary(mut self, bundle: &SessionContextBundle) -> Self {
-        self.context_slice = Some(serde_json::json!({
-            "bundle_id": bundle.bundle_id,
-            "session_id": bundle.session_id,
-            "phase_tag": bundle.phase_tag,
-            "fragment_count": bundle.bootstrap_fragments.len(),
-        }));
+        self =
+            self.with_frame_context_bundle_summary(&FrameContextBundleSummary::from_bundle(bundle));
         self
     }
 
-    pub(crate) fn with_surface_input(mut self, input: AgentFrameSurfaceInput<'_>) -> Self {
-        if let Some(state) = input.capability_state {
+    pub fn with_frame_context_bundle_summary(
+        mut self,
+        summary: &FrameContextBundleSummary,
+    ) -> Self {
+        self.context_slice = serde_json::to_value(summary).ok();
+        self
+    }
+
+    pub fn with_surface_draft(mut self, draft: &FrameSurfaceDraft) -> Self {
+        if let Some(state) = draft.capability_state.as_ref() {
             self = self.with_capability_state(state);
         }
-        if let Some(vfs) = input.vfs {
+        if let Some(vfs) = draft.vfs.as_ref() {
             self = self.with_vfs_typed(vfs);
         }
-        if !input.mcp_servers.is_empty() {
-            self = self.with_mcp_servers(input.mcp_servers);
+        if !draft.mcp_servers.is_empty() {
+            self = self.with_mcp_servers(&draft.mcp_servers);
         }
-        if let Some(config) = input.execution_profile {
+        if let Some(config) = draft.execution_profile.as_ref() {
             self = self.with_execution_profile(config);
         }
-        if let Some(bundle) = input.context_bundle {
-            self = self.with_context_bundle_summary(bundle);
+        if let Some(summary) = draft.context_bundle_summary.as_ref() {
+            self = self.with_frame_context_bundle_summary(summary);
         }
         self
     }
@@ -267,7 +278,7 @@ mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::MountDirective;
-    use agentdash_spi::{McpTransportConfig, ToolCluster};
+    use agentdash_spi::{McpTransportConfig, SessionContextBundle, ToolCluster};
     use std::{collections::BTreeSet, sync::Mutex};
 
     #[derive(Default)]
@@ -434,7 +445,7 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let activation = ActivityActivation {
             capability_state: CapabilityState::from_clusters([ToolCluster::Read]),
-            mcp_servers: vec![SessionMcpServer {
+            mcp_servers: vec![RuntimeMcpServerDeclaration {
                 name: "workflow-tools".to_string(),
                 transport: McpTransportConfig::Http {
                     url: "http://localhost/mcp".to_string(),
@@ -468,16 +479,14 @@ mod tests {
             base_vfs: Some(&base_vfs),
             inherit_skills_from: None,
         });
+        let mut draft = surface.to_surface_draft();
+        draft.execution_profile = Some(executor_config);
+        draft.context_bundle_summary =
+            Some(FrameContextBundleSummary::from_bundle(&context_bundle));
 
         let frame = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("runtime-1")
-            .with_surface_input(AgentFrameSurfaceInput {
-                capability_state: Some(&surface.capability_state),
-                vfs: Some(&surface.vfs),
-                mcp_servers: &surface.mcp_servers,
-                execution_profile: Some(&executor_config),
-                context_bundle: Some(&context_bundle),
-            })
+            .with_surface_draft(&draft)
             .build(&repo)
             .await
             .expect("frame");
@@ -522,6 +531,65 @@ mod tests {
         assert!(
             frame.effective_capability_json.is_some(),
             "capability surface should be written by the same frame revision"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_revision_writes_frame_surface_draft() {
+        let repo = InMemoryFrameRepo::default();
+        let agent_id = Uuid::new_v4();
+        let vfs = Vfs {
+            mounts: vec![mount("workspace", "relay_fs")],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
+        capability_state.vfs.active = Some(vfs.clone());
+        let mcp_servers = vec![RuntimeMcpServerDeclaration {
+            name: "draft-tools".to_string(),
+            transport: McpTransportConfig::Http {
+                url: "http://localhost/draft".to_string(),
+                headers: Vec::new(),
+            },
+            uses_relay: false,
+        }];
+        capability_state.tool.mcp_servers = mcp_servers.clone();
+        let bundle = SessionContextBundle::new(Uuid::new_v4(), "owner_bootstrap");
+        let draft = FrameSurfaceDraft {
+            capability_state: Some(capability_state),
+            vfs: Some(vfs),
+            mcp_servers,
+            context_bundle_summary: Some(FrameContextBundleSummary::from_bundle(&bundle)),
+            execution_profile: Some(AgentConfig::new("PI_AGENT")),
+        };
+
+        let frame = AgentFrameBuilder::new(agent_id)
+            .with_surface_draft(&draft)
+            .build(&repo)
+            .await
+            .expect("frame");
+
+        assert!(frame.effective_capability_json.is_some());
+        assert!(frame.vfs_surface_json.is_some());
+        assert!(frame.mcp_surface_json.is_some());
+        assert_eq!(
+            frame
+                .context_slice_json
+                .as_ref()
+                .and_then(|value| value.get("bundle_id"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            Some(bundle.bundle_id.to_string())
+        );
+        assert_eq!(
+            frame
+                .execution_profile_json
+                .as_ref()
+                .and_then(|value| value.get("executor"))
+                .and_then(serde_json::Value::as_str),
+            Some("PI_AGENT")
         );
     }
 }

@@ -68,6 +68,7 @@ use crate::vfs::{
     MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
     VfsService,
 };
+use crate::workflow::frame_surface::FrameSurfaceDraft;
 use agentdash_application_ports::backend_transport::{
     BackendTransport, DirectoryBrowseInfo, GitRepoInfo, RelayPromptRequest, RelayPromptTransport,
     RelaySessionRoute, RelaySessionRouteInfo, RelaySteerRequest, RemoteExecutorInfo,
@@ -211,6 +212,7 @@ fn simple_prompt_request(prompt: &str) -> RuntimeContextInspectionPlan {
         executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
         ..UserPromptInput::from_text(prompt)
     };
+    let executor_config = user_input.executor_config.clone();
     let owner = crate::session::construction::ResolvedSessionOwner {
         owner_type: agentdash_spi::CapabilityScope::Project,
         project_id: Some(uuid::Uuid::new_v4()),
@@ -226,7 +228,13 @@ fn simple_prompt_request(prompt: &str) -> RuntimeContextInspectionPlan {
     capability_state.vfs.active = Some(vfs.clone());
     construction.workspace.working_directory = Some(root);
     construction.surface.vfs = Some(vfs.clone());
-    construction.projections.capability_state = Some(capability_state);
+    construction.projections.frame_surface_draft = Some(FrameSurfaceDraft {
+        capability_state: Some(capability_state),
+        vfs: Some(vfs),
+        mcp_servers: Vec::new(),
+        context_bundle_summary: None,
+        execution_profile: executor_config,
+    });
     construction.resolution = ConstructionResolutionPlan {
         vfs_source: Some("test.local_workspace_vfs".to_string()),
         mcp_source: Some("test.empty".to_string()),
@@ -453,7 +461,7 @@ async fn start_prompt_records_current_turn_state() {
     let workspace = tempfile::tempdir().expect("workspace");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
     let session = hub.create_session("active-state").await.expect("create");
-    let session_mcp = agentdash_spi::SessionMcpServer {
+    let runtime_mcp_declaration = agentdash_spi::RuntimeMcpServerDeclaration {
         name: "relay_tools".to_string(),
         transport: agentdash_spi::McpTransportConfig::Http {
             url: "http://127.0.0.1:19090/mcp".to_string(),
@@ -465,9 +473,17 @@ async fn start_prompt_records_current_turn_state() {
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Workflow]);
 
     let mut req = simple_prompt_request("hello");
-    req.surface.vfs = Some(local_workspace_vfs(workspace.path()));
-    req.projections.mcp_servers = vec![session_mcp.clone()];
-    req.projections.capability_state = Some(flow_caps.clone());
+    let vfs = local_workspace_vfs(workspace.path());
+    req.surface.vfs = Some(vfs.clone());
+    let mut launch_caps = flow_caps.clone();
+    launch_caps.vfs.active = Some(vfs.clone());
+    req.projections.frame_surface_draft = Some(FrameSurfaceDraft {
+        capability_state: Some(launch_caps),
+        vfs: Some(vfs),
+        mcp_servers: vec![runtime_mcp_declaration.clone()],
+        context_bundle_summary: None,
+        execution_profile: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
+    });
 
     hub.start_prompt(&session.id, req)
         .await
@@ -494,7 +510,7 @@ async fn start_prompt_records_current_turn_state() {
 #[tokio::test]
 async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
     let base = tempfile::tempdir().expect("tempdir");
-    let workflow_server = agentdash_spi::SessionMcpServer {
+    let workflow_server = agentdash_spi::RuntimeMcpServerDeclaration {
         name: "agentdash-workflow-tools-123".to_string(),
         transport: agentdash_spi::McpTransportConfig::Http {
             url: "http://relay/ignored".to_string(),
@@ -569,11 +585,7 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
     };
 
     let plan_tools = hub
-        .build_tools_for_execution_context(
-            "session-initial-tools",
-            &plan_context,
-            std::slice::from_ref(&workflow_server),
-        )
+        .build_tools_for_execution_context("session-initial-tools", &plan_context)
         .await;
     let plan_names = plan_tools
         .iter()
@@ -601,11 +613,7 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
     };
 
     let apply_tools = hub
-        .build_tools_for_execution_context(
-            "session-initial-tools",
-            &apply_context,
-            &[workflow_server],
-        )
+        .build_tools_for_execution_context("session-initial-tools", &apply_context)
         .await;
     let apply_names = apply_tools
         .iter()
@@ -1060,8 +1068,17 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
     let initial_flow =
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Read]);
     let mut req = simple_prompt_request("hello");
-    req.surface.vfs = Some(local_workspace_vfs(workspace.path()));
-    req.projections.capability_state = Some(initial_flow);
+    let vfs = local_workspace_vfs(workspace.path());
+    req.surface.vfs = Some(vfs.clone());
+    let mut launch_flow = initial_flow;
+    launch_flow.vfs.active = Some(vfs.clone());
+    req.projections.frame_surface_draft = Some(FrameSurfaceDraft {
+        capability_state: Some(launch_flow),
+        vfs: Some(vfs),
+        mcp_servers: Vec::new(),
+        context_bundle_summary: None,
+        execution_profile: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
+    });
 
     hub.start_prompt(&session.id, req)
         .await
@@ -1076,7 +1093,7 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
         .or_default()
         .exclude
         .insert("fs_apply_patch".to_string());
-    let target_mcp = agentdash_spi::SessionMcpServer {
+    let target_mcp = agentdash_spi::RuntimeMcpServerDeclaration {
         name: "phase_tools".to_string(),
         transport: agentdash_spi::McpTransportConfig::Http {
             url: "http://127.0.0.1:19091/mcp".to_string(),
@@ -1429,7 +1446,7 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
         .tool
         .capabilities
         .insert(agentdash_spi::ToolCapability::new("file_write"));
-    let target_mcp = agentdash_spi::SessionMcpServer {
+    let target_mcp = agentdash_spi::RuntimeMcpServerDeclaration {
         name: "phase_tools".to_string(),
         transport: agentdash_spi::McpTransportConfig::Http {
             url: "http://127.0.0.1:19092/mcp".to_string(),

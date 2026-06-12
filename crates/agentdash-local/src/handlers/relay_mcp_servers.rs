@@ -1,6 +1,6 @@
-//! relay MCP Server 配置解析——从 relay 协议 JSON 转换为 SessionMcpServer
+//! relay MCP Server 配置解析——从 relay 协议 JSON 转换为 RuntimeMcpServerDeclaration
 
-use agentdash_spi::{McpEnvVar, McpHttpHeader, McpTransportConfig, SessionMcpServer};
+use agentdash_spi::{McpEnvVar, McpHttpHeader, McpTransportConfig, RuntimeMcpServerDeclaration};
 use serde_json::{Map, Value};
 use thiserror::Error;
 
@@ -71,7 +71,7 @@ pub enum RelayMcpServerParseError {
     },
 }
 
-/// 从中继 `CommandPromptPayload.mcp_servers` JSON 列表解析出 `SessionMcpServer` 列表。
+/// 从中继 `CommandPromptPayload.mcp_servers` JSON 列表解析出 `RuntimeMcpServerDeclaration` 列表。
 ///
 /// 仅接受三种显式传输类型:
 /// - `"type": "http"` → `McpTransportConfig::Http`
@@ -79,7 +79,7 @@ pub enum RelayMcpServerParseError {
 /// - `"type": "stdio"` → `McpTransportConfig::Stdio`
 pub fn parse_relay_mcp_servers(
     raw: &[Value],
-) -> Result<Vec<SessionMcpServer>, RelayMcpServerParseError> {
+) -> Result<Vec<RuntimeMcpServerDeclaration>, RelayMcpServerParseError> {
     raw.iter()
         .enumerate()
         .map(|(index, entry)| parse_relay_mcp_server(index, entry))
@@ -89,7 +89,7 @@ pub fn parse_relay_mcp_servers(
 fn parse_relay_mcp_server(
     index: usize,
     entry: &Value,
-) -> Result<SessionMcpServer, RelayMcpServerParseError> {
+) -> Result<RuntimeMcpServerDeclaration, RelayMcpServerParseError> {
     let obj = entry
         .as_object()
         .ok_or(RelayMcpServerParseError::EntryNotObject { index })?;
@@ -119,7 +119,7 @@ fn parse_relay_mcp_server(
         }
     };
 
-    Ok(SessionMcpServer {
+    Ok(RuntimeMcpServerDeclaration {
         name,
         transport,
         uses_relay: false,
@@ -404,8 +404,8 @@ fn parse_item_string_field(
 #[cfg(test)]
 mod tests {
     use super::parse_relay_mcp_servers;
-    use agentdash_application::relay_connector::session_mcp_server_to_relay_prompt_value;
-    use agentdash_spi::{McpEnvVar, McpTransportConfig, SessionMcpServer};
+    use agentdash_application::relay_connector::mcp_declaration_to_relay_prompt_value;
+    use agentdash_spi::{McpEnvVar, McpTransportConfig, RuntimeMcpServerDeclaration};
 
     #[test]
     fn relay_mcp_servers_require_explicit_type() {
@@ -451,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn relay_mcp_servers_reject_nested_session_mcp_server_shape() {
+    fn relay_mcp_servers_reject_nested_runtime_mcp_declaration_shape() {
         let error = parse_relay_mcp_servers(&[serde_json::json!({
             "name": "nested-server",
             "transport": {
@@ -460,7 +460,7 @@ mod tests {
             },
             "uses_relay": false
         })])
-        .expect_err("嵌套 transport 的内部 SessionMcpServer 形态不应被接受");
+        .expect_err("嵌套 transport 的内部 RuntimeMcpServerDeclaration 形态不应被接受");
 
         assert!(error.to_string().contains("nested-server"));
         assert!(error.to_string().contains("type"));
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn relay_mcp_servers_parse_application_prompt_wire_shape() {
-        let value = session_mcp_server_to_relay_prompt_value(&SessionMcpServer {
+        let value = mcp_declaration_to_relay_prompt_value(&RuntimeMcpServerDeclaration {
             name: "application-stdio".to_string(),
             transport: McpTransportConfig::Stdio {
                 command: "npx".to_string(),

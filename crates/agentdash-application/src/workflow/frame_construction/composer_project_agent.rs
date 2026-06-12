@@ -7,7 +7,6 @@ use crate::session::construction_planner::{
     build_project_agent_context, resolve_project_workspace,
 };
 use crate::session::construction_provider::SessionConstructionProviderInput;
-use crate::session::{AgentLevelMcp, OwnerBootstrapSpec, OwnerScope};
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
 use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 use crate::workflow::{
@@ -16,8 +15,9 @@ use crate::workflow::{
 };
 
 use super::{
-    FrameConstructionService, connector_internal, frame_builder_from_existing,
-    merge_user_executor_config, owner_prompt_lifecycle, required_user_input,
+    AgentLevelMcp, FrameConstructionService, OwnerBootstrapSpec, OwnerScope, connector_internal,
+    frame_builder_from_existing, merge_user_executor_config, owner_prompt_lifecycle,
+    required_user_input,
 };
 
 pub(super) async fn compose(
@@ -76,7 +76,7 @@ pub(super) async fn compose(
     let builder =
         frame_builder_from_existing(frame, input.session_id.as_str(), input.session_id.as_str())?;
     let (builder, extras) = svc
-        .assembler()
+        .owner_bootstrap_composer()
         .compose_owner_bootstrap_to_frame(
             builder,
             OwnerBootstrapSpec {

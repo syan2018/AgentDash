@@ -9,7 +9,7 @@ use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{
     CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionBackendPlacement,
     ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, RestoredSessionState,
-    SessionContextBundle, SessionMcpServer,
+    RuntimeMcpServerDeclaration, SessionContextBundle,
 };
 
 use crate::backend_execution_placement::ExecutionPlacementPlan;
@@ -91,7 +91,7 @@ pub struct TerminalEffectPlan {
 pub struct ConnectorInputPlan {
     pub working_directory: PathBuf,
     pub executor_config: AgentConfig,
-    pub mcp_servers: Vec<SessionMcpServer>,
+    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
     pub has_vfs: bool,
 }
 
@@ -152,9 +152,9 @@ impl LaunchPlan {
     pub fn build(input: LaunchPlanInput) -> Self {
         let pending_frame = input.launch_envelope.pending_frame.clone();
         let working_directory = input.launch_envelope.working_directory.clone();
-        let executor_config = input.launch_envelope.executor_config.clone();
-        let mcp_servers = input.launch_envelope.mcp_servers.clone();
-        let vfs = input.launch_envelope.vfs.clone();
+        let executor_config = input.launch_envelope.launch_executor_config().clone();
+        let mcp_servers = input.launch_envelope.launch_mcp_servers().to_vec();
+        let vfs = input.launch_envelope.launch_vfs().clone();
         let has_vfs = !vfs.mounts.is_empty();
         let identity = input.launch_envelope.intent.identity.clone();
         let title_hint = input
@@ -326,8 +326,10 @@ mod tests {
     use crate::session::types::{
         RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, UserPromptInput,
     };
+    use crate::workflow::FrameSurfaceDraft;
     use crate::workflow::runtime_launch::{
-        FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
+        FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
+        LaunchResolutionTrace,
     };
     use std::path::{Path, PathBuf};
 
@@ -363,9 +365,16 @@ mod tests {
             SessionConstructionContextProjection::default(),
         );
         construction.workspace.working_directory = Some(PathBuf::from("/workspace/project"));
-        construction.execution_profile.executor_config = Some(AgentConfig::new("PI_AGENT"));
-        construction.surface.vfs = Some(vfs);
-        construction.projections.capability_state = Some(capability_state);
+        let executor_config = AgentConfig::new("PI_AGENT");
+        construction.surface.vfs = Some(vfs.clone());
+        construction.projections.frame_surface_draft = Some(FrameSurfaceDraft {
+            capability_state: Some(capability_state.clone()),
+            vfs: Some(vfs),
+            mcp_servers: Vec::new(),
+            context_bundle_summary: None,
+            execution_profile: Some(executor_config.clone()),
+        });
+        construction.execution_profile.executor_config = Some(executor_config);
         construction.resolution = ConstructionResolutionPlan {
             vfs_source: Some("construction.test".to_string()),
             mcp_source: Some("construction.test".to_string()),
@@ -427,19 +436,18 @@ mod tests {
     fn envelope_from_construction(
         construction: RuntimeContextInspectionPlan,
     ) -> FrameLaunchEnvelope {
-        let executor_config = construction
-            .execution_profile
-            .executor_config
-            .unwrap_or_else(|| AgentConfig::new("test"));
-        let capability_state = construction
-            .projections
-            .capability_state
-            .unwrap_or_default();
-        let vfs = construction.surface.vfs.unwrap_or_default();
         let working_directory = construction
             .workspace
             .working_directory
+            .clone()
             .unwrap_or_else(|| PathBuf::from("/tmp"));
+        let surface_draft = construction
+            .projections
+            .frame_surface_draft
+            .clone()
+            .expect("launch plan tests must provide complete FrameSurfaceDraft");
+        let launch_surface = FrameLaunchSurface::from_surface_draft(&surface_draft)
+            .expect("launch plan tests must provide launch-ready typed surface");
         FrameLaunchEnvelope {
             surface: FrameRuntimeSurface {
                 agent_id: uuid::Uuid::new_v4(),
@@ -451,6 +459,8 @@ mod tests {
                 mcp_surface: serde_json::Value::Null,
                 runtime_session_id: Some("sess-launch".to_string()),
             },
+            surface_draft,
+            launch_surface,
             pending_frame: None,
             intent: FrameLaunchIntent {
                 input: None,
@@ -460,10 +470,6 @@ mod tests {
                 discovered_guidelines: construction.projections.discovered_guidelines,
             },
             working_directory,
-            executor_config,
-            capability_state,
-            vfs,
-            mcp_servers: construction.projections.mcp_servers,
             context_bundle: construction.context.bundle,
             continuation_context_frame: None,
             base_capability_state: construction.resolution.runtime_base_capability_state,

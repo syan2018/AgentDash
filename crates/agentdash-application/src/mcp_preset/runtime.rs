@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use agentdash_spi::{McpEnvVar, McpHttpHeader, SessionMcpServer, Vfs};
+use agentdash_spi::{McpEnvVar, McpHttpHeader, RuntimeMcpServerDeclaration, Vfs};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -9,8 +9,8 @@ use agentdash_domain::mcp_preset::{
     McpRuntimeBindingSource, McpRuntimeBindingTarget, McpTransportConfig,
 };
 
-pub fn preset_to_session_mcp_server(preset: &McpPreset) -> SessionMcpServer {
-    resolve_preset_mcp_server(preset, None).unwrap_or_else(|_| SessionMcpServer {
+pub fn preset_to_runtime_mcp_declaration(preset: &McpPreset) -> RuntimeMcpServerDeclaration {
+    resolve_preset_mcp_declaration(preset, None).unwrap_or_else(|_| RuntimeMcpServerDeclaration {
         name: preset.key.clone(),
         transport: preset.transport.clone(),
         uses_relay: preset_uses_relay(preset),
@@ -18,14 +18,14 @@ pub fn preset_to_session_mcp_server(preset: &McpPreset) -> SessionMcpServer {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct SessionRuntimeMcpContext<'a> {
+pub struct McpRuntimeBindingContext<'a> {
     pub vfs: Option<&'a Vfs>,
 }
 
 #[derive(Debug, Error)]
 pub enum McpRuntimeBindingError {
-    #[error("MCP preset `{preset_key}` runtime_binding 需要 runtime context")]
-    MissingSessionContext { preset_key: String },
+    #[error("MCP preset `{preset_key}` runtime_binding 需要 MCP runtime binding context")]
+    MissingRuntimeBindingContext { preset_key: String },
     #[error("MCP preset `{preset_key}` runtime_binding 找不到 mount `{mount_id}`")]
     MissingMount {
         preset_key: String,
@@ -56,7 +56,9 @@ pub enum McpRuntimeBindingError {
         target_path: String,
         transport_kind: String,
     },
-    #[error("MCP preset `{preset_key}` runtime_binding[{rule_index}] target {target_path} 无效: {message}")]
+    #[error(
+        "MCP preset `{preset_key}` runtime_binding[{rule_index}] target {target_path} 无效: {message}"
+    )]
     InvalidTarget {
         preset_key: String,
         rule_index: usize,
@@ -65,15 +67,15 @@ pub enum McpRuntimeBindingError {
     },
 }
 
-pub fn resolve_preset_mcp_server(
+pub fn resolve_preset_mcp_declaration(
     preset: &McpPreset,
-    context: Option<&SessionRuntimeMcpContext<'_>>,
-) -> Result<SessionMcpServer, McpRuntimeBindingError> {
+    context: Option<&McpRuntimeBindingContext<'_>>,
+) -> Result<RuntimeMcpServerDeclaration, McpRuntimeBindingError> {
     let mut transport = preset.transport.clone();
     if let Some(binding) = &preset.runtime_binding {
         apply_runtime_binding(&preset.key, &mut transport, binding, context)?;
     }
-    Ok(SessionMcpServer {
+    Ok(RuntimeMcpServerDeclaration {
         name: preset.key.clone(),
         uses_relay: preset.route_policy.uses_relay(&transport),
         transport,
@@ -88,24 +90,25 @@ fn apply_runtime_binding(
     preset_key: &str,
     transport: &mut McpTransportConfig,
     binding: &McpRuntimeBindingConfig,
-    context: Option<&SessionRuntimeMcpContext<'_>>,
+    context: Option<&McpRuntimeBindingContext<'_>>,
 ) -> Result<(), McpRuntimeBindingError> {
-    let context =
-        context.ok_or_else(|| McpRuntimeBindingError::MissingSessionContext {
-            preset_key: preset_key.to_string(),
-        })?;
+    let context = context.ok_or_else(|| McpRuntimeBindingError::MissingRuntimeBindingContext {
+        preset_key: preset_key.to_string(),
+    })?;
     let vfs = context
         .vfs
-        .ok_or_else(|| McpRuntimeBindingError::MissingSessionContext {
+        .ok_or_else(|| McpRuntimeBindingError::MissingRuntimeBindingContext {
             preset_key: preset_key.to_string(),
         })?;
     let mount_id = binding.mount_id.as_deref().unwrap_or("main");
-    let mount = vfs.mounts.iter().find(|mount| mount.id == mount_id).ok_or_else(|| {
-        McpRuntimeBindingError::MissingMount {
+    let mount = vfs
+        .mounts
+        .iter()
+        .find(|mount| mount.id == mount_id)
+        .ok_or_else(|| McpRuntimeBindingError::MissingMount {
             preset_key: preset_key.to_string(),
             mount_id: mount_id.to_string(),
-        }
-    })?;
+        })?;
 
     for (rule_index, rule) in binding.bindings.iter().enumerate() {
         let source_path = source_path(&rule.source);
@@ -145,18 +148,12 @@ fn read_source_value(
         McpRuntimeBindingSource::WorkspaceBindingId => {
             scalar_json_to_string(mount.metadata.get("workspace_binding_id"))
         }
-        McpRuntimeBindingSource::WorkspaceIdentity { path } => {
-            scalar_json_to_string(read_json_path(
-                mount.metadata.get("workspace_identity_payload"),
-                path,
-            ))
-        }
-        McpRuntimeBindingSource::WorkspaceDetectedFact { path } => {
-            scalar_json_to_string(read_json_path(
-                mount.metadata.get("workspace_detected_facts"),
-                path,
-            ))
-        }
+        McpRuntimeBindingSource::WorkspaceIdentity { path } => scalar_json_to_string(
+            read_json_path(mount.metadata.get("workspace_identity_payload"), path),
+        ),
+        McpRuntimeBindingSource::WorkspaceDetectedFact { path } => scalar_json_to_string(
+            read_json_path(mount.metadata.get("workspace_detected_facts"), path),
+        ),
     }
 }
 
@@ -210,14 +207,16 @@ fn apply_rule_target(
         | (McpRuntimeBindingTarget::HttpQuery { name }, McpTransportConfig::Sse { url, .. }) => {
             apply_http_query(preset_key, rule_index, name, url, &value)
         }
-        (McpRuntimeBindingTarget::HttpHeader { name }, McpTransportConfig::Http { headers, .. })
+        (
+            McpRuntimeBindingTarget::HttpHeader { name },
+            McpTransportConfig::Http { headers, .. },
+        )
         | (McpRuntimeBindingTarget::HttpHeader { name }, McpTransportConfig::Sse { headers, .. }) => {
             apply_http_header(preset_key, rule_index, name, headers, value)
         }
-        (
-            McpRuntimeBindingTarget::StdioEnv { name },
-            McpTransportConfig::Stdio { env, .. },
-        ) => apply_stdio_env(preset_key, rule_index, name, env, value),
+        (McpRuntimeBindingTarget::StdioEnv { name }, McpTransportConfig::Stdio { env, .. }) => {
+            apply_stdio_env(preset_key, rule_index, name, env, value)
+        }
         (McpRuntimeBindingTarget::StdioCwd, McpTransportConfig::Stdio { cwd, .. }) => {
             if value.trim().is_empty() {
                 return Err(McpRuntimeBindingError::InvalidTarget {
@@ -247,12 +246,13 @@ fn apply_http_query(
     value: &str,
 ) -> Result<(), McpRuntimeBindingError> {
     let name = validate_target_name(preset_key, rule_index, "http_query", name)?;
-    let mut parsed = url::Url::parse(url).map_err(|error| McpRuntimeBindingError::InvalidTarget {
-        preset_key: preset_key.to_string(),
-        rule_index,
-        target_path: format!("http_query.{name}"),
-        message: format!("URL 无效: {error}"),
-    })?;
+    let mut parsed =
+        url::Url::parse(url).map_err(|error| McpRuntimeBindingError::InvalidTarget {
+            preset_key: preset_key.to_string(),
+            rule_index,
+            target_path: format!("http_query.{name}"),
+            message: format!("URL 无效: {error}"),
+        })?;
     let existing = parsed
         .query_pairs()
         .filter(|(key, _)| key.as_ref() != name)
@@ -338,17 +338,17 @@ fn target_path(target: &McpRuntimeBindingTarget) -> String {
     }
 }
 
-/// 从 preset key 列表解析出对应的 `SessionMcpServer` 列表。
-pub async fn resolve_preset_mcp_refs(
+/// 从 preset key 列表解析出对应的 `RuntimeMcpServerDeclaration` 列表。
+pub async fn resolve_preset_mcp_declaration_refs(
     repo: &dyn McpPresetRepository,
     project_id: Uuid,
     keys: &[String],
-) -> Result<Vec<SessionMcpServer>, String> {
+) -> Result<Vec<RuntimeMcpServerDeclaration>, String> {
     let presets = resolve_preset_mcp_presets(repo, project_id, keys).await?;
     presets
         .iter()
         .map(|preset| {
-            resolve_preset_mcp_server(preset, None)
+            resolve_preset_mcp_declaration(preset, None)
                 .map_err(|error| format!("mcp_preset `{}` 解析失败: {error}", preset.key))
         })
         .collect()
@@ -434,8 +434,8 @@ mod tests {
         }
     }
 
-    fn runtime_context(vfs: &Vfs) -> SessionRuntimeMcpContext<'_> {
-        SessionRuntimeMcpContext { vfs: Some(vfs) }
+    fn runtime_context(vfs: &Vfs) -> McpRuntimeBindingContext<'_> {
+        McpRuntimeBindingContext { vfs: Some(vfs) }
     }
 
     fn http_preset(binding: McpRuntimeBindingConfig) -> McpPreset {
@@ -481,8 +481,8 @@ mod tests {
             ],
         });
 
-        let server =
-            resolve_preset_mcp_server(&preset, Some(&context)).expect("runtime binding resolves");
+        let server = resolve_preset_mcp_declaration(&preset, Some(&context))
+            .expect("runtime binding resolves");
 
         let McpTransportConfig::Http { url, headers } = server.transport else {
             panic!("expected http transport");
@@ -543,8 +543,8 @@ mod tests {
             ],
         }));
 
-        let server =
-            resolve_preset_mcp_server(&preset, Some(&context)).expect("runtime binding resolves");
+        let server = resolve_preset_mcp_declaration(&preset, Some(&context))
+            .expect("runtime binding resolves");
 
         let McpTransportConfig::Stdio { env, cwd, .. } = server.transport else {
             panic!("expected stdio transport");
@@ -575,7 +575,7 @@ mod tests {
             }],
         });
 
-        let error = resolve_preset_mcp_server(&preset, Some(&context)).expect_err("must fail");
+        let error = resolve_preset_mcp_declaration(&preset, Some(&context)).expect_err("must fail");
         let message = error.to_string();
         assert!(message.contains("p4-local"));
         assert!(message.contains("workspace.detected_facts.p4.missing"));

@@ -50,7 +50,9 @@ impl McpTransportConfig {
     }
 }
 
-/// MCP Preset 的 session 运行时绑定配置。
+/// MCP Preset 的运行时绑定配置。
+///
+/// 绑定规则在 frame construction 的 final VFS facts 上解析，输出本次运行的 MCP declaration。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpRuntimeBindingConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -59,7 +61,7 @@ pub struct McpRuntimeBindingConfig {
     pub bindings: Vec<McpRuntimeBindingRule>,
 }
 
-/// 单条运行时绑定规则：从 session surface 读取 source，写入 transport target。
+/// 单条运行时绑定规则：从 final VFS facts 读取 source，写入 transport target。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpRuntimeBindingRule {
     pub source: McpRuntimeBindingSource,

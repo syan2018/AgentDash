@@ -105,16 +105,20 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
 
     // 外部命令式 API：按类型打开或激活 Tab
     useImperativeHandle(ref, () => ({
-      openTab: (typeId: string, uri?: string) => {
+      openTab: (typeId: string, uri?: string, options?: { refreshContent?: boolean }) => {
         const s = useWorkspaceTabStore.getState();
+        let tabId = "";
         if (uri) {
-          s.openOrActivate(typeId, uri, tabLayoutOptions);
+          tabId = s.openOrActivate(typeId, uri, tabLayoutOptions);
         } else {
           const type = tabTypeRegistry.getType(typeId);
           if (type) {
             const defaultUri = type.defaultUri ?? type.buildUri({});
-            s.openOrActivate(typeId, defaultUri, tabLayoutOptions);
+            tabId = s.openOrActivate(typeId, defaultUri, tabLayoutOptions);
           }
+        }
+        if (tabId && options?.refreshContent) {
+          useWorkspaceTabStore.getState().refreshTab(tabId);
         }
       },
     }), [tabLayoutOptions]);
@@ -138,8 +142,13 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
           runtimeSessionId: sessionId,
           option,
           presentWorkspaceModule,
-          openOrActivate: (typeId, uri) => {
-            useWorkspaceTabStore.getState().openOrActivate(typeId, uri, tabLayoutOptions);
+          openOrActivate: (typeId, uri, refreshContent) => {
+            const tabId = useWorkspaceTabStore
+              .getState()
+              .openOrActivate(typeId, uri, tabLayoutOptions);
+            if (tabId && refreshContent) {
+              useWorkspaceTabStore.getState().refreshTab(tabId);
+            }
           },
         });
         onWorkspaceModuleOpened?.();
@@ -193,6 +202,7 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         tabId: activeTab.id,
         sessionId,
         isActive: true,
+        refreshRevision: activeTab.refreshRevision,
       });
     }, [activeTab, registrySnapshot, sessionId]);
 

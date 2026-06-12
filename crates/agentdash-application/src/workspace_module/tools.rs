@@ -356,7 +356,6 @@ pub struct WorkspaceModuleCreateTool {
     vfs: crate::vfs::tools::fs::SharedRuntimeVfs,
     session_services_handle: SharedSessionToolServicesHandle,
     session_id: Option<String>,
-    turn_id: Option<String>,
 }
 
 impl WorkspaceModuleCreateTool {
@@ -373,12 +372,10 @@ impl WorkspaceModuleCreateTool {
             vfs,
             session_services_handle,
             session_id,
-            turn_id: None,
         }
     }
 
-    pub fn with_turn_id(mut self, turn_id: impl Into<String>) -> Self {
-        self.turn_id = Some(turn_id.into());
+    pub fn with_turn_id(self, _turn_id: impl Into<String>) -> Self {
         self
     }
 }
@@ -445,38 +442,6 @@ impl AgentTool for WorkspaceModuleCreateTool {
             )
         })?;
         let module_id = descriptor.summary.module_id.clone();
-        let presentation = build_workspace_module_presentation(
-            &descriptor,
-            "preview",
-            None,
-            Some(serde_json::json!({
-                "source": "workspace_module_create",
-                "canvas_action": canvas_result.action.clone(),
-            })),
-        )
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-        if let (Some(session_id), Some(turn_id)) =
-            (self.session_id.as_deref(), self.turn_id.as_deref())
-        {
-            if let Some(session_services) = self.session_services_handle.get().await {
-                let value = serde_json::to_value(&presentation).map_err(|error| {
-                    AgentToolError::ExecutionFailed(format!(
-                        "failed to serialize workspace module presentation: {error}"
-                    ))
-                })?;
-                let notification = build_present_notification(
-                    session_id,
-                    turn_id,
-                    "workspace_module_presented",
-                    value,
-                );
-                session_services
-                    .eventing
-                    .inject_notification(session_id, notification)
-                    .await
-                    .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-            }
-        }
         let content = format!(
             "created workspace module\nmodule_id={module_id}\ncanvas_id={}\nmount={}://\nskill_path={}",
             canvas.mount_id, canvas_result.mount_id, canvas_result.skill_path
@@ -485,7 +450,6 @@ impl AgentTool for WorkspaceModuleCreateTool {
             "kind": kind,
             "module_id": module_id,
             "descriptor": descriptor,
-            "presentation": presentation,
             "canvas": canvas_result,
         });
 
@@ -1715,18 +1679,7 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("canvas://sales-board")
         );
-        assert_eq!(
-            details
-                .pointer("/presentation/presentation_uri")
-                .and_then(serde_json::Value::as_str),
-            Some("canvas://sales-board")
-        );
-        assert_eq!(
-            details
-                .pointer("/presentation/module_id")
-                .and_then(serde_json::Value::as_str),
-            Some("canvas:sales-board")
-        );
+        assert!(details.get("presentation").is_none());
 
         let vfs = shared_vfs.snapshot().await;
         assert!(
@@ -1858,13 +1811,13 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("canvas:sales-board")
         );
-        assert_eq!(
+        assert!(
             result
                 .details
                 .as_ref()
-                .and_then(|details| details.pointer("/presentation/presentation_uri"))
-                .and_then(serde_json::Value::as_str),
-            Some("canvas://sales-board")
+                .and_then(|details| details.get("presentation"))
+                .is_none(),
+            "workspace_module_create should register the Canvas without presenting it"
         );
 
         let updated_frame = frame_repo
@@ -1913,7 +1866,7 @@ mod tests {
             .await
             .expect("events should list")
             .events;
-        let capability_index = events
+        events
             .iter()
             .position(|event| {
                 matches!(
@@ -1925,30 +1878,16 @@ mod tests {
                 )
             })
             .expect("should write capability_state_update context_frame");
-        let presented = events
-            .iter()
-            .enumerate()
-            .find_map(|(index, event)| {
-                let agentdash_agent_protocol::BackboneEvent::Platform(
-                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value },
-                ) = &event.notification.event
-                else {
-                    return None;
-                };
-                if key == "workspace_module_presented" {
-                    Some((index, value))
-                } else {
-                    None
-                }
-            })
-            .expect("workspace_module_create should write workspace_module_presented event");
-        assert!(capability_index < presented.0);
-        assert_eq!(
-            presented
-                .1
-                .get("presentation_uri")
-                .and_then(serde_json::Value::as_str),
-            Some("canvas://sales-board")
+        assert!(
+            events.iter().all(|event| {
+                !matches!(
+                    &event.notification.event,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. }
+                    ) if key == "workspace_module_presented"
+                )
+            }),
+            "workspace_module_create should not open the Canvas tab"
         );
 
         let describe_visibility = WorkspaceModuleDimension {

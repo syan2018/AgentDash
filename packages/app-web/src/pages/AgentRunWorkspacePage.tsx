@@ -41,6 +41,7 @@ import { useLifecycleStore } from "../stores/lifecycleStore";
 import { useProjectStore } from "../stores/projectStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
+import { useWorkspaceModuleStore } from "../features/workspace-module";
 import { workspaceModulePresentedTabTarget } from "./AgentRunWorkspacePage.workspaceModulePresentation";
 import { deriveAgentRunWorkspaceChatControlState } from "./AgentRunWorkspacePage.chatControlState";
 import type {
@@ -87,6 +88,7 @@ export function AgentRunWorkspacePage({
   const fetchAndIngestLifecycleRun = useLifecycleStore((state) => state.fetchAndIngestLifecycleRun);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
+  const fetchWorkspaceModules = useWorkspaceModuleStore((state) => state.fetchProject);
   const hookRuntimeRefreshTimerRef = useRef<number | null>(null);
   const inFlightCommandRef = useRef<InFlightAgentRunCommand | null>(null);
 
@@ -97,9 +99,13 @@ export function AgentRunWorkspacePage({
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
 
-  const expandWorkspacePanel = useCallback((typeId?: string, uri?: string) => {
+  const expandWorkspacePanel = useCallback((
+    typeId?: string,
+    uri?: string,
+    options?: { refreshContent?: boolean },
+  ) => {
     if (typeId) {
-      workspacePanelRef.current?.openTab(typeId, uri);
+      workspacePanelRef.current?.openTab(typeId, uri, options);
     }
     rightPanelRef.current?.expand();
   }, []);
@@ -239,6 +245,10 @@ export function AgentRunWorkspacePage({
     ?? ownerStory?.project_id
     ?? draftProjectIdValue
     ?? null;
+  const refreshWorkspaceModuleCatalog = useCallback(() => {
+    if (!ownerProjectId) return;
+    void fetchWorkspaceModules(ownerProjectId);
+  }, [fetchWorkspaceModules, ownerProjectId]);
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null
     : null;
@@ -553,6 +563,7 @@ export function AgentRunWorkspacePage({
         const frameData = extractPlatformEventData(_event);
         if (frameData?.kind === "capability_state_update") {
           void refreshAgentRunWorkspaceState();
+          refreshWorkspaceModuleCatalog();
           scheduleHookRuntimeRefresh(eventType);
         }
         break;
@@ -571,7 +582,9 @@ export function AgentRunWorkspacePage({
           if (target.refreshRuntime) {
             void refreshAgentRunWorkspaceState();
           }
-          expandWorkspacePanel(target.typeId, target.uri);
+          expandWorkspacePanel(target.typeId, target.uri, {
+            refreshContent: target.refreshRuntime,
+          });
         }
         break;
       }
@@ -582,7 +595,12 @@ export function AgentRunWorkspacePage({
       default:
         break;
     }
-  }, [scheduleHookRuntimeRefresh, refreshAgentRunWorkspaceState, expandWorkspacePanel]);
+  }, [
+    scheduleHookRuntimeRefresh,
+    refreshAgentRunWorkspaceState,
+    refreshWorkspaceModuleCatalog,
+    expandWorkspacePanel,
+  ]);
 
   const handleBackToOwner = useCallback(() => {
     if (!effectiveReturnTarget) return;
@@ -617,8 +635,13 @@ export function AgentRunWorkspacePage({
 
   const handleWorkspaceModuleOpened = useCallback(() => {
     void refreshAgentRunWorkspaceState();
+    refreshWorkspaceModuleCatalog();
     scheduleHookRuntimeRefresh("workspace_module_user_opened");
-  }, [refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh]);
+  }, [
+    refreshAgentRunWorkspaceState,
+    refreshWorkspaceModuleCatalog,
+    scheduleHookRuntimeRefresh,
+  ]);
 
   const backButtonLabel = effectiveReturnTarget?.owner_type === "project"
     ? "返回项目"
@@ -819,8 +842,8 @@ export function AgentRunWorkspacePage({
         <Panel
           panelRef={rightPanelRef}
           defaultSize="0%"
-          minSize="20%"
-          maxSize="60%"
+          minSize="30%"
+          maxSize="70%"
           collapsible
           collapsedSize="0%"
           className="border-l border-border"

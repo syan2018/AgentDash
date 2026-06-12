@@ -57,6 +57,7 @@ function createDefaultPinnedTabs(options?: WorkspaceTabLayoutOptions): TabInstan
     uri: type.defaultUri,
     title: type.label,
     pinned: true,
+    refreshRevision: 0,
   }));
 }
 
@@ -86,6 +87,8 @@ interface WorkspaceTabState {
   activateTab: (tabId: string) => void;
   /** 按 URI 查找并激活同类型 Tab，不存在则新建 */
   openOrActivate: (typeId: string, uri: string, options?: WorkspaceTabLayoutOptions) => string;
+  /** 触发指定 Tab 内容重拉，不改变 URI 或布局持久化结果 */
+  refreshTab: (tabId: string) => void;
   /** 拖拽排序后更新顺序 */
   reorderTabs: (fromIndex: number, toIndex: number) => void;
   /** 更新 Tab 的 URI（导航到新位置） */
@@ -127,6 +130,7 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
         uri: item.uri,
         title: item.title,
         pinned: item.pinned,
+        refreshRevision: 0,
       }));
 
       const pinnedTypes = options?.tabTypes.filter((type) => type.pinned) ?? [];
@@ -138,6 +142,7 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
             uri: type.defaultUri,
             title: type.label,
             pinned: true,
+            refreshRevision: 0,
           });
         }
       }
@@ -194,6 +199,7 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
       uri: tabUri,
       title: resolveTitle(typeId, tabUri, options),
       pinned: false,
+      refreshRevision: 0,
     };
 
     set((s) => ({
@@ -242,6 +248,16 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
       return existing.id;
     }
     return get().addTab(typeId, uri, true, options);
+  },
+
+  refreshTab: (tabId) => {
+    set((s) => ({
+      tabs: s.tabs.map((tab) =>
+        tab.id === tabId
+          ? { ...tab, refreshRevision: tab.refreshRevision + 1 }
+          : tab,
+      ),
+    }));
   },
 
   reorderTabs: (fromIndex, toIndex) => {

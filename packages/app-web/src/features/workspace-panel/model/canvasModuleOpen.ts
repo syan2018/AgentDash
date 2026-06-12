@@ -23,7 +23,7 @@ export interface OpenUserCanvasModuleParams {
     projectId: string,
     request: WorkspaceModulePresentRequest,
   ) => Promise<WorkspaceModulePresentation>;
-  openOrActivate: (typeId: string, uri: string) => void;
+  openOrActivate: (typeId: string, uri: string, refreshContent?: boolean) => void;
 }
 
 export function selectCanvasModuleOpenOptions(
@@ -69,5 +69,5 @@ export async function openUserCanvasModule({
   if (target?.typeId !== "canvas" || !target.uri) {
     throw new Error("后端未返回可打开的 Canvas presentation。");
   }
-  openOrActivate(target.typeId, target.uri);
+  openOrActivate(target.typeId, target.uri, target.refreshRuntime);
 }

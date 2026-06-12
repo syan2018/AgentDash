@@ -7,6 +7,7 @@ export interface TabContentRenderProps {
   tabId: string;
   sessionId: string | null;
   isActive: boolean;
+  refreshRevision: number;
 }
 
 export interface TabTypeDescriptor {
@@ -30,6 +31,7 @@ export interface TabInstance {
   uri: string;
   title: string;
   pinned: boolean;
+  refreshRevision: number;
 }
 
 export interface SessionTabLayout {

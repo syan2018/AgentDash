@@ -18,7 +18,7 @@ function isConcreteCanvasUri(uri: string): boolean {
   return parseCanvasUri(uri) !== null;
 }
 
-function CanvasTabContent({ uri }: TabContentRenderProps) {
+function CanvasTabContent({ uri, refreshRevision }: TabContentRenderProps) {
   const { sessionId } = useWorkspaceData();
   const parsed = parseCanvasUri(uri);
   const canvasId = parsed?.canvasId || null;
@@ -46,6 +46,7 @@ function CanvasTabContent({ uri }: TabContentRenderProps) {
     <CanvasRuntimePanel
       canvasId={canvasId}
       sessionId={sessionId}
+      refreshRevision={refreshRevision}
       onClose={() => {}}
       onBrowseFiles={handleBrowseFiles}
     />

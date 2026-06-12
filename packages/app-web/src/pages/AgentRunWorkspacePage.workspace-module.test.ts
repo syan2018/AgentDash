@@ -210,6 +210,26 @@ describe("workspaceTabStore Canvas tab identity", () => {
     useWorkspaceTabStore.getState().reset();
   });
 
+  it("bumps refresh revision without changing Canvas tab identity", () => {
+    useWorkspaceTabStore.getState().reset();
+
+    const tabId = useWorkspaceTabStore
+      .getState()
+      .openOrActivate("canvas", "canvas://mount-a", canvasLayoutOptions);
+    useWorkspaceTabStore.getState().refreshTab(tabId);
+
+    const tabs = useWorkspaceTabStore.getState().tabs;
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]).toMatchObject({
+      id: tabId,
+      typeId: "canvas",
+      uri: "canvas://mount-a",
+      refreshRevision: 1,
+    });
+
+    useWorkspaceTabStore.getState().reset();
+  });
+
   it("rejects default empty canvas:// creation through add/open flows", () => {
     useWorkspaceTabStore.getState().reset();
 
@@ -303,7 +323,11 @@ describe("Canvas workspace module selector and user-open flow", () => {
       view_key: "preview",
       runtime_session_id: "session-1",
     });
-    expect(openOrActivate).toHaveBeenCalledWith("canvas", "canvas://canonical-from-backend");
+    expect(openOrActivate).toHaveBeenCalledWith(
+      "canvas",
+      "canvas://canonical-from-backend",
+      true,
+    );
   });
 
   it("does not open a tab when user-open fails or returns no concrete Canvas presentation", async () => {

@@ -11,12 +11,19 @@ import { CanvasRuntimePreview } from "./CanvasRuntimePreview";
 export interface CanvasRuntimePanelProps {
   canvasId: string | null;
   sessionId: string | null;
+  refreshRevision?: number;
   onClose: () => void;
   /** 打开该 Canvas 对应 mount 的资源浏览 Tab */
   onBrowseFiles?: (mountId: string) => void;
 }
 
-export function CanvasRuntimePanel({ canvasId, sessionId, onClose, onBrowseFiles }: CanvasRuntimePanelProps) {
+export function CanvasRuntimePanel({
+  canvasId,
+  sessionId,
+  refreshRevision = 0,
+  onClose,
+  onBrowseFiles,
+}: CanvasRuntimePanelProps) {
   const [canvas, setCanvas] = useState<Canvas | null>(null);
   const [snapshot, setSnapshot] = useState<CanvasRuntimeSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -56,7 +63,7 @@ export function CanvasRuntimePanel({ canvasId, sessionId, onClose, onBrowseFiles
 
   useEffect(() => {
     void loadCanvasData();
-  }, [loadCanvasData]);
+  }, [loadCanvasData, refreshRevision]);
 
   const handleBindingsSave = useCallback(async (bindings: CanvasDataBinding[]) => {
     if (!canvasId) {

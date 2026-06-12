@@ -8,6 +8,7 @@ use crate::session::construction_planner::{
 };
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
+use crate::workflow::projection::resolve_active_workflow_projection_for_session;
 use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 use crate::workflow::{
     SubjectContextAssignment, SubjectContextAssignmentRequest, SubjectContextAssignmentResolver,
@@ -73,6 +74,16 @@ pub(super) async fn compose(
     let lifecycle = owner_prompt_lifecycle(svc.prompt_lifecycle(Some(&executor_config), input));
     let user_input = required_user_input(input.command.user_input())?;
     let identity = input.command.identity();
+    let active_workflow = resolve_active_workflow_projection_for_session(
+        input.session_id.as_str(),
+        svc.repos.agent_procedure_repo.as_ref(),
+        svc.repos.agent_frame_repo.as_ref(),
+        svc.repos.lifecycle_agent_repo.as_ref(),
+        svc.repos.lifecycle_run_repo.as_ref(),
+        svc.repos.execution_anchor_repo.as_ref(),
+    )
+    .await
+    .map_err(connector_internal)?;
     let builder =
         frame_builder_from_existing(frame, input.session_id.as_str(), input.session_id.as_str())?;
     let (builder, extras) = svc
@@ -119,7 +130,7 @@ pub(super) async fn compose(
                     .preset_config
                     .visible_workspace_module_refs
                     .clone(),
-                active_workflow: None,
+                active_workflow,
                 lifecycle,
                 audit_session_key: Some(input.session_id.clone()),
                 caller_agent_id: Some(project_agent.id),

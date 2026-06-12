@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust checks, session execution state, and backend quality gates"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Application / connector / API error boundary validation"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend typecheck and focused test expectations"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer state flow and runtime projection review"}
+{"file": "packages/app-web/src/features/session/model/useSessionFeed.test.ts", "reason": "Focused frontend regression for CTX hard boundary in feed aggregation"}
+{"file": "crates/agentdash-application/src/workspace_module/tools.rs", "reason": "Focused backend regressions for canvas create/present capability update and event ordering"}
+{"file": "packages/app-web/src/pages/AgentRunWorkspacePage.workspace-module.test.ts", "reason": "Focused frontend regression for Canvas presentation target parsing"}
+{"file": "packages/app-web/src/features/workspace-panel/tab-types/canvas-tab.tsx", "reason": "Workspace Panel Canvas empty URI versus concrete Canvas URI behavior"}
+{"file": "packages/app-web/src/stores/workspaceTabStore.ts", "reason": "Focused frontend regression for multi Canvas tab open-or-activate semantics"}
+{"file": "crates/agentdash-api/src/routes/workspace_module.rs", "reason": "Backend/API regression for user-initiated Canvas presentation path"}
+{"file": ".trellis/tasks/06-12-hook-runtime-ownership-convergence/design.md", "reason": "Final Architecture Cutover Gate for proving old RuntimeSession-first ownership is removed"}

@@ -6,6 +6,8 @@
 
 用户价值是消除当前“前端猜状态、后端多入口各自判断、失败文案误导、资源 surface 分裂”的体验：进入会话时默认模型应被明确选中或明确要求用户选择；idle/ready/running/terminal 下的 Enter/Ctrl+Enter 行为应稳定；pending 队列只在真实需要用户处理时出现；workspace panel 应显示 Agent 当前真正可访问的 lifecycle/resource mount。
 
+同等重要的用户价值是删除所有会动摇目标模型的误导路径。项目处于预研期，完成重构时不保留旧式 session-first command、半可用 launch、前端二次 command 推断、store 吞错、session_runtime resource 主路径等会让后续开发者误判架构所有权的入口。
+
 ## Confirmed Facts
 
 - 真实启动失败链路不是单纯 ProjectAgent materialization 失败。`AgentRunWorkspacePage.tsx` 在发送前只校验 `executorConfig.executor` 非空；`executorConfig.provider_id/model_id` 可以为空。若前端传入只有 executor 的配置，后端 `merge_user_executor_config` 当前只补 system prompt，不补 preset 的 provider/model，ProjectAgent 默认模型会被覆盖丢失。
@@ -20,6 +22,7 @@
 - AgentRun workspace projection 会返回 frame runtime；但前端 `useAgentRunWorkspaceState` 又基于 `delivery_runtime_ref` 二次调用 `resolveVfsSurface({ source_type: "session_runtime" })`。workspace panel 当前消费的是 session_runtime surface 结果，而不是 AgentRun workspace 直接声明的 resource surface。
 - 后端已有 `session_construction::resolve_session_frame_vfs` 从 runtime session anchor 找 current AgentFrame 并读取 `vfs_surface_json` 的路径；这证明 AgentFrame surface 是可作为前端资源事实源的。
 - ProjectAgent explicit lifecycle 路径需要 ProjectAgent owner surface 与 lifecycle mount 同时存在；仅调整 composer classifier 不能保证前端 workspace panel 看见 lifecycle mount。
+- 当前代码仍有多条容易误导后续实现的旧 mental model 路径：ProjectAgent `/launch` 只创建控制面但不发送首轮消息；`SessionRuntimeControlView` 与 AgentRun workspace actions 并存；前端 `SessionChatControlState.primaryAction/secondaryAction` 继续表达业务命令；`useSessionRuntimeState` 和 `useAgentRunWorkspaceState` 都能从 `session_runtime` 解析 VFS surface；`ProjectAgentLaunchResult`、`launchProjectAgent`、Session runtime control routes 等名字会让 RuntimeSession 看起来仍是会话控制面入口。
 
 ## Requirements
 
@@ -34,6 +37,7 @@
 - 后端启动/消息/steer/pending/cancel 入口需要共享一个 state resolver，避免每个 route 分别从 RuntimeSession state、LifecycleAgent status、frame presence 推导命令能力。
 - 前端 `SessionChatView` 应从 snapshot 的 command model 渲染 composer、按钮、keyboard hint、pending row 与 model selector，不再把 `control_plane.status + actions + local optimistic state` 拼成业务事实。
 - 命令型 API store 不应吞掉真实错误；页面必须展示后端结构化错误或 snapshot diagnostic。
+- 实现完成时必须做误导路径清算：所有与目标模型冲突的旧 DTO、route、service、store action、hook、test expectation、generated type、frontend adapter 和文案都要删除、改名为 trace/diagnostic，或收束到 `AgentConversationSnapshot` / `ConversationCommandIntent` / `resource_surface`。不允许留下会被新代码自然引用的“半可用旧入口”。
 
 ## Acceptance Criteria
 
@@ -46,13 +50,15 @@
 - [ ] `implement.md` 给出分阶段重构计划，每阶段可独立验证，且不依赖隐含父子任务上下文。
 - [ ] `implement.md` 包含后端 application/API/contracts、前端 focused tests、resource surface tests、键盘交互 tests 与必要人工 smoke 验证。
 - [ ] `research/current-state.md` 保存代码证据索引，覆盖每个入口的当前文件与断点。
+- [ ] `design.md` 和 `implement.md` 包含误导路径清算规则，明确哪些旧路径必须删除、哪些只能保留为 trace/diagnostic、哪些必须转接到新 snapshot。
+- [ ] 实现计划包含 grep/audit gate：旧 command inference、session-first control path、legacy ProjectAgent launch、session_runtime resource 主路径、store null error wrapper 等残留不得通过验收。
 - [ ] `implement.jsonl` 和 `check.jsonl` 指向相关 spec 与 research 文件，供后续 Trellis sub-agent 使用。
 - [ ] 任务保持 planning 状态，等待用户审阅后再进入实现。
 
 ## Out Of Scope
 
 - 本规划任务不直接实施重构代码。
-- 本规划任务不保留旧行为兼容层作为长期方案。
+- 本规划任务不保留旧行为兼容层作为长期方案；实现阶段应删除误导路径，而不是给旧路径补兼容说明。
 - 本规划任务不重新设计 connector protocol；connector 仍消费最终 resolved `AgentConfig`、VFS 与 turn command。
 - 本规划任务不把 RuntimeSession 恢复成业务控制面根；RuntimeSession 继续是 trace/delivery substrate。
 

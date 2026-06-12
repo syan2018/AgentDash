@@ -277,6 +277,36 @@ Rules:
 4. Refactor frontend composer/model selector/pending/resource browser to consume snapshot.
 5. Remove duplicate local inference after tests prove all entry points use snapshot.
 
+## Misleading Path Eradication
+
+The target architecture is valid only if old paths cannot silently keep shaping future code. Every path that still advertises a competing owner must be classified and removed or renamed as part of the implementation.
+
+```mermaid
+flowchart TD
+  Inventory["Search and inventory old paths"] --> Classify{"Path role"}
+  Classify -->|command/control| Kill["Delete or route through ConversationCommandIntent"]
+  Classify -->|resource surface| Surface["Route through snapshot resource_surface"]
+  Classify -->|trace/diagnostic| Rename["Rename and document as trace-only"]
+  Classify -->|generated type/test residue| Regenerate["Regenerate contracts and update tests"]
+
+  Kill --> Gate["grep/audit gate"]
+  Surface --> Gate
+  Rename --> Gate
+  Regenerate --> Gate
+  Gate --> Clean["No misleading public or semi-public path remains"]
+```
+
+Cleanup rules:
+
+- Session routes may remain for trace, events, approvals, context audit, lineage and terminal inspection, but not as user-facing AgentRun command control.
+- `SessionRuntimeControlView` and `SessionRuntimeActionSetView` either disappear from interactive frontend consumption or are renamed/scoped as runtime diagnostics.
+- ProjectAgent `/launch` and `ProjectAgentLaunchResult` must be removed or made an internal materialization helper that cannot be mistaken for the primary run start path.
+- Frontend `primaryAction/secondaryAction` types must stop representing business command semantics after command list adoption.
+- `useAgentRunWorkspaceState` must not call `resolveVfsSurface(session_runtime)` as the workspace panel source after snapshot `resource_surface` exists.
+- Store actions for command APIs must not return `null` on failure; old null-return contracts should be removed from callers and tests.
+- Tests that assert stale action bits, terminal enqueue/steer behavior, or session-runtime resource control must be rewritten around snapshot commands and diagnostics.
+- Generated contracts must not continue exporting interactive control DTOs whose names imply RuntimeSession owns AgentRun commands.
+
 ## Review Question
 
 唯一需要用户确认的产品命名决策：URL 和侧边栏是否继续叫 AgentRun。推荐保留 `AgentRun` 作为产品 identity，内部 contract 使用 conversation snapshot 来表达完整会话状态。

@@ -92,7 +92,23 @@
   - no pending visible work means no pending paused banner。
   - lifecycle mount appears in VFS tab for explicit lifecycle AgentRun。
 
-## Phase 7: Cleanup And Specs
+## Phase 7: Misleading Path Eradication
+
+- [ ] Build a code inventory for misleading paths before deleting: `SessionRuntimeControlView`, `SessionRuntimeActionSetView`, `ProjectAgentLaunchResult`, `launchProjectAgent`, ProjectAgent `/launch`, `primaryAction/secondaryAction`, `resolveVfsSurface({ source_type: "session_runtime" })` in AgentRun workspace, command store methods returning `null`, stale AgentRun action tests.
+- [ ] Delete or internalize ProjectAgent `/launch` if it is no longer a product path; if a materialization helper remains, name it as internal control-plane materialization, not launch.
+- [ ] Remove `SessionRuntimeControlView` from interactive frontend paths; keep Session APIs only for trace/events/context audit/tool approvals/terminal inspection.
+- [ ] Replace `SessionChatControlState.primaryAction/secondaryAction` with command-list view models whose command semantics originate from snapshot commands.
+- [ ] Remove frontend keyboard/button logic that branches on `primaryAction.kind`, `isRunning`, or `isEnqueueMode` for business decisions.
+- [ ] Remove AgentRun workspace resource loading through `session_runtime` once snapshot `resource_surface` is available.
+- [ ] Replace command store `Promise<T | null>` behavior with thrown/typed errors and update all callers.
+- [ ] Delete tests that encode old ambiguity; replace them with snapshot command/resource/model tests.
+- [ ] Run grep gates:
+  - `rg -n "primaryAction|secondaryAction|SessionRuntimeControlView|SessionRuntimeActionSetView" packages/app-web/src crates/agentdash-contracts/src`
+  - `rg -n "launchProjectAgent|ProjectAgentLaunchResult|/launch" packages/app-web/src crates/agentdash-api/src crates/agentdash-contracts/src`
+  - `rg -n "resolveVfsSurface\\(\\{ source_type: \"session_runtime\"" packages/app-web/src/features/workspace-panel packages/app-web/src/pages`
+  - `rg -n "return null" packages/app-web/src/stores`
+
+## Phase 8: Specs And Final Gate
 
 - [ ] Remove duplicated action derivation helpers after frontend consumes command model.
 - [ ] Remove executor config merge behavior that replaces preset defaults wholesale.
@@ -100,6 +116,7 @@
 - [ ] Update `.trellis/spec/backend/session/runtime-execution-state.md` with ready/running/pending/cancelling command semantics.
 - [ ] Update `.trellis/spec/backend/vfs/architecture.md` with AgentRun resource surface projection.
 - [ ] Update frontend spec with snapshot-driven UI and model selector ownership.
+- [ ] Record the allowed remaining Session routes as trace/diagnostic surfaces so future work does not turn them back into command owners.
 
 ## Risky Files
 
@@ -125,6 +142,10 @@
 - `packages/app-web/src/stores/projectStore.ts`
 - `packages/app-web/src/features/project/agent-preset-editor/form-state.ts`
 - `packages/app-web/src/features/project/agent-preset-editor/preset-form-fields.tsx`
+- `packages/app-web/src/features/workspace-panel/model/useSessionRuntimeState.ts`
+- `packages/app-web/src/services/lifecycle.ts`
+- `packages/app-web/src/services/project.ts`
+- `crates/agentdash-api/src/routes/sessions.rs`
 
 ## Validation Commands
 
@@ -140,6 +161,10 @@ pnpm --filter app-web run test -- AgentRunWorkspacePage
 pnpm --filter app-web run test -- SessionChatView
 pnpm --filter app-web run test -- PendingMessageRow
 pnpm --filter app-web run test -- useAgentRunWorkspaceState
+rg -n "primaryAction|secondaryAction|SessionRuntimeControlView|SessionRuntimeActionSetView" packages/app-web/src crates/agentdash-contracts/src
+rg -n "launchProjectAgent|ProjectAgentLaunchResult|/launch" packages/app-web/src crates/agentdash-api/src crates/agentdash-contracts/src
+rg -n "resolveVfsSurface\\(\\{ source_type: \"session_runtime\"" packages/app-web/src/features/workspace-panel packages/app-web/src/pages
+rg -n "return null" packages/app-web/src/stores
 git diff --check
 ```
 

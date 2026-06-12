@@ -55,3 +55,15 @@
 - 当前最大问题是同一事实被多处推断：模型默认值、命令可用性、keyboard mapping、pending attention、resource surface 都缺少一个后端权威 snapshot。
 - 正确收束点不是单个 route，而是 shared resolver + generated contract + frontend snapshot consumption。
 - 会话状态 resolver 需要保留 runtime 内部 `Claimed`/`Active` 差异；resource resolver 需要同时验证 active workflow、persisted frame VFS、resolved VFS 三者一致。
+
+## Misleading Path Inventory
+
+- `crates/agentdash-api/src/routes/project_agents.rs:82` 仍暴露 ProjectAgent `/launch`；`crates/agentdash-contracts/src/project_agent.rs:55` 和 frontend `ProjectAgentLaunchResult` 会让该路径看起来仍是 ProjectAgent 运行入口。
+- `crates/agentdash-contracts/src/workflow.rs:1144` / `1153` 仍有 `SessionRuntimeActionSetView` 与 `SessionRuntimeControlView`；它们和 AgentRun workspace actions 并存时会暗示 RuntimeSession 是交互控制面。
+- `crates/agentdash-api/src/routes/sessions.rs:88` 暴露 `/sessions/{id}/runtime-control`；它应只保留为 runtime diagnostic 或被 AgentRun snapshot 替代。
+- `packages/app-web/src/services/lifecycle.ts:59` 提供 `fetchSessionRuntimeControl`；实现阶段要确认没有交互 UI 继续消费它。
+- `packages/app-web/src/pages/AgentRunWorkspacePage.chatControlState.ts:37` 仍输出 `SessionChatControlState` 的 `primaryAction/secondaryAction`，这是前端二次 command mental model。
+- `packages/app-web/src/features/session/ui/SessionChatView.tsx:499`、`SessionChatViewParts.tsx:321`、`ComposerSendButton.tsx:37` 将 command 语义拆在多个组件里。
+- `packages/app-web/src/features/workspace-panel/model/useSessionRuntimeState.ts:97` 和 `useAgentRunWorkspaceState.ts:138` 都可从 `session_runtime` 解析 VFS；AgentRun workspace 主路径应转为 snapshot `resource_surface`。
+- `packages/app-web/src/stores/projectStore.ts:386` 的 command store 返回 `null` 会吞掉真实 API 错误，是误导性失败路径。
+- `packages/app-web/src/pages/AgentRunWorkspacePage.workspace-module.test.ts:132` 仍以 running projection 推导 Ctrl/Cmd+Enter steer；实现后应改成 command list 快捷键合同测试。

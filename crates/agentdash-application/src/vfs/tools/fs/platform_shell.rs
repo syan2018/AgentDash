@@ -455,34 +455,7 @@ impl CommandOutput {
 }
 
 fn parse_argv(command: &str) -> Result<Vec<String>, String> {
-    if command.contains('\n') || command.contains('\r') {
-        return Err("platform shell 不支持多行 script".to_string());
-    }
-    let argv = shell_words::split(command).map_err(|error| format!("命令解析失败: {error}"))?;
-    for token in &argv {
-        reject_unsupported_token(token)?;
-    }
-    Ok(argv)
-}
-
-fn reject_unsupported_token(token: &str) -> Result<(), String> {
-    const CONTROL_TOKENS: &[&str] = &["|", "||", "&&", "&", ";", "<", "(", ")"];
-    if CONTROL_TOKENS.contains(&token) {
-        return Err(format!("platform shell 不支持控制语法 `{token}`"));
-    }
-    if token == ">>" {
-        return Err("platform shell 第一版只支持 `>` 重定向".to_string());
-    }
-    if token.contains('>') && token != ">" {
-        return Err("platform shell 的重定向符 `>` 必须作为独立参数".to_string());
-    }
-    if token.contains('*') || token.contains('?') || token.contains('[') || token.contains(']') {
-        return Err(format!("platform shell 第一版不支持 glob token `{token}`"));
-    }
-    if token.contains('`') || token.contains("$(") {
-        return Err("platform shell 不支持 subshell 或命令替换".to_string());
-    }
-    Ok(())
+    shell_words::split(command).map_err(|error| format!("命令解析失败: {error}"))
 }
 
 fn split_redirect(mut argv: Vec<String>) -> Result<(Vec<String>, Option<String>), String> {
@@ -769,13 +742,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_pipe_is_rejected() {
+    async fn parseable_shell_tokens_are_literal_arguments() {
         let provider = Arc::new(MemoryProvider::default());
         let shell = shell(provider, capability_state(true, true)).await;
 
-        let result = shell.execute("cat main://source.txt | cat").await;
+        let result = shell.execute("echo ok | cat").await;
 
-        assert_ne!(result.exit_code, 0);
-        assert!(result.stderr.contains("控制语法"));
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "ok | cat\n");
     }
 }

@@ -62,16 +62,16 @@ MVP 命令：
 | `echo ... > path` | write text |
 | `cat source > dest` | read text source + write text dest |
 
-Unsupported syntax returns a shell-style error instead of trying to run OS shell.
+Unsupported command semantics return a shell-style error instead of trying to run OS shell. Tokens that `shell-words` can parse but the platform shell does not interpret remain ordinary argv values.
 
 ## Parser Boundary
 
 第一版 parser 分两层：
 
-1. 轻量预检：拒绝 newline、pipe、subshell、glob token、后台任务等不支持语法。
-2. `shell-words::split`：解析单行命令为 argv，复用公开库处理 quote 与 escape。
+1. `shell-words::split`：解析 command 为 argv，复用公开库处理 quote、escape、comment 和 whitespace。
+2. 平台 shell 只解释命令名、参数数量和窄重定向；未被解释的 shell token 保持普通 argv 语义。
 
-重定向只支持 `>` 作为独立 token，例如 `echo "done" > lifecycle://records/summary.md` 与 `cat source > dest`。其他重定向形式返回 unsupported syntax。
+重定向只支持 `>` 作为独立 token，例如 `echo "done" > lifecycle://records/summary.md` 与 `cat source > dest`。其他重定向 token 作为普通 argv，或由具体命令的参数数量规则自然处理。
 
 ## Permission Model
 
@@ -114,7 +114,7 @@ copied lifecycle://session/tools/a.json -> lifecycle://artifacts/a.json
 ## Trade-Offs
 
 - 默认 `cwd` 缺失进入平台 shell 会改变当前默认行为。项目处于预研期，该取舍换来低门槛平台原语入口。
-- 不做完整 shell parser 可以控制范围，但必须给清晰错误，避免 Agent 误以为支持 pipes/globs。
+- 不做完整 shell parser 可以控制范围；平台 shell 接受 `shell-words` 能解析出的 token，但只承诺实现命令 handler 明确消费的语义。
 - 复用 `shell-words` 可以避免自写 quote/split；命令语义仍保留在 VFS application 层，避免引入完整 shell 语义。
 - 不新增 `fs_copy` 等工具减少工具面，但 platform shell 内部需要维护一组命令 handler 和权限矩阵。
 

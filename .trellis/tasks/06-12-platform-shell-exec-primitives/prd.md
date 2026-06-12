@@ -24,9 +24,9 @@ echo "done" > lifecycle://records/summary.md
 - 平台 shell 复用公开 shell words 词法库处理基础 quoting / escape / splitting；平台只实现命令分派、VFS 语义和权限裁决，避免重复造 shell 词法轮子。
 - 平台 shell 必须能访问当前 session 的完整 runtime VFS snapshot，支持跨 mount 操作。
 - MVP 命令集至少覆盖 `pwd`、`ls`、`cat`、`cp`、`mv`、`rm`、`echo`。
-- MVP 支持单行命令、基础 quoted string 参数、VFS URI、以及基于平台 shell cwd 的相对路径。
+- MVP 支持 `shell-words` 可解析的命令输入、基础 quoted string 参数、VFS URI、以及基于平台 shell cwd 的相对路径。
 - MVP 支持窄重定向：`echo "text" > path` 与 `cat source > path`。
-- `cp` 第一版只要求支持单文件 text copy；目录递归、glob、pipe 和完整 POSIX shell 语法不进入第一版。
+- `cp` 第一版只要求支持单文件 text copy；平台 shell 语义由命令 handler 定义，未被 handler 消费的 shell token 保持普通参数语义。
 - 权限不能通过平台 shell 绕过：调用入口仍需 `shell_execute`，命令内部读写还需消费 `file_read` / `file_write` 与 mount capability。
 - 写入 lifecycle artifact 继续受 `lifecycle_vfs` 的 `writable_port_keys` 裁决。
 - session feed / UI 中仍表现为一次 `shell_exec` command execution，方便复用现有展示、审计和 hook 语义。
@@ -43,7 +43,7 @@ echo "done" > lifecycle://records/summary.md
 - [ ] 缺少 `file_write` 时，`cp` destination、`rm`、`mv`、`echo >` 写入被拒绝。
 - [ ] 写入未授权 lifecycle artifact port 时仍返回 provider 层拒绝。
 - [ ] 普通 OS shell 的 VFS URI materialization 行为不被平台 shell 改动破坏。
-- [ ] 第一版明确拒绝 pipe、glob、subshell、多行 script、目录递归等未支持语法，并给出可理解错误。
+- [ ] `shell-words` 能解析出的 token 统一作为 argv 进入命令 handler；平台 shell 只执行 handler 明确消费的 VFS 原语和窄重定向语义。
 - [ ] 平台 shell 的单行解析复用轻量 shell words 库，不手写完整 quote/split 逻辑。
 
 ## Notes
@@ -54,7 +54,7 @@ echo "done" > lifecycle://records/summary.md
 ## Out of Scope
 
 - 完整 bash / POSIX shell 兼容。
-- 管道、变量展开、subshell、环境变量、后台任务。
+- shell operator execution、变量展开、subshell、环境变量、后台任务。
 - `cp -r`、目录复制、glob 展开。
 - binary copy 与大型文件 streaming。
 - 新增独立 Agent-facing 文件操作工具。

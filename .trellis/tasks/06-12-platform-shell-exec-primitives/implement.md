@@ -5,14 +5,14 @@
 - [ ] 读取相关规范：backend VFS architecture/access/materialization、capability tool pipeline、runtime gateway、cross-layer desktop local runtime。
 - [ ] 定位现有 `shell_exec` 分派、VFS tool factory、CapabilityState tool policy、runtime VFS assembly 注入点。
 - [ ] 设计 platform shell executor 模块位置与 public API。
-- [ ] 引入轻量 shell words 解析依赖，并把完整 shell 语法显式挡在平台 shell 外。
+- [ ] 引入轻量 shell words 解析依赖；完整 shell 语义不展开、不执行，能解析出的 token 作为普通参数进入命令 handler。
 - [ ] 调整 `ShellExecTool`：保存 platform shell 所需 capability context；`cwd` 缺失或 `platform://` 时进入 platform shell；显式 exec mount 继续现有路径。
-- [ ] 实现 platform shell parser：单行、基础 quoting、窄重定向、明确拒绝 unsupported syntax。
+- [ ] 实现 platform shell parser：shell words quoting、窄重定向、命令 handler 参数校验。
 - [ ] 实现 path resolver：VFS URI 与平台 cwd-relative path。
 - [ ] 实现 command handlers：`pwd`、`ls`、`cat`、`cp`、`mv`、`rm`、`echo`。
 - [ ] 在每个 command handler 内执行 `file_read` / `file_write` 与 mount capability 校验。
 - [ ] 更新 `shell_exec` tool description，说明默认平台 shell 和显式 cwd 的 OS shell 行为。
-- [ ] 增加 focused tests 覆盖默认平台 shell、显式 OS shell 分派、lifecycle copy、权限拒绝和 unsupported syntax。
+- [ ] 增加 focused tests 覆盖默认平台 shell、显式 OS shell 分派、lifecycle copy、权限拒绝和 parseable token 透传。
 - [ ] 如实现改变 runtime VFS mount projection 或 tool policy contract，更新相关 spec。
 
 ## Validation Commands

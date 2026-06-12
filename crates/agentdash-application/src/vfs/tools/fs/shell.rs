@@ -103,7 +103,7 @@ impl AgentTool for ShellExecTool {
          - Use cwd=`platform://` to explicitly run the same platform shell.\n\
          - Use cwd=`mount_id://relative/path` to run the command in the real OS shell environment of an exec-capable mount.\n\
          - Platform shell commands operate on VFS paths and never start an OS process.\n\
-         - Platform shell supports only single commands plus narrow `>` redirection for `echo` and `cat`; pipes, globbing, subshells, and multi-line scripts are rejected.\n\
+         - Platform shell supports VFS command primitives plus narrow `>` redirection for `echo` and `cat`; shell operators, variables, globbing, and command substitution are not expanded or executed.\n\
          - stdout and stderr are returned separately, labeled as [stdout] and [stderr].\n\
          - The exit code is included in the output; non-zero exit codes are flagged as errors.\n\
          - timeout_secs applies to real OS shell execution; platform shell commands are bounded VFS operations.\n\

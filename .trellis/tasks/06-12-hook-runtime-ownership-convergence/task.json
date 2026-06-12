@@ -3,7 +3,7 @@
   "name": "06-12-hook-runtime-ownership-convergence",
   "title": "Hook runtime ownership 模型收敛",
   "description": "将 Hook runtime 的业务归属从 RuntimeSession 缓存语义收敛到 AgentRun / AgentFrame control target，RuntimeSession 仅作为执行器连接通道与运行记录归属。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

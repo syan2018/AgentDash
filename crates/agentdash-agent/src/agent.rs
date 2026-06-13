@@ -526,26 +526,13 @@ impl Agent {
             let result = match result {
                 Ok(messages) => Ok(messages),
                 Err(error) => {
-                    let error_message =
-                        AgentMessage::error_assistant(error.to_string(), cancel.is_cancelled());
-                    event_sink(AgentEvent::MessageStart {
-                        message: error_message.clone(),
-                    })
-                    .await;
-                    event_sink(AgentEvent::MessageEnd {
-                        message: error_message.clone(),
-                    })
-                    .await;
-                    event_sink(AgentEvent::TurnEnd {
-                        message: error_message.clone(),
-                        tool_results: vec![],
-                    })
-                    .await;
-                    event_sink(AgentEvent::AgentEnd {
-                        messages: vec![error_message.clone()],
-                    })
-                    .await;
-                    Ok(vec![error_message])
+                    let error_text = error.to_string();
+                    {
+                        let mut s = state.lock().await;
+                        s.error = Some(error_text.clone());
+                    }
+                    tracing::error!(error = %error_text, "Agent loop failed");
+                    Err(error)
                 }
             };
 

@@ -90,15 +90,23 @@ impl AgentRunMailboxRuntimeDelegate {
         }
     }
 
-    async fn drain_agent_run_turn_boundary(&self) -> Result<Vec<AgentMessage>, AgentRuntimeError> {
+    async fn drain_agent_run_turn_boundary(&self, phase: &'static str) -> Vec<AgentMessage> {
         match self
             .mailbox_service()
             .drain_agent_run_turn_boundary_for_delegate(&self.runtime_session_id)
             .await
         {
-            Ok(messages) => Ok(messages),
-            Err(WorkflowApplicationError::NotFound(_)) => Ok(Vec::new()),
-            Err(error) => Err(AgentRuntimeError::Runtime(error.to_string())),
+            Ok(messages) => messages,
+            Err(WorkflowApplicationError::NotFound(_)) => Vec::new(),
+            Err(error) => {
+                tracing::warn!(
+                    runtime_session_id = %self.runtime_session_id,
+                    phase,
+                    error = %error,
+                    "AgentRun mailbox delegate drain 失败，跳过本轮停止边界消费"
+                );
+                Vec::new()
+            }
         }
     }
 
@@ -269,7 +277,7 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
         };
         match inner_decision {
             StopDecision::Stop => {
-                let mailbox_messages = self.drain_agent_run_turn_boundary().await?;
+                let mailbox_messages = self.drain_agent_run_turn_boundary("before_stop_stop").await;
                 if mailbox_messages.is_empty() {
                     Ok(StopDecision::Stop)
                 } else {
@@ -299,7 +307,9 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
                     )
                     .await?;
                 let mut steering = routing.direct_messages;
-                let mut mailbox_messages = self.drain_agent_run_turn_boundary().await?;
+                let mut mailbox_messages = self
+                    .drain_agent_run_turn_boundary("before_stop_continue")
+                    .await;
                 steering.append(&mut mailbox_messages);
                 Ok(StopDecision::Continue {
                     steering,

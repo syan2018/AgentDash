@@ -770,6 +770,44 @@ async fn stream_errors_become_error_assistant_messages() {
 }
 
 #[tokio::test]
+async fn runtime_delegate_errors_after_assistant_do_not_become_assistant_messages() {
+    let bridge = ScriptedBridge::new(vec![vec![ScriptStep::Chunk(
+        agentdash_agent::StreamChunk::Done(bridge_response(assistant_text("done"))),
+    )]]);
+    let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
+    agent.set_runtime_delegate(Some(Arc::new(FailingBeforeStopDelegate)));
+
+    let (_rx, handle) = agent
+        .prompt(AgentMessage::user("hi"))
+        .expect("prompt should start");
+    let error = handle
+        .await
+        .expect("task should not panic")
+        .expect_err("runtime delegate failure should remain an internal run error");
+
+    assert!(matches!(error, AgentError::RuntimeDelegate(_)));
+    assert!(error.to_string().contains("运行时委托错误: 内部数据库错误"));
+
+    let state = agent.state().await;
+    assert_eq!(state.messages.len(), 2);
+    assert!(matches!(
+        state.messages.first(),
+        Some(AgentMessage::User { .. })
+    ));
+    assert!(matches!(
+        state.messages.last(),
+        Some(AgentMessage::Assistant {
+            error_message: None,
+            ..
+        })
+    ));
+    assert_eq!(
+        state.error.as_deref(),
+        Some("运行时委托错误: 内部数据库错误")
+    );
+}
+
+#[tokio::test]
 async fn abort_becomes_aborted_assistant_message() {
     let first_delta_sent = Arc::new(Notify::new());
     let release_stream = Arc::new(Notify::new());
@@ -972,6 +1010,9 @@ async fn ask_decision_waits_for_approval_and_rejection_keeps_tool_unexecuted() {
 #[derive(Clone)]
 struct RejectingRuntimeDelegate;
 
+#[derive(Clone)]
+struct FailingBeforeStopDelegate;
+
 #[derive(Clone, Default)]
 struct EmptyContinueDelegate {
     before_stop_calls: Arc<AtomicUsize>,
@@ -1040,6 +1081,70 @@ impl agentdash_agent::AgentRuntimeDelegate for RejectingRuntimeDelegate {
         _cancel: CancellationToken,
     ) -> Result<agentdash_agent::StopDecision, agentdash_agent::AgentRuntimeError> {
         Ok(agentdash_agent::StopDecision::Stop)
+    }
+}
+
+#[async_trait]
+impl agentdash_agent::AgentRuntimeDelegate for FailingBeforeStopDelegate {
+    async fn evaluate_compaction(
+        &self,
+        _input: agentdash_agent::EvaluateCompactionInput,
+        _cancel: CancellationToken,
+    ) -> Result<Option<agentdash_agent::CompactionParams>, agentdash_agent::AgentRuntimeError> {
+        Ok(None)
+    }
+
+    async fn after_compaction(
+        &self,
+        _result: agentdash_agent::CompactionResult,
+        _cancel: CancellationToken,
+    ) -> Result<(), agentdash_agent::AgentRuntimeError> {
+        Ok(())
+    }
+
+    async fn transform_context(
+        &self,
+        input: agentdash_agent::TransformContextInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::TransformContextOutput, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::TransformContextOutput {
+            steering_messages: input.context.messages,
+            blocked: None,
+        })
+    }
+
+    async fn before_tool_call(
+        &self,
+        _input: agentdash_agent::BeforeToolCallInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::ToolCallDecision, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::ToolCallDecision::Allow)
+    }
+
+    async fn after_tool_call(
+        &self,
+        _input: agentdash_agent::AfterToolCallInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::AfterToolCallEffects, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::AfterToolCallEffects::default())
+    }
+
+    async fn after_turn(
+        &self,
+        _input: agentdash_agent::AfterTurnInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::TurnControlDecision, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::TurnControlDecision::default())
+    }
+
+    async fn before_stop(
+        &self,
+        _input: BeforeStopInput,
+        _cancel: CancellationToken,
+    ) -> Result<StopDecision, agentdash_agent::AgentRuntimeError> {
+        Err(agentdash_agent::AgentRuntimeError::Runtime(
+            "内部数据库错误".to_string(),
+        ))
     }
 }
 

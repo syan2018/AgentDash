@@ -53,12 +53,12 @@ use super::super::{AgentFrameTransitionRecord, RuntimeCommandStatus, RuntimeDeli
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
 };
+use crate::session::SetToolAccessEffect;
 use crate::session::capability_state::{
     CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
     ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
 };
 use crate::session::types::AgentFrameRuntimeTarget;
-use crate::session::{PendingQueueService, SetToolAccessEffect};
 use crate::test_support::{
     MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,
     MemoryRuntimeSessionExecutionAnchorRepository,
@@ -994,18 +994,7 @@ async fn pending_promote_uses_current_agent_frame_after_frame_refresh() {
     let run_repo = InMemoryLifecycleRunRepo::default();
     let (_run, launch_frame, current_frame) =
         seed_refreshed_agent_run_for_command_test(&hub, &run_repo, &session.id, base.path()).await;
-    let pending_queue = PendingQueueService::new();
-    let preview = pending_queue
-        .enqueue(
-            &session.id,
-            agentdash_agent_protocol::text_user_input_blocks("queued steer"),
-            None,
-        )
-        .await;
-    let pending = pending_queue
-        .take(&session.id, &preview.id)
-        .await
-        .expect("pending message should be promotable");
+    let input = agentdash_agent_protocol::text_user_input_blocks("queued steer");
     let service = AgentRunSteeringService::new(
         &run_repo,
         hub.lifecycle_agent_repo
@@ -1028,7 +1017,7 @@ async fn pending_promote_uses_current_agent_frame_after_frame_refresh() {
     let dispatch = service
         .steer(crate::workflow::AgentRunSteeringCommand {
             delivery_runtime_session_id: session.id.clone(),
-            input: pending.input,
+            input,
         })
         .await
         .expect("pending promote should steer");
@@ -4149,7 +4138,7 @@ async fn local_relay_prompt_requires_session_construction_provider() {
 }
 
 #[tokio::test]
-async fn schedule_hook_auto_resume_strict_mode_requires_provider() {
+async fn schedule_unanchored_hook_auto_resume_strict_mode_requires_provider() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct PromptCountingConnector {
@@ -4219,7 +4208,7 @@ async fn schedule_hook_auto_resume_strict_mode_requires_provider() {
         .expect("create");
 
     // 不注入 provider，strict auto-resume 应该在 launch 前失败，不能触发 connector.prompt。
-    hub.schedule_hook_auto_resume(session.id.clone());
+    hub.schedule_unanchored_hook_auto_resume(session.id.clone());
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     assert_eq!(
@@ -4230,7 +4219,7 @@ async fn schedule_hook_auto_resume_strict_mode_requires_provider() {
 }
 
 #[tokio::test]
-async fn schedule_hook_auto_resume_routes_through_provider() {
+async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
     use crate::session::{SessionConstructionProvider, SessionConstructionProviderInput};
     use crate::workflow::runtime_launch::FrameLaunchEnvelope;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -4332,7 +4321,7 @@ async fn schedule_hook_auto_resume_routes_through_provider() {
     }))
     .await;
 
-    hub.schedule_hook_auto_resume(session.id.clone());
+    hub.schedule_unanchored_hook_auto_resume(session.id.clone());
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
     while calls.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
@@ -4365,10 +4354,22 @@ async fn request_hook_auto_resume_enforces_cap() {
     let session = hub.create_session("auto-resume-cap").await.expect("create");
     let _rx = hub.ensure_session(&session.id).await;
 
-    assert!(hub.request_hook_auto_resume(session.id.clone()).await);
-    assert!(hub.request_hook_auto_resume(session.id.clone()).await);
-    assert!(!hub.request_hook_auto_resume(session.id.clone()).await);
-    assert!(!hub.request_hook_auto_resume(session.id.clone()).await);
+    assert!(
+        hub.request_hook_auto_resume(hook_auto_resume_request(&session.id))
+            .await
+    );
+    assert!(
+        hub.request_hook_auto_resume(hook_auto_resume_request(&session.id))
+            .await
+    );
+    assert!(
+        !hub.request_hook_auto_resume(hook_auto_resume_request(&session.id))
+            .await
+    );
+    assert!(
+        !hub.request_hook_auto_resume(hook_auto_resume_request(&session.id))
+            .await
+    );
 
     let auto_resume_count = hub
         .runtime_registry
@@ -4387,7 +4388,19 @@ async fn request_hook_auto_resume_returns_false_for_unknown_session() {
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
 
     assert!(
-        !hub.request_hook_auto_resume("nonexistent".to_string())
+        !hub.request_hook_auto_resume(hook_auto_resume_request("nonexistent"))
             .await,
     );
+}
+
+fn hook_auto_resume_request(
+    session_id: &str,
+) -> super::super::terminal_effects::TerminalAutoResumeRequest {
+    super::super::terminal_effects::TerminalAutoResumeRequest {
+        effect_id: uuid::Uuid::new_v4(),
+        session_id: session_id.to_string(),
+        turn_id: "turn-auto-resume-test".to_string(),
+        terminal_event_seq: 1,
+        payload: serde_json::json!({}),
+    }
 }

@@ -2,11 +2,11 @@ import type { ReactNode } from "react";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type {
+  ConversationMailboxSnapshotView,
   ConversationCommandSetView,
   ConversationCommandView,
   ConversationModelConfigView,
-  ConversationPendingSnapshotView,
-  PendingMessageView,
+  MailboxMessageView,
 } from "../../../generated/workflow-contracts";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
@@ -86,18 +86,18 @@ export interface SessionChatViewProps {
   /** 用户在模型选择器中显式选择的本地 override；仅作为 command input，不作为 ProjectAgent 默认值。 */
   onExecutorConfigOverrideChange?: (config: ExecutorConfig | null) => void;
 
-  // ─── Pending Queue ─────────────────────────────────
+  // ─── Mailbox ─────────────────────────────────
 
-  /** 排队中的消息列表（来自 runtimeControl.pending_messages） */
-  pendingMessages?: PendingMessageView[];
-  /** Pending 队列展示状态（来自 conversation.pending） */
-  pendingSnapshot?: ConversationPendingSnapshotView;
-  /** 引导排队消息（promote to steer） */
-  onPromotePending?: (messageId: string) => void;
-  /** 删除排队消息 */
-  onDeletePending?: (messageId: string) => void;
-  /** 恢复暂停的 pending 队列 */
-  onResumePendingQueue?: () => void;
+  /** Mailbox 消息列表（来自 runtimeControl.mailbox_messages） */
+  mailboxMessages?: MailboxMessageView[];
+  /** Mailbox 展示状态（来自 conversation.mailbox） */
+  mailboxSnapshot?: ConversationMailboxSnapshotView;
+  /** 引导 mailbox 消息 */
+  onPromoteMailboxMessage?: (messageId: string) => void;
+  /** 删除 mailbox 消息 */
+  onDeleteMailboxMessage?: (messageId: string) => void;
+  /** 恢复暂停的 mailbox */
+  onResumeMailbox?: () => void;
 
   // ─── 布局插槽 ────────────────────────────────────────
 

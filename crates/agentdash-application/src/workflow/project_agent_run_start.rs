@@ -5,8 +5,8 @@ use agentdash_contracts::workflow::{
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentLineageRepository, AgentRunDeliveryAcceptedRefs,
-    AgentRunDeliveryCommandReceiptRepository, LifecycleAgentRepository, LifecycleGateRepository,
+    AgentFrameRepository, AgentLineageRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
+    AgentRunCommandReceiptRepository, LifecycleAgentRepository, LifecycleGateRepository,
     LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
 };
@@ -64,7 +64,7 @@ pub struct ProjectAgentRunStartRepos<'a> {
     pub lifecycle_gate_repo: &'a dyn LifecycleGateRepository,
     pub agent_lineage_repo: &'a dyn AgentLineageRepository,
     pub execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
-    pub command_receipt_repo: &'a dyn AgentRunDeliveryCommandReceiptRepository,
+    pub command_receipt_repo: &'a dyn AgentRunCommandReceiptRepository,
     pub runtime_session_creator: &'a dyn RuntimeSessionCreator,
 }
 
@@ -80,7 +80,7 @@ impl<'a> ProjectAgentRunStartRepos<'a> {
             lifecycle_gate_repo: repos.lifecycle_gate_repo.as_ref(),
             agent_lineage_repo: repos.agent_lineage_repo.as_ref(),
             execution_anchor_repo: repos.execution_anchor_repo.as_ref(),
-            command_receipt_repo: repos.agent_run_delivery_command_receipt_repo.as_ref(),
+            command_receipt_repo: repos.agent_run_command_receipt_repo.as_ref(),
             runtime_session_creator: repos.runtime_session_creator.as_ref(),
         }
     }
@@ -207,6 +207,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 "{}:{}:{}:{}",
                 command.project_id, command.project_agent_id, subject_ref.kind, subject_ref.id
             ),
+            AgentRunCommandKind::ProjectAgentStart,
             command.client_command_id.clone(),
             request_digest,
         )
@@ -338,13 +339,14 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 return Err(error);
             }
         };
-        let accepted_refs = AgentRunDeliveryAcceptedRefs {
+        let accepted_refs = AgentRunAcceptedRefs {
             run_id: message_dispatch.run_id,
             agent_id: message_dispatch.agent_id,
             frame_id: Some(message_dispatch.frame_id),
             frame_revision: Some(message_dispatch.frame_revision),
             runtime_session_id: Some(runtime_session_id.clone()),
-            turn_id: Some(message_dispatch.turn_id.clone()),
+            agent_run_turn_id: Some(message_dispatch.turn_id.clone()),
+            protocol_turn_id: None,
         };
         let receipt = self
             .repos
@@ -415,7 +417,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
 fn project_agent_start_dispatch_from_accepted_refs(
     project_agent: ProjectAgent,
     subject_ref: Option<SubjectRef>,
-    refs: AgentRunDeliveryAcceptedRefs,
+    refs: AgentRunAcceptedRefs,
     effective_executor_config: ConversationEffectiveExecutorConfigView,
     command_receipt: AgentRunCommandReceiptView,
 ) -> ProjectAgentRunStartDispatch {
@@ -423,7 +425,7 @@ fn project_agent_start_dispatch_from_accepted_refs(
         project_agent,
         effective_executor_config,
         runtime_session_id: refs.runtime_session_id.unwrap_or_default(),
-        turn_id: refs.turn_id.unwrap_or_default(),
+        turn_id: refs.agent_run_turn_id.unwrap_or_default(),
         run_id: refs.run_id,
         agent_id: refs.agent_id,
         frame_id: refs.frame_id.unwrap_or_else(Uuid::nil),
@@ -466,7 +468,7 @@ fn validate_project_agent_subject_ref(
 mod tests {
     use super::*;
     use crate::session::{ExecutionStatus, TitleSource};
-    use crate::test_support::MemoryAgentRunDeliveryCommandReceiptRepository;
+    use crate::test_support::MemoryAgentRunCommandReceiptRepository;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         AgentFrame, AgentLineage, LifecycleAgent, LifecycleGate, LifecycleRun,
@@ -1036,7 +1038,7 @@ mod tests {
         let gate_repo = GateRepo;
         let lineage_repo = LineageRepo;
         let anchor_repo = AnchorRepo::default();
-        let command_receipt_repo = MemoryAgentRunDeliveryCommandReceiptRepository::default();
+        let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
         let runtime_creator = RuntimeCreator::default();
         let service = ProjectAgentRunStartService::new(
             ProjectAgentRunStartRepos {
@@ -1099,7 +1101,7 @@ mod tests {
         let gate_repo = GateRepo;
         let lineage_repo = LineageRepo;
         let anchor_repo = AnchorRepo::default();
-        let command_receipt_repo = MemoryAgentRunDeliveryCommandReceiptRepository::default();
+        let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
         let runtime_creator = RuntimeCreator::default();
         let service = ProjectAgentRunStartService::new(
             ProjectAgentRunStartRepos {
@@ -1155,7 +1157,7 @@ mod tests {
         let gate_repo = GateRepo;
         let lineage_repo = LineageRepo;
         let anchor_repo = AnchorRepo::default();
-        let command_receipt_repo = MemoryAgentRunDeliveryCommandReceiptRepository::default();
+        let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
         let runtime_creator = RuntimeCreator::default();
         let service = ProjectAgentRunStartService::new(
             ProjectAgentRunStartRepos {
@@ -1226,7 +1228,7 @@ mod tests {
         let gate_repo = GateRepo;
         let lineage_repo = LineageRepo;
         let anchor_repo = AnchorRepo::default();
-        let command_receipt_repo = MemoryAgentRunDeliveryCommandReceiptRepository::default();
+        let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
         let runtime_creator = RuntimeCreator::default();
         let service = ProjectAgentRunStartService::new(
             ProjectAgentRunStartRepos {

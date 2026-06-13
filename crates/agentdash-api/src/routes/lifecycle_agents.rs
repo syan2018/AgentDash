@@ -1,25 +1,26 @@
 use std::sync::Arc;
 
-use agentdash_agent_protocol::UserInputBlock;
 use agentdash_application::session::{SessionExecutionState, SessionMeta};
 use agentdash_application::vfs::ResolvedVfsSurfaceSource as AppResolvedVfsSurfaceSource;
 use agentdash_application::workflow::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
-    AgentRunMessageCommand, AgentRunMessageLaunchDeliveryPort, AgentRunMessageService,
-    AgentRunSteeringCommand, AgentRunSteeringService, ConversationModelConfigInput,
-    ConversationModelConfigResolver, conversation_snapshot_id, lifecycle_run_view_builder,
+    AgentRunMailboxCommandOutcome as AppMailboxCommandOutcome, AgentRunMailboxCommandResult,
+    AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
+    ConversationModelConfigInput, ConversationModelConfigResolver, conversation_snapshot_id,
+    lifecycle_run_view_builder,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandOnlyRequest,
-    AgentRunCommandPreconditionView, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
-    AgentRunComposerSubmitResponse, AgentRunRefDto, AgentRunWorkspaceActionAvailabilityView,
-    AgentRunWorkspaceActionSetView, AgentRunWorkspaceControlPlaneStatus,
-    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
-    AgentRunWorkspaceShell, AgentRunWorkspaceView, ConversationCommandKind,
-    ConversationDiagnosticView, LifecycleRunRefDto, LifecycleSubjectAssociationDto,
-    PendingMessageView, PendingQueuePauseReasonDto, PendingQueueStateView,
-    ResumePendingQueueResponse, RuntimeSessionCommandStateDto, RuntimeSessionRefDto,
-    RuntimeSessionTraceMeta, ValidationSeverity,
+    AgentFrameRefDto, AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView,
+    AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxView,
+    AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
+    AgentRunRefDto, AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
+    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
+    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
+    AgentRunWorkspaceView, ConsumptionBarrier, ConversationCommandKind, ConversationDiagnosticView,
+    LifecycleRunRefDto, LifecycleSubjectAssociationDto, MailboxDelivery, MailboxDrainMode,
+    MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus, MailboxMessageView,
+    MailboxStateView, RuntimeSessionCommandStateDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
+    ValidationSeverity,
 };
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use agentdash_spi::AgentConfig;
@@ -29,7 +30,6 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::agent_run_pending::AgentRunPendingDispatcher;
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
@@ -76,20 +76,20 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::post(submit_agent_run_composer_input),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/pending-messages",
-            axum::routing::get(list_agent_run_pending_messages),
+            "/agent-runs/{run_id}/agents/{agent_id}/mailbox",
+            axum::routing::get(get_agent_run_mailbox),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/pending-messages/resume",
-            axum::routing::post(resume_agent_run_pending_queue),
+            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/resume",
+            axum::routing::post(resume_agent_run_mailbox),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}",
-            axum::routing::delete(delete_agent_run_pending_message),
+            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}",
+            axum::routing::delete(delete_agent_run_mailbox_message),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}/promote",
-            axum::routing::post(promote_agent_run_pending_message),
+            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/promote",
+            axum::routing::post(promote_agent_run_mailbox_message),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/cancel",
@@ -173,7 +173,7 @@ pub async fn submit_agent_run_composer_input(
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
     Json(req): Json<AgentRunComposerSubmitRequest>,
-) -> Result<Json<AgentRunComposerSubmitResponse>, ApiError> {
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
     if req.client_command_id.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "client_command_id 不能为空".to_string(),
@@ -214,122 +214,32 @@ pub async fn submit_agent_run_composer_input(
         &runtime_session_id,
         &execution_state,
     )?;
-    let supports_steering = match &execution_state {
-        SessionExecutionState::Running { turn_id: Some(_) } => {
-            state
-                .services
-                .session_control
-                .supports_session_steering(&runtime_session_id)
-                .await
-        }
-        _ => false,
-    };
-    let accepted_kind = classify_composer_submit_kind(
-        &execution_state,
-        req.command.command_kind,
-        supports_steering,
-    )
-    .map_err(|code| {
-        command_conflict(
-            composer_submit_unavailable_message(code),
-            code,
-            replacement_command_for_state(&execution_state, false),
-            serde_json::json!({
-                "run_id": context.run.id.to_string(),
-                "agent_id": context.agent.id.to_string(),
-                "runtime_session_id": runtime_session_id,
-                "state": conversation_state_code(&execution_state),
-                "submitted_command_kind": req.command.command_kind,
-            }),
-        )
-    })?;
-
-    match accepted_kind {
-        ConversationCommandKind::SendNext => {
-            let response = dispatch_message_for_runtime(
-                state,
-                current_user,
-                runtime_session_id,
-                AgentRunMessageDispatchInput {
-                    input: req.input,
-                    client_command_id: req.client_command_id,
-                    executor_config: req.executor_config,
-                },
-            )
-            .await?;
-            Ok(Json(AgentRunComposerSubmitResponse {
-                accepted_kind,
-                command_receipt: response.command_receipt,
-                accepted_refs: Some(response.accepted_refs),
-                pending_message: None,
-                state: None,
-            }))
-        }
-        ConversationCommandKind::Enqueue => {
-            let executor_config = req
-                .executor_config
-                .map(serde_json::from_value::<AgentConfig>)
-                .transpose()
-                .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
-            let preview = state
-                .services
-                .pending_queue
-                .enqueue(&runtime_session_id, req.input, executor_config)
-                .await;
-            let active_turn_id = execution_state_active_turn_id(&execution_state);
-            Ok(Json(AgentRunComposerSubmitResponse {
-                accepted_kind,
-                command_receipt: accepted_receipt(req.client_command_id),
-                accepted_refs: Some(accepted_refs(
-                    context.run.id,
-                    context.agent.id,
-                    None,
-                    None,
-                    Some(runtime_session_id),
-                    active_turn_id,
-                )),
-                pending_message: Some(pending_message_view(preview)),
-                state: Some(runtime_command_state_dto(execution_state)),
-            }))
-        }
-        ConversationCommandKind::Steer => {
-            let response = steer_runtime_session(
-                state,
-                runtime_session_id,
-                AgentRunSteeringDispatchInput {
-                    input: req.input,
-                    client_command_id: req.client_command_id,
-                },
-            )
-            .await?;
-            Ok(Json(AgentRunComposerSubmitResponse {
-                accepted_kind,
-                command_receipt: response.command_receipt,
-                accepted_refs: Some(response.accepted_refs),
-                pending_message: None,
-                state: Some(response.state),
-            }))
-        }
-        _ => Err(command_conflict(
-            "当前输入提交无法映射到可执行的 AgentRun 文本命令。",
-            "command_unavailable",
-            replacement_command_for_state(&execution_state, false),
-            serde_json::json!({
-                "run_id": context.run.id.to_string(),
-                "agent_id": context.agent.id.to_string(),
-                "runtime_session_id": runtime_session_id,
-                "state": conversation_state_code(&execution_state),
-                "accepted_kind": accepted_kind,
-            }),
-        )),
-    }
+    let executor_config = req
+        .executor_config
+        .map(serde_json::from_value::<AgentConfig>)
+        .transpose()
+        .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
+    let service = agent_run_mailbox_service(state.as_ref());
+    let response = service
+        .accept_user_message(AgentRunMailboxUserMessageCommand {
+            run_id: context.run.id,
+            agent_id: context.agent.id,
+            runtime_session_id,
+            input: req.input,
+            client_command_id: req.client_command_id,
+            executor_config,
+            identity: Some(current_user),
+        })
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(agent_run_message_command_response(response)))
 }
 
-async fn list_agent_run_pending_messages(
+async fn get_agent_run_mailbox(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<Vec<PendingMessageView>>, ApiError> {
+) -> Result<Json<AgentRunMailboxView>, ApiError> {
     let context = resolve_agent_run_context(
         &state,
         &current_user,
@@ -338,25 +248,17 @@ async fn list_agent_run_pending_messages(
         ProjectPermission::View,
     )
     .await?;
-    let Some(runtime_session_id) = context.delivery_runtime_session_id else {
-        return Ok(Json(Vec::new()));
-    };
-    let views = state
-        .services
-        .pending_queue
-        .list(&runtime_session_id)
-        .await
-        .into_iter()
-        .map(pending_message_view)
-        .collect();
-    Ok(Json(views))
+    Ok(Json(
+        build_agent_run_mailbox_view(state.as_ref(), &context).await?,
+    ))
 }
 
-async fn delete_agent_run_pending_message(
+async fn delete_agent_run_mailbox_message(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+    Json(body): Json<AgentRunCommandOnlyRequest>,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
     let context = resolve_agent_run_context(
         &state,
         &current_user,
@@ -371,26 +273,35 @@ async fn delete_agent_run_pending_message(
             context.run.id, context.agent.id
         ))
     })?;
-    let deleted = state
-        .services
-        .pending_queue
-        .delete(&runtime_session_id, &message_id)
-        .await;
-    if !deleted {
-        return Err(ApiError::NotFound(format!(
-            "pending message {} 不存在",
-            message_id
-        )));
-    }
-    Ok(Json(serde_json::json!({ "deleted": true })))
+    ensure_agent_run_command_allowed(
+        state.as_ref(),
+        &context,
+        &runtime_session_id,
+        AgentRunCommandPrecondition::DeleteMailboxMessage {
+            command: body.command.clone(),
+        },
+    )
+    .await?;
+    let message_id = parse_uuid(&message_id, "message_id")?;
+    let response = agent_run_mailbox_service(state.as_ref())
+        .delete_message(AgentRunMailboxControlCommand {
+            run_id: context.run.id,
+            agent_id: context.agent.id,
+            runtime_session_id,
+            message_id: Some(message_id),
+            client_command_id: body.command.command_id,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(agent_run_message_command_response(response)))
 }
 
-async fn resume_agent_run_pending_queue(
+async fn resume_agent_run_mailbox(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
     Json(body): Json<AgentRunCommandOnlyRequest>,
-) -> Result<Json<ResumePendingQueueResponse>, ApiError> {
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
     let context = resolve_agent_run_context(
         &state,
         &current_user,
@@ -409,75 +320,33 @@ async fn resume_agent_run_pending_queue(
         state.as_ref(),
         &context,
         &runtime_session_id,
-        AgentRunCommandPrecondition::ResumePendingQueue {
+        AgentRunCommandPrecondition::ResumeMailbox {
             command: body.command.clone(),
         },
     )
     .await?;
-    let execution_state = state
-        .services
-        .session_core
-        .inspect_session_execution_state(&runtime_session_id)
-        .await?;
-    if matches!(
-        execution_state,
-        SessionExecutionState::Running { .. } | SessionExecutionState::Cancelling { .. }
-    ) {
-        state
-            .services
-            .pending_queue
-            .resume(&runtime_session_id)
-            .await;
-        return Ok(Json(ResumePendingQueueResponse {
-            resumed: true,
-            dispatched: false,
-            accepted_refs: None,
-        }));
-    }
-    if is_terminal_agent_status(&context.agent.status) {
-        state
-            .services
-            .pending_queue
-            .resume(&runtime_session_id)
-            .await;
-        return Ok(Json(ResumePendingQueueResponse {
-            resumed: true,
-            dispatched: false,
-            accepted_refs: None,
-        }));
-    }
-
-    let dispatcher = AgentRunPendingDispatcher::new(
-        state.repos.clone(),
-        state.services.pending_queue.clone(),
-        state.services.session_launch.clone(),
-    );
-    let dispatch = dispatcher
-        .resume_queue(&runtime_session_id)
+    let response = agent_run_mailbox_service(state.as_ref())
+        .resume_mailbox(
+            AgentRunMailboxControlCommand {
+                run_id: context.run.id,
+                agent_id: context.agent.id,
+                runtime_session_id,
+                message_id: None,
+                client_command_id: body.command.command_id,
+            },
+            Some(current_user),
+        )
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(ResumePendingQueueResponse {
-        resumed: true,
-        dispatched: dispatch.is_some(),
-        accepted_refs: dispatch.map(|dispatch| {
-            accepted_refs(
-                dispatch.run_id,
-                dispatch.agent_id,
-                Some(dispatch.frame_id),
-                Some(dispatch.frame_revision),
-                Some(dispatch.runtime_session_id),
-                Some(dispatch.turn_id),
-            )
-        }),
-    }))
+    Ok(Json(agent_run_message_command_response(response)))
 }
 
-async fn promote_agent_run_pending_message(
+async fn promote_agent_run_mailbox_message(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
     Json(body): Json<AgentRunCommandOnlyRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
     let context = resolve_agent_run_context(
         &state,
         &current_user,
@@ -496,12 +365,26 @@ async fn promote_agent_run_pending_message(
         state.as_ref(),
         &context,
         &runtime_session_id,
-        AgentRunCommandPrecondition::PromotePending {
+        AgentRunCommandPrecondition::PromoteMailboxMessage {
             command: body.command.clone(),
         },
     )
     .await?;
-    promote_pending_message_for_runtime(state, runtime_session_id, message_id).await
+    let message_id = parse_uuid(&message_id, "message_id")?;
+    let response = agent_run_mailbox_service(state.as_ref())
+        .promote_message(
+            AgentRunMailboxControlCommand {
+                run_id: context.run.id,
+                agent_id: context.agent.id,
+                runtime_session_id,
+                message_id: Some(message_id),
+                client_command_id: body.command.command_id,
+            },
+            Some(current_user),
+        )
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(agent_run_message_command_response(response)))
 }
 
 async fn cancel_agent_run(
@@ -732,60 +615,12 @@ async fn build_agent_run_workspace_view(
         }
     };
     let actions = AgentRunWorkspaceActionSetView {
-        send_next: if has_delivery_runtime
-            && has_frame
-            && !terminal_agent
-            && !delivery_running
-            && !delivery_cancelling
-        {
+        submit_message: if has_delivery_runtime && has_frame && !terminal_agent {
             enabled_action()
         } else if !has_delivery_runtime {
             disabled_action("当前 AgentRun 缺少可投递的 runtime 通道。")
-        } else if delivery_cancelling {
-            disabled_action("当前 AgentRun 正在取消中，等待执行器收口后再发送下一轮消息。")
-        } else if delivery_running {
-            disabled_action("当前 AgentRun 正在执行中，不能并发发送下一轮消息。")
         } else if terminal_agent {
             disabled_action("当前 AgentRun 已结束，不能继续发送消息。")
-        } else {
-            disabled_action("当前 AgentRun 没有可投递的 runtime frame。")
-        },
-        enqueue: if has_delivery_runtime && has_frame && !terminal_agent && delivery_running_active
-        {
-            enabled_action()
-        } else if !has_delivery_runtime {
-            disabled_action("当前 AgentRun 缺少可投递的 runtime 通道。")
-        } else if delivery_cancelling {
-            disabled_action("当前 AgentRun 正在取消中，不能排队新消息。")
-        } else if delivery_starting_claimed {
-            disabled_action("当前 AgentRun 正在启动中，等待 active turn 建立后才能排队。")
-        } else if !delivery_running {
-            disabled_action("当前 AgentRun 未在执行中，直接发送即可。")
-        } else if terminal_agent {
-            disabled_action("当前 AgentRun 已结束。")
-        } else {
-            disabled_action("当前 AgentRun 没有可投递的 runtime frame。")
-        },
-        steer: if has_delivery_runtime
-            && has_frame
-            && !terminal_agent
-            && delivery_running_active
-            && !delivery_cancelling
-            && supports_steering
-        {
-            enabled_action()
-        } else if !has_delivery_runtime {
-            disabled_action("当前 AgentRun 缺少可投递的 runtime 通道。")
-        } else if delivery_cancelling {
-            disabled_action("当前 AgentRun 正在取消中，不能运行中 steer。")
-        } else if delivery_starting_claimed {
-            disabled_action("当前 AgentRun 正在启动中，等待 active turn 建立后才能 steer。")
-        } else if !delivery_running {
-            disabled_action("当前 AgentRun 未在执行中，不需要运行中 steer。")
-        } else if !supports_steering {
-            disabled_action("当前执行器不支持对该运行中 AgentRun steer。")
-        } else if terminal_agent {
-            disabled_action("当前 AgentRun 已结束，不能运行中 steer。")
         } else {
             disabled_action("当前 AgentRun 没有可投递的 runtime frame。")
         },
@@ -795,30 +630,31 @@ async fn build_agent_run_workspace_view(
             disabled_action("当前 AgentRun 没有正在执行的 turn。")
         },
     };
-    let pending_messages = match runtime_session_id.as_deref() {
-        Some(session_id) => state
-            .services
-            .pending_queue
-            .list(session_id)
-            .await
-            .into_iter()
-            .map(pending_message_view)
-            .collect(),
-        None => Vec::new(),
-    };
-    let pause_reason = match runtime_session_id.as_deref() {
-        Some(session_id) => state.services.pending_queue.is_paused(session_id).await,
-        None => None,
-    };
-    let pending_visible_message_count = pending_messages.len();
-    let pending_queue = match runtime_session_id.as_deref() {
-        Some(_) => pending_queue_state_view(
-            pause_reason,
-            has_delivery_runtime && !terminal_agent,
-            pending_visible_message_count,
-        ),
-        None => pending_queue_state_view(None, false, 0),
-    };
+    let mailbox_messages = state
+        .repos
+        .agent_run_mailbox_repo
+        .list_messages(context.run.id, context.agent.id)
+        .await
+        .map_err(ApiError::from)?;
+    let mailbox_state = state
+        .repos
+        .agent_run_mailbox_repo
+        .get_state(context.run.id, context.agent.id)
+        .await
+        .map_err(ApiError::from)?;
+    let mailbox_visible_message_count = mailbox_messages
+        .iter()
+        .filter(|message| mailbox_message_visible(message))
+        .count();
+    let mailbox = mailbox_state_view(
+        mailbox_state.as_ref(),
+        has_delivery_runtime && !terminal_agent,
+        mailbox_visible_message_count,
+    );
+    let mailbox_message_views = mailbox_messages
+        .into_iter()
+        .map(mailbox_message_view)
+        .collect::<Vec<_>>();
     let project_agent_preset_config = match context.agent.project_agent_id {
         Some(project_agent_id) => state
             .repos
@@ -853,8 +689,8 @@ async fn build_agent_run_workspace_view(
         execution_state: execution_state.clone(),
         terminal_agent,
         supports_steering,
-        pending_paused: pause_reason.is_some(),
-        pending_visible_message_count,
+        mailbox_paused: mailbox.paused,
+        mailbox_visible_message_count,
         resource_surface,
         resource_diagnostics,
         model_config,
@@ -896,8 +732,8 @@ async fn build_agent_run_workspace_view(
         frame_runtime,
         subject_associations,
         actions,
-        pending_queue,
-        pending_messages,
+        mailbox,
+        mailbox_messages: mailbox_message_views,
         resource_surface: conversation.resource_surface.clone(),
         conversation: Some(conversation),
     })
@@ -1013,39 +849,306 @@ fn subject_label_from_metadata(association: &LifecycleSubjectAssociationDto) -> 
         .map(ToOwned::to_owned)
 }
 
-fn pending_message_view(
-    preview: agentdash_application::session::PendingMessagePreview,
-) -> PendingMessageView {
-    PendingMessageView {
-        id: preview.id,
-        preview: preview.preview,
-        has_images: preview.has_images,
-        created_at: preview.created_at.to_rfc3339(),
+pub(crate) fn mailbox_message_view(
+    message: agentdash_domain::workflow::AgentRunMailboxMessage,
+) -> MailboxMessageView {
+    let can_delete = matches!(
+        message.status,
+        agentdash_domain::workflow::MailboxMessageStatus::Accepted
+            | agentdash_domain::workflow::MailboxMessageStatus::Queued
+            | agentdash_domain::workflow::MailboxMessageStatus::ReadyToConsume
+            | agentdash_domain::workflow::MailboxMessageStatus::Paused
+            | agentdash_domain::workflow::MailboxMessageStatus::Blocked
+    );
+    let can_promote = can_delete
+        && message.delivery == agentdash_domain::workflow::MailboxDelivery::LaunchOrContinueTurn;
+    MailboxMessageView {
+        id: message.id.to_string(),
+        origin: mailbox_origin_view(message.origin),
+        source: mailbox_source_view(message.source),
+        delivery: mailbox_delivery_view(message.delivery.clone()),
+        barrier: mailbox_barrier_view(message.barrier),
+        drain_mode: mailbox_drain_mode_view(message.drain_mode),
+        status: mailbox_status_view(message.status),
+        preview: message.preview.clone(),
+        has_images: message.has_images,
+        attempt_count: message.attempt_count,
+        accepted_refs: mailbox_message_accepted_refs(&message),
+        last_error: message.last_error.clone(),
+        created_at: message.created_at.to_rfc3339(),
+        updated_at: message.updated_at.to_rfc3339(),
+        can_promote,
+        can_delete,
     }
 }
 
-pub(crate) fn pending_queue_state_view(
-    pause_reason: Option<agentdash_application::session::QueuePauseReason>,
+pub(crate) fn mailbox_message_visible(
+    message: &agentdash_domain::workflow::AgentRunMailboxMessage,
+) -> bool {
+    !matches!(
+        message.status,
+        agentdash_domain::workflow::MailboxMessageStatus::Dispatched
+            | agentdash_domain::workflow::MailboxMessageStatus::Steered
+            | agentdash_domain::workflow::MailboxMessageStatus::Deleted
+    )
+}
+
+pub(crate) fn mailbox_state_view(
+    state: Option<&agentdash_domain::workflow::AgentRunMailboxState>,
     can_resume: bool,
     visible_message_count: usize,
-) -> PendingQueueStateView {
-    let pause_reason_dto = pause_reason.map(|reason| match reason {
-        agentdash_application::session::QueuePauseReason::TurnFailed => {
-            PendingQueuePauseReasonDto::TurnFailed
+) -> MailboxStateView {
+    let paused = state.is_some_and(|state| state.paused) && visible_message_count > 0;
+    MailboxStateView {
+        paused,
+        pause_reason: state.and_then(|state| state.pause_reason.clone()),
+        message: state.and_then(|state| state.pause_message.clone()),
+        can_resume: can_resume && paused,
+    }
+}
+
+async fn build_agent_run_mailbox_view(
+    state: &AppState,
+    context: &AgentRunContext,
+) -> Result<AgentRunMailboxView, ApiError> {
+    let messages = state
+        .repos
+        .agent_run_mailbox_repo
+        .list_messages(context.run.id, context.agent.id)
+        .await
+        .map_err(ApiError::from)?;
+    let visible_message_count = messages
+        .iter()
+        .filter(|message| mailbox_message_visible(message))
+        .count();
+    let mailbox_state = state
+        .repos
+        .agent_run_mailbox_repo
+        .get_state(context.run.id, context.agent.id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(AgentRunMailboxView {
+        state: mailbox_state_view(
+            mailbox_state.as_ref(),
+            context.delivery_runtime_session_id.is_some()
+                && !is_terminal_agent_status(&context.agent.status),
+            visible_message_count,
+        ),
+        messages: messages.into_iter().map(mailbox_message_view).collect(),
+    })
+}
+
+fn agent_run_mailbox_service(state: &AppState) -> AgentRunMailboxService<'_> {
+    AgentRunMailboxService::new(
+        state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.lifecycle_agent_repo.as_ref(),
+        state.repos.agent_frame_repo.as_ref(),
+        state.repos.execution_anchor_repo.as_ref(),
+        state.repos.agent_run_command_receipt_repo.as_ref(),
+        state.repos.agent_run_mailbox_repo.as_ref(),
+        state.services.session_core.clone(),
+        state.services.session_control.clone(),
+        state.services.session_eventing.clone(),
+        state.services.session_launch.clone(),
+    )
+}
+
+fn agent_run_message_command_response(
+    result: AgentRunMailboxCommandResult,
+) -> AgentRunMessageCommandResponse {
+    AgentRunMessageCommandResponse {
+        command_receipt: command_receipt_view(result.command_receipt),
+        outcome: mailbox_command_outcome_view(result.outcome),
+        mailbox_message: result.mailbox_message.map(mailbox_message_view),
+        accepted_refs: result.accepted_refs.map(agent_run_message_accepted_refs),
+        runtime_state: result.runtime_state.map(runtime_command_state_dto),
+    }
+}
+
+fn mailbox_command_outcome_view(
+    outcome: AppMailboxCommandOutcome,
+) -> AgentRunMessageCommandOutcome {
+    match outcome {
+        AppMailboxCommandOutcome::Launched => AgentRunMessageCommandOutcome::Launched,
+        AppMailboxCommandOutcome::Queued => AgentRunMessageCommandOutcome::Queued,
+        AppMailboxCommandOutcome::Steered => AgentRunMessageCommandOutcome::Steered,
+        AppMailboxCommandOutcome::Deleted => AgentRunMessageCommandOutcome::Deleted,
+        AppMailboxCommandOutcome::Resumed => AgentRunMessageCommandOutcome::Resumed,
+        AppMailboxCommandOutcome::Blocked => AgentRunMessageCommandOutcome::Blocked,
+        AppMailboxCommandOutcome::Failed => AgentRunMessageCommandOutcome::Failed,
+    }
+}
+
+fn mailbox_status_view(
+    status: agentdash_domain::workflow::MailboxMessageStatus,
+) -> MailboxMessageStatus {
+    match status {
+        agentdash_domain::workflow::MailboxMessageStatus::Accepted => {
+            MailboxMessageStatus::Accepted
         }
-        agentdash_application::session::QueuePauseReason::TurnInterrupted => {
-            PendingQueuePauseReasonDto::TurnInterrupted
+        agentdash_domain::workflow::MailboxMessageStatus::Queued => MailboxMessageStatus::Queued,
+        agentdash_domain::workflow::MailboxMessageStatus::ReadyToConsume => {
+            MailboxMessageStatus::ReadyToConsume
         }
-    });
-    let message = pause_reason_dto.as_ref().map(|reason| match reason {
-        PendingQueuePauseReasonDto::TurnFailed => "上一轮失败，pending 队列已暂停。",
-        PendingQueuePauseReasonDto::TurnInterrupted => "上一轮已中断，pending 队列已暂停。",
-    });
-    PendingQueueStateView {
-        paused: pause_reason_dto.is_some() && visible_message_count > 0,
-        pause_reason: pause_reason_dto,
-        message: message.map(str::to_string),
-        can_resume: can_resume && pause_reason.is_some() && visible_message_count > 0,
+        agentdash_domain::workflow::MailboxMessageStatus::Consuming => {
+            MailboxMessageStatus::Consuming
+        }
+        agentdash_domain::workflow::MailboxMessageStatus::Dispatched => {
+            MailboxMessageStatus::Dispatched
+        }
+        agentdash_domain::workflow::MailboxMessageStatus::Steered => MailboxMessageStatus::Steered,
+        agentdash_domain::workflow::MailboxMessageStatus::Paused => MailboxMessageStatus::Paused,
+        agentdash_domain::workflow::MailboxMessageStatus::Blocked => MailboxMessageStatus::Blocked,
+        agentdash_domain::workflow::MailboxMessageStatus::Failed => MailboxMessageStatus::Failed,
+        agentdash_domain::workflow::MailboxMessageStatus::Deleted => MailboxMessageStatus::Deleted,
+    }
+}
+
+fn mailbox_origin_view(
+    origin: agentdash_domain::workflow::MailboxMessageOrigin,
+) -> MailboxMessageOrigin {
+    match origin {
+        agentdash_domain::workflow::MailboxMessageOrigin::User => MailboxMessageOrigin::User,
+        agentdash_domain::workflow::MailboxMessageOrigin::System => MailboxMessageOrigin::System,
+        agentdash_domain::workflow::MailboxMessageOrigin::Hook => MailboxMessageOrigin::Hook,
+        agentdash_domain::workflow::MailboxMessageOrigin::Companion => {
+            MailboxMessageOrigin::Companion
+        }
+        agentdash_domain::workflow::MailboxMessageOrigin::Workflow => {
+            MailboxMessageOrigin::Workflow
+        }
+    }
+}
+
+fn mailbox_source_view(
+    source: agentdash_domain::workflow::MailboxMessageSource,
+) -> MailboxMessageSource {
+    match source {
+        agentdash_domain::workflow::MailboxMessageSource::Composer => {
+            MailboxMessageSource::Composer
+        }
+        agentdash_domain::workflow::MailboxMessageSource::DraftStart => {
+            MailboxMessageSource::DraftStart
+        }
+        agentdash_domain::workflow::MailboxMessageSource::HookAfterTurn => {
+            MailboxMessageSource::HookAfterTurn
+        }
+        agentdash_domain::workflow::MailboxMessageSource::HookBeforeStop => {
+            MailboxMessageSource::HookBeforeStop
+        }
+        agentdash_domain::workflow::MailboxMessageSource::HookAutoResume => {
+            MailboxMessageSource::HookAutoResume
+        }
+        agentdash_domain::workflow::MailboxMessageSource::CompanionParentResume => {
+            MailboxMessageSource::CompanionParentResume
+        }
+        agentdash_domain::workflow::MailboxMessageSource::WorkflowOrchestrator => {
+            MailboxMessageSource::WorkflowOrchestrator
+        }
+        agentdash_domain::workflow::MailboxMessageSource::RoutineExecutor => {
+            MailboxMessageSource::RoutineExecutor
+        }
+        agentdash_domain::workflow::MailboxMessageSource::LocalRelayPrompt => {
+            MailboxMessageSource::LocalRelayPrompt
+        }
+    }
+}
+
+fn mailbox_delivery_view(delivery: agentdash_domain::workflow::MailboxDelivery) -> MailboxDelivery {
+    match delivery {
+        agentdash_domain::workflow::MailboxDelivery::LaunchOrContinueTurn => {
+            MailboxDelivery::LaunchOrContinueTurn
+        }
+        agentdash_domain::workflow::MailboxDelivery::SteerActiveTurn { stop_effect } => {
+            MailboxDelivery::SteerActiveTurn {
+                stop_effect: match stop_effect {
+                    agentdash_domain::workflow::SteeringStopEffect::None => {
+                        agentdash_contracts::workflow::SteeringStopEffect::None
+                    }
+                    agentdash_domain::workflow::SteeringStopEffect::ContinueOnStop => {
+                        agentdash_contracts::workflow::SteeringStopEffect::ContinueOnStop
+                    }
+                },
+            }
+        }
+        agentdash_domain::workflow::MailboxDelivery::ResumeLaunchSource { launch_source } => {
+            MailboxDelivery::ResumeLaunchSource { launch_source }
+        }
+    }
+}
+
+fn mailbox_barrier_view(
+    barrier: agentdash_domain::workflow::ConsumptionBarrier,
+) -> ConsumptionBarrier {
+    match barrier {
+        agentdash_domain::workflow::ConsumptionBarrier::ImmediateIfIdle => {
+            ConsumptionBarrier::ImmediateIfIdle
+        }
+        agentdash_domain::workflow::ConsumptionBarrier::AgentLoopTurnBoundary => {
+            ConsumptionBarrier::AgentLoopTurnBoundary
+        }
+        agentdash_domain::workflow::ConsumptionBarrier::AgentRunTurnBoundary => {
+            ConsumptionBarrier::AgentRunTurnBoundary
+        }
+        agentdash_domain::workflow::ConsumptionBarrier::ManualResume => {
+            ConsumptionBarrier::ManualResume
+        }
+    }
+}
+
+fn mailbox_drain_mode_view(
+    drain_mode: agentdash_domain::workflow::MailboxDrainMode,
+) -> MailboxDrainMode {
+    match drain_mode {
+        agentdash_domain::workflow::MailboxDrainMode::One => MailboxDrainMode::One,
+        agentdash_domain::workflow::MailboxDrainMode::All => MailboxDrainMode::All,
+    }
+}
+
+fn mailbox_message_accepted_refs(
+    message: &agentdash_domain::workflow::AgentRunMailboxMessage,
+) -> Option<AgentRunMessageAcceptedRefs> {
+    if message.accepted_agent_run_turn_id.is_none() && message.accepted_protocol_turn_id.is_none() {
+        return None;
+    }
+    Some(AgentRunMessageAcceptedRefs {
+        run_ref: LifecycleRunRefDto {
+            run_id: message.run_id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: message.run_id.to_string(),
+            agent_id: message.agent_id.to_string(),
+        },
+        frame_ref: None,
+        runtime_session_ref: Some(RuntimeSessionRefDto {
+            runtime_session_id: message.runtime_session_id.clone(),
+        }),
+        agent_run_turn_id: message.accepted_agent_run_turn_id.clone(),
+        protocol_turn_id: message.accepted_protocol_turn_id.clone(),
+    })
+}
+
+fn agent_run_message_accepted_refs(
+    refs: agentdash_domain::workflow::AgentRunAcceptedRefs,
+) -> AgentRunMessageAcceptedRefs {
+    AgentRunMessageAcceptedRefs {
+        run_ref: LifecycleRunRefDto {
+            run_id: refs.run_id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: refs.run_id.to_string(),
+            agent_id: refs.agent_id.to_string(),
+        },
+        frame_ref: refs.frame_id.map(|frame_id| AgentFrameRefDto {
+            agent_id: refs.agent_id.to_string(),
+            frame_id: frame_id.to_string(),
+            revision: refs.frame_revision,
+        }),
+        runtime_session_ref: refs
+            .runtime_session_id
+            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
+        agent_run_turn_id: refs.agent_run_turn_id,
+        protocol_turn_id: refs.protocol_turn_id,
     }
 }
 
@@ -1091,130 +1194,6 @@ fn lifecycle_run_status_to_contract(
     }
 }
 
-async fn dispatch_message_for_runtime(
-    state: Arc<AppState>,
-    current_user: agentdash_integration_api::AuthIdentity,
-    runtime_session_id: String,
-    req: AgentRunMessageDispatchInput,
-) -> Result<AgentRunMessageDispatchResponse, ApiError> {
-    if req.input.is_empty() {
-        return Err(ApiError::BadRequest("input 不能为空".to_string()));
-    }
-    let executor_config = req
-        .executor_config
-        .map(serde_json::from_value::<AgentConfig>)
-        .transpose()
-        .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
-    let client_command_id = req.client_command_id;
-    let delivery = AgentRunMessageLaunchDeliveryPort::new(state.services.session_launch.clone());
-    let service = AgentRunMessageService::new(
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.lifecycle_agent_repo.as_ref(),
-        state.repos.agent_frame_repo.as_ref(),
-        state.repos.execution_anchor_repo.as_ref(),
-        state.repos.agent_run_delivery_command_receipt_repo.as_ref(),
-        delivery,
-    );
-    let dispatch = service
-        .dispatch_user_message(AgentRunMessageCommand {
-            delivery_runtime_session_id: runtime_session_id,
-            input: req.input,
-            client_command_id,
-            executor_config,
-            identity: Some(current_user),
-        })
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(AgentRunMessageDispatchResponse {
-        command_receipt: command_receipt_view(dispatch.command_receipt),
-        accepted_refs: accepted_refs(
-            dispatch.run_id,
-            dispatch.agent_id,
-            Some(dispatch.frame_id),
-            Some(dispatch.frame_revision),
-            Some(dispatch.runtime_session_id),
-            Some(dispatch.turn_id),
-        ),
-    })
-}
-
-async fn steer_runtime_session(
-    state: Arc<AppState>,
-    runtime_session_id: String,
-    req: AgentRunSteeringDispatchInput,
-) -> Result<AgentRunSteeringDispatchResponse, ApiError> {
-    if req.input.is_empty() {
-        return Err(ApiError::BadRequest("input 不能为空".to_string()));
-    }
-    let client_command_id = req.client_command_id;
-    let service = AgentRunSteeringService::new(
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.lifecycle_agent_repo.as_ref(),
-        state.repos.agent_frame_repo.as_ref(),
-        state.repos.execution_anchor_repo.as_ref(),
-        state.services.session_core.clone(),
-        state.services.session_control.clone(),
-        state.services.session_eventing.clone(),
-    );
-    let dispatch = service
-        .steer(AgentRunSteeringCommand {
-            delivery_runtime_session_id: runtime_session_id.clone(),
-            input: req.input,
-        })
-        .await
-        .map_err(ApiError::from)?;
-    let execution_state = state
-        .services
-        .session_core
-        .inspect_session_execution_state(&runtime_session_id)
-        .await?;
-
-    Ok(AgentRunSteeringDispatchResponse {
-        command_receipt: accepted_receipt(client_command_id),
-        accepted_refs: accepted_refs(
-            dispatch.run_id,
-            dispatch.agent_id,
-            Some(dispatch.frame_id),
-            None,
-            Some(dispatch.runtime_session_id),
-            Some(dispatch.active_turn_id),
-        ),
-        state: runtime_command_state_dto(execution_state),
-    })
-}
-
-struct AgentRunMessageDispatchInput {
-    input: Vec<UserInputBlock>,
-    client_command_id: String,
-    executor_config: Option<serde_json::Value>,
-}
-
-struct AgentRunMessageDispatchResponse {
-    command_receipt: AgentRunCommandReceipt,
-    accepted_refs: AgentRunAcceptedRefs,
-}
-
-struct AgentRunSteeringDispatchInput {
-    input: Vec<UserInputBlock>,
-    client_command_id: String,
-}
-
-struct AgentRunSteeringDispatchResponse {
-    command_receipt: AgentRunCommandReceipt,
-    accepted_refs: AgentRunAcceptedRefs,
-    state: RuntimeSessionCommandStateDto,
-}
-
-fn accepted_receipt(client_command_id: String) -> AgentRunCommandReceipt {
-    AgentRunCommandReceipt {
-        client_command_id,
-        status: "accepted".to_string(),
-        duplicate: false,
-        message: None,
-    }
-}
-
 fn command_receipt_view(
     receipt: agentdash_application::workflow::AgentRunCommandReceiptView,
 ) -> AgentRunCommandReceipt {
@@ -1224,78 +1203,6 @@ fn command_receipt_view(
         duplicate: receipt.duplicate,
         message: receipt.message,
     }
-}
-
-fn accepted_refs(
-    run_id: Uuid,
-    agent_id: Uuid,
-    frame_id: Option<Uuid>,
-    frame_revision: Option<i32>,
-    runtime_session_id: Option<String>,
-    turn_id: Option<String>,
-) -> AgentRunAcceptedRefs {
-    AgentRunAcceptedRefs {
-        run_ref: LifecycleRunRefDto {
-            run_id: run_id.to_string(),
-        },
-        agent_ref: AgentRunRefDto {
-            run_id: run_id.to_string(),
-            agent_id: agent_id.to_string(),
-        },
-        frame_ref: frame_id.map(|frame_id| AgentFrameRefDto {
-            agent_id: agent_id.to_string(),
-            frame_id: frame_id.to_string(),
-            revision: frame_revision,
-        }),
-        runtime_session_ref: runtime_session_id
-            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
-        turn_id,
-    }
-}
-
-async fn promote_pending_message_for_runtime(
-    state: Arc<AppState>,
-    runtime_session_id: String,
-    message_id: String,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let msg = state
-        .services
-        .pending_queue
-        .take(&runtime_session_id, &message_id)
-        .await
-        .ok_or_else(|| ApiError::NotFound(format!("pending message {} 不存在", message_id)))?;
-
-    let service = AgentRunSteeringService::new(
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.lifecycle_agent_repo.as_ref(),
-        state.repos.agent_frame_repo.as_ref(),
-        state.repos.execution_anchor_repo.as_ref(),
-        state.services.session_core.clone(),
-        state.services.session_control.clone(),
-        state.services.session_eventing.clone(),
-    );
-    let dispatch_result = service
-        .steer(AgentRunSteeringCommand {
-            delivery_runtime_session_id: runtime_session_id.clone(),
-            input: msg.input.clone(),
-        })
-        .await;
-    let dispatch = match dispatch_result {
-        Ok(dispatch) => dispatch,
-        Err(error) => {
-            state
-                .services
-                .pending_queue
-                .requeue_front(&runtime_session_id, msg)
-                .await;
-            return Err(ApiError::from(error));
-        }
-    };
-
-    Ok(Json(serde_json::json!({
-        "promoted": true,
-        "turn_id": dispatch.active_turn_id,
-    })))
 }
 
 fn runtime_command_state_dto(
@@ -1352,10 +1259,13 @@ fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
 }
 
 enum AgentRunCommandPrecondition {
-    PromotePending {
+    DeleteMailboxMessage {
         command: AgentRunCommandPreconditionView,
     },
-    ResumePendingQueue {
+    PromoteMailboxMessage {
+        command: AgentRunCommandPreconditionView,
+    },
+    ResumeMailbox {
         command: AgentRunCommandPreconditionView,
     },
     Cancel {
@@ -1401,7 +1311,13 @@ async fn ensure_agent_run_command_allowed(
         terminal_agent,
     )?;
 
-    if terminal_agent && !matches!(&command, AgentRunCommandPrecondition::Cancel { .. }) {
+    if terminal_agent
+        && !matches!(
+            &command,
+            AgentRunCommandPrecondition::Cancel { .. }
+                | AgentRunCommandPrecondition::DeleteMailboxMessage { .. }
+        )
+    {
         return Err(command_conflict(
             "当前 AgentRun 已结束，不能执行该命令。",
             "command_unavailable",
@@ -1411,12 +1327,13 @@ async fn ensure_agent_run_command_allowed(
     }
 
     match command {
-        AgentRunCommandPrecondition::PromotePending { .. } => {
+        AgentRunCommandPrecondition::DeleteMailboxMessage { .. } => Ok(()),
+        AgentRunCommandPrecondition::PromoteMailboxMessage { .. } => {
             match &execution_state {
                 SessionExecutionState::Running { turn_id: Some(_) } => {}
                 SessionExecutionState::Running { turn_id: None } => {
                     return Err(command_conflict(
-                        "当前 AgentRun 正在启动中，等待 active turn 建立后才能投递 pending 消息。",
+                        "当前 AgentRun 正在启动中，等待 active turn 建立后才能投递 mailbox 消息。",
                         "starting_claimed",
                         None,
                         detail(),
@@ -1424,7 +1341,7 @@ async fn ensure_agent_run_command_allowed(
                 }
                 _ => {
                     return Err(command_conflict(
-                        "当前 AgentRun 不在可投递 pending 消息的运行状态。",
+                        "当前 AgentRun 不在可投递 mailbox 消息的运行状态。",
                         "command_unavailable",
                         None,
                         detail(),
@@ -1438,7 +1355,7 @@ async fn ensure_agent_run_command_allowed(
                 .await
             {
                 return Err(command_conflict(
-                    "当前执行器不支持对该 AgentRun 投递 pending steer。",
+                    "当前执行器不支持对该 AgentRun 投递 mailbox steer。",
                     "connector_steer_unsupported",
                     None,
                     detail(),
@@ -1446,23 +1363,29 @@ async fn ensure_agent_run_command_allowed(
             }
             Ok(())
         }
-        AgentRunCommandPrecondition::ResumePendingQueue { .. } => {
-            let visible_message_count = state
-                .services
-                .pending_queue
-                .list(runtime_session_id)
+        AgentRunCommandPrecondition::ResumeMailbox { .. } => {
+            let messages = state
+                .repos
+                .agent_run_mailbox_repo
+                .list_messages(context.run.id, context.agent.id)
                 .await
-                .len();
-            let paused = state
-                .services
-                .pending_queue
-                .is_paused(runtime_session_id)
-                .await;
-            if paused.is_some() && visible_message_count > 0 {
+                .map_err(ApiError::from)?;
+            let visible_message_count = messages
+                .iter()
+                .filter(|message| mailbox_message_visible(message))
+                .count();
+            let mailbox_state = state
+                .repos
+                .agent_run_mailbox_repo
+                .get_state(context.run.id, context.agent.id)
+                .await
+                .map_err(ApiError::from)?;
+            if mailbox_state.as_ref().is_some_and(|state| state.paused) && visible_message_count > 0
+            {
                 Ok(())
             } else {
                 Err(command_conflict(
-                    "当前没有需要用户恢复的 pending 队列。",
+                    "当前没有需要用户恢复的 mailbox。",
                     "command_unavailable",
                     None,
                     serde_json::json!({
@@ -1471,7 +1394,7 @@ async fn ensure_agent_run_command_allowed(
                         "runtime_session_id": runtime_session_id,
                         "state": state_code,
                         "visible_message_count": visible_message_count,
-                        "paused": paused.is_some(),
+                        "paused": mailbox_state.as_ref().is_some_and(|state| state.paused),
                     }),
                 ))
             }
@@ -1493,11 +1416,14 @@ async fn ensure_agent_run_command_allowed(
 impl AgentRunCommandPrecondition {
     fn expected_kind(&self) -> ConversationCommandKind {
         match self {
-            AgentRunCommandPrecondition::PromotePending { .. } => {
-                ConversationCommandKind::PromotePending
+            AgentRunCommandPrecondition::DeleteMailboxMessage { .. } => {
+                ConversationCommandKind::DeleteMailboxMessage
             }
-            AgentRunCommandPrecondition::ResumePendingQueue { .. } => {
-                ConversationCommandKind::ResumePendingQueue
+            AgentRunCommandPrecondition::PromoteMailboxMessage { .. } => {
+                ConversationCommandKind::PromoteMailboxMessage
+            }
+            AgentRunCommandPrecondition::ResumeMailbox { .. } => {
+                ConversationCommandKind::ResumeMailbox
             }
             AgentRunCommandPrecondition::Cancel { .. } => ConversationCommandKind::Cancel,
         }
@@ -1505,8 +1431,9 @@ impl AgentRunCommandPrecondition {
 
     fn command_precondition(&self) -> &AgentRunCommandPreconditionView {
         match self {
-            AgentRunCommandPrecondition::PromotePending { command }
-            | AgentRunCommandPrecondition::ResumePendingQueue { command }
+            AgentRunCommandPrecondition::DeleteMailboxMessage { command }
+            | AgentRunCommandPrecondition::PromoteMailboxMessage { command }
+            | AgentRunCommandPrecondition::ResumeMailbox { command }
             | AgentRunCommandPrecondition::Cancel { command } => command,
         }
     }
@@ -1657,14 +1584,9 @@ fn ensure_composer_command_precondition_matches_agent_run(
         ));
     }
 
-    if !matches!(
-        command.command_kind,
-        ConversationCommandKind::SendNext
-            | ConversationCommandKind::Enqueue
-            | ConversationCommandKind::Steer
-    ) {
+    if command.command_kind != ConversationCommandKind::SubmitMessage {
         return Err(command_conflict(
-            "当前输入提交只能使用 send_next、enqueue 或 steer 命令意图。",
+            "当前输入提交只能使用 submit_message 命令意图。",
             "command_unavailable",
             replacement_command_for_state(execution_state, false),
             detail(),
@@ -1672,36 +1594,6 @@ fn ensure_composer_command_precondition_matches_agent_run(
     }
 
     Ok(())
-}
-
-fn classify_composer_submit_kind(
-    execution_state: &SessionExecutionState,
-    requested_kind: ConversationCommandKind,
-    supports_steering: bool,
-) -> Result<ConversationCommandKind, &'static str> {
-    match execution_state {
-        SessionExecutionState::Idle
-        | SessionExecutionState::Completed { .. }
-        | SessionExecutionState::Failed { .. }
-        | SessionExecutionState::Interrupted { .. } => Ok(ConversationCommandKind::SendNext),
-        SessionExecutionState::Running { turn_id: Some(_) } => {
-            if requested_kind == ConversationCommandKind::Steer && supports_steering {
-                Ok(ConversationCommandKind::Steer)
-            } else {
-                Ok(ConversationCommandKind::Enqueue)
-            }
-        }
-        SessionExecutionState::Running { turn_id: None } => Err("starting_claimed"),
-        SessionExecutionState::Cancelling { .. } => Err("cancelling"),
-    }
-}
-
-fn composer_submit_unavailable_message(code: &str) -> &'static str {
-    match code {
-        "starting_claimed" => "当前 AgentRun 正在启动中，等待 active turn 建立。",
-        "cancelling" => "当前 AgentRun 正在取消中，等待执行器收口。",
-        _ => "当前 AgentRun 暂时不能接收新的输入。",
-    }
 }
 
 fn replacement_command_for_state(
@@ -1715,21 +1607,19 @@ fn replacement_command_for_state(
         SessionExecutionState::Idle
         | SessionExecutionState::Completed { .. }
         | SessionExecutionState::Failed { .. }
-        | SessionExecutionState::Interrupted { .. } => Some("send_next"),
-        SessionExecutionState::Running { turn_id: Some(_) } => Some("enqueue"),
-        SessionExecutionState::Running { turn_id: None }
-        | SessionExecutionState::Cancelling { .. } => None,
+        | SessionExecutionState::Interrupted { .. }
+        | SessionExecutionState::Running { .. }
+        | SessionExecutionState::Cancelling { .. } => Some("submit_message"),
     }
 }
 
 fn command_id_for_kind(kind: ConversationCommandKind) -> &'static str {
     match kind {
         ConversationCommandKind::StartDraft => "start_draft",
-        ConversationCommandKind::SendNext => "send_next",
-        ConversationCommandKind::Enqueue => "enqueue",
-        ConversationCommandKind::Steer => "steer",
-        ConversationCommandKind::PromotePending => "promote_pending",
-        ConversationCommandKind::ResumePendingQueue => "resume_pending_queue",
+        ConversationCommandKind::SubmitMessage => "submit_message",
+        ConversationCommandKind::PromoteMailboxMessage => "promote_mailbox_message",
+        ConversationCommandKind::DeleteMailboxMessage => "delete_mailbox_message",
+        ConversationCommandKind::ResumeMailbox => "resume_mailbox",
         ConversationCommandKind::Cancel => "cancel",
     }
 }
@@ -1934,12 +1824,12 @@ mod tests {
     }
 
     #[test]
-    fn composer_submit_reclassifies_stale_running_input_after_terminal() {
+    fn composer_submit_accepts_single_submit_message_intent_after_terminal() {
         let completed = SessionExecutionState::Completed {
             turn_id: "turn-1".to_string(),
         };
         let context = test_agent_run_context();
-        let command = composer_precondition(ConversationCommandKind::Enqueue, &context);
+        let command = composer_precondition(ConversationCommandKind::SubmitMessage, &context);
 
         ensure_composer_command_precondition_matches_agent_run(
             &command,
@@ -1948,12 +1838,6 @@ mod tests {
             &completed,
         )
         .expect("composer input should not require stale frame or turn guard");
-
-        let kind =
-            classify_composer_submit_kind(&completed, ConversationCommandKind::Enqueue, true)
-                .expect("terminal follow-up should start next turn");
-
-        assert_eq!(kind, ConversationCommandKind::SendNext);
     }
 
     #[test]
@@ -1981,23 +1865,20 @@ mod tests {
     }
 
     #[test]
-    fn composer_submit_maps_running_input_to_current_runtime_capability() {
+    fn composer_submit_accepts_running_submit_message() {
         let running = SessionExecutionState::Running {
             turn_id: Some("turn-1".to_string()),
         };
+        let context = test_agent_run_context();
+        let command = composer_precondition(ConversationCommandKind::SubmitMessage, &context);
 
-        assert_eq!(
-            classify_composer_submit_kind(&running, ConversationCommandKind::SendNext, false),
-            Ok(ConversationCommandKind::Enqueue)
-        );
-        assert_eq!(
-            classify_composer_submit_kind(&running, ConversationCommandKind::Steer, true),
-            Ok(ConversationCommandKind::Steer)
-        );
-        assert_eq!(
-            classify_composer_submit_kind(&running, ConversationCommandKind::Steer, false),
-            Ok(ConversationCommandKind::Enqueue)
-        );
+        ensure_composer_command_precondition_matches_agent_run(
+            &command,
+            &context,
+            "session-1",
+            &running,
+        )
+        .expect("scheduler owns running submit policy");
     }
 
     #[test]
@@ -2033,13 +1914,11 @@ mod tests {
             frame_runtime: None,
             subject_associations: Vec::new(),
             actions: AgentRunWorkspaceActionSetView {
-                send_next: enabled_action(),
-                enqueue: disabled_action("not running"),
-                steer: disabled_action("not running"),
+                submit_message: enabled_action(),
                 cancel: disabled_action("not running"),
             },
-            pending_queue: pending_queue_state_view(None, true, 0),
-            pending_messages: Vec::new(),
+            mailbox: mailbox_state_view(None, true, 0),
+            mailbox_messages: Vec::new(),
             resource_surface: None,
             conversation: None,
         };
@@ -2051,39 +1930,43 @@ mod tests {
     }
 
     #[test]
-    fn pending_queue_state_view_exposes_pause_reason_and_resume() {
-        let view = pending_queue_state_view(
-            Some(agentdash_application::session::QueuePauseReason::TurnInterrupted),
-            true,
-            1,
-        );
+    fn mailbox_state_view_exposes_pause_reason_and_resume() {
+        let state = agentdash_domain::workflow::AgentRunMailboxState {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+            runtime_session_id: "runtime-1".to_string(),
+            paused: true,
+            pause_reason: Some("turn_interrupted".to_string()),
+            pause_message: Some("上一轮已中断，mailbox 已暂停。".to_string()),
+            updated_at: chrono::Utc::now(),
+        };
+        let view = mailbox_state_view(Some(&state), true, 1);
 
         assert!(view.paused);
-        assert_eq!(
-            view.pause_reason,
-            Some(PendingQueuePauseReasonDto::TurnInterrupted)
-        );
+        assert_eq!(view.pause_reason.as_deref(), Some("turn_interrupted"));
         assert_eq!(
             view.message.as_deref(),
-            Some("上一轮已中断，pending 队列已暂停。")
+            Some("上一轮已中断，mailbox 已暂停。")
         );
         assert!(view.can_resume);
     }
 
     #[test]
-    fn pending_queue_state_view_hides_empty_paused_prompt() {
-        let view = pending_queue_state_view(
-            Some(agentdash_application::session::QueuePauseReason::TurnInterrupted),
-            true,
-            0,
-        );
+    fn mailbox_state_view_hides_empty_paused_prompt() {
+        let state = agentdash_domain::workflow::AgentRunMailboxState {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+            runtime_session_id: "runtime-1".to_string(),
+            paused: true,
+            pause_reason: Some("turn_interrupted".to_string()),
+            pause_message: Some("上一轮已中断，mailbox 已暂停。".to_string()),
+            updated_at: chrono::Utc::now(),
+        };
+        let view = mailbox_state_view(Some(&state), true, 0);
 
         assert!(!view.paused);
         assert!(!view.can_resume);
-        assert_eq!(
-            view.pause_reason,
-            Some(PendingQueuePauseReasonDto::TurnInterrupted)
-        );
+        assert_eq!(view.pause_reason.as_deref(), Some("turn_interrupted"));
     }
 
     #[test]

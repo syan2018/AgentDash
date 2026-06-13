@@ -17,9 +17,9 @@ use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::runtime_gateway::{RuntimeGateway, RuntimeSessionMcpAccess};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
-    PendingQueueService, SessionBranchingService, SessionCapabilityService, SessionControlService,
-    SessionCoreService, SessionEffectsService, SessionEventingService, SessionHookService,
-    SessionLaunchService, SessionRuntimeService, SessionTitleService,
+    SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
+    SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
+    SessionRuntimeService, SessionTitleService,
 };
 use agentdash_application::task::service::StoryActivityActivationService;
 use agentdash_application::vfs::MountProviderRegistry;
@@ -59,7 +59,6 @@ pub struct ServiceSet {
     pub session_capability: SessionCapabilityService,
     pub session_effects: SessionEffectsService,
     pub session_title: SessionTitleService,
-    pub pending_queue: PendingQueueService,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
     pub connector: Arc<dyn AgentConnector>,
     /// 统一 VFS 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
@@ -197,13 +196,10 @@ impl AppState {
             Some(mcp_relay_provider.clone()),
         ));
         let runtime_gateway_handle = vfs_bootstrap.runtime_gateway_handle;
-        let pending_queue = PendingQueueService::new();
-
         let session_bootstrap = crate::bootstrap::session::build_session_runtime(
             crate::bootstrap::session::SessionBootstrapInput {
                 repos: repos.clone(),
                 session_persistence: session_persistence.clone(),
-                pending_queue: pending_queue.clone(),
                 backend_registry: backend_registry.clone(),
                 vfs_service: vfs_service.clone(),
                 session_services_handle,
@@ -319,7 +315,6 @@ impl AppState {
                 session_capability,
                 session_effects,
                 session_title,
-                pending_queue,
                 connector,
                 vfs_service,
                 vfs_mutation_dispatcher,

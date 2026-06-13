@@ -3,7 +3,7 @@
 
 import type { JsonValue } from "./common-contracts";
 import type { UserInput } from "./backbone-protocol";
-import type { AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto, ConversationEffectiveExecutorConfigView, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto } from "./project-agent-contracts";
+import type { AgentFrameRefDto, AgentRunCommandReceipt, AgentRunRefDto, ConversationEffectiveExecutorConfigView, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto } from "./project-agent-contracts";
 import type { InstalledAssetSourceDto } from "./shared-library-contracts";
 import type { ResolvedVfsSurface } from "./vfs-contracts";
 
@@ -29,7 +29,7 @@ export type AgentConversationIdentity = { run_ref: LifecycleRunRefDto, agent_ref
 
 export type AgentConversationLifecycleContext = { frame_ref?: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_associations: Array<LifecycleSubjectAssociationDto>, };
 
-export type AgentConversationSnapshot = { snapshot_id: string, identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, pending: ConversationPendingSnapshotView, resource_surface?: ResolvedVfsSurface, diagnostics: Array<ConversationDiagnosticView>, };
+export type AgentConversationSnapshot = { snapshot_id: string, identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, mailbox: ConversationMailboxSnapshotView, resource_surface?: ResolvedVfsSurface, diagnostics: Array<ConversationDiagnosticView>, };
 
 export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, effective_executor_config?: ConversationEffectiveExecutorConfigView, };
 
@@ -45,11 +45,17 @@ export type AgentRunCommandPreconditionView = { command_id: string, command_kind
 
 export type AgentRunComposerSubmitRequest = {
 /**
- * canonical 用户输入，由后端按当前 AgentRun workspace state 归类为 send_next / enqueue / steer。
+ * canonical 用户输入，由后端写入 mailbox 并按 scheduler outcome 消费或排队。
  */
 input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue, };
 
-export type AgentRunComposerSubmitResponse = { accepted_kind: ConversationCommandKind, command_receipt: AgentRunCommandReceipt, accepted_refs?: AgentRunAcceptedRefs, pending_message?: PendingMessageView, state?: RuntimeSessionCommandStateDto, };
+export type AgentRunMailboxView = { state: MailboxStateView, messages: Array<MailboxMessageView>, };
+
+export type AgentRunMessageAcceptedRefs = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref?: AgentFrameRefDto, runtime_session_ref?: RuntimeSessionRefDto, agent_run_turn_id?: string, protocol_turn_id?: string, };
+
+export type AgentRunMessageCommandOutcome = "launched" | "queued" | "steered" | "deleted" | "resumed" | "blocked" | "failed";
+
+export type AgentRunMessageCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunMessageCommandOutcome, mailbox_message?: MailboxMessageView, accepted_refs?: AgentRunMessageAcceptedRefs, runtime_state?: RuntimeSessionCommandStateDto, };
 
 export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string, agent_kind: string, agent_role: string, project_agent_id?: string, status: string, current_frame_id?: string,
 /**
@@ -63,7 +69,7 @@ last_delivery_status?: string, created_at: string, updated_at: string, };
 
 export type AgentRunWorkspaceActionAvailabilityView = { enabled: boolean, unavailable_reason?: string, };
 
-export type AgentRunWorkspaceActionSetView = { send_next: AgentRunWorkspaceActionAvailabilityView, enqueue: AgentRunWorkspaceActionAvailabilityView, steer: AgentRunWorkspaceActionAvailabilityView, cancel: AgentRunWorkspaceActionAvailabilityView, };
+export type AgentRunWorkspaceActionSetView = { submit_message: AgentRunWorkspaceActionAvailabilityView, cancel: AgentRunWorkspaceActionAvailabilityView, };
 
 export type AgentRunWorkspaceControlPlaneStatus = "ready" | "running" | "cancelling" | "terminal" | "frame_missing" | "delivery_missing";
 
@@ -75,7 +81,7 @@ export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<
 
 export type AgentRunWorkspaceShell = { display_title: string, title_source: string, workspace_status: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
 
-export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: AgentRunWorkspaceActionSetView, pending_queue: PendingQueueStateView, pending_messages: Array<PendingMessageView>, resource_surface?: ResolvedVfsSurface, conversation?: AgentConversationSnapshot, };
+export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: AgentRunWorkspaceActionSetView, mailbox: MailboxStateView, mailbox_messages: Array<MailboxMessageView>, resource_surface?: ResolvedVfsSurface, conversation?: AgentConversationSnapshot, };
 
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
 
@@ -87,11 +93,13 @@ export type BashExecExecutorSpec = { command: string, args?: Array<string>, work
 
 export type CapabilityConfig = { tool_directives: Array<ToolCapabilityDirective>, mount_directives: Array<unknown>, };
 
+export type ConsumptionBarrier = "immediate_if_idle" | "agent_loop_turn_boundary" | "agent_run_turn_boundary" | "manual_resume";
+
 export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
 
-export type ConversationCommandKind = "start_draft" | "send_next" | "enqueue" | "steer" | "promote_pending" | "resume_pending_queue" | "cancel";
+export type ConversationCommandKind = "start_draft" | "submit_message" | "promote_mailbox_message" | "delete_mailbox_message" | "resume_mailbox" | "cancel";
 
-export type ConversationCommandPlacement = "composer_primary" | "composer_secondary" | "pending_row" | "pending_banner" | "header";
+export type ConversationCommandPlacement = "composer_primary" | "composer_secondary" | "mailbox_row" | "mailbox_banner" | "header";
 
 export type ConversationCommandSetView = { commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView, };
 
@@ -107,11 +115,11 @@ export type ConversationExecutionView = { status: ConversationExecutionStatus, r
 
 export type ConversationKeyboardMapView = { enter?: string, ctrl_enter?: string, };
 
+export type ConversationMailboxSnapshotView = { visible_message_count: number, paused: boolean, user_attention: boolean, resume_command?: ConversationCommandView, };
+
 export type ConversationModelConfigStatus = "resolved" | "model_required";
 
 export type ConversationModelConfigView = { status: ConversationModelConfigStatus, effective_executor_config?: ConversationEffectiveExecutorConfigView, missing_fields: Array<string>, message?: string, };
-
-export type ConversationPendingSnapshotView = { visible_message_count: number, paused: boolean, user_attention: boolean, resume_command?: ConversationCommandView, };
 
 export type DefinitionSource = "builtin_seed" | "user_authored" | "cloned";
 
@@ -151,15 +159,23 @@ export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string
 
 export type LifecycleSubjectAssociationDto = { id: string, anchor_run_id: string, anchor_agent_id?: string, subject_ref: SubjectRefDto, role: string, metadata?: JsonValue, created_at: string, };
 
+export type MailboxDelivery = { "kind": "launch_or_continue_turn" } | { "kind": "steer_active_turn", stop_effect: SteeringStopEffect, } | { "kind": "resume_launch_source", launch_source: string, };
+
+export type MailboxDrainMode = "one" | "all";
+
+export type MailboxMessageOrigin = "user" | "system" | "hook" | "companion" | "workflow";
+
+export type MailboxMessageSource = "composer" | "draft_start" | "hook_after_turn" | "hook_before_stop" | "hook_auto_resume" | "companion_parent_resume" | "workflow_orchestrator" | "routine_executor" | "local_relay_prompt";
+
+export type MailboxMessageStatus = "accepted" | "queued" | "ready_to_consume" | "consuming" | "dispatched" | "steered" | "paused" | "blocked" | "failed" | "deleted";
+
+export type MailboxMessageView = { id: string, origin: MailboxMessageOrigin, source: MailboxMessageSource, delivery: MailboxDelivery, barrier: ConsumptionBarrier, drain_mode: MailboxDrainMode, status: MailboxMessageStatus, preview: string, has_images: boolean, attempt_count: number, accepted_refs?: AgentRunMessageAcceptedRefs, last_error?: string, created_at: string, updated_at: string, can_promote: boolean, can_delete: boolean, };
+
+export type MailboxStateView = { paused: boolean, pause_reason?: string, message?: string, can_resume: boolean, };
+
 export type OrchestrationInstanceView = { orchestration_id: string, role: string, status: string, plan_digest: string, source_ref: JsonValue, ready_node_ids: Array<string>, nodes: Array<RuntimeNodeView>, created_at: string, updated_at: string, };
 
 export type OutputPortDefinition = { key: string, description: string, gate_strategy: GateStrategy, gate_params?: JsonValue, };
-
-export type PendingMessageView = { id: string, preview: string, has_images: boolean, created_at: string, };
-
-export type PendingQueuePauseReasonDto = "turn_failed" | "turn_interrupted";
-
-export type PendingQueueStateView = { paused: boolean, pause_reason?: PendingQueuePauseReasonDto, message?: string, can_resume: boolean, };
 
 export type PreflightWorkflowScriptRequest = { project_id: string, source_text: string, args?: JsonValue, ctx?: JsonValue, runtime_session_id?: string, };
 
@@ -168,8 +184,6 @@ export type PreflightWorkflowScriptResponse = { valid: boolean, source_digest: s
 export type ProjectActiveAgentsView = { project_id: string, runs: Array<LifecycleRunView>, agents: Array<AgentRunView>, };
 
 export type RegisterHookPresetResponse = { registered: boolean, key: string, };
-
-export type ResumePendingQueueResponse = { resumed: boolean, dispatched: boolean, accepted_refs?: AgentRunAcceptedRefs, };
 
 export type RuntimeNodeView = { node_id: string, node_path: string, kind: string, status: string, attempt: number, executor_run_ref?: ExecutorRunRef, started_at?: string, completed_at?: string, children: Array<RuntimeNodeView>, };
 
@@ -185,17 +199,19 @@ export type RuntimeSessionTraceView = { runtime_session_ref: RuntimeSessionRefDt
 
 export type SessionRuntimeActionAvailabilityView = { enabled: boolean, unavailable_reason?: string, };
 
-export type SessionRuntimeActionSetView = { send_next: SessionRuntimeActionAvailabilityView, enqueue: SessionRuntimeActionAvailabilityView, steer: SessionRuntimeActionAvailabilityView, cancel: SessionRuntimeActionAvailabilityView, };
+export type SessionRuntimeActionSetView = { submit_message: SessionRuntimeActionAvailabilityView, cancel: SessionRuntimeActionAvailabilityView, };
 
 export type SessionRuntimeControlPlaneStatus = "unbound_trace" | "anchored_idle" | "anchored_running" | "anchored_cancelling" | "terminal" | "frame_missing";
 
 export type SessionRuntimeControlPlaneView = { status: SessionRuntimeControlPlaneStatus, reason?: string, };
 
-export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, control_plane: SessionRuntimeControlPlaneView, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: SessionRuntimeActionSetView, pending_queue: PendingQueueStateView, pending_messages: Array<PendingMessageView>, };
+export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, control_plane: SessionRuntimeControlPlaneView, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: SessionRuntimeActionSetView, mailbox: MailboxStateView, mailbox_messages: Array<MailboxMessageView>, };
 
 export type SessionShellDto = { id: string, title: string, title_source: string, created_at: bigint, updated_at: bigint, last_event_seq: bigint, last_turn_id?: string, last_delivery_status: string, };
 
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
+
+export type SteeringStopEffect = "none" | "continue_on_stop";
 
 export type SubjectExecutionView = { subject_ref: SubjectRefDto, associations: Array<LifecycleSubjectAssociationDto>, runs: Array<LifecycleRunView>, current_agent?: AgentRunView, latest_runtime_node?: RuntimeNodeView, artifacts: JsonValue, };
 

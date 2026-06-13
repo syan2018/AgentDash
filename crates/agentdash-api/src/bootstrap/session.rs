@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::agent_run_pending::{AgentRunPendingDispatcher, AgentRunPendingTerminalCallback};
+use crate::agent_run_mailbox::AgentRunMailboxTerminalCallback;
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::{
-    PendingQueueService, SessionBranchingService, SessionCapabilityService, SessionControlService,
-    SessionCoreService, SessionEffectsService, SessionEventingService, SessionHookService,
-    SessionLaunchService, SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService,
-    SessionTerminalCallback, SessionTitleService,
+    SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
+    SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
+    SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService, SessionTerminalCallback,
+    SessionTitleService,
 };
 use agentdash_application::vfs::VfsService;
 use agentdash_application::vfs::tools::provider::{
@@ -29,7 +29,6 @@ use crate::relay::registry::BackendRegistry;
 pub(crate) struct SessionBootstrapInput {
     pub repos: RepositorySet,
     pub session_persistence: Arc<dyn SessionPersistence>,
-    pub pending_queue: PendingQueueService,
     pub backend_registry: Arc<BackendRegistry>,
     pub vfs_service: Arc<VfsService>,
     pub session_services_handle: SharedSessionToolServicesHandle,
@@ -67,7 +66,6 @@ pub(crate) async fn build_session_runtime(
     let SessionBootstrapInput {
         repos,
         session_persistence,
-        pending_queue,
         backend_registry,
         vfs_service,
         session_services_handle,
@@ -144,6 +142,11 @@ pub(crate) async fn build_session_runtime(
     .with_agent_frame_repo(repos.agent_frame_repo.clone())
     .with_execution_anchor_repo(repos.execution_anchor_repo.clone())
     .with_lifecycle_agent_repo(repos.lifecycle_agent_repo.clone())
+    .with_agent_run_mailbox_boundary(
+        repos.lifecycle_run_repo.clone(),
+        repos.agent_run_command_receipt_repo.clone(),
+        repos.agent_run_mailbox_repo.clone(),
+    )
     .with_lifecycle_gate_repo(repos.lifecycle_gate_repo.clone())
     .with_settings_repository(repos.settings_repo.clone());
     if let Some(base_sp) = base_system_prompt {
@@ -168,15 +171,16 @@ pub(crate) async fn build_session_runtime(
         )
         .with_function_runner(function_runner),
     );
-    let pending_dispatcher = AgentRunPendingDispatcher::new(
+    let mailbox_terminal_callback = Arc::new(AgentRunMailboxTerminalCallback::new(
         repos.clone(),
-        pending_queue.clone(),
+        session_core.clone(),
+        session_control.clone(),
+        session_eventing.clone(),
         session_launch.clone(),
-    );
-    let pending_drainer = Arc::new(AgentRunPendingTerminalCallback::new(pending_dispatcher));
+    ));
     session_runtime_builder
         .set_terminal_callback(Arc::new(CompositeSessionTerminalCallback {
-            callbacks: vec![orchestrator, pending_drainer],
+            callbacks: vec![orchestrator, mailbox_terminal_callback],
         }))
         .await;
 

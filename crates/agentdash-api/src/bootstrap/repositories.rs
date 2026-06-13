@@ -12,9 +12,9 @@ use agentdash_application::shared_library::{
 use agentdash_application::workflow::SessionPersistenceRuntimeSessionCreator;
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
-    PostgresAgentLineageRepository, PostgresAgentRunDeliveryCommandReceiptRepository,
-    PostgresAuthSessionRepository, PostgresBackendExecutionLeaseRepository,
-    PostgresBackendRepository, PostgresCanvasRepository,
+    PostgresAgentLineageRepository, PostgresAgentRunCommandReceiptRepository,
+    PostgresAgentRunMailboxRepository, PostgresAuthSessionRepository,
+    PostgresBackendExecutionLeaseRepository, PostgresBackendRepository, PostgresCanvasRepository,
     PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
     PostgresLifecycleAgentRepository, PostgresLifecycleGateRepository,
     PostgresLifecycleSubjectAssociationRepository, PostgresLlmProviderCredentialRepository,
@@ -121,9 +121,9 @@ pub(crate) async fn build_repositories(
             pool.clone(),
         ),
     );
-    let agent_run_delivery_command_receipt_repo = Arc::new(
-        PostgresAgentRunDeliveryCommandReceiptRepository::new(pool.clone()),
-    );
+    let agent_run_command_receipt_repo =
+        Arc::new(PostgresAgentRunCommandReceiptRepository::new(pool.clone()));
+    let agent_run_mailbox_repo = Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone()));
 
     let permission_grant_repo =
         Arc::new(agentdash_infrastructure::PostgresPermissionGrantRepository::new(pool));
@@ -161,7 +161,8 @@ pub(crate) async fn build_repositories(
         lifecycle_gate_repo: lifecycle_gate_repo.clone(),
         agent_lineage_repo: agent_lineage_repo.clone(),
         execution_anchor_repo: execution_anchor_repo.clone(),
-        agent_run_delivery_command_receipt_repo: agent_run_delivery_command_receipt_repo.clone(),
+        agent_run_command_receipt_repo: agent_run_command_receipt_repo.clone(),
+        agent_run_mailbox_repo: agent_run_mailbox_repo.clone(),
         runtime_session_creator: runtime_session_creator.clone(),
         routine_repo: routine_repo.clone(),
         routine_execution_repo: routine_execution_repo.clone(),

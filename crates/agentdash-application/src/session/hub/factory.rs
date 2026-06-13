@@ -114,6 +114,7 @@ impl SessionRuntimeInner {
             agent_frame_repo: None,
             execution_anchor_repo: None,
             lifecycle_agent_repo: None,
+            agent_run_mailbox_boundary_deps: None,
             lifecycle_gate_repo: None,
         }
     }
@@ -189,6 +190,38 @@ impl SessionRuntimeInner {
         repo: Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>,
     ) -> Self {
         self.lifecycle_agent_repo = Some(repo);
+        self
+    }
+
+    pub fn with_agent_run_mailbox_boundary(
+        mut self,
+        lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
+        command_receipt_repo: Arc<dyn agentdash_domain::workflow::AgentRunCommandReceiptRepository>,
+        mailbox_repo: Arc<dyn agentdash_domain::workflow::AgentRunMailboxRepository>,
+    ) -> Self {
+        let Some(lifecycle_agent_repo) = self.lifecycle_agent_repo.clone() else {
+            return self;
+        };
+        let Some(agent_frame_repo) = self.agent_frame_repo.clone() else {
+            return self;
+        };
+        let Some(execution_anchor_repo) = self.execution_anchor_repo.clone() else {
+            return self;
+        };
+        self.agent_run_mailbox_boundary_deps = Some(
+            super::super::mailbox_delegate::AgentRunMailboxRuntimeBoundaryDeps {
+                lifecycle_run_repo,
+                lifecycle_agent_repo,
+                agent_frame_repo,
+                execution_anchor_repo,
+                command_receipt_repo,
+                mailbox_repo,
+                session_core: self.core_service(),
+                session_control: self.control_service(),
+                session_eventing: self.eventing_service(),
+                session_launch: Arc::new(self.launch_service()),
+            },
+        );
         self
     }
 

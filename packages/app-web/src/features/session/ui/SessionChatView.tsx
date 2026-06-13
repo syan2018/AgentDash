@@ -39,7 +39,7 @@ import {
 } from "./SessionChatViewModel";
 import type { SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
-import { PendingMessageList } from "./composer/PendingMessageRow";
+import { MailboxMessageList } from "./composer/MailboxMessageRow";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -78,11 +78,11 @@ export function SessionChatView({
   onCommand,
   onCancelAction,
   onExecutorConfigOverrideChange,
-  pendingMessages,
-  pendingSnapshot,
-  onPromotePending,
-  onDeletePending,
-  onResumePendingQueue,
+  mailboxMessages,
+  mailboxSnapshot,
+  onPromoteMailboxMessage,
+  onDeleteMailboxMessage,
+  onResumeMailbox,
   headerSlot,
   inputPrefix,
   streamPrefixContent,
@@ -409,10 +409,8 @@ export function SessionChatView({
     }
 
     setSendError(null);
-    if (command.kind !== "enqueue") {
-      setOptimisticRunning(true);
-      optimisticRunningUntilRef.current = Date.now() + 2500;
-    }
+    setOptimisticRunning(true);
+    optimisticRunningUntilRef.current = Date.now() + 2500;
     setIsSending(true);
 
     try {
@@ -637,18 +635,21 @@ export function SessionChatView({
         onScroll={handleScroll}
       />
 
-      {/* 排队消息 + 输入区 */}
+      {/* Mailbox 消息 + 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
-        {pendingMessages && (pendingMessages.length > 0 || pendingSnapshot?.user_attention) && (
-          <PendingMessageList
-            messages={pendingMessages}
-            pending={pendingSnapshot}
+        {mailboxMessages && (mailboxMessages.length > 0 || mailboxSnapshot?.user_attention) && (
+          <MailboxMessageList
+            messages={mailboxMessages}
+            mailbox={mailboxSnapshot}
             promoteCommand={commandState.commands.commands.find(
-              (command) => command.kind === "promote_pending" && command.placement.includes("pending_row"),
+              (command) => command.kind === "promote_mailbox_message" && command.placement.includes("mailbox_row"),
             )}
-            onPromote={onPromotePending ?? (() => {})}
-            onDelete={onDeletePending ?? (() => {})}
-            onResume={onResumePendingQueue}
+            deleteCommand={commandState.commands.commands.find(
+              (command) => command.kind === "delete_mailbox_message" && command.placement.includes("mailbox_row"),
+            )}
+            onPromote={onPromoteMailboxMessage ?? (() => {})}
+            onDelete={onDeleteMailboxMessage ?? (() => {})}
+            onResume={onResumeMailbox}
           />
         )}
 

@@ -43,16 +43,14 @@ const workspace: AgentRunWorkspaceView = {
   frame_runtime: frameRuntime,
   subject_associations: [],
   actions: {
-    send_next: { enabled: false, unavailable_reason: "running" },
-    enqueue: { enabled: true },
-    steer: { enabled: true },
+    submit_message: { enabled: true },
     cancel: { enabled: true },
   },
-  pending_queue: {
+  mailbox: {
     paused: false,
     can_resume: false,
   },
-  pending_messages: [],
+  mailbox_messages: [],
 };
 
 const runtimeSurface: ResolvedVfsSurface = {
@@ -123,12 +121,12 @@ describe("AgentRun workspace refresh state", () => {
         },
         commands: {
           keyboard: {
-            enter: "enqueue",
-            ctrl_enter: "steer",
+            enter: "submit",
+            ctrl_enter: "submit",
           },
           commands: [],
         },
-        pending: {
+        mailbox: {
           visible_message_count: 0,
           paused: false,
           user_attention: false,

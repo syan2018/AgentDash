@@ -1,8 +1,8 @@
 import type {
   ConversationCommandSetView,
   ConversationCommandView,
+  ConversationMailboxSnapshotView,
   ConversationModelConfigView,
-  ConversationPendingSnapshotView,
 } from "../generated/workflow-contracts";
 import type { ProjectAgentSummary } from "../types";
 import type { SessionChatCommandState } from "../features/session";
@@ -237,8 +237,8 @@ export function buildRuntimeSessionCommandState(input: {
   };
 }
 
-export function pendingSnapshotFromConversation(
-  pending: ConversationPendingSnapshotView | null | undefined,
-): ConversationPendingSnapshotView | undefined {
-  return pending ?? undefined;
+export function mailboxSnapshotFromConversation(
+  mailbox: ConversationMailboxSnapshotView | null | undefined,
+): ConversationMailboxSnapshotView | undefined {
+  return mailbox ?? undefined;
 }

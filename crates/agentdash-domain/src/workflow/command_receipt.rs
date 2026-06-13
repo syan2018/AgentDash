@@ -1,16 +1,17 @@
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::common::error::DomainError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentRunDeliveryCommandStatus {
+pub enum AgentRunCommandStatus {
     Pending,
     Accepted,
     TerminalFailed,
 }
 
-impl AgentRunDeliveryCommandStatus {
+impl AgentRunCommandStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Pending => "pending",
@@ -20,7 +21,7 @@ impl AgentRunDeliveryCommandStatus {
     }
 }
 
-impl TryFrom<&str> for AgentRunDeliveryCommandStatus {
+impl TryFrom<&str> for AgentRunCommandStatus {
     type Error = DomainError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
@@ -29,31 +30,76 @@ impl TryFrom<&str> for AgentRunDeliveryCommandStatus {
             "accepted" => Ok(Self::Accepted),
             "terminal_failed" => Ok(Self::TerminalFailed),
             other => Err(DomainError::InvalidConfig(format!(
-                "agent_run_delivery_command_receipts.status 无效: {other}"
+                "agent_run_command_receipts.status 无效: {other}"
             ))),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunDeliveryAcceptedRefs {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRunCommandKind {
+    MessageSubmit,
+    ProjectAgentStart,
+    MailboxPromote,
+    MailboxDelete,
+    MailboxResume,
+    Cancel,
+}
+
+impl AgentRunCommandKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MessageSubmit => "message_submit",
+            Self::ProjectAgentStart => "project_agent_start",
+            Self::MailboxPromote => "mailbox_promote",
+            Self::MailboxDelete => "mailbox_delete",
+            Self::MailboxResume => "mailbox_resume",
+            Self::Cancel => "cancel",
+        }
+    }
+}
+
+impl TryFrom<&str> for AgentRunCommandKind {
+    type Error = DomainError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "message_submit" => Ok(Self::MessageSubmit),
+            "project_agent_start" => Ok(Self::ProjectAgentStart),
+            "mailbox_promote" => Ok(Self::MailboxPromote),
+            "mailbox_delete" => Ok(Self::MailboxDelete),
+            "mailbox_resume" => Ok(Self::MailboxResume),
+            "cancel" => Ok(Self::Cancel),
+            other => Err(DomainError::InvalidConfig(format!(
+                "agent_run_command_receipts.command_kind 无效: {other}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentRunAcceptedRefs {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub frame_id: Option<Uuid>,
     pub frame_revision: Option<i32>,
     pub runtime_session_id: Option<String>,
-    pub turn_id: Option<String>,
+    pub agent_run_turn_id: Option<String>,
+    pub protocol_turn_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunDeliveryCommandReceipt {
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentRunCommandReceipt {
     pub id: Uuid,
     pub scope_kind: String,
     pub scope_key: String,
+    pub command_kind: AgentRunCommandKind,
     pub client_command_id: String,
     pub request_digest: String,
-    pub status: AgentRunDeliveryCommandStatus,
-    pub accepted_refs: Option<AgentRunDeliveryAcceptedRefs>,
+    pub status: AgentRunCommandStatus,
+    pub mailbox_message_id: Option<Uuid>,
+    pub accepted_refs: Option<AgentRunAcceptedRefs>,
+    pub result_json: Option<Value>,
     pub error_message: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -62,21 +108,22 @@ pub struct AgentRunDeliveryCommandReceipt {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NewAgentRunDeliveryCommandReceipt {
+pub struct NewAgentRunCommandReceipt {
     pub scope_kind: String,
     pub scope_key: String,
+    pub command_kind: AgentRunCommandKind,
     pub client_command_id: String,
     pub request_digest: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgentRunDeliveryCommandClaim {
-    Created(AgentRunDeliveryCommandReceipt),
-    Duplicate(AgentRunDeliveryCommandReceipt),
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentRunCommandClaim {
+    Created(AgentRunCommandReceipt),
+    Duplicate(AgentRunCommandReceipt),
 }
 
-impl AgentRunDeliveryCommandClaim {
-    pub fn receipt(&self) -> &AgentRunDeliveryCommandReceipt {
+impl AgentRunCommandClaim {
+    pub fn receipt(&self) -> &AgentRunCommandReceipt {
         match self {
             Self::Created(receipt) | Self::Duplicate(receipt) => receipt,
         }
@@ -88,23 +135,35 @@ impl AgentRunDeliveryCommandClaim {
 }
 
 #[async_trait::async_trait]
-pub trait AgentRunDeliveryCommandReceiptRepository: Send + Sync {
+pub trait AgentRunCommandReceiptRepository: Send + Sync {
     async fn claim(
         &self,
-        receipt: NewAgentRunDeliveryCommandReceipt,
-    ) -> Result<AgentRunDeliveryCommandClaim, DomainError>;
+        receipt: NewAgentRunCommandReceipt,
+    ) -> Result<AgentRunCommandClaim, DomainError>;
 
     async fn mark_accepted(
         &self,
         id: Uuid,
-        accepted_refs: AgentRunDeliveryAcceptedRefs,
-    ) -> Result<AgentRunDeliveryCommandReceipt, DomainError>;
+        accepted_refs: AgentRunAcceptedRefs,
+    ) -> Result<AgentRunCommandReceipt, DomainError>;
+
+    async fn attach_mailbox_message(
+        &self,
+        id: Uuid,
+        mailbox_message_id: Uuid,
+    ) -> Result<AgentRunCommandReceipt, DomainError>;
+
+    async fn store_result_json(
+        &self,
+        id: Uuid,
+        result_json: Value,
+    ) -> Result<AgentRunCommandReceipt, DomainError>;
 
     async fn mark_terminal_failed(
         &self,
         id: Uuid,
         error_message: String,
-    ) -> Result<AgentRunDeliveryCommandReceipt, DomainError>;
+    ) -> Result<AgentRunCommandReceipt, DomainError>;
 
-    async fn get(&self, id: Uuid) -> Result<Option<AgentRunDeliveryCommandReceipt>, DomainError>;
+    async fn get(&self, id: Uuid) -> Result<Option<AgentRunCommandReceipt>, DomainError>;
 }

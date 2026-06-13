@@ -87,7 +87,16 @@ pub(crate) trait TerminalHookTriggerPort: Send + Sync {
 
 #[async_trait::async_trait]
 pub(crate) trait TerminalAutoResumePort: Send + Sync {
-    async fn request_hook_auto_resume(&self, session_id: String) -> bool;
+    async fn request_hook_auto_resume(&self, request: TerminalAutoResumeRequest) -> bool;
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TerminalAutoResumeRequest {
+    pub effect_id: uuid::Uuid,
+    pub session_id: String,
+    pub turn_id: String,
+    pub terminal_event_seq: u64,
+    pub payload: serde_json::Value,
 }
 
 impl SessionTerminalEffectDispatcher {
@@ -349,7 +358,13 @@ impl SessionTerminalEffectDispatcher {
                 let _ = self
                     .deps
                     .auto_resume
-                    .request_hook_auto_resume(item.record.session_id.clone())
+                    .request_hook_auto_resume(TerminalAutoResumeRequest {
+                        effect_id: item.record.id,
+                        session_id: item.record.session_id.clone(),
+                        turn_id: item.record.turn_id.clone(),
+                        terminal_event_seq: item.record.terminal_event_seq,
+                        payload: item.record.payload.clone(),
+                    })
                     .await;
                 Ok(())
             }

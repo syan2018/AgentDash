@@ -17,9 +17,8 @@ import type {
 import type {
   AgentRunCommandOnlyRequest,
   AgentRunComposerSubmitRequest,
-  AgentRunComposerSubmitResponse,
+  AgentRunMessageCommandResponse,
   AgentRunWorkspaceView,
-  ResumePendingQueueResponse,
 } from "../generated/workflow-contracts";
 
 function agentRunCommandPath(runId: string, agentId: string, route: string): string {
@@ -80,50 +79,52 @@ export async function submitAgentRunComposerInput(
   runId: string,
   agentId: string,
   request: AgentRunComposerSubmitRequest,
-): Promise<AgentRunComposerSubmitResponse> {
-  return api.post<AgentRunComposerSubmitResponse>(
+): Promise<AgentRunMessageCommandResponse> {
+  return api.post<AgentRunMessageCommandResponse>(
     agentRunCommandPath(runId, agentId, "/composer-submit"),
     request,
   );
 }
 
-export async function deleteAgentRunPendingMessage(
-  runId: string,
-  agentId: string,
-  messageId: string,
-): Promise<void> {
-  await api.delete<void>(
-    agentRunCommandPath(
-      runId,
-      agentId,
-      `/pending-messages/${encodeURIComponent(messageId)}`,
-    ),
-  );
-}
-
-export async function promoteAgentRunPendingMessage(
+export async function deleteAgentRunMailboxMessage(
   runId: string,
   agentId: string,
   messageId: string,
   request: AgentRunCommandOnlyRequest,
-): Promise<void> {
-  await api.post<void>(
+): Promise<AgentRunMessageCommandResponse> {
+  return api.delete<AgentRunMessageCommandResponse>(
     agentRunCommandPath(
       runId,
       agentId,
-      `/pending-messages/${encodeURIComponent(messageId)}/promote`,
+      `/mailbox/messages/${encodeURIComponent(messageId)}`,
     ),
     request,
   );
 }
 
-export async function resumeAgentRunPendingQueue(
+export async function promoteAgentRunMailboxMessage(
+  runId: string,
+  agentId: string,
+  messageId: string,
+  request: AgentRunCommandOnlyRequest,
+): Promise<AgentRunMessageCommandResponse> {
+  return api.post<AgentRunMessageCommandResponse>(
+    agentRunCommandPath(
+      runId,
+      agentId,
+      `/mailbox/messages/${encodeURIComponent(messageId)}/promote`,
+    ),
+    request,
+  );
+}
+
+export async function resumeAgentRunMailbox(
   runId: string,
   agentId: string,
   request: AgentRunCommandOnlyRequest,
-): Promise<ResumePendingQueueResponse> {
-  return api.post<ResumePendingQueueResponse>(
-    agentRunCommandPath(runId, agentId, "/pending-messages/resume"),
+): Promise<AgentRunMessageCommandResponse> {
+  return api.post<AgentRunMessageCommandResponse>(
+    agentRunCommandPath(runId, agentId, "/mailbox/resume"),
     request,
   );
 }

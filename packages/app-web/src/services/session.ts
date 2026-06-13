@@ -130,9 +130,6 @@ export async function fetchSessionExecutionState(id: string): Promise<SessionExe
   return mapSessionExecutionState(raw);
 }
 
-// ─── Pending Message Queue ───────────────────────────
-
-
 // ─── Tab 布局持久化 ──────────────────────────────────
 
 function isSessionTabLayout(value: unknown): value is SessionTabLayout {

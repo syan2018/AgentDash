@@ -32,12 +32,12 @@ pub(crate) mod hub;
 mod hub_support;
 mod identity_context_frame;
 pub mod launch;
+pub(crate) mod mailbox_delegate;
 #[cfg(test)]
 #[path = "../../test-support/session_memory_persistence.rs"]
 mod memory_persistence;
 pub(crate) mod path_policy;
 mod pending_action_context_frame;
-pub mod pending_queue;
 pub mod persistence;
 pub mod plan;
 pub mod post_turn_handler;
@@ -101,9 +101,6 @@ pub use hub_support::TurnTerminalKind;
 pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, SessionLaunchService};
 #[cfg(test)]
 pub use memory_persistence::MemorySessionPersistence;
-pub use pending_queue::{
-    PendingMessage, PendingMessagePreview, PendingQueueService, QueuePauseReason,
-};
 pub use persistence::{
     PersistedSessionEvent, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
     SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,

@@ -1,5 +1,5 @@
 /**
- * 排队消息列表 — 参照 Cursor 风格
+ * Mailbox 消息列表
  *
  * 每行: 拖拽手柄 | 文档图标 | 预览文本 | 引导按钮 | 删除 | 更多菜单
  * 列表定位于 Composer 上方，居中对齐。
@@ -7,31 +7,33 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import type {
+  ConversationMailboxSnapshotView,
   ConversationCommandView,
-  ConversationPendingSnapshotView,
-  PendingMessageView,
+  MailboxMessageView,
 } from "../../../../generated/workflow-contracts";
 
-interface PendingMessageListProps {
-  messages: PendingMessageView[];
-  pending?: ConversationPendingSnapshotView;
+interface MailboxMessageListProps {
+  messages: MailboxMessageView[];
+  mailbox?: ConversationMailboxSnapshotView;
   promoteCommand?: ConversationCommandView;
+  deleteCommand?: ConversationCommandView;
   onPromote: (messageId: string) => void;
   onDelete: (messageId: string) => void;
   onResume?: () => void;
 }
 
-export function PendingMessageList({
+export function MailboxMessageList({
   messages,
-  pending,
+  mailbox,
   promoteCommand,
+  deleteCommand,
   onPromote,
   onDelete,
   onResume,
-}: PendingMessageListProps) {
-  if (messages.length === 0 && !pending?.user_attention) return null;
-  const resumeCommand = pending?.resume_command;
-  const showBanner = Boolean(pending?.user_attention && (pending.paused || resumeCommand));
+}: MailboxMessageListProps) {
+  if (messages.length === 0 && !mailbox?.user_attention) return null;
+  const resumeCommand = mailbox?.resume_command;
+  const showBanner = Boolean(mailbox?.user_attention && (mailbox.paused || resumeCommand));
 
   return (
     <div className="shrink-0 pb-2">
@@ -39,9 +41,9 @@ export function PendingMessageList({
         {showBanner && (
           <div className="flex items-center justify-between gap-3 rounded-[12px] border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
             <div className="min-w-0">
-              <div className="font-medium">Pending 队列已暂停</div>
+              <div className="font-medium">Mailbox 已暂停</div>
               <div className="truncate text-warning/80">
-                {resumeCommand?.unavailable_reason ?? "等待用户恢复后继续投递排队消息。"}
+                {resumeCommand?.unavailable_reason ?? "等待用户恢复后继续投递消息。"}
               </div>
             </div>
             {resumeCommand?.enabled && onResume && (
@@ -56,10 +58,11 @@ export function PendingMessageList({
           </div>
         )}
         {messages.map((msg) => (
-          <PendingMessageRow
+          <MailboxMessageRow
             key={msg.id}
             message={msg}
             promoteCommand={promoteCommand}
+            deleteCommand={deleteCommand}
             onPromote={onPromote}
             onDelete={onDelete}
           />
@@ -69,14 +72,16 @@ export function PendingMessageList({
   );
 }
 
-function PendingMessageRow({
+function MailboxMessageRow({
   message,
   promoteCommand,
+  deleteCommand,
   onPromote,
   onDelete,
 }: {
-  message: PendingMessageView;
+  message: MailboxMessageView;
   promoteCommand?: ConversationCommandView;
+  deleteCommand?: ConversationCommandView;
   onPromote: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
@@ -125,7 +130,7 @@ function PendingMessageRow({
 
       {/* 行内操作 — hover 显示 */}
       <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-        {promoteCommand?.enabled && (
+        {promoteCommand?.enabled && message.can_promote && (
           <button
             type="button"
             onClick={handlePromote}
@@ -137,14 +142,16 @@ function PendingMessageRow({
           </button>
         )}
 
-        <button
-          type="button"
-          onClick={handleDelete}
-          title="删除"
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-        >
-          <TrashIcon />
-        </button>
+        {message.can_delete && deleteCommand?.enabled && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            title="删除"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+          >
+            <TrashIcon />
+          </button>
+        )}
 
         {/* 更多菜单 */}
         <div className="relative">
@@ -170,14 +177,16 @@ function PendingMessageRow({
                 <EditIcon />
                 编辑消息
               </button>
-              <button
-                type="button"
-                onClick={handleDelete}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/10"
-              >
-                <CloseQueueIcon />
-                关闭排队
-              </button>
+              {message.can_delete && deleteCommand?.enabled && (
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/10"
+                >
+                  <CloseQueueIcon />
+                  删除消息
+                </button>
+              )}
             </div>
           )}
         </div>

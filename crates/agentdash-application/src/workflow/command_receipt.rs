@@ -3,9 +3,8 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use agentdash_domain::workflow::{
-    AgentRunDeliveryAcceptedRefs, AgentRunDeliveryCommandClaim, AgentRunDeliveryCommandReceipt,
-    AgentRunDeliveryCommandReceiptRepository, AgentRunDeliveryCommandStatus,
-    NewAgentRunDeliveryCommandReceipt,
+    AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind, AgentRunCommandReceipt,
+    AgentRunCommandReceiptRepository, AgentRunCommandStatus, NewAgentRunCommandReceipt,
 };
 
 use crate::workflow::WorkflowApplicationError;
@@ -19,7 +18,7 @@ pub struct AgentRunCommandReceiptView {
 }
 
 impl AgentRunCommandReceiptView {
-    pub fn from_record(record: &AgentRunDeliveryCommandReceipt, duplicate: bool) -> Self {
+    pub fn from_record(record: &AgentRunCommandReceipt, duplicate: bool) -> Self {
         Self {
             client_command_id: record.client_command_id.clone(),
             status: record.status.as_str().to_string(),
@@ -30,31 +29,33 @@ impl AgentRunCommandReceiptView {
 }
 
 pub(crate) struct ClaimedAgentRunCommandReceipt {
-    pub record: AgentRunDeliveryCommandReceipt,
+    pub record: AgentRunCommandReceipt,
     pub duplicate: bool,
 }
 
 pub(crate) async fn claim_agent_run_command_receipt(
-    repo: &dyn AgentRunDeliveryCommandReceiptRepository,
+    repo: &dyn AgentRunCommandReceiptRepository,
     scope_kind: impl Into<String>,
     scope_key: impl Into<String>,
+    command_kind: AgentRunCommandKind,
     client_command_id: impl Into<String>,
     request_digest: impl Into<String>,
 ) -> Result<ClaimedAgentRunCommandReceipt, WorkflowApplicationError> {
     let claim = repo
-        .claim(NewAgentRunDeliveryCommandReceipt {
+        .claim(NewAgentRunCommandReceipt {
             scope_kind: scope_kind.into(),
             scope_key: scope_key.into(),
+            command_kind,
             client_command_id: client_command_id.into(),
             request_digest: request_digest.into(),
         })
         .await?;
     Ok(match claim {
-        AgentRunDeliveryCommandClaim::Created(record) => ClaimedAgentRunCommandReceipt {
+        AgentRunCommandClaim::Created(record) => ClaimedAgentRunCommandReceipt {
             record,
             duplicate: false,
         },
-        AgentRunDeliveryCommandClaim::Duplicate(record) => ClaimedAgentRunCommandReceipt {
+        AgentRunCommandClaim::Duplicate(record) => ClaimedAgentRunCommandReceipt {
             record,
             duplicate: true,
         },
@@ -62,19 +63,19 @@ pub(crate) async fn claim_agent_run_command_receipt(
 }
 
 pub(crate) fn accepted_refs_from_record(
-    record: &AgentRunDeliveryCommandReceipt,
-) -> Result<AgentRunDeliveryAcceptedRefs, WorkflowApplicationError> {
+    record: &AgentRunCommandReceipt,
+) -> Result<AgentRunAcceptedRefs, WorkflowApplicationError> {
     match record.status {
-        AgentRunDeliveryCommandStatus::Accepted => record.accepted_refs.clone().ok_or_else(|| {
+        AgentRunCommandStatus::Accepted => record.accepted_refs.clone().ok_or_else(|| {
             WorkflowApplicationError::Internal(format!(
                 "command receipt {} 缺少 accepted refs",
                 record.id
             ))
         }),
-        AgentRunDeliveryCommandStatus::Pending => Err(WorkflowApplicationError::Conflict(
+        AgentRunCommandStatus::Pending => Err(WorkflowApplicationError::Conflict(
             "命令仍在处理中，请刷新 AgentRun workspace 获取最新状态".to_string(),
         )),
-        AgentRunDeliveryCommandStatus::TerminalFailed => Err(WorkflowApplicationError::Conflict(
+        AgentRunCommandStatus::TerminalFailed => Err(WorkflowApplicationError::Conflict(
             record
                 .error_message
                 .clone()
@@ -84,7 +85,7 @@ pub(crate) fn accepted_refs_from_record(
 }
 
 pub(crate) async fn mark_command_terminal_failed(
-    repo: &dyn AgentRunDeliveryCommandReceiptRepository,
+    repo: &dyn AgentRunCommandReceiptRepository,
     receipt_id: uuid::Uuid,
     error: &WorkflowApplicationError,
 ) {

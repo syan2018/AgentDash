@@ -324,20 +324,12 @@ export function SessionChatComposer({
   onRemoveImage: (id: string) => void;
 }) {
   const enterCommandId = commandState.commands.keyboard.enter;
-  const alternateCommandId = commandState.commands.keyboard.ctrl_enter !== enterCommandId
-    ? commandState.commands.keyboard.ctrl_enter
-    : undefined;
   const submitCommand = commandState.commands.commands.find(
     (command) => command.command_id === enterCommandId,
   ) ?? commandState.commands.commands.find(
     (command) => command.placement.includes("composer_primary") && command.enabled,
   ) ?? commandState.commands.commands.find(
     (command) => command.placement.includes("composer_primary"),
-  );
-  const alternateCommand = commandState.commands.commands.find(
-    (command) => command.command_id === alternateCommandId,
-  ) ?? commandState.commands.commands.find(
-    (command) => command.placement.includes("composer_secondary") && command.enabled,
   );
   const cancelCommand = commandState.commands.commands.find((command) => command.kind === "cancel");
   const inputDisabled = isSending || !submitCommand?.enabled;
@@ -502,7 +494,6 @@ export function SessionChatComposer({
               isCancelling={isCancelling}
               cancelDisabled={cancelDisabled}
               submitCommand={sendDisabled ? undefined : submitCommand}
-              alternateCommand={alternateCommand}
               onSubmit={onCommandAction}
               onCancel={onCancelAction}
             />

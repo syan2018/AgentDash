@@ -27,9 +27,9 @@ import {
 import { useAgentRunWorkspaceState } from "../features/workspace-panel/model/useAgentRunWorkspaceState";
 import {
   cancelAgentRun,
-  deleteAgentRunPendingMessage,
-  promoteAgentRunPendingMessage,
-  resumeAgentRunPendingQueue,
+  deleteAgentRunMailboxMessage,
+  promoteAgentRunMailboxMessage,
+  resumeAgentRunMailbox,
   submitAgentRunComposerInput,
 } from "../services/lifecycle";
 import type { ExecutorConfig } from "../services/executor";
@@ -49,7 +49,7 @@ import {
   buildDraftSessionCommandState,
   buildRuntimeSessionCommandState,
   isCompleteExecutorConfig,
-  pendingSnapshotFromConversation,
+  mailboxSnapshotFromConversation,
   resolveExecutorConfigForConversationCommand,
 } from "./AgentRunWorkspacePage.conversationCommandState";
 import type {
@@ -388,7 +388,7 @@ export function AgentRunWorkspacePage({
       runtimeControl?.conversation,
     ],
   );
-  const conversationPending = pendingSnapshotFromConversation(runtimeControl?.conversation?.pending);
+  const conversationMailbox = mailboxSnapshotFromConversation(runtimeControl?.conversation?.mailbox);
   const refreshAfterStaleAgentRunCommandError = useCallback((error: unknown): boolean => {
     if (!isStaleAgentRunCommandError(error)) return false;
     void refreshAgentRunWorkspaceState().catch(() => {});
@@ -503,10 +503,10 @@ export function AgentRunWorkspacePage({
         void fetchAndIngestLifecycleRun(response.accepted_refs.run_ref.run_id);
       }
       void refreshAgentRunWorkspaceState().catch(() => {});
-      if (response.accepted_kind === "steer") {
+      if (response.outcome === "steered") {
         scheduleHookRuntimeRefresh("agent_message_steered", true);
-      } else if (response.accepted_kind === "enqueue") {
-        scheduleHookRuntimeRefresh("pending_message_enqueued", true);
+      } else if (response.outcome === "queued") {
+        scheduleHookRuntimeRefresh("mailbox_message_queued", true);
       } else {
         scheduleHookRuntimeRefresh("agent_message_sent", true);
       }
@@ -566,15 +566,15 @@ export function AgentRunWorkspacePage({
     scheduleHookRuntimeRefresh,
   ]);
 
-  const handlePromotePending = useCallback(async (messageId: string) => {
+  const handlePromoteMailboxMessage = useCallback(async (messageId: string) => {
     if (!currentRunId || !currentAgentId) return;
     if (agentRunWorkspaceState.status !== "ready") return;
     const promoteCommand = chatCommandState.commands.commands.find(
-      (command) => command.kind === "promote_pending" && command.placement.includes("pending_row"),
+      (command) => command.kind === "promote_mailbox_message" && command.placement.includes("mailbox_row"),
     );
     if (!promoteCommand?.enabled) return;
     try {
-      await promoteAgentRunPendingMessage(currentRunId, currentAgentId, messageId, {
+      await promoteAgentRunMailboxMessage(currentRunId, currentAgentId, messageId, {
         command: commandPrecondition(promoteCommand),
       });
     } catch (error) {
@@ -582,7 +582,7 @@ export function AgentRunWorkspacePage({
       throw error;
     }
     void refreshAgentRunWorkspaceState().catch(() => {});
-    scheduleHookRuntimeRefresh("pending_message_promoted", true);
+    scheduleHookRuntimeRefresh("mailbox_message_promoted", true);
   }, [
     agentRunWorkspaceState.status,
     chatCommandState.commands.commands,
@@ -593,28 +593,35 @@ export function AgentRunWorkspacePage({
     scheduleHookRuntimeRefresh,
   ]);
 
-  const handleDeletePending = useCallback(async (messageId: string) => {
+  const handleDeleteMailboxMessage = useCallback(async (messageId: string) => {
     if (!currentRunId || !currentAgentId) return;
     if (agentRunWorkspaceState.status !== "ready") return;
-    await deleteAgentRunPendingMessage(currentRunId, currentAgentId, messageId);
+    const deleteCommand = chatCommandState.commands.commands.find(
+      (command) => command.kind === "delete_mailbox_message" && command.placement.includes("mailbox_row"),
+    );
+    if (!deleteCommand?.enabled) return;
+    await deleteAgentRunMailboxMessage(currentRunId, currentAgentId, messageId, {
+      command: commandPrecondition(deleteCommand),
+    });
     void refreshAgentRunWorkspaceState().catch(() => {});
-    scheduleHookRuntimeRefresh("pending_message_deleted", true);
+    scheduleHookRuntimeRefresh("mailbox_message_deleted", true);
   }, [
     agentRunWorkspaceState.status,
+    chatCommandState.commands.commands,
     currentAgentId,
     currentRunId,
     refreshAgentRunWorkspaceState,
     scheduleHookRuntimeRefresh,
   ]);
 
-  const handleResumePendingQueue = useCallback(async () => {
+  const handleResumeMailbox = useCallback(async () => {
     if (!currentRunId || !currentAgentId) return;
     if (agentRunWorkspaceState.status !== "ready") return;
-    const resumeCommand = conversationPending?.resume_command;
+    const resumeCommand = conversationMailbox?.resume_command;
     if (!resumeCommand?.enabled) return;
-    let response: Awaited<ReturnType<typeof resumeAgentRunPendingQueue>>;
+    let response: Awaited<ReturnType<typeof resumeAgentRunMailbox>>;
     try {
-      response = await resumeAgentRunPendingQueue(currentRunId, currentAgentId, {
+      response = await resumeAgentRunMailbox(currentRunId, currentAgentId, {
         command: commandPrecondition(resumeCommand),
       });
     } catch (error) {
@@ -626,12 +633,12 @@ export function AgentRunWorkspacePage({
       void fetchAndIngestLifecycleRun(acceptedRunId);
     }
     void refreshAgentRunWorkspaceState().catch(() => {});
-    scheduleHookRuntimeRefresh("pending_queue_resumed", true);
+    scheduleHookRuntimeRefresh("mailbox_resumed", true);
   }, [
     agentRunWorkspaceState.status,
     currentAgentId,
     currentRunId,
-    conversationPending?.resume_command,
+    conversationMailbox?.resume_command,
     fetchAndIngestLifecycleRun,
     refreshAfterStaleAgentRunCommandError,
     refreshAgentRunWorkspaceState,
@@ -916,11 +923,11 @@ export function AgentRunWorkspacePage({
               onCommand={handleAgentRunCommand}
               onCancelAction={handleCancelAgentRun}
               onExecutorConfigOverrideChange={setExplicitExecutorConfigOverride}
-              pendingMessages={runtimeControl?.pending_messages}
-              pendingSnapshot={conversationPending}
-              onPromotePending={(id) => { void handlePromotePending(id); }}
-              onDeletePending={(id) => { void handleDeletePending(id); }}
-              onResumePendingQueue={() => { void handleResumePendingQueue(); }}
+              mailboxMessages={runtimeControl?.mailbox_messages}
+              mailboxSnapshot={conversationMailbox}
+              onPromoteMailboxMessage={(id) => { void handlePromoteMailboxMessage(id); }}
+              onDeleteMailboxMessage={(id) => { void handleDeleteMailboxMessage(id); }}
+              onResumeMailbox={() => { void handleResumeMailbox(); }}
               inputPrefix={ownerBindingBar ?? draftBindingBar}
             />
           </div>

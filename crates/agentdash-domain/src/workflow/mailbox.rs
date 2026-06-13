@@ -451,4 +451,14 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         run_id: Uuid,
         agent_id: Uuid,
     ) -> Result<Option<AgentRunMailboxState>, DomainError>;
+
+    /// Move a message after the anchor (or to the front if `after_id` is None).
+    /// Returns the updated message with new order_key.
+    async fn move_message_after(
+        &self,
+        id: Uuid,
+        after_id: Option<Uuid>,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<AgentRunMailboxMessage, DomainError>;
 }

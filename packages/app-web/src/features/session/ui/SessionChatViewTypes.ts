@@ -80,6 +80,7 @@ export interface SessionChatViewProps {
     prompt: string,
     executorConfig?: ExecutorConfig,
     imageAttachments?: ImageAttachment[],
+    deliveryIntent?: string,
   ) => Promise<void>;
 
   onCancelAction?: () => Promise<void>;
@@ -101,6 +102,13 @@ export interface SessionChatViewProps {
   onDeleteMailboxMessage?: (messageId: string) => void;
   /** 恢复暂停的 mailbox */
   onResumeMailbox?: () => void;
+  /** 召回 mailbox 消息（获取内容 + 删除 + 填充 composer） */
+  onRecallMailboxMessage?: (messageId: string) => void;
+  /** 重排序 mailbox 消息 */
+  onMoveMailboxMessage?: (messageId: string, afterMessageId: string | null) => void;
+  /** 外部注入的输入值（recall 后填充 composer），设置后立即消费 */
+  injectedInputValue?: string | null;
+  onInjectedInputConsumed?: () => void;
 
   // ─── 布局插槽 ────────────────────────────────────────
 

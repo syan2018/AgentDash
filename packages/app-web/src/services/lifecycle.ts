@@ -17,6 +17,8 @@ import type {
 import type {
   AgentRunCommandOnlyRequest,
   AgentRunComposerSubmitRequest,
+  AgentRunMailboxMessageContentView,
+  AgentRunMailboxMoveRequest,
   AgentRunMessageCommandResponse,
   AgentRunWorkspaceView,
 } from "../generated/workflow-contracts";
@@ -127,6 +129,36 @@ export async function resumeAgentRunMailbox(
   return api.post<AgentRunMessageCommandResponse>(
     agentRunCommandPath(runId, agentId, "/mailbox/resume"),
     request,
+  );
+}
+
+export async function moveAgentRunMailboxMessage(
+  runId: string,
+  agentId: string,
+  messageId: string,
+  request: AgentRunMailboxMoveRequest,
+): Promise<{ ok: boolean; order_key: number }> {
+  return api.put<{ ok: boolean; order_key: number }>(
+    agentRunCommandPath(
+      runId,
+      agentId,
+      `/mailbox/messages/${encodeURIComponent(messageId)}/move`,
+    ),
+    request,
+  );
+}
+
+export async function fetchAgentRunMailboxMessageContent(
+  runId: string,
+  agentId: string,
+  messageId: string,
+): Promise<AgentRunMailboxMessageContentView> {
+  return api.get<AgentRunMailboxMessageContentView>(
+    agentRunCommandPath(
+      runId,
+      agentId,
+      `/mailbox/messages/${encodeURIComponent(messageId)}/content`,
+    ),
   );
 }
 

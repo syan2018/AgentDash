@@ -11,9 +11,10 @@ use agentdash_application::workflow::{
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView,
-    AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxView,
-    AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
-    AgentRunRefDto, AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
+    AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView,
+    AgentRunMailboxMoveRequest, AgentRunMailboxView, AgentRunMessageAcceptedRefs,
+    AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse, AgentRunRefDto,
+    AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
     AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
     AgentRunWorkspaceView, ConsumptionBarrier, ConversationCommandKind, ConversationDiagnosticView,
@@ -95,6 +96,14 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/promote",
             axum::routing::post(promote_agent_run_mailbox_message),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/move",
+            axum::routing::put(move_agent_run_mailbox_message),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/content",
+            axum::routing::get(get_agent_run_mailbox_message_content),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/cancel",
@@ -234,6 +243,7 @@ pub async fn submit_agent_run_composer_input(
             client_command_id: req.client_command_id,
             executor_config,
             identity: Some(current_user),
+            delivery_intent: req.delivery_intent,
         })
         .await
         .map_err(ApiError::from)?;
@@ -390,6 +400,57 @@ async fn promote_agent_run_mailbox_message(
         .await
         .map_err(ApiError::from)?;
     Ok(Json(agent_run_message_command_response(response)))
+}
+
+async fn move_agent_run_mailbox_message(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
+    Json(body): Json<AgentRunMailboxMoveRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let context = resolve_agent_run_context(
+        &state,
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let message_id = parse_uuid(&message_id, "message_id")?;
+    let after_message_id = body
+        .after_message_id
+        .as_deref()
+        .map(|id| parse_uuid(id, "after_message_id"))
+        .transpose()?;
+    let updated = agent_run_mailbox_service(state.as_ref())
+        .move_message(context.run.id, context.agent.id, message_id, after_message_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(serde_json::json!({ "ok": true, "order_key": updated.order_key })))
+}
+
+async fn get_agent_run_mailbox_message_content(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
+) -> Result<Json<AgentRunMailboxMessageContentView>, ApiError> {
+    let context = resolve_agent_run_context(
+        &state,
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    let message_id = parse_uuid(&message_id, "message_id")?;
+    let input = agent_run_mailbox_service(state.as_ref())
+        .get_message_content(context.run.id, context.agent.id, message_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(AgentRunMailboxMessageContentView {
+        id: message_id.to_string(),
+        input,
+    }))
 }
 
 async fn cancel_agent_run(
@@ -719,13 +780,21 @@ async fn build_agent_run_workspace_view(
         .iter()
         .filter(|message| mailbox_message_visible(message))
         .count();
+    let user_prefs = state
+        .repos
+        .backend_repo
+        .get_preferences()
+        .await
+        .unwrap_or_default();
     let mailbox = mailbox_state_view(
         mailbox_state.as_ref(),
         has_delivery_runtime && !terminal_agent,
         mailbox_visible_message_count,
+        user_prefs.hide_system_steer_messages,
     );
     let mailbox_message_views = mailbox_messages
         .into_iter()
+        .filter(|msg| mailbox_message_visible(msg))
         .map(mailbox_message_view)
         .collect::<Vec<_>>();
     let project_agent_preset_config = match context.agent.project_agent_id {
@@ -937,6 +1006,12 @@ pub(crate) fn mailbox_message_view(
         && message.delivery == agentdash_domain::workflow::MailboxDelivery::LaunchOrContinueTurn
         && message.last_error.as_deref()
             != Some(agentdash_domain::workflow::MAILBOX_DELIVERY_RESULT_UNKNOWN);
+    let can_reorder = can_delete
+        && message.origin == agentdash_domain::workflow::MailboxMessageOrigin::User
+        && message.delivery == agentdash_domain::workflow::MailboxDelivery::LaunchOrContinueTurn;
+    let can_recall = can_delete
+        && message.origin == agentdash_domain::workflow::MailboxMessageOrigin::User
+        && message.payload_json.is_some();
     MailboxMessageView {
         id: message.id.to_string(),
         origin: mailbox_origin_view(message.origin),
@@ -954,6 +1029,8 @@ pub(crate) fn mailbox_message_view(
         updated_at: message.updated_at.to_rfc3339(),
         can_promote,
         can_delete,
+        can_reorder,
+        can_recall,
     }
 }
 
@@ -972,6 +1049,7 @@ pub(crate) fn mailbox_state_view(
     state: Option<&agentdash_domain::workflow::AgentRunMailboxState>,
     can_resume: bool,
     visible_message_count: usize,
+    hide_system_steer_messages: bool,
 ) -> MailboxStateView {
     let paused = state.is_some_and(|state| state.paused) && visible_message_count > 0;
     MailboxStateView {
@@ -979,6 +1057,7 @@ pub(crate) fn mailbox_state_view(
         pause_reason: state.and_then(|state| state.pause_reason.clone()),
         message: state.and_then(|state| state.pause_message.clone()),
         can_resume: can_resume && paused,
+        hide_system_steer_messages,
     }
 }
 
@@ -1008,8 +1087,19 @@ async fn build_agent_run_mailbox_view(
             context.delivery_runtime_session_id.is_some()
                 && !is_terminal_agent_status(&context.agent.status),
             visible_message_count,
+            state
+                .repos
+                .backend_repo
+                .get_preferences()
+                .await
+                .unwrap_or_default()
+                .hide_system_steer_messages,
         ),
-        messages: messages.into_iter().map(mailbox_message_view).collect(),
+        messages: messages
+            .into_iter()
+            .filter(|msg| mailbox_message_visible(msg))
+            .map(mailbox_message_view)
+            .collect(),
     })
 }
 
@@ -2023,7 +2113,7 @@ mod tests {
                 submit_message: enabled_action(),
                 cancel: disabled_action("not running"),
             },
-            mailbox: mailbox_state_view(None, true, 0),
+            mailbox: mailbox_state_view(None, true, 0, false),
             mailbox_messages: Vec::new(),
             resource_surface: None,
             conversation: None,
@@ -2046,7 +2136,7 @@ mod tests {
             pause_message: Some("上一轮已中断，mailbox 已暂停。".to_string()),
             updated_at: chrono::Utc::now(),
         };
-        let view = mailbox_state_view(Some(&state), true, 1);
+        let view = mailbox_state_view(Some(&state), true, 1, false);
 
         assert!(view.paused);
         assert_eq!(view.pause_reason.as_deref(), Some("turn_interrupted"));
@@ -2068,7 +2158,7 @@ mod tests {
             pause_message: Some("上一轮已中断，mailbox 已暂停。".to_string()),
             updated_at: chrono::Utc::now(),
         };
-        let view = mailbox_state_view(Some(&state), true, 0);
+        let view = mailbox_state_view(Some(&state), true, 0, false);
 
         assert!(!view.paused);
         assert!(!view.can_resume);

@@ -135,7 +135,8 @@ use agentdash_contracts::workflow::{
     HookPresetResponse, HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto,
     LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
     MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource,
-    MailboxMessageStatus, MailboxMessageView, MailboxStateView, OrchestrationInstanceView,
+    MailboxMessageStatus, MailboxMessageView, AgentRunMailboxMoveRequest,
+    AgentRunMailboxMessageContentView, MailboxStateView, OrchestrationInstanceView,
     PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
     RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionCommandStateDto,
     RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
@@ -458,6 +459,8 @@ fn main() {
             export_all::<MailboxDrainMode>(dir);
             export_all::<AgentRunMessageAcceptedRefs>(dir);
             export_all::<MailboxMessageView>(dir);
+            export_all::<AgentRunMailboxMoveRequest>(dir);
+            export_all::<AgentRunMailboxMessageContentView>(dir);
             export_all::<MailboxStateView>(dir);
             export_all::<AgentRunMessageCommandOutcome>(dir);
             export_all::<AgentRunMessageCommandResponse>(dir);

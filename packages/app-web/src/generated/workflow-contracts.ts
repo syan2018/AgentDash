@@ -47,7 +47,10 @@ export type AgentRunComposerSubmitRequest = {
 /**
  * canonical 用户输入，由后端写入 mailbox 并按 scheduler outcome 消费或排队。
  */
-input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue, };
+input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue, /**
+ * 投递意图：`"steer"` 表示用户明确要求注入 active turn，其余情况排队等待。
+ */
+delivery_intent?: string, };
 
 export type AgentRunMailboxView = { state: MailboxStateView, messages: Array<MailboxMessageView>, };
 
@@ -169,9 +172,13 @@ export type MailboxMessageSource = "composer" | "draft_start" | "hook_after_turn
 
 export type MailboxMessageStatus = "accepted" | "queued" | "ready_to_consume" | "consuming" | "dispatched" | "steered" | "paused" | "blocked" | "failed" | "deleted";
 
-export type MailboxMessageView = { id: string, origin: MailboxMessageOrigin, source: MailboxMessageSource, delivery: MailboxDelivery, barrier: ConsumptionBarrier, drain_mode: MailboxDrainMode, status: MailboxMessageStatus, preview: string, has_images: boolean, attempt_count: number, accepted_refs?: AgentRunMessageAcceptedRefs, last_error?: string, created_at: string, updated_at: string, can_promote: boolean, can_delete: boolean, };
+export type MailboxMessageView = { id: string, origin: MailboxMessageOrigin, source: MailboxMessageSource, delivery: MailboxDelivery, barrier: ConsumptionBarrier, drain_mode: MailboxDrainMode, status: MailboxMessageStatus, preview: string, has_images: boolean, attempt_count: number, accepted_refs?: AgentRunMessageAcceptedRefs, last_error?: string, created_at: string, updated_at: string, can_promote: boolean, can_delete: boolean, can_reorder: boolean, can_recall: boolean, };
 
-export type MailboxStateView = { paused: boolean, pause_reason?: string, message?: string, can_resume: boolean, };
+export type AgentRunMailboxMoveRequest = { after_message_id?: string, };
+
+export type AgentRunMailboxMessageContentView = { id: string, input: JsonValue, };
+
+export type MailboxStateView = { paused: boolean, pause_reason?: string, message?: string, can_resume: boolean, hide_system_steer_messages: boolean, };
 
 export type OrchestrationInstanceView = { orchestration_id: string, role: string, status: string, plan_digest: string, source_ref: JsonValue, ready_node_ids: Array<string>, nodes: Array<RuntimeNodeView>, created_at: string, updated_at: string, };
 

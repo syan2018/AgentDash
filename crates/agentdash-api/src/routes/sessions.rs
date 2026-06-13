@@ -183,7 +183,7 @@ pub async fn get_session_runtime_control(
                 ),
                 cancel: disabled_action("当前 Session 没有正在执行的 turn。"),
             },
-            mailbox: mailbox_state_view(None, false, 0),
+            mailbox: mailbox_state_view(None, false, 0, false),
             mailbox_messages: Vec::new(),
         }));
     };
@@ -310,6 +310,13 @@ pub async fn get_session_runtime_control(
             .as_ref(),
         !terminal_agent,
         visible_message_count,
+        state
+            .repos
+            .backend_repo
+            .get_preferences()
+            .await
+            .unwrap_or_default()
+            .hide_system_steer_messages,
     );
     let mailbox_messages = mailbox_messages
         .into_iter()

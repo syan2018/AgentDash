@@ -1154,6 +1154,24 @@ pub struct MailboxMessageView {
     pub updated_at: String,
     pub can_promote: bool,
     pub can_delete: bool,
+    pub can_reorder: bool,
+    pub can_recall: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunMailboxMoveRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub after_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunMailboxMessageContentView {
+    pub id: String,
+    #[ts(type = "JsonValue")]
+    pub input: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1167,6 +1185,8 @@ pub struct MailboxStateView {
     #[ts(optional)]
     pub message: Option<String>,
     pub can_resume: bool,
+    #[serde(default)]
+    pub hide_system_steer_messages: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1240,6 +1260,10 @@ pub struct AgentRunComposerSubmitRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
     pub executor_config: Option<Value>,
+    /// 投递意图：`"steer"` 表示用户明确要求注入 active turn，其余情况排队等待。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub delivery_intent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

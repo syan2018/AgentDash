@@ -61,6 +61,42 @@ impl PostgresAgentRunMailboxRepository {
         .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?;
         Ok(current.unwrap_or(0) + 1)
     }
+
+    async fn rebalance_order_keys(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        run_id: Uuid,
+        agent_id: Uuid,
+        priority: i32,
+        exclude_id: Uuid,
+    ) -> Result<(), DomainError> {
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM agent_run_mailbox_messages \
+             WHERE run_id=$1 AND agent_id=$2 AND priority=$3 AND id <> $4 \
+               AND status NOT IN ('dispatched','steered','deleted') \
+             ORDER BY order_key ASC"
+        )
+        .bind(run_id.to_string())
+        .bind(agent_id.to_string())
+        .bind(priority)
+        .bind(exclude_id.to_string())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|e| sql_err_for("agent_run_mailbox_messages", e))?;
+
+        for (i, msg_id) in ids.iter().enumerate() {
+            let new_key = ((i as i64) + 1) * 1000;
+            sqlx::query(
+                "UPDATE agent_run_mailbox_messages SET order_key=$1 WHERE id=$2"
+            )
+            .bind(new_key)
+            .bind(msg_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| sql_err_for("agent_run_mailbox_messages", e))?;
+        }
+        Ok(())
+    }
 }
 
 const MAILBOX_COLS: &str = "id,run_id,agent_id,runtime_session_id,origin,source,delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,queued_agent_run_turn_id,consuming_agent_run_turn_id,expected_active_agent_run_turn_id,accepted_agent_run_turn_id,accepted_protocol_turn_id,claim_token,claimed_at,claim_expires_at,command_receipt_id,payload_json,executor_config_json,preview,has_images,retain_payload,attempt_count,last_error,created_at,updated_at,consumed_at,deleted_at";
@@ -473,6 +509,130 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         .map_err(|error| sql_err_for("agent_run_mailbox_states", error))?
         .map(TryInto::try_into)
         .transpose()
+    }
+
+    async fn move_message_after(
+        &self,
+        id: Uuid,
+        after_id: Option<Uuid>,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<AgentRunMailboxMessage, DomainError> {
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+
+        let target = sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
+            "SELECT {MAILBOX_COLS} FROM agent_run_mailbox_messages \
+             WHERE id=$1 AND run_id=$2 AND agent_id=$3 FOR UPDATE"
+        ))
+        .bind(id.to_string())
+        .bind(run_id.to_string())
+        .bind(agent_id.to_string())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| sql_err_for("agent_run_mailbox_messages", e))?
+        .ok_or_else(|| DomainError::NotFound {
+            entity: "agent_run_mailbox_message",
+            id: id.to_string(),
+        })?;
+
+        let target_priority = target.priority;
+
+        let new_order_key = if let Some(anchor_id) = after_id {
+            let anchor = sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
+                "SELECT {MAILBOX_COLS} FROM agent_run_mailbox_messages \
+                 WHERE id=$1 AND run_id=$2 AND agent_id=$3 FOR UPDATE"
+            ))
+            .bind(anchor_id.to_string())
+            .bind(run_id.to_string())
+            .bind(agent_id.to_string())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| sql_err_for("agent_run_mailbox_messages", e))?
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "agent_run_mailbox_message",
+                id: anchor_id.to_string(),
+            })?;
+
+            let successor_key: Option<i64> = sqlx::query_scalar(
+                "SELECT MIN(order_key) FROM agent_run_mailbox_messages \
+                 WHERE run_id=$1 AND agent_id=$2 AND priority=$3 \
+                   AND order_key > $4 AND id <> $5 \
+                   AND status NOT IN ('dispatched','steered','deleted')"
+            )
+            .bind(run_id.to_string())
+            .bind(agent_id.to_string())
+            .bind(target_priority)
+            .bind(anchor.order_key)
+            .bind(id.to_string())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| sql_err_for("agent_run_mailbox_messages", e))?;
+
+            match successor_key {
+                Some(succ) if succ - anchor.order_key > 1 => {
+                    anchor.order_key + (succ - anchor.order_key) / 2
+                }
+                _ => {
+                    self.rebalance_order_keys(&mut tx, run_id, agent_id, target_priority, id).await?;
+                    let anchor_refreshed: i64 = sqlx::query_scalar(
+                        "SELECT order_key FROM agent_run_mailbox_messages WHERE id=$1"
+                    )
+                    .bind(anchor_id.to_string())
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(|e| sql_err_for("agent_run_mailbox_messages", e))?;
+
+                    let succ_refreshed: Option<i64> = sqlx::query_scalar(
+                        "SELECT MIN(order_key) FROM agent_run_mailbox_messages \
+                         WHERE run_id=$1 AND agent_id=$2 AND priority=$3 \
+                           AND order_key > $4 AND id <> $5 \
+                           AND status NOT IN ('dispatched','steered','deleted')"
+                    )
+                    .bind(run_id.to_string())
+                    .bind(agent_id.to_string())
+                    .bind(target_priority)
+                    .bind(anchor_refreshed)
+                    .bind(id.to_string())
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(|e| sql_err_for("agent_run_mailbox_messages", e))?;
+
+                    match succ_refreshed {
+                        Some(succ) => anchor_refreshed + (succ - anchor_refreshed) / 2,
+                        None => anchor_refreshed + 1000,
+                    }
+                }
+            }
+        } else {
+            let min_key: Option<i64> = sqlx::query_scalar(
+                "SELECT MIN(order_key) FROM agent_run_mailbox_messages \
+                 WHERE run_id=$1 AND agent_id=$2 AND priority=$3 AND id <> $4 \
+                   AND status NOT IN ('dispatched','steered','deleted')"
+            )
+            .bind(run_id.to_string())
+            .bind(agent_id.to_string())
+            .bind(target_priority)
+            .bind(id.to_string())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| sql_err_for("agent_run_mailbox_messages", e))?;
+
+            min_key.unwrap_or(1000) - 1000
+        };
+
+        let row = sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
+            "UPDATE agent_run_mailbox_messages SET order_key=$1, updated_at=$2 \
+             WHERE id=$3 RETURNING {MAILBOX_COLS}"
+        ))
+        .bind(new_order_key)
+        .bind(Utc::now())
+        .bind(id.to_string())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| sql_err_for("agent_run_mailbox_messages", e))?;
+
+        tx.commit().await.map_err(db_err)?;
+        row.try_into()
     }
 }
 

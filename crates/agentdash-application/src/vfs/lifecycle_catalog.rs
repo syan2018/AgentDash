@@ -14,126 +14,48 @@ pub struct LifecyclePathEntry {
     pub virtual_entry: bool,
 }
 
-const DIRECTORY_HINT_DESCRIPTION: &str = "Lifecycle journey VFS，包含 AgentRun run context、orchestration/node 投影、session item 索引、compaction summary 留档、port 产出和可写 records overlay";
+const DIRECTORY_HINT_DESCRIPTION: &str = "Lifecycle journey VFS，包含 AgentRun delivery session 日志、消息、工具执行记录，以及当前 runtime node 的 artifact / record 投影";
 
 pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     LifecyclePathEntry {
-        path: "context",
-        description: "LifecycleRun context（JSON）",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "orchestrations",
-        description: "当前 run 的 orchestration 列表",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "orchestrations/{orchestration_id}/state",
-        description: "指定 orchestration 实例状态（JSON）",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "orchestrations/{orchestration_id}/nodes",
-        description: "指定 orchestration 的 runtime node 列表",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "orchestrations/{orchestration_id}/nodes/{encoded_node_path}/state",
-        description: "指定 orchestration node 状态（JSON）",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "orchestrations/{orchestration_id}/nodes/{encoded_node_path}/session/{projection}",
-        description: "指定 orchestration node 关联 session 投影",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "orchestrations/{orchestration_id}/nodes/{encoded_node_path}/records/{name}",
-        description: "指定 orchestration node 的 journey record overlay",
-        kind: LifecyclePathKind::File,
-        virtual_entry: false,
-    },
-    LifecyclePathEntry {
-        path: "active",
-        description: "当前活跃 run 的概览（JSON）",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "active/steps",
-        description: "各 runtime node 执行状态，子路径为 node_path",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "active/steps/{node_path}",
-        description: "单步骤详情（JSON）",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "active/artifacts",
-        description: "Port output 产出别名，指向 artifacts",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: false,
-    },
-    LifecyclePathEntry {
-        path: "active/log",
-        description: "执行日志（JSON 数组）",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "artifacts",
-        description: "Port output 产出，子路径为 port_key",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: false,
-    },
-    LifecyclePathEntry {
-        path: "artifacts/{port_key}",
-        description: "指定 port 的产出内容（纯文本；写入受 writable_port_keys 限制）",
-        kind: LifecyclePathKind::File,
-        virtual_entry: false,
-    },
-    LifecyclePathEntry {
         path: "state",
-        description: "当前 node 步骤状态（JSON）",
+        description: "AgentRun delivery session anchor 与 run 状态概览（JSON）",
+        kind: LifecyclePathKind::File,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "execution-log",
+        description: "当前 LifecycleRun execution log（JSON）",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
         path: "session/meta",
-        description: "当前 node 关联 session 元信息",
+        description: "AgentRun delivery session 元信息",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
         path: "session/summary",
-        description: "当前 node session 摘要",
+        description: "AgentRun delivery session 摘要",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
         path: "session/conclusions",
-        description: "当前 node session 结论",
+        description: "AgentRun delivery session 结论",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
         path: "session/events.json",
-        description: "当前 node session 原始事件投影",
+        description: "AgentRun delivery session 原始事件投影",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
         path: "session/items",
-        description: "当前 node session 全量 item 索引",
+        description: "AgentRun delivery session 全量 item 索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -145,7 +67,7 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "session/messages",
-        description: "当前 node session 用户与 Agent 消息索引",
+        description: "AgentRun delivery session 用户与 Agent 消息索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -157,7 +79,7 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "session/tools",
-        description: "当前 node session 工具 ThreadItem 索引",
+        description: "AgentRun delivery session 工具 ThreadItem 索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -169,7 +91,7 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "session/writes",
-        description: "当前 node session 成功写入类工具 ThreadItem 索引",
+        description: "AgentRun delivery session 成功写入类工具 ThreadItem 索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -181,7 +103,7 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "session/summaries",
-        description: "当前 node session 每轮上下文压缩摘要留档",
+        description: "AgentRun delivery session 每轮上下文压缩摘要留档",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -193,13 +115,13 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "session/terminal",
-        description: "当前 node session 终端输出聚合",
+        description: "AgentRun delivery session 终端输出聚合",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
         path: "session/turns",
-        description: "当前 node session turn 列表",
+        description: "AgentRun delivery session turn 列表",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -210,99 +132,33 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
         virtual_entry: true,
     },
     LifecyclePathEntry {
-        path: "records/{name}",
-        description: "当前 node 的可写 journey record overlay",
+        path: "node/state",
+        description: "当前 anchored runtime node 状态（JSON）",
+        kind: LifecyclePathKind::File,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "node/artifacts",
+        description: "当前 anchored runtime node 的 port output 产出",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: false,
+    },
+    LifecyclePathEntry {
+        path: "node/artifacts/{port_key}",
+        description: "当前 anchored runtime node 指定 port 的产出内容",
         kind: LifecyclePathKind::File,
         virtual_entry: false,
     },
     LifecyclePathEntry {
-        path: "nodes/{node_path}/state",
-        description: "Node 步骤状态（JSON）",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/session/meta",
-        description: "Node 关联 session 元信息",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/session/summary",
-        description: "Node session 摘要",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/session/conclusions",
-        description: "Node session 结论",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/session/events.json",
-        description: "指定 node session 原始事件投影",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/session/items",
-        description: "指定 node session 全量 item 索引",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/session/messages",
-        description: "指定 node session 用户与 Agent 消息索引",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/session/tools",
-        description: "指定 node session 工具 ThreadItem 索引",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/session/writes",
-        description: "指定 node session 成功写入类工具 ThreadItem 索引",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/session/summaries",
-        description: "指定 node session 每轮上下文压缩摘要留档",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/session/terminal",
-        description: "指定 node session 终端输出聚合",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/session/turns",
-        description: "Node session turn 列表",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/session/turns/{turn_id}/events.json",
-        description: "指定 node 单 turn 原始事件投影",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{node_path}/records/{name}",
-        description: "指定 node 的可写 journey record overlay",
+        path: "node/records/{name}",
+        description: "当前 anchored runtime node 的 journey record overlay",
         kind: LifecyclePathKind::File,
         virtual_entry: false,
     },
     LifecyclePathEntry {
-        path: "runs",
-        description: "历史 run 列表",
-        kind: LifecyclePathKind::Dir,
+        path: "orchestration/state",
+        description: "当前 anchored orchestration 实例状态（JSON）",
+        kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
 ];
@@ -322,30 +178,15 @@ pub fn lifecycle_directory_hint() -> serde_json::Value {
 
 pub fn lifecycle_root_entries(include_skills: bool) -> Vec<RuntimeFileEntry> {
     let mut entries = vec![
-        RuntimeFileEntry::file("context").as_virtual(),
-        RuntimeFileEntry::dir("orchestrations").as_virtual(),
-        RuntimeFileEntry::dir("active").as_virtual(),
-        RuntimeFileEntry::dir("artifacts"),
         RuntimeFileEntry::file("state").as_virtual(),
         RuntimeFileEntry::dir("session").as_virtual(),
+        RuntimeFileEntry::dir("artifacts"),
         RuntimeFileEntry::dir("records"),
-        RuntimeFileEntry::dir("nodes").as_virtual(),
-        RuntimeFileEntry::dir("runs").as_virtual(),
     ];
     if include_skills {
         entries.push(RuntimeFileEntry::dir("skills").as_virtual());
     }
     entries
-}
-
-pub fn lifecycle_active_entries(active_log_size: u64) -> Vec<RuntimeFileEntry> {
-    vec![
-        RuntimeFileEntry::dir("active/steps").as_virtual(),
-        RuntimeFileEntry::dir("active/artifacts"),
-        RuntimeFileEntry::file("active/log")
-            .with_size(active_log_size)
-            .as_virtual(),
-    ]
 }
 
 #[cfg(test)]
@@ -364,15 +205,15 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(paths.contains(&"session/conclusions"));
-        assert!(paths.contains(&"context"));
-        assert!(paths.contains(&"orchestrations"));
-        assert!(
-            paths.contains(&"orchestrations/{orchestration_id}/nodes/{encoded_node_path}/state")
-        );
+        assert!(paths.contains(&"state"));
+        assert!(paths.contains(&"execution-log"));
         assert!(paths.contains(&"session/items"));
         assert!(paths.contains(&"session/summaries"));
-        assert!(paths.contains(&"nodes/{node_path}/session/conclusions"));
-        assert!(paths.contains(&"nodes/{node_path}/session/tools"));
+        assert!(paths.contains(&"session/messages"));
+        assert!(paths.contains(&"session/tools"));
+        assert!(paths.contains(&"node/state"));
+        assert!(paths.contains(&"node/artifacts/{port_key}"));
+        assert!(!paths.contains(&"runs"));
         assert_eq!(paths.len(), LIFECYCLE_PATH_CATALOG.len());
     }
 
@@ -383,10 +224,12 @@ mod tests {
             .map(|entry| entry.path)
             .collect::<Vec<_>>();
 
-        assert!(entries.contains(&"active".to_string()));
-        assert!(entries.contains(&"context".to_string()));
-        assert!(entries.contains(&"orchestrations".to_string()));
+        assert!(entries.contains(&"state".to_string()));
+        assert!(entries.contains(&"session".to_string()));
+        assert!(entries.contains(&"artifacts".to_string()));
+        assert!(entries.contains(&"records".to_string()));
         assert!(entries.contains(&"skills".to_string()));
-        assert!(entries.contains(&"runs".to_string()));
+        assert!(!entries.contains(&"runs".to_string()));
+        assert!(!entries.contains(&"nodes".to_string()));
     }
 }

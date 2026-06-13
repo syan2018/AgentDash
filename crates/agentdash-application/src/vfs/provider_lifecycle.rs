@@ -1,19 +1,18 @@
-//! `lifecycle_vfs` mount: expose lifecycle run and orchestration node projections.
+//! `lifecycle_vfs` mount: expose AgentRun session evidence and runtime node projections.
 
 use std::sync::Arc;
 
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::workflow::{
-    ExecutorRunRef, LifecycleRun, LifecycleRunRepository, OrchestrationInstance,
-    OrchestrationSourceRef, RuntimeNodeState, RuntimeNodeStatus,
+    ExecutorRunRef, LifecycleRun, LifecycleRunRepository, OrchestrationInstance, RuntimeNodeState,
 };
 use async_trait::async_trait;
 use serde::Serialize;
 use tracing::info;
 use uuid::Uuid;
 
-use super::lifecycle_catalog::{lifecycle_active_entries, lifecycle_root_entries};
+use super::lifecycle_catalog::lifecycle_root_entries;
 use super::mount::{PROVIDER_LIFECYCLE_VFS, list_inline_entries};
 use super::path::normalize_mount_relative_path;
 use super::provider::{
@@ -26,9 +25,7 @@ use super::provider_skill_asset::{
 use super::types::{ListOptions, ListResult, ReadResult};
 use crate::runtime::{Mount, RuntimeFileEntry};
 use crate::session::SessionPersistence;
-use crate::workflow::execution_log::{
-    RuntimeNodeArtifactScope, decode_node_path_segment, encode_node_path_segment,
-};
+use crate::workflow::execution_log::{RuntimeNodeArtifactScope, encode_node_path_segment};
 use crate::workflow::lifecycle::journey::{
     LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, filter_session_items,
     item_file_name, session_summary_archives, to_json_pretty,
@@ -53,19 +50,172 @@ impl LifecycleMountProvider {
             journey: LifecycleJourneyProjection::new(inline_file_repo, session_persistence),
         }
     }
-}
 
-#[derive(Debug, Serialize)]
-struct LifecycleRunOverview<'a> {
-    id: Uuid,
-    project_id: Uuid,
-    status: &'a agentdash_domain::workflow::LifecycleRunStatus,
-    orchestration_count: usize,
-    active_node_refs: Vec<String>,
-    log_count: usize,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-    last_activity_at: chrono::DateTime<chrono::Utc>,
+    async fn read_agent_run_session_scope(
+        &self,
+        mount: &Mount,
+        segs: &[&str],
+    ) -> Result<String, MountError> {
+        let run_ctx = load_run_context(&self.lifecycle_run_repo, mount).await?;
+        let session_id = parse_runtime_session_id_from_metadata(mount)?;
+        let content = match segs {
+            [] | ["state"] => to_json_pretty(&agent_run_session_overview(&run_ctx.run, mount)?)
+                .map_err(map_journey_err)?,
+            ["execution-log"] => {
+                to_json_pretty(&run_ctx.run.execution_log).map_err(map_journey_err)?
+            }
+            ["session"] => self
+                .journey
+                .read_session_projection(&session_id, &["meta"])
+                .await
+                .map_err(map_journey_err)?,
+            ["session", rest @ ..] => self
+                .journey
+                .read_session_projection(&session_id, rest)
+                .await
+                .map_err(map_journey_err)?,
+            ["node"] | ["node", "state"] => {
+                let active = load_agent_run_node_context(&self.lifecycle_run_repo, mount).await?;
+                to_json_pretty(current_node(&active)?).map_err(map_journey_err)?
+            }
+            ["node", "artifacts"] => {
+                let scope = runtime_scope_from_mount(mount)?;
+                let map = self
+                    .journey
+                    .list_scoped_port_outputs(&scope)
+                    .await
+                    .map_err(map_journey_err)?;
+                to_json_pretty(&map).map_err(map_journey_err)?
+            }
+            ["node", "artifacts", port_key] => {
+                let artifact_ref = runtime_scope_from_mount(mount)?.port_ref(*port_key);
+                self.journey
+                    .read_scoped_port_output(&artifact_ref)
+                    .await
+                    .map_err(map_journey_err)?
+            }
+            ["node", "records"] => {
+                let active = load_agent_run_node_context(&self.lifecycle_run_repo, mount).await?;
+                self.journey
+                    .read_records_map(active.run.id, &records_prefix(&active.node_path))
+                    .await
+                    .map_err(map_journey_err)?
+            }
+            ["node", "records", rest @ ..] => {
+                let active = load_agent_run_node_context(&self.lifecycle_run_repo, mount).await?;
+                self.journey
+                    .read_record(active.run.id, &records_prefix(&active.node_path), rest)
+                    .await
+                    .map_err(map_journey_err)?
+            }
+            ["orchestration"] | ["orchestration", "state"] => {
+                let active = load_agent_run_node_context(&self.lifecycle_run_repo, mount).await?;
+                to_json_pretty(&active.orchestration).map_err(map_journey_err)?
+            }
+            _ => {
+                return Err(MountError::NotFound(format!(
+                    "agent_run_session lifecycle_vfs 不支持的路径: `{}`",
+                    segs.join("/")
+                )));
+            }
+        };
+        Ok(content)
+    }
+
+    async fn list_agent_run_session_scope(
+        &self,
+        mount: &Mount,
+        path_norm: &str,
+        options: &ListOptions,
+        segs: &[&str],
+    ) -> Result<Vec<RuntimeFileEntry>, MountError> {
+        let session_id = parse_runtime_session_id_from_metadata(mount)?;
+        let entries = match segs {
+            [] => agent_run_session_root_entries(lifecycle_mount_has_skills(mount), mount),
+            ["session"] => session_root_entries("session"),
+            ["session", "items"] => {
+                list_session_item_entries(
+                    &self.journey,
+                    &session_id,
+                    "session/items",
+                    SessionItemView::Items,
+                )
+                .await?
+            }
+            ["session", "messages"] => {
+                list_session_item_entries(
+                    &self.journey,
+                    &session_id,
+                    "session/messages",
+                    SessionItemView::Messages,
+                )
+                .await?
+            }
+            ["session", "tools"] => {
+                list_session_item_entries(
+                    &self.journey,
+                    &session_id,
+                    "session/tools",
+                    SessionItemView::Tools,
+                )
+                .await?
+            }
+            ["session", "writes"] => {
+                list_session_item_entries(
+                    &self.journey,
+                    &session_id,
+                    "session/writes",
+                    SessionItemView::Writes,
+                )
+                .await?
+            }
+            ["session", "summaries"] => {
+                list_session_summary_entries(&self.journey, &session_id, "session/summaries")
+                    .await?
+            }
+            ["node"] => {
+                require_node_scope(mount)?;
+                node_log_entries("node")
+            }
+            ["node", "artifacts"] => self
+                .journey
+                .list_scoped_port_outputs(&runtime_scope_from_mount(mount)?)
+                .await
+                .map_err(map_journey_err)?
+                .into_keys()
+                .map(|key| RuntimeFileEntry::file(format!("node/artifacts/{key}")).as_virtual())
+                .collect(),
+            ["node", "records"] => {
+                let active = load_agent_run_node_context(&self.lifecycle_run_repo, mount).await?;
+                let map = self
+                    .journey
+                    .records_map(active.run.id, &records_prefix(&active.node_path))
+                    .await
+                    .map_err(map_journey_err)?;
+                list_inline_entries(&map, "", options.pattern.as_deref(), options.recursive)
+                    .into_iter()
+                    .map(|mut entry| {
+                        entry.path = format!("node/records/{}", entry.path);
+                        entry
+                    })
+                    .collect()
+            }
+            ["orchestration"] => {
+                require_node_scope(mount)?;
+                vec![RuntimeFileEntry::file("orchestration/state").as_virtual()]
+            }
+            _ => Vec::new(),
+        };
+
+        let mut entries = entries;
+        if let Some(pattern) = options.pattern.as_deref().filter(|value| !value.is_empty()) {
+            entries.retain(|entry| entry.path.contains(pattern));
+        }
+        if !path_norm.is_empty() && options.recursive {
+            entries.retain(|entry| entry.path.starts_with(path_norm));
+        }
+        Ok(entries)
+    }
 }
 
 struct LifecycleMountContext {
@@ -77,6 +227,22 @@ struct LifecycleMountContext {
 
 struct LifecycleRunMountContext {
     run: LifecycleRun,
+}
+
+#[derive(Debug, Serialize)]
+struct AgentRunLifecycleSessionOverview {
+    run_id: Uuid,
+    agent_id: Uuid,
+    runtime_session_id: String,
+    launch_frame_id: Uuid,
+    orchestration_id: Option<Uuid>,
+    node_path: Option<String>,
+    attempt: Option<u32>,
+    run_status: agentdash_domain::workflow::LifecycleRunStatus,
+    execution_log_count: usize,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    last_activity_at: chrono::DateTime<chrono::Utc>,
 }
 
 fn map_domain_err(error: agentdash_domain::common::error::DomainError) -> MountError {
@@ -100,8 +266,29 @@ fn parse_uuid_metadata(mount: &Mount, key: &str) -> Result<Uuid, MountError> {
         .map_err(|error| MountError::OperationFailed(format!("mount metadata {key} 无效: {error}")))
 }
 
+fn parse_string_metadata(mount: &Mount, key: &str) -> Result<String, MountError> {
+    mount
+        .metadata
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| MountError::OperationFailed(format!("mount metadata 缺少 {key}")))
+}
+
 fn parse_run_id_from_metadata(mount: &Mount) -> Result<Uuid, MountError> {
     parse_uuid_metadata(mount, "run_id")
+}
+
+fn parse_agent_id_from_metadata(mount: &Mount) -> Result<Uuid, MountError> {
+    parse_uuid_metadata(mount, "agent_id")
+}
+
+fn parse_launch_frame_id_from_metadata(mount: &Mount) -> Result<Uuid, MountError> {
+    parse_uuid_metadata(mount, "launch_frame_id")
+}
+
+fn parse_runtime_session_id_from_metadata(mount: &Mount) -> Result<String, MountError> {
+    parse_string_metadata(mount, "runtime_session_id")
 }
 
 fn parse_orchestration_id_from_metadata(mount: &Mount) -> Result<Uuid, MountError> {
@@ -130,6 +317,28 @@ fn mount_has_node_scope(mount: &Mount) -> bool {
     mount.metadata.get("orchestration_id").is_some()
         && mount.metadata.get("node_path").is_some()
         && mount.metadata.get("attempt").is_some()
+}
+
+fn mount_scope(mount: &Mount) -> Option<&str> {
+    mount.metadata.get("scope").and_then(|value| value.as_str())
+}
+
+fn mount_is_agent_run_session_scope(mount: &Mount) -> bool {
+    mount_scope(mount) == Some("agent_run_session")
+}
+
+fn mount_is_node_runtime_scope(mount: &Mount) -> bool {
+    mount_scope(mount) == Some("node_runtime")
+}
+
+fn require_node_scope(mount: &Mount) -> Result<(), MountError> {
+    if mount_has_node_scope(mount) {
+        Ok(())
+    } else {
+        Err(MountError::NotFound(
+            "当前 lifecycle_vfs mount 没有 orchestration node anchor".to_string(),
+        ))
+    }
 }
 
 fn runtime_scope_from_mount(mount: &Mount) -> Result<RuntimeNodeArtifactScope, MountError> {
@@ -181,6 +390,14 @@ async fn load_active_context(
     })
 }
 
+async fn load_agent_run_node_context(
+    run_repo: &Arc<dyn LifecycleRunRepository>,
+    mount: &Mount,
+) -> Result<LifecycleMountContext, MountError> {
+    require_node_scope(mount)?;
+    load_active_context(run_repo, mount).await
+}
+
 fn segments_from_path(path: &str) -> Vec<&str> {
     if path.is_empty() {
         Vec::new()
@@ -208,76 +425,6 @@ fn all_nodes(orchestration: &OrchestrationInstance) -> Vec<&RuntimeNodeState> {
     nodes
 }
 
-fn find_orchestration(
-    run: &LifecycleRun,
-    orchestration_id: Uuid,
-) -> Result<&OrchestrationInstance, MountError> {
-    run.orchestrations
-        .iter()
-        .find(|item| item.orchestration_id == orchestration_id)
-        .ok_or_else(|| MountError::NotFound(format!("orchestration 不存在: {orchestration_id}")))
-}
-
-fn active_orchestration(run: &LifecycleRun) -> Result<&OrchestrationInstance, MountError> {
-    run.orchestrations
-        .iter()
-        .find(|orchestration| {
-            matches!(
-                orchestration.status,
-                agentdash_domain::workflow::OrchestrationStatus::Running
-                    | agentdash_domain::workflow::OrchestrationStatus::Paused
-                    | agentdash_domain::workflow::OrchestrationStatus::Pending
-            )
-        })
-        .or_else(|| run.orchestrations.last())
-        .ok_or_else(|| MountError::NotFound("lifecycle run 没有 orchestration".to_string()))
-}
-
-fn active_node(orchestration: &OrchestrationInstance) -> Option<&RuntimeNodeState> {
-    all_nodes(orchestration)
-        .into_iter()
-        .find(|node| {
-            matches!(
-                node.status,
-                RuntimeNodeStatus::Ready
-                    | RuntimeNodeStatus::Claiming
-                    | RuntimeNodeStatus::Running
-                    | RuntimeNodeStatus::Blocked
-            )
-        })
-        .or_else(|| all_nodes(orchestration).into_iter().last())
-}
-
-fn active_context_from_run(run: LifecycleRun) -> Result<LifecycleMountContext, MountError> {
-    let orchestration = active_orchestration(&run)?.clone();
-    let node = active_node(&orchestration).ok_or_else(|| {
-        MountError::NotFound("active orchestration 没有 runtime node".to_string())
-    })?;
-    let node_path = node.node_path.clone();
-    let attempt = node.attempt;
-    Ok(LifecycleMountContext {
-        run,
-        orchestration,
-        node_path,
-        attempt,
-    })
-}
-
-async fn load_active_or_run_context(
-    run_repo: &Arc<dyn LifecycleRunRepository>,
-    mount: &Mount,
-) -> Result<LifecycleMountContext, MountError> {
-    if mount_has_node_scope(mount) {
-        return load_active_context(run_repo, mount).await;
-    }
-    let run_ctx = load_run_context(run_repo, mount).await?;
-    active_context_from_run(run_ctx.run)
-}
-
-fn decode_node_key(value: &str) -> Result<String, MountError> {
-    decode_node_path_segment(value).map_err(MountError::OperationFailed)
-}
-
 fn find_node<'a>(
     orchestration: &'a OrchestrationInstance,
     node_path: &str,
@@ -289,14 +436,6 @@ fn find_node<'a>(
             node.node_path == node_path && attempt.is_none_or(|value| node.attempt == value)
         })
         .ok_or_else(|| MountError::NotFound(format!("runtime node 不存在: {node_path}")))
-}
-
-fn find_node_by_segment<'a>(
-    orchestration: &'a OrchestrationInstance,
-    node_key: &str,
-) -> Result<&'a RuntimeNodeState, MountError> {
-    let node_path = decode_node_key(node_key)?;
-    find_node(orchestration, &node_path, None)
 }
 
 fn current_node(ctx: &LifecycleMountContext) -> Result<&RuntimeNodeState, MountError> {
@@ -315,108 +454,45 @@ fn session_id_for_node(node: &RuntimeNodeState) -> Result<String, MountError> {
         .ok_or_else(|| MountError::NotFound(format!("node `{}` 没有关联 session", node.node_path)))
 }
 
-fn run_overview(run: &LifecycleRun) -> LifecycleRunOverview<'_> {
-    let active_node_refs = run
-        .orchestrations
-        .iter()
-        .flat_map(|orchestration| {
-            all_nodes(orchestration)
-                .into_iter()
-                .filter(|node| {
-                    matches!(
-                        node.status,
-                        RuntimeNodeStatus::Ready
-                            | RuntimeNodeStatus::Claiming
-                            | RuntimeNodeStatus::Running
-                            | RuntimeNodeStatus::Blocked
-                    )
-                })
-                .map(move |node| {
-                    format!(
-                        "{}:{}#{}:{:?}",
-                        orchestration.orchestration_id, node.node_path, node.attempt, node.status
-                    )
-                })
-        })
-        .collect();
-    LifecycleRunOverview {
-        id: run.id,
-        project_id: run.project_id,
-        status: &run.status,
-        orchestration_count: run.orchestrations.len(),
-        active_node_refs,
-        log_count: run.execution_log.len(),
+fn agent_run_session_overview(
+    run: &LifecycleRun,
+    mount: &Mount,
+) -> Result<AgentRunLifecycleSessionOverview, MountError> {
+    Ok(AgentRunLifecycleSessionOverview {
+        run_id: run.id,
+        agent_id: parse_agent_id_from_metadata(mount)?,
+        runtime_session_id: parse_runtime_session_id_from_metadata(mount)?,
+        launch_frame_id: parse_launch_frame_id_from_metadata(mount)?,
+        orchestration_id: mount_has_node_scope(mount)
+            .then(|| parse_orchestration_id_from_metadata(mount))
+            .transpose()?,
+        node_path: mount_has_node_scope(mount)
+            .then(|| parse_node_path_from_metadata(mount))
+            .transpose()?,
+        attempt: mount_has_node_scope(mount)
+            .then(|| parse_attempt_from_metadata(mount))
+            .transpose()?,
+        run_status: run.status,
+        execution_log_count: run.execution_log.len(),
         created_at: run.created_at,
         updated_at: run.updated_at,
         last_activity_at: run.last_activity_at,
-    }
-}
-
-fn same_source_family(left: &OrchestrationSourceRef, right: &OrchestrationSourceRef) -> bool {
-    match (left, right) {
-        (
-            OrchestrationSourceRef::WorkflowGraph { graph_id: left, .. },
-            OrchestrationSourceRef::WorkflowGraph {
-                graph_id: right, ..
-            },
-        ) => left == right,
-        (
-            OrchestrationSourceRef::RunScriptArtifact {
-                artifact_id: left, ..
-            },
-            OrchestrationSourceRef::RunScriptArtifact {
-                artifact_id: right, ..
-            },
-        ) => left == right,
-        (
-            OrchestrationSourceRef::WorkflowScript {
-                script_id: left, ..
-            },
-            OrchestrationSourceRef::WorkflowScript {
-                script_id: right, ..
-            },
-        ) => left == right,
-        (
-            OrchestrationSourceRef::Inline {
-                source_digest: left,
-            },
-            OrchestrationSourceRef::Inline {
-                source_digest: right,
-            },
-        ) => left == right,
-        _ => false,
-    }
-}
-
-fn run_has_source_family(run: &LifecycleRun, source_ref: &OrchestrationSourceRef) -> bool {
-    run.orchestrations
-        .iter()
-        .any(|orchestration| same_source_family(&orchestration.source_ref, source_ref))
+    })
 }
 
 fn records_prefix(node_path: &str) -> String {
     encode_node_path_segment(node_path)
 }
 
-fn lifecycle_root_entries_for_scope(
-    include_skills: bool,
-    node_scoped: bool,
-    run: &LifecycleRun,
-) -> Vec<RuntimeFileEntry> {
-    if node_scoped {
-        return lifecycle_root_entries(include_skills);
-    }
+fn agent_run_session_root_entries(include_skills: bool, mount: &Mount) -> Vec<RuntimeFileEntry> {
     let mut entries = vec![
         RuntimeFileEntry::file("state").as_virtual(),
-        RuntimeFileEntry::file("context").as_virtual(),
-        RuntimeFileEntry::dir("orchestrations").as_virtual(),
-        RuntimeFileEntry::dir("runs").as_virtual(),
+        RuntimeFileEntry::dir("session").as_virtual(),
+        RuntimeFileEntry::file("execution-log").as_virtual(),
     ];
-    if !run.orchestrations.is_empty() {
-        entries.push(RuntimeFileEntry::dir("active").as_virtual());
-    }
-    if run.orchestrations.len() == 1 {
-        entries.push(RuntimeFileEntry::dir("nodes").as_virtual());
+    if mount_has_node_scope(mount) {
+        entries.push(RuntimeFileEntry::dir("node").as_virtual());
+        entries.push(RuntimeFileEntry::dir("orchestration").as_virtual());
     }
     if include_skills {
         entries.push(RuntimeFileEntry::dir("skills").as_virtual());
@@ -424,46 +500,12 @@ fn lifecycle_root_entries_for_scope(
     entries
 }
 
-fn orchestration_entries(run: &LifecycleRun) -> Vec<RuntimeFileEntry> {
-    run.orchestrations
-        .iter()
-        .map(|orchestration| {
-            RuntimeFileEntry::dir(format!("orchestrations/{}", orchestration.orchestration_id))
-                .as_virtual()
-        })
-        .collect()
-}
-
-fn orchestration_root_entries(orchestration_id: Uuid) -> Vec<RuntimeFileEntry> {
+fn node_log_entries(prefix: &str) -> Vec<RuntimeFileEntry> {
     vec![
-        RuntimeFileEntry::file(format!("orchestrations/{orchestration_id}/state")).as_virtual(),
-        RuntimeFileEntry::dir(format!("orchestrations/{orchestration_id}/nodes")).as_virtual(),
-        RuntimeFileEntry::file(format!("orchestrations/{orchestration_id}/log")).as_virtual(),
-    ]
-}
-
-fn node_root_entries(prefix: &str, node: &RuntimeNodeState) -> Vec<RuntimeFileEntry> {
-    let mut entries = vec![
         RuntimeFileEntry::file(format!("{prefix}/state")).as_virtual(),
-        RuntimeFileEntry::dir(format!("{prefix}/records")),
-    ];
-    if node_session_id(node).is_some() {
-        entries.push(RuntimeFileEntry::dir(format!("{prefix}/session")).as_virtual());
-    }
-    entries
-}
-
-fn node_entries(prefix: &str, orchestration: &OrchestrationInstance) -> Vec<RuntimeFileEntry> {
-    all_nodes(orchestration)
-        .into_iter()
-        .map(|node| {
-            RuntimeFileEntry::dir(format!(
-                "{prefix}/{}",
-                encode_node_path_segment(&node.node_path)
-            ))
-            .as_virtual()
-        })
-        .collect()
+        RuntimeFileEntry::dir(format!("{prefix}/artifacts")).as_virtual(),
+        RuntimeFileEntry::dir(format!("{prefix}/records")).as_virtual(),
+    ]
 }
 
 fn session_root_entries(prefix: &str) -> Vec<RuntimeFileEntry> {
@@ -503,157 +545,40 @@ impl MountProvider for LifecycleMountProvider {
                 .await;
         }
 
-        let run_ctx = load_run_context(&self.lifecycle_run_repo, mount).await?;
-        let node_scoped = mount_has_node_scope(mount);
+        if mount_is_agent_run_session_scope(mount) {
+            let content = self.read_agent_run_session_scope(mount, &segs).await?;
+            return Ok(ReadResult::new(path_norm, content));
+        }
+
+        if !mount_is_node_runtime_scope(mount) || !mount_has_node_scope(mount) {
+            return Err(MountError::NotSupported(
+                "lifecycle_vfs 只支持 agent_run_session 只读资源面或 node_runtime 执行期 mount"
+                    .to_string(),
+            ));
+        }
         let content = match segs.as_slice() {
-            [] => to_json_pretty(&run_overview(&run_ctx.run)).map_err(map_journey_err)?,
-            ["state"] if !node_scoped => {
-                to_json_pretty(&run_overview(&run_ctx.run)).map_err(map_journey_err)?
+            [] | ["state"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                to_json_pretty(current_node(&active)?).map_err(map_journey_err)?
             }
-            ["context"] => to_json_pretty(&run_ctx.run.context).map_err(map_journey_err)?,
-            ["orchestrations"] => {
-                to_json_pretty(&run_ctx.run.orchestrations).map_err(map_journey_err)?
+            ["session"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                let session_id = session_id_for_node(current_node(&active)?)?;
+                self.journey
+                    .read_session_projection(&session_id, &["meta"])
+                    .await
+                    .map_err(map_journey_err)?
             }
-            ["orchestrations", orchestration_id]
-            | ["orchestrations", orchestration_id, "state"] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                to_json_pretty(orchestration).map_err(map_journey_err)?
-            }
-            ["orchestrations", orchestration_id, "nodes"] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let nodes = all_nodes(orchestration);
-                to_json_pretty(&nodes).map_err(map_journey_err)?
-            }
-            ["orchestrations", orchestration_id, "nodes", node_key]
-            | [
-                "orchestrations",
-                orchestration_id,
-                "nodes",
-                node_key,
-                "state",
-            ] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                to_json_pretty(node).map_err(map_journey_err)?
-            }
-            [
-                "orchestrations",
-                orchestration_id,
-                "nodes",
-                node_key,
-                "session",
-                rest @ ..,
-            ] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                let session_id = session_id_for_node(node)?;
+            ["session", rest @ ..] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                let session_id = session_id_for_node(current_node(&active)?)?;
                 self.journey
                     .read_session_projection(&session_id, rest)
                     .await
                     .map_err(map_journey_err)?
             }
-            [
-                "orchestrations",
-                orchestration_id,
-                "nodes",
-                node_key,
-                "records",
-            ] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                self.journey
-                    .read_records_map(run_ctx.run.id, &records_prefix(&node.node_path))
-                    .await
-                    .map_err(map_journey_err)?
-            }
-            [
-                "orchestrations",
-                orchestration_id,
-                "nodes",
-                node_key,
-                "records",
-                rest @ ..,
-            ] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                self.journey
-                    .read_record(run_ctx.run.id, &records_prefix(&node.node_path), rest)
-                    .await
-                    .map_err(map_journey_err)?
-            }
-            ["orchestrations", orchestration_id, "log"] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                find_orchestration(&run_ctx.run, orchestration_id)?;
-                to_json_pretty(&run_ctx.run.execution_log).map_err(map_journey_err)?
-            }
-            ["runs"] => {
-                let source_ref = if node_scoped {
-                    Some(
-                        load_active_context(&self.lifecycle_run_repo, mount)
-                            .await?
-                            .orchestration
-                            .source_ref,
-                    )
-                } else {
-                    None
-                };
-                let runs = self
-                    .lifecycle_run_repo
-                    .list_by_project(run_ctx.run.project_id)
-                    .await
-                    .map_err(map_domain_err)?;
-                let summaries = runs
-                    .iter()
-                    .filter(|run| {
-                        source_ref
-                            .as_ref()
-                            .is_none_or(|source| run_has_source_family(run, source))
-                    })
-                    .map(run_overview)
-                    .collect::<Vec<_>>();
-                to_json_pretty(&summaries).map_err(map_journey_err)?
-            }
-            ["runs", id_str] => {
-                let run_id = Uuid::parse_str(id_str).map_err(|error| {
-                    MountError::OperationFailed(format!("run id 无效: {error}"))
-                })?;
-                let run = self
-                    .lifecycle_run_repo
-                    .get_by_id(run_id)
-                    .await
-                    .map_err(map_domain_err)?
-                    .ok_or_else(|| MountError::NotFound(format!("run 不存在: {run_id}")))?;
-                to_json_pretty(&run_overview(&run)).map_err(map_journey_err)?
-            }
-            ["artifacts"] | ["active", "artifacts"] => {
-                let scope = load_active_or_run_context(&self.lifecycle_run_repo, mount)
-                    .await
-                    .map(|active| RuntimeNodeArtifactScope {
-                        run_id: active.run.id,
-                        orchestration_id: active.orchestration.orchestration_id,
-                        node_path: active.node_path,
-                        attempt: active.attempt,
-                    })?;
+            ["artifacts"] => {
+                let scope = runtime_scope_from_mount(mount)?;
                 let map = self
                     .journey
                     .list_scoped_port_outputs(&scope)
@@ -661,87 +586,31 @@ impl MountProvider for LifecycleMountProvider {
                     .map_err(map_journey_err)?;
                 to_json_pretty(&map).map_err(map_journey_err)?
             }
-            ["artifacts", port_key] | ["active", "artifacts", port_key] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                let artifact_ref = RuntimeNodeArtifactScope {
-                    run_id: active.run.id,
-                    orchestration_id: active.orchestration.orchestration_id,
-                    node_path: active.node_path,
-                    attempt: active.attempt,
-                }
-                .port_ref(*port_key);
+            ["artifacts", port_key] => {
+                let artifact_ref = runtime_scope_from_mount(mount)?.port_ref(*port_key);
                 self.journey
                     .read_scoped_port_output(&artifact_ref)
                     .await
                     .map_err(map_journey_err)?
             }
+            ["records"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                self.journey
+                    .read_records_map(active.run.id, &records_prefix(&active.node_path))
+                    .await
+                    .map_err(map_journey_err)?
+            }
+            ["records", rest @ ..] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                self.journey
+                    .read_record(active.run.id, &records_prefix(&active.node_path), rest)
+                    .await
+                    .map_err(map_journey_err)?
+            }
             _ => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                let run_id = active.run.id;
-                match segs.as_slice() {
-                    [] | ["active"] => {
-                        to_json_pretty(&run_overview(&active.run)).map_err(map_journey_err)?
-                    }
-                    ["active", "steps"] => {
-                        let nodes = all_nodes(&active.orchestration);
-                        to_json_pretty(&nodes).map_err(map_journey_err)?
-                    }
-                    ["active", "steps", key] | ["nodes", key, "state"] => {
-                        let node = find_node_by_segment(&active.orchestration, key)?;
-                        to_json_pretty(node).map_err(map_journey_err)?
-                    }
-                    ["active", "log"] => {
-                        to_json_pretty(&active.run.execution_log).map_err(map_journey_err)?
-                    }
-                    ["state"] => {
-                        let node = current_node(&active)?;
-                        to_json_pretty(node).map_err(map_journey_err)?
-                    }
-                    ["session", rest @ ..] => {
-                        let session_id = session_id_for_node(current_node(&active)?)?;
-                        self.journey
-                            .read_session_projection(&session_id, rest)
-                            .await
-                            .map_err(map_journey_err)?
-                    }
-                    ["records"] => self
-                        .journey
-                        .read_records_map(run_id, &records_prefix(&active.node_path))
-                        .await
-                        .map_err(map_journey_err)?,
-                    ["records", rest @ ..] => self
-                        .journey
-                        .read_record(run_id, &records_prefix(&active.node_path), rest)
-                        .await
-                        .map_err(map_journey_err)?,
-                    ["nodes", key, "records"] => {
-                        let node = find_node_by_segment(&active.orchestration, key)?;
-                        self.journey
-                            .read_records_map(run_id, &records_prefix(&node.node_path))
-                            .await
-                            .map_err(map_journey_err)?
-                    }
-                    ["nodes", key, "records", rest @ ..] => {
-                        let node = find_node_by_segment(&active.orchestration, key)?;
-                        self.journey
-                            .read_record(run_id, &records_prefix(&node.node_path), rest)
-                            .await
-                            .map_err(map_journey_err)?
-                    }
-                    ["nodes", key, "session", rest @ ..] => {
-                        let node = find_node_by_segment(&active.orchestration, key)?;
-                        let session_id = session_id_for_node(node)?;
-                        self.journey
-                            .read_session_projection(&session_id, rest)
-                            .await
-                            .map_err(map_journey_err)?
-                    }
-                    _ => {
-                        return Err(MountError::NotFound(format!(
-                            "lifecycle_vfs 不支持的路径: `{path_norm}`"
-                        )));
-                    }
-                }
+                return Err(MountError::NotFound(format!(
+                    "lifecycle_vfs 不支持的路径: `{path_norm}`"
+                )));
             }
         };
 
@@ -758,15 +627,19 @@ impl MountProvider for LifecycleMountProvider {
         let path_norm =
             normalize_mount_relative_path(path, true).map_err(MountError::OperationFailed)?;
         let segs = segments_from_path(&path_norm);
-        if !mount_has_node_scope(mount) {
+        if mount_is_agent_run_session_scope(mount) {
             return Err(MountError::NotSupported(
-                "run-scoped lifecycle_vfs 只支持只读浏览；写入需要 node-scoped runtime mount"
-                    .to_string(),
+                "agent_run_session lifecycle_vfs 是只读执行证据面".to_string(),
+            ));
+        }
+        if !mount_is_node_runtime_scope(mount) || !mount_has_node_scope(mount) {
+            return Err(MountError::NotSupported(
+                "lifecycle_vfs 写入只支持 node_runtime 执行期 mount".to_string(),
             ));
         }
 
         match segs.as_slice() {
-            ["artifacts", port_key] | ["active", "artifacts", port_key] => {
+            ["artifacts", port_key] => {
                 let allowed_keys = mount
                     .metadata
                     .get("writable_port_keys")
@@ -814,45 +687,6 @@ impl MountProvider for LifecycleMountProvider {
                     .map_err(map_journey_err)?;
                 Ok(())
             }
-            ["nodes", key, "records", rest @ ..] => {
-                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
-                let node = find_node_by_segment(&active.orchestration, key)?;
-                self.journey
-                    .write_record(
-                        active.run.id,
-                        &records_prefix(&node.node_path),
-                        rest,
-                        content,
-                    )
-                    .await
-                    .map_err(map_journey_err)?;
-                Ok(())
-            }
-            [
-                "orchestrations",
-                orchestration_id,
-                "nodes",
-                node_key,
-                "records",
-                rest @ ..,
-            ] => {
-                let run_ctx = load_run_context(&self.lifecycle_run_repo, mount).await?;
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                self.journey
-                    .write_record(
-                        run_ctx.run.id,
-                        &records_prefix(&node.node_path),
-                        rest,
-                        content,
-                    )
-                    .await
-                    .map_err(map_journey_err)?;
-                Ok(())
-            }
             _ => Err(MountError::NotSupported(format!(
                 "lifecycle_vfs 不支持写入路径: `{path_norm}`"
             ))),
@@ -872,244 +706,31 @@ impl MountProvider for LifecycleMountProvider {
                 .await;
         }
         let segs = segments_from_path(&path_norm);
-        let node_scoped = mount_has_node_scope(mount);
-        let run_ctx = load_run_context(&self.lifecycle_run_repo, mount).await?;
+        if mount_is_agent_run_session_scope(mount) {
+            return Ok(ListResult {
+                entries: self
+                    .list_agent_run_session_scope(mount, &path_norm, options, &segs)
+                    .await?,
+            });
+        }
+        if !mount_is_node_runtime_scope(mount) || !mount_has_node_scope(mount) {
+            return Err(MountError::NotSupported(
+                "lifecycle_vfs 只支持 agent_run_session 只读资源面或 node_runtime 执行期 mount"
+                    .to_string(),
+            ));
+        }
         let mut entries = match segs.as_slice() {
-            [] => lifecycle_root_entries_for_scope(
-                lifecycle_mount_has_skills(mount),
-                node_scoped,
-                &run_ctx.run,
-            ),
-            ["orchestrations"] => orchestration_entries(&run_ctx.run),
-            ["orchestrations", orchestration_id] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                find_orchestration(&run_ctx.run, orchestration_id)?;
-                orchestration_root_entries(orchestration_id)
-            }
-            ["orchestrations", orchestration_id, "nodes"] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                node_entries(
-                    &format!("orchestrations/{orchestration_id}/nodes"),
-                    orchestration,
-                )
-            }
-            ["orchestrations", orchestration_id, "nodes", node_key] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                node_root_entries(
-                    &format!("orchestrations/{orchestration_id}/nodes/{node_key}"),
-                    node,
-                )
-            }
-            [
-                "orchestrations",
-                orchestration_id,
-                "nodes",
-                node_key,
-                "session",
-            ] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                session_id_for_node(node)?;
-                session_root_entries(&format!(
-                    "orchestrations/{orchestration_id}/nodes/{node_key}/session"
-                ))
-            }
-            [
-                "orchestrations",
-                orchestration_id,
-                "nodes",
-                node_key,
-                "records",
-            ] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                let map = self
-                    .journey
-                    .records_map(run_ctx.run.id, &records_prefix(&node.node_path))
-                    .await
-                    .map_err(map_journey_err)?;
-                let prefix = format!("orchestrations/{orchestration_id}/nodes/{node_key}/records");
-                list_inline_entries(&map, "", options.pattern.as_deref(), options.recursive)
-                    .into_iter()
-                    .map(|mut entry| {
-                        entry.path = format!("{prefix}/{}", entry.path);
-                        entry
-                    })
-                    .collect()
-            }
-            [
-                "orchestrations",
-                orchestration_id,
-                "nodes",
-                node_key,
-                "session",
-                "items",
-            ] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                list_session_item_entries(
-                    &self.journey,
-                    &session_id_for_node(node)?,
-                    &format!("orchestrations/{orchestration_id}/nodes/{node_key}/session/items"),
-                    SessionItemView::Items,
-                )
-                .await?
-            }
-            [
-                "orchestrations",
-                orchestration_id,
-                "nodes",
-                node_key,
-                "session",
-                "messages",
-            ] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                list_session_item_entries(
-                    &self.journey,
-                    &session_id_for_node(node)?,
-                    &format!("orchestrations/{orchestration_id}/nodes/{node_key}/session/messages"),
-                    SessionItemView::Messages,
-                )
-                .await?
-            }
-            [
-                "orchestrations",
-                orchestration_id,
-                "nodes",
-                node_key,
-                "session",
-                "tools",
-            ] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                list_session_item_entries(
-                    &self.journey,
-                    &session_id_for_node(node)?,
-                    &format!("orchestrations/{orchestration_id}/nodes/{node_key}/session/tools"),
-                    SessionItemView::Tools,
-                )
-                .await?
-            }
-            [
-                "orchestrations",
-                orchestration_id,
-                "nodes",
-                node_key,
-                "session",
-                "writes",
-            ] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                list_session_item_entries(
-                    &self.journey,
-                    &session_id_for_node(node)?,
-                    &format!("orchestrations/{orchestration_id}/nodes/{node_key}/session/writes"),
-                    SessionItemView::Writes,
-                )
-                .await?
-            }
-            [
-                "orchestrations",
-                orchestration_id,
-                "nodes",
-                node_key,
-                "session",
-                "summaries",
-            ] => {
-                let orchestration_id = Uuid::parse_str(orchestration_id).map_err(|error| {
-                    MountError::OperationFailed(format!("orchestration id 无效: {error}"))
-                })?;
-                let orchestration = find_orchestration(&run_ctx.run, orchestration_id)?;
-                let node = find_node_by_segment(orchestration, node_key)?;
-                list_session_summary_entries(
-                    &self.journey,
-                    &session_id_for_node(node)?,
-                    &format!(
-                        "orchestrations/{orchestration_id}/nodes/{node_key}/session/summaries"
-                    ),
-                )
-                .await?
-            }
-            ["runs"] => self
-                .lifecycle_run_repo
-                .list_by_project(run_ctx.run.project_id)
+            [] => lifecycle_root_entries(lifecycle_mount_has_skills(mount)),
+            ["artifacts"] => self
+                .journey
+                .list_scoped_port_outputs(&runtime_scope_from_mount(mount)?)
                 .await
-                .map_err(map_domain_err)?
-                .into_iter()
-                .map(|run| RuntimeFileEntry::file(format!("runs/{}", run.id)).as_virtual())
+                .map_err(map_journey_err)?
+                .into_keys()
+                .map(|key| RuntimeFileEntry::file(format!("{path_norm}/{key}")).as_virtual())
                 .collect(),
-            ["active"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                lifecycle_active_entries(active.run.execution_log.len() as u64)
-            }
-            ["active", "steps"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                all_nodes(&active.orchestration)
-                    .into_iter()
-                    .map(|node| {
-                        RuntimeFileEntry::file(format!(
-                            "active/steps/{}",
-                            encode_node_path_segment(&node.node_path)
-                        ))
-                        .as_virtual()
-                    })
-                    .collect()
-            }
-            ["nodes"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                node_entries("nodes", &active.orchestration)
-            }
-            ["nodes", node_key] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                let node = find_node_by_segment(&active.orchestration, node_key)?;
-                node_root_entries(&format!("nodes/{node_key}"), node)
-            }
-            ["artifacts"] | ["active", "artifacts"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                let scope = RuntimeNodeArtifactScope {
-                    run_id: active.run.id,
-                    orchestration_id: active.orchestration.orchestration_id,
-                    node_path: active.node_path,
-                    attempt: active.attempt,
-                };
-                self.journey
-                    .list_scoped_port_outputs(&scope)
-                    .await
-                    .map_err(map_journey_err)?
-                    .into_keys()
-                    .map(|key| RuntimeFileEntry::file(format!("{path_norm}/{key}")).as_virtual())
-                    .collect()
-            }
             ["records"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 let map = self
                     .journey
                     .records_map(active.run.id, &records_prefix(&active.node_path))
@@ -1123,36 +744,13 @@ impl MountProvider for LifecycleMountProvider {
                     })
                     .collect()
             }
-            ["nodes", node_key, "records"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                let node = find_node_by_segment(&active.orchestration, node_key)?;
-                let map = self
-                    .journey
-                    .records_map(active.run.id, &records_prefix(&node.node_path))
-                    .await
-                    .map_err(map_journey_err)?;
-                let prefix = format!("nodes/{node_key}/records");
-                list_inline_entries(&map, "", options.pattern.as_deref(), options.recursive)
-                    .into_iter()
-                    .map(|mut entry| {
-                        entry.path = format!("{prefix}/{}", entry.path);
-                        entry
-                    })
-                    .collect()
-            }
             ["session"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 session_id_for_node(current_node(&active)?)?;
                 session_root_entries("session")
             }
-            ["nodes", node_key, "session"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                let node = find_node_by_segment(&active.orchestration, node_key)?;
-                session_id_for_node(node)?;
-                session_root_entries(&format!("nodes/{node_key}/session"))
-            }
             ["session", "items"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id_for_node(current_node(&active)?)?,
@@ -1162,7 +760,7 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["session", "messages"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id_for_node(current_node(&active)?)?,
@@ -1172,7 +770,7 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["session", "tools"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id_for_node(current_node(&active)?)?,
@@ -1182,7 +780,7 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["session", "writes"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 list_session_item_entries(
                     &self.journey,
                     &session_id_for_node(current_node(&active)?)?,
@@ -1192,65 +790,11 @@ impl MountProvider for LifecycleMountProvider {
                 .await?
             }
             ["session", "summaries"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 list_session_summary_entries(
                     &self.journey,
                     &session_id_for_node(current_node(&active)?)?,
                     "session/summaries",
-                )
-                .await?
-            }
-            ["nodes", node_key, "session", "items"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                let node = find_node_by_segment(&active.orchestration, node_key)?;
-                list_session_item_entries(
-                    &self.journey,
-                    &session_id_for_node(node)?,
-                    &format!("nodes/{node_key}/session/items"),
-                    SessionItemView::Items,
-                )
-                .await?
-            }
-            ["nodes", node_key, "session", "messages"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                let node = find_node_by_segment(&active.orchestration, node_key)?;
-                list_session_item_entries(
-                    &self.journey,
-                    &session_id_for_node(node)?,
-                    &format!("nodes/{node_key}/session/messages"),
-                    SessionItemView::Messages,
-                )
-                .await?
-            }
-            ["nodes", node_key, "session", "tools"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                let node = find_node_by_segment(&active.orchestration, node_key)?;
-                list_session_item_entries(
-                    &self.journey,
-                    &session_id_for_node(node)?,
-                    &format!("nodes/{node_key}/session/tools"),
-                    SessionItemView::Tools,
-                )
-                .await?
-            }
-            ["nodes", node_key, "session", "writes"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                let node = find_node_by_segment(&active.orchestration, node_key)?;
-                list_session_item_entries(
-                    &self.journey,
-                    &session_id_for_node(node)?,
-                    &format!("nodes/{node_key}/session/writes"),
-                    SessionItemView::Writes,
-                )
-                .await?
-            }
-            ["nodes", node_key, "session", "summaries"] => {
-                let active = load_active_or_run_context(&self.lifecycle_run_repo, mount).await?;
-                let node = find_node_by_segment(&active.orchestration, node_key)?;
-                list_session_summary_entries(
-                    &self.journey,
-                    &session_id_for_node(node)?,
-                    &format!("nodes/{node_key}/session/summaries"),
                 )
                 .await?
             }
@@ -1383,7 +927,9 @@ mod tests {
 
     use super::*;
     use crate::session::MemorySessionPersistence;
-    use crate::vfs::build_lifecycle_run_mount;
+    use crate::vfs::{
+        build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope,
+    };
 
     #[derive(Default)]
     struct RunRepo {
@@ -1573,8 +1119,61 @@ mod tests {
         }
     }
 
-    fn provider_for_run(run: LifecycleRun) -> (LifecycleMountProvider, Mount) {
-        let mount = build_lifecycle_run_mount(run.id);
+    fn provider_for_agent_run_session(run: LifecycleRun) -> (LifecycleMountProvider, Mount) {
+        let mount = build_agent_run_session_lifecycle_mount(
+            run.id,
+            Uuid::new_v4(),
+            "session-1",
+            Uuid::new_v4(),
+            None,
+            None,
+            None,
+        );
+        let provider = LifecycleMountProvider::new(
+            Arc::new(RunRepo::with_run(run)),
+            Arc::new(EmptyInlineRepo),
+            Arc::new(EmptySkillRepo),
+            Arc::new(MemorySessionPersistence::default()),
+        );
+        (provider, mount)
+    }
+
+    fn provider_for_agent_run_node_session(
+        run: LifecycleRun,
+        orchestration_id: Uuid,
+        node_path: &str,
+    ) -> (LifecycleMountProvider, Mount) {
+        let mount = build_agent_run_session_lifecycle_mount(
+            run.id,
+            Uuid::new_v4(),
+            "session-1",
+            Uuid::new_v4(),
+            Some(orchestration_id),
+            Some(node_path),
+            Some(1),
+        );
+        let provider = LifecycleMountProvider::new(
+            Arc::new(RunRepo::with_run(run)),
+            Arc::new(EmptyInlineRepo),
+            Arc::new(EmptySkillRepo),
+            Arc::new(MemorySessionPersistence::default()),
+        );
+        (provider, mount)
+    }
+
+    fn provider_for_node_runtime(
+        run: LifecycleRun,
+        orchestration_id: Uuid,
+        node_path: &str,
+    ) -> (LifecycleMountProvider, Mount) {
+        let mount = build_lifecycle_mount_with_node_scope(
+            run.id,
+            orchestration_id,
+            node_path,
+            "test-lifecycle",
+            &["report".to_string()],
+            Some(1),
+        );
         let provider = LifecycleMountProvider::new(
             Arc::new(RunRepo::with_run(run)),
             Arc::new(EmptyInlineRepo),
@@ -1618,7 +1217,7 @@ mod tests {
         }
     }
 
-    fn run_with_orchestration() -> (LifecycleRun, Uuid, String) {
+    fn run_with_orchestration() -> (LifecycleRun, Uuid) {
         let project_id = Uuid::new_v4();
         let source_ref = OrchestrationSourceRef::Inline {
             source_digest: "test".to_string(),
@@ -1655,13 +1254,13 @@ mod tests {
         let orchestration_id = orchestration.orchestration_id;
         let mut run = LifecycleRun::new_control(project_id);
         assert!(run.add_orchestration(orchestration));
-        (run, orchestration_id, "phase%2Fplan".to_string())
+        (run, orchestration_id)
     }
 
     #[tokio::test]
-    async fn run_scoped_mount_lists_graphless_run_surface() {
+    async fn agent_run_session_mount_lists_graphless_session_log_surface() {
         let run = LifecycleRun::new_graphless(Uuid::new_v4());
-        let (provider, mount) = provider_for_run(run);
+        let (provider, mount) = provider_for_agent_run_session(run);
 
         let paths = entry_paths(
             provider
@@ -1671,70 +1270,140 @@ mod tests {
         );
 
         assert!(paths.contains(&"state".to_string()));
-        assert!(paths.contains(&"context".to_string()));
-        assert!(paths.contains(&"orchestrations".to_string()));
-        assert!(paths.contains(&"runs".to_string()));
-        assert!(!paths.contains(&"active".to_string()));
-        assert!(!paths.contains(&"nodes".to_string()));
-    }
+        assert!(paths.contains(&"session".to_string()));
+        assert!(paths.contains(&"execution-log".to_string()));
+        assert!(!paths.contains(&"runs".to_string()));
+        assert!(!paths.contains(&"orchestrations".to_string()));
 
-    #[tokio::test]
-    async fn run_scoped_mount_lists_orchestration_nodes_with_stable_encoded_paths() {
-        let (run, orchestration_id, encoded_node) = run_with_orchestration();
-        let (provider, mount) = provider_for_run(run);
-
-        let root_paths = entry_paths(
+        let session_paths = entry_paths(
             provider
                 .list(
                     &mount,
-                    &list_options("orchestrations"),
+                    &list_options("session"),
                     &MountOperationContext::default(),
                 )
                 .await
-                .expect("list orchestrations"),
+                .expect("list session"),
         );
-        assert!(root_paths.contains(&format!("orchestrations/{orchestration_id}")));
+        assert!(session_paths.contains(&"session/events.json".to_string()));
+        assert!(session_paths.contains(&"session/messages".to_string()));
+        assert!(session_paths.contains(&"session/tools".to_string()));
+
+        let read = provider
+            .read_text(&mount, "state", &MountOperationContext::default())
+            .await
+            .expect("read state");
+        assert!(
+            read.content
+                .contains("\"runtime_session_id\": \"session-1\"")
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_run_session_mount_exposes_anchor_node_without_project_wide_orchestration() {
+        let (run, orchestration_id) = run_with_orchestration();
+        let (provider, mount) =
+            provider_for_agent_run_node_session(run, orchestration_id, "phase/plan");
+
+        let root_paths = entry_paths(
+            provider
+                .list(&mount, &list_options(""), &MountOperationContext::default())
+                .await
+                .expect("list root"),
+        );
+        assert!(root_paths.contains(&"node".to_string()));
+        assert!(root_paths.contains(&"orchestration".to_string()));
+        assert!(!root_paths.contains(&"runs".to_string()));
 
         let node_paths = entry_paths(
             provider
                 .list(
                     &mount,
-                    &list_options(&format!("orchestrations/{orchestration_id}/nodes")),
+                    &list_options("node"),
                     &MountOperationContext::default(),
                 )
                 .await
-                .expect("list nodes"),
+                .expect("list node"),
         );
-        assert!(node_paths.contains(&format!(
-            "orchestrations/{orchestration_id}/nodes/{encoded_node}"
-        )));
+        assert!(node_paths.contains(&"node/state".to_string()));
+        assert!(node_paths.contains(&"node/artifacts".to_string()));
+        assert!(node_paths.contains(&"node/records".to_string()));
 
         let read = provider
-            .read_text(
-                &mount,
-                &format!("orchestrations/{orchestration_id}/nodes/{encoded_node}/state"),
-                &MountOperationContext::default(),
-            )
+            .read_text(&mount, "node/state", &MountOperationContext::default())
             .await
             .expect("read node state");
         assert!(read.content.contains("\"node_path\": \"phase/plan\""));
     }
 
     #[tokio::test]
-    async fn run_scoped_mount_rejects_direct_writes() {
-        let (run, orchestration_id, encoded_node) = run_with_orchestration();
-        let (provider, mount) = provider_for_run(run);
+    async fn agent_run_session_mount_rejects_direct_writes() {
+        let (run, orchestration_id) = run_with_orchestration();
+        let (provider, mount) =
+            provider_for_agent_run_node_session(run, orchestration_id, "phase/plan");
 
         let error = provider
             .write_text(
                 &mount,
-                &format!("orchestrations/{orchestration_id}/nodes/{encoded_node}/records/note.md"),
+                "node/records/note.md",
                 "note",
                 &MountOperationContext::default(),
             )
             .await
-            .expect_err("run mount is read-only");
+            .expect_err("agent run session mount is read-only");
 
+        assert!(matches!(error, MountError::NotSupported(_)));
+    }
+
+    #[tokio::test]
+    async fn node_runtime_mount_exposes_only_current_node_writable_surface() {
+        let (run, orchestration_id) = run_with_orchestration();
+        let (provider, mount) = provider_for_node_runtime(run, orchestration_id, "phase/plan");
+
+        let paths = entry_paths(
+            provider
+                .list(&mount, &list_options(""), &MountOperationContext::default())
+                .await
+                .expect("list node runtime root"),
+        );
+
+        assert!(paths.contains(&"state".to_string()));
+        assert!(paths.contains(&"session".to_string()));
+        assert!(paths.contains(&"artifacts".to_string()));
+        assert!(paths.contains(&"records".to_string()));
+        assert!(!paths.contains(&"nodes".to_string()));
+        assert!(!paths.contains(&"runs".to_string()));
+        assert!(!paths.contains(&"orchestrations".to_string()));
+
+        provider
+            .write_text(
+                &mount,
+                "artifacts/report",
+                "done",
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("node runtime artifact is writable");
+
+        provider
+            .write_text(
+                &mount,
+                "records/note.md",
+                "note",
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("node runtime records are writable");
+
+        let error = provider
+            .write_text(
+                &mount,
+                "nodes/phase%2Fplan/records/note.md",
+                "legacy",
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect_err("node runtime does not expose cross-node writes");
         assert!(matches!(error, MountError::NotSupported(_)));
     }
 }

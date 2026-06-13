@@ -24,7 +24,7 @@ Provider baseline：
 | `relay_fs` | 通过 relay 访问本机 workspace 文件 |
 | `inline_fs` | 暴露 Project / Story / Agent Knowledge 等内联文件 |
 | `skill_asset_fs` | 暴露 Skill asset 文件视图 |
-| `lifecycle_vfs` | 暴露 lifecycle run、node、artifact、record 投影 |
+| `lifecycle_vfs` | 暴露 AgentRun delivery session 证据面与 runtime node artifact / record 投影 |
 | `routine_vfs` | 暴露 Routine 当前触发投影、Routine 级 memory 与当前 entity memory |
 | `canvas_fs` | 暴露 Canvas 虚拟内容 |
 
@@ -46,9 +46,9 @@ Tool module baseline：
 - Project VFS Mount 使用外部 `mount_id` 作为路径身份，数据库 UUID 只服务持久化和 inline owner，原因是 runtime address 必须稳定可读。
 - VFS 物化默认使用公共稳定路径，只有物化副本语义明确绑定 runtime session 的动态投影进入 session cache scope，原因是公共资源需要跨 session 复用，而 session trace 派生内容需要随 runtime 生命周期收口。
 - Routine memory 使用 session-scoped `routine` runtime mount 承载当前触发投影和长期工作记忆，原因是 Routine 的跨轮次上下文应脱离 prompt template 与 session history，并通过 VFS 的路径级能力边界管理读写。
-- AgentRun workspace 的 resource browser 使用 conversation snapshot 中的 `resource_surface`，该 surface 从当前 `AgentFrame` typed VFS surface 摘要生成，并由 AgentRun surface resolver 叠加 run-scoped `lifecycle_vfs`。这样做的原因是 AgentRun 的资源 owner 是 run / agent / frame，RuntimeSession 只是 delivery / trace identity；前端 workspace panel 与 Agent connector launch 因此看到同一组 mount。
-- `lifecycle_vfs` mount 是 AgentRun resource surface 的一等 mount。AgentRun resolver 读取当前/anchor frame typed VFS 后按 `LifecycleRun.id` 正向构造 run-scoped lifecycle mount，不依赖 active workflow projection 或 graph topology。这样做的原因是 workspace panel 始终需要浏览 LifecycleRun / orchestration 控制面记录；graphless、terminal 或暂时没有 active node 的 AgentRun 仍有完整 run context。
-- ProjectAgent explicit lifecycle 和 Workflow AgentCall 通过 frame construction / lifecycle activation 把 node-scoped lifecycle projection 写入 runtime frame VFS；node-scoped mount 提供当前 node 的可写 artifacts / records 和 session 快捷视角。这样做的原因是写入边界属于正在执行的 runtime node，而 workspace browser 的只读资源身份属于 AgentRun run/orchestration。
+- AgentRun workspace 的 resource browser 使用 conversation snapshot 中的 `resource_surface`，该 surface 从当前 `AgentFrame` typed VFS surface 摘要生成，并由 AgentRun surface resolver 叠加 `RuntimeSessionExecutionAnchor` 锚定的 `agent_run_session` lifecycle mount。这样做的原因是 workspace panel 需要浏览当前 AgentRun delivery session 的执行证据，而不是浏览数据库层的跨会话 run inventory。
+- `lifecycle_vfs` 在 AgentRun resource surface 中是只读 session log surface。resolver 读取 latest delivery anchor、current frame / anchor frame 和 typed VFS 后安装 `scope = "agent_run_session"` mount；graphless AgentRun 只要存在 `RuntimeSessionExecutionAnchor`，就必须能看到 `session/*` 日志投影。可选 orchestration node anchor 只附带当前 node 的执行证据，不从 graph 或 active workflow 猜测节点。
+- ProjectAgent explicit lifecycle 和 Workflow AgentCall 通过 frame construction / lifecycle activation 把 `scope = "node_runtime"` lifecycle mount 写入 runtime frame VFS；该 mount 以 `orchestration_id + node_path + attempt` 作为执行节点身份，提供当前 node 的可写 `artifacts` / `records` 和只读 `session` 视角。这样做的原因是写入边界属于正在执行的 runtime node，而 workspace browser 的只读证据面属于 AgentRun delivery session。
 - AgentRun surface resolver 在应用层输出已闭包的 resource surface，原因是 resource browser、Agent connector launch 和 conversation snapshot 都需要消费同一份包含 lifecycle mount 的 AgentRun resource surface。
 
 ## Contract Appendices

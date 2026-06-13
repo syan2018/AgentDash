@@ -304,7 +304,16 @@ pub(crate) async fn resolve_agent_run_frame_vfs_for_agent(
     let Some(frame) = frame else {
         return Ok(None);
     };
-    let vfs = build_agent_run_lifecycle_vfs(frame.typed_vfs(), run.id);
+    let vfs = match anchor.as_ref() {
+        Some(anchor) => build_agent_run_lifecycle_vfs(frame.typed_vfs(), anchor),
+        None => frame.typed_vfs().unwrap_or_else(|| Vfs {
+            mounts: Vec::new(),
+            default_mount_id: None,
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        }),
+    };
 
     Ok(Some(AgentRunFrameVfsResolution { frame, vfs }))
 }

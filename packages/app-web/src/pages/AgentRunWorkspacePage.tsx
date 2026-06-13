@@ -389,6 +389,11 @@ export function AgentRunWorkspacePage({
     ],
   );
   const conversationPending = pendingSnapshotFromConversation(runtimeControl?.conversation?.pending);
+  const refreshAfterStaleAgentRunCommandError = useCallback((error: unknown): boolean => {
+    if (!isStaleAgentRunCommandError(error)) return false;
+    void refreshAgentRunWorkspaceState().catch(() => {});
+    return true;
+  }, [refreshAgentRunWorkspaceState]);
 
   const handleAgentRunCommand = useCallback(async (
     command: ConversationCommandView,
@@ -509,8 +514,7 @@ export function AgentRunWorkspacePage({
       return;
     } catch (error) {
       inFlightCommandRef.current = null;
-      if (isStaleAgentRunCommandError(error)) {
-        void refreshAgentRunWorkspaceState().catch(() => {});
+      if (refreshAfterStaleAgentRunCommandError(error)) {
         throw silentCommandRefreshError();
       }
       throw error;
@@ -525,6 +529,7 @@ export function AgentRunWorkspacePage({
     draftProjectIdValue,
     fetchAndIngestLifecycleRun,
     navigate,
+    refreshAfterStaleAgentRunCommandError,
     refreshAgentRunWorkspaceState,
     scheduleHookRuntimeRefresh,
     agentRunWorkspaceState.status,
@@ -541,9 +546,14 @@ export function AgentRunWorkspacePage({
     if (!cancelCommand?.enabled) {
       throw new Error(cancelCommand?.unavailable_reason ?? "当前 AgentRun 没有可取消的运行。");
     }
-    await cancelAgentRun(currentRunId, currentAgentId, {
-      command: commandPrecondition(cancelCommand),
-    });
+    try {
+      await cancelAgentRun(currentRunId, currentAgentId, {
+        command: commandPrecondition(cancelCommand),
+      });
+    } catch (error) {
+      if (refreshAfterStaleAgentRunCommandError(error)) return;
+      throw error;
+    }
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("agent_run_cancelled", true);
   }, [
@@ -551,6 +561,7 @@ export function AgentRunWorkspacePage({
     chatCommandState.commands.commands,
     currentAgentId,
     currentRunId,
+    refreshAfterStaleAgentRunCommandError,
     refreshAgentRunWorkspaceState,
     scheduleHookRuntimeRefresh,
   ]);
@@ -562,9 +573,14 @@ export function AgentRunWorkspacePage({
       (command) => command.kind === "promote_pending" && command.placement.includes("pending_row"),
     );
     if (!promoteCommand?.enabled) return;
-    await promoteAgentRunPendingMessage(currentRunId, currentAgentId, messageId, {
-      command: commandPrecondition(promoteCommand),
-    });
+    try {
+      await promoteAgentRunPendingMessage(currentRunId, currentAgentId, messageId, {
+        command: commandPrecondition(promoteCommand),
+      });
+    } catch (error) {
+      if (refreshAfterStaleAgentRunCommandError(error)) return;
+      throw error;
+    }
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("pending_message_promoted", true);
   }, [
@@ -572,6 +588,7 @@ export function AgentRunWorkspacePage({
     chatCommandState.commands.commands,
     currentAgentId,
     currentRunId,
+    refreshAfterStaleAgentRunCommandError,
     refreshAgentRunWorkspaceState,
     scheduleHookRuntimeRefresh,
   ]);
@@ -595,9 +612,15 @@ export function AgentRunWorkspacePage({
     if (agentRunWorkspaceState.status !== "ready") return;
     const resumeCommand = conversationPending?.resume_command;
     if (!resumeCommand?.enabled) return;
-    const response = await resumeAgentRunPendingQueue(currentRunId, currentAgentId, {
-      command: commandPrecondition(resumeCommand),
-    });
+    let response: Awaited<ReturnType<typeof resumeAgentRunPendingQueue>>;
+    try {
+      response = await resumeAgentRunPendingQueue(currentRunId, currentAgentId, {
+        command: commandPrecondition(resumeCommand),
+      });
+    } catch (error) {
+      if (refreshAfterStaleAgentRunCommandError(error)) return;
+      throw error;
+    }
     const acceptedRunId = response.accepted_refs?.run_ref.run_id;
     if (acceptedRunId) {
       void fetchAndIngestLifecycleRun(acceptedRunId);
@@ -610,6 +633,7 @@ export function AgentRunWorkspacePage({
     currentRunId,
     conversationPending?.resume_command,
     fetchAndIngestLifecycleRun,
+    refreshAfterStaleAgentRunCommandError,
     refreshAgentRunWorkspaceState,
     scheduleHookRuntimeRefresh,
   ]);

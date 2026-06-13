@@ -7,7 +7,9 @@ use agentdash_spi::Vfs;
 
 use uuid::Uuid;
 
-use crate::vfs::{build_lifecycle_mount_with_node_scope, build_lifecycle_run_mount};
+use agentdash_domain::workflow::RuntimeSessionExecutionAnchor;
+
+use crate::vfs::{build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope};
 use crate::workflow::projection::ActiveWorkflowProjection;
 
 fn empty_vfs() -> Vfs {
@@ -89,15 +91,26 @@ fn normalize_default_mount(vfs: &mut Vfs) {
         .map(|mount| mount.id.clone());
 }
 
-pub fn install_agent_run_lifecycle_mount(vfs: &mut Vfs, run_id: Uuid) {
+pub fn install_agent_run_lifecycle_mount(vfs: &mut Vfs, anchor: &RuntimeSessionExecutionAnchor) {
     vfs.mounts.retain(|candidate| candidate.id != "lifecycle");
-    vfs.mounts.push(build_lifecycle_run_mount(run_id));
+    vfs.mounts.push(build_agent_run_session_lifecycle_mount(
+        anchor.run_id,
+        anchor.agent_id,
+        &anchor.runtime_session_id,
+        anchor.launch_frame_id,
+        anchor.orchestration_id,
+        anchor.node_path.as_deref(),
+        anchor.node_attempt,
+    ));
     normalize_default_mount(vfs);
 }
 
-pub fn build_agent_run_lifecycle_vfs(vfs: Option<Vfs>, run_id: Uuid) -> Vfs {
+pub fn build_agent_run_lifecycle_vfs(
+    vfs: Option<Vfs>,
+    anchor: &RuntimeSessionExecutionAnchor,
+) -> Vfs {
     let mut vfs = vfs.unwrap_or_else(empty_vfs);
-    install_agent_run_lifecycle_mount(&mut vfs, run_id);
+    install_agent_run_lifecycle_mount(&mut vfs, anchor);
     vfs
 }
 
@@ -279,10 +292,19 @@ mod tests {
         assert_eq!(vfs.default_mount_id.as_deref(), Some("main"));
     }
 
+    fn agent_run_anchor() -> RuntimeSessionExecutionAnchor {
+        RuntimeSessionExecutionAnchor::new_dispatch(
+            "session-1",
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
+    }
+
     #[test]
-    fn agent_run_lifecycle_vfs_installs_run_scoped_mount() {
-        let run_id = Uuid::new_v4();
-        let vfs = build_agent_run_lifecycle_vfs(Some(workflow_vfs()), run_id);
+    fn agent_run_lifecycle_vfs_installs_session_scoped_mount() {
+        let anchor = agent_run_anchor();
+        let vfs = build_agent_run_lifecycle_vfs(Some(workflow_vfs()), &anchor);
 
         let lifecycle = vfs
             .mounts
@@ -291,13 +313,26 @@ mod tests {
             .expect("lifecycle mount");
 
         assert_eq!(lifecycle.provider, "lifecycle_vfs");
-        assert_eq!(lifecycle.root_ref, format!("lifecycle://run/{run_id}"));
+        assert_eq!(
+            lifecycle.root_ref,
+            format!(
+                "lifecycle://run/{}/agent/{}/session/session-1",
+                anchor.run_id, anchor.agent_id
+            )
+        );
         assert_eq!(
             lifecycle
                 .metadata
                 .get("scope")
                 .and_then(serde_json::Value::as_str),
-            Some("run")
+            Some("agent_run_session")
+        );
+        assert_eq!(
+            lifecycle
+                .metadata
+                .get("runtime_session_id")
+                .and_then(serde_json::Value::as_str),
+            Some("session-1")
         );
     }
 
@@ -307,8 +342,16 @@ mod tests {
         let vfs = project_active_workflow_lifecycle_vfs(Some(workflow_vfs()), Some(&workflow))
             .expect("vfs");
 
-        let run_id = Uuid::new_v4();
-        let vfs = build_agent_run_lifecycle_vfs(Some(vfs), run_id);
+        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
+            "session-2",
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "phase/plan",
+            3,
+        );
+        let vfs = build_agent_run_lifecycle_vfs(Some(vfs), &anchor);
         let lifecycle_mounts = vfs
             .mounts
             .iter()
@@ -317,28 +360,32 @@ mod tests {
 
         assert_eq!(lifecycle_mounts.len(), 1);
         assert_eq!(
-            lifecycle_mounts[0].root_ref,
-            format!("lifecycle://run/{run_id}")
-        );
-        assert_eq!(
             lifecycle_mounts[0]
                 .metadata
                 .get("scope")
                 .and_then(serde_json::Value::as_str),
-            Some("run")
+            Some("agent_run_session")
         );
-        assert!(
+        assert_eq!(
             lifecycle_mounts[0]
                 .metadata
-                .get("orchestration_id")
-                .is_none()
+                .get("node_path")
+                .and_then(serde_json::Value::as_str),
+            Some("phase/plan")
+        );
+        assert_eq!(
+            lifecycle_mounts[0]
+                .metadata
+                .get("attempt")
+                .and_then(serde_json::Value::as_u64),
+            Some(3)
         );
     }
 
     #[test]
     fn agent_run_lifecycle_vfs_uses_lifecycle_default_when_base_is_absent() {
-        let run_id = Uuid::new_v4();
-        let vfs = build_agent_run_lifecycle_vfs(None, run_id);
+        let anchor = agent_run_anchor();
+        let vfs = build_agent_run_lifecycle_vfs(None, &anchor);
 
         assert_eq!(vfs.mounts.len(), 1);
         assert_eq!(vfs.mounts[0].id, "lifecycle");

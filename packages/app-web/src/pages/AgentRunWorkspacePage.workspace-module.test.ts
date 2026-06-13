@@ -331,13 +331,13 @@ describe("AgentRun workspace conversation command authority", () => {
     expect(state.commands.commands.find((item) => item.command_id === "cmd-steer")?.stale_guard.active_turn_id).toBe("turn-1");
   });
 
-  it("makes a refreshing projection read-only even when retained workspace has commands", () => {
+  it("does not fabricate commands while projection is refreshing", () => {
     const state = commandState("refreshing", workspaceView("running", runningActions, [
       command("enqueue", "cmd-enqueue"),
     ], { enter: "cmd-enqueue" }));
 
     expect(state.commands.keyboard.enter).toBeUndefined();
-    expect(state.commands.commands.every((item) => !item.enabled)).toBe(true);
+    expect(state.commands.commands).toHaveLength(0);
   });
 
   it("requires conversation snapshot instead of falling back to stale action bits", () => {
@@ -346,7 +346,7 @@ describe("AgentRun workspace conversation command authority", () => {
     const state = commandState("ready", workspace);
 
     expect(state.executionStatus).toBe("delivery_missing");
-    expect(state.commands.commands.every((item) => !item.enabled)).toBe(true);
+    expect(state.commands.commands).toHaveLength(0);
   });
 });
 

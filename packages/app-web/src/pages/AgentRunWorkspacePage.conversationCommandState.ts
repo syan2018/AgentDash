@@ -9,31 +9,9 @@ import type { SessionChatCommandState } from "../features/session";
 import type { ExecutorConfig } from "../services/executor";
 import type { ConversationEffectiveExecutorConfigView } from "../generated/project-agent-contracts";
 
-function unavailableCommand(
-  kind: ConversationCommandView["kind"],
-  commandId: string,
-  reason: string,
-): ConversationCommandView {
+function emptyCommandSet(): ConversationCommandSetView {
   return {
-    kind,
-    command_id: commandId,
-    enabled: false,
-    unavailable_reason: reason,
-    disabled_code: "command_unavailable",
-    requires_input: true,
-    executor_config_policy: "required",
-    placement: ["composer_primary"],
-    stale_guard: {
-      snapshot_id: `local:${commandId}`,
-      run_id: commandId,
-      agent_id: commandId,
-    },
-  };
-}
-
-function readonlyCommandSet(reason: string): ConversationCommandSetView {
-  return {
-    commands: [unavailableCommand("send_next", "readonly", reason)],
+    commands: [],
     keyboard: {},
   };
 }
@@ -225,7 +203,7 @@ export function buildRuntimeSessionCommandState(input: {
     return {
       mode: "runtime",
       executionStatus: input.projectionStatus,
-      commands: readonlyCommandSet(reason),
+      commands: emptyCommandSet(),
       modelConfig: {
         status: "model_required",
         missing_fields: [],
@@ -240,7 +218,7 @@ export function buildRuntimeSessionCommandState(input: {
     return {
       mode: "runtime",
       executionStatus: "delivery_missing",
-      commands: readonlyCommandSet(reason),
+      commands: emptyCommandSet(),
       modelConfig: {
         status: "model_required",
         missing_fields: [],

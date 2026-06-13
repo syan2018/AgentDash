@@ -208,6 +208,12 @@ pub async fn submit_agent_run_composer_input(
         .session_core
         .inspect_session_execution_state(&runtime_session_id)
         .await?;
+    ensure_composer_command_precondition_matches_agent_run(
+        &req.command,
+        &context,
+        &runtime_session_id,
+        &execution_state,
+    )?;
     let supports_steering = match &execution_state {
         SessionExecutionState::Running { turn_id: Some(_) } => {
             state
@@ -1614,6 +1620,60 @@ fn stale_command_conflict(
     )
 }
 
+fn ensure_composer_command_precondition_matches_agent_run(
+    command: &AgentRunCommandPreconditionView,
+    context: &AgentRunContext,
+    runtime_session_id: &str,
+    execution_state: &SessionExecutionState,
+) -> Result<(), ApiError> {
+    let detail = || {
+        serde_json::json!({
+            "run_id": context.run.id.to_string(),
+            "agent_id": context.agent.id.to_string(),
+            "runtime_session_id": runtime_session_id,
+            "state": conversation_state_code(execution_state),
+            "submitted_command_kind": command.command_kind,
+            "submitted_command_id": command.command_id,
+            "submitted_guard": &command.stale_guard,
+        })
+    };
+
+    if command.stale_guard.run_id != context.run.id.to_string()
+        || command.stale_guard.agent_id != context.agent.id.to_string()
+    {
+        return Err(stale_command_conflict(
+            execution_state,
+            false,
+            serde_json::json!({
+                "reason": "agent_run_identity_mismatch",
+                "run_id": context.run.id.to_string(),
+                "agent_id": context.agent.id.to_string(),
+                "runtime_session_id": runtime_session_id,
+                "state": conversation_state_code(execution_state),
+                "submitted_run_id": &command.stale_guard.run_id,
+                "submitted_agent_id": &command.stale_guard.agent_id,
+                "snapshot_refresh_required": true,
+            }),
+        ));
+    }
+
+    if !matches!(
+        command.command_kind,
+        ConversationCommandKind::SendNext
+            | ConversationCommandKind::Enqueue
+            | ConversationCommandKind::Steer
+    ) {
+        return Err(command_conflict(
+            "当前输入提交只能使用 send_next、enqueue 或 steer 命令意图。",
+            "command_unavailable",
+            replacement_command_for_state(execution_state, false),
+            detail(),
+        ));
+    }
+
+    Ok(())
+}
+
 fn classify_composer_submit_kind(
     execution_state: &SessionExecutionState,
     requested_kind: ConversationCommandKind,
@@ -1776,6 +1836,7 @@ mod tests {
         ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary,
         ResolvedVfsSurface, ResolvedVfsSurfaceSource,
     };
+    use agentdash_contracts::workflow::ConversationCommandStaleGuardView;
     use agentdash_domain::workflow::LifecycleRun;
 
     use super::*;
@@ -1833,6 +1894,34 @@ mod tests {
         }
     }
 
+    fn test_agent_run_context() -> AgentRunContext {
+        let run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, "PI_AGENT");
+        AgentRunContext {
+            run,
+            agent,
+            delivery_runtime_session_id: Some("session-1".to_string()),
+        }
+    }
+
+    fn composer_precondition(
+        kind: ConversationCommandKind,
+        context: &AgentRunContext,
+    ) -> AgentRunCommandPreconditionView {
+        AgentRunCommandPreconditionView {
+            command_id: command_id_for_kind(kind).to_string(),
+            command_kind: kind,
+            stale_guard: ConversationCommandStaleGuardView {
+                snapshot_id: "stale-snapshot".to_string(),
+                run_id: context.run.id.to_string(),
+                agent_id: context.agent.id.to_string(),
+                frame_id: Some(Uuid::new_v4().to_string()),
+                runtime_session_id: Some("old-session".to_string()),
+                active_turn_id: Some("old-turn".to_string()),
+            },
+        }
+    }
+
     #[test]
     fn workspace_shell_title_uses_delivery_session_meta_when_present() {
         let meta = test_session_meta("Session meta title", TitleSource::Source);
@@ -1849,12 +1938,46 @@ mod tests {
         let completed = SessionExecutionState::Completed {
             turn_id: "turn-1".to_string(),
         };
+        let context = test_agent_run_context();
+        let command = composer_precondition(ConversationCommandKind::Enqueue, &context);
+
+        ensure_composer_command_precondition_matches_agent_run(
+            &command,
+            &context,
+            "session-1",
+            &completed,
+        )
+        .expect("composer input should not require stale frame or turn guard");
 
         let kind =
             classify_composer_submit_kind(&completed, ConversationCommandKind::Enqueue, true)
                 .expect("terminal follow-up should start next turn");
 
         assert_eq!(kind, ConversationCommandKind::SendNext);
+    }
+
+    #[test]
+    fn composer_submit_rejects_non_text_control_command_intent() {
+        let running = SessionExecutionState::Running {
+            turn_id: Some("turn-1".to_string()),
+        };
+        let context = test_agent_run_context();
+        let command = composer_precondition(ConversationCommandKind::Cancel, &context);
+
+        let error = ensure_composer_command_precondition_matches_agent_run(
+            &command,
+            &context,
+            "session-1",
+            &running,
+        )
+        .expect_err("cancel is not a composer input command");
+
+        match error {
+            ApiError::ConflictWithCode { error_code, .. } => {
+                assert_eq!(error_code, "command_unavailable");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]

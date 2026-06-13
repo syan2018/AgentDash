@@ -225,22 +225,33 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
             Some(inner) => inner.after_turn(input, cancel).await?,
             None => TurnControlDecision::default(),
         };
-        let mut hook_messages = std::mem::take(&mut decision.steering);
-        hook_messages.append(&mut decision.follow_up);
-        let routing = self
+        let steering = std::mem::take(&mut decision.steering);
+        let follow_up = std::mem::take(&mut decision.follow_up);
+        let steering_routing = self
             .route_hook_delivery_messages(
                 MailboxMessageSource::HookAfterTurn,
                 ConsumptionBarrier::AgentLoopTurnBoundary,
                 SteeringStopEffect::None,
                 MailboxDrainMode::All,
                 &source_event_key,
-                hook_messages,
+                steering,
+            )
+            .await?;
+        let follow_up_source_event_key = format!("after_turn_follow_up:{source_event_key}");
+        let follow_up_routing = self
+            .route_hook_delivery_messages(
+                MailboxMessageSource::HookBeforeStop,
+                ConsumptionBarrier::AgentRunTurnBoundary,
+                SteeringStopEffect::ContinueOnStop,
+                MailboxDrainMode::All,
+                &follow_up_source_event_key,
+                follow_up,
             )
             .await?;
         self.schedule_agent_loop_turn_boundary().await;
         Ok(TurnControlDecision {
-            steering: routing.direct_messages,
-            follow_up: Vec::new(),
+            steering: steering_routing.direct_messages,
+            follow_up: follow_up_routing.direct_messages,
             refresh_snapshot: decision.refresh_snapshot,
             diagnostics: decision.diagnostics,
         })

@@ -189,7 +189,7 @@ impl SessionRuntimeInner {
     pub(in crate::session) async fn request_hook_auto_resume(
         &self,
         request: TerminalAutoResumeRequest,
-    ) -> bool {
+    ) -> Result<bool, String> {
         const MAX_HOOK_AUTO_RESUMES: u32 = 2;
         let session_id = request.session_id.clone();
 
@@ -205,19 +205,26 @@ impl SessionRuntimeInner {
                 "Hook auto-resume: stop gate unsatisfied, scheduling retry"
             );
             match self.try_enqueue_hook_auto_resume_mailbox(&request).await {
-                AutoResumeMailboxRoute::Routed | AutoResumeMailboxRoute::Failed => {}
+                AutoResumeMailboxRoute::Routed => {}
                 AutoResumeMailboxRoute::NoAnchor => {
                     self.schedule_unanchored_hook_auto_resume(session_id)
                 }
+                AutoResumeMailboxRoute::Failed(error) => {
+                    self.runtime_registry
+                        .release_auto_resume_reservation(&session_id)
+                        .await;
+                    return Err(error);
+                }
             }
+            Ok(true)
         } else {
             tracing::warn!(
                 session_id = %session_id,
                 max = MAX_HOOK_AUTO_RESUMES,
                 "Hook auto-resume: 达到上限，放弃续跑"
             );
+            Ok(false)
         }
-        decision
     }
 
     async fn try_enqueue_hook_auto_resume_mailbox(
@@ -271,7 +278,7 @@ impl SessionRuntimeInner {
                     payload = ?request.payload,
                     "Hook auto-resume mailbox envelope 创建失败"
                 );
-                AutoResumeMailboxRoute::Failed
+                AutoResumeMailboxRoute::Failed(error.to_string())
             }
         }
     }
@@ -338,7 +345,10 @@ impl TerminalHookTriggerPort for SessionRuntimeInner {
 
 #[async_trait::async_trait]
 impl TerminalAutoResumePort for SessionRuntimeInner {
-    async fn request_hook_auto_resume(&self, request: TerminalAutoResumeRequest) -> bool {
+    async fn request_hook_auto_resume(
+        &self,
+        request: TerminalAutoResumeRequest,
+    ) -> Result<bool, String> {
         SessionRuntimeInner::request_hook_auto_resume(self, request).await
     }
 }
@@ -346,5 +356,5 @@ impl TerminalAutoResumePort for SessionRuntimeInner {
 enum AutoResumeMailboxRoute {
     Routed,
     NoAnchor,
-    Failed,
+    Failed(String),
 }

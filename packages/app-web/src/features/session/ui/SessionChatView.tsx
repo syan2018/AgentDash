@@ -80,6 +80,7 @@ export function SessionChatView({
   onExecutorConfigOverrideChange,
   mailboxMessages,
   mailboxSnapshot,
+  mailboxState,
   onPromoteMailboxMessage,
   onDeleteMailboxMessage,
   onResumeMailbox,
@@ -572,6 +573,10 @@ export function SessionChatView({
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
   const displayError = sendError ?? (hasSession ? wsError?.message : null) ?? null;
+  const shouldShowMailboxList = Boolean(
+    mailboxMessages
+      && (mailboxMessages.length > 0 || mailboxSnapshot?.user_attention || mailboxState?.paused),
+  );
 
   // ─── 渲染 ────────────────────────────────────────────
 
@@ -637,10 +642,11 @@ export function SessionChatView({
 
       {/* Mailbox 消息 + 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
-        {mailboxMessages && (mailboxMessages.length > 0 || mailboxSnapshot?.user_attention) && (
+        {shouldShowMailboxList && mailboxMessages && (
           <MailboxMessageList
             messages={mailboxMessages}
             mailbox={mailboxSnapshot}
+            mailboxState={mailboxState}
             promoteCommand={commandState.commands.commands.find(
               (command) => command.kind === "promote_mailbox_message" && command.placement.includes("mailbox_row"),
             )}

@@ -4357,18 +4357,22 @@ async fn request_hook_auto_resume_enforces_cap() {
     assert!(
         hub.request_hook_auto_resume(hook_auto_resume_request(&session.id))
             .await
+            .expect("auto-resume should route")
     );
     assert!(
         hub.request_hook_auto_resume(hook_auto_resume_request(&session.id))
             .await
+            .expect("auto-resume should route")
     );
     assert!(
         !hub.request_hook_auto_resume(hook_auto_resume_request(&session.id))
             .await
+            .expect("auto-resume cap check should not fail")
     );
     assert!(
         !hub.request_hook_auto_resume(hook_auto_resume_request(&session.id))
             .await
+            .expect("auto-resume cap check should not fail")
     );
 
     let auto_resume_count = hub
@@ -4389,7 +4393,8 @@ async fn request_hook_auto_resume_returns_false_for_unknown_session() {
 
     assert!(
         !hub.request_hook_auto_resume(hook_auto_resume_request("nonexistent"))
-            .await,
+            .await
+            .expect("unknown session should be skipped, not failed"),
     );
 }
 

@@ -374,8 +374,11 @@ mod tests {
 
     #[async_trait]
     impl TerminalAutoResumePort for NoopAutoResume {
-        async fn request_hook_auto_resume(&self, _request: TerminalAutoResumeRequest) -> bool {
-            false
+        async fn request_hook_auto_resume(
+            &self,
+            _request: TerminalAutoResumeRequest,
+        ) -> Result<bool, String> {
+            Ok(false)
         }
     }
 

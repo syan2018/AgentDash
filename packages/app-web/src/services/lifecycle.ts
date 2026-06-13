@@ -20,6 +20,7 @@ import type {
   AgentRunMessageCommandResponse,
   AgentRunWorkspaceView,
 } from "../generated/workflow-contracts";
+import type { AgentRunCommandReceipt } from "../generated/project-agent-contracts";
 
 function agentRunCommandPath(runId: string, agentId: string, route: string): string {
   return `/agent-runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}${route}`;
@@ -133,6 +134,6 @@ export async function cancelAgentRun(
   runId: string,
   agentId: string,
   request: AgentRunCommandOnlyRequest,
-): Promise<void> {
-  await api.post<void>(agentRunCommandPath(runId, agentId, "/cancel"), request);
+): Promise<AgentRunCommandReceipt> {
+  return api.post<AgentRunCommandReceipt>(agentRunCommandPath(runId, agentId, "/cancel"), request);
 }

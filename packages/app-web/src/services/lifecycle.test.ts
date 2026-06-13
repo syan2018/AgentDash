@@ -15,6 +15,7 @@ vi.mock("../api/client", () => ({
 }));
 
 import {
+  cancelAgentRun,
   deleteAgentRunMailboxMessage,
   promoteAgentRunMailboxMessage,
   resumeAgentRunMailbox,
@@ -74,33 +75,60 @@ describe("lifecycle message service", () => {
   it("deletes mailbox messages through the AgentRun mailbox endpoint", async () => {
     await deleteAgentRunMailboxMessage("run/1", "agent/1", "message/1", {
       command: command("delete_mailbox_message"),
+      client_command_id: "delete-message-1",
     });
 
     expect(mocks.apiDeleteMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/mailbox/messages/message%2F1",
-      { command: command("delete_mailbox_message") },
+      {
+        command: command("delete_mailbox_message"),
+        client_command_id: "delete-message-1",
+      },
     );
   });
 
   it("promotes mailbox messages through the AgentRun mailbox endpoint", async () => {
     await promoteAgentRunMailboxMessage("run/1", "agent/1", "message/1", {
       command: command("promote_mailbox_message"),
+      client_command_id: "promote-message-1",
     });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/mailbox/messages/message%2F1/promote",
-      { command: command("promote_mailbox_message") },
+      {
+        command: command("promote_mailbox_message"),
+        client_command_id: "promote-message-1",
+      },
     );
   });
 
   it("resumes mailbox through the AgentRun mailbox resume endpoint", async () => {
     await resumeAgentRunMailbox("run/1", "agent/1", {
       command: command("resume_mailbox"),
+      client_command_id: "resume-mailbox-1",
     });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/mailbox/resume",
-      { command: command("resume_mailbox") },
+      {
+        command: command("resume_mailbox"),
+        client_command_id: "resume-mailbox-1",
+      },
+    );
+  });
+
+  it("cancels AgentRun with request-level client command id", async () => {
+    await cancelAgentRun("run/1", "agent/1", {
+      command: command("cancel"),
+      client_command_id: "cancel-agent-run-1",
+    });
+
+    expect(mocks.apiPostMock).toHaveBeenCalledWith(
+      "/agent-runs/run%2F1/agents/agent%2F1/cancel",
+      {
+        command: command("cancel"),
+        client_command_id: "cancel-agent-run-1",
+      },
     );
   });
 });

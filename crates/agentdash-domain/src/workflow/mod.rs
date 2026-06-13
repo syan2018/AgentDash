@@ -35,9 +35,9 @@ pub use lifecycle_gate::LifecycleGate;
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 pub use mailbox::{
     AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
-    AgentRunMailboxState, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
-    MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus, NewAgentRunMailboxMessage,
-    SteeringStopEffect,
+    AgentRunMailboxState, ConsumptionBarrier, MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery,
+    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus,
+    NewAgentRunMailboxMessage, SteeringStopEffect,
 };
 pub use repository::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,

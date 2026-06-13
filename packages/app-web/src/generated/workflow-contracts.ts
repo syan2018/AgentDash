@@ -39,7 +39,7 @@ export type AgentProcedureResponse = { id: string, project_id: string, key: stri
 
 export type AgentReusePolicy = "create_activity_agent" | "continue_current_agent";
 
-export type AgentRunCommandOnlyRequest = { command: AgentRunCommandPreconditionView, };
+export type AgentRunCommandOnlyRequest = { command: AgentRunCommandPreconditionView, client_command_id: string, };
 
 export type AgentRunCommandPreconditionView = { command_id: string, command_kind: ConversationCommandKind, stale_guard: ConversationCommandStaleGuardView, };
 

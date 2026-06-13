@@ -93,6 +93,8 @@ AgentRun-anchored hook delivery message 使用 AgentRun Mailbox 表达：
 
 这层拆分的原因是 hook policy 与上下文注入仍要在 AgentLoop 边界同步生效，而 delivery message 需要和用户/system message 共享 durable dedup、恢复、barrier/drain mode 与 workspace projection。
 
+Anchored hook auto-resume 的 terminal effect 以 mailbox envelope 创建成功作为 effect 成功边界。mailbox route failure 必须返回 terminal effect failure，使 outbox 按 terminal effect retry policy replay；`NoAnchor` 才进入 unanchored fallback。auto-resume cap 只保留成功 route/fallback 的 reservation，原因是 mailbox 创建失败没有产生可消费 envelope，不应消耗后续 replay 机会。
+
 ### Runtime Event 行为要点
 
 - `HookTraceTrigger` 只表示 AgentLoop 生命周期节点：`SessionStart` /

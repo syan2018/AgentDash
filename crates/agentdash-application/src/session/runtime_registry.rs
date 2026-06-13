@@ -129,6 +129,14 @@ impl SessionRuntimeRegistry {
         }
     }
 
+    pub async fn release_auto_resume_reservation(&self, session_id: &str) {
+        let mut runtimes = self.runtimes.lock().await;
+        let Some(runtime) = runtimes.get_mut(session_id) else {
+            return;
+        };
+        runtime.hook_auto_resume_count = runtime.hook_auto_resume_count.saturating_sub(1);
+    }
+
     pub async fn touch_and_sender(
         &self,
         session_id: &str,

@@ -53,6 +53,7 @@ import {
   resolveExecutorConfigForConversationCommand,
 } from "./AgentRunWorkspacePage.conversationCommandState";
 import type {
+  AgentRunCommandOnlyRequest,
   AgentRunCommandPreconditionView,
   ConversationCommandView,
 } from "../generated/workflow-contracts";
@@ -86,6 +87,13 @@ function commandPrecondition(command: ConversationCommandView): AgentRunCommandP
     command_id: command.command_id,
     command_kind: command.kind,
     stale_guard: command.stale_guard,
+  };
+}
+
+function commandRequest(command: ConversationCommandView): AgentRunCommandOnlyRequest {
+  return {
+    command: commandPrecondition(command),
+    client_command_id: newClientCommandId(),
   };
 }
 
@@ -547,9 +555,7 @@ export function AgentRunWorkspacePage({
       throw new Error(cancelCommand?.unavailable_reason ?? "当前 AgentRun 没有可取消的运行。");
     }
     try {
-      await cancelAgentRun(currentRunId, currentAgentId, {
-        command: commandPrecondition(cancelCommand),
-      });
+      await cancelAgentRun(currentRunId, currentAgentId, commandRequest(cancelCommand));
     } catch (error) {
       if (refreshAfterStaleAgentRunCommandError(error)) return;
       throw error;
@@ -574,9 +580,12 @@ export function AgentRunWorkspacePage({
     );
     if (!promoteCommand?.enabled) return;
     try {
-      await promoteAgentRunMailboxMessage(currentRunId, currentAgentId, messageId, {
-        command: commandPrecondition(promoteCommand),
-      });
+      await promoteAgentRunMailboxMessage(
+        currentRunId,
+        currentAgentId,
+        messageId,
+        commandRequest(promoteCommand),
+      );
     } catch (error) {
       if (refreshAfterStaleAgentRunCommandError(error)) return;
       throw error;
@@ -600,9 +609,12 @@ export function AgentRunWorkspacePage({
       (command) => command.kind === "delete_mailbox_message" && command.placement.includes("mailbox_row"),
     );
     if (!deleteCommand?.enabled) return;
-    await deleteAgentRunMailboxMessage(currentRunId, currentAgentId, messageId, {
-      command: commandPrecondition(deleteCommand),
-    });
+    await deleteAgentRunMailboxMessage(
+      currentRunId,
+      currentAgentId,
+      messageId,
+      commandRequest(deleteCommand),
+    );
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("mailbox_message_deleted", true);
   }, [
@@ -621,9 +633,11 @@ export function AgentRunWorkspacePage({
     if (!resumeCommand?.enabled) return;
     let response: Awaited<ReturnType<typeof resumeAgentRunMailbox>>;
     try {
-      response = await resumeAgentRunMailbox(currentRunId, currentAgentId, {
-        command: commandPrecondition(resumeCommand),
-      });
+      response = await resumeAgentRunMailbox(
+        currentRunId,
+        currentAgentId,
+        commandRequest(resumeCommand),
+      );
     } catch (error) {
       if (refreshAfterStaleAgentRunCommandError(error)) return;
       throw error;
@@ -925,6 +939,7 @@ export function AgentRunWorkspacePage({
               onExecutorConfigOverrideChange={setExplicitExecutorConfigOverride}
               mailboxMessages={runtimeControl?.mailbox_messages}
               mailboxSnapshot={conversationMailbox}
+              mailboxState={runtimeControl?.mailbox}
               onPromoteMailboxMessage={(id) => { void handlePromoteMailboxMessage(id); }}
               onDeleteMailboxMessage={(id) => { void handleDeleteMailboxMessage(id); }}
               onResumeMailbox={() => { void handleResumeMailbox(); }}

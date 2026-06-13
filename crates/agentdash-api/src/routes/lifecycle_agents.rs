@@ -22,12 +22,17 @@ use agentdash_contracts::workflow::{
     MailboxStateView, RuntimeSessionCommandStateDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
     ValidationSeverity,
 };
-use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
+use agentdash_domain::workflow::{
+    AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind,
+    AgentRunCommandReceipt as DomainAgentRunCommandReceipt, LifecycleAgent, LifecycleRun,
+    NewAgentRunCommandReceipt,
+};
 use agentdash_spi::AgentConfig;
 use axum::{
     Json,
     extract::{Path, State},
 };
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
@@ -289,7 +294,7 @@ async fn delete_agent_run_mailbox_message(
             agent_id: context.agent.id,
             runtime_session_id,
             message_id: Some(message_id),
-            client_command_id: body.command.command_id,
+            client_command_id: body.client_command_id,
         })
         .await
         .map_err(ApiError::from)?;
@@ -332,7 +337,7 @@ async fn resume_agent_run_mailbox(
                 agent_id: context.agent.id,
                 runtime_session_id,
                 message_id: None,
-                client_command_id: body.command.command_id,
+                client_command_id: body.client_command_id,
             },
             Some(current_user),
         )
@@ -378,7 +383,7 @@ async fn promote_agent_run_mailbox_message(
                 agent_id: context.agent.id,
                 runtime_session_id,
                 message_id: Some(message_id),
-                client_command_id: body.command.command_id,
+                client_command_id: body.client_command_id,
             },
             Some(current_user),
         )
@@ -392,7 +397,12 @@ async fn cancel_agent_run(
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
     Json(body): Json<AgentRunCommandOnlyRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<AgentRunCommandReceipt>, ApiError> {
+    if body.client_command_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "client_command_id 不能为空".to_string(),
+        ));
+    }
     let context = resolve_agent_run_context(
         &state,
         &current_user,
@@ -416,12 +426,75 @@ async fn cancel_agent_run(
         },
     )
     .await?;
-    state
+    let request_digest =
+        digest_cancel_command_request(context.run.id, context.agent.id, &runtime_session_id)?;
+    let claim = state
+        .repos
+        .agent_run_command_receipt_repo
+        .claim(NewAgentRunCommandReceipt {
+            scope_kind: "agent_run_mailbox".to_string(),
+            scope_key: format!("{}:{}", context.run.id, context.agent.id),
+            command_kind: AgentRunCommandKind::Cancel,
+            client_command_id: body.client_command_id,
+            request_digest,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    let receipt = match claim {
+        AgentRunCommandClaim::Duplicate(receipt) => {
+            return Ok(Json(domain_command_receipt_view(&receipt, true)));
+        }
+        AgentRunCommandClaim::Created(receipt) => receipt,
+    };
+    if let Err(error) = state
         .services
         .session_runtime
         .cancel(&runtime_session_id)
-        .await?;
-    Ok(Json(serde_json::json!({ "cancelled": true })))
+        .await
+    {
+        if let Err(mark_error) = state
+            .repos
+            .agent_run_command_receipt_repo
+            .mark_terminal_failed(receipt.id, error.to_string())
+            .await
+        {
+            tracing::warn!(
+                receipt_id = %receipt.id,
+                error = %mark_error,
+                "写入 AgentRun cancel terminal_failed receipt 失败"
+            );
+        }
+        return Err(ApiError::from(error));
+    }
+    let accepted = state
+        .repos
+        .agent_run_command_receipt_repo
+        .mark_accepted(
+            receipt.id,
+            AgentRunAcceptedRefs {
+                run_id: context.run.id,
+                agent_id: context.agent.id,
+                frame_id: None,
+                frame_revision: None,
+                runtime_session_id: Some(runtime_session_id),
+                agent_run_turn_id: None,
+                protocol_turn_id: None,
+            },
+        )
+        .await
+        .map_err(ApiError::from)?;
+    let stored = state
+        .repos
+        .agent_run_command_receipt_repo
+        .store_result_json(receipt.id, serde_json::json!({ "cancelled": true }))
+        .await
+        .map_err(ApiError::from)?;
+    let final_receipt = if stored.updated_at >= accepted.updated_at {
+        stored
+    } else {
+        accepted
+    };
+    Ok(Json(domain_command_receipt_view(&final_receipt, false)))
 }
 
 async fn resolve_agent_run_context(
@@ -861,7 +934,9 @@ pub(crate) fn mailbox_message_view(
             | agentdash_domain::workflow::MailboxMessageStatus::Blocked
     );
     let can_promote = can_delete
-        && message.delivery == agentdash_domain::workflow::MailboxDelivery::LaunchOrContinueTurn;
+        && message.delivery == agentdash_domain::workflow::MailboxDelivery::LaunchOrContinueTurn
+        && message.last_error.as_deref()
+            != Some(agentdash_domain::workflow::MAILBOX_DELIVERY_RESULT_UNKNOWN);
     MailboxMessageView {
         id: message.id.to_string(),
         origin: mailbox_origin_view(message.origin),
@@ -1203,6 +1278,37 @@ fn command_receipt_view(
         duplicate: receipt.duplicate,
         message: receipt.message,
     }
+}
+
+fn domain_command_receipt_view(
+    receipt: &DomainAgentRunCommandReceipt,
+    duplicate: bool,
+) -> AgentRunCommandReceipt {
+    AgentRunCommandReceipt {
+        client_command_id: receipt.client_command_id.clone(),
+        status: receipt.status.as_str().to_string(),
+        duplicate,
+        message: receipt.error_message.clone(),
+    }
+}
+
+fn digest_cancel_command_request(
+    run_id: Uuid,
+    agent_id: Uuid,
+    runtime_session_id: &str,
+) -> Result<String, ApiError> {
+    let value = serde_json::json!({
+        "kind": "agent_run_cancel",
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "runtime_session_id": runtime_session_id,
+    });
+    let bytes = serde_json::to_vec(&value).map_err(|error| {
+        ApiError::BadRequest(format!("cancel command digest 无法序列化: {error}"))
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(format!("sha256:{:x}", hasher.finalize()))
 }
 
 fn runtime_command_state_dto(

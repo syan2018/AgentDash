@@ -87,7 +87,10 @@ pub(crate) trait TerminalHookTriggerPort: Send + Sync {
 
 #[async_trait::async_trait]
 pub(crate) trait TerminalAutoResumePort: Send + Sync {
-    async fn request_hook_auto_resume(&self, request: TerminalAutoResumeRequest) -> bool;
+    async fn request_hook_auto_resume(
+        &self,
+        request: TerminalAutoResumeRequest,
+    ) -> Result<bool, String>;
 }
 
 #[derive(Debug, Clone)]
@@ -354,20 +357,18 @@ impl SessionTerminalEffectDispatcher {
                     .await;
                 Ok(())
             }
-            TerminalEffectExecutor::HookAutoResume => {
-                let _ = self
-                    .deps
-                    .auto_resume
-                    .request_hook_auto_resume(TerminalAutoResumeRequest {
-                        effect_id: item.record.id,
-                        session_id: item.record.session_id.clone(),
-                        turn_id: item.record.turn_id.clone(),
-                        terminal_event_seq: item.record.terminal_event_seq,
-                        payload: item.record.payload.clone(),
-                    })
-                    .await;
-                Ok(())
-            }
+            TerminalEffectExecutor::HookAutoResume => self
+                .deps
+                .auto_resume
+                .request_hook_auto_resume(TerminalAutoResumeRequest {
+                    effect_id: item.record.id,
+                    session_id: item.record.session_id.clone(),
+                    turn_id: item.record.turn_id.clone(),
+                    terminal_event_seq: item.record.terminal_event_seq,
+                    payload: item.record.payload.clone(),
+                })
+                .await
+                .map(|_| ()),
             TerminalEffectExecutor::Unavailable { reason } => Err(reason.clone()),
         };
 
@@ -445,6 +446,7 @@ fn should_auto_resume(
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
     use agentdash_agent_protocol::BackboneEnvelope;
@@ -549,6 +551,100 @@ mod tests {
             .await
             .expect("succeeded effects should be queryable");
         assert_eq!(succeeded.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn hook_auto_resume_failure_keeps_terminal_effect_replayable() {
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        persistence
+            .create_session(&SessionMeta {
+                id: "sess-auto-resume-failure".to_string(),
+                title: "auto resume failure".to_string(),
+                title_source: TitleSource::Auto,
+                created_at: 1,
+                updated_at: 1,
+                last_event_seq: 0,
+                last_delivery_status: ExecutionStatus::Idle,
+                last_turn_id: None,
+                last_terminal_message: None,
+                executor_session_id: None,
+            })
+            .await
+            .expect("session should be created");
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let dispatcher = SessionTerminalEffectDispatcher::new(TerminalEffectDeps {
+            terminal_effects: persistence.clone(),
+            hook_trigger: Arc::new(NoopTerminalHookTrigger),
+            terminal_callback: Arc::new(RwLock::new(None)),
+            hook_effect_handler_registry: Arc::new(RwLock::new(None)),
+            auto_resume: Arc::new(FailingAutoResume {
+                attempts: attempts.clone(),
+            }),
+        });
+        let record = persistence
+            .insert_terminal_effect(NewTerminalEffectRecord {
+                session_id: "sess-auto-resume-failure".to_string(),
+                turn_id: "turn-1".to_string(),
+                terminal_event_seq: 7,
+                effect_type: TerminalEffectType::HookAutoResume,
+                payload: serde_json::json!({
+                    "reason": "before_stop_continue",
+                }),
+            })
+            .await
+            .expect("terminal effect should be inserted");
+
+        assert!(
+            dispatcher
+                .execute_one(EnqueuedTerminalEffect {
+                    record,
+                    executor: TerminalEffectExecutor::HookAutoResume,
+                })
+                .await
+                .is_err()
+        );
+
+        let failed = persistence
+            .list_terminal_effects_by_status(&[TerminalEffectStatus::Failed], 10)
+            .await
+            .expect("failed effects should be queryable");
+        assert_eq!(failed.len(), 1);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+
+        let replayed = dispatcher
+            .replay_durable_outbox(10)
+            .await
+            .expect("replay should query durable outbox");
+        assert_eq!(replayed, 1);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    struct NoopTerminalHookTrigger;
+
+    #[async_trait::async_trait]
+    impl TerminalHookTriggerPort for NoopTerminalHookTrigger {
+        async fn emit_terminal_hook_trigger(
+            &self,
+            _hook_runtime: &dyn HookRuntimeAccess,
+            _input: TerminalHookTriggerRequest<'_>,
+        ) -> Vec<HookEffect> {
+            Vec::new()
+        }
+    }
+
+    struct FailingAutoResume {
+        attempts: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl TerminalAutoResumePort for FailingAutoResume {
+        async fn request_hook_auto_resume(
+            &self,
+            _request: TerminalAutoResumeRequest,
+        ) -> Result<bool, String> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            Err("mailbox route failed".to_string())
+        }
     }
 
     struct RecordingHookEffectRegistry {

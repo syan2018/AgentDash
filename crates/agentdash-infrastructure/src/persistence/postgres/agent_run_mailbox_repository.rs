@@ -6,8 +6,9 @@ use uuid::Uuid;
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
     AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
-    AgentRunMailboxState, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
-    MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus, NewAgentRunMailboxMessage,
+    AgentRunMailboxState, ConsumptionBarrier, MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery,
+    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus,
+    NewAgentRunMailboxMessage, SteeringStopEffect,
 };
 
 use super::{db_err, sql_err_for};
@@ -193,7 +194,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
                  SELECT id FROM agent_run_mailbox_messages \
                  WHERE run_id=$1 AND agent_id=$2 \
                    AND ($3::text IS NULL OR runtime_session_id=$3) \
-                   AND status = ANY (ARRAY['accepted','queued','ready_to_consume','blocked']) \
+                  AND status = ANY (ARRAY['accepted','queued','ready_to_consume']) \
                    AND barrier = ANY($4) \
                    AND ($5::text IS NULL OR drain_mode=$5) \
                  ORDER BY priority DESC, order_key ASC \
@@ -224,10 +225,33 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
     async fn recover_expired_consuming(&self, now: DateTime<Utc>) -> Result<u64, DomainError> {
         let result = sqlx::query(
             "UPDATE agent_run_mailbox_messages SET \
-             status=$1,claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL,updated_at=$2 \
-             WHERE status=$3 AND claim_expires_at IS NOT NULL AND claim_expires_at < $2",
+             status=CASE \
+                 WHEN accepted_agent_run_turn_id IS NOT NULL AND delivery=$1 THEN $2 \
+                 WHEN accepted_agent_run_turn_id IS NOT NULL OR accepted_protocol_turn_id IS NOT NULL THEN $3 \
+                 ELSE $4 \
+             END,\
+             claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL,\
+             last_error=CASE \
+                 WHEN accepted_agent_run_turn_id IS NOT NULL OR accepted_protocol_turn_id IS NOT NULL THEN last_error \
+                 ELSE $5 \
+             END,\
+             consumed_at=CASE \
+                 WHEN accepted_agent_run_turn_id IS NOT NULL OR accepted_protocol_turn_id IS NOT NULL THEN COALESCE(consumed_at,$6) \
+                 ELSE consumed_at \
+             END,\
+             updated_at=$6 \
+             WHERE status=$7 AND claim_expires_at IS NOT NULL AND claim_expires_at < $6",
         )
-        .bind(MailboxMessageStatus::Queued.as_str())
+        .bind(
+            MailboxDelivery::SteerActiveTurn {
+                stop_effect: SteeringStopEffect::None,
+            }
+            .kind(),
+        )
+        .bind(MailboxMessageStatus::Steered.as_str())
+        .bind(MailboxMessageStatus::Dispatched.as_str())
+        .bind(MailboxMessageStatus::Blocked.as_str())
+        .bind(MAILBOX_DELIVERY_RESULT_UNKNOWN)
         .bind(now)
         .bind(MailboxMessageStatus::Consuming.as_str())
         .execute(&self.pool)
@@ -746,5 +770,168 @@ mod tests {
             .expect("claim after resume");
         assert_eq!(resumed_claim.len(), 1);
         assert_eq!(resumed_claim[0].id, old_message.id);
+    }
+
+    #[tokio::test]
+    async fn recover_expired_consuming_blocks_unknown_delivery_result() {
+        let Some(pool) = test_pg_pool("agent_run_mailbox_recover_unknown").await else {
+            return;
+        };
+        let repo = PostgresAgentRunMailboxRepository::new(pool.clone());
+        repo.initialize().await.expect("initialize");
+
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let session_id = format!("mailbox-session-{}", Uuid::new_v4());
+        insert_mailbox_refs(&pool, run_id, agent_id, &session_id).await;
+
+        let message = repo
+            .create_message(new_message(
+                run_id,
+                agent_id,
+                &session_id,
+                ConsumptionBarrier::ImmediateIfIdle,
+                MailboxDrainMode::One,
+                "unknown-delivery-message",
+            ))
+            .await
+            .expect("create message");
+        let claim_token = Uuid::new_v4();
+        let claimed = repo
+            .claim_next(AgentRunMailboxClaimRequest {
+                run_id,
+                agent_id,
+                runtime_session_id: Some(session_id.clone()),
+                barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
+                drain_mode: Some(MailboxDrainMode::One),
+                limit: 1,
+                claim_token,
+                claim_expires_at: Utc::now(),
+            })
+            .await
+            .expect("claim message");
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].id, message.id);
+
+        let recovered = repo
+            .recover_expired_consuming(Utc::now() + chrono::Duration::seconds(1))
+            .await
+            .expect("recover expired consuming");
+        assert_eq!(recovered, 1);
+
+        let blocked = repo
+            .get_message(message.id)
+            .await
+            .expect("load recovered message")
+            .expect("message exists");
+        assert_eq!(blocked.status, MailboxMessageStatus::Blocked);
+        assert_eq!(
+            blocked.last_error.as_deref(),
+            Some(MAILBOX_DELIVERY_RESULT_UNKNOWN)
+        );
+        assert!(blocked.claim_token.is_none());
+        assert!(blocked.claim_expires_at.is_none());
+
+        let reclaimed = repo
+            .claim_next(AgentRunMailboxClaimRequest {
+                run_id,
+                agent_id,
+                runtime_session_id: Some(session_id),
+                barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
+                drain_mode: Some(MailboxDrainMode::One),
+                limit: 1,
+                claim_token: Uuid::new_v4(),
+                claim_expires_at: Utc::now(),
+            })
+            .await
+            .expect("claim after recovery");
+        assert!(reclaimed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn recover_expired_consuming_restores_terminal_status_with_accepted_refs() {
+        let Some(pool) = test_pg_pool("agent_run_mailbox_recover_terminal").await else {
+            return;
+        };
+        let repo = PostgresAgentRunMailboxRepository::new(pool.clone());
+        repo.initialize().await.expect("initialize");
+
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let session_id = format!("mailbox-session-{}", Uuid::new_v4());
+        insert_mailbox_refs(&pool, run_id, agent_id, &session_id).await;
+
+        let message = repo
+            .create_message(new_message(
+                run_id,
+                agent_id,
+                &session_id,
+                ConsumptionBarrier::AgentLoopTurnBoundary,
+                MailboxDrainMode::All,
+                "accepted-delivery-message",
+            ))
+            .await
+            .expect("create message");
+        repo.update_message_policy(
+            message.id,
+            MailboxDelivery::SteerActiveTurn {
+                stop_effect: SteeringStopEffect::None,
+            },
+            ConsumptionBarrier::AgentLoopTurnBoundary,
+            MailboxDrainMode::All,
+            0,
+        )
+        .await
+        .expect("set steer policy");
+        let claimed = repo
+            .claim_next(AgentRunMailboxClaimRequest {
+                run_id,
+                agent_id,
+                runtime_session_id: Some(session_id.clone()),
+                barriers: vec![ConsumptionBarrier::AgentLoopTurnBoundary],
+                drain_mode: Some(MailboxDrainMode::All),
+                limit: 1,
+                claim_token: Uuid::new_v4(),
+                claim_expires_at: Utc::now(),
+            })
+            .await
+            .expect("claim message");
+        assert_eq!(claimed.len(), 1);
+
+        sqlx::query(
+            "UPDATE agent_run_mailbox_messages SET \
+             accepted_agent_run_turn_id=$1,accepted_protocol_turn_id=$2 \
+             WHERE id=$3",
+        )
+        .bind("agent-run-turn-1")
+        .bind("protocol-turn-1")
+        .bind(message.id.to_string())
+        .execute(&pool)
+        .await
+        .expect("seed accepted refs");
+
+        let recovered = repo
+            .recover_expired_consuming(Utc::now() + chrono::Duration::seconds(1))
+            .await
+            .expect("recover expired consuming");
+        assert_eq!(recovered, 1);
+
+        let terminal = repo
+            .get_message(message.id)
+            .await
+            .expect("load recovered message")
+            .expect("message exists");
+        assert_eq!(terminal.status, MailboxMessageStatus::Steered);
+        assert_eq!(
+            terminal.accepted_agent_run_turn_id.as_deref(),
+            Some("agent-run-turn-1")
+        );
+        assert_eq!(
+            terminal.accepted_protocol_turn_id.as_deref(),
+            Some("protocol-turn-1")
+        );
+        assert!(terminal.consumed_at.is_some());
+        assert!(terminal.claim_token.is_none());
+        assert!(terminal.claim_expires_at.is_none());
     }
 }

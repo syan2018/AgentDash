@@ -1529,6 +1529,7 @@ pub struct SessionRuntimeControlView {
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunCommandOnlyRequest {
     pub command: AgentRunCommandPreconditionView,
+    pub client_command_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

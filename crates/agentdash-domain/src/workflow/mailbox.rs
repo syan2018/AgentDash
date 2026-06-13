@@ -4,6 +4,8 @@ use uuid::Uuid;
 
 use crate::common::error::DomainError;
 
+pub const MAILBOX_DELIVERY_RESULT_UNKNOWN: &str = "delivery_result_unknown";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MailboxMessageOrigin {
     User,

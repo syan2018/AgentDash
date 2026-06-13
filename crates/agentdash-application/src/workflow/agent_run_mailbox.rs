@@ -8,9 +8,10 @@ use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
     AgentRunCommandReceiptRepository, AgentRunMailboxClaimRequest, AgentRunMailboxMessage,
     AgentRunMailboxRepository, AgentRunMailboxState, ConsumptionBarrier, LifecycleAgent,
-    LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository, MailboxDelivery,
-    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus,
-    NewAgentRunMailboxMessage, RuntimeSessionExecutionAnchorRepository, SteeringStopEffect,
+    LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
+    MailboxMessageSource, MailboxMessageStatus, NewAgentRunMailboxMessage,
+    RuntimeSessionExecutionAnchorRepository, SteeringStopEffect,
 };
 use agentdash_spi::platform::auth::AuthIdentity;
 use agentdash_spi::{AgentConfig, AgentMessage, ContentPart};
@@ -294,7 +295,7 @@ impl<'a> AgentRunMailboxService<'a> {
     pub async fn accept_hook_auto_resume_effect(
         &self,
         runtime_session_id: &str,
-        effect_id: Uuid,
+        _effect_id: Uuid,
         source_turn_id: String,
         terminal_event_seq: u64,
         input: Vec<UserInputBlock>,
@@ -316,7 +317,9 @@ impl<'a> AgentRunMailboxService<'a> {
                 barrier: ConsumptionBarrier::ImmediateIfIdle,
                 drain_mode: MailboxDrainMode::One,
                 priority: 0,
-                source_dedup_key: Some(format!("hook_auto_resume_effect:{effect_id}")),
+                source_dedup_key: Some(format!(
+                    "hook_auto_resume:{runtime_session_id}:{source_turn_id}:{terminal_event_seq}"
+                )),
                 queued_agent_run_turn_id: Some(source_turn_id),
                 expected_active_agent_run_turn_id: None,
                 command_receipt_id: None,
@@ -372,6 +375,7 @@ impl<'a> AgentRunMailboxService<'a> {
             }
             let payload_json =
                 serde_json::to_value(&input).map_err(serialization_error("hook steering input"))?;
+            let turn_key = active_turn_id.as_deref().unwrap_or("no_active_turn");
             let mailbox_message = self
                 .mailbox_repo
                 .create_message_idempotent(NewAgentRunMailboxMessage {
@@ -385,8 +389,8 @@ impl<'a> AgentRunMailboxService<'a> {
                     drain_mode,
                     priority: 100,
                     source_dedup_key: Some(format!(
-                        "hook_delivery:{}:{source_event_key}:{index}",
-                        source.as_str()
+                        "hook_delivery:{}:{runtime_session_id}:{turn_key}:{source_event_key}:{index}",
+                        source.as_str(),
                     )),
                     queued_agent_run_turn_id: active_turn_id.clone(),
                     expected_active_agent_run_turn_id: active_turn_id.clone(),
@@ -493,6 +497,13 @@ impl<'a> AgentRunMailboxService<'a> {
                 WorkflowApplicationError::NotFound(format!("mailbox message 不存在: {message_id}"))
             })?;
         ensure_message_owner(&message, command.run_id, command.agent_id)?;
+        if message.last_error.as_deref() == Some(MAILBOX_DELIVERY_RESULT_UNKNOWN) {
+            let error = WorkflowApplicationError::Conflict(
+                "mailbox message delivery result is unknown and cannot be promoted".to_string(),
+            );
+            mark_command_terminal_failed(self.command_receipt_repo, claim.record.id, &error).await;
+            return Err(error);
+        }
         let promoted = self
             .mailbox_repo
             .update_message_policy(

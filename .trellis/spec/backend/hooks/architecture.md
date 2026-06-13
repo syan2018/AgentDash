@@ -13,6 +13,7 @@ Hook 子系统把 workflow / project / story / task / session 等来源的策略
 - runtime context update 不作为第二条即时 live notification 推给 Agent；它进入 turn-start 队列，在 `transform_context(UserPromptSubmit)` 边界统一消费。
 - Agent-visible runtime steering 的一等展示结构是 `ContextFrame`。
 - `HookTurnStartNotice.content` 必须等于对应 `ContextFrame.rendered_text`。
+- AgentRun-anchored hook delivery message 进入 AgentRun Mailbox；hook runtime 继续拥有 block/rewrite/context injection、tool approval 和 trace。这样 delivery 调度、dedup、恢复和前端投影与用户/system message 使用同一 control-plane envelope。
 
 ## Current Baseline
 

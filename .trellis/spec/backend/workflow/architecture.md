@@ -87,8 +87,8 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 - artifact edge 自动提供 flow dependency，原因是数据依赖本身已经表达执行顺序，重复 flow edge 会制造两套 dependency 事实。
 - `RuntimeSessionExecutionAnchor` 是 runtime trace/delivery refs 的索引和 read model projection 来源，原因是运行时 trace 反查需要稳定索引，且不应随 frame revision surface 变化。
 - AgentRun conversation snapshot 以 run / agent / current frame / delivery anchor / runtime execution state /
-  pending queue / model config / resource surface 生成 command view，原因是用户工作台命令需要同时验证
-  lifecycle 控制面、active turn、模型解析和 connector capability。`RuntimeSession` 继续作为 delivery /
+  mailbox projection / model config / resource surface 生成 command view，原因是用户工作台命令需要同时验证
+  lifecycle 控制面、active AgentRunTurn、mailbox envelope、模型解析和 connector capability。`RuntimeSession` 继续作为 delivery /
   trace evidence，被 snapshot 引用但不拥有 AgentRun command surface。
 - AgentRun workspace resource surface 从当前 `AgentFrame` typed VFS surface 投影，原因是 frame revision
   是 capability、context、VFS 与 MCP 的生效 surface；workspace panel 和 connector launch 需要消费同一

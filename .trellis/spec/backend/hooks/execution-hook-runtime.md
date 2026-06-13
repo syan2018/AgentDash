@@ -81,6 +81,18 @@ provider 的 `resolve_runtime_hook_target(runtime_session_id)` 只保留为 lega
 | `BeforeStop` | 无 workflow 绑定时 `completion = None`，必须允许自然结束，不得因 `completion_satisfied = false` 错误阻止退出 |
 | `AfterTurn` | 只做生命周期观察与 effect，不消费 turn-start 暂存事件，避免重复注入 step 基线约束 |
 
+AgentRun-anchored hook delivery message 使用 AgentRun Mailbox 表达：
+
+| Hook output | Mailbox contract |
+| --- | --- |
+| `UserPromptSubmit` block/rewrite/context injection | 不进入 mailbox；它改写或阻止用户输入 envelope intake。 |
+| `UserPromptSubmit` extra steering | origin=`Hook`，delivery=`SteerActiveTurn`，barrier=`AgentLoopTurnBoundary`，drain=`All`。 |
+| `AfterTurn` steering | origin=`Hook`，delivery=`SteerActiveTurn`，barrier=`AgentLoopTurnBoundary`，drain=`All`。 |
+| `BeforeStop` steering / follow-up | origin=`Hook`，delivery=`SteerActiveTurn { stop_effect=ContinueOnStop }`，barrier=`AgentRunTurnBoundary`。 |
+| anchored hook auto-resume | origin=`Hook/System`，delivery=`ResumeLaunchSource(HookAutoResume)` 或 launch-source envelope，source dedup key 使用 terminal effect id / event seq。 |
+
+这层拆分的原因是 hook policy 与上下文注入仍要在 AgentLoop 边界同步生效，而 delivery message 需要和用户/system message 共享 durable dedup、恢复、barrier/drain mode 与 workspace projection。
+
 ### Runtime Event 行为要点
 
 - `HookTraceTrigger` 只表示 AgentLoop 生命周期节点：`SessionStart` /

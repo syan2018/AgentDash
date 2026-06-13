@@ -1,0 +1,175 @@
+# AgentRun Mailbox And Turn Boundary Contract
+
+## Role
+
+AgentRun Mailbox 是 AgentRun workspace 的统一 message intake、调度队列和恢复投影。它把用户输入、hook/system steering、companion/workflow follow-up 与普通 queued work 都表达为 durable envelope，再由 scheduler 根据 runtime state、barrier 和 drain mode 选择 delivery action。
+
+Mailbox 的原因是 AgentRun workspace command 需要同时满足幂等、跨进程恢复、前端状态投影和 Codex-compatible turn control。route-local `send_next/enqueue/steer` 分支无法表达 system pending message、hook replay dedup、claim recovery 和 stop-boundary continuation。
+
+## Terms
+
+| Term | Meaning |
+| --- | --- |
+| `AgentRunThread` | AgentRun workspace 侧 conversation/execution container，对齐 Codex `Thread`。 |
+| `AgentRunTurn` | 用户可见执行生命周期，从 `SessionLaunchService::start_prompt` 到 `TurnEvent::Terminal`，对齐 Codex `Turn`。 |
+| `AgentLoopTurn` | PiAgent/agent loop 内部 `AgentEvent::TurnStart/TurnEnd`，只在 AgentRun mailbox 边界引用时使用此前缀。 |
+| `AgentLoopTurnBoundary` | AgentLoopTurn 结束后、下一次 assistant response 前的 scheduler trigger。 |
+| `AgentRunTurnBoundary` | AgentRunTurn stop/terminal 边界；`BeforeStop` 可继续当前 loop，terminal callback 是 fallback。 |
+
+Bare `Turn` 不作为 AgentRun control-plane 新类型名使用。已有 connector 或 PiAgent event 名称可以保持原 API 命名，但 AgentRun mailbox/domain/DTO 必须显式使用 `AgentRunTurn` 或 `AgentLoopTurn`。
+
+## Scenario: AgentRun Mailbox Message Scheduling
+
+### 1. Scope / Trigger
+
+- Trigger: AgentRun composer submit、mailbox promote/delete/resume、hook/system delivery message、AgentLoopTurn boundary、AgentRunTurn boundary、process recovery。
+- Scope: `agentdash-contracts::workflow` DTO、domain mailbox records、application scheduler、command receipt、PostgreSQL repository、AgentRun workspace projection、frontend generated contract consumption。
+
+该场景是 cross-layer contract：HTTP command、domain state、scheduler delivery、hook convergence 和 frontend projection 必须共享同一组 envelope/status/barrier 字段。
+
+### 2. Signatures
+
+HTTP command surface:
+
+```text
+GET    /agent-runs/{run_id}/agents/{agent_id}/workspace
+POST   /agent-runs/{run_id}/agents/{agent_id}/composer-submit
+GET    /agent-runs/{run_id}/agents/{agent_id}/mailbox
+DELETE /agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}
+POST   /agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/promote
+POST   /agent-runs/{run_id}/agents/{agent_id}/mailbox/resume
+```
+
+Core domain records:
+
+```rust
+pub struct AgentRunMailboxMessage {
+    pub id: Uuid,
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub runtime_session_id: String,
+    pub origin: MailboxMessageOrigin,
+    pub source: MailboxMessageSource,
+    pub delivery: MailboxDelivery,
+    pub barrier: ConsumptionBarrier,
+    pub drain_mode: MailboxDrainMode,
+    pub status: MailboxMessageStatus,
+    pub priority: i32,
+    pub order_key: i64,
+    pub source_dedup_key: Option<String>,
+    pub queued_agent_run_turn_id: Option<String>,
+    pub consuming_agent_run_turn_id: Option<String>,
+    pub expected_active_agent_run_turn_id: Option<String>,
+    pub accepted_agent_run_turn_id: Option<String>,
+    pub accepted_protocol_turn_id: Option<String>,
+    pub claim_token: Option<Uuid>,
+    pub claim_expires_at: Option<DateTime<Utc>>,
+    pub command_receipt_id: Option<Uuid>,
+    pub payload_json: Option<Value>,
+    pub preview: String,
+    pub retain_payload: bool,
+    pub attempt_count: i32,
+}
+
+pub enum MailboxDelivery {
+    LaunchOrContinueTurn,
+    SteerActiveTurn { stop_effect: SteeringStopEffect },
+    ResumeLaunchSource { launch_source: LaunchSourceTag },
+}
+
+pub enum ConsumptionBarrier {
+    ImmediateIfIdle,
+    AgentLoopTurnBoundary,
+    AgentRunTurnBoundary,
+    ManualResume,
+}
+```
+
+Scheduler entrypoints:
+
+```rust
+AgentRunMailboxService::accept_user_message(...)
+AgentRunMailboxService::accept_hook_message(...)
+AgentRunMailboxService::accept_system_message(...)
+AgentRunMailboxService::promote_message(...)
+AgentRunMailboxService::delete_message(...)
+AgentRunMailboxService::resume_mailbox(...)
+AgentRunMailboxService::schedule(run_id, agent_id, trigger)
+```
+
+### 3. Contracts
+
+- Backend envelope/domain/repository 是 AgentRun control-plane fact source。Codex app-server protocol 是优先复用的 `Thread/Turn` 基线；AgentRun-only scheduling 字段必须显式存在于 envelope/domain enum/adapter/projection/test 中。
+- `composer-submit` 接收 canonical `Vec<UserInputBlock>`，claim durable command receipt，创建 mailbox envelope，再调用 scheduler。response 返回 `AgentRunMessageCommandResponse { command_receipt, outcome, mailbox_message?, accepted_refs?, runtime_state? }`。
+- `outcome` 是 scheduler outcome：`launched | queued | steered | deleted | resumed | blocked | failed`。它不是 route-local command kind。
+- `MailboxMessageView` 是 frontend pending/message row 的 wire source，至少暴露 `origin/source/delivery/barrier/status/preview/has_images/can_promote/can_delete/created_at/updated_at`。
+- `ImmediateIfIdle + LaunchOrContinueTurn + DrainMode::One` 在没有 active AgentRunTurn 时启动或恢复一个 AgentRunTurn。
+- `AgentLoopTurnBoundary + SteerActiveTurn + DrainMode::All` 在 AgentLoopTurn 结束后批量注入下一次 AgentLoopTurn，和 PiAgent `QueueMode::All` 语义对齐。
+- `AgentRunTurnBoundary + LaunchOrContinueTurn + DrainMode::One` 在 AgentRunTurn stop/terminal 边界最多消费一条普通 user-origin message。`BeforeStop` 命中时以 steering continuation 继续当前 loop；terminal callback 只作为 fallback。
+- Hook `UserPromptSubmit` 的 block/rewrite/context injection 仍由 hook runtime 处理。hook 产出的 delivery message，包括 `AfterTurn` steering、`BeforeStop` steering、legacy follow-up 和 anchored auto-resume，必须写入 mailbox envelope，并使用稳定 `source_dedup_key`。
+- Legacy hook `follow_up` 不是 mailbox delivery class；它归一为 `SteerActiveTurn { stop_effect: ContinueOnStop }`。
+- User-origin payload 可以在 queued/consuming 阶段短期持久以支持恢复；消费成功后按 retention policy 清理。preview、status、accepted refs 和 receipt result 继续保留用于投影与审计。
+- `Consuming` message 必须有 claim token、lease 和 attempt count。scheduler completion 必须比较 claim token 后才能写入 `Dispatched`、`Steered`、`Failed` 或恢复状态。
+- `thread/resume` 只表示 runtime/view rehydrate，不隐式 drain mailbox。Mailbox resume 是 AgentDash envelope state transition，然后再由 scheduler 选择 `turn/start` 或 `turn/steer`。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `client_command_id` duplicate with same digest | replay stored command receipt and mailbox/delivery result |
+| `client_command_id` duplicate with different digest | command conflict |
+| active AgentRunTurn missing for steer envelope | message becomes `Blocked(active_turn_missing)` or remains queued until a valid barrier |
+| expected active AgentRunTurn id mismatch | command result is rejected/deferred; no duplicate steer |
+| AgentLoopTurn boundary fires with multiple eligible steering messages | scheduler claims and injects all eligible `DrainMode::All` messages |
+| AgentRunTurn boundary has multiple ordinary user messages | scheduler consumes at most one `DrainMode::One` message |
+| `BeforeStop` consumes stop-boundary steering | current loop continues without first writing terminal |
+| terminal callback runs after `BeforeStop` already consumed a message | fallback does not consume the same envelope again |
+| failed/interrupted AgentRunTurn with queued messages | existing queued messages become paused or blocked according to policy |
+| new user message after failed/interrupted runtime | accepted as fresh envelope and may launch a new AgentRunTurn |
+| expired `Consuming` lease after restart | recover to queued/blocked/terminal result according to accepted refs and retryability |
+| hook terminal effect replay | same `source_dedup_key` does not create duplicate system-origin envelope |
+| user-origin envelope consumed successfully | payload cleanup runs after accepted refs/result are recorded |
+
+### 5. Good/Base/Bad Cases
+
+- Good: running workspace receives two user messages and one hook steering message; AgentLoopTurn boundary drains the hook/user steering batch, while AgentRunTurn boundary later consumes only one ordinary pending user message.
+- Good: `BeforeStop` receives a hook follow-up; scheduler consumes it as stop-boundary steering and continues the same AgentRunTurn.
+- Base: idle workspace receives one user message; mailbox creates an envelope, scheduler launches one AgentRunTurn, response returns `outcome=launched` and accepted turn refs.
+- Base: user deletes a queued message; status becomes `Deleted`, duplicate delete replays the same command result.
+- Bad: route handler chooses launch/queue/steer directly before writing mailbox envelope, because recovery, duplicate replay and hook/system messages then observe a different state model.
+- Bad: frontend infers queued/steered/dispatched from keyboard command kind, because scheduler outcome and recovery status belong to backend projection.
+
+### 6. Tests Required
+
+- Contract generation check asserts `MailboxMessageView`、`MailboxMessageStatus`、`MailboxMessageOrigin`、`MailboxDelivery`、`ConsumptionBarrier`、`MailboxDrainMode`、`AgentRunMessageCommandResponse` are present in generated TypeScript.
+- Repository tests cover order, priority, source dedup, atomic claim, claim token completion, expired claim recovery, pause/resume and payload cleanup.
+- Scheduler tests cover idle launch, running AgentLoopTurn-boundary drain-all, running no-steer AgentRunTurn-boundary drain-one, `BeforeStop` continuation, terminal fallback dedup, failed/interrupted pause, new user message after failure, promote, delete and manual resume.
+- Hook integration tests cover `AfterTurn` steering envelope, `BeforeStop` follow-up normalization, anchored hook auto-resume envelope and terminal effect replay dedup.
+- API tests cover composer submit duplicate receipt, mailbox list/delete/promote/resume, typed conflict for expected active AgentRunTurn mismatch, and no route-local `send_next/enqueue/steer` branch as authority.
+- Frontend tests cover service URLs, generated DTO consumption, mailbox row rendering by `status/barrier/delivery`, composer submit outcome refresh, and no hand-written pending DTO aliases.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+composer-submit -> route checks SessionExecutionState -> SendNext | Enqueue | Steer -> separate side effects
+```
+
+#### Correct
+
+```text
+composer-submit -> command receipt -> mailbox envelope -> scheduler -> launched | queued | steered
+```
+
+#### Wrong
+
+```text
+completed terminal callback -> dequeue in-memory pending queue -> dispatch next user message
+```
+
+#### Correct
+
+```text
+BeforeStop/terminal fallback -> schedule(AgentRunTurnBoundary) -> claim one durable envelope -> continue or launch
+```

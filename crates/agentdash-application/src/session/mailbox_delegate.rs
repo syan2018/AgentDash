@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentRunCommandReceiptRepository, AgentRunMailboxRepository,
     ConsumptionBarrier, LifecycleAgentRepository, LifecycleRunRepository, MailboxDrainMode,
@@ -79,15 +80,39 @@ impl AgentRunMailboxRuntimeDelegate {
                 AgentRunMailboxScheduleTrigger::AgentLoopTurnBoundary,
             )
             .await;
-        if let Err(error) = result {
-            if matches!(error, WorkflowApplicationError::NotFound(_)) {
-                return;
+        match result {
+            Ok(outcomes) if !outcomes.is_empty() => {
+                self.emit_mailbox_state_changed("steer_consumed").await;
             }
-            tracing::warn!(
-                runtime_session_id = %self.runtime_session_id,
-                "AgentRun mailbox AgentLoopTurnBoundary 调度失败: {error}"
-            );
+            Err(error) => {
+                if !matches!(error, WorkflowApplicationError::NotFound(_)) {
+                    tracing::warn!(
+                        runtime_session_id = %self.runtime_session_id,
+                        "AgentRun mailbox AgentLoopTurnBoundary 调度失败: {error}"
+                    );
+                }
+            }
+            _ => {}
         }
+    }
+
+    async fn emit_mailbox_state_changed(&self, reason: &str) {
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::MailboxStateChanged {
+                reason: reason.to_string(),
+            }),
+            &self.runtime_session_id,
+            SourceInfo {
+                connector_id: "mailbox".to_string(),
+                connector_type: "platform".to_string(),
+                executor_id: None,
+            },
+        );
+        let _ = self
+            .deps
+            .session_eventing
+            .persist_notification(&self.runtime_session_id, envelope)
+            .await;
     }
 
     async fn drain_agent_run_turn_boundary(&self) -> Result<Vec<AgentMessage>, AgentRuntimeError> {

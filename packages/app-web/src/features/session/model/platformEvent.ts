@@ -23,6 +23,8 @@ export function extractPlatformEventType(event: BackboneEvent): string | null {
     return platform.data.key;
   }
 
+  if (platform.kind === "mailbox_state_changed") return "mailbox_state_changed";
+
   return null;
 }
 

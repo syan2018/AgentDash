@@ -31,7 +31,7 @@ import {
   SessionChatStream,
 } from "./SessionChatViewParts";
 import {
-  collectNewSystemEvents,
+  collectAllPlatformEvents,
   computeProjectionRefreshKey,
   extractTurnLifecycleEventType,
   resolveExecutorFromHint,
@@ -43,7 +43,7 @@ import { MailboxMessageList } from "./composer/MailboxMessageRow";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 
 // eslint-disable-next-line react-refresh/only-export-components
-export { collectNewSystemEvents, computeProjectionRefreshKey } from "./SessionChatViewModel";
+export { collectAllPlatformEvents as collectNewSystemEvents, computeProjectionRefreshKey } from "./SessionChatViewModel";
 export type {
   PromptTemplate,
   SessionChatCommandState,
@@ -84,6 +84,10 @@ export function SessionChatView({
   onPromoteMailboxMessage,
   onDeleteMailboxMessage,
   onResumeMailbox,
+  onRecallMailboxMessage,
+  onMoveMailboxMessage,
+  injectedInputValue,
+  onInjectedInputConsumed,
   headerSlot,
   inputPrefix,
   streamPrefixContent,
@@ -126,6 +130,15 @@ export function SessionChatView({
       setInputValue(initialInputValue);
     }
   }, [initialInputValue]);
+
+  // 外部注入输入值（recall 消息后填充 composer）
+  useEffect(() => {
+    if (injectedInputValue != null && injectedInputValue !== "") {
+      richInputRef.current?.setValue(injectedInputValue);
+      setInputValue(injectedInputValue);
+      onInjectedInputConsumed?.();
+    }
+  }, [injectedInputValue, onInjectedInputConsumed]);
 
   // sessionId 变更时重置内部状态
   useEffect(() => {
@@ -363,7 +376,7 @@ export function SessionChatView({
 
   useEffect(() => {
     if (!hasSession || rawEvents.length === 0) return;
-    const result = collectNewSystemEvents(rawEvents, lastSystemEventSeqRef.current);
+    const result = collectAllPlatformEvents(rawEvents, lastSystemEventSeqRef.current);
     lastSystemEventSeqRef.current = result.lastSeenSeq;
     if (result.items.length === 0) return;
     for (const item of result.items) {
@@ -389,7 +402,7 @@ export function SessionChatView({
   const commandActionRef = useRef(onCommand);
   useEffect(() => { commandActionRef.current = onCommand; }, [onCommand]);
 
-  const handleSubmit = useCallback(async (command: ConversationCommandView | undefined) => {
+  const handleSubmit = useCallback(async (command: ConversationCommandView | undefined, deliveryIntent?: string) => {
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
     const images = imageAttach.attachments;
@@ -421,6 +434,7 @@ export function SessionChatView({
         trimmed,
         executorConfig,
         images.length > 0 ? images : undefined,
+        deliveryIntent,
       );
 
       execConfig.recordUsage();
@@ -491,10 +505,11 @@ export function SessionChatView({
       if (e.shiftKey) return; // Shift+Enter = 换行
 
       e.preventDefault();
-      const keyboardCommandId = (e.ctrlKey || e.metaKey)
+      const isSteer = e.ctrlKey || e.metaKey;
+      const keyboardCommandId = isSteer
         ? commandState.commands.keyboard.ctrl_enter
         : commandState.commands.keyboard.enter;
-      void handleSubmit(commandById(keyboardCommandId));
+      void handleSubmit(commandById(keyboardCommandId), isSteer ? "steer" : undefined);
     },
     [commandById, commandState.commands.keyboard.ctrl_enter, commandState.commands.keyboard.enter, fileRef, handleSubmit],
   );
@@ -656,6 +671,8 @@ export function SessionChatView({
             onPromote={onPromoteMailboxMessage ?? (() => {})}
             onDelete={onDeleteMailboxMessage ?? (() => {})}
             onResume={onResumeMailbox}
+            onRecall={onRecallMailboxMessage}
+            onMove={onMoveMailboxMessage}
           />
         )}
 

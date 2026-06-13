@@ -24,6 +24,8 @@ const mailboxMessage: MailboxMessageView = {
   updated_at: "2026-06-12T00:00:00.000Z",
   can_promote: true,
   can_delete: true,
+  can_reorder: true,
+  can_recall: true,
 };
 
 function renderMailboxList(options: {
@@ -63,19 +65,20 @@ const deleteCommand: ConversationCommandView = {
 };
 
 describe("MailboxMessageList", () => {
-  it("shows mailbox messages outside running mode without exposing promote by default", () => {
+  it("renders message preview and delete action, hides internal state", () => {
     const markup = renderMailboxList({ deleteCommand });
 
     expect(markup).toContain("继续处理下一步");
-    expect(markup).toContain("排队中");
-    expect(markup).toContain("Run 边界");
-    expect(markup).toContain("启动或继续");
     expect(markup).toContain("删除");
-    expect(markup).not.toContain("引导");
-    expect(markup).not.toContain("编辑消息");
+    // 不应暴露后端状态机概念
+    expect(markup).not.toContain("排队中");
+    expect(markup).not.toContain("Run 边界");
+    expect(markup).not.toContain("启动或继续");
+    expect(markup).not.toContain("Loop 边界");
+    expect(markup).not.toContain("Stop continuation");
   });
 
-  it("shows promote only when snapshot exposes mailbox row command", () => {
+  it("shows promote button only when command enabled and message can_promote", () => {
     const markup = renderMailboxList({
       deleteCommand,
       promoteCommand: {
@@ -95,10 +98,34 @@ describe("MailboxMessageList", () => {
       },
     });
 
-    expect(markup).toContain("引导");
+    expect(markup).toContain("注入当前轮");
   });
 
-  it("does not render paused empty mailbox without user attention", () => {
+  it("hides promote when message cannot be promoted", () => {
+    const markup = renderMailboxList({
+      messages: [{ ...mailboxMessage, can_promote: false }],
+      deleteCommand,
+      promoteCommand: {
+        kind: "promote_mailbox_message",
+        command_id: "cmd-promote",
+        enabled: true,
+        requires_input: false,
+        executor_config_policy: "forbidden",
+        placement: ["mailbox_row"],
+        stale_guard: {
+          snapshot_id: "snapshot-promote",
+          run_id: "run-1",
+          agent_id: "agent-1",
+          runtime_session_id: "session-1",
+          active_turn_id: "turn-1",
+        },
+      },
+    });
+
+    expect(markup).not.toContain("注入当前轮");
+  });
+
+  it("does not render when no messages and no user attention", () => {
     const markup = renderMailboxList({
       messages: [],
       mailbox: {
@@ -111,7 +138,7 @@ describe("MailboxMessageList", () => {
     expect(markup).toBe("");
   });
 
-  it("shows mailbox state pause message and resume action", () => {
+  it("shows pause banner with resume action", () => {
     const markup = renderMailboxList({
       messages: [],
       mailbox: {
@@ -122,7 +149,7 @@ describe("MailboxMessageList", () => {
           kind: "resume_mailbox",
           command_id: "cmd-resume",
           enabled: true,
-          unavailable_reason: "上一轮已中断，Mailbox 已暂停。",
+          unavailable_reason: "上一轮已中断。",
           requires_input: false,
           executor_config_policy: "forbidden",
           placement: ["mailbox_banner"],
@@ -139,16 +166,18 @@ describe("MailboxMessageList", () => {
         pause_reason: "turn_failed",
         message: "后端暂停消息",
         can_resume: true,
+        hide_system_steer_messages: false,
       },
     });
 
-    expect(markup).toContain("Mailbox 已暂停");
-    expect(markup).toContain("后端暂停消息");
+    expect(markup).toContain("消息投递已暂停");
     expect(markup).toContain("恢复");
-    expect(markup).not.toContain("引导");
+    // 不应直接输出后端技术信息
+    expect(markup).not.toContain("后端暂停消息");
+    expect(markup).not.toContain("Mailbox");
   });
 
-  it("shows blocked delivery error from backend projection", () => {
+  it("shows failure hint for blocked messages without exposing internal error", () => {
     const markup = renderMailboxList({
       messages: [
         {
@@ -159,29 +188,29 @@ describe("MailboxMessageList", () => {
           attempt_count: 2,
           last_error: "delivery_result_unknown",
           can_promote: false,
+          can_reorder: false,
+          can_recall: false,
         },
       ],
-      promoteCommand: {
-        kind: "promote_mailbox_message",
-        command_id: "cmd-promote",
-        enabled: true,
-        requires_input: false,
-        executor_config_policy: "forbidden",
-        placement: ["mailbox_row"],
-        stale_guard: {
-          snapshot_id: "snapshot-promote",
-          run_id: "run-1",
-          agent_id: "agent-1",
-          runtime_session_id: "session-1",
-        },
-      },
+      deleteCommand,
     });
 
-    expect(markup).toContain("已阻塞");
-    expect(markup).toContain("Loop 边界");
-    expect(markup).toContain("Stop continuation");
-    expect(markup).toContain("2 次尝试");
-    expect(markup).toContain("delivery_result_unknown");
-    expect(markup).not.toContain("引导");
+    expect(markup).toContain("继续处理下一步");
+    expect(markup).toContain("失败");
+    // 不应暴露后端状态机概念
+    expect(markup).not.toContain("已阻塞");
+    expect(markup).not.toContain("Loop 边界");
+    expect(markup).not.toContain("Stop continuation");
+    expect(markup).not.toContain("2 次尝试");
+    expect(markup).not.toContain("delivery_result_unknown");
+  });
+
+  it("shows image indicator in preview", () => {
+    const markup = renderMailboxList({
+      messages: [{ ...mailboxMessage, has_images: true }],
+      deleteCommand,
+    });
+
+    expect(markup).toContain("[图]");
   });
 });

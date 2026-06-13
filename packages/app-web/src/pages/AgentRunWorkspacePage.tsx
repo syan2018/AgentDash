@@ -28,6 +28,8 @@ import { useAgentRunWorkspaceState } from "../features/workspace-panel/model/use
 import {
   cancelAgentRun,
   deleteAgentRunMailboxMessage,
+  fetchAgentRunMailboxMessageContent,
+  moveAgentRunMailboxMessage,
   promoteAgentRunMailboxMessage,
   resumeAgentRunMailbox,
   submitAgentRunComposerInput,
@@ -125,6 +127,7 @@ export function AgentRunWorkspacePage({
     scopeKey: string | null;
     config: ExecutorConfig | null;
   }>({ scopeKey: null, config: null });
+  const [recalledInput, setRecalledInput] = useState<string | null>(null);
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
 
@@ -409,6 +412,7 @@ export function AgentRunWorkspacePage({
     prompt: string,
     executorConfig?: ExecutorConfig,
     imageAttachments?: ImageAttachment[],
+    deliveryIntent?: string,
   ) => {
     const trimmed = prompt.trim();
     const hasImages = (imageAttachments?.length ?? 0) > 0;
@@ -506,6 +510,7 @@ export function AgentRunWorkspacePage({
         client_command_id: resolvedCommand.clientCommandId,
         command: commandPrecondition(command),
         executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
+        delivery_intent: deliveryIntent,
       });
       if (response.accepted_refs?.run_ref.run_id) {
         void fetchAndIngestLifecycleRun(response.accepted_refs.run_ref.run_id);
@@ -604,7 +609,6 @@ export function AgentRunWorkspacePage({
 
   const handleDeleteMailboxMessage = useCallback(async (messageId: string) => {
     if (!currentRunId || !currentAgentId) return;
-    if (agentRunWorkspaceState.status !== "ready") return;
     const deleteCommand = chatCommandState.commands.commands.find(
       (command) => command.kind === "delete_mailbox_message" && command.placement.includes("mailbox_row"),
     );
@@ -618,7 +622,6 @@ export function AgentRunWorkspacePage({
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("mailbox_message_deleted", true);
   }, [
-    agentRunWorkspaceState.status,
     chatCommandState.commands.commands,
     currentAgentId,
     currentRunId,
@@ -664,6 +667,54 @@ export function AgentRunWorkspacePage({
     scheduleHookRuntimeRefresh("turn_end", true);
   }, [refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh]);
 
+  const handleRecallMailboxMessage = useCallback(async (messageId: string) => {
+    if (!currentRunId || !currentAgentId) return;
+    try {
+      const content = await fetchAgentRunMailboxMessageContent(
+        currentRunId,
+        currentAgentId,
+        messageId,
+      );
+      await deleteAgentRunMailboxMessage(
+        currentRunId,
+        currentAgentId,
+        messageId,
+        commandRequest(chatCommandState.commands.commands.find(
+          (c) => c.kind === "delete_mailbox_message" && c.placement.includes("mailbox_row"),
+        )!),
+      );
+      void refreshAgentRunWorkspaceState().catch(() => {});
+      const textParts = content.input
+        .filter((block: { type: string; text?: string }) => block.type === "text" && block.text)
+        .map((block: { text: string }) => block.text);
+      if (textParts.length > 0) {
+        setRecalledInput(textParts.join("\n"));
+      }
+    } catch {
+      void refreshAgentRunWorkspaceState().catch(() => {});
+    }
+  }, [
+    chatCommandState.commands.commands,
+    currentAgentId,
+    currentRunId,
+    refreshAgentRunWorkspaceState,
+  ]);
+
+  const handleMoveMailboxMessage = useCallback(async (messageId: string, afterMessageId: string | null) => {
+    if (!currentRunId || !currentAgentId) return;
+    try {
+      await moveAgentRunMailboxMessage(
+        currentRunId,
+        currentAgentId,
+        messageId,
+        { after_message_id: afterMessageId ?? undefined },
+      );
+      void refreshAgentRunWorkspaceState().catch(() => {});
+    } catch {
+      void refreshAgentRunWorkspaceState().catch(() => {});
+    }
+  }, [currentAgentId, currentRunId, refreshAgentRunWorkspaceState]);
+
   const handleSystemEvent = useCallback((eventType: string, _event: BackboneEvent) => {
     switch (eventType) {
       case "hook_event":
@@ -683,6 +734,10 @@ export function AgentRunWorkspacePage({
         break;
       }
       case "session_meta_updated": {
+        void refreshAgentRunWorkspaceState();
+        break;
+      }
+      case "mailbox_state_changed": {
         void refreshAgentRunWorkspaceState();
         break;
       }
@@ -943,6 +998,10 @@ export function AgentRunWorkspacePage({
               onPromoteMailboxMessage={(id) => { void handlePromoteMailboxMessage(id); }}
               onDeleteMailboxMessage={(id) => { void handleDeleteMailboxMessage(id); }}
               onResumeMailbox={() => { void handleResumeMailbox(); }}
+              onRecallMailboxMessage={(id) => { void handleRecallMailboxMessage(id); }}
+              onMoveMailboxMessage={(id, after) => { void handleMoveMailboxMessage(id, after); }}
+              injectedInputValue={recalledInput}
+              onInjectedInputConsumed={() => { setRecalledInput(null); }}
               inputPrefix={ownerBindingBar ?? draftBindingBar}
             />
           </div>

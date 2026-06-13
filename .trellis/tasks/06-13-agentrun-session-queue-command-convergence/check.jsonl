@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Check that implementation preserves AgentRun/session architecture boundaries."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Check that implementation matches mailbox envelope, scheduler, barrier/drain, hook convergence, recovery, and naming contracts."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Check that runtime execution state projection and AgentRun mailbox command surface stay aligned."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check that API responses and frontend projections stay contract-first and typed."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Check that frontend command state handling avoids untyped branching and duplicate local truth."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Check that frontend continues to consume backend command/mailbox projections instead of deriving runtime state locally."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Check that AgentRun workspace identity remains the command owner and runtime session remains a delivery ref."}
+{"file": ".trellis/tasks/06-13-agentrun-session-queue-command-convergence/current-state.md", "reason": "Check that all cut-over gates are satisfied and old production authority paths are removed."}

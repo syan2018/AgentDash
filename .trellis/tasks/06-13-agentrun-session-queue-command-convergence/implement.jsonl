@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Defines the AgentRun session architecture boundaries and backend command surface responsibilities."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Defines the target AgentRun Mailbox envelope, scheduler, barrier/drain, hook convergence, recovery, and Thread/Turn naming contract."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Documents how user inputs enter launch/session startup paths and how run/frame/runtime state is established."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Defines runtime execution state projection and AgentRun workspace mailbox command surface boundaries."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Defines cross-layer response and projection contracts for frontend/backend command handling."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Guides frontend type modeling for command responses and workspace projections."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Defines AgentRun workspace command authority and mailbox UI state consumption on the frontend."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Defines AgentRun command API ownership and frontend route/service contract boundaries."}
+{"file": ".trellis/tasks/06-13-agentrun-session-queue-command-convergence/current-state.md", "reason": "Defines current implementation facts and cut-over gates that implementation must satisfy."}

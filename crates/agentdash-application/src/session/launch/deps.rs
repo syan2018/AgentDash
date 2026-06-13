@@ -18,6 +18,7 @@ use crate::session::effects_service::SessionEffectsService;
 use crate::session::eventing::SessionEventingService;
 use crate::session::hooks_service::SessionHookService;
 use crate::session::hub::SessionRuntimeInner;
+use crate::session::mailbox_delegate::AgentRunMailboxRuntimeBoundaryDeps;
 use crate::session::persistence::SessionStoreSet;
 use crate::session::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
 use crate::session::runtime_registry::SessionRuntimeRegistry;
@@ -46,6 +47,7 @@ pub(in crate::session) struct SessionLaunchDeps {
     pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
     pub(super) execution_anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
     pub(super) lifecycle_agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
+    pub(super) agent_run_mailbox_boundary_deps: Option<AgentRunMailboxRuntimeBoundaryDeps>,
     eventing: SessionEventingService,
     core: SessionCoreService,
     hooks: SessionHookService,
@@ -72,6 +74,7 @@ impl SessionLaunchDeps {
             agent_frame_repo: inner.agent_frame_repo.clone(),
             execution_anchor_repo: inner.execution_anchor_repo.clone(),
             lifecycle_agent_repo: inner.lifecycle_agent_repo.clone(),
+            agent_run_mailbox_boundary_deps: inner.agent_run_mailbox_boundary_deps.clone(),
             eventing: inner.eventing_service(),
             core: inner.core_service(),
             hooks: inner.hook_service(),
@@ -96,6 +99,7 @@ impl SessionLaunchDeps {
             context_audit_bus: self.context_audit_bus.clone(),
             backend_execution_transport: self.backend_execution_transport.clone(),
             backend_execution_lease_repo: self.backend_execution_lease_repo.clone(),
+            agent_run_mailbox_boundary_deps: self.agent_run_mailbox_boundary_deps.clone(),
         }
     }
 
@@ -153,6 +157,7 @@ pub(super) struct LaunchPlanningDeps {
     context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,
     pub(super) backend_execution_transport: Option<Arc<dyn RelayPromptTransport>>,
     pub(super) backend_execution_lease_repo: Option<Arc<dyn BackendExecutionLeaseRepository>>,
+    pub(super) agent_run_mailbox_boundary_deps: Option<AgentRunMailboxRuntimeBoundaryDeps>,
 }
 
 impl LaunchPlanningDeps {

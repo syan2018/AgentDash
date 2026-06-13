@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, AgentRunDeliveryAcceptedRefs,
-    AgentRunDeliveryCommandReceiptRepository, LifecycleAgent, LifecycleAgentRepository,
-    LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+    AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
+    AgentRunCommandReceiptRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
+    LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::AgentConfig;
 use agentdash_spi::platform::auth::AuthIdentity;
@@ -94,7 +94,7 @@ pub struct AgentRunMessageService<'a, D> {
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
     execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
-    command_receipt_repo: &'a dyn AgentRunDeliveryCommandReceiptRepository,
+    command_receipt_repo: &'a dyn AgentRunCommandReceiptRepository,
     delivery: D,
 }
 
@@ -107,7 +107,7 @@ where
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         agent_frame_repo: &'a dyn AgentFrameRepository,
         execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
-        command_receipt_repo: &'a dyn AgentRunDeliveryCommandReceiptRepository,
+        command_receipt_repo: &'a dyn AgentRunCommandReceiptRepository,
         delivery: D,
     ) -> Self {
         Self {
@@ -155,6 +155,7 @@ where
             self.command_receipt_repo,
             "agent_run_message",
             format!("{}:{}", run.id, agent.id),
+            AgentRunCommandKind::MessageSubmit,
             command.client_command_id,
             request_digest,
         )
@@ -187,13 +188,14 @@ where
         let (_accepted_run, _accepted_agent, accepted_frame) = self
             .resolve_control_plane(&command.delivery_runtime_session_id)
             .await?;
-        let accepted_refs = AgentRunDeliveryAcceptedRefs {
+        let accepted_refs = AgentRunAcceptedRefs {
             run_id: run.id,
             agent_id: agent.id,
             frame_id: Some(accepted_frame.id),
             frame_revision: Some(accepted_frame.revision),
             runtime_session_id: Some(command.delivery_runtime_session_id.clone()),
-            turn_id: Some(turn_id.clone()),
+            agent_run_turn_id: Some(turn_id.clone()),
+            protocol_turn_id: None,
         };
         let receipt = self
             .command_receipt_repo
@@ -292,13 +294,13 @@ fn is_terminal_agent_status(status: &str) -> bool {
 }
 
 fn dispatch_from_accepted_refs(
-    refs: AgentRunDeliveryAcceptedRefs,
+    refs: AgentRunAcceptedRefs,
     command_receipt: AgentRunCommandReceiptView,
 ) -> AgentRunMessageDispatch {
     let frame_id = refs.frame_id.unwrap_or_else(Uuid::nil);
     AgentRunMessageDispatch {
         runtime_session_id: refs.runtime_session_id.unwrap_or_default(),
-        turn_id: refs.turn_id.unwrap_or_default(),
+        turn_id: refs.agent_run_turn_id.unwrap_or_default(),
         run_id: refs.run_id,
         agent_id: refs.agent_id,
         frame_id,
@@ -312,10 +314,10 @@ mod tests {
     use super::*;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentFrameRepository, AgentRunDeliveryCommandClaim, AgentRunDeliveryCommandReceipt,
-        AgentRunDeliveryCommandReceiptRepository, AgentRunDeliveryCommandStatus,
-        LifecycleAgentRepository, LifecycleRunRepository, NewAgentRunDeliveryCommandReceipt,
-        RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+        AgentFrameRepository, AgentRunCommandClaim, AgentRunCommandReceipt,
+        AgentRunCommandReceiptRepository, AgentRunCommandStatus, LifecycleAgentRepository,
+        LifecycleRunRepository, NewAgentRunCommandReceipt, RuntimeSessionExecutionAnchor,
+        RuntimeSessionExecutionAnchorRepository,
     };
     use chrono::Utc;
     use std::sync::Mutex;
@@ -570,15 +572,15 @@ mod tests {
 
     #[derive(Default)]
     struct InMemoryCommandReceiptRepo {
-        items: Mutex<Vec<AgentRunDeliveryCommandReceipt>>,
+        items: Mutex<Vec<AgentRunCommandReceipt>>,
     }
 
     #[async_trait]
-    impl AgentRunDeliveryCommandReceiptRepository for InMemoryCommandReceiptRepo {
+    impl AgentRunCommandReceiptRepository for InMemoryCommandReceiptRepo {
         async fn claim(
             &self,
-            receipt: NewAgentRunDeliveryCommandReceipt,
-        ) -> Result<AgentRunDeliveryCommandClaim, DomainError> {
+            receipt: NewAgentRunCommandReceipt,
+        ) -> Result<AgentRunCommandClaim, DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items.iter().find(|item| {
                 item.scope_kind == receipt.scope_kind
@@ -587,22 +589,25 @@ mod tests {
             }) {
                 if existing.request_digest != receipt.request_digest {
                     return Err(DomainError::Conflict {
-                        entity: "agent_run_delivery_command_receipt",
+                        entity: "agent_run_command_receipt",
                         constraint: "request_digest",
                         message: "digest mismatch".to_string(),
                     });
                 }
-                return Ok(AgentRunDeliveryCommandClaim::Duplicate(existing.clone()));
+                return Ok(AgentRunCommandClaim::Duplicate(existing.clone()));
             }
             let now = Utc::now();
-            let record = AgentRunDeliveryCommandReceipt {
+            let record = AgentRunCommandReceipt {
                 id: Uuid::new_v4(),
                 scope_kind: receipt.scope_kind,
                 scope_key: receipt.scope_key,
+                command_kind: receipt.command_kind,
                 client_command_id: receipt.client_command_id,
                 request_digest: receipt.request_digest,
-                status: AgentRunDeliveryCommandStatus::Pending,
+                status: AgentRunCommandStatus::Pending,
+                mailbox_message_id: None,
                 accepted_refs: None,
+                result_json: None,
                 error_message: None,
                 created_at: now,
                 updated_at: now,
@@ -610,25 +615,59 @@ mod tests {
                 failed_at: None,
             };
             items.push(record.clone());
-            Ok(AgentRunDeliveryCommandClaim::Created(record))
+            Ok(AgentRunCommandClaim::Created(record))
         }
 
         async fn mark_accepted(
             &self,
             id: Uuid,
-            accepted_refs: agentdash_domain::workflow::AgentRunDeliveryAcceptedRefs,
-        ) -> Result<AgentRunDeliveryCommandReceipt, DomainError> {
+            accepted_refs: agentdash_domain::workflow::AgentRunAcceptedRefs,
+        ) -> Result<AgentRunCommandReceipt, DomainError> {
             let mut items = self.items.lock().unwrap();
             let record = items.iter_mut().find(|item| item.id == id).ok_or_else(|| {
                 DomainError::NotFound {
-                    entity: "agent_run_delivery_command_receipt",
+                    entity: "agent_run_command_receipt",
                     id: id.to_string(),
                 }
             })?;
-            record.status = AgentRunDeliveryCommandStatus::Accepted;
+            record.status = AgentRunCommandStatus::Accepted;
             record.accepted_refs = Some(accepted_refs);
             record.updated_at = Utc::now();
             record.accepted_at = Some(record.updated_at);
+            Ok(record.clone())
+        }
+
+        async fn attach_mailbox_message(
+            &self,
+            id: Uuid,
+            mailbox_message_id: Uuid,
+        ) -> Result<AgentRunCommandReceipt, DomainError> {
+            let mut items = self.items.lock().unwrap();
+            let record = items.iter_mut().find(|item| item.id == id).ok_or_else(|| {
+                DomainError::NotFound {
+                    entity: "agent_run_command_receipt",
+                    id: id.to_string(),
+                }
+            })?;
+            record.mailbox_message_id = Some(mailbox_message_id);
+            record.updated_at = Utc::now();
+            Ok(record.clone())
+        }
+
+        async fn store_result_json(
+            &self,
+            id: Uuid,
+            result_json: serde_json::Value,
+        ) -> Result<AgentRunCommandReceipt, DomainError> {
+            let mut items = self.items.lock().unwrap();
+            let record = items.iter_mut().find(|item| item.id == id).ok_or_else(|| {
+                DomainError::NotFound {
+                    entity: "agent_run_command_receipt",
+                    id: id.to_string(),
+                }
+            })?;
+            record.result_json = Some(result_json);
+            record.updated_at = Utc::now();
             Ok(record.clone())
         }
 
@@ -636,25 +675,22 @@ mod tests {
             &self,
             id: Uuid,
             error_message: String,
-        ) -> Result<AgentRunDeliveryCommandReceipt, DomainError> {
+        ) -> Result<AgentRunCommandReceipt, DomainError> {
             let mut items = self.items.lock().unwrap();
             let record = items.iter_mut().find(|item| item.id == id).ok_or_else(|| {
                 DomainError::NotFound {
-                    entity: "agent_run_delivery_command_receipt",
+                    entity: "agent_run_command_receipt",
                     id: id.to_string(),
                 }
             })?;
-            record.status = AgentRunDeliveryCommandStatus::TerminalFailed;
+            record.status = AgentRunCommandStatus::TerminalFailed;
             record.error_message = Some(error_message);
             record.updated_at = Utc::now();
             record.failed_at = Some(record.updated_at);
             Ok(record.clone())
         }
 
-        async fn get(
-            &self,
-            id: Uuid,
-        ) -> Result<Option<AgentRunDeliveryCommandReceipt>, DomainError> {
+        async fn get(&self, id: Uuid) -> Result<Option<AgentRunCommandReceipt>, DomainError> {
             Ok(self
                 .items
                 .lock()

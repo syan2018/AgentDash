@@ -28,6 +28,7 @@ LaunchCommand
 - `ExecutionContext` 是 connector-facing projection，不是 application 层事实源。
 - 目标控制面中，`AgentFrame` 是 capability / context / VFS / MCP 的事实源；runtime trace/delivery refs 由 `RuntimeSessionExecutionAnchor` 索引和投影。`FrameConstructionService` 负责从 control-plane facts 与 composer 输出生成 `AgentFrame` revision 和 `FrameLaunchEnvelope`。
 - `RuntimeSession` 是 delivery / trace substrate。AgentRun delivery/control commands 使用 AgentRun Workspace public identity，accepted result 返回 runtime session / turn / frame refs，原因是用户动作目标是 AgentRun workspace；RuntimeSession 负责 trace refs、event log、connector continuation 与 repository rehydrate。
+- AgentRun workspace 的 message intake、queued work、steering continuation 和 system/hook pending work 统一进入 AgentRun Mailbox；scheduler 再映射到 Codex-compatible `turn/start`、`turn/steer` 或 AgentDash envelope extension。原因是 command 幂等、恢复、hook replay dedup 和前端投影需要同一个 durable control-plane 事实源。
 - 显式业务资源管理仍从 `ExecutionIntent`、`SubjectRef`、run/agent/frame refs 或 graph instance refs 开始；Lifecycle 内 AgentRun 资源管理语境使用 `/lifecycles/{lifecycle_run_id}/agent-runs`。
 - 通过 runtime session 反查业务上下文时，走 `RuntimeSessionExecutionAnchor -> AgentFrame -> LifecycleAgent -> LifecycleRun -> LifecycleSubjectAssociation`；没有 anchor 的 runtime trace 只能作为不可继续发送的消息壳展示。
 - runtime map、active turn、connector live session 是三个不同问题，不能用一个状态互相推断。
@@ -60,11 +61,13 @@ LaunchCommand
 - fork 默认把 parent fork point 的模型可见 projection 固化为 child session 自己的 initial compaction。原因是 child 的继续执行、retention、rollback 和团队协作权限都应依赖 child 自身的 durable facts，而不是重新读取 parent 的 live projection。
 - `RuntimeSessionExecutionAnchor` 承载 session 到 lifecycle control-plane identity 的反查，原因是 `RuntimeSession` 是 trace substrate，而业务推进需要稳定落到 run、agent、frame、assignment 和 activity attempt。
 - 用户输入在 session 链路只有单一 canonical 表示 `UserInputBlock`（`agentdash-agent-protocol` 对 Codex app-server v2 `UserInput` 的封名别名），贯穿 API 入参 → `UserPromptInput.input` → `PromptPayload::Input` → connector。连接器边界用唯一映射 `user_input_blocks_to_content_parts` 转 `Vec<ContentPart>`：图片（data URL / 可读 `LocalImage`）直达 `ContentPart::Image`，`Skill`/`Mention` 收敛为定义集中一处的文本语义。原因是历史上 prompt / steer / continuation 三路各自把输入拍平成文本（图片因此丢失多模态），且 ACP `ContentBlock` / codex `UserInput` / `ContentPart` 三套表示并存产生 ≥4 个平行 flattener；收敛为单表示 + 单映射后，多模态可结构化直达模型，且后续替换为自定义扩展类型只需改别名与映射单点。`ContentBlock` 仅保留在 relay 远程边界的单处双向转换，`codex_user_input_to_text` 仅作标题 / trace 摘要、非投递路径。
+- AgentRun lifecycle naming uses `AgentRunThread` for workspace-level thread, `AgentRunTurn` for the user-visible `start_prompt -> terminal` execution, and `AgentLoopTurn` only for PiAgent/agent loop `AgentEvent::TurnStart/TurnEnd` boundaries referenced by mailbox scheduling. This keeps public control-plane language aligned with Codex `Thread/Turn` while avoiding ambiguity with internal loop turns.
 
 ## Contract Appendices
 
 - [Session Startup Pipeline](./session-startup-pipeline.md)
 - [Session Runtime Execution State](./runtime-execution-state.md)
+- [AgentRun Mailbox And Turn Boundary Contract](./agentrun-mailbox.md)
 - [Execution Context Frames](./execution-context-frames.md)
 - [Session Context Bundle](./bundle-main-datasource.md)
 - [NDJSON Streaming Protocol](./streaming-protocol.md)

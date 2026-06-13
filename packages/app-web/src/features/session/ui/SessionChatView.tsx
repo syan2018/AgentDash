@@ -31,7 +31,7 @@ import {
   SessionChatStream,
 } from "./SessionChatViewParts";
 import {
-  collectNewSystemEvents,
+  collectAllPlatformEvents,
   computeProjectionRefreshKey,
   extractTurnLifecycleEventType,
   resolveExecutorFromHint,
@@ -39,11 +39,11 @@ import {
 } from "./SessionChatViewModel";
 import type { SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
-import { PendingMessageList } from "./composer/PendingMessageRow";
+import { MailboxMessageList } from "./composer/MailboxMessageRow";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 
 // eslint-disable-next-line react-refresh/only-export-components
-export { collectNewSystemEvents, computeProjectionRefreshKey } from "./SessionChatViewModel";
+export { collectAllPlatformEvents as collectNewSystemEvents, computeProjectionRefreshKey } from "./SessionChatViewModel";
 export type {
   PromptTemplate,
   SessionChatCommandState,
@@ -78,11 +78,16 @@ export function SessionChatView({
   onCommand,
   onCancelAction,
   onExecutorConfigOverrideChange,
-  pendingMessages,
-  pendingSnapshot,
-  onPromotePending,
-  onDeletePending,
-  onResumePendingQueue,
+  mailboxMessages,
+  mailboxSnapshot,
+  mailboxState,
+  onPromoteMailboxMessage,
+  onDeleteMailboxMessage,
+  onResumeMailbox,
+  onRecallMailboxMessage,
+  onMoveMailboxMessage,
+  injectedInputValue,
+  onInjectedInputConsumed,
   headerSlot,
   inputPrefix,
   streamPrefixContent,
@@ -125,6 +130,15 @@ export function SessionChatView({
       setInputValue(initialInputValue);
     }
   }, [initialInputValue]);
+
+  // 外部注入输入值（recall 消息后填充 composer）
+  useEffect(() => {
+    if (injectedInputValue != null && injectedInputValue !== "") {
+      richInputRef.current?.setValue(injectedInputValue);
+      setInputValue(injectedInputValue);
+      onInjectedInputConsumed?.();
+    }
+  }, [injectedInputValue, onInjectedInputConsumed]);
 
   // sessionId 变更时重置内部状态
   useEffect(() => {
@@ -362,7 +376,7 @@ export function SessionChatView({
 
   useEffect(() => {
     if (!hasSession || rawEvents.length === 0) return;
-    const result = collectNewSystemEvents(rawEvents, lastSystemEventSeqRef.current);
+    const result = collectAllPlatformEvents(rawEvents, lastSystemEventSeqRef.current);
     lastSystemEventSeqRef.current = result.lastSeenSeq;
     if (result.items.length === 0) return;
     for (const item of result.items) {
@@ -388,7 +402,7 @@ export function SessionChatView({
   const commandActionRef = useRef(onCommand);
   useEffect(() => { commandActionRef.current = onCommand; }, [onCommand]);
 
-  const handleSubmit = useCallback(async (command: ConversationCommandView | undefined) => {
+  const handleSubmit = useCallback(async (command: ConversationCommandView | undefined, deliveryIntent?: string) => {
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
     const images = imageAttach.attachments;
@@ -409,10 +423,8 @@ export function SessionChatView({
     }
 
     setSendError(null);
-    if (command.kind !== "enqueue") {
-      setOptimisticRunning(true);
-      optimisticRunningUntilRef.current = Date.now() + 2500;
-    }
+    setOptimisticRunning(true);
+    optimisticRunningUntilRef.current = Date.now() + 2500;
     setIsSending(true);
 
     try {
@@ -422,6 +434,7 @@ export function SessionChatView({
         trimmed,
         executorConfig,
         images.length > 0 ? images : undefined,
+        deliveryIntent,
       );
 
       execConfig.recordUsage();
@@ -492,10 +505,11 @@ export function SessionChatView({
       if (e.shiftKey) return; // Shift+Enter = 换行
 
       e.preventDefault();
-      const keyboardCommandId = (e.ctrlKey || e.metaKey)
+      const isSteer = e.ctrlKey || e.metaKey;
+      const keyboardCommandId = isSteer
         ? commandState.commands.keyboard.ctrl_enter
         : commandState.commands.keyboard.enter;
-      void handleSubmit(commandById(keyboardCommandId));
+      void handleSubmit(commandById(keyboardCommandId), isSteer ? "steer" : undefined);
     },
     [commandById, commandState.commands.keyboard.ctrl_enter, commandState.commands.keyboard.enter, fileRef, handleSubmit],
   );
@@ -574,6 +588,10 @@ export function SessionChatView({
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
   const displayError = sendError ?? (hasSession ? wsError?.message : null) ?? null;
+  const shouldShowMailboxList = Boolean(
+    mailboxMessages
+      && (mailboxMessages.length > 0 || mailboxSnapshot?.user_attention || mailboxState?.paused),
+  );
 
   // ─── 渲染 ────────────────────────────────────────────
 
@@ -637,18 +655,24 @@ export function SessionChatView({
         onScroll={handleScroll}
       />
 
-      {/* 排队消息 + 输入区 */}
+      {/* Mailbox 消息 + 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
-        {pendingMessages && (pendingMessages.length > 0 || pendingSnapshot?.user_attention) && (
-          <PendingMessageList
-            messages={pendingMessages}
-            pending={pendingSnapshot}
+        {shouldShowMailboxList && mailboxMessages && (
+          <MailboxMessageList
+            messages={mailboxMessages}
+            mailbox={mailboxSnapshot}
+            mailboxState={mailboxState}
             promoteCommand={commandState.commands.commands.find(
-              (command) => command.kind === "promote_pending" && command.placement.includes("pending_row"),
+              (command) => command.kind === "promote_mailbox_message" && command.placement.includes("mailbox_row"),
             )}
-            onPromote={onPromotePending ?? (() => {})}
-            onDelete={onDeletePending ?? (() => {})}
-            onResume={onResumePendingQueue}
+            deleteCommand={commandState.commands.commands.find(
+              (command) => command.kind === "delete_mailbox_message" && command.placement.includes("mailbox_row"),
+            )}
+            onPromote={onPromoteMailboxMessage ?? (() => {})}
+            onDelete={onDeleteMailboxMessage ?? (() => {})}
+            onResume={onResumeMailbox}
+            onRecall={onRecallMailboxMessage}
+            onMove={onMoveMailboxMessage}
           />
         )}
 

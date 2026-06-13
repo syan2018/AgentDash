@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::backend::BackendExecutionLease;
-use agentdash_spi::{ConnectorError, RestoredSessionState, Vfs};
+use agentdash_spi::{ConnectorError, DynAgentRuntimeDelegate, RestoredSessionState, Vfs};
 
 use super::deps::LaunchPlanningDeps;
 use super::{LaunchCommand, LaunchFollowUpSource, LaunchPlan, LaunchPlanInput, LaunchRestoreMode};
@@ -12,6 +12,7 @@ use crate::backend_execution_placement::{
 use crate::session::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
 };
+use crate::session::mailbox_delegate::AgentRunMailboxRuntimeDelegate;
 use crate::session::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
@@ -142,19 +143,28 @@ impl<'a> LaunchPlanner<'a> {
         // context_bundle 在 hook contribution merge 后直接传递给 LaunchPlanInput
 
         let context_audit_bus = self.deps.current_context_audit_bus().await;
-        let runtime_delegate = hook_runtime.as_ref().map(|hs| {
-            let injection_sink: DynRuntimeHookInjectionSink =
-                Arc::new(SessionRuntimeHookInjectionSink::new(
-                    self.deps.runtime_registry.clone(),
+        let hook_runtime_delegate: Option<DynAgentRuntimeDelegate> =
+            hook_runtime.as_ref().map(|hs| {
+                let injection_sink: DynRuntimeHookInjectionSink =
+                    Arc::new(SessionRuntimeHookInjectionSink::new(
+                        self.deps.runtime_registry.clone(),
+                        context_audit_bus.clone(),
+                    ));
+                HookRuntimeDelegate::new_with_mount_root_audit_and_sink(
+                    hs.clone(),
+                    Some(default_mount_root.to_string_lossy().replace('\\', "/")),
                     context_audit_bus.clone(),
-                ));
-            HookRuntimeDelegate::new_with_mount_root_audit_and_sink(
-                hs.clone(),
-                Some(default_mount_root.to_string_lossy().replace('\\', "/")),
-                context_audit_bus.clone(),
-                Some(injection_sink),
-            )
-        });
+                    Some(injection_sink),
+                )
+            });
+        let runtime_delegate = match self.deps.agent_run_mailbox_boundary_deps.clone() {
+            Some(mailbox_deps) => Some(Arc::new(AgentRunMailboxRuntimeDelegate::new(
+                input.session_id.to_string(),
+                hook_runtime_delegate,
+                mailbox_deps,
+            )) as DynAgentRuntimeDelegate),
+            None => hook_runtime_delegate,
+        };
         let restore_mode = match prompt_lifecycle {
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::SystemContext,

@@ -131,32 +131,26 @@ command scope 记录，并以 run / agent / frame / runtime session / turn refs 
 trace head；分层后，trace 恢复、事件流展示、workspace action enablement 和 command retry
 可以各自消费对应 projection。
 
-## AgentRun Workspace Control Actions
+## AgentRun Workspace Mailbox Control Actions
 
-用户可见执行工作台的 shell、conversation state 与 resource surface 由 `AgentRunWorkspaceView` /
-`AgentConversationSnapshot` 表达。`AgentRunWorkspaceShell` 承载 display title、title source、
-workspace/list status、last activity 和 last visible turn；`AgentConversationSnapshot.execution`、
-`commands`、`model_config`、`pending` 和 `resource_surface` 承载工作台可执行状态、模型解析、
-队列用户注意力与可浏览资源。
+用户可见执行工作台的 shell、conversation state、mailbox projection 与 resource surface 由
+`AgentRunWorkspaceView` / `AgentConversationSnapshot` 表达。`AgentRunWorkspaceShell` 承载 display
+title、title source、workspace/list status、last activity 和 last visible AgentRunTurn；
+`AgentConversationSnapshot.execution`、`commands`、`model_config`、`mailbox` 和
+`resource_surface` 承载工作台可执行状态、模型解析、待消费消息、用户注意力与可浏览资源。
 
-`ConversationCommandSetView.commands` 描述 `start_draft`、`send_next`、`enqueue`、`steer`、
-`promote_pending`、`resume_pending_queue` 与 `cancel` 这些 AgentRun command。每个 command 携带
-command id、enabled/disabled reason、executor config policy、placement、shortcut 和 stale guard；
-`ConversationKeyboardMapView` 把 Enter / Ctrl-Enter 映射到同一组 command id。这样做的原因是
-lifecycle 控制面、frame runtime、当前 turn、用户命令回执、pending queue、模型解析与 connector
-live session 是不同事实源，必须在同一个 snapshot 中合并成可提交的 command precondition。
-stale guard 包含 snapshot id。非文本控制 command route 用当前 run / agent / frame / runtime /
-active turn 事实重新计算并校验该 id，原因是 cancel、promote pending、resume pending queue 这些
-命令必须绑定到 snapshot 暴露的具体 runtime/turn/pending 事实。文本输入提交使用
-`composer-submit`：后端把 submitted command 作为用户意图上下文，再用当前 execution state 把输入
-归类为 `send_next`、`enqueue` 或 `steer`，原因是用户 follow-up 不应因为旧 projection token 过期而
-暴露为普通错误。
+`ConversationCommandSetView.commands` 描述用户意图 command，例如 draft start、message submit、
+mailbox promote/delete/resume 与 cancel。文本输入统一走 `composer-submit`：后端先 claim command
+receipt，再写 AgentRun mailbox envelope，由 scheduler 使用当前 runtime state、barrier 和
+drain mode 产生 `launched | queued | steered | blocked | failed` 等 outcome。这样做的原因是
+keyboard snapshot 可能滞后，而用户输入的执行语义必须以后端 durable mailbox 和当前 active
+AgentRunTurn 为准。
 
 `SessionExecutionState::Running { turn_id: None }` 投影为 `starting_claimed`，表示 runtime 已被
-claim 但 active turn 尚未建立；`Running { turn_id: Some(_) }` 投影为 `running_active`，是 steer、
-promote pending 与 enqueue 的 active-turn command surface。ready/completed/failed/interrupted
-状态投影为可发送下一轮消息的 `send_next`，原因是新用户输入在静默 runtime 上应进入下一轮 prompt
-主链路。
+claim 但 active AgentRunTurn 尚未建立；`Running { turn_id: Some(_) }` 投影为 `running_active`。
+ready/completed/failed/interrupted 状态可接受新的 user-origin envelope，并由 scheduler 决定是否
+立即启动新的 AgentRunTurn。running 状态下的 steering 或 queued user message 不由 route 分支直接
+投递，而是进入 mailbox 后在 `AgentLoopTurnBoundary` 或 `AgentRunTurnBoundary` 消费。
 
 `RuntimeSessionTraceMeta` 可以作为 `AgentRunWorkspaceView.delivery_trace_meta` 被引用，用于展示
 trace ref、event seq、executor continuation 和 terminal summary；它不决定 workspace title、list
@@ -175,62 +169,52 @@ AgentRun delivery/control command 使用 AgentRun Workspace public identity：
 ```text
 GET    /agent-runs/{run_id}/agents/{agent_id}/workspace
 POST   /agent-runs/{run_id}/agents/{agent_id}/composer-submit
-GET    /agent-runs/{run_id}/agents/{agent_id}/pending-messages
-DELETE /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}
-POST   /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}/promote
+GET    /agent-runs/{run_id}/agents/{agent_id}/mailbox
+DELETE /agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}
+POST   /agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/promote
+POST   /agent-runs/{run_id}/agents/{agent_id}/mailbox/resume
 ```
 
 这些入口表达用户正在操作某个 AgentRun workspace。handler 以 Project 权限、run / agent
-ownership、当前 AgentFrame、active turn 和 command receipt 为校验事实源，并在 accepted result
-中返回 runtime session ref、turn ref、frame ref 等 delivery refs。RuntimeSession trace endpoint
-使用 `RuntimeSessionTraceMeta` 提供只读 trace/feed/debug 能力；follow-up 与 repository rehydrate
-仍通过 trace metadata 保存的 `executor_session_id` 与 `last_event_seq` 衔接。
+ownership、当前 AgentFrame、active AgentRunTurn、mailbox envelope 和 command receipt 为校验事实源，
+并在 accepted result 中返回 runtime session ref、AgentRunTurn ref、protocol turn ref、frame ref
+等 delivery refs。RuntimeSession trace endpoint 使用 `RuntimeSessionTraceMeta` 提供只读
+trace/feed/debug 能力；follow-up 与 repository rehydrate 仍通过 trace metadata 保存的
+`executor_session_id` 与 `last_event_seq` 衔接。
 
-`POST /agent-runs/{run_id}/agents/{agent_id}/composer-submit` 代表浏览器输入区的一次文本/多模态提交。
-handler 先解析当前 AgentRun execution state：静默状态归类为 `send_next`，running active 归类为
-`enqueue` 或支持时的 `steer`，starting/cancelling 返回结构化不可用状态。这样做的原因是键盘事件
-来自可能滞后的 workspace projection，而输入提交的业务事实必须以后端当前 snapshot 为准。
+详细 mailbox envelope、scheduler、hook convergence 和 recovery 契约见
+[AgentRun Mailbox And Turn Boundary Contract](./agentrun-mailbox.md)。
 
-`pending-messages` 队列属于同一 AgentRun command surface：running workspace 可由 composer submit
-排队，队列对象可删除或列出。
-`promote` 会把指定 pending message 取出并作为当前 running workspace 的 steering 输入投递。
-当 running turn 以 completed terminal 收口后，后端 terminal callback 会从队首取出下一条
-pending message，并通过 `AgentRunMessageService` 作为下一轮用户消息自动投递；failed /
-interrupted terminal 会暂停队列，原因是失败或取消后的自动续跑需要显式用户恢复。
-
-### Scenario: AgentRun Workspace Commands
+### Scenario: AgentRun Workspace Mailbox Commands
 
 #### 1. Scope / Trigger
 
 这些 command 是跨层 API 签名。浏览器持有 AgentRun workspace identity，后端以 run / agent /
-frame / active turn / command receipt 聚合当前 delivery control state，并把 RuntimeSession 作为
-accepted delivery ref 或 trace ref 返回。
+frame / active AgentRunTurn / mailbox / command receipt 聚合当前 delivery control state，并把
+RuntimeSession 作为 accepted delivery ref 或 trace ref 返回。
 
 #### 2. Signatures
 
 ```text
 GET    /agent-runs/{run_id}/agents/{agent_id}/workspace
 POST   /agent-runs/{run_id}/agents/{agent_id}/composer-submit
-GET    /agent-runs/{run_id}/agents/{agent_id}/pending-messages
-DELETE /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}
-POST   /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}/promote
+GET    /agent-runs/{run_id}/agents/{agent_id}/mailbox
+DELETE /agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}
+POST   /agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/promote
+POST   /agent-runs/{run_id}/agents/{agent_id}/mailbox/resume
 ```
 
 #### 3. Contracts
 
-- `workspace` response: `AgentRunWorkspaceView`，包含 `shell`、conversation snapshot、frame/runtime refs、
-  `resource_surface` 和可选 `delivery_trace_meta: RuntimeSessionTraceMeta`。
-- `workspace.conversation.execution` 表达
-  `draft | model_required | ready | starting_claimed | running_active | cancelling | terminal |
-  frame_missing | delivery_missing`。
-- `workspace.conversation.commands` 使用 `ConversationCommandSetView`，command availability、keyboard
-  mapping 与 stale guard 表达 AgentRun workspace command 的可执行性。
+- `workspace` response: `AgentRunWorkspaceView`，包含 `shell`、conversation snapshot、mailbox projection、
+  frame/runtime refs、`resource_surface` 和可选 `delivery_trace_meta: RuntimeSessionTraceMeta`。
 - `composer-submit` request: `AgentRunComposerSubmitRequest`，包含 non-empty `input`、
   `client_command_id`、submitted command precondition 与可选 executor config。response 返回
-  `accepted_kind`，并按归类结果返回 accepted refs、pending message 或 runtime command state。
-- `pending-messages` GET response: `PendingMessageView[]`。
-- `pending-messages/{message_id}/promote` response: command receipt、`promoted: true` 和
-  accepted turn/runtime refs。
+  `AgentRunMessageCommandResponse`，其中 `outcome` 是 scheduler outcome。
+- `mailbox` GET response: `MailboxMessageView[]` 与 mailbox state projection。
+- `mailbox/messages/{message_id}/promote` 只改变指定 envelope 的 delivery/barrier/priority，并调用
+  scheduler；它不绕过 mailbox 直接 steer。
+- `mailbox/resume` 清除 mailbox pause state，并按目标 barrier/drain mode 调用 scheduler 一次。
 
 #### 4. Validation & Error Matrix
 
@@ -240,127 +224,44 @@ POST   /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}/prom
 | run / agent 不存在 | `404 NotFound` |
 | agent 不属于 run | `409 Conflict` |
 | 当前用户无 project edit 权限 | permission error |
-| `client_command_id` 重放且 request digest 一致 | 返回既有 command receipt |
+| `client_command_id` 重放且 request digest 一致 | 返回既有 command receipt 与 mailbox/delivery result |
 | `client_command_id` 重放但 request digest 不一致 | `409 Conflict` |
 | `executor_config` JSON 不合法 | `400 BadRequest` |
-| running command 缺少 active turn 或 expected ref 不匹配 | `409 Conflict` |
-| pending message 不存在 | `404 NotFound` |
-| enqueue pending 时 execution state 非 running | `409 Conflict`，提示直接发送下一轮或等待取消收口 |
-| promote pending 时 execution state 非 running 或缺少 active turn | `409 Conflict`，pending message 保持不被消费 |
+| active AgentRunTurn 与 expected ref 不匹配 | typed command conflict/deferred result，envelope 不重复投递 |
+| mailbox message 不存在 | `404 NotFound` |
+| promote/delete/resume 重复提交 | 通过 command receipt 或 envelope terminal state 返回稳定结果 |
 
-#### 5. Examples
+#### 5. Good/Base/Bad Cases
 
-- Idle workspace 调用 `messages` 创建下一轮 turn，并返回 command receipt 与
-  run/agent/frame/runtime refs。
-- Running workspace 调用 `steering`，connector 支持 steer 时注入当前 turn。
-- Trace-only RuntimeSession 不具备 AgentRun workspace identity，只提供只读 trace view。
+- Good: idle workspace 提交用户输入，mailbox 创建 envelope，scheduler launch 一个 AgentRunTurn。
+- Good: running workspace 提交用户输入，mailbox 依据 policy 在 AgentLoopTurnBoundary steer 或在
+  AgentRunTurnBoundary queued consume one。
+- Base: 没有 mailbox message 时，terminal callback 只处理普通 terminal effects。
+- Bad: route handler 在写 mailbox 前直接选择 launch/queue/steer，导致 recovery 与 projection 观察到
+  另一套状态。
 
-## Scenario: AgentRun Pending Message Drain
+#### 6. Tests Required
 
-### 1. Scope / Trigger
+- Backend route registration 覆盖 AgentRun Workspace mailbox command endpoints。
+- Frontend service test 断言 URL 编码后的 `/agent-runs/{run_id}/agents/{agent_id}/mailbox...` 与
+  generated DTO 对齐。
+- `cargo check -p agentdash-api` 保证 handler path extractor 与 response types 对齐。
+- `pnpm --filter app-web test -- lifecycle` 覆盖 service 调用面。
+- grep 检查产品代码和 session specs 中 AgentRun Workspace mailbox route names 与 generated DTO names 一致。
 
-AgentRun running 态允许用户把 follow-up 输入放入 `pending-messages`。队列的执行边界在后端
-runtime terminal callback，而不是浏览器刷新事件，原因是窗口切换、前端重载或投影延迟都不应决定
-pending message 是否继续执行。
-
-### 2. Signatures
-
-Backend services:
-
-```rust
-PendingQueueService::enqueue(runtime_session_id, input, executor_config) -> PendingMessagePreview
-PendingQueueService::dequeue_front(runtime_session_id) -> Option<PendingMessage>
-PendingQueueService::requeue_front(runtime_session_id, PendingMessage)
-SessionTerminalCallback::on_session_terminal(session_id, terminal_state)
-AgentRunMessageService::dispatch_user_message(AgentRunMessageCommand)
-```
-
-HTTP command surface:
-
-```text
-POST /agent-runs/{run_id}/agents/{agent_id}/composer-submit
-POST /agent-runs/{run_id}/agents/{agent_id}/pending-messages/{message_id}/promote
-```
-
-### 3. Contracts
-
-- `composer-submit` 在 `SessionExecutionState::Running { turn_id: Some(_) }` 下可把输入归类为
-  pending enqueue；在静默状态下归类为下一轮 message。
-- `pending-messages/{id}/promote` 只接受 `SessionExecutionState::Running { turn_id: Some(_) }`。
-- `pending-messages/{id}/promote` 在取出消息后若 steering 投递失败，必须把消息放回队首。
-- failed / interrupted terminal 会把 pending queue 标记为 paused，并在 workspace/runtime-control
-  view 的 `pending_queue` 字段暴露 `pause_reason`、`message` 与 `can_resume`。
-- `POST /agent-runs/{run_id}/agents/{agent_id}/pending-messages/resume` 会清除 paused 状态；若
-  runtime 已静默且 AgentRun 仍可继续，会立即通过同一个 pending dispatcher 投递队首。
-- resume 触发的派发失败时，队首消息会放回队列，并恢复进入 resume 前的 paused 状态，原因是
-  用户显式恢复只有在下一轮命令被接受后才算完成。
-- `composer-submit` 在 running / cancelling 之外接受 idle、completed、failed、interrupted runtime
-  state 作为下一轮 message，并由 AgentRun terminal status 决定是否还能继续。
-- completed terminal 后的 pending drain 使用同一个 `PendingQueueService` 实例和
-  `AgentRunMessageService`，client command id 使用 `pending:{pending_message_id}:{attempt_id}`，
-  原因是 dispatch 失败后放回队首的消息需要用新的 command receipt 重新尝试。
-- pending drain 的 dispatch 失败时必须把消息放回队首，保证队列不因 launch 失败丢消息。
-- failed / interrupted terminal 会暂停 pending queue，等待显式恢复语义；completed terminal
-  才自动投递队首。
-
-### 4. Validation & Error Matrix
-
-| 条件 | 结果 |
-| --- | --- |
-| workspace running 时 enqueue pending | 写入队列并返回 `PendingMessageView` |
-| workspace ready / completed 时 composer submit | accepted kind 为 `send_next` |
-| workspace cancelling 时 enqueue pending | `409 Conflict`，提示等待执行器收口 |
-| promote pending 时缺少 active turn | `409 Conflict`，不消费 pending message |
-| completed terminal 且队列非空 | 后端自动取队首并发起下一轮 `AgentRunMessageCommand` |
-| 自动 dispatch 失败 | pending message 回到队首 |
-| failed / interrupted terminal | pending queue 暂停，不自动续跑 |
-| 用户恢复 paused queue 且 runtime 静默 | 清除暂停状态并立即尝试投递队首 |
-| 用户恢复 paused queue 但 dispatch 失败 | 队首消息保留，paused 状态保持可见 |
-| 用户恢复 paused queue 且 runtime running/cancelling | 只清除暂停状态，等待当前 turn terminal 后继续 drain |
-
-### 5. Good/Base/Bad Cases
-
-- Good: 用户在 running turn 中排队两条消息；当前 turn completed 后，后端自动发送第一条，下一轮
-  completed 后继续发送第二条。
-- Base: running turn 中没有 pending message；completed terminal 只执行普通 terminal effects。
-- Bad: completed / idle workspace 的新输入进入 pending queue，导致 UI 静默且不会自动投递。
-
-### 6. Tests Required
-
-- `PendingQueueService` 测试覆盖 `dequeue_front` 顺序和 `requeue_front` 顺序恢复。
-- AgentRun pending enqueue route / helper 测试覆盖 idle、completed、cancelling 返回 conflict。
-- AgentRun pending promote route / helper 测试覆盖 running without turn 不消费 pending。
-- Terminal callback / bootstrap 测试覆盖 completed drain 调用 `AgentRunMessageService`，dispatch
-  失败时 `requeue_front`。
-- Workspace / runtime-control projection 测试覆盖 paused queue 的 `pause_reason`、`message` 和
-  `can_resume`。
-- Resume endpoint 测试覆盖静默 runtime 恢复后触发队首 dispatch，running/cancelling 恢复后不并发
-  dispatch。
-- Frontend chat control 测试覆盖 ready / completed 状态使用 `send_next`，running 状态才暴露
-  `enqueue` / `steer`，paused pending queue 持续展示并提供恢复命令。
-
-### 7. Wrong vs Correct
+#### 7. Wrong vs Correct
 
 #### Wrong
 
 ```text
-pending enqueue accepted -> turn completed -> no backend consumer -> pending row only depends on UI mode
+composer-submit -> route-local SendNext | Enqueue | Steer side effect
 ```
 
 #### Correct
 
 ```text
-running enqueue accepted -> completed terminal -> backend terminal callback drains queue -> next AgentRun message starts
+composer-submit -> command receipt -> mailbox envelope -> scheduler outcome
 ```
-
-#### 6. Tests Required
-
-- Backend route registration 覆盖 AgentRun Workspace command endpoints。
-- Frontend service test 断言 URL 编码后的 `/agent-runs/{run_id}/agents/{agent_id}/...` 与
-  `AgentRun*` generated DTO。
-- `cargo check -p agentdash-api` 保证 handler path extractor 与 response types 对齐。
-- `pnpm --filter app-web test -- lifecycle` 覆盖 service 调用面。
-- grep 检查产品代码和 session specs 中 AgentRun Workspace route names 与 generated DTO names 一致。
 
 ## Scenario: Cancelled Turn Closing State
 
@@ -399,8 +300,8 @@ SessionRuntimeControlPlaneStatus::AnchoredCancelling -> "anchored_cancelling"
   runtime snapshot into cancelling state.
 - `SessionCoreService::inspect_session_execution_state(session_id)` returns
   `SessionExecutionState::Cancelling { turn_id }` while the in-memory turn is cancelling.
-- AgentRun workspace conversation commands 在 cancelling 时禁用 `send_next`、`enqueue` 和 `steer`；
-  `cancel` command 可以保持幂等可用。
+- AgentRun workspace conversation commands 在 cancelling 时不直接 launch 或 steer active turn；
+  新消息可进入 mailbox projection 并等待 scheduler barrier，`cancel` command 可以保持幂等可用。
 - `PiAgentConnector::cancel(session_id)` aborts the agent and waits for the in-process Agent loop
   to become idle before the connector reports cancel completion.
 - RuntimeSession detail maps cancelling state to command state `status="cancelling"` with the active
@@ -411,7 +312,7 @@ SessionRuntimeControlPlaneStatus::AnchoredCancelling -> "anchored_cancelling"
 | Condition | Required behavior |
 | --- | --- |
 | Active turn receives cancel request | Runtime state becomes `Cancelling { turn_id }` |
-| Workspace is cancelling | `send_next=false`, `enqueue=false`, `steer=false` |
+| Workspace is cancelling | direct launch/steer command unavailable; message intake returns mailbox state |
 | Workspace is cancelling and cancel is requested again | Cancel is idempotent and keeps cancelling state |
 | Pi Agent provider stream is pending when abort arrives | Agent loop emits aborted assistant terminal and reaches idle |
 | Next prompt starts after Pi Agent cancel completion | Prompt does not fail with stale `is_streaming` |
@@ -422,7 +323,7 @@ SessionRuntimeControlPlaneStatus::AnchoredCancelling -> "anchored_cancelling"
   terminal facts and connector idle are aligned.
 - Base: User opens RuntimeSession detail during cancelling and sees `anchored_cancelling` instead
   of idle.
-- Bad: Workspace enables `send_next` from platform idle while connector agent is still streaming.
+- Bad: Workspace enables direct `turn/start` from platform idle while connector agent is still streaming.
 
 ### 6. Tests Required
 
@@ -431,8 +332,8 @@ SessionRuntimeControlPlaneStatus::AnchoredCancelling -> "anchored_cancelling"
 - Agent loop test asserts abort interrupts a pending provider stream and `wait_for_idle` completes.
 - Pi Agent connector test asserts cancel waits for agent idle and the next prompt reuses the same
   runtime without stale processing errors.
-- Frontend chat control test asserts cancelling projection exposes no send / enqueue / steer user
-  input path.
+- Frontend chat control test asserts cancelling projection exposes no direct launch / steer user
+  input path while mailbox intake remains backend-projected.
 
 ### 7. Wrong vs Correct
 

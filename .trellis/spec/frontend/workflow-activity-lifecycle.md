@@ -50,10 +50,10 @@ AgentRun command APIs use AgentRun workspace identity as the delivery/control en
 
 ```ts
 submitAgentRunComposerInput(runId, agentId, request: AgentRunComposerSubmitRequest)
-listAgentRunPendingMessages(runId, agentId)
-deleteAgentRunPendingMessage(runId, agentId, messageId)
-promoteAgentRunPendingMessage(runId, agentId, messageId, request)
-resumeAgentRunPendingQueue(runId, agentId, request)
+listAgentRunMailboxMessages(runId, agentId)
+deleteAgentRunMailboxMessage(runId, agentId, messageId)
+promoteAgentRunMailboxMessage(runId, agentId, messageId, request)
+resumeAgentRunMailbox(runId, agentId, request)
 ```
 
 These calls target `/agent-runs/{runId}/agents/{agentId}/...`; runtime session remains a delivery ref

@@ -2,11 +2,12 @@ import type { ReactNode } from "react";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type {
+  ConversationMailboxSnapshotView,
   ConversationCommandSetView,
   ConversationCommandView,
   ConversationModelConfigView,
-  ConversationPendingSnapshotView,
-  PendingMessageView,
+  MailboxStateView,
+  MailboxMessageView,
 } from "../../../generated/workflow-contracts";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
@@ -79,6 +80,7 @@ export interface SessionChatViewProps {
     prompt: string,
     executorConfig?: ExecutorConfig,
     imageAttachments?: ImageAttachment[],
+    deliveryIntent?: string,
   ) => Promise<void>;
 
   onCancelAction?: () => Promise<void>;
@@ -86,18 +88,27 @@ export interface SessionChatViewProps {
   /** 用户在模型选择器中显式选择的本地 override；仅作为 command input，不作为 ProjectAgent 默认值。 */
   onExecutorConfigOverrideChange?: (config: ExecutorConfig | null) => void;
 
-  // ─── Pending Queue ─────────────────────────────────
+  // ─── Mailbox ─────────────────────────────────
 
-  /** 排队中的消息列表（来自 runtimeControl.pending_messages） */
-  pendingMessages?: PendingMessageView[];
-  /** Pending 队列展示状态（来自 conversation.pending） */
-  pendingSnapshot?: ConversationPendingSnapshotView;
-  /** 引导排队消息（promote to steer） */
-  onPromotePending?: (messageId: string) => void;
-  /** 删除排队消息 */
-  onDeletePending?: (messageId: string) => void;
-  /** 恢复暂停的 pending 队列 */
-  onResumePendingQueue?: () => void;
+  /** Mailbox 消息列表（来自 runtimeControl.mailbox_messages） */
+  mailboxMessages?: MailboxMessageView[];
+  /** Mailbox 展示状态（来自 conversation.mailbox） */
+  mailboxSnapshot?: ConversationMailboxSnapshotView;
+  /** Mailbox 根状态（来自 AgentRunWorkspaceView.mailbox） */
+  mailboxState?: MailboxStateView;
+  /** 引导 mailbox 消息 */
+  onPromoteMailboxMessage?: (messageId: string) => void;
+  /** 删除 mailbox 消息 */
+  onDeleteMailboxMessage?: (messageId: string) => void;
+  /** 恢复暂停的 mailbox */
+  onResumeMailbox?: () => void;
+  /** 召回 mailbox 消息（获取内容 + 删除 + 填充 composer） */
+  onRecallMailboxMessage?: (messageId: string) => void;
+  /** 重排序 mailbox 消息 */
+  onMoveMailboxMessage?: (messageId: string, afterMessageId: string | null) => void;
+  /** 外部注入的输入值（recall 后填充 composer），设置后立即消费 */
+  injectedInputValue?: string | null;
+  onInjectedInputConsumed?: () => void;
 
   // ─── 布局插槽 ────────────────────────────────────────
 

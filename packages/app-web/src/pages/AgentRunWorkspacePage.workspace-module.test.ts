@@ -40,11 +40,11 @@ function workspaceView(
     control_plane: { status: controlStatus },
     subject_associations: [],
     actions,
-    pending_queue: {
+    mailbox: {
       paused: false,
       can_resume: false,
     },
-    pending_messages: [],
+    mailbox_messages: [],
     conversation: {
       snapshot_id: "snapshot-1",
       identity: {
@@ -67,7 +67,7 @@ function workspaceView(
         commands,
         keyboard,
       },
-      pending: {
+      mailbox: {
         visible_message_count: 0,
         paused: false,
         user_attention: false,
@@ -78,16 +78,12 @@ function workspaceView(
 }
 
 const runningActions: AgentRunWorkspaceView["actions"] = {
-  send_next: { enabled: false, unavailable_reason: "running" },
-  enqueue: { enabled: true },
-  steer: { enabled: true },
+  submit_message: { enabled: true },
   cancel: { enabled: true },
 };
 
 const terminalActionsWithStaleRunningBits: AgentRunWorkspaceView["actions"] = {
-  send_next: { enabled: false, unavailable_reason: "terminal" },
-  enqueue: { enabled: true },
-  steer: { enabled: true },
+  submit_message: { enabled: true },
   cancel: { enabled: false, unavailable_reason: "terminal" },
 };
 
@@ -109,13 +105,13 @@ function command(kind: ConversationCommandView["kind"], commandId: string): Conv
     enabled: true,
     requires_input: true,
     executor_config_policy: "required",
-    placement: kind === "steer" ? ["composer_secondary"] : ["composer_primary"],
+    placement: ["composer_primary"],
     stale_guard: {
       snapshot_id: `snapshot-${commandId}`,
       run_id: "run-1",
       agent_id: "agent-1",
       runtime_session_id: "session-1",
-      active_turn_id: kind === "steer" ? "turn-1" : undefined,
+      active_turn_id: undefined,
     },
   };
 }
@@ -307,34 +303,42 @@ describe("AgentRun workspace conversation command authority", () => {
     });
   });
 
-  it("uses snapshot keyboard mapping for ready Ctrl/Cmd+Enter send_next", () => {
-    const sendNext = command("send_next", "cmd-send-next");
-    const state = commandState("ready", workspaceView("ready", runningActions, [sendNext], {
-      enter: "cmd-send-next",
-      ctrl_enter: "cmd-send-next",
+  it("uses snapshot keyboard mapping for ready Ctrl/Cmd+Enter submit_message", () => {
+    const submit = command("submit_message", "cmd-submit");
+    const state = commandState("ready", workspaceView("ready", runningActions, [submit], {
+      enter: "cmd-submit",
+      ctrl_enter: "cmd-submit",
     }));
 
-    expect(state.commands.keyboard.ctrl_enter).toBe("cmd-send-next");
-    expect(state.commands.commands.find((item) => item.command_id === "cmd-send-next")?.kind).toBe("send_next");
+    expect(state.commands.keyboard.ctrl_enter).toBe("cmd-submit");
+    expect(state.commands.commands.find((item) => item.command_id === "cmd-submit")?.kind).toBe("submit_message");
   });
 
-  it("exposes running steer only when snapshot maps it", () => {
-    const enqueue = command("enqueue", "cmd-enqueue");
-    const steer = command("steer", "cmd-steer");
-    const state = commandState("ready", workspaceView("running", runningActions, [enqueue, steer], {
-      enter: "cmd-enqueue",
-      ctrl_enter: "cmd-steer",
+  it("exposes running submit only when snapshot maps it", () => {
+    const submit = {
+      ...command("submit_message", "cmd-submit"),
+      stale_guard: {
+        snapshot_id: "snapshot-cmd-submit",
+        run_id: "run-1",
+        agent_id: "agent-1",
+        runtime_session_id: "session-1",
+        active_turn_id: "turn-1",
+      },
+    };
+    const state = commandState("ready", workspaceView("running", runningActions, [submit], {
+      enter: "cmd-submit",
+      ctrl_enter: "cmd-submit",
     }));
 
-    expect(state.commands.keyboard.enter).toBe("cmd-enqueue");
-    expect(state.commands.keyboard.ctrl_enter).toBe("cmd-steer");
-    expect(state.commands.commands.find((item) => item.command_id === "cmd-steer")?.stale_guard.active_turn_id).toBe("turn-1");
+    expect(state.commands.keyboard.enter).toBe("cmd-submit");
+    expect(state.commands.keyboard.ctrl_enter).toBe("cmd-submit");
+    expect(state.commands.commands.find((item) => item.command_id === "cmd-submit")?.stale_guard.active_turn_id).toBe("turn-1");
   });
 
   it("does not fabricate commands while projection is refreshing", () => {
     const state = commandState("refreshing", workspaceView("running", runningActions, [
-      command("enqueue", "cmd-enqueue"),
-    ], { enter: "cmd-enqueue" }));
+      command("submit_message", "cmd-submit"),
+    ], { enter: "cmd-submit" }));
 
     expect(state.commands.keyboard.enter).toBeUndefined();
     expect(state.commands.commands).toHaveLength(0);

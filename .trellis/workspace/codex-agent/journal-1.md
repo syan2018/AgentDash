@@ -363,3 +363,39 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: AgentRun mailbox 控制面收敛
+
+**Date**: 2026-06-13
+**Task**: AgentRun mailbox 控制面收敛
+**Branch**: `codex/agentrun-mailbox-planning`
+
+### Summary
+
+完成 AgentRun mailbox/barrier 模型落地：新增 durable mailbox 与 command receipt 泛化，接入 runtime/hook/terminal 边界，切换 API 与前端 mailbox projection，并通过 cut-line 与 focused checks。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ed99d606` | (see git log) |
+| `1d60a052` | (see git log) |
+| `ccdf0def` | (see git log) |
+| `59c864d4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

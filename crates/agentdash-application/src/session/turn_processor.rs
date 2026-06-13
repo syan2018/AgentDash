@@ -222,8 +222,8 @@ mod tests {
     };
     use super::super::runtime_registry::SessionRuntimeRegistry;
     use super::super::terminal_effects::{
-        TerminalAutoResumePort, TerminalEffectDeps, TerminalHookTriggerPort,
-        TerminalHookTriggerRequest,
+        TerminalAutoResumePort, TerminalAutoResumeRequest, TerminalEffectDeps,
+        TerminalHookTriggerPort, TerminalHookTriggerRequest,
     };
     use super::super::turn_supervisor::TurnSupervisor;
     use super::*;
@@ -374,8 +374,11 @@ mod tests {
 
     #[async_trait]
     impl TerminalAutoResumePort for NoopAutoResume {
-        async fn request_hook_auto_resume(&self, _session_id: String) -> bool {
-            false
+        async fn request_hook_auto_resume(
+            &self,
+            _request: TerminalAutoResumeRequest,
+        ) -> Result<bool, String> {
+            Ok(false)
         }
     }
 

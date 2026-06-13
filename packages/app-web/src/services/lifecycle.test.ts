@@ -15,9 +15,10 @@ vi.mock("../api/client", () => ({
 }));
 
 import {
-  deleteAgentRunPendingMessage,
-  promoteAgentRunPendingMessage,
-  resumeAgentRunPendingQueue,
+  cancelAgentRun,
+  deleteAgentRunMailboxMessage,
+  promoteAgentRunMailboxMessage,
+  resumeAgentRunMailbox,
   submitAgentRunComposerInput,
 } from "./lifecycle";
 import type { AgentRunCommandPreconditionView } from "../generated/workflow-contracts";
@@ -31,7 +32,7 @@ function command(kind: AgentRunCommandPreconditionView["command_kind"]): AgentRu
       run_id: "run/1",
       agent_id: "agent/1",
       runtime_session_id: "session-1",
-      active_turn_id: kind === "send_next" ? undefined : "turn-1",
+      active_turn_id: kind === "submit_message" ? undefined : "turn-1",
     },
   };
 }
@@ -39,16 +40,16 @@ function command(kind: AgentRunCommandPreconditionView["command_kind"]): AgentRu
 describe("lifecycle message service", () => {
   beforeEach(() => {
     mocks.apiDeleteMock.mockReset();
-    mocks.apiDeleteMock.mockResolvedValue(undefined);
+    mocks.apiDeleteMock.mockResolvedValue({
+      command_receipt: { id: "receipt-1", status: "accepted" },
+      outcome: "deleted",
+    });
     mocks.apiGetMock.mockReset();
     mocks.apiGetMock.mockResolvedValue([]);
     mocks.apiPostMock.mockReset();
     mocks.apiPostMock.mockResolvedValue({
-      runtime_session_id: "runtime-1",
-      turn_id: "turn-1",
-      run_ref: { run_id: "run-1" },
-      agent_ref: { run_id: "run-1", agent_id: "agent-1" },
-      frame_ref: { agent_id: "agent-1", frame_id: "frame-1", revision: 1 },
+      command_receipt: { id: "receipt-1", status: "accepted" },
+      outcome: "queued",
     });
   });
 
@@ -56,7 +57,7 @@ describe("lifecycle message service", () => {
     await submitAgentRunComposerInput("run/1", "agent/1", {
       input: [{ type: "text", text: "follow up", text_elements: [] }],
       client_command_id: "command-composer",
-      command: command("enqueue"),
+      command: command("submit_message"),
       executor_config: { model_id: "gpt-test" },
     });
 
@@ -65,39 +66,69 @@ describe("lifecycle message service", () => {
       {
         input: [{ type: "text", text: "follow up", text_elements: [] }],
         client_command_id: "command-composer",
-        command: command("enqueue"),
+        command: command("submit_message"),
         executor_config: { model_id: "gpt-test" },
       },
     );
   });
 
-  it("deletes pending messages through the AgentRun pending endpoint", async () => {
-    await deleteAgentRunPendingMessage("run/1", "agent/1", "message/1");
+  it("deletes mailbox messages through the AgentRun mailbox endpoint", async () => {
+    await deleteAgentRunMailboxMessage("run/1", "agent/1", "message/1", {
+      command: command("delete_mailbox_message"),
+      client_command_id: "delete-message-1",
+    });
 
     expect(mocks.apiDeleteMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/pending-messages/message%2F1",
+      "/agent-runs/run%2F1/agents/agent%2F1/mailbox/messages/message%2F1",
+      {
+        command: command("delete_mailbox_message"),
+        client_command_id: "delete-message-1",
+      },
     );
   });
 
-  it("promotes pending messages through the AgentRun pending endpoint", async () => {
-    await promoteAgentRunPendingMessage("run/1", "agent/1", "message/1", {
-      command: command("promote_pending"),
+  it("promotes mailbox messages through the AgentRun mailbox endpoint", async () => {
+    await promoteAgentRunMailboxMessage("run/1", "agent/1", "message/1", {
+      command: command("promote_mailbox_message"),
+      client_command_id: "promote-message-1",
     });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/pending-messages/message%2F1/promote",
-      { command: command("promote_pending") },
+      "/agent-runs/run%2F1/agents/agent%2F1/mailbox/messages/message%2F1/promote",
+      {
+        command: command("promote_mailbox_message"),
+        client_command_id: "promote-message-1",
+      },
     );
   });
 
-  it("resumes pending queues through the AgentRun pending resume endpoint", async () => {
-    await resumeAgentRunPendingQueue("run/1", "agent/1", {
-      command: command("resume_pending_queue"),
+  it("resumes mailbox through the AgentRun mailbox resume endpoint", async () => {
+    await resumeAgentRunMailbox("run/1", "agent/1", {
+      command: command("resume_mailbox"),
+      client_command_id: "resume-mailbox-1",
     });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/pending-messages/resume",
-      { command: command("resume_pending_queue") },
+      "/agent-runs/run%2F1/agents/agent%2F1/mailbox/resume",
+      {
+        command: command("resume_mailbox"),
+        client_command_id: "resume-mailbox-1",
+      },
+    );
+  });
+
+  it("cancels AgentRun with request-level client command id", async () => {
+    await cancelAgentRun("run/1", "agent/1", {
+      command: command("cancel"),
+      client_command_id: "cancel-agent-run-1",
+    });
+
+    expect(mocks.apiPostMock).toHaveBeenCalledWith(
+      "/agent-runs/run%2F1/agents/agent%2F1/cancel",
+      {
+        command: command("cancel"),
+        client_command_id: "cancel-agent-run-1",
+      },
     );
   });
 });

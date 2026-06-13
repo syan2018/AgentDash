@@ -8,9 +8,9 @@ use agentdash_contracts::{
         ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
         ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
         ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
-        ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
-        ConversationPendingSnapshotView, LifecycleRunRefDto, LifecycleSubjectAssociationDto,
-        RuntimeSessionRefDto, ValidationSeverity,
+        ConversationMailboxSnapshotView, ConversationModelConfigSource,
+        ConversationModelConfigStatus, ConversationModelConfigView, LifecycleRunRefDto,
+        LifecycleSubjectAssociationDto, RuntimeSessionRefDto, ValidationSeverity,
     },
 };
 use agentdash_domain::agent::ProjectAgent;
@@ -41,9 +41,8 @@ impl ConversationModelConfigResolver {
         let mut config = input
             .project_agent_preset
             .cloned()
-            .map(|config| {
+            .inspect(|_| {
                 source = ConversationModelConfigSource::ProjectAgentPreset;
-                config
             })
             .unwrap_or_default();
 
@@ -258,8 +257,8 @@ pub struct AgentConversationSnapshotInput {
     pub execution_state: SessionExecutionState,
     pub terminal_agent: bool,
     pub supports_steering: bool,
-    pub pending_paused: bool,
-    pub pending_visible_message_count: usize,
+    pub mailbox_paused: bool,
+    pub mailbox_visible_message_count: usize,
     pub resource_surface: Option<ResolvedVfsSurface>,
     pub resource_diagnostics: Vec<ConversationDiagnosticView>,
     pub model_config: ConversationModelConfigView,
@@ -288,7 +287,7 @@ impl AgentConversationSnapshotResolver {
         let resume_command = commands
             .commands
             .iter()
-            .find(|command| command.kind == ConversationCommandKind::ResumePendingQueue)
+            .find(|command| command.kind == ConversationCommandKind::ResumeMailbox)
             .cloned()
             .filter(|command| command.enabled);
         let diagnostics = conversation_diagnostics(&input.model_config, input.resource_diagnostics);
@@ -322,10 +321,10 @@ impl AgentConversationSnapshotResolver {
             execution,
             model_config: input.model_config,
             commands,
-            pending: ConversationPendingSnapshotView {
-                visible_message_count: input.pending_visible_message_count,
-                paused: input.pending_paused,
-                user_attention: input.pending_visible_message_count > 0 && input.pending_paused,
+            mailbox: ConversationMailboxSnapshotView {
+                visible_message_count: input.mailbox_visible_message_count,
+                paused: input.mailbox_paused,
+                user_attention: input.mailbox_visible_message_count > 0 && input.mailbox_paused,
                 resume_command,
             },
             resource_surface: input.resource_surface,
@@ -393,10 +392,16 @@ fn conversation_commands(
     snapshot_id: &str,
 ) -> ConversationCommandSetView {
     let model_ready = input.model_config.status == ConversationModelConfigStatus::Resolved;
-    let send_next = status == ConversationExecutionStatus::Ready && model_ready;
+    let submit_message = !matches!(
+        status,
+        ConversationExecutionStatus::Draft
+            | ConversationExecutionStatus::Terminal
+            | ConversationExecutionStatus::FrameMissing
+            | ConversationExecutionStatus::DeliveryMissing
+            | ConversationExecutionStatus::ModelRequired
+    ) && model_ready;
     let running_active =
         status == ConversationExecutionStatus::RunningActive && active_turn_id.is_some();
-    let steer = running_active && input.supports_steering;
     let cancel = matches!(
         status,
         ConversationExecutionStatus::StartingClaimed
@@ -419,10 +424,10 @@ fn conversation_commands(
         ),
         command_view(
             input,
-            ConversationCommandKind::SendNext,
+            ConversationCommandKind::SubmitMessage,
             snapshot_id,
-            send_next,
-            unavailable_reason_for_ready(status, model_ready),
+            submit_message,
+            unavailable_reason_for_submit(status, model_ready),
             Some(disabled_code_for_status(status)),
             Some("enter"),
             true,
@@ -431,44 +436,10 @@ fn conversation_commands(
         ),
         command_view(
             input,
-            ConversationCommandKind::Enqueue,
-            snapshot_id,
-            running_active,
-            "当前 AgentRun 不在可排队新消息的运行状态。",
-            Some(if status == ConversationExecutionStatus::StartingClaimed {
-                "starting_claimed"
-            } else {
-                "command_unavailable"
-            }),
-            Some("enter"),
-            true,
-            "allowed",
-            vec![ConversationCommandPlacement::ComposerPrimary],
-        ),
-        command_view(
-            input,
-            ConversationCommandKind::Steer,
-            snapshot_id,
-            steer,
-            "当前 AgentRun 没有可用 steer intent。",
-            Some(if running_active {
-                "connector_steer_unsupported"
-            } else if status == ConversationExecutionStatus::StartingClaimed {
-                "starting_claimed"
-            } else {
-                "command_unavailable"
-            }),
-            Some("mod+enter"),
-            true,
-            "ignored",
-            vec![ConversationCommandPlacement::ComposerSecondary],
-        ),
-        command_view(
-            input,
-            ConversationCommandKind::PromotePending,
+            ConversationCommandKind::PromoteMailboxMessage,
             snapshot_id,
             running_active && input.supports_steering,
-            "当前 AgentRun 不在可投递 pending 消息的运行状态。",
+            "当前 AgentRun 不在可投递 mailbox 消息的运行状态。",
             Some(if status == ConversationExecutionStatus::StartingClaimed {
                 "starting_claimed"
             } else if running_active {
@@ -479,19 +450,31 @@ fn conversation_commands(
             None,
             false,
             "ignored",
-            vec![ConversationCommandPlacement::PendingRow],
+            vec![ConversationCommandPlacement::MailboxRow],
         ),
         command_view(
             input,
-            ConversationCommandKind::ResumePendingQueue,
+            ConversationCommandKind::DeleteMailboxMessage,
             snapshot_id,
-            input.pending_paused && input.pending_visible_message_count > 0,
-            "当前没有需要用户恢复的 pending 队列。",
+            input.mailbox_visible_message_count > 0,
+            "当前没有可删除的 mailbox message。",
             Some("command_unavailable"),
             None,
             false,
             "ignored",
-            vec![ConversationCommandPlacement::PendingBanner],
+            vec![ConversationCommandPlacement::MailboxRow],
+        ),
+        command_view(
+            input,
+            ConversationCommandKind::ResumeMailbox,
+            snapshot_id,
+            input.mailbox_paused && input.mailbox_visible_message_count > 0,
+            "当前没有需要用户恢复的 mailbox。",
+            Some("command_unavailable"),
+            None,
+            false,
+            "ignored",
+            vec![ConversationCommandPlacement::MailboxBanner],
         ),
         command_view(
             input,
@@ -509,19 +492,13 @@ fn conversation_commands(
 
     ConversationCommandSetView {
         keyboard: ConversationKeyboardMapView {
-            enter: if send_next {
-                Some(command_id_for(ConversationCommandKind::SendNext))
-            } else if running_active {
-                Some(command_id_for(ConversationCommandKind::Enqueue))
+            enter: if submit_message {
+                Some(command_id_for(ConversationCommandKind::SubmitMessage))
             } else {
                 None
             },
-            ctrl_enter: if steer {
-                Some(command_id_for(ConversationCommandKind::Steer))
-            } else if send_next {
-                Some(command_id_for(ConversationCommandKind::SendNext))
-            } else if running_active {
-                Some(command_id_for(ConversationCommandKind::Enqueue))
+            ctrl_enter: if submit_message {
+                Some(command_id_for(ConversationCommandKind::SubmitMessage))
             } else {
                 None
             },
@@ -605,11 +582,10 @@ fn execution_state_snapshot_code(execution_state: &SessionExecutionState) -> &'s
 fn command_id_for(kind: ConversationCommandKind) -> String {
     match kind {
         ConversationCommandKind::StartDraft => "start_draft",
-        ConversationCommandKind::SendNext => "send_next",
-        ConversationCommandKind::Enqueue => "enqueue",
-        ConversationCommandKind::Steer => "steer",
-        ConversationCommandKind::PromotePending => "promote_pending",
-        ConversationCommandKind::ResumePendingQueue => "resume_pending_queue",
+        ConversationCommandKind::SubmitMessage => "submit_message",
+        ConversationCommandKind::PromoteMailboxMessage => "promote_mailbox_message",
+        ConversationCommandKind::DeleteMailboxMessage => "delete_mailbox_message",
+        ConversationCommandKind::ResumeMailbox => "resume_mailbox",
         ConversationCommandKind::Cancel => "cancel",
     }
     .to_string()
@@ -629,7 +605,7 @@ fn disabled_code_for_status(status: ConversationExecutionStatus) -> &'static str
     }
 }
 
-fn unavailable_reason_for_ready(
+fn unavailable_reason_for_submit(
     status: ConversationExecutionStatus,
     model_ready: bool,
 ) -> &'static str {
@@ -641,17 +617,17 @@ fn unavailable_reason_for_ready(
             "当前 AgentRun 正在启动中，等待 active turn 建立。"
         }
         ConversationExecutionStatus::RunningActive => {
-            "当前 AgentRun 正在执行中，不能并发发送下一轮消息。"
+            "当前 AgentRun 正在执行中，新消息将进入 mailbox。"
         }
         ConversationExecutionStatus::Cancelling => {
-            "当前 AgentRun 正在取消中，等待执行器收口后再发送下一轮消息。"
+            "当前 AgentRun 正在取消中，新消息将由 mailbox 等待可消费边界。"
         }
         ConversationExecutionStatus::Terminal => "当前 AgentRun 已结束，不能继续发送消息。",
         ConversationExecutionStatus::FrameMissing => "当前 AgentRun 没有可投递的 runtime frame。",
         ConversationExecutionStatus::DeliveryMissing => "当前 AgentRun 缺少可投递的 runtime 通道。",
         ConversationExecutionStatus::ModelRequired => "当前 AgentRun 缺少模型选择。",
         ConversationExecutionStatus::Draft | ConversationExecutionStatus::Ready => {
-            "当前 AgentRun 暂不可发送下一轮消息。"
+            "当前 AgentRun 暂不可提交消息。"
         }
     }
 }
@@ -715,8 +691,8 @@ mod tests {
             execution_state,
             terminal_agent: false,
             supports_steering: true,
-            pending_paused: false,
-            pending_visible_message_count: 0,
+            mailbox_paused: false,
+            mailbox_visible_message_count: 0,
             resource_surface: None,
             resource_diagnostics: Vec::new(),
             model_config: resolved_model_config(),
@@ -843,26 +819,22 @@ mod tests {
             snapshot.execution.status,
             ConversationExecutionStatus::StartingClaimed
         );
-        assert_eq!(snapshot.commands.keyboard.enter, None);
-        assert_eq!(snapshot.commands.keyboard.ctrl_enter, None);
-        for kind in [
-            ConversationCommandKind::Enqueue,
-            ConversationCommandKind::Steer,
-            ConversationCommandKind::PromotePending,
-        ] {
-            let command = snapshot
-                .commands
-                .commands
-                .iter()
-                .find(|command| command.kind == kind)
-                .expect("command exists");
-            assert!(!command.enabled);
-            assert_eq!(command.disabled_code.as_deref(), Some("starting_claimed"));
-        }
+        assert_eq!(
+            snapshot.commands.keyboard.enter.as_deref(),
+            Some("submit_message")
+        );
+        let promote = snapshot
+            .commands
+            .commands
+            .iter()
+            .find(|command| command.kind == ConversationCommandKind::PromoteMailboxMessage)
+            .expect("promote command exists");
+        assert!(!promote.enabled);
+        assert_eq!(promote.disabled_code.as_deref(), Some("starting_claimed"));
     }
 
     #[test]
-    fn running_active_exposes_enqueue_and_supported_steer() {
+    fn running_active_exposes_submit_and_supported_promote() {
         let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
             SessionExecutionState::Running {
                 turn_id: Some("turn-1".to_string()),
@@ -873,31 +845,21 @@ mod tests {
             snapshot.execution.status,
             ConversationExecutionStatus::RunningActive
         );
-        assert_eq!(snapshot.commands.keyboard.enter.as_deref(), Some("enqueue"));
         assert_eq!(
-            snapshot.commands.keyboard.ctrl_enter.as_deref(),
-            Some("steer")
+            snapshot.commands.keyboard.enter.as_deref(),
+            Some("submit_message")
         );
-        assert!(
-            snapshot
-                .commands
-                .commands
-                .iter()
-                .any(|command| command.kind == ConversationCommandKind::Enqueue
-                    && command.enabled
-                    && command.stale_guard.active_turn_id.as_deref() == Some("turn-1"))
-        );
-        assert!(
-            snapshot
-                .commands
-                .commands
-                .iter()
-                .any(|command| command.kind == ConversationCommandKind::Steer && command.enabled)
-        );
+        assert!(snapshot.commands.commands.iter().any(|command| command.kind
+            == ConversationCommandKind::SubmitMessage
+            && command.enabled
+            && command.stale_guard.active_turn_id.as_deref() == Some("turn-1")));
+        assert!(snapshot.commands.commands.iter().any(|command| command.kind
+            == ConversationCommandKind::PromoteMailboxMessage
+            && command.enabled));
     }
 
     #[test]
-    fn running_active_without_steer_support_maps_ctrl_enter_to_enqueue() {
+    fn running_active_without_steer_support_keeps_submit_and_disables_promote() {
         let mut input = snapshot_input(SessionExecutionState::Running {
             turn_id: Some("turn-1".to_string()),
         });
@@ -905,26 +867,25 @@ mod tests {
 
         let snapshot = AgentConversationSnapshotResolver::resolve(input);
 
-        assert_eq!(snapshot.commands.keyboard.enter.as_deref(), Some("enqueue"));
         assert_eq!(
-            snapshot.commands.keyboard.ctrl_enter.as_deref(),
-            Some("enqueue")
+            snapshot.commands.keyboard.enter.as_deref(),
+            Some("submit_message")
         );
-        let steer = snapshot
+        let promote = snapshot
             .commands
             .commands
             .iter()
-            .find(|command| command.kind == ConversationCommandKind::Steer)
-            .expect("steer command exists");
-        assert!(!steer.enabled);
+            .find(|command| command.kind == ConversationCommandKind::PromoteMailboxMessage)
+            .expect("promote command exists");
+        assert!(!promote.enabled);
         assert_eq!(
-            steer.disabled_code.as_deref(),
+            promote.disabled_code.as_deref(),
             Some("connector_steer_unsupported")
         );
     }
 
     #[test]
-    fn ready_keyboard_maps_enter_and_ctrl_enter_to_send_next() {
+    fn ready_keyboard_maps_enter_and_ctrl_enter_to_submit_message() {
         let snapshot =
             AgentConversationSnapshotResolver::resolve(snapshot_input(SessionExecutionState::Idle));
 
@@ -934,11 +895,11 @@ mod tests {
         );
         assert_eq!(
             snapshot.commands.keyboard.enter.as_deref(),
-            Some("send_next")
+            Some("submit_message")
         );
         assert_eq!(
             snapshot.commands.keyboard.ctrl_enter.as_deref(),
-            Some("send_next")
+            Some("submit_message")
         );
     }
 
@@ -961,7 +922,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_turn_changes_snapshot_and_keyboard_to_send_next() {
+    fn completed_turn_changes_snapshot_and_keyboard_stays_submit_message() {
         let running = AgentConversationSnapshotResolver::resolve(snapshot_input(
             SessionExecutionState::Running {
                 turn_id: Some("turn-1".to_string()),
@@ -974,28 +935,31 @@ mod tests {
         ));
 
         assert_ne!(running.snapshot_id, completed.snapshot_id);
-        assert_eq!(running.commands.keyboard.enter.as_deref(), Some("enqueue"));
+        assert_eq!(
+            running.commands.keyboard.enter.as_deref(),
+            Some("submit_message")
+        );
         assert_eq!(
             completed.commands.keyboard.enter.as_deref(),
-            Some("send_next")
+            Some("submit_message")
         );
         assert_eq!(
             completed.commands.keyboard.ctrl_enter.as_deref(),
-            Some("send_next")
+            Some("submit_message")
         );
     }
 
     #[test]
-    fn paused_empty_pending_queue_does_not_need_user_attention() {
+    fn paused_empty_mailbox_does_not_need_user_attention() {
         let mut input = snapshot_input(SessionExecutionState::Idle);
-        input.pending_paused = true;
-        input.pending_visible_message_count = 0;
+        input.mailbox_paused = true;
+        input.mailbox_visible_message_count = 0;
 
         let snapshot = AgentConversationSnapshotResolver::resolve(input);
 
-        assert!(snapshot.pending.paused);
-        assert!(!snapshot.pending.user_attention);
-        assert!(snapshot.pending.resume_command.is_none());
+        assert!(snapshot.mailbox.paused);
+        assert!(!snapshot.mailbox.user_attention);
+        assert!(snapshot.mailbox.resume_command.is_none());
     }
 
     #[test]

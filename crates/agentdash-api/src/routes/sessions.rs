@@ -13,7 +13,9 @@ use axum::{
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
-use crate::routes::lifecycle_agents::pending_queue_state_view;
+use crate::routes::lifecycle_agents::{
+    mailbox_message_view, mailbox_message_visible, mailbox_state_view,
+};
 use crate::routes::lifecycle_contracts::{
     agent_run_to_contract, lifecycle_run_view_to_contract, subject_association_to_contract,
 };
@@ -32,10 +34,9 @@ use agentdash_contracts::session::{
     SessionProjectionViewResponse,
 };
 use agentdash_contracts::workflow::{
-    PendingMessageView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
-    SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
-    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
-    SessionShellDto,
+    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, SessionRuntimeActionAvailabilityView,
+    SessionRuntimeActionSetView, SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView,
+    SessionRuntimeControlView, SessionShellDto,
 };
 use agentdash_domain::workflow::{LifecycleRun, RuntimeSessionExecutionAnchor};
 
@@ -177,15 +178,13 @@ pub async fn get_session_runtime_control(
             frame_runtime: None,
             subject_associations: Vec::new(),
             actions: SessionRuntimeActionSetView {
-                send_next: disabled_action(
+                submit_message: disabled_action(
                     "当前 Session 没有绑定 Agent 控制面，不能继续发送消息。",
                 ),
-                enqueue: disabled_action("当前 Session 没有绑定 Agent 控制面。"),
-                steer: disabled_action("当前 Session 没有绑定 Agent 控制面，不能运行中 steer。"),
                 cancel: disabled_action("当前 Session 没有正在执行的 turn。"),
             },
-            pending_queue: pending_queue_state_view(None, false, 0),
-            pending_messages: Vec::new(),
+            mailbox: mailbox_state_view(None, false, 0, false),
+            mailbox_messages: Vec::new(),
         }));
     };
 
@@ -254,15 +253,6 @@ pub async fn get_session_runtime_control(
     let delivery_cancelling = matches!(execution_state, SessionExecutionState::Cancelling { .. });
     let terminal_agent = is_terminal_agent_status(&agent.status);
     let has_frame = frame_runtime.is_some();
-    let supports_steering = if delivery_running {
-        state
-            .services
-            .session_control
-            .supports_session_steering(&runtime_session_id)
-            .await
-    } else {
-        false
-    };
     let control_plane = if terminal_agent {
         SessionRuntimeControlPlaneView {
             status: SessionRuntimeControlPlaneStatus::Terminal,
@@ -289,32 +279,10 @@ pub async fn get_session_runtime_control(
             reason: None,
         }
     };
-    let send_next = if has_frame && !terminal_agent && !delivery_running && !delivery_cancelling {
+    let submit_message = if has_frame && !terminal_agent {
         enabled_action()
-    } else if delivery_cancelling {
-        disabled_action("当前 Session 正在取消中，等待执行器收口后再发送下一轮消息。")
-    } else if delivery_running {
-        disabled_action("当前 Session 正在执行中，不能并发发送下一轮消息。")
     } else if terminal_agent {
         disabled_action("当前 Agent 已结束，不能继续发送消息。")
-    } else {
-        disabled_action("当前 Agent 没有可投递的 runtime frame。")
-    };
-    let steer = if has_frame
-        && !terminal_agent
-        && delivery_running
-        && !delivery_cancelling
-        && supports_steering
-    {
-        enabled_action()
-    } else if delivery_cancelling {
-        disabled_action("当前 Session 正在取消中，不能运行中 steer。")
-    } else if !delivery_running {
-        disabled_action("当前 Session 未在执行中，不需要运行中 steer。")
-    } else if !supports_steering {
-        disabled_action("当前执行器不支持对该运行中 Session steer。")
-    } else if terminal_agent {
-        disabled_action("当前 Agent 已结束，不能运行中 steer。")
     } else {
         disabled_action("当前 Agent 没有可投递的 runtime frame。")
     };
@@ -323,38 +291,37 @@ pub async fn get_session_runtime_control(
     } else {
         disabled_action("当前 Session 没有正在执行的 turn。")
     };
-    // enqueue: running 且有 frame 且未终止时可排队
-    let enqueue = if has_frame && !terminal_agent && delivery_running && !delivery_cancelling {
-        enabled_action()
-    } else if delivery_cancelling {
-        disabled_action("当前 Session 正在取消中，不能排队新消息。")
-    } else if !delivery_running {
-        disabled_action("当前 Session 未在执行中，直接发送即可。")
-    } else if terminal_agent {
-        disabled_action("当前 Agent 已结束。")
-    } else {
-        disabled_action("当前 Agent 没有可投递的 runtime frame。")
-    };
 
-    let pending_previews = state.services.pending_queue.list(&runtime_session_id).await;
-    let pending_messages: Vec<PendingMessageView> = pending_previews
-        .into_iter()
-        .map(|p| PendingMessageView {
-            id: p.id,
-            preview: p.preview,
-            has_images: p.has_images,
-            created_at: p.created_at.to_rfc3339(),
-        })
-        .collect();
-    let pending_queue = pending_queue_state_view(
+    let mailbox_messages = state
+        .repos
+        .agent_run_mailbox_repo
+        .list_messages(anchor.run_id, anchor.agent_id)
+        .await?;
+    let visible_message_count = mailbox_messages
+        .iter()
+        .filter(|message| mailbox_message_visible(message))
+        .count();
+    let mailbox = mailbox_state_view(
         state
-            .services
-            .pending_queue
-            .is_paused(&runtime_session_id)
-            .await,
+            .repos
+            .agent_run_mailbox_repo
+            .get_state(anchor.run_id, anchor.agent_id)
+            .await?
+            .as_ref(),
         !terminal_agent,
-        pending_messages.len(),
+        visible_message_count,
+        state
+            .repos
+            .backend_repo
+            .get_preferences()
+            .await
+            .unwrap_or_default()
+            .hide_system_steer_messages,
     );
+    let mailbox_messages = mailbox_messages
+        .into_iter()
+        .map(mailbox_message_view)
+        .collect();
 
     Ok(Json(SessionRuntimeControlView {
         runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
@@ -366,13 +333,11 @@ pub async fn get_session_runtime_control(
         frame_runtime,
         subject_associations,
         actions: SessionRuntimeActionSetView {
-            send_next,
-            enqueue,
-            steer,
+            submit_message,
             cancel,
         },
-        pending_queue,
-        pending_messages,
+        mailbox,
+        mailbox_messages,
     }))
 }
 
@@ -1078,5 +1043,3 @@ pub async fn get_session_context_audit(
 
     Ok(Json(dtos))
 }
-
-// ─── Pending Message Queue ──────────────────────────────

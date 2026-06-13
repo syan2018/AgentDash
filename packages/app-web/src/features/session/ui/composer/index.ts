@@ -3,4 +3,4 @@ export type { ImageAttachment, UseImageAttachmentsResult } from "./useImageAttac
 export { ComposerSendButton } from "./ComposerSendButton";
 export { ComposerPlusMenu } from "./ComposerPlusMenu";
 export { ImageAttachmentPreview } from "./ImageAttachmentPreview";
-export { PendingMessageList } from "./PendingMessageRow";
+export { MailboxMessageList } from "./MailboxMessageRow";

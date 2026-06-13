@@ -6,6 +6,7 @@ mod entity;
 mod lifecycle_agent;
 mod lifecycle_gate;
 mod lifecycle_subject_association;
+mod mailbox;
 mod repository;
 mod runtime_session_anchor;
 mod validation;
@@ -14,9 +15,8 @@ mod value_objects;
 pub use agent_frame::AgentFrame;
 pub use agent_lineage::AgentLineage;
 pub use command_receipt::{
-    AgentRunDeliveryAcceptedRefs, AgentRunDeliveryCommandClaim, AgentRunDeliveryCommandReceipt,
-    AgentRunDeliveryCommandReceiptRepository, AgentRunDeliveryCommandStatus,
-    NewAgentRunDeliveryCommandReceipt,
+    AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind, AgentRunCommandReceipt,
+    AgentRunCommandReceiptRepository, AgentRunCommandStatus, NewAgentRunCommandReceipt,
 };
 pub use dispatch::{
     AgentLaunchDispatchResult, AgentLaunchIntent, AgentPolicy, AgentRuntimeRefs, CapabilityPolicy,
@@ -33,6 +33,12 @@ pub use entity::{
 pub use lifecycle_agent::{LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::LifecycleGate;
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
+pub use mailbox::{
+    AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
+    AgentRunMailboxState, ConsumptionBarrier, MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery,
+    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus,
+    NewAgentRunMailboxMessage, SteeringStopEffect,
+};
 pub use repository::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
     LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,

@@ -1,0 +1,10 @@
+{"kind":"command","cmd":"cargo check -p agentdash-api","reason":"跨 Rust crate 编译与 API contract 映射"}
+{"kind":"command","cmd":"cargo test -p agentdash-application mailbox","reason":"mailbox scheduler 与 conversation projection focused tests"}
+{"kind":"command","cmd":"cargo test -p agentdash-application hook_auto_resume","reason":"HookAutoResume route/replay focused tests"}
+{"kind":"command","cmd":"cargo test -p agentdash-infrastructure agent_run_mailbox","reason":"Postgres mailbox repository recovery tests"}
+{"kind":"command","cmd":"pnpm run contracts:check","reason":"Rust contract 到 generated TS drift check"}
+{"kind":"command","cmd":"pnpm --filter app-web typecheck","reason":"前端 generated DTO 消费与严格类型检查"}
+{"kind":"command","cmd":"pnpm --filter app-web test -- lifecycle MailboxMessageRow AgentRunWorkspacePage","reason":"mailbox service、row、workspace interaction 回归"}
+{"kind":"grep","cmd":"rg -n \"PendingQueueService|pending_queue\\.(enqueue|dequeue_front|requeue_front|take|pause|resume|delete|list)\" crates packages","reason":"确认旧 process-local pending queue 不回流"}
+{"kind":"grep","cmd":"rg -n \"classify_composer_submit_kind|ConversationCommandKind::SendNext|ConversationCommandKind::Enqueue|ConversationCommandKind::Steer\" crates/agentdash-api crates/agentdash-application packages/app-web/src","reason":"确认 route-local send/enqueue/steer 不回流"}
+{"kind":"grep","cmd":"rg -n \"accepted_receipt\\(\" crates/agentdash-api crates/agentdash-application","reason":"确认 synthetic receipt 不回流"}

@@ -5,7 +5,7 @@
 //! - [`factory`]：构造与注入（`new_with_hooks_and_persistence` + `with_*` / `set_*`）。
 //! - [`tool_builder`]：runtime tool + 直连/relay MCP 工具发现 + `replace_current_capability_state`。
 //! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_runtime` /
-//!   `collect_runtime_context_update_injections` / `schedule_hook_auto_resume`。
+//!   `collect_runtime_context_update_injections` / `schedule_unanchored_hook_auto_resume`。
 //! - [`runtime_context_transition`]：workflow phase/runtime context transition 的 live
 //!   apply、pending 入队与 next-turn 应用。
 //!
@@ -15,6 +15,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use super::construction_provider::SharedSessionConstructionProvider;
+use super::mailbox_delegate::AgentRunMailboxRuntimeBoundaryDeps;
 use super::persistence::{SessionPersistence, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_supervisor::TurnSupervisor;
@@ -89,6 +90,7 @@ pub struct SessionRuntimeInner {
     /// LifecycleAgent 仓储 — launch path 需要查询 agent bootstrap 状态。
     pub(super) lifecycle_agent_repo:
         Option<Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>>,
+    pub(super) agent_run_mailbox_boundary_deps: Option<AgentRunMailboxRuntimeBoundaryDeps>,
     /// LifecycleGate 仓储，用于 companion_wait durable 等待。
     pub(super) lifecycle_gate_repo:
         Option<Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>>,

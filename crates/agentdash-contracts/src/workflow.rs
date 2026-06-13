@@ -809,9 +809,7 @@ pub struct AgentRunWorkspaceActionAvailabilityView {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunWorkspaceActionSetView {
-    pub send_next: AgentRunWorkspaceActionAvailabilityView,
-    pub enqueue: AgentRunWorkspaceActionAvailabilityView,
-    pub steer: AgentRunWorkspaceActionAvailabilityView,
+    pub submit_message: AgentRunWorkspaceActionAvailabilityView,
     pub cancel: AgentRunWorkspaceActionAvailabilityView,
 }
 
@@ -886,11 +884,10 @@ pub struct ConversationModelConfigView {
 #[serde(rename_all = "snake_case")]
 pub enum ConversationCommandKind {
     StartDraft,
-    SendNext,
-    Enqueue,
-    Steer,
-    PromotePending,
-    ResumePendingQueue,
+    SubmitMessage,
+    PromoteMailboxMessage,
+    DeleteMailboxMessage,
+    ResumeMailbox,
     Cancel,
 }
 
@@ -899,8 +896,8 @@ pub enum ConversationCommandKind {
 pub enum ConversationCommandPlacement {
     ComposerPrimary,
     ComposerSecondary,
-    PendingRow,
-    PendingBanner,
+    MailboxRow,
+    MailboxBanner,
     Header,
 }
 
@@ -987,7 +984,7 @@ pub struct ConversationExecutionView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct ConversationPendingSnapshotView {
+pub struct ConversationMailboxSnapshotView {
     pub visible_message_count: usize,
     pub paused: bool,
     pub user_attention: bool,
@@ -1037,7 +1034,7 @@ pub struct AgentConversationSnapshot {
     pub execution: ConversationExecutionView,
     pub model_config: ConversationModelConfigView,
     pub commands: ConversationCommandSetView,
-    pub pending: ConversationPendingSnapshotView,
+    pub mailbox: ConversationMailboxSnapshotView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resource_surface: Option<ResolvedVfsSurface>,
@@ -1045,24 +1042,151 @@ pub struct AgentConversationSnapshot {
     pub diagnostics: Vec<ConversationDiagnosticView>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum PendingQueuePauseReasonDto {
-    TurnFailed,
-    TurnInterrupted,
+pub enum MailboxMessageStatus {
+    Accepted,
+    Queued,
+    ReadyToConsume,
+    Consuming,
+    Dispatched,
+    Steered,
+    Paused,
+    Blocked,
+    Failed,
+    Deleted,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MailboxMessageOrigin {
+    User,
+    System,
+    Hook,
+    Companion,
+    Workflow,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MailboxMessageSource {
+    Composer,
+    DraftStart,
+    HookAfterTurn,
+    HookBeforeStop,
+    HookAutoResume,
+    CompanionParentResume,
+    WorkflowOrchestrator,
+    RoutineExecutor,
+    LocalRelayPrompt,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SteeringStopEffect {
+    None,
+    ContinueOnStop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MailboxDelivery {
+    LaunchOrContinueTurn,
+    SteerActiveTurn { stop_effect: SteeringStopEffect },
+    ResumeLaunchSource { launch_source: String },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsumptionBarrier {
+    ImmediateIfIdle,
+    AgentLoopTurnBoundary,
+    AgentRunTurnBoundary,
+    ManualResume,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MailboxDrainMode {
+    One,
+    All,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct PendingQueueStateView {
+pub struct AgentRunMessageAcceptedRefs {
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub frame_ref: Option<AgentFrameRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_session_ref: Option<RuntimeSessionRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_run_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub protocol_turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct MailboxMessageView {
+    pub id: String,
+    pub origin: MailboxMessageOrigin,
+    pub source: MailboxMessageSource,
+    pub delivery: MailboxDelivery,
+    pub barrier: ConsumptionBarrier,
+    pub drain_mode: MailboxDrainMode,
+    pub status: MailboxMessageStatus,
+    pub preview: String,
+    pub has_images: bool,
+    pub attempt_count: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub accepted_refs: Option<AgentRunMessageAcceptedRefs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub can_promote: bool,
+    pub can_delete: bool,
+    pub can_reorder: bool,
+    pub can_recall: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunMailboxMoveRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub after_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunMailboxMessageContentView {
+    pub id: String,
+    #[ts(type = "JsonValue")]
+    pub input: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct MailboxStateView {
     pub paused: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub pause_reason: Option<PendingQueuePauseReasonDto>,
+    pub pause_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub message: Option<String>,
     pub can_resume: bool,
+    #[serde(default)]
+    pub hide_system_steer_messages: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1115,9 +1239,9 @@ pub struct AgentRunWorkspaceView {
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
     pub actions: AgentRunWorkspaceActionSetView,
-    pub pending_queue: PendingQueueStateView,
+    pub mailbox: MailboxStateView,
     #[serde(default)]
-    pub pending_messages: Vec<PendingMessageView>,
+    pub mailbox_messages: Vec<MailboxMessageView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resource_surface: Option<ResolvedVfsSurface>,
@@ -1129,29 +1253,17 @@ pub struct AgentRunWorkspaceView {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunComposerSubmitRequest {
-    /// canonical 用户输入，由后端按当前 AgentRun workspace state 归类为 send_next / enqueue / steer。
+    /// canonical 用户输入，由后端写入 mailbox 并按 scheduler outcome 消费或排队。
     pub input: Vec<codex::UserInput>,
     pub client_command_id: String,
     pub command: AgentRunCommandPreconditionView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
     pub executor_config: Option<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunComposerSubmitResponse {
-    pub accepted_kind: ConversationCommandKind,
-    pub command_receipt: AgentRunCommandReceipt,
+    /// 投递意图：`"steer"` 表示用户明确要求注入 active turn，其余情况排队等待。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub accepted_refs: Option<AgentRunAcceptedRefs>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub pending_message: Option<PendingMessageView>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub state: Option<RuntimeSessionCommandStateDto>,
+    pub delivery_intent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1164,6 +1276,42 @@ pub struct RuntimeSessionCommandStateDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunMessageCommandOutcome {
+    Launched,
+    Queued,
+    Steered,
+    Deleted,
+    Resumed,
+    Blocked,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunMessageCommandResponse {
+    pub command_receipt: AgentRunCommandReceipt,
+    pub outcome: AgentRunMessageCommandOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mailbox_message: Option<MailboxMessageView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub accepted_refs: Option<AgentRunMessageAcceptedRefs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_state: Option<RuntimeSessionCommandStateDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunMailboxView {
+    pub state: MailboxStateView,
+    #[serde(default)]
+    pub messages: Vec<MailboxMessageView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1371,9 +1519,7 @@ pub struct SessionRuntimeActionAvailabilityView {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionRuntimeActionSetView {
-    pub send_next: SessionRuntimeActionAvailabilityView,
-    pub enqueue: SessionRuntimeActionAvailabilityView,
-    pub steer: SessionRuntimeActionAvailabilityView,
+    pub submit_message: SessionRuntimeActionAvailabilityView,
     pub cancel: SessionRuntimeActionAvailabilityView,
 }
 
@@ -1398,34 +1544,16 @@ pub struct SessionRuntimeControlView {
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
     pub actions: SessionRuntimeActionSetView,
-    pub pending_queue: PendingQueueStateView,
+    pub mailbox: MailboxStateView,
     #[serde(default)]
-    pub pending_messages: Vec<PendingMessageView>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct PendingMessageView {
-    pub id: String,
-    pub preview: String,
-    pub has_images: bool,
-    pub created_at: String,
+    pub mailbox_messages: Vec<MailboxMessageView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunCommandOnlyRequest {
     pub command: AgentRunCommandPreconditionView,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct ResumePendingQueueResponse {
-    pub resumed: bool,
-    pub dispatched: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub accepted_refs: Option<AgentRunAcceptedRefs>,
+    pub client_command_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

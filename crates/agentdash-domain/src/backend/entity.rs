@@ -104,6 +104,8 @@ pub struct UserPreferences {
     pub default_view_id: Option<String>,
     pub theme: Option<String>,
     pub sidebar_collapsed: bool,
+    #[serde(default)]
+    pub hide_system_steer_messages: bool,
 }
 
 /// Desktop 本机 runtime 领取/确保 local backend 的输入。

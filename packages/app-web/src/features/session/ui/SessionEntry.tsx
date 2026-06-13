@@ -147,13 +147,10 @@ export function SingleEntry({
     }
 
     case "user_input_submitted": {
-      const isSteer = event.payload.submissionKind === "steer";
       return (
         <SessionMessageCard
           type="user"
           content={accumulatedText ?? extractTextFromUserInputs(event.payload.content)}
-          badgeOverride={isSteer ? "ST" : undefined}
-          labelOverride={isSteer ? "Steer" : undefined}
         />
       );
     }

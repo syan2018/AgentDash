@@ -163,6 +163,20 @@ impl SessionRuntimeBuilder {
         self
     }
 
+    pub fn with_agent_run_mailbox_boundary(
+        mut self,
+        lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
+        command_receipt_repo: Arc<dyn agentdash_domain::workflow::AgentRunCommandReceiptRepository>,
+        mailbox_repo: Arc<dyn agentdash_domain::workflow::AgentRunMailboxRepository>,
+    ) -> Self {
+        self.inner = self.inner.with_agent_run_mailbox_boundary(
+            lifecycle_run_repo,
+            command_receipt_repo,
+            mailbox_repo,
+        );
+        self
+    }
+
     pub async fn set_terminal_callback(
         &self,
         callback: super::post_turn_handler::DynSessionTerminalCallback,

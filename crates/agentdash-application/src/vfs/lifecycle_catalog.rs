@@ -14,9 +14,51 @@ pub struct LifecyclePathEntry {
     pub virtual_entry: bool,
 }
 
-const DIRECTORY_HINT_DESCRIPTION: &str = "Lifecycle journey VFS，包含当前 node/session item 索引、compaction summary 留档、port 产出和可写 records overlay";
+const DIRECTORY_HINT_DESCRIPTION: &str = "Lifecycle journey VFS，包含 AgentRun run context、orchestration/node 投影、session item 索引、compaction summary 留档、port 产出和可写 records overlay";
 
 pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
+    LifecyclePathEntry {
+        path: "context",
+        description: "LifecycleRun context（JSON）",
+        kind: LifecyclePathKind::File,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "orchestrations",
+        description: "当前 run 的 orchestration 列表",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "orchestrations/{orchestration_id}/state",
+        description: "指定 orchestration 实例状态（JSON）",
+        kind: LifecyclePathKind::File,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "orchestrations/{orchestration_id}/nodes",
+        description: "指定 orchestration 的 runtime node 列表",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "orchestrations/{orchestration_id}/nodes/{encoded_node_path}/state",
+        description: "指定 orchestration node 状态（JSON）",
+        kind: LifecyclePathKind::File,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "orchestrations/{orchestration_id}/nodes/{encoded_node_path}/session/{projection}",
+        description: "指定 orchestration node 关联 session 投影",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "orchestrations/{orchestration_id}/nodes/{encoded_node_path}/records/{name}",
+        description: "指定 orchestration node 的 journey record overlay",
+        kind: LifecyclePathKind::File,
+        virtual_entry: false,
+    },
     LifecyclePathEntry {
         path: "active",
         description: "当前活跃 run 的概览（JSON）",
@@ -280,6 +322,8 @@ pub fn lifecycle_directory_hint() -> serde_json::Value {
 
 pub fn lifecycle_root_entries(include_skills: bool) -> Vec<RuntimeFileEntry> {
     let mut entries = vec![
+        RuntimeFileEntry::file("context").as_virtual(),
+        RuntimeFileEntry::dir("orchestrations").as_virtual(),
         RuntimeFileEntry::dir("active").as_virtual(),
         RuntimeFileEntry::dir("artifacts"),
         RuntimeFileEntry::file("state").as_virtual(),
@@ -320,6 +364,11 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(paths.contains(&"session/conclusions"));
+        assert!(paths.contains(&"context"));
+        assert!(paths.contains(&"orchestrations"));
+        assert!(
+            paths.contains(&"orchestrations/{orchestration_id}/nodes/{encoded_node_path}/state")
+        );
         assert!(paths.contains(&"session/items"));
         assert!(paths.contains(&"session/summaries"));
         assert!(paths.contains(&"nodes/{node_path}/session/conclusions"));
@@ -335,6 +384,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(entries.contains(&"active".to_string()));
+        assert!(entries.contains(&"context".to_string()));
+        assert!(entries.contains(&"orchestrations".to_string()));
         assert!(entries.contains(&"skills".to_string()));
         assert!(entries.contains(&"runs".to_string()));
     }

@@ -67,7 +67,7 @@ Session 右侧 WorkspacePanel 消费 current runtime projection state。该 stat
 AgentRun workspace 消费 `AgentConversationSnapshot` / `AgentRunWorkspaceView.conversation` 的 generated DTO。输入区、pending row、model selector 与 keyboard submit 使用 `ConversationCommandSetView.commands`、
 `ConversationKeyboardMapView`、`ConversationModelConfigView` 和 `ConversationPendingSnapshotView`，原因是这些字段携带后端同一轮 snapshot 的 command id、stale guard、模型解析和用户注意力语义。
 
-AgentRun 右侧 WorkspacePanel 使用 snapshot `resource_surface: ResolvedVfsSurface`。该 surface 来自 AgentRun 当前 frame 的 typed VFS surface，并可带 lifecycle mount 诊断；RuntimeSession detail 仍可以用 `ResolvedVfsSurfaceSource::SessionRuntime` 展示 trace/detail 视角。两条入口共享 browser 组件，但 AgentRun producer 是 snapshot resource surface，原因是 AgentRun 的业务 owner 是 run / agent / frame，而 RuntimeSession 是 delivery/trace identity。
+AgentRun 右侧 WorkspacePanel 使用 snapshot `resource_surface: ResolvedVfsSurface`。该 surface 来自 AgentRun 当前 frame 的 typed VFS surface，并由后端 AgentRun surface resolver 叠加 run-scoped `lifecycle_vfs`；RuntimeSession detail 仍可以用 `ResolvedVfsSurfaceSource::SessionRuntime` 展示 trace/detail 视角。两条入口共享 browser 组件，但 AgentRun producer 是 snapshot resource surface，原因是 AgentRun 的业务 owner 是 run / agent / frame，而 RuntimeSession 是 delivery/trace identity。
 
 ---
 

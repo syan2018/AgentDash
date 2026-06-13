@@ -6,11 +6,7 @@ use agentdash_application::vfs::{
     build_project_agent_knowledge_vfs, build_project_skill_asset_management_mount,
     build_project_vfs_mount_mount,
 };
-use agentdash_application::workflow::AgentFrameSurfaceExt;
-use agentdash_application::workflow::{
-    ensure_active_workflow_lifecycle_mount, ensure_agent_run_lifecycle_mount,
-    resolve_active_workflow_projection_for_session,
-};
+use agentdash_application::workflow::{AgentFrameSurfaceExt, build_agent_run_lifecycle_vfs};
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::Vfs;
 
@@ -289,7 +285,6 @@ pub(crate) async fn resolve_agent_run_frame_vfs_for_agent(
         .filter(|anchor| anchor.agent_id == agent.id)
         .max_by_key(|anchor| anchor.updated_at);
     let anchor_frame_id = anchor.as_ref().map(|anchor| anchor.launch_frame_id);
-    let delivery_runtime_session_id = anchor.map(|anchor| anchor.runtime_session_id);
     let current_frame = state
         .repos
         .agent_frame_repo
@@ -309,28 +304,7 @@ pub(crate) async fn resolve_agent_run_frame_vfs_for_agent(
     let Some(frame) = frame else {
         return Ok(None);
     };
-    let active_workflow = match delivery_runtime_session_id.as_deref() {
-        Some(session_id) => resolve_active_workflow_projection_for_session(
-            session_id,
-            state.repos.agent_procedure_repo.as_ref(),
-            state.repos.agent_frame_repo.as_ref(),
-            state.repos.lifecycle_agent_repo.as_ref(),
-            state.repos.lifecycle_run_repo.as_ref(),
-            state.repos.execution_anchor_repo.as_ref(),
-        )
-        .await
-        .map_err(|error| {
-            ApiError::Internal(format!(
-                "解析 AgentRun active workflow projection 失败: {error}"
-            ))
-        })?,
-        None => None,
-    };
-    let vfs = ensure_agent_run_lifecycle_mount(
-        ensure_active_workflow_lifecycle_mount(frame.typed_vfs(), active_workflow.as_ref())
-            .unwrap_or_default(),
-        run.id,
-    );
+    let vfs = build_agent_run_lifecycle_vfs(frame.typed_vfs(), run.id);
 
     Ok(Some(AgentRunFrameVfsResolution { frame, vfs }))
 }

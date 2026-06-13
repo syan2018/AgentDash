@@ -8,7 +8,6 @@ use agentdash_application::workflow::{
     AgentRunMessageCommand, AgentRunMessageLaunchDeliveryPort, AgentRunMessageService,
     AgentRunSteeringCommand, AgentRunSteeringService, ConversationModelConfigInput,
     ConversationModelConfigResolver, conversation_snapshot_id, lifecycle_run_view_builder,
-    resolve_active_workflow_projection_for_session,
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandOnlyRequest,
@@ -836,12 +835,8 @@ async fn build_agent_run_workspace_view(
         ..Default::default()
     })
     .view;
-    let resource_diagnostics = workspace_resource_diagnostics(
-        state,
-        runtime_session_id.as_deref(),
-        resource_surface.as_ref(),
-    )
-    .await;
+    let resource_diagnostics =
+        workspace_resource_diagnostics(context.run.id, resource_surface.as_ref());
     let conversation = AgentConversationSnapshotResolver::resolve(AgentConversationSnapshotInput {
         project_id: context.run.project_id,
         run_id: context.run.id,
@@ -902,51 +897,17 @@ async fn build_agent_run_workspace_view(
     })
 }
 
-async fn workspace_resource_diagnostics(
-    state: &AppState,
-    runtime_session_id: Option<&str>,
+fn workspace_resource_diagnostics(
+    run_id: Uuid,
     resource_surface: Option<&agentdash_contracts::vfs::ResolvedVfsSurface>,
 ) -> Vec<ConversationDiagnosticView> {
-    let Some(session_id) = runtime_session_id else {
-        return Vec::new();
-    };
-
-    let active_workflow = match resolve_active_workflow_projection_for_session(
-        session_id,
-        state.repos.agent_procedure_repo.as_ref(),
-        state.repos.agent_frame_repo.as_ref(),
-        state.repos.lifecycle_agent_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.execution_anchor_repo.as_ref(),
-    )
-    .await
-    {
-        Ok(active_workflow) => active_workflow.is_some(),
-        Err(error) => {
-            return vec![ConversationDiagnosticView {
-                code: "resource_active_workflow_projection_unavailable".to_string(),
-                severity: ValidationSeverity::Warning,
-                message: "当前 AgentRun 无法校验 active workflow lifecycle mount。".to_string(),
-                detail: Some(serde_json::json!({ "error": error })),
-            }];
-        }
-    };
-    if !active_workflow {
-        return Vec::new();
-    }
-
-    lifecycle_resource_surface_diagnostics(session_id, active_workflow, resource_surface)
+    lifecycle_resource_surface_diagnostics(run_id, resource_surface)
 }
 
 fn lifecycle_resource_surface_diagnostics(
-    session_id: &str,
-    active_workflow: bool,
+    run_id: Uuid,
     resource_surface: Option<&agentdash_contracts::vfs::ResolvedVfsSurface>,
 ) -> Vec<ConversationDiagnosticView> {
-    if !active_workflow {
-        return Vec::new();
-    }
-
     let has_lifecycle_mount = resource_surface
         .map(|surface| {
             surface
@@ -962,10 +923,9 @@ fn lifecycle_resource_surface_diagnostics(
     vec![ConversationDiagnosticView {
         code: "resource_surface_lifecycle_mount_missing".to_string(),
         severity: ValidationSeverity::Error,
-        message: "当前 AgentRun 存在 active workflow，但 workspace resource_surface 缺少 lifecycle_vfs mount。"
-            .to_string(),
+        message: "当前 AgentRun workspace resource_surface 缺少 lifecycle_vfs mount。".to_string(),
         detail: Some(serde_json::json!({
-            "runtime_session_id": session_id,
+            "run_id": run_id,
         })),
     }]
 }
@@ -2011,7 +1971,8 @@ mod tests {
             ResolvedMountPurpose::Workspace,
         )]);
 
-        let diagnostics = lifecycle_resource_surface_diagnostics("session-1", true, Some(&surface));
+        let run_id = Uuid::new_v4();
+        let diagnostics = lifecycle_resource_surface_diagnostics(run_id, Some(&surface));
 
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "resource_surface_lifecycle_mount_missing"
@@ -2030,7 +1991,7 @@ mod tests {
             ),
         ]);
 
-        let diagnostics = lifecycle_resource_surface_diagnostics("session-1", true, Some(&surface));
+        let diagnostics = lifecycle_resource_surface_diagnostics(Uuid::new_v4(), Some(&surface));
 
         assert!(diagnostics.is_empty());
     }

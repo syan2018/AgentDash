@@ -22,7 +22,7 @@ use crate::session::context::{
 use crate::task::config::{resolve_task_executor_config, resolve_task_executor_source};
 use crate::vfs::{SessionMountTarget, VfsService};
 use crate::workflow::{
-    ActiveWorkflowProjection, ensure_active_workflow_lifecycle_mount,
+    ActiveWorkflowProjection, project_active_workflow_lifecycle_vfs,
     resolve_active_workflow_projection_for_session,
 };
 use agentdash_domain::common::Vfs;
@@ -134,7 +134,7 @@ pub async fn build_task_session_context(
     } else {
         None
     };
-    runtime_vfs = ensure_active_workflow_lifecycle_mount(runtime_vfs, workflow.as_ref());
+    runtime_vfs = project_active_workflow_lifecycle_vfs(runtime_vfs, workflow.as_ref());
 
     let preset_name = normalize_optional_string(task.dispatch_preference.preset_name.clone());
     if let Some(space) = runtime_vfs.as_mut() {

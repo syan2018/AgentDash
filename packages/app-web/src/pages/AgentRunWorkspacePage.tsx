@@ -42,6 +42,10 @@ import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStor
 import { useWorkspaceModuleStore } from "../features/workspace-module";
 import { workspaceModulePresentedTabTarget } from "./AgentRunWorkspacePage.workspaceModulePresentation";
 import {
+  isStaleAgentRunCommandError,
+  silentCommandRefreshError,
+} from "./AgentRunWorkspacePage.commandErrors";
+import {
   buildDraftSessionCommandState,
   buildRuntimeSessionCommandState,
   isCompleteExecutorConfig,
@@ -505,6 +509,10 @@ export function AgentRunWorkspacePage({
       return;
     } catch (error) {
       inFlightCommandRef.current = null;
+      if (isStaleAgentRunCommandError(error)) {
+        void refreshAgentRunWorkspaceState().catch(() => {});
+        throw silentCommandRefreshError();
+      }
       throw error;
     }
   }, [

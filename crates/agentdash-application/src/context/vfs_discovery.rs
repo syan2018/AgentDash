@@ -103,7 +103,7 @@ impl VfsDiscoveryProvider for McpResourceProvider {
 }
 
 /// 创建包含所有内置 Provider 的注册表
-/// Lifecycle 执行记录虚拟挂载 — 由会话在存在活跃 run 时挂载，`lifecycle_vfs` 提供读写浏览能力描述
+/// Lifecycle 执行记录虚拟挂载 — AgentRun workspace 使用 run 投影，runtime session 使用 node 投影。
 pub struct LifecycleVfsProvider;
 
 impl VfsDiscoveryProvider for LifecycleVfsProvider {

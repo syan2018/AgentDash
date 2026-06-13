@@ -41,7 +41,7 @@ use crate::session::capability_projection::{
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::vfs::{SessionMountTarget, VfsService, apply_agent_vfs_access_grants};
 use crate::workflow::frame_builder::AgentFrameBuilder;
-use crate::workflow::{ActiveWorkflowProjection, ensure_active_workflow_lifecycle_mount};
+use crate::workflow::{ActiveWorkflowProjection, project_active_workflow_lifecycle_vfs};
 use crate::workspace::BackendAvailability;
 use crate::workspace_module::skill_projection::project_workspace_module_system_skill_to_vfs;
 
@@ -364,7 +364,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             apply_agent_vfs_access_grants(space, Some(&spec.agent_vfs_access_grants));
         }
 
-        let mut vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow);
+        let mut vfs = project_active_workflow_lifecycle_vfs(vfs, active_workflow);
         let mut skill_asset_keys = spec.agent_skill_asset_keys.clone();
         if let Some(space) = vfs.as_mut() {
             if has_lifecycle_mount(space) {

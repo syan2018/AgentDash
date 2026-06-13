@@ -1,7 +1,7 @@
 //! Lifecycle VFS mount projection helpers.
 //!
-//! 这里负责把活跃 workflow run 投影成 session 可挂载的 VFS mount；`vfs` 模块只保留
-//! provider / mount 的通用访问能力，不反向理解 lifecycle 领域对象。
+//! 这里负责把 AgentRun / active workflow 的领域身份投影成可挂载的 VFS mount；
+//! `vfs` 模块只保留 provider / mount 的通用访问能力，不反向理解 lifecycle 领域对象。
 
 use agentdash_spi::Vfs;
 
@@ -73,23 +73,35 @@ pub fn append_active_workflow_lifecycle_mount(vfs: &mut Vfs, workflow: &ActiveWo
     }
 }
 
-pub fn append_lifecycle_run_mount_if_missing(vfs: &mut Vfs, run_id: Uuid) {
+fn normalize_default_mount(vfs: &mut Vfs) {
     if vfs
-        .mounts
-        .iter()
-        .any(|candidate| candidate.id == "lifecycle")
+        .default_mount_id
+        .as_ref()
+        .is_some_and(|id| vfs.mounts.iter().any(|mount| &mount.id == id))
     {
         return;
     }
-    vfs.mounts.push(build_lifecycle_run_mount(run_id));
+    vfs.default_mount_id = vfs
+        .mounts
+        .iter()
+        .find(|mount| mount.default_write)
+        .or_else(|| vfs.mounts.first())
+        .map(|mount| mount.id.clone());
 }
 
-pub fn ensure_agent_run_lifecycle_mount(mut vfs: Vfs, run_id: Uuid) -> Vfs {
-    append_lifecycle_run_mount_if_missing(&mut vfs, run_id);
+pub fn install_agent_run_lifecycle_mount(vfs: &mut Vfs, run_id: Uuid) {
+    vfs.mounts.retain(|candidate| candidate.id != "lifecycle");
+    vfs.mounts.push(build_lifecycle_run_mount(run_id));
+    normalize_default_mount(vfs);
+}
+
+pub fn build_agent_run_lifecycle_vfs(vfs: Option<Vfs>, run_id: Uuid) -> Vfs {
+    let mut vfs = vfs.unwrap_or_else(empty_vfs);
+    install_agent_run_lifecycle_mount(&mut vfs, run_id);
     vfs
 }
 
-pub fn ensure_active_workflow_lifecycle_mount(
+pub fn project_active_workflow_lifecycle_vfs(
     vfs: Option<Vfs>,
     workflow: Option<&ActiveWorkflowProjection>,
 ) -> Option<Vfs> {
@@ -99,6 +111,7 @@ pub fn ensure_active_workflow_lifecycle_mount(
 
     let mut vfs = vfs.unwrap_or_else(empty_vfs);
     append_active_workflow_lifecycle_mount(&mut vfs, workflow);
+    normalize_default_mount(&mut vfs);
     Some(vfs)
 }
 
@@ -198,9 +211,9 @@ mod tests {
     }
 
     #[test]
-    fn ensure_lifecycle_mount_creates_vfs_when_base_is_absent() {
+    fn active_workflow_projection_creates_vfs_when_base_is_absent() {
         let workflow = active_workflow_projection();
-        let vfs = ensure_active_workflow_lifecycle_mount(None, Some(&workflow)).expect("vfs");
+        let vfs = project_active_workflow_lifecycle_vfs(None, Some(&workflow)).expect("vfs");
 
         let lifecycle = vfs
             .mounts
@@ -223,10 +236,11 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("brief")
         );
+        assert_eq!(vfs.default_mount_id.as_deref(), Some("lifecycle"));
     }
 
     #[test]
-    fn ensure_lifecycle_mount_preserves_existing_mounts_and_replaces_stale_lifecycle() {
+    fn active_workflow_projection_preserves_existing_mounts_and_replaces_stale_lifecycle() {
         let workflow = active_workflow_projection();
         let stale_run_id = Uuid::new_v4();
         let base = Vfs {
@@ -246,7 +260,7 @@ mod tests {
             links: Vec::new(),
         };
 
-        let vfs = ensure_active_workflow_lifecycle_mount(Some(base), Some(&workflow)).expect("vfs");
+        let vfs = project_active_workflow_lifecycle_vfs(Some(base), Some(&workflow)).expect("vfs");
 
         assert!(vfs.mounts.iter().any(|mount| mount.id == "main"));
         let lifecycle_mounts = vfs
@@ -266,9 +280,9 @@ mod tests {
     }
 
     #[test]
-    fn ensure_agent_run_lifecycle_mount_adds_run_scoped_mount() {
+    fn agent_run_lifecycle_vfs_installs_run_scoped_mount() {
         let run_id = Uuid::new_v4();
-        let vfs = ensure_agent_run_lifecycle_mount(workflow_vfs(), run_id);
+        let vfs = build_agent_run_lifecycle_vfs(Some(workflow_vfs()), run_id);
 
         let lifecycle = vfs
             .mounts
@@ -288,12 +302,13 @@ mod tests {
     }
 
     #[test]
-    fn ensure_agent_run_lifecycle_mount_preserves_node_scoped_mount() {
+    fn agent_run_lifecycle_vfs_replaces_stale_node_scoped_mount() {
         let workflow = active_workflow_projection();
-        let vfs = ensure_active_workflow_lifecycle_mount(Some(workflow_vfs()), Some(&workflow))
+        let vfs = project_active_workflow_lifecycle_vfs(Some(workflow_vfs()), Some(&workflow))
             .expect("vfs");
 
-        let vfs = ensure_agent_run_lifecycle_mount(vfs, Uuid::new_v4());
+        let run_id = Uuid::new_v4();
+        let vfs = build_agent_run_lifecycle_vfs(Some(vfs), run_id);
         let lifecycle_mounts = vfs
             .mounts
             .iter()
@@ -302,20 +317,32 @@ mod tests {
 
         assert_eq!(lifecycle_mounts.len(), 1);
         assert_eq!(
-            lifecycle_mounts[0]
-                .metadata
-                .get("scope")
-                .and_then(serde_json::Value::as_str),
-            None
+            lifecycle_mounts[0].root_ref,
+            format!("lifecycle://run/{run_id}")
         );
         assert_eq!(
             lifecycle_mounts[0]
                 .metadata
-                .get("orchestration_id")
-                .and_then(serde_json::Value::as_str)
-                .is_some(),
-            true
+                .get("scope")
+                .and_then(serde_json::Value::as_str),
+            Some("run")
         );
+        assert!(
+            lifecycle_mounts[0]
+                .metadata
+                .get("orchestration_id")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn agent_run_lifecycle_vfs_uses_lifecycle_default_when_base_is_absent() {
+        let run_id = Uuid::new_v4();
+        let vfs = build_agent_run_lifecycle_vfs(None, run_id);
+
+        assert_eq!(vfs.mounts.len(), 1);
+        assert_eq!(vfs.mounts[0].id, "lifecycle");
+        assert_eq!(vfs.default_mount_id.as_deref(), Some("lifecycle"));
     }
 
     fn workflow_vfs() -> Vfs {

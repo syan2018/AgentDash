@@ -158,6 +158,37 @@ root_ref = "routine://routine/{routine_id}"
 
 Routine memory 复用 InlineFile 存储，provider 由 mount metadata 中的 `routine_id`、`execution_id`、`trigger_source` 与 `entity_key` 解析当前投影和允许写入的 inline storage key。通用 VFS Browser 可通过 session runtime surface 消费该 mount；Routine 页面入口只需要跳转到同一 VFS surface。
 
+## AgentRun Lifecycle Run Mount
+
+AgentRun workspace surface 使用 run-scoped lifecycle mount 暴露 `LifecycleRun`、orchestration、runtime node、session projection 和 journey records 的只读浏览入口。该 mount 不依赖 active workflow projection 或 workflow graph；graphless run 仍能通过 `state`、`context`、`orchestrations` 和 `runs` 暴露控制面事实。
+
+Run mount contract：
+
+| 字段 | 来源 | 约束 |
+| --- | --- | --- |
+| `id` | 常量 | `lifecycle` |
+| `provider` | 常量 | `lifecycle_vfs` |
+| `root_ref` | builder | `lifecycle://run/{run_id}` |
+| `metadata.run_id` | `LifecycleRun.id` | UUID string |
+| `metadata.scope` | builder | `run` |
+
+Provider run-scope 路径：
+
+| 路径 | 行为 |
+| --- | --- |
+| `state` | 当前 `LifecycleRun` overview |
+| `context` | `LifecycleRun.context` |
+| `orchestrations` | 当前 run 的 orchestration 列表 |
+| `orchestrations/{orchestration_id}/state` | 指定 orchestration 实例 |
+| `orchestrations/{orchestration_id}/nodes` | 指定 orchestration 的 runtime node 列表 |
+| `orchestrations/{orchestration_id}/nodes/{encoded_node_path}/state` | 指定 runtime node 状态 |
+| `orchestrations/{orchestration_id}/nodes/{encoded_node_path}/session/*` | 指定 node 关联 session 的投影 |
+| `orchestrations/{orchestration_id}/nodes/{encoded_node_path}/records/*` | 指定 node 的 journey records |
+| `active/*` / `nodes/*` | provider 可从 run 中确定 active orchestration/node 时的便捷视角；`nodes` 只作为单 orchestration 或 node-scoped surface 的短路径 |
+| `runs` / `runs/{run_id}` | 同 project run 列表与 run overview |
+
+节点路径作为 VFS 路径段时使用 UTF-8 percent encode，原因是 `RuntimeNodeState.node_path` 可以包含 `/`，浏览器树形展开需要稳定的单段 key。
+
 ## Lifecycle Runtime Mount
 
 Lifecycle runtime mount 暴露当前 lifecycle container 内部的 orchestration node 投影。它以 `orchestration_id + node_path + attempt` 作为运行节点身份；session assembly 通过 application 层 surface 传入以下字段：
@@ -195,7 +226,7 @@ Provider 解析行为：
 | `artifacts/{port_key}` | 写入或读取 `InlineFileOwnerKind::LifecycleRun / port_outputs / {orchestration_id}/{encoded_node_path}/{attempt}/{port_key}` |
 | `records/{name}` | 写入或读取当前 node 的 journey records |
 | `session/*` | 通过 `RuntimeNodeState.executor_run_ref == RuntimeSession` 读取 session event/item/tool/summary 投影 |
-| `nodes/{node_path}/*` | 读取同一 orchestration 内指定 runtime node 的 state/session/records |
+| `nodes/{encoded_node_path}/*` | 读取同一 orchestration 内指定 runtime node 的 state/session/records |
 
 Validation / errors：
 

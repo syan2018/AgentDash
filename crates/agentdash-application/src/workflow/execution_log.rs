@@ -255,3 +255,38 @@ pub fn encode_node_path_segment(value: &str) -> String {
     }
     encoded
 }
+
+pub fn decode_node_path_segment(value: &str) -> Result<String, String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        let Some(high) = bytes.get(index + 1).and_then(|value| hex_value(*value)) else {
+            return Err(format!(
+                "node_path segment percent escape 不完整: `{value}`"
+            ));
+        };
+        let Some(low) = bytes.get(index + 2).and_then(|value| hex_value(*value)) else {
+            return Err(format!(
+                "node_path segment percent escape 不完整: `{value}`"
+            ));
+        };
+        decoded.push((high << 4) | low);
+        index += 3;
+    }
+    String::from_utf8(decoded).map_err(|error| format!("node_path segment 不是有效 UTF-8: {error}"))
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}

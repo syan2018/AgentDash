@@ -2,6 +2,7 @@
 {"file":".trellis/tasks/06-14-module-overdesign-review/research/01-lifecycle-workflow-task.md","reason":"检查 Lifecycle P0/P1 是否按证据收束"}
 {"file":".trellis/tasks/06-14-module-overdesign-review/research/02-agentrun-session-runtime.md","reason":"检查 AgentRun control surface 是否单源化"}
 {"file":".trellis/tasks/06-14-module-overdesign-review/research/04-frontend-contracts-permission.md","reason":"检查 Permission / Contracts / Frontend capability 是否统一事实源"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/research/03-vfs-local-relay-extension.md","reason":"检查 VFS / Local / Relay / Extension 第二轮装配层和 contract 是否按证据收束"}
 {"file":".trellis/spec/backend/workflow/architecture.md","reason":"检查 Lifecycle start / orchestration runtime 语义"}
 {"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"检查 reducer ownership"}
 {"file":".trellis/spec/backend/story-task-runtime.md","reason":"检查 Task projection fact chain"}
@@ -10,3 +11,11 @@
 {"file":".trellis/spec/backend/permission/architecture.md","reason":"检查 permission grant authority"}
 {"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查 generated contract 单源"}
 {"file":".trellis/spec/frontend/type-safety.md","reason":"检查前端 DTO 类型安全"}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"检查 VFS provider / surface 边界"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"检查 VFS access 和 local root boundary"}
+{"file":".trellis/spec/backend/vfs/vfs-materialization.md","reason":"检查 VFS materialization 边界"}
+{"file":".trellis/spec/cross-layer/desktop-local-runtime.md","reason":"检查 local runtime / extension host 边界"}
+{"file":".trellis/spec/cross-layer/project-backend-workspace-routing.md","reason":"检查 workspace/backend routing fact source"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"检查 RuntimeGateway provider validation 边界"}
+{"file":".trellis/spec/frontend/architecture.md","reason":"检查 VFS Browser / Extension webview shared selection policy"}
+{"file":".trellis/spec/cross-layer/shared-library-contract.md","reason":"检查 Extension manifest permission contract"}

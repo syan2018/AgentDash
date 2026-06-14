@@ -1,10 +1,26 @@
 //! 交互式终端命令处理——spawn / input / resize / kill
 
+use std::sync::Arc;
+
 use agentdash_relay::*;
 
-use super::CommandHandler;
+use crate::terminal_manager::TerminalManager;
+use crate::tool_executor::ToolExecutor;
 
-impl CommandHandler {
+#[derive(Clone)]
+pub(super) struct TerminalCommandHandler {
+    tool_executor: ToolExecutor,
+    terminal_manager: Arc<TerminalManager>,
+}
+
+impl TerminalCommandHandler {
+    pub(super) fn new(tool_executor: ToolExecutor, terminal_manager: Arc<TerminalManager>) -> Self {
+        Self {
+            tool_executor,
+            terminal_manager,
+        }
+    }
+
     pub(super) fn handle_terminal_spawn(
         &self,
         id: String,

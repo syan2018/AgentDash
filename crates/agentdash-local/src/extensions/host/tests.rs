@@ -93,6 +93,27 @@ async fn protocol_channel_registers_and_self_invokes() {
 }
 
 #[tokio::test]
+async fn channel_output_schema_is_validated_by_local_host() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir =
+        write_channel_echo_package_with_output_schema(temp.path(), json!({ "type": "string" }))
+            .await
+            .expect("package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect("activate");
+
+    let err = manager
+        .invoke_channel("local-hello.api", "echo", json!({ "source": "direct" }))
+        .await
+        .expect_err("output schema should reject object output");
+    assert!(err.to_string().contains("output 不符合 JSON Schema"));
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
 async fn dependency_alias_invokes_provider_channel_in_same_host() {
     let temp = tempfile::tempdir().expect("tempdir");
     let provider_dir = write_provider_package(temp.path()).await.expect("provider");
@@ -461,7 +482,7 @@ async fn built_in_host_apis_use_action_permissions_and_workspace_boundary() {
             "workspace.vfs.read",
             "workspace.vfs.list",
             "env.read:PATH",
-            "process.execute"
+            "process.shell"
         ]),
     )
     .await
@@ -537,6 +558,33 @@ async fn action_exception_does_not_stop_host_process() {
     manager.stop().await.expect("stop");
 }
 
+#[tokio::test]
+async fn action_output_schema_is_validated_by_local_host() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package_with_action_contract(
+        temp.path(),
+        version_bundle(3),
+        json!([]),
+        json!([]),
+        json!({}),
+        json!({ "type": "string" }),
+    )
+    .await
+    .expect("package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect("activate");
+
+    let err = manager
+        .invoke_action("local-hello.profile", Value::Null)
+        .await
+        .expect_err("output schema should reject object output");
+    assert!(err.to_string().contains("output 不符合 JSON Schema"));
+    manager.stop().await.expect("stop");
+}
+
 fn test_manager(root: &Path) -> LocalExtensionHostManager {
     LocalExtensionHostManager::new(LocalTsExtensionHostConfig {
         node_command: "node".to_string(),
@@ -584,6 +632,25 @@ async fn write_package_with_permissions(
     permissions: Value,
     action_permissions: Value,
 ) -> anyhow::Result<PathBuf> {
+    write_package_with_action_contract(
+        root,
+        bundle,
+        permissions,
+        action_permissions,
+        json!({}),
+        json!({}),
+    )
+    .await
+}
+
+async fn write_package_with_action_contract(
+    root: &Path,
+    bundle: String,
+    permissions: Value,
+    action_permissions: Value,
+    input_schema: Value,
+    output_schema: Value,
+) -> anyhow::Result<PathBuf> {
     let package_dir = root.join("package");
     tokio::fs::create_dir_all(package_dir.join("dist")).await?;
     write_bundle(&package_dir, bundle.clone()).await?;
@@ -597,8 +664,8 @@ async fn write_package_with_permissions(
             "action_key": "local-hello.profile",
             "kind": "session_runtime",
             "description": "Read local profile",
-            "input_schema": {},
-            "output_schema": {},
+            "input_schema": input_schema,
+            "output_schema": output_schema,
             "permissions": action_permissions,
         }],
         "permissions": permissions,
@@ -622,6 +689,13 @@ async fn write_bundle(package_dir: &Path, bundle: String) -> anyhow::Result<()> 
 }
 
 async fn write_channel_echo_package(root: &Path) -> anyhow::Result<PathBuf> {
+    write_channel_echo_package_with_output_schema(root, json!(true)).await
+}
+
+async fn write_channel_echo_package_with_output_schema(
+    root: &Path,
+    output_schema: Value,
+) -> anyhow::Result<PathBuf> {
     let package_dir = root.join("channel-echo");
     tokio::fs::create_dir_all(package_dir.join("dist")).await?;
     let bundle = channel_bundle();
@@ -647,7 +721,7 @@ async fn write_channel_echo_package(root: &Path) -> anyhow::Result<PathBuf> {
                 "name": "echo",
                 "description": "Echo input",
                 "input_schema": true,
-                "output_schema": true,
+                "output_schema": output_schema,
                 "permissions": [],
             }],
         }],
@@ -1211,7 +1285,7 @@ export default {
         "workspace.vfs.read",
         "workspace.vfs.list",
         "env.read:PATH",
-        "process.execute",
+        "process.shell",
       ],
       async invoke() {
         await ctx.api.workspace.writeText("notes/hello.txt", "hello from extension");

@@ -196,6 +196,54 @@ describe("extension bridge message validation", () => {
     }]);
   });
 
+  it("extension VFS bridge 复用 VFS mount 默认选择策略", async () => {
+    const readCalls: Array<{ surfaceRef: string; mountId: string; path: string }> = [];
+    const services: ExtensionWebviewBridgeServices = {
+      ...noopServices(),
+      async readFile(request) {
+        readCalls.push(request);
+        return { content: "context" };
+      },
+    };
+    const workspaceData = workspaceRuntimeData({
+      runtimeSurface: {
+        ...runtimeSurface(),
+        default_mount_id: "workspace",
+        mounts: [
+          {
+            ...runtimeMount(),
+            id: "workspace",
+            provider: "relay_fs",
+            backend_online: false,
+          },
+          {
+            ...runtimeMount(),
+            id: "context",
+            display_name: "Context",
+            provider: "inline_fs",
+            backend_id: "",
+            backend_online: true,
+          },
+        ],
+      },
+    });
+
+    await expect(handleExtensionWebviewBridgeRequest({
+      message: bridgeRequest("vfs.read", { path: "notes/hello.txt" }),
+      workspaceData,
+      tab: webviewTab(),
+      uri: "protocol-demo://panel",
+      backend: { backend_id: "backend-1", label: "Local", online: true },
+      services,
+    })).resolves.toBe("context");
+
+    expect(readCalls).toEqual([{
+      surfaceRef: "surface-1",
+      mountId: "context",
+      path: "notes/hello.txt",
+    }]);
+  });
+
   it("为未知 method 和 admission error 保留可诊断错误", async () => {
     const services = noopServices();
     const workspaceData = workspaceRuntimeData();
@@ -226,14 +274,14 @@ describe("extension bridge message validation", () => {
       workspaceRuntimeData({
         runtimeSurface: {
           ...runtimeSurface(),
-          mounts: [{ ...runtimeMount(), backend_online: false }],
+          mounts: [{ ...runtimeMount(), provider: "relay_fs", backend_online: false }],
         },
       }),
       tab,
     )).toMatchObject({
       available: false,
-      title: "Backend 离线",
-      backend: { backend_id: "backend-1", online: false },
+      title: "Backend 不可用",
+      backend: null,
     });
   });
 
@@ -275,7 +323,7 @@ describe("extension bridge message validation", () => {
       workspaceData: workspaceRuntimeData({
         runtimeSurface: {
           ...runtimeSurface(),
-          mounts: [{ ...runtimeMount(), backend_online: false }],
+          mounts: [{ ...runtimeMount(), provider: "relay_fs", backend_online: false }],
         },
       }),
       tab: canvasTab(),

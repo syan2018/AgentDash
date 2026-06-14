@@ -1,16 +1,67 @@
 //! Agent prompt / cancel / discover 命令处理
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use agentdash_relay::*;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 
 use agentdash_application::session::{
     LaunchCommand, SessionRuntimeServices, SessionTurnSteerCommand, UserPromptInput,
 };
+use agentdash_spi::AgentConnector;
 
-use super::CommandHandler;
 use super::relay_mcp_servers::relay_mcp_servers_to_runtime;
+use crate::local_backend_config::WorkspaceContractRuntimeConfig;
+use crate::tool_executor::ToolExecutor;
 
-impl CommandHandler {
+#[derive(Clone)]
+pub(super) struct PromptCommandHandler {
+    session_runtime: Option<SessionRuntimeServices>,
+    connector: Option<Arc<dyn AgentConnector>>,
+    tool_executor: ToolExecutor,
+    workspace_contract_config: WorkspaceContractRuntimeConfig,
+    event_tx: mpsc::UnboundedSender<RelayMessage>,
+    session_forwarders: Arc<Mutex<HashSet<String>>>,
+}
+
+pub(super) struct PromptCommandHandlerConfig {
+    pub session_runtime: Option<SessionRuntimeServices>,
+    pub connector: Option<Arc<dyn AgentConnector>>,
+    pub tool_executor: ToolExecutor,
+    pub workspace_contract_config: WorkspaceContractRuntimeConfig,
+    pub event_tx: mpsc::UnboundedSender<RelayMessage>,
+    pub session_forwarders: Arc<Mutex<HashSet<String>>>,
+}
+
+impl PromptCommandHandler {
+    pub(super) fn new(config: PromptCommandHandlerConfig) -> Self {
+        Self {
+            session_runtime: config.session_runtime,
+            connector: config.connector,
+            tool_executor: config.tool_executor,
+            workspace_contract_config: config.workspace_contract_config,
+            event_tx: config.event_tx,
+            session_forwarders: config.session_forwarders,
+        }
+    }
+
+    pub(super) fn list_executors(&self) -> Vec<AgentInfoRelay> {
+        match &self.connector {
+            Some(connector) => connector
+                .list_executors()
+                .into_iter()
+                .map(|info| AgentInfoRelay {
+                    id: info.id,
+                    name: info.name,
+                    variants: info.variants,
+                    available: info.available,
+                })
+                .collect(),
+            None => vec![],
+        }
+    }
+
     pub(super) async fn handle_prompt(
         &self,
         id: String,
@@ -325,7 +376,7 @@ fn relay_prompt_blocks_to_user_input(
 }
 
 async fn claim_session_forwarder(
-    session_forwarders: &std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+    session_forwarders: &Arc<Mutex<HashSet<String>>>,
     session_id: &str,
 ) -> bool {
     session_forwarders
@@ -335,7 +386,7 @@ async fn claim_session_forwarder(
 }
 
 async fn release_session_forwarder(
-    session_forwarders: &std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+    session_forwarders: &Arc<Mutex<HashSet<String>>>,
     session_id: &str,
 ) {
     session_forwarders.lock().await.remove(session_id);

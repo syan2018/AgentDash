@@ -12,7 +12,7 @@ use std::sync::Arc;
 use agentdash_relay::*;
 
 use crate::LocalExtensionHostManager;
-use crate::handlers::CommandHandler;
+use crate::handlers::LocalCommandRouter;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::mcp_client_manager::McpClientManager;
 use crate::tool_executor::ToolExecutor;
@@ -98,10 +98,10 @@ async fn run_session(
 ) -> anyhow::Result<()> {
     let (mut write, mut read) = ws_stream.split();
 
-    // 创建事件通道（CommandHandler 通过此通道推送异步事件）
+    // 创建事件通道（domain handlers 通过此通道推送异步事件）
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<RelayMessage>();
 
-    let handler = CommandHandler::new(crate::handlers::CommandHandlerConfig {
+    let handler = LocalCommandRouter::new(crate::handlers::LocalCommandRouterConfig {
         backend_id: config.backend_id.clone(),
         workspace_roots: config.workspace_roots.clone(),
         tool_executor: config.tool_executor.clone(),
@@ -226,7 +226,7 @@ async fn run_session(
 }
 
 fn build_capabilities(
-    handler: &CommandHandler,
+    handler: &LocalCommandRouter,
     mcp_manager: &Option<Arc<McpClientManager>>,
 ) -> CapabilitiesPayload {
     let executors = handler.list_executors();

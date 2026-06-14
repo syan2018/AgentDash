@@ -65,7 +65,7 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 ### Local TS Extension Host
 
 - `agentdash-local` 管理 Node-based extension host 子进程，通过 stdio JSON line 协议执行 activate / reload / invoke / health。
-- Extension Host 内部位于 `agentdash-local/src/extensions/host/`，由 `manager.rs` 管理生命周期、`process.rs` 管理 Node stdio request-response、`protocol.rs` 定义 runner 消息、`permissions.rs` 执行 host API 权限裁决、`runner/agentdash-extension-host-runner.mjs` 承载 JS runtime 源码，`runner.rs` 只负责 `include_str!` 嵌入，原因是本机插件执行、协议、权限和 runner 分发会独立演进。
+- Extension Host 内部位于 `agentdash-local/src/extensions/host/`，由 `manager.rs` 管理生命周期、`process.rs` 管理 Node stdio request-response、`protocol.rs` 定义 runner 消息、`permission_guard.rs` 执行 host API 权限裁决、`schema.rs` 执行 JSON Schema 子集校验、`runner/agentdash-extension-host-runner.mjs` 承载 JS runtime 源码，`runner.rs` 只负责 `include_str!` 嵌入，原因是本机插件执行、协议、权限、schema validation 和 runner 分发会独立演进。
 - Extension bundle 作为 trusted local extension 在 Node runner context 中加载 self-contained ESM，原因是当前执行面使用本机 Node host 子进程承载插件代码；Host API facade 提供产品权限、协议稳定性与审计入口，不把 Node `vm` 作为不受信代码的安全隔离边界。
 - `api.local.getProfile()` 由 Rust host API facade 返回 username、platform、arch、backend/project/session 与 workspace root 摘要，原因是本机 profile 是 local runtime 的事实源。
 - Host API 运行时裁决使用当前 action 或 provider channel method 的 `permissions` 声明；manifest 顶层 capability 用于安装摘要、依赖解析、可用性诊断和审计，原因是当前插件执行模型是 trusted local extension，不把顶层 capability 重复做成 deny path。
@@ -76,6 +76,96 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 - Relay `command.extension_action_invoke` 进入本机 CommandHandler 后调用 TS Extension Host，原因是 RuntimeGateway 只拥有 action/trace/placement 意图，具体插件执行发生在 local runtime。
 - Extension action/channel relay payload 携带 session workspace context 时，`root_ref` 来自当前 session VFS default mount；TS Extension Host 将它作为 workspace/process Host API 的默认 root，原因是插件执行目录必须跟随本次 session 的工作区事实。
 - Relay payload 携带 package artifact 时，CommandHandler 先按 `artifact_id + archive_digest` 准备本机 cache，再用 extension key、backend id、project/session id、session workspace root 与 registered workspace roots 激活 TS Extension Host，原因是 packaged extension 的执行上下文由 Project 安装、session workspace 和本机登记事实共同确定。
+
+## Scenario: Local Relay Command Routing And Extension Host API
+
+### 1. Scope / Trigger
+
+- Trigger: 本机 relay 命令同时覆盖 prompt、workspace、tool、materialization、MCP、extension 与 terminal；路由层必须保持薄入口，执行依赖由职责域 handler 持有。
+- Scope: `LocalCommandRouter`、domain command handlers、extension action/channel relay payload、Extension Host workspace/process/env/http/runtime/channel Host API。
+
+### 2. Signatures
+
+```rust
+pub struct LocalCommandRouterConfig {
+    pub backend_id: String,
+    pub workspace_roots: Vec<PathBuf>,
+    pub tool_executor: ToolExecutor,
+    pub session_runtime: Option<SessionRuntimeServices>,
+    pub connector: Option<Arc<dyn AgentConnector>>,
+    pub mcp_manager: Option<Arc<McpClientManager>>,
+    pub workspace_contract_config: WorkspaceContractRuntimeConfig,
+    pub extension_host: LocalExtensionHostManager,
+    pub extension_artifact_api_base_url: String,
+    pub extension_artifact_access_token: String,
+    pub extension_artifact_cache_root: PathBuf,
+    pub event_tx: mpsc::UnboundedSender<RelayMessage>,
+}
+
+pub async fn resolve_host_api(
+    active: Option<&ActiveExtension>,
+    api_key: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, LocalExtensionHostError>;
+```
+
+### 3. Contracts
+
+- `LocalCommandRouter` 只匹配 `RelayMessage` envelope 并转发到 domain handler；prompt/session、workspace detect/browse、tool calls、materialization、MCP、extension 和 terminal 各自持有需要的依赖。
+- `CommandExtensionActionInvoke` 与 `CommandExtensionChannelInvoke` 由 extension handler 准备 package artifact cache、activation context 和 workspace context 后进入 `LocalExtensionHostManager`。
+- Extension Host workspace/process Host API 的默认 root 来自 activation/session workspace context；Host API 参数不接受调用方覆盖 raw workspace root。
+- Process Host API 运行态权限键是 `process.exec`、`process.shell`、`process.env.set` 与 `process.env.set:{KEY}`。
+- Schema validation 使用同一 JSON Schema 子集：`true/false` schema、`type`、`required`、`properties`、`additionalProperties: false`、`items`、`enum` 和 `const`。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Relay message 属于 prompt/workspace/tool/materialization/MCP/extension/terminal | Router 转交对应 handler |
+| Extension Host API 缺少 active extension | 返回 host API 调用错误 |
+| Host API 调用缺少 action 或 channel invocation context | 返回 permission denied |
+| action/channel method 未声明 Host API permission | 返回 permission denied |
+| `process.exec` 设置 env key 但未声明 `process.env.set` 或 `process.env.set:{KEY}` | 返回 permission denied |
+| Host API 参数尝试传 raw workspace root | 使用 activation workspace context，越界路径按 workspace guard 失败 |
+| action/channel output 不满足 output schema | 返回 host 调用错误 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `CommandToolShellExec` 只进入 tool handler，terminal manager 不参与普通 shell tool execution。
+- Good: extension action 携带 session `root_ref`，workspace/read/process cwd 统一从 activation context 解析。
+- Base: 本机无 `mcp_manager` 时，MCP handler 返回 relay response error，不影响其它 relay command 域。
+- Boundary mismatch: handler 直接读取 router 上其它域依赖会让 relay 命令之间形成隐式耦合。
+- Canonical flow: router 只做 envelope dispatch；domain handler 内完成依赖访问、payload validation 与 response projection。
+
+### 6. Tests Required
+
+- `agentdash-local` handler tests 覆盖 prompt/workspace/tool/materialization/MCP/extension/terminal 的 relay response 分发。
+- `agentdash-local extensions::host` 测试 process permission、workspace root context、schema validation 和 action/channel output validation。
+- Extension runner tests 覆盖 `ctx.api.process.exec/shell` 和 `ctx.api.channels` 的 action/channel invocation context 透传。
+
+### 7. Boundary Mismatch / Canonical
+
+#### Boundary Mismatch
+
+```rust
+// domain handler 从全量 router 状态读取不属于本域的依赖
+router.extension_host.invoke(...);
+router.terminal_manager.spawn(...);
+```
+
+#### Canonical
+
+```rust
+match message {
+    RelayMessage::CommandExtensionActionInvoke { id, payload } => {
+        vec![self.extension.handle_extension_action_invoke(id, payload).await]
+    }
+    RelayMessage::CommandTerminalSpawn { id, payload } => {
+        vec![self.terminal.handle_terminal_spawn(id, payload)]
+    }
+    _ => ...
+}
+```
 
 ## Scenario: Relay And Local MCP Resolved Transport
 

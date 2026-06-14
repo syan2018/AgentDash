@@ -179,31 +179,26 @@ impl AppState {
             repos.clone(),
             session_persistence.clone(),
             backend_registry.clone(),
-            shell_output_registry.clone(),
-            platform_config.clone(),
-            function_runner.clone(),
             integration_registration.mount_providers,
         );
         let mount_provider_registry = vfs_bootstrap.mount_provider_registry;
         let vfs_service = vfs_bootstrap.vfs_service;
         let vfs_mutation_dispatcher = vfs_bootstrap.vfs_mutation_dispatcher;
-        let session_services_handle = vfs_bootstrap.session_services_handle;
-        let runtime_tool_provider = vfs_bootstrap.runtime_tool_provider;
+        let vfs_materialization_service = vfs_bootstrap.vfs_materialization_service;
         let mcp_relay_provider = vfs_bootstrap.mcp_relay_provider;
         let mcp_tool_discovery: Arc<
             dyn agentdash_application_ports::mcp_discovery::McpToolDiscovery,
         > = Arc::new(agentdash_executor::mcp::ExecutorMcpToolDiscovery::new(
             Some(mcp_relay_provider.clone()),
         ));
-        let runtime_gateway_handle = vfs_bootstrap.runtime_gateway_handle;
         let session_bootstrap = crate::bootstrap::session::build_session_runtime(
             crate::bootstrap::session::SessionBootstrapInput {
                 repos: repos.clone(),
                 session_persistence: session_persistence.clone(),
                 backend_registry: backend_registry.clone(),
                 vfs_service: vfs_service.clone(),
-                session_services_handle,
-                runtime_tool_provider,
+                vfs_materialization_service,
+                shell_output_registry: shell_output_registry.clone(),
                 mcp_tool_discovery,
                 function_runner: function_runner.clone(),
                 platform_config: platform_config.clone(),
@@ -227,6 +222,7 @@ impl AppState {
         let session_title = session_bootstrap.session_title;
         let connector = session_bootstrap.connector;
         let hook_provider = session_bootstrap.hook_provider;
+        let runtime_gateway_handle = session_bootstrap.runtime_gateway_handle;
         let extra_skill_dirs = session_bootstrap.extra_skill_dirs;
         let skill_discovery_providers = session_bootstrap.skill_discovery_providers;
 
@@ -239,8 +235,8 @@ impl AppState {
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),
         );
-        // RuntimeGateway 装配序晚于 RelayRuntimeToolProvider（gateway 依赖 session_mcp_access，
-        // 后者依赖 provider 产出的工具集），此处把 gateway 回填进延迟句柄，供 workspace_module_invoke。
+        // RuntimeGateway 装配序晚于 session runtime tool composer（gateway 依赖 session_mcp_access，
+        // 后者依赖 composer 产出的工具集），此处把 gateway 回填进延迟句柄，供 workspace_module_invoke。
         runtime_gateway_handle.set(runtime_gateway.clone()).await;
 
         let project_repo_port: Arc<dyn ProjectRepository> = repos.project_repo.clone();

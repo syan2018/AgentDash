@@ -6,9 +6,9 @@ import type {
   ExtensionRuntimeInvokeChannelResponse,
   ExtensionWorkspaceTabProjectionResponse,
 } from "../../../generated/extension-runtime-contracts";
-import type { ResolvedMountSummary } from "../../../types";
 import { buildExtensionWebviewAssetUrl } from "../../../services/extensionRuntime";
 import type { WorkspaceBackendTarget, WorkspaceData } from "../../workspace-runtime";
+import { selectDefaultVfsMount, selectVfsBackendTarget } from "../../vfs/vfs-browser-panel-policy";
 import {
   bridgeParamString,
   toJsonValue,
@@ -208,7 +208,11 @@ export function resolveExtensionWebviewAvailability(
 export function selectExtensionBackendTarget(
   workspaceData: WorkspaceData,
 ): BackendTarget | null {
-  const runtimeBackend = selectRuntimeSurfaceBackend(workspaceData.runtimeSurface);
+  const runtimeBackend = workspaceData.runtimeSurface
+    ? selectVfsBackendTarget(workspaceData.runtimeSurface.mounts, {
+        defaultMountId: workspaceData.runtimeSurface.default_mount_id,
+      })
+    : null;
   return runtimeBackend ?? workspaceData.workspaceBackend;
 }
 
@@ -227,38 +231,15 @@ function resolvePanelVfsTarget(
   if (!surface) {
     throw new Error("Extension VFS bridge 缺少 runtime surface");
   }
-  const mountId = surface.default_mount_id
-    ?? surface.mounts.find((mount) => mount.backend_id.trim() !== "")?.id
-    ?? surface.mounts[0]?.id
-    ?? "";
+  const mountId = selectDefaultVfsMount(surface.mounts, {
+    defaultMountId: surface.default_mount_id,
+  })?.id ?? "";
   if (!mountId) {
     throw new Error("Extension VFS bridge 缺少可用 mount");
   }
   return {
     surfaceRef: surface.surface_ref,
     mountId,
-  };
-}
-
-function selectRuntimeSurfaceBackend(
-  runtimeSurface: WorkspaceData["runtimeSurface"],
-): BackendTarget | null {
-  const mounts = runtimeSurface?.mounts ?? [];
-  const defaultMount = runtimeSurface?.default_mount_id
-    ? mounts.find((mount) => mount.id === runtimeSurface.default_mount_id) ?? null
-    : null;
-  const ordered = defaultMount
-    ? [defaultMount, ...mounts.filter((mount) => mount.id !== defaultMount.id)]
-    : mounts;
-  const selected = ordered.find((mount) => mount.backend_id.trim() !== "");
-  return selected ? backendTargetFromMount(selected) : null;
-}
-
-function backendTargetFromMount(mount: ResolvedMountSummary): BackendTarget {
-  return {
-    backend_id: mount.backend_id,
-    label: mount.display_name || mount.backend_id,
-    online: mount.backend_online !== false,
   };
 }
 

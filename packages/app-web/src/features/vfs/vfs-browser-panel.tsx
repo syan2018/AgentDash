@@ -23,7 +23,7 @@ import type { SurfaceMountEntry } from "../../services/vfs";
 import type { ResolvedVfsSurface } from "../../types";
 import { VfsFileTree } from "./vfs-file-tree";
 import { VfsCodeEditor } from "./vfs-code-editor";
-import { isVfsMountBrowsable, resolveDefaultMountId } from "./vfs-browser-panel-policy";
+import { isVfsMountBrowsable, selectDefaultVfsMount } from "./vfs-browser-panel-policy";
 import { formatBytes } from "./vfs-format";
 import { VfsImageFilePreview } from "./vfs-image-file-preview";
 
@@ -152,13 +152,16 @@ export function VfsBrowserPanel({
   // 默认选中第一个可浏览 mount，避免离线 relay_fs 在预览页自动触发 503。
   useEffect(() => {
     if (selectedMountId && mounts.some((m) => m.id === selectedMountId)) return;
-    const defaultId = resolveDefaultMountId(mounts, initialMountId, surface?.default_mount_id);
-      setSelectedMountId(defaultId);
-      if (!initialFilePath) {
-        setSelectedFilePath(null);
-        setFileContent(null);
-        replaceBinaryFile(null);
-      }
+    const defaultId = selectDefaultVfsMount(mounts, {
+      initialMountId,
+      defaultMountId: surface?.default_mount_id,
+    })?.id ?? null;
+    setSelectedMountId(defaultId);
+    if (!initialFilePath) {
+      setSelectedFilePath(null);
+      setFileContent(null);
+      replaceBinaryFile(null);
+    }
     setOperationError(null);
   }, [mounts, selectedMountId, initialMountId, surface?.default_mount_id, initialFilePath, replaceBinaryFile]);
 

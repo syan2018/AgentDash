@@ -13,7 +13,9 @@ use crate::skill_asset::SkillAssetFileKind;
 use crate::workflow::ToolCapabilityDirective;
 
 pub const EXTENSION_PERMISSION_LOCAL_PROFILE_READ: &str = "local.profile.read";
-pub const EXTENSION_PERMISSION_PROCESS_EXECUTE: &str = "process.execute";
+pub const EXTENSION_PERMISSION_PROCESS_EXEC: &str = "process.exec";
+pub const EXTENSION_PERMISSION_PROCESS_SHELL: &str = "process.shell";
+pub const EXTENSION_PERMISSION_PROCESS_ENV_SET: &str = "process.env.set";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -1302,10 +1304,14 @@ fn classify_extension_permission_key(permission: &str) -> &'static str {
         "workspace"
     } else if permission.starts_with("env.read") {
         "env"
-    } else if permission == EXTENSION_PERMISSION_PROCESS_EXECUTE
-        || permission.starts_with("process.run")
+    } else if permission == EXTENSION_PERMISSION_PROCESS_EXEC
+        || permission == EXTENSION_PERMISSION_PROCESS_SHELL
     {
         "process"
+    } else if permission == EXTENSION_PERMISSION_PROCESS_ENV_SET
+        || permission.starts_with("process.env.set:")
+    {
+        "process_env"
     } else if permission.starts_with("runtime.invoke") {
         "runtime_action"
     } else if permission.starts_with("extension.channel.invoke") {
@@ -2195,7 +2201,7 @@ mod tests {
                     "local.profile.read",
                     "http.fetch:gitlab.example",
                     "env.read:GITLAB_TOKEN",
-                    "process.execute",
+                    "process.exec",
                     "extension.channel.invoke:gitlab-review.api.listMergeRequests"
                 ]
             }],
@@ -2353,6 +2359,43 @@ mod tests {
         assert!(!unknown.allowed);
         assert_eq!(
             unknown.reason,
+            ExtensionPermissionDecisionReason::UnknownPermission
+        );
+    }
+
+    #[test]
+    fn classifies_current_process_runtime_permission_keys() {
+        let template = extension_template_from_json(json!({
+            "runtime_actions": [{
+                "action_key": "demo.run",
+                "kind": "session_runtime",
+                "description": "Run demo",
+                "input_schema": {},
+                "output_schema": {},
+                "permissions": [
+                    "process.exec",
+                    "process.shell",
+                    "process.env.set:DEMO_TOKEN"
+                ]
+            }]
+        }));
+
+        let exec = template.evaluate_action_permission("demo.run", "process.exec");
+        assert!(exec.allowed);
+        assert_eq!(exec.capability_family, "process");
+
+        let shell = template.evaluate_action_permission("demo.run", "process.shell");
+        assert!(shell.allowed);
+        assert_eq!(shell.capability_family, "process");
+
+        let env_set = template.evaluate_action_permission("demo.run", "process.env.set:DEMO_TOKEN");
+        assert!(env_set.allowed);
+        assert_eq!(env_set.capability_family, "process_env");
+
+        let legacy = template.evaluate_action_permission("demo.run", "process.execute");
+        assert!(!legacy.allowed);
+        assert_eq!(
+            legacy.reason,
             ExtensionPermissionDecisionReason::UnknownPermission
         );
     }

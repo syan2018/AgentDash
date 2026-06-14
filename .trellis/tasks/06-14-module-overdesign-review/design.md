@@ -56,3 +56,23 @@
 - Permission 工作流可以修改 permission contract/API/repository/frontend permission/capability catalog，但不改 Lifecycle runtime。
 
 若 subagent 发现需要跨边界改动，只记录在任务产物或交回主会话，不自行扩大范围。
+
+## 第二轮实现边界
+
+第二轮只处理 VFS / Local / Extension 链路中已经形成事实源或装配职责竞争的部分：
+
+- Runtime tool composer：把外层 session runtime tool 装配从 VFS provider 名义中拆出，VFS 工具、workflow 工具、collaboration 工具、workspace module / extension runtime 工具各自有窄 provider，组合层只做聚合。
+- Local command router：保留 `RelayMessage` wire enum，但 local 执行侧拆为 router + domain handlers，减少 `CommandHandler` 同时持有所有状态。
+- Extension / VFS surface contract：收窄 extension workspace/process/env contract，执行 schema 校验或至少把校验 owner 落到明确层；前端 VFS browser 与 extension webview 的 mount/backend target selection 收敛为共享策略或后端 usage hint。
+
+第二轮暂不处理：
+
+- `vfs/mount.rs` 全量 provider builder 拆分和 typed metadata 重写。该方向正确但文件跨度大，适合作为单独第三轮。
+- Tauri `main.rs` profile/claim 下沉到 `agentdash-local`。该方向涉及 desktop shell、profile 存储和 claim 协议，单独拆任务更稳。
+- RuntimeGateway provider architecture 大改。第二轮只处理 extension action/channel schema 和 workspace/process/env contract 的执行边界。
+
+第二轮并行工作流边界：
+
+- Tool composer 工作流只改 application runtime tool provider / provider tests，不改 local relay handler。
+- Local router 工作流只改 `agentdash-local` handlers 与必要 tests，不改 cloud VFS provider。
+- Extension/VFS surface 工作流可以改 extension host API、permission/schema validation、frontend surface selector 和必要 contract，不改 Tauri profile/claim。

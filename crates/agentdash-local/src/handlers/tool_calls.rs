@@ -2,9 +2,27 @@
 
 use agentdash_relay::*;
 use base64::Engine;
+use tokio::sync::mpsc;
 
-use super::CommandHandler;
-use crate::tool_executor::ToolError;
+use crate::tool_executor::{ToolError, ToolExecutor};
+
+#[derive(Clone)]
+pub(super) struct ToolCommandHandler {
+    tool_executor: ToolExecutor,
+    event_tx: mpsc::UnboundedSender<RelayMessage>,
+}
+
+impl ToolCommandHandler {
+    pub(super) fn new(
+        tool_executor: ToolExecutor,
+        event_tx: mpsc::UnboundedSender<RelayMessage>,
+    ) -> Self {
+        Self {
+            tool_executor,
+            event_tx,
+        }
+    }
+}
 
 fn tool_error_to_relay_error(error: ToolError) -> RelayError {
     let message = error.to_string();
@@ -17,7 +35,7 @@ fn tool_error_to_relay_error(error: ToolError) -> RelayError {
     }
 }
 
-impl CommandHandler {
+impl ToolCommandHandler {
     pub(super) async fn handle_tool_file_read(
         &self,
         id: String,

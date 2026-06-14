@@ -14,6 +14,7 @@ VFS 子系统给 Agent、前端和业务用例提供统一地址模型，屏蔽 
 - Inline storage 坐标只能由 application resolver 从 runtime mount metadata 生成。
 - binary bytes 不内联进 JSON DTO；通过 `read_binary` / blob 通道读取。
 - Agent-facing VFS tools 按职责拆分：共享 runtime VFS handle 与 URI resolution 在 `vfs/tools/common.rs`，mount discovery 在 `vfs/tools/mounts.rs`，`vfs/tools/fs.rs` 只保留 file/search/patch/shell tool facade，具体 handler 位于 `vfs/tools/fs/`。共享 session state 和具体工具分离，原因是工具集合会继续扩展，但 runtime VFS address 语义必须集中。
+- Session runtime tool surface 由 `SessionRuntimeToolComposer` 组合多个 domain provider；VFS bootstrap 只构建 VFS service/materialization/registry，session bootstrap 负责注入 runtime tool composer，原因是 Agent-facing tool surface 同时消费 VFS、workflow、collaboration 和 workspace module runtime facts，不能归属于单一 VFS service。
 
 ## Current Baseline
 
@@ -40,6 +41,11 @@ Tool module baseline：
 | `vfs/tools/fs/glob.rs` | `fs.glob` list/pattern handler |
 | `vfs/tools/fs/grep.rs` | `fs.grep` text search handler |
 | `vfs/tools/fs/shell.rs` | `shell.exec`、VFS URI materialization notice、stream output projection |
+| `vfs/tools/provider.rs` | `SessionRuntimeToolComposer` 与共享 runtime session/project/VFS 解析 helper |
+| `vfs/tools/vfs_provider.rs` | mounts/fs/shell VFS 工具装配 |
+| `vfs/tools/workflow_provider.rs` | lifecycle workflow 工具装配 |
+| `vfs/tools/collaboration_provider.rs` | companion request/respond 工具装配 |
+| `vfs/tools/workspace_module_provider.rs` | workspace module list/describe/create/invoke/present 工具装配 |
 
 ## Local Decisions
 
@@ -50,6 +56,77 @@ Tool module baseline：
 - `lifecycle_vfs` 在 AgentRun resource surface 中是只读 session log surface。resolver 读取 latest delivery anchor、current frame / anchor frame 和 typed VFS 后安装 `scope = "agent_run_session"` mount；graphless AgentRun 只要存在 `RuntimeSessionExecutionAnchor`，就必须能看到 `session/*` 日志投影。可选 orchestration node anchor 只附带当前 node 的执行证据，不从 graph 或 active workflow 猜测节点。
 - ProjectAgent explicit lifecycle 和 Workflow AgentCall 通过 frame construction / lifecycle activation 把 `scope = "node_runtime"` lifecycle mount 写入 runtime frame VFS；该 mount 以 `orchestration_id + node_path + attempt` 作为执行节点身份，提供当前 node 的可写 `artifacts` / `records` 和只读 `session` 视角。这样做的原因是写入边界属于正在执行的 runtime node，而 workspace browser 的只读证据面属于 AgentRun delivery session。
 - AgentRun surface resolver 在应用层输出已闭包的 resource surface，原因是 resource browser、Agent connector launch 和 conversation snapshot 都需要消费同一份包含 lifecycle mount 的 AgentRun resource surface。
+
+## Scenario: Session Runtime Tool Composition
+
+### 1. Scope / Trigger
+
+- Trigger: Runtime tool surface 同时服务 Agent connector、capability policy、workspace module 和 extension invocation；组合边界必须让每个 domain provider 只持有自身依赖。
+- Scope: `SessionRuntimeToolComposer`、`VfsRuntimeToolProvider`、`WorkflowRuntimeToolProvider`、`CollaborationRuntimeToolProvider`、`WorkspaceModuleRuntimeToolProvider`、`SharedRuntimeGatewayHandle`。
+
+### 2. Signatures
+
+```rust
+#[async_trait]
+pub trait RuntimeToolProvider {
+    async fn build_tools(
+        &self,
+        context: &ExecutionContext,
+    ) -> Result<Vec<DynAgentTool>, ConnectorError>;
+}
+```
+
+### 3. Contracts
+
+- `SessionRuntimeToolComposer` 是唯一对外实现 `RuntimeToolProvider` 的 session tool composition root。
+- Domain provider 必须通过 `ExecutionContext` 和显式注入依赖构建工具，不回读 API bootstrap 或 route state。
+- VFS domain provider 只负责 `mounts_list`、`fs.*` 与 `shell.exec`；workflow/collaboration/workspace module 工具由各自 provider 装配。
+- `WorkspaceModuleRuntimeToolProvider` 只有在 `RuntimeGateway` 与 extension channel transport 延迟注入完成后才装配 `workspace_module_invoke`。
+- 所有 domain provider 必须继续经过 `capability_state.is_capability_tool_enabled()` 判断具体工具可见性。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `ExecutionContext.session.vfs` 缺失 | VFS 工具装配返回 `ConnectorError::InvalidConfig` |
+| capability 关闭某个 tool | provider 不注入该 tool |
+| context 无法解析 Project id | workspace module provider 不注入 Project-scoped module tools |
+| `RuntimeGateway` 或 channel transport 未注入 | 跳过 `workspace_module_invoke` 并记录 warning |
+| domain provider 构建失败 | composer 返回该错误，不吞掉失败 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: VFS 工具只依赖 `VfsService`、runtime VFS 和 materialization transport；workspace module invoke 只在 workspace module provider 中读取 Gateway handle。
+- Base: 一个 session 只启用 VFS capability 时，composer 返回 mounts/fs/shell 工具集合。
+- Boundary mismatch: VFS bootstrap 同时构建 workflow/collaboration/workspace module 工具会把 session runtime surface 绑回 VFS service 生命周期。
+- Canonical flow: session bootstrap 构造 domain providers，交给 composer；app state 在 RuntimeGateway 建好后回填 `SharedRuntimeGatewayHandle`。
+
+### 6. Tests Required
+
+- `agentdash-application vfs::tools` 测试 mounts/fs/shell 工具 schema、capability gating 与 VFS 缺失错误。
+- `agentdash-application workspace_module::tools` 测试 module list/describe/create/invoke/present 装配和 Gateway 延迟注入。
+- `agentdash-api bootstrap::tests::bootstrap_modules_do_not_depend_on_routes` 断言 bootstrap 不反向依赖 routes。
+- `agentdash-api vfs_access::tests::runtime_tool_schemas_are_openai_compatible` 覆盖最终 tool schema 兼容性。
+
+### 7. Boundary Mismatch / Canonical
+
+#### Boundary Mismatch
+
+```rust
+// VFS provider 同时组装 workflow、collaboration 和 workspace module 工具
+let tools = build_every_runtime_tool_from_vfs_bootstrap(context);
+```
+
+#### Canonical
+
+```rust
+let composer = SessionRuntimeToolComposer::new(vec![
+    Arc::new(VfsRuntimeToolProvider::new(...)),
+    Arc::new(WorkflowRuntimeToolProvider::new(...)),
+    Arc::new(CollaborationRuntimeToolProvider::new(...)),
+    Arc::new(WorkspaceModuleRuntimeToolProvider::new(...)),
+]);
+```
 
 ## Contract Appendices
 

@@ -8,14 +8,14 @@ use agentdash_application_ports::extension_runtime::{
     ExtensionRuntimeChannelTransport, ExtensionRuntimeHostPayload,
 };
 use agentdash_domain::shared_library::{
-    ExtensionDependencyDeclaration, ExtensionPermissionDecision,
-    ExtensionProtocolChannelDefinition, ExtensionProtocolChannelMethodDefinition,
-    ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ProjectExtensionInstallation,
+    ExtensionDependencyDeclaration, ExtensionProtocolChannelDefinition,
+    ExtensionProtocolChannelMethodDefinition, ExtensionRuntimeActionDefinition,
+    ExtensionRuntimeActionKind, ProjectExtensionInstallation,
     ProjectExtensionInstallationRepository,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{
@@ -166,7 +166,13 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
                 Some(request.trace.clone()),
             )
         })?;
-        let permission_decisions = validate_action_permissions(installation, action, &request)?;
+        let permission_decisions = validate_action_permissions(action, &request)?;
+        validate_json_schema_subset(
+            &action.input_schema,
+            &request.input,
+            &format!("extension action `{}` input", action.action_key),
+            &request.trace,
+        )?;
         let workspace = extension_invocation_workspace_from_metadata(&request)?;
 
         let transport_request = ExtensionActionInvokeRequest {
@@ -259,15 +265,12 @@ fn backend_target(request: &RuntimeInvocationRequest) -> Result<String, RuntimeI
 }
 
 fn validate_action_permissions(
-    installation: &ProjectExtensionInstallation,
     action: &ExtensionRuntimeActionDefinition,
     request: &RuntimeInvocationRequest,
-) -> Result<Vec<ExtensionPermissionDecision>, RuntimeInvocationError> {
+) -> Result<Vec<RuntimeExtensionPermissionDecision>, RuntimeInvocationError> {
     let mut decisions = Vec::new();
     for permission in &action.permissions {
-        let decision = installation
-            .manifest
-            .evaluate_action_permission(&action.action_key, permission);
+        let decision = evaluate_runtime_extension_permission(action, permission);
         if !decision.allowed {
             return Err(RuntimeInvocationError::capability_denied(
                 decision.denial_message(),
@@ -277,6 +280,261 @@ fn validate_action_permissions(
         decisions.push(decision);
     }
     Ok(decisions)
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RuntimeExtensionPermissionDecision {
+    requested_permission: String,
+    action_key: String,
+    capability_family: String,
+    allowed: bool,
+    reason: &'static str,
+}
+
+impl RuntimeExtensionPermissionDecision {
+    fn denial_message(&self) -> String {
+        match self.reason {
+            "allowed" => "permission allowed".to_string(),
+            "unknown_permission" => {
+                format!(
+                    "extension action 声明了未知权限: {}",
+                    self.requested_permission
+                )
+            }
+            _ => format!(
+                "extension action `{}` 未声明 {}",
+                self.action_key, self.requested_permission
+            ),
+        }
+    }
+}
+
+fn evaluate_runtime_extension_permission(
+    action: &ExtensionRuntimeActionDefinition,
+    requested_permission: &str,
+) -> RuntimeExtensionPermissionDecision {
+    let capability_family = classify_runtime_extension_permission_key(requested_permission);
+    let allowed = capability_family.is_some()
+        && action
+            .permissions
+            .iter()
+            .any(|permission| permission == requested_permission);
+    RuntimeExtensionPermissionDecision {
+        requested_permission: requested_permission.to_string(),
+        action_key: action.action_key.clone(),
+        capability_family: capability_family.unwrap_or("unknown").to_string(),
+        allowed,
+        reason: if capability_family.is_none() {
+            "unknown_permission"
+        } else if allowed {
+            "allowed"
+        } else {
+            "missing_action_declaration"
+        },
+    }
+}
+
+fn classify_runtime_extension_permission_key(permission: &str) -> Option<&'static str> {
+    if permission == "local.profile.read" {
+        Some("local_profile")
+    } else if permission == "http.fetch" || permission.starts_with("http.fetch:") {
+        Some("http")
+    } else if permission.starts_with("workspace.vfs.") {
+        Some("workspace")
+    } else if permission == "env.read" || permission.starts_with("env.read:") {
+        Some("env")
+    } else if permission == "process.exec" || permission == "process.shell" {
+        Some("process")
+    } else if permission == "process.env.set" || permission.starts_with("process.env.set:") {
+        Some("process_env")
+    } else if permission == "runtime.invoke" || permission.starts_with("runtime.invoke:") {
+        Some("runtime_action")
+    } else if permission == "extension.channel.invoke"
+        || permission.starts_with("extension.channel.invoke:")
+    {
+        Some("extension_channel")
+    } else {
+        None
+    }
+}
+
+fn validate_json_schema_subset(
+    schema: &Value,
+    value: &Value,
+    label: &str,
+    trace: &super::RuntimeTrace,
+) -> Result<(), RuntimeInvocationError> {
+    validate_schema_value(schema, value, "$").map_err(|message| {
+        RuntimeInvocationError::invalid_request(
+            format!("{label} 不符合 JSON Schema: {message}"),
+            Some(trace.clone()),
+        )
+    })
+}
+
+fn validate_schema_value(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
+    match schema {
+        Value::Bool(true) => return Ok(()),
+        Value::Bool(false) => return Err(format!("{path} 被 false schema 拒绝")),
+        Value::Object(_) => {}
+        _ => return Err("schema 必须是对象或布尔值".to_string()),
+    }
+
+    validate_const(schema, value, path)?;
+    validate_enum(schema, value, path)?;
+    validate_type(schema, value, path)?;
+
+    if let Some(object) = value.as_object() {
+        validate_required(schema, object, path)?;
+        validate_properties(schema, object, path)?;
+        validate_additional_properties(schema, object)?;
+    }
+
+    if let Some(array) = value.as_array() {
+        validate_items(schema, array, path)?;
+    }
+
+    Ok(())
+}
+
+fn validate_const(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
+    let Some(expected) = schema.get("const") else {
+        return Ok(());
+    };
+    if value == expected {
+        Ok(())
+    } else {
+        Err(format!("{path} 必须等于 const"))
+    }
+}
+
+fn validate_enum(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
+    let Some(items) = schema.get("enum") else {
+        return Ok(());
+    };
+    let Some(items) = items.as_array() else {
+        return Err("schema.enum 必须是数组".to_string());
+    };
+    if items.iter().any(|item| item == value) {
+        Ok(())
+    } else {
+        Err(format!("{path} 不在 enum 允许值内"))
+    }
+}
+
+fn validate_type(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
+    let Some(type_schema) = schema.get("type") else {
+        return Ok(());
+    };
+    let allowed = match type_schema {
+        Value::String(item) => vec![item.as_str()],
+        Value::Array(items) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .ok_or_else(|| "schema.type 数组元素必须是字符串".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err("schema.type 必须是字符串或字符串数组".to_string()),
+    };
+    if allowed
+        .iter()
+        .any(|expected| json_value_matches_type(value, expected))
+    {
+        Ok(())
+    } else {
+        Err(format!("{path} 类型不匹配，期望 {}", allowed.join(" 或 ")))
+    }
+}
+
+fn validate_required(
+    schema: &Value,
+    object: &serde_json::Map<String, Value>,
+    path: &str,
+) -> Result<(), String> {
+    let Some(required) = schema.get("required") else {
+        return Ok(());
+    };
+    let Some(required) = required.as_array() else {
+        return Err("schema.required 必须是字符串数组".to_string());
+    };
+    for item in required {
+        let Some(key) = item.as_str() else {
+            return Err("schema.required 必须是字符串数组".to_string());
+        };
+        if !object.contains_key(key) {
+            return Err(format!("{path}.{key} 是必填字段"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_properties(
+    schema: &Value,
+    object: &serde_json::Map<String, Value>,
+    path: &str,
+) -> Result<(), String> {
+    let Some(properties) = schema.get("properties") else {
+        return Ok(());
+    };
+    let Some(properties) = properties.as_object() else {
+        return Err("schema.properties 必须是对象".to_string());
+    };
+    for (key, property_schema) in properties {
+        if let Some(property_value) = object.get(key) {
+            validate_schema_value(property_schema, property_value, &format!("{path}.{key}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_additional_properties(
+    schema: &Value,
+    object: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    if schema.get("additionalProperties") != Some(&Value::Bool(false)) {
+        return Ok(());
+    }
+    let declared = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .map(|properties| properties.keys().collect::<Vec<_>>())
+        .unwrap_or_default();
+    for key in object.keys() {
+        if !declared
+            .iter()
+            .any(|declared_key| declared_key.as_str() == key)
+        {
+            return Err(format!("$.{key} 未在 schema.properties 中声明"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_items(schema: &Value, array: &[Value], path: &str) -> Result<(), String> {
+    let Some(item_schema) = schema.get("items") else {
+        return Ok(());
+    };
+    if item_schema.is_array() {
+        return Err("schema.items 暂只支持单一 schema 对象或布尔值".to_string());
+    }
+    for (index, item) in array.iter().enumerate() {
+        validate_schema_value(item_schema, item, &format!("{path}[{index}]"))?;
+    }
+    Ok(())
+}
+
+fn json_value_matches_type(value: &Value, expected: &str) -> bool {
+    match expected {
+        "array" => value.is_array(),
+        "boolean" => value.is_boolean(),
+        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        "null" => value.is_null(),
+        "number" => value.is_number(),
+        "object" => value.is_object(),
+        "string" => value.is_string(),
+        _ => false,
+    }
 }
 
 fn extension_invocation_workspace_from_metadata(
@@ -388,6 +646,15 @@ impl ExtensionRuntimeChannelInvoker {
                 Some(request.trace.clone()),
             )
         })?;
+        validate_json_schema_subset(
+            &resolved.method.input_schema,
+            &request.input,
+            &format!(
+                "extension channel `{}.{}` input",
+                resolved.channel.channel_key, resolved.method.name
+            ),
+            &request.trace,
+        )?;
         let transport_request = ExtensionChannelInvokeRequest {
             provider_extension_key: resolved.provider.extension_key.clone(),
             provider_extension_id: resolved.provider.manifest.extension_id.clone(),
@@ -1020,6 +1287,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gateway_validates_action_input_schema_before_transport() {
+        let project_id = Uuid::new_v4();
+        let mut installation = installation(project_id, true, true);
+        installation.manifest.runtime_actions[0].input_schema = json!({
+            "type": "object",
+            "required": ["username"],
+            "properties": {
+                "username": { "type": "string" }
+            },
+            "additionalProperties": false
+        });
+        let transport = Arc::new(FakeTransport {
+            result: Ok(response_payload(json!({ "ok": true }))),
+            last_payload: StdMutex::new(None),
+        });
+        let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
+            ExtensionRuntimeActionProvider::new(
+                Arc::new(FakeInstallationRepo {
+                    installations: vec![installation],
+                }),
+                transport.clone(),
+            ),
+        ));
+        let mut request = request(project_id, "local-hello.profile");
+        request.input = json!({ "username": 42 });
+
+        let err = gateway
+            .invoke(request)
+            .await
+            .expect_err("invalid input schema");
+
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::InvalidRequest);
+        assert!(transport.last_payload.lock().expect("lock").is_none());
+    }
+
+    #[tokio::test]
     async fn top_level_permission_summary_does_not_gate_declared_action_permission() {
         let project_id = Uuid::new_v4();
         let transport = Arc::new(FakeTransport {
@@ -1162,6 +1465,41 @@ mod tests {
                 .map(|workspace| (workspace.mount_id.as_str(), workspace.root_ref.as_str())),
             Some(("main", "D:/Workspaces/demo"))
         );
+    }
+
+    #[tokio::test]
+    async fn gateway_validates_channel_input_schema_before_transport() {
+        let project_id = Uuid::new_v4();
+        let mut provider = provider_channel_installation(project_id);
+        provider.manifest.protocol_channels[0].methods[0].input_schema = json!({
+            "type": "object",
+            "required": ["message"],
+            "properties": {
+                "message": { "type": "string" }
+            },
+            "additionalProperties": false
+        });
+        let transport = Arc::new(FakeChannelTransport {
+            result: Ok(channel_response_payload(json!({ "ok": true }))),
+            last_payload: StdMutex::new(None),
+        });
+        let invoker = ExtensionRuntimeChannelInvoker::new(
+            Arc::new(FakeInstallationRepo {
+                installations: vec![
+                    provider,
+                    consumer_channel_installation(project_id, "^1.0.0", true),
+                ],
+            }),
+            transport.clone(),
+        );
+
+        let err = invoker
+            .invoke(channel_request(project_id, "api", Some("provider")))
+            .await
+            .expect_err("invalid channel input schema");
+
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::InvalidRequest);
+        assert!(transport.last_payload.lock().expect("lock").is_none());
     }
 
     #[tokio::test]

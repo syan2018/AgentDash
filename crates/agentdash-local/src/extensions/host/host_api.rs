@@ -87,14 +87,16 @@ pub(super) fn resolve_workspace_root(
     active: &ActiveExtension,
     params: &Value,
 ) -> Result<String, LocalExtensionHostError> {
-    optional_string(params, "workspace_root").map_or_else(|| default_workspace_root(active), Ok)
+    reject_workspace_root_override(params)?;
+    default_workspace_root(active)
 }
 
 pub(super) fn resolve_workspace_root_from_options(
     active: &ActiveExtension,
     options: &Value,
 ) -> Result<String, LocalExtensionHostError> {
-    optional_string(options, "workspace_root").map_or_else(|| default_workspace_root(active), Ok)
+    reject_workspace_root_override(options)?;
+    default_workspace_root(active)
 }
 
 fn default_workspace_root(active: &ActiveExtension) -> Result<String, LocalExtensionHostError> {
@@ -105,6 +107,16 @@ fn default_workspace_root(active: &ActiveExtension) -> Result<String, LocalExten
         .ok_or_else(|| {
             LocalExtensionHostError::Host("extension host 未绑定 session workspace root".into())
         })
+}
+
+fn reject_workspace_root_override(params: &Value) -> Result<(), LocalExtensionHostError> {
+    if params.get("workspace_root").is_some() {
+        return Err(LocalExtensionHostError::Host(
+            "host api 不接受 workspace_root 覆盖；workspace 由当前 session context 决定"
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn process_result_value(
@@ -290,7 +302,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let active = active_extension(
             temp.path(),
-            &["process.execute", "env.read:AGENTDASH_TEST_ENV"],
+            &[
+                "process.shell",
+                "process.exec",
+                "process.env.set:AGENTDASH_TEST_ENV",
+            ],
             &[],
         );
 
@@ -363,11 +379,11 @@ mod tests {
         .expect_err("process denied");
         assert_contains(
             &denied,
-            "extension action `local-hello.profile` 未声明 process.execute",
+            "extension action `local-hello.profile` 未声明 process.exec",
         );
 
         let env_denied = resolve_host_api(
-            Some(&active_extension(temp.path(), &["process.execute"], &[])),
+            Some(&active_extension(temp.path(), &["process.exec"], &[])),
             "process.exec",
             &action_params(json!({
                 "command": "node",
@@ -379,7 +395,7 @@ mod tests {
         .expect_err("env overlay should require env permission");
         assert_contains(
             &env_denied,
-            "extension action `local-hello.profile` 未声明 env.read 或 env.read:AGENTDASH_TEST_ENV",
+            "extension action `local-hello.profile` 未声明 process.env.set 或 process.env.set:AGENTDASH_TEST_ENV",
         );
 
         let missing_command =
@@ -411,6 +427,40 @@ mod tests {
             &invalid_env,
             "host api 参数 `options.env.AGENTDASH_TEST_ENV` 的值必须是字符串",
         );
+    }
+
+    #[tokio::test]
+    async fn host_apis_reject_workspace_root_override() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let other = tempfile::tempdir().expect("other workspace");
+        let active = active_extension(temp.path(), &["workspace.vfs.read", "process.exec"], &[]);
+
+        let workspace_override = resolve_host_api(
+            Some(&active),
+            "workspace.read_text",
+            &action_params(json!({
+                "path": "notes/hello.txt",
+                "workspace_root": other.path().to_string_lossy(),
+            })),
+        )
+        .await
+        .expect_err("workspace override should be rejected");
+        assert_contains(&workspace_override, "不接受 workspace_root 覆盖");
+
+        let process_override = resolve_host_api(
+            Some(&active),
+            "process.exec",
+            &action_params(json!({
+                "command": "node",
+                "args": ["-e", "console.log('unused')"],
+                "options": {
+                    "workspace_root": other.path().to_string_lossy(),
+                },
+            })),
+        )
+        .await
+        .expect_err("process workspace override should be rejected");
+        assert_contains(&process_override, "不接受 workspace_root 覆盖");
     }
 
     #[tokio::test]

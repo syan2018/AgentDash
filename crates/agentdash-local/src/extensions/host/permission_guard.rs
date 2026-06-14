@@ -1,6 +1,3 @@
-use agentdash_domain::shared_library::{
-    ExtensionPermissionDecision, ExtensionPermissionDecisionReason,
-};
 use serde_json::Value;
 
 use super::LocalExtensionHostError;
@@ -16,20 +13,36 @@ pub(super) fn require_declared_permission(
         .map(String::as_str)
         .unwrap_or("unknown.permission");
     if let Some(action_key) = optional_string(params, "action_key") {
-        let decisions = permissions
+        let action = active
+            .manifest
+            .runtime_actions
             .iter()
-            .map(|permission| {
-                active
-                    .manifest
-                    .evaluate_action_permission(&action_key, permission)
-            })
-            .collect::<Vec<_>>();
-        if decisions.iter().any(|decision| decision.allowed) {
+            .find(|action| action.action_key == action_key);
+        let Some(action) = action else {
+            return Err(LocalExtensionHostError::PermissionDenied(format!(
+                "extension action `{action_key}` 不存在"
+            )));
+        };
+        let unknown = permissions
+            .iter()
+            .find(|permission| !is_known_extension_permission_key(permission));
+        if let Some(permission) = unknown {
+            return Err(LocalExtensionHostError::PermissionDenied(format!(
+                "extension action 声明了未知权限: {permission}"
+            )));
+        }
+        if permissions.iter().any(|permission| {
+            action
+                .permissions
+                .iter()
+                .any(|declared| declared == permission)
+        }) {
             return Ok(());
         }
-        return Err(LocalExtensionHostError::PermissionDenied(
-            action_permission_denial_message(&action_key, permissions, &decisions).to_string(),
-        ));
+        return Err(LocalExtensionHostError::PermissionDenied(format!(
+            "extension action `{action_key}` 未声明 {}",
+            permissions.join(" 或 ")
+        )));
     }
 
     if let (Some(channel_key), Some(channel_method)) = (
@@ -74,25 +87,6 @@ pub(super) fn require_declared_permission(
     )))
 }
 
-fn action_permission_denial_message(
-    action_key: &str,
-    permissions: &[String],
-    decisions: &[ExtensionPermissionDecision],
-) -> String {
-    if decisions.iter().all(|decision| {
-        decision.reason == ExtensionPermissionDecisionReason::MissingActionDeclaration
-    }) {
-        return format!(
-            "extension action `{action_key}` 未声明 {}",
-            permissions.join(" 或 ")
-        );
-    }
-    decisions
-        .first()
-        .map(ExtensionPermissionDecision::denial_message)
-        .unwrap_or_else(|| format!("extension action `{action_key}` 未声明权限"))
-}
-
 fn optional_string(params: &Value, field: &str) -> Option<String> {
     params
         .get(field)
@@ -100,4 +94,21 @@ fn optional_string(params: &Value, field: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn is_known_extension_permission_key(permission: &str) -> bool {
+    permission == "local.profile.read"
+        || permission == "http.fetch"
+        || permission.starts_with("http.fetch:")
+        || permission.starts_with("workspace.vfs.")
+        || permission == "env.read"
+        || permission.starts_with("env.read:")
+        || permission == "process.exec"
+        || permission == "process.shell"
+        || permission == "process.env.set"
+        || permission.starts_with("process.env.set:")
+        || permission == "runtime.invoke"
+        || permission.starts_with("runtime.invoke:")
+        || permission == "extension.channel.invoke"
+        || permission.starts_with("extension.channel.invoke:")
 }

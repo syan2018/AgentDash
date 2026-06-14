@@ -573,8 +573,37 @@ function validatePermissionStrings(permissions, label, errors) {
   for (const permission of permissions) {
     if (typeof permission !== "string" || !/^[A-Za-z0-9._:*=-]+$/.test(permission)) {
       errors.push(`${label} 必须是稳定 permission key`);
+      continue;
+    }
+    if (!isKnownRuntimePermissionString(permission)) {
+      errors.push(`${label} 包含未知 permission key: ${permission}`);
     }
   }
+}
+
+/**
+ * @param {string} permission
+ * @returns {boolean}
+ */
+function isKnownRuntimePermissionString(permission) {
+  return permission === "local.profile.read"
+    || hasPermissionScope(permission, "http.fetch")
+    || permission.startsWith("workspace.vfs.")
+    || hasPermissionScope(permission, "env.read")
+    || permission === "process.exec"
+    || permission === "process.shell"
+    || hasPermissionScope(permission, "process.env.set")
+    || hasPermissionScope(permission, "runtime.invoke")
+    || hasPermissionScope(permission, "extension.channel.invoke");
+}
+
+/**
+ * @param {string} permission
+ * @param {string} base
+ * @returns {boolean}
+ */
+function hasPermissionScope(permission, base) {
+  return permission === base || permission.startsWith(`${base}:`);
 }
 
 /**

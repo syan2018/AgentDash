@@ -1,7 +1,7 @@
 //! Workspace Module Agent 工具：`workspace_module_list` / `workspace_module_describe`。
 //!
-//! 二者挂在 `RelayRuntimeToolProvider`，用 `project_id_from_context` + repos 现取
-//! 现算：每次调用拉 enabled installations + visible canvases，经聚合层
+//! 二者由 session runtime tool composer 通过 workspace-module provider 装配，
+//! 用当前 project context + repos 现取现算：每次调用拉 enabled installations + visible canvases，经聚合层
 //! `build_workspace_modules` 投影，再按 capability 的
 //! `WorkspaceModuleDimension` 过滤（可见性裁切的唯一来源，D4）。
 

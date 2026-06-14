@@ -1,14 +1,25 @@
 //! MCP Relay 命令处理——probe / list_tools / call_tool / close
 
+use std::sync::Arc;
+
 use agentdash_relay::*;
 use rmcp::transport::child_process::TokioChildProcess;
 
-use super::CommandHandler;
+use crate::mcp_client_manager::McpClientManager;
 
 /// 一次性 probe 超时（秒）——覆盖进程 spawn + MCP 握手 + tools/list 全过程。
 const PROBE_TIMEOUT_SECS: u64 = 15;
 
-impl CommandHandler {
+#[derive(Clone)]
+pub(super) struct McpCommandHandler {
+    mcp_manager: Option<Arc<McpClientManager>>,
+}
+
+impl McpCommandHandler {
+    pub(super) fn new(mcp_manager: Option<Arc<McpClientManager>>) -> Self {
+        Self { mcp_manager }
+    }
+
     /// 一次性 probe：临时连接指定 transport → tools/list → 关闭，不入连接池。
     pub(super) async fn handle_mcp_probe_transport(
         &self,

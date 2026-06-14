@@ -6,6 +6,7 @@ mod process;
 mod process_api;
 mod protocol;
 mod runner;
+mod schema;
 mod workspace_api;
 
 use std::path::PathBuf;

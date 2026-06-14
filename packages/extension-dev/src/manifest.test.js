@@ -26,6 +26,12 @@ test("validateProject accepts protocol channels, dependencies, and trusted host 
   assert.deepEqual(result.errors, []);
 });
 
+test("validateProject rejects unknown runtime process permission key", async () => {
+  const root = await fixtureProject({ withProtocol: true, unknownRuntimePermission: "process.execute" });
+  const result = await validateProject(root);
+  assert.match(result.errors.join("\n"), /未知 permission key: process\.execute/);
+});
+
 test("validateProject rejects invalid protocol channel declarations", async () => {
   const root = await fixtureProject({ withInvalidProtocol: true });
   const result = await validateProject(root);
@@ -66,7 +72,7 @@ test("validateProject rejects non self-contained dependencies and native constra
 });
 
 /**
- * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel", withProtocol?: boolean, withInvalidProtocol?: boolean, omitActionSchema?: boolean, nullActionSchema?: boolean }} [options]
+ * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel", withProtocol?: boolean, withInvalidProtocol?: boolean, unknownRuntimePermission?: string, omitActionSchema?: boolean, nullActionSchema?: boolean }} [options]
  * @returns {Promise<string>}
  */
 async function fixtureProject(options = {}) {
@@ -169,18 +175,26 @@ async function fixtureProject(options = {}) {
 }
 
 /**
- * @param {{ withProtocol?: boolean, omitActionSchema?: boolean, nullActionSchema?: boolean }} options
+ * @param {{ withProtocol?: boolean, unknownRuntimePermission?: string, omitActionSchema?: boolean, nullActionSchema?: boolean }} options
  * @returns {Record<string, unknown>}
  */
 function runtimeAction(options) {
+  const permissions = options.withProtocol
+    ? [
+        "local.profile.read",
+        "http.fetch:example.com",
+        "env.read:DEMO_TOKEN",
+        "process.exec",
+        "process.env.set:DEMO_TOKEN",
+        ...(options.unknownRuntimePermission ? [options.unknownRuntimePermission] : []),
+      ]
+    : ["local.profile.read"];
   const action = {
     action_key: "local-hello.profile",
     kind: "session_runtime",
     description: "Read profile",
     output_schema: {},
-    permissions: options.withProtocol
-      ? ["local.profile.read", "http.fetch:example.com", "env.read:DEMO_TOKEN", "process.execute"]
-      : ["local.profile.read"],
+    permissions,
   };
   if (options.nullActionSchema) {
     return { ...action, input_schema: null };

@@ -2,9 +2,10 @@
 
 use agentdash_relay::*;
 
-use super::CommandHandler;
+#[derive(Clone, Copy)]
+pub(super) struct WorkspaceCommandHandler;
 
-impl CommandHandler {
+impl WorkspaceCommandHandler {
     pub(super) async fn handle_workspace_detect(
         &self,
         id: String,

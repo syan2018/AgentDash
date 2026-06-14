@@ -16,7 +16,8 @@
 - 输出清理建议时优先说明目标边界和为什么这么收敛，不把过去错误实现当作文档重点。
 - 第一轮实现只处理事实源正确性和控制面收束，不展开低优先级装配层大拆分。
 - 第一轮并行工作流控制在三条以内：Lifecycle runtime truth source、AgentRun control surface、Permission / contract capability surface。
-- VFS / Local / Extension 的装配层瘦身暂作为后续候选，不进入第一轮实现。
+- 第二轮实现处理 VFS / Local / Extension 的装配层和 contract 收束，仍控制在三条以内：runtime tool composer、local command router、extension/VFS surface contract。
+- `vfs/mount.rs` 全量拆分与 Tauri profile/claim 下沉暂作为后续候选，不混入第二轮。
 
 ## Acceptance Criteria
 
@@ -29,6 +30,10 @@
 - [x] AgentRun command/control surface 收敛为单一 workspace conversation/mailbox 投影，RuntimeSession runtime-control 不再复制 AgentRun action/mailbox 控制面。
 - [x] PermissionGrant 成为 capability grant 的唯一授权事实源，pending grant query 和 typed permission DTO 不再依赖 companion JSON 或 `JsonValue` 核心字段。
 - [x] 第一轮实现完成后运行针对性后端/frontend 检查，并记录未处理的 VFS / Local / Extension 后续任务候选。
+- [x] Runtime tool provider 拆成窄 cluster provider 与组合层，VFS provider 不再承载 workflow/companion/workspace module/extension runtime 装配。
+- [x] Local relay command handling 拆出 router 与 domain handlers，中央 handler 不再持有所有 domain-specific state。
+- [x] Extension Host workspace/process/env/schema contract 收窄，前端 VFS/extension mount selection 不再各自维护冲突策略。
+- [x] 第二轮完成后运行 targeted backend/local/frontend 检查，并记录 `vfs/mount.rs` 与 Tauri profile/claim 后续候选。
 
 ## Notes
 

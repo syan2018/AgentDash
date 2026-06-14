@@ -1,4 +1,3 @@
-use agentdash_domain::shared_library::EXTENSION_PERMISSION_PROCESS_EXECUTE;
 use serde_json::{Value, json};
 
 use crate::process_executor::ProcessEnvOverlay;
@@ -12,6 +11,10 @@ use super::host_api::{
 use super::permission_guard::require_declared_permission;
 use super::process::ActiveExtension;
 
+const EXTENSION_PERMISSION_PROCESS_EXEC: &str = "process.exec";
+const EXTENSION_PERMISSION_PROCESS_SHELL: &str = "process.shell";
+const EXTENSION_PERMISSION_PROCESS_ENV_SET: &str = "process.env.set";
+
 pub(super) async fn resolve_process_shell(
     active: &ActiveExtension,
     params: &Value,
@@ -19,7 +22,7 @@ pub(super) async fn resolve_process_shell(
     require_declared_permission(
         active,
         params,
-        &[EXTENSION_PERMISSION_PROCESS_EXECUTE.to_string()],
+        &[EXTENSION_PERMISSION_PROCESS_SHELL.to_string()],
     )?;
     let command = require_string(params, "command")?;
     let options = params.get("options").unwrap_or(&Value::Null);
@@ -59,7 +62,7 @@ pub(super) async fn resolve_process_exec(
     require_declared_permission(
         active,
         params,
-        &[EXTENSION_PERMISSION_PROCESS_EXECUTE.to_string()],
+        &[EXTENSION_PERMISSION_PROCESS_EXEC.to_string()],
     )?;
     let command = require_string(params, "command")?;
     let args = parse_args(params)?;
@@ -142,7 +145,10 @@ fn require_env_overlay_permissions(
     env: &ProcessEnvOverlay,
 ) -> Result<(), LocalExtensionHostError> {
     for (key, _) in env {
-        let permissions = vec!["env.read".to_string(), format!("env.read:{key}")];
+        let permissions = vec![
+            EXTENSION_PERMISSION_PROCESS_ENV_SET.to_string(),
+            format!("{EXTENSION_PERMISSION_PROCESS_ENV_SET}:{key}"),
+        ];
         require_declared_permission(active, params, &permissions)?;
     }
     Ok(())

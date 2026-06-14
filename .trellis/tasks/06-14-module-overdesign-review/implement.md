@@ -56,3 +56,36 @@
 - 未跑全量 backend clippy、workspace tests、frontend tests、e2e；本轮使用 targeted backend/frontend 检查覆盖三条主线。
 - `/tasks/{id}/execution` 仍是 route-local 轻量 DTO，尚未完全收敛到 generated `SubjectExecutionView`。
 - companion payload registry 仍保留 `capability_grant_result` 类型；session UI 已不再提交该授权结果，platform broker 当前仍拒绝未闭环入口。
+
+## 第二轮并行收束
+
+- [x] Runtime tool composer
+  - [x] 拆出 session-level composite tool provider / composer。
+  - [x] VFS provider 只负责 `VfsToolFactory` / VFS read-write-execute cluster。
+  - [x] Workflow、collaboration、workspace module / extension runtime 工具各自进入窄 provider。
+  - [x] 保持现有工具 surface 行为不变，并补 focused tests 或 compile checks。
+
+- [x] Local command router
+  - [x] 保留 `RelayMessage` 顶层 wire enum。
+  - [x] `CommandHandler` 瘦身为 `LocalCommandRouter` 或等价薄分发层。
+  - [x] tool / extension / terminal / materialization / MCP / prompt 等 domain handlers 只接收各自依赖。
+  - [x] 运行 `agentdash-local` targeted tests / cargo check。
+
+- [x] Extension / VFS surface contract
+  - [x] Extension Host 不再接受 raw `workspace_root` 覆盖 session workspace context。
+  - [x] process/env permission 语义收窄，manifest/SDK/Rust guard 保持一致。
+  - [x] RuntimeGateway/local host 对 extension action/channel input/output schema 有明确校验 owner。
+  - [x] VFS browser 与 extension webview mount/backend selection 使用共享策略或后端 usage hint。
+
+## 第二轮验证
+
+- [x] Rust targeted tests / cargo check 覆盖 application/local/api/domain 改动。
+- [x] Frontend typecheck / targeted vitest 覆盖 selector/contract 改动。
+- [x] 本轮未修改 generated contract，未运行 `pnpm run contracts:check`。
+- [x] 记录未处理的 `vfs/mount.rs` 全量拆分与 Tauri profile/claim 后续候选。
+
+## 第二轮残余风险
+
+- `vfs/mount.rs` 仍可继续按 provider / metadata / validation / operations 拆分；本轮只收束 session runtime tool 装配边界。
+- Tauri profile/claim 仍可继续下沉到 local runtime library；本轮只处理 relay router 与 Extension Host contract。
+- JSON Schema validation 覆盖当前插件协议子集：`true/false` schema、`type`、`required`、`properties`、`additionalProperties: false`、`items`、`enum`、`const`。

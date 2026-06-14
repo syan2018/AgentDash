@@ -11,9 +11,12 @@ use agentdash_application::session::{
     SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService, SessionTerminalCallback,
     SessionTitleService,
 };
+use agentdash_application::vfs::VfsMaterializationService;
 use agentdash_application::vfs::VfsService;
-use agentdash_application::vfs::tools::provider::{
-    SessionToolServices, SharedSessionToolServicesHandle,
+use agentdash_application::vfs::tools::{
+    CollaborationRuntimeToolProvider, SessionRuntimeToolComposer, SessionToolServices,
+    SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle, VfsRuntimeToolProvider,
+    WorkflowRuntimeToolProvider, WorkspaceModuleRuntimeToolProvider,
 };
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
@@ -21,6 +24,7 @@ use agentdash_domain::llm_provider::{
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
+use agentdash_spi::connector::RuntimeToolProvider;
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -31,8 +35,8 @@ pub(crate) struct SessionBootstrapInput {
     pub session_persistence: Arc<dyn SessionPersistence>,
     pub backend_registry: Arc<BackendRegistry>,
     pub vfs_service: Arc<VfsService>,
-    pub session_services_handle: SharedSessionToolServicesHandle,
-    pub runtime_tool_provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider>,
+    pub vfs_materialization_service: Arc<VfsMaterializationService>,
+    pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
     pub mcp_tool_discovery: Arc<dyn agentdash_application_ports::mcp_discovery::McpToolDiscovery>,
     pub function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
     pub platform_config: SharedPlatformConfig,
@@ -56,6 +60,7 @@ pub(crate) struct SessionBootstrapOutput {
     pub session_title: SessionTitleService,
     pub connector: Arc<dyn AgentConnector>,
     pub hook_provider: Arc<AppExecutionHookProvider>,
+    pub runtime_gateway_handle: SharedRuntimeGatewayHandle,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
 }
@@ -68,8 +73,8 @@ pub(crate) async fn build_session_runtime(
         session_persistence,
         backend_registry,
         vfs_service,
-        session_services_handle,
-        runtime_tool_provider,
+        vfs_materialization_service,
+        shell_output_registry,
         mcp_tool_discovery,
         function_runner,
         platform_config,
@@ -109,6 +114,20 @@ pub(crate) async fn build_session_runtime(
         .map_err(|err| anyhow::anyhow!("连接器注册失败: {err}"))?;
 
     let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
+    let session_services_handle = SharedSessionToolServicesHandle::default();
+    let runtime_gateway_handle = SharedRuntimeGatewayHandle::default();
+    let runtime_tool_provider =
+        build_session_runtime_tool_composer(SessionRuntimeToolComposerDeps {
+            repos: repos.clone(),
+            vfs_service: vfs_service.clone(),
+            vfs_materialization_service,
+            shell_output_registry,
+            session_services_handle: session_services_handle.clone(),
+            runtime_gateway_handle: runtime_gateway_handle.clone(),
+            backend_registry: backend_registry.clone(),
+            function_runner: function_runner.clone(),
+            platform_config: platform_config.clone(),
+        });
     let hook_provider = Arc::new(AppExecutionHookProvider::new(
         agentdash_application::hooks::AppExecutionHookProviderRepos {
             project_repo: repos.project_repo.clone(),
@@ -209,9 +228,62 @@ pub(crate) async fn build_session_runtime(
         session_title,
         connector,
         hook_provider,
+        runtime_gateway_handle,
         extra_skill_dirs,
         skill_discovery_providers,
     })
+}
+
+struct SessionRuntimeToolComposerDeps {
+    repos: RepositorySet,
+    vfs_service: Arc<VfsService>,
+    vfs_materialization_service: Arc<VfsMaterializationService>,
+    shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
+    session_services_handle: SharedSessionToolServicesHandle,
+    runtime_gateway_handle: SharedRuntimeGatewayHandle,
+    backend_registry: Arc<BackendRegistry>,
+    function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
+    platform_config: SharedPlatformConfig,
+}
+
+fn build_session_runtime_tool_composer(
+    deps: SessionRuntimeToolComposerDeps,
+) -> Arc<dyn RuntimeToolProvider> {
+    let inline_persister: Arc<
+        dyn agentdash_application::vfs::inline_persistence::InlineContentPersister,
+    > = Arc::new(
+        agentdash_application::vfs::inline_persistence::DbInlineContentPersister::new(
+            deps.repos.inline_file_repo.clone(),
+        ),
+    );
+
+    let vfs_provider = VfsRuntimeToolProvider::new(deps.vfs_service, Some(inline_persister))
+        .with_materialization_service(deps.vfs_materialization_service)
+        .with_shell_output_registry(deps.shell_output_registry);
+    let workflow_provider = WorkflowRuntimeToolProvider::new(
+        deps.repos.clone(),
+        deps.session_services_handle.clone(),
+        deps.platform_config,
+        deps.function_runner,
+    );
+    let collaboration_provider = CollaborationRuntimeToolProvider::new(
+        deps.repos.clone(),
+        deps.session_services_handle.clone(),
+    );
+    let workspace_module_provider = WorkspaceModuleRuntimeToolProvider::new(
+        deps.repos.project_extension_installation_repo.clone(),
+        deps.repos.canvas_repo.clone(),
+        deps.session_services_handle,
+        deps.runtime_gateway_handle,
+    )
+    .with_extension_channel_transport(deps.backend_registry);
+
+    Arc::new(SessionRuntimeToolComposer::new(vec![
+        Arc::new(vfs_provider) as Arc<dyn RuntimeToolProvider>,
+        Arc::new(workflow_provider) as Arc<dyn RuntimeToolProvider>,
+        Arc::new(collaboration_provider) as Arc<dyn RuntimeToolProvider>,
+        Arc::new(workspace_module_provider) as Arc<dyn RuntimeToolProvider>,
+    ]))
 }
 
 struct CompositeSessionTerminalCallback {

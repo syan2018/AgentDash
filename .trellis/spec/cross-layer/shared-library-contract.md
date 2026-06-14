@@ -215,7 +215,7 @@ Inline payload 额外携带 `files[]`；external service payload 额外携带 `s
 
 Extension package 中 `protocol_channels` 表达 provider 插件导出的 Project/session scoped API surface，`extension_dependencies` 表达 consumer 插件按 alias 依赖的 provider extension/channel。Projection、Gateway admission、local runner trace 都以 canonical `extension_key.channel` / method 作为事实；SDK/bridge 可以提供 self shortcut、dependency alias 或 Canvas binding alias，但不改变 manifest 中 provider/channel/dependency 的权威关系。
 
-Extension `permissions` 的职责是安装摘要、依赖解析、可用性诊断和审计。运行时真正需要裁决的本机 Host API 使用 action-level 或 channel-method-level `permissions` string，例如 `local.profile.read`、`workspace.vfs.read`、`process.execute`、`runtime.invoke:<action_key>`、`extension.channel.invoke:<channel_key>.<method>`。
+Extension `permissions` 的职责是安装摘要、依赖解析、可用性诊断和审计。运行时真正需要裁决的本机 Host API 使用 action-level 或 channel-method-level `permissions` string，例如 `local.profile.read`、`workspace.vfs.read`、`process.exec`、`process.shell`、`process.env.set[:KEY]`、`runtime.invoke:<action_key>`、`extension.channel.invoke:<channel_key>.<method>`。
 
 ExtensionTemplate 的 package requirement 由后端统一计算：`runtime_actions`、`protocol_channels`、`workspace_tabs`、`bundles` 任一非空时需要 package artifact；仅声明 `commands`、`flags`、`message_renderers`、`capability_directives` 或 `asset_refs` 时可作为 declaration-only template 安装。
 

@@ -219,6 +219,13 @@ impl<'a> ProjectAgentRunStartService<'a> {
         mut command: ProjectAgentRunStartCommand,
         initial_message: &dyn ProjectAgentRunInitialMailboxCommandPort,
     ) -> Result<ProjectAgentRunStartDispatch, WorkflowApplicationError> {
+        tracing::info!(
+            project_id = %command.project_id,
+            project_agent_id = %command.project_agent_id,
+            input_blocks = command.input.len(),
+            has_executor_config = command.executor_config.is_some(),
+            "ProjectAgent run start service entered"
+        );
         if command.input.is_empty() {
             return Err(WorkflowApplicationError::BadRequest(
                 "input 不能为空".to_string(),
@@ -241,6 +248,12 @@ impl<'a> ProjectAgentRunStartService<'a> {
                     command.project_agent_id
                 ))
             })?;
+        tracing::info!(
+            project_id = %command.project_id,
+            project_agent_id = %command.project_agent_id,
+            project_agent_name = %project_agent.name,
+            "ProjectAgent run start project agent loaded"
+        );
 
         let model_resolution = ConversationModelConfigResolver::resolve_project_agent_start(
             &project_agent,
@@ -257,6 +270,13 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 )
             });
         command.executor_config = Some(model_resolution.config.clone());
+        tracing::info!(
+            project_id = %command.project_id,
+            project_agent_id = %command.project_agent_id,
+            provider_id = ?model_resolution.config.provider_id,
+            model_id = ?model_resolution.config.model_id,
+            "ProjectAgent run start model config resolved"
+        );
 
         let subject_ref = command
             .subject_ref
@@ -285,6 +305,13 @@ impl<'a> ProjectAgentRunStartService<'a> {
             request_digest,
         )
         .await?;
+        tracing::info!(
+            project_id = %command.project_id,
+            project_agent_id = %command.project_agent_id,
+            receipt_id = %claim.record.id,
+            duplicate = claim.duplicate,
+            "ProjectAgent run start command receipt claimed"
+        );
         if claim.duplicate {
             return self
                 .dispatch_from_project_agent_start_receipt(
@@ -322,6 +349,11 @@ impl<'a> ProjectAgentRunStartService<'a> {
         .with_anchor_repo(self.repos.execution_anchor_repo)
         .with_runtime_session_creator(self.repos.runtime_session_creator);
 
+        tracing::info!(
+            project_id = %command.project_id,
+            project_agent_id = %command.project_agent_id,
+            "ProjectAgent run start launching lifecycle agent"
+        );
         let dispatch_result = match dispatch_service.launch_agent(&intent).await {
             Ok(dispatch_result) => dispatch_result,
             Err(error) => {
@@ -334,6 +366,15 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 return Err(error);
             }
         };
+        tracing::info!(
+            project_id = %command.project_id,
+            project_agent_id = %command.project_agent_id,
+            run_id = %dispatch_result.runtime_refs.run_ref,
+            agent_id = %dispatch_result.runtime_refs.agent_ref,
+            frame_id = %dispatch_result.runtime_refs.frame_ref,
+            has_runtime_ref = dispatch_result.delivery_runtime_ref.is_some(),
+            "ProjectAgent run start lifecycle launched"
+        );
         let runtime_session_id = dispatch_result
             .delivery_runtime_ref
             .ok_or_else(|| {
@@ -343,6 +384,12 @@ impl<'a> ProjectAgentRunStartService<'a> {
             })?
             .to_string();
 
+        tracing::info!(
+            runtime_session_id = %runtime_session_id,
+            run_id = %dispatch_result.runtime_refs.run_ref,
+            agent_id = %dispatch_result.runtime_refs.agent_ref,
+            "ProjectAgent run start binding project agent"
+        );
         if let Err(error) = self
             .bind_project_agent_to_lifecycle_agent(
                 dispatch_result.runtime_refs.agent_ref,
@@ -369,6 +416,12 @@ impl<'a> ProjectAgentRunStartService<'a> {
             return Err(error);
         }
 
+        tracing::info!(
+            runtime_session_id = %runtime_session_id,
+            run_id = %dispatch_result.runtime_refs.run_ref,
+            agent_id = %dispatch_result.runtime_refs.agent_ref,
+            "ProjectAgent run start accepting initial mailbox message"
+        );
         let initial_message_result = match initial_message
             .accept_initial_mailbox_message(ProjectAgentRunInitialMailboxCommand {
                 run_id: dispatch_result.runtime_refs.run_ref,
@@ -393,6 +446,14 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 return Err(error);
             }
         };
+        tracing::info!(
+            runtime_session_id = %runtime_session_id,
+            run_id = %dispatch_result.runtime_refs.run_ref,
+            agent_id = %dispatch_result.runtime_refs.agent_ref,
+            outcome = ?initial_message_result.outcome,
+            has_mailbox_message = initial_message_result.mailbox_message.is_some(),
+            "ProjectAgent run start initial mailbox accepted"
+        );
 
         let accepted_refs = match self
             .accepted_refs_from_initial_mailbox_result(
@@ -416,6 +477,13 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 return Err(error);
             }
         };
+        tracing::info!(
+            runtime_session_id = %runtime_session_id,
+            run_id = %dispatch_result.runtime_refs.run_ref,
+            agent_id = %dispatch_result.runtime_refs.agent_ref,
+            turn_id = ?accepted_refs.agent_run_turn_id,
+            "ProjectAgent run start accepted refs resolved"
+        );
         let turn_id = accepted_refs.agent_run_turn_id.clone().unwrap_or_default();
         let frame_id = accepted_refs
             .frame_id
@@ -429,6 +497,13 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 accepted_refs,
             )
             .await?;
+        tracing::info!(
+            runtime_session_id = %runtime_session_id,
+            run_id = %dispatch_result.runtime_refs.run_ref,
+            agent_id = %dispatch_result.runtime_refs.agent_ref,
+            receipt_status = ?receipt.status,
+            "ProjectAgent run start receipt accepted"
+        );
 
         Ok(ProjectAgentRunStartDispatch {
             project_agent,

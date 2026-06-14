@@ -154,20 +154,6 @@ impl FrameConstructionService {
                 ))
             })?;
 
-        let executor_config = frame.typed_execution_profile();
-        let direct_lifecycle = self.prompt_lifecycle(executor_config.as_ref(), &input);
-        if matches!(direct_lifecycle, SessionPromptLifecycle::Plain) && frame_surface_ready(&frame)
-        {
-            return build_envelope_from_frame(
-                &frame,
-                None,
-                &input.command,
-                None,
-                &input.session_id,
-                &input.requested_runtime_commands,
-            );
-        }
-
         classify::route_and_compose(self, frame, agent, run, input).await
     }
 

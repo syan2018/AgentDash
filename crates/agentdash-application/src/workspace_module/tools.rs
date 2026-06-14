@@ -346,6 +346,7 @@ pub struct WorkspaceModuleCreateParams {
     pub kind: String,
     /// Kind-specific creation payload.
     #[serde(default)]
+    #[schemars(schema_with = "json_object_payload_schema")]
     pub input: serde_json::Value,
 }
 
@@ -574,6 +575,7 @@ pub struct WorkspaceModuleInvokeParams {
     pub operation_key: String,
     /// Operation input payload; must satisfy the operation's input_schema from describe.
     #[serde(default)]
+    #[schemars(schema_with = "json_object_payload_schema")]
     pub input: serde_json::Value,
 }
 
@@ -881,6 +883,7 @@ pub struct WorkspaceModulePresentParams {
     pub view_key: String,
     /// Optional payload forwarded to the frontend view.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "json_object_payload_schema")]
     pub payload: Option<serde_json::Value>,
 }
 
@@ -1086,6 +1089,13 @@ fn build_present_notification(
     .with_trace(TraceInfo {
         turn_id: Some(turn_id.to_string()),
         entry_index: None,
+    })
+}
+
+fn json_object_payload_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "object",
+        "additionalProperties": true
     })
 }
 
@@ -2307,6 +2317,66 @@ mod tests {
                 .any(|definition| definition.name == "workspace_module_invoke")
         );
         assert_eq!(invoke_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn workspace_module_tool_schemas_are_provider_safe() {
+        let (install_repo, canvas_repo, project_id) = fixtures().await;
+        let gateway_handle = SharedRuntimeGatewayHandle::default();
+        gateway_handle
+            .set(Arc::new(RuntimeGateway::new().with_provider(Arc::new(
+                EchoActionProvider {
+                    action_key: RuntimeActionKey::parse("demo.profile").expect("valid action key"),
+                    invoke_count: Arc::new(AtomicUsize::new(0)),
+                },
+            ))))
+            .await;
+        let provider = WorkspaceModuleRuntimeToolProvider::new(
+            install_repo,
+            canvas_repo,
+            SharedSessionToolServicesHandle::default(),
+            gateway_handle,
+        )
+        .with_extension_channel_transport(Arc::new(NoopChannelTransport));
+        let context = workspace_module_execution_context(project_id);
+
+        let tools = provider
+            .build_tools(&context)
+            .await
+            .expect("workspace module tools should build");
+        let definitions = tools
+            .iter()
+            .map(|tool| ToolDefinition::from_tool(tool.as_ref()))
+            .collect::<Vec<_>>();
+
+        for (tool_name, payload_field) in [
+            ("workspace_module_create", "input"),
+            ("workspace_module_invoke", "input"),
+            ("workspace_module_present", "payload"),
+        ] {
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.name == tool_name)
+                .unwrap_or_else(|| panic!("{tool_name} should be declared"));
+            assert!(
+                definition.parameters.get("$defs").is_none(),
+                "{tool_name} schema should not expose recursive $defs"
+            );
+            assert!(
+                definition.parameters.get("definitions").is_none(),
+                "{tool_name} schema should not expose recursive definitions"
+            );
+
+            let payload_schema = &definition.parameters["properties"][payload_field];
+            assert_eq!(
+                payload_schema["type"], "object",
+                "{tool_name} {payload_field} type"
+            );
+            assert_eq!(
+                payload_schema["additionalProperties"], true,
+                "{tool_name} {payload_field} should accept object payload properties"
+            );
+        }
     }
 
     #[tokio::test]

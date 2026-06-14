@@ -2304,6 +2304,110 @@ async fn lazy_hook_runtime_rebuild_loads_snapshot_from_frame_target() {
 }
 
 #[tokio::test]
+async fn hook_runtime_target_cache_hit_does_not_refresh_snapshot() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
+    let hook_provider = Arc::new(SnapshotRecordingHookProvider {
+        frame_snapshot_queries: frame_snapshot_queries.clone(),
+    });
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(PendingConnector),
+        Some(hook_provider),
+    );
+    let session = hub
+        .create_session("lazy-hook-target-cache-hit")
+        .await
+        .expect("create");
+    let frame = attach_test_frame(&hub, &session.id).await;
+    let target = control_target_from_anchor_frame(&hub, &session.id, &frame).await;
+    let request = AgentFrameRuntimeTarget {
+        frame_id: target.frame_id,
+        delivery_runtime_session_id: session.id.clone(),
+    };
+
+    let runtime1 = hub
+        .hook_service()
+        .ensure_hook_runtime_for_target(&request, Some("turn-1"))
+        .await
+        .expect("initial hook runtime should load")
+        .expect("initial hook runtime should exist");
+    let runtime2 = hub
+        .hook_service()
+        .ensure_hook_runtime_for_target(&request, Some("turn-2"))
+        .await
+        .expect("cache hit should not refresh")
+        .expect("cached hook runtime should exist");
+
+    assert_eq!(runtime1.control_target(), target);
+    assert_eq!(runtime2.control_target(), target);
+    assert!(Arc::ptr_eq(&runtime1, &runtime2));
+    let frame_queries = frame_snapshot_queries.lock().await;
+    assert_eq!(frame_queries.len(), 1);
+    assert_eq!(frame_queries[0].target, target);
+}
+
+#[tokio::test]
+async fn hook_runtime_resolve_cache_hit_does_not_refresh_snapshot() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
+    let hook_provider = Arc::new(SnapshotRecordingHookProvider {
+        frame_snapshot_queries: frame_snapshot_queries.clone(),
+    });
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(PendingConnector),
+        Some(hook_provider),
+    );
+    let session = hub
+        .create_session("hook-runtime-resolve-cache-hit")
+        .await
+        .expect("create");
+    let frame = attach_test_frame(&hub, &session.id).await;
+    let target = control_target_from_anchor_frame(&hub, &session.id, &frame).await;
+
+    let runtime1 = hub
+        .hook_service()
+        .resolve_hook_runtime(
+            &session.id,
+            "turn-1",
+            frame.id,
+            Some(&frame),
+            &AgentConfig::new("PI_AGENT"),
+            base.path(),
+            true,
+        )
+        .await
+        .expect("initial hook runtime should load")
+        .expect("initial hook runtime should exist");
+    let runtime2 = hub
+        .hook_service()
+        .resolve_hook_runtime(
+            &session.id,
+            "turn-2",
+            frame.id,
+            Some(&frame),
+            &AgentConfig::new("PI_AGENT"),
+            base.path(),
+            false,
+        )
+        .await
+        .expect("same-target subsequent turn should reuse cache")
+        .expect("cached hook runtime should exist");
+
+    assert_eq!(runtime1.control_target(), target);
+    assert_eq!(runtime2.control_target(), target);
+    assert!(Arc::ptr_eq(&runtime1, &runtime2));
+    let frame_queries = frame_snapshot_queries.lock().await;
+    assert_eq!(frame_queries.len(), 1);
+    assert_eq!(frame_queries[0].target, target);
+    assert_eq!(
+        frame_queries[0].provenance.source,
+        "hook_runtime_launch_target_reload"
+    );
+}
+
+#[tokio::test]
 async fn hook_runtime_target_switch_replaces_stale_cached_runtime() {
     let base = tempfile::tempdir().expect("tempdir");
     let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));

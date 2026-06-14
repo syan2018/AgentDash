@@ -220,6 +220,7 @@ impl SessionLaunchOrchestrator {
             }
         };
         let backend_execution = launch_plan.backend_execution.clone();
+        tracing::debug!(session_id, turn_id, "session launch preparing turn");
         let prepared = match TurnPreparer::new(deps.preparation())
             .prepare(TurnPreparationInput {
                 launch_plan,
@@ -240,6 +241,7 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
+        tracing::debug!(session_id, turn_id, "session launch starting connector");
         let accepted = match ConnectorStarter::new(deps.connector_start())
             .start(prepared)
             .await
@@ -255,9 +257,11 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
+        tracing::debug!(session_id, turn_id, "session launch connector accepted");
         let committed = TurnCommitter::new(deps.commit())
             .commit(accepted, &mut session_meta, now)
             .await?;
+        tracing::debug!(session_id, turn_id, "session launch committed turn");
 
         if committed.accepted.prepared.is_owner_bootstrap {
             Self::mark_agent_bootstrapped(deps, session_id).await;
@@ -266,6 +270,11 @@ impl SessionLaunchOrchestrator {
         let attached = StreamIngestionAttacher::new(deps.ingestion())
             .attach(committed)
             .await;
+        tracing::debug!(
+            session_id,
+            turn_id = %attached.turn_id,
+            "session launch stream ingestion attached"
+        );
 
         Ok(attached.turn_id)
     }

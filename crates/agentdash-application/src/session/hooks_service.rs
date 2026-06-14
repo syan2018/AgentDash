@@ -5,7 +5,7 @@ use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
     AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, HookControlTarget, HookRuntimeAccess,
-    HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime,
+    RuntimeAdapterProvenance, SharedHookRuntime,
 };
 
 use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
@@ -58,16 +58,8 @@ impl SessionHookService {
             .await
             && validate_hook_runtime_target(runtime.as_ref(), target).is_ok()
         {
-            let _ = runtime
-                .refresh_from_provenance(HookRuntimeRefreshQuery {
-                    provenance: RuntimeAdapterProvenance::runtime_session(
-                        target.delivery_runtime_session_id.clone(),
-                        turn_id.map(ToString::to_string),
-                        "hook_runtime_target_refresh",
-                    ),
-                    reason: Some("hook_runtime_target_refresh".to_string()),
-                })
-                .await;
+            // AgentFrame runtime surface is immutable by frame id; a matching cached runtime
+            // already represents the requested target. New frame ids take the rebuild path.
             return Ok(Some(runtime));
         }
 
@@ -173,16 +165,8 @@ impl SessionHookService {
                     )
                     .await;
             }
-            let _ = hs
-                .refresh_from_provenance(HookRuntimeRefreshQuery {
-                    provenance: RuntimeAdapterProvenance::runtime_session(
-                        session_id.to_string(),
-                        Some(turn_id.to_string()),
-                        "subsequent_turn_refresh",
-                    ),
-                    reason: Some("subsequent_turn_refresh".to_string()),
-                })
-                .await;
+            // The cached runtime is already bound to the immutable AgentFrame target.
+            // Rebuilding is reserved for frame-id changes; same-target turns reuse it.
         }
         Ok(existing)
     }

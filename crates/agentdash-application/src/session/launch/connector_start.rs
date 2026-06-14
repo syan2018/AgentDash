@@ -32,6 +32,11 @@ impl ConnectorStarter {
             ));
         };
 
+        tracing::debug!(
+            session_id = %prepared.session_id,
+            turn_id = %prepared.turn_id,
+            "connector starter calling connector.prompt"
+        );
         let stream = match self
             .deps
             .connector
@@ -43,7 +48,14 @@ impl ConnectorStarter {
             )
             .await
         {
-            Ok(stream) => stream,
+            Ok(stream) => {
+                tracing::debug!(
+                    session_id = %prepared.session_id,
+                    turn_id = %prepared.turn_id,
+                    "connector starter accepted connector stream"
+                );
+                stream
+            }
             Err(error) => {
                 self.deps
                     .turn_supervisor

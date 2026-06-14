@@ -173,6 +173,12 @@ pub async fn submit_agent_run_composer_input(
     Path((run_id, agent_id)): Path<(String, String)>,
     Json(req): Json<AgentRunComposerSubmitRequest>,
 ) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    tracing::debug!(
+        run_id = %run_id,
+        agent_id = %agent_id,
+        input_blocks = req.input.len(),
+        "AgentRun composer submit entered"
+    );
     if req.client_command_id.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "client_command_id 不能为空".to_string(),
@@ -196,6 +202,12 @@ pub async fn submit_agent_run_composer_input(
             context.run.id, context.agent.id
         ))
     })?;
+    tracing::debug!(
+        run_id = %context.run.id,
+        agent_id = %context.agent.id,
+        runtime_session_id = %runtime_session_id,
+        "AgentRun composer submit context resolved"
+    );
     agent_run_workspace_command_policy(state.as_ref())
         .ensure_composer_submit_allowed(
             command_policy_context(&context, &runtime_session_id),
@@ -203,6 +215,12 @@ pub async fn submit_agent_run_composer_input(
         )
         .await
         .map_err(command_policy_error)?;
+    tracing::debug!(
+        run_id = %context.run.id,
+        agent_id = %context.agent.id,
+        runtime_session_id = %runtime_session_id,
+        "AgentRun composer submit policy accepted"
+    );
     let executor_config = req
         .executor_config
         .map(serde_json::from_value::<AgentConfig>)
@@ -213,7 +231,7 @@ pub async fn submit_agent_run_composer_input(
         .accept_user_message(AgentRunMailboxUserMessageCommand {
             run_id: context.run.id,
             agent_id: context.agent.id,
-            runtime_session_id,
+            runtime_session_id: runtime_session_id.clone(),
             source: agentdash_domain::agent_run_mailbox::MailboxMessageSource::Composer,
             schedule_on_submit: true,
             input: req.input,
@@ -224,6 +242,13 @@ pub async fn submit_agent_run_composer_input(
         })
         .await
         .map_err(ApiError::from)?;
+    tracing::debug!(
+        run_id = %context.run.id,
+        agent_id = %context.agent.id,
+        runtime_session_id = %runtime_session_id,
+        outcome = ?response.outcome,
+        "AgentRun composer submit mailbox accepted"
+    );
     Ok(Json(agent_run_message_command_response(response)))
 }
 

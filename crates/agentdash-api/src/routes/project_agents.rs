@@ -131,6 +131,13 @@ pub async fn create_project_agent_run(
     Path((project_id, agent_key)): Path<(String, String)>,
     Json(req): Json<CreateProjectAgentRunRequest>,
 ) -> Result<Json<ProjectAgentRunStartResult>, ApiError> {
+    tracing::info!(
+        project_id = %project_id,
+        agent_key = %agent_key,
+        input_blocks = req.input.len(),
+        has_executor_config = req.executor_config.is_some(),
+        "ProjectAgent run start API entered"
+    );
     if req.client_command_id.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "client_command_id 不能为空".to_string(),
@@ -150,8 +157,18 @@ pub async fn create_project_agent_run(
         .map(serde_json::from_value::<AgentConfig>)
         .transpose()
         .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
+    tracing::info!(
+        project_id = %project_id,
+        project_agent_id = %project_agent_id,
+        "ProjectAgent run start request parsed"
+    );
 
     let (service, initial_message) = project_agent_run_start_service_parts(state.as_ref());
+    tracing::info!(
+        project_id = %project_id,
+        project_agent_id = %project_agent_id,
+        "ProjectAgent run start service dispatching"
+    );
     let dispatch = service
         .start_run(
             ProjectAgentRunStartCommand {
@@ -167,6 +184,15 @@ pub async fn create_project_agent_run(
         )
         .await
         .map_err(ApiError::from)?;
+    tracing::info!(
+        project_id = %project_id,
+        project_agent_id = %project_agent_id,
+        run_id = %dispatch.run_id,
+        agent_id = %dispatch.agent_id,
+        runtime_session_id = %dispatch.runtime_session_id,
+        initial_outcome = ?dispatch.initial_message.outcome,
+        "ProjectAgent run start service returned"
+    );
 
     let agent_context = build_project_agent_context(&state.repos, &dispatch.project_agent)
         .await
@@ -176,6 +202,12 @@ pub async fn create_project_agent_run(
     if dispatch.initial_message.outcome == AgentRunMailboxCommandOutcome::Queued
         && dispatch.initial_message.mailbox_message.is_some()
     {
+        tracing::info!(
+            run_id = %dispatch.run_id,
+            agent_id = %dispatch.agent_id,
+            runtime_session_id = %dispatch.runtime_session_id,
+            "ProjectAgent run start spawning initial mailbox schedule"
+        );
         spawn_initial_project_agent_mailbox_schedule(
             state.clone(),
             dispatch.run_id,
@@ -185,6 +217,12 @@ pub async fn create_project_agent_run(
         );
     }
 
+    tracing::info!(
+        run_id = %dispatch.run_id,
+        agent_id = %dispatch.agent_id,
+        runtime_session_id = %dispatch.runtime_session_id,
+        "ProjectAgent run start API building response"
+    );
     Ok(Json(ProjectAgentRunStartResult {
         command_receipt: command_receipt_view(dispatch.command_receipt),
         accepted_refs: AgentRunAcceptedRefs {
@@ -245,6 +283,12 @@ fn spawn_initial_project_agent_mailbox_schedule(
     identity: agentdash_spi::platform::auth::AuthIdentity,
 ) {
     tokio::spawn(async move {
+        tracing::info!(
+            runtime_session_id = %runtime_session_id,
+            run_id = %run_id,
+            agent_id = %agent_id,
+            "ProjectAgent initial mailbox background schedule entered"
+        );
         let service = AgentRunMailboxService::new(
             state.repos.lifecycle_run_repo.as_ref(),
             state.repos.lifecycle_agent_repo.as_ref(),
@@ -273,6 +317,13 @@ fn spawn_initial_project_agent_mailbox_schedule(
                 agent_id = %agent_id,
                 error = %error,
                 "ProjectAgent 初始 mailbox 后台调度失败"
+            );
+        } else {
+            tracing::info!(
+                runtime_session_id = %runtime_session_id,
+                run_id = %run_id,
+                agent_id = %agent_id,
+                "ProjectAgent initial mailbox background schedule completed"
             );
         }
     });

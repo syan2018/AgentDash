@@ -135,6 +135,7 @@ impl PiAgentConnector {
         if let (Some(llm_provider_repo), Some(secret_codec)) =
             (&self.llm_provider_repo, &self.llm_secret_codec)
         {
+            tracing::debug!("Pi Agent loading dynamic provider runtime state");
             let catalog = build_effective_profile_catalog_from_db(
                 llm_provider_repo.as_ref(),
                 self.llm_provider_credential_repo
@@ -144,7 +145,15 @@ impl PiAgentConnector {
                 identity,
             )
             .await;
+            tracing::debug!(
+                profile_count = catalog.providers.len(),
+                "Pi Agent dynamic provider catalog loaded"
+            );
             let available = catalog.available_entries();
+            tracing::debug!(
+                available_count = available.len(),
+                "Pi Agent dynamic provider entries resolved"
+            );
             let default_model = available
                 .first()
                 .map(|provider| provider.entry.default_model.clone());
@@ -172,6 +181,7 @@ impl PiAgentConnector {
         // 直接通过 `PiAgentConnector::new(...)` 构造且未挂载动态 provider repo 的场景，
         // 允许回退到构造时注入的静态 bridge，便于测试和嵌入式用法。
         if self.settings_repo.is_none() && self.llm_provider_repo.is_none() {
+            tracing::debug!("Pi Agent using static provider runtime state");
             let default_model = self
                 .providers
                 .first()
@@ -198,6 +208,7 @@ impl PiAgentConnector {
     }
 
     fn create_agent_with_bridge(&self, bridge: Arc<dyn LlmBridge>) -> Agent {
+        tracing::debug!("Pi Agent creating agent with resolved bridge");
         let config = AgentConfig {
             system_prompt: self.system_prompt.clone(),
             ..AgentConfig::default()
@@ -213,6 +224,12 @@ impl PiAgentConnector {
     ) -> Result<Arc<dyn LlmBridge>, ConnectorError> {
         let provider_id = provider_id.map(str::trim).filter(|item| !item.is_empty());
         let model_id = model_id.map(str::trim).filter(|item| !item.is_empty());
+        tracing::debug!(
+            provider_id = ?provider_id,
+            model_id = ?model_id,
+            provider_count = provider_state.providers.len(),
+            "Pi Agent resolving bridge for execution"
+        );
 
         if let Some(provider_id) = provider_id
             && let Some(provider) = provider_state
@@ -220,9 +237,18 @@ impl PiAgentConnector {
                 .iter()
                 .find(|provider| provider.provider_id == provider_id)
         {
+            tracing::debug!(
+                provider_id,
+                "Pi Agent resolving explicitly selected provider"
+            );
             let resolved_model = provider.resolve_model(model_id).await.map_err(|error| {
                 ConnectorError::InvalidConfig(describe_provider_model_error(provider_id, &error))
             })?;
+            tracing::debug!(
+                provider_id,
+                model_id = %resolved_model.id,
+                "Pi Agent explicit provider model resolved"
+            );
             return Ok(provider.create_bridge(&resolved_model.id));
         }
 
@@ -269,6 +295,11 @@ impl PiAgentConnector {
             let mut matches = Vec::new();
             let mut blocked_providers = Vec::new();
             for provider in &provider_state.providers {
+                tracing::debug!(
+                    provider_id = %provider.provider_id,
+                    model_id,
+                    "Pi Agent probing provider for model"
+                );
                 match provider.resolve_model(Some(model_id)).await {
                     Ok(model) => matches.push((provider, model.id)),
                     Err(ProviderModelResolveError::BlockedModel { .. }) => {
@@ -539,6 +570,12 @@ impl AgentConnector for PiAgentConnector {
             .as_deref()
             .map(discover_skill_slash_commands)
             .unwrap_or_default();
+        tracing::debug!(
+            provider_count = all_providers.len(),
+            model_count = all_models.len(),
+            slash_command_count = slash_commands.len(),
+            "Pi Agent discovery options collected"
+        );
 
         let patch: json_patch::Patch = serde_json::from_value(serde_json::json!([
             { "op": "replace", "path": "/options/model_selector/providers", "value": all_providers },
@@ -549,6 +586,7 @@ impl AgentConnector for PiAgentConnector {
             { "op": "replace", "path": "/options/loading_slash_commands", "value": false },
             { "op": "replace", "path": "/options/slash_commands", "value": slash_commands }
         ])).expect("static patch must be valid");
+        tracing::debug!("Pi Agent discovery options patch built");
 
         Ok(Box::pin(futures::stream::once(async move { patch })))
     }
@@ -564,6 +602,12 @@ impl AgentConnector for PiAgentConnector {
         prompt: &PromptPayload,
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
+        tracing::debug!(
+            session_id,
+            turn_id = %context.session.turn_id,
+            tool_count = context.turn.assembled_tools.len(),
+            "Pi Agent prompt entered"
+        );
         // 统一映射：结构化 UserInput -> ContentPart（图片直达 ContentPart::Image，不再拍平成文本）。
         // `to_fallback_text` 保留仅供标题/trace 摘要，不再作为投递路径。
         let prompt_parts = prompt.to_content_parts();
@@ -583,6 +627,12 @@ impl AgentConnector for PiAgentConnector {
             .as_ref()
             .is_some_and(|runtime| runtime.model_selection != requested_model_selection);
         let is_new_agent = existing_runtime.is_none();
+        tracing::debug!(
+            session_id,
+            is_new_agent,
+            should_recreate_agent,
+            "Pi Agent prompt resolved runtime reuse state"
+        );
         let incoming_identity_prompt = extract_identity_prompt(&context.turn.context_frames);
         let mut cached_identity_prompt = existing_runtime
             .as_ref()
@@ -590,11 +640,20 @@ impl AgentConnector for PiAgentConnector {
         let mut current_tools: Vec<DynAgentTool> = Vec::new();
         let mut agent = if let Some(runtime) = existing_runtime {
             if should_recreate_agent {
+                tracing::debug!(
+                    session_id,
+                    "Pi Agent prompt recreating agent for changed model selection"
+                );
                 let preserved_messages = runtime.agent.messages().await;
                 let preserved_message_refs = runtime.agent.message_refs().await;
                 let provider_state = self
                     .load_provider_runtime_state(context.session.identity.as_ref())
                     .await;
+                tracing::debug!(
+                    session_id,
+                    provider_count = provider_state.providers.len(),
+                    "Pi Agent prompt provider runtime state ready for recreation"
+                );
                 let bridge = self
                     .resolve_bridge_for_execution(
                         &provider_state,
@@ -602,6 +661,7 @@ impl AgentConnector for PiAgentConnector {
                         context.session.executor_config.model_id.as_deref(),
                     )
                     .await?;
+                tracing::debug!(session_id, "Pi Agent prompt bridge resolved for recreation");
                 let agent = self.create_agent_with_bridge(bridge);
                 agent
                     .replace_messages_with_refs(preserved_messages, preserved_message_refs)
@@ -619,9 +679,18 @@ impl AgentConnector for PiAgentConnector {
                 runtime.agent
             }
         } else {
+            tracing::debug!(
+                session_id = %session_id,
+                "Pi Agent prompt loading provider runtime state for new session agent"
+            );
             let provider_state = self
                 .load_provider_runtime_state(context.session.identity.as_ref())
                 .await;
+            tracing::debug!(
+                session_id = %session_id,
+                provider_count = provider_state.providers.len(),
+                "Pi Agent prompt provider runtime state ready"
+            );
             let bridge = self
                 .resolve_bridge_for_execution(
                     &provider_state,
@@ -629,6 +698,10 @@ impl AgentConnector for PiAgentConnector {
                     context.session.executor_config.model_id.as_deref(),
                 )
                 .await?;
+            tracing::debug!(
+                session_id = %session_id,
+                "Pi Agent prompt bridge resolved for new session agent"
+            );
             self.create_agent_with_bridge(bridge)
         };
 
@@ -644,8 +717,18 @@ impl AgentConnector for PiAgentConnector {
                 agent.set_system_prompt(system_prompt.clone());
                 cached_identity_prompt = Some(system_prompt.clone());
             }
+            tracing::debug!(
+                session_id,
+                tool_count = current_tools.len(),
+                "Pi Agent prompt setting tools on agent"
+            );
             agent.set_tools(current_tools.clone());
             if let Some(state) = restored_state.filter(|state| !state.messages.is_empty()) {
+                tracing::debug!(
+                    session_id,
+                    restored_messages = state.messages.len(),
+                    "Pi Agent prompt restoring persisted messages"
+                );
                 agent
                     .replace_messages_with_refs(state.messages, state.message_refs)
                     .await;
@@ -668,9 +751,15 @@ impl AgentConnector for PiAgentConnector {
             agent.set_thinking_level(thinking_level);
         }
 
+        tracing::debug!(
+            session_id,
+            prompt_part_count = prompt_parts.len(),
+            "Pi Agent prompt calling agent loop"
+        );
         let (event_rx, join_handle) = agent
             .prompt(AgentMessage::user_parts(prompt_parts))
             .map_err(|error| ConnectorError::Runtime(format!("Pi Agent 启动失败: {error}")))?;
+        tracing::debug!(session_id, "Pi Agent prompt accepted agent loop");
 
         let session_id_owned = session_id.to_string();
         self.agents.lock().await.insert(

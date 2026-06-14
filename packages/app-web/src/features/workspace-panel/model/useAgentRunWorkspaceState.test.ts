@@ -49,6 +49,7 @@ const workspace: AgentRunWorkspaceView = {
   mailbox: {
     paused: false,
     can_resume: false,
+    hide_system_steer_messages: false,
   },
   mailbox_messages: [],
 };

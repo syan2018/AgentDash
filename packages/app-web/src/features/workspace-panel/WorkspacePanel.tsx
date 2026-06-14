@@ -21,6 +21,9 @@ import { AddressBar } from "./AddressBar";
 import type { WorkspacePanelHandle, WorkspacePanelProps } from "./workspace-panel-types";
 import type { WorkspaceTabLayoutOptions } from "../../stores/workspaceTabStore";
 import {
+  activeCanvasMountIdsFromRuntimeSurface,
+  canvasMountIdFromPresentationUri,
+  isActiveCanvasPresentationUri,
   selectCanvasModuleOpenOptions,
   openUserCanvasModule,
   type CanvasModuleOpenOption,
@@ -29,7 +32,6 @@ import {
   useWorkspaceModuleStore,
 } from "../workspace-module/model/workspaceModuleStore";
 import { idleProjectWorkspaceModulesState } from "../workspace-module/model/types";
-import { presentWorkspaceModule } from "../../services/workspaceModule";
 
 registerBuiltinTabTypes();
 
@@ -49,6 +51,12 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     const [canvasOpenBusyKey, setCanvasOpenBusyKey] = useState<string | null>(null);
     const [canvasOpenError, setCanvasOpenError] = useState<string | null>(null);
 
+    const activeCanvasMountIds = useMemo(
+      () => activeCanvasMountIdsFromRuntimeSurface(runtimeData.runtimeSurface),
+      [runtimeData.runtimeSurface],
+    );
+    const runtimeCanvasSurfaceReady = runtimeData.runtimeStatus === "ready";
+
     const tabLayoutOptions: WorkspaceTabLayoutOptions = useMemo(() => ({
       tabTypes: registrySnapshot.map((type) => ({
         typeId: type.typeId,
@@ -56,13 +64,18 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         allowMultiple: type.allowMultiple,
         pinned: type.pinned,
         defaultUri: type.defaultUri ?? type.buildUri({}),
-        canCreateUri: type.canCreateUri,
+        canCreateUri: type.typeId === "canvas"
+          ? (uri) => (
+              (!runtimeCanvasSurfaceReady && canvasMountIdFromPresentationUri(uri) !== null)
+              || isActiveCanvasPresentationUri(uri, activeCanvasMountIds)
+            )
+          : type.canCreateUri,
       })),
       resolveTitle: (typeId, uri) => {
         const type = registrySnapshot.find((descriptor) => descriptor.typeId === typeId);
         return type?.resolveTitle(uri) ?? uri;
       },
-    }), [registrySnapshot]);
+    }), [activeCanvasMountIds, registrySnapshot, runtimeCanvasSurfaceReady]);
 
     // 首次挂载或 session 切换时初始化 Tab 状态
     useEffect(() => {
@@ -70,6 +83,11 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         useWorkspaceTabStore.getState().initialize(sessionId, null, tabLayoutOptions);
       }
     }, [sessionId, storeSessionId, tabLayoutOptions]);
+
+    useEffect(() => {
+      if (!runtimeCanvasSurfaceReady || storeSessionId !== sessionId) return;
+      useWorkspaceTabStore.getState().pruneInvalidTabs(tabLayoutOptions);
+    }, [runtimeCanvasSurfaceReady, sessionId, storeSessionId, tabLayoutOptions]);
 
     const workspaceModuleState = useMemo(() => {
       if (storedWorkspaceModuleState) return storedWorkspaceModuleState;
@@ -128,8 +146,10 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     }, [tabLayoutOptions]);
 
     const canvasOptions = useMemo(
-      () => selectCanvasModuleOpenOptions(workspaceModuleState.modules),
-      [workspaceModuleState.modules],
+      () => runtimeCanvasSurfaceReady
+        ? selectCanvasModuleOpenOptions(workspaceModuleState.modules, activeCanvasMountIds)
+        : [],
+      [activeCanvasMountIds, runtimeCanvasSurfaceReady, workspaceModuleState.modules],
     );
 
     const handleOpenCanvasModule = useCallback(async (option: CanvasModuleOpenOption) => {
@@ -138,10 +158,8 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       setCanvasOpenError(null);
       try {
         await openUserCanvasModule({
-          projectId,
           runtimeSessionId: sessionId,
           option,
-          presentWorkspaceModule,
           openOrActivate: (typeId, uri, refreshContent) => {
             const tabId = useWorkspaceTabStore
               .getState()
@@ -161,7 +179,6 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       }
     }, [
       onWorkspaceModuleOpened,
-      projectId,
       sessionId,
       tabLayoutOptions,
     ]);

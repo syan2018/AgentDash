@@ -50,7 +50,7 @@ export type WorkspaceModuleOperationDispatch = { "kind": "runtime_action", actio
  */
 export type WorkspaceModulePresentRequest = { module_id: string, view_key: string,
 /**
- * 有 delivery RuntimeSession 时，后端会先把 Canvas 暴露给该 session。
+ * 可选展示上下文；HTTP 用户打开只校验归属，Agent 工具路径负责运行时授权。
  */
 runtime_session_id?: string | null,
 /**

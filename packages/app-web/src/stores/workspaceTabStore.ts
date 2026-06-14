@@ -47,6 +47,16 @@ function findTabType(
   return options?.tabTypes.find((type) => type.typeId === typeId) ?? null;
 }
 
+function canUseTabUri(
+  typeId: string,
+  uri: string,
+  options?: WorkspaceTabLayoutOptions,
+): boolean {
+  const type = findTabType(typeId, options);
+  if (options && !type) return false;
+  return !type?.canCreateUri || type.canCreateUri(uri);
+}
+
 // ─── 默认钉选 Tab 生成 ─────────────────────────────────
 
 function createDefaultPinnedTabs(options?: WorkspaceTabLayoutOptions): TabInstance[] {
@@ -93,6 +103,8 @@ interface WorkspaceTabState {
   reorderTabs: (fromIndex: number, toIndex: number) => void;
   /** 更新 Tab 的 URI（导航到新位置） */
   updateTabUri: (tabId: string, uri: string, title?: string) => void;
+  /** 清理当前 runtime 下不可再打开的动态 Tab */
+  pruneInvalidTabs: (options: WorkspaceTabLayoutOptions) => void;
   /** 导出当前布局用于持久化 */
   exportLayout: () => SessionTabLayout;
   /** 防抖持久化到后端 */
@@ -124,14 +136,16 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
     }
 
     if (saved && saved.tabs.length > 0) {
-      const tabs: TabInstance[] = saved.tabs.map((item) => ({
-        id: generateTabId(),
-        typeId: item.type_id,
-        uri: item.uri,
-        title: item.title,
-        pinned: item.pinned,
-        refreshRevision: 0,
-      }));
+      const tabs: TabInstance[] = saved.tabs
+        .filter((item) => item.pinned || canUseTabUri(item.type_id, item.uri, options))
+        .map((item) => ({
+          id: generateTabId(),
+          typeId: item.type_id,
+          uri: item.uri,
+          title: item.title,
+          pinned: item.pinned,
+          refreshRevision: 0,
+        }));
 
       const pinnedTypes = options?.tabTypes.filter((type) => type.pinned) ?? [];
       for (const type of pinnedTypes) {
@@ -190,7 +204,7 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
     }
 
     const tabUri = uri ?? type?.defaultUri ?? "";
-    if (type?.canCreateUri && !type.canCreateUri(tabUri)) {
+    if (!canUseTabUri(typeId, tabUri, options)) {
       return "";
     }
     const newTab: TabInstance = {
@@ -237,7 +251,10 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
 
   openOrActivate: (typeId, uri, options) => {
     const type = findTabType(typeId, options);
-    if (type?.canCreateUri && !type.canCreateUri(uri)) {
+    if (options && !type) {
+      return "";
+    }
+    if (!canUseTabUri(typeId, uri, options)) {
       return "";
     }
     const existing = get().tabs.find(
@@ -282,6 +299,20 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
         ),
       };
     });
+  },
+
+  pruneInvalidTabs: (options) => {
+    const state = get();
+    const nextTabs = state.tabs.filter(
+      (tab) => tab.pinned || canUseTabUri(tab.typeId, tab.uri, options),
+    );
+    if (nextTabs.length === state.tabs.length) return;
+    const activeStillValid = nextTabs.some((tab) => tab.id === state.activeTabId);
+    set({
+      tabs: nextTabs,
+      activeTabId: activeStillValid ? state.activeTabId : nextTabs[0]?.id ?? null,
+    });
+    get().schedulePersist();
   },
 
   exportLayout: (): SessionTabLayout => {

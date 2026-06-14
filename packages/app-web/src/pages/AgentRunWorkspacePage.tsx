@@ -92,6 +92,13 @@ function commandPrecondition(command: ConversationCommandView): AgentRunCommandP
   };
 }
 
+function textFromUserInputBlock(block: unknown): string | null {
+  if (block === null || typeof block !== "object" || Array.isArray(block)) return null;
+  if (!("type" in block) || block.type !== "text") return null;
+  if (!("text" in block) || typeof block.text !== "string") return null;
+  return block.text;
+}
+
 function commandRequest(command: ConversationCommandView): AgentRunCommandOnlyRequest {
   return {
     command: commandPrecondition(command),
@@ -684,9 +691,9 @@ export function AgentRunWorkspacePage({
         )!),
       );
       void refreshAgentRunWorkspaceState().catch(() => {});
-      const textParts = content.input
-        .filter((block: { type: string; text?: string }) => block.type === "text" && block.text)
-        .map((block: { text: string }) => block.text);
+      const textParts = Array.isArray(content.input)
+        ? content.input.map(textFromUserInputBlock).filter((text): text is string => text !== null)
+        : [];
       if (textParts.length > 0) {
         setRecalledInput(textParts.join("\n"));
       }

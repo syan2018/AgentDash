@@ -60,4 +60,56 @@ describe("workspaceTabStore extension tab layout", () => {
 
     useWorkspaceTabStore.getState().reset();
   });
+
+  it("恢复和清理 layout 时丢弃当前 runtime 不可打开的动态 tab", () => {
+    useWorkspaceTabStore.getState().reset();
+
+    const canvasType: WorkspaceTabLayoutOptions["tabTypes"][number] = {
+      typeId: "canvas",
+      label: "Canvas",
+      allowMultiple: true,
+      pinned: false,
+      defaultUri: "canvas://",
+      canCreateUri: (uri) => uri === "canvas://active",
+    };
+    const runtimeLayoutOptions: WorkspaceTabLayoutOptions = {
+      tabTypes: [canvasType],
+      resolveTitle: (_typeId, uri) => uri,
+    };
+
+    useWorkspaceTabStore.getState().initialize("session-1", {
+      tabs: [
+        {
+          type_id: "canvas",
+          uri: "canvas://active",
+          title: "Active",
+          pinned: false,
+        },
+        {
+          type_id: "canvas",
+          uri: "canvas://inactive",
+          title: "Inactive",
+          pinned: false,
+        },
+      ],
+      active_tab_uri: "canvas://inactive",
+    }, runtimeLayoutOptions);
+
+    expect(useWorkspaceTabStore.getState().tabs.map((tab) => tab.uri)).toEqual([
+      "canvas://active",
+    ]);
+
+    useWorkspaceTabStore.getState().pruneInvalidTabs({
+      ...runtimeLayoutOptions,
+      tabTypes: [{
+        ...canvasType,
+        canCreateUri: () => false,
+      }],
+    });
+
+    expect(useWorkspaceTabStore.getState().tabs).toEqual([]);
+    expect(useWorkspaceTabStore.getState().activeTabId).toBeNull();
+
+    useWorkspaceTabStore.getState().reset();
+  });
 });

@@ -14,18 +14,14 @@ use uuid::Uuid;
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::rpc::ApiError;
-use agentdash_application::canvas::{expose_existing_canvas_for_session, list_project_canvases};
+use agentdash_application::canvas::list_project_canvases;
 use agentdash_application::extension_runtime::extension_runtime_projection_from_installations;
-use agentdash_application::vfs::tools::{
-    SessionToolServices, SharedRuntimeVfs, SharedSessionToolServicesHandle,
-};
 use agentdash_application::workspace_module::{
     build_workspace_module_presentation, build_workspace_modules,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModulePresentRequest, WorkspaceModulePresentation,
 };
-use agentdash_spi::AgentToolError;
 
 #[derive(Debug, Deserialize)]
 pub struct ProjectWorkspaceModulePath {
@@ -78,8 +74,8 @@ pub async fn get_project_workspace_modules(
 
 /// POST `/api/projects/:project_id/workspace-modules/present`
 ///
-/// 用户主动打开 workspace module UI。带 `runtime_session_id` 时，Canvas 会先暴露到该
-/// RuntimeSession 对应的当前 AgentFrame，再返回 canonical presentation。
+/// 用户主动打开 workspace module UI，只返回 canonical presentation。运行时能力变更由
+/// Agent turn 内的 `workspace_module_present` 工具路径负责。
 pub async fn present_workspace_module(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -103,8 +99,6 @@ pub async fn present_workspace_module(
             "module_id 与 view_key 不能为空".to_string(),
         ));
     }
-    let runtime_session_id = request.runtime_session_id.clone();
-
     let modules = load_project_workspace_modules(state.as_ref(), project_id).await?;
     let module = modules
         .iter()
@@ -120,34 +114,14 @@ pub async fn present_workspace_module(
             } => ApiError::BadRequest(error.to_string()),
         })?;
 
-    if let Some(runtime_session_id) = runtime_session_id
+    if let Some(runtime_session_id) = request
+        .runtime_session_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
         ensure_runtime_session_belongs_to_project(state.as_ref(), runtime_session_id, project_id)
             .await?;
-        if presentation.renderer_kind == "canvas" {
-            let handle = session_tool_services_handle(state.as_ref()).await;
-            let active_vfs = state
-                .services
-                .session_capability
-                .get_latest_capability_state(runtime_session_id)
-                .await
-                .and_then(|state| state.vfs.active)
-                .unwrap_or_default();
-            let shared_vfs = SharedRuntimeVfs::new(active_vfs);
-            expose_existing_canvas_for_session(
-                state.repos.canvas_repo.as_ref(),
-                project_id,
-                &module.summary.source,
-                &shared_vfs,
-                &handle,
-                Some(runtime_session_id),
-            )
-            .await
-            .map_err(agent_tool_error_to_api)?;
-        }
     }
 
     Ok(Json(presentation))
@@ -168,21 +142,6 @@ async fn load_project_workspace_modules(
         .await
         .map_err(ApiError::from)?;
     Ok(build_workspace_modules(&projection, &canvases))
-}
-
-async fn session_tool_services_handle(state: &AppState) -> SharedSessionToolServicesHandle {
-    let handle = SharedSessionToolServicesHandle::default();
-    handle
-        .set(SessionToolServices {
-            core: state.services.session_core.clone(),
-            eventing: state.services.session_eventing.clone(),
-            control: state.services.session_control.clone(),
-            launch: state.services.session_launch.clone(),
-            hooks: state.services.session_hooks.clone(),
-            capability: state.services.session_capability.clone(),
-        })
-        .await;
-    handle
 }
 
 async fn ensure_runtime_session_belongs_to_project(
@@ -214,15 +173,4 @@ async fn ensure_runtime_session_belongs_to_project(
         )));
     }
     Ok(())
-}
-
-fn agent_tool_error_to_api(error: AgentToolError) -> ApiError {
-    match error {
-        AgentToolError::InvalidArguments(message) => ApiError::BadRequest(message),
-        AgentToolError::ExecutionFailed(message) if message.contains("不存在") => {
-            ApiError::NotFound(message)
-        }
-        AgentToolError::ExecutionFailed(message) => ApiError::Conflict(message),
-        AgentToolError::Other(error) => ApiError::Internal(error.to_string()),
-    }
 }

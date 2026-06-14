@@ -11,6 +11,7 @@ import type { WorkspaceModuleDescriptor } from "../generated/workspace-module-co
 import type { ConversationCommandView, ConversationKeyboardMapView } from "../generated/workflow-contracts";
 import type { ProjectAgentSummary } from "../types";
 import {
+  activeCanvasMountIdsFromRuntimeSurface,
   openUserCanvasModule,
   selectCanvasModuleOpenOptions,
 } from "../features/workspace-panel/model/canvasModuleOpen";
@@ -43,6 +44,7 @@ function workspaceView(
     mailbox: {
       paused: false,
       can_resume: false,
+      hide_system_steer_messages: false,
     },
     mailbox_messages: [],
     conversation: {
@@ -473,18 +475,33 @@ describe("Canvas workspace module selector and user-open flow", () => {
     }]);
   });
 
-  it("opens Canvas from the backend user-open presentation, not the project candidate URI", async () => {
-    const presentWorkspaceModule = vi.fn().mockResolvedValue({
-      module_id: "canvas:mount-a",
-      view_key: "preview",
-      renderer_kind: "canvas",
-      presentation_uri: "canvas://canonical-from-backend",
-      title: "Canvas A",
+  it("filters Canvas menu options to the current runtime surface", () => {
+    const activeCanvasMountIds = activeCanvasMountIdsFromRuntimeSurface({
+      surface_ref: "session_runtime:session-1",
+      source: { source_type: "session_runtime", session_id: "session-1" },
+      mounts: [{
+        id: "cvs-mount-a",
+        display_name: "Canvas A",
+        provider: "canvas_fs",
+        backend_id: "",
+        capabilities: ["read"],
+        default_write: false,
+        purpose: "canvas",
+        edit_capabilities: { create: true, delete: true, rename: true },
+      }],
     });
+    const options = selectCanvasModuleOpenOptions([
+      canvasModule("canvas:mount-a", "canvas://mount-a"),
+      canvasModule("canvas:mount-b", "canvas://mount-b"),
+    ], activeCanvasMountIds);
+
+    expect(options.map((option) => option.presentation_uri)).toEqual(["canvas://mount-a"]);
+  });
+
+  it("opens an already active Canvas from the canonical project presentation URI", async () => {
     const openOrActivate = vi.fn();
 
     await openUserCanvasModule({
-      projectId: "project-1",
       runtimeSessionId: "session-1",
       option: {
         module_id: "canvas:mount-a",
@@ -492,23 +509,17 @@ describe("Canvas workspace module selector and user-open flow", () => {
         title: "Canvas A",
         presentation_uri: "canvas://candidate",
       },
-      presentWorkspaceModule,
       openOrActivate,
     });
 
-    expect(presentWorkspaceModule).toHaveBeenCalledWith("project-1", {
-      module_id: "canvas:mount-a",
-      view_key: "preview",
-      runtime_session_id: "session-1",
-    });
     expect(openOrActivate).toHaveBeenCalledWith(
       "canvas",
-      "canvas://canonical-from-backend",
+      "canvas://candidate",
       true,
     );
   });
 
-  it("does not open a tab when user-open fails or returns no concrete Canvas presentation", async () => {
+  it("does not open a tab without a runtime session or concrete Canvas presentation", async () => {
     const openOrActivate = vi.fn();
     const option = {
       module_id: "canvas:mount-a",
@@ -518,26 +529,20 @@ describe("Canvas workspace module selector and user-open flow", () => {
     };
 
     await expect(openUserCanvasModule({
-      projectId: "project-1",
-      runtimeSessionId: "session-1",
+      runtimeSessionId: null,
       option,
-      presentWorkspaceModule: vi.fn().mockRejectedValue(new Error("backend failed")),
       openOrActivate,
-    })).rejects.toThrow("backend failed");
+    })).rejects.toThrow("当前 AgentRun 尚未就绪，无法打开 Canvas。");
     expect(openOrActivate).not.toHaveBeenCalled();
 
     await expect(openUserCanvasModule({
-      projectId: "project-1",
       runtimeSessionId: "session-1",
-      option,
-      presentWorkspaceModule: vi.fn().mockResolvedValue({
-        module_id: "canvas:mount-a",
-        view_key: "preview",
-        renderer_kind: "canvas",
+      option: {
+        ...option,
         presentation_uri: "canvas://",
-      }),
+      },
       openOrActivate,
-    })).rejects.toThrow("后端未返回可打开的 Canvas presentation。");
+    })).rejects.toThrow("当前 Canvas 没有可打开的 presentation。");
     expect(openOrActivate).not.toHaveBeenCalled();
   });
 });

@@ -217,3 +217,13 @@ Use narrower commands when a phase only touches one area. Avoid unrelated full-s
 - Runtime tools/delegate changes should not be mixed into Phase 1 unless they are required to keep startup tests green。
 - If Phase 5 cleanup audit finds a surviving old-model path, stop finalization and either fix in Phase 5 or return to design before proceeding。
 - If any phase reveals the design is incomplete, return to planning and update `prd.md`/`design.md` before continuing。
+
+## Final Acceptance Evidence
+
+- Check-agent gate: `trellis-check` reported PASS, no executable old-model path remained, and no code/test blocker was found.
+- Final full-stack run: `pnpm dev --frontend-port 5383` compiled and started the Rust/API/frontend stack with API health `200` and frontend health `200`.
+- Frontend smoke: opened `http://127.0.0.1:5383/dashboard/agent`, started a new Agent session, and sent two consecutive messages in the same conversation.
+- Smoke session URL: `http://127.0.0.1:5383/agent-runs/4190e760-9f18-4433-aafc-0878a8da77da/ac498885-0ada-4716-8f42-6f193dc2aed9`.
+- Round 1 message: `final smoke round one: please reply with OK and one short sentence.`
+- Round 2 message: `final smoke round two: please reply with OK again.`
+- Smoke assertions: both messages appeared in the conversation, browser console had no collected issues, page text had no `Failed to fetch`, backend health returned `{"status":"ok","version":"0.1.0"}`, and dev logs contained no `overflowed its stack`, `stack overflow`, `10054`, `Failed to fetch`, `已退出`, or `ERROR`.

@@ -35,15 +35,6 @@ use agentdash_contracts::context::{
     ContextSlot, ContextSourceKind, ContextSourceRef, SessionComposition,
     SessionRequiredContextBlock, VfsCapabilityDto,
 };
-use agentdash_contracts::core::{
-    AgentPreset, Artifact, ArtifactType, DeletedProjectSubjectGrantResponse,
-    ProjectAccessSummaryResponse, ProjectConfig, ProjectDetailResponse, ProjectResponse,
-    ProjectRole, ProjectSubjectGrantResponse, ProjectSubjectType, ProjectVisibility,
-    RevokeProjectGrantResponse, SchedulingConfig, StoryContext, StoryPriority, StoryResponse,
-    StoryStatus, StoryType, TaskDispatchPreference, TaskResponse, TaskStatus,
-    WorkspaceBindingResponse, WorkspaceBindingStatus, WorkspaceIdentityKind,
-    WorkspaceResolutionPolicy, WorkspaceResponse, WorkspaceStatus,
-};
 use agentdash_contracts::extension_management::{
     ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
     ProjectExtensionManagementItemResponse, ProjectExtensionManagementListResponse,
@@ -98,6 +89,11 @@ use agentdash_contracts::permission::{
     PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PolicyDecisionDto, PolicyOutcomeDto,
     ScopeEscalationIntentDto,
 };
+use agentdash_contracts::project::{
+    AgentPreset, DeletedProjectSubjectGrantResponse, ProjectAccessSummaryResponse, ProjectConfig,
+    ProjectDetailResponse, ProjectResponse, ProjectRole, ProjectSubjectGrantResponse,
+    ProjectSubjectType, ProjectVisibility, RevokeProjectGrantResponse, SchedulingConfig,
+};
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent, ProjectAgentExecutor,
     ProjectAgentRunStartResult, ProjectAgentSummary, UpdateProjectAgentRequest,
@@ -128,6 +124,12 @@ use agentdash_contracts::shared_library::{
     InstalledAssetSourceDto, LibraryAssetDto, LibraryExtensionPackageArtifactDto,
     ListLibraryAssetsQuery, McpServerTemplatePayloadDto, McpTransportTemplateDto,
     ProjectAssetSourceStatusDto, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
+};
+use agentdash_contracts::story::{
+    StoryContext, StoryPriority, StoryResponse, StoryStatus, StoryType,
+};
+use agentdash_contracts::task::{
+    Artifact, ArtifactType, TaskDispatchPreference, TaskResponse, TaskStatus,
 };
 use agentdash_contracts::vfs::{
     ConfigurableProviderInfo, CreateProjectVfsMountRequest, DeleteProjectVfsMountResponse,
@@ -168,6 +170,10 @@ use agentdash_contracts::workflow::{
     WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
     WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
     WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
+};
+use agentdash_contracts::workspace::{
+    WorkspaceBindingResponse, WorkspaceBindingStatus, WorkspaceIdentityKind,
+    WorkspaceResolutionPolicy, WorkspaceResponse, WorkspaceStatus,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
@@ -325,10 +331,56 @@ fn main() {
         },
     );
 
-    // --- core-contracts.ts ---
+    // --- workspace-contracts.ts ---
     emit_domain(
         &generated_dir,
-        "core-contracts.ts",
+        "workspace-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<WorkspaceIdentityKind>(dir);
+            export_all::<WorkspaceBindingStatus>(dir);
+            export_all::<WorkspaceResolutionPolicy>(dir);
+            export_all::<WorkspaceStatus>(dir);
+            export_all::<WorkspaceBindingResponse>(dir);
+            export_all::<WorkspaceResponse>(dir);
+        },
+    );
+
+    // --- story-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "story-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<StoryContext>(dir);
+            export_all::<StoryStatus>(dir);
+            export_all::<StoryPriority>(dir);
+            export_all::<StoryType>(dir);
+            export_all::<StoryResponse>(dir);
+        },
+    );
+
+    // --- task-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "task-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<TaskStatus>(dir);
+            export_all::<ArtifactType>(dir);
+            export_all::<Artifact>(dir);
+            export_all::<TaskDispatchPreference>(dir);
+            export_all::<TaskResponse>(dir);
+        },
+    );
+
+    // --- project-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "project-contracts.ts",
         &mut upstream,
         check,
         |dir| {
@@ -344,22 +396,6 @@ fn main() {
             export_all::<DeletedProjectSubjectGrantResponse>(dir);
             export_all::<RevokeProjectGrantResponse>(dir);
             export_all::<ProjectDetailResponse>(dir);
-            export_all::<WorkspaceIdentityKind>(dir);
-            export_all::<WorkspaceBindingStatus>(dir);
-            export_all::<WorkspaceResolutionPolicy>(dir);
-            export_all::<WorkspaceStatus>(dir);
-            export_all::<WorkspaceBindingResponse>(dir);
-            export_all::<WorkspaceResponse>(dir);
-            export_all::<StoryContext>(dir);
-            export_all::<StoryStatus>(dir);
-            export_all::<StoryPriority>(dir);
-            export_all::<StoryType>(dir);
-            export_all::<StoryResponse>(dir);
-            export_all::<TaskStatus>(dir);
-            export_all::<ArtifactType>(dir);
-            export_all::<Artifact>(dir);
-            export_all::<TaskDispatchPreference>(dir);
-            export_all::<TaskResponse>(dir);
         },
     );
 

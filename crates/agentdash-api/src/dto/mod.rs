@@ -26,11 +26,13 @@ mod vfs;
 mod workflow;
 mod workspace;
 
-pub use agentdash_contracts::core::{
+pub use agentdash_contracts::project::{
     ProjectAccessSummaryResponse, ProjectDetailResponse, ProjectResponse,
-    ProjectSubjectGrantResponse, StoryResponse, TaskResponse, WorkspaceBindingResponse,
-    WorkspaceResponse,
+    ProjectSubjectGrantResponse,
 };
+pub use agentdash_contracts::story::StoryResponse;
+pub use agentdash_contracts::task::TaskResponse;
+pub use agentdash_contracts::workspace::{WorkspaceBindingResponse, WorkspaceResponse};
 pub use auth::*;
 pub use backend::*;
 pub use backend_access::*;

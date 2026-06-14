@@ -11,9 +11,9 @@ use axum::extract::{Path, State};
 use uuid::Uuid;
 
 use agentdash_contracts::common_response::DeletedIdResponse;
-use agentdash_contracts::core::{
-    DeletedProjectSubjectGrantResponse, ProjectSubjectType as ContractProjectSubjectType,
-    RevokeProjectGrantResponse,
+use agentdash_contracts::project::{
+    DeletedProjectSubjectGrantResponse, ProjectRole as ContractProjectRole,
+    ProjectSubjectType as ContractProjectSubjectType, RevokeProjectGrantResponse,
 };
 use agentdash_domain::project::{Project, ProjectRole, ProjectSubjectGrant, ProjectSubjectType};
 use agentdash_integration_api::AuthIdentity;
@@ -556,9 +556,7 @@ fn project_access_response(
     access: agentdash_application::project::ProjectAuthorization,
 ) -> ProjectAccessSummaryResponse {
     ProjectAccessSummaryResponse {
-        role: access
-            .role
-            .map(agentdash_contracts::core::ProjectRole::from),
+        role: access.role.map(ContractProjectRole::from),
         can_view: access.can_view_project(),
         can_edit: access.can_edit_project(),
         can_manage_sharing: access.can_manage_project_sharing(),

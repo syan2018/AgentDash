@@ -1,22 +1,26 @@
 import type { CapabilityDirective } from "./workflow";
 import type {
   TaskDispatchPreference as CoreTaskDispatchPreference,
-  AgentPreset as CoreAgentPreset,
   Artifact as CoreArtifact,
-  ProjectAccessSummaryResponse,
-  ProjectConfig as CoreProjectConfig,
-  ProjectResponse,
-  ProjectSubjectGrantResponse,
-  StoryResponse,
-  TaskResponse,
-  WorkspaceBindingResponse,
-  WorkspaceIdentityKind,
-  WorkspaceResponse,
-} from "../generated/core-contracts";
+} from "../generated/task-contracts";
+import type { StoryResponse } from "../generated/story-contracts";
+import type { TaskResponse } from "../generated/task-contracts";
 import type {
   BackendResponse,
   BackendWithStatusResponse,
 } from "../generated/backend-contracts";
+import type {
+  AgentPreset as GeneratedAgentPreset,
+  ProjectAccessSummaryResponse,
+  ProjectConfig as GeneratedProjectConfig,
+  ProjectResponse,
+  ProjectSubjectGrantResponse,
+} from "../generated/project-contracts";
+import type {
+  WorkspaceBindingResponse,
+  WorkspaceIdentityKind,
+  WorkspaceResponse,
+} from "../generated/workspace-contracts";
 import type { ContextSourceRef as GeneratedContextSourceRef } from "../generated/context-contracts";
 import type {
   ProjectVfsMountContentDto,
@@ -34,17 +38,17 @@ import type {
   RoutineTriggerConfigResponse,
 } from "../generated/routine-contracts";
 
-// ─── Generated Core Contracts ─────────────────────────
+// ─── Generated Domain Contracts ───────────────────────
 
 export type TaskDispatchPreference = CoreTaskDispatchPreference & {
   thinking_level?: ThinkingLevel | null;
 };
-export type AgentPreset = CoreAgentPreset;
+export type AgentPreset = GeneratedAgentPreset;
 export type Artifact = CoreArtifact;
 export type ContextSourceRef = GeneratedContextSourceRef;
 export type Project = ProjectResponse;
 export type ProjectAccessSummary = ProjectAccessSummaryResponse;
-export type ProjectConfig = CoreProjectConfig;
+export type ProjectConfig = GeneratedProjectConfig;
 export type ProjectSubjectGrant = ProjectSubjectGrantResponse;
 export type Story = StoryResponse;
 export type StoryContext = StoryResponse["context"];
@@ -61,15 +65,21 @@ export type {
   ProjectRole,
   ProjectSubjectType,
   ProjectVisibility,
-  StoryPriority,
-  StoryStatus,
-  StoryType,
-  TaskStatus,
+} from "../generated/project-contracts";
+export type {
   WorkspaceBindingStatus,
   WorkspaceIdentityKind,
   WorkspaceResolutionPolicy,
   WorkspaceStatus,
-} from "../generated/core-contracts";
+} from "../generated/workspace-contracts";
+export type {
+  StoryPriority,
+  StoryStatus,
+  StoryType,
+} from "../generated/story-contracts";
+export type {
+  TaskStatus,
+} from "../generated/task-contracts";
 
 // ─── 基础枚举 ─────────────────────────────────────────
 

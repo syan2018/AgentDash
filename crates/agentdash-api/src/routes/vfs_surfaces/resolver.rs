@@ -7,7 +7,7 @@ use agentdash_application::vfs::{
     build_project_vfs_mount_mount,
 };
 use agentdash_application::workflow::{AgentFrameSurfaceExt, build_agent_run_lifecycle_vfs};
-use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
+use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use agentdash_spi::Vfs;
 
 use crate::{
@@ -23,7 +23,6 @@ use crate::{
 };
 
 pub(crate) struct AgentRunFrameVfsResolution {
-    pub(crate) frame: AgentFrame,
     pub(crate) vfs: Vfs,
 }
 
@@ -315,7 +314,7 @@ pub(crate) async fn resolve_agent_run_frame_vfs_for_agent(
         }),
     };
 
-    Ok(Some(AgentRunFrameVfsResolution { frame, vfs }))
+    Ok(Some(AgentRunFrameVfsResolution { vfs }))
 }
 
 pub(crate) async fn build_surface_summary(

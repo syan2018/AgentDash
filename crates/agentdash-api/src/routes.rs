@@ -1,3 +1,4 @@
+mod agent_run_mailbox_contracts;
 pub mod auth_routes;
 pub mod backend_access;
 pub mod backends;

@@ -13,7 +13,7 @@ use axum::{
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
-use crate::routes::lifecycle_agents::{
+use crate::routes::agent_run_mailbox_contracts::{
     mailbox_message_view, mailbox_message_visible, mailbox_state_view,
 };
 use crate::routes::lifecycle_contracts::{

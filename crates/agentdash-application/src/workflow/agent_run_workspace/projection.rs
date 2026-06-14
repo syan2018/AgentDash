@@ -33,6 +33,12 @@ impl AgentRunWorkspaceProjection {
             replacement_command,
         }
     }
+
+    pub fn runtime_command_state(
+        execution_state: &SessionExecutionState,
+    ) -> AgentRunWorkspaceRuntimeCommandStateModel {
+        runtime_command_state(execution_state)
+    }
 }
 
 pub fn is_terminal_agent_status(status: &str) -> bool {

@@ -57,7 +57,8 @@ pub use completion::{session_terminal_state_tag, session_terminal_summary};
 pub use conversation_snapshot::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver,
     ConversationModelConfigInput, ConversationModelConfigResolution,
-    ConversationModelConfigResolver, conversation_snapshot_id, merge_executor_config_fields,
+    ConversationModelConfigResolver, conversation_command_id_for, conversation_snapshot_id,
+    merge_executor_config_fields,
 };
 pub use definition::{
     BuiltinLifecycleTemplate, BuiltinWorkflowBundle, BuiltinWorkflowTemplate,

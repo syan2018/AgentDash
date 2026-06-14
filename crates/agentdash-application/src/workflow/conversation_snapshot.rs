@@ -579,7 +579,7 @@ fn execution_state_snapshot_code(execution_state: &SessionExecutionState) -> &'s
     }
 }
 
-fn command_id_for(kind: ConversationCommandKind) -> String {
+pub fn conversation_command_id_for(kind: ConversationCommandKind) -> &'static str {
     match kind {
         ConversationCommandKind::StartDraft => "start_draft",
         ConversationCommandKind::SubmitMessage => "submit_message",
@@ -588,7 +588,10 @@ fn command_id_for(kind: ConversationCommandKind) -> String {
         ConversationCommandKind::ResumeMailbox => "resume_mailbox",
         ConversationCommandKind::Cancel => "cancel",
     }
-    .to_string()
+}
+
+fn command_id_for(kind: ConversationCommandKind) -> String {
+    conversation_command_id_for(kind).to_string()
 }
 
 fn disabled_code_for_status(status: ConversationExecutionStatus) -> &'static str {

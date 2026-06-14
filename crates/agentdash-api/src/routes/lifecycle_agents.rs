@@ -1,24 +1,20 @@
 use std::sync::Arc;
 
-use agentdash_application::session::SessionExecutionState;
 use agentdash_application::workflow::agent_run_workspace as app_workspace;
 use agentdash_application::workflow::{
     AgentRunMailboxCommandOutcome as AppMailboxCommandOutcome, AgentRunMailboxCommandResult,
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
-    conversation_snapshot_id,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest,
-    AgentRunCommandPreconditionView, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
-    AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
-    AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
-    AgentRunRefDto, AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
-    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
-    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, ConsumptionBarrier, ConversationCommandKind, LifecycleRunRefDto,
-    LifecycleSubjectAssociationDto, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
-    MailboxMessageSource, MailboxMessageStatus, MailboxMessageView, MailboxStateView,
-    RuntimeSessionCommandStateDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
+    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunCommandReceipt,
+    AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest,
+    AgentRunMailboxView, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
+    AgentRunMessageCommandResponse, AgentRunRefDto, AgentRunWorkspaceActionAvailabilityView,
+    AgentRunWorkspaceActionSetView, AgentRunWorkspaceControlPlaneStatus,
+    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
+    AgentRunWorkspaceShell, AgentRunWorkspaceView, LifecycleRunRefDto,
+    LifecycleSubjectAssociationDto, MailboxStateView, RuntimeSessionCommandStateDto,
+    RuntimeSessionRefDto, RuntimeSessionTraceMeta,
 };
 use agentdash_domain::workflow::{
     AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind,
@@ -37,8 +33,11 @@ use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     routes::{
+        agent_run_mailbox_contracts::{
+            mailbox_message_view, mailbox_message_visible, mailbox_state_view,
+        },
         lifecycle_contracts::{agent_run_to_contract, subject_association_to_contract},
-        vfs_surfaces::{dto as vfs_surface_dto, resolver::resolve_agent_run_frame_vfs_for_agent},
+        vfs_surfaces::dto as vfs_surface_dto,
     },
     rpc::{ApiError, ApiErrorWithCode},
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
@@ -196,23 +195,13 @@ pub async fn submit_agent_run_composer_input(
             context.run.id, context.agent.id
         ))
     })?;
-    if app_workspace::is_terminal_agent_status(&context.agent.status) {
-        return Err(ApiError::Conflict(
-            "当前 AgentRun 已结束，不能继续发送消息。".to_string(),
-        ));
-    }
-
-    let execution_state = state
-        .services
-        .session_core
-        .inspect_session_execution_state(&runtime_session_id)
-        .await?;
-    ensure_composer_command_precondition_matches_agent_run(
-        &req.command,
-        &context,
-        &runtime_session_id,
-        &execution_state,
-    )?;
+    agent_run_workspace_command_policy(state.as_ref())
+        .ensure_composer_submit_allowed(
+            command_policy_context(&context, &runtime_session_id),
+            &req.command,
+        )
+        .await
+        .map_err(command_policy_error)?;
     let executor_config = req
         .executor_config
         .map(serde_json::from_value::<AgentConfig>)
@@ -273,15 +262,15 @@ async fn delete_agent_run_mailbox_message(
             context.run.id, context.agent.id
         ))
     })?;
-    ensure_agent_run_command_allowed(
-        state.as_ref(),
-        &context,
-        &runtime_session_id,
-        AgentRunCommandPrecondition::DeleteMailboxMessage {
-            command: body.command.clone(),
-        },
-    )
-    .await?;
+    agent_run_workspace_command_policy(state.as_ref())
+        .ensure_command_allowed(
+            command_policy_context(&context, &runtime_session_id),
+            app_workspace::AgentRunWorkspaceCommandPrecondition::DeleteMailboxMessage {
+                command: body.command.clone(),
+            },
+        )
+        .await
+        .map_err(command_policy_error)?;
     let message_id = parse_uuid(&message_id, "message_id")?;
     let response = agent_run_mailbox_service(state.as_ref())
         .delete_message(AgentRunMailboxControlCommand {
@@ -316,15 +305,15 @@ async fn resume_agent_run_mailbox(
             context.run.id, context.agent.id
         ))
     })?;
-    ensure_agent_run_command_allowed(
-        state.as_ref(),
-        &context,
-        &runtime_session_id,
-        AgentRunCommandPrecondition::ResumeMailbox {
-            command: body.command.clone(),
-        },
-    )
-    .await?;
+    agent_run_workspace_command_policy(state.as_ref())
+        .ensure_command_allowed(
+            command_policy_context(&context, &runtime_session_id),
+            app_workspace::AgentRunWorkspaceCommandPrecondition::ResumeMailbox {
+                command: body.command.clone(),
+            },
+        )
+        .await
+        .map_err(command_policy_error)?;
     let response = agent_run_mailbox_service(state.as_ref())
         .resume_mailbox(
             AgentRunMailboxControlCommand {
@@ -361,15 +350,15 @@ async fn promote_agent_run_mailbox_message(
             context.run.id, context.agent.id
         ))
     })?;
-    ensure_agent_run_command_allowed(
-        state.as_ref(),
-        &context,
-        &runtime_session_id,
-        AgentRunCommandPrecondition::PromoteMailboxMessage {
-            command: body.command.clone(),
-        },
-    )
-    .await?;
+    agent_run_workspace_command_policy(state.as_ref())
+        .ensure_command_allowed(
+            command_policy_context(&context, &runtime_session_id),
+            app_workspace::AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage {
+                command: body.command.clone(),
+            },
+        )
+        .await
+        .map_err(command_policy_error)?;
     let message_id = parse_uuid(&message_id, "message_id")?;
     let response = agent_run_mailbox_service(state.as_ref())
         .promote_message(
@@ -470,15 +459,15 @@ async fn cancel_agent_run(
             context.run.id, context.agent.id
         ))
     })?;
-    ensure_agent_run_command_allowed(
-        state.as_ref(),
-        &context,
-        &runtime_session_id,
-        AgentRunCommandPrecondition::Cancel {
-            command: body.command.clone(),
-        },
-    )
-    .await?;
+    agent_run_workspace_command_policy(state.as_ref())
+        .ensure_command_allowed(
+            command_policy_context(&context, &runtime_session_id),
+            app_workspace::AgentRunWorkspaceCommandPrecondition::Cancel {
+                command: body.command.clone(),
+            },
+        )
+        .await
+        .map_err(command_policy_error)?;
     let request_digest =
         digest_cancel_command_request(context.run.id, context.agent.id, &runtime_session_id)?;
     let claim = state
@@ -810,76 +799,6 @@ fn subject_label_from_metadata(association: &LifecycleSubjectAssociationDto) -> 
         .map(ToOwned::to_owned)
 }
 
-pub(crate) fn mailbox_message_view(
-    message: agentdash_domain::workflow::AgentRunMailboxMessage,
-) -> MailboxMessageView {
-    let can_delete = matches!(
-        message.status,
-        agentdash_domain::workflow::MailboxMessageStatus::Accepted
-            | agentdash_domain::workflow::MailboxMessageStatus::Queued
-            | agentdash_domain::workflow::MailboxMessageStatus::ReadyToConsume
-            | agentdash_domain::workflow::MailboxMessageStatus::Paused
-            | agentdash_domain::workflow::MailboxMessageStatus::Blocked
-    );
-    let can_promote = can_delete
-        && message.delivery == agentdash_domain::workflow::MailboxDelivery::LaunchOrContinueTurn
-        && message.last_error.as_deref()
-            != Some(agentdash_domain::workflow::MAILBOX_DELIVERY_RESULT_UNKNOWN);
-    let can_reorder = can_delete
-        && message.origin == agentdash_domain::workflow::MailboxMessageOrigin::User
-        && message.delivery == agentdash_domain::workflow::MailboxDelivery::LaunchOrContinueTurn;
-    let can_recall = can_delete
-        && message.origin == agentdash_domain::workflow::MailboxMessageOrigin::User
-        && message.payload_json.is_some();
-    MailboxMessageView {
-        id: message.id.to_string(),
-        origin: mailbox_origin_view(message.origin),
-        source: mailbox_source_view(message.source),
-        delivery: mailbox_delivery_view(message.delivery.clone()),
-        barrier: mailbox_barrier_view(message.barrier),
-        drain_mode: mailbox_drain_mode_view(message.drain_mode),
-        status: mailbox_status_view(message.status),
-        preview: message.preview.clone(),
-        has_images: message.has_images,
-        attempt_count: message.attempt_count,
-        accepted_refs: mailbox_message_accepted_refs(&message),
-        last_error: message.last_error.clone(),
-        created_at: message.created_at.to_rfc3339(),
-        updated_at: message.updated_at.to_rfc3339(),
-        can_promote,
-        can_delete,
-        can_reorder,
-        can_recall,
-    }
-}
-
-pub(crate) fn mailbox_message_visible(
-    message: &agentdash_domain::workflow::AgentRunMailboxMessage,
-) -> bool {
-    !matches!(
-        message.status,
-        agentdash_domain::workflow::MailboxMessageStatus::Dispatched
-            | agentdash_domain::workflow::MailboxMessageStatus::Steered
-            | agentdash_domain::workflow::MailboxMessageStatus::Deleted
-    )
-}
-
-pub(crate) fn mailbox_state_view(
-    state: Option<&agentdash_domain::workflow::AgentRunMailboxState>,
-    can_resume: bool,
-    visible_message_count: usize,
-    hide_system_steer_messages: bool,
-) -> MailboxStateView {
-    let paused = state.is_some_and(|state| state.paused) && visible_message_count > 0;
-    MailboxStateView {
-        paused,
-        pause_reason: state.and_then(|state| state.pause_reason.clone()),
-        message: state.and_then(|state| state.pause_message.clone()),
-        can_resume: can_resume && paused,
-        hide_system_steer_messages,
-    }
-}
-
 async fn build_agent_run_mailbox_view(
     state: &AppState,
     context: &AgentRunContext,
@@ -937,6 +856,27 @@ fn agent_run_mailbox_service(state: &AppState) -> AgentRunMailboxService<'_> {
     )
 }
 
+fn agent_run_workspace_command_policy(
+    state: &AppState,
+) -> app_workspace::AgentRunWorkspaceCommandPolicyService<'_> {
+    app_workspace::AgentRunWorkspaceCommandPolicyService::new(
+        &state.repos,
+        state.services.session_core.clone(),
+        state.services.session_control.clone(),
+    )
+}
+
+fn command_policy_context<'a>(
+    context: &'a AgentRunContext,
+    runtime_session_id: &'a str,
+) -> app_workspace::AgentRunWorkspaceCommandPolicyContext<'a> {
+    app_workspace::AgentRunWorkspaceCommandPolicyContext {
+        run: &context.run,
+        agent: &context.agent,
+        runtime_session_id,
+    }
+}
+
 fn agent_run_message_command_response(
     result: AgentRunMailboxCommandResult,
 ) -> AgentRunMessageCommandResponse {
@@ -945,7 +885,11 @@ fn agent_run_message_command_response(
         outcome: mailbox_command_outcome_view(result.outcome),
         mailbox_message: result.mailbox_message.map(mailbox_message_view),
         accepted_refs: result.accepted_refs.map(agent_run_message_accepted_refs),
-        runtime_state: result.runtime_state.map(runtime_command_state_dto),
+        runtime_state: result.runtime_state.map(|state| {
+            runtime_command_state_dto(
+                app_workspace::AgentRunWorkspaceProjection::runtime_command_state(&state),
+            )
+        }),
     }
 }
 
@@ -961,155 +905,6 @@ fn mailbox_command_outcome_view(
         AppMailboxCommandOutcome::Blocked => AgentRunMessageCommandOutcome::Blocked,
         AppMailboxCommandOutcome::Failed => AgentRunMessageCommandOutcome::Failed,
     }
-}
-
-fn mailbox_status_view(
-    status: agentdash_domain::workflow::MailboxMessageStatus,
-) -> MailboxMessageStatus {
-    match status {
-        agentdash_domain::workflow::MailboxMessageStatus::Accepted => {
-            MailboxMessageStatus::Accepted
-        }
-        agentdash_domain::workflow::MailboxMessageStatus::Queued => MailboxMessageStatus::Queued,
-        agentdash_domain::workflow::MailboxMessageStatus::ReadyToConsume => {
-            MailboxMessageStatus::ReadyToConsume
-        }
-        agentdash_domain::workflow::MailboxMessageStatus::Consuming => {
-            MailboxMessageStatus::Consuming
-        }
-        agentdash_domain::workflow::MailboxMessageStatus::Dispatched => {
-            MailboxMessageStatus::Dispatched
-        }
-        agentdash_domain::workflow::MailboxMessageStatus::Steered => MailboxMessageStatus::Steered,
-        agentdash_domain::workflow::MailboxMessageStatus::Paused => MailboxMessageStatus::Paused,
-        agentdash_domain::workflow::MailboxMessageStatus::Blocked => MailboxMessageStatus::Blocked,
-        agentdash_domain::workflow::MailboxMessageStatus::Failed => MailboxMessageStatus::Failed,
-        agentdash_domain::workflow::MailboxMessageStatus::Deleted => MailboxMessageStatus::Deleted,
-    }
-}
-
-fn mailbox_origin_view(
-    origin: agentdash_domain::workflow::MailboxMessageOrigin,
-) -> MailboxMessageOrigin {
-    match origin {
-        agentdash_domain::workflow::MailboxMessageOrigin::User => MailboxMessageOrigin::User,
-        agentdash_domain::workflow::MailboxMessageOrigin::System => MailboxMessageOrigin::System,
-        agentdash_domain::workflow::MailboxMessageOrigin::Hook => MailboxMessageOrigin::Hook,
-        agentdash_domain::workflow::MailboxMessageOrigin::Companion => {
-            MailboxMessageOrigin::Companion
-        }
-        agentdash_domain::workflow::MailboxMessageOrigin::Workflow => {
-            MailboxMessageOrigin::Workflow
-        }
-    }
-}
-
-fn mailbox_source_view(
-    source: agentdash_domain::workflow::MailboxMessageSource,
-) -> MailboxMessageSource {
-    match source {
-        agentdash_domain::workflow::MailboxMessageSource::Composer => {
-            MailboxMessageSource::Composer
-        }
-        agentdash_domain::workflow::MailboxMessageSource::DraftStart => {
-            MailboxMessageSource::DraftStart
-        }
-        agentdash_domain::workflow::MailboxMessageSource::HookAfterTurn => {
-            MailboxMessageSource::HookAfterTurn
-        }
-        agentdash_domain::workflow::MailboxMessageSource::HookBeforeStop => {
-            MailboxMessageSource::HookBeforeStop
-        }
-        agentdash_domain::workflow::MailboxMessageSource::HookAutoResume => {
-            MailboxMessageSource::HookAutoResume
-        }
-        agentdash_domain::workflow::MailboxMessageSource::CompanionParentResume => {
-            MailboxMessageSource::CompanionParentResume
-        }
-        agentdash_domain::workflow::MailboxMessageSource::WorkflowOrchestrator => {
-            MailboxMessageSource::WorkflowOrchestrator
-        }
-        agentdash_domain::workflow::MailboxMessageSource::RoutineExecutor => {
-            MailboxMessageSource::RoutineExecutor
-        }
-        agentdash_domain::workflow::MailboxMessageSource::LocalRelayPrompt => {
-            MailboxMessageSource::LocalRelayPrompt
-        }
-    }
-}
-
-fn mailbox_delivery_view(delivery: agentdash_domain::workflow::MailboxDelivery) -> MailboxDelivery {
-    match delivery {
-        agentdash_domain::workflow::MailboxDelivery::LaunchOrContinueTurn => {
-            MailboxDelivery::LaunchOrContinueTurn
-        }
-        agentdash_domain::workflow::MailboxDelivery::SteerActiveTurn { stop_effect } => {
-            MailboxDelivery::SteerActiveTurn {
-                stop_effect: match stop_effect {
-                    agentdash_domain::workflow::SteeringStopEffect::None => {
-                        agentdash_contracts::workflow::SteeringStopEffect::None
-                    }
-                    agentdash_domain::workflow::SteeringStopEffect::ContinueOnStop => {
-                        agentdash_contracts::workflow::SteeringStopEffect::ContinueOnStop
-                    }
-                },
-            }
-        }
-        agentdash_domain::workflow::MailboxDelivery::ResumeLaunchSource { launch_source } => {
-            MailboxDelivery::ResumeLaunchSource { launch_source }
-        }
-    }
-}
-
-fn mailbox_barrier_view(
-    barrier: agentdash_domain::workflow::ConsumptionBarrier,
-) -> ConsumptionBarrier {
-    match barrier {
-        agentdash_domain::workflow::ConsumptionBarrier::ImmediateIfIdle => {
-            ConsumptionBarrier::ImmediateIfIdle
-        }
-        agentdash_domain::workflow::ConsumptionBarrier::AgentLoopTurnBoundary => {
-            ConsumptionBarrier::AgentLoopTurnBoundary
-        }
-        agentdash_domain::workflow::ConsumptionBarrier::AgentRunTurnBoundary => {
-            ConsumptionBarrier::AgentRunTurnBoundary
-        }
-        agentdash_domain::workflow::ConsumptionBarrier::ManualResume => {
-            ConsumptionBarrier::ManualResume
-        }
-    }
-}
-
-fn mailbox_drain_mode_view(
-    drain_mode: agentdash_domain::workflow::MailboxDrainMode,
-) -> MailboxDrainMode {
-    match drain_mode {
-        agentdash_domain::workflow::MailboxDrainMode::One => MailboxDrainMode::One,
-        agentdash_domain::workflow::MailboxDrainMode::All => MailboxDrainMode::All,
-    }
-}
-
-fn mailbox_message_accepted_refs(
-    message: &agentdash_domain::workflow::AgentRunMailboxMessage,
-) -> Option<AgentRunMessageAcceptedRefs> {
-    if message.accepted_agent_run_turn_id.is_none() && message.accepted_protocol_turn_id.is_none() {
-        return None;
-    }
-    Some(AgentRunMessageAcceptedRefs {
-        run_ref: LifecycleRunRefDto {
-            run_id: message.run_id.to_string(),
-        },
-        agent_ref: AgentRunRefDto {
-            run_id: message.run_id.to_string(),
-            agent_id: message.agent_id.to_string(),
-        },
-        frame_ref: None,
-        runtime_session_ref: Some(RuntimeSessionRefDto {
-            runtime_session_id: message.runtime_session_id.clone(),
-        }),
-        agent_run_turn_id: message.accepted_agent_run_turn_id.clone(),
-        protocol_turn_id: message.accepted_protocol_turn_id.clone(),
-    })
 }
 
 fn agent_run_message_accepted_refs(
@@ -1207,51 +1002,12 @@ fn digest_cancel_command_request(
 }
 
 fn runtime_command_state_dto(
-    execution_state: agentdash_application::session::SessionExecutionState,
+    state: app_workspace::AgentRunWorkspaceRuntimeCommandStateModel,
 ) -> RuntimeSessionCommandStateDto {
-    match execution_state {
-        agentdash_application::session::SessionExecutionState::Idle => {
-            RuntimeSessionCommandStateDto {
-                status: "idle".to_string(),
-                turn_id: None,
-                message: None,
-            }
-        }
-        agentdash_application::session::SessionExecutionState::Running { turn_id } => {
-            RuntimeSessionCommandStateDto {
-                status: "running".to_string(),
-                turn_id,
-                message: None,
-            }
-        }
-        agentdash_application::session::SessionExecutionState::Cancelling { turn_id } => {
-            RuntimeSessionCommandStateDto {
-                status: "cancelling".to_string(),
-                turn_id,
-                message: Some("当前执行正在取消中。".to_string()),
-            }
-        }
-        agentdash_application::session::SessionExecutionState::Completed { turn_id } => {
-            RuntimeSessionCommandStateDto {
-                status: "completed".to_string(),
-                turn_id: Some(turn_id),
-                message: None,
-            }
-        }
-        agentdash_application::session::SessionExecutionState::Failed { turn_id, message } => {
-            RuntimeSessionCommandStateDto {
-                status: "failed".to_string(),
-                turn_id: Some(turn_id),
-                message,
-            }
-        }
-        agentdash_application::session::SessionExecutionState::Interrupted { turn_id, message } => {
-            RuntimeSessionCommandStateDto {
-                status: "interrupted".to_string(),
-                turn_id,
-                message,
-            }
-        }
+    RuntimeSessionCommandStateDto {
+        status: state.status.as_str().to_string(),
+        turn_id: state.turn_id,
+        message: state.message,
     }
 }
 
@@ -1259,413 +1015,24 @@ fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("无效的 {field}: {raw}")))
 }
 
-enum AgentRunCommandPrecondition {
-    DeleteMailboxMessage {
-        command: AgentRunCommandPreconditionView,
-    },
-    PromoteMailboxMessage {
-        command: AgentRunCommandPreconditionView,
-    },
-    ResumeMailbox {
-        command: AgentRunCommandPreconditionView,
-    },
-    Cancel {
-        command: AgentRunCommandPreconditionView,
-    },
-}
-
-async fn ensure_agent_run_command_allowed(
-    state: &AppState,
-    context: &AgentRunContext,
-    runtime_session_id: &str,
-    command: AgentRunCommandPrecondition,
-) -> Result<(), ApiError> {
-    let execution_state = state
-        .services
-        .session_core
-        .inspect_session_execution_state(runtime_session_id)
-        .await?;
-    let frame_resolution =
-        resolve_agent_run_frame_vfs_for_agent(state, &context.run, &context.agent).await?;
-    let frame_ref = frame_resolution
-        .as_ref()
-        .map(|resolution| (resolution.frame.id, resolution.frame.revision));
-    let terminal_agent = app_workspace::is_terminal_agent_status(&context.agent.status);
-    let state_code = conversation_state_code(&execution_state);
-    let detail = || {
-        serde_json::json!({
-            "run_id": context.run.id.to_string(),
-            "agent_id": context.agent.id.to_string(),
-            "runtime_session_id": runtime_session_id,
-            "state": state_code,
-            "active_turn_id": execution_state_active_turn_id(&execution_state),
-        })
-    };
-    let expected_kind = command.expected_kind();
-    ensure_command_submission_matches_snapshot(
-        command.command_precondition(),
-        expected_kind,
-        context,
-        runtime_session_id,
-        frame_ref,
-        &execution_state,
-        terminal_agent,
-    )?;
-
-    if terminal_agent
-        && !matches!(
-            &command,
-            AgentRunCommandPrecondition::Cancel { .. }
-                | AgentRunCommandPrecondition::DeleteMailboxMessage { .. }
-        )
-    {
-        return Err(command_conflict(
-            "当前 AgentRun 已结束，不能执行该命令。",
-            "command_unavailable",
-            None,
-            detail(),
-        ));
-    }
-
-    match command {
-        AgentRunCommandPrecondition::DeleteMailboxMessage { .. } => Ok(()),
-        AgentRunCommandPrecondition::PromoteMailboxMessage { .. } => {
-            match &execution_state {
-                SessionExecutionState::Running { turn_id: Some(_) } => {}
-                SessionExecutionState::Running { turn_id: None } => {
-                    return Err(command_conflict(
-                        "当前 AgentRun 正在启动中，等待 active turn 建立后才能投递 mailbox 消息。",
-                        "starting_claimed",
-                        None,
-                        detail(),
-                    ));
-                }
-                _ => {
-                    return Err(command_conflict(
-                        "当前 AgentRun 不在可投递 mailbox 消息的运行状态。",
-                        "command_unavailable",
-                        None,
-                        detail(),
-                    ));
-                }
-            }
-            if !state
-                .services
-                .session_control
-                .supports_session_steering(runtime_session_id)
-                .await
-            {
-                return Err(command_conflict(
-                    "当前执行器不支持对该 AgentRun 投递 mailbox steer。",
-                    "connector_steer_unsupported",
-                    None,
-                    detail(),
-                ));
-            }
-            Ok(())
+fn command_policy_error(error: app_workspace::AgentRunWorkspaceCommandPolicyError) -> ApiError {
+    match error {
+        app_workspace::AgentRunWorkspaceCommandPolicyError::Application(error) => {
+            ApiError::from(error)
         }
-        AgentRunCommandPrecondition::ResumeMailbox { .. } => {
-            let messages = state
-                .repos
-                .agent_run_mailbox_repo
-                .list_messages(context.run.id, context.agent.id)
-                .await
-                .map_err(ApiError::from)?;
-            let visible_message_count = messages
-                .iter()
-                .filter(|message| mailbox_message_visible(message))
-                .count();
-            let mailbox_state = state
-                .repos
-                .agent_run_mailbox_repo
-                .get_state(context.run.id, context.agent.id)
-                .await
-                .map_err(ApiError::from)?;
-            if mailbox_state.as_ref().is_some_and(|state| state.paused) && visible_message_count > 0
-            {
-                Ok(())
-            } else {
-                Err(command_conflict(
-                    "当前没有需要用户恢复的 mailbox。",
-                    "command_unavailable",
-                    None,
-                    serde_json::json!({
-                        "run_id": context.run.id.to_string(),
-                        "agent_id": context.agent.id.to_string(),
-                        "runtime_session_id": runtime_session_id,
-                        "state": state_code,
-                        "visible_message_count": visible_message_count,
-                        "paused": mailbox_state.as_ref().is_some_and(|state| state.paused),
-                    }),
-                ))
-            }
+        app_workspace::AgentRunWorkspaceCommandPolicyError::Conflict(conflict) => {
+            ApiError::ConflictWithCode(Box::new(ApiErrorWithCode {
+                message: conflict.message,
+                error_code: conflict.error_code,
+                replacement_command: conflict.replacement_command,
+                detail: conflict.detail,
+            }))
         }
-        AgentRunCommandPrecondition::Cancel { .. } => match &execution_state {
-            SessionExecutionState::Running { .. } | SessionExecutionState::Cancelling { .. } => {
-                Ok(())
-            }
-            _ => Err(command_conflict(
-                "当前 AgentRun 没有正在执行的 turn。",
-                "command_unavailable",
-                None,
-                detail(),
-            )),
-        },
-    }
-}
-
-impl AgentRunCommandPrecondition {
-    fn expected_kind(&self) -> ConversationCommandKind {
-        match self {
-            AgentRunCommandPrecondition::DeleteMailboxMessage { .. } => {
-                ConversationCommandKind::DeleteMailboxMessage
-            }
-            AgentRunCommandPrecondition::PromoteMailboxMessage { .. } => {
-                ConversationCommandKind::PromoteMailboxMessage
-            }
-            AgentRunCommandPrecondition::ResumeMailbox { .. } => {
-                ConversationCommandKind::ResumeMailbox
-            }
-            AgentRunCommandPrecondition::Cancel { .. } => ConversationCommandKind::Cancel,
-        }
-    }
-
-    fn command_precondition(&self) -> &AgentRunCommandPreconditionView {
-        match self {
-            AgentRunCommandPrecondition::DeleteMailboxMessage { command }
-            | AgentRunCommandPrecondition::PromoteMailboxMessage { command }
-            | AgentRunCommandPrecondition::ResumeMailbox { command }
-            | AgentRunCommandPrecondition::Cancel { command } => command,
-        }
-    }
-}
-
-fn ensure_command_submission_matches_snapshot(
-    command: &AgentRunCommandPreconditionView,
-    expected_kind: ConversationCommandKind,
-    context: &AgentRunContext,
-    runtime_session_id: &str,
-    frame_ref: Option<(Uuid, i32)>,
-    execution_state: &SessionExecutionState,
-    terminal_agent: bool,
-) -> Result<(), ApiError> {
-    let current_active_turn_id = execution_state_active_turn_id(execution_state);
-    let current_frame_id = frame_ref.map(|(frame_id, _)| frame_id.to_string());
-    let current_snapshot_id = conversation_snapshot_id(
-        context.run.id,
-        context.agent.id,
-        frame_ref,
-        Some(runtime_session_id),
-        execution_state,
-        terminal_agent,
-    );
-    let stale_detail = |reason: &str| {
-        serde_json::json!({
-            "reason": reason,
-            "run_id": context.run.id.to_string(),
-            "agent_id": context.agent.id.to_string(),
-            "runtime_session_id": runtime_session_id,
-            "state": conversation_state_code(execution_state),
-            "expected_command_kind": expected_kind,
-            "submitted_command_kind": command.command_kind,
-            "expected_command_id": command_id_for_kind(expected_kind),
-            "submitted_command_id": command.command_id,
-            "expected_snapshot_id": current_snapshot_id,
-            "submitted_snapshot_id": command.stale_guard.snapshot_id,
-            "expected_frame_id": current_frame_id,
-            "submitted_frame_id": command.stale_guard.frame_id,
-            "expected_active_turn_id": current_active_turn_id,
-            "submitted_active_turn_id": command.stale_guard.active_turn_id,
-            "snapshot_refresh_required": true,
-        })
-    };
-
-    if command.command_kind != expected_kind {
-        return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
-            stale_detail("command_kind_mismatch"),
-        ));
-    }
-    if command.command_id != command_id_for_kind(expected_kind) {
-        return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
-            stale_detail("command_id_mismatch"),
-        ));
-    }
-    if command.stale_guard.run_id != context.run.id.to_string()
-        || command.stale_guard.agent_id != context.agent.id.to_string()
-    {
-        return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
-            stale_detail("agent_run_identity_mismatch"),
-        ));
-    }
-    if command.stale_guard.runtime_session_id.as_deref() != Some(runtime_session_id) {
-        return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
-            stale_detail("runtime_session_mismatch"),
-        ));
-    }
-    if command.stale_guard.frame_id != current_frame_id {
-        return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
-            stale_detail("frame_mismatch"),
-        ));
-    }
-    if command.stale_guard.active_turn_id != current_active_turn_id {
-        return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
-            stale_detail("active_turn_mismatch"),
-        ));
-    }
-    if command.stale_guard.snapshot_id != current_snapshot_id {
-        return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
-            stale_detail("snapshot_id_mismatch"),
-        ));
-    }
-
-    Ok(())
-}
-
-fn stale_command_conflict(
-    execution_state: &SessionExecutionState,
-    terminal_agent: bool,
-    detail: serde_json::Value,
-) -> ApiError {
-    command_conflict(
-        "AgentRun command snapshot 已过期，请使用最新 workspace state 重试。",
-        "stale_command",
-        replacement_command_for_state(execution_state, terminal_agent),
-        detail,
-    )
-}
-
-fn ensure_composer_command_precondition_matches_agent_run(
-    command: &AgentRunCommandPreconditionView,
-    context: &AgentRunContext,
-    runtime_session_id: &str,
-    execution_state: &SessionExecutionState,
-) -> Result<(), ApiError> {
-    let detail = || {
-        serde_json::json!({
-            "run_id": context.run.id.to_string(),
-            "agent_id": context.agent.id.to_string(),
-            "runtime_session_id": runtime_session_id,
-            "state": conversation_state_code(execution_state),
-            "submitted_command_kind": command.command_kind,
-            "submitted_command_id": command.command_id,
-            "submitted_guard": &command.stale_guard,
-        })
-    };
-
-    if command.stale_guard.run_id != context.run.id.to_string()
-        || command.stale_guard.agent_id != context.agent.id.to_string()
-    {
-        return Err(stale_command_conflict(
-            execution_state,
-            false,
-            serde_json::json!({
-                "reason": "agent_run_identity_mismatch",
-                "run_id": context.run.id.to_string(),
-                "agent_id": context.agent.id.to_string(),
-                "runtime_session_id": runtime_session_id,
-                "state": conversation_state_code(execution_state),
-                "submitted_run_id": &command.stale_guard.run_id,
-                "submitted_agent_id": &command.stale_guard.agent_id,
-                "snapshot_refresh_required": true,
-            }),
-        ));
-    }
-
-    if command.command_kind != ConversationCommandKind::SubmitMessage {
-        return Err(command_conflict(
-            "当前输入提交只能使用 submit_message 命令意图。",
-            "command_unavailable",
-            replacement_command_for_state(execution_state, false),
-            detail(),
-        ));
-    }
-
-    Ok(())
-}
-
-fn replacement_command_for_state(
-    execution_state: &SessionExecutionState,
-    terminal_agent: bool,
-) -> Option<&'static str> {
-    if terminal_agent {
-        return None;
-    }
-    match execution_state {
-        SessionExecutionState::Idle
-        | SessionExecutionState::Completed { .. }
-        | SessionExecutionState::Failed { .. }
-        | SessionExecutionState::Interrupted { .. }
-        | SessionExecutionState::Running { .. }
-        | SessionExecutionState::Cancelling { .. } => Some("submit_message"),
-    }
-}
-
-fn command_id_for_kind(kind: ConversationCommandKind) -> &'static str {
-    match kind {
-        ConversationCommandKind::StartDraft => "start_draft",
-        ConversationCommandKind::SubmitMessage => "submit_message",
-        ConversationCommandKind::PromoteMailboxMessage => "promote_mailbox_message",
-        ConversationCommandKind::DeleteMailboxMessage => "delete_mailbox_message",
-        ConversationCommandKind::ResumeMailbox => "resume_mailbox",
-        ConversationCommandKind::Cancel => "cancel",
-    }
-}
-
-fn command_conflict(
-    message: impl Into<String>,
-    error_code: impl Into<String>,
-    replacement_command: Option<&str>,
-    detail: serde_json::Value,
-) -> ApiError {
-    ApiError::ConflictWithCode(Box::new(ApiErrorWithCode {
-        message: message.into(),
-        error_code: error_code.into(),
-        replacement_command: replacement_command.map(str::to_string),
-        detail: Some(detail),
-    }))
-}
-
-fn conversation_state_code(execution_state: &SessionExecutionState) -> &'static str {
-    match execution_state {
-        SessionExecutionState::Idle => "ready",
-        SessionExecutionState::Running { turn_id: None } => "starting_claimed",
-        SessionExecutionState::Running { turn_id: Some(_) } => "running_active",
-        SessionExecutionState::Cancelling { .. } => "cancelling",
-        SessionExecutionState::Completed { .. } => "completed",
-        SessionExecutionState::Failed { .. } => "failed",
-        SessionExecutionState::Interrupted { .. } => "interrupted",
-    }
-}
-
-fn execution_state_active_turn_id(execution_state: &SessionExecutionState) -> Option<String> {
-    match execution_state {
-        SessionExecutionState::Running {
-            turn_id: Some(turn_id),
-        }
-        | SessionExecutionState::Cancelling {
-            turn_id: Some(turn_id),
-        } => Some(turn_id.clone()),
-        _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use agentdash_contracts::workflow::ConversationCommandStaleGuardView;
     use agentdash_domain::workflow::LifecycleRun;
 
     use super::*;
@@ -1679,92 +1046,6 @@ mod tests {
             last_turn_id: None,
             last_activity_at: "2026-06-12T00:00:00Z".to_string(),
         }
-    }
-
-    fn test_agent_run_context() -> AgentRunContext {
-        let run = LifecycleRun::new_graphless(Uuid::new_v4());
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, "PI_AGENT");
-        AgentRunContext {
-            run,
-            agent,
-            delivery_runtime_session_id: Some("session-1".to_string()),
-        }
-    }
-
-    fn composer_precondition(
-        kind: ConversationCommandKind,
-        context: &AgentRunContext,
-    ) -> AgentRunCommandPreconditionView {
-        AgentRunCommandPreconditionView {
-            command_id: command_id_for_kind(kind).to_string(),
-            command_kind: kind,
-            stale_guard: ConversationCommandStaleGuardView {
-                snapshot_id: "stale-snapshot".to_string(),
-                run_id: context.run.id.to_string(),
-                agent_id: context.agent.id.to_string(),
-                frame_id: Some(Uuid::new_v4().to_string()),
-                runtime_session_id: Some("old-session".to_string()),
-                active_turn_id: Some("old-turn".to_string()),
-            },
-        }
-    }
-
-    #[test]
-    fn composer_submit_accepts_single_submit_message_intent_after_terminal() {
-        let completed = SessionExecutionState::Completed {
-            turn_id: "turn-1".to_string(),
-        };
-        let context = test_agent_run_context();
-        let command = composer_precondition(ConversationCommandKind::SubmitMessage, &context);
-
-        ensure_composer_command_precondition_matches_agent_run(
-            &command,
-            &context,
-            "session-1",
-            &completed,
-        )
-        .expect("composer input should not require stale frame or turn guard");
-    }
-
-    #[test]
-    fn composer_submit_rejects_non_text_control_command_intent() {
-        let running = SessionExecutionState::Running {
-            turn_id: Some("turn-1".to_string()),
-        };
-        let context = test_agent_run_context();
-        let command = composer_precondition(ConversationCommandKind::Cancel, &context);
-
-        let error = ensure_composer_command_precondition_matches_agent_run(
-            &command,
-            &context,
-            "session-1",
-            &running,
-        )
-        .expect_err("cancel is not a composer input command");
-
-        match error {
-            ApiError::ConflictWithCode(payload) => {
-                assert_eq!(payload.error_code, "command_unavailable");
-            }
-            other => panic!("unexpected error: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn composer_submit_accepts_running_submit_message() {
-        let running = SessionExecutionState::Running {
-            turn_id: Some("turn-1".to_string()),
-        };
-        let context = test_agent_run_context();
-        let command = composer_precondition(ConversationCommandKind::SubmitMessage, &context);
-
-        ensure_composer_command_precondition_matches_agent_run(
-            &command,
-            &context,
-            "session-1",
-            &running,
-        )
-        .expect("scheduler owns running submit policy");
     }
 
     #[test]

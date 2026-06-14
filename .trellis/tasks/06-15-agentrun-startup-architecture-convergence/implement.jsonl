@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Defines RuntimeSession, AgentRun, mailbox, frame and launch ownership invariants for the startup model."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Canonical LaunchCommand -> FrameLaunchEnvelope -> LaunchPlan -> PreparedTurn pipeline and accepted boundary requirements."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Durable mailbox envelope, scheduler outcome, consuming lease and recovery contract."}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Runtime tool/capability surface rules and provider-visible schema guidance."}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Runtime action invocation boundaries and session/setup action separation."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Generated DTO and frontend/backend command projection contract for AgentRun workspace and mailbox."}
+{"file": ".trellis/tasks/06-15-agentrun-startup-architecture-convergence/research/startup-failure-evidence.md", "reason": "Incident evidence and commit timeline motivating the architecture convergence."}

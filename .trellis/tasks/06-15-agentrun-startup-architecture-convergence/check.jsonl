@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Check that implementation preserves RuntimeSession versus AgentRun fact-source boundaries."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Check that launch stages and accepted boundaries match the startup pipeline contract."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Check durable mailbox scheduling, recovery and command receipt semantics."}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Check runtime tool exposure and schema handling after tool composer changes."}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Check runtime action boundaries and avoid tool declaration invoking runtime actions."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check generated DTO/front-end consumption consistency after AgentRun command projection changes."}
+{"file": ".trellis/tasks/06-15-agentrun-startup-architecture-convergence/research/startup-failure-evidence.md", "reason": "Check regression coverage against the concrete startup crash evidence."}

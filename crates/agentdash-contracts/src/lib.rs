@@ -10,6 +10,7 @@ pub mod llm_provider;
 pub mod mcp_preset;
 pub mod permission;
 pub mod project_agent;
+pub mod routine;
 pub mod session;
 pub mod settings;
 pub mod shared_library;

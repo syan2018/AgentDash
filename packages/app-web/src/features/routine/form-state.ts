@@ -1,4 +1,5 @@
 import type { Routine, RoutineTriggerType, RoutineDispatchMode } from "../../types";
+import type { CreateRoutineRequest } from "../../generated/routine-contracts";
 
 export interface RoutineFormState {
   name: string;
@@ -25,29 +26,26 @@ export const INITIAL_FORM: RoutineFormState = {
 };
 
 export function routineToForm(r: Routine): RoutineFormState {
+  const triggerConfig = r.trigger_config;
+  const dispatchStrategy = r.dispatch_strategy;
+
   return {
     name: r.name,
     prompt_template: r.prompt_template,
     project_agent_id: r.project_agent_id,
-    trigger_type: r.trigger_config.type,
-    cron_expression: r.trigger_config.cron_expression ?? "0 9 * * *",
-    provider_key: r.trigger_config.provider_key ?? "",
-    provider_config_json: r.trigger_config.provider_config
-      ? JSON.stringify(r.trigger_config.provider_config, null, 2)
+    trigger_type: triggerConfig.type,
+    cron_expression: triggerConfig.type === "scheduled" ? triggerConfig.cron_expression : "0 9 * * *",
+    provider_key: triggerConfig.type === "plugin" ? triggerConfig.provider_key : "",
+    provider_config_json: triggerConfig.type === "plugin"
+      ? JSON.stringify(triggerConfig.provider_config, null, 2)
       : "{}",
-    dispatch_mode: r.dispatch_strategy.mode,
-    entity_key_path: r.dispatch_strategy.entity_key_path ?? "",
+    dispatch_mode: dispatchStrategy.mode,
+    entity_key_path: dispatchStrategy.mode === "per_entity" ? dispatchStrategy.entity_key_path : "",
   };
 }
 
-export function formToPayload(form: RoutineFormState): {
-  name: string;
-  prompt_template: string;
-  project_agent_id: string;
-  trigger_config: Record<string, unknown>;
-  dispatch_strategy: Record<string, unknown>;
-} {
-  let trigger_config: Record<string, unknown>;
+export function formToPayload(form: RoutineFormState): CreateRoutineRequest {
+  let trigger_config: CreateRoutineRequest["trigger_config"];
   switch (form.trigger_type) {
     case "scheduled":
       trigger_config = { type: "scheduled", cron_expression: form.cron_expression };
@@ -64,10 +62,10 @@ export function formToPayload(form: RoutineFormState): {
       break;
   }
 
-  const dispatch_strategy: Record<string, unknown> = { mode: form.dispatch_mode };
-  if (form.dispatch_mode === "per_entity" && form.entity_key_path.trim()) {
-    dispatch_strategy.entity_key_path = form.entity_key_path.trim();
-  }
+  const dispatch_strategy: CreateRoutineRequest["dispatch_strategy"] =
+    form.dispatch_mode === "per_entity"
+      ? { mode: "per_entity", entity_key_path: form.entity_key_path.trim() }
+      : { mode: form.dispatch_mode };
 
   return {
     name: form.name,

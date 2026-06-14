@@ -2,6 +2,7 @@ mod agent_run_mailbox;
 pub mod app_state;
 pub mod auth;
 pub mod bootstrap;
+pub mod context;
 pub mod dto;
 pub mod integrations;
 pub mod mount_providers;
@@ -12,7 +13,6 @@ pub mod rpc;
 pub mod runtime_bridge;
 pub mod session_construction;
 pub mod stream;
-pub mod task_agent_context;
 #[cfg(test)]
 mod vfs_access;
 pub mod vfs_materialization;

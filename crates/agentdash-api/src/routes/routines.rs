@@ -1,6 +1,11 @@
 use std::sync::Arc;
 
 use agentdash_contracts::core::{DeletedFlagResponse, PendingExecutionResponse};
+use agentdash_contracts::routine::{
+    CreateRoutineRequest, EnableRoutineRequest, FireWebhookRequest, ListExecutionsQuery,
+    RegenerateTokenResponse, RoutineCreationResponse, RoutineExecutionResponse, RoutineResponse,
+    RoutineTriggerConfigRequest, UpdateRoutineRequest,
+};
 use agentdash_domain::routine::{DispatchStrategy, Routine, RoutineTriggerConfig};
 use axum::{
     Json,
@@ -12,11 +17,6 @@ use uuid::Uuid;
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
-    dto::{
-        CreateRoutineRequest, EnableRoutineRequest, FireWebhookRequest, ListExecutionsQuery,
-        RegenerateTokenResponse, RoutineCreationResponse, RoutineExecutionResponse,
-        RoutineResponse, UpdateRoutineRequest,
-    },
     rpc::ApiError,
 };
 
@@ -96,13 +96,9 @@ pub async fn create_routine(
         return Err(ApiError::BadRequest("name 不能为空".into()));
     }
 
-    let trigger_config: RoutineTriggerConfig = serde_json::from_value(req.trigger_config)
-        .map_err(|e| ApiError::BadRequest(format!("trigger_config 格式错误: {e}")))?;
-
-    // Webhook 类型：服务端自动生成 endpoint_id 和 auth_token_hash
     let mut webhook_plaintext_token: Option<String> = None;
-    let trigger_config = match trigger_config {
-        RoutineTriggerConfig::Webhook { .. } => {
+    let trigger_config = match req.trigger_config {
+        RoutineTriggerConfigRequest::Webhook {} => {
             let endpoint_id = format!("trig_{}", Uuid::new_v4().simple());
             let token = Uuid::new_v4().to_string();
             let hash = bcrypt::hash(&token, bcrypt::DEFAULT_COST)
@@ -113,12 +109,11 @@ pub async fn create_routine(
                 auth_token_hash: hash,
             }
         }
-        other => other,
+        other => routine_trigger_request_into_domain(other)?,
     };
 
     let dispatch_strategy: DispatchStrategy = match req.dispatch_strategy {
-        Some(v) => serde_json::from_value(v)
-            .map_err(|e| ApiError::BadRequest(format!("dispatch_strategy 格式错误: {e}")))?,
+        Some(strategy) => strategy.into(),
         None => DispatchStrategy::default(),
     };
 
@@ -178,13 +173,12 @@ pub async fn update_routine(
         ensure_project_agent_exists(state.as_ref(), routine.project_id, project_agent_id).await?;
         routine.project_agent_id = project_agent_id;
     }
-    if let Some(tc) = req.trigger_config {
-        routine.trigger_config = serde_json::from_value(tc)
-            .map_err(|e| ApiError::BadRequest(format!("trigger_config 格式错误: {e}")))?;
+    if let Some(trigger_config) = req.trigger_config {
+        routine.trigger_config =
+            routine_trigger_update_into_domain(trigger_config, &routine.trigger_config)?;
     }
-    if let Some(ss) = req.dispatch_strategy {
-        routine.dispatch_strategy = serde_json::from_value(ss)
-            .map_err(|e| ApiError::BadRequest(format!("dispatch_strategy 格式错误: {e}")))?;
+    if let Some(dispatch_strategy) = req.dispatch_strategy {
+        routine.dispatch_strategy = dispatch_strategy.into();
     }
     if let Some(enabled) = req.enabled {
         routine.enabled = enabled;
@@ -335,6 +329,54 @@ pub async fn fire_webhook(
 
 fn parse_uuid(id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(id).map_err(|_| ApiError::BadRequest(format!("Invalid UUID: {id}")))
+}
+
+fn routine_trigger_request_into_domain(
+    trigger_config: RoutineTriggerConfigRequest,
+) -> Result<RoutineTriggerConfig, ApiError> {
+    match trigger_config {
+        RoutineTriggerConfigRequest::Scheduled {
+            cron_expression,
+            timezone,
+        } => Ok(RoutineTriggerConfig::Scheduled {
+            cron_expression,
+            timezone,
+        }),
+        RoutineTriggerConfigRequest::Webhook {} => Err(ApiError::BadRequest(
+            "Webhook trigger_config 只能在创建时由服务端生成".into(),
+        )),
+        RoutineTriggerConfigRequest::Plugin {
+            provider_key,
+            provider_config,
+        } => Ok(RoutineTriggerConfig::Plugin {
+            provider_key,
+            provider_config,
+        }),
+    }
+}
+
+fn routine_trigger_update_into_domain(
+    trigger_config: RoutineTriggerConfigRequest,
+    current: &RoutineTriggerConfig,
+) -> Result<RoutineTriggerConfig, ApiError> {
+    match trigger_config {
+        RoutineTriggerConfigRequest::Webhook {} => {
+            let RoutineTriggerConfig::Webhook {
+                endpoint_id,
+                auth_token_hash,
+            } = current
+            else {
+                return Err(ApiError::BadRequest(
+                    "Webhook trigger_config 只能保留现有 Webhook Routine".into(),
+                ));
+            };
+            Ok(RoutineTriggerConfig::Webhook {
+                endpoint_id: endpoint_id.clone(),
+                auth_token_hash: auth_token_hash.clone(),
+            })
+        }
+        other => routine_trigger_request_into_domain(other),
+    }
 }
 
 async fn load_routine_with_permission(

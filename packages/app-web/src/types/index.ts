@@ -27,6 +27,10 @@ import type {
   ProjectAgentRunStartResult as GeneratedProjectAgentRunStartResult,
   ProjectAgentSummary as GeneratedProjectAgentSummary,
 } from "../generated/project-agent-contracts";
+import type {
+  RoutineDispatchStrategyDto,
+  RoutineTriggerConfigResponse,
+} from "../generated/routine-contracts";
 
 // ─── Generated Core Contracts ─────────────────────────
 
@@ -353,76 +357,17 @@ export interface InventoryRefreshResult {
 
 // ─── Routine ─────────────────────────────────────────────
 
-export type RoutineTriggerType = "scheduled" | "webhook" | "plugin";
-export type RoutineDispatchMode = "fresh" | "reuse" | "per_entity";
-export type RoutineExecutionStatus = "pending" | "running" | "completed" | "failed" | "skipped";
-
-export interface RoutineTriggerConfig {
-  type: RoutineTriggerType;
-  // Scheduled
-  cron_expression?: string;
-  timezone?: string | null;
-  // Webhook
-  endpoint_id?: string;
-  auth_token_hash?: string;
-  // Plugin
-  provider_key?: string;
-  provider_config?: Record<string, unknown>;
-}
-
-export interface RoutineDispatchStrategy {
-  mode: RoutineDispatchMode;
-  entity_key_path?: string;
-}
-
-export interface Routine {
-  id: string;
-  project_id: string;
-  name: string;
-  prompt_template: string;
-  project_agent_id: string;
-  trigger_config: RoutineTriggerConfig;
-  dispatch_strategy: RoutineDispatchStrategy;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-  last_fired_at: string | null;
-}
-
-export interface RoutineCreationResponse extends Routine {
-  webhook_token?: string | null;
-}
-
-export interface RoutineExecution {
-  id: string;
-  routine_id: string;
-  trigger_source: string;
-  trigger_payload: Record<string, unknown> | null;
-  resolved_prompt: string | null;
-  runtime_refs?: AgentRuntimeRefs | null;
-  status: RoutineExecutionStatus;
-  started_at: string;
-  completed_at: string | null;
-  error: string | null;
-  entity_key: string | null;
-}
-
-export interface ActivityBindingRefs {
-  graph_instance_ref: string;
-  assignment_ref?: string | null;
-}
-
-export interface AgentRuntimeRefs {
-  run_ref: string;
-  agent_ref: string;
-  frame_ref: string;
-  activity_binding?: ActivityBindingRefs | null;
-}
-
-export interface RegenerateTokenResponse {
-  endpoint_id: string;
-  webhook_token: string;
-}
+export type {
+  RegenerateTokenResponse,
+  RoutineCreationResponse,
+  RoutineDispatchStrategyDto as RoutineDispatchStrategy,
+  RoutineExecutionResponse as RoutineExecution,
+  RoutineExecutionStatusDto as RoutineExecutionStatus,
+  RoutineResponse as Routine,
+  RoutineTriggerConfigResponse as RoutineTriggerConfig,
+} from "../generated/routine-contracts";
+export type RoutineTriggerType = RoutineTriggerConfigResponse["type"];
+export type RoutineDispatchMode = RoutineDispatchStrategyDto["mode"];
 
 // ─── Re-exports from domain-split files ──────────────────
 

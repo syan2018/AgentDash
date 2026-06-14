@@ -39,7 +39,7 @@ import {
 } from "./SessionChatViewModel";
 import type { SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
-import { MailboxMessageList } from "./composer/MailboxMessageRow";
+import { MailboxMessageList } from "../../agent-run-workspace/ui";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 
 // eslint-disable-next-line react-refresh/only-export-components

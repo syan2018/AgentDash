@@ -93,6 +93,13 @@ use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent, ProjectAgentExecutor,
     ProjectAgentRunStartResult, ProjectAgentSummary, UpdateProjectAgentRequest,
 };
+use agentdash_contracts::routine::{
+    CreateRoutineRequest, EnableRoutineRequest, FireWebhookRequest, ListExecutionsQuery,
+    RegenerateTokenResponse, RoutineAgentRuntimeRefsDto, RoutineCreationResponse,
+    RoutineDispatchStrategyDto, RoutineExecutionResponse, RoutineExecutionStatusDto,
+    RoutineOrchestrationBindingRefsDto, RoutineResponse, RoutineTriggerConfigRequest,
+    RoutineTriggerConfigResponse, UpdateRoutineRequest,
+};
 use agentdash_contracts::session::{
     ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
     RejectToolCallResponse, RollbackSessionProjectionRequest, SessionCommandStateResponse,
@@ -226,6 +233,31 @@ fn main() {
             export_all::<ProjectAgentRunStartResult>(dir);
             export_all::<CreateProjectAgentRequest>(dir);
             export_all::<UpdateProjectAgentRequest>(dir);
+        },
+    );
+
+    // --- routine-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "routine-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<RoutineTriggerConfigRequest>(dir);
+            export_all::<RoutineTriggerConfigResponse>(dir);
+            export_all::<RoutineDispatchStrategyDto>(dir);
+            export_all::<RoutineExecutionStatusDto>(dir);
+            export_all::<RoutineOrchestrationBindingRefsDto>(dir);
+            export_all::<RoutineAgentRuntimeRefsDto>(dir);
+            export_all::<RoutineResponse>(dir);
+            export_all::<RoutineCreationResponse>(dir);
+            export_all::<RoutineExecutionResponse>(dir);
+            export_all::<CreateRoutineRequest>(dir);
+            export_all::<UpdateRoutineRequest>(dir);
+            export_all::<EnableRoutineRequest>(dir);
+            export_all::<RegenerateTokenResponse>(dir);
+            export_all::<FireWebhookRequest>(dir);
+            export_all::<ListExecutionsQuery>(dir);
         },
     );
 

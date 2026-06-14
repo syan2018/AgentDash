@@ -27,6 +27,7 @@
 - Duplicate ProjectAgent start 只 replay 外层 start receipt 中持久化的 accepted refs。
 - Rust contract DTO 与 generated TypeScript 继续作为前后端 wire source；前端不新增手写 AgentRun workspace DTO 别名。
 - 若本次重构触及数据库 schema，必须补 migration 并运行 migration guard；当前规划预期以 application/API 边界迁移为主，不需要新增业务表。
+- 实现阶段按可独立编译、可独立验收的 phase 分别提交，每个提交只包含一个收束点。
 
 ## Acceptance Criteria
 
@@ -39,6 +40,7 @@
 - [ ] `cargo test -p agentdash-application` 中相关 workflow/session 测试通过。
 - [ ] `cargo check -p agentdash-api` 通过。
 - [ ] 若 contract 生成结果变化，`pnpm run contracts:check` 与 `pnpm --dir packages/app-web run typecheck` 通过。
+- [ ] 每个独立可用 phase 都有单独 commit，commit message 使用项目约定的中文格式并在 body 说明该 phase 的具体收束内容。
 
 ## Scope Boundaries
 
@@ -47,12 +49,18 @@
 - 不重新设计 mailbox envelope、scheduler barrier/drain mode、RuntimeSession event store 或 connector turn lifecycle。
 - 前端只做 contract 消费必要调整，不做页面视觉或交互重构。
 
-## Recommended Task Split
+## Execution Shape
 
-- Child A: AgentRun workspace read model 与 command policy 下沉 application。
-- Child B: ProjectAgent start initial-message launch refs 与 receipt 语义收束。
-- Parent task: 保留整体方案、跨子任务验收、最终集成检查。
+- 本任务作为单一实现任务完成，不创建 Trellis 子任务。
+- 主线程负责整体边界、跨模块集成、最终验证与提交。
+- 如需使用 subagent，仅在同一任务内派发互不重叠的实现切片或研究切片，并由主线程统一合并。
+
+## Parallelization Notes
+
+- ProjectAgent start receipt 收束与 AgentRun workspace projection 纯模型可以并行推进，原因是前者主要触及 `project_agent_run_start.rs` / `project_agents.rs`，后者主要新增 application workspace projection 模块和测试。
+- Workspace query service 与 command policy 最终都会改动 `lifecycle_agents.rs` route integration，适合在 projection 模型稳定后由主线程或单一实现 agent 收口。
+- Subagent 派发必须声明互不重叠的 write ownership，并在 prompt 中说明当前任务路径、身份、禁止等待其它 subagent、不得回滚他人变更。
 
 ## Open Question
 
-- 是否按推荐拆分创建两个实现子任务，还是把两个 deliverable 放在当前任务中一次实现？
+- 是否按当前单任务方案进入 implementation 阶段？

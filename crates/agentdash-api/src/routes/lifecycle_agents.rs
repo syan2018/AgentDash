@@ -423,10 +423,17 @@ async fn move_agent_run_mailbox_message(
         .map(|id| parse_uuid(id, "after_message_id"))
         .transpose()?;
     let updated = agent_run_mailbox_service(state.as_ref())
-        .move_message(context.run.id, context.agent.id, message_id, after_message_id)
+        .move_message(
+            context.run.id,
+            context.agent.id,
+            message_id,
+            after_message_id,
+        )
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(serde_json::json!({ "ok": true, "order_key": updated.order_key })))
+    Ok(Json(
+        serde_json::json!({ "ok": true, "order_key": updated.order_key }),
+    ))
 }
 
 async fn get_agent_run_mailbox_message_content(

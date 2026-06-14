@@ -8,7 +8,7 @@ use agentdash_application::session::{
 };
 
 use super::CommandHandler;
-use super::relay_mcp_servers::parse_relay_mcp_servers;
+use super::relay_mcp_servers::relay_mcp_servers_to_runtime;
 
 impl CommandHandler {
     pub(super) async fn handle_prompt(
@@ -52,7 +52,7 @@ impl CommandHandler {
             cfg
         });
 
-        let mcp_servers = match parse_relay_mcp_servers(&payload.mcp_servers) {
+        let mcp_servers = match relay_mcp_servers_to_runtime(&payload.mcp_servers) {
             Ok(servers) => servers,
             Err(error) => {
                 return RelayMessage::ResponsePrompt {

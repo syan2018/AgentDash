@@ -12,6 +12,9 @@ use tokio::sync::mpsc;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_domain::backend::{BackendExecutionLeaseRepository, BackendExecutionTerminalKind};
+use agentdash_relay::{
+    McpEnvVarRelay, McpHttpHeaderRelay, McpServerDeclarationRelay, McpTransportConfigRelay,
+};
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::{
     AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
@@ -153,7 +156,7 @@ impl AgentConnector for RelayAgentConnector {
                 .session
                 .mcp_servers
                 .iter()
-                .map(mcp_declaration_to_relay_prompt_value)
+                .map(mcp_declaration_to_relay_prompt_server)
                 .collect(),
         };
 
@@ -386,39 +389,52 @@ fn workspace_identity_payload_from_mount(
     mount.metadata.get("workspace_identity_payload").cloned()
 }
 
-/// 把内部 `RuntimeMcpServerDeclaration` 投影为 relay prompt 当前消费的扁平 JSON 形态。
-///
-/// relay protocol 仍保留 `Vec<Value>`，这里仅对齐本机 parser 已接受的
-/// `{ name, type, url|command, headers|args|env }` wire shape。
-pub fn mcp_declaration_to_relay_prompt_value(
+/// 把内部 `RuntimeMcpServerDeclaration` 投影为 relay prompt typed wire DTO。
+pub fn mcp_declaration_to_relay_prompt_server(
     server: &RuntimeMcpServerDeclaration,
-) -> serde_json::Value {
-    match &server.transport {
-        McpTransportConfig::Http { url, headers } => serde_json::json!({
-            "name": &server.name,
-            "type": "http",
-            "url": url,
-            "headers": headers,
-        }),
-        McpTransportConfig::Sse { url, headers } => serde_json::json!({
-            "name": &server.name,
-            "type": "sse",
-            "url": url,
-            "headers": headers,
-        }),
+) -> McpServerDeclarationRelay {
+    let transport = match &server.transport {
+        McpTransportConfig::Http { url, headers } => McpTransportConfigRelay::Http {
+            url: url.clone(),
+            headers: headers
+                .iter()
+                .map(|header| McpHttpHeaderRelay {
+                    name: header.name.clone(),
+                    value: header.value.clone(),
+                })
+                .collect(),
+        },
+        McpTransportConfig::Sse { url, headers } => McpTransportConfigRelay::Sse {
+            url: url.clone(),
+            headers: headers
+                .iter()
+                .map(|header| McpHttpHeaderRelay {
+                    name: header.name.clone(),
+                    value: header.value.clone(),
+                })
+                .collect(),
+        },
         McpTransportConfig::Stdio {
             command,
             args,
             env,
             cwd,
-        } => serde_json::json!({
-            "name": &server.name,
-            "type": "stdio",
-            "command": command,
-            "args": args,
-            "env": env,
-            "cwd": cwd,
-        }),
+        } => McpTransportConfigRelay::Stdio {
+            command: command.clone(),
+            args: args.clone(),
+            env: env
+                .iter()
+                .map(|item| McpEnvVarRelay {
+                    name: item.name.clone(),
+                    value: item.value.clone(),
+                })
+                .collect(),
+            cwd: cwd.clone(),
+        },
+    };
+    McpServerDeclarationRelay {
+        name: server.name.clone(),
+        transport,
     }
 }
 
@@ -835,37 +851,24 @@ mod tests {
             .expect("payload should be captured");
         assert_eq!(payload.working_dir.as_deref(), Some("crates/app"));
         assert_eq!(payload.mcp_servers.len(), 1);
-        assert_eq!(
-            payload.mcp_servers[0]
-                .get("name")
-                .and_then(serde_json::Value::as_str),
-            Some("third_party_mcp")
-        );
-        assert_eq!(
-            payload.mcp_servers[0]
-                .get("type")
-                .and_then(serde_json::Value::as_str),
-            Some("stdio")
-        );
-        assert_eq!(
-            payload.mcp_servers[0]
-                .get("command")
-                .and_then(serde_json::Value::as_str),
-            Some("cmd")
-        );
-        assert_eq!(
-            payload.mcp_servers[0].get("args"),
-            Some(&serde_json::json!(["/c", "server"]))
-        );
-        assert_eq!(
-            payload.mcp_servers[0].get("env"),
-            Some(&serde_json::json!([{ "name": "TOKEN", "value": "secret" }]))
-        );
-        assert_eq!(
-            payload.mcp_servers[0].get("cwd"),
-            Some(&serde_json::json!("C:/workspace"))
-        );
-        assert!(payload.mcp_servers[0].get("transport").is_none());
+        let server = &payload.mcp_servers[0];
+        assert_eq!(server.name, "third_party_mcp");
+        match &server.transport {
+            agentdash_relay::McpTransportConfigRelay::Stdio {
+                command,
+                args,
+                env,
+                cwd,
+            } => {
+                assert_eq!(command, "cmd");
+                assert_eq!(args, &vec!["/c".to_string(), "server".to_string()]);
+                assert_eq!(env.len(), 1);
+                assert_eq!(env[0].name, "TOKEN");
+                assert_eq!(env[0].value, "secret");
+                assert_eq!(cwd.as_deref(), Some("C:/workspace"));
+            }
+            other => panic!("unexpected MCP transport: {other:?}"),
+        }
     }
 
     #[tokio::test]

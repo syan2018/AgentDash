@@ -7,7 +7,7 @@
 //! - `mcp_relay`：MCP probe / list_tools / call_tool / close
 //! - `materialization`：VFS 资源物化到本机 cache / working copy
 //! - `terminal`：交互式终端 spawn / input / resize / kill
-//! - `relay_mcp_servers`：relay MCP Server 配置解析
+//! - `relay_mcp_servers`：relay MCP Server typed DTO 转换
 
 mod extension;
 mod materialization;

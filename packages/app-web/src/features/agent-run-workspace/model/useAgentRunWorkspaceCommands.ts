@@ -1,0 +1,478 @@
+import { useCallback, useRef, useState } from "react";
+
+import type { JsonValue } from "../../../generated/common-contracts";
+import type { UserInput } from "../../../generated/backbone-protocol";
+import type {
+  AgentRunCommandOnlyRequest,
+  AgentRunCommandPreconditionView,
+  ConversationCommandView,
+  ConversationMailboxSnapshotView,
+  ConversationModelConfigView,
+} from "../../../generated/workflow-contracts";
+import type { ExecutorConfig } from "../../../services/executor";
+import {
+  cancelAgentRun,
+  deleteAgentRunMailboxMessage,
+  fetchAgentRunMailboxMessageContent,
+  moveAgentRunMailboxMessage,
+  promoteAgentRunMailboxMessage,
+  resumeAgentRunMailbox,
+  submitAgentRunComposerInput,
+} from "../../../services/lifecycle";
+import type {
+  CreateProjectAgentRunRequest,
+  ProjectAgentRunStartResult,
+} from "../../../types";
+import type { SessionChatCommandState } from "../../session";
+import type { ImageAttachment } from "../../session/ui/composer/useImageAttachments";
+import {
+  resolveAgentRunClientCommandId,
+  type InFlightAgentRunCommand,
+} from "./workspaceCommandState";
+
+interface ResolveExecutorConfigInput {
+  command: ConversationCommandView;
+  modelConfig: ConversationModelConfigView;
+  explicitExecutorConfigOverride?: ExecutorConfig;
+}
+
+type ResolveExecutorConfig = (input: ResolveExecutorConfigInput) => ExecutorConfig | undefined;
+type IsCompleteExecutorConfig = (config: ExecutorConfig | undefined) => boolean;
+type CreateProjectAgentRun = (
+  projectId: string,
+  agentKey: string,
+  payload: CreateProjectAgentRunRequest,
+) => Promise<ProjectAgentRunStartResult>;
+
+export interface UseAgentRunWorkspaceCommandsOptions {
+  currentRunId: string | null;
+  currentAgentId: string | null;
+  workspaceStatus: string;
+  chatCommandState: SessionChatCommandState;
+  conversationMailbox: ConversationMailboxSnapshotView | undefined;
+  draftProjectId: string | null;
+  draftProjectAgentKey: string | null;
+  draftReady: boolean;
+  createProjectAgentRun: CreateProjectAgentRun;
+  fetchAndIngestLifecycleRun: (runId: string) => Promise<unknown>;
+  refreshWorkspaceState: () => Promise<unknown>;
+  scheduleHookRuntimeRefresh: (reason: string, immediate?: boolean) => void;
+  resolveExecutorConfig: ResolveExecutorConfig;
+  isCompleteExecutorConfig: IsCompleteExecutorConfig;
+  onDraftStarted: (response: ProjectAgentRunStartResult) => void;
+}
+
+export interface UseAgentRunWorkspaceCommandsResult {
+  handleAgentRunCommand: (
+    command: ConversationCommandView,
+    sessionId: string | null,
+    prompt: string,
+    executorConfig?: ExecutorConfig,
+    imageAttachments?: ImageAttachment[],
+    deliveryIntent?: string,
+  ) => Promise<void>;
+  handleCancelAgentRun: () => Promise<void>;
+  handlePromoteMailboxMessage: (messageId: string) => Promise<void>;
+  handleDeleteMailboxMessage: (messageId: string) => Promise<void>;
+  handleResumeMailbox: () => Promise<void>;
+  handleRecallMailboxMessage: (messageId: string) => Promise<void>;
+  handleMoveMailboxMessage: (messageId: string, afterMessageId: string | null) => Promise<void>;
+  recalledInput: string | null;
+  clearRecalledInput: () => void;
+}
+
+class SilentCommandRefreshError extends Error {
+  readonly silentCommandRefresh = true;
+
+  constructor() {
+    super("AgentRun workspace state refreshed.");
+  }
+}
+
+function newClientCommandId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `cmd-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function commandPrecondition(command: ConversationCommandView): AgentRunCommandPreconditionView {
+  return {
+    command_id: command.command_id,
+    command_kind: command.kind,
+    stale_guard: command.stale_guard,
+  };
+}
+
+function commandRequest(command: ConversationCommandView): AgentRunCommandOnlyRequest {
+  return {
+    command: commandPrecondition(command),
+    client_command_id: newClientCommandId(),
+  };
+}
+
+function apiErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object" || !("errorCode" in error)) return null;
+  return typeof error.errorCode === "string" ? error.errorCode : null;
+}
+
+function isStaleAgentRunCommandError(error: unknown): boolean {
+  return apiErrorCode(error) === "stale_command";
+}
+
+function executorConfigToJsonValue(config: ExecutorConfig | undefined): JsonValue | undefined {
+  if (!config) return undefined;
+  return {
+    executor: config.executor,
+    provider_id: config.provider_id,
+    model_id: config.model_id,
+    agent_id: config.agent_id,
+    thinking_level: config.thinking_level,
+    permission_policy: config.permission_policy,
+  };
+}
+
+function textFromUserInputBlock(block: JsonValue): string | null {
+  if (block === null || typeof block !== "object" || Array.isArray(block)) return null;
+  if (block.type !== "text") return null;
+  return typeof block.text === "string" ? block.text : null;
+}
+
+function mailboxRowCommand(
+  commands: ConversationCommandView[],
+  kind: ConversationCommandView["kind"],
+): ConversationCommandView | undefined {
+  return commands.find((command) => command.kind === kind && command.placement.includes("mailbox_row"));
+}
+
+export function useAgentRunWorkspaceCommands(
+  options: UseAgentRunWorkspaceCommandsOptions,
+): UseAgentRunWorkspaceCommandsResult {
+  const {
+    currentRunId,
+    currentAgentId,
+    workspaceStatus,
+    chatCommandState,
+    conversationMailbox,
+    draftProjectId,
+    draftProjectAgentKey,
+    draftReady,
+    createProjectAgentRun,
+    fetchAndIngestLifecycleRun,
+    refreshWorkspaceState,
+    scheduleHookRuntimeRefresh,
+    resolveExecutorConfig,
+    isCompleteExecutorConfig,
+    onDraftStarted,
+  } = options;
+  const inFlightCommandRef = useRef<InFlightAgentRunCommand | null>(null);
+  const [recalledInput, setRecalledInput] = useState<string | null>(null);
+
+  const refreshWorkspaceProjection = useCallback(() => {
+    void refreshWorkspaceState().catch(() => {});
+  }, [refreshWorkspaceState]);
+
+  const refreshAfterStaleAgentRunCommandError = useCallback((error: unknown): boolean => {
+    if (!isStaleAgentRunCommandError(error)) return false;
+    refreshWorkspaceProjection();
+    return true;
+  }, [refreshWorkspaceProjection]);
+
+  const handleAgentRunCommand = useCallback(async (
+    command: ConversationCommandView,
+    _sessionId: string | null,
+    prompt: string,
+    executorConfig?: ExecutorConfig,
+    imageAttachments?: ImageAttachment[],
+    deliveryIntent?: string,
+  ) => {
+    const trimmed = prompt.trim();
+    const hasImages = (imageAttachments?.length ?? 0) > 0;
+    if (!trimmed && !hasImages) {
+      throw new Error("请输入要发送的消息。");
+    }
+    if (!command.enabled) {
+      throw new Error(command.unavailable_reason ?? "当前 AgentRun 不可执行该命令。");
+    }
+
+    const inputBlocks: UserInput[] = [];
+    if (trimmed) {
+      inputBlocks.push({ type: "text", text: trimmed, text_elements: [] });
+    }
+    if (imageAttachments) {
+      for (const img of imageAttachments) {
+        inputBlocks.push({ type: "image", url: img.dataUrl });
+      }
+    }
+
+    const commandExecutorConfig = resolveExecutorConfig({
+      command,
+      modelConfig: chatCommandState.modelConfig,
+      explicitExecutorConfigOverride: executorConfig,
+    });
+    if (
+      chatCommandState.modelConfig.status === "model_required" &&
+      !isCompleteExecutorConfig(commandExecutorConfig)
+    ) {
+      throw new Error(chatCommandState.modelConfig.message ?? "请选择模型配置后再发送。");
+    }
+    if (command.executor_config_policy === "required" && !commandExecutorConfig?.executor?.trim()) {
+      throw new Error("请选择模型配置后再发送。");
+    }
+
+    const commandKey = JSON.stringify({
+      command_id: command.command_id,
+      kind: command.kind,
+      stale_guard: command.stale_guard,
+      input: inputBlocks,
+      executor_config: commandExecutorConfig ?? null,
+    });
+    const resolvedCommand = resolveAgentRunClientCommandId(
+      inFlightCommandRef.current,
+      commandKey,
+      newClientCommandId,
+    );
+    inFlightCommandRef.current = resolvedCommand.inFlightCommand;
+
+    try {
+      if (command.kind === "start_draft") {
+        if (!draftProjectId || !draftProjectAgentKey || !draftReady) {
+          throw new Error(command.unavailable_reason ?? "当前 Draft 尚未就绪。");
+        }
+        const response = await createProjectAgentRun(draftProjectId, draftProjectAgentKey, {
+          input: inputBlocks,
+          client_command_id: resolvedCommand.clientCommandId,
+          executor_config: executorConfigToJsonValue(commandExecutorConfig),
+        });
+        void fetchAndIngestLifecycleRun(response.run_ref.run_id);
+        onDraftStarted(response);
+        return;
+      }
+
+      if (workspaceStatus !== "ready") {
+        throw new Error("当前 AgentRun 工作台投影正在刷新，无法执行控制动作。");
+      }
+      if (!currentRunId || !currentAgentId) {
+        throw new Error("当前 AgentRun 尚未就绪，无法执行控制动作。");
+      }
+
+      const response = await submitAgentRunComposerInput(currentRunId, currentAgentId, {
+        input: inputBlocks,
+        client_command_id: resolvedCommand.clientCommandId,
+        command: commandPrecondition(command),
+        executor_config: executorConfigToJsonValue(commandExecutorConfig),
+        delivery_intent: deliveryIntent,
+      });
+      if (response.accepted_refs?.run_ref.run_id) {
+        void fetchAndIngestLifecycleRun(response.accepted_refs.run_ref.run_id);
+      }
+      refreshWorkspaceProjection();
+      scheduleHookRuntimeRefresh("agent_run_command_submitted", true);
+    } catch (error) {
+      if (refreshAfterStaleAgentRunCommandError(error)) {
+        throw new SilentCommandRefreshError();
+      }
+      throw error;
+    } finally {
+      inFlightCommandRef.current = null;
+    }
+  }, [
+    chatCommandState.modelConfig,
+    createProjectAgentRun,
+    currentAgentId,
+    currentRunId,
+    draftProjectAgentKey,
+    draftProjectId,
+    draftReady,
+    fetchAndIngestLifecycleRun,
+    isCompleteExecutorConfig,
+    onDraftStarted,
+    refreshAfterStaleAgentRunCommandError,
+    refreshWorkspaceProjection,
+    resolveExecutorConfig,
+    scheduleHookRuntimeRefresh,
+    workspaceStatus,
+  ]);
+
+  const handleCancelAgentRun = useCallback(async () => {
+    if (!currentRunId || !currentAgentId) {
+      throw new Error("当前 AgentRun 尚未就绪。");
+    }
+    if (workspaceStatus !== "ready") {
+      throw new Error("当前 AgentRun 工作台投影正在刷新，无法执行控制动作。");
+    }
+    const cancelCommand = chatCommandState.commands.commands.find((command) => command.kind === "cancel");
+    if (!cancelCommand?.enabled) {
+      throw new Error(cancelCommand?.unavailable_reason ?? "当前 AgentRun 没有可取消的运行。");
+    }
+    try {
+      await cancelAgentRun(currentRunId, currentAgentId, commandRequest(cancelCommand));
+    } catch (error) {
+      if (refreshAfterStaleAgentRunCommandError(error)) return;
+      throw error;
+    }
+    refreshWorkspaceProjection();
+    scheduleHookRuntimeRefresh("agent_run_cancelled", true);
+  }, [
+    chatCommandState.commands.commands,
+    currentAgentId,
+    currentRunId,
+    refreshAfterStaleAgentRunCommandError,
+    refreshWorkspaceProjection,
+    scheduleHookRuntimeRefresh,
+    workspaceStatus,
+  ]);
+
+  const handlePromoteMailboxMessage = useCallback(async (messageId: string) => {
+    if (!currentRunId || !currentAgentId) return;
+    if (workspaceStatus !== "ready") return;
+    const promoteCommand = mailboxRowCommand(chatCommandState.commands.commands, "promote_mailbox_message");
+    if (!promoteCommand?.enabled) return;
+    try {
+      await promoteAgentRunMailboxMessage(
+        currentRunId,
+        currentAgentId,
+        messageId,
+        commandRequest(promoteCommand),
+      );
+    } catch (error) {
+      if (refreshAfterStaleAgentRunCommandError(error)) return;
+      throw error;
+    }
+    refreshWorkspaceProjection();
+    scheduleHookRuntimeRefresh("mailbox_message_promoted", true);
+  }, [
+    chatCommandState.commands.commands,
+    currentAgentId,
+    currentRunId,
+    refreshAfterStaleAgentRunCommandError,
+    refreshWorkspaceProjection,
+    scheduleHookRuntimeRefresh,
+    workspaceStatus,
+  ]);
+
+  const handleDeleteMailboxMessage = useCallback(async (messageId: string) => {
+    if (!currentRunId || !currentAgentId) return;
+    const deleteCommand = mailboxRowCommand(chatCommandState.commands.commands, "delete_mailbox_message");
+    if (!deleteCommand?.enabled) return;
+    try {
+      await deleteAgentRunMailboxMessage(
+        currentRunId,
+        currentAgentId,
+        messageId,
+        commandRequest(deleteCommand),
+      );
+    } catch (error) {
+      if (refreshAfterStaleAgentRunCommandError(error)) return;
+      throw error;
+    }
+    refreshWorkspaceProjection();
+    scheduleHookRuntimeRefresh("mailbox_message_deleted", true);
+  }, [
+    chatCommandState.commands.commands,
+    currentAgentId,
+    currentRunId,
+    refreshAfterStaleAgentRunCommandError,
+    refreshWorkspaceProjection,
+    scheduleHookRuntimeRefresh,
+  ]);
+
+  const handleResumeMailbox = useCallback(async () => {
+    if (!currentRunId || !currentAgentId) return;
+    if (workspaceStatus !== "ready") return;
+    const resumeCommand = conversationMailbox?.resume_command;
+    if (!resumeCommand?.enabled) return;
+    let response: Awaited<ReturnType<typeof resumeAgentRunMailbox>>;
+    try {
+      response = await resumeAgentRunMailbox(
+        currentRunId,
+        currentAgentId,
+        commandRequest(resumeCommand),
+      );
+    } catch (error) {
+      if (refreshAfterStaleAgentRunCommandError(error)) return;
+      throw error;
+    }
+    const acceptedRunId = response.accepted_refs?.run_ref.run_id;
+    if (acceptedRunId) {
+      void fetchAndIngestLifecycleRun(acceptedRunId);
+    }
+    refreshWorkspaceProjection();
+    scheduleHookRuntimeRefresh("mailbox_resumed", true);
+  }, [
+    conversationMailbox?.resume_command,
+    currentAgentId,
+    currentRunId,
+    fetchAndIngestLifecycleRun,
+    refreshAfterStaleAgentRunCommandError,
+    refreshWorkspaceProjection,
+    scheduleHookRuntimeRefresh,
+    workspaceStatus,
+  ]);
+
+  const handleRecallMailboxMessage = useCallback(async (messageId: string) => {
+    if (!currentRunId || !currentAgentId) return;
+    try {
+      const deleteCommand = mailboxRowCommand(chatCommandState.commands.commands, "delete_mailbox_message");
+      if (!deleteCommand?.enabled) {
+        refreshWorkspaceProjection();
+        return;
+      }
+      const content = await fetchAgentRunMailboxMessageContent(
+        currentRunId,
+        currentAgentId,
+        messageId,
+      );
+      await deleteAgentRunMailboxMessage(
+        currentRunId,
+        currentAgentId,
+        messageId,
+        commandRequest(deleteCommand),
+      );
+      refreshWorkspaceProjection();
+      const textParts = Array.isArray(content.input)
+        ? content.input.map(textFromUserInputBlock).filter((text): text is string => text !== null)
+        : [];
+      if (textParts.length > 0) {
+        setRecalledInput(textParts.join("\n"));
+      }
+    } catch (error) {
+      refreshAfterStaleAgentRunCommandError(error);
+      refreshWorkspaceProjection();
+    }
+  }, [
+    chatCommandState.commands.commands,
+    currentAgentId,
+    currentRunId,
+    refreshAfterStaleAgentRunCommandError,
+    refreshWorkspaceProjection,
+  ]);
+
+  const handleMoveMailboxMessage = useCallback(async (messageId: string, afterMessageId: string | null) => {
+    if (!currentRunId || !currentAgentId) return;
+    try {
+      await moveAgentRunMailboxMessage(
+        currentRunId,
+        currentAgentId,
+        messageId,
+        { after_message_id: afterMessageId ?? undefined },
+      );
+      refreshWorkspaceProjection();
+    } catch {
+      refreshWorkspaceProjection();
+    }
+  }, [currentAgentId, currentRunId, refreshWorkspaceProjection]);
+
+  const clearRecalledInput = useCallback(() => {
+    setRecalledInput(null);
+  }, []);
+
+  return {
+    handleAgentRunCommand,
+    handleCancelAgentRun,
+    handlePromoteMailboxMessage,
+    handleDeleteMailboxMessage,
+    handleResumeMailbox,
+    handleRecallMailboxMessage,
+    handleMoveMailboxMessage,
+    recalledInput,
+    clearRecalledInput,
+  };
+}

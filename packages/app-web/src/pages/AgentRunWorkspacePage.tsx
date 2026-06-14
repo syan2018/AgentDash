@@ -15,38 +15,20 @@ import type { BackboneEvent } from "../generated/backbone-protocol";
 import { SessionChatView } from "../features/session";
 import { extractPlatformEventData } from "../features/session/model/platformEvent";
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
-import {
-  resolveAgentRunClientCommandId,
-  type InFlightAgentRunCommand,
-} from "../features/agent-run-workspace/model/workspaceCommandState";
+import { useAgentRunWorkspaceCommands } from "../features/agent-run-workspace/model/useAgentRunWorkspaceCommands";
 import {
   WorkspacePanel,
   type WorkspacePanelHandle,
   type WorkspaceRuntimeData,
 } from "../features/workspace-panel";
 import { useAgentRunWorkspaceState } from "../features/workspace-panel/model/useAgentRunWorkspaceState";
-import {
-  cancelAgentRun,
-  deleteAgentRunMailboxMessage,
-  fetchAgentRunMailboxMessageContent,
-  moveAgentRunMailboxMessage,
-  promoteAgentRunMailboxMessage,
-  resumeAgentRunMailbox,
-  submitAgentRunComposerInput,
-} from "../services/lifecycle";
 import type { ExecutorConfig } from "../services/executor";
-import type { JsonValue } from "../generated/common-contracts";
-import type { UserInput } from "../generated/backbone-protocol";
 import { useLifecycleStore } from "../stores/lifecycleStore";
 import { useProjectStore } from "../stores/projectStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
 import { useWorkspaceModuleStore } from "../features/workspace-module";
 import { workspaceModulePresentedTabTarget } from "./AgentRunWorkspacePage.workspaceModulePresentation";
-import {
-  isStaleAgentRunCommandError,
-  silentCommandRefreshError,
-} from "./AgentRunWorkspacePage.commandErrors";
 import {
   buildDraftSessionCommandState,
   buildRuntimeSessionCommandState,
@@ -55,21 +37,16 @@ import {
   resolveExecutorConfigForConversationCommand,
 } from "./AgentRunWorkspacePage.conversationCommandState";
 import type {
-  AgentRunCommandOnlyRequest,
-  AgentRunCommandPreconditionView,
-  ConversationCommandView,
-} from "../generated/workflow-contracts";
-import type {
   RuntimeTraceAgentContext,
   SessionNavigationState,
   AgentRunWorkspaceView,
   SubjectRunContext,
   ProjectAgentSummary,
+  ProjectAgentRunStartResult,
   Story,
   StoryNavigationState,
 } from "../types";
 import type { SessionChatCommandState } from "../features/session";
-import type { ImageAttachment } from "../features/session/ui/composer/useImageAttachments";
 
 // ─── AgentRunWorkspacePage ────────────────────────────────────────
 
@@ -78,32 +55,6 @@ interface AgentRunWorkspacePageProps {
   agentId?: string;
   draftProjectId?: string;
   draftProjectAgentId?: string;
-}
-
-function newClientCommandId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `cmd-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function commandPrecondition(command: ConversationCommandView): AgentRunCommandPreconditionView {
-  return {
-    command_id: command.command_id,
-    command_kind: command.kind,
-    stale_guard: command.stale_guard,
-  };
-}
-
-function textFromUserInputBlock(block: unknown): string | null {
-  if (block === null || typeof block !== "object" || Array.isArray(block)) return null;
-  if (!("type" in block) || block.type !== "text") return null;
-  if (!("text" in block) || typeof block.text !== "string") return null;
-  return block.text;
-}
-
-function commandRequest(command: ConversationCommandView): AgentRunCommandOnlyRequest {
-  return {
-    command: commandPrecondition(command),
-    client_command_id: newClientCommandId(),
-  };
 }
 
 export function AgentRunWorkspacePage({
@@ -124,7 +75,6 @@ export function AgentRunWorkspacePage({
   const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
   const fetchWorkspaceModules = useWorkspaceModuleStore((state) => state.fetchProject);
   const hookRuntimeRefreshTimerRef = useRef<number | null>(null);
-  const inFlightCommandRef = useRef<InFlightAgentRunCommand | null>(null);
 
   const [loadedOwnerStory, setLoadedOwnerStory] = useState<{
     story_id: string;
@@ -134,7 +84,6 @@ export function AgentRunWorkspacePage({
     scopeKey: string | null;
     config: ExecutorConfig | null;
   }>({ scopeKey: null, config: null });
-  const [recalledInput, setRecalledInput] = useState<string | null>(null);
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
 
@@ -407,320 +356,50 @@ export function AgentRunWorkspacePage({
     ],
   );
   const conversationMailbox = mailboxSnapshotFromConversation(runtimeControl?.conversation?.mailbox);
-  const refreshAfterStaleAgentRunCommandError = useCallback((error: unknown): boolean => {
-    if (!isStaleAgentRunCommandError(error)) return false;
-    void refreshAgentRunWorkspaceState().catch(() => {});
-    return true;
-  }, [refreshAgentRunWorkspaceState]);
-
-  const handleAgentRunCommand = useCallback(async (
-    command: ConversationCommandView,
-    _sessionId: string | null,
-    prompt: string,
-    executorConfig?: ExecutorConfig,
-    imageAttachments?: ImageAttachment[],
-    deliveryIntent?: string,
-  ) => {
-    const trimmed = prompt.trim();
-    const hasImages = (imageAttachments?.length ?? 0) > 0;
-    if (!trimmed && !hasImages) {
-      throw new Error("请输入要发送的消息。");
-    }
-    if (!command.enabled) {
-      throw new Error(command.unavailable_reason ?? "当前 AgentRun 不可执行该命令。");
-    }
-
-    const inputBlocks: UserInput[] = [];
-    if (trimmed) {
-      inputBlocks.push({ type: "text" as const, text: trimmed, text_elements: [] });
-    }
-    if (imageAttachments) {
-      for (const img of imageAttachments) {
-        inputBlocks.push({ type: "image" as const, url: img.dataUrl });
-      }
-    }
-    const commandExecutorConfig = resolveExecutorConfigForConversationCommand({
-      command,
-      modelConfig: chatCommandState.modelConfig,
-      explicitExecutorConfigOverride: executorConfig,
-    });
-    if (
-      chatCommandState.modelConfig.status === "model_required" &&
-      !isCompleteExecutorConfig(commandExecutorConfig)
-    ) {
-      throw new Error(chatCommandState.modelConfig.message ?? "请选择模型配置后再发送。");
-    }
-    if (command.executor_config_policy === "required" && !commandExecutorConfig?.executor?.trim()) {
-      throw new Error("请选择模型配置后再发送。");
-    }
-    if (command.kind === "start_draft") {
-      if (!draftProjectIdValue || !draftProjectAgentKey || !draftProjectAgent) {
-        throw new Error(command.unavailable_reason ?? "当前 Draft 尚未就绪。");
-      }
-      const commandKey = JSON.stringify({
-        command_id: command.command_id,
-        kind: command.kind,
-        stale_guard: command.stale_guard,
-        input: inputBlocks,
-        executor_config: commandExecutorConfig ?? null,
-      });
-      const resolvedCommand = resolveAgentRunClientCommandId(
-        inFlightCommandRef.current,
-        commandKey,
-        newClientCommandId,
-      );
-      const clientCommandId = resolvedCommand.clientCommandId;
-      inFlightCommandRef.current = resolvedCommand.inFlightCommand;
-      const response = await createProjectAgentRun(draftProjectIdValue, draftProjectAgentKey, {
-        input: inputBlocks,
-        client_command_id: clientCommandId,
-        executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
-      });
-      void fetchAndIngestLifecycleRun(response.run_ref.run_id);
-      inFlightCommandRef.current = null;
-      navigate(`/agent-runs/${encodeURIComponent(response.run_ref.run_id)}/${encodeURIComponent(response.agent_ref.agent_id)}`, {
-        replace: true,
-        state: {
-          trace_agent: {
-            display_name: response.agent.display_name,
-            executor_hint: response.agent.executor.executor,
-          },
+  const handleDraftAgentRunStarted = useCallback((response: ProjectAgentRunStartResult) => {
+    navigate(`/agent-runs/${encodeURIComponent(response.run_ref.run_id)}/${encodeURIComponent(response.agent_ref.agent_id)}`, {
+      replace: true,
+      state: {
+        trace_agent: {
+          display_name: response.agent.display_name,
+          executor_hint: response.agent.executor.executor,
         },
-      });
-      return;
-    }
-    if (agentRunWorkspaceState.status !== "ready") {
-      throw new Error("当前 AgentRun 工作台投影正在刷新，无法执行控制动作。");
-    }
-    if (!currentRunId || !currentAgentId) {
-      throw new Error("当前 AgentRun 尚未就绪，无法执行控制动作。");
-    }
-
-    const commandKey = JSON.stringify({
-      command_id: command.command_id,
-      kind: command.kind,
-      stale_guard: command.stale_guard,
-      input: inputBlocks,
-      executor_config: commandExecutorConfig ?? null,
+      },
     });
+  }, [navigate]);
 
-    const resolvedCommand = resolveAgentRunClientCommandId(
-      inFlightCommandRef.current,
-      commandKey,
-      newClientCommandId,
-    );
-    inFlightCommandRef.current = resolvedCommand.inFlightCommand;
-
-    try {
-      const response = await submitAgentRunComposerInput(currentRunId, currentAgentId, {
-        input: inputBlocks,
-        client_command_id: resolvedCommand.clientCommandId,
-        command: commandPrecondition(command),
-        executor_config: commandExecutorConfig as unknown as JsonValue | undefined,
-        delivery_intent: deliveryIntent,
-      });
-      if (response.accepted_refs?.run_ref.run_id) {
-        void fetchAndIngestLifecycleRun(response.accepted_refs.run_ref.run_id);
-      }
-      void refreshAgentRunWorkspaceState().catch(() => {});
-      if (response.outcome === "steered") {
-        scheduleHookRuntimeRefresh("agent_message_steered", true);
-      } else if (response.outcome === "queued") {
-        scheduleHookRuntimeRefresh("mailbox_message_queued", true);
-      } else {
-        scheduleHookRuntimeRefresh("agent_message_sent", true);
-      }
-      inFlightCommandRef.current = null;
-      return;
-    } catch (error) {
-      inFlightCommandRef.current = null;
-      if (refreshAfterStaleAgentRunCommandError(error)) {
-        throw silentCommandRefreshError();
-      }
-      throw error;
-    }
-  }, [
-    chatCommandState.modelConfig,
-    createProjectAgentRun,
-    currentAgentId,
+  const {
+    handleAgentRunCommand,
+    handleCancelAgentRun,
+    handlePromoteMailboxMessage,
+    handleDeleteMailboxMessage,
+    handleResumeMailbox,
+    handleRecallMailboxMessage,
+    handleMoveMailboxMessage,
+    recalledInput,
+    clearRecalledInput,
+  } = useAgentRunWorkspaceCommands({
     currentRunId,
-    draftProjectAgent,
+    currentAgentId,
+    workspaceStatus: agentRunWorkspaceState.status,
+    chatCommandState,
+    conversationMailbox,
+    draftProjectId: draftProjectIdValue,
     draftProjectAgentKey,
-    draftProjectIdValue,
+    draftReady: Boolean(draftProjectIdValue && draftProjectAgentKey && draftProjectAgent),
+    createProjectAgentRun,
     fetchAndIngestLifecycleRun,
-    navigate,
-    refreshAfterStaleAgentRunCommandError,
-    refreshAgentRunWorkspaceState,
+    refreshWorkspaceState: refreshAgentRunWorkspaceState,
     scheduleHookRuntimeRefresh,
-    agentRunWorkspaceState.status,
-  ]);
-
-  const handleCancelAgentRun = useCallback(async () => {
-    if (!currentRunId || !currentAgentId) {
-      throw new Error("当前 AgentRun 尚未就绪。");
-    }
-    if (agentRunWorkspaceState.status !== "ready") {
-      throw new Error("当前 AgentRun 工作台投影正在刷新，无法执行控制动作。");
-    }
-    const cancelCommand = chatCommandState.commands.commands.find((command) => command.kind === "cancel");
-    if (!cancelCommand?.enabled) {
-      throw new Error(cancelCommand?.unavailable_reason ?? "当前 AgentRun 没有可取消的运行。");
-    }
-    try {
-      await cancelAgentRun(currentRunId, currentAgentId, commandRequest(cancelCommand));
-    } catch (error) {
-      if (refreshAfterStaleAgentRunCommandError(error)) return;
-      throw error;
-    }
-    void refreshAgentRunWorkspaceState().catch(() => {});
-    scheduleHookRuntimeRefresh("agent_run_cancelled", true);
-  }, [
-    agentRunWorkspaceState.status,
-    chatCommandState.commands.commands,
-    currentAgentId,
-    currentRunId,
-    refreshAfterStaleAgentRunCommandError,
-    refreshAgentRunWorkspaceState,
-    scheduleHookRuntimeRefresh,
-  ]);
-
-  const handlePromoteMailboxMessage = useCallback(async (messageId: string) => {
-    if (!currentRunId || !currentAgentId) return;
-    if (agentRunWorkspaceState.status !== "ready") return;
-    const promoteCommand = chatCommandState.commands.commands.find(
-      (command) => command.kind === "promote_mailbox_message" && command.placement.includes("mailbox_row"),
-    );
-    if (!promoteCommand?.enabled) return;
-    try {
-      await promoteAgentRunMailboxMessage(
-        currentRunId,
-        currentAgentId,
-        messageId,
-        commandRequest(promoteCommand),
-      );
-    } catch (error) {
-      if (refreshAfterStaleAgentRunCommandError(error)) return;
-      throw error;
-    }
-    void refreshAgentRunWorkspaceState().catch(() => {});
-    scheduleHookRuntimeRefresh("mailbox_message_promoted", true);
-  }, [
-    agentRunWorkspaceState.status,
-    chatCommandState.commands.commands,
-    currentAgentId,
-    currentRunId,
-    refreshAfterStaleAgentRunCommandError,
-    refreshAgentRunWorkspaceState,
-    scheduleHookRuntimeRefresh,
-  ]);
-
-  const handleDeleteMailboxMessage = useCallback(async (messageId: string) => {
-    if (!currentRunId || !currentAgentId) return;
-    const deleteCommand = chatCommandState.commands.commands.find(
-      (command) => command.kind === "delete_mailbox_message" && command.placement.includes("mailbox_row"),
-    );
-    if (!deleteCommand?.enabled) return;
-    await deleteAgentRunMailboxMessage(
-      currentRunId,
-      currentAgentId,
-      messageId,
-      commandRequest(deleteCommand),
-    );
-    void refreshAgentRunWorkspaceState().catch(() => {});
-    scheduleHookRuntimeRefresh("mailbox_message_deleted", true);
-  }, [
-    chatCommandState.commands.commands,
-    currentAgentId,
-    currentRunId,
-    refreshAgentRunWorkspaceState,
-    scheduleHookRuntimeRefresh,
-  ]);
-
-  const handleResumeMailbox = useCallback(async () => {
-    if (!currentRunId || !currentAgentId) return;
-    if (agentRunWorkspaceState.status !== "ready") return;
-    const resumeCommand = conversationMailbox?.resume_command;
-    if (!resumeCommand?.enabled) return;
-    let response: Awaited<ReturnType<typeof resumeAgentRunMailbox>>;
-    try {
-      response = await resumeAgentRunMailbox(
-        currentRunId,
-        currentAgentId,
-        commandRequest(resumeCommand),
-      );
-    } catch (error) {
-      if (refreshAfterStaleAgentRunCommandError(error)) return;
-      throw error;
-    }
-    const acceptedRunId = response.accepted_refs?.run_ref.run_id;
-    if (acceptedRunId) {
-      void fetchAndIngestLifecycleRun(acceptedRunId);
-    }
-    void refreshAgentRunWorkspaceState().catch(() => {});
-    scheduleHookRuntimeRefresh("mailbox_resumed", true);
-  }, [
-    agentRunWorkspaceState.status,
-    currentAgentId,
-    currentRunId,
-    conversationMailbox?.resume_command,
-    fetchAndIngestLifecycleRun,
-    refreshAfterStaleAgentRunCommandError,
-    refreshAgentRunWorkspaceState,
-    scheduleHookRuntimeRefresh,
-  ]);
+    resolveExecutorConfig: resolveExecutorConfigForConversationCommand,
+    isCompleteExecutorConfig,
+    onDraftStarted: handleDraftAgentRunStarted,
+  });
 
   const handleTurnEnd = useCallback(() => {
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("turn_end", true);
   }, [refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh]);
-
-  const handleRecallMailboxMessage = useCallback(async (messageId: string) => {
-    if (!currentRunId || !currentAgentId) return;
-    try {
-      const content = await fetchAgentRunMailboxMessageContent(
-        currentRunId,
-        currentAgentId,
-        messageId,
-      );
-      await deleteAgentRunMailboxMessage(
-        currentRunId,
-        currentAgentId,
-        messageId,
-        commandRequest(chatCommandState.commands.commands.find(
-          (c) => c.kind === "delete_mailbox_message" && c.placement.includes("mailbox_row"),
-        )!),
-      );
-      void refreshAgentRunWorkspaceState().catch(() => {});
-      const textParts = Array.isArray(content.input)
-        ? content.input.map(textFromUserInputBlock).filter((text): text is string => text !== null)
-        : [];
-      if (textParts.length > 0) {
-        setRecalledInput(textParts.join("\n"));
-      }
-    } catch {
-      void refreshAgentRunWorkspaceState().catch(() => {});
-    }
-  }, [
-    chatCommandState.commands.commands,
-    currentAgentId,
-    currentRunId,
-    refreshAgentRunWorkspaceState,
-  ]);
-
-  const handleMoveMailboxMessage = useCallback(async (messageId: string, afterMessageId: string | null) => {
-    if (!currentRunId || !currentAgentId) return;
-    try {
-      await moveAgentRunMailboxMessage(
-        currentRunId,
-        currentAgentId,
-        messageId,
-        { after_message_id: afterMessageId ?? undefined },
-      );
-      void refreshAgentRunWorkspaceState().catch(() => {});
-    } catch {
-      void refreshAgentRunWorkspaceState().catch(() => {});
-    }
-  }, [currentAgentId, currentRunId, refreshAgentRunWorkspaceState]);
 
   const handleSystemEvent = useCallback((eventType: string, _event: BackboneEvent) => {
     switch (eventType) {
@@ -1008,7 +687,7 @@ export function AgentRunWorkspacePage({
               onRecallMailboxMessage={(id) => { void handleRecallMailboxMessage(id); }}
               onMoveMailboxMessage={(id, after) => { void handleMoveMailboxMessage(id, after); }}
               injectedInputValue={recalledInput}
-              onInjectedInputConsumed={() => { setRecalledInput(null); }}
+              onInjectedInputConsumed={clearRecalledInput}
               inputPrefix={ownerBindingBar ?? draftBindingBar}
             />
           </div>

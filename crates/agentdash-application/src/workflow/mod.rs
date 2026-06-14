@@ -37,8 +37,7 @@ pub(crate) use activity_activation::{
     ActivityActivation, ActivityActivationInput, activate_activity_with_platform,
 };
 pub use agent_message::{
-    AgentRunMessageCommand, AgentRunMessageDelivery, AgentRunMessageDeliveryPort,
-    AgentRunMessageDispatch, AgentRunMessageLaunchDeliveryPort, AgentRunMessageService,
+    AgentRunMessageDelivery, AgentRunMessageDeliveryPort, AgentRunMessageLaunchDeliveryPort,
 };
 pub use agent_run_mailbox::{
     AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxControlCommand,
@@ -102,8 +101,8 @@ pub use orchestrator::{
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
 pub use project_agent_run_start::{
-    ProjectAgentRunStartCommand, ProjectAgentRunStartDispatch, ProjectAgentRunStartRepos,
-    ProjectAgentRunStartService,
+    ProjectAgentRunInitialMessagePort, ProjectAgentRunStartCommand, ProjectAgentRunStartDispatch,
+    ProjectAgentRunStartRepos, ProjectAgentRunStartService,
 };
 #[cfg(test)]
 pub(crate) use projection::activity_projection;

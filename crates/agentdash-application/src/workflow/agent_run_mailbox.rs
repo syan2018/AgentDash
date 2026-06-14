@@ -200,7 +200,11 @@ impl<'a> AgentRunMailboxService<'a> {
                 .await;
         }
 
-        let policy = user_message_policy(&execution_state, supports_steering, command.delivery_intent.as_deref());
+        let policy = user_message_policy(
+            &execution_state,
+            supports_steering,
+            command.delivery_intent.as_deref(),
+        );
         let payload_json =
             serde_json::to_value(&command.input).map_err(serialization_error("mailbox input"))?;
         let executor_config_json = command
@@ -643,9 +647,7 @@ impl<'a> AgentRunMailboxService<'a> {
             .get_message(message_id)
             .await?
             .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "mailbox message 不存在: {message_id}"
-                ))
+                WorkflowApplicationError::NotFound(format!("mailbox message 不存在: {message_id}"))
             })?;
         ensure_message_owner(&target, run_id, agent_id)?;
         if target.origin != MailboxMessageOrigin::User {
@@ -699,9 +701,7 @@ impl<'a> AgentRunMailboxService<'a> {
             .get_message(message_id)
             .await?
             .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "mailbox message 不存在: {message_id}"
-                ))
+                WorkflowApplicationError::NotFound(format!("mailbox message 不存在: {message_id}"))
             })?;
         ensure_message_owner(&message, run_id, agent_id)?;
         if message.origin != MailboxMessageOrigin::User {

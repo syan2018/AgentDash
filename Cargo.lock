@@ -237,6 +237,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-types",
  "agentdash-domain",
+ "agentdash-relay",
  "agentdash-spi",
  "async-trait",
  "serde_json",

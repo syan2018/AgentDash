@@ -4,8 +4,8 @@ use agentdash_application::session::construction_planner::{
     ResolvedProjectAgentContext, build_project_agent_context,
 };
 use agentdash_application::workflow::{
-    AgentRunMessageLaunchDeliveryPort, ConversationModelConfigResolver,
-    ProjectAgentRunStartCommand, ProjectAgentRunStartRepos, ProjectAgentRunStartService,
+    AgentRunMailboxService, ConversationModelConfigResolver, ProjectAgentRunStartCommand,
+    ProjectAgentRunStartRepos, ProjectAgentRunStartService,
 };
 use agentdash_domain::{
     agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project, workflow::SubjectRef,
@@ -144,11 +144,7 @@ pub async fn create_project_agent_run(
         .transpose()
         .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
 
-    let service = ProjectAgentRunStartService::new(
-        ProjectAgentRunStartRepos::from_repository_set(&state.repos),
-        &state.services.session_core,
-    );
-    let delivery = AgentRunMessageLaunchDeliveryPort::new(state.services.session_launch.clone());
+    let (service, initial_message) = project_agent_run_start_service_parts(state.as_ref());
     let dispatch = service
         .start_run(
             ProjectAgentRunStartCommand {
@@ -160,7 +156,7 @@ pub async fn create_project_agent_run(
                 subject_ref: parse_subject_ref(req.subject_ref)?,
                 identity: Some(current_user.clone()),
             },
-            delivery,
+            &initial_message,
         )
         .await
         .map_err(ApiError::from)?;
@@ -217,6 +213,20 @@ pub async fn create_project_agent_run(
             id: subject.id.to_string(),
         }),
     }))
+}
+
+fn project_agent_run_start_service_parts(
+    state: &AppState,
+) -> (ProjectAgentRunStartService<'_>, AgentRunMailboxService<'_>) {
+    let repos = ProjectAgentRunStartRepos::from_repository_set(&state.repos);
+    let initial_message = repos.mailbox_service(
+        state.services.session_core.clone(),
+        state.services.session_control.clone(),
+        state.services.session_eventing.clone(),
+        state.services.session_launch.clone(),
+    );
+    let service = ProjectAgentRunStartService::new(repos, &state.services.session_core);
+    (service, initial_message)
 }
 
 fn build_project_agent_summary(

@@ -3,6 +3,8 @@
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use serde::{Deserialize, Serialize};
 
+use super::mcp::McpServerDeclarationRelay;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceIdentityKindRelay {
@@ -31,7 +33,7 @@ pub struct CommandPromptPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub executor_config: Option<AgentConfigRelay>,
     #[serde(default)]
-    pub mcp_servers: Vec<serde_json::Value>,
+    pub mcp_servers: Vec<McpServerDeclarationRelay>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

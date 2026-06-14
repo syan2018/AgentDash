@@ -74,7 +74,7 @@ impl PostgresAgentRunMailboxRepository {
             "SELECT id FROM agent_run_mailbox_messages \
              WHERE run_id=$1 AND agent_id=$2 AND priority=$3 AND id <> $4 \
                AND status NOT IN ('dispatched','steered','deleted') \
-             ORDER BY order_key ASC"
+             ORDER BY order_key ASC",
         )
         .bind(run_id.to_string())
         .bind(agent_id.to_string())
@@ -86,14 +86,12 @@ impl PostgresAgentRunMailboxRepository {
 
         for (i, msg_id) in ids.iter().enumerate() {
             let new_key = ((i as i64) + 1) * 1000;
-            sqlx::query(
-                "UPDATE agent_run_mailbox_messages SET order_key=$1 WHERE id=$2"
-            )
-            .bind(new_key)
-            .bind(msg_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| sql_err_for("agent_run_mailbox_messages", e))?;
+            sqlx::query("UPDATE agent_run_mailbox_messages SET order_key=$1 WHERE id=$2")
+                .bind(new_key)
+                .bind(msg_id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| sql_err_for("agent_run_mailbox_messages", e))?;
         }
         Ok(())
     }
@@ -557,7 +555,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
                 "SELECT MIN(order_key) FROM agent_run_mailbox_messages \
                  WHERE run_id=$1 AND agent_id=$2 AND priority=$3 \
                    AND order_key > $4 AND id <> $5 \
-                   AND status NOT IN ('dispatched','steered','deleted')"
+                   AND status NOT IN ('dispatched','steered','deleted')",
             )
             .bind(run_id.to_string())
             .bind(agent_id.to_string())
@@ -573,9 +571,10 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
                     anchor.order_key + (succ - anchor.order_key) / 2
                 }
                 _ => {
-                    self.rebalance_order_keys(&mut tx, run_id, agent_id, target_priority, id).await?;
+                    self.rebalance_order_keys(&mut tx, run_id, agent_id, target_priority, id)
+                        .await?;
                     let anchor_refreshed: i64 = sqlx::query_scalar(
-                        "SELECT order_key FROM agent_run_mailbox_messages WHERE id=$1"
+                        "SELECT order_key FROM agent_run_mailbox_messages WHERE id=$1",
                     )
                     .bind(anchor_id.to_string())
                     .fetch_one(&mut *tx)
@@ -586,7 +585,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
                         "SELECT MIN(order_key) FROM agent_run_mailbox_messages \
                          WHERE run_id=$1 AND agent_id=$2 AND priority=$3 \
                            AND order_key > $4 AND id <> $5 \
-                           AND status NOT IN ('dispatched','steered','deleted')"
+                           AND status NOT IN ('dispatched','steered','deleted')",
                     )
                     .bind(run_id.to_string())
                     .bind(agent_id.to_string())
@@ -607,7 +606,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
             let min_key: Option<i64> = sqlx::query_scalar(
                 "SELECT MIN(order_key) FROM agent_run_mailbox_messages \
                  WHERE run_id=$1 AND agent_id=$2 AND priority=$3 AND id <> $4 \
-                   AND status NOT IN ('dispatched','steered','deleted')"
+                   AND status NOT IN ('dispatched','steered','deleted')",
             )
             .bind(run_id.to_string())
             .bind(agent_id.to_string())

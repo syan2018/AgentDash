@@ -47,7 +47,7 @@ use crate::{
             resolver::{build_surface_summary, resolve_agent_run_frame_vfs_for_agent},
         },
     },
-    rpc::ApiError,
+    rpc::{ApiError, ApiErrorWithCode},
 };
 
 struct AgentRunContext {
@@ -1833,12 +1833,12 @@ fn command_conflict(
     replacement_command: Option<&str>,
     detail: serde_json::Value,
 ) -> ApiError {
-    ApiError::ConflictWithCode {
+    ApiError::ConflictWithCode(Box::new(ApiErrorWithCode {
         message: message.into(),
         error_code: error_code.into(),
         replacement_command: replacement_command.map(str::to_string),
         detail: Some(detail),
-    }
+    }))
 }
 
 fn conversation_state_code(execution_state: &SessionExecutionState) -> &'static str {
@@ -2060,8 +2060,8 @@ mod tests {
         .expect_err("cancel is not a composer input command");
 
         match error {
-            ApiError::ConflictWithCode { error_code, .. } => {
-                assert_eq!(error_code, "command_unavailable");
+            ApiError::ConflictWithCode(payload) => {
+                assert_eq!(payload.error_code, "command_unavailable");
             }
             other => panic!("unexpected error: {other:?}"),
         }

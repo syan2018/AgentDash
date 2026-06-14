@@ -10,23 +10,23 @@ use serde_json::Value;
 #[derive(Debug)]
 pub enum ApiError {
     BadRequest(String),
-    BadRequestWithCode {
-        message: String,
-        error_code: String,
-    },
+    BadRequestWithCode { message: String, error_code: String },
     Unauthorized(String),
     Forbidden(String),
     NotFound(String),
     Conflict(String),
-    ConflictWithCode {
-        message: String,
-        error_code: String,
-        replacement_command: Option<String>,
-        detail: Option<Value>,
-    },
+    ConflictWithCode(Box<ApiErrorWithCode>),
     UnprocessableEntity(String),
     ServiceUnavailable(String),
     Internal(String),
+}
+
+#[derive(Debug)]
+pub struct ApiErrorWithCode {
+    pub message: String,
+    pub error_code: String,
+    pub replacement_command: Option<String>,
+    pub detail: Option<Value>,
 }
 
 #[derive(Serialize)]
@@ -59,18 +59,21 @@ impl IntoResponse for ApiError {
             ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg, None, None, None),
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg, None, None, None),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg, None, None, None),
-            ApiError::ConflictWithCode {
-                message,
-                error_code,
-                replacement_command,
-                detail,
-            } => (
-                StatusCode::CONFLICT,
-                message,
-                Some(error_code),
-                replacement_command,
-                detail,
-            ),
+            ApiError::ConflictWithCode(payload) => {
+                let ApiErrorWithCode {
+                    message,
+                    error_code,
+                    replacement_command,
+                    detail,
+                } = *payload;
+                (
+                    StatusCode::CONFLICT,
+                    message,
+                    Some(error_code),
+                    replacement_command,
+                    detail,
+                )
+            }
             ApiError::UnprocessableEntity(msg) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, msg, None, None, None)
             }
@@ -297,12 +300,12 @@ mod tests {
 
     #[tokio::test]
     async fn conflict_with_code_serializes_structured_command_error() {
-        let response = ApiError::ConflictWithCode {
+        let response = ApiError::ConflictWithCode(Box::new(ApiErrorWithCode {
             message: "当前状态下新输入应作为下一轮消息发送。".to_string(),
             error_code: "command_unavailable".to_string(),
             replacement_command: Some("send_next".to_string()),
             detail: Some(serde_json::json!({ "state": "completed" })),
-        }
+        }))
         .into_response();
 
         assert_eq!(response.status(), StatusCode::CONFLICT);

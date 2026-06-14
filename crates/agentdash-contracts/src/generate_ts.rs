@@ -13,6 +13,12 @@ use agentdash_contracts::agent_run_mailbox::{
     MailboxMessageSource, MailboxMessageStatus, MailboxMessageView, MailboxStateView,
     RuntimeSessionCommandStateDto, SteeringStopEffect,
 };
+use agentdash_contracts::backend::{
+    BackendCapabilitiesResponse, BackendExecutorCapabilityResponse,
+    BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeHealthResponse,
+    BackendShareScopeKind, BackendType, BackendVisibility, BackendWithStatusResponse,
+    RuntimeHealthStatus,
+};
 use agentdash_contracts::canvas::{
     CanvasImportMapDto, CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto,
     CanvasRuntimeFileDto, CanvasRuntimeSnapshotDto, RuntimeActionDescriptorDto,
@@ -30,16 +36,13 @@ use agentdash_contracts::context::{
     SessionRequiredContextBlock, VfsCapabilityDto,
 };
 use agentdash_contracts::core::{
-    AgentPreset, Artifact, ArtifactType, BackendCapabilitiesResponse,
-    BackendExecutorCapabilityResponse, BackendMcpServerCapabilityResponse, BackendResponse,
-    BackendRuntimeHealthResponse, BackendShareScopeKind, BackendType, BackendVisibility,
-    BackendWithStatusResponse, DeletedProjectSubjectGrantResponse, ProjectAccessSummaryResponse,
-    ProjectConfig, ProjectDetailResponse, ProjectResponse, ProjectRole,
-    ProjectSubjectGrantResponse, ProjectSubjectType, ProjectVisibility, RevokeProjectGrantResponse,
-    RuntimeHealthStatus, SchedulingConfig, StoryContext, StoryPriority, StoryResponse, StoryStatus,
-    StoryType, TaskDispatchPreference, TaskResponse, TaskStatus, WorkspaceBindingResponse,
-    WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceResponse,
-    WorkspaceStatus,
+    AgentPreset, Artifact, ArtifactType, DeletedProjectSubjectGrantResponse,
+    ProjectAccessSummaryResponse, ProjectConfig, ProjectDetailResponse, ProjectResponse,
+    ProjectRole, ProjectSubjectGrantResponse, ProjectSubjectType, ProjectVisibility,
+    RevokeProjectGrantResponse, SchedulingConfig, StoryContext, StoryPriority, StoryResponse,
+    StoryStatus, StoryType, TaskDispatchPreference, TaskResponse, TaskStatus,
+    WorkspaceBindingResponse, WorkspaceBindingStatus, WorkspaceIdentityKind,
+    WorkspaceResolutionPolicy, WorkspaceResponse, WorkspaceStatus,
 };
 use agentdash_contracts::extension_management::{
     ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
@@ -302,6 +305,26 @@ fn main() {
         },
     );
 
+    // --- backend-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "backend-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<BackendType>(dir);
+            export_all::<BackendVisibility>(dir);
+            export_all::<BackendShareScopeKind>(dir);
+            export_all::<RuntimeHealthStatus>(dir);
+            export_all::<BackendRuntimeHealthResponse>(dir);
+            export_all::<BackendExecutorCapabilityResponse>(dir);
+            export_all::<BackendMcpServerCapabilityResponse>(dir);
+            export_all::<BackendCapabilitiesResponse>(dir);
+            export_all::<BackendResponse>(dir);
+            export_all::<BackendWithStatusResponse>(dir);
+        },
+    );
+
     // --- core-contracts.ts ---
     emit_domain(
         &generated_dir,
@@ -327,16 +350,6 @@ fn main() {
             export_all::<WorkspaceStatus>(dir);
             export_all::<WorkspaceBindingResponse>(dir);
             export_all::<WorkspaceResponse>(dir);
-            export_all::<BackendType>(dir);
-            export_all::<BackendVisibility>(dir);
-            export_all::<BackendShareScopeKind>(dir);
-            export_all::<RuntimeHealthStatus>(dir);
-            export_all::<BackendRuntimeHealthResponse>(dir);
-            export_all::<BackendExecutorCapabilityResponse>(dir);
-            export_all::<BackendMcpServerCapabilityResponse>(dir);
-            export_all::<BackendCapabilitiesResponse>(dir);
-            export_all::<BackendResponse>(dir);
-            export_all::<BackendWithStatusResponse>(dir);
             export_all::<StoryContext>(dir);
             export_all::<StoryStatus>(dir);
             export_all::<StoryPriority>(dir);

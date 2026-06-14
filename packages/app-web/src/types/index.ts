@@ -3,8 +3,6 @@ import type {
   TaskDispatchPreference as CoreTaskDispatchPreference,
   AgentPreset as CoreAgentPreset,
   Artifact as CoreArtifact,
-  BackendResponse,
-  BackendWithStatusResponse,
   ProjectAccessSummaryResponse,
   ProjectConfig as CoreProjectConfig,
   ProjectResponse,
@@ -15,6 +13,10 @@ import type {
   WorkspaceIdentityKind,
   WorkspaceResponse,
 } from "../generated/core-contracts";
+import type {
+  BackendResponse,
+  BackendWithStatusResponse,
+} from "../generated/backend-contracts";
 import type { ContextSourceRef as GeneratedContextSourceRef } from "../generated/context-contracts";
 import type {
   ProjectVfsMountContentDto,
@@ -54,6 +56,8 @@ export type {
 } from "../generated/context-contracts";
 export type {
   BackendType,
+} from "../generated/backend-contracts";
+export type {
   ProjectRole,
   ProjectSubjectType,
   ProjectVisibility,

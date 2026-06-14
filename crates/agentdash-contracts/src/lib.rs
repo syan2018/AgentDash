@@ -1,4 +1,5 @@
 pub mod agent_run_mailbox;
+pub mod backend;
 pub mod canvas;
 pub mod common_response;
 pub mod companion;

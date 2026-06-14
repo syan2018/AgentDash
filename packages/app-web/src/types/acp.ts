@@ -59,8 +59,8 @@ export type SessionUpdate =
   | { type: "plan"; entries: PlanEntry[] }
   | { type: "confirmation_request"; request: ConfirmationRequest };
 
-export type RuntimeHealthStatus = import("../generated/core-contracts").RuntimeHealthStatus;
-export type RuntimeHealth = import("../generated/core-contracts").BackendRuntimeHealthResponse;
+export type RuntimeHealthStatus = import("../generated/backend-contracts").RuntimeHealthStatus;
+export type RuntimeHealth = import("../generated/backend-contracts").BackendRuntimeHealthResponse;
 
 export type BackendExecutionSelectionMode = "explicit" | "auto_idle" | "workspace_binding";
 export type BackendExecutionLeaseState = "claimed" | "running" | "released" | "lost" | "failed";

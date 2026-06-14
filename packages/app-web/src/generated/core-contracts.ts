@@ -10,24 +10,6 @@ export type Artifact = { id: string, artifact_type: ArtifactType, content: JsonV
 
 export type ArtifactType = "code_change" | "test_result" | "log_output" | "file" | "tool_execution";
 
-export type BackendCapabilitiesResponse = { executors: Array<BackendExecutorCapabilityResponse>, supports_cancel: boolean, supports_discover_options: boolean, mcp_servers: Array<BackendMcpServerCapabilityResponse>, };
-
-export type BackendExecutorCapabilityResponse = { id: string, name: string, variants: Array<string>, available: boolean, };
-
-export type BackendMcpServerCapabilityResponse = { name: string, transport: string, };
-
-export type BackendResponse = { id: string, name: string, endpoint: string, enabled: boolean, backend_type: BackendType, owner_user_id: string | null, profile_id: string | null, device_id: string | null, machine_id: string | null, machine_label: string | null, visibility: BackendVisibility, share_scope_kind: BackendShareScopeKind, share_scope_id: string | null, capability_slot: string, device: JsonValue, last_claimed_at: string | null, };
-
-export type BackendRuntimeHealthResponse = { backend_id: string, profile_id: string | null, name: string, status: RuntimeHealthStatus, online: boolean, version: string | null, capabilities: JsonValue, workspace_roots: Array<string>, device: JsonValue, connected_at: string | null, last_seen_at: string | null, disconnected_at: string | null, disconnect_reason: string | null, created_at: string, updated_at: string, };
-
-export type BackendShareScopeKind = "user" | "project" | "system";
-
-export type BackendType = "local" | "remote";
-
-export type BackendVisibility = "private" | "shared" | "system";
-
-export type BackendWithStatusResponse = { online: boolean, runtime_health: BackendRuntimeHealthResponse | null, workspace_roots: Array<string> | null, capabilities: BackendCapabilitiesResponse | null, id: string, name: string, endpoint: string, enabled: boolean, backend_type: BackendType, owner_user_id: string | null, profile_id: string | null, device_id: string | null, machine_id: string | null, machine_label: string | null, visibility: BackendVisibility, share_scope_kind: BackendShareScopeKind, share_scope_id: string | null, capability_slot: string, device: JsonValue, last_claimed_at: string | null, };
-
 export type DeletedProjectSubjectGrantResponse = { project_id: string, subject_type: ProjectSubjectType, subject_id: string, };
 
 export type ProjectAccessSummaryResponse = { role: ProjectRole | null, can_view: boolean, can_edit: boolean, can_manage_sharing: boolean, via_admin_bypass: boolean, via_template_visibility: boolean, };
@@ -47,8 +29,6 @@ export type ProjectSubjectType = "user" | "group";
 export type ProjectVisibility = "private" | "template_visible";
 
 export type RevokeProjectGrantResponse = { deleted: DeletedProjectSubjectGrantResponse, };
-
-export type RuntimeHealthStatus = "online" | "offline" | "starting" | "degraded" | "stopping" | "error";
 
 export type SchedulingConfig = { stall_timeout_ms: number | null, };
 

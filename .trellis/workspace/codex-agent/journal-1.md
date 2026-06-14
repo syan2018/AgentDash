@@ -432,3 +432,43 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: AgentRun workspace 应用层重构
+
+**Date**: 2026-06-14
+**Task**: AgentRun workspace 应用层重构
+**Branch**: `main`
+
+### Summary
+
+完成 AgentRun workspace application 层迁移：查询组装、状态投影、command policy 下沉，API 旧 helper 清理，并记录最终验收。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7026f52a` | (see git log) |
+| `3c3c9e6c` | (see git log) |
+| `ad27a56c` | (see git log) |
+| `dc2ce5d7` | (see git log) |
+| `ff511eb7` | (see git log) |
+| `fd19b0e5` | (see git log) |
+| `5acb757d` | (see git log) |
+| `41cf1858` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,6 +1,7 @@
 pub(crate) mod activity_activation;
 pub mod agent_message;
 pub mod agent_run_mailbox;
+pub mod agent_run_workspace;
 pub mod agent_steering;
 mod catalog;
 mod command_receipt;
@@ -101,6 +102,7 @@ pub use orchestrator::{
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
 pub use project_agent_run_start::{
+    ProjectAgentRunInitialMessageCommand, ProjectAgentRunInitialMessageLaunch,
     ProjectAgentRunInitialMessagePort, ProjectAgentRunStartCommand, ProjectAgentRunStartDispatch,
     ProjectAgentRunStartRepos, ProjectAgentRunStartService,
 };

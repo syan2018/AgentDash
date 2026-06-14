@@ -46,7 +46,7 @@ pub struct ProjectAgentRunStartCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProjectAgentRunInitialMessageCommand {
+pub struct ProjectAgentRunInitialMailboxCommand {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub runtime_session_id: String,
@@ -56,7 +56,7 @@ pub struct ProjectAgentRunInitialMessageCommand {
     pub identity: Option<AuthIdentity>,
 }
 
-impl ProjectAgentRunInitialMessageCommand {
+impl ProjectAgentRunInitialMailboxCommand {
     fn into_mailbox_command(self) -> AgentRunMailboxUserMessageCommand {
         AgentRunMailboxUserMessageCommand {
             run_id: self.run_id,
@@ -183,18 +183,18 @@ impl RuntimeSessionDraftCleanupPort for SessionCoreService {
 }
 
 #[async_trait]
-pub trait ProjectAgentRunInitialMessageCommandPort: Send + Sync {
-    async fn accept_initial_user_message(
+pub trait ProjectAgentRunInitialMailboxCommandPort: Send + Sync {
+    async fn accept_initial_mailbox_message(
         &self,
-        command: ProjectAgentRunInitialMessageCommand,
+        command: ProjectAgentRunInitialMailboxCommand,
     ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError>;
 }
 
 #[async_trait]
-impl ProjectAgentRunInitialMessageCommandPort for AgentRunMailboxService<'_> {
-    async fn accept_initial_user_message(
+impl ProjectAgentRunInitialMailboxCommandPort for AgentRunMailboxService<'_> {
+    async fn accept_initial_mailbox_message(
         &self,
-        command: ProjectAgentRunInitialMessageCommand,
+        command: ProjectAgentRunInitialMailboxCommand,
     ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
         self.accept_user_message(command.into_mailbox_command())
             .await
@@ -217,7 +217,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
     pub async fn start_run(
         &self,
         mut command: ProjectAgentRunStartCommand,
-        initial_message: &dyn ProjectAgentRunInitialMessageCommandPort,
+        initial_message: &dyn ProjectAgentRunInitialMailboxCommandPort,
     ) -> Result<ProjectAgentRunStartDispatch, WorkflowApplicationError> {
         if command.input.is_empty() {
             return Err(WorkflowApplicationError::BadRequest(
@@ -370,7 +370,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
         }
 
         let initial_message_result = match initial_message
-            .accept_initial_user_message(ProjectAgentRunInitialMessageCommand {
+            .accept_initial_mailbox_message(ProjectAgentRunInitialMailboxCommand {
                 run_id: dispatch_result.runtime_refs.run_ref,
                 agent_id: dispatch_result.runtime_refs.agent_ref,
                 runtime_session_id: runtime_session_id.clone(),
@@ -395,7 +395,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
         };
 
         let accepted_refs = match self
-            .accepted_refs_from_initial_message_result(
+            .accepted_refs_from_initial_mailbox_result(
                 &initial_message_result,
                 dispatch_result.runtime_refs.run_ref,
                 dispatch_result.runtime_refs.agent_ref,
@@ -511,7 +511,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
         mark_command_terminal_failed(self.repos.command_receipt_repo, receipt_id, error).await;
     }
 
-    async fn accepted_refs_from_initial_message_result(
+    async fn accepted_refs_from_initial_mailbox_result(
         &self,
         result: &AgentRunMailboxCommandResult,
         expected_run_id: Uuid,
@@ -531,7 +531,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 agent_run_turn_id: None,
                 protocol_turn_id: None,
             });
-        validate_project_agent_initial_message_refs(
+        validate_project_agent_initial_mailbox_refs(
             &refs,
             expected_run_id,
             expected_agent_id,
@@ -661,7 +661,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
     }
 }
 
-fn validate_project_agent_initial_message_refs(
+fn validate_project_agent_initial_mailbox_refs(
     refs: &AgentRunAcceptedRefs,
     expected_run_id: Uuid,
     expected_agent_id: Uuid,
@@ -1604,10 +1604,10 @@ mod tests {
     }
 
     #[async_trait]
-    impl ProjectAgentRunInitialMessageCommandPort for InitialMailboxPort<'_> {
-        async fn accept_initial_user_message(
+    impl ProjectAgentRunInitialMailboxCommandPort for InitialMailboxPort<'_> {
+        async fn accept_initial_mailbox_message(
             &self,
-            command: ProjectAgentRunInitialMessageCommand,
+            command: ProjectAgentRunInitialMailboxCommand,
         ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
             self.captured
                 .lock()
@@ -1826,7 +1826,7 @@ mod tests {
         async fn start(
             &self,
             command: ProjectAgentRunStartCommand,
-            initial_message: &dyn ProjectAgentRunInitialMessageCommandPort,
+            initial_message: &dyn ProjectAgentRunInitialMailboxCommandPort,
         ) -> Result<ProjectAgentRunStartDispatch, WorkflowApplicationError> {
             let service = self.service();
             service.start_run(command, initial_message).await
@@ -1924,7 +1924,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn initial_launch_refs_mismatch_fails_outer_receipt() {
+    async fn initial_mailbox_refs_mismatch_fails_outer_receipt() {
         for behavior in [
             InitialMailboxBehavior::WrongRun,
             InitialMailboxBehavior::WrongAgent,
@@ -1960,7 +1960,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn initial_launch_missing_agent_run_turn_id_still_accepts_start_envelope() {
+    async fn initial_mailbox_missing_agent_run_turn_id_still_accepts_start_envelope() {
         let harness = StartHarness::new();
         let initial_message = InitialMailboxPort::missing_turn(&harness.mailbox_repo);
 

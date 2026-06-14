@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
-use agentdash_application_ports::mcp_discovery::{McpToolDiscovery, McpToolDiscoveryRequest};
+use agentdash_application_ports::mcp_discovery::McpToolDiscovery;
 use agentdash_domain::backend::BackendExecutionLeaseRepository;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::workflow::{
@@ -23,6 +23,7 @@ use crate::session::persistence::SessionStoreSet;
 use crate::session::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
 use crate::session::runtime_registry::SessionRuntimeRegistry;
 use crate::session::title_generator::derive_session_title;
+use crate::session::tool_assembly::assemble_tools_for_execution_context;
 use crate::session::turn_supervisor::TurnSupervisor;
 use crate::session::types::TitleSource;
 use agentdash_application_ports::backend_transport::RelayPromptTransport;
@@ -179,48 +180,18 @@ pub(super) struct TurnPreparationDeps {
 }
 
 impl TurnPreparationDeps {
-    pub(super) async fn build_tools_for_execution_context(
+    pub(super) async fn assemble_tools(
         &self,
         session_id: &str,
         context: &agentdash_spi::ExecutionContext,
     ) -> Vec<agentdash_agent_types::DynAgentTool> {
-        let mut all_tools = Vec::new();
-
-        if let Some(provider) = &self.runtime_tool_provider {
-            match provider.build_tools(context).await {
-                Ok(tools) => all_tools.extend(tools),
-                Err(e) => tracing::warn!(
-                    session_id = %session_id,
-                    "runtime tool 构建失败: {e}"
-                ),
-            }
-        }
-
-        if let Some(discovery) = &self.mcp_tool_discovery {
-            let call_context = agentdash_spi::RelayMcpCallContext {
-                session_id: session_id.to_string(),
-                turn_id: Some(context.session.turn_id.clone()),
-                tool_call_id: None,
-                vfs: context.session.vfs.clone(),
-                identity: context.session.identity.clone(),
-            };
-            match discovery
-                .discover_tool_entries(McpToolDiscoveryRequest {
-                    servers: context.session.mcp_servers.clone(),
-                    capability_state: context.turn.capability_state.clone(),
-                    call_context: Some(call_context),
-                })
-                .await
-            {
-                Ok(entries) => all_tools.extend(entries.into_iter().map(|entry| entry.tool)),
-                Err(e) => tracing::warn!(
-                    session_id = %session_id,
-                    "MCP 工具发现失败: {e}"
-                ),
-            }
-        }
-
-        all_tools
+        assemble_tools_for_execution_context(
+            session_id,
+            context,
+            self.runtime_tool_provider.as_deref(),
+            self.mcp_tool_discovery.as_deref(),
+        )
+        .await
     }
 }
 

@@ -24,7 +24,7 @@ use crate::session::{
 };
 use crate::workflow::{
     AgentRunCommandReceiptView, AgentRunMessageDelivery, AgentRunMessageDeliveryPort,
-    AgentRunMessageLaunchDeliveryPort, WorkflowApplicationError,
+    SessionTurnMessageDeliveryPort, WorkflowApplicationError,
     command_receipt::{
         claim_agent_run_command_receipt, digest_command_request, mark_command_terminal_failed,
     },
@@ -1084,7 +1084,7 @@ impl<'a> AgentRunMailboxService<'a> {
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
         let input = message_input(&message)?;
         let executor_config = message_executor_config(&message)?;
-        let delivery = AgentRunMessageLaunchDeliveryPort::new(self.session_launch.clone());
+        let delivery = SessionTurnMessageDeliveryPort::new(self.session_launch.clone());
         let turn_id = match delivery
             .deliver_user_message(AgentRunMessageDelivery {
                 delivery_runtime_session_id: message.runtime_session_id.clone(),

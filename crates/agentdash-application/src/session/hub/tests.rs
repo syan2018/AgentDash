@@ -734,7 +734,7 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
     };
 
     let plan_tools = hub
-        .build_tools_for_execution_context("session-initial-tools", &plan_context)
+        .assemble_tools_for_execution_context("session-initial-tools", &plan_context)
         .await;
     let plan_names = plan_tools
         .iter()
@@ -762,7 +762,7 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
     };
 
     let apply_tools = hub
-        .build_tools_for_execution_context("session-initial-tools", &apply_context)
+        .assemble_tools_for_execution_context("session-initial-tools", &apply_context)
         .await;
     let apply_names = apply_tools
         .iter()

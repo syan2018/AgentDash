@@ -53,6 +53,7 @@ pub mod terminal_cache;
 pub mod terminal_effects;
 pub mod title_generator;
 pub mod title_service;
+pub(crate) mod tool_assembly;
 pub mod turn_processor;
 mod turn_supervisor;
 pub mod types;

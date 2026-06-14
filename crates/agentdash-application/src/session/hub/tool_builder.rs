@@ -1,9 +1,7 @@
 //! Hub 的工具构建与运行时 MCP 热更职责。
 //!
 //! 集中：
-//! - `build_tools_for_execution_context`：runtime tool + 直连 MCP + relay MCP
-//!   的合并发现（由 launch preparation 在 prompt 前预构建，或 replace_current_capability_state
-//!   在运行中热更时重构）。
+//! - runtime tool + 直连 MCP + relay MCP 的运行中重构。
 //! - `get_runtime_mcp_servers` / `get_current_capability_state`：读取当前能力状态。
 //! - `replace_current_capability_state`：底层热更 primitive，仅供
 //!   `runtime_context_transition` 统一 applier 调用。
@@ -15,6 +13,7 @@ use uuid::Uuid;
 
 use super::SessionRuntimeInner;
 use crate::session::capability_state::project_capability_state_from_frame;
+use crate::session::tool_assembly::assemble_tools_for_execution_context;
 use crate::session::types::{AgentFrameRuntimeTarget, CapabilityState};
 use crate::workflow::AgentFrameBuilder;
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
@@ -287,7 +286,7 @@ impl SessionRuntimeInner {
             },
         };
         let all_tools = self
-            .build_tools_for_execution_context(session_id, &context)
+            .assemble_tools_for_execution_context(session_id, &context)
             .await;
 
         self.connector
@@ -297,19 +296,6 @@ impl SessionRuntimeInner {
         self.runtime_registry
             .with_runtime_mut(session_id, |runtime| {
                 if let Some(runtime) = runtime {
-                    if state.vfs.active.is_none() {
-                        let fallback_vfs = runtime
-                            .turn_state
-                            .active_turn()
-                            .and_then(|turn| turn.capability_state.vfs.active.clone())
-                            .or_else(|| {
-                                runtime
-                                    .session_profile
-                                    .as_ref()
-                                    .and_then(|p| p.capability_state.vfs.active.clone())
-                            });
-                        state.vfs.active = fallback_vfs;
-                    }
                     runtime.session_profile = Some(super::super::hub_support::SessionProfile {
                         capability_state: state.clone(),
                     });
@@ -324,48 +310,18 @@ impl SessionRuntimeInner {
         Ok(all_tools)
     }
 
-    pub(crate) async fn build_tools_for_execution_context(
+    pub(crate) async fn assemble_tools_for_execution_context(
         &self,
         session_id: &str,
         context: &ExecutionContext,
     ) -> Vec<DynAgentTool> {
-        let mut all_tools: Vec<DynAgentTool> = Vec::new();
-
-        if let Some(provider) = &self.runtime_tool_provider {
-            match provider.build_tools(context).await {
-                Ok(tools) => all_tools.extend(tools),
-                Err(e) => tracing::warn!(
-                    session_id = %session_id,
-                    "runtime tool 构建失败: {e}"
-                ),
-            }
-        }
-
-        if let Some(discovery) = &self.mcp_tool_discovery {
-            let call_context = agentdash_spi::RelayMcpCallContext {
-                session_id: session_id.to_string(),
-                turn_id: Some(context.session.turn_id.clone()),
-                tool_call_id: None,
-                vfs: context.session.vfs.clone(),
-                identity: context.session.identity.clone(),
-            };
-            match discovery
-                .discover_tool_entries(McpToolDiscoveryRequest {
-                    servers: context.session.mcp_servers.clone(),
-                    capability_state: context.turn.capability_state.clone(),
-                    call_context: Some(call_context),
-                })
-                .await
-            {
-                Ok(entries) => all_tools.extend(entries.into_iter().map(|entry| entry.tool)),
-                Err(e) => tracing::warn!(
-                    session_id = %session_id,
-                    "MCP 工具发现失败: {e}"
-                ),
-            }
-        }
-
-        all_tools
+        assemble_tools_for_execution_context(
+            session_id,
+            context,
+            self.runtime_tool_provider.as_deref(),
+            self.mcp_tool_discovery.as_deref(),
+        )
+        .await
     }
 
     pub(in crate::session) async fn discover_runtime_mcp_tool_entries(

@@ -256,7 +256,7 @@ pub enum AgentRunWorkspaceCommandPolicyError {
     #[error("{0}")]
     Application(#[from] WorkflowApplicationError),
     #[error("{0}")]
-    Conflict(AgentRunWorkspaceCommandConflict),
+    Conflict(Box<AgentRunWorkspaceCommandConflict>),
 }
 
 impl std::fmt::Display for AgentRunWorkspaceCommandConflict {
@@ -437,12 +437,12 @@ fn conflict(
     replacement_command: Option<&str>,
     detail: Value,
 ) -> AgentRunWorkspaceCommandPolicyError {
-    AgentRunWorkspaceCommandPolicyError::Conflict(AgentRunWorkspaceCommandConflict {
+    AgentRunWorkspaceCommandPolicyError::Conflict(Box::new(AgentRunWorkspaceCommandConflict {
         message: message.into(),
         error_code: error_code.into(),
         replacement_command: replacement_command.map(str::to_string),
         detail: Some(detail),
-    })
+    }))
 }
 
 fn resolved_model_config() -> ConversationModelConfigView {

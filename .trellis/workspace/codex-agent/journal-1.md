@@ -399,3 +399,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: MCP 概念模型收束
+
+**Date**: 2026-06-14
+**Task**: MCP 概念模型收束
+**Branch**: `main`
+
+### Summary
+
+收束 MCP runtime、relay、summary、frontend editor 和 marketplace template 边界，删除重复转换与 inline server 路径，并通过 MCP 聚焦验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5f6a34bd` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

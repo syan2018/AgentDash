@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
-- **Last Active**: 2026-06-13
+- **Total Sessions**: 12
+- **Last Active**: 2026-06-14
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~401 | Active |
+| `journal-1.md` | ~434 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-06-14 | MCP 概念模型收束 | `5f6a34bd` | `main` |
 | 11 | 2026-06-13 | AgentRun mailbox 控制面收敛 | `ed99d606`, `1d60a052`, `ccdf0def`, `59c864d4` | `codex/agentrun-mailbox-planning` |
 | 10 | 2026-06-12 | Hook runtime ownership 模型收敛 | `f0659dcd`, `e89c5758`, `e0839267`, `73998a0c`, `68e25761`, `2f2086f8`, `30263333` | `main` |
 | 9 | 2026-06-12 | AgentRun 会话重连与标题回归修复 | `6db97154` | `codex/agentrun-runtime-session-surface-convergence` |

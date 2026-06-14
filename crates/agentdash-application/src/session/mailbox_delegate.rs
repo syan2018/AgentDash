@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
+use agentdash_domain::agent_run_mailbox::{
+    AgentRunMailboxRepository, ConsumptionBarrier, MailboxDrainMode, MailboxMessageSource,
+    SteeringStopEffect,
+};
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentRunCommandReceiptRepository, AgentRunMailboxRepository,
-    ConsumptionBarrier, LifecycleAgentRepository, LifecycleRunRepository, MailboxDrainMode,
-    MailboxMessageSource, RuntimeSessionExecutionAnchorRepository, SteeringStopEffect,
+    AgentFrameRepository, AgentRunCommandReceiptRepository, LifecycleAgentRepository,
+    LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
@@ -18,10 +21,8 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use crate::session::{
-    SessionControlService, SessionCoreService, SessionEventingService, SessionLaunchService,
-};
-use crate::workflow::{
-    AgentRunMailboxScheduleTrigger, AgentRunMailboxService, WorkflowApplicationError,
+    AgentRunMailboxScheduleTrigger, AgentRunMailboxService, SessionControlService,
+    SessionCoreService, SessionEventingService, SessionLaunchService, WorkflowApplicationError,
 };
 
 #[derive(Clone)]

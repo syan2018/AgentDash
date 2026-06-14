@@ -3,13 +3,13 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use agentdash_domain::common::error::DomainError;
-use agentdash_domain::workflow::{
+use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
     AgentRunMailboxState, ConsumptionBarrier, MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery,
     MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus,
     NewAgentRunMailboxMessage, SteeringStopEffect,
 };
+use agentdash_domain::common::error::DomainError;
 
 use super::{db_err, sql_err_for};
 

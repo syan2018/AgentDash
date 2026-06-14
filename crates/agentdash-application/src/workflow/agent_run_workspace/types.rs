@@ -7,7 +7,8 @@ use crate::workflow::lifecycle_run_view_builder::{
 use agentdash_contracts::workflow::{
     AgentConversationSnapshot, ConversationEffectiveExecutorConfigView,
 };
-use agentdash_domain::workflow::{AgentRunMailboxMessage, LifecycleAgent, LifecycleRun};
+use agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage;
+use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use serde_json::Value;
 
 #[derive(Debug, Clone)]

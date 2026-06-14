@@ -2,11 +2,9 @@ use async_trait::async_trait;
 
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::{
-    SessionControlService, SessionCoreService, SessionEventingService, SessionLaunchService,
-    SessionTerminalCallback,
-};
-use agentdash_application::workflow::{
-    AgentRunMailboxScheduleTrigger, AgentRunMailboxService, WorkflowApplicationError,
+    AgentRunMailboxScheduleTrigger, AgentRunMailboxService, SessionControlService,
+    SessionCoreService, SessionEventingService, SessionLaunchService, SessionTerminalCallback,
+    WorkflowApplicationError,
 };
 
 #[derive(Clone)]

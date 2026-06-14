@@ -197,7 +197,7 @@ impl SessionRuntimeInner {
         mut self,
         lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
         command_receipt_repo: Arc<dyn agentdash_domain::workflow::AgentRunCommandReceiptRepository>,
-        mailbox_repo: Arc<dyn agentdash_domain::workflow::AgentRunMailboxRepository>,
+        mailbox_repo: Arc<dyn agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository>,
     ) -> Self {
         let Some(lifecycle_agent_repo) = self.lifecycle_agent_repo.clone() else {
             return self;

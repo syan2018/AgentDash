@@ -5,6 +5,14 @@ use std::{
 };
 
 use agentdash_agent_protocol::BackboneEnvelope;
+use agentdash_contracts::agent_run_mailbox::{
+    AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
+    AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
+    AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
+    ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
+    MailboxMessageSource, MailboxMessageStatus, MailboxMessageView, MailboxStateView,
+    RuntimeSessionCommandStateDto, SteeringStopEffect,
+};
 use agentdash_contracts::canvas::{
     CanvasImportMapDto, CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto,
     CanvasRuntimeFileDto, CanvasRuntimeSnapshotDto, RuntimeActionDescriptorDto,
@@ -119,15 +127,12 @@ use agentdash_contracts::vfs::{
 use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentConversationIdentity,
     AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
-    AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse, AgentRunAcceptedRefs,
-    AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView, AgentRunCommandReceipt,
-    AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest,
-    AgentRunMailboxView, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
-    AgentRunMessageCommandResponse, AgentRunRefDto, AgentRunView,
+    AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse,
+    AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView, AgentRunRefDto, AgentRunView,
     AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
     AgentRunWorkspaceView, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
-    CapabilityScopeDto, ConsumptionBarrier, ConversationCommandKind, ConversationCommandPlacement,
+    CapabilityScopeDto, ConversationCommandKind, ConversationCommandPlacement,
     ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
     ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
@@ -136,13 +141,11 @@ use agentdash_contracts::workflow::{
     DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
     HookPresetResponse, HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto,
     LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
-    MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource,
-    MailboxMessageStatus, MailboxMessageView, MailboxStateView, OrchestrationInstanceView,
-    PlatformMcpScopeDto, PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse,
-    ProjectActiveAgentsView, RegisterHookPresetResponse, RuntimeNodeView,
-    RuntimeSessionCommandStateDto, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
+    OrchestrationInstanceView, PlatformMcpScopeDto, PreflightWorkflowScriptRequest,
+    PreflightWorkflowScriptResponse, ProjectActiveAgentsView, RegisterHookPresetResponse,
+    RuntimeNodeView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
     RuntimeSessionTraceMeta, RuntimeSessionTraceView, SessionRuntimeControlPlaneStatus,
-    SessionRuntimeControlPlaneView, SessionRuntimeControlView, SessionShellDto, SteeringStopEffect,
+    SessionRuntimeControlPlaneView, SessionRuntimeControlView, SessionShellDto,
     SubjectExecutionView, SubjectRefDto, SubmitOrchestrationHumanDecisionRequest,
     SubmitOrchestrationHumanDecisionResponse, ToolClusterDto, ToolDescriptorDto, ToolSourceDto,
     ValidateHookScriptResponse, ValidationIssue, WorkflowGraphResponse,
@@ -177,6 +180,35 @@ fn main() {
         check,
         |dir| {
             export_all::<BackboneEnvelope>(dir);
+        },
+    );
+
+    // --- agent-run-mailbox-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "agent-run-mailbox-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<AgentRunComposerSubmitRequest>(dir);
+            export_all::<AgentRunCommandReceipt>(dir);
+            export_all::<AgentRunAcceptedRefs>(dir);
+            export_all::<AgentRunMessageCommandResponse>(dir);
+            export_all::<MailboxMessageStatus>(dir);
+            export_all::<MailboxMessageOrigin>(dir);
+            export_all::<MailboxMessageSource>(dir);
+            export_all::<SteeringStopEffect>(dir);
+            export_all::<MailboxDelivery>(dir);
+            export_all::<ConsumptionBarrier>(dir);
+            export_all::<MailboxDrainMode>(dir);
+            export_all::<AgentRunMessageAcceptedRefs>(dir);
+            export_all::<MailboxMessageView>(dir);
+            export_all::<AgentRunMailboxMoveRequest>(dir);
+            export_all::<AgentRunMailboxMessageContentView>(dir);
+            export_all::<MailboxStateView>(dir);
+            export_all::<AgentRunMessageCommandOutcome>(dir);
+            export_all::<RuntimeSessionCommandStateDto>(dir);
+            export_all::<AgentRunMailboxView>(dir);
         },
     );
 
@@ -453,25 +485,6 @@ fn main() {
             export_all::<RuntimeSessionExecutionAnchorDto>(dir);
             export_all::<AgentRunCommandPreconditionView>(dir);
             export_all::<AgentRunCommandOnlyRequest>(dir);
-            export_all::<AgentRunComposerSubmitRequest>(dir);
-            export_all::<AgentRunMessageCommandResponse>(dir);
-            export_all::<MailboxMessageStatus>(dir);
-            export_all::<MailboxMessageOrigin>(dir);
-            export_all::<MailboxMessageSource>(dir);
-            export_all::<SteeringStopEffect>(dir);
-            export_all::<MailboxDelivery>(dir);
-            export_all::<ConsumptionBarrier>(dir);
-            export_all::<MailboxDrainMode>(dir);
-            export_all::<AgentRunMessageAcceptedRefs>(dir);
-            export_all::<MailboxMessageView>(dir);
-            export_all::<AgentRunMailboxMoveRequest>(dir);
-            export_all::<AgentRunMailboxMessageContentView>(dir);
-            export_all::<MailboxStateView>(dir);
-            export_all::<AgentRunMessageCommandOutcome>(dir);
-            export_all::<AgentRunMessageCommandResponse>(dir);
-            export_all::<RuntimeSessionCommandStateDto>(dir);
-            export_all::<AgentRunCommandReceipt>(dir);
-            export_all::<AgentRunAcceptedRefs>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
             export_all::<RuntimeNodeView>(dir);
             export_all::<ActiveRuntimeNodeRefDto>(dir);
@@ -503,7 +516,6 @@ fn main() {
             export_all::<AgentConversationLifecycleContext>(dir);
             export_all::<AgentConversationSnapshot>(dir);
             export_all::<AgentRunWorkspaceView>(dir);
-            export_all::<AgentRunMailboxView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
             export_all::<RuntimeSessionTraceView>(dir);

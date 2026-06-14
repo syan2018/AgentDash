@@ -2,9 +2,11 @@ import { useState, useCallback } from "react";
 import type {
   ConversationMailboxSnapshotView,
   ConversationCommandView,
+} from "../../../../generated/workflow-contracts";
+import type {
   MailboxStateView,
   MailboxMessageView,
-} from "../../../../generated/workflow-contracts";
+} from "../../../../generated/agent-run-mailbox-contracts";
 
 interface MailboxMessageListProps {
   messages: MailboxMessageView[];

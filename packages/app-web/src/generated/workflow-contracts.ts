@@ -2,8 +2,8 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { UserInput } from "./backbone-protocol";
-import type { AgentFrameRefDto, AgentRunCommandReceipt, AgentRunRefDto, ConversationEffectiveExecutorConfigView, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto } from "./project-agent-contracts";
+import type { AgentFrameRefDto, AgentRunCommandPreconditionView, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto, MailboxMessageView, MailboxStateView, RuntimeSessionRefDto } from "./agent-run-mailbox-contracts";
+import type { ConversationEffectiveExecutorConfigView, SubjectRefDto } from "./project-agent-contracts";
 import type { InstalledAssetSourceDto } from "./shared-library-contracts";
 import type { ResolvedVfsSurface } from "./vfs-contracts";
 
@@ -40,30 +40,6 @@ export type AgentProcedureResponse = { id: string, project_id: string, key: stri
 export type AgentReusePolicy = "create_activity_agent" | "continue_current_agent";
 
 export type AgentRunCommandOnlyRequest = { command: AgentRunCommandPreconditionView, client_command_id: string, };
-
-export type AgentRunCommandPreconditionView = { command_id: string, command_kind: ConversationCommandKind, stale_guard: ConversationCommandStaleGuardView, };
-
-export type AgentRunComposerSubmitRequest = {
-/**
- * canonical 用户输入，由后端写入 mailbox 并按 scheduler outcome 消费或排队。
- */
-input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue,
-/**
- * 投递意图：`"steer"` 表示用户明确要求注入 active turn，其余情况排队等待。
- */
-delivery_intent?: string, };
-
-export type AgentRunMailboxMessageContentView = { id: string, input: JsonValue, };
-
-export type AgentRunMailboxMoveRequest = { after_message_id?: string, };
-
-export type AgentRunMailboxView = { state: MailboxStateView, messages: Array<MailboxMessageView>, };
-
-export type AgentRunMessageAcceptedRefs = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref?: AgentFrameRefDto, runtime_session_ref?: RuntimeSessionRefDto, agent_run_turn_id?: string, protocol_turn_id?: string, };
-
-export type AgentRunMessageCommandOutcome = "launched" | "queued" | "steered" | "deleted" | "resumed" | "blocked" | "failed";
-
-export type AgentRunMessageCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunMessageCommandOutcome, mailbox_message?: MailboxMessageView, accepted_refs?: AgentRunMessageAcceptedRefs, runtime_state?: RuntimeSessionCommandStateDto, };
 
 export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string, agent_kind: string, agent_role: string, project_agent_id?: string, status: string, current_frame_id?: string,
 /**
@@ -103,17 +79,11 @@ export type CapabilityConfig = { tool_directives: Array<ToolCapabilityDirective>
 
 export type CapabilityScopeDto = "project" | "story" | "task";
 
-export type ConsumptionBarrier = "immediate_if_idle" | "agent_loop_turn_boundary" | "agent_run_turn_boundary" | "manual_resume";
-
 export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
-
-export type ConversationCommandKind = "start_draft" | "submit_message" | "promote_mailbox_message" | "delete_mailbox_message" | "resume_mailbox" | "cancel";
 
 export type ConversationCommandPlacement = "composer_primary" | "composer_secondary" | "mailbox_row" | "mailbox_banner" | "header";
 
 export type ConversationCommandSetView = { commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView, };
-
-export type ConversationCommandStaleGuardView = { snapshot_id: string, run_id: string, agent_id: string, frame_id?: string, runtime_session_id?: string, active_turn_id?: string, };
 
 export type ConversationCommandView = { kind: ConversationCommandKind, command_id: string, enabled: boolean, unavailable_reason?: string, disabled_code?: string, shortcut?: string, requires_input: boolean, executor_config_policy: string, placement: Array<ConversationCommandPlacement>, stale_guard: ConversationCommandStaleGuardView, };
 
@@ -169,20 +139,6 @@ export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string
 
 export type LifecycleSubjectAssociationDto = { id: string, anchor_run_id: string, anchor_agent_id?: string, subject_ref: SubjectRefDto, role: string, metadata?: JsonValue, created_at: string, };
 
-export type MailboxDelivery = { "kind": "launch_or_continue_turn" } | { "kind": "steer_active_turn", stop_effect: SteeringStopEffect, } | { "kind": "resume_launch_source", launch_source: string, };
-
-export type MailboxDrainMode = "one" | "all";
-
-export type MailboxMessageOrigin = "user" | "system" | "hook" | "companion" | "workflow";
-
-export type MailboxMessageSource = "composer" | "draft_start" | "hook_after_turn" | "hook_before_stop" | "hook_auto_resume" | "companion_parent_resume" | "workflow_orchestrator" | "routine_executor" | "local_relay_prompt";
-
-export type MailboxMessageStatus = "accepted" | "queued" | "ready_to_consume" | "consuming" | "dispatched" | "steered" | "paused" | "blocked" | "failed" | "deleted";
-
-export type MailboxMessageView = { id: string, origin: MailboxMessageOrigin, source: MailboxMessageSource, delivery: MailboxDelivery, barrier: ConsumptionBarrier, drain_mode: MailboxDrainMode, status: MailboxMessageStatus, preview: string, has_images: boolean, attempt_count: number, accepted_refs?: AgentRunMessageAcceptedRefs, last_error?: string, created_at: string, updated_at: string, can_promote: boolean, can_delete: boolean, can_reorder: boolean, can_recall: boolean, };
-
-export type MailboxStateView = { paused: boolean, pause_reason?: string, message?: string, can_resume: boolean, hide_system_steer_messages: boolean, };
-
 export type OrchestrationInstanceView = { orchestration_id: string, role: string, status: string, plan_digest: string, source_ref: JsonValue, ready_node_ids: Array<string>, nodes: Array<RuntimeNodeView>, created_at: string, updated_at: string, };
 
 export type OutputPortDefinition = { key: string, description: string, gate_strategy: GateStrategy, gate_params?: JsonValue, };
@@ -198,8 +154,6 @@ export type ProjectActiveAgentsView = { project_id: string, runs: Array<Lifecycl
 export type RegisterHookPresetResponse = { registered: boolean, key: string, };
 
 export type RuntimeNodeView = { node_id: string, node_path: string, kind: string, status: string, attempt: number, executor_run_ref?: ExecutorRunRef, started_at?: string, completed_at?: string, children: Array<RuntimeNodeView>, };
-
-export type RuntimeSessionCommandStateDto = { status: string, turn_id?: string, message?: string, };
 
 export type RuntimeSessionExecutionAnchorDto = { runtime_session_id: string, run_id: string, agent_id: string, launch_frame_id: string, orchestration_id?: string, node_path?: string, node_attempt?: number, created_by_kind: string, created_at: string, updated_at: string, };
 
@@ -218,8 +172,6 @@ export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRef
 export type SessionShellDto = { id: string, title: string, title_source: string, created_at: bigint, updated_at: bigint, last_event_seq: bigint, last_turn_id?: string, last_delivery_status: string, };
 
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
-
-export type SteeringStopEffect = "none" | "continue_on_stop";
 
 export type SubjectExecutionView = { subject_ref: SubjectRefDto, associations: Array<LifecycleSubjectAssociationDto>, runs: Array<LifecycleRunView>, current_agent?: AgentRunView, latest_runtime_node?: RuntimeNodeView, artifacts: JsonValue, };
 

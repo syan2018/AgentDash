@@ -234,7 +234,7 @@ impl SessionRuntimeInner {
         let Some(deps) = self.agent_run_mailbox_boundary_deps.clone() else {
             return AutoResumeMailboxRoute::NoAnchor;
         };
-        let service = crate::workflow::AgentRunMailboxService::new(
+        let service = crate::session::AgentRunMailboxService::new(
             deps.lifecycle_run_repo.as_ref(),
             deps.lifecycle_agent_repo.as_ref(),
             deps.agent_frame_repo.as_ref(),
@@ -267,7 +267,7 @@ impl SessionRuntimeInner {
                 }
                 AutoResumeMailboxRoute::Routed
             }
-            Err(crate::workflow::WorkflowApplicationError::NotFound(_)) => {
+            Err(crate::session::WorkflowApplicationError::NotFound(_)) => {
                 AutoResumeMailboxRoute::NoAnchor
             }
             Err(error) => {

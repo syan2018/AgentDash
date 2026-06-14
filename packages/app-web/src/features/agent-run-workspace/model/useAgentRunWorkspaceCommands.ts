@@ -4,11 +4,11 @@ import type { JsonValue } from "../../../generated/common-contracts";
 import type { UserInput } from "../../../generated/backbone-protocol";
 import type {
   AgentRunCommandOnlyRequest,
-  AgentRunCommandPreconditionView,
   ConversationCommandView,
   ConversationMailboxSnapshotView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
+import type { AgentRunCommandPreconditionView } from "../../../generated/agent-run-mailbox-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
   cancelAgentRun,
@@ -18,7 +18,7 @@ import {
   promoteAgentRunMailboxMessage,
   resumeAgentRunMailbox,
   submitAgentRunComposerInput,
-} from "../../../services/lifecycle";
+} from "../../../services/agentRunMailbox";
 import type {
   CreateProjectAgentRunRequest,
   ProjectAgentRunStartResult,

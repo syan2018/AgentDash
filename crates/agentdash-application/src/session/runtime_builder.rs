@@ -167,7 +167,7 @@ impl SessionRuntimeBuilder {
         mut self,
         lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
         command_receipt_repo: Arc<dyn agentdash_domain::workflow::AgentRunCommandReceiptRepository>,
-        mailbox_repo: Arc<dyn agentdash_domain::workflow::AgentRunMailboxRepository>,
+        mailbox_repo: Arc<dyn agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository>,
     ) -> Self {
         self.inner = self.inner.with_agent_run_mailbox_boundary(
             lifecycle_run_repo,

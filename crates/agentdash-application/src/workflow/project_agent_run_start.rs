@@ -4,10 +4,11 @@ use agentdash_contracts::workflow::{
     ConversationEffectiveExecutorConfigView, ConversationModelConfigSource,
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
+use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
-    AgentRunCommandReceiptRepository, AgentRunMailboxRepository, LifecycleAgentRepository,
-    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    AgentRunCommandReceiptRepository, LifecycleAgentRepository, LifecycleGateRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
 };
 use agentdash_domain::workflow::{
@@ -19,11 +20,13 @@ use agentdash_spi::platform::auth::AuthIdentity;
 use async_trait::async_trait;
 
 use crate::repository_set::RepositorySet;
-use crate::session::{SessionCoreService, SessionExecutionState, SessionMeta};
+use crate::session::{
+    AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxService,
+    AgentRunMailboxUserMessageCommand, SessionCoreService, SessionExecutionState, SessionMeta,
+};
 use crate::workflow::{
-    AgentRunCommandReceiptView, AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult,
-    AgentRunMailboxService, AgentRunMailboxUserMessageCommand, ConversationModelConfigResolver,
-    LifecycleDispatchService, RuntimeSessionCreator, WorkflowApplicationError,
+    AgentRunCommandReceiptView, ConversationModelConfigResolver, LifecycleDispatchService,
+    RuntimeSessionCreator, WorkflowApplicationError,
     command_receipt::{
         accepted_refs_from_record, claim_agent_run_command_receipt, digest_command_request,
         mark_command_terminal_failed,
@@ -667,12 +670,15 @@ mod tests {
     use crate::session::{ExecutionStatus, TitleSource};
     use crate::test_support::MemoryAgentRunCommandReceiptRepository;
     use agentdash_domain::DomainError;
+    use agentdash_domain::agent_run_mailbox::{
+        AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
+        AgentRunMailboxState, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
+        MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus,
+        NewAgentRunMailboxMessage,
+    };
     use agentdash_domain::workflow::{
-        AgentFrame, AgentLineage, AgentRunMailboxClaimRequest, AgentRunMailboxMessage,
-        AgentRunMailboxRepository, AgentRunMailboxState, ConsumptionBarrier, LifecycleAgent,
-        LifecycleGate, LifecycleRun, LifecycleSubjectAssociation, MailboxDelivery,
-        MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus,
-        NewAgentRunMailboxMessage, RuntimeSessionExecutionAnchor, WorkflowGraph,
+        AgentFrame, AgentLineage, LifecycleAgent, LifecycleGate, LifecycleRun,
+        LifecycleSubjectAssociation, RuntimeSessionExecutionAnchor, WorkflowGraph,
     };
     use chrono::Utc;
     use std::collections::HashMap;

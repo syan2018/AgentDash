@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import type {
   ConversationCommandView,
   ConversationMailboxSnapshotView,
+} from "../../../../generated/workflow-contracts";
+import type {
   MailboxStateView,
   MailboxMessageView,
-} from "../../../../generated/workflow-contracts";
+} from "../../../../generated/agent-run-mailbox-contracts";
 import { MailboxMessageList } from "./MailboxMessageRow";
 
 const mailboxMessage: MailboxMessageView = {

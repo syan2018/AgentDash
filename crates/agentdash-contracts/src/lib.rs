@@ -1,3 +1,4 @@
+pub mod agent_run_mailbox;
 pub mod canvas;
 pub mod companion;
 pub mod core;

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::agent::ProjectAgentRepository;
+use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::auth_session::AuthSessionRepository;
 use agentdash_domain::backend::{
     BackendExecutionLeaseRepository, BackendRepository, BackendWorkspaceInventoryRepository,
@@ -24,8 +25,8 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunCommandReceiptRepository, AgentRunMailboxRepository, LifecycleAgentRepository,
-    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    AgentRunCommandReceiptRepository, LifecycleAgentRepository, LifecycleGateRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
     WorkflowTemplateInstallRepository,
 };

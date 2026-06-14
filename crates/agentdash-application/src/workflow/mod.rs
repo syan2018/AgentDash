@@ -1,10 +1,9 @@
 pub(crate) mod activity_activation;
 pub mod agent_message;
-pub mod agent_run_mailbox;
 pub mod agent_run_workspace;
 pub mod agent_steering;
 mod catalog;
-mod command_receipt;
+pub(crate) mod command_receipt;
 mod completion;
 mod conversation_snapshot;
 mod definition;
@@ -39,11 +38,6 @@ pub(crate) use activity_activation::{
 };
 pub use agent_message::{
     AgentRunMessageDelivery, AgentRunMessageDeliveryPort, AgentRunMessageLaunchDeliveryPort,
-};
-pub use agent_run_mailbox::{
-    AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxControlCommand,
-    AgentRunMailboxScheduleOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
-    AgentRunMailboxUserMessageCommand,
 };
 pub use agent_steering::{
     AgentRunSteeringCommand, AgentRunSteeringDispatch, AgentRunSteeringService,

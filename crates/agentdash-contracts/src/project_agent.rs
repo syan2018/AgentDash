@@ -3,9 +3,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::agent_run_mailbox::{AgentRunAcceptedRefs, AgentRunCommandReceipt};
 use crate::workflow::{
-    AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto,
-    ConversationEffectiveExecutorConfigView, LifecycleRunRefDto, SubjectRefDto,
+    AgentFrameRefDto, AgentRunRefDto, ConversationEffectiveExecutorConfigView, LifecycleRunRefDto,
+    SubjectRefDto,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]

@@ -1,19 +1,22 @@
 use std::sync::Arc;
 
-use agentdash_application::workflow::agent_run_workspace as app_workspace;
-use agentdash_application::workflow::{
+use agentdash_application::session::{
     AgentRunMailboxCommandOutcome as AppMailboxCommandOutcome, AgentRunMailboxCommandResult,
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
 };
+use agentdash_application::workflow::agent_run_workspace as app_workspace;
+use agentdash_contracts::agent_run_mailbox::{
+    AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView,
+    AgentRunMailboxMoveRequest, AgentRunMailboxView, AgentRunMessageAcceptedRefs,
+    AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse, MailboxStateView,
+    RuntimeSessionCommandStateDto,
+};
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunCommandReceipt,
-    AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest,
-    AgentRunMailboxView, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
-    AgentRunMessageCommandResponse, AgentRunRefDto, AgentRunWorkspaceControlPlaneStatus,
-    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
-    AgentRunWorkspaceShell, AgentRunWorkspaceView, ConversationExecutionStatus, LifecycleRunRefDto,
-    LifecycleSubjectAssociationDto, MailboxStateView, RuntimeSessionCommandStateDto,
-    RuntimeSessionRefDto, RuntimeSessionTraceMeta,
+    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunRefDto,
+    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
+    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
+    AgentRunWorkspaceView, ConversationExecutionStatus, LifecycleRunRefDto,
+    LifecycleSubjectAssociationDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
 };
 use agentdash_domain::workflow::{
     AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind,
@@ -1063,7 +1066,7 @@ mod tests {
 
     #[test]
     fn mailbox_state_view_exposes_pause_reason_and_resume() {
-        let state = agentdash_domain::workflow::AgentRunMailboxState {
+        let state = agentdash_domain::agent_run_mailbox::AgentRunMailboxState {
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
             runtime_session_id: "runtime-1".to_string(),
@@ -1085,7 +1088,7 @@ mod tests {
 
     #[test]
     fn mailbox_state_view_hides_empty_paused_prompt() {
-        let state = agentdash_domain::workflow::AgentRunMailboxState {
+        let state = agentdash_domain::agent_run_mailbox::AgentRunMailboxState {
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
             runtime_session_id: "runtime-1".to_string(),

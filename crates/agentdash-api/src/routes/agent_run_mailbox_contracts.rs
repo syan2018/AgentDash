@@ -1,29 +1,32 @@
-use agentdash_contracts::workflow::{
-    AgentRunMessageAcceptedRefs, AgentRunRefDto, ConsumptionBarrier, LifecycleRunRefDto,
-    MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource,
-    MailboxMessageStatus, MailboxMessageView, MailboxStateView, RuntimeSessionRefDto,
+use agentdash_contracts::agent_run_mailbox::{
+    AgentRunMessageAcceptedRefs, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
+    MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus, MailboxMessageView,
+    MailboxStateView, SteeringStopEffect,
 };
+use agentdash_contracts::workflow::{AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto};
 
 pub(crate) fn mailbox_message_view(
-    message: agentdash_domain::workflow::AgentRunMailboxMessage,
+    message: agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage,
 ) -> MailboxMessageView {
     let can_delete = matches!(
         message.status,
-        agentdash_domain::workflow::MailboxMessageStatus::Accepted
-            | agentdash_domain::workflow::MailboxMessageStatus::Queued
-            | agentdash_domain::workflow::MailboxMessageStatus::ReadyToConsume
-            | agentdash_domain::workflow::MailboxMessageStatus::Paused
-            | agentdash_domain::workflow::MailboxMessageStatus::Blocked
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Accepted
+            | agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Queued
+            | agentdash_domain::agent_run_mailbox::MailboxMessageStatus::ReadyToConsume
+            | agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Paused
+            | agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Blocked
     );
     let can_promote = can_delete
-        && message.delivery == agentdash_domain::workflow::MailboxDelivery::LaunchOrContinueTurn
+        && message.delivery
+            == agentdash_domain::agent_run_mailbox::MailboxDelivery::LaunchOrContinueTurn
         && message.last_error.as_deref()
-            != Some(agentdash_domain::workflow::MAILBOX_DELIVERY_RESULT_UNKNOWN);
+            != Some(agentdash_domain::agent_run_mailbox::MAILBOX_DELIVERY_RESULT_UNKNOWN);
     let can_reorder = can_delete
-        && message.origin == agentdash_domain::workflow::MailboxMessageOrigin::User
-        && message.delivery == agentdash_domain::workflow::MailboxDelivery::LaunchOrContinueTurn;
+        && message.origin == agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User
+        && message.delivery
+            == agentdash_domain::agent_run_mailbox::MailboxDelivery::LaunchOrContinueTurn;
     let can_recall = can_delete
-        && message.origin == agentdash_domain::workflow::MailboxMessageOrigin::User
+        && message.origin == agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User
         && message.payload_json.is_some();
     MailboxMessageView {
         id: message.id.to_string(),
@@ -48,18 +51,18 @@ pub(crate) fn mailbox_message_view(
 }
 
 pub(crate) fn mailbox_message_visible(
-    message: &agentdash_domain::workflow::AgentRunMailboxMessage,
+    message: &agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage,
 ) -> bool {
     !matches!(
         message.status,
-        agentdash_domain::workflow::MailboxMessageStatus::Dispatched
-            | agentdash_domain::workflow::MailboxMessageStatus::Steered
-            | agentdash_domain::workflow::MailboxMessageStatus::Deleted
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Dispatched
+            | agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Steered
+            | agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Deleted
     )
 }
 
 pub(crate) fn mailbox_state_view(
-    state: Option<&agentdash_domain::workflow::AgentRunMailboxState>,
+    state: Option<&agentdash_domain::agent_run_mailbox::AgentRunMailboxState>,
     can_resume: bool,
     visible_message_count: usize,
     hide_system_steer_messages: bool,
@@ -75,133 +78,153 @@ pub(crate) fn mailbox_state_view(
 }
 
 fn mailbox_status_view(
-    status: agentdash_domain::workflow::MailboxMessageStatus,
+    status: agentdash_domain::agent_run_mailbox::MailboxMessageStatus,
 ) -> MailboxMessageStatus {
     match status {
-        agentdash_domain::workflow::MailboxMessageStatus::Accepted => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Accepted => {
             MailboxMessageStatus::Accepted
         }
-        agentdash_domain::workflow::MailboxMessageStatus::Queued => MailboxMessageStatus::Queued,
-        agentdash_domain::workflow::MailboxMessageStatus::ReadyToConsume => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Queued => {
+            MailboxMessageStatus::Queued
+        }
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::ReadyToConsume => {
             MailboxMessageStatus::ReadyToConsume
         }
-        agentdash_domain::workflow::MailboxMessageStatus::Consuming => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Consuming => {
             MailboxMessageStatus::Consuming
         }
-        agentdash_domain::workflow::MailboxMessageStatus::Dispatched => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Dispatched => {
             MailboxMessageStatus::Dispatched
         }
-        agentdash_domain::workflow::MailboxMessageStatus::Steered => MailboxMessageStatus::Steered,
-        agentdash_domain::workflow::MailboxMessageStatus::Paused => MailboxMessageStatus::Paused,
-        agentdash_domain::workflow::MailboxMessageStatus::Blocked => MailboxMessageStatus::Blocked,
-        agentdash_domain::workflow::MailboxMessageStatus::Failed => MailboxMessageStatus::Failed,
-        agentdash_domain::workflow::MailboxMessageStatus::Deleted => MailboxMessageStatus::Deleted,
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Steered => {
+            MailboxMessageStatus::Steered
+        }
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Paused => {
+            MailboxMessageStatus::Paused
+        }
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Blocked => {
+            MailboxMessageStatus::Blocked
+        }
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Failed => {
+            MailboxMessageStatus::Failed
+        }
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Deleted => {
+            MailboxMessageStatus::Deleted
+        }
     }
 }
 
 fn mailbox_origin_view(
-    origin: agentdash_domain::workflow::MailboxMessageOrigin,
+    origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin,
 ) -> MailboxMessageOrigin {
     match origin {
-        agentdash_domain::workflow::MailboxMessageOrigin::User => MailboxMessageOrigin::User,
-        agentdash_domain::workflow::MailboxMessageOrigin::System => MailboxMessageOrigin::System,
-        agentdash_domain::workflow::MailboxMessageOrigin::Hook => MailboxMessageOrigin::Hook,
-        agentdash_domain::workflow::MailboxMessageOrigin::Companion => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User => {
+            MailboxMessageOrigin::User
+        }
+        agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::System => {
+            MailboxMessageOrigin::System
+        }
+        agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::Hook => {
+            MailboxMessageOrigin::Hook
+        }
+        agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::Companion => {
             MailboxMessageOrigin::Companion
         }
-        agentdash_domain::workflow::MailboxMessageOrigin::Workflow => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::Workflow => {
             MailboxMessageOrigin::Workflow
         }
     }
 }
 
 fn mailbox_source_view(
-    source: agentdash_domain::workflow::MailboxMessageSource,
+    source: agentdash_domain::agent_run_mailbox::MailboxMessageSource,
 ) -> MailboxMessageSource {
     match source {
-        agentdash_domain::workflow::MailboxMessageSource::Composer => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageSource::Composer => {
             MailboxMessageSource::Composer
         }
-        agentdash_domain::workflow::MailboxMessageSource::DraftStart => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageSource::DraftStart => {
             MailboxMessageSource::DraftStart
         }
-        agentdash_domain::workflow::MailboxMessageSource::HookAfterTurn => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageSource::HookAfterTurn => {
             MailboxMessageSource::HookAfterTurn
         }
-        agentdash_domain::workflow::MailboxMessageSource::HookBeforeStop => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageSource::HookBeforeStop => {
             MailboxMessageSource::HookBeforeStop
         }
-        agentdash_domain::workflow::MailboxMessageSource::HookAutoResume => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageSource::HookAutoResume => {
             MailboxMessageSource::HookAutoResume
         }
-        agentdash_domain::workflow::MailboxMessageSource::CompanionParentResume => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageSource::CompanionParentResume => {
             MailboxMessageSource::CompanionParentResume
         }
-        agentdash_domain::workflow::MailboxMessageSource::WorkflowOrchestrator => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageSource::WorkflowOrchestrator => {
             MailboxMessageSource::WorkflowOrchestrator
         }
-        agentdash_domain::workflow::MailboxMessageSource::RoutineExecutor => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageSource::RoutineExecutor => {
             MailboxMessageSource::RoutineExecutor
         }
-        agentdash_domain::workflow::MailboxMessageSource::LocalRelayPrompt => {
+        agentdash_domain::agent_run_mailbox::MailboxMessageSource::LocalRelayPrompt => {
             MailboxMessageSource::LocalRelayPrompt
         }
     }
 }
 
-fn mailbox_delivery_view(delivery: agentdash_domain::workflow::MailboxDelivery) -> MailboxDelivery {
+fn mailbox_delivery_view(
+    delivery: agentdash_domain::agent_run_mailbox::MailboxDelivery,
+) -> MailboxDelivery {
     match delivery {
-        agentdash_domain::workflow::MailboxDelivery::LaunchOrContinueTurn => {
+        agentdash_domain::agent_run_mailbox::MailboxDelivery::LaunchOrContinueTurn => {
             MailboxDelivery::LaunchOrContinueTurn
         }
-        agentdash_domain::workflow::MailboxDelivery::SteerActiveTurn { stop_effect } => {
+        agentdash_domain::agent_run_mailbox::MailboxDelivery::SteerActiveTurn { stop_effect } => {
             MailboxDelivery::SteerActiveTurn {
                 stop_effect: match stop_effect {
-                    agentdash_domain::workflow::SteeringStopEffect::None => {
-                        agentdash_contracts::workflow::SteeringStopEffect::None
+                    agentdash_domain::agent_run_mailbox::SteeringStopEffect::None => {
+                        SteeringStopEffect::None
                     }
-                    agentdash_domain::workflow::SteeringStopEffect::ContinueOnStop => {
-                        agentdash_contracts::workflow::SteeringStopEffect::ContinueOnStop
+                    agentdash_domain::agent_run_mailbox::SteeringStopEffect::ContinueOnStop => {
+                        SteeringStopEffect::ContinueOnStop
                     }
                 },
             }
         }
-        agentdash_domain::workflow::MailboxDelivery::ResumeLaunchSource { launch_source } => {
-            MailboxDelivery::ResumeLaunchSource { launch_source }
-        }
+        agentdash_domain::agent_run_mailbox::MailboxDelivery::ResumeLaunchSource {
+            launch_source,
+        } => MailboxDelivery::ResumeLaunchSource { launch_source },
     }
 }
 
 fn mailbox_barrier_view(
-    barrier: agentdash_domain::workflow::ConsumptionBarrier,
+    barrier: agentdash_domain::agent_run_mailbox::ConsumptionBarrier,
 ) -> ConsumptionBarrier {
     match barrier {
-        agentdash_domain::workflow::ConsumptionBarrier::ImmediateIfIdle => {
+        agentdash_domain::agent_run_mailbox::ConsumptionBarrier::ImmediateIfIdle => {
             ConsumptionBarrier::ImmediateIfIdle
         }
-        agentdash_domain::workflow::ConsumptionBarrier::AgentLoopTurnBoundary => {
+        agentdash_domain::agent_run_mailbox::ConsumptionBarrier::AgentLoopTurnBoundary => {
             ConsumptionBarrier::AgentLoopTurnBoundary
         }
-        agentdash_domain::workflow::ConsumptionBarrier::AgentRunTurnBoundary => {
+        agentdash_domain::agent_run_mailbox::ConsumptionBarrier::AgentRunTurnBoundary => {
             ConsumptionBarrier::AgentRunTurnBoundary
         }
-        agentdash_domain::workflow::ConsumptionBarrier::ManualResume => {
+        agentdash_domain::agent_run_mailbox::ConsumptionBarrier::ManualResume => {
             ConsumptionBarrier::ManualResume
         }
     }
 }
 
 fn mailbox_drain_mode_view(
-    drain_mode: agentdash_domain::workflow::MailboxDrainMode,
+    drain_mode: agentdash_domain::agent_run_mailbox::MailboxDrainMode,
 ) -> MailboxDrainMode {
     match drain_mode {
-        agentdash_domain::workflow::MailboxDrainMode::One => MailboxDrainMode::One,
-        agentdash_domain::workflow::MailboxDrainMode::All => MailboxDrainMode::All,
+        agentdash_domain::agent_run_mailbox::MailboxDrainMode::One => MailboxDrainMode::One,
+        agentdash_domain::agent_run_mailbox::MailboxDrainMode::All => MailboxDrainMode::All,
     }
 }
 
 fn mailbox_message_accepted_refs(
-    message: &agentdash_domain::workflow::AgentRunMailboxMessage,
+    message: &agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage,
 ) -> Option<AgentRunMessageAcceptedRefs> {
     if message.accepted_agent_run_turn_id.is_none() && message.accepted_protocol_turn_id.is_none() {
         return None;

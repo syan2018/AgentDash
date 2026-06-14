@@ -3,6 +3,8 @@ export type {
   AgentRunRefDto,
   LifecycleRunRefDto,
   RuntimeSessionRefDto,
+} from "../generated/agent-run-mailbox-contracts";
+export type {
   SubjectRefDto,
 } from "../generated/project-agent-contracts";
 export type {

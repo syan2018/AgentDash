@@ -4,7 +4,8 @@ use agentdash_contracts::workflow::{
     SubjectRefDto, ValidationSeverity,
 };
 use agentdash_domain::agent::ProjectAgent;
-use agentdash_domain::workflow::{AgentFrame, AgentRunMailboxState, LifecycleAgent, LifecycleRun};
+use agentdash_domain::agent_run_mailbox::AgentRunMailboxState;
+use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::Vfs;
 use uuid::Uuid;
 
@@ -414,13 +415,13 @@ fn mailbox_state_model(
 }
 
 pub fn mailbox_message_visible(
-    message: &agentdash_domain::workflow::AgentRunMailboxMessage,
+    message: &agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage,
 ) -> bool {
     !matches!(
         message.status,
-        agentdash_domain::workflow::MailboxMessageStatus::Dispatched
-            | agentdash_domain::workflow::MailboxMessageStatus::Steered
-            | agentdash_domain::workflow::MailboxMessageStatus::Deleted
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Dispatched
+            | agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Steered
+            | agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Deleted
     )
 }
 

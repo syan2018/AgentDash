@@ -6,7 +6,6 @@ mod entity;
 mod lifecycle_agent;
 mod lifecycle_gate;
 mod lifecycle_subject_association;
-mod mailbox;
 mod repository;
 mod runtime_session_anchor;
 mod validation;
@@ -33,12 +32,6 @@ pub use entity::{
 pub use lifecycle_agent::{LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::LifecycleGate;
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
-pub use mailbox::{
-    AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
-    AgentRunMailboxState, ConsumptionBarrier, MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery,
-    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus,
-    NewAgentRunMailboxMessage, SteeringStopEffect,
-};
 pub use repository::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
     LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,

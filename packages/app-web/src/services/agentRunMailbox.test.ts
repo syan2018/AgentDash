@@ -20,8 +20,8 @@ import {
   promoteAgentRunMailboxMessage,
   resumeAgentRunMailbox,
   submitAgentRunComposerInput,
-} from "./lifecycle";
-import type { AgentRunCommandPreconditionView } from "../generated/workflow-contracts";
+} from "./agentRunMailbox";
+import type { AgentRunCommandPreconditionView } from "../generated/agent-run-mailbox-contracts";
 
 function command(kind: AgentRunCommandPreconditionView["command_kind"]): AgentRunCommandPreconditionView {
   return {

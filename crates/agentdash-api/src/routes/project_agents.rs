@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
+use agentdash_application::session::AgentRunMailboxService;
 use agentdash_application::session::construction_planner::{
     ResolvedProjectAgentContext, build_project_agent_context,
 };
 use agentdash_application::workflow::{
-    AgentRunMailboxService, ConversationModelConfigResolver, ProjectAgentRunStartCommand,
-    ProjectAgentRunStartRepos, ProjectAgentRunStartService,
+    ConversationModelConfigResolver, ProjectAgentRunStartCommand, ProjectAgentRunStartRepos,
+    ProjectAgentRunStartService,
 };
 use agentdash_domain::{
     agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project, workflow::SubjectRef,
@@ -17,6 +18,7 @@ use axum::{
 };
 use uuid::Uuid;
 
+use agentdash_contracts::agent_run_mailbox::{AgentRunAcceptedRefs, AgentRunCommandReceipt};
 use agentdash_contracts::core::DeletedFlagResponse;
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent as ProjectAgentResponse,
@@ -24,8 +26,8 @@ use agentdash_contracts::project_agent::{
     UpdateProjectAgentRequest,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto,
-    ConversationModelConfigSource, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
+    AgentFrameRefDto, AgentRunRefDto, ConversationModelConfigSource, LifecycleRunRefDto,
+    RuntimeSessionRefDto, SubjectRefDto,
 };
 
 use crate::{

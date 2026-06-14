@@ -4,14 +4,16 @@ use uuid::Uuid;
 use agentdash_agent_protocol::{
     UserInputBlock, UserInputSubmissionKind, user_input_blocks_to_content_parts,
 };
+use agentdash_domain::agent_run_mailbox::{
+    AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
+    AgentRunMailboxState, ConsumptionBarrier, MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery,
+    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus,
+    NewAgentRunMailboxMessage, SteeringStopEffect,
+};
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
-    AgentRunCommandReceiptRepository, AgentRunMailboxClaimRequest, AgentRunMailboxMessage,
-    AgentRunMailboxRepository, AgentRunMailboxState, ConsumptionBarrier, LifecycleAgent,
-    LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-    MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
-    MailboxMessageSource, MailboxMessageStatus, NewAgentRunMailboxMessage,
-    RuntimeSessionExecutionAnchorRepository, SteeringStopEffect,
+    AgentRunCommandReceiptRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
+    LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::platform::auth::AuthIdentity;
 use agentdash_spi::{AgentConfig, AgentMessage, ContentPart};

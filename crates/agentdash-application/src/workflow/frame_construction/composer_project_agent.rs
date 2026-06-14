@@ -122,7 +122,7 @@ pub(super) async fn compose(
                     .vfs_access_grants
                     .clone()
                     .unwrap_or_default(),
-                request_mcp_servers: input.command.local_relay_mcp_declarations().to_vec(),
+                request_mcp_servers: input.command.local_relay_mcp_servers().to_vec(),
                 existing_vfs: frame.typed_vfs(),
                 visible_canvas_mount_ids: frame.visible_canvas_mount_ids(),
                 // 三态直达：None/空集 → base mode=All；非空 → Allowlist（不再 unwrap_or_default 抹平）。

@@ -10,7 +10,7 @@ use crate::capability::{
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::runtime::Vfs as RuntimeVfs;
-use crate::runtime_bridge::mcp_declarations_to_runtime_servers;
+use crate::runtime_bridge::runtime_mcp_servers_to_summaries;
 use crate::session::ExecutorResolution;
 use crate::session::bootstrap::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
@@ -97,14 +97,12 @@ pub async fn build_task_session_context(
         contributions,
         mcp_candidates: McpCandidates {
             presets: load_available_presets(repos, task.project_id).await,
-            agent_servers: vec![],
         },
         mcp_runtime_context: None,
         capability_context: None,
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, platform_config);
-    let mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration> =
-        cap_output.tool.mcp_servers.clone();
+    let mcp_servers: Vec<agentdash_spi::RuntimeMcpServer> = cap_output.tool.mcp_servers.clone();
 
     // ── 构建 VFS（cloud-native 场景）──
     let use_vfs = resolved_config
@@ -160,7 +158,7 @@ pub async fn build_task_session_context(
         workspace,
         resolved_config,
         vfs: runtime_vfs,
-        mcp_servers: mcp_declarations_to_runtime_servers(&mcp_servers),
+        mcp_servers: runtime_mcp_servers_to_summaries(&mcp_servers),
         working_dir: None,
         executor_preset_name: preset_name,
         executor_resolution,

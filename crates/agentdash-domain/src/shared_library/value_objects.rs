@@ -338,6 +338,7 @@ pub struct AgentMcpSlotTemplate {
     pub required: bool,
 }
 
+/// Agent 模板的 MCP 依赖只描述安装期要生成的 Project MCP Preset。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AgentMcpDependencyTemplate {
     pub slot_key: String,
@@ -413,6 +414,7 @@ pub struct ProjectAgentConfigOverride {
     pub system_prompt_mode: Option<SystemPromptMode>,
 }
 
+/// Marketplace MCP 安装模板，只能在安装事务中解析为 Project MCP Preset。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct McpServerTemplatePayload {

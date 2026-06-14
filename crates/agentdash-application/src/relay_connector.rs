@@ -12,13 +12,10 @@ use tokio::sync::mpsc;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_domain::backend::{BackendExecutionLeaseRepository, BackendExecutionTerminalKind};
-use agentdash_relay::{
-    McpEnvVarRelay, McpHttpHeaderRelay, McpServerDeclarationRelay, McpTransportConfigRelay,
-};
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::{
     AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionStream, McpTransportConfig, PromptPayload, RuntimeMcpServerDeclaration,
+    ExecutionStream, PromptPayload,
 };
 
 use agentdash_application_ports::backend_transport::{
@@ -156,7 +153,7 @@ impl AgentConnector for RelayAgentConnector {
                 .session
                 .mcp_servers
                 .iter()
-                .map(mcp_declaration_to_relay_prompt_server)
+                .map(crate::mcp_relay_adapter::runtime_mcp_server_to_relay)
                 .collect(),
         };
 
@@ -387,55 +384,6 @@ fn workspace_identity_payload_from_mount(
     mount: &agentdash_domain::common::Mount,
 ) -> Option<serde_json::Value> {
     mount.metadata.get("workspace_identity_payload").cloned()
-}
-
-/// 把内部 `RuntimeMcpServerDeclaration` 投影为 relay prompt typed wire DTO。
-pub fn mcp_declaration_to_relay_prompt_server(
-    server: &RuntimeMcpServerDeclaration,
-) -> McpServerDeclarationRelay {
-    let transport = match &server.transport {
-        McpTransportConfig::Http { url, headers } => McpTransportConfigRelay::Http {
-            url: url.clone(),
-            headers: headers
-                .iter()
-                .map(|header| McpHttpHeaderRelay {
-                    name: header.name.clone(),
-                    value: header.value.clone(),
-                })
-                .collect(),
-        },
-        McpTransportConfig::Sse { url, headers } => McpTransportConfigRelay::Sse {
-            url: url.clone(),
-            headers: headers
-                .iter()
-                .map(|header| McpHttpHeaderRelay {
-                    name: header.name.clone(),
-                    value: header.value.clone(),
-                })
-                .collect(),
-        },
-        McpTransportConfig::Stdio {
-            command,
-            args,
-            env,
-            cwd,
-        } => McpTransportConfigRelay::Stdio {
-            command: command.clone(),
-            args: args.clone(),
-            env: env
-                .iter()
-                .map(|item| McpEnvVarRelay {
-                    name: item.name.clone(),
-                    value: item.value.clone(),
-                })
-                .collect(),
-            cwd: cwd.clone(),
-        },
-    };
-    McpServerDeclarationRelay {
-        name: server.name.clone(),
-        transport,
-    }
 }
 
 /// 把 canonical 用户输入投影为 relay 远程后端可识别的 ACP ContentBlock JSON。
@@ -799,7 +747,7 @@ mod tests {
         register_executor(&transport, "local", "REMOTE_EXECUTOR");
         let connector = RelayAgentConnector::new(transport.clone(), memory_lease_repo());
         let root = tempfile::tempdir().expect("workspace");
-        let mcp_server = agentdash_spi::RuntimeMcpServerDeclaration {
+        let mcp_server = agentdash_spi::RuntimeMcpServer {
             name: "third_party_mcp".to_string(),
             transport: agentdash_spi::McpTransportConfig::Stdio {
                 command: "cmd".to_string(),

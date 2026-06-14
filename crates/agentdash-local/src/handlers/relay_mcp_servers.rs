@@ -1,7 +1,8 @@
 //! relay MCP Server typed DTO 转换。
 
-use agentdash_relay::{McpServerDeclarationRelay, McpTransportConfigRelay};
-use agentdash_spi::{McpEnvVar, McpHttpHeader, McpTransportConfig, RuntimeMcpServerDeclaration};
+use agentdash_application::mcp_relay_adapter;
+use agentdash_relay::McpServerRelay;
+use agentdash_spi::RuntimeMcpServer;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -12,8 +13,8 @@ pub enum RelayMcpServerParseError {
 
 /// 从中继 `CommandPromptPayload.mcp_servers` typed wire DTO 转换出 runtime MCP 声明。
 pub fn relay_mcp_servers_to_runtime(
-    servers: &[McpServerDeclarationRelay],
-) -> Result<Vec<RuntimeMcpServerDeclaration>, RelayMcpServerParseError> {
+    servers: &[McpServerRelay],
+) -> Result<Vec<RuntimeMcpServer>, RelayMcpServerParseError> {
     servers
         .iter()
         .enumerate()
@@ -23,70 +24,26 @@ pub fn relay_mcp_servers_to_runtime(
 
 fn relay_mcp_server_to_runtime(
     index: usize,
-    server: &McpServerDeclarationRelay,
-) -> Result<RuntimeMcpServerDeclaration, RelayMcpServerParseError> {
+    server: &McpServerRelay,
+) -> Result<RuntimeMcpServer, RelayMcpServerParseError> {
     if server.name.trim().is_empty() {
         return Err(RelayMcpServerParseError::InvalidName { index });
     }
-    Ok(RuntimeMcpServerDeclaration {
-        name: server.name.clone(),
-        transport: relay_transport_to_runtime(&server.transport),
-        uses_relay: false,
-    })
-}
-
-fn relay_transport_to_runtime(transport: &McpTransportConfigRelay) -> McpTransportConfig {
-    match transport {
-        McpTransportConfigRelay::Http { url, headers } => McpTransportConfig::Http {
-            url: url.clone(),
-            headers: headers
-                .iter()
-                .map(|header| McpHttpHeader {
-                    name: header.name.clone(),
-                    value: header.value.clone(),
-                })
-                .collect(),
-        },
-        McpTransportConfigRelay::Sse { url, headers } => McpTransportConfig::Sse {
-            url: url.clone(),
-            headers: headers
-                .iter()
-                .map(|header| McpHttpHeader {
-                    name: header.name.clone(),
-                    value: header.value.clone(),
-                })
-                .collect(),
-        },
-        McpTransportConfigRelay::Stdio {
-            command,
-            args,
-            env,
-            cwd,
-        } => McpTransportConfig::Stdio {
-            command: command.clone(),
-            args: args.clone(),
-            env: env
-                .iter()
-                .map(|item| McpEnvVar {
-                    name: item.name.clone(),
-                    value: item.value.clone(),
-                })
-                .collect(),
-            cwd: cwd.clone(),
-        },
-    }
+    Ok(mcp_relay_adapter::relay_mcp_server_to_runtime(
+        server, false,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::relay_mcp_servers_to_runtime;
-    use agentdash_application::relay_connector::mcp_declaration_to_relay_prompt_server;
-    use agentdash_relay::{McpServerDeclarationRelay, McpTransportConfigRelay};
-    use agentdash_spi::{McpEnvVar, McpTransportConfig, RuntimeMcpServerDeclaration};
+    use agentdash_application::mcp_relay_adapter::runtime_mcp_server_to_relay;
+    use agentdash_relay::{McpServerRelay, McpTransportConfigRelay};
+    use agentdash_spi::{McpEnvVar, McpTransportConfig, RuntimeMcpServer};
 
     #[test]
     fn relay_mcp_servers_convert_application_prompt_wire_shape() {
-        let value = mcp_declaration_to_relay_prompt_server(&RuntimeMcpServerDeclaration {
+        let value = runtime_mcp_server_to_relay(&RuntimeMcpServer {
             name: "application-stdio".to_string(),
             transport: McpTransportConfig::Stdio {
                 command: "npx".to_string(),
@@ -121,7 +78,7 @@ mod tests {
 
     #[test]
     fn relay_mcp_servers_reject_blank_name() {
-        let error = relay_mcp_servers_to_runtime(&[McpServerDeclarationRelay {
+        let error = relay_mcp_servers_to_runtime(&[McpServerRelay {
             name: " ".to_string(),
             transport: McpTransportConfigRelay::Stdio {
                 command: "npx".to_string(),
@@ -137,7 +94,7 @@ mod tests {
 
     #[test]
     fn relay_mcp_servers_convert_valid_stdio() {
-        let servers = relay_mcp_servers_to_runtime(&[McpServerDeclarationRelay {
+        let servers = relay_mcp_servers_to_runtime(&[McpServerRelay {
             name: "stdio-server".to_string(),
             transport: McpTransportConfigRelay::Stdio {
                 command: "npx".to_string(),

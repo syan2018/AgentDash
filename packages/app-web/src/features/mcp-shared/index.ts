@@ -10,5 +10,9 @@ export {
   KeyValueList,
   StringList,
 } from '@agentdash/views/mcp-shared'
-export type { McpTransportConfigEditorProps } from '@agentdash/views/mcp-shared'
+export type {
+  McpTransportConfigEditorEntry,
+  McpTransportConfigEditorProps,
+  McpTransportConfigEditorValue,
+} from '@agentdash/views/mcp-shared'
 export { createDefaultMcpTransportConfig } from './helpers'

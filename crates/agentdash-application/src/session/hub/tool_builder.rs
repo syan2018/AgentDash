@@ -10,7 +10,7 @@
 //!
 use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::mcp_discovery::{DiscoveredMcpTool, McpToolDiscoveryRequest};
-use agentdash_spi::{ConnectorError, ExecutionContext, RuntimeMcpServerDeclaration};
+use agentdash_spi::{ConnectorError, ExecutionContext, RuntimeMcpServer};
 use uuid::Uuid;
 
 use super::SessionRuntimeInner;
@@ -25,10 +25,7 @@ impl SessionRuntimeInner {
     ///
     /// Active turn 返回 connector session frame 的执行快照；idle 时通过
     /// `RuntimeSessionExecutionAnchor` 反查当前 AgentFrame surface。
-    pub async fn get_runtime_mcp_servers(
-        &self,
-        session_id: &str,
-    ) -> Vec<RuntimeMcpServerDeclaration> {
+    pub async fn get_runtime_mcp_servers(&self, session_id: &str) -> Vec<RuntimeMcpServer> {
         let active = self
             .runtime_registry
             .with_runtime(session_id, |runtime| {

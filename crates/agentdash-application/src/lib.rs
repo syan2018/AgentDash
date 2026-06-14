@@ -12,6 +12,7 @@ pub mod extension_runtime;
 pub mod hooks;
 pub mod llm_provider;
 pub mod mcp_preset;
+pub mod mcp_relay_adapter;
 pub mod permission;
 pub mod platform_config;
 pub mod project;

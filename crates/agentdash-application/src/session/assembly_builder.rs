@@ -104,7 +104,7 @@ pub(crate) struct SessionAssemblyBuilder {
     pub(super) capability_state: Option<CapabilityState>,
 
     // ── MCP 层 ──
-    pub(super) mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
+    pub(super) mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
 
     // ── 系统上下文层 ──
     pub(super) context_bundle: Option<SessionContextBundle>,
@@ -195,7 +195,7 @@ impl SessionAssemblyBuilder {
     /// 设置 MCP server 列表（覆盖）。
     pub(crate) fn with_mcp_servers(
         mut self,
-        servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
+        servers: Vec<agentdash_spi::RuntimeMcpServer>,
     ) -> Self {
         self.mcp_servers = servers;
         self
@@ -204,7 +204,7 @@ impl SessionAssemblyBuilder {
     /// 追加 MCP server 到列表。
     pub(super) fn append_mcp_servers(
         mut self,
-        servers: impl IntoIterator<Item = agentdash_spi::RuntimeMcpServerDeclaration>,
+        servers: impl IntoIterator<Item = agentdash_spi::RuntimeMcpServer>,
     ) -> Self {
         self.mcp_servers.extend(servers);
         self
@@ -288,7 +288,7 @@ impl SessionAssemblyBuilder {
     pub(super) fn apply_companion_slice(
         self,
         parent_vfs: Option<&Vfs>,
-        parent_mcp_servers: &[agentdash_spi::RuntimeMcpServerDeclaration],
+        parent_mcp_servers: &[agentdash_spi::RuntimeMcpServer],
         parent_context_bundle: Option<&SessionContextBundle>,
         mode: CompanionSliceMode,
         executor_config: AgentConfig,

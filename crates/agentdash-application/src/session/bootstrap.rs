@@ -10,7 +10,7 @@ use super::context::{
 use super::plan::{
     SessionRuntimePolicySummary, SessionToolVisibilitySummary, summarize_runtime_policy,
 };
-use crate::runtime::{AgentConfig, RuntimeMcpServer, Vfs};
+use crate::runtime::{AgentConfig, McpServerSummary, Vfs};
 use crate::workflow::ActiveWorkflowProjection;
 
 /// 统一的 session bootstrap 计划。
@@ -25,7 +25,7 @@ pub struct SessionBootstrapPlan {
     pub executor: SessionExecutorSummary,
     pub resolved_config: Option<AgentConfig>,
     pub vfs: Option<Vfs>,
-    pub mcp_servers: Vec<RuntimeMcpServer>,
+    pub mcp_servers: Vec<McpServerSummary>,
     pub working_dir: Option<String>,
     pub tool_visibility: SessionToolVisibilitySummary,
     pub runtime_policy: SessionRuntimePolicySummary,
@@ -64,7 +64,7 @@ pub struct BootstrapPlanInput {
     pub workspace: Option<Workspace>,
     pub resolved_config: Option<AgentConfig>,
     pub vfs: Option<Vfs>,
-    pub mcp_servers: Vec<RuntimeMcpServer>,
+    pub mcp_servers: Vec<McpServerSummary>,
     pub working_dir: Option<String>,
     pub executor_preset_name: Option<String>,
     pub executor_resolution: super::context::ExecutorResolution,

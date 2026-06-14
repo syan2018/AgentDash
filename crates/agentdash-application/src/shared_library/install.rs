@@ -404,7 +404,7 @@ async fn install_agent_template(
     asset: LibraryAsset,
     config: agentdash_domain::shared_library::AgentTemplateConfig,
 ) -> Result<InstallLibraryAssetOutput, DomainError> {
-    let dependency_plans = resolve_agent_mcp_dependency_plans(
+    let dependency_plans = resolve_agent_mcp_preset_install_plans(
         repos,
         &asset,
         &config.mcp_dependencies,
@@ -465,7 +465,7 @@ async fn install_agent_template(
     })
 }
 
-struct AgentMcpDependencyInstallPlan {
+struct AgentMcpPresetInstallPlan {
     asset: LibraryAsset,
     payload: McpServerTemplatePayload,
     target_key: String,
@@ -473,12 +473,12 @@ struct AgentMcpDependencyInstallPlan {
     overwrite: bool,
 }
 
-async fn resolve_agent_mcp_dependency_plans(
+async fn resolve_agent_mcp_preset_install_plans(
     repos: &RepositorySet,
     agent_asset: &LibraryAsset,
     dependencies: &[AgentMcpDependencyTemplate],
     install_options: Option<&InstallLibraryAssetOptions>,
-) -> Result<Vec<AgentMcpDependencyInstallPlan>, DomainError> {
+) -> Result<Vec<AgentMcpPresetInstallPlan>, DomainError> {
     let options = agent_template_install_options(install_options)?;
     if options.dependency_mode == AgentTemplateDependencyMode::Skip || dependencies.is_empty() {
         return Ok(vec![]);
@@ -525,7 +525,7 @@ async fn resolve_agent_mcp_dependency_plans(
         let parameters = merged_dependency_parameters(dependency, options.dependency_parameters)?;
         // 预先解析一次，确保参数错误发生在任何写入之前。
         payload.resolve_transport(parameters.as_ref())?;
-        plans.push(AgentMcpDependencyInstallPlan {
+        plans.push(AgentMcpPresetInstallPlan {
             asset,
             payload,
             target_key,

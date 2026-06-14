@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
-    AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, RuntimeMcpServerDeclaration,
+    AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, RuntimeMcpServer,
     SessionContextBundle, Vfs,
 };
 use uuid::Uuid;
@@ -90,7 +90,7 @@ pub struct FrameLaunchIntent {
 pub struct FrameLaunchSurface {
     pub capability_state: CapabilityState,
     pub vfs: Vfs,
-    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
+    pub mcp_servers: Vec<RuntimeMcpServer>,
     pub execution_profile: AgentConfig,
 }
 
@@ -180,7 +180,7 @@ impl FrameLaunchEnvelope {
     }
 
     /// Launch-time MCP surface。
-    pub fn launch_mcp_servers(&self) -> &[RuntimeMcpServerDeclaration] {
+    pub fn launch_mcp_servers(&self) -> &[RuntimeMcpServer] {
         &self.launch_surface.mcp_servers
     }
 

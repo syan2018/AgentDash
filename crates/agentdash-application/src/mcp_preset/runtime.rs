@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use agentdash_spi::{McpEnvVar, McpHttpHeader, RuntimeMcpServerDeclaration, Vfs};
+use agentdash_spi::{McpEnvVar, McpHttpHeader, RuntimeMcpServer, Vfs};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -9,8 +9,8 @@ use agentdash_domain::mcp_preset::{
     McpRuntimeBindingSource, McpRuntimeBindingTarget, McpTransportConfig,
 };
 
-pub fn preset_to_runtime_mcp_declaration(preset: &McpPreset) -> RuntimeMcpServerDeclaration {
-    resolve_preset_mcp_declaration(preset, None).unwrap_or_else(|_| RuntimeMcpServerDeclaration {
+pub fn preset_to_runtime_mcp_server(preset: &McpPreset) -> RuntimeMcpServer {
+    resolve_preset_mcp_server(preset, None).unwrap_or_else(|_| RuntimeMcpServer {
         name: preset.key.clone(),
         transport: preset.transport.clone(),
         uses_relay: preset_uses_relay(preset),
@@ -67,15 +67,15 @@ pub enum McpRuntimeBindingError {
     },
 }
 
-pub fn resolve_preset_mcp_declaration(
+pub fn resolve_preset_mcp_server(
     preset: &McpPreset,
     context: Option<&McpRuntimeBindingContext<'_>>,
-) -> Result<RuntimeMcpServerDeclaration, McpRuntimeBindingError> {
+) -> Result<RuntimeMcpServer, McpRuntimeBindingError> {
     let mut transport = preset.transport.clone();
     if let Some(binding) = &preset.runtime_binding {
         apply_runtime_binding(&preset.key, &mut transport, binding, context)?;
     }
-    Ok(RuntimeMcpServerDeclaration {
+    Ok(RuntimeMcpServer {
         name: preset.key.clone(),
         uses_relay: preset.route_policy.uses_relay(&transport),
         transport,
@@ -338,17 +338,17 @@ fn target_path(target: &McpRuntimeBindingTarget) -> String {
     }
 }
 
-/// 从 preset key 列表解析出对应的 `RuntimeMcpServerDeclaration` 列表。
-pub async fn resolve_preset_mcp_declaration_refs(
+/// 从 preset key 列表解析出对应的 `RuntimeMcpServer` 列表。
+pub async fn resolve_preset_mcp_server_refs(
     repo: &dyn McpPresetRepository,
     project_id: Uuid,
     keys: &[String],
-) -> Result<Vec<RuntimeMcpServerDeclaration>, String> {
+) -> Result<Vec<RuntimeMcpServer>, String> {
     let presets = resolve_preset_mcp_presets(repo, project_id, keys).await?;
     presets
         .iter()
         .map(|preset| {
-            resolve_preset_mcp_declaration(preset, None)
+            resolve_preset_mcp_server(preset, None)
                 .map_err(|error| format!("mcp_preset `{}` 解析失败: {error}", preset.key))
         })
         .collect()
@@ -481,8 +481,8 @@ mod tests {
             ],
         });
 
-        let server = resolve_preset_mcp_declaration(&preset, Some(&context))
-            .expect("runtime binding resolves");
+        let server =
+            resolve_preset_mcp_server(&preset, Some(&context)).expect("runtime binding resolves");
 
         let McpTransportConfig::Http { url, headers } = server.transport else {
             panic!("expected http transport");
@@ -543,8 +543,8 @@ mod tests {
             ],
         }));
 
-        let server = resolve_preset_mcp_declaration(&preset, Some(&context))
-            .expect("runtime binding resolves");
+        let server =
+            resolve_preset_mcp_server(&preset, Some(&context)).expect("runtime binding resolves");
 
         let McpTransportConfig::Stdio { env, cwd, .. } = server.transport else {
             panic!("expected stdio transport");
@@ -575,7 +575,7 @@ mod tests {
             }],
         });
 
-        let error = resolve_preset_mcp_declaration(&preset, Some(&context)).expect_err("must fail");
+        let error = resolve_preset_mcp_server(&preset, Some(&context)).expect_err("must fail");
         let message = error.to_string();
         assert!(message.contains("p4-local"));
         assert!(message.contains("workspace.detected_facts.p4.missing"));

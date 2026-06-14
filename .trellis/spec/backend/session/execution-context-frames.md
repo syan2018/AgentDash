@@ -32,7 +32,7 @@ pub struct ExecutionSessionFrame {
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: AgentConfig,
-    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
+    pub mcp_servers: Vec<RuntimeMcpServer>,
     pub vfs: Option<Vfs>,
     pub identity: Option<AuthIdentity>,
 }
@@ -102,7 +102,7 @@ active TurnExecution
 ```
 
 该流程只服务 live connector 的工具集替换；active turn 的 `ExecutionSessionFrame.mcp_servers`
-是当前 frame surface 的执行快照，工具发现从该快照读取 MCP declaration，并用
+是当前 frame surface 的执行快照，工具发现从该快照读取 `RuntimeMcpServer`，并用
 `CapabilityState.tool_policy` 做工具级裁决。下一轮 prompt 仍通过
 `LaunchCommand -> FrameLaunchEnvelope -> LaunchPlan -> PreparedTurn` 重新投影完整
 `ExecutionContext`。

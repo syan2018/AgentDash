@@ -23,19 +23,19 @@
 
 2. 收束 Rust transport / relay adapter
    - 新增或移动一个权威 MCP adapter 模块。
-   - 合并 `RuntimeMcpServerDeclaration -> McpServerDeclarationRelay`。
+   - 合并 `RuntimeMcpServer -> McpServerRelay`。
    - 合并 `McpTransportConfig <-> McpTransportConfigRelay`。
    - 删除 application/api/local 中重复 match 逻辑。
 
 3. 收束执行面 runtime model
-   - 将 `RuntimeMcpServerDeclaration` 重命名或明确为 `RuntimeMcpServer`。
+   - 将执行面 MCP 类型固定为 `RuntimeMcpServer`。
    - 将 application 当前 `RuntimeMcpServer` 改名为 summary/view。
    - 删除有损反向转换入口。
    - 校准 session plan、bootstrap、context contribution 对 summary 类型的使用。
 
 4. 清理 Agent MCP 引用路径
    - 保留 `mcp_preset_keys -> McpPreset -> RuntimeMcpServer` 主路径。
-   - 删除或显式重命名 `AgentMcpServerEntry` / `agent_mcp_servers`。
+   - 删除 inline agent MCP server 路径。
    - 校准 capability resolver、activity activation、owner bootstrap。
 
 5. 校准 AgentFrame / Capability projection
@@ -116,3 +116,56 @@ pnpm test -- mcp
 - Gate 2: 执行面 runtime model 与 summary model 分离后，无有损反向转换。
 - Gate 3: 前端 cloud/local MCP transport 类型不再隐式混用。
 - Gate 4: 全链路 MCP preset 启用、relay probe/list/call、AgentFrame projection 通过定向测试。
+
+## Progress
+
+### 2026-06-14 Gate 0/1/2/3 Contract Lock
+
+- Rust runtime surface 固定为 `agentdash_spi::RuntimeMcpServer`。
+- Application 展示摘要固定为 `agentdash_application::runtime::McpServerSummary`，`runtime_bridge` 只保留 `RuntimeMcpServer -> McpServerSummary` 单向投影。
+- Relay wire server 固定为 `agentdash_relay::McpServerRelay`，MCP transport/server wire 转换集中到 `agentdash_application::mcp_relay_adapter`。
+- `agentdash-api`、`agentdash-local`、`agentdash-application::relay_connector` 已删除重复 MCP transport/server match 转换。
+- `McpTransportConfigEditor` 使用 `McpTransportConfigEditorValue` / `McpTransportConfigEditorEntry`，不再 import local-runtime MCP transport 类型。
+- Inline agent MCP server 路径已删除，custom `mcp:<key>` 只从 project MCP Preset 解析为 `RuntimeMcpServer`。
+
+已通过检查：
+
+```powershell
+cargo check -p agentdash-relay -p agentdash-spi -p agentdash-application-ports -p agentdash-application -p agentdash-api -p agentdash-local -p agentdash-executor
+pnpm --filter @agentdash/views typecheck
+pnpm --filter app-web typecheck
+pnpm run contracts:check
+cargo test -p agentdash-application -p agentdash-local -p agentdash-executor -p agentdash-relay --no-run
+```
+
+### 2026-06-14 Marketplace / Shared Library 边界收束
+
+- 已审计 `mcp_server_template` / `McpServerTemplate` / `AgentMcpDependencyTemplate` / `AgentMcpSlotTemplate` / `McpTransportTemplate` 引用。
+- `mcp_server_template` 安装路径保持为 `McpServerTemplatePayload -> McpPreset`，`InstallLibraryAssetOutput` 只返回 `McpPreset { id }`。
+- Agent 模板 MCP 依赖路径只预安装依赖模板为 Project MCP Preset，并向 ProjectAgent 配置写入 `mcp_preset_keys`；未发现模板进入 `RuntimeMcpServer`、`McpServerRelay`、`CapabilityState`、`AgentFrame` 或 `mcp_surface_json`。
+- `AgentMcpDependencyInstallPlan` 已收束命名为 `AgentMcpPresetInstallPlan`，强调安装产物是 Project MCP Preset。
+
+已通过检查：
+
+```powershell
+cargo check -p agentdash-domain -p agentdash-application -p agentdash-contracts
+```
+
+### 2026-06-14 Final Quality Gate
+
+- `docs/relay-protocol.md` 已同步到 `McpServerRelay { name, transport }` payload，`mcp.list_tools` / `mcp.call_tool` 不再使用旧 `server_name` 示例。
+- 当前代码、packages、docs、spec、当前任务和相关活跃任务中，旧类型名与旧 inline MCP server 路径 scoped search 无命中。
+- Shared Library / Marketplace MCP template 仍只停留在 publish/install/display 边界，没有进入 runtime、capability、AgentFrame 或 relay dispatch。
+- 本次没有 MCP 数据库 schema 改动；不需要 migration。
+
+已通过最终检查：
+
+```powershell
+cargo fmt --check
+cargo check -p agentdash-relay -p agentdash-spi -p agentdash-application-ports -p agentdash-application -p agentdash-domain -p agentdash-contracts -p agentdash-api -p agentdash-local -p agentdash-executor
+pnpm --filter @agentdash/views typecheck
+pnpm --filter app-web typecheck
+pnpm run contracts:check
+cargo test -p agentdash-application -p agentdash-local -p agentdash-executor -p agentdash-relay mcp
+python ./.trellis/scripts/task.py validate ./.trellis/tasks/06-14-mcp-concept-model-convergence
+```

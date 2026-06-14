@@ -1,6 +1,6 @@
 # MCP 概念模型收束设计
 
-## Current Shape
+## Current Shape After Gate 0
 
 ```mermaid
 flowchart LR
@@ -9,38 +9,31 @@ flowchart LR
   ContractDto["contracts::McpTransportConfigDto<br/>API/TS DTO"]
   FrontendTypes["app-web generated MCP types"]
   LocalTs["packages/core local-runtime<br/>McpTransportConfig"]
-  Editor["views McpTransportConfigEditor<br/>绑定 local-runtime 类型"]
+  Editor["views McpTransportConfigEditor<br/>编辑值类型"]
 
-  RuntimeDecl["spi::RuntimeMcpServerDeclaration<br/>执行面声明"]
-  RuntimeView["application::RuntimeMcpServer<br/>summary/bootstrap 形状"]
+  Runtime["spi::RuntimeMcpServer<br/>执行面事实源"]
+  Summary["application::McpServerSummary<br/>只读展示投影"]
   FrameJson["agent_frames.mcp_surface_json<br/>JSON 投影"]
 
-  RelayDto["relay::McpServerDeclarationRelay<br/>wire DTO"]
-  AppRelay["application relay_connector<br/>Runtime -> Relay"]
-  ApiRelay["api relay mcp_relay_impl<br/>Runtime -> Relay"]
-  LocalManager["local mcp_client_manager<br/>Domain <-> Relay"]
-  LocalPrompt["local relay_mcp_servers<br/>Relay -> Runtime"]
-
-  AgentInline["AgentMcpServerEntry / agent_mcp_servers<br/>inline/fallback 命名"]
+  RelayDto["relay::McpServerRelay<br/>wire DTO"]
+  Adapter["application::mcp_relay_adapter<br/>唯一 wire 转换"]
+  Capability["capability resolver<br/>mcp key -> preset -> runtime"]
   Marketplace["shared_library::mcp_server_template<br/>安装模板"]
 
   DomainPreset --> DomainTransport
   DomainTransport <--> ContractDto
   ContractDto --> FrontendTypes
+  FrontendTypes --> Editor
   LocalTs --> Editor
-  FrontendTypes -.结构兼容复用.-> Editor
 
-  DomainPreset --> RuntimeDecl
-  RuntimeDecl --> FrameJson
-  FrameJson --> RuntimeDecl
-  RuntimeDecl --> RuntimeView
-  RuntimeView -.有损反向转换.-> RuntimeDecl
+  DomainPreset --> Capability --> Runtime
+  Runtime --> FrameJson
+  FrameJson --> Runtime
+  Runtime --> Summary
 
-  RuntimeDecl --> AppRelay --> RelayDto
-  RuntimeDecl --> ApiRelay --> RelayDto
-  DomainTransport --> LocalManager --> RelayDto
-  RelayDto --> LocalPrompt --> RuntimeDecl
-  AgentInline --> RuntimeDecl
+  Runtime --> Adapter --> RelayDto
+  DomainTransport --> Adapter
+  RelayDto --> Adapter --> Runtime
   Marketplace --> DomainPreset
 ```
 
@@ -51,7 +44,7 @@ flowchart LR
   Transport["McpTransportConfig<br/>唯一 transport 语义"]
   Preset["McpPreset<br/>项目资产事实源"]
   Runtime["RuntimeMcpServer<br/>执行面事实源"]
-  Wire["McpServerWire<br/>Relay/API 边界 DTO"]
+  Wire["McpServerRelay<br/>Relay/API 边界 DTO"]
   Summary["McpServerSummary<br/>只读展示投影"]
   Template["McpServerTemplate<br/>Marketplace 安装模板"]
   Adapter["mcp adapter<br/>集中转换"]
@@ -84,14 +77,14 @@ flowchart LR
 | `McpTransportConfig` | 纯连接参数：HTTP/SSE/stdio、headers/env/cwd | domain；SPI 可 re-export |
 | `McpPreset` | project 级可编辑、可安装、可引用资产 | domain/application/API |
 | `RuntimeMcpServer` | 本次执行真实可用的 MCP server：name + transport + placement | SPI/application/session/executor |
-| `McpServerWire` | Relay/API 边界 DTO | relay crate + adapter |
+| `McpServerRelay` | Relay/API 边界 DTO | relay crate + adapter |
 | `McpServerSummary` | 只读展示和 session plan 文案 | application/frontend |
 | `McpServerTemplate` | Marketplace 安装模板 | shared_library |
 
 ## Architecture Boundaries
 
 - Domain owns durable business meaning: preset, transport, template.
-- SPI owns executable runtime surface: runtime server declaration and capability state.
+- SPI owns executable runtime surface: runtime server and capability state.
 - Relay owns wire shape only.
 - Application owns resolution: preset refs, runtime binding, capability directives, AgentFrame projection.
 - Local runtime owns machine config and connection lifecycle, but transport semantics come from domain or adapter.
@@ -105,12 +98,12 @@ flowchart LR
 | --- | --- |
 | Transport shape | domain `McpTransportConfig` 是唯一业务 transport 语义，其他 transport DTO 只在边界存在 |
 | Runtime surface | SPI 执行面类型是唯一可执行 MCP server 事实源 |
-| Summary shape | 展示 / markdown / plan 只能用 summary 类型，禁止反向生成 runtime surface |
+| Summary shape | 展示 / markdown / plan 使用 summary 类型，summary 单向来源于 runtime surface |
 | Wire adapter | Relay / local / API 只能通过统一 adapter 转换 |
 | Frontend typing | Cloud preset contract type 与 local runtime config type 显式分流 |
-| Legacy policy | 无业务价值的 inline MCP / fallback / duplicate helper 直接删除 |
+| Concept policy | 只保留 preset、runtime、wire、summary、template 主路径 |
 
-Contract lock 完成前，模块级 subagent 不应各自引入临时结构或兼容转换。后续 subagent 的工作是沿锁定 contract 删除旧路径并替换调用点。
+Contract lock 先固定类型和模块归属；后续 subagent 沿锁定 contract 收束调用点。
 
 ## Data Flow
 

@@ -9,7 +9,7 @@
 //! ## 设计原则
 //!
 //! - **纯计算**:`activate_activity` 本身不做 IO;所有外部状态(workflow 定义 /
-//!   agent MCP servers / available presets / baseline caps)都通过 input 传入。
+//!   available presets / baseline caps)都通过 input 传入。
 //! - **port 前驱状态剥离**:kickoff prompt 构造需要知道 "前驱 output port 是否就绪",
 //!   这部分 IO 由调用方先查好,以 `BTreeSet<String>` 形式塞进 `kickoff_context`。
 //! - **baseline 可覆盖**:默认 baseline = `workflow.contract.capability_config.tool_directives`;
@@ -26,9 +26,9 @@ use agentdash_spi::{CapabilityState, Vfs};
 use uuid::Uuid;
 
 use crate::capability::{
-    AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
-    CompanionContribution, CompanionSliceMode, ContextContributionSource, ContextContributions,
-    McpCandidates, ToolContribution,
+    AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput, CompanionContribution,
+    CompanionSliceMode, ContextContributionSource, ContextContributions, McpCandidates,
+    ToolContribution,
 };
 use crate::platform_config::PlatformConfig;
 use crate::vfs::build_lifecycle_mount_with_node_scope;
@@ -59,8 +59,6 @@ pub struct ActivityActivationInput<'a> {
     pub attempt: u32,
     /// lifecycle key,lifecycle mount 路径的一部分。
     pub lifecycle_key: &'a str,
-    /// agent config 内联 MCP server(向前兼容 `mcp:<name>` 解析)。
-    pub agent_mcp_servers: Vec<AgentMcpServerEntry>,
     /// project 级 MCP Preset 预展开字典。
     pub available_presets: AvailableMcpPresets,
     /// Companion 子 session 的 slice 裁剪模式（resolve 后应用，不混入 resolver 输入）。
@@ -95,7 +93,7 @@ pub struct ActivityActivation {
     /// 内置工具簇(PiAgent 内部使用)。
     pub capability_state: CapabilityState,
     /// 合并并去重后的 MCP server 列表(platform + custom)。
-    pub mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
+    pub mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
     /// 已解析通过的 capability key 集合(供 hook runtime 初始化、日志、delta 对比)。
     pub capability_keys: BTreeSet<String>,
     /// kickoff prompt 结构化片段;若 activity 没有 port/workflow,字段可能全为空。
@@ -185,7 +183,6 @@ pub fn activate_activity_with_platform(
         contributions,
         mcp_candidates: McpCandidates {
             presets: input.available_presets.clone(),
-            agent_servers: input.agent_mcp_servers.clone(),
         },
         mcp_runtime_context: Some(crate::mcp_preset::McpRuntimeBindingContext {
             vfs: Some(&effective_vfs),
@@ -198,9 +195,8 @@ pub fn activate_activity_with_platform(
     }
 
     // ── 4. 汇总 MCP server 列表(platform + custom),去重 ──
-    let mut mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration> =
-        cap_output.tool.mcp_servers.clone();
-    dedupe_runtime_mcp_declarations(&mut mcp_servers);
+    let mut mcp_servers: Vec<agentdash_spi::RuntimeMcpServer> = cap_output.tool.mcp_servers.clone();
+    dedupe_runtime_mcp_servers(&mut mcp_servers);
 
     let capability_keys = cap_output.capability_keys();
 
@@ -280,7 +276,7 @@ fn render_input_section(
     )
 }
 
-fn dedupe_runtime_mcp_declarations(servers: &mut Vec<agentdash_spi::RuntimeMcpServerDeclaration>) {
+fn dedupe_runtime_mcp_servers(servers: &mut Vec<agentdash_spi::RuntimeMcpServer>) {
     let mut seen = BTreeSet::<String>::new();
     servers.retain(|server| seen.insert(server.name.clone()));
 }
@@ -395,7 +391,6 @@ mod tests {
             node_path: "implement",
             attempt: 1,
             lifecycle_key: "trellis_dev_task",
-            agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
@@ -433,7 +428,6 @@ mod tests {
             node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc_admin",
-            agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
@@ -468,7 +462,6 @@ mod tests {
             node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc_phase",
-            agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
@@ -509,7 +502,6 @@ mod tests {
             node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc_phase",
-            agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
@@ -581,7 +573,6 @@ mod tests {
             node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc_phase",
-            agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
@@ -646,7 +637,6 @@ mod tests {
             node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc",
-            agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: Some(vec![
@@ -693,7 +683,6 @@ mod tests {
             node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc",
-            agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
@@ -753,7 +742,6 @@ mod tests {
             node_path: "implement",
             attempt: 1,
             lifecycle_key: "lc",
-            agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,

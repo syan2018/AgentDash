@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use agentdash_spi::RuntimeMcpServerDeclaration;
+use agentdash_spi::RuntimeMcpServer;
 
 use crate::session::construction_provider::{CompanionLaunchSource, RoutineLaunchSource};
 use crate::session::types::UserPromptInput;
@@ -24,7 +24,7 @@ pub struct LaunchCommand {
     identity: Option<agentdash_spi::AuthIdentity>,
     routine: Option<RoutineLaunchSource>,
     companion: Option<CompanionLaunchSource>,
-    local_relay_mcp_declarations: Vec<RuntimeMcpServerDeclaration>,
+    local_relay_mcp_servers: Vec<RuntimeMcpServer>,
     local_relay_workspace_root: Option<PathBuf>,
 }
 
@@ -43,7 +43,7 @@ impl LaunchCommand {
             identity: None,
             routine: None,
             companion: None,
-            local_relay_mcp_declarations: Vec::new(),
+            local_relay_mcp_servers: Vec::new(),
             local_relay_workspace_root: None,
         }
     }
@@ -69,8 +69,8 @@ impl LaunchCommand {
         self.routine.clone()
     }
 
-    pub fn local_relay_mcp_declarations(&self) -> &[RuntimeMcpServerDeclaration] {
-        &self.local_relay_mcp_declarations
+    pub fn local_relay_mcp_servers(&self) -> &[RuntimeMcpServer] {
+        &self.local_relay_mcp_servers
     }
 
     pub fn local_relay_workspace_root(&self) -> Option<&Path> {
@@ -177,11 +177,11 @@ impl LaunchCommand {
 
     pub fn local_relay_prompt_input(
         input: UserPromptInput,
-        mcp_declarations: Vec<RuntimeMcpServerDeclaration>,
+        mcp_servers: Vec<RuntimeMcpServer>,
         workspace_root: PathBuf,
     ) -> Self {
         let mut command = Self::new(input, LaunchSource::LocalRelayPrompt);
-        command.local_relay_mcp_declarations = mcp_declarations;
+        command.local_relay_mcp_servers = mcp_servers;
         command.local_relay_workspace_root = Some(workspace_root);
         command
     }

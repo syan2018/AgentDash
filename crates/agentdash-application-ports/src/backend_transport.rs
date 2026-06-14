@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use agentdash_agent_protocol::{BackboneEnvelope, UserInputBlock};
 use agentdash_domain::workspace::WorkspaceIdentityKind;
-use agentdash_relay::McpServerDeclarationRelay;
+use agentdash_relay::McpServerRelay;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -118,7 +118,7 @@ pub struct RelayPromptRequest {
     ///
     /// Relay/remote agent 的 MCP 建联由远端第三方 agent 自行处理；
     /// cloud 侧不区分 direct / relay，也不在 relay connector 内私有缓存。
-    pub mcp_servers: Vec<McpServerDeclarationRelay>,
+    pub mcp_servers: Vec<McpServerRelay>,
 }
 
 /// relay steer 命令 payload — 只影响已有运行中 session，不创建新 turn。

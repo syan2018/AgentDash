@@ -16,7 +16,7 @@ use tokio::sync::{Mutex, watch};
 
 use crate::LocalExtensionHostManager;
 use crate::local_backend_config::{self, McpLocalServerEntry};
-use crate::mcp_client_manager::{McpClientManager, local_server_to_relay_declaration};
+use crate::mcp_client_manager::{McpClientManager, local_server_to_relay_mcp_server};
 use crate::runtime_paths::local_runtime_data_dir;
 use crate::tool_executor::ToolExecutor;
 use crate::ws_client;
@@ -412,8 +412,8 @@ pub async fn probe_mcp_server(server: McpLocalServerEntry) -> McpProbeResult {
     }
 
     let manager = McpClientManager::new(vec![server.clone()], true);
-    let declaration = local_server_to_relay_declaration(&server);
-    match manager.list_tools(&declaration).await {
+    let relay_server = local_server_to_relay_mcp_server(&server);
+    match manager.list_tools(&relay_server).await {
         Ok(tools) => {
             let tool_count = tools.len();
             let _ = manager.close(&server.name).await;

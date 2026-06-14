@@ -5,7 +5,7 @@ use agentdash_spi::{
 };
 use serde::Serialize;
 
-use crate::runtime::{Mount, MountCapability, RuntimeMcpServer, Vfs};
+use crate::runtime::{McpServerSummary, Mount, MountCapability, Vfs};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionPlanPhase {
@@ -37,19 +37,12 @@ pub struct SessionVfsSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct RuntimeMcpServerSummary {
-    pub name: String,
-    pub transport: String,
-    pub target: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct SessionToolVisibilitySummary {
     pub markdown: String,
     pub resolved: bool,
     pub toolset_label: String,
     pub tool_names: Vec<String>,
-    pub mcp_servers: Vec<RuntimeMcpServerSummary>,
+    pub mcp_servers: Vec<McpServerSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -70,7 +63,7 @@ pub struct SessionPlanInput<'a> {
     pub scope: CapabilityScope,
     pub phase: SessionPlanPhase,
     pub vfs: Option<&'a Vfs>,
-    pub mcp_servers: &'a [RuntimeMcpServer],
+    pub mcp_servers: &'a [McpServerSummary],
     pub session_composition: Option<&'a SessionComposition>,
     pub agent_type: Option<&'a str>,
     pub preset_name: Option<&'a str>,
@@ -210,14 +203,14 @@ pub fn summarize_vfs(vfs: &Vfs) -> SessionVfsSummary {
 
 pub fn summarize_tool_visibility(
     vfs: Option<&Vfs>,
-    mcp_servers: &[RuntimeMcpServer],
+    mcp_servers: &[McpServerSummary],
 ) -> SessionToolVisibilitySummary {
     summarize_tool_visibility_with_context(vfs, mcp_servers, None)
 }
 
 pub fn summarize_tool_visibility_with_context(
     vfs: Option<&Vfs>,
-    mcp_servers: &[RuntimeMcpServer],
+    mcp_servers: &[McpServerSummary],
     owner_type: Option<CapabilityScope>,
 ) -> SessionToolVisibilitySummary {
     let resolved = vfs.is_some();
@@ -432,7 +425,7 @@ fn build_required_context_block_markdown(block: &SessionRequiredContextBlock) ->
 pub fn summarize_runtime_policy(
     workspace_attached: bool,
     vfs: Option<&Vfs>,
-    mcp_servers: &[RuntimeMcpServer],
+    mcp_servers: &[McpServerSummary],
     tool_names: &[String],
 ) -> SessionRuntimePolicySummary {
     let mount_ids = vfs
@@ -562,18 +555,11 @@ fn runtime_vfs_tools(_vfs: &Vfs) -> Vec<String> {
     ]
 }
 
-fn summarize_mcp_servers(mcp_servers: &[RuntimeMcpServer]) -> Vec<RuntimeMcpServerSummary> {
-    mcp_servers
-        .iter()
-        .map(|server| RuntimeMcpServerSummary {
-            name: server.name().to_string(),
-            transport: server.transport_label().to_string(),
-            target: server.target(),
-        })
-        .collect()
+fn summarize_mcp_servers(mcp_servers: &[McpServerSummary]) -> Vec<McpServerSummary> {
+    mcp_servers.to_vec()
 }
 
-fn render_mcp_server_summary(server: &RuntimeMcpServerSummary) -> String {
+fn render_mcp_server_summary(server: &McpServerSummary) -> String {
     format!("- `{}`: {}", server.name, server.transport)
 }
 
@@ -667,9 +653,10 @@ mod tests {
             default_mount_id: Some("main".to_string()),
             ..Default::default()
         };
-        let mcp_servers = vec![RuntimeMcpServer::Http {
+        let mcp_servers = vec![McpServerSummary {
             name: "agentdash-story-tools".to_string(),
-            url: "http://127.0.0.1:3001/mcp/story/123".to_string(),
+            transport: "http".to_string(),
+            target: "http://127.0.0.1:3001/mcp/story/123".to_string(),
         }];
 
         let summary = summarize_tool_visibility(Some(&vfs), &mcp_servers);
@@ -812,9 +799,10 @@ mod tests {
 
     #[test]
     fn summarize_tool_visibility_with_only_mcp_keeps_runtime_unresolved() {
-        let mcp_servers = vec![RuntimeMcpServer::Http {
+        let mcp_servers = vec![McpServerSummary {
             name: "agentdash-project-tools".to_string(),
-            url: "http://127.0.0.1:3001/mcp/project/123".to_string(),
+            transport: "http".to_string(),
+            target: "http://127.0.0.1:3001/mcp/project/123".to_string(),
         }];
 
         let summary = summarize_tool_visibility(None, &mcp_servers);

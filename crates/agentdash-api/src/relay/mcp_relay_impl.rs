@@ -2,12 +2,10 @@
 
 use async_trait::async_trait;
 
-use agentdash_relay::{
-    McpEnvVarRelay, McpHttpHeaderRelay, McpServerDeclarationRelay, McpTransportConfigRelay,
-    RelayMessage,
-};
+use agentdash_application::mcp_relay_adapter;
+use agentdash_relay::RelayMessage;
 use agentdash_spi::ConnectorError;
-use agentdash_spi::RuntimeMcpServerDeclaration;
+use agentdash_spi::RuntimeMcpServer;
 use agentdash_spi::platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo, RelayProbeResult,
     RelayProbeTool,
@@ -19,7 +17,7 @@ use super::registry::BackendRegistry;
 impl McpRelayProvider for BackendRegistry {
     async fn list_relay_tools(
         &self,
-        requested_servers: &[RuntimeMcpServerDeclaration],
+        requested_servers: &[RuntimeMcpServer],
         context: Option<RelayMcpCallContext>,
     ) -> Vec<RelayMcpToolInfo> {
         let mut result = Vec::new();
@@ -43,7 +41,7 @@ impl McpRelayProvider for BackendRegistry {
             let cmd = RelayMessage::CommandMcpListTools {
                 id: RelayMessage::new_id("mcp-list"),
                 payload: agentdash_relay::CommandMcpListToolsPayload {
-                    server: mcp_declaration_to_relay(server),
+                    server: mcp_relay_adapter::runtime_mcp_server_to_relay(server),
                 },
             };
 
@@ -96,7 +94,7 @@ impl McpRelayProvider for BackendRegistry {
 
     async fn call_relay_tool(
         &self,
-        server: &RuntimeMcpServerDeclaration,
+        server: &RuntimeMcpServer,
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
         context: Option<RelayMcpCallContext>,
@@ -114,7 +112,7 @@ impl McpRelayProvider for BackendRegistry {
         let cmd = RelayMessage::CommandMcpCallTool {
             id: RelayMessage::new_id("mcp-call"),
             payload: agentdash_relay::CommandMcpCallToolPayload {
-                server: mcp_declaration_to_relay(server),
+                server: mcp_relay_adapter::runtime_mcp_server_to_relay(server),
                 tool_name: tool_name.to_string(),
                 arguments,
             },
@@ -155,7 +153,7 @@ impl McpRelayProvider for BackendRegistry {
         let cmd = RelayMessage::CommandMcpProbeTransport {
             id: RelayMessage::new_id("mcp-probe"),
             payload: agentdash_relay::CommandMcpProbeTransportPayload {
-                transport: mcp_transport_to_relay(transport),
+                transport: mcp_relay_adapter::mcp_transport_to_relay(transport),
             },
         };
 
@@ -194,60 +192,5 @@ impl McpRelayProvider for BackendRegistry {
                 "MCP probe relay 返回意外响应类型".to_string(),
             )),
         }
-    }
-}
-
-fn mcp_transport_to_relay(
-    transport: &agentdash_domain::mcp_preset::McpTransportConfig,
-) -> McpTransportConfigRelay {
-    match transport {
-        agentdash_domain::mcp_preset::McpTransportConfig::Http { url, headers } => {
-            McpTransportConfigRelay::Http {
-                url: url.clone(),
-                headers: headers
-                    .iter()
-                    .map(|header| McpHttpHeaderRelay {
-                        name: header.name.clone(),
-                        value: header.value.clone(),
-                    })
-                    .collect(),
-            }
-        }
-        agentdash_domain::mcp_preset::McpTransportConfig::Sse { url, headers } => {
-            McpTransportConfigRelay::Sse {
-                url: url.clone(),
-                headers: headers
-                    .iter()
-                    .map(|header| McpHttpHeaderRelay {
-                        name: header.name.clone(),
-                        value: header.value.clone(),
-                    })
-                    .collect(),
-            }
-        }
-        agentdash_domain::mcp_preset::McpTransportConfig::Stdio {
-            command,
-            args,
-            env,
-            cwd,
-        } => McpTransportConfigRelay::Stdio {
-            command: command.clone(),
-            args: args.clone(),
-            env: env
-                .iter()
-                .map(|var| McpEnvVarRelay {
-                    name: var.name.clone(),
-                    value: var.value.clone(),
-                })
-                .collect(),
-            cwd: cwd.clone(),
-        },
-    }
-}
-
-fn mcp_declaration_to_relay(server: &RuntimeMcpServerDeclaration) -> McpServerDeclarationRelay {
-    McpServerDeclarationRelay {
-        name: server.name.clone(),
-        transport: mcp_transport_to_relay(&server.transport),
     }
 }

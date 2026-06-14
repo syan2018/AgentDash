@@ -12,9 +12,7 @@
 
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository};
-use agentdash_spi::{
-    AgentConfig, CapabilityState, RuntimeMcpServerDeclaration, SessionContextBundle, Vfs,
-};
+use agentdash_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
 use crate::session::capability_state::{
@@ -36,7 +34,7 @@ pub(crate) struct AgentFrameActivationSurfaceInput<'a> {
 pub(crate) struct AgentFrameActivationSurface {
     pub capability_state: CapabilityState,
     pub vfs: Vfs,
-    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
+    pub mcp_servers: Vec<RuntimeMcpServer>,
 }
 
 impl AgentFrameActivationSurface {
@@ -153,8 +151,8 @@ impl AgentFrameBuilder {
         self
     }
 
-    /// 从结构化 `Vec<RuntimeMcpServerDeclaration>` 填充 mcp_surface。
-    pub fn with_mcp_servers(mut self, servers: &[RuntimeMcpServerDeclaration]) -> Self {
+    /// 从结构化 `Vec<RuntimeMcpServer>` 填充 mcp_surface。
+    pub fn with_mcp_servers(mut self, servers: &[RuntimeMcpServer]) -> Self {
         if servers.is_empty() {
             self.mcp_surface = None;
         } else {
@@ -478,7 +476,7 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let activation = ActivityActivation {
             capability_state: CapabilityState::from_clusters([ToolCluster::Read]),
-            mcp_servers: vec![RuntimeMcpServerDeclaration {
+            mcp_servers: vec![RuntimeMcpServer {
                 name: "workflow-tools".to_string(),
                 transport: McpTransportConfig::Http {
                     url: "http://localhost/mcp".to_string(),
@@ -580,7 +578,7 @@ mod tests {
         };
         let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
         capability_state.vfs.active = Some(vfs.clone());
-        let mcp_servers = vec![RuntimeMcpServerDeclaration {
+        let mcp_servers = vec![RuntimeMcpServer {
             name: "draft-tools".to_string(),
             transport: McpTransportConfig::Http {
                 url: "http://localhost/draft".to_string(),

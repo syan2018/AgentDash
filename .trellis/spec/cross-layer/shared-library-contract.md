@@ -98,10 +98,21 @@ DTO 层 `crates/agentdash-api/src/dto/shared_library.rs` 直接透传 `serde_jso
     "system_prompt": "string?",
     "system_prompt_mode": "SystemPromptMode?",
     "capability_directives": ["ToolCapabilityDirective"],
-    "mcp_slots": [{ "key": "string", "description": "string?", "required": "bool" }]
+    "mcp_slots": [{ "key": "string", "description": "string?", "required": "bool" }],
+    "mcp_dependencies": [{
+      "slot_key": "string",
+      "asset_key": "string?",
+      "asset_id": "string?",
+      "preset_key": "string?",
+      "parameters": "object?",
+      "required": "bool",
+      "overwrite": "bool"
+    }]
   }
 }
 ```
+
+Agent 模板的 MCP dependency 是安装期依赖计划。安装 AgentTemplate 时，后端按 dependency 定位 `mcp_server_template`，解析安装参数，生成 Project MCP Preset，并把最终 preset key 写入 ProjectAgent 的 `mcp_preset_keys`。因此 AgentTemplate 只描述 Project 资源装配关系，运行时 MCP surface 仍从 Project MCP Preset 解析为 `RuntimeMcpServer`。
 
 ### `mcp_server_template`
 

@@ -756,7 +756,7 @@ mod tests {
 
     #[test]
     fn mcp_list_and_call_commands_carry_resolved_server_declaration() {
-        let server = McpServerDeclarationRelay {
+        let server = McpServerRelay {
             name: "p4-tools".to_string(),
             transport: McpTransportConfigRelay::Http {
                 url: "http://127.0.0.1:8999/mcp?p4_client=demo".to_string(),

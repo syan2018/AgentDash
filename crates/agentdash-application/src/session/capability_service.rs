@@ -1,5 +1,5 @@
 use agentdash_spi::hooks::SharedHookRuntime;
-use agentdash_spi::{RuntimeMcpServerDeclaration, Vfs};
+use agentdash_spi::{RuntimeMcpServer, Vfs};
 use async_trait::async_trait;
 use std::io;
 
@@ -31,10 +31,7 @@ impl SessionCapabilityService {
         Self { hub }
     }
 
-    pub async fn get_runtime_mcp_servers(
-        &self,
-        session_id: &str,
-    ) -> Vec<RuntimeMcpServerDeclaration> {
+    pub async fn get_runtime_mcp_servers(&self, session_id: &str) -> Vec<RuntimeMcpServer> {
         self.hub.get_runtime_mcp_servers(session_id).await
     }
 

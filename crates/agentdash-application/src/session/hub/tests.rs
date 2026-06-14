@@ -547,7 +547,7 @@ async fn start_prompt_records_current_turn_state() {
     let workspace = tempfile::tempdir().expect("workspace");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
     let session = hub.create_session("active-state").await.expect("create");
-    let runtime_mcp_declaration = agentdash_spi::RuntimeMcpServerDeclaration {
+    let runtime_mcp_server = agentdash_spi::RuntimeMcpServer {
         name: "relay_tools".to_string(),
         transport: agentdash_spi::McpTransportConfig::Http {
             url: "http://127.0.0.1:19090/mcp".to_string(),
@@ -566,7 +566,7 @@ async fn start_prompt_records_current_turn_state() {
     req.projections.frame_surface_draft = Some(FrameSurfaceDraft {
         capability_state: Some(launch_caps),
         vfs: Some(vfs),
-        mcp_servers: vec![runtime_mcp_declaration.clone()],
+        mcp_servers: vec![runtime_mcp_server.clone()],
         context_bundle_summary: None,
         execution_profile: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
     });
@@ -596,7 +596,7 @@ async fn start_prompt_records_current_turn_state() {
 #[tokio::test]
 async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
     let base = tempfile::tempdir().expect("tempdir");
-    let workflow_server = agentdash_spi::RuntimeMcpServerDeclaration {
+    let workflow_server = agentdash_spi::RuntimeMcpServer {
         name: "agentdash-workflow-tools-123".to_string(),
         transport: agentdash_spi::McpTransportConfig::Http {
             url: "http://relay/ignored".to_string(),
@@ -1445,7 +1445,7 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
         .or_default()
         .exclude
         .insert("fs_apply_patch".to_string());
-    let target_mcp = agentdash_spi::RuntimeMcpServerDeclaration {
+    let target_mcp = agentdash_spi::RuntimeMcpServer {
         name: "phase_tools".to_string(),
         transport: agentdash_spi::McpTransportConfig::Http {
             url: "http://127.0.0.1:19091/mcp".to_string(),
@@ -1829,7 +1829,7 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
         .tool
         .capabilities
         .insert(agentdash_spi::ToolCapability::new("file_write"));
-    let target_mcp = agentdash_spi::RuntimeMcpServerDeclaration {
+    let target_mcp = agentdash_spi::RuntimeMcpServer {
         name: "phase_tools".to_string(),
         transport: agentdash_spi::McpTransportConfig::Http {
             url: "http://127.0.0.1:19092/mcp".to_string(),
@@ -4247,7 +4247,7 @@ async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
                 .map(ToString::to_string);
             *self.captured_prompt.lock().await = text;
             self.captured_mcp_len.store(
-                input.command.local_relay_mcp_declarations().len(),
+                input.command.local_relay_mcp_servers().len(),
                 Ordering::SeqCst,
             );
             Err(ConnectorError::InvalidConfig(

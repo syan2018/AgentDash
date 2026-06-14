@@ -52,7 +52,7 @@ impl McpTransportConfig {
 
 /// MCP Preset 的运行时绑定配置。
 ///
-/// 绑定规则在 frame construction 的 final VFS facts 上解析，输出本次运行的 MCP declaration。
+/// 绑定规则在 frame construction 的 final VFS facts 上解析，输出本次运行的 MCP server。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpRuntimeBindingConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]

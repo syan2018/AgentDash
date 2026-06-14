@@ -229,7 +229,7 @@ export type ProbeMcpPresetResponse =
 - `McpTransportConfigDto::Http` and `Sse` carry `headers`; `Stdio` carries `command`, `args`, `env`, and optional `cwd`.
 - `CreateMcpPresetRequest.runtime_binding` creates a binding declaration; omission means static preset.
 - `UpdateMcpPresetRequest.runtime_binding` is tri-state: missing means unchanged, `null` clears the declaration, and an object replaces the declaration.
-- `McpPresetResponse.runtime_binding` mirrors the persisted declaration. The response does not include resolved runtime values because those belong to the launch-time MCP server declaration.
+- `McpPresetResponse.runtime_binding` mirrors the persisted declaration. The response does not include resolved runtime values because those belong to launch-time `RuntimeMcpServer`.
 - `ProbeMcpPresetRequest` always sends the edited `transport` and includes optional `runtime_binding` when the edited form or saved preset has one, allowing the probe cache key to fingerprint both values.
 - For HTTP/SSE probes, `ProbeMcpPresetRequest.transport.headers` are part of the connection parameters; backend probe code must pass them into the MCP HTTP client the same way real preset connections do.
 - Ordinary preset probe has no AgentRun runtime context. If any binding rule is `required=true`, the response is `Unsupported { reason }` and should be displayed as a diagnostic state, not as a successful connectivity result.

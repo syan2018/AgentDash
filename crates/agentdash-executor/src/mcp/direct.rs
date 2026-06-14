@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use agentdash_spi::{
     AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, DynAgentTool,
-    McpHttpHeader, McpTransportConfig, RuntimeMcpServerDeclaration, ToolUpdateCallback,
+    McpHttpHeader, McpTransportConfig, RuntimeMcpServer, ToolUpdateCallback,
 };
 use async_trait::async_trait;
 use reqwest::header::{HeaderName, HeaderValue};
@@ -205,7 +205,7 @@ impl AgentTool for McpToolAdapter {
 }
 
 pub async fn discover_mcp_tools(
-    servers: &[RuntimeMcpServerDeclaration],
+    servers: &[RuntimeMcpServer],
     capability_state: &CapabilityState,
 ) -> Result<Vec<DynAgentTool>, ConnectorError> {
     Ok(discover_mcp_tool_entries(servers, capability_state)
@@ -216,14 +216,14 @@ pub async fn discover_mcp_tools(
 }
 
 pub async fn discover_mcp_tool_entries(
-    servers: &[RuntimeMcpServerDeclaration],
+    servers: &[RuntimeMcpServer],
     capability_state: &CapabilityState,
 ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
     let mut entries = Vec::new();
     let pool = Arc::new(DirectMcpClientPool::default());
 
     for server in servers {
-        let Some(server_spec) = parse_http_mcp_declaration(server) else {
+        let Some(server_spec) = parse_http_mcp_server(server) else {
             tracing::debug!("跳过非 HTTP MCP Server");
             continue;
         };
@@ -321,7 +321,7 @@ fn format_service_error(error: &ServiceError) -> String {
     }
 }
 
-fn parse_http_mcp_declaration(server: &RuntimeMcpServerDeclaration) -> Option<McpHttpServerSpec> {
+fn parse_http_mcp_server(server: &RuntimeMcpServer) -> Option<McpHttpServerSpec> {
     match &server.transport {
         McpTransportConfig::Http { url, headers } => Some(McpHttpServerSpec {
             name: server.name.clone(),
@@ -344,8 +344,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_http_mcp_declaration_preserves_resolved_headers() {
-        let server = RuntimeMcpServerDeclaration {
+    fn parse_http_mcp_server_preserves_resolved_headers() {
+        let server = RuntimeMcpServer {
             name: "p4-tools".to_string(),
             transport: McpTransportConfig::Http {
                 url: "http://127.0.0.1:8999/mcp?p4_client=demo".to_string(),
@@ -354,7 +354,7 @@ mod tests {
             uses_relay: false,
         };
 
-        let parsed = parse_http_mcp_declaration(&server).expect("http server should parse");
+        let parsed = parse_http_mcp_server(&server).expect("http server should parse");
         assert_eq!(parsed.name, "p4-tools");
         assert_eq!(parsed.url, "http://127.0.0.1:8999/mcp?p4_client=demo");
         assert_eq!(parsed.headers, vec![header("demo")]);

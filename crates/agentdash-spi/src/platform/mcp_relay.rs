@@ -3,13 +3,13 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::{AuthIdentity, ConnectorError, RuntimeMcpServerDeclaration, Vfs};
+use crate::{AuthIdentity, ConnectorError, RuntimeMcpServer, Vfs};
 
 /// relay MCP 工具描述
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayMcpToolInfo {
     pub server_name: String,
-    pub server: RuntimeMcpServerDeclaration,
+    pub server: RuntimeMcpServer,
     pub tool_name: String,
     pub description: String,
     #[serde(default)]
@@ -57,14 +57,14 @@ pub trait McpRelayProvider: Send + Sync {
     /// 列出指定 server 的 MCP 工具（通过 relay 信道）
     async fn list_relay_tools(
         &self,
-        requested_servers: &[RuntimeMcpServerDeclaration],
+        requested_servers: &[RuntimeMcpServer],
         context: Option<RelayMcpCallContext>,
     ) -> Vec<RelayMcpToolInfo>;
 
     /// 调用指定 MCP server 上的工具
     async fn call_relay_tool(
         &self,
-        server: &RuntimeMcpServerDeclaration,
+        server: &RuntimeMcpServer,
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
         context: Option<RelayMcpCallContext>,

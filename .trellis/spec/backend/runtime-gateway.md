@@ -53,7 +53,7 @@
 Session Action baseline：`mcp.list_tools`、`mcp.call_tool`
 
 关键约束：
-- MCP declaration surface 来源于当前 AgentFrame / active execution surface；active turn 读取 `ExecutionSessionFrame.mcp_servers`，idle runtime 通过 `RuntimeSessionExecutionAnchor` 反查当前 AgentFrame surface。
+- MCP runtime server surface 来源于当前 AgentFrame / active execution surface；active turn 读取 `ExecutionSessionFrame.mcp_servers`，idle runtime 通过 `RuntimeSessionExecutionAnchor` 反查当前 AgentFrame surface。
 - `CapabilityState` 负责工具能力与 tool policy 裁决；空或未授权的 `CapabilityState` 不暴露任何工具。
 - Provider 通过 `RuntimeSessionMcpAccess` 进入 SessionHub，不直接读 MCP preset/agent config。
 - 所有工具暴露都必须经过 `capability_state.is_capability_tool_enabled()`。
@@ -61,7 +61,7 @@ Session Action baseline：`mcp.list_tools`、`mcp.call_tool`
 
 `RuntimeSessionExecutionAnchor` 在这里只服务 trace/runtime session 到 AgentFrame 的 backlink。MCP
 runtime action 仍然是 Session action，原因是调用发生在一个可投递的 delivery runtime session
-上；可执行 MCP declaration 的事实源仍回到 AgentFrame surface。
+上；可执行 MCP server 的事实源仍回到 AgentFrame surface。
 
 ---
 

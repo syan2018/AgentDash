@@ -28,12 +28,12 @@ use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     build_session_context_bundle, emit_bundle_fragments, resolve_workspace_declared_sources,
 };
-use crate::mcp_preset::{McpRuntimeBindingContext, resolve_preset_mcp_declaration};
+use crate::mcp_preset::{McpRuntimeBindingContext, resolve_preset_mcp_server};
 use crate::platform_config::PlatformConfig;
 use crate::project::context_builder::{ProjectContextBuildInput, contribute_project_context};
 use crate::repository_set::RepositorySet;
-use crate::runtime::RuntimeMcpServer;
-use crate::runtime_bridge::mcp_declarations_to_runtime_servers;
+use crate::runtime::McpServerSummary;
+use crate::runtime_bridge::runtime_mcp_servers_to_summaries;
 use crate::session::assembly_builder::{SessionAssemblyBuilder, project_assembly_to_frame};
 use crate::session::capability_projection::{
     SessionCapabilityProjectionInput, derive_session_skill_baseline,
@@ -119,7 +119,7 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     pub agent_tool_directives: Vec<ToolCapabilityDirective>,
     pub agent_skill_asset_keys: Vec<String>,
     pub agent_vfs_access_grants: Vec<AgentVfsAccessGrant>,
-    pub request_mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
+    pub request_mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
     pub existing_vfs: Option<Vfs>,
     pub visible_canvas_mount_ids: Vec<String>,
     /// ProjectAgent preset 声明的 workspace module 可见性白名单。
@@ -251,7 +251,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
                 spec.visible_workspace_module_refs.as_deref(),
             );
         let mcp_runtime_context = McpRuntimeBindingContext { vfs: vfs.as_ref() };
-        let runtime_mcp_declarations = normalize_owner_bootstrap_mcp_projection(
+        let runtime_mcp_servers = normalize_owner_bootstrap_mcp_projection(
             &mut cap_output,
             &spec.request_mcp_servers,
             &spec.agent_mcp,
@@ -261,7 +261,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             .build_owner_context_bundle(
                 &spec,
                 vfs.as_ref(),
-                &runtime_mcp_declarations,
+                &runtime_mcp_servers,
                 subject_context_contributions,
             )
             .await?;
@@ -301,7 +301,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
         let mut builder = SessionAssemblyBuilder::new()
             .with_input(user_input)
             .with_executor_config(spec.executor_config.clone())
-            .with_mcp_servers(runtime_mcp_declarations)
+            .with_mcp_servers(runtime_mcp_servers)
             .with_resolved_capabilities(cap_output)
             .with_optional_workspace_defaults(workspace_defaults)
             .with_optional_context_bundle(effective_bundle);
@@ -451,7 +451,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
             contributions,
             mcp_candidates: McpCandidates {
                 presets: load_available_presets(self.repos, project_id).await,
-                agent_servers: Vec::new(),
             },
             mcp_runtime_context: Some(McpRuntimeBindingContext { vfs }),
             capability_context: None,
@@ -489,10 +488,10 @@ impl<'a> OwnerBootstrapComposer<'a> {
         &self,
         spec: &OwnerBootstrapSpec<'_>,
         vfs: Option<&Vfs>,
-        runtime_mcp_declarations: &[agentdash_spi::RuntimeMcpServerDeclaration],
+        runtime_mcp_servers: &[agentdash_spi::RuntimeMcpServer],
         subject_context_contributions: Vec<Contribution>,
     ) -> Result<SessionContextBundle, String> {
-        let runtime_mcp_servers = mcp_declarations_to_runtime_servers(runtime_mcp_declarations);
+        let runtime_mcp_servers = runtime_mcp_servers_to_summaries(runtime_mcp_servers);
         let (workspace_fragments, workspace_warnings) = match &spec.owner {
             OwnerScope::Story {
                 story, workspace, ..
@@ -606,7 +605,7 @@ fn build_owner_context_contribution(
 fn build_owner_session_plan_contribution(
     owner: &OwnerScope<'_>,
     vfs: Option<&Vfs>,
-    mcp_servers: &[RuntimeMcpServer],
+    mcp_servers: &[McpServerSummary],
     effective_agent_type: &str,
 ) -> Contribution {
     use crate::session::plan::{
@@ -774,40 +773,36 @@ async fn resolve_owner_workflow_tool_directives(
 
 fn normalize_owner_bootstrap_mcp_projection(
     capability_state: &mut CapabilityState,
-    request_mcp_servers: &[agentdash_spi::RuntimeMcpServerDeclaration],
+    request_mcp_servers: &[agentdash_spi::RuntimeMcpServer],
     agent_mcp: &AgentLevelMcp,
     runtime_context: &McpRuntimeBindingContext<'_>,
-) -> Result<Vec<agentdash_spi::RuntimeMcpServerDeclaration>, String> {
+) -> Result<Vec<agentdash_spi::RuntimeMcpServer>, String> {
     let mut servers = Vec::new();
     servers.extend(request_mcp_servers.iter().cloned());
     servers.extend(capability_state.tool.mcp_servers.iter().cloned());
     for preset in &agent_mcp.preset_mcp_presets {
-        let server = resolve_preset_mcp_declaration(preset, Some(runtime_context))
+        let server = resolve_preset_mcp_server(preset, Some(runtime_context))
             .map_err(|error| error.to_string())?;
         servers.push(server);
     }
-    normalize_runtime_mcp_declarations(&mut servers);
+    normalize_runtime_mcp_servers(&mut servers);
 
     for server in &servers {
         capability_state
             .tool
             .capabilities
-            .insert(capability_for_runtime_mcp_declaration(server));
+            .insert(capability_for_runtime_mcp_server(server));
     }
     capability_state.tool.mcp_servers = servers.clone();
     Ok(servers)
 }
 
-fn normalize_runtime_mcp_declarations(
-    servers: &mut Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
-) {
+fn normalize_runtime_mcp_servers(servers: &mut Vec<agentdash_spi::RuntimeMcpServer>) {
     let mut seen = BTreeSet::<String>::new();
     servers.retain(|server| seen.insert(server.name.clone()));
 }
 
-fn capability_for_runtime_mcp_declaration(
-    server: &agentdash_spi::RuntimeMcpServerDeclaration,
-) -> ToolCapability {
+fn capability_for_runtime_mcp_server(server: &agentdash_spi::RuntimeMcpServer) -> ToolCapability {
     match agent_facing_mcp_server_name(&server.name).as_str() {
         "agentdash-relay-tools" => {
             ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_RELAY_MANAGEMENT)
@@ -845,11 +840,8 @@ fn agent_facing_mcp_server_name(server_name: &str) -> String {
 mod tests {
     use super::*;
 
-    fn runtime_mcp_declaration(
-        name: &str,
-        url: &str,
-    ) -> agentdash_spi::RuntimeMcpServerDeclaration {
-        agentdash_spi::RuntimeMcpServerDeclaration {
+    fn runtime_mcp_server(name: &str, url: &str) -> agentdash_spi::RuntimeMcpServer {
+        agentdash_spi::RuntimeMcpServer {
             name: name.to_string(),
             transport: agentdash_spi::McpTransportConfig::Http {
                 url: url.to_string(),
@@ -873,7 +865,7 @@ mod tests {
         )
     }
 
-    fn server_url(server: &agentdash_spi::RuntimeMcpServerDeclaration) -> &str {
+    fn server_url(server: &agentdash_spi::RuntimeMcpServer) -> &str {
         match &server.transport {
             agentdash_spi::McpTransportConfig::Http { url, .. } => url.as_str(),
             _ => "",
@@ -882,7 +874,7 @@ mod tests {
 
     #[test]
     fn owner_bootstrap_mcp_projection_grants_agent_preset_without_directive() {
-        let agent_server = runtime_mcp_declaration("code_analyzer", "http://agent/mcp");
+        let agent_server = runtime_mcp_server("code_analyzer", "http://agent/mcp");
         let mut capability_state = CapabilityState::default();
 
         let servers = normalize_owner_bootstrap_mcp_projection(
@@ -914,13 +906,13 @@ mod tests {
     fn owner_bootstrap_mcp_projection_dedupes_by_source_priority() {
         let mut capability_state = CapabilityState::default();
         capability_state.tool.mcp_servers = vec![
-            runtime_mcp_declaration("shared", "http://resolver/mcp"),
-            runtime_mcp_declaration("resolver_only", "http://resolver-only/mcp"),
+            runtime_mcp_server("shared", "http://resolver/mcp"),
+            runtime_mcp_server("resolver_only", "http://resolver-only/mcp"),
         ];
 
         let servers = normalize_owner_bootstrap_mcp_projection(
             &mut capability_state,
-            &[runtime_mcp_declaration("shared", "http://request/mcp")],
+            &[runtime_mcp_server("shared", "http://request/mcp")],
             &AgentLevelMcp {
                 preset_mcp_presets: vec![
                     runtime_mcp_preset("shared", "http://agent/mcp"),
@@ -955,7 +947,7 @@ mod tests {
     #[test]
     fn owner_bootstrap_mcp_projection_maps_platform_scoped_server_to_platform_capability() {
         let mut capability_state = CapabilityState::default();
-        capability_state.tool.mcp_servers = vec![runtime_mcp_declaration(
+        capability_state.tool.mcp_servers = vec![runtime_mcp_server(
             "agentdash-workflow-tools-123",
             "http://workflow/mcp",
         )];

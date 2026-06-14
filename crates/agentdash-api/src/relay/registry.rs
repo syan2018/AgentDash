@@ -262,7 +262,7 @@ impl BackendRegistry {
 
     /// 解析 relay MCP 应投递到的本机 backend。
     ///
-    /// Project MCP Preset / AgentFrame surface 是 server declaration 的事实源；
+    /// Project MCP Preset / AgentFrame surface 是 MCP server 的事实源；
     /// backend 上报的 MCP catalog 仅作为本机预配置 catalog。运行中的 session 优先使用
     /// 已注册的 relay route，其次使用 VFS default mount backend，最后才按 catalog 或在线
     /// backend 选择。

@@ -22,9 +22,9 @@ pub use notification::{
     build_capability_delta_markdown, capability_description, is_known_capability_key,
 };
 pub use resolver::{
-    AgentMcpServerEntry, AvailableMcpPresets, CapabilityContext, CapabilityResolver,
-    CapabilityResolverInput, CapabilityResolverOutput, CompanionContribution,
-    ContextContributionSource, ContextContributions, McpCandidates, ToolContribution,
+    AvailableMcpPresets, CapabilityContext, CapabilityResolver, CapabilityResolverInput,
+    CapabilityResolverOutput, CompanionContribution, ContextContributionSource,
+    ContextContributions, McpCandidates, ToolContribution,
 };
 pub use session_workflow_context::{
     SessionWorkflowOwner, SessionWorkflowRepos, resolve_session_workflow_context,
@@ -48,7 +48,7 @@ pub async fn load_available_presets(
             tracing::warn!(
                 project_id = %project_id,
                 error = %error,
-                "加载 project MCP Preset 列表失败,mcp:<X> 能力将退化到 inline agent_mcp_servers"
+                "加载 project MCP Preset 列表失败,mcp:<X> 能力无法解析为 RuntimeMcpServer"
             );
             Default::default()
         }

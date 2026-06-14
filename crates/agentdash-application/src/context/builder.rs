@@ -8,7 +8,7 @@
 use agentdash_spi::{ContextFragment, FragmentScopeSet, MergeStrategy, SessionContextBundle};
 use uuid::Uuid;
 
-use crate::runtime::RuntimeMcpServer;
+use crate::runtime::McpServerSummary;
 
 // ─── 新契约（零 domain 依赖） ────────────────────────────────
 
@@ -70,7 +70,7 @@ pub struct SessionContextConfig {
 pub struct Contribution {
     pub fragments: Vec<ContextFragment>,
     /// application 层 MCP server 抽象 — 边界层再转换为具体协议类型。
-    pub mcp_servers: Vec<RuntimeMcpServer>,
+    pub mcp_servers: Vec<McpServerSummary>,
 }
 
 impl Contribution {

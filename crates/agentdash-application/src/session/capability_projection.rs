@@ -6,7 +6,7 @@ use agentdash_spi::context::capability::{
     SessionBaselineCapabilities, SkillCapabilityEntry, SkillEntry, SkillProviderCluster,
 };
 use agentdash_spi::{
-    AuthIdentity, DiscoveredGuideline, RuntimeMcpServerDeclaration, SkillContextExposure,
+    AuthIdentity, DiscoveredGuideline, RuntimeMcpServer, SkillContextExposure,
     SkillDiscoveryCluster, SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryOutput,
     SkillDiscoveryProvider, SkillDiscoveryUserContext, Vfs, skill_capability_key,
 };
@@ -178,7 +178,7 @@ pub async fn derive_session_guidelines(
 pub fn normalize_capability_state_dimensions(
     state: &mut CapabilityState,
     active_vfs: Option<Vfs>,
-    mcp_servers: Vec<RuntimeMcpServerDeclaration>,
+    mcp_servers: Vec<RuntimeMcpServer>,
     session_capabilities: &SessionBaselineCapabilities,
 ) {
     state.vfs.active = active_vfs;

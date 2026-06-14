@@ -2,11 +2,13 @@
 
 use std::collections::HashMap;
 
-use agentdash_domain::mcp_preset::{McpEnvVar, McpHttpHeader, McpTransportConfig};
+use agentdash_application::mcp_relay_adapter::{
+    mcp_server_parts_to_relay, relay_transport_to_mcp_transport,
+};
+use agentdash_domain::mcp_preset::McpTransportConfig;
 use agentdash_mcp::render_content;
 use agentdash_relay::{
-    McpEnvVarRelay, McpHttpHeaderRelay, McpServerDeclarationRelay, McpServerInfoRelay,
-    McpToolInfoRelay, McpTransportConfigRelay, ResponseMcpCallToolPayload,
+    McpServerInfoRelay, McpServerRelay, McpToolInfoRelay, ResponseMcpCallToolPayload,
 };
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
@@ -54,7 +56,7 @@ impl McpClientManager {
     /// 列举指定 server 的工具
     pub async fn list_tools(
         &self,
-        server: &McpServerDeclarationRelay,
+        server: &McpServerRelay,
     ) -> Result<Vec<McpToolInfoRelay>, anyhow::Error> {
         let entry = resolved_server_entry(server);
         let key = self.ensure_connected(&entry).await?;
@@ -82,7 +84,7 @@ impl McpClientManager {
     /// 调用指定 server 上的工具
     pub async fn call_tool(
         &self,
-        server: &McpServerDeclarationRelay,
+        server: &McpServerRelay,
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> Result<ResponseMcpCallToolPayload, anyhow::Error> {
@@ -198,106 +200,15 @@ impl McpClientManager {
     }
 }
 
-pub(crate) fn local_server_to_relay_declaration(
-    server: &McpLocalServerEntry,
-) -> McpServerDeclarationRelay {
-    McpServerDeclarationRelay {
-        name: server.name.clone(),
-        transport: domain_transport_to_relay(&server.transport),
-    }
+pub(crate) fn local_server_to_relay_mcp_server(server: &McpLocalServerEntry) -> McpServerRelay {
+    mcp_server_parts_to_relay(&server.name, &server.transport)
 }
 
-fn resolved_server_entry(server: &McpServerDeclarationRelay) -> ResolvedMcpServerEntry {
+fn resolved_server_entry(server: &McpServerRelay) -> ResolvedMcpServerEntry {
     ResolvedMcpServerEntry {
         name: server.name.clone(),
-        transport: relay_transport_to_domain(&server.transport),
+        transport: relay_transport_to_mcp_transport(&server.transport),
     }
-}
-
-fn domain_transport_to_relay(transport: &McpTransportConfig) -> McpTransportConfigRelay {
-    match transport {
-        McpTransportConfig::Http { url, headers } => McpTransportConfigRelay::Http {
-            url: url.clone(),
-            headers: domain_headers_to_relay(headers),
-        },
-        McpTransportConfig::Sse { url, headers } => McpTransportConfigRelay::Sse {
-            url: url.clone(),
-            headers: domain_headers_to_relay(headers),
-        },
-        McpTransportConfig::Stdio {
-            command,
-            args,
-            env,
-            cwd,
-        } => McpTransportConfigRelay::Stdio {
-            command: command.clone(),
-            args: args.clone(),
-            env: domain_env_to_relay(env),
-            cwd: cwd.clone(),
-        },
-    }
-}
-
-fn relay_transport_to_domain(transport: &McpTransportConfigRelay) -> McpTransportConfig {
-    match transport {
-        McpTransportConfigRelay::Http { url, headers } => McpTransportConfig::Http {
-            url: url.clone(),
-            headers: relay_headers_to_domain(headers),
-        },
-        McpTransportConfigRelay::Sse { url, headers } => McpTransportConfig::Sse {
-            url: url.clone(),
-            headers: relay_headers_to_domain(headers),
-        },
-        McpTransportConfigRelay::Stdio {
-            command,
-            args,
-            env,
-            cwd,
-        } => McpTransportConfig::Stdio {
-            command: command.clone(),
-            args: args.clone(),
-            env: relay_env_to_domain(env),
-            cwd: cwd.clone(),
-        },
-    }
-}
-
-fn relay_headers_to_domain(headers: &[McpHttpHeaderRelay]) -> Vec<McpHttpHeader> {
-    headers
-        .iter()
-        .map(|header| McpHttpHeader {
-            name: header.name.clone(),
-            value: header.value.clone(),
-        })
-        .collect()
-}
-
-fn relay_env_to_domain(env: &[McpEnvVarRelay]) -> Vec<McpEnvVar> {
-    env.iter()
-        .map(|var| McpEnvVar {
-            name: var.name.clone(),
-            value: var.value.clone(),
-        })
-        .collect()
-}
-
-fn domain_headers_to_relay(headers: &[McpHttpHeader]) -> Vec<McpHttpHeaderRelay> {
-    headers
-        .iter()
-        .map(|header| McpHttpHeaderRelay {
-            name: header.name.clone(),
-            value: header.value.clone(),
-        })
-        .collect()
-}
-
-fn domain_env_to_relay(env: &[McpEnvVar]) -> Vec<McpEnvVarRelay> {
-    env.iter()
-        .map(|var| McpEnvVarRelay {
-            name: var.name.clone(),
-            value: var.value.clone(),
-        })
-        .collect()
 }
 
 fn connection_key(entry: &ResolvedMcpServerEntry) -> Result<String, anyhow::Error> {
@@ -313,6 +224,8 @@ fn connection_key_prefix(server_name: &str) -> Result<String, anyhow::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_domain::mcp_preset::{McpEnvVar, McpHttpHeader};
+    use agentdash_relay::{McpEnvVarRelay, McpHttpHeaderRelay, McpTransportConfigRelay};
 
     fn http_entry(name: &str, header_value: &str) -> ResolvedMcpServerEntry {
         ResolvedMcpServerEntry {
@@ -365,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn local_server_to_relay_declaration_preserves_resolved_transport_fields() {
+    fn local_server_to_relay_mcp_server_preserves_resolved_transport_fields() {
         let server = McpLocalServerEntry {
             name: "stdio-tools".to_string(),
             transport: McpTransportConfig::Stdio {
@@ -379,9 +292,9 @@ mod tests {
             },
         };
 
-        let declaration = local_server_to_relay_declaration(&server);
-        assert_eq!(declaration.name, "stdio-tools");
-        match declaration.transport {
+        let relay_server = local_server_to_relay_mcp_server(&server);
+        assert_eq!(relay_server.name, "stdio-tools");
+        match relay_server.transport {
             McpTransportConfigRelay::Stdio {
                 command,
                 args,
@@ -400,7 +313,7 @@ mod tests {
 
     #[test]
     fn resolved_server_entry_preserves_http_headers() {
-        let declaration = McpServerDeclarationRelay {
+        let relay_server = McpServerRelay {
             name: "http-tools".to_string(),
             transport: McpTransportConfigRelay::Http {
                 url: "http://127.0.0.1:8999/mcp?p4_client=demo".to_string(),
@@ -411,7 +324,7 @@ mod tests {
             },
         };
 
-        let entry = resolved_server_entry(&declaration);
+        let entry = resolved_server_entry(&relay_server);
         assert_eq!(entry.name, "http-tools");
         assert_eq!(
             entry.transport,
@@ -427,7 +340,7 @@ mod tests {
 
     #[test]
     fn resolved_server_entry_preserves_stdio_env_and_cwd() {
-        let declaration = McpServerDeclarationRelay {
+        let relay_server = McpServerRelay {
             name: "stdio-tools".to_string(),
             transport: McpTransportConfigRelay::Stdio {
                 command: "tool-server".to_string(),
@@ -440,7 +353,7 @@ mod tests {
             },
         };
 
-        let entry = resolved_server_entry(&declaration);
+        let entry = resolved_server_entry(&relay_server);
         assert_eq!(entry.name, "stdio-tools");
         assert_eq!(
             entry.transport,
@@ -468,7 +381,7 @@ mod tests {
             }],
             true,
         );
-        let undeclared = McpServerDeclarationRelay {
+        let undeclared = McpServerRelay {
             name: "undeclared".to_string(),
             transport: McpTransportConfigRelay::Http {
                 url: "http://127.0.0.1:8999/mcp".to_string(),
@@ -495,7 +408,7 @@ mod tests {
             }],
             true,
         );
-        let changed_transport = McpServerDeclarationRelay {
+        let changed_transport = McpServerRelay {
             name: "declared".to_string(),
             transport: McpTransportConfigRelay::Http {
                 url: "http://127.0.0.1:8998/mcp".to_string(),
@@ -511,9 +424,9 @@ mod tests {
     }
 
     #[test]
-    fn unprotected_manager_accepts_project_scoped_declaration_policy() {
+    fn unprotected_manager_accepts_project_scoped_server_policy() {
         let manager = McpClientManager::new(Vec::new(), false);
-        let entry = resolved_server_entry(&McpServerDeclarationRelay {
+        let entry = resolved_server_entry(&McpServerRelay {
             name: "project-tools".to_string(),
             transport: McpTransportConfigRelay::Http {
                 url: "http://127.0.0.1:8999/mcp".to_string(),
@@ -523,7 +436,7 @@ mod tests {
 
         assert!(
             !manager.protect_mode && !manager.is_preconfigured_server(&entry),
-            "默认关闭 protect mode 时，项目级 declaration 不需要命中本机静态 catalog"
+            "默认关闭 protect mode 时，项目级 MCP server 不需要命中本机静态 catalog"
         );
     }
 }

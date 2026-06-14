@@ -44,7 +44,7 @@ use crate::context::{
 };
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
-use crate::runtime::RuntimeMcpServer;
+use crate::runtime::McpServerSummary;
 use crate::session::assembly_builder::SessionAssemblyBuilder;
 #[cfg(test)]
 use crate::session::assembly_builder::slice_companion_bundle;
@@ -331,7 +331,6 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
             node_path: spec.node_path,
             attempt: spec.attempt,
             lifecycle_key: spec.lifecycle_key,
-            agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, spec.run.project_id).await,
             companion_slice_mode: None,
             baseline_override: None,
@@ -347,10 +346,10 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
 
     // Lifecycle node 与 owner 路径都追加 SessionPlan contribution，保持 vfs /
     // tools / persona / workflow / runtime_policy 的统一画像。
-    let lifecycle_mcp_runtime: Vec<RuntimeMcpServer> = activation
+    let lifecycle_mcp_runtime: Vec<McpServerSummary> = activation
         .mcp_servers
         .iter()
-        .map(crate::runtime_bridge::mcp_declaration_to_runtime_server)
+        .map(crate::runtime_bridge::runtime_mcp_server_to_summary)
         .collect();
     let lifecycle_plan = crate::session::plan::build_session_plan_fragments(
         crate::session::plan::SessionPlanInput {
@@ -543,7 +542,7 @@ pub struct LifecycleNodeSpec<'a> {
 /// Companion compose 输入。
 pub struct CompanionSpec<'a> {
     pub parent_vfs: Option<&'a Vfs>,
-    pub parent_mcp_servers: &'a [agentdash_spi::RuntimeMcpServerDeclaration],
+    pub parent_mcp_servers: &'a [agentdash_spi::RuntimeMcpServer],
     /// 父 session 的结构化上下文 Bundle，companion 直接继承（按 slice_mode 过滤）。
     pub parent_context_bundle: Option<&'a SessionContextBundle>,
     pub slice_mode: CompanionSliceMode,
@@ -571,7 +570,7 @@ pub struct CompanionParentWorkflowSpec<'a> {
 
 pub(crate) struct CompanionParentFacts {
     pub(crate) parent_vfs: Option<Vfs>,
-    pub(crate) parent_mcp_servers: Vec<agentdash_spi::RuntimeMcpServerDeclaration>,
+    pub(crate) parent_mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
     pub(crate) parent_context_bundle: Option<SessionContextBundle>,
 }
 
@@ -629,7 +628,6 @@ pub(in crate::session) async fn compose_companion_with_workflow(
             node_path: spec.node_path,
             attempt: spec.attempt,
             lifecycle_key: &spec.lifecycle.key,
-            agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, project_id).await,
             companion_slice_mode: Some(comp.slice_mode),
             baseline_override: None,
@@ -1058,11 +1056,8 @@ mod tests {
             RuntimeContextInspectionPlan::from_source_input("test-session", owner, &user_input)
         }
 
-        fn runtime_mcp_declaration(
-            name: &str,
-            url: &str,
-        ) -> agentdash_spi::RuntimeMcpServerDeclaration {
-            agentdash_spi::RuntimeMcpServerDeclaration {
+        fn runtime_mcp_server(name: &str, url: &str) -> agentdash_spi::RuntimeMcpServer {
+            agentdash_spi::RuntimeMcpServer {
                 name: name.to_string(),
                 transport: agentdash_spi::McpTransportConfig::Http {
                     url: url.to_string(),
@@ -1085,7 +1080,7 @@ mod tests {
                 links: Vec::new(),
             };
             capability_state.vfs.active = Some(vfs.clone());
-            let mcp_servers = vec![runtime_mcp_declaration("compose_a", "http://a")];
+            let mcp_servers = vec![runtime_mcp_server("compose_a", "http://a")];
             let prepared = SessionAssemblyBuilder {
                 vfs: Some(vfs),
                 capability_state: Some(capability_state),

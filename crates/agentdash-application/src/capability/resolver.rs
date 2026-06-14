@@ -38,8 +38,6 @@ pub struct ToolContribution {
 pub struct McpCandidates {
     /// project 级 MCP Preset 预展开字典。
     pub presets: AvailableMcpPresets,
-    /// agent 内联 MCP servers。
-    pub agent_servers: Vec<AgentMcpServerEntry>,
 }
 
 /// Companion 维度的 contribution。
@@ -93,13 +91,6 @@ pub struct CapabilityResolverInput<'a> {
     /// LifecycleSubjectAssociation-based 解析上下文（可选，新路径）。
     #[allow(dead_code)]
     pub capability_context: Option<CapabilityContext>,
-}
-
-/// agent config 中注册的 MCP server 条目（用于 `mcp:*` key 解析）
-#[derive(Debug, Clone)]
-pub struct AgentMcpServerEntry {
-    pub name: String,
-    pub server: agentdash_spi::RuntimeMcpServerDeclaration,
 }
 
 // ── Resolver 内部合并中间态 ──────────────────────────────────────────
@@ -234,7 +225,7 @@ impl CapabilityResolver {
         let mut effective_caps =
             default_visible_capabilities(&input.owner_ctx, &merged, granted_keys);
 
-        let mut resolved_mcp_servers = Vec::<agentdash_spi::RuntimeMcpServerDeclaration>::new();
+        let mut resolved_mcp_servers = Vec::<agentdash_spi::RuntimeMcpServer>::new();
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
 
         // ── 按 directive 序列执行 slot 归约 ──
@@ -262,28 +253,18 @@ impl CapabilityResolver {
                         if let Some(preset) = input.mcp_candidates.presets.get(&server_name) {
                             effective_caps.insert(cap.clone());
                             if seen_custom_mcp_names.insert(server_name.clone()) {
-                                let server = crate::mcp_preset::resolve_preset_mcp_declaration(
+                                let server = crate::mcp_preset::resolve_preset_mcp_server(
                                     preset,
                                     input.mcp_runtime_context.as_ref(),
                                 )
                                 .map_err(|error| error.to_string())?;
                                 resolved_mcp_servers.push(server);
                             }
-                        } else if let Some(agent_entry) = input
-                            .mcp_candidates
-                            .agent_servers
-                            .iter()
-                            .find(|e| e.name == server_name)
-                        {
-                            effective_caps.insert(cap.clone());
-                            if seen_custom_mcp_names.insert(server_name.clone()) {
-                                resolved_mcp_servers.push(agent_entry.server.clone());
-                            }
                         } else {
                             tracing::warn!(
                                 key = %cap.key(),
                                 server_name = %server_name,
-                                "directive 声明了 mcp:{server_name}，但 McpPreset 和 agent 内联都未注册"
+                                "directive 声明了 mcp:{server_name}，但 Project MCP Preset 未注册"
                             );
                         }
                     }
@@ -305,7 +286,7 @@ impl CapabilityResolver {
                     &input.owner_ctx,
                 )
             {
-                resolved_mcp_servers.push(config.to_runtime_mcp_declaration());
+                resolved_mcp_servers.push(config.to_runtime_mcp_server());
             }
         }
 
@@ -495,18 +476,20 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    fn test_runtime_mcp_declaration(
-        name: &str,
-        url: &str,
-    ) -> agentdash_spi::RuntimeMcpServerDeclaration {
-        agentdash_spi::RuntimeMcpServerDeclaration {
-            name: name.to_string(),
-            transport: agentdash_spi::McpTransportConfig::Http {
+    fn test_mcp_preset(key: &str, url: &str) -> McpPreset {
+        use agentdash_domain::mcp_preset::{McpRoutePolicy, McpTransportConfig};
+
+        McpPreset::new_user(
+            Uuid::new_v4(),
+            key,
+            key,
+            None,
+            McpTransportConfig::Http {
                 url: url.to_string(),
                 headers: vec![],
             },
-            uses_relay: false,
-        }
+            McpRoutePolicy::Direct,
+        )
     }
 
     fn test_platform() -> PlatformConfig {
@@ -583,7 +566,7 @@ mod tests {
     fn state_mcp_server<'a>(
         output: &'a CapabilityResolverOutput,
         name: &str,
-    ) -> Option<&'a agentdash_spi::RuntimeMcpServerDeclaration> {
+    ) -> Option<&'a agentdash_spi::RuntimeMcpServer> {
         output
             .tool
             .mcp_servers
@@ -760,17 +743,17 @@ mod tests {
     }
 
     #[test]
-    fn custom_mcp_from_workflow_resolved() {
+    fn custom_mcp_from_workflow_resolves_preset() {
         let mut input = base_input();
         with_workflow_directives(
             &mut input,
             vec![ToolCapabilityDirective::add_simple("mcp:code_analyzer")],
             true,
         );
-        input.mcp_candidates.agent_servers = vec![AgentMcpServerEntry {
-            name: "code_analyzer".to_string(),
-            server: test_runtime_mcp_declaration("code_analyzer", "http://external:8080/mcp"),
-        }];
+        input.mcp_candidates.presets.insert(
+            "code_analyzer".to_string(),
+            test_mcp_preset("code_analyzer", "http://external:8080/mcp"),
+        );
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
@@ -780,6 +763,7 @@ mod tests {
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer"))
         );
+        assert!(state_mcp_server(&output, "code_analyzer").is_some());
     }
 
     #[test]
@@ -905,15 +889,18 @@ mod tests {
         );
     }
 
-    /// Preset 与 inline agent mcp_server 同名时以 Preset 为准（不重复注入）。
+    /// 同一个 preset key 被重复声明时只注入一条 RuntimeMcpServer。
     #[test]
-    fn preset_takes_precedence_over_inline_agent_mcp_server() {
+    fn duplicate_preset_key_injects_single_runtime_mcp_server() {
         use agentdash_domain::mcp_preset::{McpPreset, McpRoutePolicy, McpTransportConfig};
 
         let mut input = base_input();
         with_workflow_directives(
             &mut input,
-            vec![ToolCapabilityDirective::add_simple("mcp:shared")],
+            vec![
+                ToolCapabilityDirective::add_simple("mcp:shared"),
+                ToolCapabilityDirective::add_simple("mcp:shared"),
+            ],
             true,
         );
         input.mcp_candidates.presets.insert(
@@ -930,10 +917,6 @@ mod tests {
                 McpRoutePolicy::Direct,
             ),
         );
-        input.mcp_candidates.agent_servers = vec![AgentMcpServerEntry {
-            name: "shared".to_string(),
-            server: test_runtime_mcp_declaration("shared", "http://inline/mcp"),
-        }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert_eq!(
@@ -949,7 +932,7 @@ mod tests {
         let server = state_mcp_server(&output, "shared").expect("应注入 shared");
         match &server.transport {
             agentdash_spi::McpTransportConfig::Http { url, .. } => {
-                assert_eq!(url, "http://preset/mcp", "应以 preset url 为准");
+                assert_eq!(url, "http://preset/mcp");
             }
             other => panic!("期望 Http transport, 实际: {other:?}"),
         }
@@ -998,10 +981,10 @@ mod tests {
             vec![ToolCapabilityDirective::add_simple("mcp:code_analyzer")],
             true,
         );
-        input.mcp_candidates.agent_servers = vec![AgentMcpServerEntry {
-            name: "code_analyzer".to_string(),
-            server: test_runtime_mcp_declaration("code_analyzer", "http://external:8080/mcp"),
-        }];
+        input.mcp_candidates.presets.insert(
+            "code_analyzer".to_string(),
+            test_mcp_preset("code_analyzer", "http://external:8080/mcp"),
+        );
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(state_mcp_server(&output, "code_analyzer").is_some());
@@ -1130,10 +1113,10 @@ mod tests {
             ],
             true,
         );
-        input.mcp_candidates.agent_servers = vec![AgentMcpServerEntry {
-            name: "code_analyzer".to_string(),
-            server: test_runtime_mcp_declaration("code_analyzer", "http://external:8080/mcp"),
-        }];
+        input.mcp_candidates.presets.insert(
+            "code_analyzer".to_string(),
+            test_mcp_preset("code_analyzer", "http://external:8080/mcp"),
+        );
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(state_mcp_server(&output, "code_analyzer").is_none());

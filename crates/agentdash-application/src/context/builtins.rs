@@ -309,7 +309,7 @@ pub fn contribute_instruction(
     Contribution::fragments_only(fragments)
 }
 
-/// MCP 能力注入片段 —— 同时把 `RuntimeMcpServer` 声明挂到 `Contribution.mcp_servers`。
+/// MCP 能力注入片段 —— 同时把 `McpServerSummary` 声明挂到 `Contribution.mcp_servers`。
 pub fn contribute_mcp(config: &agentdash_spi::McpInjectionConfig) -> Contribution {
     let label: &'static str = match config.scope {
         agentdash_spi::ToolScope::Relay => "mcp_relay_tools",
@@ -318,9 +318,8 @@ pub fn contribute_mcp(config: &agentdash_spi::McpInjectionConfig) -> Contributio
         agentdash_spi::ToolScope::Workflow => "mcp_workflow_tools",
     };
 
-    let runtime_mcp_declaration = config.to_runtime_mcp_declaration();
-    let runtime_server =
-        crate::runtime_bridge::mcp_declaration_to_runtime_server(&runtime_mcp_declaration);
+    let runtime_mcp_server = config.to_runtime_mcp_server();
+    let server_summary = crate::runtime_bridge::runtime_mcp_server_to_summary(&runtime_mcp_server);
 
     Contribution {
         fragments: vec![ContextFragment {
@@ -332,6 +331,6 @@ pub fn contribute_mcp(config: &agentdash_spi::McpInjectionConfig) -> Contributio
             source: "context_contributor:mcp".to_string(),
             content: config.to_context_content(),
         }],
-        mcp_servers: vec![runtime_server],
+        mcp_servers: vec![server_summary],
     }
 }

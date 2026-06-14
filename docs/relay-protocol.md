@@ -257,19 +257,54 @@ MCP relay 支持一次性 transport probe、本机 server tool 列表、tool 调
       "type": "stdio",
       "command": "npx",
       "args": ["@modelcontextprotocol/server-filesystem"],
-      "env": []
+      "env": [],
+      "cwd": "F:/Projects/AgentDash"
     }
   }
 }
 ```
 
 ```json
-{ "type": "command.mcp_list_tools", "id": "mcp-list-1", "payload": { "server_name": "repo-tools" } }
-{ "type": "command.mcp_call_tool", "id": "mcp-call-1", "payload": { "server_name": "repo-tools", "tool_name": "read_file", "arguments": { "path": "README.md" } } }
+{
+  "type": "command.mcp_list_tools",
+  "id": "mcp-list-1",
+  "payload": {
+    "server": {
+      "name": "repo-tools",
+      "transport": {
+        "type": "http",
+        "url": "http://127.0.0.1:7357/mcp",
+        "headers": [{ "name": "x-workspace", "value": "agentdash" }]
+      }
+    }
+  }
+}
+```
+
+```json
+{
+  "type": "command.mcp_call_tool",
+  "id": "mcp-call-1",
+  "payload": {
+    "server": {
+      "name": "repo-tools",
+      "transport": {
+        "type": "http",
+        "url": "http://127.0.0.1:7357/mcp",
+        "headers": [{ "name": "x-workspace", "value": "agentdash" }]
+      }
+    },
+    "tool_name": "read_file",
+    "arguments": { "path": "README.md" }
+  }
+}
+```
+
+```json
 { "type": "command.mcp_close", "id": "mcp-close-1", "payload": { "server_name": "repo-tools" } }
 ```
 
-`McpTransportConfigRelay` 支持 `http`、`sse` 和 `stdio`。HTTP/SSE transport 携带 `url` 与 headers；stdio transport 携带 `command`、`args`、`env`。Tool info 使用 `name`、`description`、`parameters_schema`。
+`command.mcp_list_tools` 与 `command.mcp_call_tool` 的 server payload 是完整 `McpServerRelay { name, transport }`，原因是云端发送的是已经解析 runtime binding 的执行面 MCP server，本机不能只靠静态 server name 还原 transport。`McpTransportConfigRelay` 支持 `http`、`sse` 和 `stdio`。HTTP/SSE transport 携带 `url` 与 headers；stdio transport 携带 `command`、`args`、`env` 和可选 `cwd`。Tool info 使用 `name`、`description`、`parameters_schema`。
 
 ## Extension Runtime
 

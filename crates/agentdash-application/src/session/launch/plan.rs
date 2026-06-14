@@ -9,7 +9,7 @@ use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{
     CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionBackendPlacement,
     ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, RestoredSessionState,
-    RuntimeMcpServerDeclaration, SessionContextBundle,
+    RuntimeMcpServer, SessionContextBundle,
 };
 
 use crate::backend_execution_placement::ExecutionPlacementPlan;
@@ -91,7 +91,7 @@ pub struct TerminalEffectPlan {
 pub struct ConnectorInputPlan {
     pub working_directory: PathBuf,
     pub executor_config: AgentConfig,
-    pub mcp_servers: Vec<RuntimeMcpServerDeclaration>,
+    pub mcp_servers: Vec<RuntimeMcpServer>,
     pub has_vfs: bool,
 }
 

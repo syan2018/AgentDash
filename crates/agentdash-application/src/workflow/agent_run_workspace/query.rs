@@ -136,13 +136,9 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             }
             _ => false,
         };
-        let projection =
-            AgentRunWorkspaceProjection::derive(AgentRunWorkspaceProjectionInput::new(
-                &execution_state,
-                &agent.status,
-                delivery_runtime_session_id.is_some(),
-                frame_runtime.is_some(),
-            ));
+        let projection = AgentRunWorkspaceProjection::derive(
+            AgentRunWorkspaceProjectionInput::new(&execution_state, &agent.status),
+        );
 
         let mailbox_messages = self
             .repos

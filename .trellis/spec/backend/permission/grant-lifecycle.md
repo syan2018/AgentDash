@@ -8,9 +8,10 @@
 
 ### 1. Scope / Trigger
 
-- Agent 在 runtime 通过 `companion_request(capability_grant_request)` 发起 capability 申请
-- 新增 `permission_grants` 数据库表 + REST endpoints
+- Agent runtime 或 platform broker 通过 `PermissionGrantService::request` 发起 capability 申请
+- `permission_grants` 数据库表 + REST endpoints
 - 跨层数据流：domain entity → application service → infrastructure repo → API handler → frontend card
+- Companion `capability_grant_request` 只作为交互/broker 输入；授权事实以 `PermissionGrant` 聚合为准。
 
 ### 2. Signatures
 
@@ -21,7 +22,8 @@
 pub struct PermissionGrant {
     pub id: Uuid,
     pub run_id: Uuid,
-    pub session_id: String,
+    pub effect_frame_id: Option<Uuid>,
+    pub source_runtime_session_id: String,
     pub source_turn_id: Option<String>,
     pub source_tool_call_id: Option<String>,
     pub requested_paths: Vec<ToolCapabilityPath>,
@@ -46,7 +48,9 @@ pub trait PermissionGrantRepository: Send + Sync {
     async fn create(&self, grant: &PermissionGrant) -> Result<(), DomainError>;
     async fn update(&self, grant: &PermissionGrant) -> Result<(), DomainError>;
     async fn find_by_id(&self, id: Uuid) -> Result<Option<PermissionGrant>, DomainError>;
-    async fn list_active_by_session(&self, session_id: &str) -> Result<Vec<PermissionGrant>, DomainError>;
+    async fn list_by_frame(&self, effect_frame_id: Uuid, status_filter: Option<PermissionGrantStatusFilter>) -> Result<Vec<PermissionGrant>, DomainError>;
+    async fn list_by_run(&self, run_id: Uuid, status_filter: Option<PermissionGrantStatusFilter>) -> Result<Vec<PermissionGrant>, DomainError>;
+    async fn list_active_by_frame(&self, effect_frame_id: Uuid) -> Result<Vec<PermissionGrant>, DomainError>;
     async fn list_active_by_run(&self, run_id: Uuid) -> Result<Vec<PermissionGrant>, DomainError>;
     async fn find_active_escalation_grant(&self, session_id: &str, target_subject_kind: &str) -> Result<Option<PermissionGrant>, DomainError>;
     async fn expire_overdue(&self) -> Result<u64, DomainError>;
@@ -60,12 +64,13 @@ pub trait PermissionGrantRepository: Send + Sync {
 CREATE TABLE IF NOT EXISTS permission_grants (
     id TEXT PRIMARY KEY,               -- UUID as text
     run_id TEXT NOT NULL,              -- FK to lifecycle_runs (logical)
-    session_id TEXT NOT NULL,
+    effect_frame_id TEXT,
+    source_runtime_session_id TEXT NOT NULL,
     source_turn_id TEXT,
     source_tool_call_id TEXT,
     requested_paths TEXT NOT NULL,     -- JSON array: ["story_management", "task_management::execution_view"]
     reason TEXT NOT NULL,
-    grant_scope TEXT NOT NULL,         -- enum: turn / session / workflow_step
+    grant_scope TEXT NOT NULL,         -- enum: turn / agent_frame / activity
     expires_at TEXT,                   -- ISO 8601
     scope_escalation_intent TEXT,      -- JSON object or NULL
     status TEXT NOT NULL DEFAULT 'created',
@@ -76,8 +81,8 @@ CREATE TABLE IF NOT EXISTS permission_grants (
 );
 
 -- Partial indexes for active grant queries
-CREATE INDEX idx_permission_grants_session_active
-    ON permission_grants(session_id)
+CREATE INDEX idx_permission_grants_frame_active
+    ON permission_grants(effect_frame_id)
     WHERE status IN ('applied', 'scope_escalated');
 
 CREATE INDEX idx_permission_grants_run
@@ -92,7 +97,7 @@ CREATE INDEX idx_permission_grants_status
 
 | Method | Path | Handler | Auth |
 |--------|------|---------|------|
-| GET | `/permission-grants?session_id=&run_id=&status=` | `list_grants` | CurrentUser |
+| GET | `/permission-grants?effect_frame_id=&run_id=&status=&status_group=` | `list_grants` | CurrentUser |
 | GET | `/permission-grants/:id` | `get_grant` | CurrentUser |
 | POST | `/permission-grants/:id/approve` | `approve_grant` | CurrentUser |
 | POST | `/permission-grants/:id/reject` | `reject_grant` | CurrentUser |
@@ -104,9 +109,10 @@ CREATE INDEX idx_permission_grants_status
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| session_id | String (query) | One of session_id/run_id required | Non-empty |
-| run_id | String (query) | One of session_id/run_id required | Valid UUID |
-| status | String (query) | Optional | `active` (default) |
+| effect_frame_id | String (query) | One of effect_frame_id/run_id required | Valid UUID |
+| run_id | String (query) | One of effect_frame_id/run_id required | Valid UUID |
+| status | String (query) | Optional | Exact grant status |
+| status_group | String (query) | Optional | `pending` / `active` / `terminal`; mutually exclusive with `status` |
 
 #### Response — PermissionGrantDto
 
@@ -114,14 +120,15 @@ CREATE INDEX idx_permission_grants_status
 |-------|------|-------------|
 | id | String | UUID |
 | run_id | String | UUID |
-| session_id | String | Non-empty |
+| effect_frame_id | Option\<String\> | AgentFrame UUID when grant is frame-scoped |
+| source_runtime_session_id | String | Runtime trace audit ref |
 | requested_paths | Vec\<String\> | e.g. `["story_management", "task_management::execution_view"]` |
 | reason | String | Agent-provided justification |
-| grant_scope | String | `turn` / `session` / `workflow_step` |
+| grant_scope | String | `turn` / `agent_frame` / `activity` |
 | expires_at | Option\<String\> | ISO 8601 |
-| scope_escalation_intent | Option\<Value\> | JSON of `ScopeEscalationIntent` |
+| scope_escalation_intent | Option\<ScopeEscalationIntentDto\> | typed target scope + unlocked paths |
 | status | String | GrantStatus snake_case |
-| policy_decision | Option\<Value\> | JSON of `PolicyDecision` |
+| policy_decision | Option\<PolicyDecisionDto\> | typed policy outcome, matched rules and reason |
 | approved_by | Option\<String\> | user_id or "system" |
 | created_at | String | ISO 8601 |
 | updated_at | String | ISO 8601 |
@@ -130,7 +137,9 @@ CREATE INDEX idx_permission_grants_status
 
 | Condition | Error |
 |-----------|-------|
-| list: neither session_id nor run_id | `400 BadRequest("session_id or run_id query param required")` |
+| list: neither effect_frame_id nor run_id | `400 BadRequest("effect_frame_id or run_id query param required")` |
+| list: both status and status_group | `400 BadRequest("status and status_group cannot be used together")` |
+| list: invalid effect_frame_id UUID | `400 BadRequest("invalid effect_frame_id: {v}")` |
 | list: invalid run_id UUID | `400 BadRequest("invalid run_id: {v}")` |
 | get/approve/reject/revoke: invalid grant_id | `400 BadRequest("invalid grant_id: {v}")` |
 | get/approve/reject/revoke: grant not found | `404 NotFound("grant not found: {id}")` |
@@ -181,7 +190,8 @@ Agent requests unknown_capability
 | Unit | `GrantStatus::is_active()` / `is_terminal()` | Applied/ScopeEscalated active; Rejected/Expired/Revoked terminal |
 | Unit | `GrantScope::from_str` / `as_str` roundtrip | All variants |
 | Integration | `PostgresPermissionGrantRepository::create` + `find_by_id` | Roundtrip preserves all fields |
-| Integration | `list_active_by_session` filters non-active | Only Applied/ScopeEscalated returned |
+| Integration | `list_by_frame(..., Active)` filters non-active | Only Applied/ScopeEscalated returned |
+| Integration | `list_by_run(..., Pending/Terminal)` filters by status group | Pending and terminal groups do not rely on active-only query |
 | Integration | `expire_overdue` marks old grants | Applied + expired → Expired |
 | API | `GET /permission-grants` without params | 400 error |
 | API | `POST /permission-grants/:id/approve` on Applied grant | 400 error |

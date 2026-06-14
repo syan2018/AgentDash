@@ -3,12 +3,12 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository,
     LifecycleRunRepository, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
-    OrchestrationBindingRefs, RuntimeControlRefs, RuntimeDeliverySelectionPolicy, RuntimeNodeError,
-    RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
-    RuntimeSessionExecutionAnchorRepository, SubjectRef,
+    OrchestrationBindingRefs, RuntimeControlRefs, RuntimeDeliverySelectionPolicy,
+    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, SubjectRef,
 };
 
 use super::WorkflowApplicationError;
+use super::orchestration::{OrchestrationRuntimeEvent, apply_orchestration_event_to_run};
 
 #[derive(Debug, Clone)]
 pub struct CancelSubjectExecutionCommand {
@@ -223,23 +223,19 @@ impl<'a> SubjectExecutionControlService<'a> {
                     target.association.anchor_run_id
                 ))
             })?;
-        let Some(orchestration) = run
-            .orchestrations
-            .iter_mut()
-            .find(|item| item.orchestration_id == orchestration_id)
-        else {
-            return Ok(());
-        };
-        let changed = mark_runtime_node_cancelled(
-            &mut orchestration.node_tree,
-            node_path,
-            anchor.node_attempt.unwrap_or(1),
-            reason,
-        );
-        if changed {
-            orchestration.updated_at = chrono::Utc::now();
-            self.lifecycle_run_repo.update(&run).await?;
-        }
+        let (next_run, _) = apply_orchestration_event_to_run(
+            run,
+            orchestration_id,
+            OrchestrationRuntimeEvent::NodeCancelled {
+                node_path: node_path.to_string(),
+                attempt: anchor.node_attempt.unwrap_or(1),
+                reason,
+                timestamp: chrono::Utc::now(),
+            },
+        )
+        .map_err(|error| WorkflowApplicationError::Conflict(error.to_string()))?;
+        run = next_run;
+        self.lifecycle_run_repo.update(&run).await?;
         Ok(())
     }
 
@@ -296,40 +292,6 @@ fn runtime_refs_for_target(target: &SubjectExecutionCancelTarget) -> RuntimeCont
     )
 }
 
-fn mark_runtime_node_cancelled(
-    nodes: &mut [RuntimeNodeState],
-    node_path: &str,
-    attempt: u32,
-    reason: Option<String>,
-) -> bool {
-    for node in nodes {
-        if node.node_path == node_path && node.attempt == attempt {
-            if matches!(
-                node.status,
-                RuntimeNodeStatus::Completed
-                    | RuntimeNodeStatus::Failed
-                    | RuntimeNodeStatus::Cancelled
-                    | RuntimeNodeStatus::Skipped
-            ) {
-                return false;
-            }
-            node.status = RuntimeNodeStatus::Cancelled;
-            node.completed_at = Some(chrono::Utc::now());
-            node.error = Some(RuntimeNodeError {
-                code: "cancelled".to_string(),
-                message: reason.unwrap_or_else(|| "subject execution cancelled".to_string()),
-                retryable: false,
-                detail: None,
-            });
-            return true;
-        }
-        if mark_runtime_node_cancelled(&mut node.children, node_path, attempt, reason.clone()) {
-            return true;
-        }
-    }
-    false
-}
-
 fn select_subject_association(
     associations: &[LifecycleSubjectAssociation],
 ) -> Option<LifecycleSubjectAssociation> {
@@ -346,8 +308,9 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        LifecycleRun, OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef,
-        OrchestrationStatus, PlanNodeKind, RuntimeSessionExecutionAnchor,
+        LifecycleRun, LifecycleRunStatus, OrchestrationInstance, OrchestrationPlanSnapshot,
+        OrchestrationSourceRef, OrchestrationStatus, PlanNodeKind, RuntimeNodeState,
+        RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
     };
     use chrono::Utc;
 
@@ -782,11 +745,12 @@ mod tests {
             .await
             .expect("query run")
             .expect("run");
+        assert_eq!(persisted_run.status, LifecycleRunStatus::Cancelled);
         let node = &persisted_run.orchestrations[0].node_tree[0];
         assert_eq!(node.status, RuntimeNodeStatus::Cancelled);
         assert_eq!(
             node.error.as_ref().map(|error| error.code.as_str()),
-            Some("cancelled")
+            Some("runtime_node_cancelled")
         );
     }
 

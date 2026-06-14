@@ -1,4 +1,7 @@
-use agentdash_contracts::workflow::{AgentRunCommandPreconditionView, ConversationCommandKind};
+use agentdash_contracts::workflow::{
+    AgentConversationSnapshot, AgentRunCommandPreconditionView, ConversationCommandKind,
+    ConversationCommandView, ConversationModelConfigStatus, ConversationModelConfigView,
+};
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use serde_json::Value;
 use uuid::Uuid;
@@ -6,13 +9,12 @@ use uuid::Uuid;
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionExecutionState};
 use crate::workflow::{
-    WorkflowApplicationError, conversation_command_id_for, conversation_snapshot_id,
+    AgentConversationSnapshotInput, AgentConversationSnapshotResolver, WorkflowApplicationError,
+    conversation_command_id_for, conversation_execution_state_code,
 };
 
-use super::projection::AgentRunWorkspaceProjection;
 use super::projection::is_terminal_agent_status;
 use super::query::mailbox_message_visible;
-use super::types::AgentRunWorkspaceProjectionInput;
 
 pub struct AgentRunWorkspaceCommandPolicyService<'a> {
     repos: &'a RepositorySet,
@@ -47,20 +49,16 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             .resolve_current_frame_ref(context.run, context.agent)
             .await?;
         let terminal_agent = is_terminal_agent_status(&context.agent.status);
-        let projection =
-            AgentRunWorkspaceProjection::derive(AgentRunWorkspaceProjectionInput::new(
-                &execution_state,
-                &context.agent.status,
-                true,
-                frame_ref.is_some(),
-            ));
+        let policy_snapshot = self
+            .resolve_policy_snapshot(context, frame_ref, execution_state.clone(), terminal_agent)
+            .await?;
         let detail = || {
             serde_json::json!({
                 "run_id": context.run.id.to_string(),
                 "agent_id": context.agent.id.to_string(),
                 "runtime_session_id": context.runtime_session_id,
-                "state": projection.state_code.as_str(),
-                "active_turn_id": snapshot_active_turn_id(&execution_state),
+                "state": policy_snapshot.execution.status,
+                "active_turn_id": &policy_snapshot.execution.active_turn_id,
             })
         };
         let expected_kind = command.expected_kind();
@@ -68,110 +66,16 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             command.command_precondition(),
             expected_kind,
             context,
-            frame_ref,
-            &execution_state,
-            terminal_agent,
-            projection.state_code.as_str(),
+            &policy_snapshot,
         )?;
 
-        if terminal_agent
-            && !matches!(
-                &command,
-                AgentRunWorkspaceCommandPrecondition::Cancel { .. }
-                    | AgentRunWorkspaceCommandPrecondition::DeleteMailboxMessage { .. }
-            )
-        {
-            return Err(conflict(
-                "当前 AgentRun 已结束，不能执行该命令。",
-                "command_unavailable",
-                None,
-                detail(),
-            ));
-        }
-
         match command {
-            AgentRunWorkspaceCommandPrecondition::DeleteMailboxMessage { .. } => Ok(()),
-            AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage { .. } => {
-                match &execution_state {
-                    SessionExecutionState::Running { turn_id: Some(_) } => {}
-                    SessionExecutionState::Running { turn_id: None } => {
-                        return Err(conflict(
-                            "当前 AgentRun 正在启动中，等待 active turn 建立后才能投递 mailbox 消息。",
-                            "starting_claimed",
-                            None,
-                            detail(),
-                        ));
-                    }
-                    _ => {
-                        return Err(conflict(
-                            "当前 AgentRun 不在可投递 mailbox 消息的运行状态。",
-                            "command_unavailable",
-                            None,
-                            detail(),
-                        ));
-                    }
-                }
-                if !self
-                    .session_control
-                    .supports_session_steering(context.runtime_session_id)
-                    .await
-                {
-                    return Err(conflict(
-                        "当前执行器不支持对该 AgentRun 投递 mailbox steer。",
-                        "connector_steer_unsupported",
-                        None,
-                        detail(),
-                    ));
-                }
-                Ok(())
+            AgentRunWorkspaceCommandPrecondition::DeleteMailboxMessage { .. }
+            | AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage { .. }
+            | AgentRunWorkspaceCommandPrecondition::ResumeMailbox { .. }
+            | AgentRunWorkspaceCommandPrecondition::Cancel { .. } => {
+                ensure_snapshot_command_enabled(&policy_snapshot, expected_kind, detail)
             }
-            AgentRunWorkspaceCommandPrecondition::ResumeMailbox { .. } => {
-                let messages = self
-                    .repos
-                    .agent_run_mailbox_repo
-                    .list_messages(context.run.id, context.agent.id)
-                    .await
-                    .map_err(WorkflowApplicationError::from)?;
-                let visible_message_count = messages
-                    .iter()
-                    .filter(|message| mailbox_message_visible(message))
-                    .count();
-                let mailbox_state = self
-                    .repos
-                    .agent_run_mailbox_repo
-                    .get_state(context.run.id, context.agent.id)
-                    .await
-                    .map_err(WorkflowApplicationError::from)?;
-                if mailbox_state.as_ref().is_some_and(|state| state.paused)
-                    && visible_message_count > 0
-                {
-                    Ok(())
-                } else {
-                    Err(conflict(
-                        "当前没有需要用户恢复的 mailbox。",
-                        "command_unavailable",
-                        None,
-                        serde_json::json!({
-                            "run_id": context.run.id.to_string(),
-                            "agent_id": context.agent.id.to_string(),
-                            "runtime_session_id": context.runtime_session_id,
-                            "state": projection.state_code.as_str(),
-                            "visible_message_count": visible_message_count,
-                            "paused": mailbox_state.as_ref().is_some_and(|state| state.paused),
-                        }),
-                    ))
-                }
-            }
-            AgentRunWorkspaceCommandPrecondition::Cancel { .. } => match &execution_state {
-                SessionExecutionState::Running { .. }
-                | SessionExecutionState::Cancelling { .. } => Ok(()),
-                _ => Err(conflict(
-                    "当前 AgentRun 没有正在执行的 turn。",
-                    "command_unavailable",
-                    None,
-                    detail(),
-                )),
-            },
         }
     }
 
@@ -186,13 +90,6 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             .await
             .map_err(WorkflowApplicationError::from)?;
         if is_terminal_agent_status(&context.agent.status) {
-            let projection =
-                AgentRunWorkspaceProjection::derive(AgentRunWorkspaceProjectionInput::new(
-                    &execution_state,
-                    &context.agent.status,
-                    true,
-                    true,
-                ));
             return Err(conflict(
                 "当前 AgentRun 已结束，不能继续发送消息。",
                 "command_unavailable",
@@ -201,11 +98,65 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
                     "run_id": context.run.id.to_string(),
                     "agent_id": context.agent.id.to_string(),
                     "runtime_session_id": context.runtime_session_id,
-                    "state": projection.state_code.as_str(),
+                    "state": conversation_execution_state_code(&execution_state),
                 }),
             ));
         }
         ensure_composer_command_precondition_matches_agent_run(command, context, &execution_state)
+    }
+
+    async fn resolve_policy_snapshot(
+        &self,
+        context: AgentRunWorkspaceCommandPolicyContext<'_>,
+        frame_ref: Option<(Uuid, i32)>,
+        execution_state: SessionExecutionState,
+        terminal_agent: bool,
+    ) -> Result<AgentConversationSnapshot, AgentRunWorkspaceCommandPolicyError> {
+        let supports_steering = match &execution_state {
+            SessionExecutionState::Running { turn_id: Some(_) } => {
+                self.session_control
+                    .supports_session_steering(context.runtime_session_id)
+                    .await
+            }
+            _ => false,
+        };
+        let messages = self
+            .repos
+            .agent_run_mailbox_repo
+            .list_messages(context.run.id, context.agent.id)
+            .await
+            .map_err(WorkflowApplicationError::from)?;
+        let mailbox_visible_message_count = messages
+            .iter()
+            .filter(|message| mailbox_message_visible(message))
+            .count();
+        let mailbox_state = self
+            .repos
+            .agent_run_mailbox_repo
+            .get_state(context.run.id, context.agent.id)
+            .await
+            .map_err(WorkflowApplicationError::from)?;
+        let mailbox_paused = mailbox_state.as_ref().is_some_and(|state| state.paused)
+            && mailbox_visible_message_count > 0;
+
+        Ok(AgentConversationSnapshotResolver::resolve(
+            AgentConversationSnapshotInput {
+                project_id: context.run.project_id,
+                run_id: context.run.id,
+                agent_id: context.agent.id,
+                frame_ref,
+                delivery_runtime_session_id: Some(context.runtime_session_id.to_string()),
+                subject_associations: Vec::new(),
+                execution_state,
+                terminal_agent,
+                supports_steering,
+                mailbox_paused,
+                mailbox_visible_message_count,
+                resource_surface: None,
+                resource_diagnostics: Vec::new(),
+                model_config: resolved_model_config(),
+            },
+        ))
     }
 
     async fn resolve_current_frame_ref(
@@ -318,33 +269,31 @@ fn ensure_command_submission_matches_snapshot(
     command: &AgentRunCommandPreconditionView,
     expected_kind: ConversationCommandKind,
     context: AgentRunWorkspaceCommandPolicyContext<'_>,
-    frame_ref: Option<(Uuid, i32)>,
-    execution_state: &SessionExecutionState,
-    terminal_agent: bool,
-    state_code: &str,
+    snapshot: &AgentConversationSnapshot,
 ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
-    let current_active_turn_id = snapshot_active_turn_id(execution_state);
-    let current_frame_id = frame_ref.map(|(frame_id, _)| frame_id.to_string());
-    let current_snapshot_id = conversation_snapshot_id(
-        context.run.id,
-        context.agent.id,
-        frame_ref,
-        Some(context.runtime_session_id),
-        execution_state,
-        terminal_agent,
-    );
+    let current_active_turn_id = snapshot.execution.active_turn_id.clone();
+    let current_frame_id = snapshot
+        .lifecycle_context
+        .frame_ref
+        .as_ref()
+        .map(|frame| frame.frame_id.clone());
+    let current_runtime_session_id = snapshot
+        .lifecycle_context
+        .delivery_runtime_ref
+        .as_ref()
+        .map(|runtime| runtime.runtime_session_id.as_str());
     let stale_detail = |reason: &str| {
         serde_json::json!({
             "reason": reason,
             "run_id": context.run.id.to_string(),
             "agent_id": context.agent.id.to_string(),
             "runtime_session_id": context.runtime_session_id,
-            "state": state_code,
+            "state": snapshot.execution.status,
             "expected_command_kind": expected_kind,
             "submitted_command_kind": command.command_kind,
             "expected_command_id": conversation_command_id_for(expected_kind),
             "submitted_command_id": command.command_id,
-            "expected_snapshot_id": current_snapshot_id,
+            "expected_snapshot_id": snapshot.snapshot_id,
             "submitted_snapshot_id": command.stale_guard.snapshot_id,
             "expected_frame_id": current_frame_id,
             "submitted_frame_id": command.stale_guard.frame_id,
@@ -356,15 +305,15 @@ fn ensure_command_submission_matches_snapshot(
 
     if command.command_kind != expected_kind {
         return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
+            &snapshot_execution_state(snapshot),
+            is_terminal_snapshot(snapshot),
             stale_detail("command_kind_mismatch"),
         ));
     }
     if command.command_id != conversation_command_id_for(expected_kind) {
         return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
+            &snapshot_execution_state(snapshot),
+            is_terminal_snapshot(snapshot),
             stale_detail("command_id_mismatch"),
         ));
     }
@@ -372,36 +321,36 @@ fn ensure_command_submission_matches_snapshot(
         || command.stale_guard.agent_id != context.agent.id.to_string()
     {
         return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
+            &snapshot_execution_state(snapshot),
+            is_terminal_snapshot(snapshot),
             stale_detail("agent_run_identity_mismatch"),
         ));
     }
-    if command.stale_guard.runtime_session_id.as_deref() != Some(context.runtime_session_id) {
+    if command.stale_guard.runtime_session_id.as_deref() != current_runtime_session_id {
         return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
+            &snapshot_execution_state(snapshot),
+            is_terminal_snapshot(snapshot),
             stale_detail("runtime_session_mismatch"),
         ));
     }
     if command.stale_guard.frame_id != current_frame_id {
         return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
+            &snapshot_execution_state(snapshot),
+            is_terminal_snapshot(snapshot),
             stale_detail("frame_mismatch"),
         ));
     }
     if command.stale_guard.active_turn_id != current_active_turn_id {
         return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
+            &snapshot_execution_state(snapshot),
+            is_terminal_snapshot(snapshot),
             stale_detail("active_turn_mismatch"),
         ));
     }
-    if command.stale_guard.snapshot_id != current_snapshot_id {
+    if command.stale_guard.snapshot_id != snapshot.snapshot_id {
         return Err(stale_command_conflict(
-            execution_state,
-            terminal_agent,
+            &snapshot_execution_state(snapshot),
+            is_terminal_snapshot(snapshot),
             stale_detail("snapshot_id_mismatch"),
         ));
     }
@@ -414,19 +363,13 @@ fn ensure_composer_command_precondition_matches_agent_run(
     context: AgentRunWorkspaceCommandPolicyContext<'_>,
     execution_state: &SessionExecutionState,
 ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
-    let state_code = AgentRunWorkspaceProjection::derive(AgentRunWorkspaceProjectionInput::new(
-        execution_state,
-        &context.agent.status,
-        true,
-        true,
-    ))
-    .state_code;
+    let state_code = conversation_execution_state_code(execution_state);
     let detail = || {
         serde_json::json!({
             "run_id": context.run.id.to_string(),
             "agent_id": context.agent.id.to_string(),
             "runtime_session_id": context.runtime_session_id,
-            "state": state_code.as_str(),
+            "state": state_code,
             "submitted_command_kind": command.command_kind,
             "submitted_command_id": command.command_id,
             "submitted_guard": &command.stale_guard,
@@ -444,7 +387,7 @@ fn ensure_composer_command_precondition_matches_agent_run(
                 "run_id": context.run.id.to_string(),
                 "agent_id": context.agent.id.to_string(),
                 "runtime_session_id": context.runtime_session_id,
-                "state": state_code.as_str(),
+                "state": state_code,
                 "submitted_run_id": &command.stale_guard.run_id,
                 "submitted_agent_id": &command.stale_guard.agent_id,
                 "snapshot_refresh_required": true,
@@ -502,14 +445,83 @@ fn conflict(
     })
 }
 
-fn snapshot_active_turn_id(execution_state: &SessionExecutionState) -> Option<String> {
-    match execution_state {
-        SessionExecutionState::Running { turn_id }
-        | SessionExecutionState::Cancelling { turn_id }
-        | SessionExecutionState::Interrupted { turn_id, .. } => turn_id.clone(),
-        SessionExecutionState::Completed { turn_id }
-        | SessionExecutionState::Failed { turn_id, .. } => Some(turn_id.clone()),
-        SessionExecutionState::Idle => None,
+fn resolved_model_config() -> ConversationModelConfigView {
+    ConversationModelConfigView {
+        status: ConversationModelConfigStatus::Resolved,
+        effective_executor_config: None,
+        missing_fields: Vec::new(),
+        message: None,
+    }
+}
+
+fn ensure_snapshot_command_enabled(
+    snapshot: &AgentConversationSnapshot,
+    kind: ConversationCommandKind,
+    detail: impl Fn() -> Value,
+) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
+    let Some(command) = snapshot_command(snapshot, kind) else {
+        return Err(conflict(
+            "当前 AgentRun command snapshot 缺少该命令。",
+            "command_unavailable",
+            None,
+            detail(),
+        ));
+    };
+    if command.enabled {
+        return Ok(());
+    }
+    Err(conflict(
+        command
+            .unavailable_reason
+            .clone()
+            .unwrap_or_else(|| "当前 AgentRun 不可执行该命令。".to_string()),
+        command
+            .disabled_code
+            .clone()
+            .unwrap_or_else(|| "command_unavailable".to_string()),
+        replacement_command_for_snapshot(snapshot),
+        detail(),
+    ))
+}
+
+fn snapshot_command(
+    snapshot: &AgentConversationSnapshot,
+    kind: ConversationCommandKind,
+) -> Option<&ConversationCommandView> {
+    snapshot
+        .commands
+        .commands
+        .iter()
+        .find(|command| command.kind == kind)
+}
+
+fn replacement_command_for_snapshot(snapshot: &AgentConversationSnapshot) -> Option<&'static str> {
+    if is_terminal_snapshot(snapshot) {
+        None
+    } else {
+        Some("submit_message")
+    }
+}
+
+fn is_terminal_snapshot(snapshot: &AgentConversationSnapshot) -> bool {
+    snapshot.execution.status
+        == agentdash_contracts::workflow::ConversationExecutionStatus::Terminal
+}
+
+fn snapshot_execution_state(snapshot: &AgentConversationSnapshot) -> SessionExecutionState {
+    use agentdash_contracts::workflow::ConversationExecutionStatus;
+
+    match snapshot.execution.status {
+        ConversationExecutionStatus::StartingClaimed => {
+            SessionExecutionState::Running { turn_id: None }
+        }
+        ConversationExecutionStatus::RunningActive => SessionExecutionState::Running {
+            turn_id: snapshot.execution.active_turn_id.clone(),
+        },
+        ConversationExecutionStatus::Cancelling => SessionExecutionState::Cancelling {
+            turn_id: snapshot.execution.active_turn_id.clone(),
+        },
+        _ => SessionExecutionState::Idle,
     }
 }
 

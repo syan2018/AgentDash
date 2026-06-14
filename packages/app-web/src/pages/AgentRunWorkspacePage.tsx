@@ -678,9 +678,7 @@ export function AgentRunWorkspacePage({
               onCommand={handleAgentRunCommand}
               onCancelAction={handleCancelAgentRun}
               onExecutorConfigOverrideChange={setExplicitExecutorConfigOverride}
-              mailboxMessages={runtimeControl?.mailbox_messages}
               mailboxSnapshot={conversationMailbox}
-              mailboxState={runtimeControl?.mailbox}
               onPromoteMailboxMessage={(id) => { void handlePromoteMailboxMessage(id); }}
               onDeleteMailboxMessage={(id) => { void handleDeleteMailboxMessage(id); }}
               onResumeMailbox={() => { void handleResumeMailbox(); }}

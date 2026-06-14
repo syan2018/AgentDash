@@ -2,10 +2,10 @@ use std::collections::BTreeSet;
 
 use agentdash_domain::workflow::{
     ActivationRule, ActivityCompletionPolicy, ActivityJoinPolicy, DispatchState, ExecutorRunRef,
-    LifecycleRun, LifecycleRunStatus, NodePortValue, OrchestrationInstance,
-    OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus, PlanNode, PlanNodeKind,
-    RuntimeNodeError, RuntimeNodeState, RuntimeNodeStatus, RuntimeTraceRef, StateExchangeRule,
-    StateExchangeSnapshot, TransitionCondition,
+    LifecycleRun, NodePortValue, OrchestrationInstance, OrchestrationPlanSnapshot,
+    OrchestrationSourceRef, OrchestrationStatus, PlanNode, PlanNodeKind, RuntimeNodeError,
+    RuntimeNodeState, RuntimeNodeStatus, RuntimeTraceRef, StateExchangeRule, StateExchangeSnapshot,
+    TransitionCondition,
 };
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
@@ -276,7 +276,7 @@ pub fn apply_orchestration_event_to_run(
             .ok_or(OrchestrationRuntimeError::OrchestrationNotFound { orchestration_id })?;
         apply_orchestration_event(orchestration, event)?
     };
-    sync_lifecycle_run_status_from_orchestrations(&mut run);
+    run.refresh_status_from_orchestrations();
     let now = Utc::now();
     run.updated_at = now;
     run.last_activity_at = now;
@@ -990,38 +990,6 @@ fn collect_node_statuses(nodes: &[RuntimeNodeState]) -> Vec<RuntimeNodeStatus> {
         statuses.extend(collect_node_statuses(&node.children));
     }
     statuses
-}
-
-fn sync_lifecycle_run_status_from_orchestrations(run: &mut LifecycleRun) {
-    if run.orchestrations.is_empty() {
-        return;
-    }
-    let statuses = run
-        .orchestrations
-        .iter()
-        .map(|orchestration| orchestration.status)
-        .collect::<Vec<_>>();
-    run.status = if statuses.contains(&OrchestrationStatus::Failed) {
-        LifecycleRunStatus::Failed
-    } else if statuses.contains(&OrchestrationStatus::Paused) {
-        LifecycleRunStatus::Blocked
-    } else if statuses.contains(&OrchestrationStatus::Running) {
-        LifecycleRunStatus::Running
-    } else if statuses.contains(&OrchestrationStatus::Pending) {
-        LifecycleRunStatus::Ready
-    } else if statuses
-        .iter()
-        .all(|status| *status == OrchestrationStatus::Completed)
-    {
-        LifecycleRunStatus::Completed
-    } else if statuses
-        .iter()
-        .all(|status| *status == OrchestrationStatus::Cancelled)
-    {
-        LifecycleRunStatus::Cancelled
-    } else {
-        LifecycleRunStatus::Running
-    };
 }
 
 #[cfg(test)]

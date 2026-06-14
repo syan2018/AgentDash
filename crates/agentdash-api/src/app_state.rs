@@ -261,6 +261,8 @@ impl AppState {
                     .lifecycle_subject_association_repo
                     .clone(),
                 lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
+                lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
+                execution_anchor_repo: repos.execution_anchor_repo.clone(),
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;
             if report.has_errors() {

@@ -1,26 +1,33 @@
 import { describe, expect, it } from "vitest";
+import type { CapabilityCatalogEntryDto } from "../../../../types";
 
 import {
-  AUTO_GRANTED_BASELINE,
-  CAP_EDITOR_WELL_KNOWN_KEYS,
-  isWellKnownCapability,
+  capabilityAutoGrantedForTargetKind,
+  capabilityKnownInCatalog,
+  capabilityVisibleForTargetKind,
 } from "./shared";
 
-describe("workflow capability editor shared constants", () => {
-  it("uses workspace_module as the well-known Canvas-capable entry", () => {
-    expect(CAP_EDITOR_WELL_KNOWN_KEYS).toContain("workspace_module");
-    expect(CAP_EDITOR_WELL_KNOWN_KEYS).not.toContain("canvas");
-    expect(isWellKnownCapability("workspace_module")).toBe(true);
-    expect(isWellKnownCapability("canvas")).toBe(false);
+const workspaceModuleEntry: CapabilityCatalogEntryDto = {
+  key: "workspace_module",
+  label: "Workspace Module",
+  description: "模块创建、调用与展示，包含 Canvas",
+  allowed_scopes: ["project", "story", "task"],
+  auto_granted: true,
+  agent_can_grant: false,
+  workflow_can_grant: false,
+  tools: [],
+};
+
+describe("workflow capability editor catalog helpers", () => {
+  it("detects catalog entries by key", () => {
+    expect(capabilityKnownInCatalog([workspaceModuleEntry], "workspace_module")).toBe(true);
+    expect(capabilityKnownInCatalog([workspaceModuleEntry], "canvas")).toBe(false);
   });
 
-  it("auto-grants workspace_module for project workflows", () => {
-    expect(AUTO_GRANTED_BASELINE.project).toContain("workspace_module");
-    expect(AUTO_GRANTED_BASELINE.project).not.toContain("canvas");
-  });
-
-  it("auto-grants workspace_module for story workflows", () => {
-    expect(AUTO_GRANTED_BASELINE.story).toContain("workspace_module");
-    expect(AUTO_GRANTED_BASELINE.story).not.toContain("canvas");
+  it("uses catalog visibility and auto-grant metadata for target kinds", () => {
+    expect(capabilityVisibleForTargetKind(workspaceModuleEntry, "project")).toBe(true);
+    expect(capabilityVisibleForTargetKind(workspaceModuleEntry, "story")).toBe(true);
+    expect(capabilityAutoGrantedForTargetKind(workspaceModuleEntry, "project")).toBe(true);
+    expect(capabilityAutoGrantedForTargetKind(workspaceModuleEntry, "story")).toBe(true);
   });
 });

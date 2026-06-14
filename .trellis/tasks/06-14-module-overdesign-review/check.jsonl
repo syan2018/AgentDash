@@ -1,1 +1,12 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/tasks/06-14-module-overdesign-review/overdesign-review.md","reason":"检查实现是否对应父级 review 排序和第一轮边界"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/research/01-lifecycle-workflow-task.md","reason":"检查 Lifecycle P0/P1 是否按证据收束"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/research/02-agentrun-session-runtime.md","reason":"检查 AgentRun control surface 是否单源化"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/research/04-frontend-contracts-permission.md","reason":"检查 Permission / Contracts / Frontend capability 是否统一事实源"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"检查 Lifecycle start / orchestration runtime 语义"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"检查 reducer ownership"}
+{"file":".trellis/spec/backend/story-task-runtime.md","reason":"检查 Task projection fact chain"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"检查 AgentRun / RuntimeSession boundary"}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"检查 mailbox / command receipt boundary"}
+{"file":".trellis/spec/backend/permission/architecture.md","reason":"检查 permission grant authority"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查 generated contract 单源"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"检查前端 DTO 类型安全"}

@@ -1,8 +1,6 @@
 use crate::session::SessionExecutionState;
 
 use super::types::{
-    AgentRunWorkspaceActionAvailabilityModel, AgentRunWorkspaceActionSetModel,
-    AgentRunWorkspaceControlPlaneModel, AgentRunWorkspaceControlPlaneStatus,
     AgentRunWorkspaceProjectionInput, AgentRunWorkspaceProjectionModel,
     AgentRunWorkspaceRuntimeCommandStateModel, AgentRunWorkspaceRuntimeCommandStatus,
     AgentRunWorkspaceStateCode,
@@ -12,25 +10,16 @@ pub struct AgentRunWorkspaceProjection;
 
 impl AgentRunWorkspaceProjection {
     pub fn derive(input: AgentRunWorkspaceProjectionInput<'_>) -> AgentRunWorkspaceProjectionModel {
-        let terminal_agent = is_terminal_agent_status(input.agent_status);
         let state_code = state_code(input.execution_state);
         let active_turn_id = active_turn_id(input.execution_state);
         let last_turn_id = last_turn_id(input.execution_state);
         let delivery_status = delivery_status(input.execution_state, input.agent_status);
-        let control_plane = control_plane(input, terminal_agent);
-        let actions = actions(input, terminal_agent);
-        let runtime_command_state = runtime_command_state(input.execution_state);
-        let replacement_command = replacement_command(terminal_agent);
 
         AgentRunWorkspaceProjectionModel {
             state_code,
             active_turn_id,
             last_turn_id,
             delivery_status,
-            control_plane,
-            actions,
-            runtime_command_state,
-            replacement_command,
         }
     }
 
@@ -98,83 +87,6 @@ fn delivery_status(execution_state: &SessionExecutionState, agent_status: &str) 
     }
 }
 
-fn control_plane(
-    input: AgentRunWorkspaceProjectionInput<'_>,
-    terminal_agent: bool,
-) -> AgentRunWorkspaceControlPlaneModel {
-    if terminal_agent {
-        return AgentRunWorkspaceControlPlaneModel {
-            status: AgentRunWorkspaceControlPlaneStatus::Terminal,
-            reason: Some("当前 AgentRun 已结束。".to_string()),
-        };
-    }
-    if !input.has_delivery_runtime {
-        return AgentRunWorkspaceControlPlaneModel {
-            status: AgentRunWorkspaceControlPlaneStatus::DeliveryMissing,
-            reason: Some("当前 AgentRun 缺少可投递的 runtime 通道。".to_string()),
-        };
-    }
-    if !input.has_frame {
-        return AgentRunWorkspaceControlPlaneModel {
-            status: AgentRunWorkspaceControlPlaneStatus::FrameMissing,
-            reason: Some("当前 AgentRun 没有可投递的 runtime frame。".to_string()),
-        };
-    }
-    match input.execution_state {
-        SessionExecutionState::Cancelling { .. } => AgentRunWorkspaceControlPlaneModel {
-            status: AgentRunWorkspaceControlPlaneStatus::Cancelling,
-            reason: Some("当前 AgentRun 正在取消中，等待执行器收口。".to_string()),
-        },
-        SessionExecutionState::Running { turn_id } => AgentRunWorkspaceControlPlaneModel {
-            status: AgentRunWorkspaceControlPlaneStatus::Running,
-            reason: Some(if turn_id.is_none() {
-                "当前 AgentRun 正在启动中，等待 active turn 建立。".to_string()
-            } else {
-                "当前 AgentRun 正在执行中。".to_string()
-            }),
-        },
-        _ => AgentRunWorkspaceControlPlaneModel {
-            status: AgentRunWorkspaceControlPlaneStatus::Ready,
-            reason: None,
-        },
-    }
-}
-
-fn actions(
-    input: AgentRunWorkspaceProjectionInput<'_>,
-    terminal_agent: bool,
-) -> AgentRunWorkspaceActionSetModel {
-    let submit_message = if input.has_delivery_runtime && input.has_frame && !terminal_agent {
-        AgentRunWorkspaceActionAvailabilityModel::enabled()
-    } else if !input.has_delivery_runtime {
-        AgentRunWorkspaceActionAvailabilityModel::disabled(
-            "当前 AgentRun 缺少可投递的 runtime 通道。",
-        )
-    } else if terminal_agent {
-        AgentRunWorkspaceActionAvailabilityModel::disabled(
-            "当前 AgentRun 已结束，不能继续发送消息。",
-        )
-    } else {
-        AgentRunWorkspaceActionAvailabilityModel::disabled(
-            "当前 AgentRun 没有可投递的 runtime frame。",
-        )
-    };
-
-    let cancel = match input.execution_state {
-        SessionExecutionState::Running { .. } | SessionExecutionState::Cancelling { .. } => {
-            AgentRunWorkspaceActionAvailabilityModel::enabled()
-        }
-        _ => AgentRunWorkspaceActionAvailabilityModel::disabled(
-            "当前 AgentRun 没有正在执行的 turn。",
-        ),
-    };
-
-    AgentRunWorkspaceActionSetModel {
-        submit_message,
-        cancel,
-    }
-}
-
 fn runtime_command_state(
     execution_state: &SessionExecutionState,
 ) -> AgentRunWorkspaceRuntimeCommandStateModel {
@@ -218,33 +130,21 @@ fn runtime_command_state(
     }
 }
 
-fn replacement_command(terminal_agent: bool) -> Option<String> {
-    if terminal_agent {
-        None
-    } else {
-        Some("submit_message".to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn project(execution_state: &SessionExecutionState) -> AgentRunWorkspaceProjectionModel {
-        project_with(execution_state, "active", true, true)
+        project_with(execution_state, "active")
     }
 
     fn project_with(
         execution_state: &SessionExecutionState,
         agent_status: &str,
-        has_delivery_runtime: bool,
-        has_frame: bool,
     ) -> AgentRunWorkspaceProjectionModel {
         AgentRunWorkspaceProjection::derive(AgentRunWorkspaceProjectionInput::new(
             execution_state,
             agent_status,
-            has_delivery_runtime,
-            has_frame,
         ))
     }
 
@@ -258,17 +158,9 @@ mod tests {
         assert_eq!(model.last_turn_id, None);
         assert_eq!(model.delivery_status, "idle");
         assert_eq!(
-            model.control_plane.status,
-            AgentRunWorkspaceControlPlaneStatus::Ready
-        );
-        assert_eq!(model.control_plane.reason, None);
-        assert!(model.actions.submit_message.enabled);
-        assert!(!model.actions.cancel.enabled);
-        assert_eq!(
-            model.runtime_command_state.status,
+            AgentRunWorkspaceProjection::runtime_command_state(&SessionExecutionState::Idle).status,
             AgentRunWorkspaceRuntimeCommandStatus::Idle
         );
-        assert_eq!(model.replacement_command.as_deref(), Some("submit_message"));
     }
 
     #[test]
@@ -282,21 +174,6 @@ mod tests {
         assert_eq!(model.active_turn_id, None);
         assert_eq!(model.last_turn_id, None);
         assert_eq!(model.delivery_status, "running");
-        assert_eq!(
-            model.control_plane.status,
-            AgentRunWorkspaceControlPlaneStatus::Running
-        );
-        assert_eq!(
-            model.control_plane.reason.as_deref(),
-            Some("当前 AgentRun 正在启动中，等待 active turn 建立。")
-        );
-        assert!(model.actions.submit_message.enabled);
-        assert!(model.actions.cancel.enabled);
-        assert_eq!(
-            model.runtime_command_state.status,
-            AgentRunWorkspaceRuntimeCommandStatus::Running
-        );
-        assert_eq!(model.runtime_command_state.turn_id, None);
     }
 
     #[test]
@@ -310,27 +187,24 @@ mod tests {
         assert_eq!(model.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.delivery_status, "running");
         assert_eq!(
-            model.control_plane.status,
-            AgentRunWorkspaceControlPlaneStatus::Running
-        );
-        assert_eq!(
-            model.control_plane.reason.as_deref(),
-            Some("当前 AgentRun 正在执行中。")
-        );
-        assert!(model.actions.submit_message.enabled);
-        assert!(model.actions.cancel.enabled);
-        assert_eq!(
-            model.runtime_command_state.status,
+            AgentRunWorkspaceProjection::runtime_command_state(&SessionExecutionState::Running {
+                turn_id: Some("turn-1".to_string()),
+            })
+            .status,
             AgentRunWorkspaceRuntimeCommandStatus::Running
         );
         assert_eq!(
-            model.runtime_command_state.turn_id.as_deref(),
+            AgentRunWorkspaceProjection::runtime_command_state(&SessionExecutionState::Running {
+                turn_id: Some("turn-1".to_string()),
+            })
+            .turn_id
+            .as_deref(),
             Some("turn-1")
         );
     }
 
     #[test]
-    fn cancelling_keeps_active_turn_and_cancel_available() {
+    fn cancelling_keeps_active_turn() {
         let model = project(&SessionExecutionState::Cancelling {
             turn_id: Some("turn-1".to_string()),
         });
@@ -339,18 +213,17 @@ mod tests {
         assert_eq!(model.active_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.delivery_status, "cancelling");
-        assert_eq!(
-            model.control_plane.status,
-            AgentRunWorkspaceControlPlaneStatus::Cancelling
+        let command_state = AgentRunWorkspaceProjection::runtime_command_state(
+            &SessionExecutionState::Cancelling {
+                turn_id: Some("turn-1".to_string()),
+            },
         );
-        assert!(model.actions.submit_message.enabled);
-        assert!(model.actions.cancel.enabled);
         assert_eq!(
-            model.runtime_command_state.status,
+            command_state.status,
             AgentRunWorkspaceRuntimeCommandStatus::Cancelling
         );
         assert_eq!(
-            model.runtime_command_state.message.as_deref(),
+            command_state.message.as_deref(),
             Some("当前执行正在取消中。")
         );
     }
@@ -366,13 +239,10 @@ mod tests {
         assert_eq!(model.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.delivery_status, "completed");
         assert_eq!(
-            model.control_plane.status,
-            AgentRunWorkspaceControlPlaneStatus::Ready
-        );
-        assert!(model.actions.submit_message.enabled);
-        assert!(!model.actions.cancel.enabled);
-        assert_eq!(
-            model.runtime_command_state.status,
+            AgentRunWorkspaceProjection::runtime_command_state(&SessionExecutionState::Completed {
+                turn_id: "turn-1".to_string(),
+            })
+            .status,
             AgentRunWorkspaceRuntimeCommandStatus::Completed
         );
     }
@@ -388,18 +258,16 @@ mod tests {
         assert_eq!(model.active_turn_id, None);
         assert_eq!(model.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.delivery_status, "failed");
+        let command_state =
+            AgentRunWorkspaceProjection::runtime_command_state(&SessionExecutionState::Failed {
+                turn_id: "turn-1".to_string(),
+                message: Some("provider failed".to_string()),
+            });
         assert_eq!(
-            model.control_plane.status,
-            AgentRunWorkspaceControlPlaneStatus::Ready
-        );
-        assert_eq!(
-            model.runtime_command_state.status,
+            command_state.status,
             AgentRunWorkspaceRuntimeCommandStatus::Failed
         );
-        assert_eq!(
-            model.runtime_command_state.message.as_deref(),
-            Some("provider failed")
-        );
+        assert_eq!(command_state.message.as_deref(), Some("provider failed"));
     }
 
     #[test]
@@ -413,82 +281,31 @@ mod tests {
         assert_eq!(model.active_turn_id, None);
         assert_eq!(model.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.delivery_status, "interrupted");
-        assert_eq!(
-            model.control_plane.status,
-            AgentRunWorkspaceControlPlaneStatus::Ready
+        let command_state = AgentRunWorkspaceProjection::runtime_command_state(
+            &SessionExecutionState::Interrupted {
+                turn_id: Some("turn-1".to_string()),
+                message: Some("user interrupted".to_string()),
+            },
         );
         assert_eq!(
-            model.runtime_command_state.status,
+            command_state.status,
             AgentRunWorkspaceRuntimeCommandStatus::Interrupted
         );
-        assert_eq!(
-            model.runtime_command_state.message.as_deref(),
-            Some("user interrupted")
-        );
+        assert_eq!(command_state.message.as_deref(), Some("user interrupted"));
     }
 
     #[test]
-    fn terminal_agent_disables_submit_and_replacement() {
-        let model = project_with(&SessionExecutionState::Idle, "completed", true, true);
+    fn terminal_agent_status_sets_delivery_status() {
+        let model = project_with(&SessionExecutionState::Idle, "completed");
 
         assert_eq!(model.state_code, AgentRunWorkspaceStateCode::Ready);
         assert_eq!(model.delivery_status, "completed");
-        assert_eq!(
-            model.control_plane.status,
-            AgentRunWorkspaceControlPlaneStatus::Terminal
-        );
-        assert_eq!(
-            model.control_plane.reason.as_deref(),
-            Some("当前 AgentRun 已结束。")
-        );
-        assert!(!model.actions.submit_message.enabled);
-        assert_eq!(
-            model.actions.submit_message.unavailable_reason.as_deref(),
-            Some("当前 AgentRun 已结束，不能继续发送消息。")
-        );
-        assert!(!model.actions.cancel.enabled);
-        assert_eq!(model.replacement_command, None);
     }
 
     #[test]
-    fn missing_delivery_runtime_blocks_control_and_submit() {
-        let model = project_with(&SessionExecutionState::Idle, "active", false, true);
+    fn active_agent_idle_state_reports_idle_delivery() {
+        let model = project_with(&SessionExecutionState::Idle, "active");
 
-        assert_eq!(
-            model.control_plane.status,
-            AgentRunWorkspaceControlPlaneStatus::DeliveryMissing
-        );
-        assert_eq!(
-            model.control_plane.reason.as_deref(),
-            Some("当前 AgentRun 缺少可投递的 runtime 通道。")
-        );
         assert_eq!(model.delivery_status, "idle");
-        assert!(!model.actions.submit_message.enabled);
-        assert_eq!(
-            model.actions.submit_message.unavailable_reason.as_deref(),
-            Some("当前 AgentRun 缺少可投递的 runtime 通道。")
-        );
-        assert_eq!(model.replacement_command.as_deref(), Some("submit_message"));
-    }
-
-    #[test]
-    fn missing_frame_blocks_control_and_submit() {
-        let model = project_with(&SessionExecutionState::Idle, "active", true, false);
-
-        assert_eq!(
-            model.control_plane.status,
-            AgentRunWorkspaceControlPlaneStatus::FrameMissing
-        );
-        assert_eq!(
-            model.control_plane.reason.as_deref(),
-            Some("当前 AgentRun 没有可投递的 runtime frame。")
-        );
-        assert_eq!(model.delivery_status, "idle");
-        assert!(!model.actions.submit_message.enabled);
-        assert_eq!(
-            model.actions.submit_message.unavailable_reason.as_deref(),
-            Some("当前 AgentRun 没有可投递的 runtime frame。")
-        );
-        assert_eq!(model.replacement_command.as_deref(), Some("submit_message"));
     }
 }

@@ -440,7 +440,8 @@ fn map_grant_transition_error(error: DomainError) -> ApplicationError {
 mod tests {
     use super::*;
     use agentdash_domain::permission::{
-        GrantStatus, PermissionGrantRepository, PolicyDecision, PolicyOutcome,
+        GrantStatus, PermissionGrantRepository, PermissionGrantStatusFilter, PolicyDecision,
+        PolicyOutcome,
     };
     use agentdash_domain::workflow::AgentFrameRepository;
     use agentdash_spi::ToolCluster;
@@ -481,34 +482,52 @@ mod tests {
                 .cloned())
         }
 
-        async fn list_active_by_frame(
+        async fn list_by_frame(
             &self,
             effect_frame_id: Uuid,
+            status_filter: Option<PermissionGrantStatusFilter>,
         ) -> Result<Vec<PermissionGrant>, DomainError> {
             Ok(self
                 .items
                 .lock()
                 .await
                 .iter()
-                .filter(|grant| {
-                    grant.effect_frame_id == Some(effect_frame_id) && grant.status.is_active()
-                })
+                .filter(|grant| grant.effect_frame_id == Some(effect_frame_id))
+                .filter(|grant| grant_matches_status_filter(grant.status, status_filter))
                 .cloned()
                 .collect())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+            status_filter: Option<PermissionGrantStatusFilter>,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .await
+                .iter()
+                .filter(|grant| grant.run_id == run_id)
+                .filter(|grant| grant_matches_status_filter(grant.status, status_filter))
+                .cloned()
+                .collect())
+        }
+
+        async fn list_active_by_frame(
+            &self,
+            effect_frame_id: Uuid,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            self.list_by_frame(effect_frame_id, Some(PermissionGrantStatusFilter::Active))
+                .await
         }
 
         async fn list_active_by_run(
             &self,
             run_id: Uuid,
         ) -> Result<Vec<PermissionGrant>, DomainError> {
-            Ok(self
-                .items
-                .lock()
+            self.list_by_run(run_id, Some(PermissionGrantStatusFilter::Active))
                 .await
-                .iter()
-                .filter(|grant| grant.run_id == run_id && grant.status.is_active())
-                .cloned()
-                .collect())
         }
 
         async fn find_active_escalation_grant(
@@ -534,6 +553,25 @@ mod tests {
 
         async fn expire_overdue(&self) -> Result<u64, DomainError> {
             Ok(0)
+        }
+    }
+
+    fn grant_matches_status_filter(
+        status: GrantStatus,
+        status_filter: Option<PermissionGrantStatusFilter>,
+    ) -> bool {
+        match status_filter {
+            Some(PermissionGrantStatusFilter::Exact(expected)) => status == expected,
+            Some(PermissionGrantStatusFilter::Pending) => matches!(
+                status,
+                GrantStatus::Created
+                    | GrantStatus::PendingPolicy
+                    | GrantStatus::PendingUserApproval
+                    | GrantStatus::Approved
+            ),
+            Some(PermissionGrantStatusFilter::Active) => status.is_active(),
+            Some(PermissionGrantStatusFilter::Terminal) => status.is_terminal(),
+            None => true,
         }
     }
 

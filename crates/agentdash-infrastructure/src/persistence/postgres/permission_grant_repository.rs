@@ -1,11 +1,11 @@
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::permission::{
-    GrantScope, GrantStatus, PermissionGrant, PermissionGrantRepository, PolicyDecision,
-    ScopeEscalationIntent,
+    GrantScope, GrantStatus, PermissionGrant, PermissionGrantRepository,
+    PermissionGrantStatusFilter, PolicyDecision, ScopeEscalationIntent,
 };
 use agentdash_domain::workflow::ToolCapabilityPath;
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use super::db_err;
@@ -113,37 +113,60 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
         row.map(TryInto::try_into).transpose()
     }
 
+    async fn list_by_frame(
+        &self,
+        effect_frame_id: Uuid,
+        status_filter: Option<PermissionGrantStatusFilter>,
+    ) -> Result<Vec<PermissionGrant>, DomainError> {
+        let mut query = QueryBuilder::<Postgres>::new(
+            "SELECT * FROM permission_grants WHERE effect_frame_id = ",
+        );
+        query.push_bind(effect_frame_id.to_string());
+        push_status_filter(&mut query, status_filter);
+        query.push(" ORDER BY created_at DESC");
+
+        query
+            .build_query_as::<GrantRow>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect()
+    }
+
+    async fn list_by_run(
+        &self,
+        run_id: Uuid,
+        status_filter: Option<PermissionGrantStatusFilter>,
+    ) -> Result<Vec<PermissionGrant>, DomainError> {
+        let mut query =
+            QueryBuilder::<Postgres>::new("SELECT * FROM permission_grants WHERE run_id = ");
+        query.push_bind(run_id.to_string());
+        push_status_filter(&mut query, status_filter);
+        query.push(" ORDER BY created_at DESC");
+
+        query
+            .build_query_as::<GrantRow>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect()
+    }
+
     async fn list_active_by_frame(
         &self,
         effect_frame_id: Uuid,
     ) -> Result<Vec<PermissionGrant>, DomainError> {
-        sqlx::query_as::<_, GrantRow>(
-            "SELECT * FROM permission_grants \
-             WHERE effect_frame_id = $1 AND status IN ('applied', 'scope_escalated') \
-             ORDER BY created_at DESC",
-        )
-        .bind(effect_frame_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
+        self.list_by_frame(effect_frame_id, Some(PermissionGrantStatusFilter::Active))
+            .await
     }
 
     async fn list_active_by_run(&self, run_id: Uuid) -> Result<Vec<PermissionGrant>, DomainError> {
-        sqlx::query_as::<_, GrantRow>(
-            "SELECT * FROM permission_grants \
-             WHERE run_id = $1 AND status IN ('applied', 'scope_escalated') \
-             ORDER BY created_at DESC",
-        )
-        .bind(run_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
+        self.list_by_run(run_id, Some(PermissionGrantStatusFilter::Active))
+            .await
     }
 
     async fn find_active_escalation_grant(
@@ -181,6 +204,30 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
         .map_err(db_err)?;
 
         Ok(result.rows_affected())
+    }
+}
+
+fn push_status_filter(
+    query: &mut QueryBuilder<'_, Postgres>,
+    status_filter: Option<PermissionGrantStatusFilter>,
+) {
+    match status_filter {
+        Some(PermissionGrantStatusFilter::Exact(status)) => {
+            query.push(" AND status = ");
+            query.push_bind(status.as_str());
+        }
+        Some(PermissionGrantStatusFilter::Pending) => {
+            query.push(
+                " AND status IN ('created', 'pending_policy', 'pending_user_approval', 'approved')",
+            );
+        }
+        Some(PermissionGrantStatusFilter::Active) => {
+            query.push(" AND status IN ('applied', 'scope_escalated')");
+        }
+        Some(PermissionGrantStatusFilter::Terminal) => {
+            query.push(" AND status IN ('rejected', 'failed', 'expired', 'revoked')");
+        }
+        None => {}
     }
 }
 

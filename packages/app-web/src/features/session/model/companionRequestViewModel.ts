@@ -85,6 +85,7 @@ export function buildCompanionRequestDetailLines(
     if (requestedPaths.length > 0) detailLines.push(`请求能力：${requestedPaths.join(", ")}`);
     if (reason) detailLines.push(`理由：${reason}`);
     if (scope) detailLines.push(`范围：${scope}${ttlSeconds ? `，TTL ${ttlSeconds} 秒` : ""}`);
+    detailLines.push("能力授权以 PermissionGrant 审批为准，此会话卡片不提交授权结果");
   }
 
   return detailLines;
@@ -99,23 +100,6 @@ export function buildCompanionChoiceSubmission(choice: string): CompanionRequest
       summary: choice,
     },
     label: choice,
-  };
-}
-
-export function buildCapabilityGrantSubmission(
-  request: CompanionRequestViewModel,
-  approved: boolean,
-): CompanionRequestSubmission {
-  const status = approved ? "approved" : "rejected";
-  const requestedPaths = request.capabilityGrant.requestedPaths;
-  return {
-    payload: {
-      type: "capability_grant_result",
-      status,
-      summary: approved ? "用户已批准临时能力申请" : "用户已拒绝临时能力申请",
-      ...(approved ? { granted_paths: requestedPaths } : { rejected_paths: requestedPaths }),
-    },
-    label: approved ? "已批准" : "已拒绝",
   };
 }
 

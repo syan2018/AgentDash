@@ -6,7 +6,6 @@
  */
 
 import { useState } from "react";
-import type { JsonValue } from "../../generated/common-contracts";
 import type { PermissionGrant } from "../../types/permission";
 import { isGrantPendingAction, isGrantActive } from "../../types/permission";
 import {
@@ -116,12 +115,12 @@ export function PermissionGrantCard({ grant, onUpdated }: PermissionGrantCardPro
   );
 }
 
-function scopeEscalationTarget(value: JsonValue | undefined): string | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
+function scopeEscalationTarget(
+  value: PermissionGrant["scope_escalation_intent"],
+): string | null {
+  if (!value) return null;
   const target = value.target_subject_kind;
-  return typeof target === "string" && target.trim() ? target : null;
+  return target.trim() ? target : null;
 }
 
 function statusLabel(status: string): string {
@@ -143,8 +142,8 @@ function statusLabel(status: string): string {
 function scopeLabel(scope: string): string {
   const map: Record<string, string> = {
     turn: "单轮",
-    session: "会话",
-    workflow_step: "步骤",
+    agent_frame: "Agent Frame",
+    activity: "Activity",
   };
   return map[scope] ?? scope;
 }

@@ -257,12 +257,14 @@ impl LifecycleRun {
         self.last_activity_at = self.updated_at;
     }
 
-    fn refresh_status_from_orchestrations(&mut self) {
-        self.status = aggregate_orchestration_status(&self.orchestrations);
+    pub fn refresh_status_from_orchestrations(&mut self) {
+        self.status = aggregate_lifecycle_run_status(&self.orchestrations);
     }
 }
 
-fn aggregate_orchestration_status(orchestrations: &[OrchestrationInstance]) -> LifecycleRunStatus {
+pub fn aggregate_lifecycle_run_status(
+    orchestrations: &[OrchestrationInstance],
+) -> LifecycleRunStatus {
     if orchestrations.is_empty() {
         return LifecycleRunStatus::Ready;
     }
@@ -274,36 +276,44 @@ fn aggregate_orchestration_status(orchestrations: &[OrchestrationInstance]) -> L
     }
     if orchestrations
         .iter()
+        .any(|instance| instance.status == OrchestrationStatus::Paused)
+        || orchestration_nodes(orchestrations)
+            .iter()
+            .any(|node| node.status == RuntimeNodeStatus::Blocked)
+    {
+        return LifecycleRunStatus::Blocked;
+    }
+    if orchestrations
+        .iter()
+        .any(|instance| instance.status == OrchestrationStatus::Running)
+        || orchestration_nodes(orchestrations).iter().any(|node| {
+            matches!(
+                node.status,
+                RuntimeNodeStatus::Ready | RuntimeNodeStatus::Claiming | RuntimeNodeStatus::Running
+            )
+        })
+    {
+        return LifecycleRunStatus::Running;
+    }
+    if orchestrations
+        .iter()
+        .any(|instance| instance.status == OrchestrationStatus::Pending)
+    {
+        return LifecycleRunStatus::Ready;
+    }
+    if orchestrations
+        .iter()
         .all(|instance| instance.status == OrchestrationStatus::Cancelled)
     {
         return LifecycleRunStatus::Cancelled;
     }
-    if orchestrations
-        .iter()
-        .all(|instance| instance.status == OrchestrationStatus::Completed)
-    {
-        return LifecycleRunStatus::Completed;
-    }
-    if orchestration_nodes(orchestrations)
-        .iter()
-        .any(|node| node.status == RuntimeNodeStatus::Blocked)
-    {
-        return LifecycleRunStatus::Blocked;
-    }
-    if orchestrations.iter().any(|instance| {
+    if orchestrations.iter().all(|instance| {
         matches!(
             instance.status,
-            OrchestrationStatus::Running | OrchestrationStatus::Paused
-        ) || orchestration_nodes(std::slice::from_ref(instance))
-            .iter()
-            .any(|node| {
-                matches!(
-                    node.status,
-                    RuntimeNodeStatus::Claiming | RuntimeNodeStatus::Running
-                )
-            })
+            OrchestrationStatus::Completed | OrchestrationStatus::Cancelled
+        )
     }) {
-        return LifecycleRunStatus::Running;
+        return LifecycleRunStatus::Completed;
     }
     LifecycleRunStatus::Ready
 }
@@ -535,5 +545,44 @@ mod tests {
                 .expect("human executor"),
             ExecutorSpec::Human { .. }
         ));
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_mixed_terminal_as_completed() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut completed = orchestration_instance("completed", agent_executor());
+        completed.status = OrchestrationStatus::Completed;
+        let mut cancelled = orchestration_instance("cancelled", function_executor());
+        cancelled.status = OrchestrationStatus::Cancelled;
+
+        assert!(run.add_orchestration(completed));
+        assert!(run.add_orchestration(cancelled));
+
+        assert_eq!(run.status, LifecycleRunStatus::Completed);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_paused_as_blocked() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut paused = orchestration_instance("paused", human_executor());
+        paused.status = OrchestrationStatus::Paused;
+
+        assert!(run.add_orchestration(paused));
+
+        assert_eq!(run.status, LifecycleRunStatus::Blocked);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_all_cancelled_as_cancelled() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut first = orchestration_instance("cancelled_a", agent_executor());
+        first.status = OrchestrationStatus::Cancelled;
+        let mut second = orchestration_instance("cancelled_b", function_executor());
+        second.status = OrchestrationStatus::Cancelled;
+
+        assert!(run.add_orchestration(first));
+        assert!(run.add_orchestration(second));
+
+        assert_eq!(run.status, LifecycleRunStatus::Cancelled);
     }
 }

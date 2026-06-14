@@ -1,6 +1,7 @@
 import { api } from "../api/client";
 import { asRecord } from "../api/mappers";
 import type {
+  CapabilityCatalogResponse,
   HookPresetsResponse,
   PreflightWorkflowScriptRequest,
   PreflightWorkflowScriptResponse,
@@ -154,9 +155,20 @@ export async function deleteAgentProcedure(id: string): Promise<void> {
   await api.delete(`/agent-procedures/${id}`);
 }
 
+export async function fetchCapabilityCatalog(
+  capabilityKeys?: string[],
+): Promise<CapabilityCatalogResponse> {
+  const params = new URLSearchParams();
+  if (capabilityKeys && capabilityKeys.length > 0) {
+    params.set("capabilities", capabilityKeys.join(","));
+  }
+  const query = params.toString();
+  return api.get<CapabilityCatalogResponse>(`/tool-catalog${query ? `?${query}` : ""}`);
+}
+
 export async function fetchToolCatalog(capabilityKeys: string[]): Promise<ToolDescriptor[]> {
-  const qs = capabilityKeys.join(",");
-  return api.get<ToolDescriptor[]>(`/tool-catalog?capabilities=${encodeURIComponent(qs)}`);
+  const catalog = await fetchCapabilityCatalog(capabilityKeys);
+  return catalog.capabilities.flatMap((entry) => entry.tools);
 }
 
 export async function fetchHookPresets(): Promise<HookRulePreset[]> {

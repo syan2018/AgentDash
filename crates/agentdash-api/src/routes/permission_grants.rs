@@ -9,9 +9,12 @@ use uuid::Uuid;
 use agentdash_application::permission::PermissionGrantService;
 use agentdash_contracts::permission::{
     ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
-    PermissionGrantStatusDto,
+    PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PolicyDecisionDto, PolicyOutcomeDto,
+    ScopeEscalationIntentDto,
 };
-use agentdash_domain::permission::PermissionGrant;
+use agentdash_domain::permission::{
+    GrantStatus, PermissionGrant, PermissionGrantStatusFilter, PolicyOutcome,
+};
 
 use crate::{app_state::AppState, auth::CurrentUser, rpc::ApiError};
 
@@ -48,6 +51,52 @@ fn grant_status_to_dto(
     }
 }
 
+fn grant_status_to_domain(status: PermissionGrantStatusDto) -> GrantStatus {
+    match status {
+        PermissionGrantStatusDto::Created => GrantStatus::Created,
+        PermissionGrantStatusDto::PendingPolicy => GrantStatus::PendingPolicy,
+        PermissionGrantStatusDto::PendingUserApproval => GrantStatus::PendingUserApproval,
+        PermissionGrantStatusDto::Approved => GrantStatus::Approved,
+        PermissionGrantStatusDto::Rejected => GrantStatus::Rejected,
+        PermissionGrantStatusDto::Applied => GrantStatus::Applied,
+        PermissionGrantStatusDto::Failed => GrantStatus::Failed,
+        PermissionGrantStatusDto::Expired => GrantStatus::Expired,
+        PermissionGrantStatusDto::Revoked => GrantStatus::Revoked,
+        PermissionGrantStatusDto::ScopeEscalated => GrantStatus::ScopeEscalated,
+    }
+}
+
+fn status_group_to_filter(group: PermissionGrantStatusGroupDto) -> PermissionGrantStatusFilter {
+    match group {
+        PermissionGrantStatusGroupDto::Pending => PermissionGrantStatusFilter::Pending,
+        PermissionGrantStatusGroupDto::Active => PermissionGrantStatusFilter::Active,
+        PermissionGrantStatusGroupDto::Terminal => PermissionGrantStatusFilter::Terminal,
+    }
+}
+
+fn policy_outcome_to_dto(outcome: PolicyOutcome) -> PolicyOutcomeDto {
+    match outcome {
+        PolicyOutcome::AutoApproved => PolicyOutcomeDto::AutoApproved,
+        PolicyOutcome::NeedsUserApproval => PolicyOutcomeDto::NeedsUserApproval,
+        PolicyOutcome::Rejected => PolicyOutcomeDto::Rejected,
+    }
+}
+
+fn status_filter_from_query(
+    query: &ListPermissionGrantsQuery,
+) -> Result<Option<PermissionGrantStatusFilter>, ApiError> {
+    match (query.status, query.status_group) {
+        (Some(_), Some(_)) => Err(ApiError::BadRequest(
+            "status and status_group cannot be used together".to_string(),
+        )),
+        (Some(status), None) => Ok(Some(PermissionGrantStatusFilter::Exact(
+            grant_status_to_domain(status),
+        ))),
+        (None, Some(group)) => Ok(Some(status_group_to_filter(group))),
+        (None, None) => Ok(None),
+    }
+}
+
 fn grant_to_dto(grant: &PermissionGrant) -> PermissionGrantResponse {
     PermissionGrantResponse {
         id: grant.id.to_string(),
@@ -62,15 +111,25 @@ fn grant_to_dto(grant: &PermissionGrant) -> PermissionGrantResponse {
         reason: grant.reason.clone(),
         grant_scope: grant_scope_to_dto(grant.grant_scope),
         expires_at: grant.expires_at.map(|t| t.to_rfc3339()),
-        scope_escalation_intent: grant
-            .scope_escalation_intent
-            .as_ref()
-            .and_then(|v| serde_json::to_value(v).ok()),
+        scope_escalation_intent: grant.scope_escalation_intent.as_ref().map(|intent| {
+            ScopeEscalationIntentDto {
+                target_subject_kind: intent.target_subject_kind.clone(),
+                unlocked_paths: intent
+                    .unlocked_paths
+                    .iter()
+                    .map(|path| path.to_qualified_string())
+                    .collect(),
+            }
+        }),
         status: grant_status_to_dto(grant.status),
         policy_decision: grant
             .policy_decision
             .as_ref()
-            .and_then(|v| serde_json::to_value(v).ok()),
+            .map(|decision| PolicyDecisionDto {
+                outcome: policy_outcome_to_dto(decision.outcome),
+                matched_rules: decision.matched_rules.clone(),
+                reason: decision.reason.clone(),
+            }),
         approved_by: grant.approved_by.clone(),
         created_at: grant.created_at.to_rfc3339(),
         updated_at: grant.updated_at.to_rfc3339(),
@@ -105,14 +164,16 @@ pub async fn list_grants(
     CurrentUser(_current_user): CurrentUser,
     Query(query): Query<ListPermissionGrantsQuery>,
 ) -> Result<Json<Vec<PermissionGrantResponse>>, ApiError> {
-    let mut grants = if let Some(frame_id) = &query.effect_frame_id {
+    let status_filter = status_filter_from_query(&query)?;
+
+    let grants = if let Some(frame_id) = &query.effect_frame_id {
         let frame_uuid: Uuid = frame_id
             .parse()
             .map_err(|_| ApiError::BadRequest(format!("invalid effect_frame_id: {frame_id}")))?;
         state
             .repos
             .permission_grant_repo
-            .list_active_by_frame(frame_uuid)
+            .list_by_frame(frame_uuid, status_filter)
             .await?
     } else if let Some(run_id) = &query.run_id {
         let run_uuid: Uuid = run_id
@@ -121,17 +182,13 @@ pub async fn list_grants(
         state
             .repos
             .permission_grant_repo
-            .list_active_by_run(run_uuid)
+            .list_by_run(run_uuid, status_filter)
             .await?
     } else {
         return Err(ApiError::BadRequest(
             "effect_frame_id or run_id query param required".to_string(),
         ));
     };
-
-    if let Some(status) = query.status {
-        grants.retain(|grant| grant_status_to_dto(grant.status) == status);
-    }
 
     Ok(Json(grants.iter().map(grant_to_dto).collect()))
 }

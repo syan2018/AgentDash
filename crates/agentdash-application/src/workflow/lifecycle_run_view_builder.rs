@@ -13,7 +13,8 @@ use agentdash_domain::workflow::{
     LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind, LifecycleRun,
     LifecycleRunStatus as DomainLifecycleRunStatus,
     LifecycleRunTopology as DomainLifecycleRunTopology, LifecycleSubjectAssociation,
-    OrchestrationInstance, RuntimeNodeState, RuntimeNodeStatus, SubjectRef,
+    OrchestrationInstance, RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
+    SubjectRef,
 };
 
 use crate::repository_set::RepositorySet;
@@ -239,8 +240,13 @@ pub async fn build_subject_execution_view(
 
     let mut run_views = Vec::with_capacity(runs.len());
     let mut current_agent: Option<AgentRunView> = None;
-    let latest_runtime_node = None;
-    let artifacts = json!({});
+    let runtime_projection = latest_subject_runtime_projection(repos, &associations, &runs).await?;
+    let latest_runtime_node = runtime_projection
+        .as_ref()
+        .map(|projection| projection.node.clone());
+    let artifacts = runtime_projection
+        .map(|projection| projection.artifacts)
+        .unwrap_or_else(|| json!({}));
 
     for run in &runs {
         let agents = repos.lifecycle_agent_repo.list_by_run(run.id).await?;
@@ -316,6 +322,90 @@ async fn collect_runtime_trace_refs(
             runtime_session_id: anchor.runtime_session_id,
         })
         .collect())
+}
+
+struct SubjectRuntimeProjection {
+    node: RuntimeNodeView,
+    artifacts: Value,
+    observed_at: DateTime<Utc>,
+}
+
+async fn latest_subject_runtime_projection(
+    repos: &RepositorySet,
+    associations: &[LifecycleSubjectAssociation],
+    runs: &[LifecycleRun],
+) -> Result<Option<SubjectRuntimeProjection>, DomainError> {
+    let mut latest: Option<SubjectRuntimeProjection> = None;
+
+    for association in associations {
+        let Some(agent) = resolve_association_agent(repos, association).await? else {
+            continue;
+        };
+        let Some(current_frame_id) = agent.current_frame_id else {
+            continue;
+        };
+        let Some(run) = runs.iter().find(|run| run.id == association.anchor_run_id) else {
+            continue;
+        };
+        let anchors = repos.execution_anchor_repo.list_by_agent(agent.id).await?;
+        for anchor in anchors {
+            if anchor.run_id != run.id || anchor.launch_frame_id != current_frame_id {
+                continue;
+            }
+            let Some(projection) = runtime_projection_from_anchor(run, &anchor) else {
+                continue;
+            };
+            if latest
+                .as_ref()
+                .map(|current| projection.observed_at > current.observed_at)
+                .unwrap_or(true)
+            {
+                latest = Some(projection);
+            }
+        }
+    }
+
+    Ok(latest)
+}
+
+async fn resolve_association_agent(
+    repos: &RepositorySet,
+    association: &LifecycleSubjectAssociation,
+) -> Result<Option<LifecycleAgent>, DomainError> {
+    if let Some(agent_id) = association.anchor_agent_id {
+        let agent = repos.lifecycle_agent_repo.get(agent_id).await?;
+        return Ok(agent.filter(|agent| agent.run_id == association.anchor_run_id));
+    }
+    Ok(repos
+        .lifecycle_agent_repo
+        .list_by_run(association.anchor_run_id)
+        .await?
+        .into_iter()
+        .filter(|agent| agent.status == "active")
+        .max_by_key(|agent| agent.updated_at))
+}
+
+fn runtime_projection_from_anchor(
+    run: &LifecycleRun,
+    anchor: &RuntimeSessionExecutionAnchor,
+) -> Option<SubjectRuntimeProjection> {
+    let orchestration_id = anchor.orchestration_id?;
+    let node_path = anchor.node_path.as_deref()?;
+    let attempt = anchor.node_attempt.unwrap_or(1);
+    let orchestration = run
+        .orchestrations
+        .iter()
+        .find(|item| item.orchestration_id == orchestration_id)?;
+    let node = find_runtime_node_by_path(&orchestration.node_tree, node_path, attempt)?;
+    let observed_at = node
+        .completed_at
+        .or(node.started_at)
+        .unwrap_or(anchor.updated_at);
+    Some(SubjectRuntimeProjection {
+        node: runtime_node_to_view(node),
+        artifacts: runtime_node_artifacts(orchestration, node),
+        observed_at,
+    })
 }
 
 // ── Pure conversion functions (pub for reuse) ──────────────────
@@ -542,6 +632,42 @@ fn flatten_runtime_nodes(nodes: &[RuntimeNodeState]) -> Vec<&RuntimeNodeState> {
         collect(node, &mut flattened);
     }
     flattened
+}
+
+fn find_runtime_node_by_path<'a>(
+    nodes: &'a [RuntimeNodeState],
+    node_path: &str,
+    attempt: u32,
+) -> Option<&'a RuntimeNodeState> {
+    for node in nodes {
+        if node.node_path == node_path && node.attempt == attempt {
+            return Some(node);
+        }
+        if let Some(found) = find_runtime_node_by_path(&node.children, node_path, attempt) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn runtime_node_artifacts(orchestration: &OrchestrationInstance, node: &RuntimeNodeState) -> Value {
+    let node_outputs = orchestration
+        .state_snapshot
+        .node_outputs
+        .get(&node.node_id)
+        .cloned()
+        .unwrap_or(Value::Null);
+    let artifact_refs = orchestration
+        .state_snapshot
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.node_path.as_deref() == Some(node.node_path.as_str()))
+        .collect::<Vec<_>>();
+
+    json!({
+        "node_outputs": node_outputs,
+        "artifact_refs": serde_json::to_value(artifact_refs).unwrap_or(Value::Null),
+    })
 }
 
 fn status_string<T: serde::Serialize>(value: &T) -> String {

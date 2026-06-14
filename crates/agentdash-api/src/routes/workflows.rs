@@ -14,15 +14,15 @@ use agentdash_application::workflow::{
     WorkflowScriptPreflightService, lifecycle_run_view_builder,
 };
 use agentdash_contracts::workflow::{
-    AgentProcedureResponse, DeleteAgentProcedureResponse, DeleteHookPresetResponse,
-    DeleteWorkflowGraphResponse, HookPresetResponse, HookPresetsResponse, LifecycleRunView,
-    PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, RegisterHookPresetResponse,
-    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
-    ValidateHookScriptResponse, ValidationSeverity as ContractValidationSeverity,
-    WorkflowGraphResponse, WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto,
-    WorkflowScriptCapabilitySummaryDto, WorkflowScriptHumanGateCapabilityDto,
-    WorkflowScriptPlanPreviewDto, WorkflowScriptPlanPreviewNodeDto,
-    WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
+    AgentProcedureResponse, CapabilityCatalogResponse, DeleteAgentProcedureResponse,
+    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, HookPresetResponse, HookPresetsResponse,
+    LifecycleRunView, PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse,
+    RegisterHookPresetResponse, SubmitOrchestrationHumanDecisionRequest,
+    SubmitOrchestrationHumanDecisionResponse, ValidateHookScriptResponse,
+    ValidationSeverity as ContractValidationSeverity, WorkflowGraphResponse,
+    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
+    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
+    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, AgentProcedure, DefinitionSource, ExecutionSource, LifecycleRun,
@@ -1076,13 +1076,13 @@ pub async fn delete_hook_preset(
 
 pub async fn query_tool_catalog(
     Query(query): Query<ToolCatalogQuery>,
-) -> Json<Vec<agentdash_spi::ToolDescriptor>> {
-    let keys: Vec<String> = query
-        .capabilities
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    let catalog = agentdash_application::capability::query_tool_catalog(&keys);
+) -> Json<CapabilityCatalogResponse> {
+    let keys = query.capabilities.as_deref().map(|raw| {
+        raw.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+    });
+    let catalog = agentdash_application::capability::query_capability_catalog(keys.as_deref());
     Json(catalog)
 }

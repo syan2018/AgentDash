@@ -132,6 +132,7 @@ describe("MailboxMessageList", () => {
         paused: true,
         visible_message_count: 0,
         user_attention: false,
+        messages: [],
       },
     });
 
@@ -145,6 +146,7 @@ describe("MailboxMessageList", () => {
         paused: true,
         visible_message_count: 0,
         user_attention: true,
+        messages: [],
         resume_command: {
           kind: "resume_mailbox",
           command_id: "cmd-resume",

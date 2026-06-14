@@ -96,5 +96,6 @@ pub struct RegisterPresetRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct ToolCatalogQuery {
-    pub capabilities: String,
+    #[serde(default)]
+    pub capabilities: Option<String>,
 }

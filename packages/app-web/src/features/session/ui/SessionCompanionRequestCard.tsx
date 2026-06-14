@@ -11,7 +11,6 @@ import { useState } from "react";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import { respondCompanionRequest } from "../../../services/executor";
 import {
-  buildCapabilityGrantSubmission,
   buildCompanionChoiceSubmission,
   buildCompanionRequestDetailLines,
   parseCompanionRequest,
@@ -49,11 +48,6 @@ export function SessionCompanionRequestCard({ event }: SessionCompanionRequestCa
     await submitPayload(submission.payload, submission.label);
   };
 
-  const handleCapabilityGrant = async (approved: boolean) => {
-    const submission = buildCapabilityGrantSubmission(request, approved);
-    await submitPayload(submission.payload, submission.label);
-  };
-
   const handleSubmitCustom = async () => {
     const text = customInput.trim();
     if (!text) return;
@@ -70,26 +64,7 @@ export function SessionCompanionRequestCard({ event }: SessionCompanionRequestCa
         </div>
       ) : (
         <>
-          {request.isCapabilityGrant ? (
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => { void handleCapabilityGrant(true); }}
-                disabled={isSubmitting}
-                className="rounded-[8px] border border-success/30 bg-success/10 px-3 py-1.5 text-sm text-success transition-colors hover:bg-success/20 disabled:opacity-50"
-              >
-                {isSubmitting ? "处理中..." : "批准"}
-              </button>
-              <button
-                type="button"
-                onClick={() => { void handleCapabilityGrant(false); }}
-                disabled={isSubmitting}
-                className="rounded-[8px] border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-sm text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-50"
-              >
-                {isSubmitting ? "处理中..." : "拒绝"}
-              </button>
-            </div>
-          ) : request.options.length > 0 ? (
+          {request.isCapabilityGrant ? null : request.options.length > 0 ? (
             <div className="flex flex-wrap gap-2">
               {request.options.map((option) => (
                 <button

@@ -42,16 +42,6 @@ const workspace: AgentRunWorkspaceView = {
   },
   frame_runtime: frameRuntime,
   subject_associations: [],
-  actions: {
-    submit_message: { enabled: true },
-    cancel: { enabled: true },
-  },
-  mailbox: {
-    paused: false,
-    can_resume: false,
-    hide_system_steer_messages: false,
-  },
-  mailbox_messages: [],
 };
 
 const runtimeSurface: ResolvedVfsSurface = {
@@ -131,6 +121,7 @@ describe("AgentRun workspace refresh state", () => {
           visible_message_count: 0,
           paused: false,
           user_attention: false,
+          messages: [],
         },
         resource_surface: runtimeSurface,
         diagnostics: [],

@@ -127,14 +127,16 @@ delivery RuntimeSession meta 的 workspace 再使用 AgentRun/workspace fallback
 RuntimeSession trace metadata 仍进入 trace/feed/debug 展示：事件游标、trace title provenance、
 delivery trace summary、last turn pointer、terminal summary 和 executor continuation 都属于
 runtime trace 视角。Workspace route 可以展示关联的 `delivery_trace_meta` 或 trace link，但
-侧栏列表、工作台标题、运行状态、最近活动和按钮 enablement 以 AgentRun Workspace projection /
-`AgentRunWorkspaceView.actions` 为准。
+侧栏列表、工作台标题、运行状态和最近活动以 AgentRun Workspace shell/projection 为准；输入区、
+keyboard shortcut、mailbox promote/delete/resume 和 cancel 的可执行性以
+`AgentRunWorkspaceView.conversation.commands` 为准。这样工作台 shell 和用户命令投影各自保持窄职责：
+shell 服务导航与展示，conversation snapshot 服务可执行控制面。
 
 同一 `run_id + agent_id + source_key` 的 AgentRun Workspace refresh 保留上一帧 `workspace`、
 `runtime_session_id`、resource surface 与 frame，原因是 `SessionChatView` 的 NDJSON stream
 生命周期绑定 runtime session identity，右侧 resource browser 也需要展示连续性。输入区 command
-authority 只在当前 projection `status="ready"` 时消费最新 `AgentConversationSnapshot.commands`；
-`loading` / `refreshing` / `error` / stale projection 状态下上一帧 snapshot 只能用于展示诊断。
+authority 来自最新 `AgentConversationSnapshot.commands`；`loading` / `refreshing` / `error` /
+stale projection 状态下上一帧 snapshot 只能用于展示诊断。
 
 `session_meta_updated`、`Platform(SessionMetaUpdate)` 与 RuntimeSession event stream 仍是 feed
 和 debug 面板可渲染的事实。工作台标题编辑和状态刷新通过 AgentRun Workspace shell 刷新或后续

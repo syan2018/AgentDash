@@ -6,28 +6,28 @@
 //!
 //! 真相源 = LifecycleRun.orchestrations；Task view 仅为只读投影。
 //!
-//! 投影匹配策略（B5a）：
-//! 通过 `LifecycleSubjectAssociation(subject_kind=task, subject_id=task_id)`
-//! 关联 run → activity state。
+//! 投影匹配策略：
+//! 从 `SubjectRef(kind=task)` 查找 `LifecycleSubjectAssociation`，再沿
+//! association anchor agent → `LifecycleAgent.current_frame` →
+//! `RuntimeSessionExecutionAnchor` → runtime node 坐标派生明确 node fact。
 //!
-//! 1. 遍历所有 project 的 active LifecycleRun
-//! 2. 通过 `LifecycleSubjectAssociation` 找到 task_id → run 的映射
-//! 3. 对每个关联的 task，从 run 下 orchestration node_tree 取最新 runtime node 状态投影到 task view
-//! 4. 对于仍处于 `Running` 但没有任何活跃 run 覆盖的孤儿 task，fallback 置为 `Failed`
+//! 没有明确 lifecycle runtime node fact 时不写 Task 终态。
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::repository_set::RepositorySet;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
-use agentdash_domain::task::{Task, TaskStatus};
+use agentdash_domain::task::Task;
 use agentdash_domain::workflow::{
-    LifecycleRun, LifecycleRunRepository, LifecycleRunStatus,
-    LifecycleSubjectAssociationRepository, RuntimeNodeState, RuntimeNodeStatus,
+    LifecycleAgent, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository, OrchestrationInstance,
+    RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
+    RuntimeSessionExecutionAnchorRepository, SubjectRef,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -96,59 +96,42 @@ pub async fn project_task_view_from_runtime_node_status(
 /// 方向：LifecycleRun/step state → Story.tasks 只读 view。
 ///
 /// 投影链路：
-/// `LifecycleSubjectAssociation(kind=task)` → run → `LifecycleRun.orchestrations[].node_tree` → `Story::apply_task_projection`
+/// `SubjectRef(kind=task)` → `LifecycleSubjectAssociation` → `LifecycleAgent.current_frame`
+/// → `RuntimeSessionExecutionAnchor` → `LifecycleRun.orchestrations[].node_tree`
+/// → `Story::apply_task_projection`
 pub async fn project_task_views_on_boot(
     project_repo: &Arc<dyn ProjectRepository>,
     state_change_repo: &Arc<dyn StateChangeRepository>,
     story_repo: &Arc<dyn StoryRepository>,
     association_repo: &Arc<dyn LifecycleSubjectAssociationRepository>,
     lifecycle_run_repo: &Arc<dyn LifecycleRunRepository>,
+    lifecycle_agent_repo: &Arc<dyn LifecycleAgentRepository>,
+    execution_anchor_repo: &Arc<dyn RuntimeSessionExecutionAnchorRepository>,
 ) -> Result<(), TaskViewProjectionError> {
     let projects = project_repo.list_all().await?;
     let mut projected_count: usize = 0;
-    let mut orphan_fallback: usize = 0;
-
-    let mut covered_tasks: HashSet<uuid::Uuid> = HashSet::new();
 
     for project in projects {
-        let runs = lifecycle_run_repo.list_by_project(project.id).await?;
-
-        // Phase 1 — 通过 SubjectAssociation 匹配 task → run 投影
-        for run in &runs {
-            if !is_run_active(run.status) {
-                continue;
-            }
-
-            // 查找该 run 下所有 task subject associations
-            let run_associations = association_repo.list_by_anchor(run.id, None).await?;
-
-            let task_associations: Vec<_> = run_associations
-                .into_iter()
-                .filter(|a| a.subject_kind == "task")
-                .collect();
-
-            if task_associations.is_empty() {
-                continue;
-            }
-
-            let statuses = lifecycle_task_projection_statuses(run);
-            if statuses.is_empty() {
-                continue;
-            }
-
-            let latest_status = statuses.last().copied();
-
-            for assoc in &task_associations {
-                let task_id = assoc.subject_id;
-                let Some(status) = latest_status else {
+        let stories = story_repo.list_by_project(project.id).await?;
+        for story in stories {
+            for task in &story.tasks {
+                let task_id = task.id;
+                let subject = SubjectRef::new("task", task_id);
+                let associations = association_repo.list_by_subject(&subject).await?;
+                let Some(projection) = resolve_task_runtime_projection(
+                    &associations,
+                    lifecycle_run_repo,
+                    lifecycle_agent_repo,
+                    execution_anchor_repo,
+                )
+                .await?
+                else {
                     continue;
                 };
 
-                // 通过 story 聚合查找 task 并投影
                 let Some(mut story) = story_repo.find_by_task_id(task_id).await? else {
                     tracing::warn!(
                         task_id = %task_id,
-                        run_id = %run.id,
                         "Task view 投影：task 所属 Story 不存在，跳过"
                     );
                     continue;
@@ -156,9 +139,8 @@ pub async fn project_task_views_on_boot(
 
                 let previous_status = story.find_task(task_id).map(|t| t.status().clone());
                 let changed = story
-                    .apply_task_projection(task_id, status)
+                    .apply_task_projection(task_id, projection.node_status)
                     .unwrap_or(false);
-                covered_tasks.insert(task_id);
 
                 if !changed {
                     continue;
@@ -173,9 +155,12 @@ pub async fn project_task_views_on_boot(
                     "reason": "boot_reconcile_subject_association_projection",
                     "task_id": task_id,
                     "story_id": story_id,
-                    "run_id": run.id,
-                    "association_id": assoc.id,
-                    "runtime_node_status": status,
+                    "run_id": projection.run_id,
+                    "association_id": projection.association_id,
+                    "orchestration_id": projection.orchestration_id,
+                    "node_path": projection.node_path,
+                    "node_attempt": projection.node_attempt,
+                    "runtime_node_status": projection.node_status,
                     "from": previous_status,
                     "to": next_status,
                 });
@@ -192,7 +177,7 @@ pub async fn project_task_views_on_boot(
                 {
                     tracing::warn!(
                         task_id = %task_id,
-                        run_id = %run.id,
+                        run_id = %projection.run_id,
                         error = %err,
                         "Task view 投影：state_change 追加失败（story 已更新）"
                     );
@@ -203,73 +188,13 @@ pub async fn project_task_views_on_boot(
                 tracing::info!(
                     task_id = %task_id,
                     story_id = %story_id,
-                    run_id = %run.id,
+                    run_id = %projection.run_id,
+                    orchestration_id = %projection.orchestration_id,
+                    node_path = %projection.node_path,
+                    node_attempt = projection.node_attempt,
                     from = ?previous_status,
                     to = ?next_status,
                     "Task view 投影：已从 SubjectAssociation 投影 Task view"
-                );
-            }
-        }
-
-        // Phase 2 — fallback：处理孤儿 Running task（没有任何活跃 run 覆盖）
-        let stories = story_repo.list_by_project(project.id).await?;
-        for story in stories {
-            for task in &story.tasks {
-                if task.status() != &TaskStatus::Running {
-                    continue;
-                }
-                if covered_tasks.contains(&task.id) {
-                    continue;
-                }
-
-                let next_status = TaskStatus::Failed;
-                let reason = "boot_reconcile_orphan_running";
-                let previous_status = task.status().clone();
-                let task_id = task.id;
-                let mut story_mut = match story_repo.get_by_id(story.id).await? {
-                    Some(s) => s,
-                    None => continue,
-                };
-                let applied = story_mut.force_set_task_status(task_id, next_status.clone());
-                if !matches!(applied, Some(true)) {
-                    continue;
-                }
-                let project_id = story_mut.project_id;
-                let story_id = story_mut.id;
-                story_repo.update(&story_mut).await?;
-
-                if let Err(err) = state_change_repo
-                    .append_change(
-                        project_id,
-                        task_id,
-                        ChangeKind::TaskStatusChanged,
-                        json!({
-                            "reason": reason,
-                            "task_id": task_id,
-                            "story_id": story_id,
-                            "from": previous_status,
-                            "to": next_status,
-                        }),
-                        None,
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        task_id = %task_id,
-                        error = %err,
-                        "Task view 投影 fallback：state_change 追加失败"
-                    );
-                }
-
-                orphan_fallback += 1;
-
-                tracing::info!(
-                    task_id = %task_id,
-                    story_id = %story_id,
-                    reason = reason,
-                    from = ?previous_status,
-                    to = ?next_status,
-                    "Task view 投影 fallback：孤儿 Running task 已回收"
                 );
             }
         }
@@ -277,50 +202,145 @@ pub async fn project_task_views_on_boot(
 
     tracing::info!(
         projected_count,
-        orphan_fallback,
         "启动阶段 Task view 投影完成（SubjectAssociation 匹配）"
     );
     Ok(())
 }
 
-fn is_run_active(status: LifecycleRunStatus) -> bool {
-    matches!(
-        status,
-        LifecycleRunStatus::Ready | LifecycleRunStatus::Running | LifecycleRunStatus::Blocked
-    )
+struct TaskRuntimeProjection {
+    association_id: Uuid,
+    run_id: Uuid,
+    orchestration_id: Uuid,
+    node_path: String,
+    node_attempt: u32,
+    node_status: RuntimeNodeStatus,
+    observed_at: DateTime<Utc>,
 }
 
-fn lifecycle_task_projection_statuses(run: &LifecycleRun) -> Vec<RuntimeNodeStatus> {
-    let mut statuses = Vec::new();
-    for orchestration in &run.orchestrations {
-        collect_node_projection_statuses(&orchestration.node_tree, &mut statuses);
-    }
-    statuses
-}
+async fn resolve_task_runtime_projection(
+    associations: &[LifecycleSubjectAssociation],
+    lifecycle_run_repo: &Arc<dyn LifecycleRunRepository>,
+    lifecycle_agent_repo: &Arc<dyn LifecycleAgentRepository>,
+    execution_anchor_repo: &Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+) -> Result<Option<TaskRuntimeProjection>, TaskViewProjectionError> {
+    let mut latest: Option<TaskRuntimeProjection> = None;
 
-fn collect_node_projection_statuses(
-    nodes: &[RuntimeNodeState],
-    statuses: &mut Vec<RuntimeNodeStatus>,
-) {
-    for node in nodes {
-        if let Some(status) = task_projection_status_from_node(node.status) {
-            statuses.push(status);
+    for association in associations {
+        let Some(agent) = resolve_association_agent(association, lifecycle_agent_repo).await?
+        else {
+            continue;
+        };
+        let Some(current_frame_id) = agent.current_frame_id else {
+            continue;
+        };
+        let Some(run) = lifecycle_run_repo
+            .get_by_id(association.anchor_run_id)
+            .await?
+        else {
+            continue;
+        };
+        let anchors = execution_anchor_repo.list_by_agent(agent.id).await?;
+        for anchor in anchors {
+            if anchor.run_id != run.id || anchor.launch_frame_id != current_frame_id {
+                continue;
+            }
+            let Some(projection) = projection_from_anchor(association, &run, &anchor) else {
+                continue;
+            };
+            if latest
+                .as_ref()
+                .map(|current| projection.observed_at > current.observed_at)
+                .unwrap_or(true)
+            {
+                latest = Some(projection);
+            }
         }
-        collect_node_projection_statuses(&node.children, statuses);
     }
+
+    Ok(latest)
+}
+
+async fn resolve_association_agent(
+    association: &LifecycleSubjectAssociation,
+    lifecycle_agent_repo: &Arc<dyn LifecycleAgentRepository>,
+) -> Result<Option<LifecycleAgent>, TaskViewProjectionError> {
+    if let Some(agent_id) = association.anchor_agent_id {
+        let agent = lifecycle_agent_repo.get(agent_id).await?;
+        return Ok(agent.filter(|agent| agent.run_id == association.anchor_run_id));
+    }
+    Ok(lifecycle_agent_repo
+        .list_by_run(association.anchor_run_id)
+        .await?
+        .into_iter()
+        .filter(|agent| agent.status == "active")
+        .max_by_key(|agent| agent.updated_at))
+}
+
+fn projection_from_anchor(
+    association: &LifecycleSubjectAssociation,
+    run: &LifecycleRun,
+    anchor: &RuntimeSessionExecutionAnchor,
+) -> Option<TaskRuntimeProjection> {
+    let orchestration_id = anchor.orchestration_id?;
+    let node_path = anchor.node_path.as_deref()?;
+    let node_attempt = anchor.node_attempt.unwrap_or(1);
+    let orchestration = run
+        .orchestrations
+        .iter()
+        .find(|item| item.orchestration_id == orchestration_id)?;
+    let node = find_runtime_node(orchestration, node_path, node_attempt)?;
+    let node_status = task_projection_status_from_node(node.status)?;
+    let observed_at = node
+        .completed_at
+        .or(node.started_at)
+        .unwrap_or(anchor.updated_at);
+
+    Some(TaskRuntimeProjection {
+        association_id: association.id,
+        run_id: run.id,
+        orchestration_id,
+        node_path: node.node_path.clone(),
+        node_attempt,
+        node_status,
+        observed_at,
+    })
+}
+
+fn find_runtime_node<'a>(
+    orchestration: &'a OrchestrationInstance,
+    node_path: &str,
+    attempt: u32,
+) -> Option<&'a RuntimeNodeState> {
+    find_runtime_node_in_tree(&orchestration.node_tree, node_path, attempt)
+}
+
+fn find_runtime_node_in_tree<'a>(
+    nodes: &'a [RuntimeNodeState],
+    node_path: &str,
+    attempt: u32,
+) -> Option<&'a RuntimeNodeState> {
+    for node in nodes {
+        if node.node_path == node_path && node.attempt == attempt {
+            return Some(node);
+        }
+        if let Some(found) = find_runtime_node_in_tree(&node.children, node_path, attempt) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn task_projection_status_from_node(status: RuntimeNodeStatus) -> Option<RuntimeNodeStatus> {
     match status {
         RuntimeNodeStatus::Pending => None,
-        RuntimeNodeStatus::Ready => Some(RuntimeNodeStatus::Ready),
-        RuntimeNodeStatus::Claiming => Some(RuntimeNodeStatus::Claiming),
-        RuntimeNodeStatus::Running | RuntimeNodeStatus::Blocked => Some(RuntimeNodeStatus::Running),
-        RuntimeNodeStatus::Completed => Some(RuntimeNodeStatus::Completed),
-        RuntimeNodeStatus::Failed => Some(RuntimeNodeStatus::Failed),
-        RuntimeNodeStatus::Cancelled | RuntimeNodeStatus::Skipped => {
-            Some(RuntimeNodeStatus::Cancelled)
-        }
+        RuntimeNodeStatus::Ready
+        | RuntimeNodeStatus::Claiming
+        | RuntimeNodeStatus::Running
+        | RuntimeNodeStatus::Blocked
+        | RuntimeNodeStatus::Completed
+        | RuntimeNodeStatus::Failed
+        | RuntimeNodeStatus::Cancelled
+        | RuntimeNodeStatus::Skipped => Some(status),
     }
 }
 
@@ -336,10 +356,11 @@ mod tests {
         Project, ProjectRepository, ProjectSubjectGrant, ProjectSubjectType,
     };
     use agentdash_domain::story::{StateChange, Story};
-    use agentdash_domain::task::Task;
+    use agentdash_domain::task::{Task, TaskStatus};
     use agentdash_domain::workflow::{
-        LifecycleSubjectAssociation, OrchestrationInstance, OrchestrationPlanSnapshot,
-        OrchestrationSourceRef, PlanNode, PlanNodeKind, RuntimeNodeState, SubjectRef,
+        LifecycleAgent, LifecycleRunStatus, LifecycleSubjectAssociation, OrchestrationInstance,
+        OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNode, PlanNodeKind,
+        RuntimeNodeState, RuntimeSessionExecutionAnchor, SubjectRef,
     };
     use chrono::Utc;
 
@@ -598,6 +619,144 @@ mod tests {
         }
     }
 
+    struct InMemoryLifecycleAgentRepo {
+        agents: Mutex<Vec<LifecycleAgent>>,
+    }
+
+    #[async_trait]
+    impl LifecycleAgentRepository for InMemoryLifecycleAgentRepo {
+        async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
+            self.agents.lock().unwrap().push(agent.clone());
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
+            Ok(self
+                .agents
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|agent| agent.id == id)
+                .cloned())
+        }
+
+        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
+            Ok(self
+                .agents
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|agent| agent.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
+            let mut agents = self.agents.lock().unwrap();
+            if let Some(existing) = agents.iter_mut().find(|existing| existing.id == agent.id) {
+                *existing = agent.clone();
+            }
+            Ok(())
+        }
+    }
+
+    struct InMemoryExecutionAnchorRepo {
+        anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
+    }
+
+    #[async_trait]
+    impl RuntimeSessionExecutionAnchorRepository for InMemoryExecutionAnchorRepo {
+        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+            let mut anchors = self.anchors.lock().unwrap();
+            if let Some(existing) = anchors
+                .iter_mut()
+                .find(|existing| existing.runtime_session_id == anchor.runtime_session_id)
+            {
+                *existing = anchor.clone();
+            } else {
+                anchors.push(anchor.clone());
+            }
+            Ok(())
+        }
+
+        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+            self.anchors
+                .lock()
+                .unwrap()
+                .retain(|anchor| anchor.runtime_session_id != runtime_session_id);
+            Ok(())
+        }
+
+        async fn find_by_session(
+            &self,
+            runtime_session_id: &str,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|anchor| anchor.runtime_session_id == runtime_session_id)
+                .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| anchor.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_project_session_ids(
+            &self,
+            runtime_session_ids: &[String],
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| runtime_session_ids.contains(&anchor.runtime_session_id))
+                .cloned()
+                .collect())
+        }
+
+        async fn latest_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .max_by_key(|anchor| anchor.updated_at)
+                .cloned())
+        }
+    }
+
     // ── Fixtures ─────────────────────────────────────────────────
 
     fn make_run_with_runtime_node_status(
@@ -663,12 +822,40 @@ mod tests {
         run
     }
 
-    fn association_for_task(run_id: Uuid, task_id: Uuid) -> LifecycleSubjectAssociation {
-        LifecycleSubjectAssociation::new_run_scoped(
+    fn agent_for_run(run: &LifecycleRun) -> LifecycleAgent {
+        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, "task_agent");
+        agent.set_current_frame(Uuid::new_v4());
+        agent
+    }
+
+    fn association_for_task(
+        run_id: Uuid,
+        agent_id: Uuid,
+        task_id: Uuid,
+    ) -> LifecycleSubjectAssociation {
+        LifecycleSubjectAssociation::new_agent_scoped(
             run_id,
+            agent_id,
             &SubjectRef::new("task", task_id),
             "user_initiated",
             None,
+        )
+    }
+
+    fn anchor_for_runtime_node(
+        run: &LifecycleRun,
+        agent: &LifecycleAgent,
+        orchestration_id: Uuid,
+        node_path: &str,
+    ) -> RuntimeSessionExecutionAnchor {
+        RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
+            format!("sess-{node_path}"),
+            run.id,
+            agent.current_frame_id.expect("agent current frame"),
+            agent.id,
+            orchestration_id,
+            node_path,
+            1,
         )
     }
 
@@ -692,7 +879,10 @@ mod tests {
             "only",
             RuntimeNodeStatus::Running,
         );
-        let assoc = association_for_task(run.id, task_id);
+        let agent = agent_for_run(&run);
+        let anchor =
+            anchor_for_runtime_node(&run, &agent, run.orchestrations[0].orchestration_id, "only");
+        let assoc = association_for_task(run.id, agent.id, task_id);
 
         let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {
             projects: Mutex::new(vec![project]),
@@ -711,6 +901,14 @@ mod tests {
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
             });
+        let lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository> =
+            Arc::new(InMemoryLifecycleAgentRepo {
+                agents: Mutex::new(vec![agent]),
+            });
+        let execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository> =
+            Arc::new(InMemoryExecutionAnchorRepo {
+                anchors: Mutex::new(vec![anchor]),
+            });
 
         project_task_views_on_boot(
             &project_repo,
@@ -718,6 +916,8 @@ mod tests {
             &story_repo,
             &association_repo,
             &lifecycle_run_repo,
+            &lifecycle_agent_repo,
+            &execution_anchor_repo,
         )
         .await
         .expect("reconcile ok");
@@ -749,7 +949,10 @@ mod tests {
             "only",
             RuntimeNodeStatus::Completed,
         );
-        let assoc = association_for_task(run.id, task_id);
+        let agent = agent_for_run(&run);
+        let anchor =
+            anchor_for_runtime_node(&run, &agent, run.orchestrations[0].orchestration_id, "only");
+        let assoc = association_for_task(run.id, agent.id, task_id);
 
         let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {
             projects: Mutex::new(vec![project]),
@@ -768,6 +971,14 @@ mod tests {
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
             });
+        let lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository> =
+            Arc::new(InMemoryLifecycleAgentRepo {
+                agents: Mutex::new(vec![agent]),
+            });
+        let execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository> =
+            Arc::new(InMemoryExecutionAnchorRepo {
+                anchors: Mutex::new(vec![anchor]),
+            });
 
         project_task_views_on_boot(
             &project_repo,
@@ -775,6 +986,8 @@ mod tests {
             &story_repo,
             &association_repo,
             &lifecycle_run_repo,
+            &lifecycle_agent_repo,
+            &execution_anchor_repo,
         )
         .await
         .expect("reconcile ok");
@@ -805,7 +1018,10 @@ mod tests {
             "only",
             RuntimeNodeStatus::Cancelled,
         );
-        let assoc = association_for_task(run.id, task_id);
+        let agent = agent_for_run(&run);
+        let anchor =
+            anchor_for_runtime_node(&run, &agent, run.orchestrations[0].orchestration_id, "only");
+        let assoc = association_for_task(run.id, agent.id, task_id);
 
         let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {
             projects: Mutex::new(vec![project]),
@@ -824,6 +1040,14 @@ mod tests {
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
             });
+        let lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository> =
+            Arc::new(InMemoryLifecycleAgentRepo {
+                agents: Mutex::new(vec![agent]),
+            });
+        let execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository> =
+            Arc::new(InMemoryExecutionAnchorRepo {
+                anchors: Mutex::new(vec![anchor]),
+            });
 
         project_task_views_on_boot(
             &project_repo,
@@ -831,6 +1055,8 @@ mod tests {
             &story_repo,
             &association_repo,
             &lifecycle_run_repo,
+            &lifecycle_agent_repo,
+            &execution_anchor_repo,
         )
         .await
         .expect("reconcile ok");
@@ -843,7 +1069,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn orphan_running_task_without_active_run_falls_back_to_failed() {
+    async fn running_task_without_lifecycle_fact_stays_unchanged() {
         let project = Project::new("P".into(), "".into());
         let project_id = project.id;
 
@@ -870,12 +1096,22 @@ mod tests {
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![]),
             });
+        let lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository> =
+            Arc::new(InMemoryLifecycleAgentRepo {
+                agents: Mutex::new(vec![]),
+            });
+        let execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository> =
+            Arc::new(InMemoryExecutionAnchorRepo {
+                anchors: Mutex::new(vec![]),
+            });
         project_task_views_on_boot(
             &project_repo,
             &state_change_repo,
             &story_repo,
             &association_repo,
             &lifecycle_run_repo,
+            &lifecycle_agent_repo,
+            &execution_anchor_repo,
         )
         .await
         .expect("reconcile ok");
@@ -883,13 +1119,13 @@ mod tests {
         let after = story_repo.find_by_task_id(task_id).await.unwrap().unwrap();
         assert_eq!(
             *after.find_task(task_id).unwrap().status(),
-            TaskStatus::Failed,
-            "孤儿 Running task → Failed"
+            TaskStatus::Running,
+            "没有 lifecycle runtime fact 时不从缺失关系推断终态"
         );
     }
 
     #[tokio::test]
-    async fn inactive_run_does_not_project() {
+    async fn task_association_without_runtime_anchor_stays_unchanged() {
         let project = Project::new("P".into(), "".into());
         let project_id = project.id;
 
@@ -899,15 +1135,15 @@ mod tests {
         story.add_task(task);
 
         let lifecycle_id = Uuid::new_v4();
-        let mut run = make_run_with_runtime_node_status(
+        let run = make_run_with_runtime_node_status(
             project_id,
             lifecycle_id,
-            "sess-boot-inactive",
+            "sess-boot-no-anchor",
             "only",
             RuntimeNodeStatus::Running,
         );
-        run.status = LifecycleRunStatus::Completed;
-        let assoc = association_for_task(run.id, task_id);
+        let agent = agent_for_run(&run);
+        let assoc = association_for_task(run.id, agent.id, task_id);
 
         let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {
             projects: Mutex::new(vec![project]),
@@ -926,6 +1162,14 @@ mod tests {
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
             });
+        let lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository> =
+            Arc::new(InMemoryLifecycleAgentRepo {
+                agents: Mutex::new(vec![agent]),
+            });
+        let execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository> =
+            Arc::new(InMemoryExecutionAnchorRepo {
+                anchors: Mutex::new(vec![]),
+            });
 
         project_task_views_on_boot(
             &project_repo,
@@ -933,6 +1177,8 @@ mod tests {
             &story_repo,
             &association_repo,
             &lifecycle_run_repo,
+            &lifecycle_agent_repo,
+            &execution_anchor_repo,
         )
         .await
         .expect("reconcile ok");
@@ -941,7 +1187,7 @@ mod tests {
         assert_eq!(
             *after.find_task(task_id).unwrap().status(),
             TaskStatus::Pending,
-            "非活跃 run 不应影响 task 状态"
+            "缺少 runtime anchor 不应影响 task 状态"
         );
     }
 
@@ -981,6 +1227,14 @@ mod tests {
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
             });
+        let lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository> =
+            Arc::new(InMemoryLifecycleAgentRepo {
+                agents: Mutex::new(vec![]),
+            });
+        let execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository> =
+            Arc::new(InMemoryExecutionAnchorRepo {
+                anchors: Mutex::new(vec![]),
+            });
 
         project_task_views_on_boot(
             &project_repo,
@@ -988,6 +1242,8 @@ mod tests {
             &story_repo,
             &association_repo,
             &lifecycle_run_repo,
+            &lifecycle_agent_repo,
+            &execution_anchor_repo,
         )
         .await
         .expect("reconcile ok");

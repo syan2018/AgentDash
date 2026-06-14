@@ -223,3 +223,65 @@ Workflow 与 Lifecycle 编辑链路必须把能力配置当成结构化字段透
 - Workflow 级权威字段：`WorkflowDefinition.contract.capability_config.tool_directives`
 - Lifecycle step 级权威字段：`LifecycleStepDefinition.capability_config.tool_directives`
 - 前端 mapper / store / editor 必须在读取、保存和模板 bootstrap 后 roundtrip 不丢字段
+
+### Capability Catalog Projection
+
+前端 capability editor 使用后端 catalog projection，而不是本地镜像 well-known key、label 或
+visibility baseline。这样做的原因是 capability visibility、auto-grant 和 tool mapping 都由 SPI
+规则决定，前端只负责展示、排序和编辑用户选择。
+
+#### 1. Scope / Trigger
+
+- Trigger: workflow capability editor 需要展示 key、label、description、allowed scopes、auto grant
+  和 tools。
+- Scope: `agentdash-spi::platform::tool_capability` → application catalog projection →
+  `agentdash-contracts::workflow::CapabilityCatalogResponse` → frontend editor。
+
+#### 2. Signatures
+
+```rust
+pub fn query_capability_catalog(capability_keys: Option<&[String]>) -> CapabilityCatalogResponse;
+pub fn query_tool_catalog(capability_keys: &[String]) -> Vec<ToolDescriptorDto>;
+```
+
+#### 3. Contracts
+
+- `CapabilityCatalogResponse.capabilities[]` fields:
+  - `key`
+  - `label`
+  - `description`
+  - `allowed_scopes: CapabilityScopeDto[]`
+  - `auto_granted`
+  - `agent_can_grant`
+  - `workflow_can_grant`
+  - `tools: ToolDescriptorDto[]`
+- `mcp:<preset_key>` entries are projected as non-auto-granted, grantable custom MCP capabilities
+  with Project/Story/Task scopes.
+
+#### 4. Validation & Error Matrix
+
+| 条件 | 语义 |
+| --- | --- |
+| unknown non-MCP key | omitted from catalog projection |
+| duplicate requested keys | response contains one entry per key |
+| well-known key | metadata and visibility derive from SPI rule |
+| `mcp:*` key | response contains placeholder tool descriptor for runtime discovery |
+
+#### 5. Good/Base/Bad Cases
+
+- Good: `workspace_module` entry shows Project/Story/Task scopes and create/list/describe/invoke/present tools.
+- Base: editor requests no explicit keys and receives all well-known platform capabilities.
+- Bad: editor stores its own auto-granted baseline and diverges from SPI visibility rules.
+
+#### 6. Tests Required
+
+- Backend catalog test asserts `workspace_module` tools and scopes.
+- Frontend panel tests assert baseline and labels come from fetched catalog.
+- Contract check asserts generated `workflow-contracts.ts` includes capability catalog DTOs.
+
+#### 7. Wrong vs Correct
+
+```text
+Wrong: frontend CAP_EDITOR_WELL_KNOWN_KEYS + AUTO_GRANTED_BASELINE decide capability visibility.
+Correct: frontend consumes CapabilityCatalogResponse and only stores UI selection state.
+```

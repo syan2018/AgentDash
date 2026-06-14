@@ -37,12 +37,19 @@ import type {
   WorkflowContextBinding,
   AgentProcedureContract as GeneratedAgentProcedureContract,
   AgentProcedureResponse,
+  CapabilityCatalogEntryDto,
+  CapabilityCatalogResponse,
+  CapabilityScopeDto,
   DefinitionSource,
+  PlatformMcpScopeDto,
+  ToolClusterDto,
   WorkflowGraphResponse,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
   WorkflowTargetKind,
+  ToolDescriptorDto,
+  ToolSourceDto,
 } from "../generated/workflow-contracts";
 
 export type {
@@ -79,6 +86,13 @@ export type {
   ValidationSeverity,
   WorkflowContextBinding,
   DefinitionSource,
+  CapabilityCatalogEntryDto,
+  CapabilityCatalogResponse,
+  CapabilityScopeDto,
+  PlatformMcpScopeDto,
+  ToolClusterDto,
+  ToolDescriptorDto,
+  ToolSourceDto,
   WorkflowTargetKind,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
@@ -181,34 +195,7 @@ export function directiveKind(directive: CapabilityDirective): "add" | "remove" 
   return "add" in directive ? "add" : "remove";
 }
 
-export const WELL_KNOWN_CAPABILITY_KEYS = [
-  "file_read",
-  "file_write",
-  "shell_execute",
-  "workspace_module",
-  "workflow",
-  "collaboration",
-  "story_management",
-  "task_management",
-  "relay_management",
-  "workflow_management",
-] as const;
-
-// ─── Tool Descriptor（统一工具元数据）──────────────────
-
-export type ToolSourceType = "platform" | "platform_mcp" | "mcp";
-export type PlatformMcpScope = "relay" | "story" | "task" | "workflow";
-
-export interface ToolDescriptor {
-  name: string;
-  display_name: string;
-  description: string;
-  source:
-    | { type: "platform"; cluster: string }
-    | { type: "platform_mcp"; scope: PlatformMcpScope }
-    | { type: "mcp"; server_name: string };
-  capability_key: string;
-}
+export type ToolDescriptor = ToolDescriptorDto;
 
 export interface WorkflowValidationResult {
   valid: boolean;

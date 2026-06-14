@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
+  CapabilityCatalogEntryDto,
   CapabilityDirective,
   McpPresetDto,
   ToolDescriptor,
@@ -30,7 +31,7 @@ import {
   toolBlockedByWorkflow,
 } from "../../capability-directive-ops";
 import { fetchProjectMcpPresets } from "../../../../services/mcpPreset";
-import { fetchToolCatalog } from "../../../../services/workflow";
+import { fetchCapabilityCatalog, fetchToolCatalog } from "../../../../services/workflow";
 import { useMcpProbeStore } from "../../../../stores/mcpProbeStore";
 import { formatTargetKinds } from "../../shared-labels";
 import {
@@ -38,12 +39,9 @@ import {
   mcpProbePlaceholderDescriptor,
 } from "../../../mcp-shared/probeViewModel";
 import {
-  AUTO_GRANTED_BASELINE,
-  CAP_EDITOR_WELL_KNOWN_KEYS,
-  WELL_KNOWN_CAPABILITY_DESCRIPTION,
-  WELL_KNOWN_CAPABILITY_LABEL,
+  capabilityAutoGrantedForTargetKind,
+  capabilityVisibleForTargetKind,
   extractMcpPresetName,
-  isWellKnownCapability,
 } from "./shared";
 
 /** 工具行 — 展示单个工具，带「屏蔽此工具」/「恢复」按钮。 */
@@ -257,6 +255,9 @@ function CapabilitiesEditor({
   const [presets, setPresets] = useState<McpPresetDto[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [presetsError, setPresetsError] = useState<string | null>(null);
+  const [capabilityCatalog, setCapabilityCatalog] = useState<CapabilityCatalogEntryDto[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const getOrRefreshProbe = useMcpProbeStore((state) => state.getOrRefresh);
 
   // 已展开工具面板的 capability key 集合
@@ -265,6 +266,29 @@ function CapabilitiesEditor({
   const [toolCatalogCache, setToolCatalogCache] = useState<Record<string, ToolDescriptor[]>>({});
   // 「+ 添加能力」picker 是否展开
   const [showPicker, setShowPicker] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      setCatalogLoading(true);
+      setCatalogError(null);
+      try {
+        const catalog = await fetchCapabilityCatalog();
+        if (!cancelled) setCapabilityCatalog(catalog.capabilities);
+      } catch (err) {
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : String(err);
+          setCatalogError(message);
+          setCapabilityCatalog([]);
+        }
+      } finally {
+        if (!cancelled) setCatalogLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!projectId) return;
@@ -290,10 +314,25 @@ function CapabilitiesEditor({
     };
   }, [projectId]);
 
-  const baselineKeys = useMemo(
-    () => Array.from(new Set(targetKinds.flatMap((kind) => AUTO_GRANTED_BASELINE[kind]))),
-    [targetKinds],
-  );
+  const catalogByKey = useMemo(() => {
+    const entries = new Map<string, CapabilityCatalogEntryDto>();
+    for (const entry of capabilityCatalog) {
+      entries.set(entry.key, entry);
+    }
+    return entries;
+  }, [capabilityCatalog]);
+
+  const baselineKeys = useMemo(() => {
+    const keys: string[] = [];
+    for (const targetKind of targetKinds) {
+      for (const entry of capabilityCatalog) {
+        if (capabilityAutoGrantedForTargetKind(entry, targetKind) && !keys.includes(entry.key)) {
+          keys.push(entry.key);
+        }
+      }
+    }
+    return keys;
+  }, [capabilityCatalog, targetKinds]);
   const baselineSet = useMemo(() => new Set<string>(baselineKeys), [baselineKeys]);
 
   // 当前所有显式 Add 的 capability key（短 path + 长 path 合并）
@@ -331,6 +370,12 @@ function CapabilitiesEditor({
       if (toolCatalogCache[key]) return;
 
       const mcpServerName = key.startsWith("mcp:") ? key.slice(4) : null;
+      const catalogEntry = catalogByKey.get(key);
+      if (mcpServerName === null && catalogEntry) {
+        setToolCatalogCache((prev) => ({ ...prev, [key]: catalogEntry.tools }));
+        return;
+      }
+
       if (mcpServerName !== null) {
         const preset = presets.find((p) => p.key === mcpServerName);
         if (!preset) {
@@ -373,7 +418,7 @@ function CapabilitiesEditor({
         setToolCatalogCache((prev) => ({ ...prev, [key]: [] }));
       }
     },
-    [toolCatalogCache, presets, getOrRefreshProbe],
+    [toolCatalogCache, presets, getOrRefreshProbe, catalogByKey],
   );
 
   // 切换 baseline 能力的屏蔽状态：发出 Remove(cap) / 撤销该 Remove
@@ -432,12 +477,15 @@ function CapabilitiesEditor({
     [directives, onChange],
   );
 
-  // 可追加选项：well-known 中未被 baseline 覆盖也未被显式 Add 的
-  const wellKnownAddable = useMemo(() => {
-    return CAP_EDITOR_WELL_KNOWN_KEYS.filter(
-      (k) => !baselineSet.has(k) && !declaredAddKeys.has(k),
+  // 可追加选项：catalog 中未被 baseline 覆盖也未被显式 Add 的能力。
+  const catalogAddable = useMemo(() => {
+    return capabilityCatalog.filter(
+      (entry) =>
+        !baselineSet.has(entry.key) &&
+        !declaredAddKeys.has(entry.key) &&
+        targetKinds.some((targetKind) => capabilityVisibleForTargetKind(entry, targetKind)),
     );
-  }, [baselineSet, declaredAddKeys]);
+  }, [baselineSet, capabilityCatalog, declaredAddKeys, targetKinds]);
 
   // 可追加的 MCP preset：当前 project 已注册且未被显式 Add 的
   const mcpAddable = useMemo(() => {
@@ -453,10 +501,19 @@ function CapabilitiesEditor({
         </label>
         <p className="mb-2 text-[11px] text-muted-foreground">
           根据挂载类型自动授予的能力基线（<code className="rounded bg-secondary/50 px-1">auto_granted</code>）。
-          每条能力可单独屏蔽，或展开后屏蔽下属某个工具。镜像自后端 visibility rule。
+          每条能力可单独屏蔽，或展开后屏蔽下属某个工具。
         </p>
+        {catalogLoading && (
+          <p className="py-2 text-center text-xs text-muted-foreground">Capability catalog 加载中...</p>
+        )}
+        {catalogError && (
+          <p className="rounded-[8px] border border-destructive/30 bg-destructive/5 px-2 py-1 text-[11px] text-destructive">
+            加载 capability catalog 失败：{catalogError}
+          </p>
+        )}
         <div className="space-y-1.5">
           {baselineKeys.map((key) => {
+            const entry = catalogByKey.get(key);
             const isBlocked = capabilityBlockedByWorkflow(directives, key);
             const isExpanded = expandedCaps.has(key);
             const tools = toolCatalogCache[key] ?? [];
@@ -464,8 +521,8 @@ function CapabilitiesEditor({
               <CapabilityRow
                 key={key}
                 capKey={key}
-                label={WELL_KNOWN_CAPABILITY_LABEL[key]}
-                description={WELL_KNOWN_CAPABILITY_DESCRIPTION[key]}
+                label={entry?.label ?? key}
+                description={entry?.description ?? ""}
                 isBaseline
                 isBlocked={isBlocked}
                 isExpanded={isExpanded}
@@ -493,15 +550,15 @@ function CapabilitiesEditor({
         )}
         <div className="space-y-1.5">
           {extraKeys.map((key) => {
-            const isWellKnown = isWellKnownCapability(key);
+            const catalogEntry = catalogByKey.get(key);
             const mcpName = extractMcpPresetName(key);
-            const label = isWellKnown
-              ? WELL_KNOWN_CAPABILITY_LABEL[key]
+            const label = catalogEntry
+              ? catalogEntry.label
               : mcpName
                 ? `MCP · ${mcpName}`
                 : key;
-            const description = isWellKnown
-              ? WELL_KNOWN_CAPABILITY_DESCRIPTION[key]
+            const description = catalogEntry
+              ? catalogEntry.description
               : mcpName
                 ? `用户自定义 MCP Preset 引用。由后端按 preset key 展开为运行时 MCP server。`
                 : "未识别的 capability key —— 建议清理。";
@@ -514,7 +571,7 @@ function CapabilitiesEditor({
               <span className="rounded bg-warning/15 px-1.5 py-0.5 text-[9px] font-mono text-warning">
                 mcp
               </span>
-            ) : !isWellKnown ? (
+            ) : !catalogEntry ? (
               <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[9px] text-destructive">
                 未知
               </span>
@@ -551,21 +608,21 @@ function CapabilitiesEditor({
             {/* Well-known 可追加 */}
             <div>
               <p className="mb-1 text-[11px] font-medium text-muted-foreground">Well-known 能力</p>
-              {wellKnownAddable.length === 0 ? (
+              {catalogAddable.length === 0 ? (
                 <p className="py-1 text-[11px] text-muted-foreground">
                   所有 well-known 能力已在基线或已追加
                 </p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
-                  {wellKnownAddable.map((key) => (
+                  {catalogAddable.map((entry) => (
                     <button
-                      key={key}
+                      key={entry.key}
                       type="button"
-                      onClick={() => addExtraCapability(key)}
+                      onClick={() => addExtraCapability(entry.key)}
                       className="rounded-[8px] border border-border bg-background px-3 py-1 text-xs text-foreground hover:border-primary/30 hover:bg-primary/5"
-                      title={WELL_KNOWN_CAPABILITY_DESCRIPTION[key]}
+                      title={entry.description}
                     >
-                      {WELL_KNOWN_CAPABILITY_LABEL[key]}
+                      {entry.label}
                     </button>
                   ))}
                 </div>

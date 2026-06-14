@@ -78,7 +78,8 @@ use agentdash_contracts::mcp_preset::{
 };
 use agentdash_contracts::permission::{
     ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
-    PermissionGrantStatusDto,
+    PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PolicyDecisionDto, PolicyOutcomeDto,
+    ScopeEscalationIntentDto,
 };
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent, ProjectAgentExecutor,
@@ -123,12 +124,12 @@ use agentdash_contracts::workflow::{
     AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest,
     AgentRunMailboxView, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
     AgentRunMessageCommandResponse, AgentRunRefDto, AgentRunView,
-    AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
     AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, ConsumptionBarrier, ConversationCommandKind,
-    ConversationCommandPlacement, ConversationCommandSetView, ConversationCommandStaleGuardView,
-    ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
+    AgentRunWorkspaceView, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
+    CapabilityScopeDto, ConsumptionBarrier, ConversationCommandKind, ConversationCommandPlacement,
+    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
+    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
     ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
     ConversationModelConfigView, DefinitionSource, DeleteAgentProcedureResponse,
@@ -137,13 +138,13 @@ use agentdash_contracts::workflow::{
     LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
     MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource,
     MailboxMessageStatus, MailboxMessageView, MailboxStateView, OrchestrationInstanceView,
-    PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
-    RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionCommandStateDto,
-    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
-    RuntimeSessionTraceView, SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
-    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
-    SessionShellDto, SteeringStopEffect, SubjectExecutionView, SubjectRefDto,
-    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
+    PlatformMcpScopeDto, PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse,
+    ProjectActiveAgentsView, RegisterHookPresetResponse, RuntimeNodeView,
+    RuntimeSessionCommandStateDto, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
+    RuntimeSessionTraceMeta, RuntimeSessionTraceView, SessionRuntimeControlPlaneStatus,
+    SessionRuntimeControlPlaneView, SessionRuntimeControlView, SessionShellDto, SteeringStopEffect,
+    SubjectExecutionView, SubjectRefDto, SubmitOrchestrationHumanDecisionRequest,
+    SubmitOrchestrationHumanDecisionResponse, ToolClusterDto, ToolDescriptorDto, ToolSourceDto,
     ValidateHookScriptResponse, ValidationIssue, WorkflowGraphResponse,
     WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
     WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
@@ -359,6 +360,10 @@ fn main() {
         |dir| {
             export_all::<PermissionGrantScopeDto>(dir);
             export_all::<PermissionGrantStatusDto>(dir);
+            export_all::<PermissionGrantStatusGroupDto>(dir);
+            export_all::<PolicyOutcomeDto>(dir);
+            export_all::<PolicyDecisionDto>(dir);
+            export_all::<ScopeEscalationIntentDto>(dir);
             export_all::<ListPermissionGrantsQuery>(dir);
             export_all::<PermissionGrantResponse>(dir);
         },
@@ -480,8 +485,6 @@ fn main() {
             export_all::<AgentRunWorkspaceShell>(dir);
             export_all::<AgentRunWorkspaceControlPlaneStatus>(dir);
             export_all::<AgentRunWorkspaceControlPlaneView>(dir);
-            export_all::<AgentRunWorkspaceActionAvailabilityView>(dir);
-            export_all::<AgentRunWorkspaceActionSetView>(dir);
             export_all::<ConversationExecutionStatus>(dir);
             export_all::<ConversationModelConfigStatus>(dir);
             export_all::<ConversationModelConfigSource>(dir);
@@ -506,13 +509,18 @@ fn main() {
             export_all::<RuntimeSessionTraceView>(dir);
             export_all::<SessionRuntimeControlPlaneStatus>(dir);
             export_all::<SessionRuntimeControlPlaneView>(dir);
-            export_all::<SessionRuntimeActionAvailabilityView>(dir);
-            export_all::<SessionRuntimeActionSetView>(dir);
             export_all::<SessionRuntimeControlView>(dir);
             export_all::<AgentRunWorkspaceListEntry>(dir);
             export_all::<AgentRunWorkspaceListView>(dir);
             export_all::<DefinitionSource>(dir);
             export_all::<WorkflowTargetKind>(dir);
+            export_all::<CapabilityScopeDto>(dir);
+            export_all::<ToolClusterDto>(dir);
+            export_all::<PlatformMcpScopeDto>(dir);
+            export_all::<ToolSourceDto>(dir);
+            export_all::<ToolDescriptorDto>(dir);
+            export_all::<CapabilityCatalogEntryDto>(dir);
+            export_all::<CapabilityCatalogResponse>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);
             export_all::<DeleteAgentProcedureResponse>(dir);
             export_all::<PreflightWorkflowScriptRequest>(dir);

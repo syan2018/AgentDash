@@ -75,10 +75,6 @@ delivery_runtime_ref?: RuntimeSessionRefDto,
  */
 last_delivery_status?: string, created_at: string, updated_at: string, };
 
-export type AgentRunWorkspaceActionAvailabilityView = { enabled: boolean, unavailable_reason?: string, };
-
-export type AgentRunWorkspaceActionSetView = { submit_message: AgentRunWorkspaceActionAvailabilityView, cancel: AgentRunWorkspaceActionAvailabilityView, };
-
 export type AgentRunWorkspaceControlPlaneStatus = "ready" | "running" | "cancelling" | "terminal" | "frame_missing" | "delivery_missing";
 
 export type AgentRunWorkspaceControlPlaneView = { status: AgentRunWorkspaceControlPlaneStatus, reason?: string, };
@@ -89,7 +85,7 @@ export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<
 
 export type AgentRunWorkspaceShell = { display_title: string, title_source: string, workspace_status: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
 
-export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: AgentRunWorkspaceActionSetView, mailbox: MailboxStateView, mailbox_messages: Array<MailboxMessageView>, resource_surface?: ResolvedVfsSurface, conversation?: AgentConversationSnapshot, };
+export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, conversation?: AgentConversationSnapshot, };
 
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
 
@@ -99,7 +95,13 @@ export type ArtifactBinding = { from_activity?: string, from_port: string, to_po
 
 export type BashExecExecutorSpec = { command: string, args?: Array<string>, working_directory?: string, };
 
+export type CapabilityCatalogEntryDto = { key: string, label: string, description: string, allowed_scopes: Array<CapabilityScopeDto>, auto_granted: boolean, agent_can_grant: boolean, workflow_can_grant: boolean, tools: Array<ToolDescriptorDto>, };
+
+export type CapabilityCatalogResponse = { capabilities: Array<CapabilityCatalogEntryDto>, };
+
 export type CapabilityConfig = { tool_directives: Array<ToolCapabilityDirective>, mount_directives: Array<unknown>, };
+
+export type CapabilityScopeDto = "project" | "story" | "task";
 
 export type ConsumptionBarrier = "immediate_if_idle" | "agent_loop_turn_boundary" | "agent_run_turn_boundary" | "manual_resume";
 
@@ -123,7 +125,7 @@ export type ConversationExecutionView = { status: ConversationExecutionStatus, r
 
 export type ConversationKeyboardMapView = { enter?: string, ctrl_enter?: string, };
 
-export type ConversationMailboxSnapshotView = { visible_message_count: number, paused: boolean, user_attention: boolean, resume_command?: ConversationCommandView, };
+export type ConversationMailboxSnapshotView = { visible_message_count: number, paused: boolean, user_attention: boolean, resume_command?: ConversationCommandView, state?: MailboxStateView, messages: Array<MailboxMessageView>, };
 
 export type ConversationModelConfigStatus = "resolved" | "model_required";
 
@@ -185,6 +187,8 @@ export type OrchestrationInstanceView = { orchestration_id: string, role: string
 
 export type OutputPortDefinition = { key: string, description: string, gate_strategy: GateStrategy, gate_params?: JsonValue, };
 
+export type PlatformMcpScopeDto = "relay" | "story" | "task" | "workflow";
+
 export type PreflightWorkflowScriptRequest = { project_id: string, source_text: string, args?: JsonValue, ctx?: JsonValue, runtime_session_id?: string, };
 
 export type PreflightWorkflowScriptResponse = { valid: boolean, source_digest: string, source_ref: JsonValue, raw_builder_document?: JsonValue, plan_snapshot?: JsonValue, plan_preview?: WorkflowScriptPlanPreviewDto, capability_summary: WorkflowScriptCapabilitySummaryDto, diagnostics: Array<WorkflowScriptPreflightDiagnosticDto>, };
@@ -205,15 +209,11 @@ export type RuntimeSessionTraceMeta = { runtime_session_ref: RuntimeSessionRefDt
 
 export type RuntimeSessionTraceView = { runtime_session_ref: RuntimeSessionRefDto, frame_ref?: AgentFrameRefDto, events: Array<JsonValue>, turns: Array<JsonValue>, };
 
-export type SessionRuntimeActionAvailabilityView = { enabled: boolean, unavailable_reason?: string, };
-
-export type SessionRuntimeActionSetView = { submit_message: SessionRuntimeActionAvailabilityView, cancel: SessionRuntimeActionAvailabilityView, };
-
 export type SessionRuntimeControlPlaneStatus = "unbound_trace" | "anchored_idle" | "anchored_running" | "anchored_cancelling" | "terminal" | "frame_missing";
 
 export type SessionRuntimeControlPlaneView = { status: SessionRuntimeControlPlaneStatus, reason?: string, };
 
-export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, control_plane: SessionRuntimeControlPlaneView, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: SessionRuntimeActionSetView, mailbox: MailboxStateView, mailbox_messages: Array<MailboxMessageView>, };
+export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, control_plane: SessionRuntimeControlPlaneView, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, };
 
 export type SessionShellDto = { id: string, title: string, title_source: string, created_at: bigint, updated_at: bigint, last_event_seq: bigint, last_turn_id?: string, last_delivery_status: string, };
 
@@ -230,6 +230,12 @@ export type SubmitOrchestrationHumanDecisionResponse = { run: LifecycleRunView, 
 export type ToolCapabilityDirective = { "add": ToolCapabilityPath } | { "remove": ToolCapabilityPath };
 
 export type ToolCapabilityPath = string;
+
+export type ToolClusterDto = "read" | "write" | "execute" | "workflow" | "collaboration" | "workspace_module";
+
+export type ToolDescriptorDto = { name: string, display_name: string, description: string, source: ToolSourceDto, capability_key: string, };
+
+export type ToolSourceDto = { "type": "platform", cluster: ToolClusterDto, } | { "type": "platform_mcp", scope: PlatformMcpScopeDto, } | { "type": "mcp", server_name: string, };
 
 export type TransitionCondition = { "kind": "always" } | { "kind": "artifact_field_equals", activity: string, port: string, path: string, value: JsonValue, } | { "kind": "human_decision_equals", activity: string, decision_port: string, value: string, } | { "kind": "agent_signal_equals", activity: string, signal_key: string, value: JsonValue, };
 

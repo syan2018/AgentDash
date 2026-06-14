@@ -13,9 +13,6 @@ use axum::{
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
-use crate::routes::agent_run_mailbox_contracts::{
-    mailbox_message_view, mailbox_message_visible, mailbox_state_view,
-};
 use crate::routes::lifecycle_contracts::{
     agent_run_to_contract, lifecycle_run_view_to_contract, subject_association_to_contract,
 };
@@ -34,9 +31,8 @@ use agentdash_contracts::session::{
     SessionProjectionViewResponse,
 };
 use agentdash_contracts::workflow::{
-    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, SessionRuntimeActionAvailabilityView,
-    SessionRuntimeActionSetView, SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView,
-    SessionRuntimeControlView, SessionShellDto,
+    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, SessionRuntimeControlPlaneStatus,
+    SessionRuntimeControlPlaneView, SessionRuntimeControlView, SessionShellDto,
 };
 use agentdash_domain::workflow::{LifecycleRun, RuntimeSessionExecutionAnchor};
 
@@ -177,14 +173,6 @@ pub async fn get_session_runtime_control(
             agent: None,
             frame_runtime: None,
             subject_associations: Vec::new(),
-            actions: SessionRuntimeActionSetView {
-                submit_message: disabled_action(
-                    "当前 Session 没有绑定 Agent 控制面，不能继续发送消息。",
-                ),
-                cancel: disabled_action("当前 Session 没有正在执行的 turn。"),
-            },
-            mailbox: mailbox_state_view(None, false, 0, false),
-            mailbox_messages: Vec::new(),
         }));
     };
 
@@ -279,50 +267,6 @@ pub async fn get_session_runtime_control(
             reason: None,
         }
     };
-    let submit_message = if has_frame && !terminal_agent {
-        enabled_action()
-    } else if terminal_agent {
-        disabled_action("当前 Agent 已结束，不能继续发送消息。")
-    } else {
-        disabled_action("当前 Agent 没有可投递的 runtime frame。")
-    };
-    let cancel = if delivery_running || delivery_cancelling {
-        enabled_action()
-    } else {
-        disabled_action("当前 Session 没有正在执行的 turn。")
-    };
-
-    let mailbox_messages = state
-        .repos
-        .agent_run_mailbox_repo
-        .list_messages(anchor.run_id, anchor.agent_id)
-        .await?;
-    let visible_message_count = mailbox_messages
-        .iter()
-        .filter(|message| mailbox_message_visible(message))
-        .count();
-    let mailbox = mailbox_state_view(
-        state
-            .repos
-            .agent_run_mailbox_repo
-            .get_state(anchor.run_id, anchor.agent_id)
-            .await?
-            .as_ref(),
-        !terminal_agent,
-        visible_message_count,
-        state
-            .repos
-            .backend_repo
-            .get_preferences()
-            .await
-            .unwrap_or_default()
-            .hide_system_steer_messages,
-    );
-    let mailbox_messages = mailbox_messages
-        .into_iter()
-        .map(mailbox_message_view)
-        .collect();
-
     Ok(Json(SessionRuntimeControlView {
         runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
         session_meta: session_shell_dto(&meta),
@@ -332,27 +276,7 @@ pub async fn get_session_runtime_control(
         agent: agent_view.map(agent_run_to_contract),
         frame_runtime,
         subject_associations,
-        actions: SessionRuntimeActionSetView {
-            submit_message,
-            cancel,
-        },
-        mailbox,
-        mailbox_messages,
     }))
-}
-
-fn enabled_action() -> SessionRuntimeActionAvailabilityView {
-    SessionRuntimeActionAvailabilityView {
-        enabled: true,
-        unavailable_reason: None,
-    }
-}
-
-fn disabled_action(reason: impl Into<String>) -> SessionRuntimeActionAvailabilityView {
-    SessionRuntimeActionAvailabilityView {
-        enabled: false,
-        unavailable_reason: Some(reason.into()),
-    }
 }
 
 fn map_session_event(

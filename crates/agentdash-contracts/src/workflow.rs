@@ -31,6 +31,68 @@ pub enum WorkflowTargetKind {
     Story,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityScopeDto {
+    Project,
+    Story,
+    Task,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolClusterDto {
+    Read,
+    Write,
+    Execute,
+    Workflow,
+    Collaboration,
+    WorkspaceModule,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlatformMcpScopeDto {
+    Relay,
+    Story,
+    Task,
+    Workflow,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolSourceDto {
+    Platform { cluster: ToolClusterDto },
+    PlatformMcp { scope: PlatformMcpScopeDto },
+    Mcp { server_name: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct ToolDescriptorDto {
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub source: ToolSourceDto,
+    pub capability_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct CapabilityCatalogEntryDto {
+    pub key: String,
+    pub label: String,
+    pub description: String,
+    pub allowed_scopes: Vec<CapabilityScopeDto>,
+    pub auto_granted: bool,
+    pub agent_can_grant: bool,
+    pub workflow_can_grant: bool,
+    pub tools: Vec<ToolDescriptorDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct CapabilityCatalogResponse {
+    pub capabilities: Vec<CapabilityCatalogEntryDto>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct ValidationIssue {
     pub code: String,
@@ -797,22 +859,6 @@ pub struct AgentRunWorkspaceControlPlaneView {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunWorkspaceActionAvailabilityView {
-    pub enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub unavailable_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunWorkspaceActionSetView {
-    pub submit_message: AgentRunWorkspaceActionAvailabilityView,
-    pub cancel: AgentRunWorkspaceActionAvailabilityView,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationExecutionStatus {
@@ -982,7 +1028,7 @@ pub struct ConversationExecutionView {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ConversationMailboxSnapshotView {
     pub visible_message_count: usize,
@@ -991,6 +1037,11 @@ pub struct ConversationMailboxSnapshotView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resume_command: Option<ConversationCommandView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub state: Option<MailboxStateView>,
+    #[serde(default)]
+    pub messages: Vec<MailboxMessageView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
@@ -1238,10 +1289,6 @@ pub struct AgentRunWorkspaceView {
     pub frame_runtime: Option<AgentFrameRuntimeView>,
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
-    pub actions: AgentRunWorkspaceActionSetView,
-    pub mailbox: MailboxStateView,
-    #[serde(default)]
-    pub mailbox_messages: Vec<MailboxMessageView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resource_surface: Option<ResolvedVfsSurface>,
@@ -1509,22 +1556,6 @@ pub struct SessionRuntimeControlPlaneView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct SessionRuntimeActionAvailabilityView {
-    pub enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub unavailable_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionRuntimeActionSetView {
-    pub submit_message: SessionRuntimeActionAvailabilityView,
-    pub cancel: SessionRuntimeActionAvailabilityView,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct SessionRuntimeControlView {
     pub runtime_session_ref: RuntimeSessionRefDto,
     pub session_meta: SessionShellDto,
@@ -1543,10 +1574,6 @@ pub struct SessionRuntimeControlView {
     pub frame_runtime: Option<AgentFrameRuntimeView>,
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
-    pub actions: SessionRuntimeActionSetView,
-    pub mailbox: MailboxStateView,
-    #[serde(default)]
-    pub mailbox_messages: Vec<MailboxMessageView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

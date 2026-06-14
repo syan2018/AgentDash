@@ -117,10 +117,10 @@ task_id → SubjectRef(kind=Task, id=task_id)
 ```text
 project_id → LifecycleRun(project_id)
            → LifecycleAgent / AgentFrame
-           → AgentRunWorkspaceView(shell, control_plane, actions, delivery_trace_meta?)
+           → AgentRunWorkspaceView(shell, conversation.commands, delivery_trace_meta?)
 ```
 
-`control_plane` 与 `actions` 使用 AgentRun workspace DTO，原因是 Project/Story/Task 页面打开的是
+`conversation.commands` 使用 AgentRun workspace DTO，原因是 Project/Story/Task 页面打开的是
 可继续交互的 AgentRun 工作台；`delivery_trace_meta` 只提供 RuntimeSession trace/detail 下钻。
 
 ### 查找 Project 下所有 RuntimeSession traces
@@ -146,7 +146,11 @@ runtime_session_id → RuntimeSessionExecutionAnchor
 
 - ProjectAgent session start 接收可选 `subject_ref`。省略时为 Project context；传入 Story/Task 时由 SubjectContextAssignment 动态补齐 subject context。
 - Story 快速创建会话是 ProjectAgent session start 的薄入口：选择 ProjectAgent 后携带 `subject_ref=story`，返回同一套 run / agent / frame / runtime session refs。
-- Task 执行面向 read projection：`GET /tasks/{id}/execution` 返回 `SubjectExecutionView`，命令控制走统一 AgentRun / Lifecycle 控制面。
+- Task 执行面向 read projection：subject-oriented API 返回 `SubjectExecutionView`，包含 association、
+  current agent、latest runtime node 和 artifacts。`GET /tasks/{id}/execution` 返回紧凑
+  `TaskExecutionView` refs/status，服务只需要 task execution refs 的调用方；两条读路径都从
+  `SubjectRef(Task)`、association、LifecycleAgent current frame、RuntimeSessionExecutionAnchor 与
+  runtime node facts 派生，命令控制走统一 AgentRun / Lifecycle 控制面。
 - Subject / agent / run-oriented API 是 Story / Task 业务查询的主路径；session route 只提供 RuntimeTrace。
 
 ---

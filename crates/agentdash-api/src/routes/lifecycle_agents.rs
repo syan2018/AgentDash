@@ -9,10 +9,9 @@ use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunCommandReceipt,
     AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest,
     AgentRunMailboxView, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
-    AgentRunMessageCommandResponse, AgentRunRefDto, AgentRunWorkspaceActionAvailabilityView,
-    AgentRunWorkspaceActionSetView, AgentRunWorkspaceControlPlaneStatus,
+    AgentRunMessageCommandResponse, AgentRunRefDto, AgentRunWorkspaceControlPlaneStatus,
     AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
-    AgentRunWorkspaceShell, AgentRunWorkspaceView, LifecycleRunRefDto,
+    AgentRunWorkspaceShell, AgentRunWorkspaceView, ConversationExecutionStatus, LifecycleRunRefDto,
     LifecycleSubjectAssociationDto, MailboxStateView, RuntimeSessionCommandStateDto,
     RuntimeSessionRefDto, RuntimeSessionTraceMeta,
 };
@@ -624,6 +623,16 @@ fn agent_run_workspace_view(
     let resource_surface = snapshot
         .resource_surface
         .map(vfs_surface_dto::surface_from_application);
+    let mailbox = workspace_mailbox_to_contract(snapshot.mailbox);
+    let mailbox_messages = snapshot
+        .mailbox_messages
+        .into_iter()
+        .map(mailbox_message_view)
+        .collect();
+    let mut conversation = snapshot.conversation;
+    conversation.mailbox.state = Some(mailbox);
+    conversation.mailbox.messages = mailbox_messages;
+    let control_plane = workspace_control_plane_from_conversation(&conversation);
 
     AgentRunWorkspaceView {
         run_ref: LifecycleRunRefDto {
@@ -648,7 +657,7 @@ fn agent_run_workspace_view(
         delivery_trace_meta: snapshot
             .delivery_trace_meta
             .map(workspace_trace_meta_to_contract),
-        control_plane: workspace_control_plane_to_contract(snapshot.projection.control_plane),
+        control_plane,
         agent: snapshot.agent_view.map(agent_run_to_contract),
         frame_runtime: snapshot.frame_runtime.map(frame_runtime_to_contract),
         subject_associations: snapshot
@@ -656,15 +665,8 @@ fn agent_run_workspace_view(
             .into_iter()
             .map(subject_association_to_contract)
             .collect(),
-        actions: workspace_actions_to_contract(snapshot.projection.actions),
-        mailbox: workspace_mailbox_to_contract(snapshot.mailbox),
-        mailbox_messages: snapshot
-            .mailbox_messages
-            .into_iter()
-            .map(mailbox_message_view)
-            .collect(),
         resource_surface,
-        conversation: Some(snapshot.conversation),
+        conversation: Some(conversation),
     }
 }
 
@@ -686,50 +688,29 @@ fn workspace_trace_meta_to_contract(
     }
 }
 
-fn workspace_control_plane_to_contract(
-    control: app_workspace::AgentRunWorkspaceControlPlaneModel,
+fn workspace_control_plane_from_conversation(
+    conversation: &agentdash_contracts::workflow::AgentConversationSnapshot,
 ) -> AgentRunWorkspaceControlPlaneView {
-    let status = match control.status {
-        app_workspace::AgentRunWorkspaceControlPlaneStatus::Ready => {
-            AgentRunWorkspaceControlPlaneStatus::Ready
-        }
-        app_workspace::AgentRunWorkspaceControlPlaneStatus::Running => {
+    let status = match conversation.execution.status {
+        ConversationExecutionStatus::Ready
+        | ConversationExecutionStatus::Draft
+        | ConversationExecutionStatus::ModelRequired => AgentRunWorkspaceControlPlaneStatus::Ready,
+        ConversationExecutionStatus::StartingClaimed
+        | ConversationExecutionStatus::RunningActive => {
             AgentRunWorkspaceControlPlaneStatus::Running
         }
-        app_workspace::AgentRunWorkspaceControlPlaneStatus::Cancelling => {
-            AgentRunWorkspaceControlPlaneStatus::Cancelling
-        }
-        app_workspace::AgentRunWorkspaceControlPlaneStatus::Terminal => {
-            AgentRunWorkspaceControlPlaneStatus::Terminal
-        }
-        app_workspace::AgentRunWorkspaceControlPlaneStatus::FrameMissing => {
+        ConversationExecutionStatus::Cancelling => AgentRunWorkspaceControlPlaneStatus::Cancelling,
+        ConversationExecutionStatus::Terminal => AgentRunWorkspaceControlPlaneStatus::Terminal,
+        ConversationExecutionStatus::FrameMissing => {
             AgentRunWorkspaceControlPlaneStatus::FrameMissing
         }
-        app_workspace::AgentRunWorkspaceControlPlaneStatus::DeliveryMissing => {
+        ConversationExecutionStatus::DeliveryMissing => {
             AgentRunWorkspaceControlPlaneStatus::DeliveryMissing
         }
     };
     AgentRunWorkspaceControlPlaneView {
         status,
-        reason: control.reason,
-    }
-}
-
-fn workspace_actions_to_contract(
-    actions: app_workspace::AgentRunWorkspaceActionSetModel,
-) -> AgentRunWorkspaceActionSetView {
-    AgentRunWorkspaceActionSetView {
-        submit_message: workspace_action_to_contract(actions.submit_message),
-        cancel: workspace_action_to_contract(actions.cancel),
-    }
-}
-
-fn workspace_action_to_contract(
-    action: app_workspace::AgentRunWorkspaceActionAvailabilityModel,
-) -> AgentRunWorkspaceActionAvailabilityView {
-    AgentRunWorkspaceActionAvailabilityView {
-        enabled: action.enabled,
-        unavailable_reason: action.unavailable_reason,
+        reason: conversation.execution.reason.clone(),
     }
 }
 
@@ -1070,18 +1051,6 @@ mod tests {
             agent: None,
             frame_runtime: None,
             subject_associations: Vec::new(),
-            actions: AgentRunWorkspaceActionSetView {
-                submit_message: AgentRunWorkspaceActionAvailabilityView {
-                    enabled: true,
-                    unavailable_reason: None,
-                },
-                cancel: AgentRunWorkspaceActionAvailabilityView {
-                    enabled: false,
-                    unavailable_reason: Some("not running".to_string()),
-                },
-            },
-            mailbox: mailbox_state_view(None, true, 0, false),
-            mailbox_messages: Vec::new(),
             resource_surface: None,
             conversation: None,
         };

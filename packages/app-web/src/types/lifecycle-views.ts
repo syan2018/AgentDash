@@ -9,8 +9,6 @@ export type {
   ActiveRuntimeNodeRefDto,
   AgentFrameRuntimeView,
   AgentRunView,
-  AgentRunWorkspaceActionAvailabilityView,
-  AgentRunWorkspaceActionSetView,
   AgentRunWorkspaceControlPlaneStatus,
   AgentRunWorkspaceControlPlaneView,
   AgentRunWorkspaceListEntry,

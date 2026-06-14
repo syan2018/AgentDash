@@ -13,7 +13,10 @@ use crate::session::SessionRuntimeService;
 use crate::task::view_projector::project_task_views_on_boot;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
-use agentdash_domain::workflow::{LifecycleRunRepository, LifecycleSubjectAssociationRepository};
+use agentdash_domain::workflow::{
+    LifecycleAgentRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    RuntimeSessionExecutionAnchorRepository,
+};
 
 /// 启动对账管线的依赖集合
 ///
@@ -26,6 +29,8 @@ pub struct BootReconcileDeps {
     pub story_repo: Arc<dyn StoryRepository>,
     pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
 }
 
 /// 单阶段对账结果
@@ -116,6 +121,8 @@ async fn run_task_view_projection(deps: &BootReconcileDeps) -> PhaseReport {
         &deps.story_repo,
         &deps.lifecycle_subject_association_repo,
         &deps.lifecycle_run_repo,
+        &deps.lifecycle_agent_repo,
+        &deps.execution_anchor_repo,
     )
     .await
     {

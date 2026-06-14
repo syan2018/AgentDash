@@ -6,8 +6,6 @@ import type {
   ConversationCommandSetView,
   ConversationCommandView,
   ConversationModelConfigView,
-  MailboxStateView,
-  MailboxMessageView,
 } from "../../../generated/workflow-contracts";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
@@ -90,12 +88,8 @@ export interface SessionChatViewProps {
 
   // ─── Mailbox ─────────────────────────────────
 
-  /** Mailbox 消息列表（来自 runtimeControl.mailbox_messages） */
-  mailboxMessages?: MailboxMessageView[];
-  /** Mailbox 展示状态（来自 conversation.mailbox） */
+  /** Mailbox 展示状态与消息列表（来自 conversation.mailbox） */
   mailboxSnapshot?: ConversationMailboxSnapshotView;
-  /** Mailbox 根状态（来自 AgentRunWorkspaceView.mailbox） */
-  mailboxState?: MailboxStateView;
   /** 引导 mailbox 消息 */
   onPromoteMailboxMessage?: (messageId: string) => void;
   /** 删除 mailbox 消息 */

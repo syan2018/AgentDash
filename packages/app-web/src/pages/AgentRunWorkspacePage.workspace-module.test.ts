@@ -22,7 +22,6 @@ import {
 
 function workspaceView(
   controlStatus: AgentRunWorkspaceView["control_plane"]["status"],
-  actions: AgentRunWorkspaceView["actions"],
   commands: ConversationCommandView[] = [],
   keyboard: ConversationKeyboardMapView = {},
 ): AgentRunWorkspaceView {
@@ -40,13 +39,6 @@ function workspaceView(
     delivery_runtime_ref: { runtime_session_id: "session-1" },
     control_plane: { status: controlStatus },
     subject_associations: [],
-    actions,
-    mailbox: {
-      paused: false,
-      can_resume: false,
-      hide_system_steer_messages: false,
-    },
-    mailbox_messages: [],
     conversation: {
       snapshot_id: "snapshot-1",
       identity: {
@@ -73,21 +65,12 @@ function workspaceView(
         visible_message_count: 0,
         paused: false,
         user_attention: false,
+        messages: [],
       },
       diagnostics: [],
     },
   };
 }
-
-const runningActions: AgentRunWorkspaceView["actions"] = {
-  submit_message: { enabled: true },
-  cancel: { enabled: true },
-};
-
-const terminalActionsWithStaleRunningBits: AgentRunWorkspaceView["actions"] = {
-  submit_message: { enabled: true },
-  cancel: { enabled: false, unavailable_reason: "terminal" },
-};
 
 function commandState(
   projectionStatus: "ready" | "refreshing" | "error" | "idle" | "loading",
@@ -307,7 +290,7 @@ describe("AgentRun workspace conversation command authority", () => {
 
   it("uses snapshot keyboard mapping for ready Ctrl/Cmd+Enter submit_message", () => {
     const submit = command("submit_message", "cmd-submit");
-    const state = commandState("ready", workspaceView("ready", runningActions, [submit], {
+    const state = commandState("ready", workspaceView("ready", [submit], {
       enter: "cmd-submit",
       ctrl_enter: "cmd-submit",
     }));
@@ -327,7 +310,7 @@ describe("AgentRun workspace conversation command authority", () => {
         active_turn_id: "turn-1",
       },
     };
-    const state = commandState("ready", workspaceView("running", runningActions, [submit], {
+    const state = commandState("ready", workspaceView("running", [submit], {
       enter: "cmd-submit",
       ctrl_enter: "cmd-submit",
     }));
@@ -338,7 +321,7 @@ describe("AgentRun workspace conversation command authority", () => {
   });
 
   it("does not fabricate commands while projection is refreshing", () => {
-    const state = commandState("refreshing", workspaceView("running", runningActions, [
+    const state = commandState("refreshing", workspaceView("running", [
       command("submit_message", "cmd-submit"),
     ], { enter: "cmd-submit" }));
 
@@ -346,8 +329,8 @@ describe("AgentRun workspace conversation command authority", () => {
     expect(state.commands.commands).toHaveLength(0);
   });
 
-  it("requires conversation snapshot instead of falling back to stale action bits", () => {
-    const workspace = workspaceView("terminal", terminalActionsWithStaleRunningBits);
+  it("requires conversation snapshot before exposing commands", () => {
+    const workspace = workspaceView("terminal");
     workspace.conversation = undefined;
     const state = commandState("ready", workspace);
 

@@ -326,6 +326,8 @@ impl AgentConversationSnapshotResolver {
                 paused: input.mailbox_paused,
                 user_attention: input.mailbox_visible_message_count > 0 && input.mailbox_paused,
                 resume_command,
+                state: None,
+                messages: Vec::new(),
             },
             resource_surface: input.resource_surface,
             diagnostics,
@@ -408,6 +410,10 @@ fn conversation_commands(
             | ConversationExecutionStatus::RunningActive
             | ConversationExecutionStatus::Cancelling
     );
+    let mailbox_can_resume = !input.terminal_agent
+        && input.delivery_runtime_session_id.is_some()
+        && input.mailbox_paused
+        && input.mailbox_visible_message_count > 0;
 
     let commands = vec![
         command_view(
@@ -468,7 +474,7 @@ fn conversation_commands(
             input,
             ConversationCommandKind::ResumeMailbox,
             snapshot_id,
-            input.mailbox_paused && input.mailbox_visible_message_count > 0,
+            mailbox_can_resume,
             "当前没有需要用户恢复的 mailbox。",
             Some("command_unavailable"),
             None,
@@ -563,11 +569,11 @@ pub fn conversation_snapshot_id(
     let turn = active_turn_id(execution_state).unwrap_or_else(|| "none".to_string());
     format!(
         "agentrun:{run_id}:{agent_id}:frame:{frame}:runtime:{runtime}:state:{}:turn:{turn}:terminal:{terminal_agent}",
-        execution_state_snapshot_code(execution_state)
+        conversation_execution_state_code(execution_state)
     )
 }
 
-fn execution_state_snapshot_code(execution_state: &SessionExecutionState) -> &'static str {
+pub fn conversation_execution_state_code(execution_state: &SessionExecutionState) -> &'static str {
     match execution_state {
         SessionExecutionState::Idle => "idle",
         SessionExecutionState::Running { turn_id: None } => "starting_claimed",

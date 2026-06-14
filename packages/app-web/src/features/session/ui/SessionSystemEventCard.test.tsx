@@ -118,8 +118,9 @@ describe("SessionSystemEventCard", () => {
     const markup = renderToStaticMarkup(<SessionSystemEventCard event={event} />);
     expect(markup).toContain("能力申请");
     expect(markup).toContain("workflow_management::upsert_lifecycle_tool");
-    expect(markup).toContain("批准");
-    expect(markup).toContain("拒绝");
+    expect(markup).toContain("PermissionGrant");
+    expect(markup).not.toContain("批准");
+    expect(markup).not.toContain("拒绝");
   });
 
   it("没有 injections 的 context_injected 不再显示空壳 CTX", () => {

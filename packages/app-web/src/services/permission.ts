@@ -9,6 +9,7 @@ export async function listPermissionGrants(params: ListPermissionGrantsQuery): P
   if (params.effect_frame_id) searchParams.set("effect_frame_id", params.effect_frame_id);
   if (params.run_id) searchParams.set("run_id", params.run_id);
   if (params.status) searchParams.set("status", params.status);
+  if (params.status_group) searchParams.set("status_group", params.status_group);
   const query = searchParams.toString();
   return api.get<PermissionGrantResponse[]>(`/permission-grants${query ? `?${query}` : ""}`);
 }

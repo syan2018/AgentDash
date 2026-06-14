@@ -1,27 +1,24 @@
 use std::sync::Arc;
 
-use agentdash_application::session::{SessionExecutionState, SessionMeta};
-use agentdash_application::vfs::ResolvedVfsSurfaceSource as AppResolvedVfsSurfaceSource;
+use agentdash_application::session::SessionExecutionState;
+use agentdash_application::workflow::agent_run_workspace as app_workspace;
 use agentdash_application::workflow::{
-    AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
     AgentRunMailboxCommandOutcome as AppMailboxCommandOutcome, AgentRunMailboxCommandResult,
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
-    ConversationModelConfigInput, ConversationModelConfigResolver, conversation_snapshot_id,
-    lifecycle_run_view_builder,
+    conversation_snapshot_id,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView,
-    AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView,
-    AgentRunMailboxMoveRequest, AgentRunMailboxView, AgentRunMessageAcceptedRefs,
-    AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse, AgentRunRefDto,
-    AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
+    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest,
+    AgentRunCommandPreconditionView, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
+    AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
+    AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
+    AgentRunRefDto, AgentRunWorkspaceActionAvailabilityView, AgentRunWorkspaceActionSetView,
     AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, ConsumptionBarrier, ConversationCommandKind, ConversationDiagnosticView,
-    LifecycleRunRefDto, LifecycleSubjectAssociationDto, MailboxDelivery, MailboxDrainMode,
-    MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus, MailboxMessageView,
-    MailboxStateView, RuntimeSessionCommandStateDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
-    ValidationSeverity,
+    AgentRunWorkspaceView, ConsumptionBarrier, ConversationCommandKind, LifecycleRunRefDto,
+    LifecycleSubjectAssociationDto, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
+    MailboxMessageSource, MailboxMessageStatus, MailboxMessageView, MailboxStateView,
+    RuntimeSessionCommandStateDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
 };
 use agentdash_domain::workflow::{
     AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind,
@@ -41,30 +38,16 @@ use crate::{
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     routes::{
         lifecycle_contracts::{agent_run_to_contract, subject_association_to_contract},
-        lifecycle_views::{agent_frame_runtime_to_view, runtime_refs_for_agent},
-        vfs_surfaces::{
-            dto as vfs_surface_dto,
-            resolver::{build_surface_summary, resolve_agent_run_frame_vfs_for_agent},
-        },
+        vfs_surfaces::{dto as vfs_surface_dto, resolver::resolve_agent_run_frame_vfs_for_agent},
     },
     rpc::{ApiError, ApiErrorWithCode},
+    vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
 };
 
 struct AgentRunContext {
     run: LifecycleRun,
     agent: LifecycleAgent,
     delivery_runtime_session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct WorkspaceShellTitle {
-    display_title: String,
-    title_source: String,
-}
-
-enum WorkspaceShellTitleCandidate<'a> {
-    DeliveryMeta(&'a SessionMeta),
-    WorkspaceFallback(String),
 }
 
 pub fn router() -> axum::Router<Arc<AppState>> {
@@ -152,7 +135,9 @@ pub async fn get_project_agent_runs(
                 agent,
                 delivery_runtime_session_id,
             };
-            let workspace = build_agent_run_workspace_view(&state, &context).await?;
+            let workspace = agent_run_workspace_view(
+                load_agent_run_workspace_snapshot(&state, &context).await?,
+            );
             entries.push(agent_run_workspace_list_entry(&context.run, workspace));
         }
     }
@@ -177,9 +162,9 @@ pub async fn get_agent_run_workspace(
         ProjectPermission::View,
     )
     .await?;
-    Ok(Json(
-        build_agent_run_workspace_view(&state, &context).await?,
-    ))
+    Ok(Json(agent_run_workspace_view(
+        load_agent_run_workspace_snapshot(&state, &context).await?,
+    )))
 }
 
 pub async fn submit_agent_run_composer_input(
@@ -211,7 +196,7 @@ pub async fn submit_agent_run_composer_input(
             context.run.id, context.agent.id
         ))
     })?;
-    if is_terminal_agent_status(&context.agent.status) {
+    if app_workspace::is_terminal_agent_status(&context.agent.status) {
         return Err(ApiError::Conflict(
             "当前 AgentRun 已结束，不能继续发送消息。".to_string(),
         ));
@@ -621,351 +606,178 @@ async fn delivery_runtime_session_for_agent_run(
         .map(|anchor| anchor.runtime_session_id))
 }
 
-async fn build_agent_run_workspace_view(
+async fn load_agent_run_workspace_snapshot(
     state: &AppState,
     context: &AgentRunContext,
-) -> Result<AgentRunWorkspaceView, ApiError> {
-    let runtime_session_id = context.delivery_runtime_session_id.clone();
-    let meta = match runtime_session_id.as_deref() {
-        Some(session_id) => {
-            state
-                .services
-                .session_core
-                .get_session_meta(session_id)
-                .await?
-        }
-        None => None,
-    };
-    let frame_resolution =
-        resolve_agent_run_frame_vfs_for_agent(state, &context.run, &context.agent).await?;
-    let frame = frame_resolution
-        .as_ref()
-        .map(|resolution| resolution.frame.clone());
-    let frame_ref = frame.as_ref().map(|frame| (frame.id, frame.revision));
-    let frame_execution_profile = frame
-        .as_ref()
-        .and_then(|frame| frame.typed_execution_profile());
-    let resource_surface = match frame_resolution.as_ref() {
-        Some(resolution) => {
-            let source = AppResolvedVfsSurfaceSource::AgentRun {
-                run_id: context.run.id,
-                agent_id: context.agent.id,
-            };
-            let surface = build_surface_summary(state, &source, &resolution.vfs).await;
-            Some(vfs_surface_dto::surface_from_application(surface))
-        }
-        None => None,
-    };
-    let frame_runtime = match frame.as_ref() {
-        Some(frame) => {
-            let runtime_refs = runtime_refs_for_agent(state, context.agent.id).await?;
-            Some(agent_frame_runtime_to_view(frame, runtime_refs))
-        }
-        None => None,
-    };
-    let run_view =
-        lifecycle_run_view_builder::build_lifecycle_run_view(&state.repos, &context.run).await?;
-    let agent_view = run_view
-        .agents
-        .iter()
-        .find(|view| view.agent_ref.agent_id == context.agent.id.to_string())
-        .cloned();
-    let agent_id_string = context.agent.id.to_string();
-    let subject_associations = run_view
-        .subject_associations
-        .iter()
-        .filter(|assoc| {
-            assoc.anchor_agent_id.as_deref() == Some(agent_id_string.as_str())
-                || assoc.anchor_agent_id.is_none()
+) -> Result<app_workspace::AgentRunWorkspaceSnapshot, ApiError> {
+    let vfs_runtime = ApiVfsSurfaceRuntimeProjection::new(
+        state.services.backend_registry.clone(),
+        state.services.mount_provider_registry.clone(),
+    );
+    let service = app_workspace::AgentRunWorkspaceQueryService::new(
+        &state.repos,
+        state.services.session_core.clone(),
+        state.services.session_control.clone(),
+        &vfs_runtime,
+    );
+    service
+        .resolve(app_workspace::AgentRunWorkspaceQueryInput {
+            run: context.run.clone(),
+            agent: context.agent.clone(),
         })
-        .cloned()
-        .map(subject_association_to_contract)
-        .collect::<Vec<_>>();
-    let execution_state = match runtime_session_id.as_deref() {
-        Some(session_id) => {
-            state
-                .services
-                .session_core
-                .inspect_session_execution_state(session_id)
-                .await?
-        }
-        None => agentdash_application::session::SessionExecutionState::Idle,
-    };
-    let delivery_running = matches!(
-        execution_state,
-        agentdash_application::session::SessionExecutionState::Running { .. }
-    );
-    let delivery_running_active = matches!(
-        execution_state,
-        agentdash_application::session::SessionExecutionState::Running { turn_id: Some(_) }
-    );
-    let delivery_starting_claimed = matches!(
-        execution_state,
-        agentdash_application::session::SessionExecutionState::Running { turn_id: None }
-    );
-    let delivery_cancelling = matches!(
-        execution_state,
-        agentdash_application::session::SessionExecutionState::Cancelling { .. }
-    );
-    let terminal_agent = is_terminal_agent_status(&context.agent.status);
-    let has_frame = frame_runtime.is_some();
-    let has_delivery_runtime = runtime_session_id.is_some();
-    let supports_steering = match runtime_session_id.as_deref() {
-        Some(session_id) if delivery_running_active => {
-            state
-                .services
-                .session_control
-                .supports_session_steering(session_id)
-                .await
-        }
-        _ => false,
-    };
-    let control_plane = if terminal_agent {
-        AgentRunWorkspaceControlPlaneView {
-            status: AgentRunWorkspaceControlPlaneStatus::Terminal,
-            reason: Some("当前 AgentRun 已结束。".to_string()),
-        }
-    } else if !has_delivery_runtime {
-        AgentRunWorkspaceControlPlaneView {
-            status: AgentRunWorkspaceControlPlaneStatus::DeliveryMissing,
-            reason: Some("当前 AgentRun 缺少可投递的 runtime 通道。".to_string()),
-        }
-    } else if !has_frame {
-        AgentRunWorkspaceControlPlaneView {
-            status: AgentRunWorkspaceControlPlaneStatus::FrameMissing,
-            reason: Some("当前 AgentRun 没有可投递的 runtime frame。".to_string()),
-        }
-    } else if delivery_cancelling {
-        AgentRunWorkspaceControlPlaneView {
-            status: AgentRunWorkspaceControlPlaneStatus::Cancelling,
-            reason: Some("当前 AgentRun 正在取消中，等待执行器收口。".to_string()),
-        }
-    } else if delivery_running {
-        AgentRunWorkspaceControlPlaneView {
-            status: AgentRunWorkspaceControlPlaneStatus::Running,
-            reason: Some(if delivery_starting_claimed {
-                "当前 AgentRun 正在启动中，等待 active turn 建立。".to_string()
-            } else {
-                "当前 AgentRun 正在执行中。".to_string()
-            }),
-        }
-    } else {
-        AgentRunWorkspaceControlPlaneView {
-            status: AgentRunWorkspaceControlPlaneStatus::Ready,
-            reason: None,
-        }
-    };
-    let actions = AgentRunWorkspaceActionSetView {
-        submit_message: if has_delivery_runtime && has_frame && !terminal_agent {
-            enabled_action()
-        } else if !has_delivery_runtime {
-            disabled_action("当前 AgentRun 缺少可投递的 runtime 通道。")
-        } else if terminal_agent {
-            disabled_action("当前 AgentRun 已结束，不能继续发送消息。")
-        } else {
-            disabled_action("当前 AgentRun 没有可投递的 runtime frame。")
-        },
-        cancel: if delivery_running || delivery_cancelling {
-            enabled_action()
-        } else {
-            disabled_action("当前 AgentRun 没有正在执行的 turn。")
-        },
-    };
-    let mailbox_messages = state
-        .repos
-        .agent_run_mailbox_repo
-        .list_messages(context.run.id, context.agent.id)
         .await
-        .map_err(ApiError::from)?;
-    let mailbox_state = state
-        .repos
-        .agent_run_mailbox_repo
-        .get_state(context.run.id, context.agent.id)
-        .await
-        .map_err(ApiError::from)?;
-    let mailbox_visible_message_count = mailbox_messages
-        .iter()
-        .filter(|message| mailbox_message_visible(message))
-        .count();
-    let user_prefs = state
-        .repos
-        .backend_repo
-        .get_preferences()
-        .await
-        .unwrap_or_default();
-    let mailbox = mailbox_state_view(
-        mailbox_state.as_ref(),
-        has_delivery_runtime && !terminal_agent,
-        mailbox_visible_message_count,
-        user_prefs.hide_system_steer_messages,
-    );
-    let mailbox_message_views = mailbox_messages
-        .into_iter()
-        .filter(|msg| mailbox_message_visible(msg))
-        .map(mailbox_message_view)
-        .collect::<Vec<_>>();
-    let project_agent_preset_config = match context.agent.project_agent_id {
-        Some(project_agent_id) => state
-            .repos
-            .project_agent_repo
-            .get_by_project_and_id(context.run.project_id, project_agent_id)
-            .await
-            .map_err(ApiError::from)?
-            .map(|project_agent| {
-                project_agent
-                    .preset_config()
-                    .map(|preset| preset.to_agent_config(&project_agent.agent_type))
-            })
-            .transpose()
-            .map_err(ApiError::from)?,
-        None => None,
-    };
-    let model_config = ConversationModelConfigResolver::resolve(ConversationModelConfigInput {
-        project_agent_preset: project_agent_preset_config.as_ref(),
-        frame_execution_profile: frame_execution_profile.as_ref(),
-        ..Default::default()
-    })
-    .view;
-    let resource_diagnostics =
-        workspace_resource_diagnostics(context.run.id, resource_surface.as_ref());
-    let conversation = AgentConversationSnapshotResolver::resolve(AgentConversationSnapshotInput {
-        project_id: context.run.project_id,
-        run_id: context.run.id,
-        agent_id: context.agent.id,
-        frame_ref,
-        delivery_runtime_session_id: runtime_session_id.clone(),
-        subject_associations: subject_associations.clone(),
-        execution_state: execution_state.clone(),
-        terminal_agent,
-        supports_steering,
-        mailbox_paused: mailbox.paused,
-        mailbox_visible_message_count,
-        resource_surface,
-        resource_diagnostics,
-        model_config,
-    });
-    let shell_title = match meta.as_ref() {
-        Some(meta) => {
-            select_workspace_shell_title(WorkspaceShellTitleCandidate::DeliveryMeta(meta))
-        }
-        None => {
-            let display_title = resolve_workspace_title(state, context).await?;
-            select_workspace_shell_title(WorkspaceShellTitleCandidate::WorkspaceFallback(
-                display_title,
-            ))
-        }
-    };
-    let delivery_status = workspace_delivery_status(&execution_state, &context.agent.status);
-    Ok(AgentRunWorkspaceView {
+        .map_err(ApiError::from)
+}
+
+fn agent_run_workspace_view(
+    snapshot: app_workspace::AgentRunWorkspaceSnapshot,
+) -> AgentRunWorkspaceView {
+    let resource_surface = snapshot
+        .resource_surface
+        .map(vfs_surface_dto::surface_from_application);
+
+    AgentRunWorkspaceView {
         run_ref: LifecycleRunRefDto {
-            run_id: context.run.id.to_string(),
+            run_id: snapshot.run.id.to_string(),
         },
         agent_ref: AgentRunRefDto {
-            run_id: context.run.id.to_string(),
-            agent_id: context.agent.id.to_string(),
+            run_id: snapshot.run.id.to_string(),
+            agent_id: snapshot.agent.id.to_string(),
         },
-        project_id: context.run.project_id.to_string(),
+        project_id: snapshot.run.project_id.to_string(),
         shell: AgentRunWorkspaceShell {
-            display_title: shell_title.display_title,
-            title_source: shell_title.title_source,
-            workspace_status: context.agent.status.clone(),
-            delivery_status,
-            last_turn_id: execution_state_turn_id(&execution_state),
-            last_activity_at: context.agent.updated_at.to_rfc3339(),
+            display_title: snapshot.shell.display_title,
+            title_source: snapshot.shell.title_source,
+            workspace_status: snapshot.shell.workspace_status,
+            delivery_status: snapshot.shell.delivery_status,
+            last_turn_id: snapshot.shell.last_turn_id,
+            last_activity_at: snapshot.shell.last_activity_at,
         },
-        delivery_runtime_ref: runtime_session_id
+        delivery_runtime_ref: snapshot
+            .delivery_runtime_session_id
             .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
-        delivery_trace_meta: meta.as_ref().map(runtime_trace_meta),
-        control_plane,
-        agent: agent_view.map(agent_run_to_contract),
-        frame_runtime,
-        subject_associations,
-        actions,
-        mailbox,
-        mailbox_messages: mailbox_message_views,
-        resource_surface: conversation.resource_surface.clone(),
-        conversation: Some(conversation),
-    })
-}
-
-fn workspace_resource_diagnostics(
-    run_id: Uuid,
-    resource_surface: Option<&agentdash_contracts::vfs::ResolvedVfsSurface>,
-) -> Vec<ConversationDiagnosticView> {
-    lifecycle_resource_surface_diagnostics(run_id, resource_surface)
-}
-
-fn lifecycle_resource_surface_diagnostics(
-    run_id: Uuid,
-    resource_surface: Option<&agentdash_contracts::vfs::ResolvedVfsSurface>,
-) -> Vec<ConversationDiagnosticView> {
-    let has_lifecycle_mount = resource_surface
-        .map(|surface| {
-            surface
-                .mounts
-                .iter()
-                .any(|mount| mount.id == "lifecycle" && mount.provider == "lifecycle_vfs")
-        })
-        .unwrap_or(false);
-    if has_lifecycle_mount {
-        return Vec::new();
-    }
-
-    vec![ConversationDiagnosticView {
-        code: "resource_surface_lifecycle_mount_missing".to_string(),
-        severity: ValidationSeverity::Error,
-        message: "当前 AgentRun workspace resource_surface 缺少 lifecycle_vfs mount。".to_string(),
-        detail: Some(serde_json::json!({
-            "run_id": run_id,
-        })),
-    }]
-}
-
-async fn resolve_workspace_title(
-    state: &AppState,
-    context: &AgentRunContext,
-) -> Result<String, ApiError> {
-    if let Some(project_agent_id) = context.agent.project_agent_id
-        && let Some(project_agent) = state
-            .repos
-            .project_agent_repo
-            .get_by_project_and_id(context.run.project_id, project_agent_id)
-            .await
-            .map_err(ApiError::from)?
-    {
-        return Ok(project_agent.name);
-    }
-    Ok(format!("AgentRun {}", context.agent.id))
-}
-
-fn select_workspace_shell_title(
-    candidate: WorkspaceShellTitleCandidate<'_>,
-) -> WorkspaceShellTitle {
-    match candidate {
-        WorkspaceShellTitleCandidate::DeliveryMeta(meta) => WorkspaceShellTitle {
-            display_title: meta.title.clone(),
-            title_source: serialized_string(&meta.title_source),
-        },
-        WorkspaceShellTitleCandidate::WorkspaceFallback(display_title) => WorkspaceShellTitle {
-            display_title,
-            title_source: "agentrun_workspace".to_string(),
-        },
+        delivery_trace_meta: snapshot
+            .delivery_trace_meta
+            .map(workspace_trace_meta_to_contract),
+        control_plane: workspace_control_plane_to_contract(snapshot.projection.control_plane),
+        agent: snapshot.agent_view.map(agent_run_to_contract),
+        frame_runtime: snapshot.frame_runtime.map(frame_runtime_to_contract),
+        subject_associations: snapshot
+            .subject_associations
+            .into_iter()
+            .map(subject_association_to_contract)
+            .collect(),
+        actions: workspace_actions_to_contract(snapshot.projection.actions),
+        mailbox: workspace_mailbox_to_contract(snapshot.mailbox),
+        mailbox_messages: snapshot
+            .mailbox_messages
+            .into_iter()
+            .map(mailbox_message_view)
+            .collect(),
+        resource_surface,
+        conversation: Some(snapshot.conversation),
     }
 }
 
-fn runtime_trace_meta(meta: &SessionMeta) -> RuntimeSessionTraceMeta {
+fn workspace_trace_meta_to_contract(
+    meta: app_workspace::AgentRunWorkspaceTraceMetaModel,
+) -> RuntimeSessionTraceMeta {
     RuntimeSessionTraceMeta {
         runtime_session_ref: RuntimeSessionRefDto {
-            runtime_session_id: meta.id.clone(),
+            runtime_session_id: meta.runtime_session_id,
         },
         last_event_seq: meta.last_event_seq,
-        executor_session_id: meta.executor_session_id.clone(),
-        trace_title: meta.title.clone(),
-        trace_title_source: serialized_string(&meta.title_source),
-        delivery_status: serialized_string(&meta.last_delivery_status),
-        last_turn_id: meta.last_turn_id.clone(),
-        terminal_summary: meta.last_terminal_message.clone(),
+        executor_session_id: meta.executor_session_id,
+        trace_title: meta.trace_title,
+        trace_title_source: meta.trace_title_source,
+        delivery_status: meta.delivery_status,
+        last_turn_id: meta.last_turn_id,
+        terminal_summary: meta.terminal_summary,
         updated_at: meta.updated_at,
+    }
+}
+
+fn workspace_control_plane_to_contract(
+    control: app_workspace::AgentRunWorkspaceControlPlaneModel,
+) -> AgentRunWorkspaceControlPlaneView {
+    let status = match control.status {
+        app_workspace::AgentRunWorkspaceControlPlaneStatus::Ready => {
+            AgentRunWorkspaceControlPlaneStatus::Ready
+        }
+        app_workspace::AgentRunWorkspaceControlPlaneStatus::Running => {
+            AgentRunWorkspaceControlPlaneStatus::Running
+        }
+        app_workspace::AgentRunWorkspaceControlPlaneStatus::Cancelling => {
+            AgentRunWorkspaceControlPlaneStatus::Cancelling
+        }
+        app_workspace::AgentRunWorkspaceControlPlaneStatus::Terminal => {
+            AgentRunWorkspaceControlPlaneStatus::Terminal
+        }
+        app_workspace::AgentRunWorkspaceControlPlaneStatus::FrameMissing => {
+            AgentRunWorkspaceControlPlaneStatus::FrameMissing
+        }
+        app_workspace::AgentRunWorkspaceControlPlaneStatus::DeliveryMissing => {
+            AgentRunWorkspaceControlPlaneStatus::DeliveryMissing
+        }
+    };
+    AgentRunWorkspaceControlPlaneView {
+        status,
+        reason: control.reason,
+    }
+}
+
+fn workspace_actions_to_contract(
+    actions: app_workspace::AgentRunWorkspaceActionSetModel,
+) -> AgentRunWorkspaceActionSetView {
+    AgentRunWorkspaceActionSetView {
+        submit_message: workspace_action_to_contract(actions.submit_message),
+        cancel: workspace_action_to_contract(actions.cancel),
+    }
+}
+
+fn workspace_action_to_contract(
+    action: app_workspace::AgentRunWorkspaceActionAvailabilityModel,
+) -> AgentRunWorkspaceActionAvailabilityView {
+    AgentRunWorkspaceActionAvailabilityView {
+        enabled: action.enabled,
+        unavailable_reason: action.unavailable_reason,
+    }
+}
+
+fn workspace_mailbox_to_contract(
+    mailbox: app_workspace::AgentRunWorkspaceMailboxStateModel,
+) -> MailboxStateView {
+    MailboxStateView {
+        paused: mailbox.paused,
+        pause_reason: mailbox.pause_reason,
+        message: mailbox.message,
+        can_resume: mailbox.can_resume,
+        hide_system_steer_messages: mailbox.hide_system_steer_messages,
+    }
+}
+
+fn frame_runtime_to_contract(
+    frame: app_workspace::AgentRunWorkspaceFrameRuntimeModel,
+) -> AgentFrameRuntimeView {
+    AgentFrameRuntimeView {
+        frame_ref: AgentFrameRefDto {
+            agent_id: frame.frame_ref.agent_id,
+            frame_id: frame.frame_ref.frame_id,
+            revision: frame.frame_ref.revision,
+        },
+        capability_surface: frame.capability_surface,
+        context_slice: frame.context_slice,
+        vfs_surface: frame.vfs_surface,
+        mcp_surface: frame.mcp_surface,
+        runtime_session_refs: frame
+            .runtime_session_refs
+            .into_iter()
+            .map(|runtime_ref| RuntimeSessionRefDto {
+                runtime_session_id: runtime_ref.runtime_session_id,
+            })
+            .collect(),
+        execution_profile: frame.execution_profile,
+        effective_executor_config: frame.effective_executor_config,
     }
 }
 
@@ -1092,7 +904,7 @@ async fn build_agent_run_mailbox_view(
         state: mailbox_state_view(
             mailbox_state.as_ref(),
             context.delivery_runtime_session_id.is_some()
-                && !is_terminal_agent_status(&context.agent.status),
+                && !app_workspace::is_terminal_agent_status(&context.agent.status),
             visible_message_count,
             state
                 .repos
@@ -1324,20 +1136,6 @@ fn agent_run_message_accepted_refs(
     }
 }
 
-fn enabled_action() -> AgentRunWorkspaceActionAvailabilityView {
-    AgentRunWorkspaceActionAvailabilityView {
-        enabled: true,
-        unavailable_reason: None,
-    }
-}
-
-fn disabled_action(reason: impl Into<String>) -> AgentRunWorkspaceActionAvailabilityView {
-    AgentRunWorkspaceActionAvailabilityView {
-        enabled: false,
-        unavailable_reason: Some(reason.into()),
-    }
-}
-
 fn lifecycle_run_status_to_contract(
     status: agentdash_domain::workflow::LifecycleRunStatus,
 ) -> agentdash_contracts::workflow::LifecycleRunStatus {
@@ -1492,7 +1290,7 @@ async fn ensure_agent_run_command_allowed(
     let frame_ref = frame_resolution
         .as_ref()
         .map(|resolution| (resolution.frame.id, resolution.frame.revision));
-    let terminal_agent = is_terminal_agent_status(&context.agent.status);
+    let terminal_agent = app_workspace::is_terminal_agent_status(&context.agent.status);
     let state_code = conversation_state_code(&execution_state);
     let detail = || {
         serde_json::json!({
@@ -1865,89 +1663,12 @@ fn execution_state_active_turn_id(execution_state: &SessionExecutionState) -> Op
     }
 }
 
-fn serialized_string<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn is_terminal_agent_status(status: &str) -> bool {
-    matches!(status, "completed" | "failed" | "cancelled")
-}
-
-fn workspace_delivery_status(
-    execution_state: &agentdash_application::session::SessionExecutionState,
-    agent_status: &str,
-) -> String {
-    match execution_state {
-        agentdash_application::session::SessionExecutionState::Running { .. } => {
-            "running".to_string()
-        }
-        agentdash_application::session::SessionExecutionState::Cancelling { .. } => {
-            "cancelling".to_string()
-        }
-        agentdash_application::session::SessionExecutionState::Completed { .. } => {
-            "completed".to_string()
-        }
-        agentdash_application::session::SessionExecutionState::Failed { .. } => {
-            "failed".to_string()
-        }
-        agentdash_application::session::SessionExecutionState::Interrupted { .. } => {
-            "interrupted".to_string()
-        }
-        agentdash_application::session::SessionExecutionState::Idle
-            if is_terminal_agent_status(agent_status) =>
-        {
-            agent_status.to_string()
-        }
-        agentdash_application::session::SessionExecutionState::Idle => "idle".to_string(),
-    }
-}
-
-fn execution_state_turn_id(
-    execution_state: &agentdash_application::session::SessionExecutionState,
-) -> Option<String> {
-    match execution_state {
-        agentdash_application::session::SessionExecutionState::Running { turn_id }
-        | agentdash_application::session::SessionExecutionState::Cancelling { turn_id }
-        | agentdash_application::session::SessionExecutionState::Interrupted { turn_id, .. } => {
-            turn_id.clone()
-        }
-        agentdash_application::session::SessionExecutionState::Completed { turn_id }
-        | agentdash_application::session::SessionExecutionState::Failed { turn_id, .. } => {
-            Some(turn_id.clone())
-        }
-        agentdash_application::session::SessionExecutionState::Idle => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use agentdash_application::session::{ExecutionStatus, TitleSource};
-    use agentdash_contracts::vfs::{
-        ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary,
-        ResolvedVfsSurface, ResolvedVfsSurfaceSource,
-    };
     use agentdash_contracts::workflow::ConversationCommandStaleGuardView;
     use agentdash_domain::workflow::LifecycleRun;
 
     use super::*;
-
-    fn test_session_meta(title: &str, title_source: TitleSource) -> SessionMeta {
-        SessionMeta {
-            id: "runtime-session-1".to_string(),
-            title: title.to_string(),
-            title_source,
-            created_at: 1,
-            updated_at: 2,
-            last_event_seq: 3,
-            last_delivery_status: ExecutionStatus::Idle,
-            last_turn_id: None,
-            last_terminal_message: None,
-            executor_session_id: None,
-        }
-    }
 
     fn test_shell(display_title: &str, title_source: &str) -> AgentRunWorkspaceShell {
         AgentRunWorkspaceShell {
@@ -1957,33 +1678,6 @@ mod tests {
             delivery_status: "idle".to_string(),
             last_turn_id: None,
             last_activity_at: "2026-06-12T00:00:00Z".to_string(),
-        }
-    }
-
-    fn test_surface(mounts: Vec<ResolvedMountSummary>) -> ResolvedVfsSurface {
-        ResolvedVfsSurface {
-            surface_ref: "agent-run:run-1:agent-1".to_string(),
-            source: ResolvedVfsSurfaceSource::AgentRun {
-                run_id: "run-1".to_string(),
-                agent_id: "agent-1".to_string(),
-            },
-            mounts,
-            default_mount_id: None,
-        }
-    }
-
-    fn test_mount(id: &str, provider: &str, purpose: ResolvedMountPurpose) -> ResolvedMountSummary {
-        ResolvedMountSummary {
-            id: id.to_string(),
-            display_name: id.to_string(),
-            provider: provider.to_string(),
-            backend_id: provider.to_string(),
-            capabilities: vec!["read".to_string(), "list".to_string()],
-            default_write: false,
-            purpose,
-            backend_online: None,
-            file_count: None,
-            edit_capabilities: ResolvedMountEditCapabilities::default(),
         }
     }
 
@@ -2013,17 +1707,6 @@ mod tests {
                 active_turn_id: Some("old-turn".to_string()),
             },
         }
-    }
-
-    #[test]
-    fn workspace_shell_title_uses_delivery_session_meta_when_present() {
-        let meta = test_session_meta("Session meta title", TitleSource::Source);
-
-        let shell_title =
-            select_workspace_shell_title(WorkspaceShellTitleCandidate::DeliveryMeta(&meta));
-
-        assert_eq!(shell_title.display_title, "Session meta title");
-        assert_eq!(shell_title.title_source, "source");
     }
 
     #[test]
@@ -2085,16 +1768,6 @@ mod tests {
     }
 
     #[test]
-    fn workspace_shell_title_uses_workspace_fallback_without_delivery_meta() {
-        let shell_title = select_workspace_shell_title(
-            WorkspaceShellTitleCandidate::WorkspaceFallback("AgentRun fallback".to_string()),
-        );
-
-        assert_eq!(shell_title.display_title, "AgentRun fallback");
-        assert_eq!(shell_title.title_source, "agentrun_workspace");
-    }
-
-    #[test]
     fn list_entry_inherits_workspace_shell_title() {
         let run = LifecycleRun::new_graphless(Uuid::new_v4());
         let run_id = run.id.to_string();
@@ -2117,8 +1790,14 @@ mod tests {
             frame_runtime: None,
             subject_associations: Vec::new(),
             actions: AgentRunWorkspaceActionSetView {
-                submit_message: enabled_action(),
-                cancel: disabled_action("not running"),
+                submit_message: AgentRunWorkspaceActionAvailabilityView {
+                    enabled: true,
+                    unavailable_reason: None,
+                },
+                cancel: AgentRunWorkspaceActionAvailabilityView {
+                    enabled: false,
+                    unavailable_reason: Some("not running".to_string()),
+                },
             },
             mailbox: mailbox_state_view(None, true, 0, false),
             mailbox_messages: Vec::new(),
@@ -2170,38 +1849,5 @@ mod tests {
         assert!(!view.paused);
         assert!(!view.can_resume);
         assert_eq!(view.pause_reason.as_deref(), Some("turn_interrupted"));
-    }
-
-    #[test]
-    fn lifecycle_resource_diagnostic_reports_missing_mount() {
-        let surface = test_surface(vec![test_mount(
-            "main",
-            "relay_fs",
-            ResolvedMountPurpose::Workspace,
-        )]);
-
-        let run_id = Uuid::new_v4();
-        let diagnostics = lifecycle_resource_surface_diagnostics(run_id, Some(&surface));
-
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "resource_surface_lifecycle_mount_missing"
-                && diagnostic.severity == ValidationSeverity::Error
-        }));
-    }
-
-    #[test]
-    fn lifecycle_resource_diagnostic_accepts_lifecycle_mount() {
-        let surface = test_surface(vec![
-            test_mount("main", "relay_fs", ResolvedMountPurpose::Workspace),
-            test_mount(
-                "lifecycle",
-                "lifecycle_vfs",
-                ResolvedMountPurpose::Lifecycle,
-            ),
-        ]);
-
-        let diagnostics = lifecycle_resource_surface_diagnostics(Uuid::new_v4(), Some(&surface));
-
-        assert!(diagnostics.is_empty());
     }
 }

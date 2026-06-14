@@ -1,5 +1,6 @@
 use agentdash_domain::DomainError;
 use agentdash_spi::ConnectorError;
+use agentdash_spi::session_persistence::SessionStoreError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkflowApplicationError {
@@ -46,6 +47,18 @@ impl From<ConnectorError> for WorkflowApplicationError {
                 Self::Internal("内部连接器 IO 错误".to_string())
             }
             ConnectorError::Json(error) => Self::BadRequest(error.to_string()),
+        }
+    }
+}
+
+impl From<SessionStoreError> for WorkflowApplicationError {
+    fn from(value: SessionStoreError) -> Self {
+        match value {
+            SessionStoreError::NotFound(message) => Self::NotFound(message),
+            SessionStoreError::InvalidInput(message) => Self::BadRequest(message),
+            SessionStoreError::InvalidData(message) => Self::Internal(message),
+            SessionStoreError::Database(_) => Self::Internal("内部会话持久化错误".to_string()),
+            SessionStoreError::Internal(message) => Self::Internal(message),
         }
     }
 }

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "API/application/domain layering invariant for moving AgentRun workspace business assembly into application."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "LifecycleRun, LifecycleAgent, AgentFrame and RuntimeSessionExecutionAnchor ownership model for AgentRun workspace read model."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "SessionExecutionState, AgentRun workspace shell, command action availability and RuntimeSession trace metadata boundaries."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Mailbox-first command receipt, envelope, scheduler outcome and AgentRunTurn boundary contract."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Rust contract DTO and generated TypeScript source-of-truth rules for workspace and ProjectAgent run responses."}

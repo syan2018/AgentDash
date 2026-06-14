@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Verify final implementation keeps API thin and application-owned business orchestration."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Verify workspace projection and command availability match documented execution-state semantics."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Verify command receipt and mailbox scheduler semantics are preserved."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Verify contract generation and frontend consumption stay aligned."}

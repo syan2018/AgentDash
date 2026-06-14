@@ -52,7 +52,7 @@ impl RuntimeToolProvider for WorkflowRuntimeToolProvider {
 
         Ok(vec![Arc::new(CompleteLifecycleNodeTool::new(
             self.repos.clone(),
-            self.session_services_handle.get().await,
+            self.session_services_handle.clone(),
             Some(self.function_runner.clone()),
             self.platform_config.clone(),
             context,

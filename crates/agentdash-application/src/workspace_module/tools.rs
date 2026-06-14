@@ -1093,7 +1093,8 @@ fn build_present_notification(
 mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use agentdash_domain::DomainError;
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
@@ -1106,12 +1107,18 @@ mod tests {
         AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository,
         RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
     };
+    use agentdash_spi::connector::RuntimeToolProvider;
     use agentdash_spi::hooks::{
         ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
         AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookResolution,
         SessionSnapshotMetadata,
     };
-    use agentdash_spi::{AgentConnector, CapabilityState, ConnectorError, PromptPayload};
+    use agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE;
+    use agentdash_spi::{
+        AgentConfig, AgentConnector, CapabilityState, ConnectorError, ExecutionContext,
+        ExecutionSessionFrame, ExecutionTurnFrame, PromptPayload, ToolCapability, ToolCluster,
+        ToolDefinition,
+    };
     use futures::stream;
     use tokio::sync::RwLock;
 
@@ -1128,6 +1135,10 @@ mod tests {
         MemoryRuntimeSessionExecutionAnchorRepository,
     };
     use crate::vfs::tools::SessionToolServices;
+    use crate::vfs::tools::{
+        SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
+        WorkspaceModuleRuntimeToolProvider,
+    };
     use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
     use crate::workflow::frame_builder::AgentFrameBuilder;
     use crate::workflow::frame_surface::FrameSurfaceDraft;
@@ -2140,6 +2151,7 @@ mod tests {
 
     struct EchoActionProvider {
         action_key: RuntimeActionKey,
+        invoke_count: Arc<AtomicUsize>,
     }
 
     #[async_trait]
@@ -2154,6 +2166,7 @@ mod tests {
             &self,
             request: RuntimeInvocationRequest,
         ) -> Result<RuntimeInvocationOutput, RuntimeInvocationError> {
+            self.invoke_count.fetch_add(1, Ordering::SeqCst);
             Ok(RuntimeInvocationOutput::new(serde_json::json!({
                 "echoed": request.input,
                 "action": request.action_key.as_str(),
@@ -2182,16 +2195,29 @@ mod tests {
         project_id: Uuid,
         backend: Option<ResolvedInvocationBackend>,
     ) -> WorkspaceModuleInvokeTool {
+        let (tool, _invoke_count) =
+            invoke_tool_with_backend_and_counter(install_repo, canvas_repo, project_id, backend);
+        tool
+    }
+
+    fn invoke_tool_with_backend_and_counter(
+        install_repo: Arc<dyn ProjectExtensionInstallationRepository>,
+        canvas_repo: Arc<dyn CanvasRepository>,
+        project_id: Uuid,
+        backend: Option<ResolvedInvocationBackend>,
+    ) -> (WorkspaceModuleInvokeTool, Arc<AtomicUsize>) {
+        let invoke_count = Arc::new(AtomicUsize::new(0));
         let gateway = Arc::new(
             RuntimeGateway::new().with_provider(Arc::new(EchoActionProvider {
                 action_key: RuntimeActionKey::parse("demo.profile").expect("valid action key"),
+                invoke_count: invoke_count.clone(),
             })),
         );
         let channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
             install_repo.clone(),
             Arc::new(NoopChannelTransport),
         ));
-        WorkspaceModuleInvokeTool::new(
+        let tool = WorkspaceModuleInvokeTool::new(
             install_repo,
             canvas_repo,
             project_id,
@@ -2201,7 +2227,8 @@ mod tests {
             backend,
             gateway,
             channel_invoker,
-        )
+        );
+        (tool, invoke_count)
     }
 
     fn backend(id: &str) -> Option<ResolvedInvocationBackend> {
@@ -2211,11 +2238,86 @@ mod tests {
         })
     }
 
+    fn workspace_module_execution_context(project_id: Uuid) -> ExecutionContext {
+        let working_directory = PathBuf::from(".");
+        let mut vfs = local_workspace_vfs(&working_directory);
+        vfs.source_project_id = Some(project_id.to_string());
+        let mut capability_state = CapabilityState::from_clusters([ToolCluster::WorkspaceModule]);
+        capability_state
+            .tool
+            .capabilities
+            .insert(ToolCapability::new(CAP_WORKSPACE_MODULE));
+        ExecutionContext {
+            session: ExecutionSessionFrame {
+                turn_id: "turn-1".to_string(),
+                working_directory,
+                environment_variables: HashMap::new(),
+                executor_config: AgentConfig::default(),
+                mcp_servers: Vec::new(),
+                vfs: Some(vfs),
+                backend_execution: None,
+                identity: None,
+            },
+            turn: ExecutionTurnFrame {
+                capability_state,
+                ..Default::default()
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn workspace_module_provider_declaration_does_not_invoke_runtime_gateway() {
+        let (install_repo, canvas_repo, project_id) = fixtures().await;
+        let invoke_count = Arc::new(AtomicUsize::new(0));
+        let gateway = Arc::new(
+            RuntimeGateway::new().with_provider(Arc::new(EchoActionProvider {
+                action_key: RuntimeActionKey::parse("demo.profile").expect("valid action key"),
+                invoke_count: invoke_count.clone(),
+            })),
+        );
+        let gateway_handle = SharedRuntimeGatewayHandle::default();
+        gateway_handle.set(gateway).await;
+        let provider = WorkspaceModuleRuntimeToolProvider::new(
+            install_repo,
+            canvas_repo,
+            SharedSessionToolServicesHandle::default(),
+            gateway_handle,
+        )
+        .with_extension_channel_transport(Arc::new(NoopChannelTransport));
+        let context = workspace_module_execution_context(project_id);
+
+        let tools = provider
+            .build_tools(&context)
+            .await
+            .expect("workspace module tools should build");
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool.name() == "workspace_module_invoke"),
+            "provider should declare invoke tool when runtime deps are present"
+        );
+
+        let definitions = tools
+            .iter()
+            .map(|tool| ToolDefinition::from_tool(tool.as_ref()))
+            .collect::<Vec<_>>();
+        assert!(
+            definitions
+                .iter()
+                .any(|definition| definition.name == "workspace_module_invoke")
+        );
+        assert_eq!(invoke_count.load(Ordering::SeqCst), 0);
+    }
+
     #[tokio::test]
     async fn invoke_runtime_action_routes_to_gateway() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
-        let tool =
-            invoke_tool_with_backend(install_repo, canvas_repo, project_id, backend("backend-1"));
+        let (tool, invoke_count) = invoke_tool_with_backend_and_counter(
+            install_repo,
+            canvas_repo,
+            project_id,
+            backend("backend-1"),
+        );
         let result = tool
             .execute(
                 "t",
@@ -2244,6 +2346,7 @@ mod tests {
         // gateway 实际收到 input
         let output = details.get("output").expect("output");
         assert_eq!(output["echoed"]["name"], "alice");
+        assert_eq!(invoke_count.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

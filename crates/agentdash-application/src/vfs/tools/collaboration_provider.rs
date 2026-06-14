@@ -43,7 +43,7 @@ impl RuntimeToolProvider for CollaborationRuntimeToolProvider {
         }
 
         let mut tools: Vec<DynAgentTool> = Vec::new();
-        let companion_tool_context = CompanionToolContext::resolve(context, &self.repos).await;
+        let companion_tool_context = CompanionToolContext::from_execution_context(context);
         if flow.is_capability_tool_enabled(
             CAP_COLLABORATION,
             "companion_request",

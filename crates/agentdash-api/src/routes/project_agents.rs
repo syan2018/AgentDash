@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
-use agentdash_application::session::AgentRunMailboxService;
 use agentdash_application::session::construction_planner::{
     ResolvedProjectAgentContext, build_project_agent_context,
+};
+use agentdash_application::session::{
+    AgentRunMailboxCommandOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
 };
 use agentdash_application::workflow::{
     ConversationModelConfigResolver, ProjectAgentRunStartCommand, ProjectAgentRunStartRepos,
@@ -18,7 +20,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_contracts::agent_run_mailbox::{AgentRunAcceptedRefs, AgentRunCommandReceipt};
+use agentdash_contracts::agent_run_mailbox::AgentRunAcceptedRefs;
 use agentdash_contracts::common_response::DeletedFlagResponse;
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent as ProjectAgentResponse,
@@ -33,6 +35,9 @@ use agentdash_contracts::workflow::{
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
+    routes::agent_run_mailbox_contracts::{
+        agent_run_message_command_response, command_receipt_view,
+    },
     rpc::ApiError,
 };
 
@@ -168,14 +173,20 @@ pub async fn create_project_agent_run(
         .map_err(ApiError::Internal)?;
     let summary = build_project_agent_summary(&project, &agent_context);
     let effective_executor_config = Some(dispatch.effective_executor_config.clone());
+    if dispatch.initial_message.outcome == AgentRunMailboxCommandOutcome::Queued
+        && dispatch.initial_message.mailbox_message.is_some()
+    {
+        spawn_initial_project_agent_mailbox_schedule(
+            state.clone(),
+            dispatch.run_id,
+            dispatch.agent_id,
+            dispatch.runtime_session_id.clone(),
+            current_user.clone(),
+        );
+    }
 
     Ok(Json(ProjectAgentRunStartResult {
-        command_receipt: AgentRunCommandReceipt {
-            client_command_id: dispatch.command_receipt.client_command_id,
-            status: dispatch.command_receipt.status,
-            duplicate: dispatch.command_receipt.duplicate,
-            message: dispatch.command_receipt.message,
-        },
+        command_receipt: command_receipt_view(dispatch.command_receipt),
         accepted_refs: AgentRunAcceptedRefs {
             run_ref: LifecycleRunRefDto {
                 run_id: dispatch.run_id.to_string(),
@@ -192,11 +203,20 @@ pub async fn create_project_agent_run(
             runtime_session_ref: Some(RuntimeSessionRefDto {
                 runtime_session_id: dispatch.runtime_session_id.clone(),
             }),
-            turn_id: Some(dispatch.turn_id.clone()),
+            turn_id: if dispatch.turn_id.is_empty() {
+                None
+            } else {
+                Some(dispatch.turn_id.clone())
+            },
         },
+        initial_message: agent_run_message_command_response(dispatch.initial_message),
         effective_executor_config,
         runtime_session_id: dispatch.runtime_session_id,
-        turn_id: dispatch.turn_id,
+        turn_id: if dispatch.turn_id.is_empty() {
+            None
+        } else {
+            Some(dispatch.turn_id)
+        },
         agent: summary,
         run_ref: LifecycleRunRefDto {
             run_id: dispatch.run_id.to_string(),
@@ -215,6 +235,47 @@ pub async fn create_project_agent_run(
             id: subject.id.to_string(),
         }),
     }))
+}
+
+fn spawn_initial_project_agent_mailbox_schedule(
+    state: Arc<AppState>,
+    run_id: Uuid,
+    agent_id: Uuid,
+    runtime_session_id: String,
+    identity: agentdash_spi::platform::auth::AuthIdentity,
+) {
+    tokio::spawn(async move {
+        let service = AgentRunMailboxService::new(
+            state.repos.lifecycle_run_repo.as_ref(),
+            state.repos.lifecycle_agent_repo.as_ref(),
+            state.repos.agent_frame_repo.as_ref(),
+            state.repos.execution_anchor_repo.as_ref(),
+            state.repos.agent_run_command_receipt_repo.as_ref(),
+            state.repos.agent_run_mailbox_repo.as_ref(),
+            state.services.session_core.clone(),
+            state.services.session_control.clone(),
+            state.services.session_eventing.clone(),
+            state.services.session_launch.clone(),
+        );
+        if let Err(error) = service
+            .schedule(
+                run_id,
+                agent_id,
+                &runtime_session_id,
+                AgentRunMailboxScheduleTrigger::UserMessageSubmitted,
+                Some(identity),
+            )
+            .await
+        {
+            tracing::warn!(
+                runtime_session_id = %runtime_session_id,
+                run_id = %run_id,
+                agent_id = %agent_id,
+                error = %error,
+                "ProjectAgent 初始 mailbox 后台调度失败"
+            );
+        }
+    });
 }
 
 fn project_agent_run_start_service_parts(

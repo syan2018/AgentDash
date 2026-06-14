@@ -72,6 +72,8 @@ pub struct AgentRunMailboxUserMessageCommand {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub runtime_session_id: String,
+    pub source: MailboxMessageSource,
+    pub schedule_on_submit: bool,
     pub input: Vec<UserInputBlock>,
     pub client_command_id: String,
     pub executor_config: Option<AgentConfig>,
@@ -222,7 +224,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 agent_id: command.agent_id,
                 runtime_session_id: command.runtime_session_id.clone(),
                 origin: MailboxMessageOrigin::User,
-                source: MailboxMessageSource::Composer,
+                source: command.source,
                 delivery: policy.delivery,
                 barrier: policy.barrier,
                 drain_mode: policy.drain_mode,
@@ -243,15 +245,18 @@ impl<'a> AgentRunMailboxService<'a> {
             .attach_mailbox_message(claim.record.id, message.id)
             .await?;
 
-        let outcomes = self
-            .schedule(
+        let outcomes = if command.schedule_on_submit {
+            self.schedule(
                 command.run_id,
                 command.agent_id,
                 &command.runtime_session_id,
                 AgentRunMailboxScheduleTrigger::UserMessageSubmitted,
                 command.identity,
             )
-            .await?;
+            .await?
+        } else {
+            Vec::new()
+        };
         if let Some(outcome) = outcomes
             .into_iter()
             .find(|outcome| outcome.mailbox_message.id == message.id)
@@ -1856,7 +1861,9 @@ fn ensure_message_owner(
     Ok(())
 }
 
-fn outcome_from_message(message: &AgentRunMailboxMessage) -> AgentRunMailboxCommandOutcome {
+pub(crate) fn outcome_from_message(
+    message: &AgentRunMailboxMessage,
+) -> AgentRunMailboxCommandOutcome {
     match message.status {
         MailboxMessageStatus::Dispatched => AgentRunMailboxCommandOutcome::Launched,
         MailboxMessageStatus::Steered => AgentRunMailboxCommandOutcome::Steered,
@@ -1871,7 +1878,9 @@ fn outcome_from_message(message: &AgentRunMailboxMessage) -> AgentRunMailboxComm
     }
 }
 
-fn outcome_from_result_json(value: &serde_json::Value) -> Option<AgentRunMailboxCommandOutcome> {
+pub(crate) fn outcome_from_result_json(
+    value: &serde_json::Value,
+) -> Option<AgentRunMailboxCommandOutcome> {
     match value.get("outcome").and_then(serde_json::Value::as_str)? {
         "launched" => Some(AgentRunMailboxCommandOutcome::Launched),
         "queued" => Some(AgentRunMailboxCommandOutcome::Queued),

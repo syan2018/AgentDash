@@ -97,9 +97,9 @@ pub use orchestrator::{
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
 pub use project_agent_run_start::{
-    ProjectAgentRunInitialMessageCommand, ProjectAgentRunInitialMessageLaunch,
-    ProjectAgentRunInitialMessagePort, ProjectAgentRunStartCommand, ProjectAgentRunStartDispatch,
-    ProjectAgentRunStartRepos, ProjectAgentRunStartService,
+    ProjectAgentRunInitialMessageCommand, ProjectAgentRunInitialMessageCommandPort,
+    ProjectAgentRunStartCommand, ProjectAgentRunStartDispatch, ProjectAgentRunStartRepos,
+    ProjectAgentRunStartService,
 };
 #[cfg(test)]
 pub(crate) use projection::activity_projection;

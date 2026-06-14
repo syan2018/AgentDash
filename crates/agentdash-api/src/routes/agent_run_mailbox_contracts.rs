@@ -1,9 +1,91 @@
+use agentdash_application::session::{
+    AgentRunMailboxCommandOutcome as AppMailboxCommandOutcome, AgentRunMailboxCommandResult,
+};
+use agentdash_application::workflow::{
+    AgentRunCommandReceiptView, agent_run_workspace as app_workspace,
+};
 use agentdash_contracts::agent_run_mailbox::{
-    AgentRunMessageAcceptedRefs, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
+    AgentRunCommandReceipt, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
+    AgentRunMessageCommandResponse, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
     MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus, MailboxMessageView,
-    MailboxStateView, SteeringStopEffect,
+    MailboxStateView, RuntimeSessionCommandStateDto, SteeringStopEffect,
 };
 use agentdash_contracts::workflow::{AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto};
+
+pub(crate) fn agent_run_message_command_response(
+    result: AgentRunMailboxCommandResult,
+) -> AgentRunMessageCommandResponse {
+    AgentRunMessageCommandResponse {
+        command_receipt: command_receipt_view(result.command_receipt),
+        outcome: mailbox_command_outcome_view(result.outcome),
+        mailbox_message: result.mailbox_message.map(mailbox_message_view),
+        accepted_refs: result.accepted_refs.map(agent_run_message_accepted_refs),
+        runtime_state: result.runtime_state.map(|state| {
+            runtime_command_state_dto(
+                app_workspace::AgentRunWorkspaceProjection::runtime_command_state(&state),
+            )
+        }),
+    }
+}
+
+pub(crate) fn command_receipt_view(receipt: AgentRunCommandReceiptView) -> AgentRunCommandReceipt {
+    AgentRunCommandReceipt {
+        client_command_id: receipt.client_command_id,
+        status: receipt.status,
+        duplicate: receipt.duplicate,
+        message: receipt.message,
+    }
+}
+
+pub(crate) fn agent_run_message_accepted_refs(
+    refs: agentdash_domain::workflow::AgentRunAcceptedRefs,
+) -> AgentRunMessageAcceptedRefs {
+    AgentRunMessageAcceptedRefs {
+        run_ref: LifecycleRunRefDto {
+            run_id: refs.run_id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: refs.run_id.to_string(),
+            agent_id: refs.agent_id.to_string(),
+        },
+        frame_ref: refs
+            .frame_id
+            .map(|frame_id| agentdash_contracts::workflow::AgentFrameRefDto {
+                agent_id: refs.agent_id.to_string(),
+                frame_id: frame_id.to_string(),
+                revision: refs.frame_revision,
+            }),
+        runtime_session_ref: refs
+            .runtime_session_id
+            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
+        agent_run_turn_id: refs.agent_run_turn_id,
+        protocol_turn_id: refs.protocol_turn_id,
+    }
+}
+
+pub(crate) fn mailbox_command_outcome_view(
+    outcome: AppMailboxCommandOutcome,
+) -> AgentRunMessageCommandOutcome {
+    match outcome {
+        AppMailboxCommandOutcome::Launched => AgentRunMessageCommandOutcome::Launched,
+        AppMailboxCommandOutcome::Queued => AgentRunMessageCommandOutcome::Queued,
+        AppMailboxCommandOutcome::Steered => AgentRunMessageCommandOutcome::Steered,
+        AppMailboxCommandOutcome::Deleted => AgentRunMessageCommandOutcome::Deleted,
+        AppMailboxCommandOutcome::Resumed => AgentRunMessageCommandOutcome::Resumed,
+        AppMailboxCommandOutcome::Blocked => AgentRunMessageCommandOutcome::Blocked,
+        AppMailboxCommandOutcome::Failed => AgentRunMessageCommandOutcome::Failed,
+    }
+}
+
+pub(crate) fn runtime_command_state_dto(
+    state: app_workspace::AgentRunWorkspaceRuntimeCommandStateModel,
+) -> RuntimeSessionCommandStateDto {
+    RuntimeSessionCommandStateDto {
+        status: state.status.as_str().to_string(),
+        turn_id: state.turn_id,
+        message: state.message,
+    }
+}
 
 pub(crate) fn mailbox_message_view(
     message: agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage,

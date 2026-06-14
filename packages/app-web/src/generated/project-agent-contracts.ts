@@ -2,7 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto, LifecycleRunRefDto } from "./agent-run-mailbox-contracts";
+import type { AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandResponse, AgentRunRefDto, LifecycleRunRefDto } from "./agent-run-mailbox-contracts";
 import type { UserInput } from "./backbone-protocol";
 
 export type ConversationEffectiveExecutorConfigView = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: string, permission_policy?: string, source: ConversationModelConfigSource, };
@@ -21,7 +21,7 @@ export type ProjectAgent = { id: string, project_id: string, name: string, agent
 
 export type ProjectAgentExecutor = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, permission_policy?: string, };
 
-export type ProjectAgentRunStartResult = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, effective_executor_config?: ConversationEffectiveExecutorConfigView, runtime_session_id: string, turn_id: string, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
+export type ProjectAgentRunStartResult = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, initial_message: AgentRunMessageCommandResponse, effective_executor_config?: ConversationEffectiveExecutorConfigView, runtime_session_id: string, turn_id?: string, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
 
 export type ProjectAgentSummary = { key: string, display_name: string, description: string, executor: ProjectAgentExecutor, effective_executor_config?: ConversationEffectiveExecutorConfigView, preset_name?: string, source: string, };
 

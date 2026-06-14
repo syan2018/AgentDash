@@ -20,7 +20,9 @@ use crate::context::SharedContextAuditBus;
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::session::assembler::CompanionParentFactsProvider;
+use crate::session::capability_state::replay_runtime_capability_transitions;
 use crate::session::construction_provider::SessionConstructionProviderInput;
+use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
 };
@@ -162,6 +164,7 @@ impl FrameConstructionService {
                 &input.command,
                 None,
                 &input.session_id,
+                &input.requested_runtime_commands,
             );
         }
 
@@ -222,6 +225,7 @@ impl FrameConstructionService {
         command: &LaunchCommand,
         runtime_session_id: &str,
         hook_binding: Option<TerminalHookEffectBinding>,
+        requested_runtime_commands: &[RuntimeCommandRecord],
     ) -> Result<FrameLaunchEnvelope, ConnectorError> {
         let frame = builder
             .build_uncommitted(self.repos.agent_frame_repo.as_ref())
@@ -233,6 +237,7 @@ impl FrameConstructionService {
             command,
             hook_binding,
             runtime_session_id,
+            requested_runtime_commands,
         )?;
         envelope.pending_frame = Some(frame);
         Ok(envelope)
@@ -316,11 +321,12 @@ pub(crate) fn build_envelope_from_frame(
     command: &LaunchCommand,
     hook_binding: Option<TerminalHookEffectBinding>,
     runtime_session_id: &str,
+    requested_runtime_commands: &[RuntimeCommandRecord],
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let surface = FrameRuntimeSurface::from_frame(frame, Some(runtime_session_id.to_string()));
 
     let mut surface_draft = FrameSurfaceDraft::from_frame(frame);
-    let mut vfs = surface_draft.vfs.clone().unwrap_or_default();
+    let mut vfs = surface_draft.vfs.clone();
     let mut executor_config = surface_draft.execution_profile.clone();
     let mut capability_state = surface_draft.capability_state.clone();
     let mut mcp_servers = surface_draft.mcp_servers.clone();
@@ -358,13 +364,7 @@ pub(crate) fn build_envelope_from_frame(
             capability_state = Some(cs);
         }
         if let Some(v) = surface_draft.vfs.clone() {
-            let override_wd = v
-                .default_mount()
-                .map(|m| PathBuf::from(m.root_ref.trim()))
-                .filter(|p| !p.as_os_str().is_empty());
-            if override_wd.is_some() {
-                vfs = v;
-            }
+            vfs = Some(v);
         }
         if !surface_draft.mcp_servers.is_empty() {
             mcp_servers = surface_draft.mcp_servers.clone();
@@ -376,14 +376,20 @@ pub(crate) fn build_envelope_from_frame(
             "FrameLaunchEnvelope: executor_config 未在 frame construction 阶段解析".into(),
         )
     })?;
-    let mut capability_state = capability_state.ok_or_else(|| {
+    let capability_state = capability_state.ok_or_else(|| {
         ConnectorError::InvalidConfig(
             "FrameLaunchEnvelope: capability_state 未在 frame construction 阶段解析".into(),
         )
     })?;
-    // Workspace module 可见性已收口进 base CapabilityState.workspace_module（经
-    // effective_capability_json 投影/还原），不再从 frame 旁路字段二次覆盖。
-    let working_directory = vfs
+    surface_draft.capability_state = Some(capability_state.clone());
+    surface_draft.vfs = vfs.clone();
+    surface_draft.mcp_servers = mcp_servers.clone();
+    surface_draft.execution_profile = Some(executor_config.clone());
+    let closed_surface =
+        close_frame_launch_surface(&mut surface_draft, requested_runtime_commands)?;
+    let working_directory = closed_surface
+        .launch_surface
+        .vfs
         .default_mount()
         .map(|m| PathBuf::from(m.root_ref.trim()))
         .filter(|p| !p.as_os_str().is_empty())
@@ -392,19 +398,11 @@ pub(crate) fn build_envelope_from_frame(
                 "FrameLaunchEnvelope: working_directory 未在 frame construction 阶段解析".into(),
             )
         })?;
-    capability_state.vfs.active = Some(vfs.clone());
-    capability_state.tool.mcp_servers = mcp_servers.clone();
-    surface_draft.capability_state = Some(capability_state.clone());
-    surface_draft.vfs = Some(vfs.clone());
-    surface_draft.mcp_servers = mcp_servers.clone();
-    surface_draft.execution_profile = Some(executor_config.clone());
-    let launch_surface = FrameLaunchSurface::from_surface_draft(&surface_draft)
-        .map_err(|error| ConnectorError::InvalidConfig(format!("FrameLaunchEnvelope: {error}")))?;
 
     Ok(FrameLaunchEnvelope {
         surface,
         surface_draft,
-        launch_surface,
+        launch_surface: closed_surface.launch_surface,
         pending_frame: None,
         intent: FrameLaunchIntent {
             input,
@@ -416,7 +414,72 @@ pub(crate) fn build_envelope_from_frame(
         working_directory,
         context_bundle,
         continuation_context_frame: None,
-        base_capability_state: None,
-        resolution_trace: LaunchResolutionTrace::default(),
+        base_capability_state: closed_surface.base_capability_state,
+        resolution_trace: closed_surface.resolution_trace,
+    })
+}
+
+pub(crate) struct ClosedFrameLaunchSurface {
+    pub launch_surface: FrameLaunchSurface,
+    pub base_capability_state: Option<agentdash_spi::CapabilityState>,
+    pub resolution_trace: LaunchResolutionTrace,
+}
+
+pub(crate) fn close_frame_launch_surface(
+    surface_draft: &mut FrameSurfaceDraft,
+    requested_runtime_commands: &[RuntimeCommandRecord],
+) -> Result<ClosedFrameLaunchSurface, ConnectorError> {
+    let base_launch_surface = FrameLaunchSurface::from_surface_draft(surface_draft)
+        .map_err(|error| ConnectorError::InvalidConfig(format!("FrameLaunchEnvelope: {error}")))?;
+
+    if requested_runtime_commands.is_empty() {
+        return Ok(ClosedFrameLaunchSurface {
+            launch_surface: base_launch_surface,
+            base_capability_state: None,
+            resolution_trace: LaunchResolutionTrace::default(),
+        });
+    }
+
+    let base_capability_state = base_launch_surface.capability_state.clone();
+    let requested_transitions = requested_runtime_commands
+        .iter()
+        .map(|command| command.pending_capability_state_transition())
+        .collect::<Vec<_>>();
+    let replay =
+        replay_runtime_capability_transitions(&base_capability_state, &requested_transitions)
+            .map_err(|error| {
+                ConnectorError::InvalidConfig(format!(
+                    "FrameLaunchEnvelope: pending runtime command closure 失败: {error}"
+                ))
+            })?;
+
+    let mut final_capability_state = replay.capability_state;
+    let effective_vfs = replay
+        .effective_vfs
+        .unwrap_or_else(|| base_launch_surface.vfs.clone());
+    final_capability_state.vfs.active = Some(effective_vfs.clone());
+    let effective_mcp_servers = replay
+        .effective_mcp_servers
+        .unwrap_or_else(|| final_capability_state.tool.mcp_servers.clone());
+    final_capability_state.tool.mcp_servers = effective_mcp_servers.clone();
+    let execution_profile = base_launch_surface.execution_profile;
+    let launch_surface = FrameLaunchSurface::new(
+        final_capability_state,
+        effective_vfs,
+        effective_mcp_servers,
+        execution_profile,
+    )
+    .map_err(|error| ConnectorError::InvalidConfig(format!("FrameLaunchEnvelope: {error}")))?;
+    launch_surface.write_back_to_surface_draft(surface_draft);
+
+    Ok(ClosedFrameLaunchSurface {
+        launch_surface,
+        base_capability_state: Some(base_capability_state),
+        resolution_trace: LaunchResolutionTrace {
+            vfs_source: Some("pending_runtime_command".to_string()),
+            mcp_source: Some("pending_runtime_command".to_string()),
+            capability_source: Some("pending_runtime_command".to_string()),
+            pending_overlay_applied: true,
+        },
     })
 }

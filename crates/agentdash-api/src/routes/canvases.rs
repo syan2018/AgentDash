@@ -26,7 +26,7 @@ use agentdash_contracts::canvas::{
     RuntimeActionKindDto, RuntimeContextDto, RuntimeInvocationOutputDto,
     RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto, RuntimeTraceDto,
 };
-use agentdash_contracts::core::DeletedIdResponse;
+use agentdash_contracts::common_response::DeletedIdResponse;
 use agentdash_contracts::extension_package::ExtensionPackageInstallationResponse;
 
 use crate::app_state::AppState;

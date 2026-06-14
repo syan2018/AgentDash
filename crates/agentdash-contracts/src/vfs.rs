@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::context::VfsCapabilityDto;
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct SelectorHint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -336,18 +338,6 @@ pub struct SurfaceUploadBinaryFileResponse {
     pub size: u64,
     pub content_kind: String,
     pub mime_type: String,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum VfsCapabilityDto {
-    Read,
-    Write,
-    List,
-    Search,
-    Exec,
-    /// 订阅内容变更事件。
-    Watch,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

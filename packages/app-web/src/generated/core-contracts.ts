@@ -2,6 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
+import type { ContextContainerDefinition, ContextSourceRef, SessionComposition, VfsCapabilityDto } from "./context-contracts";
 
 export type AgentPreset = { name: string, agent_type: string, config: JsonValue, };
 
@@ -27,27 +28,7 @@ export type BackendVisibility = "private" | "shared" | "system";
 
 export type BackendWithStatusResponse = { online: boolean, runtime_health: BackendRuntimeHealthResponse | null, workspace_roots: Array<string> | null, capabilities: BackendCapabilitiesResponse | null, id: string, name: string, endpoint: string, enabled: boolean, backend_type: BackendType, owner_user_id: string | null, profile_id: string | null, device_id: string | null, machine_id: string | null, machine_label: string | null, visibility: BackendVisibility, share_scope_kind: BackendShareScopeKind, share_scope_id: string | null, capability_slot: string, device: JsonValue, last_claimed_at: string | null, };
 
-export type ContextContainerDefinition = { mount_id: string, display_name: string, provider: ContextContainerProvider, capabilities: Array<VfsCapabilityDto>, default_write: boolean, };
-
-export type ContextContainerFile = { path: string, content: string, };
-
-export type ContextContainerProvider = { "kind": "inline_files", files: Array<ContextContainerFile>, } | { "kind": "external_service", service_id: string, root_ref: string, };
-
-export type ContextDelivery = "inline" | "resource" | "lazy";
-
-export type ContextSlot = "requirements" | "constraints" | "codebase" | "references" | "instruction_append";
-
-export type ContextSourceKind = "manual_text" | "file" | "project_snapshot" | "http_fetch" | "mcp_resource" | "entity_ref";
-
-export type ContextSourceRef = { kind: ContextSourceKind, locator: string, label: string | null, slot: ContextSlot, priority: number, required: boolean, max_chars: number | null, delivery: ContextDelivery, };
-
-export type DeletedFlagResponse = { deleted: boolean, };
-
-export type DeletedIdResponse = { deleted: string, };
-
 export type DeletedProjectSubjectGrantResponse = { project_id: string, subject_type: ProjectSubjectType, subject_id: string, };
-
-export type PendingExecutionResponse = { execution_id: string, status: string, };
 
 export type ProjectAccessSummaryResponse = { role: ProjectRole | null, can_view: boolean, can_edit: boolean, can_manage_sharing: boolean, via_admin_bypass: boolean, via_template_visibility: boolean, };
 
@@ -67,15 +48,9 @@ export type ProjectVisibility = "private" | "template_visible";
 
 export type RevokeProjectGrantResponse = { deleted: DeletedProjectSubjectGrantResponse, };
 
-export type RevokedIdResponse = { revoked: string, };
-
 export type RuntimeHealthStatus = "online" | "offline" | "starting" | "degraded" | "stopping" | "error";
 
 export type SchedulingConfig = { stall_timeout_ms: number | null, };
-
-export type SessionComposition = { persona_label: string | null, persona_prompt: string | null, workflow_steps: Array<string>, required_context_blocks: Array<SessionRequiredContextBlock>, };
-
-export type SessionRequiredContextBlock = { title: string, content: string, };
 
 export type StoryContext = { source_refs: Array<ContextSourceRef>, context_containers: Array<ContextContainerDefinition>, disabled_container_ids: Array<string>, session_composition: SessionComposition | null, };
 
@@ -92,10 +67,6 @@ export type TaskDispatchPreference = { agent_type: string | null, agent_pid: str
 export type TaskResponse = { id: string, project_id: string, story_id: string, workspace_id: string | null, title: string, description: string, status: TaskStatus, dispatch_preference: TaskDispatchPreference, artifacts: Array<Artifact>, created_at: string, updated_at: string, };
 
 export type TaskStatus = "pending" | "assigned" | "running" | "awaiting_verification" | "completed" | "failed" | "cancelled";
-
-export type UpdatedIdResponse = { updated: string, };
-
-export type VfsCapabilityDto = "read" | "write" | "list" | "search" | "exec" | "watch";
 
 export type WorkspaceBindingResponse = { id: string, workspace_id: string, backend_id: string, root_ref: string, status: WorkspaceBindingStatus, detected_facts: JsonValue, last_verified_at: string | null, priority: number, created_at: string, updated_at: string, };
 

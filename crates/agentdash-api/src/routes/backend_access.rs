@@ -14,7 +14,7 @@ use agentdash_application::workspace::{
     WorkspaceBindingSyncResult, WorkspaceDetectionResult, WorkspaceInventoryCandidate,
     list_project_workspace_candidates, sync_project_backend_workspace_bindings,
 };
-use agentdash_contracts::core::RevokedIdResponse;
+use agentdash_contracts::common_response::RevokedIdResponse;
 use agentdash_domain::backend::{
     BackendWorkspaceInventory, BackendWorkspaceInventorySource, BackendWorkspaceInventoryStatus,
     ProjectBackendAccess, ProjectBackendAccessStatus,

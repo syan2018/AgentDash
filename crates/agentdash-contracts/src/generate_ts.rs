@@ -19,21 +19,27 @@ use agentdash_contracts::canvas::{
     RuntimeActionKindDto, RuntimeContextDto, RuntimeInvocationOutputDto,
     RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto, RuntimeTraceDto,
 };
+use agentdash_contracts::common_response::{
+    DeletedFlagResponse, DeletedIdResponse, PendingExecutionResponse, RevokedIdResponse,
+    UpdatedIdResponse,
+};
 use agentdash_contracts::companion::{CompanionGateRespondRequest, CompanionGateRespondResponse};
+use agentdash_contracts::context::{
+    ContextContainerDefinition, ContextContainerFile, ContextContainerProvider, ContextDelivery,
+    ContextSlot, ContextSourceKind, ContextSourceRef, SessionComposition,
+    SessionRequiredContextBlock, VfsCapabilityDto,
+};
 use agentdash_contracts::core::{
     AgentPreset, Artifact, ArtifactType, BackendCapabilitiesResponse,
     BackendExecutorCapabilityResponse, BackendMcpServerCapabilityResponse, BackendResponse,
     BackendRuntimeHealthResponse, BackendShareScopeKind, BackendType, BackendVisibility,
-    BackendWithStatusResponse, ContextContainerDefinition, ContextContainerFile,
-    ContextContainerProvider, ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
-    DeletedFlagResponse, DeletedIdResponse, DeletedProjectSubjectGrantResponse,
-    PendingExecutionResponse, ProjectAccessSummaryResponse, ProjectConfig, ProjectDetailResponse,
-    ProjectResponse, ProjectRole, ProjectSubjectGrantResponse, ProjectSubjectType,
-    ProjectVisibility, RevokeProjectGrantResponse, RevokedIdResponse, RuntimeHealthStatus,
-    SchedulingConfig, SessionComposition, SessionRequiredContextBlock, StoryContext, StoryPriority,
-    StoryResponse, StoryStatus, StoryType, TaskDispatchPreference, TaskResponse, TaskStatus,
-    UpdatedIdResponse, VfsCapabilityDto, WorkspaceBindingResponse, WorkspaceBindingStatus,
-    WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceResponse, WorkspaceStatus,
+    BackendWithStatusResponse, DeletedProjectSubjectGrantResponse, ProjectAccessSummaryResponse,
+    ProjectConfig, ProjectDetailResponse, ProjectResponse, ProjectRole,
+    ProjectSubjectGrantResponse, ProjectSubjectType, ProjectVisibility, RevokeProjectGrantResponse,
+    RuntimeHealthStatus, SchedulingConfig, StoryContext, StoryPriority, StoryResponse, StoryStatus,
+    StoryType, TaskDispatchPreference, TaskResponse, TaskStatus, WorkspaceBindingResponse,
+    WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceResponse,
+    WorkspaceStatus,
 };
 use agentdash_contracts::extension_management::{
     ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
@@ -261,10 +267,25 @@ fn main() {
         },
     );
 
-    // --- core-contracts.ts ---
+    // --- common-response-contracts.ts ---
     emit_domain(
         &generated_dir,
-        "core-contracts.ts",
+        "common-response-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<DeletedIdResponse>(dir);
+            export_all::<DeletedFlagResponse>(dir);
+            export_all::<UpdatedIdResponse>(dir);
+            export_all::<RevokedIdResponse>(dir);
+            export_all::<PendingExecutionResponse>(dir);
+        },
+    );
+
+    // --- context-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "context-contracts.ts",
         &mut upstream,
         check,
         |dir| {
@@ -272,6 +293,22 @@ fn main() {
             export_all::<ContextContainerFile>(dir);
             export_all::<ContextContainerProvider>(dir);
             export_all::<ContextContainerDefinition>(dir);
+            export_all::<ContextSourceKind>(dir);
+            export_all::<ContextSlot>(dir);
+            export_all::<ContextDelivery>(dir);
+            export_all::<ContextSourceRef>(dir);
+            export_all::<SessionRequiredContextBlock>(dir);
+            export_all::<SessionComposition>(dir);
+        },
+    );
+
+    // --- core-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "core-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
             export_all::<SchedulingConfig>(dir);
             export_all::<AgentPreset>(dir);
             export_all::<ProjectConfig>(dir);
@@ -290,15 +327,6 @@ fn main() {
             export_all::<WorkspaceStatus>(dir);
             export_all::<WorkspaceBindingResponse>(dir);
             export_all::<WorkspaceResponse>(dir);
-            export_all::<ContextSourceKind>(dir);
-            export_all::<ContextSlot>(dir);
-            export_all::<ContextDelivery>(dir);
-            export_all::<ContextSourceRef>(dir);
-            export_all::<DeletedIdResponse>(dir);
-            export_all::<DeletedFlagResponse>(dir);
-            export_all::<UpdatedIdResponse>(dir);
-            export_all::<RevokedIdResponse>(dir);
-            export_all::<PendingExecutionResponse>(dir);
             export_all::<BackendType>(dir);
             export_all::<BackendVisibility>(dir);
             export_all::<BackendShareScopeKind>(dir);
@@ -309,8 +337,6 @@ fn main() {
             export_all::<BackendCapabilitiesResponse>(dir);
             export_all::<BackendResponse>(dir);
             export_all::<BackendWithStatusResponse>(dir);
-            export_all::<SessionRequiredContextBlock>(dir);
-            export_all::<SessionComposition>(dir);
             export_all::<StoryContext>(dir);
             export_all::<StoryStatus>(dir);
             export_all::<StoryPriority>(dir);

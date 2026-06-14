@@ -12,7 +12,7 @@ use agentdash_application::runtime_gateway::{
     WorkspaceDetectGitOutput, WorkspaceDetectInput,
 };
 use agentdash_application::workspace::WorkspaceDetectionResult;
-use agentdash_contracts::core::{DeletedIdResponse, UpdatedIdResponse};
+use agentdash_contracts::common_response::{DeletedIdResponse, UpdatedIdResponse};
 use agentdash_domain::workspace::{
     Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
     WorkspaceResolutionPolicy, WorkspaceStatus, identity_payload_matches,

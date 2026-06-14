@@ -5,7 +5,6 @@ import type {
   Artifact as CoreArtifact,
   BackendResponse,
   BackendWithStatusResponse,
-  ContextSourceRef as CoreContextSourceRef,
   ProjectAccessSummaryResponse,
   ProjectConfig as CoreProjectConfig,
   ProjectResponse,
@@ -16,6 +15,7 @@ import type {
   WorkspaceIdentityKind,
   WorkspaceResponse,
 } from "../generated/core-contracts";
+import type { ContextSourceRef as GeneratedContextSourceRef } from "../generated/context-contracts";
 import type {
   ProjectVfsMountContentDto,
   ProjectVfsMountResponse,
@@ -39,7 +39,7 @@ export type TaskDispatchPreference = CoreTaskDispatchPreference & {
 };
 export type AgentPreset = CoreAgentPreset;
 export type Artifact = CoreArtifact;
-export type ContextSourceRef = CoreContextSourceRef;
+export type ContextSourceRef = GeneratedContextSourceRef;
 export type Project = ProjectResponse;
 export type ProjectAccessSummary = ProjectAccessSummaryResponse;
 export type ProjectConfig = CoreProjectConfig;
@@ -51,6 +51,8 @@ export type Workspace = WorkspaceResponse;
 export type WorkspaceBinding = WorkspaceBindingResponse;
 export type {
   ContextSourceKind,
+} from "../generated/context-contracts";
+export type {
   BackendType,
   ProjectRole,
   ProjectSubjectType,

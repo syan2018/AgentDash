@@ -10,9 +10,10 @@ use axum::Json;
 use axum::extract::{Path, State};
 use uuid::Uuid;
 
+use agentdash_contracts::common_response::DeletedIdResponse;
 use agentdash_contracts::core::{
-    DeletedIdResponse, DeletedProjectSubjectGrantResponse,
-    ProjectSubjectType as ContractProjectSubjectType, RevokeProjectGrantResponse,
+    DeletedProjectSubjectGrantResponse, ProjectSubjectType as ContractProjectSubjectType,
+    RevokeProjectGrantResponse,
 };
 use agentdash_domain::project::{Project, ProjectRole, ProjectSubjectGrant, ProjectSubjectType};
 use agentdash_integration_api::AuthIdentity;

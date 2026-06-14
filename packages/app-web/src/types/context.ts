@@ -6,7 +6,7 @@ import type {
   SessionComposition,
   SessionRequiredContextBlock,
   VfsCapabilityDto,
-} from "../generated/core-contracts";
+} from "../generated/context-contracts";
 import type {
   ResolvedMountEditCapabilities,
   ResolvedMountPurpose,

@@ -1,6 +1,8 @@
 pub mod agent_run_mailbox;
 pub mod canvas;
+pub mod common_response;
 pub mod companion;
+pub mod context;
 pub mod core;
 pub mod extension_management;
 pub mod extension_package;

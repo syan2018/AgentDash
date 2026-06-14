@@ -19,7 +19,7 @@ use axum::{
 use uuid::Uuid;
 
 use agentdash_contracts::agent_run_mailbox::{AgentRunAcceptedRefs, AgentRunCommandReceipt};
-use agentdash_contracts::core::DeletedFlagResponse;
+use agentdash_contracts::common_response::DeletedFlagResponse;
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent as ProjectAgentResponse,
     ProjectAgentExecutor, ProjectAgentRunStartResult, ProjectAgentSummary, ThinkingLevel,

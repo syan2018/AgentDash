@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_contracts::core::{DeletedFlagResponse, PendingExecutionResponse};
+use agentdash_contracts::common_response::{DeletedFlagResponse, PendingExecutionResponse};
 use agentdash_contracts::routine::{
     CreateRoutineRequest, EnableRoutineRequest, FireWebhookRequest, ListExecutionsQuery,
     RegenerateTokenResponse, RoutineCreationResponse, RoutineExecutionResponse, RoutineResponse,

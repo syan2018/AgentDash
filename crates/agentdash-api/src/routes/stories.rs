@@ -9,7 +9,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use uuid::Uuid;
 
-use agentdash_contracts::core::DeletedIdResponse;
+use agentdash_contracts::common_response::DeletedIdResponse;
 use agentdash_domain::story::ChangeKind;
 
 use crate::app_state::AppState;

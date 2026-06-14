@@ -16,7 +16,7 @@ use agentdash_application::skill_asset::{
     SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput, content_from_bytes,
     import_remote_skill_url_to_project,
 };
-use agentdash_contracts::core::DeletedIdResponse;
+use agentdash_contracts::common_response::DeletedIdResponse;
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
 
 use crate::app_state::AppState;

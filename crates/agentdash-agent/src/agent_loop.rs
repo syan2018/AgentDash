@@ -19,6 +19,8 @@ mod tool_result;
 use self::streaming::stream_assistant_response;
 use self::tool_call::execute_tool_calls;
 
+const MAX_CONSECUTIVE_EMPTY_CONTINUES: usize = 1;
+
 // ─── 回调类型别名 ───────────────────────────────────────────
 
 /// 上下文变换回调：AgentMessage[] → AgentMessage[]
@@ -218,6 +220,7 @@ async fn run_loop(
     let mut first_turn = true;
     let mut pending_messages = poll_steering(config);
     let mut pending_follow_up_messages: Vec<AgentMessage> = Vec::new();
+    let mut consecutive_empty_continues = 0_usize;
 
     loop {
         let mut has_more_tool_calls = true;
@@ -234,6 +237,7 @@ async fn run_loop(
             }
 
             if !pending_messages.is_empty() {
+                consecutive_empty_continues = 0;
                 for msg in pending_messages.drain(..) {
                     emit_event(
                         emit,
@@ -332,12 +336,14 @@ async fn run_loop(
         }
 
         if !pending_follow_up_messages.is_empty() {
+            consecutive_empty_continues = 0;
             pending_messages = std::mem::take(&mut pending_follow_up_messages);
             continue;
         }
 
         let follow_ups = poll_follow_up(config);
         if !follow_ups.is_empty() {
+            consecutive_empty_continues = 0;
             pending_messages = follow_ups;
             continue;
         }
@@ -348,11 +354,23 @@ async fn run_loop(
                 StopDecision::Continue {
                     mut steering,
                     mut follow_up,
+                    reason,
                     allow_empty,
-                    ..
                 } => {
-                    if steering.is_empty() && follow_up.is_empty() && !allow_empty {
-                        break;
+                    let is_empty_continue = steering.is_empty() && follow_up.is_empty();
+                    if is_empty_continue {
+                        if !allow_empty {
+                            break;
+                        }
+                        consecutive_empty_continues = consecutive_empty_continues.saturating_add(1);
+                        if consecutive_empty_continues > MAX_CONSECUTIVE_EMPTY_CONTINUES {
+                            let reason = reason.as_deref().unwrap_or("unspecified");
+                            return Err(AgentError::ContinueError(format!(
+                                "空 continuation 连续触发且没有新消息（reason: {reason}）"
+                            )));
+                        }
+                    } else {
+                        consecutive_empty_continues = 0;
                     }
                     pending_messages.append(&mut steering);
                     pending_messages.append(&mut follow_up);

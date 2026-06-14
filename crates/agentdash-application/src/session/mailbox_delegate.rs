@@ -58,6 +58,27 @@ impl AgentRunMailboxRuntimeDelegate {
         }
     }
 
+    fn boundary_stage(&self) -> MailboxBoundaryStage<'_> {
+        MailboxBoundaryStage {
+            runtime_session_id: &self.runtime_session_id,
+            deps: &self.deps,
+        }
+    }
+
+    fn hook_router(&self) -> HookDeliveryRouter<'_> {
+        HookDeliveryRouter {
+            runtime_session_id: &self.runtime_session_id,
+            deps: &self.deps,
+        }
+    }
+}
+
+struct MailboxBoundaryStage<'a> {
+    runtime_session_id: &'a str,
+    deps: &'a AgentRunMailboxRuntimeBoundaryDeps,
+}
+
+impl MailboxBoundaryStage<'_> {
     fn mailbox_service(&self) -> AgentRunMailboxService<'_> {
         AgentRunMailboxService::new(
             self.deps.lifecycle_run_repo.as_ref(),
@@ -77,7 +98,7 @@ impl AgentRunMailboxRuntimeDelegate {
         let result = self
             .mailbox_service()
             .schedule_for_runtime_session(
-                &self.runtime_session_id,
+                self.runtime_session_id,
                 AgentRunMailboxScheduleTrigger::AgentLoopTurnBoundary,
             )
             .await;
@@ -102,7 +123,7 @@ impl AgentRunMailboxRuntimeDelegate {
             BackboneEvent::Platform(PlatformEvent::MailboxStateChanged {
                 reason: reason.to_string(),
             }),
-            &self.runtime_session_id,
+            self.runtime_session_id,
             SourceInfo {
                 connector_id: "mailbox".to_string(),
                 connector_type: "platform".to_string(),
@@ -112,20 +133,42 @@ impl AgentRunMailboxRuntimeDelegate {
         let _ = self
             .deps
             .session_eventing
-            .persist_notification(&self.runtime_session_id, envelope)
+            .persist_notification(self.runtime_session_id, envelope)
             .await;
     }
 
     async fn drain_agent_run_turn_boundary(&self) -> Result<Vec<AgentMessage>, AgentRuntimeError> {
         match self
             .mailbox_service()
-            .drain_agent_run_turn_boundary_for_delegate(&self.runtime_session_id)
+            .drain_agent_run_turn_boundary_for_delegate(self.runtime_session_id)
             .await
         {
             Ok(messages) => Ok(messages),
             Err(WorkflowApplicationError::NotFound(_)) => Ok(Vec::new()),
             Err(error) => Err(AgentRuntimeError::Runtime(error.to_string())),
         }
+    }
+}
+
+struct HookDeliveryRouter<'a> {
+    runtime_session_id: &'a str,
+    deps: &'a AgentRunMailboxRuntimeBoundaryDeps,
+}
+
+impl HookDeliveryRouter<'_> {
+    fn mailbox_service(&self) -> AgentRunMailboxService<'_> {
+        AgentRunMailboxService::new(
+            self.deps.lifecycle_run_repo.as_ref(),
+            self.deps.lifecycle_agent_repo.as_ref(),
+            self.deps.agent_frame_repo.as_ref(),
+            self.deps.execution_anchor_repo.as_ref(),
+            self.deps.command_receipt_repo.as_ref(),
+            self.deps.mailbox_repo.as_ref(),
+            self.deps.session_core.clone(),
+            self.deps.session_control.clone(),
+            self.deps.session_eventing.clone(),
+            (*self.deps.session_launch).clone(),
+        )
     }
 
     async fn route_hook_delivery_messages(
@@ -144,7 +187,7 @@ impl AgentRunMailboxRuntimeDelegate {
         match self
             .mailbox_service()
             .accept_hook_steering_messages(
-                &self.runtime_session_id,
+                self.runtime_session_id,
                 source,
                 barrier,
                 stop_effect,
@@ -212,10 +255,7 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
     ) -> Result<TransformContextOutput, AgentRuntimeError> {
         match &self.inner {
             Some(inner) => inner.transform_context(input, cancel).await,
-            None => Ok(TransformContextOutput {
-                steering_messages: Vec::new(),
-                blocked: None,
-            }),
+            None => Ok(preserve_transform_context(input)),
         }
     }
 
@@ -253,7 +293,8 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
         };
         let steering = std::mem::take(&mut decision.steering);
         let follow_up = std::mem::take(&mut decision.follow_up);
-        let steering_routing = self
+        let hook_router = self.hook_router();
+        let steering_routing = hook_router
             .route_hook_delivery_messages(
                 MailboxMessageSource::HookAfterTurn,
                 ConsumptionBarrier::AgentLoopTurnBoundary,
@@ -264,7 +305,7 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
             )
             .await?;
         let follow_up_source_event_key = format!("after_turn_follow_up:{source_event_key}");
-        let follow_up_routing = self
+        let follow_up_routing = hook_router
             .route_hook_delivery_messages(
                 MailboxMessageSource::HookBeforeStop,
                 ConsumptionBarrier::AgentRunTurnBoundary,
@@ -274,7 +315,9 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
                 follow_up,
             )
             .await?;
-        self.schedule_agent_loop_turn_boundary().await;
+        self.boundary_stage()
+            .schedule_agent_loop_turn_boundary()
+            .await;
         Ok(TurnControlDecision {
             steering: steering_routing.direct_messages,
             follow_up: follow_up_routing.direct_messages,
@@ -295,17 +338,11 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
         };
         match inner_decision {
             StopDecision::Stop => {
-                let mailbox_messages = self.drain_agent_run_turn_boundary().await?;
-                if mailbox_messages.is_empty() {
-                    Ok(StopDecision::Stop)
-                } else {
-                    Ok(StopDecision::Continue {
-                        steering: mailbox_messages,
-                        follow_up: Vec::new(),
-                        reason: Some("agent_run_mailbox_boundary".to_string()),
-                        allow_empty: false,
-                    })
-                }
+                let mailbox_messages = self
+                    .boundary_stage()
+                    .drain_agent_run_turn_boundary()
+                    .await?;
+                Ok(stop_after_mailbox_boundary_drain(mailbox_messages))
             }
             StopDecision::Continue {
                 mut steering,
@@ -315,6 +352,7 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
             } => {
                 steering.append(&mut follow_up);
                 let routing = self
+                    .hook_router()
                     .route_hook_delivery_messages(
                         MailboxMessageSource::HookBeforeStop,
                         ConsumptionBarrier::AgentRunTurnBoundary,
@@ -325,7 +363,10 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
                     )
                     .await?;
                 let mut steering = routing.direct_messages;
-                let mut mailbox_messages = self.drain_agent_run_turn_boundary().await?;
+                let mut mailbox_messages = self
+                    .boundary_stage()
+                    .drain_agent_run_turn_boundary()
+                    .await?;
                 steering.append(&mut mailbox_messages);
                 Ok(StopDecision::Continue {
                     steering,
@@ -345,6 +386,26 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
         match &self.inner {
             Some(inner) => inner.on_before_provider_request(input, cancel).await,
             None => Ok(()),
+        }
+    }
+}
+
+fn preserve_transform_context(input: TransformContextInput) -> TransformContextOutput {
+    TransformContextOutput {
+        steering_messages: input.context.messages,
+        blocked: None,
+    }
+}
+
+fn stop_after_mailbox_boundary_drain(mailbox_messages: Vec<AgentMessage>) -> StopDecision {
+    if mailbox_messages.is_empty() {
+        StopDecision::Stop
+    } else {
+        StopDecision::Continue {
+            steering: mailbox_messages,
+            follow_up: Vec::new(),
+            reason: Some("agent_run_mailbox_boundary".to_string()),
+            allow_empty: false,
         }
     }
 }
@@ -370,4 +431,54 @@ fn stable_source_digest(value: serde_json::Value) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_spi::AgentContext;
+
+    #[test]
+    fn no_inner_transform_context_preserves_provider_visible_messages() {
+        let messages = vec![
+            AgentMessage::user("用户输入"),
+            AgentMessage::assistant("已有上下文"),
+        ];
+
+        let output = preserve_transform_context(TransformContextInput {
+            context: AgentContext {
+                system_prompt: "system".to_string(),
+                messages: messages.clone(),
+                message_refs: vec![],
+                tools: vec![],
+            },
+        });
+
+        assert_eq!(output.steering_messages, messages);
+        assert!(output.blocked.is_none());
+    }
+
+    #[test]
+    fn mailbox_boundary_drain_requires_non_empty_continue() {
+        assert!(matches!(
+            stop_after_mailbox_boundary_drain(Vec::new()),
+            StopDecision::Stop
+        ));
+
+        let drained = vec![AgentMessage::user("边界消息")];
+        match stop_after_mailbox_boundary_drain(drained.clone()) {
+            StopDecision::Continue {
+                steering,
+                follow_up,
+                reason,
+                allow_empty,
+            } => {
+                assert_eq!(steering, drained);
+                assert!(follow_up.is_empty());
+                assert_eq!(reason.as_deref(), Some("agent_run_mailbox_boundary"));
+                assert!(!allow_empty);
+            }
+            StopDecision::Stop => panic!("边界消息不应被自然停止吞掉"),
+        }
+    }
 }

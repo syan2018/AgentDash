@@ -170,7 +170,6 @@ impl SessionLaunchOrchestrator {
             .list_requested_runtime_commands(&sid)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
-        let envelope = Self::finalize_envelope_for_test(envelope, &requested_runtime_commands);
         let facts = LaunchRuntimeFacts {
             turn_id,
             had_existing_runtime,
@@ -180,73 +179,6 @@ impl SessionLaunchOrchestrator {
         };
         self.launch_with_envelope(session_id, &command, envelope, facts)
             .await
-    }
-
-    #[cfg(test)]
-    fn finalize_envelope_for_test(
-        mut envelope: FrameLaunchEnvelope,
-        requested_runtime_commands: &[crate::session::runtime_commands::RuntimeCommandRecord],
-    ) -> FrameLaunchEnvelope {
-        use crate::workflow::runtime_launch::FrameLaunchSurface;
-        use crate::workflow::runtime_launch::LaunchResolutionTrace;
-
-        let mut base_capability_state = envelope.launch_capability_state().clone();
-        base_capability_state.vfs.active = Some(envelope.launch_vfs().clone());
-        base_capability_state.tool.mcp_servers = envelope.launch_mcp_servers().to_vec();
-
-        let requested_transitions = requested_runtime_commands
-            .iter()
-            .map(|command| command.pending_capability_state_transition())
-            .collect::<Vec<_>>();
-        let replay = if requested_transitions.is_empty() {
-            None
-        } else {
-            crate::session::capability_state::replay_runtime_capability_transitions(
-                &base_capability_state,
-                &requested_transitions,
-            )
-            .ok()
-        };
-        let mut final_capability_state = replay
-            .as_ref()
-            .map(|replay| replay.capability_state.clone())
-            .unwrap_or_else(|| base_capability_state.clone());
-        let effective_vfs = replay
-            .as_ref()
-            .and_then(|replay| replay.effective_vfs.clone())
-            .unwrap_or_else(|| envelope.launch_vfs().clone());
-        if let Some(mount) = effective_vfs.default_mount() {
-            let wd = std::path::PathBuf::from(mount.root_ref.trim());
-            if !wd.as_os_str().is_empty() {
-                envelope.working_directory = wd;
-            }
-        }
-        final_capability_state.vfs.active = Some(effective_vfs.clone());
-
-        let effective_mcp_servers = replay
-            .as_ref()
-            .and_then(|replay| replay.effective_mcp_servers.clone())
-            .unwrap_or_else(|| envelope.launch_mcp_servers().to_vec());
-        final_capability_state.tool.mcp_servers = effective_mcp_servers.clone();
-        let execution_profile = envelope.launch_executor_config().clone();
-        envelope.replace_launch_surface(FrameLaunchSurface {
-            capability_state: final_capability_state,
-            vfs: effective_vfs,
-            mcp_servers: effective_mcp_servers,
-            execution_profile,
-        });
-        envelope.base_capability_state = Some(base_capability_state);
-        if requested_runtime_commands.is_empty() {
-            envelope.resolution_trace.pending_overlay_applied = false;
-        } else {
-            envelope.resolution_trace = LaunchResolutionTrace {
-                vfs_source: Some("test.pending_runtime_command".to_string()),
-                mcp_source: Some("test.pending_runtime_command".to_string()),
-                capability_source: Some("test.pending_runtime_command".to_string()),
-                pending_overlay_applied: true,
-            };
-        }
-        envelope
     }
 
     /// 已完成 frame construction 后的内部 stage runner。生产入口只能从 `launch` 进入。
@@ -288,6 +220,7 @@ impl SessionLaunchOrchestrator {
             }
         };
         let backend_execution = launch_plan.backend_execution.clone();
+        tracing::debug!(session_id, turn_id, "session launch preparing turn");
         let prepared = match TurnPreparer::new(deps.preparation())
             .prepare(TurnPreparationInput {
                 launch_plan,
@@ -308,6 +241,7 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
+        tracing::debug!(session_id, turn_id, "session launch starting connector");
         let accepted = match ConnectorStarter::new(deps.connector_start())
             .start(prepared)
             .await
@@ -323,9 +257,11 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
+        tracing::debug!(session_id, turn_id, "session launch connector accepted");
         let committed = TurnCommitter::new(deps.commit())
             .commit(accepted, &mut session_meta, now)
             .await?;
+        tracing::debug!(session_id, turn_id, "session launch committed turn");
 
         if committed.accepted.prepared.is_owner_bootstrap {
             Self::mark_agent_bootstrapped(deps, session_id).await;
@@ -334,6 +270,11 @@ impl SessionLaunchOrchestrator {
         let attached = StreamIngestionAttacher::new(deps.ingestion())
             .attach(committed)
             .await;
+        tracing::debug!(
+            session_id,
+            turn_id = %attached.turn_id,
+            "session launch stream ingestion attached"
+        );
 
         Ok(attached.turn_id)
     }

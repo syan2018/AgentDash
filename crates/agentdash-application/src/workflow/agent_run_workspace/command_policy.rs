@@ -84,11 +84,24 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
         command: &AgentRunCommandPreconditionView,
     ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
+        tracing::debug!(
+            run_id = %context.run.id,
+            agent_id = %context.agent.id,
+            runtime_session_id = %context.runtime_session_id,
+            "AgentRun composer policy inspect state"
+        );
         let execution_state = self
             .session_core
             .inspect_session_execution_state(context.runtime_session_id)
             .await
             .map_err(WorkflowApplicationError::from)?;
+        tracing::debug!(
+            run_id = %context.run.id,
+            agent_id = %context.agent.id,
+            runtime_session_id = %context.runtime_session_id,
+            execution_state = ?execution_state,
+            "AgentRun composer policy state resolved"
+        );
         if is_terminal_agent_status(&context.agent.status) {
             return Err(conflict(
                 "当前 AgentRun 已结束，不能继续发送消息。",
@@ -102,7 +115,19 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
                 }),
             ));
         }
-        ensure_composer_command_precondition_matches_agent_run(command, context, &execution_state)
+        let result = ensure_composer_command_precondition_matches_agent_run(
+            command,
+            context,
+            &execution_state,
+        );
+        tracing::debug!(
+            run_id = %context.run.id,
+            agent_id = %context.agent.id,
+            runtime_session_id = %context.runtime_session_id,
+            accepted = result.is_ok(),
+            "AgentRun composer policy precondition checked"
+        );
+        result
     }
 
     async fn resolve_policy_snapshot(
@@ -256,7 +281,7 @@ pub enum AgentRunWorkspaceCommandPolicyError {
     #[error("{0}")]
     Application(#[from] WorkflowApplicationError),
     #[error("{0}")]
-    Conflict(AgentRunWorkspaceCommandConflict),
+    Conflict(Box<AgentRunWorkspaceCommandConflict>),
 }
 
 impl std::fmt::Display for AgentRunWorkspaceCommandConflict {
@@ -437,12 +462,12 @@ fn conflict(
     replacement_command: Option<&str>,
     detail: Value,
 ) -> AgentRunWorkspaceCommandPolicyError {
-    AgentRunWorkspaceCommandPolicyError::Conflict(AgentRunWorkspaceCommandConflict {
+    AgentRunWorkspaceCommandPolicyError::Conflict(Box::new(AgentRunWorkspaceCommandConflict {
         message: message.into(),
         error_code: error_code.into(),
         replacement_command: replacement_command.map(str::to_string),
         detail: Some(detail),
-    })
+    }))
 }
 
 fn resolved_model_config() -> ConversationModelConfigView {

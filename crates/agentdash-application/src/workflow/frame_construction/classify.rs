@@ -51,6 +51,7 @@ pub(super) async fn route_and_compose(
                 &input.command,
                 None,
                 &input.session_id,
+                &input.requested_runtime_commands,
             );
         }
         None => {}

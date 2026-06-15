@@ -13,6 +13,8 @@ use crate::session::types::{
 };
 use crate::workflow::{AgentFrameBuilder, resolve_current_frame_for_runtime_session};
 
+/// Accepted-after-commit boundary: connector accepted 后的 user/start/context/runtime
+/// facts 已提交。Frame/bootstrap accepted 在本 stage 内作为独立副作用提交。
 pub(in crate::session) struct CommittedTurn {
     pub accepted: ConnectorAcceptedTurn,
 }

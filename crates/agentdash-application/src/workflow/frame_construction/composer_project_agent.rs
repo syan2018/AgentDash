@@ -145,6 +145,7 @@ pub(super) async fn compose(
         &input.command,
         input.session_id.as_str(),
         None,
+        &input.requested_runtime_commands,
     )
     .await
 }

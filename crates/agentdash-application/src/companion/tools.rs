@@ -304,7 +304,8 @@ impl CompanionRequestTool {
             .to_string();
         let anchor = self
             .tool_context
-            .require_lifecycle_anchor("派发 companion agent")?;
+            .require_lifecycle_anchor("派发 companion agent", &self.repos)
+            .await?;
         let project_id = anchor.project_id;
         let parent_run_id = anchor.run_id;
         let parent_agent_id = anchor.agent_id;
@@ -728,7 +729,8 @@ impl CompanionRequestTool {
             require_session_services(&self.session_services_handle, "向用户发起请求").await?;
         let anchor = self
             .tool_context
-            .require_lifecycle_anchor("向用户发起请求")?;
+            .require_lifecycle_anchor("向用户发起请求", &self.repos)
+            .await?;
 
         let request_id = format!("human-{}", Uuid::new_v4().simple());
         let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");

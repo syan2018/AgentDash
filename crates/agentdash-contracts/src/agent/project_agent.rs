@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::agent_run_mailbox::{AgentRunAcceptedRefs, AgentRunCommandReceipt};
+use crate::agent_run_mailbox::{
+    AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandResponse,
+};
 use crate::workflow::{
     AgentFrameRefDto, AgentRunRefDto, ConversationEffectiveExecutorConfigView, LifecycleRunRefDto,
     SubjectRefDto,
@@ -72,11 +74,14 @@ pub struct CreateProjectAgentRunRequest {
 pub struct ProjectAgentRunStartResult {
     pub command_receipt: AgentRunCommandReceipt,
     pub accepted_refs: AgentRunAcceptedRefs,
+    pub initial_message: AgentRunMessageCommandResponse,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub effective_executor_config: Option<ConversationEffectiveExecutorConfigView>,
     pub runtime_session_id: String,
-    pub turn_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub turn_id: Option<String>,
     pub agent: ProjectAgentSummary,
     pub run_ref: LifecycleRunRefDto,
     pub agent_ref: AgentRunRefDto,

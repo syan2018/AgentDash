@@ -24,7 +24,7 @@ use crate::session::{
 };
 use crate::workflow::{
     AgentRunCommandReceiptView, AgentRunMessageDelivery, AgentRunMessageDeliveryPort,
-    AgentRunMessageLaunchDeliveryPort, WorkflowApplicationError,
+    SessionTurnMessageDeliveryPort, WorkflowApplicationError,
     command_receipt::{
         claim_agent_run_command_receipt, digest_command_request, mark_command_terminal_failed,
     },
@@ -72,6 +72,8 @@ pub struct AgentRunMailboxUserMessageCommand {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub runtime_session_id: String,
+    pub source: MailboxMessageSource,
+    pub schedule_on_submit: bool,
     pub input: Vec<UserInputBlock>,
     pub client_command_id: String,
     pub executor_config: Option<AgentConfig>,
@@ -150,6 +152,14 @@ impl<'a> AgentRunMailboxService<'a> {
         &self,
         command: AgentRunMailboxUserMessageCommand,
     ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
+        tracing::debug!(
+            run_id = %command.run_id,
+            agent_id = %command.agent_id,
+            runtime_session_id = %command.runtime_session_id,
+            input_blocks = command.input.len(),
+            schedule_on_submit = command.schedule_on_submit,
+            "AgentRun mailbox accept user message entered"
+        );
         if command.input.is_empty() {
             return Err(WorkflowApplicationError::BadRequest(
                 "input 不能为空".to_string(),
@@ -164,12 +174,27 @@ impl<'a> AgentRunMailboxService<'a> {
         let (run, agent, frame) = self
             .resolve_control_plane(&command.runtime_session_id)
             .await?;
+        tracing::debug!(
+            run_id = %run.id,
+            agent_id = %agent.id,
+            runtime_session_id = %command.runtime_session_id,
+            frame_id = %frame.id,
+            frame_revision = frame.revision,
+            "AgentRun mailbox control plane resolved"
+        );
         ensure_command_target(&run, &agent, command.run_id, command.agent_id)?;
         let execution_state = self
             .session_core
             .inspect_session_execution_state(&command.runtime_session_id)
             .await
             .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
+        tracing::debug!(
+            run_id = %run.id,
+            agent_id = %agent.id,
+            runtime_session_id = %command.runtime_session_id,
+            execution_state = ?execution_state,
+            "AgentRun mailbox execution state resolved"
+        );
         let supports_steering = match execution_state {
             SessionExecutionState::Running { turn_id: Some(_) } => {
                 self.session_control
@@ -222,7 +247,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 agent_id: command.agent_id,
                 runtime_session_id: command.runtime_session_id.clone(),
                 origin: MailboxMessageOrigin::User,
-                source: MailboxMessageSource::Composer,
+                source: command.source,
                 delivery: policy.delivery,
                 barrier: policy.barrier,
                 drain_mode: policy.drain_mode,
@@ -238,20 +263,47 @@ impl<'a> AgentRunMailboxService<'a> {
                 retain_payload: false,
             })
             .await?;
+        tracing::debug!(
+            run_id = %command.run_id,
+            agent_id = %command.agent_id,
+            runtime_session_id = %command.runtime_session_id,
+            mailbox_message_id = %message.id,
+            delivery = ?message.delivery,
+            barrier = ?message.barrier,
+            "AgentRun mailbox message persisted"
+        );
         let _ = self
             .command_receipt_repo
             .attach_mailbox_message(claim.record.id, message.id)
             .await?;
 
-        let outcomes = self
-            .schedule(
+        let outcomes = if command.schedule_on_submit {
+            tracing::debug!(
+                run_id = %command.run_id,
+                agent_id = %command.agent_id,
+                runtime_session_id = %command.runtime_session_id,
+                mailbox_message_id = %message.id,
+                "AgentRun mailbox scheduling submitted message"
+            );
+            self.schedule(
                 command.run_id,
                 command.agent_id,
                 &command.runtime_session_id,
                 AgentRunMailboxScheduleTrigger::UserMessageSubmitted,
                 command.identity,
             )
-            .await?;
+            .await?
+        } else {
+            Vec::new()
+        };
+        tracing::debug!(
+            run_id = %command.run_id,
+            agent_id = %command.agent_id,
+            runtime_session_id = %command.runtime_session_id,
+            mailbox_message_id = %message.id,
+            outcome_count = outcomes.len(),
+            "AgentRun mailbox scheduling completed"
+        );
         if let Some(outcome) = outcomes
             .into_iter()
             .find(|outcome| outcome.mailbox_message.id == message.id)
@@ -758,6 +810,13 @@ impl<'a> AgentRunMailboxService<'a> {
         trigger: AgentRunMailboxScheduleTrigger,
         identity: Option<AuthIdentity>,
     ) -> Result<Vec<AgentRunMailboxScheduleOutcome>, WorkflowApplicationError> {
+        tracing::debug!(
+            run_id = %run_id,
+            agent_id = %agent_id,
+            runtime_session_id = %runtime_session_id,
+            trigger = ?trigger,
+            "AgentRun mailbox schedule entered"
+        );
         let now = Utc::now();
         let _ = self.mailbox_repo.recover_expired_consuming(now).await?;
         let execution_state = self
@@ -765,6 +824,14 @@ impl<'a> AgentRunMailboxService<'a> {
             .inspect_session_execution_state(runtime_session_id)
             .await
             .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
+        tracing::debug!(
+            run_id = %run_id,
+            agent_id = %agent_id,
+            runtime_session_id = %runtime_session_id,
+            trigger = ?trigger,
+            execution_state = ?execution_state,
+            "AgentRun mailbox schedule state resolved"
+        );
         match trigger {
             AgentRunMailboxScheduleTrigger::UserMessageSubmitted => {
                 if runtime_can_launch(&execution_state) {
@@ -896,6 +963,17 @@ impl<'a> AgentRunMailboxService<'a> {
         identity: Option<AuthIdentity>,
     ) -> Result<Vec<AgentRunMailboxScheduleOutcome>, WorkflowApplicationError> {
         let claim_token = Uuid::new_v4();
+        tracing::debug!(
+            run_id = %run_id,
+            agent_id = %agent_id,
+            runtime_session_id = %runtime_session_id,
+            trigger = ?trigger,
+            barriers = ?barriers,
+            drain_mode = ?drain_mode,
+            limit,
+            claim_token = %claim_token,
+            "AgentRun mailbox claim starting"
+        );
         let claimed = self
             .mailbox_repo
             .claim_next(AgentRunMailboxClaimRequest {
@@ -909,8 +987,27 @@ impl<'a> AgentRunMailboxService<'a> {
                 claim_expires_at: Utc::now() + Duration::seconds(CLAIM_LEASE_SECONDS),
             })
             .await?;
+        tracing::debug!(
+            run_id = %run_id,
+            agent_id = %agent_id,
+            runtime_session_id = %runtime_session_id,
+            trigger = ?trigger,
+            claimed_count = claimed.len(),
+            claim_token = %claim_token,
+            "AgentRun mailbox claim completed"
+        );
         let mut outcomes = Vec::with_capacity(claimed.len());
         for message in claimed {
+            tracing::debug!(
+                run_id = %run_id,
+                agent_id = %agent_id,
+                runtime_session_id = %runtime_session_id,
+                trigger = ?trigger,
+                mailbox_message_id = %message.id,
+                delivery = ?message.delivery,
+                barrier = ?message.barrier,
+                "AgentRun mailbox consuming claimed message"
+            );
             outcomes.push(
                 self.consume_claimed_message(message, trigger, identity.clone())
                     .await?,
@@ -1041,6 +1138,14 @@ impl<'a> AgentRunMailboxService<'a> {
         trigger: AgentRunMailboxScheduleTrigger,
         identity: Option<AuthIdentity>,
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
+        tracing::debug!(
+            runtime_session_id = %message.runtime_session_id,
+            mailbox_message_id = %message.id,
+            delivery = ?message.delivery,
+            barrier = ?message.barrier,
+            trigger = ?trigger,
+            "AgentRun mailbox consume claimed message entered"
+        );
         match &message.delivery {
             MailboxDelivery::LaunchOrContinueTurn => {
                 let execution_state = self
@@ -1048,6 +1153,13 @@ impl<'a> AgentRunMailboxService<'a> {
                     .inspect_session_execution_state(&message.runtime_session_id)
                     .await
                     .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
+                tracing::debug!(
+                    runtime_session_id = %message.runtime_session_id,
+                    mailbox_message_id = %message.id,
+                    execution_state = ?execution_state,
+                    trigger = ?trigger,
+                    "AgentRun mailbox launch-or-continue state resolved"
+                );
                 if message.barrier == ConsumptionBarrier::AgentRunTurnBoundary
                     && matches!(
                         trigger,
@@ -1077,9 +1189,21 @@ impl<'a> AgentRunMailboxService<'a> {
         message: AgentRunMailboxMessage,
         identity: Option<AuthIdentity>,
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
+        tracing::debug!(
+            runtime_session_id = %message.runtime_session_id,
+            mailbox_message_id = %message.id,
+            "AgentRun mailbox launch consumption entered"
+        );
         let input = message_input(&message)?;
         let executor_config = message_executor_config(&message)?;
-        let delivery = AgentRunMessageLaunchDeliveryPort::new(self.session_launch.clone());
+        let delivery = SessionTurnMessageDeliveryPort::new(self.session_launch.clone());
+        tracing::debug!(
+            runtime_session_id = %message.runtime_session_id,
+            mailbox_message_id = %message.id,
+            input_blocks = input.len(),
+            has_executor_config = executor_config.is_some(),
+            "AgentRun mailbox delivering launch message"
+        );
         let turn_id = match delivery
             .deliver_user_message(AgentRunMessageDelivery {
                 delivery_runtime_session_id: message.runtime_session_id.clone(),
@@ -1091,6 +1215,12 @@ impl<'a> AgentRunMailboxService<'a> {
         {
             Ok(turn_id) => turn_id,
             Err(error) => {
+                tracing::debug!(
+                    runtime_session_id = %message.runtime_session_id,
+                    mailbox_message_id = %message.id,
+                    error = %error,
+                    "AgentRun mailbox launch delivery failed"
+                );
                 let failed = self
                     .mailbox_repo
                     .mark_message_status(
@@ -1111,6 +1241,12 @@ impl<'a> AgentRunMailboxService<'a> {
                 });
             }
         };
+        tracing::debug!(
+            runtime_session_id = %message.runtime_session_id,
+            mailbox_message_id = %message.id,
+            turn_id = %turn_id,
+            "AgentRun mailbox launch delivery accepted"
+        );
         let (run, agent, frame) = self
             .resolve_control_plane(&message.runtime_session_id)
             .await?;
@@ -1299,7 +1435,7 @@ impl<'a> AgentRunMailboxService<'a> {
         };
         let turn_id = match self
             .session_launch
-            .launch_command(&message.runtime_session_id, command)
+            .launch_command_in_task(message.runtime_session_id.clone(), command)
             .await
         {
             Ok(turn_id) => turn_id,
@@ -1856,7 +1992,9 @@ fn ensure_message_owner(
     Ok(())
 }
 
-fn outcome_from_message(message: &AgentRunMailboxMessage) -> AgentRunMailboxCommandOutcome {
+pub(crate) fn outcome_from_message(
+    message: &AgentRunMailboxMessage,
+) -> AgentRunMailboxCommandOutcome {
     match message.status {
         MailboxMessageStatus::Dispatched => AgentRunMailboxCommandOutcome::Launched,
         MailboxMessageStatus::Steered => AgentRunMailboxCommandOutcome::Steered,
@@ -1871,7 +2009,9 @@ fn outcome_from_message(message: &AgentRunMailboxMessage) -> AgentRunMailboxComm
     }
 }
 
-fn outcome_from_result_json(value: &serde_json::Value) -> Option<AgentRunMailboxCommandOutcome> {
+pub(crate) fn outcome_from_result_json(
+    value: &serde_json::Value,
+) -> Option<AgentRunMailboxCommandOutcome> {
     match value.get("outcome").and_then(serde_json::Value::as_str)? {
         "launched" => Some(AgentRunMailboxCommandOutcome::Launched),
         "queued" => Some(AgentRunMailboxCommandOutcome::Queued),

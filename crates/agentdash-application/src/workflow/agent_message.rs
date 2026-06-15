@@ -24,18 +24,18 @@ pub trait AgentRunMessageDeliveryPort: Send + Sync {
 }
 
 #[derive(Clone)]
-pub struct AgentRunMessageLaunchDeliveryPort {
+pub struct SessionTurnMessageDeliveryPort {
     session_launch: SessionLaunchService,
 }
 
-impl AgentRunMessageLaunchDeliveryPort {
+impl SessionTurnMessageDeliveryPort {
     pub fn new(session_launch: SessionLaunchService) -> Self {
         Self { session_launch }
     }
 }
 
 #[async_trait]
-impl AgentRunMessageDeliveryPort for AgentRunMessageLaunchDeliveryPort {
+impl AgentRunMessageDeliveryPort for SessionTurnMessageDeliveryPort {
     async fn deliver_user_message(
         &self,
         delivery: AgentRunMessageDelivery,
@@ -52,7 +52,7 @@ impl AgentRunMessageDeliveryPort for AgentRunMessageLaunchDeliveryPort {
         let command =
             LaunchCommand::lifecycle_agent_user_message_input(user_input, delivery.identity);
         self.session_launch
-            .launch_command(&delivery.delivery_runtime_session_id, command)
+            .launch_command_in_task(delivery.delivery_runtime_session_id.clone(), command)
             .await
             .map_err(WorkflowApplicationError::from)
     }

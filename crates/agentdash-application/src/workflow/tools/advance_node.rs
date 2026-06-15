@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::platform_config::SharedPlatformConfig;
-use crate::vfs::tools::SessionToolServices;
+use crate::vfs::tools::SharedSessionToolServicesHandle;
 use crate::workflow::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeStatus, LifecycleNodeAdvanceOutcome,
     LifecycleOrchestrator,
@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub struct CompleteLifecycleNodeTool {
     repos: crate::repository_set::RepositorySet,
-    session_services: Option<SessionToolServices>,
+    session_services_handle: SharedSessionToolServicesHandle,
     platform_config: SharedPlatformConfig,
     function_runner: Option<Arc<dyn FunctionRunner>>,
     current_turn_id: String,
@@ -54,14 +54,14 @@ pub struct CompleteLifecycleNodeParams {
 impl CompleteLifecycleNodeTool {
     pub fn new(
         repos: crate::repository_set::RepositorySet,
-        session_services: Option<SessionToolServices>,
+        session_services_handle: SharedSessionToolServicesHandle,
         function_runner: Option<Arc<dyn FunctionRunner>>,
         platform_config: SharedPlatformConfig,
         context: &ExecutionContext,
     ) -> Self {
         Self {
             repos,
-            session_services,
+            session_services_handle,
             platform_config,
             function_runner,
             current_turn_id: context.session.turn_id.clone(),
@@ -102,7 +102,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
             )
         })?;
 
-        let _session_services = self.session_services.clone().ok_or_else(|| {
+        let _session_services = self.session_services_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed(
                 "session services 尚未就绪，无法推进 lifecycle node".to_string(),
             )

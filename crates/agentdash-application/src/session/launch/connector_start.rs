@@ -4,6 +4,10 @@ use super::deps::ConnectorStartDeps;
 use super::preparation::PreparedTurn;
 use crate::session::hub_support::{TurnTerminalKind, build_turn_terminal_envelope};
 
+/// Session turn accepted boundary: connector.prompt 已返回 ExecutionStream。
+///
+/// 这里不表达 command receipt accepted、mailbox delivery accepted 或 frame/bootstrap
+/// accepted；这些边界分别由 AgentRun mailbox/receipt 和 commit stage 负责。
 pub(in crate::session) struct ConnectorAcceptedTurn {
     pub prepared: PreparedTurn,
     pub stream: ExecutionStream,
@@ -28,6 +32,11 @@ impl ConnectorStarter {
             ));
         };
 
+        tracing::debug!(
+            session_id = %prepared.session_id,
+            turn_id = %prepared.turn_id,
+            "connector starter calling connector.prompt"
+        );
         let stream = match self
             .deps
             .connector
@@ -39,7 +48,14 @@ impl ConnectorStarter {
             )
             .await
         {
-            Ok(stream) => stream,
+            Ok(stream) => {
+                tracing::debug!(
+                    session_id = %prepared.session_id,
+                    turn_id = %prepared.turn_id,
+                    "connector starter accepted connector stream"
+                );
+                stream
+            }
             Err(error) => {
                 self.deps
                     .turn_supervisor

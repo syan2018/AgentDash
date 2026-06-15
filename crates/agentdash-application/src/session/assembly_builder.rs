@@ -61,8 +61,13 @@ pub(crate) fn apply_session_assembly(
     // prepared VFS 代表 compose 后的最终 workspace/canvas/lifecycle mount 组合，
     // 因此优先于 source 输入中的 VFS。
     let active_vfs = prepared.vfs.or_else(|| plan.surface.vfs.clone());
+    let mut capability_state = prepared.capability_state;
+    if let Some(state) = capability_state.as_mut() {
+        state.vfs.active = active_vfs.clone();
+        state.tool.mcp_servers = prepared.mcp_servers.clone();
+    }
     plan.projections.frame_surface_draft = Some(FrameSurfaceDraft {
-        capability_state: prepared.capability_state,
+        capability_state,
         vfs: active_vfs.clone(),
         mcp_servers: prepared.mcp_servers,
         context_bundle_summary: plan
@@ -347,8 +352,13 @@ impl SessionAssemblyBuilder {
     }
 
     pub(super) fn to_surface_draft(&self) -> FrameSurfaceDraft {
+        let mut capability_state = self.capability_state.clone();
+        if let Some(state) = capability_state.as_mut() {
+            state.vfs.active = self.vfs.clone();
+            state.tool.mcp_servers = self.mcp_servers.clone();
+        }
         FrameSurfaceDraft {
-            capability_state: self.capability_state.clone(),
+            capability_state,
             vfs: self.vfs.clone(),
             mcp_servers: self.mcp_servers.clone(),
             context_bundle_summary: self

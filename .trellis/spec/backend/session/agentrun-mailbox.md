@@ -102,8 +102,10 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 
 - Backend envelope/domain/repository 是 AgentRun control-plane fact source。Codex app-server protocol 是优先复用的 `Thread/Turn` 基线；AgentRun-only scheduling 字段必须显式存在于 envelope/domain enum/adapter/projection/test 中。
 - `composer-submit` 接收 canonical `Vec<UserInputBlock>`，claim durable command receipt，创建 mailbox envelope，再调用 scheduler。response 返回 `AgentRunMessageCommandResponse { command_receipt, outcome, mailbox_message?, accepted_refs?, runtime_state? }`。
+- ProjectAgent draft start 使用同一组 canonical `Vec<UserInputBlock>` 创建 `MailboxMessageSource::DraftStart` envelope，并返回 `ProjectAgentRunStartResult.initial_message: AgentRunMessageCommandResponse`。`schedule_on_submit=false` 的 draft envelope 由 API 在 start receipt 形成后触发后台 scheduler，原因是 AgentRun workspace 必须先有 durable run/agent/frame/runtime anchor，首条消息投递才能作为可恢复的 mailbox delivery 继续推进。
 - `cancel` 是 AgentRun runtime command，不创建 mailbox envelope，但必须 claim durable `AgentRunCommandReceipt`，以 `client_command_id + request_digest` 提供 duplicate replay/conflict 语义；cancel delivery 失败时 receipt 进入 `terminal_failed`。
 - `outcome` 是 scheduler outcome：`launched | queued | steered | deleted | resumed | blocked | failed`。它不是 route-local command kind。
+- `ProjectAgentRunStartResult.accepted_refs` 表达外层 AgentRun start refs；`initial_message.accepted_refs` 表达首条 mailbox message 的投递 refs。两者分开存在，原因是 workspace 可导航性、命令幂等和 connector turn accepted 是不同边界。
 - `MailboxMessageView` 是 frontend pending/message row 的 wire source，至少暴露 `origin/source/delivery/barrier/status/preview/has_images/can_promote/can_delete/created_at/updated_at`。
 - `ImmediateIfIdle + LaunchOrContinueTurn + DrainMode::One` 在没有 active AgentRunTurn 时启动或恢复一个 AgentRunTurn。
 - `AgentLoopTurnBoundary + SteerActiveTurn + DrainMode::All` 在 AgentLoopTurn 结束后批量注入下一次 AgentLoopTurn，和 PiAgent `QueueMode::All` 语义对齐。

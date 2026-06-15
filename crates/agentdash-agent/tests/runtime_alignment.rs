@@ -562,6 +562,49 @@ async fn empty_continue_decision_keeps_loop_running_without_fake_messages() {
 }
 
 #[tokio::test]
+async fn repeated_empty_continue_decision_fails_instead_of_spinning() {
+    let bridge = ScriptedBridge::new(vec![
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("first pass")),
+        ))],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("second pass")),
+        ))],
+    ]);
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        message_refs: vec![],
+        tools: vec![],
+    };
+    let tool_instances: Vec<DynAgentTool> = vec![];
+    let before_stop_calls = Arc::new(AtomicUsize::new(0));
+    let config = AgentLoopConfig {
+        runtime_delegate: Some(Arc::new(EmptyContinueDelegate {
+            before_stop_calls: before_stop_calls.clone(),
+            always_continue: true,
+        })),
+        ..AgentLoopConfig::default()
+    };
+
+    let error = agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("hello")],
+        &mut context,
+        &tool_instances,
+        &config,
+        &bridge,
+        &collecting_sink(Arc::new(Mutex::new(Vec::new()))),
+        CancellationToken::new(),
+    )
+    .await
+    .expect_err("连续空 continue 应被截断为错误");
+
+    assert!(matches!(error, AgentError::ContinueError(_)));
+    assert!(error.to_string().contains("空 continuation 连续触发"));
+    assert_eq!(before_stop_calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
 async fn tool_arguments_are_validated_before_before_tool_call_hook() {
     let before_calls = Arc::new(AtomicUsize::new(0));
     let executed = Arc::new(AtomicUsize::new(0));
@@ -1016,6 +1059,7 @@ struct FailingBeforeStopDelegate;
 #[derive(Clone, Default)]
 struct EmptyContinueDelegate {
     before_stop_calls: Arc<AtomicUsize>,
+    always_continue: bool,
 }
 
 #[async_trait]
@@ -1207,7 +1251,7 @@ impl agentdash_agent::AgentRuntimeDelegate for EmptyContinueDelegate {
         _cancel: CancellationToken,
     ) -> Result<StopDecision, agentdash_agent::AgentRuntimeError> {
         let attempt = self.before_stop_calls.fetch_add(1, Ordering::SeqCst);
-        if attempt == 0 {
+        if self.always_continue || attempt == 0 {
             Ok(StopDecision::Continue {
                 steering: vec![],
                 follow_up: vec![],

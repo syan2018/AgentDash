@@ -26,6 +26,19 @@ impl SessionLaunchService {
             .turn_id)
     }
 
+    pub async fn launch_command_in_task(
+        &self,
+        session_id: String,
+        command: LaunchCommand,
+    ) -> Result<String, ConnectorError> {
+        let service = self.clone();
+        tokio::spawn(async move { service.launch_command(&session_id, command).await })
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!("session launch task join failed: {error}"))
+            })?
+    }
+
     pub async fn launch_command_with_outcome(
         &self,
         session_id: &str,

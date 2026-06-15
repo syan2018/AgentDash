@@ -1,15 +1,13 @@
 use std::sync::Arc;
 
 use agentdash_application::session::{
-    AgentRunMailboxCommandOutcome as AppMailboxCommandOutcome, AgentRunMailboxCommandResult,
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
 };
 use agentdash_application::workflow::agent_run_workspace as app_workspace;
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView,
-    AgentRunMailboxMoveRequest, AgentRunMailboxView, AgentRunMessageAcceptedRefs,
-    AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse, MailboxStateView,
-    RuntimeSessionCommandStateDto,
+    AgentRunMailboxMoveRequest, AgentRunMailboxView, AgentRunMessageCommandResponse,
+    MailboxStateView,
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunRefDto,
@@ -36,7 +34,8 @@ use crate::{
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     routes::{
         agent_run_mailbox_contracts::{
-            mailbox_message_view, mailbox_message_visible, mailbox_state_view,
+            agent_run_message_command_response, mailbox_message_view, mailbox_message_visible,
+            mailbox_state_view,
         },
         lifecycle_contracts::{agent_run_to_contract, subject_association_to_contract},
         vfs_surfaces::dto as vfs_surface_dto,
@@ -174,6 +173,12 @@ pub async fn submit_agent_run_composer_input(
     Path((run_id, agent_id)): Path<(String, String)>,
     Json(req): Json<AgentRunComposerSubmitRequest>,
 ) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    tracing::debug!(
+        run_id = %run_id,
+        agent_id = %agent_id,
+        input_blocks = req.input.len(),
+        "AgentRun composer submit entered"
+    );
     if req.client_command_id.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "client_command_id 不能为空".to_string(),
@@ -197,6 +202,12 @@ pub async fn submit_agent_run_composer_input(
             context.run.id, context.agent.id
         ))
     })?;
+    tracing::debug!(
+        run_id = %context.run.id,
+        agent_id = %context.agent.id,
+        runtime_session_id = %runtime_session_id,
+        "AgentRun composer submit context resolved"
+    );
     agent_run_workspace_command_policy(state.as_ref())
         .ensure_composer_submit_allowed(
             command_policy_context(&context, &runtime_session_id),
@@ -204,6 +215,12 @@ pub async fn submit_agent_run_composer_input(
         )
         .await
         .map_err(command_policy_error)?;
+    tracing::debug!(
+        run_id = %context.run.id,
+        agent_id = %context.agent.id,
+        runtime_session_id = %runtime_session_id,
+        "AgentRun composer submit policy accepted"
+    );
     let executor_config = req
         .executor_config
         .map(serde_json::from_value::<AgentConfig>)
@@ -214,7 +231,9 @@ pub async fn submit_agent_run_composer_input(
         .accept_user_message(AgentRunMailboxUserMessageCommand {
             run_id: context.run.id,
             agent_id: context.agent.id,
-            runtime_session_id,
+            runtime_session_id: runtime_session_id.clone(),
+            source: agentdash_domain::agent_run_mailbox::MailboxMessageSource::Composer,
+            schedule_on_submit: true,
             input: req.input,
             client_command_id: req.client_command_id,
             executor_config,
@@ -223,6 +242,13 @@ pub async fn submit_agent_run_composer_input(
         })
         .await
         .map_err(ApiError::from)?;
+    tracing::debug!(
+        run_id = %context.run.id,
+        agent_id = %context.agent.id,
+        runtime_session_id = %runtime_session_id,
+        outcome = ?response.outcome,
+        "AgentRun composer submit mailbox accepted"
+    );
     Ok(Json(agent_run_message_command_response(response)))
 }
 
@@ -861,60 +887,6 @@ fn command_policy_context<'a>(
     }
 }
 
-fn agent_run_message_command_response(
-    result: AgentRunMailboxCommandResult,
-) -> AgentRunMessageCommandResponse {
-    AgentRunMessageCommandResponse {
-        command_receipt: command_receipt_view(result.command_receipt),
-        outcome: mailbox_command_outcome_view(result.outcome),
-        mailbox_message: result.mailbox_message.map(mailbox_message_view),
-        accepted_refs: result.accepted_refs.map(agent_run_message_accepted_refs),
-        runtime_state: result.runtime_state.map(|state| {
-            runtime_command_state_dto(
-                app_workspace::AgentRunWorkspaceProjection::runtime_command_state(&state),
-            )
-        }),
-    }
-}
-
-fn mailbox_command_outcome_view(
-    outcome: AppMailboxCommandOutcome,
-) -> AgentRunMessageCommandOutcome {
-    match outcome {
-        AppMailboxCommandOutcome::Launched => AgentRunMessageCommandOutcome::Launched,
-        AppMailboxCommandOutcome::Queued => AgentRunMessageCommandOutcome::Queued,
-        AppMailboxCommandOutcome::Steered => AgentRunMessageCommandOutcome::Steered,
-        AppMailboxCommandOutcome::Deleted => AgentRunMessageCommandOutcome::Deleted,
-        AppMailboxCommandOutcome::Resumed => AgentRunMessageCommandOutcome::Resumed,
-        AppMailboxCommandOutcome::Blocked => AgentRunMessageCommandOutcome::Blocked,
-        AppMailboxCommandOutcome::Failed => AgentRunMessageCommandOutcome::Failed,
-    }
-}
-
-fn agent_run_message_accepted_refs(
-    refs: agentdash_domain::workflow::AgentRunAcceptedRefs,
-) -> AgentRunMessageAcceptedRefs {
-    AgentRunMessageAcceptedRefs {
-        run_ref: LifecycleRunRefDto {
-            run_id: refs.run_id.to_string(),
-        },
-        agent_ref: AgentRunRefDto {
-            run_id: refs.run_id.to_string(),
-            agent_id: refs.agent_id.to_string(),
-        },
-        frame_ref: refs.frame_id.map(|frame_id| AgentFrameRefDto {
-            agent_id: refs.agent_id.to_string(),
-            frame_id: frame_id.to_string(),
-            revision: refs.frame_revision,
-        }),
-        runtime_session_ref: refs
-            .runtime_session_id
-            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
-        agent_run_turn_id: refs.agent_run_turn_id,
-        protocol_turn_id: refs.protocol_turn_id,
-    }
-}
-
 fn lifecycle_run_status_to_contract(
     status: agentdash_domain::workflow::LifecycleRunStatus,
 ) -> agentdash_contracts::workflow::LifecycleRunStatus {
@@ -940,17 +912,6 @@ fn lifecycle_run_status_to_contract(
         agentdash_domain::workflow::LifecycleRunStatus::Cancelled => {
             agentdash_contracts::workflow::LifecycleRunStatus::Cancelled
         }
-    }
-}
-
-fn command_receipt_view(
-    receipt: agentdash_application::workflow::AgentRunCommandReceiptView,
-) -> AgentRunCommandReceipt {
-    AgentRunCommandReceipt {
-        client_command_id: receipt.client_command_id,
-        status: receipt.status,
-        duplicate: receipt.duplicate,
-        message: receipt.message,
     }
 }
 
@@ -983,16 +944,6 @@ fn digest_cancel_command_request(
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     Ok(format!("sha256:{:x}", hasher.finalize()))
-}
-
-fn runtime_command_state_dto(
-    state: app_workspace::AgentRunWorkspaceRuntimeCommandStateModel,
-) -> RuntimeSessionCommandStateDto {
-    RuntimeSessionCommandStateDto {
-        status: state.status.as_str().to_string(),
-        turn_id: state.turn_id,
-        message: state.message,
-    }
 }
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {

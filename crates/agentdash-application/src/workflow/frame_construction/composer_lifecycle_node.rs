@@ -113,8 +113,15 @@ pub(super) async fn compose(
     .await
     .map_err(ConnectorError::InvalidConfig)?;
 
-    svc.compose_pending_frame(builder, extras, command, input.session_id.as_str(), None)
-        .await
+    svc.compose_pending_frame(
+        builder,
+        extras,
+        command,
+        input.session_id.as_str(),
+        None,
+        &input.requested_runtime_commands,
+    )
+    .await
 }
 
 async fn load_workflow_for_plan_node(

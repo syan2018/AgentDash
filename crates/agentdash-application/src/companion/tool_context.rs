@@ -17,32 +17,20 @@ pub(crate) struct CompanionToolContext {
     delivery_runtime_session_id: Option<String>,
     turn_id: String,
     hook_runtime: Option<SharedHookRuntime>,
-    lifecycle_anchor: Option<CompanionLifecycleAnchor>,
-    lifecycle_anchor_error: Option<String>,
 }
 
 impl CompanionToolContext {
-    pub(crate) async fn resolve(context: &ExecutionContext, repos: &RepositorySet) -> Self {
+    pub(crate) fn from_execution_context(context: &ExecutionContext) -> Self {
         let delivery_runtime_session_id = context
             .turn
             .hook_runtime
             .as_ref()
             .map(|session| session.session_id().to_string());
-        let (lifecycle_anchor, lifecycle_anchor_error) =
-            match delivery_runtime_session_id.as_deref() {
-                Some(session_id) => match resolve_lifecycle_anchor(session_id, repos).await {
-                    Ok(anchor) => (Some(anchor), None),
-                    Err(error) => (None, Some(error)),
-                },
-                None => (None, None),
-            };
 
         Self {
             delivery_runtime_session_id,
             turn_id: context.session.turn_id.clone(),
             hook_runtime: context.turn.hook_runtime.clone(),
-            lifecycle_anchor,
-            lifecycle_anchor_error,
         }
     }
 
@@ -74,23 +62,17 @@ impl CompanionToolContext {
         })
     }
 
-    pub(crate) fn require_lifecycle_anchor(
+    pub(crate) async fn require_lifecycle_anchor(
         &self,
         action: &str,
+        repos: &RepositorySet,
     ) -> Result<CompanionLifecycleAnchor, AgentToolError> {
-        if let Some(anchor) = self.lifecycle_anchor {
-            return Ok(anchor);
-        }
-
-        if let Some(error) = &self.lifecycle_anchor_error {
-            return Err(AgentToolError::ExecutionFailed(format!(
-                "{error}，无法{action}"
-            )));
-        }
-
-        Err(AgentToolError::ExecutionFailed(format!(
-            "当前 delivery runtime session 缺少 lifecycle anchor，无法{action}"
-        )))
+        let session_id = self
+            .require_delivery_runtime_session_id(action)?
+            .to_string();
+        resolve_lifecycle_anchor(&session_id, repos)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(format!("{error}，无法{action}")))
     }
 }
 

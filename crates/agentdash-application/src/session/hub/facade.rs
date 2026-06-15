@@ -6,6 +6,8 @@
 use std::io;
 
 #[cfg(test)]
+use super::super::RuntimeCommandRecord;
+#[cfg(test)]
 #[allow(deprecated)]
 use super::super::construction::RuntimeContextInspectionPlan;
 #[cfg(test)]
@@ -16,8 +18,7 @@ use super::super::{AgentFrameTransitionRecord, RuntimeDeliveryCommand};
 use super::SessionRuntimeInner;
 #[cfg(test)]
 use crate::workflow::runtime_launch::{
-    FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
-    LaunchResolutionTrace,
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
 };
 use agentdash_agent_protocol::BackboneEnvelope;
 #[cfg(test)]
@@ -109,7 +110,18 @@ impl SessionRuntimeInner {
     ) -> Result<String, ConnectorError> {
         construction.session_id = session_id.to_string();
         construction.session.session_id = session_id.to_string();
-        let envelope = envelope_from_construction(self, construction).await;
+        let requested_runtime_commands = self
+            .stores
+            .runtime_commands
+            .list_requested_runtime_commands(session_id)
+            .await
+            .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
+        let envelope = envelope_from_construction_with_commands(
+            self,
+            construction,
+            &requested_runtime_commands,
+        )
+        .await?;
         SessionLaunchOrchestrator::new(SessionLaunchDeps::from_inner(self))
             .launch_with_envelope_for_test(session_id, envelope)
             .await
@@ -144,19 +156,38 @@ impl SessionRuntimeInner {
 pub(super) async fn envelope_from_construction(
     hub: &SessionRuntimeInner,
     construction: RuntimeContextInspectionPlan,
-) -> FrameLaunchEnvelope {
-    let working_directory = construction
-        .workspace
-        .working_directory
-        .clone()
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-    let surface_draft = construction
+) -> Result<FrameLaunchEnvelope, ConnectorError> {
+    envelope_from_construction_with_commands(hub, construction, &[]).await
+}
+
+#[cfg(test)]
+#[allow(deprecated)]
+pub(super) async fn envelope_from_construction_with_commands(
+    hub: &SessionRuntimeInner,
+    construction: RuntimeContextInspectionPlan,
+    requested_runtime_commands: &[RuntimeCommandRecord],
+) -> Result<FrameLaunchEnvelope, ConnectorError> {
+    let mut surface_draft = construction
         .projections
         .frame_surface_draft
         .clone()
-        .expect("session hub tests must provide complete FrameSurfaceDraft");
-    let launch_surface = FrameLaunchSurface::from_surface_draft(&surface_draft)
-        .expect("session hub tests must provide launch-ready typed surface");
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(
+                "session hub test construction 缺少 FrameSurfaceDraft".to_string(),
+            )
+        })?;
+    let mut closed_surface = crate::workflow::frame_construction::close_frame_launch_surface(
+        &mut surface_draft,
+        requested_runtime_commands,
+    )?;
+    let working_directory = closed_surface
+        .launch_surface
+        .vfs
+        .default_mount()
+        .map(|mount| std::path::PathBuf::from(mount.root_ref.trim()))
+        .filter(|path| !path.as_os_str().is_empty())
+        .or_else(|| construction.workspace.working_directory.clone())
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
     let (agent_id, frame_id, frame_revision) = match (
         hub.execution_anchor_repo.as_ref(),
         hub.lifecycle_agent_repo.as_ref(),
@@ -178,7 +209,16 @@ pub(super) async fn envelope_from_construction(
         _ => (uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), 1),
     };
 
-    FrameLaunchEnvelope {
+    if !closed_surface.resolution_trace.pending_overlay_applied {
+        closed_surface.resolution_trace = LaunchResolutionTrace {
+            vfs_source: construction.resolution.vfs_source,
+            mcp_source: construction.resolution.mcp_source,
+            capability_source: construction.resolution.capability_source,
+            pending_overlay_applied: construction.resolution.pending_overlay_applied,
+        };
+    }
+
+    Ok(FrameLaunchEnvelope {
         surface: FrameRuntimeSurface {
             agent_id,
             frame_id,
@@ -190,7 +230,7 @@ pub(super) async fn envelope_from_construction(
             runtime_session_id: Some(construction.session_id.clone()),
         },
         surface_draft,
-        launch_surface,
+        launch_surface: closed_surface.launch_surface,
         pending_frame: None,
         intent: FrameLaunchIntent {
             input: construction.prompt.input,
@@ -202,12 +242,9 @@ pub(super) async fn envelope_from_construction(
         working_directory,
         context_bundle: construction.context.bundle,
         continuation_context_frame: None,
-        base_capability_state: construction.resolution.runtime_base_capability_state,
-        resolution_trace: LaunchResolutionTrace {
-            vfs_source: construction.resolution.vfs_source,
-            mcp_source: construction.resolution.mcp_source,
-            capability_source: construction.resolution.capability_source,
-            pending_overlay_applied: construction.resolution.pending_overlay_applied,
-        },
-    }
+        base_capability_state: closed_surface
+            .base_capability_state
+            .or(construction.resolution.runtime_base_capability_state),
+        resolution_trace: closed_surface.resolution_trace,
+    })
 }

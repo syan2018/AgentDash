@@ -1,7 +1,14 @@
 //! `SessionRuntimeInner` 行为测试（从原 `hub.rs` 迁移；PR 6 拆分）。
 #![allow(deprecated)]
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
@@ -399,6 +406,61 @@ impl AgentConnector for EmptyConnector {
     }
 }
 
+struct PromptCountingConnector {
+    prompt_calls: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl AgentConnector for PromptCountingConnector {
+    fn connector_id(&self) -> &'static str {
+        "prompt-counting"
+    }
+    fn connector_type(&self) -> agentdash_spi::ConnectorType {
+        agentdash_spi::ConnectorType::LocalExecutor
+    }
+    fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+        agentdash_spi::ConnectorCapabilities::default()
+    }
+    fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+        Vec::new()
+    }
+    async fn discover_options_stream(
+        &self,
+        _executor: &str,
+        _working_dir: Option<PathBuf>,
+    ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        Ok(Box::pin(stream::empty()))
+    }
+    async fn prompt(
+        &self,
+        _session_id: &str,
+        _follow_up_session_id: Option<&str>,
+        _prompt: &PromptPayload,
+        _context: agentdash_spi::ExecutionContext,
+    ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+        self.prompt_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::pin(stream::empty()))
+    }
+    async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn approve_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn reject_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+        _reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 struct SetupFailingConnector;
 
@@ -563,6 +625,7 @@ async fn start_prompt_records_current_turn_state() {
     req.surface.vfs = Some(vfs.clone());
     let mut launch_caps = flow_caps.clone();
     launch_caps.vfs.active = Some(vfs.clone());
+    launch_caps.tool.mcp_servers = vec![runtime_mcp_server.clone()];
     req.projections.frame_surface_draft = Some(FrameSurfaceDraft {
         capability_state: Some(launch_caps),
         vfs: Some(vfs),
@@ -671,7 +734,7 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
     };
 
     let plan_tools = hub
-        .build_tools_for_execution_context("session-initial-tools", &plan_context)
+        .assemble_tools_for_execution_context("session-initial-tools", &plan_context)
         .await;
     let plan_names = plan_tools
         .iter()
@@ -699,7 +762,7 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
     };
 
     let apply_tools = hub
-        .build_tools_for_execution_context("session-initial-tools", &apply_context)
+        .assemble_tools_for_execution_context("session-initial-tools", &apply_context)
         .await;
     let apply_names = apply_tools
         .iter()
@@ -1817,11 +1880,13 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
             captures: captures.clone(),
         }),
         None,
-    );
+    )
+    .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
     let session = hub
         .create_session("pending-capability-surface")
         .await
         .expect("create");
+    let launch_frame = attach_test_lifecycle_frame(&hub, &session.id).await;
 
     let mut target_flow =
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Write]);
@@ -1858,7 +1923,7 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
     target_flow.vfs.active = Some(pending_vfs);
 
     let frame_transition = AgentFrameTransitionRecord::from_pending(
-        uuid::Uuid::new_v4(),
+        launch_frame.id,
         PendingCapabilityStateTransition {
             id: "transition-1".to_string(),
             run_id: uuid::Uuid::new_v4(),
@@ -2235,6 +2300,110 @@ async fn lazy_hook_runtime_rebuild_loads_snapshot_from_frame_target() {
     assert_eq!(
         frame_queries[0].provenance.source,
         "hook_runtime_target_rebuild"
+    );
+}
+
+#[tokio::test]
+async fn hook_runtime_target_cache_hit_does_not_refresh_snapshot() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
+    let hook_provider = Arc::new(SnapshotRecordingHookProvider {
+        frame_snapshot_queries: frame_snapshot_queries.clone(),
+    });
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(PendingConnector),
+        Some(hook_provider),
+    );
+    let session = hub
+        .create_session("lazy-hook-target-cache-hit")
+        .await
+        .expect("create");
+    let frame = attach_test_frame(&hub, &session.id).await;
+    let target = control_target_from_anchor_frame(&hub, &session.id, &frame).await;
+    let request = AgentFrameRuntimeTarget {
+        frame_id: target.frame_id,
+        delivery_runtime_session_id: session.id.clone(),
+    };
+
+    let runtime1 = hub
+        .hook_service()
+        .ensure_hook_runtime_for_target(&request, Some("turn-1"))
+        .await
+        .expect("initial hook runtime should load")
+        .expect("initial hook runtime should exist");
+    let runtime2 = hub
+        .hook_service()
+        .ensure_hook_runtime_for_target(&request, Some("turn-2"))
+        .await
+        .expect("cache hit should not refresh")
+        .expect("cached hook runtime should exist");
+
+    assert_eq!(runtime1.control_target(), target);
+    assert_eq!(runtime2.control_target(), target);
+    assert!(Arc::ptr_eq(&runtime1, &runtime2));
+    let frame_queries = frame_snapshot_queries.lock().await;
+    assert_eq!(frame_queries.len(), 1);
+    assert_eq!(frame_queries[0].target, target);
+}
+
+#[tokio::test]
+async fn hook_runtime_resolve_cache_hit_does_not_refresh_snapshot() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
+    let hook_provider = Arc::new(SnapshotRecordingHookProvider {
+        frame_snapshot_queries: frame_snapshot_queries.clone(),
+    });
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(PendingConnector),
+        Some(hook_provider),
+    );
+    let session = hub
+        .create_session("hook-runtime-resolve-cache-hit")
+        .await
+        .expect("create");
+    let frame = attach_test_frame(&hub, &session.id).await;
+    let target = control_target_from_anchor_frame(&hub, &session.id, &frame).await;
+
+    let runtime1 = hub
+        .hook_service()
+        .resolve_hook_runtime(
+            &session.id,
+            "turn-1",
+            frame.id,
+            Some(&frame),
+            &AgentConfig::new("PI_AGENT"),
+            base.path(),
+            true,
+        )
+        .await
+        .expect("initial hook runtime should load")
+        .expect("initial hook runtime should exist");
+    let runtime2 = hub
+        .hook_service()
+        .resolve_hook_runtime(
+            &session.id,
+            "turn-2",
+            frame.id,
+            Some(&frame),
+            &AgentConfig::new("PI_AGENT"),
+            base.path(),
+            false,
+        )
+        .await
+        .expect("same-target subsequent turn should reuse cache")
+        .expect("cached hook runtime should exist");
+
+    assert_eq!(runtime1.control_target(), target);
+    assert_eq!(runtime2.control_target(), target);
+    assert!(Arc::ptr_eq(&runtime1, &runtime2));
+    let frame_queries = frame_snapshot_queries.lock().await;
+    assert_eq!(frame_queries.len(), 1);
+    assert_eq!(frame_queries[0].target, target);
+    assert_eq!(
+        frame_queries[0].provenance.source,
+        "hook_runtime_launch_target_reload"
     );
 }
 
@@ -3768,6 +3937,7 @@ async fn launch_hook_runtime_accepts_pending_agent_frame_target() {
                 &input.command,
                 None,
                 &input.session_id,
+                &input.requested_runtime_commands,
             )?;
             envelope.pending_frame = Some(pending_frame);
             Ok(envelope)
@@ -3889,7 +4059,7 @@ async fn planner_invalid_config_leaves_current_frame_unchanged() {
             let mut construction = simple_prompt_request(prompt_text);
             construction.session_id = input.session_id.clone();
             construction.session.session_id = input.session_id;
-            Ok(super::facade::envelope_from_construction(&self.hub, construction).await)
+            super::facade::envelope_from_construction(&self.hub, construction).await
         }
     }
 
@@ -3944,6 +4114,109 @@ async fn planner_invalid_config_leaves_current_frame_unchanged() {
             BackboneEvent::UserInputSubmitted(_)
         )),
         "planner InvalidConfig 不能写入 user input"
+    );
+}
+
+#[tokio::test]
+async fn missing_launch_vfs_rejects_before_connector_prompt() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let prompt_calls = Arc::new(AtomicUsize::new(0));
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(PromptCountingConnector {
+            prompt_calls: prompt_calls.clone(),
+        }),
+        None,
+    );
+    let session = hub
+        .create_session("missing-launch-vfs")
+        .await
+        .expect("create");
+    let mut request = simple_prompt_request("hello");
+    request
+        .projections
+        .frame_surface_draft
+        .as_mut()
+        .expect("test request should have frame surface")
+        .vfs = None;
+
+    let error = hub
+        .start_prompt(&session.id, request)
+        .await
+        .expect_err("missing VFS should reject before connector prompt");
+
+    assert!(
+        error.to_string().contains("vfs"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(prompt_calls.load(Ordering::SeqCst), 0);
+    assert_no_connector_accepted_events(&hub, &session.id).await;
+}
+
+#[tokio::test]
+async fn mismatched_launch_mcp_rejects_before_connector_prompt() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let prompt_calls = Arc::new(AtomicUsize::new(0));
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(PromptCountingConnector {
+            prompt_calls: prompt_calls.clone(),
+        }),
+        None,
+    );
+    let session = hub
+        .create_session("mismatched-launch-mcp")
+        .await
+        .expect("create");
+    let mut request = simple_prompt_request("hello");
+    let draft_only_mcp = agentdash_spi::RuntimeMcpServer {
+        name: "draft-only".to_string(),
+        transport: agentdash_spi::McpTransportConfig::Http {
+            url: "http://localhost/mcp".to_string(),
+            headers: vec![],
+        },
+        uses_relay: false,
+    };
+    let draft = request
+        .projections
+        .frame_surface_draft
+        .as_mut()
+        .expect("test request should have frame surface");
+    draft.mcp_servers = vec![draft_only_mcp];
+
+    let error = hub
+        .start_prompt(&session.id, request)
+        .await
+        .expect_err("mismatched MCP surface should reject before connector prompt");
+
+    assert!(
+        error
+            .to_string()
+            .contains("capability_state.tool.mcp_servers"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(prompt_calls.load(Ordering::SeqCst), 0);
+    assert_no_connector_accepted_events(&hub, &session.id).await;
+}
+
+async fn assert_no_connector_accepted_events(hub: &SessionRuntimeInner, session_id: &str) {
+    let history = hub
+        .persistence
+        .list_all_events(session_id)
+        .await
+        .expect("history should load");
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.notification.event, BackboneEvent::TurnStarted(_))),
+        "launch surface rejection must not write turn_started"
+    );
+    assert!(
+        !history.iter().any(|event| matches!(
+            &event.notification.event,
+            BackboneEvent::UserInputSubmitted(_)
+        )),
+        "launch surface rejection must not write user input"
     );
 }
 

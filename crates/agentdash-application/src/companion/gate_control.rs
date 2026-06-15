@@ -887,6 +887,17 @@ mod tests {
                 .find(|lineage| lineage.child_agent_id == child_agent_id)
                 .cloned())
         }
+
+        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentLineage>, DomainError> {
+            Ok(self
+                .lineages
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|lineage| lineage.run_id == run_id)
+                .cloned()
+                .collect())
+        }
     }
 
     #[derive(Default)]

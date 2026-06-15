@@ -5,7 +5,7 @@ use crate::workflow::lifecycle_run_view_builder::{
     AgentRunView, LifecycleSubjectAssociationView, RuntimeSessionRefView,
 };
 use agentdash_contracts::workflow::{
-    AgentConversationSnapshot, ConversationEffectiveExecutorConfigView,
+    AgentConversationSnapshot, ConversationEffectiveExecutorConfigView, SubjectRefDto,
 };
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage;
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
@@ -32,6 +32,23 @@ pub struct AgentRunWorkspaceSnapshot {
     pub mailbox_messages: Vec<AgentRunMailboxMessage>,
     pub resource_surface: Option<ResolvedVfsSurface>,
     pub conversation: AgentConversationSnapshot,
+}
+
+/// 列表视图专用的轻量投影。
+///
+/// 只解析侧栏 / 主区列表实际消费的字段（标题、投递状态、subject 归属），
+/// 刻意跳过 vfs surface、lifecycle run view、mailbox、conversation 等重量级解析，
+/// 避免列表为每个主 Run 走一遍详情快照。
+#[derive(Debug, Clone)]
+pub struct AgentRunListProjection {
+    pub run: LifecycleRun,
+    pub agent: LifecycleAgent,
+    pub shell: AgentRunWorkspaceShellModel,
+    pub agent_role: String,
+    pub delivery_runtime_session_id: Option<String>,
+    pub delivery_trace_meta: Option<AgentRunWorkspaceTraceMetaModel>,
+    pub subject_ref: Option<SubjectRefDto>,
+    pub subject_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

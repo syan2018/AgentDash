@@ -737,6 +737,20 @@ impl AgentLineageRepository for PostgresAgentLineageRepository {
         .map(TryInto::try_into)
         .transpose()
     }
+
+    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentLineage>, DomainError> {
+        sqlx::query_as::<_, LineageRow>(
+            r#"SELECT id,run_id,parent_agent_id,child_agent_id,relation_kind,source_frame_id,metadata_json,created_at
+               FROM agent_lineages WHERE run_id=$1 ORDER BY created_at"#,
+        )
+        .bind(run_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

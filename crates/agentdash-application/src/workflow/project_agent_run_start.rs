@@ -1184,6 +1184,10 @@ mod tests {
         ) -> Result<Option<AgentLineage>, DomainError> {
             Ok(None)
         }
+
+        async fn list_by_run(&self, _run_id: Uuid) -> Result<Vec<AgentLineage>, DomainError> {
+            Ok(Vec::new())
+        }
     }
 
     #[derive(Default)]

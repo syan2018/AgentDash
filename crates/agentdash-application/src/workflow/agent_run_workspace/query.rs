@@ -238,6 +238,72 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         })
     }
 
+    /// 列表视图的轻量解析：只取标题 / 投递状态 / subject 归属，
+    /// 跳过 vfs surface、run view、mailbox、conversation 等重量级解析。
+    pub async fn resolve_list_projection(
+        &self,
+        input: AgentRunWorkspaceQueryInput,
+    ) -> Result<super::types::AgentRunListProjection, WorkflowApplicationError> {
+        let run = input.run;
+        let agent = input.agent;
+        let delivery_runtime_session_id = self
+            .delivery_runtime_session_for_agent_run(run.id, agent.id)
+            .await?;
+        let meta = match delivery_runtime_session_id.as_deref() {
+            Some(session_id) => self.session_core.get_session_meta(session_id).await?,
+            None => None,
+        };
+        let execution_state = match delivery_runtime_session_id.as_deref() {
+            Some(session_id) => {
+                self.session_core
+                    .inspect_session_execution_state(session_id)
+                    .await?
+            }
+            None => SessionExecutionState::Idle,
+        };
+        let projection = AgentRunWorkspaceProjection::derive(
+            AgentRunWorkspaceProjectionInput::new(&execution_state, &agent.status),
+        );
+        let project_agent = self.load_project_agent(&run, &agent).await?;
+        let shell = shell_model(
+            meta.as_ref(),
+            project_agent.as_ref(),
+            &agent,
+            &projection.delivery_status,
+            projection.last_turn_id.clone(),
+        );
+        let delivery_trace_meta = meta
+            .as_ref()
+            .map(AgentRunWorkspaceTraceMetaModel::from_session_meta);
+
+        let association = self
+            .repos
+            .lifecycle_subject_association_repo
+            .list_by_anchor(run.id, Some(agent.id))
+            .await
+            .map_err(WorkflowApplicationError::from)?
+            .into_iter()
+            .next();
+        let subject_ref = association.as_ref().map(|assoc| SubjectRefDto {
+            kind: assoc.subject_kind.clone(),
+            id: assoc.subject_id.to_string(),
+        });
+        let subject_label = association
+            .as_ref()
+            .and_then(|assoc| subject_label_from_metadata(assoc.metadata_json.as_ref()));
+
+        Ok(super::types::AgentRunListProjection {
+            run,
+            agent: agent.clone(),
+            shell,
+            agent_role: agent.agent_role.clone(),
+            delivery_runtime_session_id,
+            delivery_trace_meta,
+            subject_ref,
+            subject_label,
+        })
+    }
+
     async fn delivery_runtime_session_for_agent_run(
         &self,
         run_id: Uuid,
@@ -350,6 +416,17 @@ fn shell_model(
         last_turn_id,
         last_activity_at: agent.updated_at.to_rfc3339(),
     }
+}
+
+/// 从 subject association 的 metadata 取可读 label（label/title/name 任一字符串）。
+fn subject_label_from_metadata(metadata: Option<&serde_json::Value>) -> Option<String> {
+    let metadata = metadata?;
+    ["label", "title", "name"]
+        .iter()
+        .find_map(|key| metadata.get(key).and_then(|value| value.as_str()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn frame_runtime_model(

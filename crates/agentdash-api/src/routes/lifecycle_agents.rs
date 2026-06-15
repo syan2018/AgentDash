@@ -14,11 +14,11 @@ use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunLineageRef,
     AgentRunRefDto, AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, ConversationExecutionStatus, LifecycleRunRefDto,
-    LifecycleSubjectAssociationDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
+    AgentRunWorkspaceView, ConversationExecutionStatus, LifecycleRunRefDto, RuntimeSessionRefDto,
+    RuntimeSessionTraceMeta,
 };
 use agentdash_domain::workflow::{
-    AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind,
+    AgentLineage, AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind,
     AgentRunCommandReceipt as DomainAgentRunCommandReceipt, LifecycleAgent, LifecycleRun,
     NewAgentRunCommandReceipt,
 };
@@ -127,51 +127,23 @@ pub async fn get_project_agent_runs(
             continue;
         }
 
-        // 在内存里构建该 run 的 lineage 控制树邻接：parent -> [child]。
+        // 一次取回该 run 的全部 lineage 边，内存构建控制树 forest。
         // 主从真值源是 AgentLineage，不依赖 agent_role。
-        let mut children_map: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
-        let mut child_ids: HashSet<Uuid> = HashSet::new();
-        for agent in &agents {
-            let lineages = state
-                .repos
-                .agent_lineage_repo
-                .list_children(agent.id)
-                .await
-                .map_err(ApiError::from)?;
-            for lineage in lineages {
-                children_map
-                    .entry(agent.id)
-                    .or_default()
-                    .push(lineage.child_agent_id);
-                child_ids.insert(lineage.child_agent_id);
-            }
-        }
+        let lineages = state
+            .repos
+            .agent_lineage_repo
+            .list_by_run(run.id)
+            .await
+            .map_err(ApiError::from)?;
+        let (children_map, child_ids) = build_lineage_forest(&lineages);
 
-        // 只对主 Run（控制树 root = 未作为任何 lineage child 出现的 agent）产出 entry。
+        // 只对主 Run（控制树 root = 未作为任何 lineage child 出现的 agent）产出 entry，
+        // 走轻量列表投影（跳过 vfs / conversation 等重量级解析）。
         for agent in agents.iter().filter(|agent| !child_ids.contains(&agent.id)) {
             let subagent_count = count_descendants(agent.id, &children_map);
-            let agent_role = agent.agent_role.clone();
-            let delivery_runtime_session_id = state
-                .repos
-                .execution_anchor_repo
-                .latest_for_agent(agent.id)
-                .await
-                .map_err(ApiError::from)?
-                .map(|anchor| anchor.runtime_session_id);
-            let context = AgentRunContext {
-                run: run.clone(),
-                agent: agent.clone(),
-                delivery_runtime_session_id,
-            };
-            let workspace = agent_run_workspace_view(
-                load_agent_run_workspace_snapshot(&state, &context).await?,
-            );
-            entries.push(agent_run_workspace_list_entry(
-                &context.run,
-                workspace,
-                agent_role,
-                subagent_count,
-            ));
+            let projection =
+                load_agent_run_list_projection(&state, run.clone(), agent.clone()).await?;
+            entries.push(list_entry_from_projection(&run, projection, subagent_count));
         }
     }
     entries.sort_by(|a, b| b.shell.last_activity_at.cmp(&a.shell.last_activity_at));
@@ -206,49 +178,59 @@ pub async fn get_agent_run_workspace(
 
 /// 解析当前 AgentRun 的 lineage 一跳父子，供右侧会话栏展示从属关系与跳转。
 ///
-/// lineage 是 run-scoped 一跳关系；parent 至多一个，children 为直接子节点。
-/// 标题复用 workspace shell 的 display_title 解析，保证与列表/header 一致。
+/// 一次 `list_by_run` 拿全 run 的 lineage 边，内存建 forest：parent 至多一个，
+/// children 为直接子节点；每个 ref 附其子树后代数（`subagent_count`）供前端决定是否可下钻。
+/// 标题走轻量列表投影，保证与列表/header 一致且不再为取标题做完整详情快照。
 async fn resolve_agent_run_lineage(
     state: &AppState,
     run: &LifecycleRun,
     agent: &LifecycleAgent,
 ) -> Result<(Option<AgentRunLineageRef>, Vec<AgentRunLineageRef>), ApiError> {
-    let parent = match state
+    let lineages = state
         .repos
         .agent_lineage_repo
-        .find_parent(agent.id)
+        .list_by_run(run.id)
         .await
-        .map_err(ApiError::from)?
+        .map_err(ApiError::from)?;
+    let (children_map, _) = build_lineage_forest(&lineages);
+
+    let parent = match lineages
+        .iter()
+        .find(|lineage| lineage.child_agent_id == agent.id)
+        .and_then(|lineage| lineage.parent_agent_id.map(|id| (id, lineage.relation_kind.clone())))
     {
-        Some(lineage) => match lineage.parent_agent_id {
-            Some(parent_agent_id) => {
-                match state
-                    .repos
-                    .lifecycle_agent_repo
-                    .get(parent_agent_id)
-                    .await
-                    .map_err(ApiError::from)?
-                {
-                    Some(parent_agent) => Some(
-                        lineage_ref_for_agent(state, run, &parent_agent, lineage.relation_kind)
-                            .await?,
-                    ),
-                    None => None,
+        Some((parent_agent_id, relation_kind)) => {
+            match state
+                .repos
+                .lifecycle_agent_repo
+                .get(parent_agent_id)
+                .await
+                .map_err(ApiError::from)?
+            {
+                Some(parent_agent) => {
+                    let subagent_count = count_descendants(parent_agent.id, &children_map);
+                    Some(
+                        lineage_ref_for_agent(
+                            state,
+                            run,
+                            &parent_agent,
+                            relation_kind,
+                            subagent_count,
+                        )
+                        .await?,
+                    )
                 }
+                None => None,
             }
-            None => None,
-        },
+        }
         None => None,
     };
 
-    let child_lineages = state
-        .repos
-        .agent_lineage_repo
-        .list_children(agent.id)
-        .await
-        .map_err(ApiError::from)?;
-    let mut children = Vec::with_capacity(child_lineages.len());
-    for lineage in child_lineages {
+    let mut children = Vec::new();
+    for lineage in lineages
+        .iter()
+        .filter(|lineage| lineage.parent_agent_id == Some(agent.id))
+    {
         if let Some(child_agent) = state
             .repos
             .lifecycle_agent_repo
@@ -256,41 +238,41 @@ async fn resolve_agent_run_lineage(
             .await
             .map_err(ApiError::from)?
         {
-            children
-                .push(lineage_ref_for_agent(state, run, &child_agent, lineage.relation_kind).await?);
+            let subagent_count = count_descendants(child_agent.id, &children_map);
+            children.push(
+                lineage_ref_for_agent(
+                    state,
+                    run,
+                    &child_agent,
+                    lineage.relation_kind.clone(),
+                    subagent_count,
+                )
+                .await?,
+            );
         }
     }
 
     Ok((parent, children))
 }
 
-/// 为 lineage 上的某 agent 构建一跳引用（含可读 title）。
+/// 为 lineage 上的某 agent 构建一跳引用（标题走轻量投影，避免完整详情快照）。
 async fn lineage_ref_for_agent(
     state: &AppState,
     run: &LifecycleRun,
     agent: &LifecycleAgent,
     relation_kind: String,
+    subagent_count: u32,
 ) -> Result<AgentRunLineageRef, ApiError> {
-    let delivery_runtime_session_id = state
-        .repos
-        .execution_anchor_repo
-        .latest_for_agent(agent.id)
-        .await
-        .map_err(ApiError::from)?
-        .map(|anchor| anchor.runtime_session_id);
-    let context = AgentRunContext {
-        run: run.clone(),
-        agent: agent.clone(),
-        delivery_runtime_session_id,
-    };
-    let snapshot = load_agent_run_workspace_snapshot(state, &context).await?;
+    let projection =
+        load_agent_run_list_projection(state, run.clone(), agent.clone()).await?;
     Ok(AgentRunLineageRef {
         run_id: agent.run_id.to_string(),
         agent_id: agent.id.to_string(),
         agent_kind: agent.agent_kind.clone(),
         agent_role: agent.agent_role.clone(),
         relation_kind,
-        display_title: snapshot.shell.display_title,
+        display_title: projection.shell.display_title,
+        subagent_count,
     })
 }
 
@@ -773,6 +755,91 @@ async fn load_agent_run_workspace_snapshot(
         .map_err(ApiError::from)
 }
 
+/// 轻量列表投影：列表/lineage ref 共用，避免为每个主 Run 走完整详情快照。
+async fn load_agent_run_list_projection(
+    state: &AppState,
+    run: LifecycleRun,
+    agent: LifecycleAgent,
+) -> Result<app_workspace::AgentRunListProjection, ApiError> {
+    let vfs_runtime = ApiVfsSurfaceRuntimeProjection::new(
+        state.services.backend_registry.clone(),
+        state.services.mount_provider_registry.clone(),
+    );
+    let service = app_workspace::AgentRunWorkspaceQueryService::new(
+        &state.repos,
+        state.services.session_core.clone(),
+        state.services.session_control.clone(),
+        &vfs_runtime,
+    );
+    service
+        .resolve_list_projection(app_workspace::AgentRunWorkspaceQueryInput { run, agent })
+        .await
+        .map_err(ApiError::from)
+}
+
+/// 从 run 的全部 lineage 边构建控制树邻接（parent -> [child]）与 child id 集合。
+/// root = 未作为任何 lineage child 出现的 agent。
+fn build_lineage_forest(
+    lineages: &[AgentLineage],
+) -> (HashMap<Uuid, Vec<Uuid>>, HashSet<Uuid>) {
+    let mut children_map: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    let mut child_ids: HashSet<Uuid> = HashSet::new();
+    for lineage in lineages {
+        if let Some(parent_agent_id) = lineage.parent_agent_id {
+            children_map
+                .entry(parent_agent_id)
+                .or_default()
+                .push(lineage.child_agent_id);
+        }
+        child_ids.insert(lineage.child_agent_id);
+    }
+    (children_map, child_ids)
+}
+
+fn shell_model_to_contract(
+    shell: app_workspace::AgentRunWorkspaceShellModel,
+) -> AgentRunWorkspaceShell {
+    AgentRunWorkspaceShell {
+        display_title: shell.display_title,
+        title_source: shell.title_source,
+        workspace_status: shell.workspace_status,
+        delivery_status: shell.delivery_status,
+        last_turn_id: shell.last_turn_id,
+        last_activity_at: shell.last_activity_at,
+    }
+}
+
+fn list_entry_from_projection(
+    run: &LifecycleRun,
+    projection: app_workspace::AgentRunListProjection,
+    subagent_count: u32,
+) -> AgentRunWorkspaceListEntry {
+    AgentRunWorkspaceListEntry {
+        run_ref: LifecycleRunRefDto {
+            run_id: run.id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: run.id.to_string(),
+            agent_id: projection.agent.id.to_string(),
+        },
+        project_id: run.project_id.to_string(),
+        shell: shell_model_to_contract(projection.shell),
+        run_status: lifecycle_run_status_to_contract(run.status),
+        agent_role: projection.agent_role,
+        subagent_count,
+        delivery_runtime_ref: projection
+            .delivery_runtime_session_id
+            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
+        delivery_trace_meta: projection
+            .delivery_trace_meta
+            .map(workspace_trace_meta_to_contract),
+        // 列表 UI 不消费 frame_ref，省去 frame runtime 解析。
+        frame_ref: None,
+        subject_ref: projection.subject_ref,
+        subject_label: projection.subject_label,
+    }
+}
+
 fn agent_run_workspace_view(
     snapshot: app_workspace::AgentRunWorkspaceSnapshot,
 ) -> AgentRunWorkspaceView {
@@ -910,29 +977,6 @@ fn frame_runtime_to_contract(
     }
 }
 
-fn agent_run_workspace_list_entry(
-    run: &LifecycleRun,
-    workspace: AgentRunWorkspaceView,
-    agent_role: String,
-    subagent_count: u32,
-) -> AgentRunWorkspaceListEntry {
-    let subject_association = workspace.subject_associations.first();
-    AgentRunWorkspaceListEntry {
-        run_ref: workspace.run_ref,
-        agent_ref: workspace.agent_ref,
-        project_id: workspace.project_id,
-        shell: workspace.shell,
-        run_status: lifecycle_run_status_to_contract(run.status),
-        agent_role,
-        subagent_count,
-        delivery_runtime_ref: workspace.delivery_runtime_ref,
-        delivery_trace_meta: workspace.delivery_trace_meta,
-        frame_ref: workspace.frame_runtime.map(|frame| frame.frame_ref),
-        subject_ref: subject_association.map(|association| association.subject_ref.clone()),
-        subject_label: subject_association.and_then(subject_label_from_metadata),
-    }
-}
-
 /// 统计控制树某 root 子树（传递闭包）下的 subagent 总数。
 ///
 /// lineage 支持任意深度递归且无环检测，因此遍历带 `visited` 防环 + 深度上限兜底，
@@ -963,16 +1007,6 @@ fn count_descendants(root: Uuid, children_map: &HashMap<Uuid, Vec<Uuid>>) -> u32
         }
     }
     count
-}
-
-fn subject_label_from_metadata(association: &LifecycleSubjectAssociationDto) -> Option<String> {
-    let metadata = association.metadata.as_ref()?;
-    ["label", "title", "name"]
-        .iter()
-        .find_map(|key| metadata.get(key).and_then(|value| value.as_str()))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
 }
 
 async fn build_agent_run_mailbox_view(
@@ -1138,51 +1172,54 @@ mod tests {
 
     use super::*;
 
-    fn test_shell(display_title: &str, title_source: &str) -> AgentRunWorkspaceShell {
-        AgentRunWorkspaceShell {
-            display_title: display_title.to_string(),
-            title_source: title_source.to_string(),
-            workspace_status: "running".to_string(),
-            delivery_status: "idle".to_string(),
-            last_turn_id: None,
-            last_activity_at: "2026-06-12T00:00:00Z".to_string(),
-        }
-    }
-
     #[test]
-    fn list_entry_inherits_workspace_shell_title() {
+    fn list_entry_from_projection_carries_role_and_count() {
         let run = LifecycleRun::new_graphless(Uuid::new_v4());
-        let run_id = run.id.to_string();
-        let agent_id = Uuid::new_v4().to_string();
-        let project_id = run.project_id.to_string();
-        let workspace = AgentRunWorkspaceView {
-            run_ref: LifecycleRunRefDto {
-                run_id: run_id.clone(),
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, "PI_AGENT");
+        let projection = app_workspace::AgentRunListProjection {
+            run: run.clone(),
+            agent,
+            shell: app_workspace::AgentRunWorkspaceShellModel {
+                display_title: "Session meta title".to_string(),
+                title_source: "source".to_string(),
+                workspace_status: "running".to_string(),
+                delivery_status: "idle".to_string(),
+                last_turn_id: None,
+                last_activity_at: "2026-06-12T00:00:00Z".to_string(),
             },
-            agent_ref: AgentRunRefDto { run_id, agent_id },
-            project_id,
-            shell: test_shell("Session meta title", "source"),
-            delivery_runtime_ref: None,
+            agent_role: "primary".to_string(),
+            delivery_runtime_session_id: None,
             delivery_trace_meta: None,
-            control_plane: AgentRunWorkspaceControlPlaneView {
-                status: AgentRunWorkspaceControlPlaneStatus::Ready,
-                reason: None,
-            },
-            agent: None,
-            frame_runtime: None,
-            subject_associations: Vec::new(),
-            resource_surface: None,
-            conversation: None,
-            parent: None,
-            children: Vec::new(),
+            subject_ref: None,
+            subject_label: None,
         };
 
-        let entry = agent_run_workspace_list_entry(&run, workspace, "primary".to_string(), 3);
+        let entry = list_entry_from_projection(&run, projection, 3);
 
         assert_eq!(entry.shell.display_title, "Session meta title");
         assert_eq!(entry.shell.title_source, "source");
         assert_eq!(entry.agent_role, "primary");
         assert_eq!(entry.subagent_count, 3);
+        assert!(entry.frame_ref.is_none());
+    }
+
+    #[test]
+    fn build_lineage_forest_identifies_roots() {
+        let run_id = Uuid::new_v4();
+        let root = Uuid::new_v4();
+        let child = Uuid::new_v4();
+        let grandchild = Uuid::new_v4();
+        let lineages = vec![
+            AgentLineage::new(run_id, Some(root), child, "spawn", None, None),
+            AgentLineage::new(run_id, Some(child), grandchild, "spawn", None, None),
+        ];
+
+        let (children_map, child_ids) = build_lineage_forest(&lineages);
+
+        assert!(!child_ids.contains(&root));
+        assert!(child_ids.contains(&child));
+        assert!(child_ids.contains(&grandchild));
+        assert_eq!(count_descendants(root, &children_map), 2);
     }
 
     #[test]

@@ -1364,6 +1364,9 @@ pub struct AgentRunLineageRef {
     pub agent_role: String,
     pub relation_kind: String,
     pub display_title: String,
+    /// 该节点子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开箭头。
+    #[serde(default)]
+    pub subagent_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

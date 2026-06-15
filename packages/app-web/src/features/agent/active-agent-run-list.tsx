@@ -297,7 +297,7 @@ function AgentRunTreeRow({
               executionStatus={null}
               updatedAt={null}
               metaLabel={[child.agent_kind, child.relation_kind].filter(Boolean).join(" · ") || null}
-              canExpand
+              canExpand={(child.subagent_count ?? 0) > 0}
               depth={depth + 1}
               ancestors={childAncestors}
               selectedAgentId={selectedAgentId}

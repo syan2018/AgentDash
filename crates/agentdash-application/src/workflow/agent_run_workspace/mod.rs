@@ -11,7 +11,7 @@ pub use command_policy::{
 pub use projection::{AgentRunWorkspaceProjection, is_terminal_agent_status};
 pub use query::{AgentRunWorkspaceQueryService, mailbox_message_visible};
 pub use types::{
-    AgentRunWorkspaceFrameRefModel, AgentRunWorkspaceFrameRuntimeModel,
+    AgentRunListProjection, AgentRunWorkspaceFrameRefModel, AgentRunWorkspaceFrameRuntimeModel,
     AgentRunWorkspaceMailboxStateModel, AgentRunWorkspaceProjectionInput,
     AgentRunWorkspaceProjectionModel, AgentRunWorkspaceQueryInput,
     AgentRunWorkspaceRuntimeCommandStateModel, AgentRunWorkspaceRuntimeCommandStatus,

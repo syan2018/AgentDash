@@ -46,7 +46,11 @@ export type AgentRunCommandOnlyRequest = { command: AgentRunCommandPreconditionV
  *
  * 用于右侧会话栏展示从属关系与跳转。`relation_kind` 来自 `AgentLineage`。
  */
-export type AgentRunLineageRef = { run_id: string, agent_id: string, agent_kind: string, agent_role: string, relation_kind: string, display_title: string, };
+export type AgentRunLineageRef = { run_id: string, agent_id: string, agent_kind: string, agent_role: string, relation_kind: string, display_title: string,
+/**
+ * 该节点子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开箭头。
+ */
+subagent_count: number, };
 
 export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string, agent_kind: string, agent_role: string, project_agent_id?: string, status: string, current_frame_id?: string,
 /**

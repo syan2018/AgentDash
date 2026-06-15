@@ -46,7 +46,7 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::SkillTemplate,
         key: "companion-system",
-        version: "1.0.1",
+        version: "1.0.2",
     },
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::SkillTemplate,

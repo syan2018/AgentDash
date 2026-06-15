@@ -1,0 +1,16 @@
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-companion-convergence/prd.md", "reason": "检查实现是否满足任务验收标准"}
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-companion-convergence/design.md", "reason": "检查实现是否符合 AgentRun-first lifecycle surface 与 companion payload 设计"}
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-companion-convergence/implement.md", "reason": "检查实施步骤、测试命令与风险点是否已覆盖"}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "检查内嵌 SkillAsset bundle 投影契约是否同步更新"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查 RuntimeSession 与 AgentRun workspace 边界是否保持一致"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查前后端 runtime/capability/resource projection 契约是否一致"}
+{"file": "crates/agentdash-application/src/companion/payload_types.rs", "reason": "检查 request payload required fields 是否统一为 message"}
+{"file": "crates/agentdash-application/src/companion/tools.rs", "reason": "检查 companion_request 执行逻辑与 tool schema 是否消费 message"}
+{"file": "crates/agentdash-domain/src/companion/skills/companion-system/references/payload-envelope.md", "reason": "检查 companion-system payload matrix 与示例是否完整"}
+{"file": "crates/agentdash-application/src/workflow/lifecycle/mount.rs", "reason": "检查 AgentRun lifecycle helper 是否保留 skill projection metadata"}
+{"file": "crates/agentdash-application/src/vfs/provider_lifecycle.rs", "reason": "检查 lifecycle_vfs 是否同时暴露 session surface、node subtree 与 skills"}
+{"file": "crates/agentdash-application/src/workflow/frame_construction/owner_bootstrap.rs", "reason": "检查 ProjectAgent graphless/workspace_module/companion-system projection 路径"}
+{"file": "crates/agentdash-application/src/workflow/frame_construction/composer_companion.rs", "reason": "检查 plain companion child 是否安装 child AgentRun lifecycle surface"}
+{"file": "crates/agentdash-application/src/workflow/agent_run_workspace/query.rs", "reason": "检查 workspace query 是否不再丢失 skill projection metadata"}
+{"file": "packages/app-web/src/features/session/model/sessionCapabilitiesBlock.ts", "reason": "检查前端 capability projection 是否消费后端统一 surface"}
+{"file": "packages/app-web/src/features/session/ui/SessionCapabilityCard.tsx", "reason": "检查 projected builtin skill 是否可见"}

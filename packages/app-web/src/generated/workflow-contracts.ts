@@ -41,6 +41,17 @@ export type AgentReusePolicy = "create_activity_agent" | "continue_current_agent
 
 export type AgentRunCommandOnlyRequest = { command: AgentRunCommandPreconditionView, client_command_id: string, };
 
+/**
+ * AgentRun lineage 控制树上的一跳引用（父或子）。
+ *
+ * 用于右侧会话栏展示从属关系与跳转。`relation_kind` 来自 `AgentLineage`。
+ */
+export type AgentRunLineageRef = { run_id: string, agent_id: string, agent_kind: string, agent_role: string, relation_kind: string, display_title: string,
+/**
+ * 该节点子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开箭头。
+ */
+subagent_count: number, };
+
 export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string, agent_kind: string, agent_role: string, project_agent_id?: string, status: string, current_frame_id?: string,
 /**
  * 投递用的 runtime session（由 execution anchor 提供）。
@@ -55,13 +66,29 @@ export type AgentRunWorkspaceControlPlaneStatus = "ready" | "running" | "cancell
 
 export type AgentRunWorkspaceControlPlaneView = { status: AgentRunWorkspaceControlPlaneStatus, reason?: string, };
 
-export type AgentRunWorkspaceListEntry = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, run_status: LifecycleRunStatus, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, };
+export type AgentRunWorkspaceListEntry = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, run_status: LifecycleRunStatus,
+/**
+ * agent 角色快捷标记（primary / subagent / companion）。
+ */
+agent_role: string,
+/**
+ * 该主 Run 子树（传递闭包）下的 subagent 总数，0 表示无子。
+ */
+subagent_count: number, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, };
 
 export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<AgentRunWorkspaceListEntry>, };
 
 export type AgentRunWorkspaceShell = { display_title: string, title_source: string, workspace_status: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
 
-export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, conversation?: AgentConversationSnapshot, };
+export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, conversation?: AgentConversationSnapshot,
+/**
+ * lineage 父节点：本 Run 若为 subagent 则指向其父，供"隶属于"跳转。
+ */
+parent?: AgentRunLineageRef,
+/**
+ * 本 Run 直接派发的 subagent（一跳子节点），供右侧展开/下钻。
+ */
+children: Array<AgentRunLineageRef>, };
 
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
 

@@ -61,9 +61,10 @@ pub mod types;
 pub use crate::workflow::WorkflowApplicationError;
 pub use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 pub use agent_run_mailbox::{
-    AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxControlCommand,
+    AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxCommandTarget,
+    AgentRunMailboxControlCommand, AgentRunMailboxControlTargetCommand,
     AgentRunMailboxScheduleOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
-    AgentRunMailboxUserMessageCommand,
+    AgentRunMailboxUserMessageCommand, AgentRunMailboxUserMessageTargetCommand,
 };
 pub use assembler::{
     CompanionParentSpec, CompanionParentWorkflowSpec, CompanionSpec, CompanionWorkflowSpec,
@@ -134,15 +135,16 @@ pub use terminal_effects::{
 pub use title_service::SessionTitleService;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
-    AgentFrameRuntimeTarget, ApplyMountOperationsEffect, ApplyVfsOverlayEffect,
-    CapabilityArtifactSource, CapabilityContributionRecord, CapabilityDeclarationRecord,
-    CapabilityDimensionKey, CapabilityState, DECLARATION_TYPE_CAPABILITY_DIRECTIVE,
-    DECLARATION_TYPE_MOUNT_OPERATION, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
-    EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
-    EFFECT_TYPE_SET_MCP_SERVER_SET, EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus,
-    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
-    RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, RuntimeTraceLaunchState,
-    SessionExecutionState, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
-    SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect, TitleSource,
-    UserPromptInput, resolve_session_prompt_lifecycle,
+    AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget, ApplyMountOperationsEffect,
+    ApplyVfsOverlayEffect, CapabilityArtifactSource, CapabilityContributionRecord,
+    CapabilityDeclarationRecord, CapabilityDimensionKey, CapabilityState,
+    DECLARATION_TYPE_CAPABILITY_DIRECTIVE, DECLARATION_TYPE_MOUNT_OPERATION,
+    EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
+    EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
+    EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, HookSnapshotReloadTrigger,
+    PendingCapabilityStateTransition, ResolvedPromptPayload, RuntimeCapabilityEffectRecord,
+    RuntimeCapabilityTransition, RuntimeTraceLaunchState, SessionExecutionState, SessionMeta,
+    SessionPromptLifecycle, SessionRepositoryRehydrateMode, SetCompanionAgentRosterEffect,
+    SetMcpServerSetEffect, SetToolAccessEffect, TitleSource, UserPromptInput,
+    resolve_session_prompt_lifecycle,
 };

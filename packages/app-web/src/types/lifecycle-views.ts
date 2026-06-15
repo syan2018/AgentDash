@@ -10,6 +10,7 @@ export type {
 export type {
   ActiveRuntimeNodeRefDto,
   AgentFrameRuntimeView,
+  AgentRunLineageRef,
   AgentRunView,
   AgentRunWorkspaceControlPlaneStatus,
   AgentRunWorkspaceControlPlaneView,

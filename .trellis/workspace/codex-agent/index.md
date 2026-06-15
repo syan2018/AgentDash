@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
-- **Last Active**: 2026-06-14
+- **Total Sessions**: 14
+- **Last Active**: 2026-06-15
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~474 | Active |
+| `journal-1.md` | ~509 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-06-15 | AgentRun runtime entry session 收束 | `d834cbe7`, `06642665`, `b1b3296a` | `feat/agentrun-list-collapse-identity` |
 | 13 | 2026-06-14 | AgentRun workspace 应用层重构 | `7026f52a`, `3c3c9e6c`, `ad27a56c`, `dc2ce5d7`, `ff511eb7`, `fd19b0e5`, `5acb757d`, `41cf1858` | `main` |
 | 12 | 2026-06-14 | MCP 概念模型收束 | `5f6a34bd` | `main` |
 | 11 | 2026-06-13 | AgentRun mailbox 控制面收敛 | `ed99d606`, `1d60a052`, `ccdf0def`, `59c864d4` | `codex/agentrun-mailbox-planning` |

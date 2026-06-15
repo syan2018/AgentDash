@@ -37,7 +37,7 @@ use crate::session::{
 };
 use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::workflow::dispatch_service::LifecycleDispatchService;
-use crate::workflow::resolve_current_frame_for_runtime_session;
+use crate::workflow::resolve_current_frame_from_delivery_trace_ref;
 
 pub use agentdash_spi::CompanionSliceMode;
 
@@ -77,7 +77,7 @@ pub struct CompanionRequestParams {
     #[serde(default)]
     pub wait: bool,
     /// 结构化 JSON object payload，内容由 target 与 payload.type 决定。
-    #[schemars(schema_with = "json_object_payload_schema")]
+    #[schemars(schema_with = "companion_request_payload_schema")]
     pub payload: serde_json::Value,
 }
 
@@ -148,7 +148,7 @@ impl AgentTool for CompanionRequestTool {
     }
 
     fn description(&self) -> &str {
-        "发起结构化 companion 交互请求；用于询问用户、申请平台能力、协调 parent/sub session，或把动态 workflow 提案交给人/平台评审。payload 必须是 JSON object；复杂规则见 companion-system skill。"
+        "发起结构化 companion 交互请求；用于询问用户、申请平台能力、协调 parent/sub session，或把动态 workflow 提案交给人/平台评审。payload 必须是 JSON object；交互正文统一使用 payload.message，复杂规则见 companion-system skill。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -216,13 +216,13 @@ impl CompanionRequestTool {
         _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let prompt = payload
-            .get("prompt")
+            .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim();
         if prompt.is_empty() {
             return Err(AgentToolError::InvalidArguments(
-                "payload.prompt 不能为空".to_string(),
+                "payload.message 不能为空".to_string(),
             ));
         }
 
@@ -271,7 +271,7 @@ impl CompanionRequestTool {
             Some(self.tool_context.turn_id().to_string()),
             &companion_label,
             Some(serde_json::json!({
-                "prompt": prompt,
+                "message": prompt,
                 "companion_label": companion_label,
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
@@ -611,13 +611,13 @@ impl CompanionRequestTool {
         _cancel: CancellationToken,
     ) -> Result<AgentToolResult, AgentToolError> {
         let prompt = payload
-            .get("prompt")
+            .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim();
         if prompt.is_empty() {
             return Err(AgentToolError::InvalidArguments(
-                "payload.prompt 不能为空".to_string(),
+                "payload.message 不能为空".to_string(),
             ));
         }
 
@@ -710,14 +710,13 @@ impl CompanionRequestTool {
         cancel: CancellationToken,
     ) -> Result<AgentToolResult, AgentToolError> {
         let prompt = payload
-            .get("prompt")
+            .get("message")
             .and_then(|v| v.as_str())
-            .or_else(|| payload.get("message").and_then(|v| v.as_str()))
             .unwrap_or("")
             .trim();
         if prompt.is_empty() {
             return Err(AgentToolError::InvalidArguments(
-                "payload.prompt 或 payload.message 不能为空".to_string(),
+                "payload.message 不能为空".to_string(),
             ));
         }
 
@@ -778,7 +777,7 @@ impl CompanionRequestTool {
                 serde_json::json!({
                     "request_id": request_id.clone(),
                     "gate_id": request_id.clone(),
-                    "prompt": prompt,
+                    "message": prompt,
                     "options": options.clone(),
                     "wait": true,
                     "payload_type": payload_type,
@@ -882,7 +881,7 @@ impl CompanionRequestTool {
                 serde_json::json!({
                     "request_id": request_id.clone(),
                     "gate_id": request_id.clone(),
-                    "prompt": prompt,
+                    "message": prompt,
                     "options": options.clone(),
                     "wait": false,
                     "payload_type": payload_type,
@@ -906,7 +905,7 @@ impl CompanionRequestTool {
                 details: Some(serde_json::json!({
                     "request_id": request_id,
                     "wait": false,
-                    "prompt": prompt,
+                    "message": prompt,
                     "options": options,
                     "payload_type": payload_type,
                     "ui_hint": ui_hint,
@@ -983,7 +982,7 @@ pub struct CompanionRespondParams {
     /// 回应的 request_id（companion_request 返回的 gate id / dispatch id / pending action id）
     pub request_id: String,
     /// 结构化 JSON object payload。示例：{"type":"resolution","status":"approved","summary":"..."}
-    #[schemars(schema_with = "json_object_payload_schema")]
+    #[schemars(schema_with = "companion_response_payload_schema")]
     pub payload: serde_json::Value,
 }
 
@@ -1139,7 +1138,7 @@ impl CompanionRespondTool {
         &self,
         current_session_id: &str,
     ) -> Result<Option<String>, AgentToolError> {
-        let child_frame = match resolve_current_frame_for_runtime_session(
+        let child_frame = match resolve_current_frame_from_delivery_trace_ref(
             current_session_id,
             self.repos.execution_anchor_repo.as_ref(),
             self.repos.lifecycle_agent_repo.as_ref(),
@@ -1365,10 +1364,128 @@ fn parse_adoption_mode(value: &str) -> CompanionAdoptionMode {
     }
 }
 
-fn json_object_payload_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+fn companion_request_payload_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({
         "type": "object",
-        "additionalProperties": true
+        "additionalProperties": true,
+        "description": "Companion request payload. The message body field is payload.message.",
+        "anyOf": [
+            {
+                "type": "object",
+                "required": ["type", "message"],
+                "properties": {
+                    "type": { "const": "task" },
+                    "message": { "type": "string", "minLength": 1 },
+                    "label": { "type": "string" },
+                    "context_mode": {
+                        "type": "string",
+                        "enum": ["compact", "full", "workflow_only", "constraints_only"]
+                    },
+                    "adoption_mode": {
+                        "type": "string",
+                        "enum": ["suggestion", "follow_up_required", "blocking_review"]
+                    },
+                    "agent_key": { "type": "string" },
+                    "max_fragments": { "type": "integer", "minimum": 1 },
+                    "max_constraints": { "type": "integer", "minimum": 1 }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["type", "message"],
+                "properties": {
+                    "type": { "const": "review" },
+                    "message": { "type": "string", "minLength": 1 }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["type", "message"],
+                "properties": {
+                    "type": { "const": "approval" },
+                    "message": { "type": "string", "minLength": 1 },
+                    "options": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["type", "message"],
+                "properties": {
+                    "type": { "const": "notification" },
+                    "message": { "type": "string", "minLength": 1 }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["type", "requested_paths", "reason", "scope"],
+                "properties": {
+                    "type": { "const": "capability_grant_request" },
+                    "requested_paths": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "minItems": 1
+                    },
+                    "reason": { "type": "string", "minLength": 1 },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["turn", "session", "workflow_step"]
+                    },
+                    "ttl_seconds": { "type": "integer", "minimum": 1 }
+                }
+            }
+        ]
+    })
+}
+
+fn companion_response_payload_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "object",
+        "additionalProperties": true,
+        "anyOf": [
+            {
+                "type": "object",
+                "required": ["type", "status", "summary"],
+                "properties": {
+                    "type": { "const": "completion" },
+                    "status": { "type": "string" },
+                    "summary": { "type": "string", "minLength": 1 }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["type", "status", "summary"],
+                "properties": {
+                    "type": { "const": "resolution" },
+                    "status": { "type": "string" },
+                    "summary": { "type": "string", "minLength": 1 }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["type", "choice"],
+                "properties": {
+                    "type": { "const": "decision" },
+                    "choice": { "type": "string", "minLength": 1 },
+                    "status": { "type": "string" },
+                    "summary": { "type": "string" }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["type", "status", "summary"],
+                "properties": {
+                    "type": { "const": "capability_grant_result" },
+                    "status": {
+                        "type": "string",
+                        "enum": ["approved", "rejected", "pending_user_approval", "applied", "failed", "expired", "revoked"]
+                    },
+                    "summary": { "type": "string", "minLength": 1 }
+                }
+            }
+        ]
     })
 }
 

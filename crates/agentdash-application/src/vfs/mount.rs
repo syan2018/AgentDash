@@ -1012,8 +1012,8 @@ pub fn append_lifecycle_skill_asset_projection(
     project_id: Uuid,
     skill_asset_keys: &[String],
 ) -> bool {
-    let keys = normalized_skill_asset_keys(skill_asset_keys);
-    if keys.is_empty() {
+    let new_keys = normalized_skill_asset_keys(skill_asset_keys);
+    if new_keys.is_empty() {
         return true;
     }
 
@@ -1031,6 +1031,19 @@ pub fn append_lifecycle_skill_asset_projection(
                 object
             }
         };
+        let mut keys = metadata
+            .get(SKILL_ASSET_KEYS_METADATA_KEY)
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        keys.extend(new_keys);
+        let keys = normalized_skill_asset_keys(&keys);
         metadata.insert(
             SKILL_ASSET_PROJECT_ID_METADATA_KEY.to_string(),
             serde_json::Value::String(project_id.to_string()),

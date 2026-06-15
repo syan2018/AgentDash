@@ -25,10 +25,11 @@ use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository
 use agentdash_domain::task::Task;
 use agentdash_domain::workflow::{
     LifecycleAgent, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository, OrchestrationInstance,
-    RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
+    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository, RuntimeNodeStatus,
     RuntimeSessionExecutionAnchorRepository, SubjectRef,
 };
+
+use super::runtime_coordinate::task_runtime_projection_from_anchor;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TaskViewProjectionError {
@@ -244,7 +245,9 @@ async fn resolve_task_runtime_projection(
             if anchor.run_id != run.id || anchor.launch_frame_id != current_frame_id {
                 continue;
             }
-            let Some(projection) = projection_from_anchor(association, &run, &anchor) else {
+            let Some(projection) =
+                projection_from_anchor(association, &run, &agent, current_frame_id, &anchor)
+            else {
                 continue;
             };
             if latest
@@ -279,55 +282,22 @@ async fn resolve_association_agent(
 fn projection_from_anchor(
     association: &LifecycleSubjectAssociation,
     run: &LifecycleRun,
-    anchor: &RuntimeSessionExecutionAnchor,
+    agent: &LifecycleAgent,
+    frame_id: Uuid,
+    anchor: &agentdash_domain::workflow::RuntimeSessionExecutionAnchor,
 ) -> Option<TaskRuntimeProjection> {
-    let orchestration_id = anchor.orchestration_id?;
-    let node_path = anchor.node_path.as_deref()?;
-    let node_attempt = anchor.node_attempt.unwrap_or(1);
-    let orchestration = run
-        .orchestrations
-        .iter()
-        .find(|item| item.orchestration_id == orchestration_id)?;
-    let node = find_runtime_node(orchestration, node_path, node_attempt)?;
-    let node_status = task_projection_status_from_node(node.status)?;
-    let observed_at = node
-        .completed_at
-        .or(node.started_at)
-        .unwrap_or(anchor.updated_at);
+    let runtime_projection = task_runtime_projection_from_anchor(run, agent, frame_id, anchor)?;
+    let node_status = task_projection_status_from_node(runtime_projection.node_status)?;
 
     Some(TaskRuntimeProjection {
         association_id: association.id,
-        run_id: run.id,
-        orchestration_id,
-        node_path: node.node_path.clone(),
-        node_attempt,
+        run_id: runtime_projection.coordinate.run_id,
+        orchestration_id: runtime_projection.coordinate.orchestration_id,
+        node_path: runtime_projection.coordinate.node_path,
+        node_attempt: runtime_projection.coordinate.attempt,
         node_status,
-        observed_at,
+        observed_at: runtime_projection.observed_at,
     })
-}
-
-fn find_runtime_node<'a>(
-    orchestration: &'a OrchestrationInstance,
-    node_path: &str,
-    attempt: u32,
-) -> Option<&'a RuntimeNodeState> {
-    find_runtime_node_in_tree(&orchestration.node_tree, node_path, attempt)
-}
-
-fn find_runtime_node_in_tree<'a>(
-    nodes: &'a [RuntimeNodeState],
-    node_path: &str,
-    attempt: u32,
-) -> Option<&'a RuntimeNodeState> {
-    for node in nodes {
-        if node.node_path == node_path && node.attempt == attempt {
-            return Some(node);
-        }
-        if let Some(found) = find_runtime_node_in_tree(&node.children, node_path, attempt) {
-            return Some(found);
-        }
-    }
-    None
 }
 
 fn task_projection_status_from_node(status: RuntimeNodeStatus) -> Option<RuntimeNodeStatus> {

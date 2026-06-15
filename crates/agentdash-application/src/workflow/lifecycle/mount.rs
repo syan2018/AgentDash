@@ -9,7 +9,11 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::RuntimeSessionExecutionAnchor;
 
-use crate::vfs::{build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope};
+use crate::vfs::mount::{SKILL_ASSET_KEYS_METADATA_KEY, SKILL_ASSET_PROJECT_ID_METADATA_KEY};
+use crate::vfs::{
+    append_lifecycle_skill_asset_projection, build_agent_run_session_lifecycle_mount,
+    build_lifecycle_mount_with_node_scope,
+};
 use crate::workflow::projection::ActiveWorkflowProjection;
 
 fn empty_vfs() -> Vfs {
@@ -114,6 +118,57 @@ pub fn build_agent_run_lifecycle_vfs(
     vfs
 }
 
+fn lifecycle_skill_projection_keys(vfs: &Vfs, project_id: Uuid) -> Vec<String> {
+    vfs.mounts
+        .iter()
+        .find(|mount| mount.id == "lifecycle")
+        .filter(|mount| {
+            mount
+                .metadata
+                .get(SKILL_ASSET_PROJECT_ID_METADATA_KEY)
+                .and_then(serde_json::Value::as_str)
+                .and_then(|value| Uuid::parse_str(value).ok())
+                == Some(project_id)
+        })
+        .and_then(|mount| {
+            mount
+                .metadata
+                .get(SKILL_ASSET_KEYS_METADATA_KEY)
+                .and_then(serde_json::Value::as_array)
+        })
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn install_agent_run_lifecycle_mount_with_skills(
+    vfs: &mut Vfs,
+    anchor: &RuntimeSessionExecutionAnchor,
+    project_id: Uuid,
+    skill_asset_keys: &[String],
+) {
+    let mut keys = lifecycle_skill_projection_keys(vfs, project_id);
+    keys.extend(skill_asset_keys.iter().cloned());
+    install_agent_run_lifecycle_mount(vfs, anchor);
+    append_lifecycle_skill_asset_projection(vfs, project_id, &keys);
+}
+
+pub fn build_agent_run_lifecycle_vfs_with_skills(
+    vfs: Option<Vfs>,
+    anchor: &RuntimeSessionExecutionAnchor,
+    project_id: Uuid,
+    skill_asset_keys: &[String],
+) -> Vfs {
+    let mut vfs = vfs.unwrap_or_else(empty_vfs);
+    install_agent_run_lifecycle_mount_with_skills(&mut vfs, anchor, project_id, skill_asset_keys);
+    vfs
+}
+
 pub fn project_active_workflow_lifecycle_vfs(
     vfs: Option<Vfs>,
     workflow: Option<&ActiveWorkflowProjection>,
@@ -131,7 +186,7 @@ pub fn project_active_workflow_lifecycle_vfs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vfs::build_lifecycle_mount_with_ports;
+    use crate::vfs::{append_lifecycle_skill_asset_projection, build_lifecycle_mount_with_ports};
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, BashExecExecutorSpec, DefinitionSource,
@@ -380,6 +435,64 @@ mod tests {
                 .and_then(serde_json::Value::as_u64),
             Some(3)
         );
+    }
+
+    #[test]
+    fn agent_run_lifecycle_vfs_with_skills_preserves_existing_projection_metadata() {
+        let project_id = Uuid::new_v4();
+        let workflow = active_workflow_projection();
+        let mut vfs = project_active_workflow_lifecycle_vfs(Some(workflow_vfs()), Some(&workflow))
+            .expect("vfs");
+        assert!(append_lifecycle_skill_asset_projection(
+            &mut vfs,
+            project_id,
+            &["companion-system".to_string()],
+        ));
+
+        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
+            "session-3",
+            workflow.run.id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            workflow.orchestration_id,
+            "phase/plan",
+            3,
+        );
+        let vfs = build_agent_run_lifecycle_vfs_with_skills(
+            Some(vfs),
+            &anchor,
+            project_id,
+            &["workspace-module-system".to_string()],
+        );
+        let lifecycle = vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == "lifecycle")
+            .expect("lifecycle mount");
+
+        assert_eq!(
+            lifecycle
+                .metadata
+                .get("scope")
+                .and_then(serde_json::Value::as_str),
+            Some("agent_run_session")
+        );
+        assert_eq!(
+            lifecycle
+                .metadata
+                .get("skill_asset_project_id")
+                .and_then(serde_json::Value::as_str),
+            Some(project_id.to_string().as_str())
+        );
+        let keys = lifecycle
+            .metadata
+            .get("skill_asset_keys")
+            .and_then(serde_json::Value::as_array)
+            .expect("skill keys")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["companion-system", "workspace-module-system"]);
     }
 
     #[test]

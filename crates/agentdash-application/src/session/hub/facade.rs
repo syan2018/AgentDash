@@ -194,7 +194,7 @@ pub(super) async fn envelope_from_construction_with_commands(
         hub.agent_frame_repo.as_ref(),
     ) {
         (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) => {
-            match crate::workflow::resolve_current_frame_for_runtime_session(
+            match crate::workflow::resolve_current_frame_from_delivery_trace_ref(
                 &construction.session_id,
                 anchor_repo.as_ref(),
                 agent_repo.as_ref(),

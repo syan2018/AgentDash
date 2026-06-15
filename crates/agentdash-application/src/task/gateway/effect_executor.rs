@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::repository_set::RepositorySet;
 use crate::session::{DynPostTurnHandler, PostTurnHandler, TerminalHookEffectHandlerRegistry};
+use crate::task::runtime_coordinate::task_runtime_projection_from_anchor;
 
 use super::{
     artifact_ops::{
@@ -153,6 +154,9 @@ impl TaskHookEffectExecutor {
             "run_id": verified_context.run_id(),
             "agent_id": verified_context.agent_id(),
             "frame_id": verified_context.frame_id(),
+            "orchestration_id": verified_context.orchestration_id(),
+            "node_path": verified_context.node_path(),
+            "node_attempt": verified_context.node_attempt(),
             "session_id": verified_context.session_id(),
             "turn_id": verified_context.turn_id(),
             "reason": reason,
@@ -204,6 +208,26 @@ impl TaskHookEffectExecutor {
             );
         }
 
+        let run = self
+            .repos
+            .lifecycle_run_repo
+            .get_by_id(anchor.run_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| {
+                "runtime session anchor 未关联 LifecycleRun，拒绝执行 task effect".to_string()
+            })?;
+        let runtime_projection = task_runtime_projection_from_anchor(
+            &run,
+            &agent,
+            anchor.launch_frame_id,
+            &anchor,
+        )
+        .ok_or_else(|| {
+            "runtime session anchor 缺少可验证 orchestration node coordinate，拒绝执行 task effect"
+                .to_string()
+        })?;
+
         let mut associations = self
             .repos
             .lifecycle_subject_association_repo
@@ -235,6 +259,9 @@ impl TaskHookEffectExecutor {
             agent.run_id,
             agent.id,
             anchor.launch_frame_id,
+            runtime_projection.coordinate.orchestration_id,
+            &runtime_projection.coordinate.node_path,
+            runtime_projection.coordinate.attempt,
             &self.backend_id,
         ))
     }

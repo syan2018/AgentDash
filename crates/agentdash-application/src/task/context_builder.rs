@@ -1,4 +1,5 @@
 use agentdash_spi::CapabilityScopeCtx;
+use agentdash_spi::hooks::HookControlTarget;
 use uuid::Uuid;
 
 use crate::canvas::append_visible_canvas_mounts;
@@ -23,7 +24,7 @@ use crate::task::config::{resolve_task_executor_config, resolve_task_executor_so
 use crate::vfs::{SessionMountTarget, VfsService};
 use crate::workflow::{
     ActiveWorkflowProjection, project_active_workflow_lifecycle_vfs,
-    resolve_active_workflow_projection_for_session,
+    resolve_active_workflow_projection_for_target,
 };
 use agentdash_domain::common::Vfs;
 
@@ -71,7 +72,7 @@ pub async fn build_task_session_context(
         };
 
     // ── 定位 task 关联的活跃 lifecycle run projection ──
-    let workflow = find_active_workflow_via_task_sessions(repos, task.id).await;
+    let workflow = find_active_workflow_for_task_target(repos, task.id).await;
 
     // ── 资源 Capability / MCP 列表 ──
     let workflow_directives = workflow
@@ -174,13 +175,13 @@ pub async fn build_task_session_context(
     })
 }
 
-/// 通过 task 关联的 agent → frame 查找活跃 lifecycle workflow projection。
+/// 通过 task 关联的 AgentRun target 查找活跃 lifecycle workflow projection。
 ///
-/// 链路: LifecycleSubjectAssociation(Task) → LifecycleAgent → AgentFrame
-///      → RuntimeSession trace lookup → RuntimeSessionExecutionAnchor → RuntimeNodeState
+/// 链路: LifecycleSubjectAssociation(Task) → LifecycleAgent.current_frame
+///      → HookControlTarget(run/agent/frame) → LifecycleRun.orchestrations[].RuntimeNodeState
 ///
 /// 只读视图辅助函数；失败或缺失均返回 None，绝不抛错。
-async fn find_active_workflow_via_task_sessions(
+async fn find_active_workflow_for_task_target(
     repos: &RepositorySet,
     task_id: Uuid,
 ) -> Option<ActiveWorkflowProjection> {
@@ -205,35 +206,22 @@ async fn find_active_workflow_via_task_sessions(
             .ok()
             .flatten();
         let Some(agent) = agent else { continue };
-        let Some(_run) = repos
-            .lifecycle_run_repo
-            .get_by_id(assoc.anchor_run_id)
-            .await
-            .ok()
-            .flatten()
-        else {
+        if agent.run_id != assoc.anchor_run_id {
             continue;
         };
-        if agent.current_frame_id.is_none() {
-            continue;
-        }
-        let Some(session_id) = repos
-            .execution_anchor_repo
-            .latest_for_agent(agent.id)
-            .await
-            .ok()
-            .flatten()
-            .map(|anchor| anchor.runtime_session_id)
-        else {
+        let Some(frame_id) = agent.current_frame_id else {
             continue;
         };
-        if let Ok(Some(projection)) = resolve_active_workflow_projection_for_session(
-            &session_id,
+        let target = HookControlTarget {
+            run_id: assoc.anchor_run_id,
+            agent_id: agent.id,
+            frame_id,
+        };
+        if let Ok(Some(projection)) = resolve_active_workflow_projection_for_target(
+            &target,
             repos.agent_procedure_repo.as_ref(),
             repos.agent_frame_repo.as_ref(),
-            repos.lifecycle_agent_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
-            repos.execution_anchor_repo.as_ref(),
         )
         .await
         {

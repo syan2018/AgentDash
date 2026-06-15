@@ -12,7 +12,7 @@ use super::{
     PayloadTypeRegistry, build_companion_event_notification,
     build_companion_human_response_notification, payload_types,
 };
-use crate::workflow::resolve_current_frame_for_runtime_session;
+use crate::workflow::resolve_current_frame_from_delivery_trace_ref;
 use crate::{ApplicationError, session::SessionEventingService};
 
 const COMPANION_PARENT_REQUEST_GATE_KIND: &str = "companion_parent_request";
@@ -314,7 +314,7 @@ impl CompanionGateControlService {
             return Err(ApplicationError::BadRequest(error));
         }
 
-        let child_frame = match resolve_current_frame_for_runtime_session(
+        let child_frame = match resolve_current_frame_from_delivery_trace_ref(
             &command.child_runtime_session_id,
             self.anchor_repo.as_ref(),
             self.agent_repo.as_ref(),
@@ -430,15 +430,15 @@ impl CompanionGateControlService {
         if let Some(error) = payload_types::payload_object_error(&command.payload) {
             return Err(ApplicationError::BadRequest(error));
         }
-        let prompt = command
+        let message = command
             .payload
-            .get("prompt")
+            .get("message")
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| ApplicationError::BadRequest("payload.prompt 不能为空".to_string()))?;
+            .ok_or_else(|| ApplicationError::BadRequest("payload.message 不能为空".to_string()))?;
 
-        let (_anchor, _agent, child_frame) = resolve_current_frame_for_runtime_session(
+        let (_anchor, _agent, child_frame) = resolve_current_frame_from_delivery_trace_ref(
             &command.child_runtime_session_id,
             self.anchor_repo.as_ref(),
             self.agent_repo.as_ref(),
@@ -520,7 +520,7 @@ impl CompanionGateControlService {
             "request_type": "review",
             "adoption_mode": agentdash_spi::action_type::FOLLOW_UP_REQUIRED,
             "status": "pending",
-            "summary": prompt,
+            "summary": message,
             "turn_id": command.turn_id,
             "wait": command.wait,
             "payload": command.payload,
@@ -532,7 +532,7 @@ impl CompanionGateControlService {
             delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
             turn_id: command.turn_id,
             event_type: "companion_review_request".to_string(),
-            message: format!("Companion `{companion_label}` 请求审阅: {prompt}"),
+            message: format!("Companion `{companion_label}` 请求审阅: {message}"),
             payload: review_payload.clone(),
         };
         if let Err(error) = self.delivery.deliver_companion_event(notification).await {
@@ -577,7 +577,7 @@ impl CompanionGateControlService {
             return Ok(None);
         }
 
-        let (_anchor, _agent, parent_frame) = resolve_current_frame_for_runtime_session(
+        let (_anchor, _agent, parent_frame) = resolve_current_frame_from_delivery_trace_ref(
             &command.parent_runtime_session_id,
             self.anchor_repo.as_ref(),
             self.agent_repo.as_ref(),
@@ -886,6 +886,17 @@ mod tests {
                 .iter()
                 .find(|lineage| lineage.child_agent_id == child_agent_id)
                 .cloned())
+        }
+
+        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentLineage>, DomainError> {
+            Ok(self
+                .lineages
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|lineage| lineage.run_id == run_id)
+                .cloned()
+                .collect())
         }
     }
 
@@ -1383,7 +1394,7 @@ mod tests {
                 child_runtime_session_id: "child-session".to_string(),
                 turn_id: "turn-child-1".to_string(),
                 wait: true,
-                payload: serde_json::json!({ "prompt": "please review" }),
+                payload: serde_json::json!({ "message": "please review" }),
             })
             .await
             .expect("open parent request");
@@ -1485,7 +1496,7 @@ mod tests {
                 child_runtime_session_id: "child-session".to_string(),
                 turn_id: "turn-child-1".to_string(),
                 wait: false,
-                payload: serde_json::json!({ "prompt": "please review latest frame" }),
+                payload: serde_json::json!({ "message": "please review latest frame" }),
             })
             .await
             .expect("open parent request");

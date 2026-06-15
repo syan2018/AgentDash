@@ -8,7 +8,7 @@ use crate::session::construction_planner::{
 };
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
-use crate::workflow::projection::resolve_active_workflow_projection_for_session;
+use crate::workflow::projection::resolve_active_workflow_projection_from_message_stream_trace;
 use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 use crate::workflow::{
     SubjectContextAssignment, SubjectContextAssignmentRequest, SubjectContextAssignmentResolver,
@@ -74,7 +74,7 @@ pub(super) async fn compose(
     let lifecycle = owner_prompt_lifecycle(svc.prompt_lifecycle(Some(&executor_config), input));
     let user_input = required_user_input(input.command.user_input())?;
     let identity = input.command.identity();
-    let active_workflow = resolve_active_workflow_projection_for_session(
+    let active_workflow = resolve_active_workflow_projection_from_message_stream_trace(
         input.session_id.as_str(),
         svc.repos.agent_procedure_repo.as_ref(),
         svc.repos.agent_frame_repo.as_ref(),

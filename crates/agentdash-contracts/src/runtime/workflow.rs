@@ -1121,6 +1121,13 @@ pub struct AgentRunWorkspaceView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub conversation: Option<AgentConversationSnapshot>,
+    /// lineage 父节点：本 Run 若为 subagent 则指向其父，供"隶属于"跳转。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub parent: Option<AgentRunLineageRef>,
+    /// 本 Run 直接派发的 subagent（一跳子节点），供右侧展开/下钻。
+    #[serde(default)]
+    pub children: Vec<AgentRunLineageRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1345,6 +1352,23 @@ pub struct AgentRunCommandOnlyRequest {
     pub client_command_id: String,
 }
 
+/// AgentRun lineage 控制树上的一跳引用（父或子）。
+///
+/// 用于右侧会话栏展示从属关系与跳转。`relation_kind` 来自 `AgentLineage`。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunLineageRef {
+    pub run_id: String,
+    pub agent_id: String,
+    pub agent_kind: String,
+    pub agent_role: String,
+    pub relation_kind: String,
+    pub display_title: String,
+    /// 该节点子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开箭头。
+    #[serde(default)]
+    pub subagent_count: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunWorkspaceListEntry {
@@ -1353,6 +1377,12 @@ pub struct AgentRunWorkspaceListEntry {
     pub project_id: String,
     pub shell: AgentRunWorkspaceShell,
     pub run_status: LifecycleRunStatus,
+    /// agent 角色快捷标记（primary / subagent / companion）。
+    #[serde(default)]
+    pub agent_role: String,
+    /// 该主 Run 子树（传递闭包）下的 subagent 总数，0 表示无子。
+    #[serde(default)]
+    pub subagent_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,

@@ -78,6 +78,19 @@ struct MailboxBoundaryStage<'a> {
     deps: &'a AgentRunMailboxRuntimeBoundaryDeps,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeSessionMailboxAdapterRef {
+    runtime_session_id: String,
+}
+
+fn runtime_session_mailbox_adapter_ref(
+    runtime_session_id: &str,
+) -> RuntimeSessionMailboxAdapterRef {
+    RuntimeSessionMailboxAdapterRef {
+        runtime_session_id: runtime_session_id.to_string(),
+    }
+}
+
 impl MailboxBoundaryStage<'_> {
     fn mailbox_service(&self) -> AgentRunMailboxService<'_> {
         AgentRunMailboxService::new(
@@ -95,10 +108,11 @@ impl MailboxBoundaryStage<'_> {
     }
 
     async fn schedule_agent_loop_turn_boundary(&self) {
+        let adapter_ref = runtime_session_mailbox_adapter_ref(self.runtime_session_id);
         let result = self
             .mailbox_service()
             .schedule_for_runtime_session(
-                self.runtime_session_id,
+                &adapter_ref.runtime_session_id,
                 AgentRunMailboxScheduleTrigger::AgentLoopTurnBoundary,
             )
             .await;
@@ -138,9 +152,10 @@ impl MailboxBoundaryStage<'_> {
     }
 
     async fn drain_agent_run_turn_boundary(&self) -> Result<Vec<AgentMessage>, AgentRuntimeError> {
+        let adapter_ref = runtime_session_mailbox_adapter_ref(self.runtime_session_id);
         match self
             .mailbox_service()
-            .drain_agent_run_turn_boundary_for_delegate(self.runtime_session_id)
+            .drain_agent_run_turn_boundary_for_delegate(&adapter_ref.runtime_session_id)
             .await
         {
             Ok(messages) => Ok(messages),
@@ -480,5 +495,17 @@ mod tests {
             }
             StopDecision::Stop => panic!("边界消息不应被自然停止吞掉"),
         }
+    }
+
+    #[test]
+    fn runtime_delegate_keeps_session_id_as_adapter_ref() {
+        let adapter_ref = runtime_session_mailbox_adapter_ref("runtime-session-1");
+
+        assert_eq!(
+            adapter_ref,
+            RuntimeSessionMailboxAdapterRef {
+                runtime_session_id: "runtime-session-1".to_string(),
+            }
+        );
     }
 }

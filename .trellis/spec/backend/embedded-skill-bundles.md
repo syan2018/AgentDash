@@ -66,9 +66,14 @@ ensure_embedded_skill_bundle(files, &CANVAS_SYSTEM_BUNDLE)
 `ensure_canvas_system_skill` 只是 Canvas 兼容包装，不应继续扩展手写文件同步逻辑。
 
 项目级内嵌 Skill 当前通过 `SkillAssetService::bootstrap_builtins(project_id, Some(key))`
-同步到项目 SkillAsset，再由 lifecycle VFS projection 暴露给 session。
-`append_lifecycle_skill_asset_projection` 把 SkillAsset keys 写入 lifecycle mount metadata，
-由 `LifecycleMountProvider` 在 `lifecycle://skills/<key>/...` 下暴露同一组 skill 文件。
+同步到项目 SkillAsset，再由 AgentRun lifecycle VFS projection 暴露给 session。
+`AgentRunLifecycleSurfaceProjector` 通过 `BuiltinLifecycleSkillPolicy` 表达是否只保留已有
+projection，或 ensure 并投影 `companion-system` / `workspace-module-system` / `routine-memory`。
+projector 将 SkillAsset keys 写入唯一 `lifecycle` mount metadata，由 `LifecycleMountProvider`
+在 `lifecycle://skills/<key>/...` 下暴露同一组 skill 文件。
+同一个 lifecycle mount 可由 agent preset、companion system、workspace module system 或 routine
+memory 多个来源追加 SkillAsset key；projection helper 负责合并去重，原因是执行器 skill baseline、
+AgentRun workspace resource surface 和前端 capability 展示必须观察同一组已投影 skill。
 这样 session 的 skill baseline 与 lifecycle runtime 上下文使用同一条 mount 事实源，
 同时保持 skill 内容仍由 embedded bundle 与项目 SkillAsset 管理。Project SkillAsset
 文件管理 surface 继续使用 `skill_asset_fs` provider 直接浏览和编辑项目级 Skill 文件。

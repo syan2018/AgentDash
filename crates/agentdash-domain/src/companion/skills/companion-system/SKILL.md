@@ -20,6 +20,7 @@ Use this skill when a session has companion tools and needs structured cross-sub
 - `companion_request` is the active interaction entrypoint. It carries intent and routing metadata.
 - `companion_respond` returns a structured response to a known `request_id`.
 - `payload` is always a JSON object. Use `payload.type` for registered protocols.
+- Request message bodies use `payload.message` for `task`, `review`, `approval`, and `notification`.
 - Companion events record interaction continuity. Permission, grant, and runtime capability state remain the authority for tool access.
 
 ## Target Selection
@@ -41,7 +42,7 @@ Use registered payload types when the intent matches a known protocol:
 - `notification` expects no response.
 - `capability_grant_request` expects `capability_grant_result`.
 
-For field-level examples, read `references/payload-envelope.md`.
+For the target/type/required-field matrix and examples, read `references/payload-envelope.md`.
 
 ## Capability Grants
 

@@ -18,9 +18,15 @@
 `delivery RuntimeSession id -> AgentFrameHookRuntime(control_target)`。它存在的原因是
 同一个执行器会话需要在 turn、event adapter、trace 和 live connector 同步路径复用 runtime
 对象；业务 owner 始终是 `HookControlTarget { run_id, agent_id, frame_id }`。业务路径应先持有
-`AgentFrameRuntimeTarget`，再通过 `SessionHookService::ensure_hook_runtime_for_target` 校验或
-重建绑定；裸 delivery session lookup 只属于 hub adapter / trace 场景，不能决定 hook policy、
-capability、context、VFS 或 MCP 的生效 owner。
+`AgentFrameHookRuntimeTarget { control_target, delivery_runtime_session_id }`，再通过
+`SessionHookService::ensure_hook_runtime_for_hook_target` 校验或重建绑定；裸 delivery session
+lookup 只属于 hub adapter / trace 场景，不能决定 hook policy、capability、context、VFS 或 MCP
+的生效 owner。
+
+AgentRun lifecycle surface 同样从 AgentRun runtime address 构造：`run_id + agent_id +
+frame_id` 是业务索引，`RuntimeSession` 只以 `MessageStreamProjectionRef` 形式进入 projector。
+这样 workspace resource surface、connector VFS 和 skill baseline 都从 AgentFrame / AgentRun
+控制面事实闭包得到，delivery trace 仍能通过 message stream ref 下钻到 runtime events。
 
 三个查询语义保持分离：
 
@@ -131,6 +137,11 @@ command scope 记录，并以 run / agent / frame / runtime session / turn refs 
 trace head；分层后，trace 恢复、事件流展示、workspace action enablement 和 command retry
 可以各自消费对应 projection。
 
+AgentRun mailbox command target 使用 `AgentRunMailboxCommandTarget` 表达：`AgentRunRuntimeAddress`
+承载 run / agent / frame 业务目标，`MessageStreamProjectionRef` 承载可选 delivery trace。runtime
+delegate adapter 解析 delivery anchor 后进入同一条 target-first scheduler，原因是命令幂等、
+mailbox ownership 与 workspace projection 都绑定 AgentRun control-plane identity。
+
 ## AgentRun Workspace Mailbox Control Actions
 
 用户可见执行工作台的 shell、conversation state、mailbox projection 与 resource surface 由
@@ -138,6 +149,12 @@ trace head；分层后，trace 恢复、事件流展示、workspace action enabl
 title、title source、workspace/list status、last activity 和 last visible AgentRunTurn；
 `AgentConversationSnapshot.execution`、`commands`、`model_config`、`mailbox` 和
 `resource_surface` 承载工作台可执行状态、模型解析、待消费消息、用户注意力与可浏览资源。
+`resource_surface` 来自当前 AgentFrame typed VFS 与 `RuntimeSessionExecutionAnchor` 锚定的
+AgentRun lifecycle projection；该 projection 由 `AgentRunLifecycleSurfaceProjector` 按
+AgentRun runtime address、optional message stream ref 和 optional orchestration node projection
+闭包生成。projection 需要保留 lifecycle mount 上的 SkillAsset metadata，
+原因是 builtin skill 文档、执行器 skill baseline 和前端 resource browser 应由同一 runtime surface
+发现，而不是由前端或查询层单独推导。
 
 `ConversationCommandSetView.commands` 描述用户意图 command，例如 draft start、message submit、
 mailbox promote/delete/resume 与 cancel。文本输入统一走 `composer-submit`：后端先 claim command
@@ -356,6 +373,10 @@ cancel requested -> runtime cancelling -> connector idle confirmed -> terminal f
 
 `turn_terminal` event 先持久化，`SessionMeta.last_delivery_status` 由事件投影更新。
 终态后的业务副作用写入 terminal effect outbox，再由 dispatcher 执行。
+
+Task hook terminal effect 从 runtime trace callback 进入后构造 task runtime coordinate，并在持久化
+artifact 或 status context 时记录 `orchestration_id + node_path + attempt`。这样任务投影、artifact
+审计和 lifecycle node runtime facts 能共享同一定位方式。
 
 Outbox effect 类型：
 

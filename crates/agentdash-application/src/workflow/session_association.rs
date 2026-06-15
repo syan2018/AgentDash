@@ -31,7 +31,11 @@ pub struct ActivityRuntimeAssociation {
 
 pub type RuntimeSessionCurrentFrame = (RuntimeSessionExecutionAnchor, LifecycleAgent, AgentFrame);
 
-pub async fn resolve_current_frame_for_runtime_session(
+/// 从 delivery trace ref 回溯当前 AgentFrame surface。
+///
+/// RuntimeSession 只作为 trace/delivery evidence；业务 owner 来自 anchor 反查出的
+/// LifecycleAgent 与当前 AgentFrame。
+pub async fn resolve_current_frame_from_delivery_trace_ref(
     runtime_session_id: &str,
     anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
     agent_repo: &dyn LifecycleAgentRepository,
@@ -145,7 +149,7 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
         self
     }
 
-    pub async fn resolve_by_runtime_session(
+    pub async fn resolve_by_message_stream_trace(
         &self,
         session_id: &str,
     ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
@@ -218,8 +222,8 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
     }
 }
 
-/// 解析 session 是否为某个 lifecycle runtime node 的执行 session。
-pub async fn resolve_activity_session_association(
+/// 从 message stream trace 解析 lifecycle runtime node 执行证据。
+pub async fn resolve_activity_runtime_association_from_message_stream_trace(
     session_id: &str,
     frame_repo: &dyn AgentFrameRepository,
     _agent_repo: &dyn LifecycleAgentRepository,
@@ -231,7 +235,7 @@ pub async fn resolve_activity_session_association(
         resolver = resolver.with_anchor_repo(anchor_repo);
     }
     Ok(resolver
-        .resolve_by_runtime_session(session_id)
+        .resolve_by_message_stream_trace(session_id)
         .await?
         .map(|association| {
             let ActivityRuntimeAssociation {
@@ -512,7 +516,7 @@ mod tests {
         let resolver = resolver.with_anchor_repo(&anchor_repo);
 
         let association = resolver
-            .resolve_by_runtime_session("sess-1")
+            .resolve_by_message_stream_trace("sess-1")
             .await
             .expect("resolver should not error")
             .expect("association should resolve");
@@ -555,7 +559,7 @@ mod tests {
             .with_anchor_repo(&anchor_repo);
 
         let association = resolver
-            .resolve_by_runtime_session("sess-anchor")
+            .resolve_by_message_stream_trace("sess-anchor")
             .await
             .expect("anchor resolver should not error")
             .expect("anchor runtime node should resolve");
@@ -616,7 +620,7 @@ mod tests {
             anchors: [("sess-vfs".to_string(), anchor)].into_iter().collect(),
         };
 
-        let (_anchor, _agent, frame) = resolve_current_frame_for_runtime_session(
+        let (_anchor, _agent, frame) = resolve_current_frame_from_delivery_trace_ref(
             "sess-vfs",
             &anchor_repo,
             &agent_repo,
@@ -659,7 +663,7 @@ mod tests {
         let resolver = resolver.with_anchor_repo(&anchor_repo);
 
         let association = resolver
-            .resolve_by_runtime_session("sess-1")
+            .resolve_by_message_stream_trace("sess-1")
             .await
             .expect("graphless anchor should not error");
         assert!(association.is_none());
@@ -683,7 +687,7 @@ mod tests {
 
         assert!(
             resolver
-                .resolve_by_runtime_session("sess-1")
+                .resolve_by_message_stream_trace("sess-1")
                 .await
                 .expect("surface frame without activity scope should be non-activity runtime")
                 .is_none()
@@ -698,7 +702,7 @@ mod tests {
 
         assert!(
             resolver
-                .resolve_by_runtime_session("not-lifecycle")
+                .resolve_by_message_stream_trace("not-lifecycle")
                 .await
                 .expect("missing frame should not error")
                 .is_none()

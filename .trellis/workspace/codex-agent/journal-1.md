@@ -472,3 +472,38 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: AgentRun runtime entry session 收束
+
+**Date**: 2026-06-15
+**Task**: AgentRun runtime entry session 收束
+**Branch**: `feat/agentrun-list-collapse-identity`
+
+### Summary
+
+收束 AgentRun runtime entry 中的 session 残留：mailbox 改为 AgentRun target-first，task/runtime effect 使用 orchestration coordinate，hook runtime target 明确 HookControlTarget + delivery binding，并将剩余 application helper 命名显性化为 message stream trace / delivery trace adapter。同步 backend specs 与任务执行记录。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d834cbe7` | (see git log) |
+| `06642665` | (see git log) |
+| `b1b3296a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

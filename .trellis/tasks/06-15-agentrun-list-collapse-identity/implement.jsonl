@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "lineage 收束查询放应用层、repo 边界约束"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "LifecycleRun / Agent / Lineage 关系建模基线"}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "契约新增字段贯穿后端 DTO 到前端类型的跨层一致性"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "新增 lineage 字段的 DTO/mapper 约定，禁止字段别名兼容"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "侧栏自适应列表与主区折叠行的组件分层"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "identity bar / subagent 角标的 token 与 primitive 复用"}

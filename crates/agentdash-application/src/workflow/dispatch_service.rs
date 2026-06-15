@@ -3,6 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use uuid::Uuid;
 
+use agentdash_domain::workflow::agent_role;
 use agentdash_domain::workflow::{
     AgentFrame, AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage, AgentPolicy,
     AgentRuntimeRefs, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, ExecutorRunRef,
@@ -646,7 +647,8 @@ impl<'a> LifecycleDispatchService<'a> {
         plan: &DispatchPlan,
     ) -> Result<LifecycleAgent, WorkflowApplicationError> {
         let agent_kind = agent_kind_from_source(&plan.source);
-        let agent = LifecycleAgent::new_root(run.id, plan.project_id, agent_kind);
+        let agent = LifecycleAgent::new_root(run.id, plan.project_id, agent_kind)
+            .with_role(agent_role_for_plan(plan));
         self.agent_repo.create(&agent).await?;
         Ok(agent)
     }
@@ -890,6 +892,21 @@ fn lineage_relation_kind(policy: &AgentPolicy) -> &'static str {
         AgentPolicy::Create => "delegation",
         AgentPolicy::Resume => "resume",
         AgentPolicy::Reuse => "reuse",
+    }
+}
+
+/// 新建 agent 的角色快捷标记（冗余于 lineage，主从真值仍以 lineage 为准）。
+///
+/// 无 parent = 控制树 root = `primary`（主 Run）；有 parent 则按 relation_kind 归类。
+/// 当前 `lineage_relation_kind` 不产出 companion（companion 语义由 gate_kind 承载，
+/// relation_kind 仍是 spawn），因此被派发的 child 统一标 `subagent`。
+fn agent_role_for_plan(plan: &DispatchPlan) -> &'static str {
+    if plan.parent_agent_id.is_none() {
+        return agent_role::PRIMARY;
+    }
+    match lineage_relation_kind(&plan.agent_policy) {
+        "companion" => agent_role::COMPANION,
+        _ => agent_role::SUBAGENT,
     }
 }
 
@@ -1210,6 +1227,16 @@ mod tests {
                 .iter()
                 .find(|l| l.child_agent_id == child_agent_id)
                 .cloned())
+        }
+        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentLineage>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|l| l.run_id == run_id)
+                .cloned()
+                .collect())
         }
     }
 

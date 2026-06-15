@@ -6,7 +6,7 @@ use crate::session::launch::{
 };
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::*;
-use crate::workflow::resolve_current_frame_for_runtime_session;
+use crate::workflow::resolve_current_frame_from_delivery_trace_ref;
 use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 use agentdash_spi::ConnectorError;
 
@@ -291,7 +291,7 @@ impl SessionLaunchOrchestrator {
         let Some(agent_repo) = deps.lifecycle_agent_repo.as_ref() else {
             return false;
         };
-        match resolve_current_frame_for_runtime_session(
+        match resolve_current_frame_from_delivery_trace_ref(
             session_id,
             anchor_repo.as_ref(),
             agent_repo.as_ref(),
@@ -315,7 +315,7 @@ impl SessionLaunchOrchestrator {
         let Some(agent_repo) = deps.lifecycle_agent_repo.as_ref() else {
             return;
         };
-        let mut agent = match resolve_current_frame_for_runtime_session(
+        let mut agent = match resolve_current_frame_from_delivery_trace_ref(
             session_id,
             anchor_repo.as_ref(),
             agent_repo.as_ref(),

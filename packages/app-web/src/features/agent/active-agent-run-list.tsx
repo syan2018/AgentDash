@@ -3,10 +3,16 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { fetchProjectAgentRuns } from "../../services/lifecycle";
-import type { AgentRunWorkspaceListEntry } from "../../types";
+import { fetchAgentRunWorkspace, fetchProjectAgentRuns } from "../../services/lifecycle";
+import type { AgentRunLineageRef, AgentRunWorkspaceListEntry } from "../../types";
 import type { SessionExecutionStatusValue } from "../../services/session";
 import { formatRelativeTime } from "../../lib/format";
+
+/** UI 递归展开的最大深度兜底（lineage 支持任意深度且无环检测）。 */
+const MAX_TREE_DEPTH = 16;
+
+/** 顶层行的稳定空祖先集合，避免每次渲染新建。 */
+const EMPTY_ANCESTORS: ReadonlySet<string> = new Set<string>();
 
 const executionStatusLabel: Record<SessionExecutionStatusValue, string> = {
   idle: "就绪",
@@ -127,50 +133,180 @@ function AgentRunSearchBar({
   );
 }
 
-interface AgentRunRowProps {
-  entry: AgentRunWorkspaceListEntry;
-  isSelected: boolean;
-  onSelect: () => void;
+function ExpandChevron({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`shrink-0 text-muted-foreground/70 transition-transform ${expanded ? "rotate-90" : ""}`}
+      aria-hidden
+    >
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
 }
 
-function AgentRunRow({ entry, isSelected, onSelect }: AgentRunRowProps) {
-  const executionStatus = normalizeExecutionStatus(entry.shell.delivery_status);
-  const updatedAt = updatedAtTimestamp(entry.shell.last_activity_at);
-  const title = entry.shell.display_title.trim() || "AgentRun 加载中...";
-  const subjectLabel = entry.subject_label?.trim() || null;
+interface AgentRunTreeRowProps {
+  runId: string;
+  agentId: string;
+  title: string;
+  /** delivery 执行状态；子节点（lineage ref）暂无状态时为 null。 */
+  executionStatus: SessionExecutionStatusValue | null;
+  updatedAt: number | null;
+  /** 副信息：top 行为 subject label，子行为 agent_kind / relation。 */
+  metaLabel: string | null;
+  /** 是否可能存在子节点（top: subagent_count>0；子行: 乐观允许下钻）。 */
+  canExpand: boolean;
+  depth: number;
+  /** 祖先 agentId 路径，用于防环。 */
+  ancestors: ReadonlySet<string>;
+  selectedAgentId: string | null;
+  onOpenAgentRun: (runId: string, agentId: string) => void;
+}
+
+function AgentRunTreeRow({
+  runId,
+  agentId,
+  title,
+  executionStatus,
+  updatedAt,
+  metaLabel,
+  canExpand,
+  depth,
+  ancestors,
+  selectedAgentId,
+  onOpenAgentRun,
+}: AgentRunTreeRowProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [children, setChildren] = useState<AgentRunLineageRef[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const isSelected = selectedAgentId === agentId;
+  // 防环 + 深度上限：祖先链已含本节点或超深时不再允许展开。
+  const expandable = canExpand && depth < MAX_TREE_DEPTH && !ancestors.has(agentId);
+
+  const toggleExpand = async () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && children === null && !loading) {
+      setLoading(true);
+      try {
+        const view = await fetchAgentRunWorkspace(runId, agentId);
+        setChildren(view.children ?? []);
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "子 Agent 加载失败");
+        setChildren([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const childAncestors = useMemo(() => {
+    const next = new Set(ancestors);
+    next.add(agentId);
+    return next;
+  }, [ancestors, agentId]);
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`flex w-full flex-col gap-0.5 rounded-[8px] px-3 py-2.5 text-left transition-colors ${
-        isSelected ? "bg-primary/10" : "hover:bg-muted/40"
-      }`}
-    >
-      <div className="flex items-center gap-2">
-        <StatusDot status={executionStatus} />
-        <span className={`min-w-0 flex-1 truncate text-xs font-medium ${
-          isSelected ? "text-foreground" : "text-foreground/90"
-        }`}>
-          {title}
-        </span>
-        {updatedAt && (
-          <span className="shrink-0 text-[10px] text-muted-foreground/60">
-            {formatRelativeTime(updatedAt)}
-          </span>
-        )}
+    <div>
+      <div
+        className={`flex w-full items-center gap-1 rounded-[8px] transition-colors ${
+          isSelected ? "bg-primary/10" : "hover:bg-muted/40"
+        }`}
+        style={{ paddingLeft: `${depth * 16}px` }}
+      >
+        <button
+          type="button"
+          onClick={() => void toggleExpand()}
+          disabled={!expandable}
+          aria-label={expanded ? "收起 subagent" : "展开 subagent"}
+          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] ${
+            expandable ? "hover:bg-muted/60" : "invisible"
+          }`}
+        >
+          <ExpandChevron expanded={expanded} />
+        </button>
+        <button
+          type="button"
+          onClick={() => onOpenAgentRun(runId, agentId)}
+          className="flex min-w-0 flex-1 flex-col gap-0.5 py-2 pr-3 text-left"
+        >
+          <div className="flex items-center gap-2">
+            <StatusDot status={executionStatus ?? "idle"} />
+            <span className={`min-w-0 flex-1 truncate text-xs font-medium ${
+              isSelected ? "text-foreground" : "text-foreground/90"
+            }`}>
+              {title}
+            </span>
+            {updatedAt && (
+              <span className="shrink-0 text-[10px] text-muted-foreground/60">
+                {formatRelativeTime(updatedAt)}
+              </span>
+            )}
+          </div>
+          {(metaLabel || executionStatus) && (
+            <div className="flex items-center gap-1.5">
+              {metaLabel && (
+                <span className="truncate text-[10px] text-muted-foreground/60">
+                  {metaLabel}
+                </span>
+              )}
+              {executionStatus && (
+                <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/60">
+                  {executionStatusLabel[executionStatus] ?? executionStatus}
+                </span>
+              )}
+            </div>
+          )}
+        </button>
       </div>
-      <div className="flex items-center gap-1.5 pl-4">
-        {subjectLabel && (
-          <span className="truncate text-[10px] text-muted-foreground/60">
-            {subjectLabel}
-          </span>
-        )}
-        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/60">
-          {executionStatusLabel[executionStatus] ?? executionStatus}
-        </span>
-      </div>
-    </button>
+
+      {expanded && (
+        <div>
+          {loading && (
+            <p className="py-1 text-[10px] text-muted-foreground/60" style={{ paddingLeft: `${(depth + 1) * 16 + 28}px` }}>
+              加载中…
+            </p>
+          )}
+          {error && (
+            <p className="py-1 text-[10px] text-destructive" style={{ paddingLeft: `${(depth + 1) * 16 + 28}px` }}>
+              {error}
+            </p>
+          )}
+          {children && children.length === 0 && !loading && !error && (
+            <p className="py-1 text-[10px] text-muted-foreground/50" style={{ paddingLeft: `${(depth + 1) * 16 + 28}px` }}>
+              无子 Agent
+            </p>
+          )}
+          {children?.map((child) => (
+            <AgentRunTreeRow
+              key={`${child.run_id}:${child.agent_id}`}
+              runId={child.run_id}
+              agentId={child.agent_id}
+              title={child.display_title.trim() || child.agent_kind || "Subagent"}
+              executionStatus={null}
+              updatedAt={null}
+              metaLabel={[child.agent_kind, child.relation_kind].filter(Boolean).join(" · ") || null}
+              canExpand={(child.subagent_count ?? 0) > 0}
+              depth={depth + 1}
+              ancestors={childAncestors}
+              selectedAgentId={selectedAgentId}
+              onOpenAgentRun={onOpenAgentRun}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -298,13 +434,19 @@ export function ActiveAgentRunList({
         ) : (
           <div className="space-y-0.5 p-1">
             {filteredEntries.map((entry) => (
-              <AgentRunRow
+              <AgentRunTreeRow
                 key={`${entry.run_ref.run_id}:${entry.agent_ref.agent_id}`}
-                entry={entry}
-                isSelected={selectedAgentId === entry.agent_ref.agent_id}
-                onSelect={() => {
-                  onOpenAgentRun(entry.run_ref.run_id, entry.agent_ref.agent_id);
-                }}
+                runId={entry.run_ref.run_id}
+                agentId={entry.agent_ref.agent_id}
+                title={entry.shell.display_title.trim() || "AgentRun 加载中..."}
+                executionStatus={normalizeExecutionStatus(entry.shell.delivery_status)}
+                updatedAt={updatedAtTimestamp(entry.shell.last_activity_at)}
+                metaLabel={entry.subject_label?.trim() || null}
+                canExpand={(entry.subagent_count ?? 0) > 0}
+                depth={0}
+                ancestors={EMPTY_ANCESTORS}
+                selectedAgentId={selectedAgentId}
+                onOpenAgentRun={onOpenAgentRun}
               />
             ))}
           </div>

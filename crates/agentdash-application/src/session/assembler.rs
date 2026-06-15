@@ -50,7 +50,10 @@ use crate::session::assembly_builder::SessionAssemblyBuilder;
 use crate::session::assembly_builder::slice_companion_bundle;
 use crate::vfs::VfsService;
 use crate::workflow::{
-    ActivityActivationInput, RuntimeNodeArtifactScope, activate_activity_with_platform,
+    ActivityActivationInput, AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode,
+    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, BuiltinLifecycleSkill,
+    BuiltinLifecycleSkillPolicy, MessageStreamProjectionRef, MessageStreamTraceKind,
+    OrchestrationNodeProjectionInput, RuntimeNodeArtifactScope, activate_activity_with_platform,
     load_scoped_port_output_map,
 };
 use crate::workspace::BackendAvailability;
@@ -190,7 +193,7 @@ impl<'a> SessionRequestAssembler<'a> {
         let parent_facts = self
             .resolve_companion_parent_facts(spec.parent_session_id)
             .await?;
-        let prepared = compose_companion(CompanionSpec {
+        let mut prepared = compose_companion(CompanionSpec {
             parent_vfs: parent_facts.parent_vfs.as_ref(),
             parent_mcp_servers: &parent_facts.parent_mcp_servers,
             parent_context_bundle: parent_facts.parent_context_bundle.as_ref(),
@@ -198,6 +201,8 @@ impl<'a> SessionRequestAssembler<'a> {
             companion_executor_config: spec.companion_executor_config,
             dispatch_prompt: spec.dispatch_prompt,
         })?;
+        self.project_companion_system_to_agent_run_lifecycle(spec.child_session_id, &mut prepared)
+            .await?;
         Ok(crate::session::assembly_builder::project_assembly_to_frame(
             frame_builder,
             prepared,
@@ -238,6 +243,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 lifecycle: spec.lifecycle,
                 activity: spec.activity,
                 workflow: spec.workflow,
+                child_session_id: spec.companion.child_session_id,
             },
         )
         .await?;
@@ -267,6 +273,61 @@ impl<'a> SessionRequestAssembler<'a> {
             parent_mcp_servers: parent_capability_state.tool.mcp_servers.clone(),
             parent_context_bundle: None,
         })
+    }
+
+    async fn project_companion_system_to_agent_run_lifecycle(
+        &self,
+        child_session_id: &str,
+        prepared: &mut SessionAssemblyBuilder,
+    ) -> Result<(), String> {
+        let Some(anchor) = self
+            .repos
+            .execution_anchor_repo
+            .find_by_session(child_session_id)
+            .await
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(());
+        };
+        let run = self
+            .repos
+            .lifecycle_run_repo
+            .get_by_id(anchor.run_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| {
+                format!(
+                    "LifecycleRun {} 不存在，无法投影 companion-system",
+                    anchor.run_id
+                )
+            })?;
+        let surface = AgentRunLifecycleSurfaceProjector::new(self.repos)
+            .project(AgentRunLifecycleSurfaceInput {
+                base_vfs: prepared.vfs.take(),
+                address: AgentRunRuntimeAddress {
+                    run_id: anchor.run_id,
+                    agent_id: anchor.agent_id,
+                    frame_id: anchor.launch_frame_id,
+                },
+                message_stream: Some(MessageStreamProjectionRef {
+                    runtime_session_id: anchor.runtime_session_id,
+                    trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
+                }),
+                project_id: run.project_id,
+                mode: AgentRunLifecycleSurfaceMode::CompanionChildSurface,
+                explicit_skill_asset_keys: Vec::new(),
+                builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
+                    BuiltinLifecycleSkill::CompanionSystem,
+                ]),
+                node_projection: None,
+            })
+            .await?;
+        let vfs = surface.vfs;
+        prepared.vfs = Some(vfs.clone());
+        if let Some(capability_state) = prepared.capability_state.as_mut() {
+            capability_state.vfs.active = Some(vfs);
+        }
+        Ok(())
     }
 }
 
@@ -340,9 +401,56 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
         },
         platform_config,
     )?;
-    project_companion_system_skill_to_activation(repos, spec.run.project_id, &mut activation)
-        .await
-        .map_err(|error| error.to_string())?;
+    if let Some(anchor) = match audit_session_key {
+        Some(session_id) => repos
+            .execution_anchor_repo
+            .find_by_session(session_id)
+            .await
+            .map_err(|error| error.to_string())?,
+        None => None,
+    } {
+        let base_vfs = activation.lifecycle_vfs.clone();
+        AgentRunLifecycleSurfaceProjector::new(repos)
+            .project_activation(
+                &mut activation,
+                AgentRunLifecycleSurfaceInput {
+                    base_vfs: Some(base_vfs),
+                    address: AgentRunRuntimeAddress {
+                        run_id: anchor.run_id,
+                        agent_id: anchor.agent_id,
+                        frame_id: anchor.launch_frame_id,
+                    },
+                    message_stream: Some(MessageStreamProjectionRef {
+                        runtime_session_id: anchor.runtime_session_id,
+                        trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
+                    }),
+                    project_id: spec.run.project_id,
+                    mode: AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
+                    explicit_skill_asset_keys: Vec::new(),
+                    builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
+                        BuiltinLifecycleSkill::CompanionSystem,
+                    ]),
+                    node_projection: Some(OrchestrationNodeProjectionInput {
+                        run_id: spec.run.id,
+                        orchestration_id: spec.orchestration_id,
+                        node_path: spec.node_path.to_string(),
+                        lifecycle_key: spec.lifecycle_key.to_string(),
+                        attempt: spec.attempt,
+                        writable_port_keys: spec
+                            .activity
+                            .output_ports
+                            .iter()
+                            .map(|port| port.key.clone())
+                            .collect(),
+                    }),
+                },
+            )
+            .await?;
+    } else {
+        project_companion_system_skill_to_activation(repos, spec.run.project_id, &mut activation)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
 
     // Lifecycle node 与 owner 路径都追加 SessionPlan contribution，保持 vfs /
     // tools / persona / workflow / runtime_policy 的统一画像。
@@ -552,6 +660,7 @@ pub struct CompanionSpec<'a> {
 
 pub struct CompanionParentSpec<'a> {
     pub parent_session_id: &'a str,
+    pub child_session_id: &'a str,
     pub slice_mode: CompanionSliceMode,
     pub companion_executor_config: AgentConfig,
     pub dispatch_prompt: String,
@@ -577,6 +686,7 @@ pub(crate) struct CompanionParentFacts {
 /// Companion + Workflow 组合 compose 输入。
 pub struct CompanionWorkflowSpec<'a> {
     pub companion: CompanionSpec<'a>,
+    pub child_session_id: &'a str,
     /// 已创建的 lifecycle run。
     pub run: &'a LifecycleRun,
     pub orchestration_id: Uuid,
@@ -617,7 +727,7 @@ pub(in crate::session) async fn compose_companion_with_workflow(
         load_scoped_port_output_map(repos.inline_file_repo.as_ref(), &artifact_scope).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
-    let activation = activate_activity_with_platform(
+    let mut activation = activate_activity_with_platform(
         &ActivityActivationInput {
             owner_ctx,
             active_activity: spec.activity,
@@ -637,6 +747,54 @@ pub(in crate::session) async fn compose_companion_with_workflow(
         },
         platform_config,
     )?;
+    if let Some(anchor) = repos
+        .execution_anchor_repo
+        .find_by_session(spec.child_session_id)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        let base_vfs = activation.lifecycle_vfs.clone();
+        AgentRunLifecycleSurfaceProjector::new(repos)
+            .project_activation(
+                &mut activation,
+                AgentRunLifecycleSurfaceInput {
+                    base_vfs: Some(base_vfs),
+                    address: AgentRunRuntimeAddress {
+                        run_id: anchor.run_id,
+                        agent_id: anchor.agent_id,
+                        frame_id: anchor.launch_frame_id,
+                    },
+                    message_stream: Some(MessageStreamProjectionRef {
+                        runtime_session_id: anchor.runtime_session_id,
+                        trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
+                    }),
+                    project_id,
+                    mode: AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
+                    explicit_skill_asset_keys: Vec::new(),
+                    builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
+                        BuiltinLifecycleSkill::CompanionSystem,
+                    ]),
+                    node_projection: Some(OrchestrationNodeProjectionInput {
+                        run_id: spec.run.id,
+                        orchestration_id: spec.orchestration_id,
+                        node_path: spec.node_path.to_string(),
+                        lifecycle_key: spec.lifecycle.key.clone(),
+                        attempt: spec.attempt,
+                        writable_port_keys: spec
+                            .activity
+                            .output_ports
+                            .iter()
+                            .map(|port| port.key.clone())
+                            .collect(),
+                    }),
+                },
+            )
+            .await?;
+    } else {
+        project_companion_system_skill_to_activation(repos, project_id, &mut activation)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
 
     // ── 3. 用 builder 组合 companion + workflow 两个层 ──
     //

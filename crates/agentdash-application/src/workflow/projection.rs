@@ -196,11 +196,11 @@ fn derive_node_facts(plan_node: &PlanNode) -> (Option<String>, LifecycleNodeType
     }
 }
 
-/// 解析任意 RuntimeSession 的 Activity workflow projection。
+/// 从 message stream trace 解析 Activity workflow projection。
 ///
 /// 生产链路只允许 RuntimeSession 作为 trace lookup 起点：
 /// RuntimeSession -> RuntimeSessionExecutionAnchor -> LifecycleRun.orchestrations。
-pub async fn resolve_active_workflow_projection_for_session(
+pub async fn resolve_active_workflow_projection_from_message_stream_trace(
     session_id: &str,
     definition_repo: &dyn AgentProcedureRepository,
     frame_repo: &dyn AgentFrameRepository,
@@ -211,7 +211,7 @@ pub async fn resolve_active_workflow_projection_for_session(
     let resolver =
         ActivityRuntimeAssociationResolver::new(frame_repo, run_repo).with_anchor_repo(anchor_repo);
     let Some(association) = resolver
-        .resolve_by_runtime_session(session_id)
+        .resolve_by_message_stream_trace(session_id)
         .await
         .map_err(|error| error.to_string())?
     else {

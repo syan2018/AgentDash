@@ -1,0 +1,14 @@
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-surface-projector/prd.md", "reason": "检查实现是否满足任务验收标准"}
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-surface-projector/design.md", "reason": "检查 projector 设计和范围决策是否一致"}
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-surface-projector/implement.md", "reason": "检查实施步骤和验证命令是否完成"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "检查 lifecycle mount metadata 和 provider contract 是否同步"}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "检查 builtin SkillAsset projection contract 是否同步"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查 AgentRun workspace resource surface 边界是否同步"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "检查 RuntimeSession 是否只保留 message stream / connector trace 语义"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "检查 AgentRun 外部索引和 orchestration node ownership 是否同步"}
+{"file": "crates/agentdash-application/src/workflow/lifecycle/mount.rs", "reason": "检查 projector 是否替代散落 helper 调用并保持 metadata 合并"}
+{"file": "crates/agentdash-application/src/vfs/mount.rs", "reason": "检查 typed metadata serialization 与 mount builder 输出"}
+{"file": "crates/agentdash-application/src/vfs/provider_lifecycle.rs", "reason": "检查 provider 对 agent_run_session/node_runtime/skills 行为未回归"}
+{"file": "crates/agentdash-application/src/workflow/frame_construction/owner_bootstrap.rs", "reason": "检查 graphless ProjectAgent 和 workflow owner bootstrap 迁移"}
+{"file": "crates/agentdash-application/src/session/assembler.rs", "reason": "检查 companion child 与 companion+workflow 迁移"}
+{"file": "crates/agentdash-application/src/workflow/agent_run_workspace/query.rs", "reason": "检查 workspace query preserve-only projection 语义显式化"}

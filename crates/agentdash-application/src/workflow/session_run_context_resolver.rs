@@ -34,8 +34,8 @@ impl<'a> SubjectRunContextResolver<'a> {
         }
     }
 
-    /// RuntimeSession → RuntimeSessionExecutionAnchor → LifecycleAgent → LifecycleRun → SubjectAssociations → context
-    pub async fn resolve_for_session(
+    /// Message stream trace → RuntimeSessionExecutionAnchor → LifecycleAgent → LifecycleRun → SubjectAssociations → context
+    pub async fn resolve_from_message_stream_trace(
         &self,
         session_id: &str,
     ) -> Result<Option<SubjectRunContext>, ApplicationError> {

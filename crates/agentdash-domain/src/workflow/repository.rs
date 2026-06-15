@@ -126,6 +126,9 @@ pub trait AgentLineageRepository: Send + Sync {
     async fn create(&self, lineage: &AgentLineage) -> Result<(), DomainError>;
     async fn list_children(&self, agent_id: Uuid) -> Result<Vec<AgentLineage>, DomainError>;
     async fn find_parent(&self, child_agent_id: Uuid) -> Result<Option<AgentLineage>, DomainError>;
+    /// 一次取回某 run 下的全部 lineage 边，供 UI 在内存构建控制树 forest，
+    /// 避免按 agent 逐个 `list_children` 的 N 次往返。
+    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentLineage>, DomainError>;
 }
 
 /// RuntimeSession → 控制面锚点的 repository。

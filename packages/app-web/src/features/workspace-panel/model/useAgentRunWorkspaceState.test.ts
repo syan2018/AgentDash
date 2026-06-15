@@ -42,6 +42,7 @@ const workspace: AgentRunWorkspaceView = {
   },
   frame_runtime: frameRuntime,
   subject_associations: [],
+  children: [],
 };
 
 const runtimeSurface: ResolvedVfsSurface = {

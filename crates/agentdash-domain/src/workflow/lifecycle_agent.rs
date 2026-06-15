@@ -10,6 +10,20 @@ pub mod bootstrap_status {
     pub const NOT_APPLICABLE: &str = "not_applicable";
 }
 
+/// Agent 角色快捷标记。
+///
+/// 注意：主/从关系的**真值源是 `AgentLineage` 控制树**，此字段仅作冗余快捷标记，
+/// 用于列表展示与新数据的快速过滤；任何收束/嵌套判定都应回到 lineage，
+/// 不得仅依赖此字段（存量数据可能恒为 `primary`）。
+pub mod agent_role {
+    /// 控制树 root，即用户面向的"主 Run"。
+    pub const PRIMARY: &str = "primary";
+    /// 被派发的子 agent（spawn / delegation 等）。
+    pub const SUBAGENT: &str = "subagent";
+    /// companion 协作 child。
+    pub const COMPANION: &str = "companion";
+}
+
 /// Run-scoped Agent runtime identity.
 ///
 /// Agent 只属于一个 LifecycleRun；可以有多个 frame revision 和 runtime session refs。
@@ -59,6 +73,15 @@ impl LifecycleAgent {
 
     pub fn with_project_agent(mut self, project_agent_id: Uuid) -> Self {
         self.project_agent_id = Some(project_agent_id);
+        self
+    }
+
+    /// 覆盖 agent 角色快捷标记（见 [`agent_role`]）。
+    ///
+    /// 默认 `new_root` 写 `primary`；被派发的子 agent 应在创建路径用此 builder
+    /// 写入 `subagent` / `companion`，与 lineage 写入保持一致。
+    pub fn with_role(mut self, role: impl Into<String>) -> Self {
+        self.agent_role = role.into();
         self
     }
 

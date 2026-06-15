@@ -37,6 +37,10 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 - Scheduler 负责 durable claim 和 executor 启动；executor 只通过 runtime node terminal event 把结果交还给 orchestration runtime。
 - Function executor 即使立即完成，也必须产出 runtime node terminal event，而不是直接修改 run state。
 - Agent node execution identity 使用 `AgentInvocation(lifecycle_run_id, orchestration_id, node_path, attempt, agent_run_id, frame_id)` 定位当前 work；RuntimeSession 只作为 terminal/runtime evidence。
+- AgentRun lifecycle surface 的 node projection 必须由 `orchestration_id + node_path + attempt`
+  显式构造。`RuntimeSessionExecutionAnchor` 可以作为 message stream / launch evidence ref，但
+  不拥有 node runtime；原因是 artifacts、records 和 runtime reducer 都以 orchestration node
+  coordinate 为写入与推进事实源。
 - 通过 `RuntimeSession` 反查 Lifecycle node 时，必须使用 runtime trace anchor，再进入 `LifecycleRun -> OrchestrationInstance -> RuntimeNodeState` 的证据链。
 - `AgentFrame` revision 分为 dispatch launch evidence 与 runtime surface 两类生产角色。dispatch launch evidence 记录 run / agent / frame / runtime session anchor；capability、context、VFS、MCP 和 execution profile 的生效 surface 由 frame construction / lifecycle node composer 写入后续 runtime surface revision。读取 workspace/VFS 时从 runtime session anchor 进入 agent current frame，再消费 frame 上的 typed surface。
 - `LifecycleSubjectAssociation` 是 Task / Story / Routine / Project 等业务 subject 的归属入口；业务状态不能由 `RuntimeSession` title、存在性或 trace 内容推断。
@@ -93,6 +97,14 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 - AgentRun workspace resource surface 从当前 `AgentFrame` typed VFS surface 投影，原因是 frame revision
   是 capability、context、VFS 与 MCP 的生效 surface；workspace panel 和 connector launch 需要消费同一
   个 surface 事实。
+- `AgentRunLifecycleSurfaceProjector` 是 application 层构造 AgentRun lifecycle VFS surface 的标准入口。
+  projector input 使用 AgentRun runtime address、optional message stream ref、optional
+  orchestration node projection 和 typed builtin skill policy；原因是 owner bootstrap、companion、
+  workflow node 和 workspace query 需要共享同一个 `lifecycle` aggregate mount 与 SkillAsset
+  projection 事实源。
+- Task runtime projection 使用显式 `run_id + agent_id + frame_id + orchestration_id + node_path + attempt`
+  coordinate，原因是 task view、terminal effect artifact/status 和 journey node lookup 都需要消费同一
+  runtime node identity，同时保留 RuntimeSession trace 下钻能力。
 
 ## Scenario: Lifecycle Orchestration Contract
 

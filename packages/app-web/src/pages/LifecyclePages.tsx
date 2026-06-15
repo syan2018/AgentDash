@@ -138,8 +138,13 @@ function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
                 })}
                 className="flex w-full items-center justify-between gap-3 rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-left hover:bg-secondary/40"
               >
-                <span className="truncate text-sm text-foreground">
-                  {agent.agent_role || agent.agent_kind}
+                <span className="flex min-w-0 items-center gap-1.5 truncate text-sm text-foreground">
+                  {agent.agent_kind || agent.agent_role}
+                  {agent.agent_role && agent.agent_role !== "primary" && (
+                    <span className="shrink-0 rounded-[6px] bg-secondary px-1.5 text-[10px] text-muted-foreground">
+                      {agent.agent_role}
+                    </span>
+                  )}
                 </span>
                 <span className="shrink-0 font-mono text-xs text-muted-foreground">
                   {agent.agent_ref.agent_id.slice(0, 8)}
@@ -238,7 +243,14 @@ function AgentSummary({
       <Section title="Agent">
         <div className="space-y-2 text-sm">
           <p className="font-mono text-xs text-muted-foreground">{agent.agent_ref.agent_id}</p>
-          <p className="text-foreground">{agent.agent_role || agent.agent_kind}</p>
+          <p className="text-foreground">
+            {agent.agent_kind || agent.agent_role}
+            {agent.agent_role && agent.agent_role !== "primary" && (
+              <span className="ml-1.5 rounded-[6px] bg-secondary px-1.5 text-[10px] text-muted-foreground">
+                {agent.agent_role}
+              </span>
+            )}
+          </p>
           <p className="text-xs text-muted-foreground">status: {agent.status}</p>
           <button
             type="button"

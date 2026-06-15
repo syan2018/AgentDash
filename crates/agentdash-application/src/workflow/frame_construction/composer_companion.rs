@@ -28,6 +28,7 @@ pub(super) async fn compose(
                 CompanionParentWorkflowSpec {
                     companion: CompanionParentSpec {
                         parent_session_id: &companion.parent_session_id,
+                        child_session_id: input.session_id.as_str(),
                         slice_mode: companion.slice_mode,
                         companion_executor_config: companion.companion_executor_config,
                         dispatch_prompt: companion.dispatch_prompt,
@@ -48,6 +49,7 @@ pub(super) async fn compose(
                 builder,
                 CompanionParentSpec {
                     parent_session_id: &companion.parent_session_id,
+                    child_session_id: input.session_id.as_str(),
                     slice_mode: companion.slice_mode,
                     companion_executor_config: companion.companion_executor_config,
                     dispatch_prompt: companion.dispatch_prompt,

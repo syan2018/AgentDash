@@ -193,6 +193,31 @@ export function AgentRunWorkspacePage({
   const workspaceTitle = isProjectAgentDraft
     ? draftWorkspaceTitle
     : runtimeControl?.shell.display_title ?? "";
+
+  // ─── 身份 / 从属信息（identity bar）─────────────────────
+  const identityAgentKind = runtimeControl?.agent?.agent_kind ?? null;
+  const identityAgentRole = runtimeControl?.agent?.agent_role ?? null;
+  const identitySubject = useMemo(() => {
+    const assoc = runtimeControl?.subject_associations?.[0];
+    if (!assoc) return null;
+    let label = assoc.subject_ref.kind;
+    const meta = assoc.metadata;
+    if (meta && typeof meta === "object") {
+      for (const key of ["label", "title", "name"]) {
+        const value = (meta as Record<string, unknown>)[key];
+        if (typeof value === "string" && value.trim()) {
+          label = value.trim();
+          break;
+        }
+      }
+    }
+    return { kind: assoc.subject_ref.kind, id: assoc.subject_ref.id, label };
+  }, [runtimeControl?.subject_associations]);
+  const lineageParent = runtimeControl?.parent ?? null;
+  const subagentChildCount = runtimeControl?.children?.length ?? 0;
+  const hasIdentityBar =
+    !isProjectAgentDraft
+    && (identityAgentKind !== null || identitySubject !== null || lineageParent !== null || subagentChildCount > 0);
   const activeHookRuntime = agentRunWorkspaceState.hook_runtime?.runtime_adapter_session_id === deliveryRuntimeSessionId
     ? agentRunWorkspaceState.hook_runtime
     : null;
@@ -661,6 +686,58 @@ export function AgentRunWorkspacePage({
           </button>
         </div>
       </header>
+
+      {hasIdentityBar && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background/60 px-5 py-1.5 text-[11px] text-muted-foreground">
+          {identityAgentKind && (
+            <span className="inline-flex items-center gap-1">
+              <span className="text-muted-foreground/60">身份</span>
+              <span className="rounded-[6px] bg-secondary px-1.5 py-0.5 font-medium text-foreground">
+                {identityAgentKind}
+              </span>
+              {identityAgentRole && identityAgentRole !== "primary" && (
+                <span className="rounded-[6px] bg-secondary px-1.5 py-0.5">{identityAgentRole}</span>
+              )}
+            </span>
+          )}
+          {identitySubject && (
+            <button
+              type="button"
+              onClick={() => navigate(`/subject/${encodeURIComponent(identitySubject.kind)}/${encodeURIComponent(identitySubject.id)}`)}
+              className="inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5 transition-colors hover:bg-secondary hover:text-foreground"
+              title="查看所属 subject"
+            >
+              <span className="text-muted-foreground/60">{identitySubject.kind}</span>
+              <span className="font-medium text-foreground">{identitySubject.label}</span>
+            </button>
+          )}
+          {lineageParent && (
+            <button
+              type="button"
+              onClick={() => navigate(`/agent-runs/${encodeURIComponent(lineageParent.run_id)}/${encodeURIComponent(lineageParent.agent_id)}`)}
+              className="inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5 transition-colors hover:bg-secondary hover:text-foreground"
+              title="跳转到父 Run"
+            >
+              <span aria-hidden>←</span>
+              <span className="text-muted-foreground/60">隶属于</span>
+              <span className="max-w-[200px] truncate font-medium text-foreground">
+                {lineageParent.display_title.trim() || lineageParent.agent_kind}
+              </span>
+            </button>
+          )}
+          {subagentChildCount > 0 && agentRunDetailTarget && (
+            <button
+              type="button"
+              onClick={handleOpenRunDetail}
+              className="inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5 transition-colors hover:bg-secondary hover:text-foreground"
+              title="查看派发的 subagent"
+            >
+              <span className="font-medium text-foreground">{subagentChildCount}</span>
+              <span>个 subagent</span>
+            </button>
+          )}
+        </div>
+      )}
 
       <Group orientation="horizontal" className="flex-1 overflow-hidden">
         <Panel minSize="30%">

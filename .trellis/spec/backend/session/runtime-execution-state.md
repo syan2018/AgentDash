@@ -18,9 +18,10 @@
 `delivery RuntimeSession id -> AgentFrameHookRuntime(control_target)`。它存在的原因是
 同一个执行器会话需要在 turn、event adapter、trace 和 live connector 同步路径复用 runtime
 对象；业务 owner 始终是 `HookControlTarget { run_id, agent_id, frame_id }`。业务路径应先持有
-`AgentFrameRuntimeTarget`，再通过 `SessionHookService::ensure_hook_runtime_for_target` 校验或
-重建绑定；裸 delivery session lookup 只属于 hub adapter / trace 场景，不能决定 hook policy、
-capability、context、VFS 或 MCP 的生效 owner。
+`AgentFrameHookRuntimeTarget { control_target, delivery_runtime_session_id }`，再通过
+`SessionHookService::ensure_hook_runtime_for_hook_target` 校验或重建绑定；裸 delivery session
+lookup 只属于 hub adapter / trace 场景，不能决定 hook policy、capability、context、VFS 或 MCP
+的生效 owner。
 
 AgentRun lifecycle surface 同样从 AgentRun runtime address 构造：`run_id + agent_id +
 frame_id` 是业务索引，`RuntimeSession` 只以 `MessageStreamProjectionRef` 形式进入 projector。

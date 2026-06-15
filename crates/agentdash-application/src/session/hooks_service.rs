@@ -9,7 +9,7 @@ use agentdash_spi::hooks::{
 };
 
 use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
-use super::types::AgentFrameRuntimeTarget;
+use super::types::{AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget};
 use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 
 #[derive(Clone)]
@@ -22,11 +22,46 @@ impl SessionHookService {
         Self { hub }
     }
 
-    /// 基于 `AgentFrameRuntimeTarget` 确保 hook runtime 就绪并校验 target 一致性。
+    /// 基于 `AgentFrameHookRuntimeTarget` 确保 hook runtime 就绪并校验 target 一致性。
+    pub async fn ensure_hook_runtime_for_hook_target(
+        &self,
+        target: &AgentFrameHookRuntimeTarget,
+        turn_id: Option<&str>,
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
+        let frame = self
+            .resolve_hook_target_frame_for_control_target(target)
+            .await?;
+        self.ensure_resolved_hook_runtime(
+            target,
+            Some(&frame),
+            turn_id,
+            "hook_runtime_target_rebuild",
+        )
+        .await
+    }
+
+    /// Adapter: 从 frame/session binding 解析 hook control target 后进入 hook target-first 路径。
     pub async fn ensure_hook_runtime_for_target(
         &self,
         target: &AgentFrameRuntimeTarget,
         turn_id: Option<&str>,
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
+        let resolved_target = resolve_hook_target_frame(&self.hub, target, None).await?;
+        self.ensure_resolved_hook_runtime(
+            &resolved_target.hook_target,
+            Some(&resolved_target.frame),
+            turn_id,
+            "hook_runtime_target_rebuild",
+        )
+        .await
+    }
+
+    async fn ensure_resolved_hook_runtime(
+        &self,
+        target: &AgentFrameHookRuntimeTarget,
+        frame: Option<&AgentFrame>,
+        turn_id: Option<&str>,
+        provenance_source: &'static str,
     ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
         if self
             .hub
@@ -63,14 +98,20 @@ impl SessionHookService {
             return Ok(Some(runtime));
         }
 
-        let resolved_target = resolve_hook_target_frame(&self.hub, target, None).await?;
+        let frame = match frame {
+            Some(frame) => frame.clone(),
+            None => {
+                self.resolve_hook_target_frame_for_control_target(target)
+                    .await?
+            }
+        };
         let snapshot = provider
             .load_frame_snapshot(AgentFrameHookSnapshotQuery {
-                target: resolved_target.control_target.clone(),
+                target: target.control_target.clone(),
                 provenance: RuntimeAdapterProvenance::runtime_session(
                     target.delivery_runtime_session_id.clone(),
                     turn_id.map(ToString::to_string),
-                    "hook_runtime_target_rebuild",
+                    provenance_source,
                 ),
             })
             .await
@@ -81,8 +122,8 @@ impl SessionHookService {
         let Some(rebuilt_runtime) = build_frame_hook_runtime(
             &self.hub,
             &target.delivery_runtime_session_id,
-            resolved_target.control_target,
-            Some(&resolved_target.frame),
+            target.control_target.clone(),
+            Some(&frame),
             provider.clone(),
             snapshot,
         )
@@ -113,6 +154,13 @@ impl SessionHookService {
         self.ensure_hook_runtime_for_target(target, None).await
     }
 
+    pub async fn get_hook_runtime_for_hook_target(
+        &self,
+        target: &AgentFrameHookRuntimeTarget,
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
+        self.ensure_hook_runtime_for_hook_target(target, None).await
+    }
+
     pub(crate) async fn resolve_hook_runtime(
         &self,
         session_id: &str,
@@ -138,9 +186,8 @@ impl SessionHookService {
         if is_owner_bootstrap || existing.is_none() {
             return self
                 .reload_hook_runtime_for_frame(
-                    &expected_target,
+                    &resolved_target.hook_target,
                     &resolved_target.frame,
-                    resolved_target.control_target.clone(),
                     turn_id,
                     executor_config.executor.as_str(),
                     executor_config.permission_policy.as_deref(),
@@ -151,12 +198,11 @@ impl SessionHookService {
         }
 
         if let Some(ref hs) = existing {
-            if validate_hook_runtime_target(hs.as_ref(), &expected_target).is_err() {
+            if validate_hook_runtime_target(hs.as_ref(), &resolved_target.hook_target).is_err() {
                 return self
                     .reload_hook_runtime_for_frame(
-                        &expected_target,
+                        &resolved_target.hook_target,
                         &resolved_target.frame,
-                        resolved_target.control_target.clone(),
                         turn_id,
                         executor_config.executor.as_str(),
                         executor_config.permission_policy.as_deref(),
@@ -173,9 +219,8 @@ impl SessionHookService {
 
     async fn reload_hook_runtime_for_frame(
         &self,
-        target: &AgentFrameRuntimeTarget,
+        target: &AgentFrameHookRuntimeTarget,
         frame: &AgentFrame,
-        control_target: HookControlTarget,
         turn_id: &str,
         executor: &str,
         permission_policy: Option<&str>,
@@ -195,7 +240,7 @@ impl SessionHookService {
         };
         let mut snapshot = provider
             .load_frame_snapshot(AgentFrameHookSnapshotQuery {
-                target: control_target.clone(),
+                target: target.control_target.clone(),
                 provenance: RuntimeAdapterProvenance::runtime_session(
                     target.delivery_runtime_session_id.clone(),
                     Some(turn_id.to_string()),
@@ -218,7 +263,7 @@ impl SessionHookService {
         let Some(runtime) = build_frame_hook_runtime(
             &self.hub,
             &target.delivery_runtime_session_id,
-            control_target,
+            target.control_target.clone(),
             Some(frame),
             provider.clone(),
             snapshot,
@@ -256,15 +301,43 @@ impl SessionHookService {
             .emit_session_hook_trigger(hook_runtime, input)
             .await
     }
+
+    async fn resolve_hook_target_frame_for_control_target(
+        &self,
+        target: &AgentFrameHookRuntimeTarget,
+    ) -> Result<AgentFrame, ConnectorError> {
+        let Some(frame_repo) = self.hub.agent_frame_repo.as_ref() else {
+            return Err(ConnectorError::Runtime(
+                "AgentFrameRepository 未注入，无法按 AgentFrameHookRuntimeTarget 查询 AgentFrame"
+                    .to_string(),
+            ));
+        };
+        let frame = frame_repo
+            .get(target.frame_id())
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!("查询 Hook target 对应 AgentFrame 失败: {error}"))
+            })?
+            .ok_or_else(|| {
+                ConnectorError::Runtime(format!("Hook target frame `{}` 不存在", target.frame_id()))
+            })?;
+        if frame.agent_id != target.control_target.agent_id {
+            return Err(ConnectorError::Runtime(format!(
+                "Hook target frame `{}` belongs to agent `{}`, not `{}`",
+                frame.id, frame.agent_id, target.control_target.agent_id
+            )));
+        }
+        Ok(frame)
+    }
 }
 
 fn validate_hook_runtime_target(
     hook_runtime: &dyn HookRuntimeAccess,
-    target: &AgentFrameRuntimeTarget,
+    target: &AgentFrameHookRuntimeTarget,
 ) -> Result<(), ConnectorError> {
     let control_target = hook_runtime.control_target();
     if hook_runtime.session_id() == target.delivery_runtime_session_id
-        && control_target.frame_id == target.frame_id
+        && control_target == target.control_target
     {
         return Ok(());
     }
@@ -274,12 +347,12 @@ fn validate_hook_runtime_target(
         hook_runtime.session_id(),
         control_target.frame_id,
         target.delivery_runtime_session_id,
-        target.frame_id
+        target.frame_id()
     )))
 }
 
 struct ResolvedHookTargetFrame {
-    control_target: HookControlTarget,
+    hook_target: AgentFrameHookRuntimeTarget,
     frame: AgentFrame,
 }
 
@@ -361,11 +434,14 @@ async fn resolve_hook_target_frame_from_frame(
         )));
     }
     Ok(ResolvedHookTargetFrame {
-        control_target: HookControlTarget {
-            run_id: anchor.run_id,
-            agent_id: frame.agent_id,
-            frame_id: frame.id,
-        },
+        hook_target: AgentFrameHookRuntimeTarget::new(
+            HookControlTarget {
+                run_id: anchor.run_id,
+                agent_id: frame.agent_id,
+                frame_id: frame.id,
+            },
+            target.delivery_runtime_session_id.clone(),
+        ),
         frame: frame.clone(),
     })
 }

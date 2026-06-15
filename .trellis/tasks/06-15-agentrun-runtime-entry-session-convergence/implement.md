@@ -29,7 +29,7 @@ Research summary:
 ## Phase 3: Runtime Entry Migration
 
 - [x] Migrate mailbox command target from session-first to AgentRun-first.
-- [ ] Migrate hook control target from session-first to AgentRun-first.
+- [x] Migrate hook control target from session-first to AgentRun-first.
 - [x] Migrate task effect/runtime action targets where they currently resolve business context from session.
 - [ ] Rename remaining session-first functions to make message stream intent explicit.
 
@@ -46,6 +46,12 @@ Task coordinate slice notes:
 - Task execution view and boot projection consume `run_id + agent_id + frame_id + orchestration_id + node_path + attempt`.
 - Task hook terminal effects keep `runtime_session_id` as callback adapter, then validate the anchor against LifecycleRun runtime node coordinate before persisting artifact/status.
 - Journey helpers now expose coordinate-first node lookup while session-id helpers remain trace-open helpers.
+
+Hook target slice notes:
+
+- `AgentFrameHookRuntimeTarget` carries `HookControlTarget` plus delivery runtime binding.
+- `SessionHookService` resolves legacy frame/session adapters into hook target-first runtime construction and cache validation.
+- `AgentFrameRuntimeTarget` remains available for capability/runtime transition adapters where only frame + delivery binding is known.
 
 ## Phase 4: Specs And Tests
 

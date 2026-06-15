@@ -56,11 +56,12 @@ runtime session / turn 只表达 delivery trace、audit source 与 adapter prove
 
 `RuntimeAdapterProvenance.runtime_session_id` 与 `HookRuntimeAccess::session_id()` 只描述
 delivery / trace provenance。业务入口需要 hook runtime 时应传递
-`AgentFrameRuntimeTarget` 或 `HookControlTarget`，由 target-first service 确认 delivery
-binding cache 是否仍指向同一 frame；若 frame revision 已推进，service 按当前 AgentFrame 与
-`RuntimeSessionExecutionAnchor` 重建 `AgentFrameHookRuntime` 并替换 delivery binding。这样
-provider 的 `resolve_runtime_hook_target(runtime_session_id)` 只保留为 legacy adapter/bootstrap
-边界，不形成 session id 主导的第二事实源。
+`AgentFrameHookRuntimeTarget { control_target: HookControlTarget, delivery_runtime_session_id }`，
+由 target-first service 确认 delivery binding cache 是否仍指向同一 control target；若 frame
+revision 已推进，service 按当前 AgentFrame 与 `RuntimeSessionExecutionAnchor` 重建
+`AgentFrameHookRuntime` 并替换 delivery binding。这样 provider 的
+`resolve_runtime_hook_target(runtime_session_id)` 只保留为 legacy adapter/bootstrap 边界，不形成
+session id 主导的第二事实源。
 
 ---
 

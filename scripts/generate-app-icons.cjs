@@ -20,7 +20,7 @@ const svg = fs.readFileSync(sourceSvgPath, "utf8");
 const viewBox = readViewBox(svg);
 const strokeWidth = Number(readAttribute(svg, "stroke-width") ?? 12);
 const strokeColor = readAttribute(svg, "stroke") ?? "#fff";
-const backgroundColor = readRectFill(svg) ?? "#000";
+const backgroundColor = readRectFill(svg);
 const segments = readPathSegments(svg);
 
 if (segments.length === 0) {
@@ -153,9 +153,9 @@ function readNumber(tokens, index) {
 function renderPng(size) {
   const rgba = Buffer.alloc(size * size * 4);
   const scale = size / Math.max(viewBox.width, viewBox.height);
-  const halfStroke = Math.max(1.25, (strokeWidth * scale) / 2);
-  const feather = Math.max(0.65, scale * 1.25);
-  const bg = parseHexColor(backgroundColor);
+  const halfStroke = Math.max(0.42, (strokeWidth * scale) / 2);
+  const feather = Math.max(0.28, Math.min(0.85, scale * 14));
+  const bg = backgroundColor ? parseHexColor(backgroundColor) : null;
   const fg = parseHexColor(strokeColor);
   const scaledSegments = segments.map(([a, b]) => [
     [(a[0] - viewBox.x) * scale, (a[1] - viewBox.y) * scale],
@@ -172,10 +172,10 @@ function renderPng(size) {
       }
       const coverage = Math.max(0, Math.min(1, (halfStroke + feather - distance) / feather));
       const offset = (y * size + x) * 4;
-      rgba[offset] = mix(bg.r, fg.r, coverage);
-      rgba[offset + 1] = mix(bg.g, fg.g, coverage);
-      rgba[offset + 2] = mix(bg.b, fg.b, coverage);
-      rgba[offset + 3] = 255;
+      rgba[offset] = bg ? mix(bg.r, fg.r, coverage) : fg.r;
+      rgba[offset + 1] = bg ? mix(bg.g, fg.g, coverage) : fg.g;
+      rgba[offset + 2] = bg ? mix(bg.b, fg.b, coverage) : fg.b;
+      rgba[offset + 3] = bg ? 255 : Math.round(coverage * 255);
     }
   }
 

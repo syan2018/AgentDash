@@ -71,8 +71,7 @@ export function DesktopTitlebar() {
       className="flex h-9 shrink-0 select-none items-center justify-between bg-sidebar pl-3 shadow-sm"
     >
       <div data-tauri-drag-region className="pointer-events-none flex items-center gap-2">
-        {/* eslint-disable-next-line no-restricted-syntax -- 品牌点为圆形 */}
-        <span className="h-2.5 w-2.5 rounded-full bg-primary" />
+        <img src="/app-icon.svg" alt="" draggable={false} className="h-4 w-4 shrink-0" />
         <span className="text-xs font-semibold tracking-tight text-sidebar-foreground">
           AgentDash
         </span>

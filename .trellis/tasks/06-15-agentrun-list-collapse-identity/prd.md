@@ -51,13 +51,13 @@
 
 ## Acceptance Criteria
 
-- [ ] AC1：一个含 1 主 Run + ≥1 subagent 的 Lifecycle，侧栏只出 1 条主 Run，并显示 subagent 数标识。
-- [ ] AC2：主区列表能折叠/展开看到该主 Run 下的 subagent；含孙节点（递归）的 Run 可逐层钻入；搜索与状态过滤仍可用。
-- [ ] AC2b：subagent_count 为整棵子树后代数（含孙及更深），非仅直接子节点。
-- [ ] AC3：右侧打开一个 subagent 会话时，identity bar 显示其 agent_kind、所属 subject、以及可跳转的父 Run；打开主 Run 时显示其派发的 subagent 数/入口。
-- [ ] AC4：新建的 subagent 在 DB 中 `agent_role` 不再恒为 `primary`，与 lineage relation 一致；前端不再出现"恒显示 primary"。
-- [ ] AC5：侧栏列表无常驻滚动条，窗口高度变化时可见条数随之自适应，超量有"更多"入口。
-- [ ] AC6：`cargo` 编译 + 契约生成通过；前端 typecheck/lint 通过。
+- [x] AC1：一个含 1 主 Run + ≥1 subagent 的 Lifecycle，侧栏只出 1 条主 Run，并显示 subagent 数标识。（后端按 lineage root 收束 + 侧栏 `N sub` 角标）
+- [x] AC2：主区列表能折叠/展开看到该主 Run 下的 subagent；含孙节点（递归）的 Run 可逐层钻入；搜索与状态过滤仍可用。（`AgentRunTreeRow` 递归懒加载）
+- [x] AC2b：subagent_count 为整棵子树后代数（含孙及更深），非仅直接子节点。（`count_descendants` 传递闭包，单测覆盖）
+- [x] AC3：右侧打开一个 subagent 会话时，identity bar 显示其 agent_kind、所属 subject、以及可跳转的父 Run；打开主 Run 时显示其派发的 subagent 数/入口。
+- [x] AC4：新建的 subagent 在 DB 中 `agent_role` 不再恒为 `primary`，与 lineage relation 一致；前端不再出现"恒显示 primary"。（`agent_role_for_plan` + LifecyclePages 修复）
+- [x] AC5：侧栏列表无常驻滚动条，窗口高度变化时可见条数随之自适应，超量有"更多"入口。（ResizeObserver + overflow-hidden）
+- [x] AC6：`cargo` 编译 + 契约生成通过；前端 typecheck/lint 通过。（均验证；新增 + 既有单测绿）
 
 ## Notes
 

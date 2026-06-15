@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use agentdash_application::session::{
@@ -10,8 +11,8 @@ use agentdash_contracts::agent_run_mailbox::{
     MailboxStateView,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunRefDto,
-    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
+    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunLineageRef,
+    AgentRunRefDto, AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
     AgentRunWorkspaceView, ConversationExecutionStatus, LifecycleRunRefDto,
     LifecycleSubjectAssociationDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
@@ -122,7 +123,34 @@ pub async fn get_project_agent_runs(
             .list_by_run(run.id)
             .await
             .map_err(ApiError::from)?;
-        for agent in agents {
+        if agents.is_empty() {
+            continue;
+        }
+
+        // 在内存里构建该 run 的 lineage 控制树邻接：parent -> [child]。
+        // 主从真值源是 AgentLineage，不依赖 agent_role。
+        let mut children_map: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+        let mut child_ids: HashSet<Uuid> = HashSet::new();
+        for agent in &agents {
+            let lineages = state
+                .repos
+                .agent_lineage_repo
+                .list_children(agent.id)
+                .await
+                .map_err(ApiError::from)?;
+            for lineage in lineages {
+                children_map
+                    .entry(agent.id)
+                    .or_default()
+                    .push(lineage.child_agent_id);
+                child_ids.insert(lineage.child_agent_id);
+            }
+        }
+
+        // 只对主 Run（控制树 root = 未作为任何 lineage child 出现的 agent）产出 entry。
+        for agent in agents.iter().filter(|agent| !child_ids.contains(&agent.id)) {
+            let subagent_count = count_descendants(agent.id, &children_map);
+            let agent_role = agent.agent_role.clone();
             let delivery_runtime_session_id = state
                 .repos
                 .execution_anchor_repo
@@ -132,13 +160,18 @@ pub async fn get_project_agent_runs(
                 .map(|anchor| anchor.runtime_session_id);
             let context = AgentRunContext {
                 run: run.clone(),
-                agent,
+                agent: agent.clone(),
                 delivery_runtime_session_id,
             };
             let workspace = agent_run_workspace_view(
                 load_agent_run_workspace_snapshot(&state, &context).await?,
             );
-            entries.push(agent_run_workspace_list_entry(&context.run, workspace));
+            entries.push(agent_run_workspace_list_entry(
+                &context.run,
+                workspace,
+                agent_role,
+                subagent_count,
+            ));
         }
     }
     entries.sort_by(|a, b| b.shell.last_activity_at.cmp(&a.shell.last_activity_at));
@@ -162,9 +195,103 @@ pub async fn get_agent_run_workspace(
         ProjectPermission::View,
     )
     .await?;
-    Ok(Json(agent_run_workspace_view(
-        load_agent_run_workspace_snapshot(&state, &context).await?,
-    )))
+    let mut view =
+        agent_run_workspace_view(load_agent_run_workspace_snapshot(&state, &context).await?);
+    let (parent, children) =
+        resolve_agent_run_lineage(&state, &context.run, &context.agent).await?;
+    view.parent = parent;
+    view.children = children;
+    Ok(Json(view))
+}
+
+/// 解析当前 AgentRun 的 lineage 一跳父子，供右侧会话栏展示从属关系与跳转。
+///
+/// lineage 是 run-scoped 一跳关系；parent 至多一个，children 为直接子节点。
+/// 标题复用 workspace shell 的 display_title 解析，保证与列表/header 一致。
+async fn resolve_agent_run_lineage(
+    state: &AppState,
+    run: &LifecycleRun,
+    agent: &LifecycleAgent,
+) -> Result<(Option<AgentRunLineageRef>, Vec<AgentRunLineageRef>), ApiError> {
+    let parent = match state
+        .repos
+        .agent_lineage_repo
+        .find_parent(agent.id)
+        .await
+        .map_err(ApiError::from)?
+    {
+        Some(lineage) => match lineage.parent_agent_id {
+            Some(parent_agent_id) => {
+                match state
+                    .repos
+                    .lifecycle_agent_repo
+                    .get(parent_agent_id)
+                    .await
+                    .map_err(ApiError::from)?
+                {
+                    Some(parent_agent) => Some(
+                        lineage_ref_for_agent(state, run, &parent_agent, lineage.relation_kind)
+                            .await?,
+                    ),
+                    None => None,
+                }
+            }
+            None => None,
+        },
+        None => None,
+    };
+
+    let child_lineages = state
+        .repos
+        .agent_lineage_repo
+        .list_children(agent.id)
+        .await
+        .map_err(ApiError::from)?;
+    let mut children = Vec::with_capacity(child_lineages.len());
+    for lineage in child_lineages {
+        if let Some(child_agent) = state
+            .repos
+            .lifecycle_agent_repo
+            .get(lineage.child_agent_id)
+            .await
+            .map_err(ApiError::from)?
+        {
+            children
+                .push(lineage_ref_for_agent(state, run, &child_agent, lineage.relation_kind).await?);
+        }
+    }
+
+    Ok((parent, children))
+}
+
+/// 为 lineage 上的某 agent 构建一跳引用（含可读 title）。
+async fn lineage_ref_for_agent(
+    state: &AppState,
+    run: &LifecycleRun,
+    agent: &LifecycleAgent,
+    relation_kind: String,
+) -> Result<AgentRunLineageRef, ApiError> {
+    let delivery_runtime_session_id = state
+        .repos
+        .execution_anchor_repo
+        .latest_for_agent(agent.id)
+        .await
+        .map_err(ApiError::from)?
+        .map(|anchor| anchor.runtime_session_id);
+    let context = AgentRunContext {
+        run: run.clone(),
+        agent: agent.clone(),
+        delivery_runtime_session_id,
+    };
+    let snapshot = load_agent_run_workspace_snapshot(state, &context).await?;
+    Ok(AgentRunLineageRef {
+        run_id: agent.run_id.to_string(),
+        agent_id: agent.id.to_string(),
+        agent_kind: agent.agent_kind.clone(),
+        agent_role: agent.agent_role.clone(),
+        relation_kind,
+        display_title: snapshot.shell.display_title,
+    })
 }
 
 pub async fn submit_agent_run_composer_input(
@@ -696,6 +823,9 @@ fn agent_run_workspace_view(
             .collect(),
         resource_surface,
         conversation: Some(conversation),
+        // lineage 由 get_agent_run_workspace 单独填充（列表路径不需要，保持默认）。
+        parent: None,
+        children: Vec::new(),
     }
 }
 
@@ -783,6 +913,8 @@ fn frame_runtime_to_contract(
 fn agent_run_workspace_list_entry(
     run: &LifecycleRun,
     workspace: AgentRunWorkspaceView,
+    agent_role: String,
+    subagent_count: u32,
 ) -> AgentRunWorkspaceListEntry {
     let subject_association = workspace.subject_associations.first();
     AgentRunWorkspaceListEntry {
@@ -791,12 +923,46 @@ fn agent_run_workspace_list_entry(
         project_id: workspace.project_id,
         shell: workspace.shell,
         run_status: lifecycle_run_status_to_contract(run.status),
+        agent_role,
+        subagent_count,
         delivery_runtime_ref: workspace.delivery_runtime_ref,
         delivery_trace_meta: workspace.delivery_trace_meta,
         frame_ref: workspace.frame_runtime.map(|frame| frame.frame_ref),
         subject_ref: subject_association.map(|association| association.subject_ref.clone()),
         subject_label: subject_association.and_then(subject_label_from_metadata),
     }
+}
+
+/// 统计控制树某 root 子树（传递闭包）下的 subagent 总数。
+///
+/// lineage 支持任意深度递归且无环检测，因此遍历带 `visited` 防环 + 深度上限兜底，
+/// 超限截断并 warn（不静默丢弃）。root 自身不计入。
+fn count_descendants(root: Uuid, children_map: &HashMap<Uuid, Vec<Uuid>>) -> u32 {
+    const MAX_DEPTH: usize = 64;
+    let mut visited: HashSet<Uuid> = HashSet::new();
+    let mut stack: Vec<(Uuid, usize)> = vec![(root, 0)];
+    let mut count: u32 = 0;
+    while let Some((node, depth)) = stack.pop() {
+        if depth >= MAX_DEPTH {
+            tracing::warn!(
+                root = %root,
+                node = %node,
+                depth,
+                "agent lineage 子树超过最大深度，截断后代计数"
+            );
+            continue;
+        }
+        let Some(children) = children_map.get(&node) else {
+            continue;
+        };
+        for &child in children {
+            if visited.insert(child) {
+                count += 1;
+                stack.push((child, depth + 1));
+            }
+        }
+    }
+    count
 }
 
 fn subject_label_from_metadata(association: &LifecycleSubjectAssociationDto) -> Option<String> {
@@ -1007,12 +1173,44 @@ mod tests {
             subject_associations: Vec::new(),
             resource_surface: None,
             conversation: None,
+            parent: None,
+            children: Vec::new(),
         };
 
-        let entry = agent_run_workspace_list_entry(&run, workspace);
+        let entry = agent_run_workspace_list_entry(&run, workspace, "primary".to_string(), 3);
 
         assert_eq!(entry.shell.display_title, "Session meta title");
         assert_eq!(entry.shell.title_source, "source");
+        assert_eq!(entry.agent_role, "primary");
+        assert_eq!(entry.subagent_count, 3);
+    }
+
+    #[test]
+    fn count_descendants_counts_full_subtree() {
+        // root -> a -> c ; root -> b
+        let root = Uuid::new_v4();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let c = Uuid::new_v4();
+        let mut map: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+        map.insert(root, vec![a, b]);
+        map.insert(a, vec![c]);
+
+        assert_eq!(count_descendants(root, &map), 3);
+        assert_eq!(count_descendants(a, &map), 1);
+        assert_eq!(count_descendants(b, &map), 0);
+    }
+
+    #[test]
+    fn count_descendants_guards_against_cycle() {
+        // 人为构造环 a -> b -> a，遍历不应死循环或重复计数。
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let mut map: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+        map.insert(a, vec![b]);
+        map.insert(b, vec![a]);
+
+        assert_eq!(count_descendants(a, &map), 2);
     }
 
     #[test]

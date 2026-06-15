@@ -127,6 +127,24 @@ SubjectRef(kind=Task, id=task_id)
   -> SubjectExecutionView.task_projection
 ```
 
+### Project AgentRun 列表收束（主 Run vs subagent）
+
+面向用户的 AgentRun 列表（`GET /projects/:id/agent-runs`）按 **AgentLineage 控制树** 收束，每个 Run 只产出"主 Run"：
+
+```text
+project_id
+  -> lifecycle_run_repo.list_by_project
+  -> 每个 run: lifecycle_agent_repo.list_by_run + agent_lineage_repo.list_children 建内存 forest
+  -> root = 从未作为 lineage child 出现的 agent（主 Run）
+  -> subagent_count = root 子树传递闭包后代数（DFS + visited 防环 + 深度上限）
+```
+
+约定（contract）：
+
+- **主/从关系的真值源是 `AgentLineage`，不是 `LifecycleAgent.agent_role`**。所有创建路径（含被派发的子 agent）都经 `LifecycleAgent::new_root`，历史上 `agent_role` 恒为 `primary`；现按 `agent_role::{PRIMARY, SUBAGENT, COMPANION}` 在创建时写入真实值，但它**仅作冗余快捷标记**用于展示/过滤，收束与嵌套判定一律回到 lineage。
+- lineage 控制树**支持任意深度递归且无环检测**（subagent 可再派发 subagent，`parent_agent_id = 派发者 anchor.agent_id`）。任何后代遍历（后端 `count_descendants` / 前端递归展开）必须带 `visited` 防环 + 深度上限兜底，超限 `warn` 而非静默。
+- `AgentRunWorkspaceView.parent` / `.children` 提供一跳 lineage 引用（`AgentRunLineageRef`），供右侧会话栏展示从属与跳转；列表 entry 只带 `subagent_count`，不内联 children，避免 N×M 膨胀。
+
 ## DTO Contract
 
 ```rust

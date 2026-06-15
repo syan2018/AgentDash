@@ -39,6 +39,7 @@ function workspaceView(
     delivery_runtime_ref: { runtime_session_id: "session-1" },
     control_plane: { status: controlStatus },
     subject_associations: [],
+    children: [],
     conversation: {
       snapshot_id: "snapshot-1",
       identity: {

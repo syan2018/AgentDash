@@ -5,7 +5,7 @@
  * 点击跳转到 `/agent-runs/:runId/:agentId`。
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useMatch, useNavigate } from "react-router-dom";
 import { StatusDot, type StatusDotTone } from "@agentdash/ui";
 import type { SessionExecutionStatusValue } from "../../services/session";
@@ -58,7 +58,11 @@ interface AgentRunShortcutEntry {
   workspaceTitle: string;
   executionStatus: SessionExecutionStatusValue;
   updatedAt: string | number;
+  subagentCount: number;
 }
+
+/** 单行估算高度（px），用于自适应可见条数计算。需与下方 row className 的间距匹配。 */
+const ROW_HEIGHT = 40;
 
 interface LifecycleShortcutListProps {
   projectId: string | null;
@@ -85,6 +89,7 @@ function shortcutEntryFromAgentRun(entry: AgentRunWorkspaceListEntry): AgentRunS
     workspaceTitle: entry.shell.display_title.trim() || "AgentRun 加载中...",
     executionStatus: normalizeExecutionStatus(entry.shell.delivery_status),
     updatedAt: entry.shell.last_activity_at,
+    subagentCount: entry.subagent_count ?? 0,
   };
 }
 
@@ -94,6 +99,8 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
   const agentRunRouteMatch = useMatch("/agent-runs/:runId/:agentId");
   const [entries, setEntries] = useState<AgentRunWorkspaceListEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [maxVisible, setMaxVisible] = useState(8);
 
   useEffect(() => {
     if (!projectId) {
@@ -128,8 +135,29 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
       .sort((a, b) => updatedAtTimestamp(b.updatedAt) - updatedAtTimestamp(a.updatedAt));
   }, [entries, projectId]);
 
+  // 自适应高度：按容器实测高度计算可见条数，去掉常驻滚动条。
+  useLayoutEffect(() => {
+    const node = listRef.current;
+    if (!node) return;
+    const recompute = () => {
+      const height = node.clientHeight;
+      setMaxVisible(Math.max(1, Math.floor(height / ROW_HEIGHT)));
+    };
+    recompute();
+    const observer = new ResizeObserver(recompute);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   const activeRunId = agentRunRouteMatch?.params.runId ?? null;
   const activeAgentId = agentRunRouteMatch?.params.agentId ?? null;
+
+  // 若超出可见容量，保留最后一行给"更多"入口。
+  const overflowing = agentRunEntries.length > maxVisible;
+  const visibleEntries = overflowing
+    ? agentRunEntries.slice(0, Math.max(1, maxVisible - 1))
+    : agentRunEntries;
+  const hiddenCount = agentRunEntries.length - visibleEntries.length;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col border-b border-border">
@@ -152,8 +180,8 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
           {error && <p className="mt-1 line-clamp-2 text-[11px] text-destructive">{error}</p>}
         </div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
-          {agentRunEntries.map((entry) => {
+        <div ref={listRef} className="min-h-0 flex-1 overflow-hidden px-3 pb-2">
+          {visibleEntries.map((entry) => {
             const isActive = activeRunId === entry.runId && activeAgentId === entry.agentId;
             const path = `/agent-runs/${encodeURIComponent(entry.runId)}/${encodeURIComponent(entry.agentId)}`;
             return (
@@ -180,6 +208,14 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
                     {entry.workspaceTitle}
                   </span>
+                  {entry.subagentCount > 0 && (
+                    <span
+                      className="shrink-0 rounded-[6px] bg-secondary px-1.5 text-[10px] tabular-nums text-muted-foreground"
+                      title={`${entry.subagentCount} 个 subagent`}
+                    >
+                      {entry.subagentCount} sub
+                    </span>
+                  )}
                   <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
                     {formatUpdatedAt(entry.updatedAt)}
                   </span>
@@ -187,6 +223,15 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
               </button>
             );
           })}
+          {overflowing && (
+            <button
+              type="button"
+              onClick={() => navigate("/dashboard/agent")}
+              className="flex w-full items-center justify-center rounded-[8px] px-2.5 py-2 text-left text-[11px] text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
+            >
+              +{hiddenCount} 更多 · 查看全部
+            </button>
+          )}
         </div>
       )}
     </div>

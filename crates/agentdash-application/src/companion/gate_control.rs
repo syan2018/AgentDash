@@ -12,7 +12,7 @@ use super::{
     PayloadTypeRegistry, build_companion_event_notification,
     build_companion_human_response_notification, payload_types,
 };
-use crate::workflow::resolve_current_frame_for_runtime_session;
+use crate::workflow::resolve_current_frame_from_delivery_trace_ref;
 use crate::{ApplicationError, session::SessionEventingService};
 
 const COMPANION_PARENT_REQUEST_GATE_KIND: &str = "companion_parent_request";
@@ -314,7 +314,7 @@ impl CompanionGateControlService {
             return Err(ApplicationError::BadRequest(error));
         }
 
-        let child_frame = match resolve_current_frame_for_runtime_session(
+        let child_frame = match resolve_current_frame_from_delivery_trace_ref(
             &command.child_runtime_session_id,
             self.anchor_repo.as_ref(),
             self.agent_repo.as_ref(),
@@ -438,7 +438,7 @@ impl CompanionGateControlService {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| ApplicationError::BadRequest("payload.message 不能为空".to_string()))?;
 
-        let (_anchor, _agent, child_frame) = resolve_current_frame_for_runtime_session(
+        let (_anchor, _agent, child_frame) = resolve_current_frame_from_delivery_trace_ref(
             &command.child_runtime_session_id,
             self.anchor_repo.as_ref(),
             self.agent_repo.as_ref(),
@@ -577,7 +577,7 @@ impl CompanionGateControlService {
             return Ok(None);
         }
 
-        let (_anchor, _agent, parent_frame) = resolve_current_frame_for_runtime_session(
+        let (_anchor, _agent, parent_frame) = resolve_current_frame_from_delivery_trace_ref(
             &command.parent_runtime_session_id,
             self.anchor_repo.as_ref(),
             self.agent_repo.as_ref(),

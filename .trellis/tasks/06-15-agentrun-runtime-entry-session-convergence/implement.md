@@ -31,7 +31,7 @@ Research summary:
 - [x] Migrate mailbox command target from session-first to AgentRun-first.
 - [x] Migrate hook control target from session-first to AgentRun-first.
 - [x] Migrate task effect/runtime action targets where they currently resolve business context from session.
-- [ ] Rename remaining session-first functions to make message stream intent explicit.
+- [x] Rename remaining session-first functions to make message stream intent explicit.
 
 Mailbox slice notes:
 
@@ -52,6 +52,11 @@ Hook target slice notes:
 - `AgentFrameHookRuntimeTarget` carries `HookControlTarget` plus delivery runtime binding.
 - `SessionHookService` resolves legacy frame/session adapters into hook target-first runtime construction and cache validation.
 - `AgentFrameRuntimeTarget` remains available for capability/runtime transition adapters where only frame + delivery binding is known.
+
+Message stream trace naming notes:
+
+- Workflow/session association helpers now name delivery trace/message stream lookup explicitly (`from_message_stream_trace` / `from_delivery_trace_ref`), while repository traits and RuntimeSession trace URLs keep their existing contracts.
+- The rename is mechanical inside application-layer adapters so callers can distinguish trace evidence lookup from AgentRun business ownership.
 
 ## Phase 4: Specs And Tests
 

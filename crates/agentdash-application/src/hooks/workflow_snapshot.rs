@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::workflow::execution_log as workflow_recording;
 use crate::workflow::{
-    ActiveWorkflowProjection, resolve_active_workflow_projection_for_session,
-    resolve_active_workflow_projection_for_target,
+    ActiveWorkflowProjection, resolve_active_workflow_projection_for_target,
+    resolve_active_workflow_projection_from_message_stream_trace,
 };
 
 fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
@@ -58,7 +58,7 @@ impl WorkflowSnapshotBuilder {
         &self,
         session_id: &str,
     ) -> Result<Option<ActiveWorkflowProjection>, HookError> {
-        resolve_active_workflow_projection_for_session(
+        resolve_active_workflow_projection_from_message_stream_trace(
             session_id,
             self.agent_procedure_repo.as_ref(),
             self.agent_frame_repo.as_ref(),

@@ -197,8 +197,11 @@ async fn resolve_agent_run_lineage(
     let parent = match lineages
         .iter()
         .find(|lineage| lineage.child_agent_id == agent.id)
-        .and_then(|lineage| lineage.parent_agent_id.map(|id| (id, lineage.relation_kind.clone())))
-    {
+        .and_then(|lineage| {
+            lineage
+                .parent_agent_id
+                .map(|id| (id, lineage.relation_kind.clone()))
+        }) {
         Some((parent_agent_id, relation_kind)) => {
             match state
                 .repos
@@ -263,8 +266,7 @@ async fn lineage_ref_for_agent(
     relation_kind: String,
     subagent_count: u32,
 ) -> Result<AgentRunLineageRef, ApiError> {
-    let projection =
-        load_agent_run_list_projection(state, run.clone(), agent.clone()).await?;
+    let projection = load_agent_run_list_projection(state, run.clone(), agent.clone()).await?;
     Ok(AgentRunLineageRef {
         run_id: agent.run_id.to_string(),
         agent_id: agent.id.to_string(),
@@ -779,9 +781,7 @@ async fn load_agent_run_list_projection(
 
 /// 从 run 的全部 lineage 边构建控制树邻接（parent -> [child]）与 child id 集合。
 /// root = 未作为任何 lineage child 出现的 agent。
-fn build_lineage_forest(
-    lineages: &[AgentLineage],
-) -> (HashMap<Uuid, Vec<Uuid>>, HashSet<Uuid>) {
+fn build_lineage_forest(lineages: &[AgentLineage]) -> (HashMap<Uuid, Vec<Uuid>>, HashSet<Uuid>) {
     let mut children_map: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
     let mut child_ids: HashSet<Uuid> = HashSet::new();
     for lineage in lineages {

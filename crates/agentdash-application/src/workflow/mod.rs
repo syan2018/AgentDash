@@ -112,8 +112,8 @@ pub use project_agent_run_start::{
 #[cfg(test)]
 pub(crate) use projection::activity_projection;
 pub use projection::{
-    ActiveWorkflowProjection, resolve_active_workflow_projection_for_session,
-    resolve_active_workflow_projection_for_target,
+    ActiveWorkflowProjection, resolve_active_workflow_projection_for_target,
+    resolve_active_workflow_projection_from_message_stream_trace,
 };
 pub use run::select_active_run;
 pub use runtime_launch::{FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface};
@@ -131,7 +131,8 @@ pub use script::{
 pub use session_association::{
     LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,
     build_lifecycle_node_label, lifecycle_activity_parts_from_label,
-    resolve_activity_session_association, resolve_current_frame_for_runtime_session,
+    resolve_activity_runtime_association_from_message_stream_trace,
+    resolve_current_frame_from_delivery_trace_ref,
 };
 pub use session_run_context_resolver::{SubjectRunContextResolver, build_subject_run_context};
 pub use subject_context_assignment::{

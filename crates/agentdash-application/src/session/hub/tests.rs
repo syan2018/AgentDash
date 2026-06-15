@@ -3893,7 +3893,7 @@ async fn launch_hook_runtime_accepts_pending_agent_frame_target() {
     use crate::workflow::runtime_launch::FrameLaunchEnvelope;
     use crate::workflow::{
         AgentFrameBuilder, frame_construction::build_envelope_from_frame,
-        resolve_current_frame_for_runtime_session,
+        resolve_current_frame_from_delivery_trace_ref,
     };
 
     struct PendingFrameConstructionProvider {
@@ -3915,7 +3915,7 @@ async fn launch_hook_runtime_accepts_pending_agent_frame_target() {
                     "test hub missing frame construction repositories".to_string(),
                 ));
             };
-            let (_anchor, _agent, current_frame) = resolve_current_frame_for_runtime_session(
+            let (_anchor, _agent, current_frame) = resolve_current_frame_from_delivery_trace_ref(
                 &input.session_id,
                 anchor_repo.as_ref(),
                 agent_repo.as_ref(),

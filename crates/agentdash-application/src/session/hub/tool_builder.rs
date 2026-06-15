@@ -17,7 +17,7 @@ use crate::session::tool_assembly::assemble_tools_for_execution_context;
 use crate::session::types::{AgentFrameRuntimeTarget, CapabilityState};
 use crate::workflow::AgentFrameBuilder;
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
-use crate::workflow::resolve_current_frame_for_runtime_session;
+use crate::workflow::resolve_current_frame_from_delivery_trace_ref;
 
 impl SessionRuntimeInner {
     /// 读取 delivery RuntimeSession 当前生效的 MCP server 列表。
@@ -44,7 +44,7 @@ impl SessionRuntimeInner {
         ) else {
             return Vec::new();
         };
-        resolve_current_frame_for_runtime_session(
+        resolve_current_frame_from_delivery_trace_ref(
             session_id,
             anchor_repo.as_ref(),
             agent_repo.as_ref(),
@@ -101,7 +101,7 @@ impl SessionRuntimeInner {
         ) else {
             return None;
         };
-        resolve_current_frame_for_runtime_session(
+        resolve_current_frame_from_delivery_trace_ref(
             session_id,
             anchor_repo.as_ref(),
             agent_repo.as_ref(),
@@ -136,7 +136,7 @@ impl SessionRuntimeInner {
                 "session `{session_id}` 无 LifecycleAgent repository，无法解析 runtime surface target"
             ))
         })?;
-        let (_anchor, _agent, frame) = resolve_current_frame_for_runtime_session(
+        let (_anchor, _agent, frame) = resolve_current_frame_from_delivery_trace_ref(
             session_id,
             anchor_repo.as_ref(),
             agent_repo.as_ref(),
@@ -353,7 +353,7 @@ impl SessionRuntimeInner {
                     "session `{session_id}` 缺少 AgentFrame surface repository，无法发现 MCP 工具"
                 )));
             };
-            let (_anchor, _agent, frame) = resolve_current_frame_for_runtime_session(
+            let (_anchor, _agent, frame) = resolve_current_frame_from_delivery_trace_ref(
                 session_id,
                 anchor_repo.as_ref(),
                 agent_repo.as_ref(),

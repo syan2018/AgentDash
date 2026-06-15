@@ -22,7 +22,7 @@ use uuid::Uuid;
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 
-use super::session_association::resolve_activity_session_association;
+use super::session_association::resolve_activity_runtime_association_from_message_stream_trace;
 use crate::session::SessionTerminalCallback;
 use crate::workflow::execution_log::{RuntimeNodeArtifactScope, load_scoped_port_output_map};
 use crate::workflow::orchestration::{
@@ -124,7 +124,7 @@ impl LifecycleOrchestrator {
         session_id: &str,
         terminal_state: &str,
     ) -> Result<Option<OrchestrationResult>, String> {
-        let Some(association) = resolve_activity_session_association(
+        let Some(association) = resolve_activity_runtime_association_from_message_stream_trace(
             session_id,
             self.repos.agent_frame_repo.as_ref(),
             self.repos.lifecycle_agent_repo.as_ref(),
@@ -202,7 +202,7 @@ impl LifecycleOrchestrator {
         &self,
         input: AdvanceCurrentActivityInput,
     ) -> Result<AdvanceCurrentNodeResult, String> {
-        let Some(association) = resolve_activity_session_association(
+        let Some(association) = resolve_activity_runtime_association_from_message_stream_trace(
             &input.runtime_session_id,
             self.repos.agent_frame_repo.as_ref(),
             self.repos.lifecycle_agent_repo.as_ref(),

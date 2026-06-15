@@ -37,7 +37,7 @@ use crate::session::{
 };
 use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::workflow::dispatch_service::LifecycleDispatchService;
-use crate::workflow::resolve_current_frame_for_runtime_session;
+use crate::workflow::resolve_current_frame_from_delivery_trace_ref;
 
 pub use agentdash_spi::CompanionSliceMode;
 
@@ -1138,7 +1138,7 @@ impl CompanionRespondTool {
         &self,
         current_session_id: &str,
     ) -> Result<Option<String>, AgentToolError> {
-        let child_frame = match resolve_current_frame_for_runtime_session(
+        let child_frame = match resolve_current_frame_from_delivery_trace_ref(
             current_session_id,
             self.repos.execution_anchor_repo.as_ref(),
             self.repos.lifecycle_agent_repo.as_ref(),

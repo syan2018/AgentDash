@@ -20,8 +20,10 @@ use crate::workflow::lifecycle_run_view_builder::{
 };
 use crate::workflow::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
-    ConversationModelConfigInput, ConversationModelConfigResolver, WorkflowApplicationError,
-    build_agent_run_lifecycle_vfs_with_skills,
+    AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode, AgentRunLifecycleSurfaceProjector,
+    AgentRunRuntimeAddress, BuiltinLifecycleSkillPolicy, ConversationModelConfigInput,
+    ConversationModelConfigResolver, MessageStreamProjectionRef, MessageStreamTraceKind,
+    WorkflowApplicationError,
 };
 
 use super::projection::{AgentRunWorkspaceProjection, is_terminal_agent_status};
@@ -341,12 +343,29 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             return Ok(None);
         };
         let vfs = match anchor.as_ref() {
-            Some(anchor) => build_agent_run_lifecycle_vfs_with_skills(
-                frame.typed_vfs(),
-                anchor,
-                run.project_id,
-                &[],
-            ),
+            Some(anchor) => {
+                AgentRunLifecycleSurfaceProjector::new(self.repos)
+                    .project(AgentRunLifecycleSurfaceInput {
+                        base_vfs: frame.typed_vfs(),
+                        address: AgentRunRuntimeAddress {
+                            run_id: anchor.run_id,
+                            agent_id: anchor.agent_id,
+                            frame_id: anchor.launch_frame_id,
+                        },
+                        message_stream: Some(MessageStreamProjectionRef {
+                            runtime_session_id: anchor.runtime_session_id.clone(),
+                            trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
+                        }),
+                        project_id: run.project_id,
+                        mode: AgentRunLifecycleSurfaceMode::WorkspaceReadSurface,
+                        explicit_skill_asset_keys: Vec::new(),
+                        builtin_skills: BuiltinLifecycleSkillPolicy::PreserveProjected,
+                        node_projection: None,
+                    })
+                    .await
+                    .map_err(WorkflowApplicationError::Internal)?
+                    .vfs
+            }
             None => frame.typed_vfs().unwrap_or_else(empty_vfs),
         };
 

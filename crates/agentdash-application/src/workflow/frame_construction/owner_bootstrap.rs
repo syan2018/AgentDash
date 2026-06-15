@@ -42,8 +42,10 @@ use crate::story::context_builder::{StoryContextBuildInput, contribute_story_con
 use crate::vfs::{SessionMountTarget, VfsService, apply_agent_vfs_access_grants};
 use crate::workflow::frame_builder::AgentFrameBuilder;
 use crate::workflow::{
-    ActiveWorkflowProjection, build_agent_run_lifecycle_vfs_with_skills,
-    project_active_workflow_lifecycle_vfs,
+    ActiveWorkflowProjection, AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode,
+    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, BuiltinLifecycleSkill,
+    BuiltinLifecycleSkillPolicy, MessageStreamProjectionRef, MessageStreamTraceKind,
+    OrchestrationNodeProjectionInput, project_active_workflow_lifecycle_vfs,
 };
 use crate::workspace::BackendAvailability;
 use crate::workspace_module::skill_projection::project_workspace_module_system_skill_to_vfs;
@@ -375,24 +377,60 @@ impl<'a> OwnerBootstrapComposer<'a> {
             append_companion_system_skill_key(&mut skill_asset_keys);
         }
 
-        let mut vfs = project_active_workflow_lifecycle_vfs(vfs, active_workflow);
-        if active_workflow.is_none()
-            && matches!(spec.owner, OwnerScope::Project { .. })
-            && let Some(session_id) = spec.audit_session_key.as_deref()
-            && let Some(anchor) = self
-                .repos
-                .execution_anchor_repo
-                .find_by_session(session_id)
-                .await
-                .map_err(|error| error.to_string())?
-        {
-            vfs = Some(build_agent_run_lifecycle_vfs_with_skills(
-                vfs,
-                &anchor,
-                project_id,
-                &skill_asset_keys,
-            ));
-        }
+        let mut vfs = if matches!(spec.owner, OwnerScope::Project { .. }) {
+            let anchor = match spec.audit_session_key.as_deref() {
+                Some(session_id) => self
+                    .repos
+                    .execution_anchor_repo
+                    .find_by_session(session_id)
+                    .await
+                    .map_err(|error| error.to_string())?,
+                None => None,
+            };
+            match anchor {
+                Some(anchor) => {
+                    let node_projection =
+                        active_workflow.map(|workflow| OrchestrationNodeProjectionInput {
+                            run_id: workflow.run.id,
+                            orchestration_id: workflow.orchestration_id,
+                            node_path: workflow.node_path.clone(),
+                            lifecycle_key: workflow.lifecycle_key.clone(),
+                            attempt: workflow.active_attempt.attempt,
+                            writable_port_keys:
+                                crate::workflow::writable_port_keys_for_active_workflow(workflow),
+                        });
+                    let surface = AgentRunLifecycleSurfaceProjector::new(self.repos)
+                        .project(AgentRunLifecycleSurfaceInput {
+                            base_vfs: vfs,
+                            address: AgentRunRuntimeAddress {
+                                run_id: anchor.run_id,
+                                agent_id: anchor.agent_id,
+                                frame_id: anchor.launch_frame_id,
+                            },
+                            message_stream: Some(MessageStreamProjectionRef {
+                                runtime_session_id: anchor.runtime_session_id,
+                                trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
+                            }),
+                            project_id,
+                            mode: if node_projection.is_some() {
+                                AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface
+                            } else {
+                                AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface
+                            },
+                            explicit_skill_asset_keys: skill_asset_keys.clone(),
+                            builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
+                                BuiltinLifecycleSkill::CompanionSystem,
+                            ]),
+                            node_projection,
+                        })
+                        .await?;
+                    Some(surface.vfs)
+                }
+                None => project_active_workflow_lifecycle_vfs(vfs, active_workflow),
+            }
+        } else {
+            project_active_workflow_lifecycle_vfs(vfs, active_workflow)
+        };
         if let Some(space) = vfs.as_mut() {
             append_visible_canvas_mounts(
                 self.canvas_repo,
@@ -402,11 +440,13 @@ impl<'a> OwnerBootstrapComposer<'a> {
             )
             .await
             .map_err(|e| e.to_string())?;
-            if !crate::vfs::append_lifecycle_skill_asset_projection(
-                space,
-                project_id,
-                &skill_asset_keys,
-            ) {
+            if !skill_asset_keys.is_empty()
+                && !crate::vfs::append_lifecycle_skill_asset_projection(
+                    space,
+                    project_id,
+                    &skill_asset_keys,
+                )
+            {
                 return Err(
                     "session VFS 缺少 lifecycle mount，无法投影 SkillAsset baseline".to_string(),
                 );

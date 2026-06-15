@@ -79,6 +79,13 @@ pub use lifecycle::mount::{
     lifecycle_mount_surface_for_active_workflow, project_active_workflow_lifecycle_vfs,
     writable_port_keys_for_active_workflow,
 };
+pub use lifecycle::surface_projector::{
+    AgentRunLifecycleProjectionSet, AgentRunLifecycleSurface, AgentRunLifecycleSurfaceInput,
+    AgentRunLifecycleSurfaceMode, AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress,
+    BuiltinLifecycleSkill, BuiltinLifecycleSkillPolicy, MessageStreamProjectionFacts,
+    MessageStreamProjectionRef, MessageStreamTraceKind, OrchestrationNodeProjectionFacts,
+    OrchestrationNodeProjectionInput,
+};
 pub use lifecycle_gate_service::LifecycleGateService;
 pub use orchestration::{
     OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher, SubmitHumanGateDecisionInput,

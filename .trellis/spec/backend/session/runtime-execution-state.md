@@ -22,6 +22,11 @@
 重建绑定；裸 delivery session lookup 只属于 hub adapter / trace 场景，不能决定 hook policy、
 capability、context、VFS 或 MCP 的生效 owner。
 
+AgentRun lifecycle surface 同样从 AgentRun runtime address 构造：`run_id + agent_id +
+frame_id` 是业务索引，`RuntimeSession` 只以 `MessageStreamProjectionRef` 形式进入 projector。
+这样 workspace resource surface、connector VFS 和 skill baseline 都从 AgentFrame / AgentRun
+控制面事实闭包得到，delivery trace 仍能通过 message stream ref 下钻到 runtime events。
+
 三个查询语义保持分离：
 
 - `has_live_executor_session(session_id)`：connector 层是否持有 live executor session。
@@ -139,7 +144,9 @@ title、title source、workspace/list status、last activity 和 last visible Ag
 `AgentConversationSnapshot.execution`、`commands`、`model_config`、`mailbox` 和
 `resource_surface` 承载工作台可执行状态、模型解析、待消费消息、用户注意力与可浏览资源。
 `resource_surface` 来自当前 AgentFrame typed VFS 与 `RuntimeSessionExecutionAnchor` 锚定的
-AgentRun lifecycle projection；该 projection 需要保留 lifecycle mount 上的 SkillAsset metadata，
+AgentRun lifecycle projection；该 projection 由 `AgentRunLifecycleSurfaceProjector` 按
+AgentRun runtime address、optional message stream ref 和 optional orchestration node projection
+闭包生成。projection 需要保留 lifecycle mount 上的 SkillAsset metadata，
 原因是 builtin skill 文档、执行器 skill baseline 和前端 resource browser 应由同一 runtime surface
 发现，而不是由前端或查询层单独推导。
 

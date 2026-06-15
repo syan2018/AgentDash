@@ -1,0 +1,12 @@
+{"file": ".trellis/tasks/06-15-agentrun-runtime-entry-session-convergence/prd.md", "reason": "session 残留收束目标、范围与验收"}
+{"file": ".trellis/tasks/06-15-agentrun-runtime-entry-session-convergence/design.md", "reason": "AgentRun-first runtime entry 目标模型"}
+{"file": ".trellis/tasks/06-15-agentrun-runtime-entry-session-convergence/implement.md", "reason": "审计、迁移阶段与验证命令"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "RuntimeSession 语义边界"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "AgentRun workspace resource surface 与 runtime execution state"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "AgentRun runtime refs、orchestration node ownership 与 workflow runtime"}
+{"file": ".trellis/spec/backend/workflow/lifecycle-run-link.md", "reason": "RuntimeSession 与 LifecycleRun/subject link 现状"}
+{"file": "crates/agentdash-domain/src/workflow/runtime_session_anchor.rs", "reason": "RuntimeSessionExecutionAnchor 当前模型"}
+{"file": "crates/agentdash-domain/src/workflow/repository.rs", "reason": "RuntimeSessionExecutionAnchorRepository 查询入口"}
+{"file": "crates/agentdash-application/src/session", "reason": "session launch / hub / mailbox / hook runtime 入口"}
+{"file": "crates/agentdash-application/src/workflow", "reason": "workflow projection / orchestration launch / frame construction 入口"}
+{"file": "crates/agentdash-application/src/task", "reason": "task runtime context / effect executor session 反查"}

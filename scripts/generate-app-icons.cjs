@@ -13,7 +13,10 @@ const icoTargets = [
   path.join(root, "packages", "app-web", "public", "favicon.ico"),
   path.join(root, "packages", "app-tauri", "public", "favicon.ico"),
 ];
-const icoSizes = [16, 24, 32, 48, 64, 128, 256];
+const icoSizes = [256, 128, 96, 64, 48, 40, 32, 24, 20, 16];
+const desktopIconBackgroundColor = "#000";
+const desktopIconStrokeColor = "#fff";
+const desktopIconScale = 1.12;
 const crcTable = createCrcTable();
 
 const svg = fs.readFileSync(sourceSvgPath, "utf8");
@@ -32,7 +35,13 @@ for (const target of svgTargets) {
   fs.copyFileSync(sourceSvgPath, target);
 }
 
-const ico = createIco(icoSizes.map((size) => renderPng(size)));
+const ico = createIco(icoSizes.map((size) => renderPng(size, {
+  backgroundColor: desktopIconBackgroundColor,
+  featherPx: 0.32,
+  iconScale: desktopIconScale,
+  minStrokeWidthPx: desktopIconStrokeWidth(size),
+  strokeColor: desktopIconStrokeColor,
+})));
 for (const target of icoTargets) {
   ensureDir(target);
   fs.writeFileSync(target, ico);
@@ -150,16 +159,24 @@ function readNumber(tokens, index) {
   return value;
 }
 
-function renderPng(size) {
+function renderPng(size, options = {}) {
   const rgba = Buffer.alloc(size * size * 4);
-  const scale = size / Math.max(viewBox.width, viewBox.height);
-  const halfStroke = Math.max(0.42, (strokeWidth * scale) / 2);
-  const feather = Math.max(0.28, Math.min(0.85, scale * 14));
-  const bg = backgroundColor ? parseHexColor(backgroundColor) : null;
-  const fg = parseHexColor(strokeColor);
+  const baseScale = size / Math.max(viewBox.width, viewBox.height);
+  const scale = baseScale * (options.iconScale ?? 1);
+  const centerX = size / 2;
+  const centerY = size / 2;
+  const viewBoxCenterX = viewBox.x + viewBox.width / 2;
+  const viewBoxCenterY = viewBox.y + viewBox.height / 2;
+  const minHalfStroke = options.minStrokeWidthPx ? options.minStrokeWidthPx / 2 : 0.42;
+  const halfStroke = Math.max(minHalfStroke, (strokeWidth * scale) / 2);
+  const feather = options.featherPx ?? Math.max(0.28, Math.min(0.85, baseScale * 14));
+  const bgColor = options.backgroundColor ?? backgroundColor;
+  const fgColor = options.strokeColor ?? strokeColor;
+  const bg = bgColor ? parseHexColor(bgColor) : null;
+  const fg = parseHexColor(fgColor);
   const scaledSegments = segments.map(([a, b]) => [
-    [(a[0] - viewBox.x) * scale, (a[1] - viewBox.y) * scale],
-    [(b[0] - viewBox.x) * scale, (b[1] - viewBox.y) * scale],
+    [centerX + (a[0] - viewBoxCenterX) * scale, centerY + (a[1] - viewBoxCenterY) * scale],
+    [centerX + (b[0] - viewBoxCenterX) * scale, centerY + (b[1] - viewBoxCenterY) * scale],
   ]);
 
   for (let y = 0; y < size; y++) {
@@ -180,6 +197,10 @@ function renderPng(size) {
   }
 
   return { size, png: encodePng(size, size, rgba) };
+}
+
+function desktopIconStrokeWidth(size) {
+  return Math.min(3, 1.1 + size / 53);
 }
 
 function parseHexColor(value) {

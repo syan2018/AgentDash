@@ -21,6 +21,9 @@ pub(super) struct VerifiedTaskArtifactContext<'a> {
     run_id: Uuid,
     agent_id: Uuid,
     frame_id: Uuid,
+    orchestration_id: Uuid,
+    node_path: String,
+    node_attempt: u32,
     backend_id: &'a str,
 }
 
@@ -32,6 +35,9 @@ impl<'a> VerifiedTaskArtifactContext<'a> {
         run_id: Uuid,
         agent_id: Uuid,
         frame_id: Uuid,
+        orchestration_id: Uuid,
+        node_path: &str,
+        node_attempt: u32,
         backend_id: &'a str,
     ) -> Self {
         Self {
@@ -41,6 +47,9 @@ impl<'a> VerifiedTaskArtifactContext<'a> {
             run_id,
             agent_id,
             frame_id,
+            orchestration_id,
+            node_path: node_path.to_string(),
+            node_attempt,
             backend_id,
         }
     }
@@ -55,6 +64,18 @@ impl<'a> VerifiedTaskArtifactContext<'a> {
 
     pub(super) fn frame_id(&self) -> Uuid {
         self.frame_id
+    }
+
+    pub(super) fn orchestration_id(&self) -> Uuid {
+        self.orchestration_id
+    }
+
+    pub(super) fn node_path(&self) -> &str {
+        &self.node_path
+    }
+
+    pub(super) fn node_attempt(&self) -> u32 {
+        self.node_attempt
     }
 
     pub(super) fn session_id(&self) -> &str {
@@ -117,6 +138,9 @@ pub(super) async fn persist_tool_call_artifact(
             "run_id": input.context.run_id,
             "agent_id": input.context.agent_id,
             "frame_id": input.context.frame_id,
+            "orchestration_id": input.context.orchestration_id,
+            "node_path": input.context.node_path,
+            "node_attempt": input.context.node_attempt,
             "session_id": input.context.session_id,
             "turn_id": input.context.turn_id,
             "tool_call_id": input.tool_call_id,

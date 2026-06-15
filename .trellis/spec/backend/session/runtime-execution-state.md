@@ -136,6 +136,11 @@ command scope 记录，并以 run / agent / frame / runtime session / turn refs 
 trace head；分层后，trace 恢复、事件流展示、workspace action enablement 和 command retry
 可以各自消费对应 projection。
 
+AgentRun mailbox command target 使用 `AgentRunMailboxCommandTarget` 表达：`AgentRunRuntimeAddress`
+承载 run / agent / frame 业务目标，`MessageStreamProjectionRef` 承载可选 delivery trace。runtime
+delegate adapter 解析 delivery anchor 后进入同一条 target-first scheduler，原因是命令幂等、
+mailbox ownership 与 workspace projection 都绑定 AgentRun control-plane identity。
+
 ## AgentRun Workspace Mailbox Control Actions
 
 用户可见执行工作台的 shell、conversation state、mailbox projection 与 resource surface 由
@@ -367,6 +372,10 @@ cancel requested -> runtime cancelling -> connector idle confirmed -> terminal f
 
 `turn_terminal` event 先持久化，`SessionMeta.last_delivery_status` 由事件投影更新。
 终态后的业务副作用写入 terminal effect outbox，再由 dispatcher 执行。
+
+Task hook terminal effect 从 runtime trace callback 进入后构造 task runtime coordinate，并在持久化
+artifact 或 status context 时记录 `orchestration_id + node_path + attempt`。这样任务投影、artifact
+审计和 lifecycle node runtime facts 能共享同一定位方式。
 
 Outbox effect 类型：
 

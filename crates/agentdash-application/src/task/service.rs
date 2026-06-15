@@ -1,14 +1,14 @@
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    LifecycleAgent, LifecycleRun, LifecycleSubjectAssociation, RuntimeNodeState, RuntimeNodeStatus,
-    RuntimeSessionExecutionAnchor, SubjectRef,
+    LifecycleAgent, LifecycleSubjectAssociation, RuntimeNodeStatus, SubjectRef,
 };
 
 use crate::repository_set::RepositorySet;
 
 use super::execution::*;
 use super::gateway::get_task as gw_get_task;
+use super::runtime_coordinate::{runtime_node_status_code, task_runtime_projection_from_anchor};
 
 /// Story activity activation service — 保留 Task execution 的只读 lifecycle 投影。
 pub struct StoryActivityActivationService {
@@ -89,9 +89,17 @@ impl StoryActivityActivationService {
                 if anchor.run_id != run.id || anchor.launch_frame_id != frame_id {
                     continue;
                 }
-                let Some(refs) = task_execution_refs_from_anchor(&run, &agent, frame_id, &anchor)
+                let Some(projection) =
+                    task_runtime_projection_from_anchor(&run, &agent, frame_id, &anchor)
                 else {
                     continue;
+                };
+                let refs = TaskExecutionRefs {
+                    run_id: projection.coordinate.run_id,
+                    agent_id: projection.coordinate.agent_id,
+                    frame_id: projection.coordinate.frame_id,
+                    node_status: projection.node_status,
+                    observed_at: projection.observed_at,
                 };
                 if latest
                     .as_ref()
@@ -140,62 +148,4 @@ struct TaskExecutionRefs {
     frame_id: Uuid,
     node_status: RuntimeNodeStatus,
     observed_at: chrono::DateTime<chrono::Utc>,
-}
-
-fn task_execution_refs_from_anchor(
-    run: &LifecycleRun,
-    agent: &LifecycleAgent,
-    frame_id: Uuid,
-    anchor: &RuntimeSessionExecutionAnchor,
-) -> Option<TaskExecutionRefs> {
-    let orchestration_id = anchor.orchestration_id?;
-    let node_path = anchor.node_path.as_deref()?;
-    let node_attempt = anchor.node_attempt.unwrap_or(1);
-    let orchestration = run
-        .orchestrations
-        .iter()
-        .find(|item| item.orchestration_id == orchestration_id)?;
-    let node = find_runtime_node(&orchestration.node_tree, node_path, node_attempt)?;
-    let observed_at = node
-        .completed_at
-        .or(node.started_at)
-        .unwrap_or(anchor.updated_at);
-
-    Some(TaskExecutionRefs {
-        run_id: run.id,
-        agent_id: agent.id,
-        frame_id,
-        node_status: node.status,
-        observed_at,
-    })
-}
-
-fn find_runtime_node<'a>(
-    nodes: &'a [RuntimeNodeState],
-    node_path: &str,
-    attempt: u32,
-) -> Option<&'a RuntimeNodeState> {
-    for node in nodes {
-        if node.node_path == node_path && node.attempt == attempt {
-            return Some(node);
-        }
-        if let Some(found) = find_runtime_node(&node.children, node_path, attempt) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn runtime_node_status_code(status: RuntimeNodeStatus) -> &'static str {
-    match status {
-        RuntimeNodeStatus::Pending => "pending",
-        RuntimeNodeStatus::Ready => "ready",
-        RuntimeNodeStatus::Claiming => "claiming",
-        RuntimeNodeStatus::Running => "running",
-        RuntimeNodeStatus::Blocked => "blocked",
-        RuntimeNodeStatus::Completed => "completed",
-        RuntimeNodeStatus::Failed => "failed",
-        RuntimeNodeStatus::Cancelled => "cancelled",
-        RuntimeNodeStatus::Skipped => "skipped",
-    }
 }

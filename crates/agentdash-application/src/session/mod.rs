@@ -61,9 +61,10 @@ pub mod types;
 pub use crate::workflow::WorkflowApplicationError;
 pub use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 pub use agent_run_mailbox::{
-    AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxControlCommand,
+    AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxCommandTarget,
+    AgentRunMailboxControlCommand, AgentRunMailboxControlTargetCommand,
     AgentRunMailboxScheduleOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
-    AgentRunMailboxUserMessageCommand,
+    AgentRunMailboxUserMessageCommand, AgentRunMailboxUserMessageTargetCommand,
 };
 pub use assembler::{
     CompanionParentSpec, CompanionParentWorkflowSpec, CompanionSpec, CompanionWorkflowSpec,

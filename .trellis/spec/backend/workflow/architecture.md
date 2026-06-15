@@ -102,6 +102,9 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
   orchestration node projection 和 typed builtin skill policy；原因是 owner bootstrap、companion、
   workflow node 和 workspace query 需要共享同一个 `lifecycle` aggregate mount 与 SkillAsset
   projection 事实源。
+- Task runtime projection 使用显式 `run_id + agent_id + frame_id + orchestration_id + node_path + attempt`
+  coordinate，原因是 task view、terminal effect artifact/status 和 journey node lookup 都需要消费同一
+  runtime node identity，同时保留 RuntimeSession trace 下钻能力。
 
 ## Scenario: Lifecycle Orchestration Contract
 

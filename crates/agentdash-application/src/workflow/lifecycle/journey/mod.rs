@@ -569,6 +569,43 @@ pub fn current_step(nodes: &[RuntimeNodeState]) -> JourneyResult<RuntimeNodeStat
         })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct JourneyNodeCoordinate {
+    pub orchestration_id: Uuid,
+    pub node_path: String,
+    pub attempt: u32,
+}
+
+pub fn attempt_coordinate(
+    orchestration_id: Uuid,
+    attempt: &RuntimeNodeState,
+) -> JourneyNodeCoordinate {
+    JourneyNodeCoordinate {
+        orchestration_id,
+        node_path: attempt.node_path.clone(),
+        attempt: attempt.attempt,
+    }
+}
+
+pub fn step_coordinate(
+    nodes: &[RuntimeNodeState],
+    orchestration_id: Uuid,
+    key: &str,
+) -> JourneyResult<JourneyNodeCoordinate> {
+    Ok(attempt_coordinate(
+        orchestration_id,
+        &find_step(nodes, key)?,
+    ))
+}
+
+pub fn current_step_coordinate(
+    nodes: &[RuntimeNodeState],
+    orchestration_id: Uuid,
+) -> JourneyResult<JourneyNodeCoordinate> {
+    Ok(attempt_coordinate(orchestration_id, &current_step(nodes)?))
+}
+
+/// Trace helper: 从 node executor ref 提取 delivery RuntimeSession，用于打开 transcript。
 pub fn attempt_session_id(attempt: &RuntimeNodeState) -> Option<String> {
     match &attempt.executor_run_ref {
         Some(ExecutorRunRef::RuntimeSession { session_id }) => Some(session_id.clone()),
@@ -576,11 +613,13 @@ pub fn attempt_session_id(attempt: &RuntimeNodeState) -> Option<String> {
     }
 }
 
+/// Trace helper: 查找 node 后返回 delivery RuntimeSession id，用于打开 transcript。
 pub fn step_session_id(nodes: &[RuntimeNodeState], key: &str) -> JourneyResult<String> {
     attempt_session_id(&find_step(nodes, key)?)
         .ok_or_else(|| LifecycleJourneyError::NotFound(format!("node `{key}` 没有关联 session")))
 }
 
+/// Trace helper: 查找当前 active node 后返回 delivery RuntimeSession id。
 pub fn current_step_session_id(nodes: &[RuntimeNodeState]) -> JourneyResult<(String, String)> {
     let attempt = current_step(nodes)?;
     let session_id = attempt_session_id(&attempt).ok_or_else(|| {

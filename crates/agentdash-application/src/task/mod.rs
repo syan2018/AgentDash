@@ -5,6 +5,7 @@ pub mod execution;
 pub mod gateway;
 pub mod lock;
 pub mod meta;
+pub(crate) mod runtime_coordinate;
 pub mod service;
 pub mod view_projector;
 

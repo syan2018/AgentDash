@@ -28,7 +28,7 @@
 ### Task
 
 - **Durable spec**：id / story_id / workspace_id / title / description / authoring preference / dispatch policy。
-- **投影字段**：status / artifacts / current agent / latest runtime node，由 `SubjectRef(kind=Task)`、`LifecycleSubjectAssociation`、`LifecycleAgent`、`AgentFrame`、`RuntimeNodeState` 与 lifecycle artifacts 派生；外部不可直接写为 runtime truth。
+- **投影字段**：status / artifacts / current agent / latest runtime node，由 `SubjectRef(kind=Task)`、`LifecycleSubjectAssociation`、`LifecycleAgent`、`AgentFrame`、`TaskRuntimeCoordinate`、`RuntimeNodeState` 与 lifecycle artifacts 派生；外部不可直接写为 runtime truth。
 - Task context 通过 `SubjectContextAssignment(subject_ref=Task)` 注入 ProjectAgent frame：Task binding、parent Story、Project、effective Workspace 和 declared sources 在 application 层一次解析成 `Contribution`。
 - Task execution view 由 lifecycle association 和 runtime node facts 投影，command 控制走统一 AgentRun / Lifecycle 控制面。
 
@@ -107,7 +107,9 @@ API 端点：`GET /stories/{story_id}/runs/active`。
 task_id → SubjectRef(kind=Task, id=task_id)
         → lifecycle_subject_association_repo.list_by_subject(Task, task_id)
         → anchor agent / run
-        → LifecycleAgent.current_frame / runtime anchors / artifacts
+        → LifecycleAgent.current_frame
+        → TaskRuntimeCoordinate(run_id, agent_id, frame_id, orchestration_id, node_path, attempt)
+        → artifacts
         → workflow_graph topology 时进入 LifecycleRun.orchestrations[] / RuntimeNodeState
         → SubjectExecutionView.task_projection
 ```
@@ -149,7 +151,7 @@ runtime_session_id → RuntimeSessionExecutionAnchor
 - Task 执行面向 read projection：subject-oriented API 返回 `SubjectExecutionView`，包含 association、
   current agent、latest runtime node 和 artifacts。`GET /tasks/{id}/execution` 返回紧凑
   `TaskExecutionView` refs/status，服务只需要 task execution refs 的调用方；两条读路径都从
-  `SubjectRef(Task)`、association、LifecycleAgent current frame、RuntimeSessionExecutionAnchor 与
+  `SubjectRef(Task)`、association、LifecycleAgent current frame、TaskRuntimeCoordinate 与
   runtime node facts 派生，命令控制走统一 AgentRun / Lifecycle 控制面。
 - Subject / agent / run-oriented API 是 Story / Task 业务查询的主路径；session route 只提供 RuntimeTrace。
 

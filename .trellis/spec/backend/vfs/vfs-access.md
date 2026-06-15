@@ -177,6 +177,8 @@ Session mount contract：
 | `metadata.orchestration_id` | optional anchor | 有 orchestration node anchor 时存在 |
 | `metadata.node_path` | optional anchor | 有 orchestration node anchor 时存在 |
 | `metadata.attempt` | optional anchor | 有 orchestration node anchor 时存在 |
+| `metadata.skill_asset_project_id` | lifecycle skill projection | 存在 projected skills 时为 Project UUID string |
+| `metadata.skill_asset_keys` | lifecycle skill projection | 存在 projected skills 时为已合并去重的 SkillAsset key list |
 
 Provider `agent_run_session` 路径：
 
@@ -199,8 +201,12 @@ Provider `agent_run_session` 路径：
 | `node/artifacts` | 有 node anchor 时的当前 runtime node port output 列表 |
 | `node/records` | 有 node anchor 时的当前 runtime node journey records |
 | `orchestration/state` | 有 node anchor 时的 orchestration 实例状态 |
+| `skills/{key}/...` | mount metadata 声明 projected skills 时暴露对应 Project SkillAsset 文件 |
 
 `agent_run_session` mount 的 path set 收口在当前 delivery session 证据面与 anchor node evidence。历史 run inventory 属于独立资源入口，因为 AgentRun workspace 的 lifecycle mount 需要表达当前 delivery session 的执行证据，而不是数据库层 run inventory。
+AgentRun resource surface 从 frame typed VFS 叠加 session-scoped lifecycle mount 时，需要保留同 Project
+已有 lifecycle mount 上的 SkillAsset projection metadata；这样 graphless ProjectAgent、plain companion
+child、workflow node 的 workspace browser 和执行器 baseline 能看到同一组 builtin skill 文件。
 
 ## Lifecycle Runtime Mount
 

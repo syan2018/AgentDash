@@ -430,13 +430,13 @@ impl CompanionGateControlService {
         if let Some(error) = payload_types::payload_object_error(&command.payload) {
             return Err(ApplicationError::BadRequest(error));
         }
-        let prompt = command
+        let message = command
             .payload
-            .get("prompt")
+            .get("message")
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| ApplicationError::BadRequest("payload.prompt 不能为空".to_string()))?;
+            .ok_or_else(|| ApplicationError::BadRequest("payload.message 不能为空".to_string()))?;
 
         let (_anchor, _agent, child_frame) = resolve_current_frame_for_runtime_session(
             &command.child_runtime_session_id,
@@ -520,7 +520,7 @@ impl CompanionGateControlService {
             "request_type": "review",
             "adoption_mode": agentdash_spi::action_type::FOLLOW_UP_REQUIRED,
             "status": "pending",
-            "summary": prompt,
+            "summary": message,
             "turn_id": command.turn_id,
             "wait": command.wait,
             "payload": command.payload,
@@ -532,7 +532,7 @@ impl CompanionGateControlService {
             delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
             turn_id: command.turn_id,
             event_type: "companion_review_request".to_string(),
-            message: format!("Companion `{companion_label}` 请求审阅: {prompt}"),
+            message: format!("Companion `{companion_label}` 请求审阅: {message}"),
             payload: review_payload.clone(),
         };
         if let Err(error) = self.delivery.deliver_companion_event(notification).await {
@@ -1383,7 +1383,7 @@ mod tests {
                 child_runtime_session_id: "child-session".to_string(),
                 turn_id: "turn-child-1".to_string(),
                 wait: true,
-                payload: serde_json::json!({ "prompt": "please review" }),
+                payload: serde_json::json!({ "message": "please review" }),
             })
             .await
             .expect("open parent request");
@@ -1485,7 +1485,7 @@ mod tests {
                 child_runtime_session_id: "child-session".to_string(),
                 turn_id: "turn-child-1".to_string(),
                 wait: false,
-                payload: serde_json::json!({ "prompt": "please review latest frame" }),
+                payload: serde_json::json!({ "message": "please review latest frame" }),
             })
             .await
             .expect("open parent request");

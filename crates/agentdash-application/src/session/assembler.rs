@@ -36,7 +36,11 @@ use uuid::Uuid;
 
 use crate::capability::load_available_presets;
 use crate::companion::{
-    skill_projection::project_companion_system_skill_to_activation, tools::CompanionSliceMode,
+    skill_projection::{
+        append_companion_system_skill_key, ensure_companion_system_skill_asset,
+        project_companion_system_skill_to_activation,
+    },
+    tools::CompanionSliceMode,
 };
 use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
@@ -51,7 +55,7 @@ use crate::session::assembly_builder::slice_companion_bundle;
 use crate::vfs::VfsService;
 use crate::workflow::{
     ActivityActivationInput, RuntimeNodeArtifactScope, activate_activity_with_platform,
-    load_scoped_port_output_map,
+    build_agent_run_lifecycle_vfs_with_skills, load_scoped_port_output_map,
 };
 use crate::workspace::BackendAvailability;
 
@@ -190,7 +194,7 @@ impl<'a> SessionRequestAssembler<'a> {
         let parent_facts = self
             .resolve_companion_parent_facts(spec.parent_session_id)
             .await?;
-        let prepared = compose_companion(CompanionSpec {
+        let mut prepared = compose_companion(CompanionSpec {
             parent_vfs: parent_facts.parent_vfs.as_ref(),
             parent_mcp_servers: &parent_facts.parent_mcp_servers,
             parent_context_bundle: parent_facts.parent_context_bundle.as_ref(),
@@ -198,6 +202,8 @@ impl<'a> SessionRequestAssembler<'a> {
             companion_executor_config: spec.companion_executor_config,
             dispatch_prompt: spec.dispatch_prompt,
         })?;
+        self.project_companion_system_to_agent_run_lifecycle(spec.child_session_id, &mut prepared)
+            .await?;
         Ok(crate::session::assembly_builder::project_assembly_to_frame(
             frame_builder,
             prepared,
@@ -267,6 +273,50 @@ impl<'a> SessionRequestAssembler<'a> {
             parent_mcp_servers: parent_capability_state.tool.mcp_servers.clone(),
             parent_context_bundle: None,
         })
+    }
+
+    async fn project_companion_system_to_agent_run_lifecycle(
+        &self,
+        child_session_id: &str,
+        prepared: &mut SessionAssemblyBuilder,
+    ) -> Result<(), String> {
+        let Some(anchor) = self
+            .repos
+            .execution_anchor_repo
+            .find_by_session(child_session_id)
+            .await
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(());
+        };
+        let run = self
+            .repos
+            .lifecycle_run_repo
+            .get_by_id(anchor.run_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| {
+                format!(
+                    "LifecycleRun {} 不存在，无法投影 companion-system",
+                    anchor.run_id
+                )
+            })?;
+        ensure_companion_system_skill_asset(self.repos, run.project_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut skill_asset_keys = Vec::new();
+        append_companion_system_skill_key(&mut skill_asset_keys);
+        let vfs = build_agent_run_lifecycle_vfs_with_skills(
+            prepared.vfs.take(),
+            &anchor,
+            run.project_id,
+            &skill_asset_keys,
+        );
+        prepared.vfs = Some(vfs.clone());
+        if let Some(capability_state) = prepared.capability_state.as_mut() {
+            capability_state.vfs.active = Some(vfs);
+        }
+        Ok(())
     }
 }
 
@@ -552,6 +602,7 @@ pub struct CompanionSpec<'a> {
 
 pub struct CompanionParentSpec<'a> {
     pub parent_session_id: &'a str,
+    pub child_session_id: &'a str,
     pub slice_mode: CompanionSliceMode,
     pub companion_executor_config: AgentConfig,
     pub dispatch_prompt: String,
@@ -617,7 +668,7 @@ pub(in crate::session) async fn compose_companion_with_workflow(
         load_scoped_port_output_map(repos.inline_file_repo.as_ref(), &artifact_scope).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
-    let activation = activate_activity_with_platform(
+    let mut activation = activate_activity_with_platform(
         &ActivityActivationInput {
             owner_ctx,
             active_activity: spec.activity,
@@ -637,6 +688,9 @@ pub(in crate::session) async fn compose_companion_with_workflow(
         },
         platform_config,
     )?;
+    project_companion_system_skill_to_activation(repos, project_id, &mut activation)
+        .await
+        .map_err(|error| error.to_string())?;
 
     // ── 3. 用 builder 组合 companion + workflow 两个层 ──
     //

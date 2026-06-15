@@ -21,7 +21,7 @@ use crate::workflow::lifecycle_run_view_builder::{
 use crate::workflow::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
     ConversationModelConfigInput, ConversationModelConfigResolver, WorkflowApplicationError,
-    build_agent_run_lifecycle_vfs,
+    build_agent_run_lifecycle_vfs_with_skills,
 };
 
 use super::projection::{AgentRunWorkspaceProjection, is_terminal_agent_status};
@@ -275,7 +275,12 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             return Ok(None);
         };
         let vfs = match anchor.as_ref() {
-            Some(anchor) => build_agent_run_lifecycle_vfs(frame.typed_vfs(), anchor),
+            Some(anchor) => build_agent_run_lifecycle_vfs_with_skills(
+                frame.typed_vfs(),
+                anchor,
+                run.project_id,
+                &[],
+            ),
             None => frame.typed_vfs().unwrap_or_else(empty_vfs),
         };
 

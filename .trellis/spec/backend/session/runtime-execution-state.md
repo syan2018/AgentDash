@@ -138,6 +138,10 @@ trace head；分层后，trace 恢复、事件流展示、workspace action enabl
 title、title source、workspace/list status、last activity 和 last visible AgentRunTurn；
 `AgentConversationSnapshot.execution`、`commands`、`model_config`、`mailbox` 和
 `resource_surface` 承载工作台可执行状态、模型解析、待消费消息、用户注意力与可浏览资源。
+`resource_surface` 来自当前 AgentFrame typed VFS 与 `RuntimeSessionExecutionAnchor` 锚定的
+AgentRun lifecycle projection；该 projection 需要保留 lifecycle mount 上的 SkillAsset metadata，
+原因是 builtin skill 文档、执行器 skill baseline 和前端 resource browser 应由同一 runtime surface
+发现，而不是由前端或查询层单独推导。
 
 `ConversationCommandSetView.commands` 描述用户意图 command，例如 draft start、message submit、
 mailbox promote/delete/resume 与 cancel。文本输入统一走 `composer-submit`：后端先 claim command

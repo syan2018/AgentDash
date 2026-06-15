@@ -22,7 +22,7 @@ use crate::capability::{
     tool_directives_from_active_workflow, tool_directives_from_active_workflow_projection,
 };
 use crate::companion::skill_projection::{
-    append_companion_system_skill_key, ensure_companion_system_skill_asset, has_lifecycle_mount,
+    append_companion_system_skill_key, ensure_companion_system_skill_asset,
 };
 use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
@@ -41,7 +41,10 @@ use crate::session::capability_projection::{
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::vfs::{SessionMountTarget, VfsService, apply_agent_vfs_access_grants};
 use crate::workflow::frame_builder::AgentFrameBuilder;
-use crate::workflow::{ActiveWorkflowProjection, project_active_workflow_lifecycle_vfs};
+use crate::workflow::{
+    ActiveWorkflowProjection, build_agent_run_lifecycle_vfs_with_skills,
+    project_active_workflow_lifecycle_vfs,
+};
 use crate::workspace::BackendAvailability;
 use crate::workspace_module::skill_projection::project_workspace_module_system_skill_to_vfs;
 
@@ -364,15 +367,33 @@ impl<'a> OwnerBootstrapComposer<'a> {
             apply_agent_vfs_access_grants(space, Some(&spec.agent_vfs_access_grants));
         }
 
-        let mut vfs = project_active_workflow_lifecycle_vfs(vfs, active_workflow);
         let mut skill_asset_keys = spec.agent_skill_asset_keys.clone();
+        if matches!(spec.owner, OwnerScope::Project { .. }) {
+            ensure_companion_system_skill_asset(self.repos, project_id)
+                .await
+                .map_err(|error| error.to_string())?;
+            append_companion_system_skill_key(&mut skill_asset_keys);
+        }
+
+        let mut vfs = project_active_workflow_lifecycle_vfs(vfs, active_workflow);
+        if active_workflow.is_none()
+            && matches!(spec.owner, OwnerScope::Project { .. })
+            && let Some(session_id) = spec.audit_session_key.as_deref()
+            && let Some(anchor) = self
+                .repos
+                .execution_anchor_repo
+                .find_by_session(session_id)
+                .await
+                .map_err(|error| error.to_string())?
+        {
+            vfs = Some(build_agent_run_lifecycle_vfs_with_skills(
+                vfs,
+                &anchor,
+                project_id,
+                &skill_asset_keys,
+            ));
+        }
         if let Some(space) = vfs.as_mut() {
-            if has_lifecycle_mount(space) {
-                ensure_companion_system_skill_asset(self.repos, project_id)
-                    .await
-                    .map_err(|error| error.to_string())?;
-                append_companion_system_skill_key(&mut skill_asset_keys);
-            }
             append_visible_canvas_mounts(
                 self.canvas_repo,
                 project_id,

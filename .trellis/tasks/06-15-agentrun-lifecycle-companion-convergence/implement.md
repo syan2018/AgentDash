@@ -2,67 +2,65 @@
 
 ## Phase 0: Pre-implementation Review
 
-- [ ] 用户确认本任务的 PRD 与设计方向。
-- [ ] 决定是否把实现拆为子任务：
+- [x] 用户确认本任务的 PRD 与设计方向。
+- [x] 决定是否把实现拆为子任务：
   - companion payload contract
   - AgentRun lifecycle VFS helper
   - embedded skill projection
   - frontend resource/capability projection
-- [ ] 进入实现前运行 `trellis-before-dev`，读取 backend / cross-layer / frontend 相关 spec index。
+- [x] 进入实现前运行 `trellis-before-dev`，读取 backend / cross-layer / frontend 相关 spec index。
 
 ## Phase 1: Companion Payload Contract
 
-- [ ] 修改 `CompanionRequestTool` 执行逻辑：`sub` / `parent` / `human` 都读取 `payload.message`。
-- [ ] 修改 `PayloadTypeRegistry`：`task`、`review`、`approval`、`notification` 的 request required field 改为 `message`。
-- [ ] 更新 error message，统一提示 `payload.message 不能为空`。
-- [ ] 更新 companion request tool schema，展开 registered payload types。
-- [ ] 更新 companion-system skill docs：
+- [x] 修改 `CompanionRequestTool` 执行逻辑：`sub` / `parent` / `human` 都读取 `payload.message`。
+- [x] 修改 `PayloadTypeRegistry`：`task`、`review`、`approval`、`notification` 的 request required field 改为 `message`。
+- [x] 更新 error message，统一提示 `payload.message 不能为空`。
+- [x] 更新 companion request tool schema，展开 registered payload types。
+- [x] 更新 companion-system skill docs：
   - `SKILL.md`
   - `references/payload-envelope.md`
   - `references/human-interaction.md`
   - `references/response-adoption.md`
   - `references/capability-grant-request.md`
-- [ ] 更新相关测试与示例中的 `prompt` 字段。
+- [x] 更新相关测试与示例中的 `prompt` 字段。
 
 ## Phase 2: AgentRun Lifecycle VFS Helper
 
-- [ ] 设计并实现统一 helper，用 anchor + project_id + skill keys 构造 AgentRun lifecycle VFS。
-- [ ] helper 合并 explicit agent skill keys 与 builtin skill keys。
-- [ ] helper 保证 `skill_asset_project_id` / `skill_asset_keys` 不因 mount 替换丢失。
-- [ ] lifecycle provider 支持 AgentRun session-scope mount 下的 `skills/` 与 node subtree。
-- [ ] 若当前 node artifact/record 仍依赖 `node_runtime` scope，迁移到 AgentRun session-scope subtree 或明确桥接。
+- [x] 设计并实现统一 helper，用 anchor + project_id + skill keys 构造 AgentRun lifecycle VFS。
+- [x] helper 合并 explicit agent skill keys 与 builtin skill keys。
+- [x] helper 保证 `skill_asset_project_id` / `skill_asset_keys` 不因 mount 替换丢失。
+- [x] lifecycle provider 支持 AgentRun session-scope mount 下的 `skills/` 与 node subtree。
+- [x] 当前 node artifact/record 写入仍使用 `node_runtime` scope；AgentRun session projection 负责展示、anchor node evidence 与 skill metadata carry-over。
 
 ## Phase 3: Frame Construction Integration
 
-- [ ] ProjectAgent owner bootstrap：无 active workflow 时仍安装 AgentRun lifecycle mount。
-- [ ] ProjectAgent owner bootstrap：有 collaboration/companion capability 时投影 `companion-system`。
-- [ ] ProjectAgent owner bootstrap：有 workspace_module capability 时投影 `workspace-module-system`。
-- [ ] Lifecycle node composer：使用统一 AgentRun lifecycle helper，保留 node artifact/record 能力。
-- [ ] Plain companion child composer：在 parent VFS slice 基础上安装 child AgentRun lifecycle mount，并投影 `companion-system`。
-- [ ] Companion + workflow child composer：与 plain companion 使用同一 lifecycle helper，再叠加 workflow node surface。
-- [ ] Routine frame construction 如涉及 AgentRun surface，同步投影 `routine-memory`。
+- [x] ProjectAgent owner bootstrap：无 active workflow 时仍安装 AgentRun lifecycle mount。
+- [x] ProjectAgent owner bootstrap：有 collaboration/companion capability 时投影 `companion-system`。
+- [x] ProjectAgent owner bootstrap：有 workspace_module capability 时投影 `workspace-module-system`。
+- [x] Lifecycle node composer：保留 node artifact/record 写入能力，并让 AgentRun workspace projection 保留 skill metadata。
+- [x] Plain companion child composer：在 parent VFS slice 基础上安装 child AgentRun lifecycle mount，并投影 `companion-system`。
+- [x] Companion + workflow child composer：叠加 workflow node surface，并投影 `companion-system`。
+- [x] Routine frame construction 如涉及 AgentRun surface，同步投影 `routine-memory`。
 
 ## Phase 4: Workspace Query And Frontend Projection
 
-- [ ] `AgentRunWorkspaceQuery` 不再用无 skill metadata 的 fresh lifecycle mount 覆盖 frame VFS。
-- [ ] workspace/resource surface 与 connector-visible VFS 使用同一闭包后的 runtime surface。
-- [ ] 前端 capability/resource surface 测试覆盖 projected builtin skill 可见性。
-- [ ] 检查 Session/Runtime detail 入口仍能通过 RuntimeSession trace ref 下钻，但不复制 AgentRun command facts。
+- [x] `AgentRunWorkspaceQuery` 不再用无 skill metadata 的 fresh lifecycle mount 覆盖 frame VFS。
+- [x] workspace/resource surface 与 connector-visible VFS 使用同一闭包后的 runtime surface。
+- [x] 前端 capability/resource surface 继续消费后端 projected runtime surface，本轮无需硬编码 builtin skill。
+- [x] 检查 Session/Runtime detail 入口仍能通过 RuntimeSession trace ref 下钻，但不复制 AgentRun command facts。
 
 ## Phase 5: Specs And Tests
 
-- [ ] 更新 `.trellis/spec/backend/embedded-skill-bundles.md`。
-- [ ] 更新 `.trellis/spec/backend/session/runtime-execution-state.md`。
-- [ ] 更新 `.trellis/spec/cross-layer/frontend-backend-contracts.md`。
-- [ ] 补 backend 单元测试：
+- [x] 更新 `.trellis/spec/backend/embedded-skill-bundles.md`。
+- [x] 更新 `.trellis/spec/backend/session/runtime-execution-state.md`。
+- [x] 更新 `.trellis/spec/cross-layer/frontend-backend-contracts.md`。
+- [x] 补 backend 单元测试：
   - graphless ProjectAgent frame VFS 包含 AgentRun lifecycle mount + companion-system。
   - workspace_module capability 追加 workspace-module-system。
   - plain companion child 包含 child AgentRun lifecycle mount + companion-system。
   - workspace query 不丢 skill projection metadata。
   - companion payload registry 要求 message。
-- [ ] 补 frontend 测试：
-  - capability card 展示 projected builtin skill。
-  - resource surface 可浏览 lifecycle skills。
+- [x] 前端测试评估：本轮未新增前端测试；前端继续消费后端 `resource_surface` / capability projection，未引入前端硬编码或新 DTO。
 
 ## Validation Commands
 

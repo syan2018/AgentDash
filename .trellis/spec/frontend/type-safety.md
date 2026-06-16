@@ -73,6 +73,21 @@ AgentRun 右侧 WorkspacePanel 使用 snapshot `resource_surface: ResolvedVfsSur
 
 ---
 
+## Task Plan And Story Projection DTO
+
+Task plan DTO、Story Task projection DTO 与 Task status enum 都来自 Rust contract 生成文件。前端只消费 generated plan status union；execution status、artifacts 和 launch hint 字段由各自的 generated DTO 表达。
+
+AgentRun workspace 消费 Run-scoped Task plan DTO 来创建、推进、归档和 assignment。Story 页面消费 Story Task projection DTO，只展示来源关系；runtime artifacts、latest runtime node 和 linked runs 只从 `SubjectExecutionView` / lifecycle generated DTO 读取。
+
+新增或修改 Task plan / projection contract 后必须运行：
+
+```powershell
+pnpm run contracts:check
+pnpm run frontend:check
+```
+
+---
+
 ## 禁止模式
 
 - `any` 类型

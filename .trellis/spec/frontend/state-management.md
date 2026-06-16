@@ -11,7 +11,7 @@
 | 本地 UI 状态 | 组件内 `useState` | `isOpen`, `selectedTab` |
 | Feature 状态 | Feature `model/` hooks | `entries`, `isConnected` |
 | 全局应用状态 | `stores/` | `projects`, `currentProjectId` |
-| 服务端缓存 | Store + API | `tasksByStoryId`, `workspacesByProjectId` |
+| 服务端缓存 | Store + API | `storyTaskProjectionByStoryId`, `workspacesByProjectId` |
 
 派生状态使用 `useMemo` 计算，不存储在状态中。
 
@@ -23,11 +23,12 @@
 |-------|------|
 | `projectStore` | Project CRUD + 选择 |
 | `workspaceStore` | Workspace CRUD + 状态管理 |
-| `storyStore` | Story/Task 数据 |
+| `storyStore` | Story 数据 + Story Task projection cache |
 | `coordinatorStore` | 后端连接管理 |
 | `eventStore` | 项目级 NDJSON 事件流 |
 | `workflowStore` | `WorkflowGraph` 定义态管理；Agent Activity 关联的 `AgentProcedure` draft 是配套编辑数据 |
 | `lifecycleStore` | Lifecycle 运行态 view projection：run、graph instance、subject execution、agent、frame、runtime trace |
+| `taskPlanStore` / AgentRun workspace model | Run-scoped Task plan facts：创建、推进、归档、assignment |
 | `sessionHistoryStore` | 会话历史 |
 | `settingsStore` | 全局设置 |
 | `currentUserStore` | 当前用户 |
@@ -58,6 +59,16 @@
 - `workflowStore` 不保存运行态事实；Activity attempt、agent assignment、runtime trace 等观察数据进入 `lifecycleStore` 或 session projection。
 - `lifecycleStore` 只缓存后端 lifecycle view，不作为 command input；写命令应从 SubjectRef、run/graph/agent/frame refs 或明确的 API intent 发起。
 - Session UI 可以消费 `RuntimeSessionTraceView` 与 frame runtime projection，但不能从 session title、session 存在性或 trace 内容推导 Task / Story / Lifecycle 状态。
+- Task plan facts 从 Run / AgentRun scoped API 进入 AgentRun workspace model 或专用 Task plan store；Story 页面只消费 Story Task projection cache。
+- `lifecycleStore` 是 SubjectExecution、runtime artifacts、latest runtime node 与 linked runs 的唯一执行投影缓存；Task plan store 和 `storyStore` 不保存这些运行事实。
+
+## Story Task Projection 与 Run-scoped Task Plan State
+
+Story 页面展示的 Task 列表是 projection，来源于 Story-bound LifecycleRun、linked run 和可选 `story_ref`。该缓存可以放在 `storyStore`，命名应表达 projection 语义，例如 `storyTaskProjectionByStoryId`。
+
+AgentRun workspace 是 Task plan facts 的写入口。创建、推进、归档和 assignment 命令使用 run / agent refs 发起，并在成功后刷新对应 run-scoped Task plan view。Story projection 需要通过 projection endpoint 或后端事件重新拉取，不能用本地写入的 Task plan DTO 推断 Story ownership。
+
+Task runtime artifacts、running / failed / cancelled 等执行状态只进入 `lifecycleStore` 的 `SubjectExecutionView` 或 AgentRun / RuntimeSession projection。Task plan status 只使用 `open / active / review / blocked / done / dropped`。
 
 ## AgentRun Workspace Conversation Snapshot
 

@@ -9,3 +9,10 @@
 {"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"AgentRun message intake、companion follow-up 与 queued work 的事实源边界"}
 {"file":".trellis/spec/backend/permission/grant-lifecycle.md","reason":"后续 fanout approval policy 与 PermissionGrant 事实源收束参考"}
 {"file":".trellis/spec/backend/permission/policy-engine.md","reason":"后续 project/workflow policy 控制 fanout 审批门的参考"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"LifecycleRun.tasks migration、JSON 文本列命名、migration guard 与删除旧列规则"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"LifecycleRun aggregate 持有 Task facts，StoryRepository 不承担 Task durable CRUD 的 repository 边界"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Task plan / Story projection generated DTO 与无旧字段兼容规则"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Story projection cache、Run-scoped Task plan state 与 lifecycleStore 执行投影边界"}
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/research/backend-data-review.md","reason":"后端、数据库、MCP 当前 Task 模型事实与迁移风险"}
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/research/frontend-api-surface-review.md","reason":"前端 API surface、generated DTO、store、UI 与测试迁移风险"}
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/research/planning-consistency-review.md","reason":"规划缺口、阶段顺序与需要前置修正的 spec 冲突"}

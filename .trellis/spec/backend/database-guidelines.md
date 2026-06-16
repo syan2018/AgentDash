@@ -28,9 +28,9 @@
 
 ## 事务规则
 
-- **单一聚合**：事务边界由对应 Repository 负责（如 `WorkspaceRepository` 内部同事务写 `workspaces` + `workspace_bindings`）
+- **单一聚合**：事务边界由对应 Repository 负责（如 `WorkspaceRepository` 内部同事务写 `workspaces` + `workspace_bindings`，`LifecycleRunRepository` 整体写回 lifecycle context / orchestrations / tasks / view projection）
 - **跨聚合**：使用显式 Command Port 或 Unit of Work，不要硬塞进单一 Repository trait
-- Story aggregate 的 Task CRUD 走 `StoryRepository::update` 整体写回
+- Story projection 与 LifecycleRun Task facts 同时变化时，使用应用层命令编排多个聚合；不要让 `StoryRepository` 承担 Task durable CRUD
 
 ---
 

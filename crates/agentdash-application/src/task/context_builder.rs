@@ -22,11 +22,12 @@ use crate::session::bootstrap::{
     derive_session_context_snapshot,
 };
 use crate::session::context::{
-    SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
+    SessionContextSnapshot, SessionStoryOverrides, extract_story_overrides,
 };
-use crate::task::config::{resolve_task_executor_config, resolve_task_executor_source};
 use crate::vfs::{SessionMountTarget, VfsService};
 use agentdash_domain::common::Vfs;
+use agentdash_domain::story::Story;
+use agentdash_domain::workflow::{LifecycleRun, SubjectRef};
 
 #[derive(Debug)]
 pub struct BuiltTaskSessionContext {
@@ -49,27 +50,32 @@ pub async fn build_task_session_context(
     task_id: Uuid,
     runtime_session_id: Option<&str>,
 ) -> Option<BuiltTaskSessionContext> {
-    let task = crate::task::load_task(repos.story_repo.as_ref(), task_id)
-        .await
-        .ok()??;
-    let story = repos.story_repo.get_by_id(task.story_id).await.ok()??;
-    let project = repos.project_repo.get_by_id(task.project_id).await.ok()??;
-    let workspace = if let Some(ws_id) = task.workspace_id {
-        repos.workspace_repo.get_by_id(ws_id).await.ok()?
-    } else {
-        None
-    };
+    let located = crate::task::plan::find_task_plan_item_by_subject(
+        repos.lifecycle_run_repo.as_ref(),
+        repos.lifecycle_subject_association_repo.as_ref(),
+        task_id,
+    )
+    .await
+    .ok()??;
+    let task = located.task;
+    let run = located.run;
+    let project = repos.project_repo.get_by_id(run.project_id).await.ok()??;
+    let story = resolve_story_for_task_context(repos, &run, task.story_ref.as_ref()).await;
+    let workspace = resolve_task_workspace(repos, &project, story.as_ref()).await?;
 
-    // ── 解析 executor config（非 strict：失败时降级为 None）──
-    let executor_source = resolve_task_executor_source(&task, &project, None);
-    let (resolved_config, executor_resolution) =
-        match resolve_task_executor_config(None, &task, &project) {
-            Ok(config) => (config, ExecutorResolution::resolved(executor_source)),
-            Err(err) => (
-                None,
-                ExecutorResolution::failed(executor_source, err.to_string()),
-            ),
-        };
+    // Task plan facts 不保存 executor 选择；只读 context projection 使用 Project 默认值。
+    let resolved_config = project
+        .config
+        .default_agent_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|agent_type| crate::runtime::AgentConfig::new(agent_type.to_string()));
+    let executor_resolution = ExecutorResolution::resolved(if resolved_config.is_some() {
+        "project.config.default_agent_type"
+    } else {
+        "unresolved"
+    });
 
     // ── 定位 task 关联的活跃 lifecycle run projection ──
     let workflow = find_active_workflow_for_task_target(repos, task.id).await;
@@ -91,13 +97,13 @@ pub async fn build_task_session_context(
     }
     let cap_input = CapabilityResolverInput {
         owner_ctx: CapabilityScopeCtx::Task {
-            project_id: task.project_id,
-            story_id: task.story_id,
+            project_id: run.project_id,
+            story_id: story.as_ref().map(|story| story.id),
             task_id: task.id,
         },
         contributions,
         mcp_candidates: McpCandidates {
-            presets: load_available_presets(repos, task.project_id).await,
+            presets: load_available_presets(repos, run.project_id).await,
         },
         mcp_runtime_context: None,
         capability_context: None,
@@ -123,7 +129,7 @@ pub async fn build_task_session_context(
                 .build_vfs(
                     &project,
                     &project_vfs_mounts,
-                    Some(&story),
+                    story.as_ref(),
                     workspace.as_ref(),
                     SessionMountTarget::Task,
                     effective_agent_type,
@@ -135,13 +141,12 @@ pub async fn build_task_session_context(
     };
     runtime_vfs = project_active_workflow_lifecycle_vfs(runtime_vfs, workflow.as_ref());
 
-    let preset_name = normalize_optional_string(task.dispatch_preference.preset_name.clone());
     if let Some(space) = runtime_vfs.as_mut() {
         let visible_canvas_mount_ids =
             resolve_visible_canvas_mount_ids(repos, runtime_session_id).await;
         if append_visible_canvas_mounts(
             repos.canvas_repo.as_ref(),
-            task.project_id,
+            run.project_id,
             space,
             &visible_canvas_mount_ids,
         )
@@ -152,16 +157,23 @@ pub async fn build_task_session_context(
         }
     }
 
-    let story_overrides = extract_story_overrides(&story);
+    let story_overrides = story
+        .as_ref()
+        .map(extract_story_overrides)
+        .unwrap_or_else(|| SessionStoryOverrides {
+            context_containers: Vec::new(),
+            disabled_container_ids: Vec::new(),
+            session_composition: None,
+        });
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project,
-        story: Some(story),
+        story,
         workspace,
         resolved_config,
         vfs: runtime_vfs,
         mcp_servers: runtime_mcp_servers_to_summaries(&mcp_servers),
         working_dir: None,
-        executor_preset_name: preset_name,
+        executor_preset_name: None,
         executor_resolution,
         owner_variant: BootstrapOwnerVariant::Task { story_overrides },
         workflow,
@@ -173,6 +185,45 @@ pub async fn build_task_session_context(
         vfs: plan.vfs.clone(),
         context_snapshot: Some(snapshot),
     })
+}
+
+async fn resolve_story_for_task_context(
+    repos: &RepositorySet,
+    run: &LifecycleRun,
+    story_ref: Option<&SubjectRef>,
+) -> Option<Story> {
+    let story_id = if let Some(story_ref) = story_ref {
+        (story_ref.kind == "story").then_some(story_ref.id)
+    } else {
+        repos
+            .lifecycle_subject_association_repo
+            .list_by_anchor(run.id, None)
+            .await
+            .ok()?
+            .into_iter()
+            .find(|assoc| assoc.subject_kind == "story")
+            .map(|assoc| assoc.subject_id)
+    }?;
+    repos
+        .story_repo
+        .get_by_id(story_id)
+        .await
+        .ok()
+        .flatten()
+        .filter(|story| story.project_id == run.project_id)
+}
+
+async fn resolve_task_workspace(
+    repos: &RepositorySet,
+    project: &agentdash_domain::project::Project,
+    story: Option<&Story>,
+) -> Option<Option<agentdash_domain::workspace::Workspace>> {
+    if let Some(workspace_id) = story.and_then(|story| story.default_workspace_id) {
+        return Some(repos.workspace_repo.get_by_id(workspace_id).await.ok()?);
+    }
+    crate::session::construction_planner::resolve_project_workspace(repos, project)
+        .await
+        .ok()
 }
 
 /// 通过 task 关联的 AgentRun target 查找活跃 lifecycle workflow projection。

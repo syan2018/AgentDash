@@ -1,3 +1,4 @@
+use agentdash_application::ApplicationError;
 use agentdash_domain::DomainError;
 
 /// MCP 层统一错误类型
@@ -49,6 +50,31 @@ impl McpError {
         Self::InvalidParam {
             field,
             message: message.into(),
+        }
+    }
+}
+
+impl From<ApplicationError> for McpError {
+    fn from(error: ApplicationError) -> Self {
+        match error {
+            ApplicationError::NotFound(message) => Self::NotFound {
+                entity_type: "Application",
+                id: message,
+            },
+            ApplicationError::Forbidden(message) => Self::Forbidden { reason: message },
+            ApplicationError::BadRequest(message) | ApplicationError::InvalidConfig(message) => {
+                Self::InvalidParam {
+                    field: "request",
+                    message,
+                }
+            }
+            ApplicationError::Conflict(message) => Self::InvalidParam {
+                field: "state_transition",
+                message,
+            },
+            ApplicationError::Unavailable(message) | ApplicationError::Internal(message) => {
+                Self::Internal(message)
+            }
         }
     }
 }

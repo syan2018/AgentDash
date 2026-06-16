@@ -23,7 +23,7 @@ When responding to a parent session, include enough structure for the parent to 
 - `status`: `completed`, `approved`, `rejected`, or `needs_revision`.
 - `findings`: concrete observations.
 - `follow_ups`: actions the parent should consider.
-- `artifact_refs`: files, task paths, or durable records.
+- `artifact_refs`: files, lifecycle artifact paths, SubjectExecution records, or other durable records. Task plan items reference these externally because Task facts describe plan progress, not runtime evidence.
 
 ## Human And Platform Responses
 

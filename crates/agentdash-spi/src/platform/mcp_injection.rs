@@ -24,17 +24,12 @@ pub struct McpInjectionConfig {
 }
 
 impl McpInjectionConfig {
-    pub fn for_task(
-        base_url: impl Into<String>,
-        project_id: Uuid,
-        story_id: Uuid,
-        task_id: Uuid,
-    ) -> Self {
+    pub fn for_task(base_url: impl Into<String>, project_id: Uuid, task_id: Uuid) -> Self {
         Self {
             base_url: base_url.into(),
             scope: ToolScope::Task,
             project_id,
-            story_id: Some(story_id),
+            story_id: None,
             task_id: Some(task_id),
         }
     }
@@ -103,8 +98,12 @@ impl McpInjectionConfig {
         };
         let tool_desc = match self.scope {
             ToolScope::Relay => "项目管理、Story 创建与状态变更",
-            ToolScope::Story => "Story 上下文管理、Task 创建与批量拆解、状态推进",
-            ToolScope::Task => "Task 状态更新、执行产物上报、兄弟 Task 查看、Story 上下文读取",
+            ToolScope::Story => {
+                "Story 上下文管理、Story Task projection 查询、基于 Story-bound run 创建计划项、状态推进"
+            }
+            ToolScope::Task => {
+                "Task 计划状态推进、Run-scoped 计划项查看、SubjectExecution 产物关联记录、可选 Story 上下文读取"
+            }
             ToolScope::Workflow => "Workflow/Lifecycle 定义的查看、创建与编辑",
         };
 

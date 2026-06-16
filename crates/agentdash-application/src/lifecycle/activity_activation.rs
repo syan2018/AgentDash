@@ -380,7 +380,7 @@ mod tests {
         let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Task {
                 project_id,
-                story_id,
+                story_id: Some(story_id),
                 task_id,
             },
             active_activity: &step,

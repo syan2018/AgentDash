@@ -461,8 +461,7 @@ fn build_platform_mcp_config(
         }
         PlatformMcpScope::Task => {
             let task_id = owner_ctx.task_id()?;
-            let story_id = owner_ctx.story_id()?;
-            McpInjectionConfig::for_task(base_url, owner_ctx.project_id(), story_id, task_id)
+            McpInjectionConfig::for_task(base_url, owner_ctx.project_id(), task_id)
         }
         PlatformMcpScope::Workflow => {
             McpInjectionConfig::for_workflow(base_url, owner_ctx.project_id())
@@ -638,7 +637,7 @@ mod tests {
         let input = CapabilityResolverInput {
             owner_ctx: CapabilityScopeCtx::Task {
                 project_id,
-                story_id,
+                story_id: Some(story_id),
                 task_id,
             },
             contributions: Vec::new(),
@@ -1238,14 +1237,13 @@ mod tests {
     }
 
     #[test]
-    fn task_owner_ctx_injects_task_scope_with_story_and_task_ids() {
+    fn task_owner_ctx_injects_task_scope_with_task_id_without_story() {
         let project_id = Uuid::new_v4();
-        let story_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
         let input = CapabilityResolverInput {
             owner_ctx: CapabilityScopeCtx::Task {
                 project_id,
-                story_id,
+                story_id: None,
                 task_id,
             },
             contributions: Vec::new(),

@@ -5,6 +5,7 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     LifecycleRun, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     LifecycleTaskPlanItem, LifecycleTaskPlanItemDraft, LifecycleTaskPlanItemPatch, SubjectRef,
+    TaskPlanStatus,
 };
 
 use crate::ApplicationError;
@@ -35,6 +36,24 @@ pub struct RunTaskCommandResult {
 pub struct LocatedTaskPlanItem {
     pub run: LifecycleRun,
     pub task: LifecycleTaskPlanItem,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskPlanPolicyAction {
+    Create,
+    Update,
+    Assign,
+    Review,
+    Done,
+    Archive,
+    StatusTransition(TaskPlanStatus),
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskPlanPolicyHook<'a> {
+    pub action: TaskPlanPolicyAction,
+    pub run: &'a LifecycleRun,
+    pub task_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +106,11 @@ pub async fn create_run_task(
     draft: LifecycleTaskPlanItemDraft,
 ) -> Result<RunTaskCommandResult, ApplicationError> {
     let mut run = load_run(lifecycle_run_repo, run_id).await?;
+    ensure_task_plan_policy_allowed(TaskPlanPolicyHook {
+        action: TaskPlanPolicyAction::Create,
+        run: &run,
+        task_id: draft.id,
+    })?;
     let task = run.create_task(draft).map_err(ApplicationError::from)?;
     lifecycle_run_repo
         .update(&run)
@@ -106,6 +130,16 @@ pub async fn update_run_task(
     patch: LifecycleTaskPlanItemPatch,
 ) -> Result<RunTaskCommandResult, ApplicationError> {
     let mut run = load_run(lifecycle_run_repo, run_id).await?;
+    let action = if patch.assigned_agent_id.is_some() {
+        TaskPlanPolicyAction::Assign
+    } else {
+        TaskPlanPolicyAction::Update
+    };
+    ensure_task_plan_policy_allowed(TaskPlanPolicyHook {
+        action,
+        run: &run,
+        task_id: Some(task_id),
+    })?;
     let task = run
         .update_task(task_id, patch)
         .map_err(ApplicationError::from)?;
@@ -126,6 +160,11 @@ pub async fn archive_run_task(
     task_id: Uuid,
 ) -> Result<RunTaskCommandResult, ApplicationError> {
     let mut run = load_run(lifecycle_run_repo, run_id).await?;
+    ensure_task_plan_policy_allowed(TaskPlanPolicyHook {
+        action: TaskPlanPolicyAction::Archive,
+        run: &run,
+        task_id: Some(task_id),
+    })?;
     let task = run.archive_task(task_id).map_err(ApplicationError::from)?;
     lifecycle_run_repo
         .update(&run)
@@ -145,6 +184,16 @@ pub async fn transition_run_task_status(
     status: agentdash_domain::workflow::TaskPlanStatus,
 ) -> Result<RunTaskCommandResult, ApplicationError> {
     let mut run = load_run(lifecycle_run_repo, run_id).await?;
+    let action = match status {
+        TaskPlanStatus::Review => TaskPlanPolicyAction::Review,
+        TaskPlanStatus::Done => TaskPlanPolicyAction::Done,
+        other => TaskPlanPolicyAction::StatusTransition(other),
+    };
+    ensure_task_plan_policy_allowed(TaskPlanPolicyHook {
+        action,
+        run: &run,
+        task_id: Some(task_id),
+    })?;
     let task = run
         .transition_task_status(task_id, status)
         .map_err(ApplicationError::from)?;
@@ -157,6 +206,19 @@ pub async fn transition_run_task_status(
         run_id: run.id,
         task,
     })
+}
+
+pub fn ensure_task_plan_policy_allowed(
+    hook: TaskPlanPolicyHook<'_>,
+) -> Result<(), ApplicationError> {
+    tracing::debug!(
+        run_id = %hook.run.id,
+        project_id = %hook.run.project_id,
+        task_id = ?hook.task_id,
+        action = ?hook.action,
+        "Task plan policy hook allowed by default"
+    );
+    Ok(())
 }
 
 pub async fn find_project_task_plan_item(

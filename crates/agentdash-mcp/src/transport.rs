@@ -80,7 +80,6 @@ fn create_story_http_service(
 fn create_task_http_service(
     services: Arc<McpServices>,
     project_id: Uuid,
-    story_id: Uuid,
     task_id: Uuid,
     identity: AuthIdentity,
 ) -> McpHttpService<TaskMcpServer> {
@@ -89,7 +88,6 @@ fn create_task_http_service(
             Ok(TaskMcpServer::new(
                 services.clone(),
                 project_id,
-                story_id,
                 task_id,
                 identity.clone(),
             ))
@@ -118,13 +116,12 @@ pub async fn serve_story_via_stdio(
 pub async fn serve_task_via_stdio(
     services: Arc<McpServices>,
     project_id: Uuid,
-    story_id: Uuid,
     task_id: Uuid,
     identity: AuthIdentity,
 ) -> Result<(), rmcp::RmcpError> {
     use rmcp::{ServiceExt, transport::stdio};
 
-    let server = TaskMcpServer::new(services, project_id, story_id, task_id, identity);
+    let server = TaskMcpServer::new(services, project_id, task_id, identity);
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
@@ -287,11 +284,6 @@ impl McpHttpRouterState {
         let service = create_task_http_service(
             self.services.clone(),
             run.project_id,
-            task.story_ref
-                .as_ref()
-                .filter(|subject| subject.kind == "story")
-                .map(|subject| subject.id)
-                .unwrap_or_else(Uuid::nil),
             task.id,
             identity.clone(),
         );

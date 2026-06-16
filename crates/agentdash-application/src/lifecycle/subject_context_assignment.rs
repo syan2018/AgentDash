@@ -275,7 +275,7 @@ impl<'a> SubjectContextAssignmentResolver<'a> {
             contributions,
             capability_scope: CapabilityScopeCtx::Task {
                 project_id,
-                story_id: story_id.unwrap_or_else(Uuid::nil),
+                story_id,
                 task_id,
             },
         })

@@ -396,7 +396,7 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor::platform_mcp(
             "get_story_detail",
             "Get Story Detail",
-            "获取 Story 的完整详情，包括上下文信息和关联的 Task 列表",
+            "获取 Story 的完整详情；Task 列表通过 Story Task projection 查询",
             PlatformMcpScope::Relay,
             CAP_RELAY_MANAGEMENT,
         ),
@@ -439,21 +439,21 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor::platform_mcp(
             "create_task",
             "Create Task",
-            "在当前 Story 下创建一个新的 Task（执行单元）",
+            "通过 Story-bound LifecycleRun 创建 run-scoped Task 计划项",
             PlatformMcpScope::Story,
             CAP_STORY_MANAGEMENT,
         ),
         ToolDescriptor::platform_mcp(
             "batch_create_tasks",
             "Batch Create Tasks",
-            "在当前 Story 下批量创建多个 Task（通常用于 Story 拆解完成后一次性创建）",
+            "通过 Story-bound LifecycleRun 批量创建 run-scoped Task 计划项",
             PlatformMcpScope::Story,
             CAP_STORY_MANAGEMENT,
         ),
         ToolDescriptor::platform_mcp(
             "list_tasks",
             "List Tasks",
-            "列出当前 Story 下的所有 Task 及其状态",
+            "查询当前 Story 的 Task projection",
             PlatformMcpScope::Story,
             CAP_STORY_MANAGEMENT,
         ),
@@ -475,28 +475,28 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor::platform_mcp(
             "update_task_status",
             "Update Task Status",
-            "更新当前 Task 的执行状态",
+            "推进当前 Task 的计划状态",
             PlatformMcpScope::Task,
             CAP_TASK_MANAGEMENT,
         ),
         ToolDescriptor::platform_mcp(
             "report_artifact",
             "Report Artifact",
-            "上报 Task 执行产物（代码变更、测试结果、日志等）",
+            "记录 Task 关联的 SubjectExecution 产物路径或摘要",
             PlatformMcpScope::Task,
             CAP_TASK_MANAGEMENT,
         ),
         ToolDescriptor::platform_mcp(
             "get_sibling_tasks",
             "Get Sibling Tasks",
-            "查看同一 Story 下的其它 Task 及其状态（只读，用于协调）",
+            "查看同一 LifecycleRun 内的其它 Task 计划状态（只读，用于协调）",
             PlatformMcpScope::Task,
             CAP_TASK_MANAGEMENT,
         ),
         ToolDescriptor::platform_mcp(
             "get_story_context",
             "Get Story Context",
-            "获取所属 Story 的上下文信息（PRD、规范引用），用于理解任务背景",
+            "获取 Task 关联 Story 的上下文信息；Task scope 的 Story 归属可为空",
             PlatformMcpScope::Task,
             CAP_TASK_MANAGEMENT,
         ),
@@ -644,7 +644,7 @@ pub enum CapabilityScopeCtx {
     },
     Task {
         project_id: Uuid,
-        story_id: Uuid,
+        story_id: Option<Uuid>,
         task_id: Uuid,
     },
 }
@@ -668,7 +668,8 @@ impl CapabilityScopeCtx {
 
     pub fn story_id(&self) -> Option<Uuid> {
         match self {
-            Self::Story { story_id, .. } | Self::Task { story_id, .. } => Some(*story_id),
+            Self::Story { story_id, .. } => Some(*story_id),
+            Self::Task { story_id, .. } => *story_id,
             _ => None,
         }
     }

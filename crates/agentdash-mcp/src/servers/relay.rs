@@ -264,7 +264,7 @@ impl RelayMcpServer {
         )]))
     }
 
-    #[tool(description = "获取 Story 的完整详情，包括上下文信息和关联的 Task 列表")]
+    #[tool(description = "获取 Story 的完整详情，并附带 Story Task projection")]
     async fn get_story_detail(
         &self,
         Parameters(params): Parameters<GetStoryDetailParams>,
@@ -281,8 +281,14 @@ impl RelayMcpServer {
         self.require_project(story.project_id, McpProjectPermission::View)
             .await?;
 
-        // M1-b：Story aggregate 已持有 tasks；直接从 story.tasks 读取
-        let tasks = story.tasks.clone();
+        let task_projection = agentdash_application::task::plan::build_story_task_projection(
+            self.services.lifecycle_run_repo.as_ref(),
+            self.services.lifecycle_subject_association_repo.as_ref(),
+            story.project_id,
+            story.id,
+        )
+        .await
+        .map_err(McpError::from)?;
 
         let result = serde_json::json!({
             "story": {
@@ -297,12 +303,7 @@ impl RelayMcpServer {
                 "task_count": story.task_count,
                 "created_at": story.created_at.to_rfc3339(),
             },
-            "tasks": tasks.iter().map(|t| serde_json::json!({
-                "id": t.id.to_string(),
-                "title": t.title,
-                "status": t.status(),
-                "workspace_id": t.workspace_id.map(|w| w.to_string()),
-            })).collect::<Vec<_>>(),
+            "task_projection": story_task_projection_to_json(task_projection),
         });
 
         Ok(CallToolResult::success(vec![Content::text(
@@ -389,7 +390,41 @@ impl RelayMcpServer {
 impl ServerHandler for RelayMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "AgentDashboard 看板操作工具。可用于查看项目、创建和管理 Story、查看 Task 状态等。",
+            "AgentDashboard 看板操作工具。可用于查看项目、创建和管理 Story、查看 Story Task projection 等。",
         )
+    }
+}
+
+fn story_task_projection_to_json(
+    projection: agentdash_application::task::plan::StoryTaskProjectionView,
+) -> serde_json::Value {
+    serde_json::json!({
+        "story_id": projection.story_id.to_string(),
+        "tasks": projection.tasks.into_iter().map(|item| {
+            serde_json::json!({
+                "project_id": item.project_id.to_string(),
+                "owning_run_id": item.owning_run_id.to_string(),
+                "task": item.task,
+                "sources": item.sources.into_iter().map(|source| {
+                    serde_json::json!({
+                        "kind": story_projection_source_kind(source.kind),
+                        "run_id": source.run_id.to_string(),
+                        "agent_id": source.agent_id.map(|id| id.to_string()),
+                        "story_ref": source.story_ref,
+                        "reason": source.reason,
+                    })
+                }).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn story_projection_source_kind(
+    kind: agentdash_application::task::plan::StoryTaskProjectionSourceKind,
+) -> &'static str {
+    match kind {
+        agentdash_application::task::plan::StoryTaskProjectionSourceKind::OwningRun => "owning_run",
+        agentdash_application::task::plan::StoryTaskProjectionSourceKind::LinkedRun => "linked_run",
+        agentdash_application::task::plan::StoryTaskProjectionSourceKind::StoryRef => "story_ref",
     }
 }

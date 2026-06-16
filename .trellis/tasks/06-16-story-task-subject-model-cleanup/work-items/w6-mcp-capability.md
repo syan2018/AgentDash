@@ -2,7 +2,7 @@
 
 ## 状态
 
-pending
+done
 
 ## 依赖
 
@@ -48,8 +48,16 @@ pending
 
 ## 产出记录
 
-- 待填写。
+- `agentdash-mcp` 现在依赖 application command 层；Story / Relay MCP 的 Task 查询走 `build_story_task_projection`，不再读取 Story-owned `tasks`。
+- Story MCP `create_task` / `batch_create_tasks` 要求传入 Story-bound `run_id`，通过 `create_run_task` 写入 `LifecycleRun.tasks`，并使用 `story_ref` 作为 projection hint。
+- Task MCP `update_task_status` 只接受 `open / active / review / blocked / done / dropped`，通过 `transition_run_task_status` 推进计划状态；`append_task_description` 通过 `update_run_task` 修改 plan body。
+- Task MCP `report_artifact` 不写 Task facts，不使用旧 Task artifact type；仅记录 `subject_execution_artifact_reported` state_change 事件，携带可选 artifact path / content 作为执行投影关联线索。
+- `TaskPlanPolicyHook` 已在 run-scoped create / update / assign / review / done / archive 写入口预留，当前默认开放，后续 permission convergence 可接管该函数。
+- `CapabilityScopeCtx::Task` 的 Story 归属改为 `Option<Uuid>`；Task MCP 注入只要求 task id，resolver、SubjectContextAssignment 与 activity activation 测试已同步。
+- companion-system skill 增加 Task plan tools 说明：companion completion 通过 `artifact_refs` / SubjectExecution-linked paths 返回执行证据，原因是 Task facts 只描述计划进度。
 
 ## 风险与交接
 
-- W8 需要 MCP 旧状态、artifact 和 dispatch surface 搜索结果。
+- W8 可使用本节点搜索结果继续总清理：W6 范围内 `crates/agentdash-mcp`、`crates/agentdash-application/src/capability`、`crates/agentdash-spi/src/platform` 已无 `dispatch_preference`、`story.tasks`、旧 TaskStatus 描述、`TaskArtifactAdded` 或旧 `ArtifactType` surface。
+- Relay MCP 仍允许 Story 状态 `completed / failed / cancelled`，这是 Story workflow 状态语言，不属于旧 TaskStatus surface。
+- `report_artifact` 当前只记录 SubjectExecution 关联事件，尚未接入专用 artifact repository；后续如需要可由 SubjectExecution / lifecycle artifact 任务把该 state_change 事件替换为正式产物命令。

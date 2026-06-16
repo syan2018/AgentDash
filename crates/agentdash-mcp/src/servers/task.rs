@@ -1,7 +1,7 @@
 //! Task 层 MCP Server — Task 粒度执行工具
 //!
-//! 面向执行 Agent，在 Task 粒度上提供状态更新和产物上报能力。
-//! 典型场景：Agent 完成代码编写后，通过工具上报产物、更新状态。
+//! 面向执行 Agent，在 Task 粒度上提供计划状态推进和执行投影关联能力。
+//! 典型场景：Agent 完成代码编写后，通过工具推进计划状态、记录产物路径或摘要。
 //!
 //! 每个 TaskMcpServer 实例绑定到一个具体的 Task，工具操作范围受限于该 Task。
 
@@ -16,16 +16,16 @@ use uuid::Uuid;
 use crate::authz::{McpProjectPermission, require_project_permission};
 use crate::error::McpError;
 use crate::services::McpServices;
-use agentdash_domain::workflow::{LifecycleRun, LifecycleTaskPlanItem, SubjectRef};
+use agentdash_domain::workflow::{
+    LifecycleRun, LifecycleTaskPlanItem, LifecycleTaskPlanItemPatch, SubjectRef, TaskPlanStatus,
+};
 use agentdash_spi::platform::auth::AuthIdentity;
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UpdateTaskStatusParams {
-    #[schemars(
-        description = "目标状态：pending / assigned / running / awaiting_verification / completed / failed / cancelled"
-    )]
+    #[schemars(description = "目标计划状态：open / active / review / blocked / done / dropped")]
     pub status: String,
     #[schemars(description = "状态变更原因说明")]
     pub reason: Option<String>,
@@ -34,11 +34,13 @@ pub struct UpdateTaskStatusParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReportArtifactParams {
     #[schemars(
-        description = "产物类型：code_change / test_result / log_output / file / tool_execution"
+        description = "产物类型或关联语义，如 code_change / test_result / log_output / file / tool_execution"
     )]
     pub artifact_type: String,
-    #[schemars(description = "产物内容。优先传 JSON 字符串；若为纯文本，可直接传文本")]
+    #[schemars(description = "产物内容、摘要或路径。优先传 JSON 字符串；若为纯文本，可直接传文本")]
     pub content: String,
+    #[schemars(description = "可选产物路径，如 lifecycle://artifacts/report")]
+    pub artifact_path: Option<String>,
 }
 
 fn parse_artifact_content(raw: &str) -> serde_json::Value {
@@ -60,7 +62,6 @@ pub struct AppendTaskDescriptionParams {
 pub struct TaskMcpServer {
     services: Arc<McpServices>,
     task_id: Uuid,
-    story_id: Uuid,
     project_id: Uuid,
     identity: AuthIdentity,
 }
@@ -69,14 +70,12 @@ impl TaskMcpServer {
     pub fn new(
         services: Arc<McpServices>,
         project_id: Uuid,
-        story_id: Uuid,
         task_id: Uuid,
         identity: AuthIdentity,
     ) -> Self {
         Self {
             services,
             task_id,
-            story_id,
             project_id,
             identity,
         }
@@ -120,6 +119,31 @@ impl TaskMcpServer {
         }
         Err(McpError::not_found("Task", self.task_id))
     }
+
+    async fn resolve_story_id_for_task(
+        &self,
+        run: &LifecycleRun,
+        task: &LifecycleTaskPlanItem,
+    ) -> Result<Option<Uuid>, McpError> {
+        if let Some(story_id) = task
+            .story_ref
+            .as_ref()
+            .filter(|subject| subject.kind == "story")
+            .map(|subject| subject.id)
+        {
+            return Ok(Some(story_id));
+        }
+        let associations = self
+            .services
+            .lifecycle_subject_association_repo
+            .list_by_anchor(run.id, None)
+            .await
+            .map_err(McpError::from)?;
+        Ok(associations
+            .into_iter()
+            .find(|association| association.subject_kind == "story")
+            .map(|association| association.subject_id))
+    }
 }
 
 // ─── 工具实现 ──────────────────────────────────────────────────
@@ -156,10 +180,18 @@ impl TaskMcpServer {
         Parameters(params): Parameters<UpdateTaskStatusParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         self.require_project(McpProjectPermission::Edit).await?;
-        let new_status: agentdash_domain::task::TaskStatus =
-            serde_json::from_value(serde_json::Value::String(params.status.clone())).map_err(
-                |_| McpError::invalid_param("status", format!("无效的状态值: {}", params.status)),
-            )?;
+        let new_status: TaskPlanStatus = serde_json::from_value(serde_json::Value::String(
+            params.status.clone(),
+        ))
+        .map_err(|_| {
+            McpError::invalid_param(
+                "status",
+                format!(
+                    "无效的计划状态: {}。允许值: open / active / review / blocked / done / dropped",
+                    params.status
+                ),
+            )
+        })?;
 
         tracing::info!(
             task_id = %self.task_id,
@@ -169,19 +201,27 @@ impl TaskMcpServer {
         );
 
         let (run, task_before) = self.load_task_plan().await?;
+        let updated = agentdash_application::task::plan::transition_run_task_status(
+            self.services.lifecycle_run_repo.as_ref(),
+            run.id,
+            self.task_id,
+            new_status,
+        )
+        .await
+        .map_err(McpError::from)?;
         self.services
             .state_change_repo
             .append_change(
                 run.project_id,
                 self.task_id,
-                agentdash_domain::story::ChangeKind::TaskUpdated,
+                agentdash_domain::story::ChangeKind::TaskStatusChanged,
                 serde_json::json!({
                     "reason": params.reason.as_deref().unwrap_or("mcp_update_task_status"),
                     "task_id": self.task_id,
                     "run_id": run.id,
                     "source": "mcp_command",
                     "current_status": task_before.status,
-                    "requested_status": new_status,
+                    "new_status": updated.task.status,
                 }),
                 None,
             )
@@ -189,27 +229,20 @@ impl TaskMcpServer {
             .map_err(McpError::from)?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "Task {} 状态变更意图已记录：{}",
+            "Task {} 计划状态已更新为：{}",
             self.task_id, params.status,
         ))]))
     }
 
-    #[tool(description = "上报 Task 执行产物（代码变更、测试结果、日志等）")]
+    #[tool(description = "记录 Task 关联的 SubjectExecution 产物路径或摘要")]
     async fn report_artifact(
         &self,
         Parameters(params): Parameters<ReportArtifactParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use agentdash_domain::task::ArtifactType;
-
         self.require_project(McpProjectPermission::Edit).await?;
-        let _artifact_type: ArtifactType =
-            serde_json::from_value(serde_json::Value::String(params.artifact_type.clone()))
-                .map_err(|_| {
-                    McpError::invalid_param(
-                        "artifact_type",
-                        format!("无效的产物类型: {}", params.artifact_type),
-                    )
-                })?;
+        if params.artifact_type.trim().is_empty() {
+            return Err(McpError::invalid_param("artifact_type", "产物类型不能为空").into());
+        }
 
         let (run, _) = self.load_task_plan().await?;
         let artifact_id = Uuid::new_v4();
@@ -218,14 +251,16 @@ impl TaskMcpServer {
             .append_change(
                 run.project_id,
                 self.task_id,
-                agentdash_domain::story::ChangeKind::TaskArtifactAdded,
+                agentdash_domain::story::ChangeKind::TaskUpdated,
                 serde_json::json!({
+                    "event": "subject_execution_artifact_reported",
                     "reason": "mcp_report_artifact",
                     "task_id": self.task_id,
                     "run_id": run.id,
                     "source": "mcp_command",
                     "artifact_id": artifact_id,
                     "artifact_type": params.artifact_type,
+                    "artifact_path": params.artifact_path,
                     "content": parse_artifact_content(&params.content),
                 }),
                 None,
@@ -234,12 +269,12 @@ impl TaskMcpServer {
             .map_err(McpError::from)?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "产物已上报（类型: {}, ID: {}）",
+            "SubjectExecution 产物关联已记录（类型: {}, ID: {}）",
             params.artifact_type, artifact_id,
         ))]))
     }
 
-    #[tool(description = "查看同一 Story 下的其它 Task 及其状态（只读，用于协调）")]
+    #[tool(description = "查看同一 LifecycleRun 内的其它 Task 计划状态（只读，用于协调）")]
     async fn get_sibling_tasks(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         self.require_project(McpProjectPermission::View).await?;
         let (run, _) = self.load_task_plan().await?;
@@ -262,16 +297,27 @@ impl TaskMcpServer {
         )]))
     }
 
-    #[tool(description = "获取所属 Story 的上下文信息（PRD、规范引用），用于理解任务背景")]
+    #[tool(description = "获取 Task 关联 Story 的上下文信息；无 Story 关联时返回空上下文")]
     async fn get_story_context(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         self.require_project(McpProjectPermission::View).await?;
+        let (run, task) = self.load_task_plan().await?;
+        let Some(story_id) = self.resolve_story_id_for_task(&run, &task).await? else {
+            let result = serde_json::json!({
+                "task_id": self.task_id.to_string(),
+                "story": null,
+                "reason": "Task 没有关联 Story；Task scope 的 Story 归属是可选的",
+            });
+            return Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&result).unwrap_or_default(),
+            )]));
+        };
         let story = self
             .services
             .story_repo
-            .get_by_id(self.story_id)
+            .get_by_id(story_id)
             .await
             .map_err(McpError::from)?
-            .ok_or_else(|| McpError::not_found("Story", self.story_id))?;
+            .ok_or_else(|| McpError::not_found("Story", story_id))?;
 
         let result = serde_json::json!({
             "story_id": story.id.to_string(),
@@ -293,7 +339,24 @@ impl TaskMcpServer {
         Parameters(params): Parameters<AppendTaskDescriptionParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         self.require_project(McpProjectPermission::Edit).await?;
-        let (run, _) = self.load_task_plan().await?;
+        let (run, task) = self.load_task_plan().await?;
+        let next_body = match task.body.as_deref() {
+            Some(existing) if !existing.trim().is_empty() => {
+                format!("{existing}\n\n{}", params.append_text)
+            }
+            _ => params.append_text.clone(),
+        };
+        agentdash_application::task::plan::update_run_task(
+            self.services.lifecycle_run_repo.as_ref(),
+            run.id,
+            self.task_id,
+            LifecycleTaskPlanItemPatch {
+                body: Some(Some(next_body)),
+                ..LifecycleTaskPlanItemPatch::default()
+            },
+        )
+        .await
+        .map_err(McpError::from)?;
         self.services
             .state_change_repo
             .append_change(

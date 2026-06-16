@@ -9,7 +9,6 @@ use crate::{McpTransportConfig, RuntimeMcpServer};
 pub enum ToolScope {
     Relay,
     Story,
-    Task,
     Workflow,
 }
 
@@ -24,16 +23,6 @@ pub struct McpInjectionConfig {
 }
 
 impl McpInjectionConfig {
-    pub fn for_task(base_url: impl Into<String>, project_id: Uuid, task_id: Uuid) -> Self {
-        Self {
-            base_url: base_url.into(),
-            scope: ToolScope::Task,
-            project_id,
-            story_id: None,
-            task_id: Some(task_id),
-        }
-    }
-
     pub fn for_story(base_url: impl Into<String>, project_id: Uuid, story_id: Uuid) -> Self {
         Self {
             base_url: base_url.into(),
@@ -72,10 +61,6 @@ impl McpInjectionConfig {
                 let story_id = self.story_id.expect("Story 层必须提供 story_id");
                 format!("{base}/mcp/story/{story_id}")
             }
-            ToolScope::Task => {
-                let task_id = self.task_id.expect("Task 层必须提供 task_id");
-                format!("{base}/mcp/task/{task_id}")
-            }
             ToolScope::Workflow => format!("{base}/mcp/workflow/{}", self.project_id),
         }
     }
@@ -84,7 +69,6 @@ impl McpInjectionConfig {
         match self.scope {
             ToolScope::Relay => "agentdash-relay-tools".to_string(),
             ToolScope::Story => "agentdash-story-tools".to_string(),
-            ToolScope::Task => "agentdash-task-tools".to_string(),
             ToolScope::Workflow => "agentdash-workflow-tools".to_string(),
         }
     }
@@ -93,16 +77,12 @@ impl McpInjectionConfig {
         let scope_label = match self.scope {
             ToolScope::Relay => "relay",
             ToolScope::Story => "story",
-            ToolScope::Task => "task",
             ToolScope::Workflow => "workflow",
         };
         let tool_desc = match self.scope {
             ToolScope::Relay => "项目管理、Story 创建与状态变更",
             ToolScope::Story => {
                 "Story 上下文管理、Story Task projection 查询、基于 Story-bound run 创建计划项、状态推进"
-            }
-            ToolScope::Task => {
-                "Task 计划状态推进、Run-scoped 计划项查看、SubjectExecution 产物关联记录、可选 Story 上下文读取"
             }
             ToolScope::Workflow => "Workflow/Lifecycle 定义的查看、创建与编辑",
         };

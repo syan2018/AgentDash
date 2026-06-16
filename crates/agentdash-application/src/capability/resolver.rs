@@ -459,10 +459,6 @@ fn build_platform_mcp_config(
             let story_id = owner_ctx.story_id()?;
             McpInjectionConfig::for_story(base_url, owner_ctx.project_id(), story_id)
         }
-        PlatformMcpScope::Task => {
-            let task_id = owner_ctx.task_id()?;
-            McpInjectionConfig::for_task(base_url, owner_ctx.project_id(), task_id)
-        }
         PlatformMcpScope::Workflow => {
             McpInjectionConfig::for_workflow(base_url, owner_ctx.project_id())
         }
@@ -629,7 +625,7 @@ mod tests {
     }
 
     #[test]
-    fn task_session_gets_task_mcp() {
+    fn task_session_gets_task_runtime_tools() {
         let project_id = Uuid::new_v4();
         let story_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
@@ -648,8 +644,9 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
+        assert!(output.has(ToolCluster::Task), "task session 应启用 Task tools");
         let has_task_mcp = state_has_mcp_url(&output, "/mcp/task/");
-        assert!(has_task_mcp, "task session 应注入 TaskMcpServer");
+        assert!(!has_task_mcp, "task session 不再注入 TaskMcpServer");
 
         let has_relay_mcp = state_has_mcp_url(&output, "/mcp/relay");
         assert!(!has_relay_mcp, "task session 不应注入 RelayMcpServer");
@@ -1189,9 +1186,9 @@ mod tests {
             !output.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
                 agentdash_spi::McpTransportConfig::Http { url, .. }
-                    if url.contains("/mcp/story/") || url.contains("/mcp/task/")
+                    if url.contains("/mcp/story/")
             )),
-            "project owner 不应注入 story/task scope"
+            "project owner 不应注入 story scope"
         );
     }
 
@@ -1227,17 +1224,10 @@ mod tests {
             panic!("story MCP 应使用 HTTP transport");
         };
         assert!(url.contains(&story_id.to_string()));
-        assert!(
-            !output.tool.mcp_servers.iter().any(|server| matches!(
-                &server.transport,
-                agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/task/")
-            )),
-            "story owner 不应注入 task scope"
-        );
     }
 
     #[test]
-    fn task_owner_ctx_injects_task_scope_with_task_id_without_story() {
+    fn task_owner_ctx_enables_task_cluster_without_mcp_scope() {
         let project_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
         let input = CapabilityResolverInput {
@@ -1254,20 +1244,13 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        let task = output
-            .tool
-            .mcp_servers
-            .iter()
-            .find(|server| {
-                matches!(
-                    &server.transport,
-                    agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/task/")
-                )
-            })
-            .expect("task owner 应注入 task MCP");
-        let agentdash_spi::McpTransportConfig::Http { url, .. } = &task.transport else {
-            panic!("task MCP 应使用 HTTP transport");
-        };
-        assert!(url.contains(&task_id.to_string()));
+        assert!(output.has(ToolCluster::Task), "task owner 应启用 Task runtime tools");
+        assert!(
+            !output.tool.mcp_servers.iter().any(|server| matches!(
+                &server.transport,
+                agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/task/")
+            )),
+            "task owner 不再注入 Task MCP"
+        );
     }
 }

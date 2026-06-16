@@ -871,9 +871,6 @@ fn capability_for_runtime_mcp_server(server: &agentdash_spi::RuntimeMcpServer) -
         "agentdash-story-tools" => {
             ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_STORY_MANAGEMENT)
         }
-        "agentdash-task-tools" => {
-            ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_TASK_MANAGEMENT)
-        }
         "agentdash-workflow-tools" => {
             ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_WORKFLOW_MANAGEMENT)
         }
@@ -884,7 +881,6 @@ fn capability_for_runtime_mcp_server(server: &agentdash_spi::RuntimeMcpServer) -
 fn agent_facing_mcp_server_name(server_name: &str) -> String {
     const PLATFORM_SCOPED_PREFIXES: &[(&str, &str)] = &[
         ("agentdash-story-tools-", "agentdash-story-tools"),
-        ("agentdash-task-tools-", "agentdash-task-tools"),
         ("agentdash-workflow-tools-", "agentdash-workflow-tools"),
     ];
 

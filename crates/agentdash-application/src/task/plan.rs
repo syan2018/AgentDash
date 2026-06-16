@@ -208,6 +208,32 @@ pub async fn transition_run_task_status(
     })
 }
 
+pub async fn reorder_run_tasks(
+    lifecycle_run_repo: &dyn LifecycleRunRepository,
+    run_id: Uuid,
+    ordered_task_ids: Vec<Uuid>,
+) -> Result<RunTaskPlanView, ApplicationError> {
+    let mut run = load_run(lifecycle_run_repo, run_id).await?;
+    for task_id in &ordered_task_ids {
+        ensure_task_plan_policy_allowed(TaskPlanPolicyHook {
+            action: TaskPlanPolicyAction::Update,
+            run: &run,
+            task_id: Some(*task_id),
+        })?;
+    }
+    run.reorder_tasks(&ordered_task_ids)
+        .map_err(ApplicationError::from)?;
+    lifecycle_run_repo
+        .update(&run)
+        .await
+        .map_err(ApplicationError::from)?;
+    Ok(RunTaskPlanView {
+        project_id: run.project_id,
+        run_id: run.id,
+        tasks: run.tasks,
+    })
+}
+
 pub fn ensure_task_plan_policy_allowed(
     hook: TaskPlanPolicyHook<'_>,
 ) -> Result<(), ApplicationError> {

@@ -369,6 +369,36 @@ impl LifecycleRun {
         Ok(transitioned)
     }
 
+    pub fn reorder_tasks(
+        &mut self,
+        ordered_task_ids: &[Uuid],
+    ) -> Result<Vec<LifecycleTaskPlanItem>, DomainError> {
+        for task_id in ordered_task_ids {
+            if self.task_by_id(*task_id).is_none() {
+                return Err(DomainError::NotFound {
+                    entity: "LifecycleRun.tasks",
+                    id: task_id.to_string(),
+                });
+            }
+        }
+
+        let now = Utc::now();
+        let mut reordered = Vec::with_capacity(self.tasks.len());
+        for task_id in ordered_task_ids {
+            let mut task = self.task_by_id(*task_id).expect("validated task id").clone();
+            task.updated_at = now;
+            reordered.push(task);
+        }
+        for task in &self.tasks {
+            if !ordered_task_ids.contains(&task.id) {
+                reordered.push(task.clone());
+            }
+        }
+        self.tasks = reordered;
+        self.touch_activity();
+        Ok(self.tasks.clone())
+    }
+
     pub fn append_execution_log(&mut self, entries: Vec<LifecycleExecutionEntry>) {
         if entries.is_empty() {
             return;

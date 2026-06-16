@@ -68,7 +68,6 @@ pub fn contribute_mcp(config: &agentdash_spi::McpInjectionConfig) -> Contributio
     let label: &'static str = match config.scope {
         agentdash_spi::ToolScope::Relay => "mcp_relay_tools",
         agentdash_spi::ToolScope::Story => "mcp_story_tools",
-        agentdash_spi::ToolScope::Task => "mcp_task_tools",
         agentdash_spi::ToolScope::Workflow => "mcp_workflow_tools",
     };
 

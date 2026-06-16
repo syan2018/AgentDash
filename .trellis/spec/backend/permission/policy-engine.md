@@ -97,7 +97,7 @@ pub struct PolicyDecision {
 | `story_management::*` (tool-wildcard) | `story_management::create_story` | covers |
 | `story_management::create_story` | `story_management::create_story` | covers (exact) |
 | `story_management::create_story` | `story_management` | does NOT cover |
-| `task_management` | `story_management` | does NOT cover |
+| `task` | `story_management` | does NOT cover |
 
 #### Compiler Output
 
@@ -138,11 +138,11 @@ Result if matched: creates `LifecycleSubjectAssociation(role=ControlScope)` anch
 #### Good: Patrol Agent Auto-Approve
 
 ```
-agent_config.auto_grantable_capabilities: ["story_management", "task_management"]
-lifecycle_contract.requestable_capabilities: ["story_management", "task_management"]
+agent_config.auto_grantable_capabilities: ["story_management", "task"]
+lifecycle_contract.requestable_capabilities: ["story_management", "task"]
 requested_paths: ["story_management::create_story"]
 
-→ auto_approve_pool = [story_management, task_management]
+→ auto_approve_pool = [story_management, task]
 → story_management covers story_management::create_story
 → PolicyOutcome::AutoApproved
 ```
@@ -151,13 +151,13 @@ requested_paths: ["story_management::create_story"]
 
 ```
 Grant applied with scope_escalation_intent:
-  { target_subject_kind: Story, unlocked_paths: [task_management] }
+  { target_subject_kind: Story, unlocked_paths: [task] }
 
 Agent calls create_story → success → story_id = X
 → ScopeEscalationCoordinator::try_escalate(frame_id, Story, X)
 → Creates LifecycleSubjectAssociation(anchor_run_id, anchor_agent_id, Story, X, ControlScope)
 → Grant → ScopeEscalated
-→ Returns unlocked_paths: [task_management]
+→ Returns unlocked_paths: [task]
 → Caller compiles secondary RuntimeCapabilityTransition
 ```
 

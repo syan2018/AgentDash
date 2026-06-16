@@ -1,12 +1,11 @@
 use agentdash_spi::platform::tool_capability::{
-    CAP_RELAY_MANAGEMENT, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT, CAP_WORKFLOW_MANAGEMENT,
+    CAP_RELAY_MANAGEMENT, CAP_STORY_MANAGEMENT, CAP_WORKFLOW_MANAGEMENT,
 };
 
 pub fn capability_key_for_mcp_server_name(server_name: &str) -> String {
     match agent_facing_mcp_server_name(server_name).as_str() {
         "agentdash-relay-tools" => CAP_RELAY_MANAGEMENT.to_string(),
         "agentdash-story-tools" => CAP_STORY_MANAGEMENT.to_string(),
-        "agentdash-task-tools" => CAP_TASK_MANAGEMENT.to_string(),
         "agentdash-workflow-tools" => CAP_WORKFLOW_MANAGEMENT.to_string(),
         other => format!("mcp:{other}"),
     }
@@ -24,7 +23,6 @@ pub fn namespaced_tool_name(server_name: &str, tool_name: &str) -> String {
 pub fn agent_facing_mcp_server_name(server_name: &str) -> String {
     const PLATFORM_SCOPED_PREFIXES: &[(&str, &str)] = &[
         ("agentdash-story-tools-", "agentdash-story-tools"),
-        ("agentdash-task-tools-", "agentdash-task-tools"),
         ("agentdash-workflow-tools-", "agentdash-workflow-tools"),
     ];
 
@@ -58,10 +56,6 @@ mod tests {
     #[test]
     fn namespaced_name_hides_platform_scope_ids() {
         assert_eq!(
-            namespaced_tool_name("agentdash-task-tools-1234", "update_status"),
-            "mcp_agentdash_task_tools_update_status"
-        );
-        assert_eq!(
             namespaced_tool_name("agentdash-workflow-tools-8de613e7", "get_lifecycle"),
             "mcp_agentdash_workflow_tools_get_lifecycle"
         );
@@ -80,10 +74,6 @@ mod tests {
         assert_eq!(
             capability_key_for_mcp_server_name("agentdash-workflow-tools-8de613e7"),
             "workflow_management"
-        );
-        assert_eq!(
-            capability_key_for_mcp_server_name("agentdash-task-tools-1234"),
-            "task_management"
         );
         assert_eq!(
             capability_key_for_mcp_server_name("code-analyzer"),

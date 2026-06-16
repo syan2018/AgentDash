@@ -119,7 +119,7 @@ mod tests {
                 None,
             ),
             unlocked_paths: vec![
-                agentdash_domain::workflow::ToolCapabilityPath::parse("task_management").unwrap(),
+                agentdash_domain::workflow::ToolCapabilityPath::parse("task").unwrap(),
             ],
         };
         assert_eq!(result.unlocked_paths.len(), 1);

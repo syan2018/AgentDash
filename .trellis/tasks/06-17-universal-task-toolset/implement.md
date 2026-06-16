@@ -78,3 +78,22 @@ flowchart TD
 ## 进入实现
 
 本任务作为 `06-16-story-task-subject-model-cleanup` 的业务验收闭环，在当前重构分支继续推进。底层实现和正式命名统一为 Task，第一版按 `task_read + task_write` 两工具落地。
+
+## 实现记录
+
+- 新增 `task` runtime capability 和 `ToolCluster::Task`，工具集固定为 `task_read` / `task_write`。
+- `task_read` 支持 overview/list/detail/context/execution/projection mode。
+- `task_write` 支持 patch / snapshot，并覆盖 create、patch、status、reorder、drop、context refs 写入。
+- Task facts 继续写入 `LifecycleRun.tasks`；Story 只通过 projection 读回。
+- 旧 Task Platform MCP scope 与 `/mcp/task/{task_id}` 路由退出 runtime 注入面。
+- `companion_request(target=sub)` 支持 `payload.task_id`，会把 Task 上下文附加给 child companion，并在派发成功后写回 `assigned_agent_id`。
+
+已执行验证：
+
+- `cargo check -p agentdash-api`
+- `pnpm run contracts:check`
+- `pnpm run migration:guard`
+- `pnpm run frontend:check`
+- `cargo test -p agentdash-application task::plan`
+- `cargo test -p agentdash-application capability::resolver`
+- `cargo test -p agentdash-application session::post_turn_handler`

@@ -266,7 +266,7 @@ mod tests {
     fn scope_escalation_path() {
         let mut grant = sample_grant().with_escalation_intent(ScopeEscalationIntent {
             target_subject_kind: "story".to_string(),
-            unlocked_paths: vec![ToolCapabilityPath::parse("task_management").unwrap()],
+            unlocked_paths: vec![ToolCapabilityPath::parse("task").unwrap()],
         });
 
         grant.submit_for_policy().unwrap();

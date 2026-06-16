@@ -83,8 +83,8 @@ pub const CAP_SHELL_EXECUTE: &str = "shell_execute";
 pub const CAP_WORKSPACE_MODULE: &str = "workspace_module";
 pub const CAP_WORKFLOW: &str = "workflow";
 pub const CAP_COLLABORATION: &str = "collaboration";
+pub const CAP_TASK: &str = "task";
 pub const CAP_STORY_MANAGEMENT: &str = "story_management";
-pub const CAP_TASK_MANAGEMENT: &str = "task_management";
 pub const CAP_RELAY_MANAGEMENT: &str = "relay_management";
 pub const CAP_WORKFLOW_MANAGEMENT: &str = "workflow_management";
 
@@ -101,8 +101,8 @@ pub const WELL_KNOWN_KEYS: &[&str] = &[
     CAP_WORKSPACE_MODULE,
     CAP_WORKFLOW,
     CAP_COLLABORATION,
+    CAP_TASK,
     CAP_STORY_MANAGEMENT,
-    CAP_TASK_MANAGEMENT,
     CAP_RELAY_MANAGEMENT,
     CAP_WORKFLOW_MANAGEMENT,
 ];
@@ -119,6 +119,7 @@ pub const CLUSTER_WRITE_TOOLS: &[&str] = &["fs_apply_patch"];
 pub const CLUSTER_EXECUTE_TOOLS: &[&str] = &["shell_exec"];
 pub const CLUSTER_WORKFLOW_TOOLS: &[&str] = &["complete_lifecycle_node"];
 pub const CLUSTER_COLLABORATION_TOOLS: &[&str] = &["companion_request", "companion_respond"];
+pub const CLUSTER_TASK_TOOLS: &[&str] = &["task_read", "task_write"];
 pub const CLUSTER_WORKSPACE_MODULE_TOOLS: &[&str] = &[
     "workspace_module_list",
     "workspace_module_describe",
@@ -135,6 +136,7 @@ pub fn cluster_tools(cluster: ToolCluster) -> &'static [&'static str] {
         ToolCluster::Execute => CLUSTER_EXECUTE_TOOLS,
         ToolCluster::Workflow => CLUSTER_WORKFLOW_TOOLS,
         ToolCluster::Collaboration => CLUSTER_COLLABORATION_TOOLS,
+        ToolCluster::Task => CLUSTER_TASK_TOOLS,
         ToolCluster::WorkspaceModule => CLUSTER_WORKSPACE_MODULE_TOOLS,
     }
 }
@@ -328,6 +330,21 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             ToolCluster::Collaboration,
             CAP_COLLABORATION,
         ),
+        // ── Task cluster ──
+        ToolDescriptor::platform(
+            "task_read",
+            "Read Tasks",
+            "按 overview/list/detail/context/execution/projection 模式读取当前 run 的 Task view",
+            ToolCluster::Task,
+            CAP_TASK,
+        ),
+        ToolDescriptor::platform(
+            "task_write",
+            "Write Tasks",
+            "通过 patch/snapshot mutation 创建、更新、推进、排序、归档 Task",
+            ToolCluster::Task,
+            CAP_TASK,
+        ),
         // ── Workspace Module cluster ──
         ToolDescriptor::platform(
             "workspace_module_list",
@@ -464,49 +481,6 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             PlatformMcpScope::Story,
             CAP_STORY_MANAGEMENT,
         ),
-        // ── Platform MCP: Task scope (capability=task_management) ──
-        ToolDescriptor::platform_mcp(
-            "get_task_info",
-            "Get Task Info",
-            "获取当前绑定 Task 的完整信息",
-            PlatformMcpScope::Task,
-            CAP_TASK_MANAGEMENT,
-        ),
-        ToolDescriptor::platform_mcp(
-            "update_task_status",
-            "Update Task Status",
-            "推进当前 Task 的计划状态",
-            PlatformMcpScope::Task,
-            CAP_TASK_MANAGEMENT,
-        ),
-        ToolDescriptor::platform_mcp(
-            "report_artifact",
-            "Report Artifact",
-            "记录 Task 关联的 SubjectExecution 产物路径或摘要",
-            PlatformMcpScope::Task,
-            CAP_TASK_MANAGEMENT,
-        ),
-        ToolDescriptor::platform_mcp(
-            "get_sibling_tasks",
-            "Get Sibling Tasks",
-            "查看同一 LifecycleRun 内的其它 Task 计划状态（只读，用于协调）",
-            PlatformMcpScope::Task,
-            CAP_TASK_MANAGEMENT,
-        ),
-        ToolDescriptor::platform_mcp(
-            "get_story_context",
-            "Get Story Context",
-            "获取 Task 关联 Story 的上下文信息；Task scope 的 Story 归属可为空",
-            PlatformMcpScope::Task,
-            CAP_TASK_MANAGEMENT,
-        ),
-        ToolDescriptor::platform_mcp(
-            "append_task_description",
-            "Append Task Description",
-            "向 Task 描述中追加内容（记录执行过程发现的关键信息）",
-            PlatformMcpScope::Task,
-            CAP_TASK_MANAGEMENT,
-        ),
         // ── Platform MCP: Workflow scope (capability=workflow_management) ──
         ToolDescriptor::platform_mcp(
             "list_workflows",
@@ -573,6 +547,7 @@ fn capability_to_tool_clusters_by_key(key: &str) -> Vec<ToolCluster> {
         CAP_WORKSPACE_MODULE => vec![ToolCluster::WorkspaceModule],
         CAP_WORKFLOW => vec![ToolCluster::Workflow],
         CAP_COLLABORATION => vec![ToolCluster::Collaboration],
+        CAP_TASK => vec![ToolCluster::Task],
         _ => vec![],
     }
 }
@@ -586,7 +561,6 @@ fn capability_to_tool_clusters_by_key(key: &str) -> Vec<ToolCluster> {
 pub enum PlatformMcpScope {
     Relay,
     Story,
-    Task,
     Workflow,
 }
 
@@ -596,7 +570,6 @@ pub fn capability_to_platform_mcp_scope(cap: &ToolCapability) -> Option<Platform
     match cap.key() {
         CAP_RELAY_MANAGEMENT => Some(PlatformMcpScope::Relay),
         CAP_STORY_MANAGEMENT => Some(PlatformMcpScope::Story),
-        CAP_TASK_MANAGEMENT => Some(PlatformMcpScope::Task),
         CAP_WORKFLOW_MANAGEMENT => Some(PlatformMcpScope::Workflow),
         _ => None,
     }
@@ -766,8 +739,8 @@ pub fn default_visibility_rules() -> &'static [CapabilityVisibilityRule] {
             workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
-            key: CAP_TASK_MANAGEMENT,
-            allowed_scopes: &[Task],
+            key: CAP_TASK,
+            allowed_scopes: &[Project, Story, Task],
             auto_granted: true,
             agent_can_grant: false,
             workflow_can_grant: false,
@@ -1047,10 +1020,10 @@ mod tests {
         assert!(story_names.contains(&"get_story_context"));
         assert!(story_names.contains(&"create_task"));
 
-        let task_tools = platform_tools_for_capability(CAP_TASK_MANAGEMENT);
+        let task_tools = platform_tools_for_capability(CAP_TASK);
         let task_names: Vec<&str> = task_tools.iter().map(|d| d.name.as_str()).collect();
-        assert!(task_names.contains(&"get_task_info"));
-        assert!(task_names.contains(&"report_artifact"));
+        assert!(task_names.contains(&"task_read"));
+        assert!(task_names.contains(&"task_write"));
     }
 
     #[test]

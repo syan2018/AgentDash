@@ -27,8 +27,8 @@
 | `workspace_module` | WorkspaceModule | — | Workspace Module 创建、发现、描述、调用与展示；Canvas Agent 入口收束在这里 |
 | `workflow` | Workflow | — | Lifecycle node 推进 |
 | `collaboration` | Collaboration | — | Companion 协作 |
+| `task` | Task | — | `task_read` / `task_write` 读取与维护 run-scoped Task |
 | `story_management` | — | Story | Story 上下文编排 |
-| `task_management` | — | Task | Task 状态与产物管理 |
 | `relay_management` | — | Relay | 全局看板/Project 管理 |
 | `workflow_management` | — | Workflow | Workflow/Lifecycle CRUD |
 
@@ -57,8 +57,8 @@
 | workspace_module | ✓ | ✓ | ✓ | ✓ | — | — |
 | workflow | ✓ | ✓ | ✓ | — | — | ✓ |
 | collaboration | ✓ | — | — | ✓ | — | — |
+| task | ✓ | ✓ | ✓ | ✓ | — | — |
 | story_management | — | ✓ | — | ✓ | — | — |
-| task_management | — | — | ✓ | ✓ | — | — |
 | relay_management | ✓ | — | — | ✓ | — | — |
 | workflow_management | ✓ | — | — | — | ✓ | ✓ |
 
@@ -179,6 +179,64 @@ workspace_module_create(kind="canvas")
 workspace_module_describe(module_id="canvas:{mount_id}")
 workspace_module_invoke(module_id="canvas:{mount_id}", operation_key="canvas.bind_data", input={...})
 workspace_module_present(module_id="canvas:{mount_id}", view_key="preview")
+```
+
+## Task Runtime Tool Surface
+
+### 1. Scope / Trigger
+
+- Trigger: AgentRun 会话需要直接维护 `LifecycleRun.tasks`，并让 Story projection 消费同一事实源。
+- Scope: SPI capability key、ToolCluster、runtime provider、tool schema、CapabilityCatalog、generated TS。
+
+### 2. Signatures
+
+```rust
+pub const CAP_TASK: &str = "task";
+pub enum ToolCluster { Task, /* ... */ }
+pub const CLUSTER_TASK_TOOLS: &[&str] = &["task_read", "task_write"];
+```
+
+```text
+task_read(mode = overview | list | detail | context | execution | projection, ...)
+task_write(mode = patch | snapshot, operations[], snapshot[], return_mode = ...)
+```
+
+### 3. Contracts
+
+- `task` 是 cluster-based runtime capability，不映射平台 MCP scope。
+- `task_read` 是唯一读取入口，mode 覆盖 overview/list/detail/context/execution/projection。
+- `task_write` 是唯一写入口，patch operations 覆盖 create/patch/status/reorder/drop/context refs；snapshot 写入同一组 Task facts。
+- 写入事实源固定为 `LifecycleRun.tasks`；Story 只读取 projection。
+- Companion 派发如携带 `payload.task_id`，由 companion 工具读取 Task context 并写回 `assigned_agent_id`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 语义 |
+| --- | --- |
+| 当前 runtime session 缺少 execution anchor | `task_read/task_write` 构建失败 |
+| `run_id` 不属于当前 project | tool execution failed |
+| `task_id` 不属于目标 run | invalid arguments / not found |
+| context ref enum 值未知 | invalid arguments |
+| snapshot `drop_missing=true` | 未出现在 snapshot 的旧 Task 软归档为 dropped |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Story-bound AgentRun 调用 `task_write` 创建 Task，AgentRun workspace 读回，Story projection 解释来源。
+- Base: 普通 Project AgentRun 调用 `task_read overview` 只看到当前 run scope 的 Task。
+- Bad: Task runtime tools 通过平台 MCP Task scope 注入，导致 Task 读写入口分散。
+
+### 6. Tests Required
+
+- Capability mapping test asserts `task -> ToolCluster::Task -> task_read/task_write`。
+- Runtime provider test or focused check asserts capability filter gates both tools。
+- Task write tests cover create/status/reorder/drop/context refs。
+- Companion sub dispatch test covers `payload.task_id` adds Task context and writes `assigned_agent_id`。
+
+### 7. Wrong vs Correct
+
+```text
+Wrong: platform MCP Task scope exposes separate Task CRUD/status tools.
+Correct: task runtime capability exposes task_read/task_write and execution artifacts stay in SubjectExecutionView.
 ```
 
 ## 工具 schema 与模型可见说明

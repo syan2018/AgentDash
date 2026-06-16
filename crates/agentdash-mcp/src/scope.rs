@@ -14,7 +14,7 @@ pub struct McpSessionContext {
     pub project_id: Option<Uuid>,
     /// 关联的 Story ID（Story 层必填，Task 层从实体反查）
     pub story_id: Option<Uuid>,
-    /// 关联的 Task ID（仅 Task 层使用）
+    /// 关联的 Task ID（由非 MCP runtime tools 使用时可为空）
     pub task_id: Option<Uuid>,
     /// 可选的调用者标识（用于审计和隔离）
     pub caller_id: Option<String>,
@@ -39,17 +39,6 @@ impl McpSessionContext {
             project_id: Some(project_id),
             story_id: Some(story_id),
             task_id: None,
-            caller_id: None,
-        }
-    }
-
-    /// 创建 Task 层上下文
-    pub fn task(project_id: Uuid, story_id: Uuid, task_id: Uuid) -> Self {
-        Self {
-            scope: ToolScope::Task,
-            project_id: Some(project_id),
-            story_id: Some(story_id),
-            task_id: Some(task_id),
             caller_id: None,
         }
     }

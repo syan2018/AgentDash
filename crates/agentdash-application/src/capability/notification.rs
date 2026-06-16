@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 
 use agentdash_spi::platform::tool_capability::{
     self, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_RELAY_MANAGEMENT,
-    CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT, CAP_WORKFLOW,
+    CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK, CAP_WORKFLOW,
     CAP_WORKFLOW_MANAGEMENT, CAP_WORKSPACE_MODULE, ToolCapability,
 };
 
@@ -26,8 +26,8 @@ pub fn capability_description(key: &str) -> &'static str {
         CAP_WORKSPACE_MODULE => "Workspace Module 创建、调用与展示（含 Canvas）",
         CAP_WORKFLOW => "Lifecycle 推进与产物上报",
         CAP_COLLABORATION => "Companion 协作 + Hook action 解析",
+        CAP_TASK => "Task 读取与维护（task_read / task_write）",
         CAP_STORY_MANAGEMENT => "Story 上下文管理、Task 创建与批量拆解、状态推进",
-        CAP_TASK_MANAGEMENT => "Task 状态更新、执行产物上报、兄弟 Task 查看、Story 上下文读取",
         CAP_RELAY_MANAGEMENT => "项目管理、Story 创建与状态变更",
         CAP_WORKFLOW_MANAGEMENT => "Workflow / Lifecycle 定义的查看、创建与编辑",
         _ => {

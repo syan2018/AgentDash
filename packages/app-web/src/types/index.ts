@@ -131,6 +131,7 @@ export type CapabilityKey =
   | "shell_execute"
   | "workflow"
   | "collaboration"
+  | "task"
   | "workspace_module";
 
 export type CapabilityGroup = "basic" | "extended";
@@ -153,6 +154,7 @@ export const CAPABILITY_OPTIONS: CapabilityOption[] = [
   { value: "shell_execute", label: "命令执行", description: "Shell 命令执行", group: "basic" },
   { value: "workflow", label: "工作流", description: "Workflow 产出汇报", group: "extended" },
   { value: "collaboration", label: "协作", description: "Companion 派发、回传、Hook 审核", group: "extended" },
+  { value: "task", label: "Task", description: "Task 读取与维护", group: "extended" },
   { value: "workspace_module", label: "Workspace Module", description: "模块创建、调用与展示，包含 Canvas", group: "extended" },
 ];
 

@@ -220,7 +220,7 @@ export type OrchestrationInstanceView = { orchestration_id: string, role: string
 
 export type OutputPortDefinition = { key: string, description: string, gate_strategy: GateStrategy, gate_params?: JsonValue, };
 
-export type PlatformMcpScopeDto = "relay" | "story" | "task" | "workflow";
+export type PlatformMcpScopeDto = "relay" | "story" | "workflow";
 
 export type PreflightWorkflowScriptRequest = { project_id: string, source_text: string, args?: JsonValue, ctx?: JsonValue, runtime_session_id?: string, };
 
@@ -260,7 +260,7 @@ export type ToolCapabilityDirective = { "add": ToolCapabilityPath } | { "remove"
 
 export type ToolCapabilityPath = string;
 
-export type ToolClusterDto = "read" | "write" | "execute" | "workflow" | "collaboration" | "workspace_module";
+export type ToolClusterDto = "read" | "write" | "execute" | "workflow" | "collaboration" | "task" | "workspace_module";
 
 export type ToolDescriptorDto = { name: string, display_name: string, description: string, source: ToolSourceDto, capability_key: string, };
 

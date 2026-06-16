@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use agentdash_domain::context_source::{
     ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
 };
@@ -240,13 +240,52 @@ pub struct TaskWriteParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum TaskWriteOperation {
-    CreateTask(TaskCreateInput),
-    PatchTask(TaskPatchInput),
-    SetStatus { task_id: Uuid, status: TaskStatusInput },
+    CreateTask {
+        title: String,
+        #[serde(default)]
+        body: Option<String>,
+        #[serde(default)]
+        status: Option<TaskStatusInput>,
+        #[serde(default)]
+        priority: Option<TaskPriorityInput>,
+        #[serde(default)]
+        owner_agent_id: Option<Uuid>,
+        #[serde(default)]
+        assigned_agent_id: Option<Uuid>,
+        #[serde(default)]
+        source_task_id: Option<Uuid>,
+        #[serde(default)]
+        context_refs: Vec<ContextSourceRefInput>,
+        #[serde(default)]
+        story_ref: Option<SubjectRefInput>,
+    },
+    PatchTask {
+        task_id: String,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        body: Option<Option<String>>,
+        #[serde(default)]
+        priority: Option<Option<TaskPriorityInput>>,
+        #[serde(default)]
+        owner_agent_id: Option<Option<Uuid>>,
+        #[serde(default)]
+        assigned_agent_id: Option<Option<Uuid>>,
+        #[serde(default)]
+        source_task_id: Option<Option<Uuid>>,
+        #[serde(default)]
+        context_refs: Option<Vec<ContextSourceRefInput>>,
+        #[serde(default)]
+        story_ref: Option<Option<SubjectRefInput>>,
+    },
+    SetStatus {
+        task_id: String,
+        status: TaskStatusInput,
+    },
     ReorderTasks { task_ids: Vec<Uuid> },
-    DropTask { task_id: Uuid },
+    DropTask { task_id: String },
     ReplaceContextRefs {
-        task_id: Uuid,
+        task_id: String,
         context_refs: Vec<ContextSourceRefInput>,
     },
 }
@@ -274,7 +313,7 @@ pub struct TaskCreateInput {
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct TaskPatchInput {
-    pub task_id: Uuid,
+    pub task_id: String,
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
@@ -420,29 +459,73 @@ async fn apply_operation(
     changed_task_ids: &mut Vec<Uuid>,
 ) -> Result<(), AgentToolError> {
     match operation {
-        TaskWriteOperation::CreateTask(input) => {
+        TaskWriteOperation::CreateTask {
+            title,
+            body,
+            status,
+            priority,
+            owner_agent_id,
+            assigned_agent_id,
+            source_task_id,
+            context_refs,
+            story_ref,
+        } => {
             let result = create_run_task(
                 repos.lifecycle_run_repo.as_ref(),
                 run_id,
-                draft_from_create(input, scope)?,
+                draft_from_create(
+                    TaskCreateInput {
+                        title,
+                        body,
+                        status,
+                        priority,
+                        owner_agent_id,
+                        assigned_agent_id,
+                        source_task_id,
+                        context_refs,
+                        story_ref,
+                    },
+                    scope,
+                )?,
             )
             .await
             .map_err(tool_error)?;
             changed_task_ids.push(result.task.id);
         }
-        TaskWriteOperation::PatchTask(input) => {
-            let task_id = input.task_id;
+        TaskWriteOperation::PatchTask {
+            task_id,
+            title,
+            body,
+            priority,
+            owner_agent_id,
+            assigned_agent_id,
+            source_task_id,
+            context_refs,
+            story_ref,
+        } => {
+            let task_id = resolve_task_selector(repos, run_id, &task_id).await?;
             let result = update_run_task(
                 repos.lifecycle_run_repo.as_ref(),
                 run_id,
                 task_id,
-                patch_from_input(input)?,
+                patch_from_input(TaskPatchInput {
+                    task_id: task_id.to_string(),
+                    title,
+                    body,
+                    priority,
+                    owner_agent_id,
+                    assigned_agent_id,
+                    source_task_id,
+                    context_refs,
+                    story_ref,
+                })?,
             )
             .await
             .map_err(tool_error)?;
             changed_task_ids.push(result.task.id);
         }
         TaskWriteOperation::SetStatus { task_id, status } => {
+            let task_id = resolve_task_selector(repos, run_id, &task_id).await?;
             let result = transition_run_task_status(
                 repos.lifecycle_run_repo.as_ref(),
                 run_id,
@@ -460,6 +543,7 @@ async fn apply_operation(
             changed_task_ids.extend(task_ids);
         }
         TaskWriteOperation::DropTask { task_id } => {
+            let task_id = resolve_task_selector(repos, run_id, &task_id).await?;
             let result = archive_run_task(repos.lifecycle_run_repo.as_ref(), run_id, task_id)
                 .await
                 .map_err(tool_error)?;
@@ -469,6 +553,7 @@ async fn apply_operation(
             task_id,
             context_refs,
         } => {
+            let task_id = resolve_task_selector(repos, run_id, &task_id).await?;
             let result = update_run_task(
                 repos.lifecycle_run_repo.as_ref(),
                 run_id,
@@ -501,10 +586,32 @@ async fn apply_snapshot(
         .map_err(tool_error)?
         .ok_or_else(|| AgentToolError::ExecutionFailed(format!("LifecycleRun {run_id} 不存在")))?;
     let existing_ids = existing.tasks.iter().map(|task| task.id).collect::<Vec<_>>();
+    let mut title_matches = existing
+        .tasks
+        .iter()
+        .filter(|task| task.archived_at.is_none())
+        .fold(BTreeMap::<String, Vec<Uuid>>::new(), |mut acc, task| {
+            acc.entry(task.title.clone()).or_default().push(task.id);
+            acc
+        });
+    let mut matched_ids = HashSet::new();
     let mut ordered_ids = Vec::new();
 
     for item in snapshot {
-        let maybe_id = item.id;
+        let normalized_title = normalize_title(&item.title)?;
+        let status = item.status;
+        let maybe_id = item.id.or_else(|| {
+            title_matches
+                .get_mut(&normalized_title)
+                .and_then(|ids| {
+                    while let Some(task_id) = ids.pop() {
+                        if matched_ids.insert(task_id) {
+                            return Some(task_id);
+                        }
+                    }
+                    None
+                })
+        });
         let task_id = if let Some(task_id) = maybe_id {
             if existing.task_by_id(task_id).is_some() {
                 update_run_task(
@@ -515,6 +622,16 @@ async fn apply_snapshot(
                 )
                 .await
                 .map_err(tool_error)?;
+                if let Some(status) = status {
+                    transition_run_task_status(
+                        repos.lifecycle_run_repo.as_ref(),
+                        run_id,
+                        task_id,
+                        status.into(),
+                    )
+                    .await
+                    .map_err(tool_error)?;
+                }
                 task_id
             } else {
                 create_run_task(
@@ -798,6 +915,44 @@ fn patch_from_input(input: TaskPatchInput) -> Result<LifecycleTaskPlanItemPatch,
             .story_ref
             .map(|value| value.map(SubjectRef::from)),
     })
+}
+
+async fn resolve_task_selector(
+    repos: &RepositorySet,
+    run_id: Uuid,
+    selector: &str,
+) -> Result<Uuid, AgentToolError> {
+    if let Ok(task_id) = Uuid::parse_str(selector) {
+        return Ok(task_id);
+    }
+
+    let title = normalize_title(selector)?;
+    let run = repos
+        .lifecycle_run_repo
+        .get_by_id(run_id)
+        .await
+        .map_err(tool_error)?
+        .ok_or_else(|| AgentToolError::ExecutionFailed(format!("LifecycleRun {run_id} 不存在")))?;
+    let matches = run
+        .tasks
+        .iter()
+        .filter(|task| task.archived_at.is_none() && task.title == title)
+        .map(|task| task.id)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [task_id] => Ok(*task_id),
+        [] => Err(AgentToolError::InvalidArguments(format!(
+            "未找到标题为 `{title}` 的未归档 Task"
+        ))),
+        ids => Err(AgentToolError::InvalidArguments(format!(
+            "标题 `{title}` 匹配到 {} 个未归档 Task，请改用 task_id: {}",
+            ids.len(),
+            ids.iter()
+                .map(Uuid::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
 }
 
 fn normalize_title(title: &str) -> Result<String, AgentToolError> {

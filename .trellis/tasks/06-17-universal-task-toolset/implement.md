@@ -97,3 +97,40 @@ flowchart TD
 - `cargo test -p agentdash-application task::plan`
 - `cargo test -p agentdash-application capability::resolver`
 - `cargo test -p agentdash-application session::post_turn_handler`
+
+## 前端会话验收记录
+
+时间：2026-06-17
+
+启动方式：
+
+- `pnpm dev`
+- 前端：`http://127.0.0.1:5380`
+- 后端 health：`http://127.0.0.1:3001/api/health`
+
+验收路径：
+
+- 从 Agent Hub 启动 `Pi Agent General` Project AgentRun。
+- 在真实前端会话中要求 Agent 调用 `task_write` 创建/维护 Task，并调用 `task_read` 的 list/detail/projection 读回。
+- 首轮会话完成后，Agent 最终读回 2 个 Task：`验收 Task A` 为 completed，`验收 Task B` 为 pending。
+- 刷新 AgentRun 页面后，workspace Task Plan 面板能从 run projection 读回工具写入的 Task。
+
+验收中补齐的工具语义：
+
+- `task_write` patch operation schema 改为扁平 `op + fields`，使 `{ "op": "create_task", "title": "...", "status": "active" }` 这类 Agent 自然生成的参数能通过工具 schema 校验。
+- `task_write` snapshot 对无 id 条目按当前 run 内唯一未归档标题 reconcile，避免 Agent 二次 snapshot 时追加同名 Task。
+- snapshot 匹配到已有 Task 时会继续应用 status 推进，保证 snapshot 表达的状态事实进入 run task。
+- mutating operation 的 `task_id` 支持 UUID 或当前 run 内唯一未归档标题；标题不唯一时要求改用 UUID，便于 Agent 在已读回列表后按标题完成短链路更新。
+
+最终执行验证：
+
+- `cargo check -p agentdash-api`
+- `pnpm run contracts:check`
+- `pnpm run frontend:check`
+- `pnpm run migration:guard`
+- `cargo test -p agentdash-application task::plan`
+- `git diff --check`
+
+限制记录：
+
+- in-app browser 在最终短会话重试时对 contenteditable 输入出现 CDP/虚拟剪贴板不稳定；此前两轮真实前端 AgentRun 已覆盖 `task_write`/`task_read` 调用、projection 读回和 Task Plan 面板刷新。

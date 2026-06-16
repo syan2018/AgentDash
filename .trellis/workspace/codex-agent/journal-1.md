@@ -507,3 +507,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: 收束 Agent 来源为 AgentSource 枚举 + 删除 agent_role + 清理废弃 hub 单测
+
+**Date**: 2026-06-16
+**Task**: 收束 Agent 来源为 AgentSource 枚举 + 删除 agent_role + 清理废弃 hub 单测
+**Branch**: `main`
+
+### Summary
+
+将 LifecycleAgent.agent_kind 自由字符串收束为标准化 AgentSource 枚举（出生时确定一次的内在身份，不与 per-execution 的 ExecutionSource 耦合），并删除从未被分支逻辑消费的冗余 agent_role。经实地穷举发现生产仅 2 个 new_root 出生点，据此把枚举收窄为诚实 5 变体（ProjectAgent/Routine/Subagent/WorkflowAgent/Unknown），删除测试噪声伪变体与死变体 Migration；定义随 LifecycleAgent 落在 lifecycle_agent.rs。migration 0014 RENAME agent_kind->source + 规范化 + DROP agent_role；契约 source 字段；前端 agentSourceLabel 来源标签（列表行/workspace 身份栏）。另删除 7 个测试已弱化 session hub 旧 launch/hook/connector 契约的废弃单测及其孤儿夹具，全 workspace 单测恢复全绿。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `415ab00d` | (see git log) |
+| `6f2e72a1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::context::{ContextContainerDefinition, ContextSourceRef, SessionComposition};
+use crate::task::TaskResponse;
+use crate::workflow::SubjectRefDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct StoryContext {
@@ -135,4 +137,42 @@ impl From<agentdash_domain::story::Story> for StoryResponse {
             updated_at: value.updated_at.to_rfc3339(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StoryTaskProjectionSourceKind {
+    OwningRun,
+    LinkedRun,
+    StoryRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct StoryTaskProjectionSource {
+    pub kind: StoryTaskProjectionSourceKind,
+    pub run_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub story_ref: Option<SubjectRefDto>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct StoryTaskProjectionItem {
+    pub task: TaskResponse,
+    #[serde(default)]
+    pub sources: Vec<StoryTaskProjectionSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct StoryTaskProjectionResponse {
+    pub story_id: String,
+    #[serde(default)]
+    pub tasks: Vec<StoryTaskProjectionItem>,
 }

@@ -126,10 +126,13 @@ use agentdash_contracts::shared_library::{
     ProjectAssetSourceStatusDto, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
 };
 use agentdash_contracts::story::{
-    StoryContext, StoryPriority, StoryResponse, StoryStatus, StoryType,
+    StoryContext, StoryPriority, StoryResponse, StoryStatus, StoryTaskProjectionItem,
+    StoryTaskProjectionResponse, StoryTaskProjectionSource, StoryTaskProjectionSourceKind,
+    StoryType,
 };
 use agentdash_contracts::task::{
-    Artifact, ArtifactType, TaskDispatchPreference, TaskResponse, TaskStatus,
+    CreateRunTaskRequest, RunTaskCommandResponse, RunTaskPlanResponse, TaskPlanStatus,
+    TaskPriority, TaskResponse, TaskStatus, UpdateRunTaskRequest, UpdateRunTaskStatusRequest,
 };
 use agentdash_contracts::vfs::{
     ConfigurableProviderInfo, CreateProjectVfsMountRequest, DeleteProjectVfsMountResponse,
@@ -347,6 +350,25 @@ fn main() {
         },
     );
 
+    // --- task-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "task-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<TaskPlanStatus>(dir);
+            export_all::<TaskStatus>(dir);
+            export_all::<TaskPriority>(dir);
+            export_all::<TaskResponse>(dir);
+            export_all::<RunTaskPlanResponse>(dir);
+            export_all::<CreateRunTaskRequest>(dir);
+            export_all::<UpdateRunTaskRequest>(dir);
+            export_all::<UpdateRunTaskStatusRequest>(dir);
+            export_all::<RunTaskCommandResponse>(dir);
+        },
+    );
+
     // --- story-contracts.ts ---
     emit_domain(
         &generated_dir,
@@ -359,21 +381,10 @@ fn main() {
             export_all::<StoryPriority>(dir);
             export_all::<StoryType>(dir);
             export_all::<StoryResponse>(dir);
-        },
-    );
-
-    // --- task-contracts.ts ---
-    emit_domain(
-        &generated_dir,
-        "task-contracts.ts",
-        &mut upstream,
-        check,
-        |dir| {
-            export_all::<TaskStatus>(dir);
-            export_all::<ArtifactType>(dir);
-            export_all::<Artifact>(dir);
-            export_all::<TaskDispatchPreference>(dir);
-            export_all::<TaskResponse>(dir);
+            export_all::<StoryTaskProjectionSourceKind>(dir);
+            export_all::<StoryTaskProjectionSource>(dir);
+            export_all::<StoryTaskProjectionItem>(dir);
+            export_all::<StoryTaskProjectionResponse>(dir);
         },
     );
 

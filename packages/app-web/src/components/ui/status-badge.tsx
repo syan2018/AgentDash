@@ -27,13 +27,12 @@ const storyTypeConfig: Record<StoryType, { label: string; icon: string; classNam
 };
 
 const taskStatusConfig: Record<TaskStatus, { label: string; className: string }> = {
-  pending: { label: "待执行", className: "border-border bg-secondary text-muted-foreground" },
-  assigned: { label: "已分配", className: "border-info/20 bg-info/10 text-info" },
-  running: { label: "执行中", className: "border-primary/20 bg-primary/10 text-primary" },
-  awaiting_verification: { label: "待验收", className: "border-warning/20 bg-warning/10 text-warning" },
-  completed: { label: "已完成", className: "border-success/20 bg-success/10 text-success" },
-  failed: { label: "失败", className: "border-destructive/20 bg-destructive/10 text-destructive" },
-  cancelled: { label: "已取消", className: "border-warning/20 bg-warning/10 text-warning" },
+  open: { label: "open", className: "border-border bg-secondary text-muted-foreground" },
+  active: { label: "active", className: "border-primary/20 bg-primary/10 text-primary" },
+  review: { label: "review", className: "border-warning/20 bg-warning/10 text-warning" },
+  blocked: { label: "blocked", className: "border-destructive/20 bg-destructive/10 text-destructive" },
+  done: { label: "done", className: "border-success/20 bg-success/10 text-success" },
+  dropped: { label: "dropped", className: "border-border bg-secondary text-muted-foreground" },
 };
 
 interface BadgeProps {
@@ -98,8 +97,6 @@ export function TaskStatusBadge({ status, className = "" }: BadgeProps & { statu
   const config = taskStatusConfig[status];
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs font-medium ${config.className} ${className}`}>
-      {/* eslint-disable-next-line no-restricted-syntax -- 状态指示圆点 */}
-      {status === "running" && <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />}
       {config.label}
     </span>
   );

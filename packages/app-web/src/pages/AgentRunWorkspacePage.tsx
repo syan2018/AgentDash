@@ -17,6 +17,7 @@ import { extractPlatformEventData } from "../features/session/model/platformEven
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import { agentSourceLabel } from "../lib/agent-source";
 import { useAgentRunWorkspaceCommands } from "../features/agent-run-workspace/model/useAgentRunWorkspaceCommands";
+import { TaskPlanPanel } from "../features/task/task-plan-panel";
 import {
   WorkspacePanel,
   type WorkspacePanelHandle,
@@ -738,30 +739,33 @@ export function AgentRunWorkspacePage({
 
       <Group orientation="horizontal" className="flex-1 overflow-hidden">
         <Panel minSize="30%">
-          <div className="h-full overflow-hidden">
-            <SessionChatView
-              sessionId={deliveryRuntimeSessionId}
-              workspaceId={chatWorkspaceId}
-              onMessageSent={handleMessageSent}
-              onTurnEnd={handleTurnEnd}
-              onSystemEvent={handleSystemEvent}
-              executorHint={executorHint}
-              agentDefaults={draftProjectAgent?.effective_executor_config ?? runtimeControl?.conversation?.model_config.effective_executor_config ?? taskExecutorSummary}
-              executorStateKey={executorStateKey}
-              commandState={chatCommandState}
-              onCommand={handleAgentRunCommand}
-              onCancelAction={handleCancelAgentRun}
-              onExecutorConfigOverrideChange={setExplicitExecutorConfigOverride}
-              mailboxSnapshot={conversationMailbox}
-              onPromoteMailboxMessage={(id) => { void handlePromoteMailboxMessage(id); }}
-              onDeleteMailboxMessage={(id) => { void handleDeleteMailboxMessage(id); }}
-              onResumeMailbox={() => { void handleResumeMailbox(); }}
-              onRecallMailboxMessage={(id) => { void handleRecallMailboxMessage(id); }}
-              onMoveMailboxMessage={(id, after) => { void handleMoveMailboxMessage(id, after); }}
-              injectedInputValue={recalledInput}
-              onInjectedInputConsumed={clearRecalledInput}
-              inputPrefix={ownerBindingBar ?? draftBindingBar}
-            />
+          <div className="flex h-full flex-col overflow-hidden">
+            <TaskPlanPanel runId={currentRunId} agentId={currentAgentId} />
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <SessionChatView
+                sessionId={deliveryRuntimeSessionId}
+                workspaceId={chatWorkspaceId}
+                onMessageSent={handleMessageSent}
+                onTurnEnd={handleTurnEnd}
+                onSystemEvent={handleSystemEvent}
+                executorHint={executorHint}
+                agentDefaults={draftProjectAgent?.effective_executor_config ?? runtimeControl?.conversation?.model_config.effective_executor_config ?? taskExecutorSummary}
+                executorStateKey={executorStateKey}
+                commandState={chatCommandState}
+                onCommand={handleAgentRunCommand}
+                onCancelAction={handleCancelAgentRun}
+                onExecutorConfigOverrideChange={setExplicitExecutorConfigOverride}
+                mailboxSnapshot={conversationMailbox}
+                onPromoteMailboxMessage={(id) => { void handlePromoteMailboxMessage(id); }}
+                onDeleteMailboxMessage={(id) => { void handleDeleteMailboxMessage(id); }}
+                onResumeMailbox={() => { void handleResumeMailbox(); }}
+                onRecallMailboxMessage={(id) => { void handleRecallMailboxMessage(id); }}
+                onMoveMailboxMessage={(id, after) => { void handleMoveMailboxMessage(id, after); }}
+                injectedInputValue={recalledInput}
+                onInjectedInputConsumed={clearRecalledInput}
+                inputPrefix={ownerBindingBar ?? draftBindingBar}
+              />
+            </div>
           </div>
         </Panel>
 

@@ -7,7 +7,7 @@ interface TaskCardProps {
 }
 
 export function TaskCard({ task, onClick }: TaskCardProps) {
-  const agentLabel = task.dispatch_preference?.agent_type ?? "未指定";
+  const assignmentLabel = task.assigned_agent_id ?? task.owner_agent_id ?? "未指派";
 
   return (
     <button
@@ -18,12 +18,12 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium leading-6 text-foreground">{task.title}</p>
-          {task.description && <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">{task.description}</p>}
+          {task.body && <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">{task.body}</p>}
         </div>
         <TaskStatusBadge status={task.status} />
       </div>
       <div className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-xs text-muted-foreground">
-        <span className="truncate">{agentLabel}</span>
+        <span className="truncate">{assignmentLabel}</span>
         <span>{new Date(task.updated_at).toLocaleDateString("zh-CN")}</span>
       </div>
     </button>

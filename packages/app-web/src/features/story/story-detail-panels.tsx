@@ -17,10 +17,20 @@ import {
   createDefaultSessionComposition,
 } from "../../components/context-config-defaults";
 import { VfsBrowser } from "../vfs";
-import { resolveDefaultWorkspaceId } from "../task/dispatch-preference";
 import { useVfsPicker, VfsEntryPickerInline } from "../context-source";
 import { useStoryStore } from "../../stores/storyStore";
 import { sourceKindMeta } from "./context-source-utils";
+
+function resolveDefaultWorkspaceId(
+  projectConfig: ProjectConfig | undefined,
+  workspaces: Workspace[],
+): string {
+  const projectDefault = projectConfig?.default_workspace_id?.trim() ?? "";
+  if (projectDefault && workspaces.some((item) => item.id === projectDefault)) {
+    return projectDefault;
+  }
+  return "";
+}
 
 function buildFileContextSource(address: string, label: string, index: number): ContextSourceRef {
   return {

@@ -1,8 +1,4 @@
 import type { CapabilityDirective } from "./workflow";
-import type {
-  TaskDispatchPreference as CoreTaskDispatchPreference,
-  Artifact as CoreArtifact,
-} from "../generated/task-contracts";
 import type { StoryResponse } from "../generated/story-contracts";
 import type { TaskResponse } from "../generated/task-contracts";
 import type {
@@ -40,11 +36,7 @@ import type {
 
 // ─── Generated Domain Contracts ───────────────────────
 
-export type TaskDispatchPreference = CoreTaskDispatchPreference & {
-  thinking_level?: ThinkingLevel | null;
-};
 export type AgentPreset = GeneratedAgentPreset;
-export type Artifact = CoreArtifact;
 export type ContextSourceRef = GeneratedContextSourceRef;
 export type Project = ProjectResponse;
 export type ProjectAccessSummary = ProjectAccessSummaryResponse;
@@ -52,7 +44,7 @@ export type ProjectConfig = GeneratedProjectConfig;
 export type ProjectSubjectGrant = ProjectSubjectGrantResponse;
 export type Story = StoryResponse;
 export type StoryContext = StoryResponse["context"];
-export type Task = Omit<TaskResponse, "dispatch_preference"> & { dispatch_preference: TaskDispatchPreference };
+export type Task = TaskResponse;
 export type Workspace = WorkspaceResponse;
 export type WorkspaceBinding = WorkspaceBindingResponse;
 export type {
@@ -79,7 +71,20 @@ export type {
 } from "../generated/story-contracts";
 export type {
   TaskStatus,
+  TaskPlanStatus,
+  TaskPriority,
+  CreateRunTaskRequest,
+  RunTaskCommandResponse,
+  RunTaskPlanResponse,
+  UpdateRunTaskRequest,
+  UpdateRunTaskStatusRequest,
 } from "../generated/task-contracts";
+export type {
+  StoryTaskProjectionItem,
+  StoryTaskProjectionResponse,
+  StoryTaskProjectionSource,
+  StoryTaskProjectionSourceKind,
+} from "../generated/story-contracts";
 
 // ─── 基础枚举 ─────────────────────────────────────────
 

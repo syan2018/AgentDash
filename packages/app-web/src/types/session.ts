@@ -1,5 +1,3 @@
-import type { TaskDispatchPreference } from "./index";
-
 // ─── Session Types ─────────────────────────────────
 
 export type CapabilityScope = "project" | "story" | "task";
@@ -15,7 +13,6 @@ export interface SubjectRunContext {
 
 export interface SessionTaskContext {
   task_id: string;
-  dispatch_preference?: TaskDispatchPreference;
 }
 
 export interface HookInjection {

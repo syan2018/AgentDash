@@ -5,7 +5,7 @@ import type {
   Story,
   StoryNavigationState,
   Task,
-  Workspace,
+  StoryTaskProjectionItem,
 } from "../types";
 import { StorySubjectExecutionPanel } from "../features/story/story-subject-execution-panel";
 import { TaskStatusBadge } from "../components/ui/status-badge";
@@ -24,7 +24,6 @@ import {
   Textarea,
   TextInput,
 } from "@agentdash/ui";
-import { CreateTaskPanel } from "../features/story/create-task-panel";
 import { sourceKindMeta } from "../features/story/context-source-utils";
 import { ContextPanel } from "../features/story/story-detail-panels";
 import {
@@ -55,25 +54,6 @@ function contextSignalCount(story: Story): number {
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleDateString("zh-CN");
-}
-
-function taskReviewLabel(status: Task["status"]): { label: string; className: string } {
-  switch (status) {
-    case "awaiting_verification":
-      return { label: "待验收", className: "text-warning" };
-    case "completed":
-      return { label: "通过", className: "text-success" };
-    case "failed":
-      return { label: "未通过", className: "text-destructive" };
-    case "cancelled":
-      return { label: "已取消", className: "text-warning" };
-    case "running":
-      return { label: "执行中", className: "text-primary" };
-    case "assigned":
-    case "pending":
-    default:
-      return { label: "未开始", className: "text-muted-foreground" };
-  }
 }
 
 function CompactProperty({
@@ -115,62 +95,66 @@ function isStoryNavigationState(value: unknown): value is StoryNavigationState {
 
 
 function StoryTaskRows({
-  tasks,
-  workspaces,
+  items,
   onOpenTask,
 }: {
-  tasks: Task[];
-  workspaces: Workspace[];
+  items: StoryTaskProjectionItem[];
   onOpenTask: (task: Task) => void;
 }) {
-  if (tasks.length === 0) {
+  if (items.length === 0) {
     return (
       <EmptyState className="py-8">
-        当前 Story 暂无 Task。创建 Task 后，它会在这里以执行队列形式展示。
+        当前 Story 暂无 Task projection。
       </EmptyState>
     );
   }
 
-  const workspaceName = (workspaceId?: string | null) => {
-    if (!workspaceId) return "未绑定 Workspace";
-    return workspaces.find((workspace) => workspace.id === workspaceId)?.name ?? workspaceId.slice(0, 8);
+  const sourceLabel = (item: StoryTaskProjectionItem): string => {
+    const source = item.sources[0];
+    if (!source) return "未解释来源";
+    if (source.kind === "owning_run") return `Story-bound run ${source.run_id.slice(0, 8)}`;
+    if (source.kind === "linked_run") return `Linked run ${source.run_id.slice(0, 8)}`;
+    return source.reason || `Story ref ${source.run_id.slice(0, 8)}`;
   };
 
   return (
     <div className="overflow-hidden rounded-[8px] border border-border bg-background">
-      <div className="hidden grid-cols-[minmax(0,1fr)_7rem_6rem_6rem] gap-3 border-b border-border bg-secondary/20 px-3 py-2 text-[10px] font-medium text-muted-foreground lg:grid">
+      <div className="hidden grid-cols-[minmax(0,1fr)_8rem_minmax(8rem,12rem)_8rem] gap-3 border-b border-border bg-secondary/20 px-3 py-2 text-[10px] font-medium text-muted-foreground lg:grid">
         <span>Task</span>
-        <span>Workspace</span>
-        <span>Agent</span>
-        <span className="text-right">验收</span>
+        <span>Owner</span>
+        <span>来源</span>
+        <span className="text-right">状态</span>
       </div>
-      {tasks.map((task) => (
+      {items.map((item) => {
+        const task = item.task;
+        return (
         <button
           key={task.id}
           type="button"
           onClick={() => onOpenTask(task)}
-          className="group grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-border px-3 py-2.5 text-left text-sm transition-colors last:border-b-0 hover:bg-secondary/30 lg:grid-cols-[auto_minmax(0,1fr)_7rem_6rem_6rem]"
+          className="group grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-border px-3 py-2.5 text-left text-sm transition-colors last:border-b-0 hover:bg-secondary/30 lg:grid-cols-[auto_minmax(0,1fr)_8rem_minmax(8rem,12rem)_8rem]"
         >
           <TaskStatusBadge status={task.status} className="shrink-0 px-2 py-0.5 text-[11px]" />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <span className="truncate font-medium text-foreground">{task.title}</span>
             </div>
-            {task.description && (
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">{task.description}</p>
+            {task.body && (
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{task.body}</p>
             )}
           </div>
           <span className="hidden min-w-0 truncate text-xs text-muted-foreground lg:block">
-            {workspaceName(task.workspace_id)}
+            {task.owner_agent_id?.slice(0, 8) ?? task.created_by_agent_id?.slice(0, 8) ?? "未设置"}
           </span>
           <span className="hidden min-w-0 truncate text-xs text-muted-foreground lg:block">
-            {task.dispatch_preference.agent_type ?? task.dispatch_preference.preset_name ?? "未指定 Agent"}
+            {sourceLabel(item)}
           </span>
-          <span className={`hidden text-right text-xs font-medium lg:block ${taskReviewLabel(task.status).className}`}>
-            {taskReviewLabel(task.status).label}
+          <span className="hidden text-right text-xs font-medium text-muted-foreground lg:block">
+            {task.status}
           </span>
         </button>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -181,9 +165,9 @@ export function StoryPage() {
   const navigate = useNavigate();
   const projects = useProjectStore((s) => s.projects);
   const storiesByProjectId = useStoryStore((s) => s.storiesByProjectId);
-  const tasksByStoryId = useStoryStore((s) => s.tasksByStoryId);
+  const storyTaskProjectionByStoryId = useStoryStore((s) => s.storyTaskProjectionByStoryId);
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
-  const fetchTasks = useStoryStore((s) => s.fetchTasks);
+  const fetchStoryTaskProjection = useStoryStore((s) => s.fetchStoryTaskProjection);
   const updateStory = useStoryStore((s) => s.updateStory);
   const deleteStory = useStoryStore((s) => s.deleteStory);
   const error = useStoryStore((s) => s.error);
@@ -205,19 +189,19 @@ export function StoryPage() {
   const openTaskIdFromRoute = routeState?.open_task_id?.trim() ?? "";
 
   const story = useMemo(() => (storyId ? findStoryById(storiesByProjectId, storyId) : null), [storiesByProjectId, storyId]);
-  const tasks = useMemo(() => (storyId ? tasksByStoryId[storyId] ?? [] : []), [tasksByStoryId, storyId]);
-  const sortedTasks = useMemo(
-    () => [...tasks].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
-    [tasks],
+  const projectionItems = useMemo(() => (storyId ? storyTaskProjectionByStoryId[storyId] ?? [] : []), [storyId, storyTaskProjectionByStoryId]);
+  const sortedProjectionItems = useMemo(
+    () => [...projectionItems].sort((a, b) => new Date(b.task.updated_at).getTime() - new Date(a.task.updated_at).getTime()),
+    [projectionItems],
   );
   const routeSelectedTaskId = useMemo(
-    () => (openTaskIdFromRoute && sortedTasks.some((task) => task.id === openTaskIdFromRoute) ? openTaskIdFromRoute : null),
-    [openTaskIdFromRoute, sortedTasks],
+    () => (openTaskIdFromRoute && sortedProjectionItems.some((item) => item.task.id === openTaskIdFromRoute) ? openTaskIdFromRoute : null),
+    [openTaskIdFromRoute, sortedProjectionItems],
   );
   const effectiveSelectedTaskId = selectedTaskId ?? routeSelectedTaskId;
   const selectedTask = useMemo(
-    () => sortedTasks.find((task) => task.id === effectiveSelectedTaskId) ?? null,
-    [effectiveSelectedTaskId, sortedTasks],
+    () => sortedProjectionItems.find((item) => item.task.id === effectiveSelectedTaskId)?.task ?? null,
+    [effectiveSelectedTaskId, sortedProjectionItems],
   );
 
   const currentProject = useMemo(() => {
@@ -263,10 +247,10 @@ export function StoryPage() {
   }, [fetchStoryById, story?.id, storyId]);
 
   useEffect(() => {
-    if (storyId && !tasksByStoryId[storyId]) {
-      void fetchTasks(storyId);
+    if (storyId && !storyTaskProjectionByStoryId[storyId]) {
+      void fetchStoryTaskProjection(storyId);
     }
-  }, [fetchTasks, storyId, tasksByStoryId]);
+  }, [fetchStoryTaskProjection, storyId, storyTaskProjectionByStoryId]);
 
   const saveStory = useCallback(async (payload: Parameters<typeof updateStory>[1]) => {
     if (!story) return false;
@@ -317,16 +301,10 @@ export function StoryPage() {
     navigate("/dashboard/story");
   };
 
-  const handleTaskCreated = () => {
-    if (storyId) {
-      void fetchTasks(storyId);
-    }
-  };
-
   const handleTaskUpdated = (updated: Task) => {
     setSelectedTaskId(updated.id);
     if (storyId) {
-      void fetchTasks(storyId);
+      void fetchStoryTaskProjection(storyId);
     }
   };
 
@@ -335,7 +313,7 @@ export function StoryPage() {
       setSelectedTaskId(null);
     }
     if (storyId) {
-      void fetchTasks(storyId);
+      void fetchStoryTaskProjection(storyId);
     }
   };
 
@@ -578,19 +556,12 @@ export function StoryPage() {
 
                   <section className="border-t border-border pt-4">
                     <SectionTitle
-                      title="Tasks"
-                      subtitle="验收状态直接随 Task 行展示"
-                      badge={`${sortedTasks.length}`}
+                      title="Task Projection"
+                      subtitle="来自 Story-bound run、linked run 或显式 story_ref"
+                      badge={`${sortedProjectionItems.length}`}
                     />
                     <div className="space-y-3 pt-3">
-                      <CreateTaskPanel
-                        story={story}
-                        storyId={story.id}
-                        workspaces={workspaces}
-                        projectConfig={currentProject?.config}
-                        onCreated={handleTaskCreated}
-                      />
-                      <StoryTaskRows tasks={sortedTasks} workspaces={workspaces} onOpenTask={(task) => setSelectedTaskId(task.id)} />
+                      <StoryTaskRows items={sortedProjectionItems} onOpenTask={(task) => setSelectedTaskId(task.id)} />
                     </div>
                   </section>
 
@@ -629,8 +600,6 @@ export function StoryPage() {
       <TaskDrawer
         key={selectedTask?.id ?? "no-task-selected"}
         task={selectedTask}
-        workspaces={workspaces}
-        projectConfig={currentProject?.config}
         onTaskUpdated={handleTaskUpdated}
         onTaskDeleted={handleTaskDeleted}
         onClose={() => {
@@ -646,7 +615,7 @@ export function StoryPage() {
       <DangerConfirmDialog
         open={isDeleteConfirmOpen}
         title="删除 Story"
-        description="Story 删除后其下 Task 会一起删除。"
+        description="删除后将移除这个 Story 主题与上下文配置。"
         expectedValue={story.title}
         inputValue={deleteConfirmValue}
         onInputValueChange={setDeleteConfirmValue}

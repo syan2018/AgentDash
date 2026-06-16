@@ -2,7 +2,7 @@
 
 ## 状态
 
-pending
+done
 
 ## 依赖
 
@@ -54,8 +54,18 @@ pending
 
 ## 产出记录
 
-- 待填写。
+- 新增 `packages/app-web/src/services/taskPlan.ts` 与 `packages/app-web/src/stores/taskPlanStore.ts`，前端通过 run / agent-run scoped API 执行 Task plan list/create/update/status/archive。
+- `AgentRunWorkspacePage` 增加 `TaskPlanPanel`，支持当前 AgentRun 内计划项创建、状态推进、归档和基础 assignment 字段录入。
+- `storyStore.tasksByStoryId` 已替换为 `storyTaskProjectionByStoryId`；`StoryPage` 改为消费 `/stories/{id}/task-projection`，展示 projection 来源关系，不再提供 Story 页面直接创建 Task。
+- `TaskDrawer` 改为计划字段、状态、owner/assigned/source task、context/story ref 与 linked runs；runtime artifacts/latest node 只通过 `TaskSubjectExecutionPanel` 的 `SubjectExecutionView` 展示。
+- `TaskStatusBadge` 切换为 `open / active / review / blocked / done / dropped`，新增 focused test 覆盖新状态集合。
+- 删除旧 Story Task 创建面板与 dispatch preference UI/helper，前端类型入口不再从 generated Task contract 暴露旧 `dispatch_preference` / `artifacts` wrapper。
+- 验证已通过 `pnpm run frontend:check` 和 `pnpm --filter app-web test src/components/ui/status-badge.test.tsx`。
 
 ## 风险与交接
 
-- W8 需要前端旧字段搜索结果和未覆盖风险。
+- 已运行旧 surface 搜索：`rg -n 'TaskDispatchPreference|dispatch_preference|task\.artifacts|tasksByStoryId|task\.description|task\.story_id|CreateTaskPanel|dispatch-preference|awaiting_verification|TaskStatusBadge status="(pending|assigned|running|failed|cancelled|completed)"' packages/app-web/src`，无命中。
+- 已运行 `rg -n 'TaskStatus|dispatch_preference|task\.artifacts|tasksByStoryId' packages/app-web/src`；仅剩新 TaskStatus 类型/组件使用，无旧字段命中。
+- 当前 Task assignment UI 第一版是手填 `assigned_agent_id` / `owner_agent_id`；W6/W7 后续若提供 companion/fanout selector，可接入同一 run-scoped update command。
+- Story projection 写后刷新依赖显式重新拉取；若后续增加 Task plan event，需要事件 payload 带 Story projection key 或后端提供 projection invalidation 事件。
+- 未改 MCP/capability 与 workflow fanout；对应节点仍需完成后再由 W8 做全链路旧 surface 总清理。

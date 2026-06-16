@@ -1147,7 +1147,7 @@ mod tests {
     use crate::runtime_tools::{
         SessionToolServices, SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
     };
-    use crate::vfs::tools::WorkspaceModuleRuntimeToolProvider;
+    use crate::workspace_module::WorkspaceModuleRuntimeToolProvider;
     use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
     use crate::agent_run::frame::builder::AgentFrameBuilder;
     use crate::agent_run::frame::surface::FrameSurfaceDraft;

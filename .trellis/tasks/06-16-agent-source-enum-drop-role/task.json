@@ -3,7 +3,7 @@
   "name": "agent-source-enum-drop-role",
   "title": "收束 Agent 来源枚举 + 删除 agent_role",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

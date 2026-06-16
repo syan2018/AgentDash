@@ -9,10 +9,14 @@
 - `LifecycleAgent`（[lifecycle_agent.rs](crates/agentdash-domain/src/workflow/lifecycle_agent.rs)）：`agent_kind: String`、`agent_role: String`。
 - `agent_role` 域注释自承：「冗余快捷标记…存量数据可能恒为 primary…任何收束/嵌套判定都应回到 lineage，不得仅依赖此字段」。即 role 已非真值源。
 - 主从真值源是 `AgentLineage` 控制树（root = 主 Run）；subject 归属来自 `lifecycle_subject_association`。
-- `agent_kind` 硬编码于 **20 处 `new_root(...)`**，取值集合：`project_agent` / `task_agent` / `routine` / `workflow_agent` / `workflow_activity`（测试另有 `PI_AGENT` / `test`）。
-- **已存在来源抓手**：[dispatch_service.rs](crates/agentdash-application/src/workflow/dispatch_service.rs) 的 `agent_kind_from_source(&plan.source)` —— kind 实际从某 `source` 派生，说明「来源」概念已部分存在，可作为枚举收束起点。
-- 持久化：`agents` 表 `agent_kind` / `agent_role` 列定义于 [0001_init.sql](crates/agentdash-infrastructure/migrations/0001_init.sql)。
-- Rust 侧 `agent_role` / `.agent_kind` 引用约 40 处；契约侧 `AgentRunView` / `AgentRunLineageRef` 等暴露这两字段；前端 [AgentRunWorkspacePage.tsx](packages/app-web/src/pages/AgentRunWorkspacePage.tsx)、[LifecyclePages.tsx](packages/app-web/src/pages/LifecyclePages.tsx) 有引用。
+- `agent_kind` 散见于 ~17 处 `new_root(...)`，但**生产出生点只有 2 个**（`dispatch_service::create_agent` + `agent_node_launcher`），其余全是 `#[cfg(test)]` 夹具；早期把测试 slug 误当真实来源 union 进枚举（已返工删除）。历史上**存在两套互不一致的 slug**（已实地核对）：
+  - dispatch 路径 `agent_kind_from_source(&plan.source)` 产出：`project_agent` / `routine_agent` / `child_agent` / `migration_agent`；
+  - 散落字面量产出：`task_agent`（view_projector / subject_execution_control×3）、`routine`（reuse_resolver / dispatch×2）、`workflow_agent`（session_association / agent_node_launcher）、`workflow_activity`（classify）、`project_agent`（classify）、`create-workspace-module` / `present-workspace-module`（workspace_module/tools）；测试另有 `PI_AGENT` / `test`。
+  - 两套并存正是要收束的根因 —— 枚举全集须覆盖上述全部语义。
+- **`ExecutionSource`（`User/Routine/ParentAgent/ProjectAgent/Api/Migration`）是「触发来源」轴，与 `agent_kind`（Agent 种类/语义轴）不是一回事**，故 `AgentSource` 独立定义，不复用 `ExecutionSource`；二者由 `agent_kind_from_source` 做映射。
+- **`agent_role` 经全量 grep 确认无任何分支逻辑消费**（lifecycle_agents.rs:157 注释自承「主从真值源是 lineage，不依赖 agent_role」；permission 侧 `agent_role:patrol` / reason 文案是字符串字面量，非本字段）。即删除 role **无需** role 推导 helper，是纯冗余字段删除。
+- 持久化：`agents` 表 `agent_kind` / `agent_role` 列定义于 [0001_init.sql](crates/agentdash-infrastructure/migrations/0001_init.sql)；列名还散见于 mailbox / command_receipt repo 的 INSERT 列清单。**当前最新 migration 为 0013，新增编号 0014。**
+- Rust 侧引用：`agent_role` 14 文件、`agent_kind` 10 文件；契约 `AgentRunView` / `AgentRunLineageRef` / `AgentRunWorkspaceListEntry` 暴露这两字段；前端 [AgentRunWorkspacePage.tsx](packages/app-web/src/pages/AgentRunWorkspacePage.tsx)、[LifecyclePages.tsx](packages/app-web/src/pages/LifecyclePages.tsx) 有 role/kind 展示。
 
 ## 需求
 
@@ -36,7 +40,7 @@
 - 列表 UI 展示形态（已在 `06-16-agentrun-list-inline-subagents` 完成；本任务若需在 UI 暴露 `AgentSource` 作为收尾小项）。
 - Story/Task subject 模型本身的重构（另见 codex-agent 的 `story-task-subject-model-cleanup`，需协调 role-from-subject 的推导依赖）。
 
-## 待澄清
+## 已决策（原待澄清）
 
-- Q1：`agent_kind` 列直接复用（存枚举 snake_case）还是改名 `source`？（影响 migration 与契约命名）
-- Q2：是否需在 UI 暴露 `AgentSource`（图标/标签区分 project/routine/workflow 来源）？
+- **Q1 → 改名 `source`**：列与契约字段统一改名 `source`，彻底摆脱误导性的 `agent_kind`。migration 含 `RENAME COLUMN agent_kind TO source`，并同步 mailbox / command_receipt repo 的 INSERT 列清单。
+- **Q2 → 在列表暴露 `AgentSource`**：AgentRun 列表行展示来源标签（snake_case → 人类可读映射，复用前端既有标签风格），主行与子行共用。

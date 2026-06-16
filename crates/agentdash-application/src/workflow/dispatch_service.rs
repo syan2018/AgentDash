@@ -3,9 +3,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use agentdash_domain::workflow::agent_role;
 use agentdash_domain::workflow::{
-    AgentFrame, AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage, AgentPolicy,
+    AgentFrame, AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage, AgentPolicy, AgentSource,
     AgentRuntimeRefs, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, ExecutorRunRef,
     GatePolicy, InteractionDispatchIntent, InteractionGateOpenedDispatchResult, LifecycleAgent,
     LifecycleGate, LifecycleRun, LifecycleRunStartDispatchResult, LifecycleRunStartIntent,
@@ -646,9 +645,8 @@ impl<'a> LifecycleDispatchService<'a> {
         run: &LifecycleRun,
         plan: &DispatchPlan,
     ) -> Result<LifecycleAgent, WorkflowApplicationError> {
-        let agent_kind = agent_kind_from_source(&plan.source);
-        let agent = LifecycleAgent::new_root(run.id, plan.project_id, agent_kind)
-            .with_role(agent_role_for_plan(plan));
+        let source = agent_source_from_execution_source(&plan.source);
+        let agent = LifecycleAgent::new_root(run.id, plan.project_id, source);
         self.agent_repo.create(&agent).await?;
         Ok(agent)
     }
@@ -875,14 +873,16 @@ fn runtime_session_title(request: &RuntimeSessionCreationRequest) -> String {
     format!("{kind_label} · {now}")
 }
 
-fn agent_kind_from_source(source: &ExecutionSource) -> &'static str {
+/// 把「触发 dispatch 的 [`ExecutionSource`]」映射到「Agent 创建来源 [`AgentSource`]」。
+fn agent_source_from_execution_source(source: &ExecutionSource) -> AgentSource {
     match source {
         ExecutionSource::User | ExecutionSource::ProjectAgent | ExecutionSource::Api => {
-            "project_agent"
+            AgentSource::ProjectAgent
         }
-        ExecutionSource::Routine => "routine_agent",
-        ExecutionSource::ParentAgent => "child_agent",
-        ExecutionSource::Migration => "migration_agent",
+        ExecutionSource::Routine => AgentSource::Routine,
+        ExecutionSource::ParentAgent => AgentSource::Subagent,
+        // Migration 是 ExecutionSource 的死变体（全仓库无构造点），防御性落 Unknown。
+        ExecutionSource::Migration => AgentSource::Unknown,
     }
 }
 
@@ -892,21 +892,6 @@ fn lineage_relation_kind(policy: &AgentPolicy) -> &'static str {
         AgentPolicy::Create => "delegation",
         AgentPolicy::Resume => "resume",
         AgentPolicy::Reuse => "reuse",
-    }
-}
-
-/// 新建 agent 的角色快捷标记（冗余于 lineage，主从真值仍以 lineage 为准）。
-///
-/// 无 parent = 控制树 root = `primary`（主 Run）；有 parent 则按 relation_kind 归类。
-/// 当前 `lineage_relation_kind` 不产出 companion（companion 语义由 gate_kind 承载，
-/// relation_kind 仍是 spawn），因此被派发的 child 统一标 `subagent`。
-fn agent_role_for_plan(plan: &DispatchPlan) -> &'static str {
-    if plan.parent_agent_id.is_none() {
-        return agent_role::PRIMARY;
-    }
-    match lineage_relation_kind(&plan.agent_policy) {
-        "companion" => agent_role::COMPANION,
-        _ => agent_role::SUBAGENT,
     }
 }
 
@@ -1838,8 +1823,9 @@ mod tests {
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         seed_test_workflow_graph(&workflow_repo, project_id);
         let existing_run = create_lifecycle_run(project_id);
-        let first_agent = LifecycleAgent::new_root(existing_run.id, project_id, "routine");
-        let target_agent = LifecycleAgent::new_root(existing_run.id, project_id, "routine");
+        let first_agent = LifecycleAgent::new_root(existing_run.id, project_id, AgentSource::Routine);
+        let target_agent =
+            LifecycleAgent::new_root(existing_run.id, project_id, AgentSource::Routine);
         run_repo.items.lock().unwrap().push(existing_run.clone());
         agent_repo.items.lock().unwrap().push(first_agent.clone());
         agent_repo.items.lock().unwrap().push(target_agent.clone());

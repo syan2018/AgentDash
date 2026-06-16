@@ -328,7 +328,8 @@ mod tests {
     use agentdash_domain::story::{StateChange, Story};
     use agentdash_domain::task::{Task, TaskStatus};
     use agentdash_domain::workflow::{
-        LifecycleAgent, LifecycleRunStatus, LifecycleSubjectAssociation, OrchestrationInstance,
+        AgentSource, LifecycleAgent, LifecycleRunStatus, LifecycleSubjectAssociation,
+        OrchestrationInstance,
         OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNode, PlanNodeKind,
         RuntimeNodeState, RuntimeSessionExecutionAnchor, SubjectRef,
     };
@@ -793,7 +794,7 @@ mod tests {
     }
 
     fn agent_for_run(run: &LifecycleRun) -> LifecycleAgent {
-        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, "task_agent");
+        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::Unknown);
         agent.set_current_frame(Uuid::new_v4());
         agent
     }

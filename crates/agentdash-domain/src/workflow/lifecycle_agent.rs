@@ -1,6 +1,68 @@
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// Agent 的创建/启动来源 —— 在 agent **出生时**确定一次，此后不再变更。
+///
+/// 这是 agent 的内在身份属性，**不是** [`super::dispatch::ExecutionSource`]
+/// （那是每次 dispatch / 状态更新的触发来源，会反复变化）。二者只在 agent
+/// 出生那一刻做一次映射（见 dispatch_service 的 `agent_source_from_execution_source`）；
+/// 任何状态/交互更新都不得回写本字段。
+///
+/// 变体集合 = 生产中真实存在的出生路径全集（已穷举：dispatch 出生 + orchestration
+/// activity 出生）。不收录任何仅出现在测试夹具里的伪来源。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSource {
+    /// 由用户 / API / Project Agent 触发而出生（ExecutionSource::User|Api|ProjectAgent）。
+    ProjectAgent,
+    /// 由 routine 触发而出生。
+    Routine,
+    /// 由 parent agent spawn 而出生（ExecutionSource::ParentAgent）。
+    Subagent,
+    /// orchestration workflow activity 节点 agent。
+    WorkflowAgent,
+    /// 兜底：未识别 / 历史遗留 / 已废弃来源。唯一的非具体来源变体。
+    #[default]
+    Unknown,
+}
+
+impl AgentSource {
+    /// 持久化 / 契约用的 snake_case slug。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AgentSource::ProjectAgent => "project_agent",
+            AgentSource::Routine => "routine",
+            AgentSource::Subagent => "subagent",
+            AgentSource::WorkflowAgent => "workflow_agent",
+            AgentSource::Unknown => "unknown",
+        }
+    }
+}
+
+impl std::fmt::Display for AgentSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for AgentSource {
+    type Err = std::convert::Infallible;
+
+    /// 宽松解析：兼容历史别名（routine_agent / child_agent 等）；未识别值落 [`AgentSource::Unknown`]。
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let source = match s {
+            "project_agent" => AgentSource::ProjectAgent,
+            "routine" | "routine_agent" => AgentSource::Routine,
+            "subagent" | "child_agent" => AgentSource::Subagent,
+            "workflow_agent" => AgentSource::WorkflowAgent,
+            _ => AgentSource::Unknown,
+        };
+        Ok(source)
+    }
+}
 
 /// Agent bootstrap 状态 — 控制首轮 owner context 注入是否完成。
 pub mod bootstrap_status {
@@ -8,20 +70,6 @@ pub mod bootstrap_status {
     pub const BOOTSTRAPPED: &str = "bootstrapped";
     /// 无需 owner bootstrap 的 agent（如 companion child、reuse 场景）。
     pub const NOT_APPLICABLE: &str = "not_applicable";
-}
-
-/// Agent 角色快捷标记。
-///
-/// 注意：主/从关系的**真值源是 `AgentLineage` 控制树**，此字段仅作冗余快捷标记，
-/// 用于列表展示与新数据的快速过滤；任何收束/嵌套判定都应回到 lineage，
-/// 不得仅依赖此字段（存量数据可能恒为 `primary`）。
-pub mod agent_role {
-    /// 控制树 root，即用户面向的"主 Run"。
-    pub const PRIMARY: &str = "primary";
-    /// 被派发的子 agent（spawn / delegation 等）。
-    pub const SUBAGENT: &str = "subagent";
-    /// companion 协作 child。
-    pub const COMPANION: &str = "companion";
 }
 
 /// Run-scoped Agent runtime identity.
@@ -34,8 +82,8 @@ pub struct LifecycleAgent {
     pub id: Uuid,
     pub run_id: Uuid,
     pub project_id: Uuid,
-    pub agent_kind: String,
-    pub agent_role: String,
+    /// Agent 创建/启动来源（取代原 `agent_kind` 自由字符串）。
+    pub source: AgentSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_agent_id: Option<Uuid>,
     pub status: String,
@@ -54,14 +102,13 @@ fn default_bootstrap_status() -> String {
 }
 
 impl LifecycleAgent {
-    pub fn new_root(run_id: Uuid, project_id: Uuid, agent_kind: impl Into<String>) -> Self {
+    pub fn new_root(run_id: Uuid, project_id: Uuid, source: AgentSource) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             run_id,
             project_id,
-            agent_kind: agent_kind.into(),
-            agent_role: "primary".to_string(),
+            source,
             project_agent_id: None,
             status: "active".to_string(),
             bootstrap_status: bootstrap_status::PENDING.to_string(),
@@ -73,15 +120,6 @@ impl LifecycleAgent {
 
     pub fn with_project_agent(mut self, project_agent_id: Uuid) -> Self {
         self.project_agent_id = Some(project_agent_id);
-        self
-    }
-
-    /// 覆盖 agent 角色快捷标记（见 [`agent_role`]）。
-    ///
-    /// 默认 `new_root` 写 `primary`；被派发的子 agent 应在创建路径用此 builder
-    /// 写入 `subagent` / `companion`，与 lineage 写入保持一致。
-    pub fn with_role(mut self, role: impl Into<String>) -> Self {
-        self.agent_role = role.into();
         self
     }
 
@@ -102,5 +140,33 @@ impl LifecycleAgent {
 
     pub fn needs_bootstrap(&self) -> bool {
         self.bootstrap_status == bootstrap_status::PENDING
+    }
+}
+
+#[cfg(test)]
+mod agent_source_tests {
+    use super::*;
+
+    #[test]
+    fn slug_round_trips() {
+        for source in [
+            AgentSource::ProjectAgent,
+            AgentSource::Routine,
+            AgentSource::Subagent,
+            AgentSource::WorkflowAgent,
+            AgentSource::Unknown,
+        ] {
+            assert_eq!(AgentSource::from_str(source.as_str()).unwrap(), source);
+        }
+    }
+
+    #[test]
+    fn legacy_aliases_and_unknown_normalize() {
+        assert_eq!(AgentSource::from_str("routine_agent").unwrap(), AgentSource::Routine);
+        assert_eq!(AgentSource::from_str("child_agent").unwrap(), AgentSource::Subagent);
+        // 已废弃 / 测试遗留 slug 落 Unknown，不再是独立变体。
+        assert_eq!(AgentSource::from_str("migration_agent").unwrap(), AgentSource::Unknown);
+        assert_eq!(AgentSource::from_str("task_agent").unwrap(), AgentSource::Unknown);
+        assert_eq!(AgentSource::from_str("PI_AGENT").unwrap(), AgentSource::Unknown);
     }
 }

@@ -413,8 +413,8 @@ mod tests {
         .expect("insert run");
         sqlx::query(
             "INSERT INTO lifecycle_agents \
-             (id,run_id,project_id,agent_kind,agent_role,status,created_at,updated_at) \
-             VALUES ($1,$2,$3,'test','primary','idle',now(),now())",
+             (id,run_id,project_id,source,status,created_at,updated_at) \
+             VALUES ($1,$2,$3,'unknown','idle',now(),now())",
         )
         .bind(agent_id.to_string())
         .bind(run_id.to_string())

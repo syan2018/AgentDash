@@ -261,7 +261,7 @@ mod tests {
     use crate::workflow::frame_surface::AgentFrameSurfaceExt;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository,
+        AgentFrame, AgentFrameRepository, AgentSource, LifecycleAgent, LifecycleAgentRepository,
         LifecycleRunRepository,
     };
     use agentdash_spi::Vfs;
@@ -574,7 +574,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let orchestration_id = Uuid::new_v4();
-        let mut agent = LifecycleAgent::new_root(run_id, project_id, "workflow_agent");
+        let mut agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::WorkflowAgent);
         agent.set_current_frame(Uuid::new_v4());
 
         let launch_frame = AgentFrame::new_revision(agent.id, 1, "launch");

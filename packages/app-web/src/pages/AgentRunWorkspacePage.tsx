@@ -15,6 +15,7 @@ import type { BackboneEvent } from "../generated/backbone-protocol";
 import { SessionChatView } from "../features/session";
 import { extractPlatformEventData } from "../features/session/model/platformEvent";
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
+import { agentSourceLabel } from "../lib/agent-source";
 import { useAgentRunWorkspaceCommands } from "../features/agent-run-workspace/model/useAgentRunWorkspaceCommands";
 import {
   WorkspacePanel,
@@ -195,8 +196,7 @@ export function AgentRunWorkspacePage({
     : runtimeControl?.shell.display_title ?? "";
 
   // ─── 身份 / 从属信息（identity bar）─────────────────────
-  const identityAgentKind = runtimeControl?.agent?.agent_kind ?? null;
-  const identityAgentRole = runtimeControl?.agent?.agent_role ?? null;
+  const identityAgentSource = agentSourceLabel(runtimeControl?.agent?.source);
   const identitySubject = useMemo(() => {
     const assoc = runtimeControl?.subject_associations?.[0];
     if (!assoc) return null;
@@ -217,7 +217,7 @@ export function AgentRunWorkspacePage({
   const subagentChildCount = runtimeControl?.children?.length ?? 0;
   const hasIdentityBar =
     !isProjectAgentDraft
-    && (identityAgentKind !== null || identitySubject !== null || lineageParent !== null || subagentChildCount > 0);
+    && (identityAgentSource !== null || identitySubject !== null || lineageParent !== null || subagentChildCount > 0);
   const activeHookRuntime = agentRunWorkspaceState.hook_runtime?.runtime_adapter_session_id === deliveryRuntimeSessionId
     ? agentRunWorkspaceState.hook_runtime
     : null;
@@ -689,15 +689,12 @@ export function AgentRunWorkspacePage({
 
       {hasIdentityBar && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background/60 px-5 py-1.5 text-[11px] text-muted-foreground">
-          {identityAgentKind && (
+          {identityAgentSource && (
             <span className="inline-flex items-center gap-1">
-              <span className="text-muted-foreground/60">身份</span>
+              <span className="text-muted-foreground/60">来源</span>
               <span className="rounded-[6px] bg-secondary px-1.5 py-0.5 font-medium text-foreground">
-                {identityAgentKind}
+                {identityAgentSource}
               </span>
-              {identityAgentRole && identityAgentRole !== "primary" && (
-                <span className="rounded-[6px] bg-secondary px-1.5 py-0.5">{identityAgentRole}</span>
-              )}
             </span>
           )}
           {identitySubject && (
@@ -721,7 +718,7 @@ export function AgentRunWorkspacePage({
               <span aria-hidden>←</span>
               <span className="text-muted-foreground/60">隶属于</span>
               <span className="max-w-[200px] truncate font-medium text-foreground">
-                {lineageParent.display_title.trim() || lineageParent.agent_kind}
+                {lineageParent.display_title.trim() || agentSourceLabel(lineageParent.source) || "父 Run"}
               </span>
             </button>
           )}

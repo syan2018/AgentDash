@@ -46,7 +46,11 @@ export type AgentRunCommandOnlyRequest = { command: AgentRunCommandPreconditionV
  *
  * 用于右侧会话栏展示从属关系与跳转。`relation_kind` 来自 `AgentLineage`。
  */
-export type AgentRunLineageRef = { run_id: string, agent_id: string, agent_kind: string, agent_role: string, relation_kind: string, display_title: string,
+export type AgentRunLineageRef = { run_id: string, agent_id: string,
+/**
+ * Agent 创建/启动来源（标准化枚举 slug，取代原 `agent_kind`）。
+ */
+source: string, relation_kind: string, display_title: string,
 /**
  * 该节点子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开箭头。
  */
@@ -65,6 +69,10 @@ export type AgentRunListChild = { run_ref: LifecycleRunRefDto, agent_ref: AgentR
  */
 project_agent_label?: string,
 /**
+ * Agent 创建/启动来源（标准化枚举 slug）。
+ */
+source: string,
+/**
  * 含 display_title / delivery_status / last_activity_at 等执行态。
  */
 shell: AgentRunWorkspaceShell,
@@ -77,7 +85,11 @@ subagent_count: number,
  */
 children: Array<AgentRunListChild>, delivery_runtime_ref?: RuntimeSessionRefDto, };
 
-export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string, agent_kind: string, agent_role: string, project_agent_id?: string, status: string, current_frame_id?: string,
+export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string,
+/**
+ * Agent 创建/启动来源（标准化枚举 slug，取代原 `agent_kind`）。
+ */
+source: string, project_agent_id?: string, status: string, current_frame_id?: string,
 /**
  * 投递用的 runtime session（由 execution anchor 提供）。
  */
@@ -98,10 +110,9 @@ export type AgentRunWorkspaceListEntry = { run_ref: LifecycleRunRefDto, agent_re
  */
 project_agent_label?: string,
 /**
- * agent 角色快捷标记（primary / subagent / companion）。
- * 注：后续将随「删除 role / kind 标准化为来源枚举」重构收束，列表 UI 已不再展示。
+ * Agent 创建/启动来源（标准化枚举 slug），供列表行展示来源标签。
  */
-agent_role: string,
+source: string,
 /**
  * 该主 Run 子树（传递闭包）下的 subagent 总数，0 表示无子。
  */

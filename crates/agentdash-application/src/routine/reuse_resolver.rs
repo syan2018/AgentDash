@@ -323,7 +323,7 @@ mod tests {
         RoutineExecutionRepository, RoutineExecutionStatus, RoutineTriggerConfig,
     };
     use agentdash_domain::workflow::{
-        AgentFrame, LifecycleAgent, LifecycleRun, LifecycleSubjectAssociation,
+        AgentFrame, AgentSource, LifecycleAgent, LifecycleRun, LifecycleSubjectAssociation,
         OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNode,
         PlanNodeKind, RuntimeNodeState, RuntimeNodeStatus,
     };
@@ -641,7 +641,8 @@ mod tests {
             entity_key: Option<&str>,
         ) -> RoutineDispatchReuseTarget {
             let mut run = test_run(routine.project_id);
-            let mut agent = LifecycleAgent::new_root(run.id, routine.project_id, "routine");
+            let mut agent =
+                LifecycleAgent::new_root(run.id, routine.project_id, AgentSource::Routine);
             let frame = AgentFrame::new_revision(agent.id, 1, "test");
             agent.set_current_frame(frame.id);
             let mut orchestration = test_orchestration("routine.main");

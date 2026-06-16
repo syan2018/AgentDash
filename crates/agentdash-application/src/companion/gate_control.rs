@@ -747,7 +747,9 @@ mod tests {
 
     use agentdash_domain::{
         DomainError,
-        workflow::{AgentFrame, AgentLineage, LifecycleAgent, RuntimeSessionExecutionAnchor},
+        workflow::{
+            AgentFrame, AgentLineage, AgentSource, LifecycleAgent, RuntimeSessionExecutionAnchor,
+        },
     };
 
     use super::*;
@@ -909,7 +911,7 @@ mod tests {
         fn from_frame_repo(frame_repo: &MemoryFrameRepo, run_id: Uuid, project_id: Uuid) -> Self {
             let mut agents = HashMap::new();
             for frame in frame_repo.frames.lock().unwrap().values() {
-                let mut agent = LifecycleAgent::new_root(run_id, project_id, "test");
+                let mut agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::Unknown);
                 agent.id = frame.agent_id;
                 agent.status = "running".to_string();
                 agent.set_current_frame(frame.id);

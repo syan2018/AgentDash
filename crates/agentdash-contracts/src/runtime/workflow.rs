@@ -1198,8 +1198,8 @@ pub struct OrchestrationInstanceView {
 pub struct AgentRunView {
     pub agent_ref: AgentRunRefDto,
     pub project_id: String,
-    pub agent_kind: String,
-    pub agent_role: String,
+    /// Agent 创建/启动来源（标准化枚举 slug，取代原 `agent_kind`）。
+    pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub project_agent_id: Option<String>,
@@ -1360,8 +1360,8 @@ pub struct AgentRunCommandOnlyRequest {
 pub struct AgentRunLineageRef {
     pub run_id: String,
     pub agent_id: String,
-    pub agent_kind: String,
-    pub agent_role: String,
+    /// Agent 创建/启动来源（标准化枚举 slug，取代原 `agent_kind`）。
+    pub source: String,
     pub relation_kind: String,
     pub display_title: String,
     /// 该节点子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开箭头。
@@ -1383,6 +1383,9 @@ pub struct AgentRunListChild {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub project_agent_label: Option<String>,
+    /// Agent 创建/启动来源（标准化枚举 slug）。
+    #[serde(default)]
+    pub source: String,
     /// 含 display_title / delivery_status / last_activity_at 等执行态。
     pub shell: AgentRunWorkspaceShell,
     /// 该子自身子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开开关。
@@ -1409,10 +1412,9 @@ pub struct AgentRunWorkspaceListEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub project_agent_label: Option<String>,
-    /// agent 角色快捷标记（primary / subagent / companion）。
-    /// 注：后续将随「删除 role / kind 标准化为来源枚举」重构收束，列表 UI 已不再展示。
+    /// Agent 创建/启动来源（标准化枚举 slug），供列表行展示来源标签。
     #[serde(default)]
-    pub agent_role: String,
+    pub source: String,
     /// 该主 Run 子树（传递闭包）下的 subagent 总数，0 表示无子。
     #[serde(default)]
     pub subagent_count: u32,

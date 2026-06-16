@@ -21,8 +21,8 @@ use agentdash_domain::backend::{
     BackendExecutionTerminalKind,
 };
 use agentdash_domain::workflow::{
-    AgentFrame, LifecycleAgent, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    AgentFrame, AgentSource, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
+    LifecycleRunRepository, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::hooks::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
@@ -136,7 +136,7 @@ async fn attach_test_lifecycle_frame(hub: &SessionRuntimeInner, session_id: &str
         .await
         .expect("anchor lookup should succeed")
         .expect("test frame should attach runtime anchor");
-    let mut agent = LifecycleAgent::new_root(anchor.run_id, uuid::Uuid::new_v4(), "test")
+    let mut agent = LifecycleAgent::new_root(anchor.run_id, uuid::Uuid::new_v4(), AgentSource::Unknown)
         .with_bootstrap_status("not_applicable");
     agent.id = frame.agent_id;
     agent.set_current_frame(frame.id);
@@ -2891,7 +2891,7 @@ async fn start_prompt_triggers_session_start_before_connector_prompt() {
         .await
         .expect("anchor lookup should succeed")
         .expect("test frame should attach runtime anchor");
-    let mut agent = LifecycleAgent::new_root(anchor.run_id, uuid::Uuid::new_v4(), "test");
+    let mut agent = LifecycleAgent::new_root(anchor.run_id, uuid::Uuid::new_v4(), AgentSource::Unknown);
     agent.id = frame.agent_id;
     agent_repo.create(&agent).await.expect("create agent");
 
@@ -3988,7 +3988,7 @@ async fn launch_hook_runtime_accepts_pending_agent_frame_target() {
         ))
         .await
         .expect("anchor should persist");
-    let mut agent = LifecycleAgent::new_root(run_id, uuid::Uuid::new_v4(), "test")
+    let mut agent = LifecycleAgent::new_root(run_id, uuid::Uuid::new_v4(), AgentSource::Unknown)
         .with_bootstrap_status("not_applicable");
     agent.id = agent_id;
     agent.set_current_frame(launch_frame.id);

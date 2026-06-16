@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentProcedureContract, AgentProcedureExecutionSpec,
-    AgentProcedureRepository, AgentReusePolicy, ExecutorRunRef, ExecutorSpec, LifecycleAgent,
+    AgentProcedureRepository, AgentReusePolicy, AgentSource, ExecutorRunRef, ExecutorSpec,
+    LifecycleAgent,
     LifecycleAgentRepository, LifecycleRun, OrchestrationInstance, PlanNode,
     RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy,
 };
@@ -103,7 +104,7 @@ impl AgentNodeLauncher {
 
         let (mut agent, session_id) = match (agent_reuse_policy, runtime_session_policy) {
             (AgentReusePolicy::CreateActivityAgent, RuntimeSessionPolicy::CreateNew) => {
-                let agent = LifecycleAgent::new_root(run.id, run.project_id, "workflow_agent")
+                let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent)
                     .with_bootstrap_status(
                         agentdash_domain::workflow::bootstrap_status::NOT_APPLICABLE,
                     );

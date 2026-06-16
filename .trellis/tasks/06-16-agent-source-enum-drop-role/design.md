@@ -1,45 +1,64 @@
 # Design — Agent 来源枚举收束 + 删除 agent_role
 
-## 1. AgentSource 枚举
+## 1. AgentSource 枚举（诚实集合，已返工收窄）
 
-- 位置：`agentdash-domain` workflow 模块（与 `LifecycleAgent` 同域）。
-- 形态：`enum AgentSource { ProjectAgent, TaskAgent, Routine, WorkflowAgent, WorkflowActivity, /* 视 dispatch source 补全 */ }`，`#[serde(rename_all = "snake_case")]`，实现 `FromStr` / `as_str()` 与现有 slug 双向映射（迁移与 DB 解析复用）。
-- 真值源：以 [dispatch_service.rs](crates/agentdash-application/src/workflow/dispatch_service.rs) `agent_kind_from_source(&plan.source)` 现有派生关系反推完整变体集合，确保枚举 = 现有来源全集（避免遗漏 workspace_module/present 等边角 new_root）。
+- **位置**：定义在 [lifecycle_agent.rs](crates/agentdash-domain/src/workflow/lifecycle_agent.rs)，与 `LifecycleAgent` 同文件——它是 agent 的内在身份属性，不是 workflow 概念，不再放孤儿文件 `agent_source.rs`。
+- 形态：`#[serde(rename_all = "snake_case")]`，`Copy`，`as_str()` + `FromStr`（未识别落 `Unknown`）+ `Default = Unknown`。
+
+```rust
+pub enum AgentSource {
+    ProjectAgent,  // ExecutionSource::User|Api|ProjectAgent 出生
+    Routine,       // routine 出生
+    Subagent,      // ExecutionSource::ParentAgent spawn 出生
+    WorkflowAgent, // orchestration workflow activity 节点 agent
+    Unknown,       // 唯一兜底：未识别 / 历史 / 死路径
+}
+```
+
+- **变体来源（实地穷举后收窄）**：生产中 `new_root` 只有 2 个真实出生点——`dispatch_service::create_agent`（出生唯一路径，非 resume/reuse）与 `agent_node_launcher`（orchestration activity）。其余 ~15 处全是 `#[cfg(test)]` 夹具。早期把测试 slug（`task_agent`/`workflow_activity`/`create-workspace-module`...）一并 union 进来 = 伪变体，已删除。
+- **删除 `Migration`**：`ExecutionSource::Migration` 全仓库**无构造点**（死变体），故对应 AgentSource 同样删除；防御性 match 落 `Unknown`。
+- **出生唯一映射**（`agent_source_from_execution_source`，仅 `create_agent` 调用一次，绝不在状态/交互更新回写）：`User|ProjectAgent|Api → ProjectAgent`，`Routine → Routine`，`ParentAgent → Subagent`，`Migration → Unknown`。
+- **关键澄清**：`AgentSource`（出生一次的身份）≠ `ExecutionSource`（每次 dispatch/状态更新的触发来源）。早期 `agent_kind_from_source` 把身份耦合到 per-execution 触发轴，是这次要纠正的「变态耦合」。
+- 验证：经全量 grep，无任何生产逻辑分支读 `agent_kind`/`source`（与 `agent_role` 一样纯展示）。
 
 ## 2. LifecycleAgent 字段变更
 
-- `agent_kind: String` → `source: AgentSource`（或保留 `agent_kind` 名承载枚举，见 PRD Q1）。
-- 删除 `agent_role: String`。
-- `new_root(run_id, project_id, agent_kind: impl Into<String>)` → `new_root(run_id, project_id, source: AgentSource)`；`with_role(..)` 移除。
+- `agent_kind: String` → `source: AgentSource`（Q1 已定：字段 + 列同步改名 `source`）。
+- 删除 `agent_role: String` 及 `with_role(..)`、`pub mod agent_role { .. }`、mod.rs re-export。
+- `new_root(run_id, project_id, agent_kind: impl Into<String>)` → `new_root(run_id, project_id, source: AgentSource)`。
 
-## 3. role 语义替代（删除后如何取 role）
+## 3. role 删除（确认无需替代推导）
 
-现有依赖 role 的判定盘点后逐一替换：
-- **primary/主 Run 判定** → 已有真值源：lineage 控制树 root（`build_lineage_forest` 的 `child_ids` 之外即 root）。列表 / workspace 收束已部分走 lineage，统一收口。
-- **companion/subagent 判定** → lineage 边 `relation_kind` + 是否为某 agent 的 child。
-- **subject 维度的角色** → `lifecycle_subject_association`（用户已指出 role 应由 subject 推导）。
-- 提供 helper（如 `fn is_primary(agent, lineage_forest) -> bool`）替代散落的 `agent.agent_role == "primary"` 比较。
+全量 grep 确认 `agent_role` **无分支逻辑消费**：
+- 主从/嵌套判定早已走 lineage 控制树（`build_lineage_forest`），列表/workspace 收束不读 role。
+- dispatch 侧 `agent_role_for_plan` 仅在 create 时**写入** role，无读取方 → 连同 `with_role` 一并删除。
+- permission 侧 `"agent_role:patrol"`（entity.rs:220）、`"...agent_role ∩..."`（policy.rs:56）是字符串字面量/reason 文案，与字段无关，**不动**。
+- 故**无需** `is_primary` 等 role 推导 helper；纯删字段 + 删散落 pass-through 引用。
 
-## 4. 持久化迁移
+## 4. 持久化迁移（0014）
 
-- 新 migration（编号续 0090+）：
-  - 存量 `agent_kind` 自由字符串 → 枚举 snake_case 规范化（绝大多数已是合法 slug，仅校验/兜底未知值为某默认变体并 warn）。
-  - `agent_role` 列 DROP。
-- 遵循项目 migration history guard（pre-commit 已校验）。仓库为 append-only migration，不可改历史文件。
-- repo 层 `lifecycle_agent_repo` 的 row ↔ entity 映射同步（读写 source、移除 role）。
+- 新 migration `0014_agent_source_enum_drop_role.sql`：
+  1. `ALTER TABLE lifecycle_agents RENAME COLUMN agent_kind TO source;`
+  2. 存量值规范化 UPDATE（诚实集合）：`project_agent → project_agent`，`routine|routine_agent → routine`，`subagent|child_agent → subagent`，`workflow_agent → workflow_agent`，**其余全部**（`migration_agent`/`task_agent`/`workflow_activity`/`test`/`PI_AGENT`/NULL...）→ `unknown`。
+  3. `ALTER TABLE lifecycle_agents DROP COLUMN agent_role;`
+- 遵循 migration history guard（append-only，不改历史文件）。
+- repo 层同步：`lifecycle_anchor_repository` row 结构/INSERT/SELECT 改 `source`、移除 `agent_role`；`agent_run_mailbox_repository` / `agent_run_command_receipt_repository` 的 INSERT 列清单 `agent_kind,agent_role` → `source`（去掉 agent_role）。
 
 ## 5. 契约与前端
 
-- 契约：`AgentRunView` / `AgentRunLineageRef` / 其它暴露处移除 `agent_role`、`agent_kind` 改 `source`（或保留名）。ts-rs 重新生成。
-- 前端引用点（[AgentRunWorkspacePage.tsx](packages/app-web/src/pages/AgentRunWorkspacePage.tsx)、[LifecyclePages.tsx](packages/app-web/src/pages/LifecyclePages.tsx)）改用 source / lineage 推导；本次列表已不展示 role/kind，仅需删类型引用。
+- 契约：`AgentRunView` / `AgentRunLineageRef` / `AgentRunWorkspaceListEntry`（及 list child）移除 `agent_role`、`agent_kind` 改 `source: String`（DB 存 snake_case，契约层维持 string 即可）。ts-rs 重新生成。
+- 前端：
+  - **列表（Q2 暴露）**：[active-agent-run-list.tsx](packages/app-web/src/features/agent/active-agent-run-list.tsx) 主行/子行在身份标识旁增「来源标签」`<SourceTag>`，新增 [agent-source.ts](packages/app-web/src/lib/agent-source.ts) `agentSourceLabel(source)` 映射（Project / Routine / Subagent / Workflow；unknown→null 不渲染）。
+  - [AgentRunWorkspacePage.tsx](packages/app-web/src/pages/AgentRunWorkspacePage.tsx)：`identityAgentRole` 删除，`identityAgentKind`/`lineageParent.agent_kind` → `source`。
+  - [LifecyclePages.tsx](packages/app-web/src/pages/LifecyclePages.tsx)：role badge 删除，`agent_kind` → `source`。
 
-## 6. 拆分建议（parent + children）
+## 6. 实施切分（单任务、顺序推进）
 
-规模大、跨层，建议 parent 任务下拆三个可独立验证的 child：
-- **C1 domain+源收束**：定义 `AgentSource`、改 `new_root` 全部调用点、kind 字段语义化（不动 role）。
-- **C2 删 role**：移除字段 + 40 处引用 + role 推导 helper + repo 映射。
-- **C3 迁移+契约+前端**：DB migration、契约重生成、前端清理、端到端回归。
-顺序：C1 → C2 → C3（C2 依赖 C1 的 lineage helper 收口；C3 依赖 C1/C2 的最终字段形态）。
+复盘后规模可控（C2 确认为纯删、无推导 helper），不拆 child task，单任务内按阶段推进：
+- **C1 domain+源收束**：定义 `AgentSource`、改 `new_root` 全部调用点、字段改 `source`（不动 role）。
+- **C2 删 role**：移除字段 + 散落 pass-through 引用（无 helper）。
+- **C3 迁移+契约+前端**：DB migration（rename+normalize+drop）、repo SQL、契约重生成、前端 source 标签 + 删 role 展示、端到端回归。
+顺序 C1 → C2 → C3（C3 依赖 C1/C2 的最终字段形态）。
 
 ## 7. 风险
 

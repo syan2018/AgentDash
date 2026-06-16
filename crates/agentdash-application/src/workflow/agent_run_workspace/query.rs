@@ -298,7 +298,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             run,
             agent: agent.clone(),
             shell,
-            agent_role: agent.agent_role.clone(),
             project_agent_label: project_agent.as_ref().map(project_agent_display_label),
             delivery_runtime_session_id,
             delivery_trace_meta,

@@ -554,11 +554,11 @@ fn snapshot_execution_state(snapshot: &AgentConversationSnapshot) -> SessionExec
 mod tests {
     use super::*;
     use agentdash_contracts::workflow::ConversationCommandStaleGuardView;
-    use agentdash_domain::workflow::LifecycleRun;
+    use agentdash_domain::workflow::{AgentSource, LifecycleRun};
 
     fn test_context() -> (LifecycleRun, LifecycleAgent) {
         let run = LifecycleRun::new_graphless(Uuid::new_v4());
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, "PI_AGENT");
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         (run, agent)
     }
 

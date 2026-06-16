@@ -1,26 +1,27 @@
 # Implement — Agent 来源枚举收束 + 删除 agent_role
 
-> 规划态。建议拆 C1→C2→C3 三 child（见 design §6）。以下为单线展开的有序清单，可按 child 切分。
+> 单会话实现，按 C1→C2→C3 顺序推进（不拆 child task）。决策：Q1=改名 `source`，Q2=列表暴露来源标签。
 
 ## C1. domain + 来源收束
-- [ ] 盘点全部来源：`grep -rn "new_root(" crates --include=*.rs`（20 处）+ `agent_kind_from_source` 的 source 全集。
-- [ ] 在 domain 定义 `AgentSource` 枚举（snake_case 序列化 + `FromStr`/`as_str` 双向映射）。
-- [ ] `LifecycleAgent.agent_kind` 改承载 `AgentSource`（PRD Q1 决定是否改名 `source`）。
-- [ ] `new_root` 签名改收 `AgentSource`；逐一改 20 处调用点；`agent_kind_from_source` 收口为返回 `AgentSource`。
-- [ ] `cargo check` 全 workspace 通过。
+- [ ] 新建 [agent_source.rs](crates/agentdash-domain/src/workflow/agent_source.rs)：`enum AgentSource`（9 变体，见 design §1）+ `as_str()` + `FromStr`（未知落 `Unknown`）+ `Default = Unknown`；mod.rs 导出。
+- [ ] `LifecycleAgent.agent_kind: String` → `source: AgentSource`；`new_root(.., source: AgentSource)`。
+- [ ] 改 17 处生产 `new_root` 调用点 + dispatch `agent_kind_from_source` 收口为返回 `AgentSource`（`ParentAgent → Subagent` 等，见 design §1）；测试 4 处用 `AgentSource::Unknown` / `ProjectAgent`。
+  - tools.rs ×2 → `WorkspaceModule`；view_projector + subject_execution_control ×3 → `TaskAgent`；reuse_resolver + dispatch ×2 → `Routine`；session_association + agent_node_launcher → `WorkflowAgent`；classify → `ProjectAgent` / `WorkflowActivity`；command_policy + lifecycle_agents 测试 `PI_AGENT` → `ProjectAgent`；gate_control + hub tests `test` → `Unknown`。
+- [ ] `cargo check -p agentdash-domain -p agentdash-application` 通过。
 
-## C2. 删除 agent_role
-- [ ] `grep -rn "agent_role" crates --include=*.rs`（~40 处）逐一分类：primary 判定 / companion 判定 / subject 角色 / 纯展示。
-- [ ] 新增 role 推导 helper（基于 lineage forest / subject association），替换散落比较。
-- [ ] 删除 `LifecycleAgent.agent_role` 字段 + `with_role`。
-- [ ] repo row↔entity 映射移除 role。
-- [ ] `cargo check` + 受影响单测修复。
+## C2. 删除 agent_role（纯删，无推导 helper）
+- [ ] domain：删 `agent_role` 字段、`with_role`、`pub mod agent_role`、mod.rs re-export。
+- [ ] dispatch_service：删 `agent_role_for_plan` + `.with_role(..)` + `use agent_role` import（`lineage_relation_kind` 若仅服务 role 也评估）。
+- [ ] 删散落 pass-through：query.rs / types.rs / lifecycle_run_view_builder.rs / lifecycle_agents.rs（视图赋值 + 测试断言）/ lifecycle_contracts.rs。
+- [ ] permission entity.rs:220 / policy.rs:56 的字符串字面量**不动**（非本字段）。
+- [ ] `cargo check --workspace` 通过。
 
-## C3. 迁移 + 契约 + 前端
-- [ ] 新 migration（0090+）：`agent_kind` 存量规范化为枚举 slug；`DROP COLUMN agent_role`。`node scripts/check-migration-history.js` 通过。
-- [ ] 契约：移除 `agent_role`，`agent_kind`→`source`（或保留名）于 `AgentRunView`/`AgentRunLineageRef` 等；`pnpm run contracts:generate`。
-- [ ] 前端 [AgentRunWorkspacePage.tsx](packages/app-web/src/pages/AgentRunWorkspacePage.tsx) / [LifecyclePages.tsx](packages/app-web/src/pages/LifecyclePages.tsx) 引用清理或改用 source。
-- [ ] 端到端回归：列表收束 / 嵌套展开 / workspace 父子导航。
+## C3. 迁移 + repo + 契约 + 前端
+- [ ] migration `0014_agent_source_enum_drop_role.sql`：RENAME `agent_kind`→`source` + 存量值规范化 UPDATE + DROP `agent_role`（见 design §4）。`node scripts/check-migration-history.js` 通过。
+- [ ] repo：lifecycle_anchor_repository（row/INSERT/SELECT 改 source、删 role）；mailbox + command_receipt repo INSERT 列清单 `agent_kind,agent_role`→`source`。
+- [ ] 契约 workflow.rs：`AgentRunView`/`AgentRunLineageRef`/`AgentRunWorkspaceListEntry`（+ list child）`agent_kind`→`source`、删 `agent_role`；`pnpm run contracts:generate`。
+- [ ] 前端：列表来源标签 `agentSourceLabel()` + 主/子行展示；AgentRunWorkspacePage / LifecyclePages 改 source、删 role badge。
+- [ ] 端到端回归：列表收束 / 嵌套展开 / 来源标签 / workspace 父子导航。
 
 ## 验证命令
 ```bash
@@ -31,6 +32,6 @@ pnpm --dir packages/app-web check
 ```
 
 ## 风险 / 回滚
-- DROP COLUMN 不可逆：上线前确认无外部消费 `agent_role`。
-- 枚举漏覆盖来源 → 解析落默认值；C1 穷举为硬性门槛。
-- 与 codex-agent `story-task-subject-model-cleanup` 在「role 由 subject 推导」处可能耦合，需对齐。
+- DROP COLUMN 不可逆：role 已确认无消费方，存量基本恒 primary，安全。
+- 枚举漏覆盖来源 → `FromStr` 落 `Unknown`（不 panic）；C1 调用点已穷举。
+- RENAME COLUMN 牵动多处 SQL 字符串，逐一核对 mailbox/receipt repo。

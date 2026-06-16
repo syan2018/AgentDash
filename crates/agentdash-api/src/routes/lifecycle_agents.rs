@@ -154,7 +154,7 @@ pub async fn get_project_agent_runs(
         }
 
         // 一次取回该 run 的全部 lineage 边，内存构建控制树 forest。
-        // 主从真值源是 AgentLineage，不依赖 agent_role。
+        // 主从真值源是 AgentLineage 控制树。
         let lineages = state
             .repos
             .agent_lineage_repo
@@ -376,8 +376,7 @@ async fn lineage_ref_for_agent(
     Ok(AgentRunLineageRef {
         run_id: agent.run_id.to_string(),
         agent_id: agent.id.to_string(),
-        agent_kind: agent.agent_kind.clone(),
-        agent_role: agent.agent_role.clone(),
+        source: agent.source.as_str().to_string(),
         relation_kind,
         display_title: projection.shell.display_title,
         subagent_count,
@@ -930,6 +929,7 @@ fn list_child_from_projection(
             agent_id: projection.agent.id.to_string(),
         },
         project_agent_label: projection.project_agent_label,
+        source: projection.agent.source.as_str().to_string(),
         shell: shell_model_to_contract(projection.shell),
         subagent_count,
         children: Vec::new(),
@@ -955,9 +955,9 @@ fn list_entry_from_projection(
         },
         project_id: run.project_id.to_string(),
         project_agent_label: projection.project_agent_label.clone(),
+        source: projection.agent.source.as_str().to_string(),
         shell: shell_model_to_contract(projection.shell),
         run_status: lifecycle_run_status_to_contract(run.status),
-        agent_role: projection.agent_role,
         subagent_count,
         children,
         delivery_runtime_ref: projection
@@ -1301,14 +1301,14 @@ fn command_policy_error(error: app_workspace::AgentRunWorkspaceCommandPolicyErro
 
 #[cfg(test)]
 mod tests {
-    use agentdash_domain::workflow::LifecycleRun;
+    use agentdash_domain::workflow::{AgentSource, LifecycleRun};
 
     use super::*;
 
     #[test]
-    fn list_entry_from_projection_carries_role_and_count() {
+    fn list_entry_from_projection_carries_source_and_count() {
         let run = LifecycleRun::new_graphless(Uuid::new_v4());
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, "PI_AGENT");
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         let projection = app_workspace::AgentRunListProjection {
             run: run.clone(),
             agent,
@@ -1320,7 +1320,6 @@ mod tests {
                 last_turn_id: None,
                 last_activity_at: "2026-06-12T00:00:00Z".to_string(),
             },
-            agent_role: "primary".to_string(),
             project_agent_label: Some("Code Reviewer".to_string()),
             delivery_runtime_session_id: None,
             delivery_trace_meta: None,
@@ -1332,7 +1331,7 @@ mod tests {
 
         assert_eq!(entry.shell.display_title, "Session meta title");
         assert_eq!(entry.shell.title_source, "source");
-        assert_eq!(entry.agent_role, "primary");
+        assert_eq!(entry.source, "project_agent");
         assert_eq!(entry.project_agent_label.as_deref(), Some("Code Reviewer"));
         assert_eq!(entry.subagent_count, 3);
         assert!(entry.frame_ref.is_none());

@@ -106,14 +106,14 @@ mod tests {
     use uuid::Uuid;
 
     use super::{ComposeRoute, classify_primary_route};
-    use agentdash_domain::workflow::LifecycleAgent;
+    use agentdash_domain::workflow::{AgentSource, LifecycleAgent};
 
     #[test]
     fn project_agent_identity_wins_over_orchestration_anchor() {
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let project_agent_id = Uuid::new_v4();
-        let agent = LifecycleAgent::new_root(run_id, project_id, "project_agent")
+        let agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::ProjectAgent)
             .with_project_agent(project_agent_id);
 
         assert_eq!(
@@ -126,7 +126,7 @@ mod tests {
     fn lifecycle_node_routes_by_orchestration_anchor_without_project_agent_identity() {
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
-        let agent = LifecycleAgent::new_root(run_id, project_id, "workflow_activity");
+        let agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::WorkflowAgent);
 
         assert_eq!(
             classify_primary_route(&agent, true, false),

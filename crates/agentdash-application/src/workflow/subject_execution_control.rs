@@ -308,7 +308,7 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        LifecycleRun, LifecycleRunStatus, OrchestrationInstance, OrchestrationPlanSnapshot,
+        AgentSource, LifecycleRun, LifecycleRunStatus, OrchestrationInstance, OrchestrationPlanSnapshot,
         OrchestrationSourceRef, OrchestrationStatus, PlanNodeKind, RuntimeNodeState,
         RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
     };
@@ -683,7 +683,7 @@ mod tests {
         let (run, orchestration_id) = run_with_running_node(project_id);
         run_repo.create(&run).await.expect("run");
 
-        let mut agent = LifecycleAgent::new_root(run.id, project_id, "task_agent");
+        let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
         let frame = AgentFrame::new_revision(agent.id, 1, "test");
         agent.set_current_frame(frame.id);
         agent_repo.create(&agent).await.expect("agent");
@@ -766,7 +766,7 @@ mod tests {
 
         let run = LifecycleRun::new_graphless(project_id);
         run_repo.create(&run).await.expect("run");
-        let mut agent = LifecycleAgent::new_root(run.id, project_id, "task_agent");
+        let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
         let frame = AgentFrame::new_revision(agent.id, 1, "test");
         agent.set_current_frame(frame.id);
         agent_repo.create(&agent).await.expect("agent");
@@ -827,7 +827,7 @@ mod tests {
         let anchor_repo = AnchorRepo::default();
 
         let run = LifecycleRun::new_control(project_id);
-        let mut agent = LifecycleAgent::new_root(run.id, project_id, "task_agent");
+        let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
         agent.status = "completed".to_string();
         agent_repo.create(&agent).await.expect("agent");
         let association = LifecycleSubjectAssociation::new_agent_scoped(

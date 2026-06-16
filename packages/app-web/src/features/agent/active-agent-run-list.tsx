@@ -10,6 +10,7 @@ import { fetchProjectAgentRuns } from "../../services/lifecycle";
 import type { AgentRunListChild, AgentRunWorkspaceListEntry } from "../../types";
 import type { SessionExecutionStatusValue } from "../../services/session";
 import { formatRelativeTime } from "../../lib/format";
+import { agentSourceLabel } from "../../lib/agent-source";
 import {
   groupAgentRunsBySubject,
   groupKindLabel,
@@ -190,8 +191,7 @@ function SubAgentToggle({
 
 /**
  * Agent 身份标识：展示绑定的 Project Agent 显示名（后端已解析 preset.display_name || name）。
- * 刻意不展示 agent_kind / agent_role —— 二者是创建期硬编码 slug / 冗余标记，对用户无意义
- * （详见后续「kind 标准化为来源枚举 + 删除 role」重构）。主行与各级子行共用。
+ * 主行与各级子行共用。来源（source）以单独的 {@link SourceTag} 展示。
  */
 function AgentIdentityMeta({ label }: { label?: string | null }) {
   const text = label?.trim() || null;
@@ -199,6 +199,20 @@ function AgentIdentityMeta({ label }: { label?: string | null }) {
   return (
     <span className="min-w-0 truncate text-[10px] text-muted-foreground" title={text}>
       {text}
+    </span>
+  );
+}
+
+/**
+ * Agent 来源标签：把后端标准化 `source` 枚举 slug 映射为人类可读短标签
+ * （project_agent → Project 等）；unknown / 空值不渲染。主行与各级子行共用。
+ */
+function SourceTag({ source }: { source?: string | null }) {
+  const label = agentSourceLabel(source);
+  if (!label) return null;
+  return (
+    <span className="shrink-0 rounded-[4px] bg-secondary px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+      {label}
     </span>
   );
 }
@@ -244,6 +258,7 @@ function AgentRunChildRow({ child, depth, selectedAgentId, onOpenAgentRun }: Age
           )}
         </div>
         <div className="flex items-center gap-1.5 pl-5">
+          <SourceTag source={child.source} />
           <AgentIdentityMeta label={child.project_agent_label} />
           <span className="min-w-0 flex-1" />
           {nested.length > 0 && (
@@ -309,6 +324,7 @@ function AgentRunRow({ entry, selectedAgentId, onOpenAgentRun }: AgentRunRowProp
           )}
         </div>
         <div className="flex items-center gap-1.5 pl-4">
+          <SourceTag source={entry.source} />
           <AgentIdentityMeta label={entry.project_agent_label} />
           <span className="min-w-0 flex-1" />
           {children.length > 0 && (

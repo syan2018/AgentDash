@@ -29,7 +29,7 @@ pub use entity::{
     AgentProcedure, LifecycleRun, LifecycleRunTopology, WorkflowGraph, WorkflowGraphDraft,
     build_effective_contract, build_effective_contract_from_contract,
 };
-pub use lifecycle_agent::{LifecycleAgent, agent_role, bootstrap_status};
+pub use lifecycle_agent::{AgentSource, LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::LifecycleGate;
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 pub use repository::{

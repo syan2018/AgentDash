@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
-- **Last Active**: 2026-06-16
+- **Total Sessions**: 16
+- **Last Active**: 2026-06-17
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~543 | Active |
+| `journal-1.md` | ~584 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-06-17 | Story Task subject 模型清理 | `12f17940`, `d22d2470`, `097ff7f2`, `e243c832`, `f1e1a3ad`, `8a45899e`, `71d8f5fd`, `eb8570de`, `6013a29b` | `codex/refactor-story-task-subject-model-cleanup` |
 | 15 | 2026-06-16 | 收束 Agent 来源为 AgentSource 枚举 + 删除 agent_role + 清理废弃 hub 单测 | `415ab00d`, `6f2e72a1` | `main` |
 | 14 | 2026-06-15 | AgentRun runtime entry session 收束 | `d834cbe7`, `06642665`, `b1b3296a` | `feat/agentrun-list-collapse-identity` |
 | 13 | 2026-06-14 | AgentRun workspace 应用层重构 | `7026f52a`, `3c3c9e6c`, `ad27a56c`, `dc2ce5d7`, `ff511eb7`, `fd19b0e5`, `5acb757d`, `41cf1858` | `main` |

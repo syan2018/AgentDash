@@ -8,6 +8,7 @@ pub mod mount_canvas;
 pub mod mount_lifecycle;
 pub mod mount_routine;
 pub mod mount_skill_asset;
+pub mod mount_workspace;
 pub mod mutation_dispatcher;
 pub(crate) mod mutation_queue;
 pub mod path;
@@ -42,9 +43,8 @@ pub use mount::{
     PROVIDER_RELAY_FS, PROVIDER_ROUTINE_VFS, PROVIDER_SKILL_ASSET_FS, SessionMountTarget,
     append_agent_knowledge_mounts, apply_agent_vfs_access_grants, build_context_container_mount,
     build_derived_vfs, build_project_agent_knowledge_vfs, build_project_vfs_mount_mount,
-    build_workspace_vfs,
     effective_context_containers, list_inline_entries, mount_purpose, normalize_inline_files,
-    parse_inline_mount_owner, selected_workspace_binding, workspace_mount,
+    parse_inline_mount_owner,
 };
 pub use mount_canvas::{append_canvas_mounts, build_canvas_mount, build_canvas_mount_id};
 pub use mount_lifecycle::{
@@ -55,6 +55,7 @@ pub use mount_routine::build_routine_mount;
 pub use mount_skill_asset::{
     append_lifecycle_skill_asset_projection, build_project_skill_asset_management_mount,
 };
+pub use mount_workspace::{build_workspace_vfs, selected_workspace_binding, workspace_mount};
 pub use mutation_dispatcher::{
     BinaryMutationResult, InlineStorageKey, TextMutationResult, VfsMutationDispatcher,
     VfsMutationError, inline_storage_key_from_mount,

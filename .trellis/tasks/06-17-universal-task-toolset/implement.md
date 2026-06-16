@@ -47,6 +47,7 @@ flowchart TD
 
 可并行窗口：
 
+- M1a 与 M1b 可在 M1 后并行。
 - M4 与 M5 可在 M3 后并行。
 - M6 可与 M4/M5 并行，但必须依赖 M2 的 command contract。
 
@@ -65,10 +66,15 @@ flowchart TD
 - Task status badge / list reducer
 - AgentRun workspace Task quick-edit panel
 
-## 暂不进入实现
+## 实际会话验收
 
-本任务当前只做规划。进入实现前需要：
+- 使用当前重构分支启动 `pnpm dev`。
+- 打开前端，创建或进入可运行 AgentRun / Story 业务路径。
+- 通过真实 Agent 工具调用创建/维护 Task。
+- 在 AgentRun workspace 验证 Task 读回。
+- 在 Story 页面验证 Task projection 来源和执行关系。
+- 记录手动验收步骤、观察结果和限制。
 
-- research 文档完成。
-- 用户确认第一版是否按 `task_read + task_write` 推进；底层实现和正式命名统一为 Task。
-- `prd.md` / `design.md` / `implement.md` 通过 review。
+## 进入实现
+
+本任务作为 `06-16-story-task-subject-model-cleanup` 的业务验收闭环，在当前重构分支继续推进。底层实现和正式命名统一为 Task，第一版按 `task_read + task_write` 两工具落地。

@@ -4,6 +4,8 @@
 
 规划一套 AgentDash 通用 Task 工具集，让 agent 在单个 run、subagent 扇出、跨 session continuation 中都能维护可审计的任务清单，并与现有 `LifecycleRun.tasks` / Story Task projection 模型自然衔接。
 
+本任务是 `06-16-story-task-subject-model-cleanup` 的业务验收闭环：上一轮已经把 Task facts 收束到 `LifecycleRun.tasks`，本轮需要补齐 Agent 在真实会话中读取和创建/维护 Task 的能力，使前端 AgentRun workspace 与 Story Task projection 能进入实际验收路径。
+
 本项目只有 `Task` 这一个业务概念。业务代码、API、DTO、DB、MCP tool name、event kind、store、组件命名都必须使用 Task；`Todo` 只允许出现在参考实现调研或少量面向模型的工具说明中，用来表达“Task 工具集可以作为自己的待办清单使用”。
 
 目标不是恢复旧 Story-owned Task CRUD，而是定义一组 agent-facing Task 工具和 UI/API 边界，使模型能高效维护 `LifecycleRun.tasks`。
@@ -22,6 +24,7 @@
 - 规划与既有 assignment/fanout 能力的衔接方式，不把通用 Task 工具集扩成重复的派发工具集合。
 - 规划工具如何直接操作 `LifecycleRun.tasks`，避免出现第二套清单事实源。
 - 规划 UI/事件投影：如何展示当前 run 的 Task 清单、subagent 关联 Task 汇总、Story projection 和执行证据关系。
+- 补齐真实会话验收路径：Agent 能通过工具创建/维护 Task，前端能在 AgentRun workspace 读到 Task，并能从 Story projection 验证 Task 来源和执行关系。
 - 明确权限和审计要求：工具调用应能落到 run/session/activity 语义事件，避免隐式修改 Story 事实。
 - 输出足够清晰的 `design.md` 和 `implement.md`，供后续进入标准 Trellis 实现流程。
 
@@ -34,8 +37,9 @@
 - [ ] 规划明确说明 AgentDash 只有 Task 一个业务概念，且不引入旧 `dispatch_preference` / Task artifacts 事实字段。
 - [ ] 规划明确给出工具数量最小化原则，第一版只设计 `task_read` / `task_write`，并解释为什么不需要独立 status 工具。
 - [ ] `task_read` 至少定义 overview/list/detail/context/execution/projection 等读取模式，以及每种模式的默认字段和扩展字段。
+- [ ] Agent 实际会话可以调用 Task 工具创建/维护 Task，前端 AgentRun workspace 与 Story Task projection 可以完成业务验收。
 
 ## Notes
 
-- 当前任务是规划任务，不直接进入实现。
-- 参考实现调研完成后，再决定工具说明是否需要写“可作为自己的待办清单使用”；正式命名必须统一为 Task。
+- 本任务在当前重构分支继续推进，不作为独立 feature 分支拆出。
+- 工具说明可以写“可作为自己的待办清单使用”；正式命名必须统一为 Task。

@@ -112,8 +112,8 @@ pub use persistence::{
 };
 pub use post_turn_handler::{
     DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,
-    PostTurnHandler, SessionTerminalCallback, TerminalHookEffectBinding,
-    TerminalHookEffectHandlerRegistry,
+    EmptyTerminalHookEffectHandlerRegistry, PostTurnHandler, SessionTerminalCallback,
+    TerminalHookEffectBinding, TerminalHookEffectHandlerRegistry,
 };
 pub use prompt_vfs::local_workspace_vfs;
 pub use runtime_builder::SessionRuntimeBuilder;

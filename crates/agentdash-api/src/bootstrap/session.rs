@@ -11,6 +11,7 @@ use agentdash_application::runtime_tools::{
     WorkflowRuntimeToolProvider, WorkspaceModuleRuntimeToolProvider,
 };
 use agentdash_application::session::{
+    EmptyTerminalHookEffectHandlerRegistry,
     SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
     SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
     SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService, SessionTerminalCallback,
@@ -202,6 +203,9 @@ pub(crate) async fn build_session_runtime(
         .set_terminal_callback(Arc::new(CompositeSessionTerminalCallback {
             callbacks: vec![orchestrator, mailbox_terminal_callback],
         }))
+        .await;
+    session_runtime_builder
+        .set_hook_effect_handler_registry(Arc::new(EmptyTerminalHookEffectHandlerRegistry))
         .await;
 
     session_services_handle

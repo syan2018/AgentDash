@@ -69,6 +69,25 @@ pub trait TerminalHookEffectHandlerRegistry: Send + Sync + 'static {
 
 pub type DynTerminalHookEffectHandlerRegistry = Arc<dyn TerminalHookEffectHandlerRegistry>;
 
+#[derive(Debug, Default)]
+pub struct EmptyTerminalHookEffectHandlerRegistry;
+
+#[async_trait::async_trait]
+impl TerminalHookEffectHandlerRegistry for EmptyTerminalHookEffectHandlerRegistry {
+    async fn handler_for(
+        &self,
+        _session_id: &str,
+        payload: &serde_json::Value,
+    ) -> Result<Option<DynPostTurnHandler>, String> {
+        match payload.get("handler") {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(handler) => Err(format!(
+                "未注册 durable terminal hook effect handler: {handler}"
+            )),
+        }
+    }
+}
+
 /// Session 进入终态后的全局回调。
 ///
 /// 与 `PostTurnHandler`（per-session、由调用方传入）不同，
@@ -82,3 +101,38 @@ pub trait SessionTerminalCallback: Send + Sync + 'static {
 }
 
 pub type DynSessionTerminalCallback = Arc<dyn SessionTerminalCallback>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn empty_registry_allows_missing_handler_identity() {
+        let registry = EmptyTerminalHookEffectHandlerRegistry;
+
+        let result = registry
+            .handler_for("session-1", &serde_json::json!({"handler": null}))
+            .await
+            .expect("missing handler identity should be valid");
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn empty_registry_rejects_unknown_handler_identity() {
+        let registry = EmptyTerminalHookEffectHandlerRegistry;
+
+        let error = match registry
+            .handler_for(
+                "session-1",
+                &serde_json::json!({"handler": {"kind": "task_effect"}}),
+            )
+            .await
+        {
+            Ok(_) => panic!("unknown handler identity should be explicit"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("未注册 durable terminal hook effect handler"));
+    }
+}

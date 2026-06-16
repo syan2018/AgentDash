@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::canvas::{build_canvas, upsert_canvas_binding};
 use crate::session::AgentFrameRuntimeTarget;
 use crate::vfs::build_canvas_mount_id;
-use crate::vfs::tools::SharedSessionToolServicesHandle;
+use crate::runtime_tools::SharedSessionToolServicesHandle;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -282,7 +282,7 @@ pub(crate) async fn expose_canvas_to_session(
 
 async fn sync_canvas_mount_capability_state_for_runtime_delivery(
     vfs: &SharedRuntimeVfs,
-    session_services: &crate::vfs::tools::SessionToolServices,
+    session_services: &crate::runtime_tools::SessionToolServices,
     session_id: &str,
     canvas: &Canvas,
 ) -> Result<(), AgentToolError> {
@@ -325,7 +325,7 @@ async fn sync_canvas_mount_capability_state_for_runtime_delivery(
 
 async fn sync_canvas_mount_capability_state(
     vfs: &SharedRuntimeVfs,
-    session_services: &crate::vfs::tools::SessionToolServices,
+    session_services: &crate::runtime_tools::SessionToolServices,
     target: AgentFrameRuntimeTarget,
     before_state: crate::session::CapabilityState,
     hook_runtime: agentdash_spi::hooks::SharedHookRuntime,

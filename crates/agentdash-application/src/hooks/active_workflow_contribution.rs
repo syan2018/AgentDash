@@ -19,7 +19,7 @@ pub(super) fn build_step_summary_markdown(workflow: &ActiveWorkflowProjection) -
     )
 }
 
-pub(super) fn build_workflow_step_fragments(
+pub(super) fn build_active_workflow_step_fragments(
     workflow: &ActiveWorkflowProjection,
     source: &str,
 ) -> Vec<HookInjection> {
@@ -65,7 +65,7 @@ mod tests {
             workflow_projection_with_guidance(Some("先补齐检查证据，再结束 session".to_string()));
         let source = super::super::workflow_source(&workflow);
 
-        let injections = build_workflow_step_fragments(&workflow, &source);
+        let injections = build_active_workflow_step_fragments(&workflow, &source);
 
         assert_eq!(injections.len(), 2);
         assert_eq!(injections[0].slot, "workflow");

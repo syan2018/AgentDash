@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use crate::companion::tool_context::CompanionToolContext;
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
-use crate::vfs::tools::provider::SharedSessionToolServicesHandle;
+use crate::runtime_tools::provider::SharedSessionToolServicesHandle;
 
 #[derive(Clone)]
 pub struct CollaborationRuntimeToolProvider {

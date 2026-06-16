@@ -24,17 +24,17 @@ use super::presets::builtin_preset_scripts;
 use super::rules::*;
 use super::script_engine::HookScriptEngine;
 use super::snapshot_helpers::*;
-use super::workflow_contribution::build_workflow_step_fragments;
-use super::workflow_snapshot::WorkflowSnapshotBuilder;
+use super::active_workflow_contribution::build_active_workflow_step_fragments;
+use super::active_workflow_snapshot::ActiveWorkflowSnapshotBuilder;
 use super::{dedupe_tags, global_builtin_source, workflow_scope_key, workflow_source};
 use crate::ApplicationError;
 
-/// Facade：组合 SessionOwnerResolver + WorkflowSnapshotBuilder + HookScriptEngine，
+/// Facade：组合 SessionOwnerResolver + ActiveWorkflowSnapshotBuilder + HookScriptEngine，
 /// 对外仍实现 ExecutionHookProvider trait。
 pub struct AppExecutionHookProvider {
     pub(super) inline_file_repo: Arc<dyn InlineFileRepository>,
     pub(super) owner_resolver: SessionOwnerResolver,
-    pub(super) workflow_builder: WorkflowSnapshotBuilder,
+    pub(super) workflow_builder: ActiveWorkflowSnapshotBuilder,
     pub(super) script_engine: HookScriptEngine,
 }
 
@@ -68,7 +68,7 @@ impl AppExecutionHookProvider {
                 repos.story_repo,
                 repos.lifecycle_subject_association_repo,
             ),
-            workflow_builder: WorkflowSnapshotBuilder::new(
+            workflow_builder: ActiveWorkflowSnapshotBuilder::new(
                 repos.agent_procedure_repo,
                 repos.agent_frame_repo,
                 repos.lifecycle_agent_repo,
@@ -250,7 +250,7 @@ impl AppExecutionHookProvider {
             // Add workflow step injections
             snapshot
                 .injections
-                .extend(build_workflow_step_fragments(&workflow, &wf_source));
+                .extend(build_active_workflow_step_fragments(&workflow, &wf_source));
         }
 
         snapshot.tags = dedupe_tags(snapshot.tags);

@@ -6,11 +6,11 @@
 //! - [`tool_builder`]：runtime tool + 直连/relay MCP 工具发现 + `replace_current_capability_state`。
 //! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_runtime` /
 //!   `collect_runtime_context_update_injections` / `schedule_unanchored_hook_auto_resume`。
-//! - [`runtime_context_transition`]：workflow phase/runtime context transition 的 live
+//! - [`runtime_context_transition`]：runtime context transition 的 live
 //!   apply、pending 入队与 next-turn 应用。
 //!
-//! Commit 8 必须继续把 tool / hook / transition / launch / effects 内部实现迁到
-//! 具体服务或明确依赖包；本模块最终只保留装配与 ready gate。
+//! 本模块最终只保留装配与 ready gate，tool / hook / transition / launch /
+//! effects 的内部实现应持续下沉到具体服务或明确依赖包。
 
 use std::{path::PathBuf, sync::Arc};
 

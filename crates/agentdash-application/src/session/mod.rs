@@ -26,6 +26,7 @@ pub mod effects_service;
 pub mod eventing;
 pub mod hook_delegate;
 pub mod hook_events;
+pub(crate) mod hook_injection_sink;
 mod hook_messages;
 pub mod hooks_service;
 pub(crate) mod hub;

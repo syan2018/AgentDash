@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::platform_config::SharedPlatformConfig;
-use crate::vfs::tools::SharedSessionToolServicesHandle;
+use crate::runtime_tools::SharedSessionToolServicesHandle;
 use crate::lifecycle::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,

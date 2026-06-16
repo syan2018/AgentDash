@@ -7,7 +7,7 @@
 //! - `schedule_unanchored_hook_auto_resume`（非 AgentRun runtime 的 hook auto-resume）
 
 use super::super::auto_resume_context_frame::build_auto_resume_context_frame;
-use super::super::hook_delegate::{
+use super::super::hook_injection_sink::{
     RuntimeHookInjectionSink, RuntimeInjectionSource, SessionRuntimeHookInjectionSink,
 };
 use super::super::hook_events::build_hook_trace_envelope;

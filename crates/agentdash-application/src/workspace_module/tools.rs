@@ -38,7 +38,7 @@ use crate::runtime_gateway::{
     RuntimeInvocationError, RuntimeInvocationErrorKind, RuntimeInvocationRequest,
     RuntimeInvocationResult, RuntimeTarget, RuntimeTrace,
 };
-use crate::vfs::tools::SharedSessionToolServicesHandle;
+use crate::runtime_tools::SharedSessionToolServicesHandle;
 use crate::workspace_module::{
     ResolvedInvocationBackend, build_workspace_module_presentation, build_workspace_modules,
     validate_input_against_schema,
@@ -1144,11 +1144,10 @@ mod tests {
         MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,
         MemoryRuntimeSessionExecutionAnchorRepository,
     };
-    use crate::vfs::tools::SessionToolServices;
-    use crate::vfs::tools::{
-        SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
-        WorkspaceModuleRuntimeToolProvider,
+    use crate::runtime_tools::{
+        SessionToolServices, SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
     };
+    use crate::vfs::tools::WorkspaceModuleRuntimeToolProvider;
     use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
     use crate::agent_run::frame::builder::AgentFrameBuilder;
     use crate::agent_run::frame::surface::FrameSurfaceDraft;

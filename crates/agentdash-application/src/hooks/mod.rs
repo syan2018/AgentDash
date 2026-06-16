@@ -10,14 +10,14 @@ mod provider;
 mod rules;
 pub(crate) mod script_engine;
 mod snapshot_helpers;
-mod workflow_contribution;
-mod workflow_snapshot;
+mod active_workflow_contribution;
+mod active_workflow_snapshot;
 
+pub use active_workflow_snapshot::ActiveWorkflowSnapshotBuilder;
 pub(crate) use fragment_bridge::hook_injection_to_fragment;
 pub use owner_resolver::SessionOwnerResolver;
 pub use presets::{HookRulePreset, PresetSource, hook_rule_preset_registry};
 pub use provider::{AppExecutionHookProvider, AppExecutionHookProviderRepos};
-pub use workflow_snapshot::WorkflowSnapshotBuilder;
 
 // Re-exports consumed by child modules (rules.rs, snapshot_helpers.rs, etc.)
 // so that `super::xxx` references from those children remain valid.

@@ -11,12 +11,14 @@ use agentdash_application::session::{
     SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService, SessionTerminalCallback,
     SessionTitleService,
 };
+use agentdash_application::runtime_tools::{
+    SessionRuntimeToolComposer, SessionToolServices, SharedRuntimeGatewayHandle,
+    SharedSessionToolServicesHandle, VfsRuntimeToolProvider,
+};
 use agentdash_application::vfs::VfsMaterializationService;
 use agentdash_application::vfs::VfsService;
 use agentdash_application::vfs::tools::{
-    CollaborationRuntimeToolProvider, SessionRuntimeToolComposer, SessionToolServices,
-    SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle, VfsRuntimeToolProvider,
-    WorkflowRuntimeToolProvider, WorkspaceModuleRuntimeToolProvider,
+    CollaborationRuntimeToolProvider, WorkflowRuntimeToolProvider, WorkspaceModuleRuntimeToolProvider,
 };
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,

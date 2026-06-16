@@ -9,8 +9,9 @@ use crate::backend_execution_placement::{
     BackendSelectionIntent, BackendSelectionRequest, ExecutionPlacementPlan,
     has_available_relay_executor, resolve_backend_execution_placement,
 };
-use crate::session::hook_delegate::{
-    DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
+use crate::session::hook_delegate::HookRuntimeDelegate;
+use crate::session::hook_injection_sink::{
+    DynRuntimeHookInjectionSink, SessionRuntimeHookInjectionSink,
 };
 use crate::session::mailbox_delegate::AgentRunMailboxRuntimeDelegate;
 use crate::session::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};

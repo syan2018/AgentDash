@@ -7,10 +7,9 @@ use async_trait::async_trait;
 use crate::vfs::inline_persistence::{InlineContentOverlay, InlineContentPersister};
 use crate::vfs::service::VfsService;
 use crate::vfs::tools::factory::{VfsToolFactory, VfsToolFactoryInput};
-use crate::vfs::tools::provider::{
-    runtime_session_id_from_context, shared_runtime_vfs_from_context,
-};
 use crate::vfs::{VfsMaterializationService, VfsMaterializationTransport};
+
+use super::provider::{runtime_session_id_from_context, shared_runtime_vfs_from_context};
 
 #[derive(Clone)]
 pub struct VfsRuntimeToolProvider {

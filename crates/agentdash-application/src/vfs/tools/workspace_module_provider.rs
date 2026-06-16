@@ -9,7 +9,7 @@ use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext, ToolCluster}
 use async_trait::async_trait;
 
 use crate::runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
-use crate::vfs::tools::provider::{
+use crate::runtime_tools::provider::{
     SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle, project_id_from_context,
     runtime_session_id_from_context, shared_runtime_vfs_from_context,
 };

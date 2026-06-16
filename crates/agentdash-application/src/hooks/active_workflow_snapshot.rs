@@ -17,8 +17,8 @@ fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
     HookError::Runtime(error.to_string())
 }
 
-/// 根据 session 信息构建 ActiveWorkflowProjection，以及 workflow 推进与日志写入。
-pub struct WorkflowSnapshotBuilder {
+/// 根据 session 信息构建 ActiveWorkflowProjection，以及 lifecycle 推进与日志写入。
+pub struct ActiveWorkflowSnapshotBuilder {
     agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
     agent_frame_repo: Arc<dyn AgentFrameRepository>,
     lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
@@ -26,7 +26,7 @@ pub struct WorkflowSnapshotBuilder {
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
 }
 
-impl WorkflowSnapshotBuilder {
+impl ActiveWorkflowSnapshotBuilder {
     pub fn new(
         agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
         agent_frame_repo: Arc<dyn AgentFrameRepository>,

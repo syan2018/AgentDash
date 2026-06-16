@@ -25,6 +25,7 @@ pub mod routine;
 pub mod runtime;
 pub mod runtime_bridge;
 pub mod runtime_gateway;
+pub mod runtime_tools;
 pub mod scheduling;
 pub mod session;
 pub mod shared_library;

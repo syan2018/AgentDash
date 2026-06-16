@@ -38,7 +38,7 @@ use crate::session::{
 use crate::lifecycle::{
     LifecycleDispatchService, resolve_current_frame_from_delivery_trace_ref,
 };
-use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
+use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
 
 pub use agentdash_spi::CompanionSliceMode;
 
@@ -2104,7 +2104,7 @@ mod companion_tests {
     use agentdash_spi::{McpTransportConfig, MountCapability, RuntimeMcpServer, Vfs};
     use uuid::Uuid;
 
-    use crate::vfs::tools::SharedSessionToolServicesHandle;
+    use crate::runtime_tools::SharedSessionToolServicesHandle;
 
     #[test]
     fn companion_owner_candidates_fallback_from_task_to_story() {

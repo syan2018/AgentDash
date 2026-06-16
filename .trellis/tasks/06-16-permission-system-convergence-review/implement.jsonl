@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/permission/grant-lifecycle.md","reason":"PermissionGrant 生命周期与授权事实源基线"}
+{"file":".trellis/spec/backend/permission/policy-engine.md","reason":"权限策略判定与审批规则基线"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/research/04-frontend-contracts-permission.md","reason":"既有 Permission / Companion / Contract 事实源分裂评估"}
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/prd.md","reason":"Task fanout 默认开放但保留审批门的来源背景"}

@@ -1,0 +1,11 @@
+{"file":".trellis/spec/backend/story-task-runtime.md","reason":"当前 Story / Task / SubjectRef / Lifecycle projection 的长期架构基线"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/overdesign-review.md","reason":"既有模块过度设计评估，包含 Task projection 与 execution read model 收口结论"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/research/01-lifecycle-workflow-task.md","reason":"Lifecycle / Workflow / Task 事实源和 projection 问题的详细证据"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"后续 DTO / generated contract 收口需要遵循的跨层契约"}
+{"file":".trellis/spec/frontend/architecture.md","reason":"前端 Story / Task UI 瘦身和页面职责调整的基础规范"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"dynamic orchestration / LifecycleRun / graphless 与 graph runtime 的命令边界"}
+{"file":".trellis/spec/backend/workflow/lifecycle-run-link.md","reason":"AgentRun / subagent lineage 与 subject association 投影规则"}
+{"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"Task management、collaboration、workflow fanout 后续 capability 分层参考"}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"AgentRun message intake、companion follow-up 与 queued work 的事实源边界"}
+{"file":".trellis/spec/backend/permission/grant-lifecycle.md","reason":"后续 fanout approval policy 与 PermissionGrant 事实源收束参考"}
+{"file":".trellis/spec/backend/permission/policy-engine.md","reason":"后续 project/workflow policy 控制 fanout 审批门的参考"}

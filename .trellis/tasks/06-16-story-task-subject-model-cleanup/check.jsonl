@@ -1,0 +1,8 @@
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/prd.md","reason":"检查目标语义、需求和验收标准是否覆盖本轮讨论"}
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/design.md","reason":"检查 Story subject AgentRun、TaskTodo、Lifecycle 事实源边界是否一致"}
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/implement.md","reason":"检查后续执行顺序、验证命令和风险文件是否可操作"}
+{"file":".trellis/spec/backend/story-task-runtime.md","reason":"检查规划是否与现有 Story / Task runtime spec 的演进方向相容"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/research/01-lifecycle-workflow-task.md","reason":"检查 Task execution read model 收口是否承接既有证据"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"检查 dynamic orchestration fanout 是否不混淆计划创建和 runtime dispatch"}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"检查 AgentRun 自执行和 companion follow-up 是否保持 mailbox/control 事实源边界"}
+{"file":".trellis/spec/backend/permission/grant-lifecycle.md","reason":"检查 fanout 审批门默认开放但可接入 PermissionGrant 的边界是否合理"}

@@ -7,6 +7,7 @@ pub mod mount;
 pub mod mount_canvas;
 pub mod mount_inline;
 pub mod mount_lifecycle;
+pub mod mount_project;
 pub mod mount_routine;
 pub mod mount_skill_asset;
 pub mod mount_workspace;
@@ -42,8 +43,6 @@ pub use materialization::{
 pub use mount::{
     PROJECT_VFS_MOUNT_CONTAINER_ID, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS,
     PROVIDER_RELAY_FS, PROVIDER_ROUTINE_VFS, PROVIDER_SKILL_ASSET_FS, SessionMountTarget,
-    append_agent_knowledge_mounts, apply_agent_vfs_access_grants, build_derived_vfs,
-    build_project_agent_knowledge_vfs, build_project_vfs_mount_mount, effective_context_containers,
     mount_purpose,
 };
 pub use mount_canvas::{append_canvas_mounts, build_canvas_mount, build_canvas_mount_id};
@@ -54,6 +53,10 @@ pub use mount_inline::{
 pub use mount_lifecycle::{
     build_agent_run_session_lifecycle_mount, build_lifecycle_mount,
     build_lifecycle_mount_with_node_scope, build_lifecycle_mount_with_ports,
+};
+pub use mount_project::{
+    append_agent_knowledge_mounts, apply_agent_vfs_access_grants, build_derived_vfs,
+    build_project_agent_knowledge_vfs, build_project_vfs_mount_mount, effective_context_containers,
 };
 pub use mount_routine::build_routine_mount;
 pub use mount_skill_asset::{

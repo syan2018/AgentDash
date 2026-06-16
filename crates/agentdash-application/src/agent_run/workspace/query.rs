@@ -9,24 +9,23 @@ use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::Vfs;
 use uuid::Uuid;
 
+use crate::agent_run::{
+    AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
+    ConversationModelConfigInput, ConversationModelConfigResolver,
+};
+use crate::lifecycle::run_view_builder::{
+    LifecycleSubjectAssociationView, RuntimeSessionRefView, build_lifecycle_run_view,
+};
+use crate::lifecycle::{
+    AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode, AgentRunLifecycleSurfaceProjector,
+    AgentRunRuntimeAddress, BuiltinLifecycleSkillPolicy, MessageStreamProjectionRef,
+    MessageStreamTraceKind, WorkflowApplicationError,
+};
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionExecutionState};
 use crate::vfs::{
     ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary, ResolvedVfsSurface,
     ResolvedVfsSurfaceSource, VfsSurfaceRuntimeProjection, build_surface_summary,
-};
-use crate::lifecycle::run_view_builder::{
-    LifecycleSubjectAssociationView, RuntimeSessionRefView, build_lifecycle_run_view,
-};
-use crate::agent_run::{
-    AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
-    ConversationModelConfigInput, ConversationModelConfigResolver,
-};
-use crate::lifecycle::{
-    AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode, AgentRunLifecycleSurfaceProjector,
-    AgentRunRuntimeAddress, BuiltinLifecycleSkillPolicy, MessageStreamProjectionRef,
-    MessageStreamTraceKind,
-    WorkflowApplicationError,
 };
 
 use super::projection::{AgentRunWorkspaceProjection, is_terminal_agent_status};

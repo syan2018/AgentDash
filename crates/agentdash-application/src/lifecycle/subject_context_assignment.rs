@@ -1,19 +1,18 @@
 use uuid::Uuid;
 
+use agentdash_domain::story::Story;
 use agentdash_domain::workflow::SubjectRef;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::CapabilityScopeCtx;
+use agentdash_spi::{CapabilityScopeCtx, ContextFragment, MergeStrategy};
 
 use crate::context::{
-    Contribution, contribute_binding_initial_context, contribute_declared_sources,
-    contribute_task_binding, resolve_workspace_declared_sources,
+    Contribution, contribute_workspace_static_sources, resolve_workspace_declared_sources,
 };
+use crate::lifecycle::WorkflowApplicationError;
 use crate::repository_set::RepositorySet;
 use crate::session::construction_planner::resolve_project_workspace;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
-use crate::task::gateway::resolve_effective_task_workspace;
 use crate::vfs::VfsService;
-use crate::lifecycle::WorkflowApplicationError;
 use crate::workspace::BackendAvailability;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,28 +184,26 @@ impl<'a> SubjectContextAssignmentResolver<'a> {
         project_id: Uuid,
         subject_ref: SubjectRef,
     ) -> Result<SubjectContextAssignment, WorkflowApplicationError> {
-        let task = crate::task::load_task(self.repos.story_repo.as_ref(), subject_ref.id)
-            .await?
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!("Task {} 不存在", subject_ref.id))
-            })?;
-        if task.project_id != project_id {
+        let located = crate::task::plan::find_task_plan_item_for_subject(
+            self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.lifecycle_subject_association_repo.as_ref(),
+            project_id,
+            subject_ref.id,
+        )
+        .await
+        .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            WorkflowApplicationError::NotFound(format!("Task {} 不存在", subject_ref.id))
+        })?;
+        if located.run.project_id != project_id {
             return Err(WorkflowApplicationError::BadRequest(format!(
                 "Task {} 不属于当前 Project {}",
-                task.id, project_id
+                located.task.id, project_id
             )));
         }
         let story = self
-            .repos
-            .story_repo
-            .get_by_id(task.story_id)
-            .await?
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "Task 所属 Story {} 不存在",
-                    task.story_id
-                ))
-            })?;
+            .resolve_story_for_task(&located.run, located.task.story_ref.as_ref())
+            .await?;
         let project = self
             .repos
             .project_repo
@@ -215,11 +212,34 @@ impl<'a> SubjectContextAssignmentResolver<'a> {
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!("Project {project_id} 不存在"))
             })?;
-        let workspace = resolve_effective_task_workspace(self.repos, &task, &story, &project)
-            .await
-            .map_err(|error| WorkflowApplicationError::BadRequest(error.to_string()))?;
-        let mut declared_sources = story.context.source_refs.clone();
-        declared_sources.extend(task.dispatch_preference.context_sources.clone());
+        let workspace = if let Some(story) = &story {
+            if let Some(workspace_id) = story.default_workspace_id {
+                Some(
+                    self.repos
+                        .workspace_repo
+                        .get_by_id(workspace_id)
+                        .await?
+                        .ok_or_else(|| {
+                            WorkflowApplicationError::NotFound(format!(
+                                "Story 默认 Workspace {workspace_id} 不存在"
+                            ))
+                        })?,
+                )
+            } else {
+                resolve_project_workspace(self.repos, &project)
+                    .await
+                    .map_err(WorkflowApplicationError::Internal)?
+            }
+        } else {
+            resolve_project_workspace(self.repos, &project)
+                .await
+                .map_err(WorkflowApplicationError::Internal)?
+        };
+        let mut declared_sources = story
+            .as_ref()
+            .map(|story| story.context.source_refs.clone())
+            .unwrap_or_default();
+        declared_sources.extend(located.task.context_refs.clone());
         let resolved_sources = resolve_workspace_declared_sources(
             self.availability,
             self.vfs_service,
@@ -229,21 +249,25 @@ impl<'a> SubjectContextAssignmentResolver<'a> {
         )
         .await
         .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
-        let story_id = story.id;
-        let task_id = task.id;
-        let story_contribution = contribute_story_context(StoryContextBuildInput {
-            story: &story,
-            project: &project,
-            workspace: workspace.as_ref(),
-            workspace_source_fragments: resolved_sources.fragments,
-            workspace_source_warnings: resolved_sources.warnings,
-        });
-        let contributions = vec![
-            contribute_task_binding(&task),
-            story_contribution,
-            contribute_binding_initial_context(&task),
-            contribute_declared_sources(&task, &story),
-        ];
+        let task_id = located.task.id;
+        let story_id = story.as_ref().map(|story| story.id);
+        let mut contributions = vec![contribute_lifecycle_task_binding(&located.task)];
+        if let Some(story) = &story {
+            contributions.push(contribute_story_context(StoryContextBuildInput {
+                story,
+                project: &project,
+                workspace: workspace.as_ref(),
+                workspace_source_fragments: resolved_sources.fragments,
+                workspace_source_warnings: resolved_sources.warnings,
+            }));
+        } else {
+            contributions.push(contribute_workspace_static_sources(
+                resolved_sources.fragments,
+            ));
+            if !resolved_sources.warnings.is_empty() {
+                contributions.push(contribute_task_source_warnings(resolved_sources.warnings));
+            }
+        }
 
         Ok(SubjectContextAssignment {
             subject_ref,
@@ -251,9 +275,93 @@ impl<'a> SubjectContextAssignmentResolver<'a> {
             contributions,
             capability_scope: CapabilityScopeCtx::Task {
                 project_id,
-                story_id,
+                story_id: story_id.unwrap_or_else(Uuid::nil),
                 task_id,
             },
         })
+    }
+
+    async fn resolve_story_for_task(
+        &self,
+        run: &agentdash_domain::workflow::LifecycleRun,
+        story_ref: Option<&SubjectRef>,
+    ) -> Result<Option<Story>, WorkflowApplicationError> {
+        let story_id = if let Some(story_ref) = story_ref {
+            if story_ref.kind != "story" {
+                return Ok(None);
+            }
+            Some(story_ref.id)
+        } else {
+            self.repos
+                .lifecycle_subject_association_repo
+                .list_by_anchor(run.id, None)
+                .await?
+                .into_iter()
+                .filter(|assoc| assoc.subject_kind == "story")
+                .min_by_key(|assoc| (role_rank(&assoc.role), assoc.created_at, assoc.id))
+                .map(|assoc| assoc.subject_id)
+        };
+
+        let Some(story_id) = story_id else {
+            return Ok(None);
+        };
+        let story = self
+            .repos
+            .story_repo
+            .get_by_id(story_id)
+            .await?
+            .ok_or_else(|| {
+                WorkflowApplicationError::NotFound(format!("Story {story_id} 不存在"))
+            })?;
+        if story.project_id != run.project_id {
+            return Err(WorkflowApplicationError::BadRequest(format!(
+                "Task owning run {} 与 Story {} 不属于同一 Project",
+                run.id, story.id
+            )));
+        }
+        Ok(Some(story))
+    }
+}
+
+fn contribute_lifecycle_task_binding(
+    task: &agentdash_domain::workflow::LifecycleTaskPlanItem,
+) -> Contribution {
+    Contribution::fragments_only(vec![ContextFragment {
+        slot: "task".to_string(),
+        label: "task_plan_core".to_string(),
+        order: crate::context::slot_orders::TASK_CORE,
+        strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "context_contributor:lifecycle_task_plan".to_string(),
+        content: format!(
+            "## Task\n- id: {}\n- title: {}\n- body: {}\n- status: {:?}",
+            task.id,
+            crate::context::trim_or_dash(&task.title),
+            crate::context::trim_or_dash(task.body.as_deref().unwrap_or_default()),
+            task.status
+        ),
+    }])
+}
+
+fn contribute_task_source_warnings(warnings: Vec<String>) -> Contribution {
+    Contribution::fragments_only(vec![ContextFragment {
+        slot: "references".to_string(),
+        label: "task_source_warnings".to_string(),
+        order: crate::context::slot_orders::WORKSPACE_SOURCES_WARNINGS,
+        strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "context_contributor:lifecycle_task_plan".to_string(),
+        content: format!("## Injection Notes\n{}", warnings.join("\n")),
+    }])
+}
+
+fn role_rank(role: &str) -> u8 {
+    match role {
+        "subject" => 0,
+        "projection_target" => 1,
+        "control_scope" => 2,
+        "source" => 3,
+        "lineage" => 4,
+        _ => 9,
     }
 }

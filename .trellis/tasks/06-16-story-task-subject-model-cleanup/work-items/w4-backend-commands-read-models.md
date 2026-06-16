@@ -2,7 +2,7 @@
 
 ## 状态
 
-pending
+done
 
 ## 依赖
 
@@ -49,9 +49,19 @@ pending
 
 ## 产出记录
 
-- 待填写。
+- 新增 `agentdash_application::task::plan`：提供 run-scoped Task list/create/update/status/archive command、按 Task subject 定位 owning LifecycleRun、Story Task projection read model。
+- 新增 API 路由 `routes/task_plan.rs`：提供 `/lifecycle-runs/{run_id}/tasks` 与 `/agent-runs/{run_id}/agents/{agent_id}/tasks` 的 query/create/update/status/archive 入口，响应使用 W3 Task contract DTO。
+- `stories.rs` 移除 Story-owned Task CRUD 路由，新增 `/stories/{id}/task-projection`，从 Story-bound run、linked association 与 `story_ref` 生成 projection source 说明。
+- `SubjectContextAssignmentResolver` 改为从 owning `LifecycleRun.tasks` 解析 Task subject context；Story context 通过 owning run 的 Story association 或 `story_ref` 可选补齐。
+- `SubjectRunContextResolver` / hook owner resolver 改为从 LifecycleRun Task plan 读取 task title/story_ref，不再用 `StoryRepository::find_by_task_id`。
+- 旧 Task runtime backwrite 路径已收口：boot projector 不再把 runtime node 状态写回 Story.tasks，artifact/status hook 路径只追加 state_change 事件；旧 `/tasks/{id}/execution` route 不再挂载，SubjectExecutionView 是运行视图入口。
+- MCP 仅做 W4 编译适配：注入 lifecycle run / subject association repo，Task MCP 从 run-scoped task plan 读取，Story MCP 的 create/batch create 返回迁移提示，完整 tool schema/agent 行为留给 W6。
+- focused tests 覆盖 run-scoped Task command 和 Story projection；静态搜索确认后端/API/MCP 已无 `find_by_task_id`、Story Task CRUD 写入口、Task projection/artifact mutator 调用。
 
 ## 风险与交接
 
-- W5 / W6 / W7 从此节点后可并行。
-- 下游只消费 W4 暴露的 command / read model，不自行绕过 repository 或 contract。
+- W5 可消费 W4 API：run/agent-run Task plan command 与 Story Task projection。
+- W6 需要重新设计 MCP tool schema 和 agent-facing 行为；当前 MCP 只保证后端编译与旧工具不再写 Story-owned Task。
+- W7 负责 workflow fanout；当前 Story terminal cancel 只取消 Story subject 自身 latest attached execution，不做 Story→Task 级联。
+- `CapabilityScopeCtx::Task` 仍要求 `story_id`，无 Story 的 run-scoped Task 暂以 `Uuid::nil()` 填充；W6/Capability 节点应把 Task scope 的 Story 归属改为可选。
+- 工作区存在大量非 W4 文件变更，合流时需由主会话确认哪些来自其它并行节点；W4 没有主动回滚这些变更。

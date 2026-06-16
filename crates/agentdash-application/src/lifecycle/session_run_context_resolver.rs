@@ -78,9 +78,14 @@ impl<'a> SubjectRunContextResolver<'a> {
                 .await
                 .map_err(ApplicationError::from)?;
         }
-        build_subject_run_context(run.project_id, &associations, self.story_repo)
-            .await
-            .map(Some)
+        build_subject_run_context(
+            run.project_id,
+            &associations,
+            self.lifecycle_run_repo,
+            self.story_repo,
+        )
+        .await
+        .map(Some)
     }
 
     pub async fn resolve_for_run(
@@ -92,17 +97,31 @@ impl<'a> SubjectRunContextResolver<'a> {
             .list_by_anchor(run.id, None)
             .await
             .map_err(ApplicationError::from)?;
-        build_subject_run_context(run.project_id, &associations, self.story_repo).await
+        build_subject_run_context(
+            run.project_id,
+            &associations,
+            self.lifecycle_run_repo,
+            self.story_repo,
+        )
+        .await
     }
 }
 
 pub async fn build_subject_run_context(
     project_id: Uuid,
     associations: &[LifecycleSubjectAssociation],
+    lifecycle_run_repo: &dyn LifecycleRunRepository,
     story_repo: &dyn StoryRepository,
 ) -> Result<SubjectRunContext, ApplicationError> {
     if let Some(assoc) = select_association(associations, "task") {
-        return task_context(project_id, assoc.subject_id, story_repo).await;
+        return task_context(
+            project_id,
+            assoc,
+            associations,
+            lifecycle_run_repo,
+            story_repo,
+        )
+        .await;
     }
 
     if let Some(assoc) = select_association(associations, "story") {
@@ -142,30 +161,53 @@ fn role_rank(role: &str) -> u8 {
 
 async fn task_context(
     project_id: Uuid,
-    task_id: Uuid,
+    task_assoc: &LifecycleSubjectAssociation,
+    associations: &[LifecycleSubjectAssociation],
+    lifecycle_run_repo: &dyn LifecycleRunRepository,
     story_repo: &dyn StoryRepository,
 ) -> Result<SubjectRunContext, ApplicationError> {
-    let story = story_repo
-        .find_by_task_id(task_id)
+    let task_id = task_assoc.subject_id;
+    let run = lifecycle_run_repo
+        .get_by_id(task_assoc.anchor_run_id)
         .await
-        .map_err(ApplicationError::from)?;
-    let (story_id, story_title, task_title) = story
+        .map_err(ApplicationError::from)?
+        .ok_or_else(|| {
+            ApplicationError::NotFound(format!(
+                "Task {task_id} owning LifecycleRun {} 不存在",
+                task_assoc.anchor_run_id
+            ))
+        })?;
+    if run.project_id != project_id {
+        return Err(ApplicationError::Conflict(format!(
+            "Task {task_id} owning LifecycleRun 不属于当前 Project {project_id}"
+        )));
+    }
+    let task = run.task_by_id(task_id).cloned();
+    let story_id = task
         .as_ref()
-        .map(|story| {
-            (
-                Some(story.id),
-                Some(story.title.clone()),
-                story.find_task(task_id).map(|task| task.title.clone()),
-            )
+        .and_then(|task| {
+            task.story_ref
+                .as_ref()
+                .filter(|story_ref| story_ref.kind == "story")
+                .map(|story_ref| story_ref.id)
         })
-        .unwrap_or((None, None, None));
+        .or_else(|| select_association(associations, "story").map(|assoc| assoc.subject_id));
+    let story_title = if let Some(story_id) = story_id {
+        story_repo
+            .get_by_id(story_id)
+            .await
+            .map_err(ApplicationError::from)?
+            .map(|story| story.title)
+    } else {
+        None
+    };
 
     Ok(SubjectRunContext {
         project_id,
         story_id,
         task_id: Some(task_id),
         story_title,
-        task_title,
+        task_title: task.map(|task| task.title),
         scope: CapabilityScope::Task,
     })
 }

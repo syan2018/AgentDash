@@ -3,10 +3,6 @@
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun, SubjectRef};
 use agentdash_spi::ConnectorError;
 
-use crate::session::construction_planner::{
-    build_project_agent_context, resolve_project_workspace,
-};
-use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::lifecycle::projection::resolve_active_workflow_projection_from_message_stream_trace;
@@ -14,6 +10,10 @@ use crate::lifecycle::{
     SubjectContextAssignment, SubjectContextAssignmentRequest, SubjectContextAssignmentResolver,
     SubjectWorkspacePolicy,
 };
+use crate::session::construction_planner::{
+    build_project_agent_context, resolve_project_workspace,
+};
+use crate::session::construction_provider::SessionConstructionProviderInput;
 
 use super::{
     AgentLevelMcp, FrameConstructionService, OwnerBootstrapSpec, OwnerScope, connector_internal,

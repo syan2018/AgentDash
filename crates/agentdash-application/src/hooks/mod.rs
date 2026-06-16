@@ -2,6 +2,8 @@ use std::collections::BTreeSet;
 
 use crate::lifecycle::ActiveWorkflowProjection;
 
+mod active_workflow_contribution;
+mod active_workflow_snapshot;
 mod fragment_bridge;
 mod helpers;
 mod owner_resolver;
@@ -10,8 +12,6 @@ mod provider;
 mod rules;
 pub(crate) mod script_engine;
 mod snapshot_helpers;
-mod active_workflow_contribution;
-mod active_workflow_snapshot;
 
 pub use active_workflow_snapshot::ActiveWorkflowSnapshotBuilder;
 pub(crate) use fragment_bridge::hook_injection_to_fragment;

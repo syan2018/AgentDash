@@ -231,11 +231,11 @@ impl McpHttpRouterState {
         identity: &AuthIdentity,
         task_id: Uuid,
     ) -> Result<McpHttpService<TaskMcpServer>, (StatusCode, String)> {
-        // M1-b：Task 查询经 Story aggregate（find_by_task_id 一步拿到 Story）
-        let story = self
+        let subject = agentdash_domain::workflow::SubjectRef::new("task", task_id);
+        let associations = self
             .services
-            .story_repo
-            .find_by_task_id(task_id)
+            .lifecycle_subject_association_repo
+            .list_by_subject(&subject)
             .await
             .map_err(|error| {
                 tracing::error!(%task_id, ?error, "加载 Task 以建立 MCP HTTP 服务失败");
@@ -243,15 +243,31 @@ impl McpHttpRouterState {
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("加载 Task 失败: {error}"),
                 )
-            })?
-            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Task 不存在: {task_id}")))?;
-        let task = story
-            .find_task(task_id)
+            })?;
+        let run_ids = associations
+            .iter()
+            .map(|assoc| assoc.anchor_run_id)
+            .collect::<Vec<_>>();
+        let runs = self
+            .services
+            .lifecycle_run_repo
+            .list_by_ids(&run_ids)
+            .await
+            .map_err(|error| {
+                tracing::error!(%task_id, ?error, "加载 Task owning run 以建立 MCP HTTP 服务失败");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("加载 Task owning run 失败: {error}"),
+                )
+            })?;
+        let (run, task) = runs
+            .iter()
+            .find_map(|run| run.task_by_id(task_id).map(|task| (run, task)))
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Task 不存在: {task_id}")))?;
         require_project_permission(
             &self.services,
             identity,
-            story.project_id,
+            run.project_id,
             McpProjectPermission::View,
         )
         .await
@@ -270,8 +286,12 @@ impl McpHttpRouterState {
 
         let service = create_task_http_service(
             self.services.clone(),
-            story.project_id,
-            task.story_id,
+            run.project_id,
+            task.story_ref
+                .as_ref()
+                .filter(|subject| subject.kind == "story")
+                .map(|subject| subject.id)
+                .unwrap_or_else(Uuid::nil),
             task.id,
             identity.clone(),
         );

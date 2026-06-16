@@ -30,7 +30,7 @@ pub mod shared_library;
 pub mod skill_assets;
 pub mod stories;
 pub mod story_runs;
-pub mod task_execution;
+pub mod task_plan;
 pub mod terminals;
 pub mod vfs;
 pub mod vfs_surfaces;
@@ -56,6 +56,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         workspace_repo: state.repos.workspace_repo.clone(),
         agent_procedure_repo: state.repos.agent_procedure_repo.clone(),
         workflow_graph_repo: state.repos.workflow_graph_repo.clone(),
+        lifecycle_run_repo: state.repos.lifecycle_run_repo.clone(),
+        lifecycle_subject_association_repo: state.repos.lifecycle_subject_association_repo.clone(),
         state_change_repo: state.repos.state_change_repo.clone(),
     });
     let mcp = McpRouterBuilder::new(mcp_services)
@@ -83,7 +85,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(backend_access::router())
         .merge(stories::router())
         .merge(story_runs::router())
-        .merge(task_execution::router())
+        .merge(task_plan::router())
         .merge(lifecycle_agents::router())
         .merge(lifecycle_views::router())
         .merge(workflows::router())

@@ -4,14 +4,15 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    AgentFrame, AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage, AgentPolicy, AgentSource,
-    AgentRuntimeRefs, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, ExecutorRunRef,
-    GatePolicy, InteractionDispatchIntent, InteractionGateOpenedDispatchResult, LifecycleAgent,
-    LifecycleGate, LifecycleRun, LifecycleRunStartDispatchResult, LifecycleRunStartIntent,
-    LifecycleSubjectAssociation, OrchestrationBindingRefs, OrchestrationInstance,
-    OrchestrationPlanSnapshot, OrchestrationSourceRef, RunPolicy, RuntimePolicy,
-    RuntimeSessionExecutionAnchor, SubjectExecutionDispatchResult, SubjectExecutionIntent,
-    SubjectExecutionRef, SubjectRef, ValidationSeverity, WorkflowGraph, WorkflowGraphRef,
+    AgentFrame, AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage, AgentPolicy,
+    AgentRuntimeRefs, AgentSource, ExecutionDispatchResult, ExecutionIntent, ExecutionSource,
+    ExecutorRunRef, GatePolicy, InteractionDispatchIntent, InteractionGateOpenedDispatchResult,
+    LifecycleAgent, LifecycleGate, LifecycleRun, LifecycleRunStartDispatchResult,
+    LifecycleRunStartIntent, LifecycleSubjectAssociation, OrchestrationBindingRefs,
+    OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef, RunPolicy,
+    RuntimePolicy, RuntimeSessionExecutionAnchor, SubjectExecutionDispatchResult,
+    SubjectExecutionIntent, SubjectExecutionRef, SubjectRef, ValidationSeverity, WorkflowGraph,
+    WorkflowGraphRef,
 };
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository,
@@ -19,7 +20,9 @@ use agentdash_domain::workflow::{
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
 };
 
+use super::WorkflowApplicationError;
 use crate::agent_run::frame::builder::AgentFrameBuilder;
+use crate::session::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
 use crate::workflow::WorkflowGraphCompileDiagnostic;
 use crate::workflow::graph_resolver::WorkflowGraphResolver;
 use crate::workflow::orchestration::{
@@ -27,8 +30,6 @@ use crate::workflow::orchestration::{
     WorkflowGraphCompileInput, WorkflowGraphCompileMode, WorkflowGraphCompileSourceMetadata,
     WorkflowGraphCompiler, activate_orchestration, apply_orchestration_event_to_run,
 };
-use super::WorkflowApplicationError;
-use crate::session::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
 
 #[derive(Debug, Clone)]
 pub struct RuntimeSessionCreationRequest {
@@ -1824,7 +1825,8 @@ mod tests {
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         seed_test_workflow_graph(&workflow_repo, project_id);
         let existing_run = create_lifecycle_run(project_id);
-        let first_agent = LifecycleAgent::new_root(existing_run.id, project_id, AgentSource::Routine);
+        let first_agent =
+            LifecycleAgent::new_root(existing_run.id, project_id, AgentSource::Routine);
         let target_agent =
             LifecycleAgent::new_root(existing_run.id, project_id, AgentSource::Routine);
         run_repo.items.lock().unwrap().push(existing_run.clone());

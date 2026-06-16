@@ -5,9 +5,9 @@ use agentdash_spi::platform::tool_capability::CAP_WORKFLOW;
 use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext, ToolCluster};
 use async_trait::async_trait;
 
+use crate::lifecycle::tools::advance_node::CompleteLifecycleNodeTool;
 use crate::platform_config::SharedPlatformConfig;
 use crate::runtime_tools::provider::SharedSessionToolServicesHandle;
-use crate::lifecycle::tools::advance_node::CompleteLifecycleNodeTool;
 
 #[derive(Clone)]
 pub struct WorkflowRuntimeToolProvider {

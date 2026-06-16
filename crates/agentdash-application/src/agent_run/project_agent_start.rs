@@ -20,21 +20,18 @@ use agentdash_spi::AgentConfig;
 use agentdash_spi::platform::auth::AuthIdentity;
 use async_trait::async_trait;
 
-use crate::repository_set::RepositorySet;
 use crate::agent_run::{
-    AgentRunCommandReceiptView,
-    AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxService,
-    AgentRunMailboxUserMessageCommand, ConversationModelConfigResolver,
+    AgentRunCommandReceiptView, AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult,
+    AgentRunMailboxService, AgentRunMailboxUserMessageCommand, ConversationModelConfigResolver,
     command_receipt::{
         accepted_refs_from_record, claim_agent_run_command_receipt, digest_command_request,
         mark_command_terminal_failed,
     },
     mailbox::{outcome_from_message, outcome_from_result_json},
 };
+use crate::lifecycle::{LifecycleDispatchService, RuntimeSessionCreator, WorkflowApplicationError};
+use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionMeta};
-use crate::lifecycle::{
-    LifecycleDispatchService, RuntimeSessionCreator, WorkflowApplicationError,
-};
 
 pub struct ProjectAgentRunStartCommand {
     pub project_id: Uuid,

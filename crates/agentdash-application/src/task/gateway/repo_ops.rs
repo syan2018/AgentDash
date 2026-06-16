@@ -35,12 +35,20 @@ pub async fn append_task_change(
     kind: ChangeKind,
     payload: Value,
 ) -> Result<(), DomainError> {
-    let task = crate::task::load_task(repos.story_repo.as_ref(), task_id)
-        .await?
-        .ok_or_else(|| DomainError::NotFound {
-            entity: "task",
-            id: task_id.to_string(),
-        })?;
+    let located = crate::task::plan::find_task_plan_item_by_subject(
+        repos.lifecycle_run_repo.as_ref(),
+        repos.lifecycle_subject_association_repo.as_ref(),
+        task_id,
+    )
+    .await
+    .map_err(|error| DomainError::Database {
+        operation: "find_lifecycle_task_plan_item",
+        message: error.to_string(),
+    })?
+    .ok_or_else(|| DomainError::NotFound {
+        entity: "task",
+        id: task_id.to_string(),
+    })?;
     let backend_id_opt = if backend_id.trim().is_empty() {
         None
     } else {
@@ -48,7 +56,13 @@ pub async fn append_task_change(
     };
     repos
         .state_change_repo
-        .append_change(task.project_id, task_id, kind, payload, backend_id_opt)
+        .append_change(
+            located.run.project_id,
+            task_id,
+            kind,
+            payload,
+            backend_id_opt,
+        )
         .await
 }
 
@@ -60,24 +74,30 @@ pub async fn update_task_status(
     reason: &str,
     context: Value,
 ) -> Result<bool, DomainError> {
-    let Some(story) = repos.story_repo.find_by_task_id(task_id).await? else {
-        return Ok(false);
-    };
-
-    let Some(previous_task) = story.find_task(task_id).cloned() else {
+    let Some(located) = crate::task::plan::find_task_plan_item_by_subject(
+        repos.lifecycle_run_repo.as_ref(),
+        repos.lifecycle_subject_association_repo.as_ref(),
+        task_id,
+    )
+    .await
+    .map_err(|error| DomainError::Database {
+        operation: "find_lifecycle_task_plan_item",
+        message: error.to_string(),
+    })?
+    else {
         return Ok(false);
     };
 
     append_task_change(
         repos,
-        previous_task.id,
+        located.task.id,
         backend_id,
         ChangeKind::TaskUpdated,
         json!({
             "reason": reason,
-            "task_id": previous_task.id,
-            "story_id": previous_task.story_id,
-            "current_status": previous_task.status(),
+            "task_id": located.task.id,
+            "run_id": located.run.id,
+            "current_status": located.task.status,
             "requested_status": next_status,
             "context": context,
         }),

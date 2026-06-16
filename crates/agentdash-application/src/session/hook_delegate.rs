@@ -921,9 +921,9 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::HookRuntimeDelegate;
-    use crate::session::hook_injection_sink::{RuntimeHookInjectionSink, RuntimeInjectionSource};
-    use crate::context::{AuditFilter, InMemoryContextAuditBus, SharedContextAuditBus};
     use crate::agent_run::frame::hook_runtime::AgentFrameHookRuntime;
+    use crate::context::{AuditFilter, InMemoryContextAuditBus, SharedContextAuditBus};
+    use crate::session::hook_injection_sink::{RuntimeHookInjectionSink, RuntimeInjectionSource};
     use agentdash_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
         AgentFrameHookSnapshotQuery, ContextTokenStats, ExecutionHookProvider,

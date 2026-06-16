@@ -1133,7 +1133,12 @@ mod tests {
     use tokio::sync::RwLock;
 
     use super::*;
+    use crate::agent_run::frame::builder::AgentFrameBuilder;
+    use crate::agent_run::frame::surface::FrameSurfaceDraft;
     use crate::canvas::build_canvas;
+    use crate::runtime_tools::{
+        SessionToolServices, SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
+    };
     use crate::session::construction::{
         ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
         RuntimeContextInspectionPlan,
@@ -1144,13 +1149,8 @@ mod tests {
         MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,
         MemoryRuntimeSessionExecutionAnchorRepository,
     };
-    use crate::runtime_tools::{
-        SessionToolServices, SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
-    };
-    use crate::workspace_module::WorkspaceModuleRuntimeToolProvider;
     use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
-    use crate::agent_run::frame::builder::AgentFrameBuilder;
-    use crate::agent_run::frame::surface::FrameSurfaceDraft;
+    use crate::workspace_module::WorkspaceModuleRuntimeToolProvider;
 
     fn manifest(extension_id: &str) -> ExtensionTemplatePayload {
         ExtensionTemplatePayload {

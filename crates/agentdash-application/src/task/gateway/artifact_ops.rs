@@ -9,10 +9,8 @@ use uuid::Uuid;
 use agentdash_domain::DomainError;
 use agentdash_domain::story::ChangeKind;
 
-use crate::repository_set::RepositorySet;
-use crate::task::artifact::upsert_tool_execution_artifact;
-
 use super::repo_ops::append_task_change;
+use crate::repository_set::RepositorySet;
 
 pub(super) struct VerifiedTaskArtifactContext<'a> {
     task_id: Uuid,
@@ -98,43 +96,14 @@ pub(super) async fn persist_tool_call_artifact(
     repos: &RepositorySet,
     input: ToolCallArtifactInput<'_>,
 ) -> Result<(), DomainError> {
-    let Some(mut story) = repos
-        .story_repo
-        .find_by_task_id(input.context.task_id)
-        .await?
-    else {
-        return Ok(());
-    };
-    let Some(task_snapshot) = story.find_task(input.context.task_id).cloned() else {
-        return Ok(());
-    };
-
-    let mut updated_task = task_snapshot.clone();
-    let changed = upsert_tool_execution_artifact(
-        &mut updated_task,
-        input.context.session_id,
-        input.context.turn_id,
-        input.tool_call_id,
-        input.patch,
-    )?;
-    if !changed {
-        return Ok(());
-    }
-
-    // artifact 已经在 updated_task 上加好了，直接替换 story 内的 task。
-    story.mutate_task_artifacts(input.context.task_id, |artifacts| {
-        *artifacts = updated_task.artifacts().to_vec();
-    });
-    repos.story_repo.update(&story).await?;
     append_task_change(
         repos,
-        updated_task.id,
+        input.context.task_id,
         input.context.backend_id,
         ChangeKind::TaskArtifactAdded,
         json!({
             "reason": input.reason,
-            "task_id": updated_task.id,
-            "story_id": updated_task.story_id,
+            "task_id": input.context.task_id,
             "run_id": input.context.run_id,
             "agent_id": input.context.agent_id,
             "frame_id": input.context.frame_id,
@@ -144,6 +113,7 @@ pub(super) async fn persist_tool_call_artifact(
             "session_id": input.context.session_id,
             "turn_id": input.context.turn_id,
             "tool_call_id": input.tool_call_id,
+            "patch": Value::Object(input.patch),
             "artifact_type": "tool_execution",
         }),
     )

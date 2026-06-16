@@ -383,120 +383,24 @@ impl StoryMcpServer {
     #[tool(description = "在当前 Story 下创建一个新的 Task（执行单元）")]
     async fn create_task(
         &self,
-        Parameters(params): Parameters<CreateTaskParams>,
+        Parameters(_params): Parameters<CreateTaskParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use agentdash_domain::task::{Task, TaskDispatchPreference};
-
         self.require_project(McpProjectPermission::Edit).await?;
-        let workspace_id = params
-            .workspace_id
-            .as_deref()
-            .map(|s| {
-                Uuid::parse_str(s)
-                    .map_err(|_| McpError::invalid_param("workspace_id", "无效的 UUID"))
-            })
-            .transpose()?;
-
-        let mut task = Task::new(
-            self.project_id,
-            self.story_id,
-            params.title,
-            params.description,
-        );
-        task.workspace_id = workspace_id;
-        task.dispatch_preference = TaskDispatchPreference {
-            agent_type: params.agent_type,
-            initial_context: params.initial_context,
-            context_sources: params
-                .context_sources
-                .unwrap_or_default()
-                .into_iter()
-                .map(Self::into_context_source)
-                .collect::<Result<Vec<_>, _>>()?,
-            ..Default::default()
-        };
-
-        // M1-b：task create 走 Story aggregate 命令路径，保证 TaskCreated 事件与
-        // stories.tasks 写入在同一事务内落地。
-        let task_id = task.id;
-        self.services
-            .story_repo
-            .add_task_to_story(self.story_id, &task)
-            .await
-            .map_err(McpError::from)?;
-
-        let result = serde_json::json!({
-            "task_id": task_id.to_string(),
-            "story_id": self.story_id.to_string(),
-            "status": "pending",
-            "message": "Task 已创建",
-        });
-
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result).unwrap_or_default(),
+            "Story MCP Task 创建已迁移到 run-scoped Task command；W6 会更新 MCP tool schema。"
+                .to_string(),
         )]))
     }
 
     #[tool(description = "在当前 Story 下批量创建多个 Task（通常用于 Story 拆解完成后一次性创建）")]
     async fn batch_create_tasks(
         &self,
-        Parameters(params): Parameters<BatchCreateTasksParams>,
+        Parameters(_params): Parameters<BatchCreateTasksParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use agentdash_domain::task::{Task, TaskDispatchPreference};
-
         self.require_project(McpProjectPermission::Edit).await?;
-        let mut created_ids = Vec::new();
-        let mut tasks_to_create = Vec::new();
-
-        for input in &params.tasks {
-            let workspace_id = input
-                .workspace_id
-                .as_deref()
-                .map(|s| {
-                    Uuid::parse_str(s)
-                        .map_err(|_| McpError::invalid_param("workspace_id", "无效的 UUID"))
-                })
-                .transpose()?;
-
-            let mut task = Task::new(
-                self.project_id,
-                self.story_id,
-                input.title.clone(),
-                input.description.clone(),
-            );
-            task.workspace_id = workspace_id;
-            task.dispatch_preference = TaskDispatchPreference {
-                agent_type: input.agent_type.clone(),
-                initial_context: input.initial_context.clone(),
-                context_sources: input
-                    .context_sources
-                    .clone()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(Self::into_context_source)
-                    .collect::<Result<Vec<_>, _>>()?,
-                ..Default::default()
-            };
-
-            let task_id = task.id;
-            tasks_to_create.push(task);
-            created_ids.push(task_id.to_string());
-        }
-
-        self.services
-            .story_repo
-            .add_tasks_to_story(self.story_id, &tasks_to_create)
-            .await
-            .map_err(McpError::from)?;
-
-        let result = serde_json::json!({
-            "story_id": self.story_id.to_string(),
-            "created_count": created_ids.len(),
-            "task_ids": created_ids,
-        });
-
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result).unwrap_or_default(),
+            "Story MCP Task 批量创建已迁移到 run-scoped Task command；W6 会更新 MCP tool schema。"
+                .to_string(),
         )]))
     }
 

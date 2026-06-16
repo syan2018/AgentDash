@@ -1,4 +1,6 @@
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::backend_execution_placement::ExecutionPlacementPlan;
+use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::launch::{
     ConnectorStarter, LaunchCommand, LaunchCommandOutcome, LaunchPlanner, LaunchPlannerInput,
@@ -6,8 +8,6 @@ use crate::session::launch::{
 };
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::*;
-use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use agentdash_spi::ConnectorError;
 
 pub(in crate::session) struct SessionLaunchOrchestrator {

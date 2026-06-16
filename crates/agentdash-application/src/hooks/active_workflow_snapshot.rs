@@ -7,11 +7,11 @@ use agentdash_domain::workflow::{
 use agentdash_spi::{HookError, hooks::HookControlTarget, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
 
+use crate::lifecycle::execution_log as workflow_recording;
 use crate::lifecycle::{
     ActiveWorkflowProjection, resolve_active_workflow_projection_for_target,
     resolve_active_workflow_projection_from_message_stream_trace,
 };
-use crate::lifecycle::execution_log as workflow_recording;
 
 fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
     HookError::Runtime(error.to_string())

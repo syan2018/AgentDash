@@ -18,11 +18,11 @@ use crate::routes::lifecycle_contracts::{
 };
 use crate::routes::lifecycle_views::{agent_frame_runtime_to_view, runtime_refs_for_agent};
 use crate::{app_state::AppState, rpc::ApiError};
+use agentdash_application::lifecycle::run_view_builder;
 use agentdash_application::session::{
     ExecutionStatus, SessionExecutionState, SessionForkRequest, SessionMeta,
     SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
 };
-use agentdash_application::lifecycle::run_view_builder;
 use agentdash_contracts::session::{
     ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
     RejectToolCallResponse, RollbackSessionProjectionRequest, SessionEventResponse,

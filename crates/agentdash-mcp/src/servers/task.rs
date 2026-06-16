@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::authz::{McpProjectPermission, require_project_permission};
 use crate::error::McpError;
 use crate::services::McpServices;
+use agentdash_domain::workflow::{LifecycleRun, LifecycleTaskPlanItem, SubjectRef};
 use agentdash_spi::platform::auth::AuthIdentity;
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
@@ -89,36 +90,35 @@ impl TaskMcpServer {
             .await
     }
 
-    async fn load_task(&self) -> Result<agentdash_domain::task::Task, McpError> {
-        // M1-b：Task 查询经 Story aggregate（find_by_task_id）
-        let story = self
+    async fn load_task_plan(&self) -> Result<(LifecycleRun, LifecycleTaskPlanItem), McpError> {
+        let subject = SubjectRef::new("task", self.task_id);
+        let associations = self
             .services
-            .story_repo
-            .find_by_task_id(self.task_id)
+            .lifecycle_subject_association_repo
+            .list_by_subject(&subject)
             .await
-            .map_err(McpError::from)?
-            .ok_or_else(|| McpError::not_found("Task", self.task_id))?;
-        story
-            .find_task(self.task_id)
-            .cloned()
-            .ok_or_else(|| McpError::not_found("Task", self.task_id))
-    }
-
-    async fn load_story_with_task(
-        &self,
-    ) -> Result<(agentdash_domain::story::Story, agentdash_domain::task::Task), McpError> {
-        let story = self
+            .map_err(McpError::from)?;
+        let mut run_ids = Vec::new();
+        for assoc in associations {
+            if !run_ids.contains(&assoc.anchor_run_id) {
+                run_ids.push(assoc.anchor_run_id);
+            }
+        }
+        let runs = self
             .services
-            .story_repo
-            .find_by_task_id(self.task_id)
+            .lifecycle_run_repo
+            .list_by_ids(&run_ids)
             .await
-            .map_err(McpError::from)?
-            .ok_or_else(|| McpError::not_found("Task", self.task_id))?;
-        let task = story
-            .find_task(self.task_id)
-            .cloned()
-            .ok_or_else(|| McpError::not_found("Task", self.task_id))?;
-        Ok((story, task))
+            .map_err(McpError::from)?;
+        for run in runs {
+            if run.project_id != self.project_id {
+                continue;
+            }
+            if let Some(task) = run.task_by_id(self.task_id).cloned() {
+                return Ok((run, task));
+            }
+        }
+        Err(McpError::not_found("Task", self.task_id))
     }
 }
 
@@ -129,21 +129,20 @@ impl TaskMcpServer {
     #[tool(description = "获取当前绑定 Task 的完整信息")]
     async fn get_task_info(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         self.require_project(McpProjectPermission::View).await?;
-        let task = self.load_task().await?;
+        let (run, task) = self.load_task_plan().await?;
 
         let result = serde_json::json!({
             "task_id": task.id.to_string(),
-            "story_id": task.story_id.to_string(),
+            "owning_run_id": run.id.to_string(),
+            "story_ref": task.story_ref,
             "title": task.title,
-            "description": task.description,
-            "status": task.status(),
-            "workspace_id": task.workspace_id.map(|w| w.to_string()),
-            "dispatch_preference": {
-                "agent_type": task.dispatch_preference.agent_type,
-                "preset_name": task.dispatch_preference.preset_name,
-                "initial_context": task.dispatch_preference.initial_context,
-            },
-            "artifact_count": task.artifacts().len(),
+            "body": task.body,
+            "status": task.status,
+            "priority": task.priority,
+            "created_by_agent_id": task.created_by_agent_id.map(|id| id.to_string()),
+            "owner_agent_id": task.owner_agent_id.map(|id| id.to_string()),
+            "assigned_agent_id": task.assigned_agent_id.map(|id| id.to_string()),
+            "context_refs": task.context_refs,
         });
 
         Ok(CallToolResult::success(vec![Content::text(
@@ -169,19 +168,19 @@ impl TaskMcpServer {
             "Task 状态变更意图"
         );
 
-        let (story, task_before) = self.load_story_with_task().await?;
+        let (run, task_before) = self.load_task_plan().await?;
         self.services
             .state_change_repo
             .append_change(
-                story.project_id,
+                run.project_id,
                 self.task_id,
                 agentdash_domain::story::ChangeKind::TaskUpdated,
                 serde_json::json!({
                     "reason": params.reason.as_deref().unwrap_or("mcp_update_task_status"),
                     "task_id": self.task_id,
-                    "story_id": story.id,
+                    "run_id": run.id,
                     "source": "mcp_command",
-                    "current_status": task_before.status(),
+                    "current_status": task_before.status,
                     "requested_status": new_status,
                 }),
                 None,
@@ -200,10 +199,10 @@ impl TaskMcpServer {
         &self,
         Parameters(params): Parameters<ReportArtifactParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use agentdash_domain::task::{Artifact, ArtifactType};
+        use agentdash_domain::task::ArtifactType;
 
         self.require_project(McpProjectPermission::Edit).await?;
-        let artifact_type: ArtifactType =
+        let _artifact_type: ArtifactType =
             serde_json::from_value(serde_json::Value::String(params.artifact_type.clone()))
                 .map_err(|_| {
                     McpError::invalid_param(
@@ -212,21 +211,25 @@ impl TaskMcpServer {
                     )
                 })?;
 
-        let artifact = Artifact {
-            id: Uuid::new_v4(),
-            artifact_type,
-            content: parse_artifact_content(&params.content),
-            created_at: chrono::Utc::now(),
-        };
-
-        let (mut story, _) = self.load_story_with_task().await?;
-        let artifact_id = artifact.id;
-        // M2：MCP 主动上报 artifact 走命令级 `Story::push_task_artifact` 入口。
-        story.push_task_artifact(self.task_id, artifact.clone());
-
+        let (run, _) = self.load_task_plan().await?;
+        let artifact_id = Uuid::new_v4();
         self.services
-            .story_repo
-            .update(&story)
+            .state_change_repo
+            .append_change(
+                run.project_id,
+                self.task_id,
+                agentdash_domain::story::ChangeKind::TaskArtifactAdded,
+                serde_json::json!({
+                    "reason": "mcp_report_artifact",
+                    "task_id": self.task_id,
+                    "run_id": run.id,
+                    "source": "mcp_command",
+                    "artifact_id": artifact_id,
+                    "artifact_type": params.artifact_type,
+                    "content": parse_artifact_content(&params.content),
+                }),
+                None,
+            )
             .await
             .map_err(McpError::from)?;
 
@@ -239,14 +242,8 @@ impl TaskMcpServer {
     #[tool(description = "查看同一 Story 下的其它 Task 及其状态（只读，用于协调）")]
     async fn get_sibling_tasks(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         self.require_project(McpProjectPermission::View).await?;
-        let story = self
-            .services
-            .story_repo
-            .get_by_id(self.story_id)
-            .await
-            .map_err(McpError::from)?
-            .ok_or_else(|| McpError::not_found("Story", self.story_id))?;
-        let tasks = &story.tasks;
+        let (run, _) = self.load_task_plan().await?;
+        let tasks = &run.tasks;
 
         let result: Vec<serde_json::Value> = tasks
             .iter()
@@ -254,7 +251,7 @@ impl TaskMcpServer {
                 serde_json::json!({
                     "id": t.id.to_string(),
                     "title": t.title,
-                    "status": t.status(),
+                    "status": t.status,
                     "is_self": t.id == self.task_id,
                 })
             })
@@ -296,16 +293,22 @@ impl TaskMcpServer {
         Parameters(params): Parameters<AppendTaskDescriptionParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         self.require_project(McpProjectPermission::Edit).await?;
-        let (mut story, task) = self.load_story_with_task().await?;
-        let new_description = format!("{}\n\n---\n{}", task.description, params.append_text);
-
-        story.update_task(self.task_id, |task| {
-            *task.description = new_description.clone();
-        });
-
+        let (run, _) = self.load_task_plan().await?;
         self.services
-            .story_repo
-            .update(&story)
+            .state_change_repo
+            .append_change(
+                run.project_id,
+                self.task_id,
+                agentdash_domain::story::ChangeKind::TaskUpdated,
+                serde_json::json!({
+                    "reason": "mcp_append_task_description",
+                    "task_id": self.task_id,
+                    "run_id": run.id,
+                    "source": "mcp_command",
+                    "append_text": params.append_text,
+                }),
+                None,
+            )
             .await
             .map_err(McpError::from)?;
 

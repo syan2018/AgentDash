@@ -42,13 +42,6 @@ use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     build_session_context_bundle, emit_bundle_fragments,
 };
-use crate::platform_config::PlatformConfig;
-use crate::repository_set::RepositorySet;
-use crate::runtime::McpServerSummary;
-use crate::session::assembly_builder::SessionAssemblyBuilder;
-#[cfg(test)]
-use crate::session::assembly_builder::slice_companion_bundle;
-use crate::vfs::VfsService;
 use crate::lifecycle::{
     ActivityActivationInput, AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode,
     AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, BuiltinLifecycleSkill,
@@ -56,6 +49,13 @@ use crate::lifecycle::{
     OrchestrationNodeProjectionInput, RuntimeNodeArtifactScope, activate_activity_with_platform,
     load_scoped_port_output_map,
 };
+use crate::platform_config::PlatformConfig;
+use crate::repository_set::RepositorySet;
+use crate::runtime::McpServerSummary;
+use crate::session::assembly_builder::SessionAssemblyBuilder;
+#[cfg(test)]
+use crate::session::assembly_builder::slice_companion_bundle;
+use crate::vfs::VfsService;
 use crate::workspace::BackendAvailability;
 
 // ═══════════════════════════════════════════════════════════════════

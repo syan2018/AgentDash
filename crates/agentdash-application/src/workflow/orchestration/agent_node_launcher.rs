@@ -3,22 +3,21 @@ use std::sync::Arc;
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentProcedureContract, AgentProcedureExecutionSpec,
     AgentProcedureRepository, AgentReusePolicy, AgentSource, ExecutorRunRef, ExecutorSpec,
-    LifecycleAgent,
-    LifecycleAgentRepository, LifecycleRun, OrchestrationInstance, PlanNode,
+    LifecycleAgent, LifecycleAgentRepository, LifecycleRun, OrchestrationInstance, PlanNode,
     RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy,
 };
 use async_trait::async_trait;
 
-use crate::platform_config::SharedPlatformConfig;
-use crate::repository_set::RepositorySet;
-use crate::session::{LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit};
 use crate::agent_run::frame::builder::AgentFrameBuilder;
-use crate::lifecycle::{
-    RuntimeSessionCreationRequest, RuntimeSessionCreator, WorkflowApplicationError,
-};
 use crate::lifecycle::projection::{
     activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
 };
+use crate::lifecycle::{
+    RuntimeSessionCreationRequest, RuntimeSessionCreator, WorkflowApplicationError,
+};
+use crate::platform_config::SharedPlatformConfig;
+use crate::repository_set::RepositorySet;
+use crate::session::{LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit};
 
 use super::executor_launcher::LaunchedAgentNode;
 use super::ready_node::{ReadyNodeView, RuntimeNodeCoordinate};
@@ -104,10 +103,11 @@ impl AgentNodeLauncher {
 
         let (mut agent, session_id) = match (agent_reuse_policy, runtime_session_policy) {
             (AgentReusePolicy::CreateActivityAgent, RuntimeSessionPolicy::CreateNew) => {
-                let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent)
-                    .with_bootstrap_status(
-                        agentdash_domain::workflow::bootstrap_status::NOT_APPLICABLE,
-                    );
+                let agent =
+                    LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent)
+                        .with_bootstrap_status(
+                            agentdash_domain::workflow::bootstrap_status::NOT_APPLICABLE,
+                        );
                 self.lifecycle_agent_repo.create(&agent).await?;
                 let session_id = self
                     .runtime_session_creator

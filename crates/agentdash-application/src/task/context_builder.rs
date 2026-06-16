@@ -8,6 +8,10 @@ use crate::capability::{
     McpCandidates, ToolContribution, load_available_presets,
     tool_directives_from_active_workflow_projection,
 };
+use crate::lifecycle::{
+    ActiveWorkflowProjection, project_active_workflow_lifecycle_vfs,
+    resolve_active_workflow_projection_for_target,
+};
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::runtime::Vfs as RuntimeVfs;
@@ -22,10 +26,6 @@ use crate::session::context::{
 };
 use crate::task::config::{resolve_task_executor_config, resolve_task_executor_source};
 use crate::vfs::{SessionMountTarget, VfsService};
-use crate::lifecycle::{
-    ActiveWorkflowProjection, project_active_workflow_lifecycle_vfs,
-    resolve_active_workflow_projection_for_target,
-};
 use agentdash_domain::common::Vfs;
 
 #[derive(Debug)]

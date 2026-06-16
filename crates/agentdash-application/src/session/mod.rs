@@ -58,8 +58,8 @@ pub mod turn_processor;
 mod turn_supervisor;
 pub mod types;
 
-pub use crate::lifecycle::WorkflowApplicationError;
 pub use crate::agent_run::frame::hook_runtime::AgentFrameHookRuntime;
+pub use crate::lifecycle::WorkflowApplicationError;
 pub use assembler::{
     CompanionParentSpec, CompanionParentWorkflowSpec, CompanionSpec, CompanionWorkflowSpec,
     LifecycleNodeSpec, SessionRequestAssembler, compose_lifecycle_node_to_frame_with_audit,

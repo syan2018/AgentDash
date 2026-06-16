@@ -59,10 +59,10 @@ flowchart TD
 | W1 Lifecycle Task Facts | done | 否 | `w1-lifecycle-task-facts.md` |
 | W2 Migration + Repository | done | 否 | `w2-migration-repository.md` |
 | W3 Contracts + Generated TS | done | 否 | `w3-contracts-generated.md` |
-| W4 Backend Commands + Read Models | ready | 否 | `w4-backend-commands-read-models.md` |
-| W5 Frontend Core | pending | 是，等待 W4 | `w5-frontend-core.md` |
-| W6 MCP + Capability | pending | 是，等待 W4 | `w6-mcp-capability.md` |
-| W7 Workflow Fanout | pending | 是，等待 W4 | `w7-workflow-fanout.md` |
+| W4 Backend Commands + Read Models | done | 否 | `w4-backend-commands-read-models.md` |
+| W5 Frontend Core | ready | 是 | `w5-frontend-core.md` |
+| W6 MCP + Capability | ready | 是 | `w6-mcp-capability.md` |
+| W7 Workflow Fanout | ready | 是 | `w7-workflow-fanout.md` |
 | W8 Cleanup + Verification | pending | 否，等待 W5/W6/W7 | `w8-cleanup-verification.md` |
 
 ## 派发模板

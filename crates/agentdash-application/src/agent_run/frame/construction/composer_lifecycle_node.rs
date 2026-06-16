@@ -6,13 +6,13 @@ use agentdash_domain::workflow::{
 };
 use agentdash_spi::ConnectorError;
 
-use crate::session::construction_provider::SessionConstructionProviderInput;
-use crate::session::{LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit};
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::lifecycle::projection::{
     activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
 };
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
+use crate::session::construction_provider::SessionConstructionProviderInput;
+use crate::session::{LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit};
 
 use super::{FrameConstructionService, connector_internal, frame_builder_from_existing};
 

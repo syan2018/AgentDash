@@ -16,8 +16,8 @@ use agentdash_contracts::{
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_spi::{AgentConfig, ThinkingLevel};
 
-use crate::session::SessionExecutionState;
 use crate::lifecycle::WorkflowApplicationError;
+use crate::session::SessionExecutionState;
 
 #[derive(Debug, Clone)]
 pub struct ConversationModelConfigResolution {

@@ -8,11 +8,11 @@ use agentdash_spi::Vfs;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::lifecycle::ActivityActivation;
 use crate::repository_set::RepositorySet;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 use crate::skill_asset::SkillAssetService;
 use crate::vfs::{append_lifecycle_skill_asset_projection, build_lifecycle_mount_with_node_scope};
-use crate::lifecycle::ActivityActivation;
 
 use super::mount::install_agent_run_lifecycle_mount_with_skills;
 

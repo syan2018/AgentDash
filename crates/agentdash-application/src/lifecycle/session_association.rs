@@ -257,8 +257,8 @@ pub async fn resolve_activity_runtime_association_from_message_stream_trace(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vfs::build_lifecycle_mount_with_node_scope;
     use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
+    use crate::vfs::build_lifecycle_mount_with_node_scope;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         AgentFrame, AgentFrameRepository, AgentSource, LifecycleAgent, LifecycleAgentRepository,

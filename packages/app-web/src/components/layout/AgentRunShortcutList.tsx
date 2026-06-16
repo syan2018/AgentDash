@@ -64,6 +64,9 @@ interface AgentRunShortcutEntry {
 /** 单行估算高度（px），用于自适应可见条数计算。需与下方 row className 的间距匹配。 */
 const ROW_HEIGHT = 40;
 
+/** 侧栏只拉首页若干条；超出的通过「查看全部」进入完整列表页。 */
+const SIDEBAR_FETCH_LIMIT = 20;
+
 interface LifecycleShortcutListProps {
   projectId: string | null;
 }
@@ -98,6 +101,7 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
   const location = useLocation();
   const agentRunRouteMatch = useMatch("/agent-runs/:runId/:agentId");
   const [entries, setEntries] = useState<AgentRunWorkspaceListEntry[]>([]);
+  const [hasMoreOnServer, setHasMoreOnServer] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [maxVisible, setMaxVisible] = useState(8);
@@ -109,9 +113,10 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
     let cancelled = false;
     const load = async () => {
       try {
-        const view = await fetchProjectAgentRuns(projectId);
+        const view = await fetchProjectAgentRuns(projectId, { limit: SIDEBAR_FETCH_LIMIT });
         if (!cancelled) {
           setEntries(view.agent_runs);
+          setHasMoreOnServer(Boolean(view.next_cursor));
           setError(null);
         }
       } catch (err) {
@@ -152,36 +157,39 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
   const activeRunId = agentRunRouteMatch?.params.runId ?? null;
   const activeAgentId = agentRunRouteMatch?.params.agentId ?? null;
 
-  // 若超出可见容量，保留最后一行给"更多"入口。
-  const overflowing = agentRunEntries.length > maxVisible;
-  const visibleEntries = overflowing
+  // 是否需要「查看全部」入口：本地超出可见容量，或服务端还有更多页。
+  const needMoreEntry = agentRunEntries.length > maxVisible || hasMoreOnServer;
+  const visibleEntries = needMoreEntry
     ? agentRunEntries.slice(0, Math.max(1, maxVisible - 1))
     : agentRunEntries;
   const hiddenCount = agentRunEntries.length - visibleEntries.length;
 
+  // 外层 section 为「测量包络」：保持 flex-1 撑满（让 footer 留在底部）+ 挂 ref 测可用高度；
+  // 内层可见块为内容高（不 flex-grow），border-b 跟随内容——条目少时不再留大片空白边框。
   return (
-    <div className="flex min-h-0 flex-1 flex-col border-b border-border">
-      <div className="flex shrink-0 items-center justify-between px-4 pb-1.5 pt-3">
-        <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-          AgentRun
-        </span>
-        {agentRunEntries.length > 0 && (
-          <span className="text-[10px] text-muted-foreground/70">
-            {agentRunEntries.length}
+    <section ref={listRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex flex-col">
+        <div className="flex shrink-0 items-center justify-between px-4 pb-1.5 pt-3">
+          <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            AgentRun
           </span>
-        )}
-      </div>
-
-      {!projectId ? (
-        <p className="px-4 pb-3 text-xs text-muted-foreground">未选择项目</p>
-      ) : agentRunEntries.length === 0 ? (
-        <div className="px-4 pb-3">
-          <p className="text-xs text-muted-foreground">暂无活跃 AgentRun</p>
-          {error && <p className="mt-1 line-clamp-2 text-[11px] text-destructive">{error}</p>}
+          {agentRunEntries.length > 0 && (
+            <span className="text-[10px] text-muted-foreground/70">
+              {agentRunEntries.length}{hasMoreOnServer ? "+" : ""}
+            </span>
+          )}
         </div>
-      ) : (
-        <div ref={listRef} className="min-h-0 flex-1 overflow-hidden px-3 pb-2">
-          {visibleEntries.map((entry) => {
+
+        {!projectId ? (
+          <p className="px-4 pb-3 text-xs text-muted-foreground">未选择项目</p>
+        ) : agentRunEntries.length === 0 ? (
+          <div className="px-4 pb-3">
+            <p className="text-xs text-muted-foreground">暂无活跃 AgentRun</p>
+            {error && <p className="mt-1 line-clamp-2 text-[11px] text-destructive">{error}</p>}
+          </div>
+        ) : (
+          <div className="px-3 pb-2">
+            {visibleEntries.map((entry) => {
             const isActive = activeRunId === entry.runId && activeAgentId === entry.agentId;
             const path = `/agent-runs/${encodeURIComponent(entry.runId)}/${encodeURIComponent(entry.agentId)}`;
             return (
@@ -223,17 +231,18 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
               </button>
             );
           })}
-          {overflowing && (
-            <button
-              type="button"
-              onClick={() => navigate("/dashboard/agent")}
-              className="flex w-full items-center justify-center rounded-[8px] px-2.5 py-2 text-left text-[11px] text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
-            >
-              +{hiddenCount} 更多 · 查看全部
-            </button>
-          )}
-        </div>
-      )}
-    </div>
+            {needMoreEntry && (
+              <button
+                type="button"
+                onClick={() => navigate("/dashboard/agent")}
+                className="flex w-full items-center justify-center rounded-[8px] px-2.5 py-2 text-left text-[11px] text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
+              >
+                {hiddenCount > 0 ? `+${hiddenCount} 更多 · 查看全部` : "查看全部"}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }

@@ -299,6 +299,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             agent: agent.clone(),
             shell,
             agent_role: agent.agent_role.clone(),
+            project_agent_label: project_agent.as_ref().map(project_agent_display_label),
             delivery_runtime_session_id,
             delivery_trace_meta,
             subject_ref,
@@ -408,6 +409,18 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
 struct AgentRunFrameVfsResolution {
     frame: AgentFrame,
     vfs: Vfs,
+}
+
+/// Project Agent 面向用户的显示名：优先 preset.display_name，回退 ProjectAgent.name。
+/// 与 construction_planner 的 display_name 解析同语义，仅依赖实体本地 config，无额外查询。
+fn project_agent_display_label(project_agent: &ProjectAgent) -> String {
+    project_agent
+        .preset_config()
+        .ok()
+        .and_then(|preset| preset.display_name)
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| project_agent.name.clone())
 }
 
 fn shell_model(

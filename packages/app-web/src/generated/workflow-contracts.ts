@@ -52,6 +52,31 @@ export type AgentRunLineageRef = { run_id: string, agent_id: string, agent_kind:
  */
 subagent_count: number, };
 
+/**
+ * AgentRun 列表内联的直接子 Agent 节点（一跳），携带真实 shell 状态，免前端懒加载。
+ *
+ * 与 run 级 `AgentRunWorkspaceListEntry` 区分：子节点不持有 run_status / subject 等 run 级字段，
+ * 仅承载渲染一行子 Agent 所需信息 + 自身子树规模（供「N sub」深层提示）。
+ */
+export type AgentRunListChild = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto,
+/**
+ * 面向用户的身份标识：绑定 Project Agent 的显示名（preset.display_name || name）。
+ * 未绑定 project agent（动态 companion 等）时为 None。
+ */
+project_agent_label?: string,
+/**
+ * 含 display_title / delivery_status / last_activity_at 等执行态。
+ */
+shell: AgentRunWorkspaceShell,
+/**
+ * 该子自身子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开开关。
+ */
+subagent_count: number,
+/**
+ * 递归内联的下一层直接子 Agent，支持列表内任意深度展开（深度上限兜底）。
+ */
+children: Array<AgentRunListChild>, delivery_runtime_ref?: RuntimeSessionRefDto, };
+
 export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string, agent_kind: string, agent_role: string, project_agent_id?: string, status: string, current_frame_id?: string,
 /**
  * 投递用的 runtime session（由 execution anchor 提供）。
@@ -68,15 +93,29 @@ export type AgentRunWorkspaceControlPlaneView = { status: AgentRunWorkspaceContr
 
 export type AgentRunWorkspaceListEntry = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, run_status: LifecycleRunStatus,
 /**
+ * 面向用户的身份标识：绑定 Project Agent 的显示名（preset.display_name || name）。
+ * 未绑定 project agent 时为 None。
+ */
+project_agent_label?: string,
+/**
  * agent 角色快捷标记（primary / subagent / companion）。
+ * 注：后续将随「删除 role / kind 标准化为来源枚举」重构收束，列表 UI 已不再展示。
  */
 agent_role: string,
 /**
  * 该主 Run 子树（传递闭包）下的 subagent 总数，0 表示无子。
  */
-subagent_count: number, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, };
+subagent_count: number,
+/**
+ * 该主 Run 的直接子 Agent（一跳），已内联 shell 状态，前端免懒加载。
+ */
+children: Array<AgentRunListChild>, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, };
 
-export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<AgentRunWorkspaceListEntry>, };
+export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<AgentRunWorkspaceListEntry>,
+/**
+ * 下一页游标（keyset，不透明）；None 表示已到尾页。
+ */
+next_cursor?: string, };
 
 export type AgentRunWorkspaceShell = { display_title: string, title_source: string, workspace_status: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
 

@@ -45,6 +45,9 @@ pub struct AgentRunListProjection {
     pub agent: LifecycleAgent,
     pub shell: AgentRunWorkspaceShellModel,
     pub agent_role: String,
+    /// 面向用户的身份标识：绑定 Project Agent 的显示名（preset.display_name || name）；
+    /// 无绑定（ad-hoc / 已删除）时为 None。
+    pub project_agent_label: Option<String>,
     pub delivery_runtime_session_id: Option<String>,
     pub delivery_trace_meta: Option<AgentRunWorkspaceTraceMetaModel>,
     pub subject_ref: Option<SubjectRefDto>,

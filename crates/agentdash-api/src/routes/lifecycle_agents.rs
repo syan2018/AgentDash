@@ -12,10 +12,10 @@ use agentdash_contracts::agent_run_mailbox::{
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunLineageRef,
-    AgentRunRefDto, AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
-    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, ConversationExecutionStatus, LifecycleRunRefDto, RuntimeSessionRefDto,
-    RuntimeSessionTraceMeta,
+    AgentRunListChild, AgentRunRefDto, AgentRunWorkspaceControlPlaneStatus,
+    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
+    AgentRunWorkspaceShell, AgentRunWorkspaceView, ConversationExecutionStatus, LifecycleRunRefDto,
+    RuntimeSessionRefDto, RuntimeSessionTraceMeta,
 };
 use agentdash_domain::workflow::{
     AgentLineage, AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind,
@@ -25,8 +25,10 @@ use agentdash_domain::workflow::{
 use agentdash_spi::AgentConfig;
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -99,6 +101,7 @@ pub async fn get_project_agent_runs(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(project_id): Path<String>,
+    Query(query): Query<AgentRunListQuery>,
 ) -> Result<Json<AgentRunWorkspaceListView>, ApiError> {
     let project_id = parse_uuid(&project_id, "project_id")?;
     load_project_with_permission(
@@ -109,14 +112,37 @@ pub async fn get_project_agent_runs(
     )
     .await?;
 
-    let runs = state
+    let limit = query
+        .limit
+        .map(|l| l as usize)
+        .unwrap_or(DEFAULT_PAGE_LIMIT)
+        .clamp(1, MAX_PAGE_LIMIT);
+    let cursor = query.cursor.as_deref().and_then(decode_cursor);
+
+    // keyset 分页：按 run 级 last_activity_at desc（run_id desc tiebreak）稳定排序，
+    // 仅对**页内** run 跑投影——成本随页大小而非项目历史 Run 总量增长。
+    let mut runs = state
         .repos
         .lifecycle_run_repo
         .list_by_project(project_id)
         .await
         .map_err(ApiError::from)?;
+    // 排序键与游标 keyset 同为毫秒粒度，避免亚毫秒同刻在分页边界错位。
+    runs.sort_by(|a, b| {
+        b.last_activity_at
+            .timestamp_millis()
+            .cmp(&a.last_activity_at.timestamp_millis())
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    if let Some((cur_millis, cur_id)) = cursor {
+        // 严格排在游标项之后（desc 序）的 run。
+        runs.retain(|run| (run.last_activity_at.timestamp_millis(), run.id) < (cur_millis, cur_id));
+    }
+
+    let total = runs.len();
     let mut entries = Vec::new();
-    for run in runs {
+    let mut next_cursor = None;
+    for (idx, run) in runs.iter().enumerate() {
         let agents = state
             .repos
             .lifecycle_agent_repo
@@ -138,20 +164,100 @@ pub async fn get_project_agent_runs(
         let (children_map, child_ids) = build_lineage_forest(&lineages);
 
         // 只对主 Run（控制树 root = 未作为任何 lineage child 出现的 agent）产出 entry，
-        // 走轻量列表投影（跳过 vfs / conversation 等重量级解析）。
+        // 并内联其直接子 Agent（一跳），均走轻量列表投影。
         for agent in agents.iter().filter(|agent| !child_ids.contains(&agent.id)) {
             let subagent_count = count_descendants(agent.id, &children_map);
             let projection =
                 load_agent_run_list_projection(&state, run.clone(), agent.clone()).await?;
-            entries.push(list_entry_from_projection(&run, projection, subagent_count));
+            let children =
+                build_inline_children(&state, run, agent.id, &agents, &children_map, 0).await?;
+            entries.push(list_entry_from_projection(
+                run,
+                projection,
+                subagent_count,
+                children,
+            ));
+        }
+
+        // 按 run 分页：本 run 全部 entry 产出后若已达页大小，游标指向本 run，下一页从其后开始。
+        if entries.len() >= limit {
+            if idx + 1 < total {
+                next_cursor = Some(encode_cursor(run.last_activity_at, run.id));
+            }
+            break;
         }
     }
-    entries.sort_by(|a, b| b.shell.last_activity_at.cmp(&a.shell.last_activity_at));
 
     Ok(Json(AgentRunWorkspaceListView {
         project_id: project_id.to_string(),
         agent_runs: entries,
+        next_cursor,
     }))
+}
+
+/// AgentRun 列表分页查询参数。
+#[derive(serde::Deserialize)]
+pub struct AgentRunListQuery {
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+}
+
+const DEFAULT_PAGE_LIMIT: usize = 30;
+const MAX_PAGE_LIMIT: usize = 100;
+
+/// keyset 游标：编码页尾 run 的 (last_activity_at_millis, run_id)，base64 不透明串。
+fn encode_cursor(last_activity_at: DateTime<Utc>, run_id: Uuid) -> String {
+    let raw = format!("{}:{}", last_activity_at.timestamp_millis(), run_id);
+    URL_SAFE_NO_PAD.encode(raw.as_bytes())
+}
+
+fn decode_cursor(cursor: &str) -> Option<(i64, Uuid)> {
+    let bytes = URL_SAFE_NO_PAD.decode(cursor.as_bytes()).ok()?;
+    let raw = String::from_utf8(bytes).ok()?;
+    let (millis, run_id) = raw.split_once(':')?;
+    Some((millis.parse().ok()?, Uuid::parse_str(run_id).ok()?))
+}
+
+/// 递归内联某节点的直接子 Agent 子树，每个节点携带真实 shell 状态。
+///
+/// forest（`children_map`）已在 list 循环内建好，取子节点零额外 repo 查询；仅投影是新增异步调用。
+/// 深度上限兜底防 lineage 环 / 异常深树（与 `count_descendants` 同语义）。async 递归经 `Box::pin`。
+fn build_inline_children<'a>(
+    state: &'a AppState,
+    run: &'a LifecycleRun,
+    parent_id: Uuid,
+    agents: &'a [LifecycleAgent],
+    children_map: &'a HashMap<Uuid, Vec<Uuid>>,
+    depth: usize,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<AgentRunListChild>, ApiError>> + Send + 'a>>
+{
+    Box::pin(async move {
+        const MAX_DEPTH: usize = 16;
+        let mut children = Vec::new();
+        if depth >= MAX_DEPTH {
+            tracing::warn!(run_id = %run.id, parent = %parent_id, depth, "inline children 触达深度上限，截断");
+            return Ok(children);
+        }
+        let Some(direct) = children_map.get(&parent_id) else {
+            return Ok(children);
+        };
+        for child_id in direct {
+            let Some(child_agent) = agents.iter().find(|a| a.id == *child_id) else {
+                continue;
+            };
+            let subagent_count = count_descendants(child_agent.id, children_map);
+            let projection =
+                load_agent_run_list_projection(state, run.clone(), child_agent.clone()).await?;
+            let nested =
+                build_inline_children(state, run, child_agent.id, agents, children_map, depth + 1)
+                    .await?;
+            let mut node = list_child_from_projection(run, projection, subagent_count);
+            node.children = nested;
+            children.push(node);
+        }
+        children.sort_by(|a, b| b.shell.last_activity_at.cmp(&a.shell.last_activity_at));
+        Ok(children)
+    })
 }
 
 pub async fn get_agent_run_workspace(
@@ -809,10 +915,35 @@ fn shell_model_to_contract(
     }
 }
 
+/// 内联子 Agent 节点：复用列表投影的 shell（含真实 delivery_status / last_activity_at）。
+fn list_child_from_projection(
+    run: &LifecycleRun,
+    projection: app_workspace::AgentRunListProjection,
+    subagent_count: u32,
+) -> AgentRunListChild {
+    AgentRunListChild {
+        run_ref: LifecycleRunRefDto {
+            run_id: run.id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: run.id.to_string(),
+            agent_id: projection.agent.id.to_string(),
+        },
+        project_agent_label: projection.project_agent_label,
+        shell: shell_model_to_contract(projection.shell),
+        subagent_count,
+        children: Vec::new(),
+        delivery_runtime_ref: projection
+            .delivery_runtime_session_id
+            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
+    }
+}
+
 fn list_entry_from_projection(
     run: &LifecycleRun,
     projection: app_workspace::AgentRunListProjection,
     subagent_count: u32,
+    children: Vec<AgentRunListChild>,
 ) -> AgentRunWorkspaceListEntry {
     AgentRunWorkspaceListEntry {
         run_ref: LifecycleRunRefDto {
@@ -823,10 +954,12 @@ fn list_entry_from_projection(
             agent_id: projection.agent.id.to_string(),
         },
         project_id: run.project_id.to_string(),
+        project_agent_label: projection.project_agent_label.clone(),
         shell: shell_model_to_contract(projection.shell),
         run_status: lifecycle_run_status_to_contract(run.status),
         agent_role: projection.agent_role,
         subagent_count,
+        children,
         delivery_runtime_ref: projection
             .delivery_runtime_session_id
             .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
@@ -1188,19 +1321,35 @@ mod tests {
                 last_activity_at: "2026-06-12T00:00:00Z".to_string(),
             },
             agent_role: "primary".to_string(),
+            project_agent_label: Some("Code Reviewer".to_string()),
             delivery_runtime_session_id: None,
             delivery_trace_meta: None,
             subject_ref: None,
             subject_label: None,
         };
 
-        let entry = list_entry_from_projection(&run, projection, 3);
+        let entry = list_entry_from_projection(&run, projection, 3, Vec::new());
 
         assert_eq!(entry.shell.display_title, "Session meta title");
         assert_eq!(entry.shell.title_source, "source");
         assert_eq!(entry.agent_role, "primary");
+        assert_eq!(entry.project_agent_label.as_deref(), Some("Code Reviewer"));
         assert_eq!(entry.subagent_count, 3);
         assert!(entry.frame_ref.is_none());
+        assert!(entry.children.is_empty());
+    }
+
+    #[test]
+    fn cursor_round_trips_keyset() {
+        let run_id = Uuid::new_v4();
+        let at = DateTime::parse_from_rfc3339("2026-06-16T08:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let encoded = encode_cursor(at, run_id);
+        let (millis, decoded_id) = decode_cursor(&encoded).expect("decode");
+        assert_eq!(millis, at.timestamp_millis());
+        assert_eq!(decoded_id, run_id);
+        assert!(decode_cursor("not-base64!!").is_none());
     }
 
     #[test]

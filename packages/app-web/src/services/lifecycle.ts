@@ -39,9 +39,23 @@ export async function fetchProjectActiveAgents(projectId: string): Promise<Proje
   );
 }
 
-export async function fetchProjectAgentRuns(projectId: string): Promise<AgentRunWorkspaceListView> {
+export interface FetchProjectAgentRunsOptions {
+  /** 单页大小（后端默认 30，上限 100）。 */
+  limit?: number;
+  /** keyset 游标，续拉下一页；省略则取首页。 */
+  cursor?: string;
+}
+
+export async function fetchProjectAgentRuns(
+  projectId: string,
+  opts: FetchProjectAgentRunsOptions = {},
+): Promise<AgentRunWorkspaceListView> {
+  const params = new URLSearchParams();
+  if (opts.limit != null) params.set("limit", String(opts.limit));
+  if (opts.cursor) params.set("cursor", opts.cursor);
+  const query = params.toString();
   return api.get<AgentRunWorkspaceListView>(
-    `/projects/${encodeURIComponent(projectId)}/agent-runs`,
+    `/projects/${encodeURIComponent(projectId)}/agent-runs${query ? `?${query}` : ""}`,
   );
 }
 

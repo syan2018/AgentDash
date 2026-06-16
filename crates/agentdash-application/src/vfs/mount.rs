@@ -12,7 +12,6 @@ use agentdash_domain::project_vfs_mount::{ProjectVfsMount, ProjectVfsMountConten
 pub const PROJECT_VFS_MOUNT_CONTAINER_ID: &str = "files";
 use agentdash_domain::{
     agent::ProjectAgent,
-    canvas::Canvas,
     project::Project,
     story::Story,
     workspace::{Workspace, WorkspaceBinding},
@@ -878,48 +877,6 @@ pub fn build_agent_run_session_lifecycle_mount(
     }
 }
 
-pub fn build_routine_mount(
-    routine_id: Uuid,
-    execution_id: Uuid,
-    trigger_source: &str,
-    entity_key: Option<&str>,
-) -> Mount {
-    Mount {
-        id: "routine".to_string(),
-        provider: PROVIDER_ROUTINE_VFS.to_string(),
-        backend_id: String::new(),
-        root_ref: format!("routine://routine/{routine_id}"),
-        capabilities: vec![
-            MountCapability::Read,
-            MountCapability::Write,
-            MountCapability::List,
-            MountCapability::Search,
-        ],
-        default_write: false,
-        display_name: "Routine Memory".to_string(),
-        metadata: serde_json::json!({
-            "routine_id": routine_id.to_string(),
-            "execution_id": execution_id.to_string(),
-            "trigger_source": trigger_source,
-            "entity_key": entity_key,
-            "directory_hint": [
-                "current/trigger.json",
-                "current/execution.json",
-                "current/resolved-prompt.md",
-                "memory/brief.md",
-                "memory/facts.md",
-                "memory/decisions.md",
-                "memory/open-items.md",
-                "memory/changelog.md",
-                "entities/{entity_key}/brief.md",
-                "entities/{entity_key}/facts.md",
-                "entities/{entity_key}/open-items.md",
-                "entities/{entity_key}/last-run.md"
-            ]
-        }),
-    }
-}
-
 /// 构建 attempt=1 且带 output port 写入权限的 lifecycle mount。
 /// mount 始终启用 Write capability 以支持 `records/{name}` overlay；
 /// `artifacts/{port_key}` 仍由 `writable_port_keys` 做路径级白名单控制。
@@ -980,142 +937,6 @@ pub fn build_lifecycle_mount_with_node_scope(
         default_write: false,
         display_name: "Lifecycle 执行记录".to_string(),
         metadata,
-    }
-}
-
-pub fn build_project_skill_asset_management_mount(
-    project_id: Uuid,
-    skill_asset_keys: &[String],
-) -> Mount {
-    Mount {
-        id: "skill-assets".to_string(),
-        provider: PROVIDER_SKILL_ASSET_FS.to_string(),
-        backend_id: String::new(),
-        root_ref: format!("skill-assets://project/{project_id}"),
-        capabilities: vec![
-            MountCapability::Read,
-            MountCapability::Write,
-            MountCapability::List,
-            MountCapability::Search,
-        ],
-        default_write: true,
-        display_name: "Project Skill Assets".to_string(),
-        metadata: serde_json::json!({
-            SKILL_ASSET_PROJECT_ID_METADATA_KEY: project_id.to_string(),
-            SKILL_ASSET_KEYS_METADATA_KEY: normalized_skill_asset_keys(skill_asset_keys),
-        }),
-    }
-}
-
-pub fn append_lifecycle_skill_asset_projection(
-    vfs: &mut Vfs,
-    project_id: Uuid,
-    skill_asset_keys: &[String],
-) -> bool {
-    let new_keys = normalized_skill_asset_keys(skill_asset_keys);
-    if new_keys.is_empty() {
-        return true;
-    }
-
-    if let Some(lifecycle) = vfs
-        .mounts
-        .iter_mut()
-        .find(|mount| mount.id == "lifecycle" && mount.provider == PROVIDER_LIFECYCLE_VFS)
-    {
-        let mut metadata = match std::mem::take(&mut lifecycle.metadata) {
-            serde_json::Value::Object(object) => object,
-            serde_json::Value::Null => serde_json::Map::new(),
-            other => {
-                let mut object = serde_json::Map::new();
-                object.insert("raw_metadata".to_string(), other);
-                object
-            }
-        };
-        let mut keys = metadata
-            .get(SKILL_ASSET_KEYS_METADATA_KEY)
-            .and_then(serde_json::Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        keys.extend(new_keys);
-        let keys = normalized_skill_asset_keys(&keys);
-        metadata.insert(
-            SKILL_ASSET_PROJECT_ID_METADATA_KEY.to_string(),
-            serde_json::Value::String(project_id.to_string()),
-        );
-        metadata.insert(
-            SKILL_ASSET_KEYS_METADATA_KEY.to_string(),
-            serde_json::Value::Array(
-                keys.iter()
-                    .cloned()
-                    .map(serde_json::Value::String)
-                    .collect(),
-            ),
-        );
-        lifecycle.metadata = serde_json::Value::Object(metadata);
-        return true;
-    }
-
-    false
-}
-
-fn normalized_skill_asset_keys(skill_asset_keys: &[String]) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    skill_asset_keys
-        .iter()
-        .map(|key| key.trim())
-        .filter(|key| !key.is_empty())
-        .filter_map(|key| {
-            if seen.insert(key.to_string()) {
-                Some(key.to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-pub fn build_canvas_mount_id(canvas: &Canvas) -> String {
-    format!("cvs-{}", canvas.mount_id)
-}
-
-pub fn build_canvas_mount(canvas: &Canvas) -> Mount {
-    Mount {
-        id: build_canvas_mount_id(canvas),
-        provider: PROVIDER_CANVAS_FS.to_string(),
-        backend_id: String::new(),
-        root_ref: format!("canvas://{}", canvas.id),
-        capabilities: vec![
-            MountCapability::Read,
-            MountCapability::Write,
-            MountCapability::List,
-            MountCapability::Search,
-        ],
-        default_write: false,
-        display_name: if canvas.title.trim().is_empty() {
-            format!("Canvas {}", canvas.id)
-        } else {
-            canvas.title.clone()
-        },
-        metadata: serde_json::json!({
-            "canvas_id": canvas.id.to_string(),
-            "mount_id": canvas.mount_id,
-            "project_id": canvas.project_id.to_string(),
-            "entry_file": canvas.entry_file,
-        }),
-    }
-}
-
-pub fn append_canvas_mounts(vfs: &mut Vfs, canvases: &[Canvas]) {
-    for canvas in canvases {
-        let mount = build_canvas_mount(canvas);
-        vfs.mounts.retain(|existing| existing.id != mount.id);
-        vfs.mounts.push(mount);
     }
 }
 

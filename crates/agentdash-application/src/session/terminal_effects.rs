@@ -525,14 +525,14 @@ mod tests {
                 payload: serde_json::json!({
                     "effects": [
                         {
-                            "kind": "task:set_status",
-                            "payload": { "status": "done" }
+                            "kind": "record:note",
+                            "payload": { "message": "done" }
                         }
                     ],
                     "handler": {
                         "kind": "recording"
                     },
-                    "supported_effect_kinds": ["task:set_status"]
+                    "supported_effect_kinds": ["record:note"]
                 }),
             })
             .await
@@ -545,7 +545,7 @@ mod tests {
             .expect("replay should not fail at store level");
 
         assert_eq!(attempted, 1);
-        assert_eq!(executed.lock().await.as_slice(), ["task:set_status"]);
+        assert_eq!(executed.lock().await.as_slice(), ["record:note"]);
         let succeeded = persistence
             .list_terminal_effects_by_status(&[TerminalEffectStatus::Succeeded], 10)
             .await
@@ -687,7 +687,7 @@ mod tests {
         }
 
         fn supported_effect_kinds(&self) -> &[&str] {
-            &["task:set_status"]
+            &["record:note"]
         }
     }
 

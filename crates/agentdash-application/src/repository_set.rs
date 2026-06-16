@@ -39,8 +39,7 @@ use crate::lifecycle::RuntimeSessionCreator;
 /// 在 application 层定义，使 gateway / service 可直接持有仓储引用，
 /// 无需依赖 api 层的 `AppState`。
 ///
-/// **M1-b 更新**：Task 合入 Story aggregate（`stories.tasks` JSONB），删除独立
-/// `task_repo` / `task_command_repo`；所有 task CRUD 经 `story_repo` 整体写回。
+/// Task plan facts live in `LifecycleRun.tasks`; Story repository only owns Story topic facts.
 #[derive(Clone)]
 pub struct RepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,

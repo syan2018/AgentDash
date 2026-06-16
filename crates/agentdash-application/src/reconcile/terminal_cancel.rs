@@ -13,7 +13,6 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use agentdash_domain::story::{StoryRepository, StoryStatus};
-use agentdash_domain::task::TaskStatus;
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
     LifecycleSubjectAssociationRepository, RuntimeDeliverySelectionPolicy,
@@ -56,44 +55,6 @@ impl TerminalCancelCoordinator {
         }
     }
 
-    /// Task 状态变更后调用。如果新状态是终态且 task 有关联的 running session，取消之。
-    pub async fn on_task_status_changed(&self, task_id: Uuid, new_status: &TaskStatus) {
-        if !is_task_terminal(new_status) {
-            return;
-        }
-
-        let command = match self.resolve_task_runtime_cancel_delivery(task_id).await {
-            Some(command) => command,
-            None => return,
-        };
-
-        if let Err(err) = self
-            .session_runtime
-            .cancel(&command.runtime_session_id)
-            .await
-        {
-            tracing::warn!(
-                task_id = %task_id,
-                session_id = %command.runtime_session_id,
-                frame_ref = %command.runtime_refs.frame_ref,
-                orchestration_ref = ?command.runtime_refs.orchestration_ref(),
-                node_path = ?command.runtime_refs.node_path(),
-                error = %err,
-                "终态取消协调器：Task 进入终态后取消关联 session 失败"
-            );
-        } else {
-            tracing::info!(
-                task_id = %task_id,
-                session_id = %command.runtime_session_id,
-                frame_ref = %command.runtime_refs.frame_ref,
-                orchestration_ref = ?command.runtime_refs.orchestration_ref(),
-                node_path = ?command.runtime_refs.node_path(),
-                new_status = ?new_status,
-                "终态取消协调器：Task 进入终态，已取消关联 session"
-            );
-        }
-    }
-
     /// Story 状态变更后调用。如果新状态是终态，取消 Story subject 关联的 session。
     pub async fn on_story_status_changed(&self, story_id: Uuid, new_status: &StoryStatus) {
         if !is_story_terminal(new_status) {
@@ -131,15 +92,6 @@ impl TerminalCancelCoordinator {
         }
     }
 
-    /// 通过 SubjectExecution 控制面解析 runtime cancel delivery。
-    async fn resolve_task_runtime_cancel_delivery(
-        &self,
-        task_id: Uuid,
-    ) -> Option<crate::lifecycle::RuntimeCancelDeliveryCommand> {
-        self.resolve_subject_runtime_cancel_delivery("task", task_id)
-            .await
-    }
-
     async fn resolve_subject_runtime_cancel_delivery(
         &self,
         subject_kind: &str,
@@ -173,13 +125,6 @@ impl TerminalCancelCoordinator {
             }
         }
     }
-}
-
-fn is_task_terminal(status: &TaskStatus) -> bool {
-    matches!(
-        status,
-        TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
-    )
 }
 
 fn is_story_terminal(status: &StoryStatus) -> bool {

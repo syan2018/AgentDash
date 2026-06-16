@@ -59,7 +59,6 @@ export const canMapStoryFromPayload = (payload: Record<string, unknown>): payloa
     typeof payload.story_type === "string" &&
     storyTypes.has(payload.story_type) &&
     Array.isArray(payload.tags) &&
-    typeof payload.task_count === "number" &&
     isRecord(payload.context) &&
     hasString(payload, "created_at") &&
     hasString(payload, "updated_at")

@@ -20,7 +20,6 @@ function makeStory(overrides: Partial<Story>): Story {
     priority: "p2",
     story_type: "feature",
     tags: [],
-    task_count: 0,
     context: baseContext,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",

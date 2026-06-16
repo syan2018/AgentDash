@@ -41,29 +41,3 @@ pub struct UpdateStoryRequest {
     pub session_composition: Option<SessionComposition>,
     pub clear_session_composition: Option<bool>,
 }
-
-#[derive(Deserialize, Default)]
-pub struct TaskDispatchPreferenceInput {
-    pub agent_type: Option<String>,
-    pub agent_pid: Option<String>,
-    pub preset_name: Option<String>,
-    pub prompt_template: Option<String>,
-    pub initial_context: Option<String>,
-    pub context_sources: Option<Vec<ContextSourceRef>>,
-}
-
-#[derive(Deserialize)]
-pub struct CreateTaskRequest {
-    pub title: String,
-    pub description: Option<String>,
-    pub workspace_id: Option<String>,
-    pub dispatch_preference: Option<TaskDispatchPreferenceInput>,
-}
-
-#[derive(Deserialize, Default)]
-pub struct UpdateTaskRequest {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub workspace_id: Option<String>,
-    pub dispatch_preference: Option<TaskDispatchPreferenceInput>,
-}

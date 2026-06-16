@@ -364,9 +364,8 @@ impl AppExecutionHookProvider {
                 );
             }
             HookTrigger::SessionTerminal => {
-                // owner_default_hook_rules 会为 task owner 自动注入
-                // task_session_terminal preset；port 完成门禁由 port_output_gate
-                // preset 在 BeforeStop 阶段驱动。
+                // SessionTerminal rules evaluate declared hook effects. Port 完成门禁由
+                // port_output_gate preset 在 BeforeStop 阶段驱动。
                 apply_hook_rules(
                     HookEvaluationContext { snapshot, query },
                     &mut resolution,

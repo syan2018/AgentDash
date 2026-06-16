@@ -68,5 +68,5 @@ done
 
 - W4 以此 contract 作为 API/read model 输出边界。
 - W5/W6/W7 不得重新定义 DTO 或状态集合。
-- 旧 Story-scoped Task API、前端 service/store/UI 和 MCP 仍引用旧 `TaskResponse::from(domain::task::Task)`、`dispatch_preference`、`artifacts` 与旧状态；这些类型错误应由 W4/W5/W6 收口，不在 W3 做兼容字段。
+- W4/W5/W6/W8 已将后端入口、前端入口、MCP 和旧 domain task surface 收口到 run-scoped Task plan。
 - Task runtime artifacts、latest runtime node 和 linked runs 继续通过 `SubjectExecutionView` 消费；W4 不需要新增 Task 专属 runtime DTO。

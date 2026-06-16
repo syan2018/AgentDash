@@ -27,34 +27,32 @@ impl StoryRepository for PostgresStoryRepository {
     async fn create(&self, story: &Story) -> Result<(), DomainError> {
         let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
-        let story_to_write = story_without_tasks(story);
-
         sqlx::query(
             "INSERT INTO stories (id, project_id, default_workspace_id, title, description, status, priority, story_type, tags, context, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
-        .bind(story_to_write.id.to_string())
-        .bind(story_to_write.project_id.to_string())
-        .bind(story_to_write.default_workspace_id.map(|id| id.to_string()))
-        .bind(&story_to_write.title)
-        .bind(&story_to_write.description)
-        .bind(serde_json::to_string(&story_to_write.status)?.trim_matches('"'))
-        .bind(serde_json::to_string(&story_to_write.priority)?.trim_matches('"'))
-        .bind(serde_json::to_string(&story_to_write.story_type)?.trim_matches('"'))
-        .bind(serde_json::to_string(&story_to_write.tags)?)
-        .bind(serde_json::to_string(&story_to_write.context)?)
-        .bind(story_to_write.created_at)
-        .bind(story_to_write.updated_at)
+        .bind(story.id.to_string())
+        .bind(story.project_id.to_string())
+        .bind(story.default_workspace_id.map(|id| id.to_string()))
+        .bind(&story.title)
+        .bind(&story.description)
+        .bind(serde_json::to_string(&story.status)?.trim_matches('"'))
+        .bind(serde_json::to_string(&story.priority)?.trim_matches('"'))
+        .bind(serde_json::to_string(&story.story_type)?.trim_matches('"'))
+        .bind(serde_json::to_string(&story.tags)?)
+        .bind(serde_json::to_string(&story.context)?)
+        .bind(story.created_at)
+        .bind(story.updated_at)
         .execute(&mut *tx)
         .await
         .map_err(super::db_err)?;
 
         append_state_change_in_tx(
             &mut tx,
-            story_to_write.project_id,
-            story_to_write.id,
+            story.project_id,
+            story.id,
             ChangeKind::StoryCreated,
-            story_payload(&story_to_write)?,
+            story_payload(story)?,
             None,
         )
         .await?;
@@ -93,7 +91,7 @@ impl StoryRepository for PostgresStoryRepository {
         let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         let _current = load_story_for_update(&mut tx, story.id).await?;
-        let mut story_to_write = story_without_tasks(story);
+        let mut story_to_write = story.clone();
         story_to_write.updated_at = chrono::Utc::now();
 
         update_story_row_in_tx(&mut tx, &story_to_write).await?;
@@ -182,9 +180,7 @@ impl TryFrom<StoryRow> for Story {
             priority: parse_story_priority(&row.priority)?,
             story_type: parse_story_type(&row.story_type)?,
             tags,
-            task_count: 0,
             context,
-            tasks: Vec::new(),
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -246,13 +242,6 @@ async fn update_story_row_in_tx(
 fn story_payload(story: &Story) -> Result<serde_json::Value, DomainError> {
     serde_json::to_value(story)
         .map_err(|error| DomainError::InvalidConfig(format!("stories.state_payload: {error}")))
-}
-
-fn story_without_tasks(story: &Story) -> Story {
-    let mut story = story.clone();
-    story.task_count = 0;
-    story.tasks.clear();
-    story
 }
 
 fn parse_json_column<T: serde::de::DeserializeOwned>(

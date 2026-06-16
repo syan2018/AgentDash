@@ -51,5 +51,5 @@ done
 ## 风险与交接
 
 - 当前只实现 application 层 selector / command；尚未接 HTTP/UI workflow fanout 入口，W5/W8 合流时需要确认前端入口是否消费该命令或另行补 route。
-- `rg` 仍能找到旧 `dispatch_preference` surface，主要在 legacy Story-owned Task、旧 Task context/config、前端 Story/Task UI 与文档中；这属于 W5/W6/W8 清理面，不由 W7 恢复兼容。
+- W8 已完成旧 `dispatch_preference` surface 总清理；fanout command 继续消费 run-scoped Task plan。
 - Permission / approval gate 只保留在 dispatch policy 入口形状中，默认开放；后续 permission 收束任务接管策略。

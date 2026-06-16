@@ -2,7 +2,7 @@
 
 ## 状态
 
-pending
+done
 
 ## 依赖
 
@@ -45,8 +45,23 @@ pending
 
 ## 产出记录
 
-- 待填写。
+- 删除旧 `agentdash_domain::task` 模块、Story aggregate 内 `tasks/task_count` 字段、Story task mutation helpers 和 Story task DTO。
+- 删除旧 application `task::artifact`、`task::config`、`task::gateway` 实现，以及 `task_session_terminal` preset / owner-default rule / AppState handler 注册。
+- `TaskExecutionView.task_status` 改为 `TaskPlanStatus`，通过 `LifecycleRun.tasks` 定位计划项；runtime execution 状态仍由 lifecycle projection 提供。
+- Story contract / generated TS / frontend Story board/list/card 不再消费持久 `task_count`；Story 详情继续消费 Story Task projection。
+- Relay MCP Story 输出不再暴露 `task_count`；workflow MCP preset 示例改为当前内置 preset。
+- Hook effect 文档和 terminal effect 测试改用中性 `record:note` 示例，避免把 Task 状态写回作为通用默认路径。
+- 更新 `.trellis/spec/backend/hooks/hook-script-engine.md` 的 builtin preset baseline。
+
+## 验证记录
+
+- `pnpm run contracts:check`
+- `cargo check --workspace`
+- `pnpm run frontend:check`
+- `pnpm run migration:guard`
+- 旧 surface 搜索：代码主线无 `agentdash_domain::task`、`TaskDispatchPreference`、`TaskArtifactAdded`、`task_session_terminal`、`task:set_status`、`tasksByStoryId` 命中；剩余命中为 schema migration 的 `task_count`、workflow negative serialization test 的 `dispatch_preference`、Story projection contract 复用当前 `TaskResponse` 类型。
 
 ## 风险与交接
 
-- 待填写。
+- `0001_init.sql` 仍包含历史 `task_count` 列，后续由 `0015_lifecycle_run_tasks_story_task_cleanup.sql` 在迁移序列中删除；migration guard 已通过。
+- `.trellis/tasks/.../research` 与部分 work-item 输入说明保留旧字段名称作为规划证据，代码事实源以 W8 验证记录为准。

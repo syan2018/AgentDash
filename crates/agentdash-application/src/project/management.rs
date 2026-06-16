@@ -335,7 +335,6 @@ pub async fn delete_project_aggregate(
         repos.agent_procedure_repo.delete(procedure.id).await?;
     }
 
-    // Story aggregate 已持有 Vec<Task>（stories.tasks JSONB）；删除 story 即级联清理 tasks。
     let stories = repos.story_repo.list_by_project(project_id).await?;
     for story in stories {
         repos.story_repo.delete(story.id).await?;

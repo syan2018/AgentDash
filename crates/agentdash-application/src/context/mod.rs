@@ -19,10 +19,7 @@ pub use builder::{
     build_declared_source_warning_fragment, build_session_context_bundle,
 };
 pub use builtins::build_owner_context_resource_block;
-pub use builtins::{
-    contribute_binding_initial_context, contribute_declared_sources, contribute_instruction,
-    contribute_mcp, contribute_task_binding,
-};
+pub use builtins::contribute_mcp;
 pub(crate) use builtins::{trim_or_dash, workspace_context_fragment};
 pub use source_resolver::{
     SourceResolverRegistry, resolve_declared_sources, resolve_declared_sources_with_registry,

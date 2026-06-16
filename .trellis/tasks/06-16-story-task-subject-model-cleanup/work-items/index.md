@@ -63,7 +63,7 @@ flowchart TD
 | W5 Frontend Core | done | 是 | `w5-frontend-core.md` |
 | W6 MCP + Capability | done | 是 | `w6-mcp-capability.md` |
 | W7 Workflow Fanout | done | 是 | `w7-workflow-fanout.md` |
-| W8 Cleanup + Verification | pending | 否，等待 W5/W6/W7 | `w8-cleanup-verification.md` |
+| W8 Cleanup + Verification | done | 否，等待 W5/W6/W7 | `w8-cleanup-verification.md` |
 
 ## 派发模板
 

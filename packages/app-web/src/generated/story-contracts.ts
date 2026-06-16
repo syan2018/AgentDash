@@ -9,7 +9,7 @@ export type StoryContext = { source_refs: Array<ContextSourceRef>, context_conta
 
 export type StoryPriority = "p0" | "p1" | "p2" | "p3";
 
-export type StoryResponse = { id: string, project_id: string, default_workspace_id: string | null, title: string, description: string, status: StoryStatus, priority: StoryPriority, story_type: StoryType, tags: Array<string>, task_count: number, context: StoryContext, created_at: string, updated_at: string, };
+export type StoryResponse = { id: string, project_id: string, default_workspace_id: string | null, title: string, description: string, status: StoryStatus, priority: StoryPriority, story_type: StoryType, tags: Array<string>, context: StoryContext, created_at: string, updated_at: string, };
 
 export type StoryStatus = "created" | "context_ready" | "decomposed" | "executing" | "completed" | "failed" | "cancelled";
 

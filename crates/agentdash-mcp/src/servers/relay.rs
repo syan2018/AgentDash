@@ -254,7 +254,6 @@ impl RelayMcpServer {
                     "status": s.status,
                     "priority": s.priority,
                     "story_type": s.story_type,
-                    "task_count": s.task_count,
                 })
             })
             .collect();
@@ -300,7 +299,6 @@ impl RelayMcpServer {
                 "priority": story.priority,
                 "story_type": story.story_type,
                 "context": story.context,
-                "task_count": story.task_count,
                 "created_at": story.created_at.to_rfc3339(),
             },
             "task_projection": story_task_projection_to_json(task_projection),

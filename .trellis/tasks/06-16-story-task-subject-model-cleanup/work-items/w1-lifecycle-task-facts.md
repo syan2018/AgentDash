@@ -53,4 +53,4 @@ done
 
 - W2 需要把 `lifecycle_runs.tasks` migration、repository row mapping、INSERT/UPDATE/SELECT 序列化接到本次新增的 `LifecycleTaskPlanItem` shape；本节点未做 migration/repository。
 - W2 接入 repository 前，workspace 级 `cargo check --workspace` 预计会因为 `LifecycleRun` 新增字段但 repository row mapping 尚未补齐而不可作为本节点验收依据。
-- W3 可直接消费 `TaskPlanStatus` 和 `LifecycleTaskPlanItem` 作为 DTO 字段来源；旧 `agentdash_domain::task::TaskStatus` 仍存在，留给后续 contract/API/MCP/frontend 节点拆除旧 surface。
+- W3 可直接消费 `TaskPlanStatus` 和 `LifecycleTaskPlanItem` 作为 DTO 字段来源；W8 已移除旧 `agentdash_domain::task` surface。

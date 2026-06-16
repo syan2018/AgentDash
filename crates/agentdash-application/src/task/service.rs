@@ -7,7 +7,7 @@ use agentdash_domain::workflow::{
 use crate::repository_set::RepositorySet;
 
 use super::execution::*;
-use super::gateway::get_task as gw_get_task;
+use super::plan::find_task_plan_item_by_subject;
 use super::runtime_coordinate::{runtime_node_status_code, task_runtime_projection_from_anchor};
 
 /// Story activity activation service — 保留 Task execution 的只读 lifecycle 投影。
@@ -21,7 +21,14 @@ impl StoryActivityActivationService {
         &self,
         task_id: Uuid,
     ) -> Result<TaskExecutionView, TaskExecutionError> {
-        let task = gw_get_task(&self.repos, task_id).await?;
+        let located = find_task_plan_item_by_subject(
+            self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.lifecycle_subject_association_repo.as_ref(),
+            task_id,
+        )
+        .await
+        .map_err(|error| TaskExecutionError::Internal(error.to_string()))?
+        .ok_or_else(|| TaskExecutionError::NotFound(format!("Task {task_id} 不存在")))?;
         let refs = self.resolve_task_execution_refs(task_id).await?;
 
         let (execution_status, agent_ref, run_ref, frame_ref, delivery_runtime_ref) =
@@ -38,13 +45,13 @@ impl StoryActivityActivationService {
             };
 
         Ok(TaskExecutionView {
-            task_id: task.id,
+            task_id: located.task.id,
             execution_status,
             agent_ref,
             run_ref,
             frame_ref,
             delivery_runtime_ref,
-            task_status: task.status().clone(),
+            task_status: located.task.status,
         })
     }
 

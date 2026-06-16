@@ -100,8 +100,7 @@ pub fn build_session_executor_summary(
 /// 用 enum 表达可以让类型层拒绝"err 为 Some 但 source 为空"这类非法组合。
 #[derive(Debug, Clone)]
 pub enum ExecutorResolution {
-    /// 成功解析到 AgentConfig。`source` 描述使用的来源
-    /// （如 `task.dispatch_preference.preset_name` / `project.config.default_agent_type`）。
+    /// 成功解析到 AgentConfig。`source` 描述使用的来源。
     Resolved { source: String },
     /// 解析失败但被上游容忍（`strict_config_resolution=false` 场景）。
     /// `source` 描述尝试过的来源，`error` 记录失败原因。

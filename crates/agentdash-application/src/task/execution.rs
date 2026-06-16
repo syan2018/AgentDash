@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use agentdash_domain::task::TaskStatus;
+use agentdash_domain::workflow::TaskPlanStatus;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TaskExecutionError {
@@ -27,5 +27,5 @@ pub struct TaskExecutionView {
     pub run_ref: Option<Uuid>,
     pub frame_ref: Option<Uuid>,
     pub delivery_runtime_ref: Option<Uuid>,
-    pub task_status: TaskStatus,
+    pub task_status: TaskPlanStatus,
 }

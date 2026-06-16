@@ -1,7 +1,6 @@
 //! Task view 投影器。
 //!
-//! Task 的 durable 真相源已经收口到 `LifecycleRun.tasks`。启动期不再把
-//! runtime node 状态反写到 Story-owned Task view；运行态证据由
+//! Task 的 durable 真相源已经收口到 `LifecycleRun.tasks`。运行态证据由
 //! `SubjectExecutionView` 通过 LifecycleRun / LifecycleAgent / AgentFrame /
 //! RuntimeSessionExecutionAnchor 读取。
 
@@ -36,7 +35,7 @@ pub async fn project_task_view_from_runtime_node_status(
         node_status = ?node_status,
         reason,
         context = %context,
-        "Task runtime projection is read through SubjectExecutionView; skipping Story task backwrite"
+        "Task runtime projection is read through SubjectExecutionView"
     );
     Ok(())
 }

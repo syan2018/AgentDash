@@ -16,7 +16,6 @@ import { useStoryViewStore } from "../../stores/storyViewStore";
 
 interface StoryCardProps {
   story: Story;
-  taskCount: number;
   onClick: () => void;
   isDragging?: boolean;
   selectable?: boolean;
@@ -30,7 +29,6 @@ function formatStoryKey(id: string): string {
 
 export function StoryCard({
   story,
-  taskCount,
   onClick,
   isDragging,
   selectable = false,
@@ -182,7 +180,6 @@ export function StoryCard({
             <EditableTypeBadge story={story} />
           </>
         )}
-        <span>{taskCount} Task</span>
         <span className="ml-auto">{new Date(story.updated_at).toLocaleDateString("zh-CN")}</span>
       </div>
 
@@ -213,7 +210,6 @@ export function StoryCard({
 
 interface SortableStoryCardProps {
   story: Story;
-  taskCount: number;
   onClick: () => void;
   selectable?: boolean;
   showHoverDescription?: boolean;
@@ -221,7 +217,6 @@ interface SortableStoryCardProps {
 
 export function SortableStoryCard({
   story,
-  taskCount,
   onClick,
   selectable,
   showHoverDescription,
@@ -245,7 +240,6 @@ export function SortableStoryCard({
     >
       <StoryCard
         story={story}
-        taskCount={taskCount}
         onClick={onClick}
         isDragging={isDragging}
         selectable={selectable}

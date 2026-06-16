@@ -55,9 +55,9 @@ flowchart TD
 
 | 节点 | 状态 | 可并行 | 跟踪文档 |
 | --- | --- | --- | --- |
-| W0 Spec Gate | pending | 否 | `w0-spec-gate.md` |
-| W1 Lifecycle Task Facts | pending | 否 | `w1-lifecycle-task-facts.md` |
-| W2 Migration + Repository | pending | 否 | `w2-migration-repository.md` |
+| W0 Spec Gate | done | 否 | `w0-spec-gate.md` |
+| W1 Lifecycle Task Facts | done | 否 | `w1-lifecycle-task-facts.md` |
+| W2 Migration + Repository | ready | 否 | `w2-migration-repository.md` |
 | W3 Contracts + Generated TS | pending | 否 | `w3-contracts-generated.md` |
 | W4 Backend Commands + Read Models | pending | 否 | `w4-backend-commands-read-models.md` |
 | W5 Frontend Core | pending | 是，等待 W4 | `w5-frontend-core.md` |

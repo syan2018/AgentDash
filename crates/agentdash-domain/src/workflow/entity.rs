@@ -3,14 +3,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::DomainError;
 use crate::shared_library::InstalledAssetSource;
 
 use super::validation::{validate_agent_procedure, validate_workflow_graph};
 use super::value_objects::{
     ActivityDefinition, ActivityTransition, AgentProcedureContract, DefinitionSource,
     EffectiveSessionContract, LifecycleContext, LifecycleExecutionEntry, LifecycleRunStatus,
+    LifecycleTaskPlanItem, LifecycleTaskPlanItemDraft, LifecycleTaskPlanItemPatch,
     OrchestrationInstance, OrchestrationStatus, RuntimeNodeState, RuntimeNodeStatus,
-    ValidationIssue,
+    TaskPlanStatus, ValidationIssue,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,6 +164,8 @@ pub struct LifecycleRun {
     pub context: LifecycleContext,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub orchestrations: Vec<OrchestrationInstance>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<LifecycleTaskPlanItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view_projection: Option<Value>,
     pub status: LifecycleRunStatus,
@@ -181,6 +185,7 @@ impl LifecycleRun {
             topology: LifecycleRunTopology::WorkflowGraph,
             context: LifecycleContext::default(),
             orchestrations: Vec::new(),
+            tasks: Vec::new(),
             view_projection: None,
             status: LifecycleRunStatus::Ready,
             execution_log: Vec::new(),
@@ -198,6 +203,7 @@ impl LifecycleRun {
             topology: LifecycleRunTopology::Graphless,
             context: LifecycleContext::default(),
             orchestrations: Vec::new(),
+            tasks: Vec::new(),
             view_projection: None,
             status: LifecycleRunStatus::Ready,
             execution_log: Vec::new(),
@@ -244,6 +250,125 @@ impl LifecycleRun {
             .find(|orchestration| orchestration.orchestration_id == orchestration_id)
     }
 
+    pub fn task_by_id(&self, task_id: Uuid) -> Option<&LifecycleTaskPlanItem> {
+        self.tasks.iter().find(|task| task.id == task_id)
+    }
+
+    pub fn create_task(
+        &mut self,
+        draft: LifecycleTaskPlanItemDraft,
+    ) -> Result<LifecycleTaskPlanItem, DomainError> {
+        validate_task_title(&draft.title)?;
+        validate_story_ref(&draft.story_ref)?;
+
+        let task_id = draft.id.unwrap_or_else(Uuid::new_v4);
+        if self.task_by_id(task_id).is_some() {
+            return Err(DomainError::Conflict {
+                entity: "LifecycleRun",
+                constraint: "tasks.id",
+                message: format!("Task plan item {task_id} already exists in run {}", self.id),
+            });
+        }
+
+        let now = Utc::now();
+        let task = LifecycleTaskPlanItem {
+            id: task_id,
+            title: draft.title,
+            body: draft.body,
+            status: draft.status,
+            priority: draft.priority,
+            created_by_agent_id: draft.created_by_agent_id,
+            owner_agent_id: draft.owner_agent_id,
+            assigned_agent_id: draft.assigned_agent_id,
+            source_task_id: draft.source_task_id,
+            created_at: now,
+            updated_at: now,
+            archived_at: None,
+            context_refs: draft.context_refs,
+            story_ref: draft.story_ref,
+        };
+        self.tasks.push(task.clone());
+        self.touch_activity();
+        Ok(task)
+    }
+
+    pub fn update_task(
+        &mut self,
+        task_id: Uuid,
+        patch: LifecycleTaskPlanItemPatch,
+    ) -> Result<LifecycleTaskPlanItem, DomainError> {
+        if let Some(title) = patch.title.as_deref() {
+            validate_task_title(title)?;
+        }
+        if let Some(story_ref) = &patch.story_ref {
+            validate_story_ref(story_ref)?;
+        }
+
+        let task = self.task_by_id_mut(task_id)?;
+        if let Some(title) = patch.title {
+            task.title = title;
+        }
+        if let Some(body) = patch.body {
+            task.body = body;
+        }
+        if let Some(priority) = patch.priority {
+            task.priority = priority;
+        }
+        if let Some(owner_agent_id) = patch.owner_agent_id {
+            task.owner_agent_id = owner_agent_id;
+        }
+        if let Some(assigned_agent_id) = patch.assigned_agent_id {
+            task.assigned_agent_id = assigned_agent_id;
+        }
+        if let Some(source_task_id) = patch.source_task_id {
+            task.source_task_id = source_task_id;
+        }
+        if let Some(context_refs) = patch.context_refs {
+            task.context_refs = context_refs;
+        }
+        if let Some(story_ref) = patch.story_ref {
+            task.story_ref = story_ref;
+        }
+        task.updated_at = Utc::now();
+        let updated = task.clone();
+        self.touch_activity();
+        Ok(updated)
+    }
+
+    pub fn archive_task(&mut self, task_id: Uuid) -> Result<LifecycleTaskPlanItem, DomainError> {
+        let task = self.task_by_id_mut(task_id)?;
+        let now = Utc::now();
+        if task.archived_at.is_none() {
+            task.archived_at = Some(now);
+            task.status = TaskPlanStatus::Dropped;
+            task.updated_at = now;
+        }
+        let archived = task.clone();
+        self.touch_activity();
+        Ok(archived)
+    }
+
+    pub fn transition_task_status(
+        &mut self,
+        task_id: Uuid,
+        next: TaskPlanStatus,
+    ) -> Result<LifecycleTaskPlanItem, DomainError> {
+        let task = self.task_by_id_mut(task_id)?;
+        if !task.status.can_transition_to(next) {
+            return Err(DomainError::InvalidTransition {
+                from: format!("{:?}", task.status),
+                to: format!("{next:?}"),
+            });
+        }
+        if task.status != next {
+            task.status = next;
+            task.updated_at = Utc::now();
+        }
+        let transitioned = task.clone();
+        self.touch_activity();
+        Ok(transitioned)
+    }
+
     pub fn append_execution_log(&mut self, entries: Vec<LifecycleExecutionEntry>) {
         if entries.is_empty() {
             return;
@@ -257,9 +382,42 @@ impl LifecycleRun {
         self.last_activity_at = self.updated_at;
     }
 
+    fn task_by_id_mut(&mut self, task_id: Uuid) -> Result<&mut LifecycleTaskPlanItem, DomainError> {
+        self.tasks
+            .iter_mut()
+            .find(|task| task.id == task_id)
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "LifecycleRun.tasks",
+                id: task_id.to_string(),
+            })
+    }
+
     pub fn refresh_status_from_orchestrations(&mut self) {
         self.status = aggregate_lifecycle_run_status(&self.orchestrations);
     }
+}
+
+fn validate_task_title(title: &str) -> Result<(), DomainError> {
+    if title.trim().is_empty() {
+        return Err(DomainError::InvalidConfig(
+            "lifecycle_run.tasks.title 不能为空".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_story_ref(
+    story_ref: &Option<super::lifecycle_subject_association::SubjectRef>,
+) -> Result<(), DomainError> {
+    if let Some(story_ref) = story_ref {
+        if story_ref.kind != "story" {
+            return Err(DomainError::InvalidConfig(format!(
+                "lifecycle_run.tasks.story_ref.kind 必须是 story，实际为 {}",
+                story_ref.kind
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub fn aggregate_lifecycle_run_status(
@@ -368,6 +526,7 @@ pub fn build_effective_contract_from_contract(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workflow::TaskPriority;
     use crate::workflow::value_objects::{
         AgentProcedureExecutionSpec, AgentReusePolicy, BashExecExecutorSpec, ExecutorSpec,
         FunctionActivityExecutorSpec, HumanActivityExecutorSpec, HumanApprovalExecutorSpec,
@@ -472,12 +631,128 @@ mod tests {
         let control = LifecycleRun::new_control(Uuid::new_v4());
         assert_eq!(control.context, LifecycleContext::default());
         assert!(control.orchestrations.is_empty());
+        assert!(control.tasks.is_empty());
         assert!(control.view_projection.is_none());
 
         let graphless = LifecycleRun::new_graphless(Uuid::new_v4());
         assert_eq!(graphless.context, LifecycleContext::default());
         assert!(graphless.orchestrations.is_empty());
+        assert!(graphless.tasks.is_empty());
         assert!(graphless.view_projection.is_none());
+    }
+
+    #[test]
+    fn lifecycle_run_task_plan_create_writes_plan_facts_only() {
+        let mut run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let creator_agent_id = Uuid::new_v4();
+        let owner_agent_id = Uuid::new_v4();
+        let story_id = Uuid::new_v4();
+        let mut draft = LifecycleTaskPlanItemDraft::new("Implement task facts");
+        draft.body = Some("Add aggregate-owned plan item state".to_string());
+        draft.priority = Some(TaskPriority::P1);
+        draft.created_by_agent_id = Some(creator_agent_id);
+        draft.owner_agent_id = Some(owner_agent_id);
+        draft.story_ref =
+            Some(super::super::lifecycle_subject_association::SubjectRef::new("story", story_id));
+
+        let created = run.create_task(draft).expect("create task");
+
+        assert_eq!(run.tasks.len(), 1);
+        assert_eq!(created.status, TaskPlanStatus::Open);
+        assert_eq!(created.created_by_agent_id, Some(creator_agent_id));
+        assert_eq!(created.owner_agent_id, Some(owner_agent_id));
+        assert_eq!(
+            created.story_ref.as_ref().map(|subject| subject.id),
+            Some(story_id)
+        );
+
+        let value = serde_json::to_value(&created).expect("serialize task");
+        assert!(value.get("dispatch_preference").is_none());
+        assert!(value.get("artifacts").is_none());
+        assert!(value.get("execution_status").is_none());
+        assert!(value.get("runtime_status").is_none());
+    }
+
+    #[test]
+    fn lifecycle_run_task_plan_update_changes_editable_plan_fields() {
+        let mut run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let created = run
+            .create_task(LifecycleTaskPlanItemDraft::new("Initial title"))
+            .expect("create task");
+        let owner_agent_id = Uuid::new_v4();
+        let assigned_agent_id = Uuid::new_v4();
+
+        let updated = run
+            .update_task(
+                created.id,
+                LifecycleTaskPlanItemPatch {
+                    title: Some("Updated title".to_string()),
+                    body: Some(Some("Updated body".to_string())),
+                    priority: Some(Some(TaskPriority::P0)),
+                    owner_agent_id: Some(Some(owner_agent_id)),
+                    assigned_agent_id: Some(Some(assigned_agent_id)),
+                    ..LifecycleTaskPlanItemPatch::default()
+                },
+            )
+            .expect("update task");
+
+        assert_eq!(updated.title, "Updated title");
+        assert_eq!(updated.body.as_deref(), Some("Updated body"));
+        assert_eq!(updated.priority, Some(TaskPriority::P0));
+        assert_eq!(updated.owner_agent_id, Some(owner_agent_id));
+        assert_eq!(updated.assigned_agent_id, Some(assigned_agent_id));
+        assert_eq!(updated.status, TaskPlanStatus::Open);
+        assert!(updated.updated_at >= updated.created_at);
+    }
+
+    #[test]
+    fn lifecycle_run_task_plan_archive_marks_dropped_and_archived() {
+        let mut run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let task = run
+            .create_task(LifecycleTaskPlanItemDraft::new("Archive me"))
+            .expect("create task");
+
+        let archived = run.archive_task(task.id).expect("archive task");
+
+        assert_eq!(archived.status, TaskPlanStatus::Dropped);
+        assert!(archived.archived_at.is_some());
+        assert_eq!(
+            run.task_by_id(task.id).expect("task").status,
+            TaskPlanStatus::Dropped
+        );
+    }
+
+    #[test]
+    fn lifecycle_run_task_plan_status_transition_enforces_plan_language() {
+        let mut run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let task = run
+            .create_task(LifecycleTaskPlanItemDraft::new("Transition me"))
+            .expect("create task");
+
+        let active = run
+            .transition_task_status(task.id, TaskPlanStatus::Active)
+            .expect("open to active");
+        assert_eq!(active.status, TaskPlanStatus::Active);
+
+        let blocked = run
+            .transition_task_status(task.id, TaskPlanStatus::Blocked)
+            .expect("active to blocked");
+        assert_eq!(blocked.status, TaskPlanStatus::Blocked);
+
+        let active = run
+            .transition_task_status(task.id, TaskPlanStatus::Active)
+            .expect("blocked to active");
+        assert_eq!(active.status, TaskPlanStatus::Active);
+
+        let done = run
+            .transition_task_status(task.id, TaskPlanStatus::Done)
+            .expect("active to done");
+        assert_eq!(done.status, TaskPlanStatus::Done);
+
+        let err = run
+            .transition_task_status(task.id, TaskPlanStatus::Review)
+            .expect_err("done cannot move to review");
+        assert!(matches!(err, DomainError::InvalidTransition { .. }));
     }
 
     #[test]

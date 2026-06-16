@@ -2,7 +2,7 @@
 
 ## 状态
 
-pending
+done
 
 ## 目标
 
@@ -43,8 +43,11 @@ pending
 
 ## 产出记录
 
-- 待填写。
+- 2026-06-16：任务已从 planning 激活为 in_progress；当前工作分支为 `codex/refactor-story-task-subject-model-cleanup`。
+- 2026-06-16：确认长期 spec 已指向 `LifecycleRun.tasks` 作为 Task durable facts，Story 只消费 Story-bound run / linked run / optional `story_ref` 推导出的 Task projection。
+- 2026-06-16：确认 `implement.jsonl` / `check.jsonl` 已覆盖 backend story-task runtime、database、repository、frontend type/state、cross-layer contract 与三份 research。
 
 ## 风险与交接
 
-- 待填写。
+- W1 可直接以 `LifecycleRun.tasks` 为目标推进 domain aggregate 和 Task plan status。
+- research 中早期“独立 tasks 表”判断只作为迁移风险证据；后续实现以当前 `design.md` 与 `.trellis/spec/backend/story-task-runtime.md` 的 `LifecycleRun.tasks` 决策为准。

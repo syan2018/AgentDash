@@ -10,6 +10,7 @@ mod orchestration;
 mod ports;
 mod run_state;
 mod script_asset;
+mod task_plan;
 
 pub use activity_def::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
@@ -50,6 +51,10 @@ pub use script_asset::{
     WorkflowScriptDefinitionScope, WorkflowScriptDefinitionStatus,
     WorkflowScriptHumanGateCapability, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
     workflow_script_source_digest,
+};
+pub use task_plan::{
+    LifecycleTaskPlanItem, LifecycleTaskPlanItemDraft, LifecycleTaskPlanItemPatch, TaskPlanStatus,
+    TaskPriority,
 };
 
 #[cfg(test)]

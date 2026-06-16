@@ -1,219 +1,242 @@
-# Story/Task subject 模型清理设计
+# Story / Task Subject Model Cleanup Design
 
-## 背景判断
+## 总体模型
 
-当前项目主线已经收敛到 AgentRun / LifecycleRun / SubjectRef / RuntimeSession trace。Story / Task 早期承载过 PM 看板、AI 拆解、Task 执行和状态投影等多种设想，后续重构让这些能力以适配层方式挂接到新主线，形成了重复事实源和职责漂移。
+本任务将 Story 与 Task 放回 AgentRun / LifecycleRun 的当前事实源之下：
 
-本设计的目标是让 Story / Task 回到当前主线中的清晰位置：
+- Story 是 Project 下的 subject / context container，用于可操作流程、主题管理和上下文注入。
+- Story-bound AgentRun 是普通 AgentRun / LifecycleRun 携带 `SubjectRef(kind = story)` 后的运行形态。
+- Task 是 LifecycleRun 控制树内的 Todo facts / plan item，由 AgentRun 创建、推进、派发和归档。
+- Story 看到的 Task 是 projection，不是 Story domain 私有实体。
 
-- Story 是业务主题和上下文容器。
-- Story 入口启动的是普通 AgentRun / LifecycleRun，只是 subject 为 Story。
-- Task 是 AgentRun 可创建和管理的通用 Todo / work item，不是运行时执行实体。
-- Story 下看到的 Task 是 Story 视角的 subject projection，不是 Task 的唯一归属。
-- 运行时事实由 Lifecycle / AgentRun 链路表达，Story / Task 只通过 association 或 projection 读取。
+这组边界让 Story 保留人和 Agent 都能管理的主题价值，同时让 Task 贴近实际执行单元，查询也围绕 run tree 局部聚合。
 
-## 目标模型
+## Story
 
-```text
-Project
-  └─ Story
-       ├─ 人工流程状态
-       ├─ Story context sources / containers
+Story 继续作为 Project 下的一等业务主题。它负责表达：
 
-Task
-  ├─ 通用计划项 / Todo
-  ├─ 创建者 / 管理者可来自任意 AgentRun
-  ├─ 可关联 Story / Project / Routine / External subject
-  ├─ 可由 AgentRun 自执行、assign 给 Companion subagent、或由 orchestration 批量生成
-  └─ 可关联 0..N 个 AgentRun / LifecycleRun 执行事实
+1. 工作主题与目标。
+2. 用户或 Agent 可操作的状态流转。
+3. 面向 AgentRun 的上下文材料。
+4. Story scope capability 的授权边界。
 
-AgentRun / LifecycleRun
-  ├─ subject_ref = project | story | task
-  ├─ LifecycleAgent / AgentFrame
-  ├─ RuntimeNodeState
-  └─ RuntimeSession trace
+Story 不定义独立 runtime。进入 Story 入口时，系统创建普通 AgentRun / LifecycleRun，并在 run subject、frame construction block 与 capability 上体现 Story 语义。
 
-LifecycleSubjectAssociation
-  └─ 连接 Story / Task / 其它 subject 与 run / agent / frame 事实
-```
+Story 的上下文职责包括 title、description、priority、type、tags、default workspace、context source refs、context containers、disabled inherited containers、session composition 和 Story 视角 Task projection。
 
-## Story 边界
+Story 状态表达产品流程和工作判断。LifecycleRun 的失败、取消、完成可以成为 UI 提示或投影信号，但 Story 状态推进应通过明确 Story command 发生。用户可以在 Story 页面里对已列好的事项做快速一键启动或人工确认；Agent 也可以在具备 Story scope capability 且命令来源可解释时推进 Story 状态。
 
-Story 保留为 Project 下的工作主题，承担人工可操作的流程状态。Story 状态表达产品流程和用户判断，例如创建、上下文准备、拆解、执行中、验收、完成等。
+## Story-bound AgentRun
 
-Story 状态可以被系统建议推进，但事实来源仍是用户或明确的业务命令。LifecycleRun 的失败、取消、完成可以成为 UI 提示或投影信号，不直接替代 Story 的人工状态语义。
+Story-bound AgentRun 的差异集中在初始化阶段：
 
-Story 继续承担 context container：
+1. `SubjectRef(kind = story, id = story_id)` 进入 run metadata。
+2. Frame construction 注入 Story blocks，例如 Story summary、Story constraints、已有结论、相关 Task projection。
+3. Capability grants 中包含 Story scope 权限，例如更新 Story 状态、追加 Story context、创建 Story 显式关联 Task。
 
-- title / description / priority / type / tags
-- default workspace
-- context source refs
-- context containers / disabled inherited containers
-- session composition
-- Story 视角的 Task projection
+具体链路应复用 `SubjectContextAssignmentResolver`、`CapabilityScopeCtx::Story` 和 ProjectAgent launch config。Story 入口只是在这些统一机制上追加 Story subject 语义，不形成独立 StoryAgent entity、repository、runtime 或 session。
 
-## Story-subject AgentRun
+运行时仍遵循统一 AgentRun / LifecycleRun 机制。这样 StoryAgent 可以作为入口概念存在，但不扩大为独立实体系统。
 
-`StoryAgent` 只作为产品口语表达，代码模型中使用普通 AgentRun / LifecycleRun：
+## Task
 
-```json
-{
-  "subject_ref": {
-    "kind": "story",
-    "id": "<story_id>"
-  }
-}
-```
+Task 的第一性定位是 Todo facts / plan item，而不是执行进程、workflow node 或 Project 级工作单。
 
-Story 入口启动时的差异来自三层：
+Task 需要保留 durable identity 与计划项能力：title、description、plan status、ordering / grouping metadata、creator / source、manager / assignment、context refs、linked runs summary。Task 可以显式 link 到 Story、Routine、External source 或 AgentRun；Project 只作为上层作用域和权限上下文，不推出 Project 全局任务队列。
 
-1. `SubjectContextAssignmentResolver` 根据 Story subject 解析 Project、Story、Workspace 和 context contributions。
-2. frame construction 注入 Story 专属 blocks，例如 Story brief、context summary、Todo list、linked runs summary。
-3. capability resolver 使用 `CapabilityScopeCtx::Story` 派生 Story scope 默认 capability。
+推荐最小字段语义：
 
-这条路径复用 ProjectAgent / AgentRun / LifecycleRun 主链，不引入独立 StoryAgent entity、repository、runtime 或 session 类型。
+- `id`
+- `root_lifecycle_run_id`
+- `owner_agent_run_id`
+- `created_by_agent_run_id`
+- `title`
+- `body`
+- `status`
+- `priority`
+- `story_link`
+- `assigned_agent_run_id`
+- `source_task_id`
+- `created_at`
+- `updated_at`
+- `archived_at`
 
-## Task 边界
+其中 `root_lifecycle_run_id` 用于表达 Task 集合边界，`owner_agent_run_id` 表达当前主要管理者，`assigned_agent_run_id` 表达计划层派发关系。真正的执行状态需要通过关联 run / lifecycle trace 查询。
 
-Task 的命名继续保留，目标语义收敛为通用 Todo / work item。Task 不归属 Story domain；任意 AgentRun 都可以在自身工作过程中创建、更新、关闭和派发 Task。Story 页面中的 Task 列表只是按 Story subject、context、origin 或 association 规则投影出的视图。
+当前代码中 Task 与 Story aggregate 的关系需要在实现阶段重点核对。目标是让 Task durable facts 脱离 Story aggregate 生命周期，Story 只通过显式 link、origin refs 或 subject association 获得 projection。
 
-- 人工或 AgentRun 拆解出的计划项。
-- 可排序、可编辑、可关闭。
-- 可绑定上下文 refs。
-- 可关联 Project、Story、Routine、LifecycleRun 或 External subject。
-- 可作为 subagent / AgentRun 的 subject 或 projection target。
-- 可被 AgentRun 自执行，也可被快速 assign 给 Companion subagent。
-- 可由 dynamic orchestration / workflow planning 一次性生成系列 Task，再通过显式 fanout 指令分配给工作流 subagents。
-- 可展示 linked runs 和 latest execution summary。
+## 存储与查询边界
 
-Task 状态表达计划协作状态，而不是 executor 运行状态。候选状态：
+Task 查询优先围绕 LifecycleRun 控制树展开：
+
+1. AgentRun workspace 查询当前 run 自己创建或管理的 Task。
+2. Root LifecycleRun 查询整个控制树内的 Task 集合。
+3. Story 查询显式关联 Story 的 run tree Task projection。
+
+Project 级 Task visibility 当前没有业务需求。Project 视角如需展示，应先来自明确入口的聚合视图，而不是引入常驻全局 Task 队列。
+
+这种局部性符合 Task 作为 Agent 自身 Todo 的使用方式，也能避免 Story / Project 页面为了获取 Task 状态持续扫描所有运行事实。
+
+## 状态机
+
+Task 状态使用计划语言：
 
 ```text
 open -> active -> review -> done
-         |
-       blocked
-         |
-      dropped
+open -> active -> done
+open -> dropped
+active -> blocked
+blocked -> active
+review -> active
+review -> done
 ```
 
-运行态信息通过 linked AgentRun / Lifecycle projection 展示，例如 current agent、runtime node status、artifacts、trace refs。
+状态枚举：
 
-## Task 与 AgentRun / Companion Subagent
+- `open`：已创建，等待处理。
+- `active`：正在被某个 AgentRun 或人处理。
+- `review`：等待人、父 AgentRun 或具备 owner capability 的 Agent 确认。
+- `blocked`：外部条件未满足。
+- `done`：完成。
+- `dropped`：从当前计划软归档。
 
-Task 与 AgentRun / subagent 的连接优先复用 subject association 或后续专用 execution link。AgentRun 可以是 Task 的创建者、管理者、执行尝试来源或 review 来源，但 Task 的 durable storage 不应放入 AgentRun runtime 事实表。
+状态转换只描述 Todo 计划进度。`review` 不是必经节点；自执行或 owner 直接推进的 Task 可以从 `active` 直接到 `done`。是否启动了 subagent、subagent 是否仍在运行、workflow 是否重试，都由 LifecycleRun / Runtime trace 表达。
+
+不同 assignment mode 可以附带不同推进策略：
+
+- `self-managed`：当前 AgentRun 或 owner AgentRun 可以按计划直接推进到 `done`。
+- `human-owned`：人类可以直接推进，也可以把 Task 放入 `review` 等待确认。
+- `assigned-to-subagent`：subagent 可以推进执行结果并提交 `review`，但不能自行把 Task 推过 owner 确认边界；`done` 由父 AgentRun、人类或具备 owner capability 的 Agent 确认。
+- `workflow-fanout`：workflow runtime 负责运行事实，Task 状态可由 workflow policy 决定是否需要 review gate。
+
+## Assignment
+
+Task 派发是一条计划层关联关系。单个 Task 指派给 Companion subagent、Story 入口创建 Task 后派发、dynamic workflow 批量 fanout，都应使用同一套关联链路：
 
 ```text
-Task subject_ref -> LifecycleSubjectAssociation -> LifecycleRun / LifecycleAgent / AgentFrame
+Task -> assigned AgentRun / LifecycleRun -> runtime trace
 ```
 
-短期沿用 `SubjectRef(kind=task)` 和 Task 命名。关联关系用于展示执行尝试、review run、follow-up run，不把 runtime fields 写回 Task 本体作为事实源。
+Task 层只记录“这个 Todo 当前计划交给谁处理”、是否需要 owner review gate 以及必要的来源关联。审计、重试、批量派发策略属于 orchestration / workflow runtime 层。
 
-Task 的 assignment / fanout 是计划层动作，不直接表示 runtime running：
+关联链路可以复用 `LifecycleSubjectAssociation` 或后续专用 execution link。短期可以继续使用 `SubjectRef(kind = task)` 表达 Task subject，并通过 association 展示 execution attempt、review run、follow-up run。
 
-- 自执行：当前 AgentRun 创建或领取 Task，并把 Task 作为自己的 Todo 推进；Task 可记录 manager / latest linked run，但运行状态来自当前 AgentRun / Lifecycle projection。
-- 快速 assign：父 AgentRun 通过 Companion `sub` 或等价 dispatch 能力创建 child AgentRun，并将 Task 作为 child run 的 subject 或启动上下文。
-- 编排扇出：dynamic orchestration 先产生一组 Task plan，再由用户或平台确认 fanout，批量创建 child AgentRun / workflow node association。
+## Dynamic Workflow Fanout
 
-这三种入口都应该产出可追踪的 TaskExecutionLink / LifecycleSubjectAssociation，而不是把 child runtime refs 直接写进 Task 本体作为唯一事实。
+Dynamic workflow 可以从 Task 集合中读取输入，例如：
 
-## Dynamic Orchestration Fanout
+1. 选中 root LifecycleRun 内的若干 Task。
+2. 根据 workflow plan 过滤、分组或映射为 node inputs。
+3. 创建对应 subagent run。
+4. 用统一 assignment link 将 Task 与执行 run 关联起来。
 
-dynamic orchestration 与 Task 的关系应是“计划生成 + 显式派发”：
+Task 只作为 fanout 数据源。依赖关系、批次、并发、失败恢复和审计日志由 workflow runtime 维护。
 
-```text
-dynamic orchestration proposal
-  -> Task batch plan
-  -> optional review / approve
-  -> create Tasks
-  -> fanout dispatch to workflow / companion subagents
-  -> write subject associations / execution links
-```
+应用层命令边界仍应清楚：
 
-动态编排可以生成 Task 集合、依赖、推荐 companion / agent profile 和分配策略，但 Task 本体仍是通用计划项。workflow runtime 负责调度和执行，Companion/subagent 负责具体处理，Task 页面只展示计划状态和 linked run projection。
+- `create_tasks_from_plan`：根据计划持久化 Task 集合。
+- `assign_tasks`：为单个或多个 Task 建立计划层派发关系。
+- `fanout_tasks`：由 workflow / collaboration 层基于已选 Task 创建 child AgentRun 或 workflow node dispatch。
 
-一键扇出需要保留明确命令边界：
+UI 可以把这些动作合并成一键操作，但命令边界需要能解释计划创建、派发关系和 runtime dispatch 分别发生了什么。
 
-- `create_tasks_from_plan`：持久化 Task 集合。
-- `assign_tasks`：为单个或多个 Task 创建 assignment intent。
-- `fanout_tasks`：基于 assignment intent 创建 child AgentRun / workflow node dispatch。
+## Story Projection
 
-后续实现可以合并 UI 操作，但应用层命令应保持可审计，避免一次按钮同时混淆计划创建、审批和 runtime dispatch。
+Story Task projection 的第一版规则：
 
-审批门作为可配置能力保留，但默认不阻塞 fanout。默认策略应支持 Task batch plan 确认后直接 fanout；当 Project policy、workflow rule 或 permission grant 后续配置要求审批时，才进入显式 review / approve。这样 Task fanout 清理可以先收敛命令边界，不被当前较久未维护的 permission / approval 系统阻塞。
+1. Story subject run 创建的 Task 可见。
+2. 显式 link 到 Story 的 Task 可见。
+3. 与 Story subject run 同属一个 root LifecycleRun 控制树的 child run Task 可见。
+4. 派发给其它 AgentRun 的 Task，如果保留 Story link 或来源 run link，也可回投 Story。
 
-## Task 仓储边界
+显式关联优先能让 Story 页面解释“为什么这个 Task 属于这个 Story”，也让后续权限策略更容易落地。
 
-当前代码把 Task 合入 Story aggregate 的 `stories.tasks JSONB`，这是早期 Story 拆解模型的残留。目标模型中 Task 应从 Story aggregate 中独立出来，形成通用 Task repository / table：
+## 注入 Block
 
-- Task 持有自己的 durable identity、title、description、plan status、ordering / grouping metadata。
-- Task 可以记录 creator / source，例如 human、AgentRun、Story subject run、imported。
-- Task 可以记录 manager / assignment intent，例如 self-managed、assigned-to-companion、orchestration-fanout-pending。
-- Task 通过 link / association 连接 Story、Project、Routine、External source 或 AgentRun。
-- Story 不删除 Task 的事实；Story 删除只影响 Story projection / link，Task 是否归档由 Task 自己的生命周期决定。
-- AgentRun 不直接持久化 Task 本体；AgentRun 创建 / 管理 Task 是 capability，执行关联通过 subject association / link 表表达。
+Story / Task 注入作为 Frame construction 的可组合 Block：
 
-## Read Model 收口
+- `StorySubjectBlock`
+- `StoryContextBlock`
+- `StoryTaskProjectionBlock`
+- `SelectedTaskBlock`
+- `RunTreeTaskSummaryBlock`
 
-执行视图统一以 `SubjectExecutionView` 为主：
+第一版只需要保证启动流程能选择并组合这些 block。Block 内容的压缩、排序、截断和权限过滤可以随 AgentFrame 构造策略逐步增强。
 
-- Story 页面展示 `SubjectRef(kind=story)` 的 linked runs。
-- Task 页面或抽屉展示 `SubjectRef(kind=task)` 的 linked runs。
-- `/tasks/{id}/execution` 这类 Task 专属轻量 DTO 后续应复用或让位给 subject execution view。
+## Read Model
 
-Task 的 latest execution summary 可以作为 read projection 生成，但其来源必须能追溯到 association / run / agent / frame / runtime node。
+Story / Task execution 视图应统一向 subject execution view 收口：
 
-Story 视角下的 Task projection 可以按以下来源组合：
+- Story 页面展示 `SubjectRef(kind = story)` 的 linked runs。
+- Task 页面或抽屉展示 `SubjectRef(kind = task)` 的 linked runs。
+- Task latest execution summary 可以作为 read projection 生成，但来源需要追溯到 association / run / agent / frame / runtime node。
 
-- Task 显式 link 到 Story subject。
-- Task 由 Story subject AgentRun 创建。
-- Task linked AgentRun 关联到同一 Story subject。
-- Task context refs 或 labels 明确指向 Story。
+`/tasks/{id}/execution` 这类 Task 专属轻量 DTO 后续应复用 subject execution view，或者让位给同一套 linked runs projection。
 
-## MCP / Capability 收口
+## MCP / Capability
 
-Story / Task 的工具能力应该从 subject scope 派生。任意 AgentRun 都可以通过 capability 获得 Task 创建和管理工具；Story subject frame 可以额外获得 Story 投影相关的 Task 查询 / 建议能力，是因为 capability scope 为 Story；Task subject frame 可以获得 Task 上下文和 linked run 能力，是因为 capability scope 为 Task。
+Story / Task 工具能力从 subject scope 派生：
 
-Companion subagent assign 和 dynamic orchestration fanout 应作为 collaboration / workflow capability 暴露：
+- Story subject frame 获得 Story 投影查询、Story context 更新和 Story 状态推进能力。
+- Task subject frame 获得 Task 上下文、Task 状态推进和 linked run 查看能力。
+- 任意 AgentRun 可以通过 Task management capability 创建和管理 Task。
+- Collaboration capability 提供单个 Task assign 给 Companion subagent。
+- Workflow / orchestration capability 提供 Task selector、计划生成和 fanout。
 
-- collaboration capability 提供单个 Task 快速 assign 给 Companion subagent。
-- workflow / orchestration capability 提供批量 Task plan、审批和 fanout。
-- Task management capability 只负责计划项 CRUD / 状态 / link，不直接执行 runtime dispatch。
-- permission / approval 系统只作为 fanout policy 的可选约束来源；授权事实后续应回到统一 PermissionGrant / policy projection，不在 Task 模型内另建审批事实。
+状态推进、artifact 上报和 dispatch 入口需要对应明确事实源：Story 流程状态走 Story command，Task 计划状态走 Task command，runtime artifacts / status 走 Lifecycle / AgentRun projection，subagent dispatch 走 AgentRun / Lifecycle launch command 并写 subject association。
 
-后续工具面应优先表达为 subject-scoped capabilities，而不是扩大 StoryMcpServer / TaskMcpServer 的实体感。状态推进、artifact 上报、dispatch 入口都应对应明确的事实源：
+## UI 入口
 
-- Story 人工流程状态走 Story command。
-- Task 计划状态走 Task command。
-- Runtime artifacts / status 走 Lifecycle / AgentRun projection。
-- subagent dispatch 走 AgentRun / Lifecycle launch command，并写 subject association。
-- dynamic orchestration 扇出走 workflow command，并在 dispatch 后写 Task execution links / subject associations。
+第一版 UI 入口优先级：
 
-## UI 收口方向
+1. AgentRun workspace 的 Task / Todo 面板。
+2. Story 页面中的 Task projection 区域。
+3. Companion / subagent 派发入口。
+4. Dynamic workflow fanout 选择器。
 
-Story 页面保留轻量但闭环的工作面：
+AgentRun workspace 是最贴近 Task 一等模型的入口。Story 页面只展示与 Story 关联的投影视图。
 
-- Story brief 和人工状态。
-- Story context。
-- Story 视角 Task projection。
-- linked AgentRuns / Lifecycle runs。
+具体收口方向：
 
-Task 交互降级为计划项编辑和 linked runs 查看。用户需要进入执行过程时，从 linked run 跳到 AgentRun workspace。
+- Story 页面保留 Story brief、状态、context、Story Task projection、linked AgentRuns / Lifecycle runs。
+- TaskDrawer 保留 Task 命名，聚焦计划项编辑、状态推进和 linked runs 查看。
+- Task execution panel 使用 SubjectExecutionView 或 linked runs projection。
+- StoryBoard / bulk / quick jump 等 PM 产品化表面按当前目标重新评估，优先服务 Story subject run 和 Todo list。
 
-Story 看板、批量操作、复杂 Task execution panel 可以在后续实现中按产品价值保留、隐藏或重做，但目标是让 UI 语言围绕 Story subject run 和 Todo list，而不是第二套 execution dashboard。
+## 删除与归档
+
+Task 使用软归档语义。`dropped` 表达从当前计划移除，`archived_at` 表达从默认视图隐藏。
+
+软归档能保留 linked run、Story projection 和 workflow trace 的解释链路，也便于后续审计和复盘。
+
+## Permission 接入点
+
+Task fanout 与 Story scope capability 保留 permission / approval 接入点。默认策略开放，具体收束由 permission system convergence review 任务处理。
+
+需要预留的检查点：
+
+1. AgentRun 是否可创建 Task。
+2. AgentRun 是否可修改当前 Task。
+3. AgentRun 是否可将 Task 派发给指定 Companion / subagent。
+4. Subagent 是否只能提交 review，而不能自行确认 owner-owned Task 为 done。
+5. Story-bound AgentRun 是否可读取或更新 Story projection。
 
 ## 数据迁移考虑
 
 预研期可以直接做正确迁移：
 
-- Task status enum 从执行状态迁移为 Todo 状态。
-- Task artifacts 迁出实体事实源，改为 execution projection 或 linked artifacts。
-- Task dispatch preference 迁为 launch hint 或 dispatch command 参数。
-- 从 `stories.tasks JSONB` 迁出为通用 Task repository / table，Story 只保留 projection links 或通过 association 查询相关 Tasks。
+- Task status enum 从执行状态迁移为 Todo 计划状态。
+- Task artifacts 迁出 Task 实体事实源，改为 execution projection 或 linked artifacts。
+- Task dispatch preference 拆分为 context source、launch hint 或 dispatch command 参数。
+- Story projection links 或 subject association 负责解释 Story 与 Task 的关系。
 
-迁移时需要处理现有 JSONB 中的旧状态值和 artifacts 字段，优先选择确定性映射，不引入兼容双写。
+迁移时需要处理旧状态值和 artifacts 字段，优先选择确定性映射。
 
-## 关键取舍
+## 待后续细化
 
-本设计保留 Story 的人工流程状态，因为它服务于用户组织工作和确认阶段；收敛 Task 的执行状态机，因为执行事实已经由 Lifecycle / AgentRun 承担。
-
-本设计保留 Task 的未来扩展空间，因为 AgentRun 运行中生成、管理和派发 Todo 是有效产品能力；收敛它的 runtime ownership，因为 ownership 会让 Task 与 Lifecycle 重复表达同一执行事实。
+1. Task 物理仓储形态：独立表、run-scoped table 或 lifecycle task projection 表的具体落地。
+2. Assignment link 与 LifecycleRun / AgentRun 外键的精确方向。
+3. Frame construction Block 的接口形态与裁剪策略。
+4. Story projection 的权限过滤和 UI 展示策略。
+5. Dynamic workflow 从 Task 集合读取数据时的 selector DSL。
+6. SubjectExecutionView 对 Story / Task linked runs 的统一 DTO 形态。

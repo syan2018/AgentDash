@@ -6,8 +6,8 @@ use crate::session::launch::{
 };
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::*;
-use crate::workflow::resolve_current_frame_from_delivery_trace_ref;
-use crate::workflow::runtime_launch::FrameLaunchEnvelope;
+use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use agentdash_spi::ConnectorError;
 
 pub(in crate::session) struct SessionLaunchOrchestrator {

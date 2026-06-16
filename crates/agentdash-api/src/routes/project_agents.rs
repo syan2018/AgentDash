@@ -3,10 +3,8 @@ use std::sync::Arc;
 use agentdash_application::session::construction_planner::{
     ResolvedProjectAgentContext, build_project_agent_context,
 };
-use agentdash_application::session::{
+use agentdash_application::agent_run::{
     AgentRunMailboxCommandOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
-};
-use agentdash_application::workflow::{
     ConversationModelConfigResolver, ProjectAgentRunStartCommand, ProjectAgentRunStartRepos,
     ProjectAgentRunStartService,
 };

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use crate::platform_config::SharedPlatformConfig;
 use crate::vfs::tools::provider::SharedSessionToolServicesHandle;
-use crate::workflow::tools::advance_node::CompleteLifecycleNodeTool;
+use crate::lifecycle::tools::advance_node::CompleteLifecycleNodeTool;
 
 #[derive(Clone)]
 pub struct WorkflowRuntimeToolProvider {

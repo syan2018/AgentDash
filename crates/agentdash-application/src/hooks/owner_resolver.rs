@@ -6,7 +6,7 @@ use agentdash_domain::workflow::{LifecycleRun, LifecycleSubjectAssociationReposi
 use agentdash_spi::hooks::SubjectRunContext;
 
 use crate::ApplicationError;
-use crate::workflow::build_subject_run_context;
+use crate::lifecycle::build_subject_run_context;
 
 /// 从 LifecycleSubjectAssociation 反查 project/story/task 实体，构建 SubjectRunContext。
 pub struct SessionOwnerResolver {

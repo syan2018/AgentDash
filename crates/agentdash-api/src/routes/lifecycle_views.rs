@@ -7,10 +7,11 @@ use axum::{
 use serde_json::Value;
 use uuid::Uuid;
 
-use agentdash_application::workflow::lifecycle_run_view_builder::{
+use agentdash_application::lifecycle::run_view_builder::{
     self, SubjectExecutionView as SubjectExecutionReadModel,
 };
-use agentdash_application::workflow::{AgentFrameSurfaceExt, ConversationModelConfigResolver};
+use agentdash_application::agent_run::ConversationModelConfigResolver;
+use agentdash_application::agent_run::AgentFrameSurfaceExt;
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentFrameRuntimeView, ConversationModelConfigSource, LifecycleRunView,
     ProjectActiveAgentsView, RuntimeSessionRefDto, RuntimeSessionTraceView, SubjectExecutionView,
@@ -72,7 +73,7 @@ pub async fn get_lifecycle_run_view(
     )
     .await?;
 
-    let view = lifecycle_run_view_builder::build_lifecycle_run_view(&state.repos, &run).await?;
+    let view = run_view_builder::build_lifecycle_run_view(&state.repos, &run).await?;
     Ok(Json(lifecycle_run_view_to_contract(view)))
 }
 
@@ -83,7 +84,7 @@ pub async fn get_subject_execution(
 ) -> Result<Json<SubjectExecutionView>, ApiError> {
     let subject = SubjectRef::new(kind, parse_uuid(&id, "subject_id")?);
     let view =
-        lifecycle_run_view_builder::build_subject_execution_view(&state.repos, subject.clone())
+        run_view_builder::build_subject_execution_view(&state.repos, subject.clone())
             .await?;
     authorize_subject_execution_view(&state, &current_user, &subject, &view).await?;
     Ok(Json(subject_execution_view_to_contract(view)))
@@ -178,7 +179,7 @@ pub async fn get_project_active_agents(
     .await?;
 
     let view =
-        lifecycle_run_view_builder::build_project_active_agents_view(&state.repos, project_id)
+        run_view_builder::build_project_active_agents_view(&state.repos, project_id)
             .await?;
     Ok(Json(project_active_agents_view_to_contract(view)))
 }

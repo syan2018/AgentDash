@@ -10,7 +10,7 @@ use crate::ApplicationError;
 use crate::session::capability_state::{
     ToolCapabilityDimensionModule, project_capability_state_from_frame,
 };
-use crate::workflow::AgentFrameBuilder;
+use crate::agent_run::AgentFrameBuilder;
 use agentdash_domain::DomainError;
 use agentdash_domain::permission::{
     GrantScope, PermissionGrant, PermissionGrantRepository, PolicyOutcome, ScopeEscalationIntent,

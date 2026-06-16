@@ -25,8 +25,8 @@ use super::provider_skill_asset::{
 use super::types::{ListOptions, ListResult, ReadResult};
 use crate::runtime::{Mount, RuntimeFileEntry};
 use crate::session::SessionPersistence;
-use crate::workflow::execution_log::{RuntimeNodeArtifactScope, encode_node_path_segment};
-use crate::workflow::lifecycle::journey::{
+use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, encode_node_path_segment};
+use crate::lifecycle::surface::journey::{
     LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, filter_session_items,
     item_file_name, session_summary_archives, to_json_pretty,
 };

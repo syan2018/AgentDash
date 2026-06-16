@@ -5,7 +5,7 @@ use agentdash_domain::workflow::{
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use crate::workflow::WorkflowApplicationError;
+use crate::lifecycle::WorkflowApplicationError;
 
 const ORCHESTRATION_NODE_COORDINATE_CONTRACT: &str = "orchestration_node_coordinate.v1";
 

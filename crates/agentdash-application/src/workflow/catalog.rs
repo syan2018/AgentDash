@@ -6,7 +6,7 @@ use agentdash_domain::workflow::{
 };
 
 use super::definition::BuiltinWorkflowBundle;
-use super::error::WorkflowApplicationError;
+use crate::lifecycle::WorkflowApplicationError;
 
 pub struct WorkflowCatalogService<'a, D: ?Sized> {
     definition_repo: &'a D,

@@ -1,11 +1,14 @@
 use async_trait::async_trait;
 
 use agentdash_application::repository_set::RepositorySet;
-use agentdash_application::session::{
-    AgentRunMailboxScheduleTrigger, AgentRunMailboxService, SessionControlService,
-    SessionCoreService, SessionEventingService, SessionLaunchService, SessionTerminalCallback,
-    WorkflowApplicationError,
+use agentdash_application::agent_run::{
+    AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
 };
+use agentdash_application::session::{
+    SessionControlService, SessionCoreService, SessionEventingService, SessionLaunchService,
+    SessionTerminalCallback,
+};
+use agentdash_application::lifecycle::WorkflowApplicationError;
 
 #[derive(Clone)]
 pub(crate) struct AgentRunMailboxTerminalCallback {

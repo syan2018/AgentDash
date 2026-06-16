@@ -7,7 +7,7 @@ use agentdash_domain::workflow::{
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::workflow::WorkflowApplicationError;
+use crate::lifecycle::WorkflowApplicationError;
 
 use super::executor_launcher::{OpenedHumanGate, SubmitHumanGateDecisionInput};
 use super::ready_node::{ReadyNodeView, RunningNodeView, RuntimeNodeCoordinate};

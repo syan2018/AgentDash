@@ -17,7 +17,7 @@ use super::super::types::SessionMeta;
 use super::super::{AgentFrameTransitionRecord, RuntimeDeliveryCommand};
 use super::SessionRuntimeInner;
 #[cfg(test)]
-use crate::workflow::runtime_launch::{
+use crate::agent_run::frame::runtime_launch::{
     FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
 };
 use agentdash_agent_protocol::BackboneEnvelope;
@@ -165,7 +165,7 @@ pub(super) async fn envelope_from_construction_with_commands(
                 "session hub test construction 缺少 FrameSurfaceDraft".to_string(),
             )
         })?;
-    let mut closed_surface = crate::workflow::frame_construction::close_frame_launch_surface(
+    let mut closed_surface = crate::agent_run::frame::construction::close_frame_launch_surface(
         &mut surface_draft,
         requested_runtime_commands,
     )?;
@@ -183,7 +183,7 @@ pub(super) async fn envelope_from_construction_with_commands(
         hub.agent_frame_repo.as_ref(),
     ) {
         (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) => {
-            match crate::workflow::resolve_current_frame_from_delivery_trace_ref(
+            match crate::lifecycle::resolve_current_frame_from_delivery_trace_ref(
                 &construction.session_id,
                 anchor_repo.as_ref(),
                 agent_repo.as_ref(),

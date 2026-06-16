@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::workflow::ActiveWorkflowProjection;
+use crate::lifecycle::ActiveWorkflowProjection;
 
 mod fragment_bridge;
 mod helpers;

@@ -198,16 +198,19 @@ impl SessionRuntimeInner {
         lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
         command_receipt_repo: Arc<dyn agentdash_domain::workflow::AgentRunCommandReceiptRepository>,
         mailbox_repo: Arc<dyn agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository>,
-    ) -> Self {
-        let Some(lifecycle_agent_repo) = self.lifecycle_agent_repo.clone() else {
-            return self;
-        };
-        let Some(agent_frame_repo) = self.agent_frame_repo.clone() else {
-            return self;
-        };
-        let Some(execution_anchor_repo) = self.execution_anchor_repo.clone() else {
-            return self;
-        };
+    ) -> Result<Self, String> {
+        let lifecycle_agent_repo = self.lifecycle_agent_repo.clone().ok_or_else(|| {
+            "SessionRuntimeInner 注入 AgentRun mailbox boundary 前必须先注入 lifecycle_agent_repo"
+                .to_string()
+        })?;
+        let agent_frame_repo = self.agent_frame_repo.clone().ok_or_else(|| {
+            "SessionRuntimeInner 注入 AgentRun mailbox boundary 前必须先注入 agent_frame_repo"
+                .to_string()
+        })?;
+        let execution_anchor_repo = self.execution_anchor_repo.clone().ok_or_else(|| {
+            "SessionRuntimeInner 注入 AgentRun mailbox boundary 前必须先注入 execution_anchor_repo"
+                .to_string()
+        })?;
         self.agent_run_mailbox_boundary_deps = Some(
             super::super::mailbox_delegate::AgentRunMailboxRuntimeBoundaryDeps {
                 lifecycle_run_repo,
@@ -222,7 +225,7 @@ impl SessionRuntimeInner {
                 session_launch: Arc::new(self.launch_service()),
             },
         );
-        self
+        Ok(self)
     }
 
     /// 注入 VFS 访问服务（用于 skill 扫描等需要跨 mount 读取的场景）
@@ -316,6 +319,18 @@ impl SessionRuntimeInner {
         }
         if self.backend_execution_lease_repo.is_none() {
             return Err("SessionRuntimeInner 缺少 backend_execution_lease_repo".to_string());
+        }
+        if self.agent_frame_repo.is_none() {
+            return Err("SessionRuntimeInner 缺少 agent_frame_repo".to_string());
+        }
+        if self.execution_anchor_repo.is_none() {
+            return Err("SessionRuntimeInner 缺少 execution_anchor_repo".to_string());
+        }
+        if self.lifecycle_agent_repo.is_none() {
+            return Err("SessionRuntimeInner 缺少 lifecycle_agent_repo".to_string());
+        }
+        if self.agent_run_mailbox_boundary_deps.is_none() {
+            return Err("SessionRuntimeInner 缺少 agent_run_mailbox_boundary_deps".to_string());
         }
         Ok(())
     }

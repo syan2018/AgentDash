@@ -4,7 +4,7 @@
 //!
 //! Session 层保留 runtime launch 所需的共享 assembly builder，以及 lifecycle /
 //! companion 这类 delivery-adjacent 组装路径。Project / Story / Routine owner
-//! bootstrap composition 由 `workflow::frame_construction` 负责，因为它产出
+//! bootstrap composition 由 `agent_run::frame::construction` 负责，因为它产出
 //! 写入 `AgentFrame` 的 owner runtime surface。
 //!
 //! | 路径 | 实现入口 |
@@ -49,7 +49,7 @@ use crate::session::assembly_builder::SessionAssemblyBuilder;
 #[cfg(test)]
 use crate::session::assembly_builder::slice_companion_bundle;
 use crate::vfs::VfsService;
-use crate::workflow::{
+use crate::lifecycle::{
     ActivityActivationInput, AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode,
     AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, BuiltinLifecycleSkill,
     BuiltinLifecycleSkillPolicy, MessageStreamProjectionRef, MessageStreamTraceKind,
@@ -155,11 +155,11 @@ impl<'a> SessionRequestAssembler<'a> {
     /// lifecycle_node 的 frame builder 路径。
     pub async fn compose_lifecycle_node_to_frame(
         &self,
-        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+        frame_builder: crate::agent_run::frame::builder::AgentFrameBuilder,
         spec: LifecycleNodeSpec<'_>,
     ) -> Result<
         (
-            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::agent_run::frame::builder::AgentFrameBuilder,
             crate::session::assembly_builder::AssemblyLaunchExtras,
         ),
         String,
@@ -181,11 +181,11 @@ impl<'a> SessionRequestAssembler<'a> {
     /// companion 的 frame builder 路径。
     pub async fn compose_companion_to_frame(
         &self,
-        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+        frame_builder: crate::agent_run::frame::builder::AgentFrameBuilder,
         spec: CompanionParentSpec<'_>,
     ) -> Result<
         (
-            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::agent_run::frame::builder::AgentFrameBuilder,
             crate::session::assembly_builder::AssemblyLaunchExtras,
         ),
         String,
@@ -212,11 +212,11 @@ impl<'a> SessionRequestAssembler<'a> {
     /// companion + workflow 的 frame builder 路径。
     pub async fn compose_companion_with_workflow_to_frame(
         &self,
-        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+        frame_builder: crate::agent_run::frame::builder::AgentFrameBuilder,
         spec: CompanionParentWorkflowSpec<'_>,
     ) -> Result<
         (
-            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::agent_run::frame::builder::AgentFrameBuilder,
             crate::session::assembly_builder::AssemblyLaunchExtras,
         ),
         String,
@@ -333,7 +333,7 @@ impl<'a> SessionRequestAssembler<'a> {
 
 /// lifecycle_node 的 frame builder 路径（free-standing 版本）。
 pub async fn compose_lifecycle_node_to_frame_with_audit(
-    frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+    frame_builder: crate::agent_run::frame::builder::AgentFrameBuilder,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
@@ -341,7 +341,7 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
     audit_session_key: Option<&str>,
 ) -> Result<
     (
-        crate::workflow::frame_builder::AgentFrameBuilder,
+        crate::agent_run::frame::builder::AgentFrameBuilder,
         crate::session::assembly_builder::AssemblyLaunchExtras,
     ),
     String,
@@ -515,7 +515,7 @@ fn activity_node_type(
 
 fn contribute_lifecycle_context(
     spec: &LifecycleNodeSpec<'_>,
-    activation: &crate::workflow::ActivityActivation,
+    activation: &crate::lifecycle::ActivityActivation,
     ready_port_keys: &BTreeSet<String>,
 ) -> Contribution {
     let mut fragments = Vec::new();
@@ -994,7 +994,7 @@ mod tests {
         }
     }
 
-    fn test_activity_activation(run_id: Uuid) -> crate::workflow::ActivityActivation {
+    fn test_activity_activation(run_id: Uuid) -> crate::lifecycle::ActivityActivation {
         let lifecycle_mount = build_lifecycle_mount_with_ports(
             run_id,
             Uuid::new_v4(),
@@ -1002,11 +1002,11 @@ mod tests {
             "test-lifecycle",
             &["report".to_string()],
         );
-        crate::workflow::ActivityActivation {
+        crate::lifecycle::ActivityActivation {
             capability_state: Default::default(),
             mcp_servers: Vec::new(),
             capability_keys: BTreeSet::new(),
-            kickoff_prompt: crate::workflow::KickoffPromptFragment {
+            kickoff_prompt: crate::lifecycle::KickoffPromptFragment {
                 title_line: String::new(),
                 output_section: String::new(),
                 input_section: String::new(),
@@ -1026,7 +1026,7 @@ mod tests {
     #[test]
     fn append_lifecycle_mount_creates_vfs_when_base_is_absent() {
         let prepared = SessionAssemblyBuilder::new()
-            .append_lifecycle_mount(crate::workflow::LifecycleMountSurface {
+            .append_lifecycle_mount(crate::lifecycle::LifecycleMountSurface {
                 run_id: Uuid::new_v4(),
                 orchestration_id: Uuid::new_v4(),
                 node_path: "test-node",
@@ -1136,11 +1136,11 @@ mod tests {
             &lifecycle.key,
             &["summary".into()],
         );
-        let activation = crate::workflow::ActivityActivation {
+        let activation = crate::lifecycle::ActivityActivation {
             capability_state: Default::default(),
             mcp_servers: vec![],
             capability_keys: BTreeSet::from(["workflow_management".to_string()]),
-            kickoff_prompt: crate::workflow::KickoffPromptFragment {
+            kickoff_prompt: crate::lifecycle::KickoffPromptFragment {
                 title_line: "你正在执行 lifecycle `dev` 的 node `implement`。".to_string(),
                 output_section: "## 必须交付的产出\n- `summary`".to_string(),
                 input_section: "## 输入上下文\n- `design`".to_string(),

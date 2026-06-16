@@ -68,8 +68,8 @@ use crate::vfs::{
     MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
     VfsService,
 };
-use crate::workflow::AgentRunSteeringService;
-use crate::workflow::frame_surface::FrameSurfaceDraft;
+use crate::agent_run::AgentRunSteeringService;
+use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use agentdash_application_ports::mcp_discovery::{
     DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryRequest,
 };
@@ -955,7 +955,7 @@ async fn agent_run_steer_uses_current_agent_frame_after_frame_refresh() {
     );
 
     let dispatch = service
-        .steer(crate::workflow::AgentRunSteeringCommand {
+        .steer(crate::agent_run::AgentRunSteeringCommand {
             delivery_runtime_session_id: session.id.clone(),
             input: agentdash_agent_protocol::text_user_input_blocks("live steer"),
         })
@@ -1013,7 +1013,7 @@ async fn pending_promote_uses_current_agent_frame_after_frame_refresh() {
     );
 
     let dispatch = service
-        .steer(crate::workflow::AgentRunSteeringCommand {
+        .steer(crate::agent_run::AgentRunSteeringCommand {
             delivery_runtime_session_id: session.id.clone(),
             input,
         })
@@ -3305,7 +3305,7 @@ async fn accepted_turn_commits_hook_runtime_target_to_new_frame() {
 #[tokio::test]
 async fn planner_invalid_config_leaves_current_frame_unchanged() {
     use crate::session::SessionConstructionProvider;
-    use crate::workflow::runtime_launch::FrameLaunchEnvelope;
+    use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 
     struct StaticConstructionProvider {
         hub: SessionRuntimeInner,
@@ -3659,7 +3659,7 @@ async fn schedule_unanchored_hook_auto_resume_strict_mode_requires_provider() {
 #[tokio::test]
 async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
     use crate::session::{SessionConstructionProvider, SessionConstructionProviderInput};
-    use crate::workflow::runtime_launch::FrameLaunchEnvelope;
+    use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct SpyConstructionProvider {

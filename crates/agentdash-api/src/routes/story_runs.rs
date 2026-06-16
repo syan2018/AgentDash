@@ -6,8 +6,8 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application::workflow::lifecycle_run_view_builder;
-use agentdash_application::workflow::lifecycle_run_view_builder::LifecycleRunStatusView;
+use agentdash_application::lifecycle::run_view_builder;
+use agentdash_application::lifecycle::run_view_builder::LifecycleRunStatusView;
 use agentdash_contracts::workflow::SubjectExecutionView;
 use agentdash_domain::workflow::SubjectRef;
 
@@ -48,7 +48,7 @@ pub async fn list_story_runs(
 
     let subject = SubjectRef::new("story", story_uuid);
     let view =
-        lifecycle_run_view_builder::build_subject_execution_view(&state.repos, subject).await?;
+        run_view_builder::build_subject_execution_view(&state.repos, subject).await?;
     Ok(Json(subject_execution_view_to_contract(view)))
 }
 
@@ -71,7 +71,7 @@ pub async fn get_active_story_run(
 
     let subject = SubjectRef::new("story", story_uuid);
     let view =
-        lifecycle_run_view_builder::build_subject_execution_view(&state.repos, subject).await?;
+        run_view_builder::build_subject_execution_view(&state.repos, subject).await?;
     let has_active_run = view.runs.iter().any(|run| {
         matches!(
             run.status,

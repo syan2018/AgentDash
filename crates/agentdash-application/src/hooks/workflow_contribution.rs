@@ -1,6 +1,6 @@
 use agentdash_spi::HookInjection;
 
-use crate::workflow::ActiveWorkflowProjection;
+use crate::lifecycle::ActiveWorkflowProjection;
 
 pub(super) fn build_step_summary_markdown(workflow: &ActiveWorkflowProjection) -> String {
     let wf_line = match workflow.primary_workflow.as_ref() {
@@ -53,7 +53,7 @@ fn build_guidance_injection_markdown(guidance: &str) -> String {
 mod tests {
     use super::*;
 
-    use crate::workflow::{ActiveWorkflowProjection, activity_projection};
+    use crate::lifecycle::{ActiveWorkflowProjection, activity_projection};
 
     fn workflow_projection_with_guidance(guidance: Option<String>) -> ActiveWorkflowProjection {
         activity_projection(guidance)

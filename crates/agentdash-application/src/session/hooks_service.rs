@@ -10,7 +10,7 @@ use agentdash_spi::hooks::{
 
 use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
 use super::types::{AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget};
-use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
+use crate::agent_run::frame::hook_runtime::AgentFrameHookRuntime;
 
 #[derive(Clone)]
 pub struct SessionHookService {

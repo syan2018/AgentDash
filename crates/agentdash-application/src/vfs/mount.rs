@@ -865,7 +865,7 @@ pub fn build_agent_run_session_lifecycle_mount(
         backend_id: String::new(),
         root_ref: format!(
             "lifecycle://run/{run_id}/agent/{agent_id}/session/{}",
-            crate::workflow::execution_log::encode_node_path_segment(runtime_session_id)
+            crate::lifecycle::execution_log::encode_node_path_segment(runtime_session_id)
         ),
         capabilities: vec![
             MountCapability::Read,
@@ -974,7 +974,7 @@ pub fn build_lifecycle_mount_with_node_scope(
         backend_id: String::new(),
         root_ref: format!(
             "lifecycle://run/{run_id}/orchestration/{orchestration_id}/node/{}",
-            crate::workflow::execution_log::encode_node_path_segment(node_path)
+            crate::lifecycle::execution_log::encode_node_path_segment(node_path)
         ),
         capabilities,
         default_write: false,

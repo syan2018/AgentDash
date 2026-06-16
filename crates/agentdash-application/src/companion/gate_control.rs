@@ -12,7 +12,7 @@ use super::{
     PayloadTypeRegistry, build_companion_event_notification,
     build_companion_human_response_notification, payload_types,
 };
-use crate::workflow::resolve_current_frame_from_delivery_trace_ref;
+use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::{ApplicationError, session::SessionEventingService};
 
 const COMPANION_PARENT_REQUEST_GATE_KIND: &str = "companion_parent_request";

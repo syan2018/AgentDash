@@ -1,8 +1,6 @@
-use agentdash_application::session::{
-    AgentRunMailboxCommandOutcome as AppMailboxCommandOutcome, AgentRunMailboxCommandResult,
-};
-use agentdash_application::workflow::{
-    AgentRunCommandReceiptView, agent_run_workspace as app_workspace,
+use agentdash_application::agent_run::{
+    AgentRunCommandReceiptView, AgentRunMailboxCommandOutcome as AppMailboxCommandOutcome,
+    AgentRunMailboxCommandResult, workspace as app_workspace,
 };
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,

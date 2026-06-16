@@ -9,8 +9,8 @@ use agentdash_domain::workflow::SubjectExecutionDispatchResult;
 use agentdash_domain::workspace::Workspace;
 
 use crate::ApplicationError;
+use crate::lifecycle::{LifecycleDispatchService, WorkflowApplicationError};
 use crate::repository_set::RepositorySet;
-use crate::workflow::{LifecycleDispatchService, WorkflowApplicationError};
 use crate::workspace::BackendAvailability;
 
 use super::dispatch::build_routine_execution_intent_with_reuse;

@@ -6,7 +6,7 @@ use crate::ApplicationError;
 use crate::repository_set::RepositorySet;
 use crate::skill_asset::SkillAssetService;
 use crate::vfs::{PROVIDER_LIFECYCLE_VFS, append_lifecycle_skill_asset_projection};
-use crate::workflow::ActivityActivation;
+use crate::lifecycle::ActivityActivation;
 
 pub(crate) async fn ensure_companion_system_skill_asset(
     repos: &RepositorySet,

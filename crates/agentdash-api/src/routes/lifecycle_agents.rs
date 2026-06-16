@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use agentdash_application::session::{
+use agentdash_application::agent_run::workspace as app_workspace;
+use agentdash_application::agent_run::{
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
 };
-use agentdash_application::workflow::agent_run_workspace as app_workspace;
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView,
     AgentRunMailboxMoveRequest, AgentRunMailboxView, AgentRunMessageCommandResponse,
@@ -229,8 +229,9 @@ fn build_inline_children<'a>(
     agents: &'a [LifecycleAgent],
     children_map: &'a HashMap<Uuid, Vec<Uuid>>,
     depth: usize,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<AgentRunListChild>, ApiError>> + Send + 'a>>
-{
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Vec<AgentRunListChild>, ApiError>> + Send + 'a>,
+> {
     Box::pin(async move {
         const MAX_DEPTH: usize = 16;
         let mut children = Vec::new();

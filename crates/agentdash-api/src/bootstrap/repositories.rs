@@ -9,7 +9,7 @@ use agentdash_application::session::SessionPersistence;
 use agentdash_application::shared_library::{
     IntegrationEmbeddedLibraryAssetSeed, SharedLibraryService,
 };
-use agentdash_application::workflow::SessionPersistenceRuntimeSessionCreator;
+use agentdash_application::lifecycle::SessionPersistenceRuntimeSessionCreator;
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
     PostgresAgentLineageRepository, PostgresAgentRunCommandReceiptRepository,

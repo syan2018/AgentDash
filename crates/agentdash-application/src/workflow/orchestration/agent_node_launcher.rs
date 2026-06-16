@@ -12,12 +12,12 @@ use async_trait::async_trait;
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::session::{LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit};
-use crate::workflow::frame_builder::AgentFrameBuilder;
-use crate::workflow::projection::{
-    activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
-};
-use crate::workflow::{
+use crate::agent_run::frame::builder::AgentFrameBuilder;
+use crate::lifecycle::{
     RuntimeSessionCreationRequest, RuntimeSessionCreator, WorkflowApplicationError,
+};
+use crate::lifecycle::projection::{
+    activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
 };
 
 use super::executor_launcher::LaunchedAgentNode;

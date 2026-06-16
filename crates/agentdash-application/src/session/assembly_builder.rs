@@ -17,8 +17,8 @@ use crate::session::construction::RuntimeContextInspectionPlan;
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::UserPromptInput;
 use crate::vfs::build_lifecycle_mount_with_node_scope;
-use crate::workflow::LifecycleMountSurface;
-use crate::workflow::frame_surface::{FrameContextBundleSummary, FrameSurfaceDraft};
+use crate::lifecycle::LifecycleMountSurface;
+use crate::agent_run::frame::surface::{FrameContextBundleSummary, FrameSurfaceDraft};
 
 /// 把 `SessionAssemblyBuilder` 的累积声明合并进 frame construction handoff。
 ///
@@ -325,11 +325,11 @@ impl SessionAssemblyBuilder {
     /// 一步完成 lifecycle node 装配（VFS + 能力 + MCP + prompt）。
     pub(super) fn apply_lifecycle_activation(
         mut self,
-        activation: &crate::workflow::ActivityActivation,
+        activation: &crate::lifecycle::ActivityActivation,
         inherited_executor_config: Option<AgentConfig>,
     ) -> Self {
-        let surface = crate::workflow::frame_builder::build_lifecycle_activation_surface(
-            crate::workflow::frame_builder::AgentFrameActivationSurfaceInput {
+        let surface = crate::agent_run::frame::builder::build_lifecycle_activation_surface(
+            crate::agent_run::frame::builder::AgentFrameActivationSurfaceInput {
                 activation,
                 base_vfs: self.vfs.as_ref(),
                 inherit_skills_from: None,
@@ -410,10 +410,10 @@ pub(super) fn slice_companion_bundle(
 /// frame builder 接收 surface 数据（capability/VFS/MCP），
 /// 返回的 launch extras 包含 context bundle / prompt / executor config 等 launch-only 数据。
 pub(crate) fn project_assembly_to_frame(
-    frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+    frame_builder: crate::agent_run::frame::builder::AgentFrameBuilder,
     prepared: SessionAssemblyBuilder,
 ) -> (
-    crate::workflow::frame_builder::AgentFrameBuilder,
+    crate::agent_run::frame::builder::AgentFrameBuilder,
     AssemblyLaunchExtras,
 ) {
     let surface_draft = prepared.to_surface_draft();

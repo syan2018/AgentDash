@@ -98,7 +98,7 @@ impl AppExecutionHookProvider {
         &self,
         runtime_session_id: String,
         turn_id: Option<String>,
-        workflow: Option<crate::workflow::ActiveWorkflowProjection>,
+        workflow: Option<crate::lifecycle::ActiveWorkflowProjection>,
     ) -> Result<AgentFrameHookSnapshot, HookError> {
         let mut snapshot = AgentFrameHookSnapshot {
             runtime_adapter_session_id: runtime_session_id,
@@ -213,13 +213,13 @@ impl AppExecutionHookProvider {
                     },
                     fulfilled_port_keys: {
                         let artifact_scope =
-                            crate::workflow::execution_log::RuntimeNodeArtifactScope {
+                            crate::lifecycle::execution_log::RuntimeNodeArtifactScope {
                                 run_id: workflow.run.id,
                                 orchestration_id: workflow.orchestration_id,
                                 node_path: workflow.node_path.clone(),
                                 attempt: workflow.active_attempt.attempt,
                             };
-                        let map = crate::workflow::load_scoped_port_output_map(
+                        let map = crate::lifecycle::load_scoped_port_output_map(
                             self.inline_file_repo.as_ref(),
                             &artifact_scope,
                         )
@@ -419,7 +419,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::session::HookRuntimeDelegate;
-    use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
+    use crate::agent_run::frame::hook_runtime::AgentFrameHookRuntime;
     use agentdash_spi::hooks::HookRuntimeAccess;
     use agentdash_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,

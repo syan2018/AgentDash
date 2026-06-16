@@ -32,7 +32,7 @@ use agentdash_domain::workflow::{
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 
-use crate::workflow::RuntimeSessionCreator;
+use crate::lifecycle::RuntimeSessionCreator;
 
 /// 持久化层端口 — 所有 Repository trait 对象的集合
 ///

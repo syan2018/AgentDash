@@ -22,7 +22,7 @@ use agentdash_application::session::{
     ExecutionStatus, SessionExecutionState, SessionForkRequest, SessionMeta,
     SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
 };
-use agentdash_application::workflow::lifecycle_run_view_builder;
+use agentdash_application::lifecycle::run_view_builder;
 use agentdash_contracts::session::{
     ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
     RejectToolCallResponse, RollbackSessionProjectionRequest, SessionEventResponse,
@@ -214,7 +214,7 @@ pub async fn get_session_runtime_control(
         }
         None => None,
     };
-    let run_view = lifecycle_run_view_builder::build_lifecycle_run_view(&state.repos, &run).await?;
+    let run_view = run_view_builder::build_lifecycle_run_view(&state.repos, &run).await?;
     let agent_view = run_view
         .agents
         .iter()

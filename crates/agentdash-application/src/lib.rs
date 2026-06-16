@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod agent_run;
 pub mod backend;
 pub mod backend_execution_placement;
 pub mod canvas;
@@ -10,6 +11,7 @@ pub mod extension_management;
 pub mod extension_package;
 pub mod extension_runtime;
 pub mod hooks;
+pub mod lifecycle;
 pub mod llm_provider;
 pub mod mcp_preset;
 pub mod mcp_relay_adapter;

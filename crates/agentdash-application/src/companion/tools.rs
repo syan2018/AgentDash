@@ -35,9 +35,10 @@ use super::{
 use crate::session::{
     AgentFrameRuntimeTarget, CompanionLaunchSource, LaunchCommand, UserPromptInput,
 };
+use crate::lifecycle::{
+    LifecycleDispatchService, resolve_current_frame_from_delivery_trace_ref,
+};
 use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
-use crate::workflow::dispatch_service::LifecycleDispatchService;
-use crate::workflow::resolve_current_frame_from_delivery_trace_ref;
 
 pub use agentdash_spi::CompanionSliceMode;
 

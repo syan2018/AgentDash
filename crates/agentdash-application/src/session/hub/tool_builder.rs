@@ -15,9 +15,9 @@ use super::SessionRuntimeInner;
 use crate::session::capability_state::project_capability_state_from_frame;
 use crate::session::tool_assembly::assemble_tools_for_execution_context;
 use crate::session::types::{AgentFrameRuntimeTarget, CapabilityState};
-use crate::workflow::AgentFrameBuilder;
-use crate::workflow::frame_surface::AgentFrameSurfaceExt;
-use crate::workflow::resolve_current_frame_from_delivery_trace_ref;
+use crate::agent_run::AgentFrameBuilder;
+use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
+use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 
 impl SessionRuntimeInner {
     /// 读取 delivery RuntimeSession 当前生效的 MCP server 列表。

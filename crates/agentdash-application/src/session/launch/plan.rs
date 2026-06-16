@@ -19,7 +19,7 @@ use crate::session::types::{
     HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
     SessionPromptLifecycle,
 };
-use crate::workflow::runtime_launch::FrameLaunchEnvelope;
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchFollowUpSource {
     Explicit,
@@ -326,8 +326,8 @@ mod tests {
     use crate::session::types::{
         RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, UserPromptInput,
     };
-    use crate::workflow::FrameSurfaceDraft;
-    use crate::workflow::runtime_launch::{
+    use crate::agent_run::FrameSurfaceDraft;
+    use crate::agent_run::frame::runtime_launch::{
         FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
         LaunchResolutionTrace,
     };

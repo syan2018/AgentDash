@@ -22,7 +22,7 @@ use crate::session::context::{
 };
 use crate::task::config::{resolve_task_executor_config, resolve_task_executor_source};
 use crate::vfs::{SessionMountTarget, VfsService};
-use crate::workflow::{
+use crate::lifecycle::{
     ActiveWorkflowProjection, project_active_workflow_lifecycle_vfs,
     resolve_active_workflow_projection_for_target,
 };

@@ -18,7 +18,6 @@ pub mod context;
 mod context_frame;
 mod context_projector;
 // context_query_use_case 已删除：所有 API 消费者已迁移至 frame-based read model
-pub mod agent_run_mailbox;
 pub mod continuation;
 pub mod control;
 pub mod core;
@@ -58,14 +57,8 @@ pub mod turn_processor;
 mod turn_supervisor;
 pub mod types;
 
-pub use crate::workflow::WorkflowApplicationError;
-pub use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
-pub use agent_run_mailbox::{
-    AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxCommandTarget,
-    AgentRunMailboxControlCommand, AgentRunMailboxControlTargetCommand,
-    AgentRunMailboxScheduleOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
-    AgentRunMailboxUserMessageCommand, AgentRunMailboxUserMessageTargetCommand,
-};
+pub use crate::lifecycle::WorkflowApplicationError;
+pub use crate::agent_run::frame::hook_runtime::AgentFrameHookRuntime;
 pub use assembler::{
     CompanionParentSpec, CompanionParentWorkflowSpec, CompanionSpec, CompanionWorkflowSpec,
     LifecycleNodeSpec, SessionRequestAssembler, compose_lifecycle_node_to_frame_with_audit,

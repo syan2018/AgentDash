@@ -1,4 +1,4 @@
-use agentdash_application::workflow::lifecycle_run_view_builder as app;
+use agentdash_application::lifecycle::run_view_builder as app;
 use agentdash_contracts::workflow as contract;
 
 pub(crate) fn lifecycle_run_view_to_contract(

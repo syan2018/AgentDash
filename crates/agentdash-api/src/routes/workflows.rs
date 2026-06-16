@@ -8,10 +8,10 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
+use agentdash_application::lifecycle::{LifecycleDispatchService, run_view_builder};
 use agentdash_application::workflow::{
-    ActivityLifecycleCatalogService, LifecycleDispatchService, OrchestrationExecutorLauncher,
-    ScriptCompiler, SubmitHumanGateDecisionInput, WorkflowScriptPreflightInput,
-    WorkflowScriptPreflightService, lifecycle_run_view_builder,
+    ActivityLifecycleCatalogService, OrchestrationExecutorLauncher, ScriptCompiler,
+    SubmitHumanGateDecisionInput, WorkflowScriptPreflightInput, WorkflowScriptPreflightService,
 };
 use agentdash_contracts::workflow::{
     AgentProcedureResponse, CapabilityCatalogResponse, DeleteAgentProcedureResponse,
@@ -518,7 +518,7 @@ pub async fn submit_orchestration_human_decision(
         })
         .await?;
     let view =
-        lifecycle_run_view_builder::build_lifecycle_run_view(&state.repos, &result.run).await?;
+        run_view_builder::build_lifecycle_run_view(&state.repos, &result.run).await?;
     Ok(Json(SubmitOrchestrationHumanDecisionResponse {
         run: lifecycle_run_view_to_contract(view),
         gate_id: result.gate_id.to_string(),
@@ -818,7 +818,7 @@ async fn lifecycle_run_to_contract_view(
     state: &Arc<AppState>,
     run: &LifecycleRun,
 ) -> Result<LifecycleRunView, ApiError> {
-    lifecycle_run_view_builder::build_lifecycle_run_view(&state.repos, run)
+    run_view_builder::build_lifecycle_run_view(&state.repos, run)
         .await
         .map(lifecycle_run_view_to_contract)
         .map_err(ApiError::from)

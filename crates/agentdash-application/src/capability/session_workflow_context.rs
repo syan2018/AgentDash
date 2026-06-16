@@ -247,7 +247,7 @@ pub fn tool_directives_from_active_workflow(
 }
 
 pub fn tool_directives_from_active_workflow_projection(
-    workflow: &crate::workflow::ActiveWorkflowProjection,
+    workflow: &crate::lifecycle::ActiveWorkflowProjection,
 ) -> Vec<ToolCapabilityDirective> {
     workflow
         .active_contract()

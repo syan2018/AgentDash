@@ -11,7 +11,8 @@ use crate::session::persistence::SessionRuntimeCommandStore;
 use crate::session::types::{
     AgentFrameRuntimeTarget, ExecutionStatus, ResolvedPromptPayload, SessionMeta, TitleSource,
 };
-use crate::workflow::{AgentFrameBuilder, resolve_current_frame_from_delivery_trace_ref};
+use crate::agent_run::AgentFrameBuilder;
+use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 
 /// Accepted-after-commit boundary: connector accepted 后的 user/start/context/runtime
 /// facts 已提交。Frame/bootstrap accepted 在本 stage 内作为独立副作用提交。

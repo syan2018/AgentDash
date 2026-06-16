@@ -12,7 +12,7 @@ use std::sync::Arc;
 use super::launch::LaunchCommand;
 use super::runtime_commands::RuntimeCommandRecord;
 use super::types::RuntimeTraceLaunchState;
-use crate::workflow::runtime_launch::FrameLaunchEnvelope;
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use agentdash_domain::workflow::{ActivityDefinition, AgentProcedure, LifecycleRun, WorkflowGraph};
 use agentdash_spi::ConnectorError;
 use async_trait::async_trait;

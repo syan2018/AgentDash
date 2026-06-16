@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
-use crate::workflow::{RuntimeSessionCreator, WorkflowApplicationError};
+use crate::lifecycle::{RuntimeSessionCreator, WorkflowApplicationError};
 
 use super::agent_node_launcher::{
     AgentNodeFrameComposer, AgentNodeLaunchOutcome, AgentNodeLauncher,
@@ -475,9 +475,8 @@ mod launcher_drain_tests {
 
     use crate::vfs::build_lifecycle_mount_with_node_scope;
     use crate::workflow::orchestration::runtime::activate_root_orchestration;
-    use crate::workflow::{
-        AgentFrameBuilder, RuntimeSessionCreationRequest, RuntimeSessionCreator,
-    };
+    use crate::agent_run::AgentFrameBuilder;
+    use crate::lifecycle::{RuntimeSessionCreationRequest, RuntimeSessionCreator};
 
     use super::*;
 

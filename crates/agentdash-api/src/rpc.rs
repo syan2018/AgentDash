@@ -173,25 +173,25 @@ impl From<agentdash_spi::ConnectorError> for ApiError {
     }
 }
 
-impl From<agentdash_application::workflow::WorkflowApplicationError> for ApiError {
-    fn from(err: agentdash_application::workflow::WorkflowApplicationError) -> Self {
+impl From<agentdash_application::lifecycle::WorkflowApplicationError> for ApiError {
+    fn from(err: agentdash_application::lifecycle::WorkflowApplicationError) -> Self {
         match err {
-            agentdash_application::workflow::WorkflowApplicationError::BadRequest(message) => {
+            agentdash_application::lifecycle::WorkflowApplicationError::BadRequest(message) => {
                 ApiError::BadRequest(message)
             }
-            agentdash_application::workflow::WorkflowApplicationError::ModelRequired(message) => {
+            agentdash_application::lifecycle::WorkflowApplicationError::ModelRequired(message) => {
                 ApiError::BadRequestWithCode {
                     message,
                     error_code: "model_required".to_string(),
                 }
             }
-            agentdash_application::workflow::WorkflowApplicationError::NotFound(message) => {
+            agentdash_application::lifecycle::WorkflowApplicationError::NotFound(message) => {
                 ApiError::NotFound(message)
             }
-            agentdash_application::workflow::WorkflowApplicationError::Conflict(message) => {
+            agentdash_application::lifecycle::WorkflowApplicationError::Conflict(message) => {
                 ApiError::Conflict(message)
             }
-            agentdash_application::workflow::WorkflowApplicationError::Internal(message) => {
+            agentdash_application::lifecycle::WorkflowApplicationError::Internal(message) => {
                 ApiError::Internal(message)
             }
         }

@@ -11,7 +11,7 @@ use super::plan::{
     SessionRuntimePolicySummary, SessionToolVisibilitySummary, summarize_runtime_policy,
 };
 use crate::runtime::{AgentConfig, McpServerSummary, Vfs};
-use crate::workflow::ActiveWorkflowProjection;
+use crate::lifecycle::ActiveWorkflowProjection;
 
 /// 统一的 session bootstrap 计划。
 ///

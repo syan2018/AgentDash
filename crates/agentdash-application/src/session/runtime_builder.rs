@@ -168,13 +168,13 @@ impl SessionRuntimeBuilder {
         lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
         command_receipt_repo: Arc<dyn agentdash_domain::workflow::AgentRunCommandReceiptRepository>,
         mailbox_repo: Arc<dyn agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         self.inner = self.inner.with_agent_run_mailbox_boundary(
             lifecycle_run_repo,
             command_receipt_repo,
             mailbox_repo,
-        );
-        self
+        )?;
+        Ok(self)
     }
 
     pub async fn set_terminal_callback(

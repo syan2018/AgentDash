@@ -20,7 +20,7 @@ use crate::session::types::{
     RuntimeTraceLaunchState, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
     resolve_session_prompt_lifecycle,
 };
-use crate::workflow::runtime_launch::FrameLaunchEnvelope;
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 
 pub(in crate::session) struct LaunchPlanner<'a> {
     deps: LaunchPlanningDeps,

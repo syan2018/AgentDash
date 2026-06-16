@@ -6,7 +6,8 @@ use agentdash_application::vfs::{
     build_project_agent_knowledge_vfs, build_project_skill_asset_management_mount,
     build_project_vfs_mount_mount,
 };
-use agentdash_application::workflow::{AgentFrameSurfaceExt, build_agent_run_lifecycle_vfs};
+use agentdash_application::agent_run::AgentFrameSurfaceExt;
+use agentdash_application::lifecycle::build_agent_run_lifecycle_vfs;
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use agentdash_spi::Vfs;
 

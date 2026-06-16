@@ -21,7 +21,7 @@ use agentdash_domain::workflow::{
 };
 
 use crate::session::SessionRuntimeService;
-use crate::workflow::SubjectExecutionControlService;
+use crate::lifecycle::SubjectExecutionControlService;
 
 /// 业务终态取消协调器 — 在 Task/Story 状态变更路径上被调用。
 ///
@@ -163,7 +163,7 @@ impl TerminalCancelCoordinator {
     async fn resolve_task_runtime_cancel_delivery(
         &self,
         task_id: Uuid,
-    ) -> Option<crate::workflow::RuntimeCancelDeliveryCommand> {
+    ) -> Option<crate::lifecycle::RuntimeCancelDeliveryCommand> {
         let subject = SubjectRef::new("task", task_id);
         let service = SubjectExecutionControlService::new(
             self.lifecycle_run_repo.as_ref(),

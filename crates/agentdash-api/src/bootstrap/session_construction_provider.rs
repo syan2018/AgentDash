@@ -11,10 +11,10 @@ use async_trait::async_trait;
 use agentdash_application::session::{
     SessionConstructionProvider, SessionConstructionProviderInput,
 };
-use agentdash_application::workflow::frame_construction::{
+use agentdash_application::agent_run::frame::construction::{
     FrameConstructionDeps, FrameConstructionService,
 };
-use agentdash_application::workflow::runtime_launch::FrameLaunchEnvelope;
+use agentdash_application::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;

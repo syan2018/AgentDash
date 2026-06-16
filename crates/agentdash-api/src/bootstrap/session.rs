@@ -166,6 +166,7 @@ pub(crate) async fn build_session_runtime(
         repos.agent_run_command_receipt_repo.clone(),
         repos.agent_run_mailbox_repo.clone(),
     )
+    .map_err(anyhow::Error::msg)?
     .with_lifecycle_gate_repo(repos.lifecycle_gate_repo.clone())
     .with_settings_repository(repos.settings_repo.clone());
     if let Some(base_sp) = base_system_prompt {
@@ -184,7 +185,7 @@ pub(crate) async fn build_session_runtime(
     let session_title = session_runtime_builder.title_service();
 
     let orchestrator = Arc::new(
-        agentdash_application::workflow::LifecycleOrchestrator::new_with_platform_config(
+        agentdash_application::lifecycle::LifecycleOrchestrator::new_with_platform_config(
             repos.clone(),
             platform_config.clone(),
         )

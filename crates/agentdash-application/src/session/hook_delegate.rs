@@ -1017,7 +1017,7 @@ mod tests {
 
     use super::{HookRuntimeDelegate, RuntimeHookInjectionSink, RuntimeInjectionSource};
     use crate::context::{AuditFilter, InMemoryContextAuditBus, SharedContextAuditBus};
-    use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
+    use crate::agent_run::frame::hook_runtime::AgentFrameHookRuntime;
     use agentdash_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
         AgentFrameHookSnapshotQuery, ContextTokenStats, ExecutionHookProvider,

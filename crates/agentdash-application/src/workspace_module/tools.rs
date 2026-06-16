@@ -1150,8 +1150,8 @@ mod tests {
         WorkspaceModuleRuntimeToolProvider,
     };
     use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
-    use crate::workflow::frame_builder::AgentFrameBuilder;
-    use crate::workflow::frame_surface::FrameSurfaceDraft;
+    use crate::agent_run::frame::builder::AgentFrameBuilder;
+    use crate::agent_run::frame::surface::FrameSurfaceDraft;
 
     fn manifest(extension_id: &str) -> ExtensionTemplatePayload {
         ExtensionTemplatePayload {

@@ -16,10 +16,6 @@ use agentdash_agent_protocol::{
     PlatformEvent, SourceInfo, TraceInfo, UserInputSubmissionKind,
 };
 use agentdash_domain::DomainError;
-use agentdash_domain::backend::{
-    BackendExecutionLease, BackendExecutionLeaseRepository, BackendExecutionSelectionMode,
-    BackendExecutionTerminalKind,
-};
 use agentdash_domain::workflow::{
     AgentFrame, AgentSource, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
     LifecycleRunRepository, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
@@ -39,8 +35,7 @@ use agentdash_spi::{
 };
 use futures::stream;
 use serde_json::json;
-use tokio::sync::{Mutex as TokioMutex, mpsc};
-use tokio_stream::wrappers::ReceiverStream;
+use tokio::sync::Mutex as TokioMutex;
 
 use super::super::MemorySessionPersistence;
 use super::super::construction::{ConstructionResolutionPlan, RuntimeContextInspectionPlan};
@@ -48,13 +43,11 @@ use super::super::construction_provider::SessionConstructionProviderInput;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
     TurnExecution, TurnState, build_user_input_submitted_envelope,
-    parse_turn_terminal_event_from_envelope,
 };
 use super::super::local_workspace_vfs;
 use super::super::types::{
     BackendSelectionInput, BackendSelectionInputMode, EFFECT_TYPE_APPLY_VFS_OVERLAY,
-    PendingCapabilityStateTransition, RuntimeCapabilityTransition, SessionExecutionState,
-    UserPromptInput,
+    PendingCapabilityStateTransition, RuntimeCapabilityTransition, UserPromptInput,
 };
 use super::super::{AgentFrameTransitionRecord, RuntimeCommandStatus, RuntimeDeliveryCommand};
 use super::{
@@ -77,11 +70,6 @@ use crate::vfs::{
 };
 use crate::workflow::AgentRunSteeringService;
 use crate::workflow::frame_surface::FrameSurfaceDraft;
-use agentdash_application_ports::backend_transport::{
-    BackendTransport, DirectoryBrowseInfo, GitRepoInfo, RelayPromptRequest, RelayPromptTransport,
-    RelaySessionRoute, RelaySessionRouteInfo, RelaySteerRequest, RemoteExecutorInfo,
-    TransportError, WorkspaceProbeInfo,
-};
 use agentdash_application_ports::mcp_discovery::{
     DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryRequest,
 };
@@ -604,59 +592,6 @@ impl McpToolDiscovery for StaticMcpToolDiscovery {
 }
 
 #[tokio::test]
-async fn start_prompt_records_current_turn_state() {
-    let base = tempfile::tempdir().expect("tempdir");
-    let workspace = tempfile::tempdir().expect("workspace");
-    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
-    let session = hub.create_session("active-state").await.expect("create");
-    let runtime_mcp_server = agentdash_spi::RuntimeMcpServer {
-        name: "relay_tools".to_string(),
-        transport: agentdash_spi::McpTransportConfig::Http {
-            url: "http://127.0.0.1:19090/mcp".to_string(),
-            headers: vec![],
-        },
-        uses_relay: true,
-    };
-    let flow_caps =
-        agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Workflow]);
-
-    let mut req = simple_prompt_request("hello");
-    let vfs = local_workspace_vfs(workspace.path());
-    req.surface.vfs = Some(vfs.clone());
-    let mut launch_caps = flow_caps.clone();
-    launch_caps.vfs.active = Some(vfs.clone());
-    launch_caps.tool.mcp_servers = vec![runtime_mcp_server.clone()];
-    req.projections.frame_surface_draft = Some(FrameSurfaceDraft {
-        capability_state: Some(launch_caps),
-        vfs: Some(vfs),
-        mcp_servers: vec![runtime_mcp_server.clone()],
-        context_bundle_summary: None,
-        execution_profile: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
-    });
-
-    hub.start_prompt(&session.id, req)
-        .await
-        .expect("prompt should start");
-
-    let turn = hub
-        .runtime_registry
-        .with_runtime(&session.id, |runtime| {
-            runtime.and_then(|runtime| runtime.turn_state.active_turn().cloned())
-        })
-        .await
-        .expect("current turn execution state");
-    assert_eq!(turn.session_frame.mcp_servers.len(), 1);
-    assert_eq!(turn.session_frame.mcp_servers[0].name, "relay_tools");
-    assert!(turn.session_frame.mcp_servers[0].uses_relay);
-    assert_eq!(turn.session_frame.working_directory, workspace.path());
-    assert_eq!(turn.session_frame.executor_config.executor, "PI_AGENT");
-    assert_eq!(
-        turn.capability_state.tool.enabled_clusters,
-        flow_caps.tool.enabled_clusters
-    );
-}
-
-#[tokio::test]
 async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
     let base = tempfile::tempdir().expect("tempdir");
     let workflow_server = agentdash_spi::RuntimeMcpServer {
@@ -1109,8 +1044,6 @@ struct CapturedPromptSurface {
     tool_clusters: std::collections::BTreeSet<agentdash_spi::ToolCluster>,
     mount_ids: Vec<String>,
     default_mount_id: Option<String>,
-    backend_execution_backend_id: Option<String>,
-    backend_execution_lease_id: Option<uuid::Uuid>,
 }
 
 #[async_trait::async_trait]
@@ -1155,16 +1088,6 @@ impl AgentConnector for CapturingConnector {
                 .map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect())
                 .unwrap_or_default(),
             default_mount_id: vfs.and_then(|vfs| vfs.default_mount_id),
-            backend_execution_backend_id: context
-                .session
-                .backend_execution
-                .as_ref()
-                .map(|placement| placement.backend_id.clone()),
-            backend_execution_lease_id: context
-                .session
-                .backend_execution
-                .as_ref()
-                .map(|placement| placement.lease_id),
         });
         Ok(Box::pin(stream::empty()))
     }
@@ -1185,173 +1108,6 @@ impl AgentConnector for CapturingConnector {
         _reason: Option<String>,
     ) -> Result<(), ConnectorError> {
         Ok(())
-    }
-}
-
-#[derive(Default)]
-struct PlacementTransport {
-    executors: Vec<RemoteExecutorInfo>,
-}
-
-#[async_trait::async_trait]
-impl BackendTransport for PlacementTransport {
-    async fn is_online(&self, backend_id: &str) -> bool {
-        self.executors
-            .iter()
-            .any(|executor| executor.backend_id == backend_id)
-    }
-
-    async fn list_online_backend_ids(&self) -> Vec<String> {
-        self.executors
-            .iter()
-            .map(|executor| executor.backend_id.clone())
-            .collect()
-    }
-
-    async fn detect_workspace(
-        &self,
-        _backend_id: &str,
-        _root: &str,
-    ) -> Result<WorkspaceProbeInfo, TransportError> {
-        Ok(WorkspaceProbeInfo::default())
-    }
-
-    async fn detect_git_repo(
-        &self,
-        _backend_id: &str,
-        _root: &str,
-    ) -> Result<GitRepoInfo, TransportError> {
-        Ok(GitRepoInfo::default())
-    }
-
-    async fn browse_directory(
-        &self,
-        _backend_id: &str,
-        _path: Option<&str>,
-    ) -> Result<DirectoryBrowseInfo, TransportError> {
-        Ok(DirectoryBrowseInfo::default())
-    }
-}
-
-#[async_trait::async_trait]
-impl RelayPromptTransport for PlacementTransport {
-    async fn relay_prompt(
-        &self,
-        _backend_id: &str,
-        _payload: RelayPromptRequest,
-    ) -> Result<String, TransportError> {
-        Ok("turn".to_string())
-    }
-
-    async fn relay_cancel(
-        &self,
-        _backend_id: &str,
-        _session_id: &str,
-    ) -> Result<(), TransportError> {
-        Ok(())
-    }
-
-    async fn relay_steer(
-        &self,
-        _backend_id: &str,
-        _payload: RelaySteerRequest,
-    ) -> Result<(), TransportError> {
-        Ok(())
-    }
-
-    fn list_online_executors(&self) -> Vec<RemoteExecutorInfo> {
-        self.executors.clone()
-    }
-
-    async fn resolve_backend(
-        &self,
-        _executor_id: &str,
-        _preferred_backend_id: Option<&str>,
-    ) -> Result<String, TransportError> {
-        Ok(self
-            .executors
-            .first()
-            .map(|executor| executor.backend_id.clone())
-            .unwrap_or_default())
-    }
-
-    fn register_session_sink(&self, _route: RelaySessionRoute) {}
-
-    fn unregister_session_sink(&self, _session_id: &str) {}
-
-    fn has_session_sink(&self, _session_id: &str) -> bool {
-        false
-    }
-
-    fn session_route(&self, _session_id: &str) -> Option<RelaySessionRouteInfo> {
-        None
-    }
-}
-
-#[derive(Default)]
-struct PlacementLeaseRepository {
-    claims: std::sync::Mutex<Vec<BackendExecutionLease>>,
-}
-
-#[async_trait::async_trait]
-impl BackendExecutionLeaseRepository for PlacementLeaseRepository {
-    async fn claim(&self, lease: &BackendExecutionLease) -> Result<(), DomainError> {
-        self.claims.lock().unwrap().push(lease.clone());
-        Ok(())
-    }
-
-    async fn activate(
-        &self,
-        _lease_id: uuid::Uuid,
-        _activated_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), DomainError> {
-        Ok(())
-    }
-
-    async fn release(
-        &self,
-        _lease_id: uuid::Uuid,
-        _terminal_kind: Option<BackendExecutionTerminalKind>,
-        _reason: Option<String>,
-        _released_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), DomainError> {
-        Ok(())
-    }
-
-    async fn fail(
-        &self,
-        _lease_id: uuid::Uuid,
-        _reason: Option<String>,
-        _failed_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), DomainError> {
-        Ok(())
-    }
-
-    async fn mark_lost_by_backend(
-        &self,
-        _backend_id: &str,
-        _reason: Option<String>,
-        _lost_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<u64, DomainError> {
-        Ok(0)
-    }
-
-    async fn get_by_id(
-        &self,
-        _lease_id: uuid::Uuid,
-    ) -> Result<Option<BackendExecutionLease>, DomainError> {
-        Ok(None)
-    }
-
-    async fn list_active(&self) -> Result<Vec<BackendExecutionLease>, DomainError> {
-        Ok(Vec::new())
-    }
-
-    async fn count_active_by_backend(
-        &self,
-        backend_ids: &[String],
-    ) -> Result<HashMap<String, i64>, DomainError> {
-        Ok(backend_ids.iter().map(|id| (id.clone(), 0)).collect())
     }
 }
 
@@ -1467,101 +1223,6 @@ fn canvas_skill_entry() -> agentdash_spi::context::capability::SkillEntry {
         exposure: agentdash_spi::SkillContextExposure::DefaultExposed,
         disable_model_invocation: false,
     }
-}
-
-#[tokio::test]
-async fn replace_current_capability_state_updates_active_turn_capability_state() {
-    let base = tempfile::tempdir().expect("tempdir");
-    let workspace = tempfile::tempdir().expect("workspace");
-    let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None);
-    let session = hub
-        .create_session("capability-surface")
-        .await
-        .expect("create");
-    let frame = attach_test_frame(&hub, &session.id).await;
-
-    let initial_flow =
-        agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Read]);
-    let mut req = simple_prompt_request("hello");
-    let vfs = local_workspace_vfs(workspace.path());
-    req.surface.vfs = Some(vfs.clone());
-    let mut launch_flow = initial_flow;
-    launch_flow.vfs.active = Some(vfs.clone());
-    req.projections.frame_surface_draft = Some(FrameSurfaceDraft {
-        capability_state: Some(launch_flow),
-        vfs: Some(vfs),
-        mcp_servers: Vec::new(),
-        context_bundle_summary: None,
-        execution_profile: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
-    });
-
-    hub.start_prompt(&session.id, req)
-        .await
-        .expect("prompt should start");
-
-    let mut target_flow =
-        agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Write]);
-    target_flow
-        .tool
-        .tool_policy
-        .entry("file_write".to_string())
-        .or_default()
-        .exclude
-        .insert("fs_apply_patch".to_string());
-    let target_mcp = agentdash_spi::RuntimeMcpServer {
-        name: "phase_tools".to_string(),
-        transport: agentdash_spi::McpTransportConfig::Http {
-            url: "http://127.0.0.1:19091/mcp".to_string(),
-            headers: vec![],
-        },
-        uses_relay: false,
-    };
-    let target_vfs = agentdash_spi::Vfs {
-        mounts: vec![agentdash_domain::common::Mount {
-            id: "phase".to_string(),
-            provider: "inline_fs".to_string(),
-            backend_id: "test-backend".to_string(),
-            root_ref: "phase-root".to_string(),
-            capabilities: vec![agentdash_domain::common::MountCapability::Read],
-            default_write: false,
-            display_name: "Phase Mount".to_string(),
-            metadata: serde_json::json!({ "phase": true }),
-        }],
-        default_mount_id: Some("phase".to_string()),
-        source_project_id: None,
-        source_story_id: None,
-        links: Vec::new(),
-    };
-
-    let mut target_state = target_flow.clone();
-    target_state.tool.mcp_servers = vec![target_mcp.clone()];
-    target_state.vfs.active = Some(target_vfs.clone());
-
-    hub.replace_current_capability_state(
-        AgentFrameRuntimeTarget {
-            frame_id: frame.id,
-            delivery_runtime_session_id: session.id.clone(),
-        },
-        target_state.clone(),
-    )
-    .await
-    .expect("replace capability state");
-
-    let (turn, profile) = hub
-        .runtime_registry
-        .with_runtime(&session.id, |runtime| {
-            let runtime = runtime?;
-            Some((
-                runtime.turn_state.active_turn().cloned()?,
-                runtime.session_profile.clone()?,
-            ))
-        })
-        .await
-        .expect("current turn execution state");
-    assert_eq!(turn.capability_state, target_state);
-    assert_eq!(turn.session_frame.mcp_servers, vec![target_mcp]);
-    assert_eq!(turn.session_frame.vfs, Some(target_vfs));
-    assert_eq!(profile.capability_state, turn.capability_state);
 }
 
 #[tokio::test]
@@ -1980,54 +1641,6 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
                         == Some("applied_on_next_turn")
         )
     }));
-}
-
-#[tokio::test]
-async fn relay_backend_execution_placement_is_claimed_during_launch() {
-    let base = tempfile::tempdir().expect("tempdir");
-    let captures = Arc::new(TokioMutex::new(Vec::new()));
-    let placement_transport = Arc::new(PlacementTransport {
-        executors: vec![RemoteExecutorInfo {
-            backend_id: "local".to_string(),
-            executor_id: "PI_AGENT".to_string(),
-            executor_name: "Pi".to_string(),
-            variants: Vec::new(),
-            available: true,
-        }],
-    });
-    let lease_repo = Arc::new(PlacementLeaseRepository::default());
-    let hub = test_hub(
-        base.path().to_path_buf(),
-        Arc::new(CapturingConnector {
-            captures: captures.clone(),
-        }),
-        None,
-    )
-    .with_backend_execution_placement(placement_transport, lease_repo.clone());
-    let session = hub
-        .create_session("launch-backend-placement")
-        .await
-        .expect("create");
-
-    hub.start_prompt(&session.id, simple_prompt_request("hello"))
-        .await
-        .expect("prompt should start");
-
-    let claims = lease_repo.claims.lock().unwrap();
-    assert_eq!(claims.len(), 1);
-    assert_eq!(claims[0].backend_id, "local");
-    assert_eq!(claims[0].executor_id, "PI_AGENT");
-    assert_eq!(
-        claims[0].selection_mode,
-        BackendExecutionSelectionMode::WorkspaceBinding
-    );
-    let captured = captures.lock().await;
-    let surface = captured.first().expect("connector should be called");
-    assert_eq!(
-        surface.backend_execution_backend_id.as_deref(),
-        Some("local")
-    );
-    assert_eq!(surface.backend_execution_lease_id, Some(claims[0].id));
 }
 
 #[derive(Default)]
@@ -3560,204 +3173,6 @@ async fn compaction_projection_context_token_estimate_includes_suffix_messages()
 }
 
 #[tokio::test]
-async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
-    struct FailingConnector;
-
-    #[async_trait::async_trait]
-    impl AgentConnector for FailingConnector {
-        fn connector_id(&self) -> &'static str {
-            "failing"
-        }
-        fn connector_type(&self) -> agentdash_spi::ConnectorType {
-            agentdash_spi::ConnectorType::LocalExecutor
-        }
-        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
-            agentdash_spi::ConnectorCapabilities::default()
-        }
-        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
-            Vec::new()
-        }
-        async fn discover_options_stream(
-            &self,
-            _: &str,
-            _: Option<PathBuf>,
-        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
-        {
-            Ok(Box::pin(stream::empty()))
-        }
-        async fn prompt(
-            &self,
-            _: &str,
-            _: Option<&str>,
-            _: &PromptPayload,
-            _: agentdash_spi::ExecutionContext,
-        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-            Err(ConnectorError::Runtime(
-                "connector setup failed".to_string(),
-            ))
-        }
-        async fn cancel(&self, _: &str) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn approve_tool_call(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn reject_tool_call(
-            &self,
-            _: &str,
-            _: &str,
-            _: Option<String>,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-    }
-
-    let base = tempfile::tempdir().expect("tempdir");
-    let hub = test_hub(base.path().to_path_buf(), Arc::new(FailingConnector), None);
-    let session = hub.create_session("test").await.expect("create session");
-
-    let error = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        hub.start_prompt(&session.id, simple_prompt_request("hello")),
-    )
-    .await
-    .expect("prompt should not hang")
-    .expect_err("prompt should fail");
-    assert!(error.to_string().contains("connector setup failed"));
-
-    let history = hub
-        .persistence
-        .list_all_events(&session.id)
-        .await
-        .expect("history should load");
-    assert!(
-        !history
-            .iter()
-            .any(|event| matches!(event.notification.event, BackboneEvent::TurnStarted(_))),
-        "connector 未接受前不应提交 turn_started"
-    );
-    assert!(
-        !history.iter().any(|event| {
-            matches!(
-                &event.notification.event,
-                BackboneEvent::UserInputSubmitted(_)
-            )
-        }),
-        "connector 未接受前不应提交 user message"
-    );
-    let terminal = history
-        .iter()
-        .filter_map(|event| parse_turn_terminal_event_from_envelope(&event.notification))
-        .last()
-        .expect("terminal event should exist");
-    assert_eq!(
-        terminal.1,
-        super::super::hub_support::TurnTerminalKind::Failed
-    );
-    assert_eq!(
-        terminal.2.as_deref(),
-        Some("执行器运行错误: connector setup failed")
-    );
-
-    let is_running = hub
-        .runtime_registry
-        .with_runtime(&session.id, |runtime| {
-            runtime.is_some_and(|runtime| runtime.turn_state.is_running())
-        })
-        .await;
-    assert!(!is_running, "connector 初始化失败后不应留下 running turn");
-}
-
-#[tokio::test]
-async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands() {
-    struct FailingConnector;
-
-    #[async_trait::async_trait]
-    impl AgentConnector for FailingConnector {
-        fn connector_id(&self) -> &'static str {
-            "failing"
-        }
-        fn connector_type(&self) -> agentdash_spi::ConnectorType {
-            agentdash_spi::ConnectorType::LocalExecutor
-        }
-        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
-            agentdash_spi::ConnectorCapabilities::default()
-        }
-        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
-            Vec::new()
-        }
-        async fn discover_options_stream(
-            &self,
-            _: &str,
-            _: Option<PathBuf>,
-        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
-        {
-            Ok(Box::pin(stream::empty()))
-        }
-        async fn prompt(
-            &self,
-            _: &str,
-            _: Option<&str>,
-            _: &PromptPayload,
-            _: agentdash_spi::ExecutionContext,
-        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-            Err(ConnectorError::Runtime(
-                "connector setup failed".to_string(),
-            ))
-        }
-        async fn cancel(&self, _: &str) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn approve_tool_call(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn reject_tool_call(
-            &self,
-            _: &str,
-            _: &str,
-            _: Option<String>,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-    }
-
-    let base = tempfile::tempdir().expect("tempdir");
-    let hub = test_hub(base.path().to_path_buf(), Arc::new(FailingConnector), None);
-    let session = hub.create_session("test").await.expect("create session");
-    let frame_transition = AgentFrameTransitionRecord::from_pending(
-        uuid::Uuid::new_v4(),
-        PendingCapabilityStateTransition {
-            id: "transition-fail".to_string(),
-            run_id: uuid::Uuid::new_v4(),
-            lifecycle_key: "dev".to_string(),
-            phase_node: "review".to_string(),
-            capability_keys: std::collections::BTreeSet::new(),
-            transition: RuntimeCapabilityTransition::default(),
-            created_at: 1,
-            source_turn_id: None,
-        },
-    );
-    let delivery = RuntimeDeliveryCommand::pending_runtime_context(&frame_transition);
-    hub.enqueue_runtime_delivery_command(&session.id, delivery, frame_transition)
-        .await
-        .expect("enqueue pending transition");
-
-    let error = hub
-        .start_prompt(&session.id, owner_bootstrap_request("hello", "ctx"))
-        .await
-        .expect_err("prompt should fail");
-    assert!(error.to_string().contains("connector setup failed"));
-
-    let requested_commands = hub
-        .persistence
-        .list_runtime_commands_by_status(&[RuntimeCommandStatus::Requested], 10)
-        .await
-        .expect("runtime commands should load");
-    assert_eq!(requested_commands.len(), 1);
-    assert_eq!(requested_commands[0].frame_transition_id, "transition-fail");
-}
-
-#[tokio::test]
 async fn connector_setup_failure_leaves_current_frame_unchanged() {
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(
@@ -3885,152 +3300,6 @@ async fn accepted_turn_commits_hook_runtime_target_to_new_frame() {
         launch_frame.id,
         "accepted frame 推进后 hook runtime target 应同步到新 frame"
     );
-}
-
-#[tokio::test]
-async fn launch_hook_runtime_accepts_pending_agent_frame_target() {
-    use crate::session::SessionConstructionProvider;
-    use crate::workflow::runtime_launch::FrameLaunchEnvelope;
-    use crate::workflow::{
-        AgentFrameBuilder, frame_construction::build_envelope_from_frame,
-        resolve_current_frame_from_delivery_trace_ref,
-    };
-
-    struct PendingFrameConstructionProvider {
-        hub: SessionRuntimeInner,
-    }
-
-    #[async_trait::async_trait]
-    impl SessionConstructionProvider for PendingFrameConstructionProvider {
-        async fn build_frame_construction(
-            &self,
-            input: SessionConstructionProviderInput,
-        ) -> Result<FrameLaunchEnvelope, ConnectorError> {
-            let (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) = (
-                self.hub.execution_anchor_repo.as_ref(),
-                self.hub.lifecycle_agent_repo.as_ref(),
-                self.hub.agent_frame_repo.as_ref(),
-            ) else {
-                return Err(ConnectorError::Runtime(
-                    "test hub missing frame construction repositories".to_string(),
-                ));
-            };
-            let (_anchor, _agent, current_frame) = resolve_current_frame_from_delivery_trace_ref(
-                &input.session_id,
-                anchor_repo.as_ref(),
-                agent_repo.as_ref(),
-                frame_repo.as_ref(),
-            )
-            .await
-            .map_err(|error| ConnectorError::Runtime(error.to_string()))?
-            .expect("test runtime session should resolve current frame");
-            let surface = FrameSurfaceDraft::from_frame(&current_frame);
-            let pending_frame = AgentFrameBuilder::new(current_frame.agent_id)
-                .with_surface_draft(&surface)
-                .with_created_by("test_pending_launch", Some(input.session_id.clone()))
-                .build_uncommitted(frame_repo.as_ref())
-                .await
-                .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
-            let mut envelope = build_envelope_from_frame(
-                &pending_frame,
-                None,
-                &input.command,
-                None,
-                &input.session_id,
-                &input.requested_runtime_commands,
-            )?;
-            envelope.pending_frame = Some(pending_frame);
-            Ok(envelope)
-        }
-    }
-
-    let base = tempfile::tempdir().expect("tempdir");
-    let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
-    let hook_provider = Arc::new(SnapshotRecordingHookProvider {
-        frame_snapshot_queries: frame_snapshot_queries.clone(),
-    });
-    let hub = test_hub(
-        base.path().to_path_buf(),
-        Arc::new(EmptyConnector),
-        Some(hook_provider),
-    )
-    .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
-    let session = hub
-        .create_session("pending-frame-hook-target")
-        .await
-        .expect("create session");
-    let seed = simple_prompt_request("seed");
-    let seed_surface = seed
-        .projections
-        .frame_surface_draft
-        .as_ref()
-        .expect("seed construction should carry frame surface");
-    let frame_repo = hub
-        .agent_frame_repo
-        .as_ref()
-        .expect("test hub should provide AgentFrameRepository");
-    let agent_id = uuid::Uuid::new_v4();
-    let launch_frame = AgentFrameBuilder::new(agent_id)
-        .with_surface_draft(seed_surface)
-        .with_created_by("test_launch_frame", Some(session.id.clone()))
-        .build(frame_repo.as_ref())
-        .await
-        .expect("launch frame should persist");
-    let run_id = uuid::Uuid::new_v4();
-    hub.execution_anchor_repo
-        .as_ref()
-        .expect("test hub should provide anchor repo")
-        .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
-            &session.id,
-            run_id,
-            launch_frame.id,
-            agent_id,
-        ))
-        .await
-        .expect("anchor should persist");
-    let mut agent = LifecycleAgent::new_root(run_id, uuid::Uuid::new_v4(), AgentSource::Unknown)
-        .with_bootstrap_status("not_applicable");
-    agent.id = agent_id;
-    agent.set_current_frame(launch_frame.id);
-    hub.lifecycle_agent_repo
-        .as_ref()
-        .expect("test hub should provide lifecycle agent repo")
-        .create(&agent)
-        .await
-        .expect("agent should persist");
-    hub.set_session_construction_provider(Arc::new(PendingFrameConstructionProvider {
-        hub: hub.clone(),
-    }))
-    .await;
-
-    hub.launch_service()
-        .launch_command(
-            &session.id,
-            super::super::launch::LaunchCommand::http_prompt_input(
-                UserPromptInput::from_text("hello"),
-                None,
-            ),
-        )
-        .await
-        .expect("pending frame hook runtime should not block launch");
-
-    let frame_queries = frame_snapshot_queries.lock().await;
-    assert_eq!(frame_queries.len(), 2);
-    let pending_frame_id = frame_queries[0].target.frame_id;
-    assert_ne!(pending_frame_id, launch_frame.id);
-    assert_eq!(frame_queries[1].target.frame_id, pending_frame_id);
-    drop(frame_queries);
-
-    let current_id = current_frame_id(&hub, agent_id)
-        .await
-        .expect("current frame should exist after accepted launch");
-    assert_eq!(current_id, pending_frame_id);
-    let persisted_pending = frame_repo
-        .get(pending_frame_id)
-        .await
-        .expect("frame lookup should succeed")
-        .expect("accepted pending frame should persist");
-    assert_eq!(persisted_pending.agent_id, agent_id);
 }
 
 #[tokio::test]
@@ -4239,110 +3508,6 @@ async fn start_prompt_releases_claim_when_session_meta_is_missing() {
         })
         .await;
     assert!(!is_running, "missing session claim should be released");
-}
-
-#[tokio::test]
-async fn cancel_marks_running_turn_interrupted() {
-    #[derive(Default)]
-    struct CancelAwareConnector {
-        streams: Arc<
-            TokioMutex<HashMap<String, mpsc::Sender<Result<BackboneEnvelope, ConnectorError>>>>,
-        >,
-    }
-
-    #[async_trait::async_trait]
-    impl AgentConnector for CancelAwareConnector {
-        fn connector_id(&self) -> &'static str {
-            "cancel-aware"
-        }
-        fn connector_type(&self) -> agentdash_spi::ConnectorType {
-            agentdash_spi::ConnectorType::LocalExecutor
-        }
-        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
-            agentdash_spi::ConnectorCapabilities::default()
-        }
-        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
-            Vec::new()
-        }
-        async fn discover_options_stream(
-            &self,
-            _: &str,
-            _: Option<PathBuf>,
-        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
-        {
-            Ok(Box::pin(stream::empty()))
-        }
-        async fn prompt(
-            &self,
-            session_id: &str,
-            _: Option<&str>,
-            _: &PromptPayload,
-            _: agentdash_spi::ExecutionContext,
-        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-            let (tx, rx) = mpsc::channel(4);
-            self.streams.lock().await.insert(session_id.to_string(), tx);
-            Ok(Box::pin(ReceiverStream::new(rx)))
-        }
-        async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
-            self.streams.lock().await.remove(session_id);
-            Ok(())
-        }
-        async fn approve_tool_call(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn reject_tool_call(
-            &self,
-            _: &str,
-            _: &str,
-            _: Option<String>,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-    }
-
-    let base = tempfile::tempdir().expect("tempdir");
-    let connector = Arc::new(CancelAwareConnector::default());
-    let hub = test_hub(base.path().to_path_buf(), connector, None);
-    let session = hub.create_session("test").await.expect("create session");
-
-    let turn_id = hub
-        .start_prompt(&session.id, simple_prompt_request("hello"))
-        .await
-        .expect("prompt should start");
-    hub.runtime_service()
-        .cancel(&session.id)
-        .await
-        .expect("cancel should succeed");
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-    let state = hub
-        .inspect_session_execution_state(&session.id)
-        .await
-        .expect("state should load");
-    assert_eq!(
-        state,
-        SessionExecutionState::Interrupted {
-            turn_id: Some(turn_id.clone()),
-            message: Some("执行已取消".to_string())
-        }
-    );
-
-    let history = hub
-        .persistence
-        .list_all_events(&session.id)
-        .await
-        .expect("history should load");
-    let terminal = history
-        .iter()
-        .filter_map(|event| parse_turn_terminal_event_from_envelope(&event.notification))
-        .last()
-        .expect("terminal event should exist");
-    assert_eq!(terminal.0, turn_id);
-    assert_eq!(
-        terminal.1,
-        super::super::hub_support::TurnTerminalKind::Interrupted
-    );
-    assert_eq!(terminal.2.as_deref(), Some("执行已取消"));
 }
 
 // ─────────────────────────────────────────────────────────────────────

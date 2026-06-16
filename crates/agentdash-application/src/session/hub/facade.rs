@@ -13,7 +13,7 @@ use super::super::construction::RuntimeContextInspectionPlan;
 #[cfg(test)]
 use super::super::launch::{SessionLaunchDeps, SessionLaunchOrchestrator};
 #[cfg(test)]
-use super::super::types::{SessionExecutionState, SessionMeta};
+use super::super::types::SessionMeta;
 use super::super::{AgentFrameTransitionRecord, RuntimeDeliveryCommand};
 use super::SessionRuntimeInner;
 #[cfg(test)]
@@ -31,17 +31,6 @@ impl SessionRuntimeInner {
     #[cfg(test)]
     pub async fn create_session(&self, title: &str) -> SessionStoreResult<SessionMeta> {
         self.core_service().create_session(title).await
-    }
-
-    /// 查询单个 session 的执行状态。
-    #[cfg(test)]
-    pub async fn inspect_session_execution_state(
-        &self,
-        session_id: &str,
-    ) -> SessionStoreResult<SessionExecutionState> {
-        self.core_service()
-            .inspect_session_execution_state(session_id)
-            .await
     }
 
     #[cfg(test)]

@@ -8,7 +8,8 @@ use uuid::Uuid;
 use crate::runtime::{Mount, MountCapability, Vfs};
 
 use super::inline_persistence::{DbInlineContentPersister, InlineContentOverlay};
-use super::mount::{PROVIDER_INLINE_FS, parse_inline_mount_owner};
+use super::mount::PROVIDER_INLINE_FS;
+use super::mount_inline::parse_inline_mount_owner;
 use super::path::{normalize_mount_relative_path, resolve_mount};
 use super::provider::MountProviderRegistry;
 use super::service::VfsService;

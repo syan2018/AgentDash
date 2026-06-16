@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::mount::{PROVIDER_INLINE_FS, list_inline_entries, parse_inline_mount_owner};
+use super::mount::PROVIDER_INLINE_FS;
+use super::mount_inline::{list_inline_entries, parse_inline_mount_owner};
 use super::path::normalize_mount_relative_path;
 use super::provider::{
     GrepQuery, MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery,

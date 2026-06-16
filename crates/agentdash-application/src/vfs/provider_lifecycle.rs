@@ -13,7 +13,8 @@ use tracing::info;
 use uuid::Uuid;
 
 use super::lifecycle_catalog::lifecycle_root_entries;
-use super::mount::{PROVIDER_LIFECYCLE_VFS, list_inline_entries};
+use super::mount::PROVIDER_LIFECYCLE_VFS;
+use super::mount_inline::list_inline_entries;
 use super::path::normalize_mount_relative_path;
 use super::provider::{
     MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult,

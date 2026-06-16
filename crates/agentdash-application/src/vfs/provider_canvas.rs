@@ -6,7 +6,8 @@ use uuid::Uuid;
 
 use agentdash_domain::canvas::{Canvas, CanvasFile, CanvasRepository, is_canvas_system_skill_path};
 
-use super::mount::{PROVIDER_CANVAS_FS, list_inline_entries};
+use super::mount::PROVIDER_CANVAS_FS;
+use super::mount_inline::list_inline_entries;
 use super::path::normalize_mount_relative_path;
 use super::provider::{
     MountEditCapabilities, MountError, MountOperationContext, MountProvider, SearchMatch,

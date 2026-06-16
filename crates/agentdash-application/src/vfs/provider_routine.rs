@@ -8,7 +8,8 @@ use agentdash_domain::routine::{RoutineExecution, RoutineExecutionRepository};
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use super::mount::{PROVIDER_ROUTINE_VFS, list_inline_entries};
+use super::mount::PROVIDER_ROUTINE_VFS;
+use super::mount_inline::list_inline_entries;
 use super::path::normalize_mount_relative_path;
 use super::provider::{
     MountEditCapabilities, MountError, MountOperationContext, MountProvider, SearchMatch,

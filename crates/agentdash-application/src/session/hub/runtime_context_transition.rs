@@ -94,6 +94,7 @@ pub(crate) fn build_initial_capability_state_frame(
         state_delta: Some(&state_delta),
         tools,
         skill_entries: &capability_state.skill.skills,
+        companion_agents: &capability_state.companion.agents,
     })
 }
 
@@ -255,6 +256,7 @@ impl SessionRuntimeInner {
             state_delta: Some(&state_delta),
             tools: &[],
             skill_entries: &input.after_state.skill.skills,
+            companion_agents: &input.after_state.companion.agents,
         });
         self.emit_context_frame(
             &input.delivery_runtime_session_id,
@@ -325,6 +327,7 @@ impl SessionRuntimeInner {
                 state_delta: Some(&state_delta),
                 tools: input.tools,
                 skill_entries: &pending_after_state.skill.skills,
+                companion_agents: &pending_after_state.companion.agents,
             });
             application.context_frames.push(notice);
 
@@ -398,6 +401,7 @@ fn build_live_context_frame(
         state_delta: Some(state_delta),
         tools,
         skill_entries: &input.after_state.skill.skills,
+        companion_agents: &input.after_state.companion.agents,
     });
     context_frame::build_context_frame(&metadata)
 }
@@ -416,6 +420,7 @@ struct RuntimeContextUpdateFrameInput<'a> {
     state_delta: Option<&'a CapabilityStateDelta>,
     tools: &'a [DynAgentTool],
     skill_entries: &'a [agentdash_spi::context::capability::SkillEntry],
+    companion_agents: &'a [agentdash_spi::context::capability::CompanionAgentEntry],
 }
 
 impl RuntimeContextUpdateFrame {
@@ -437,6 +442,12 @@ impl RuntimeContextUpdateFrame {
         if let Some(d) =
             dimension::mcp_server::McpServerDimensionDelta::from_state_delta(input.state_delta)
         {
+            dimensions.push(d);
+        }
+        if let Some(d) = dimension::companion_agent::CompanionAgentDimensionDelta::from_state_delta(
+            input.state_delta,
+            input.companion_agents,
+        ) {
             dimensions.push(d);
         }
         if let Some(d) = dimension::vfs::VfsDimensionDelta::from_state_delta(input.state_delta) {
@@ -649,6 +660,59 @@ mod tests {
         assert!(notice.rendered_text.contains("`key` (required, string)"));
         assert!(!notice.rendered_text.contains("```json"));
         assert!(notice.rendered_text.contains("Workflow key"));
+    }
+
+    #[test]
+    fn live_context_frame_includes_companion_agent_roster_delta() {
+        let companion_agent = agentdash_spi::context::capability::CompanionAgentEntry {
+            name: "reviewer".to_string(),
+            executor: "PI_AGENT".to_string(),
+            display_name: "Review Agent".to_string(),
+        };
+        let mut after_state = CapabilityState::default();
+        after_state.companion.agents = vec![companion_agent];
+        let input = LiveRuntimeContextTransitionInput {
+            target_frame_id: Uuid::new_v4(),
+            delivery_runtime_session_id: "session-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            phase_node: "apply".to_string(),
+            run_id: None,
+            lifecycle_key: None,
+            before_state: Some(CapabilityState::default()),
+            after_state,
+            capability_keys: BTreeSet::new(),
+            key_delta: SetDelta::default(),
+            apply_mode: "live",
+        };
+        let state_delta = compute_capability_state_delta(
+            input.before_state.as_ref(),
+            &input.after_state,
+            &input.capability_keys,
+        );
+
+        let notice = build_live_context_frame(&input, &SetDelta::default(), &state_delta, &[]);
+
+        let (added_agents, effective_agents) = notice
+            .sections
+            .iter()
+            .find_map(|section| match section {
+                ContextFrameSection::CompanionAgentRosterDelta {
+                    added_agents,
+                    effective_agents,
+                    ..
+                } => Some((added_agents, effective_agents)),
+                _ => None,
+            })
+            .expect("companion roster delta section should exist");
+        assert_eq!(added_agents.len(), 1);
+        assert_eq!(added_agents[0].agent_key, "reviewer");
+        assert_eq!(effective_agents[0].display_name, "Review Agent");
+        assert!(
+            notice
+                .rendered_text
+                .contains("## Companion Agent Roster Delta — Step Transition: apply")
+        );
+        assert!(notice.rendered_text.contains("agent_key: `reviewer`"));
     }
 
     #[test]

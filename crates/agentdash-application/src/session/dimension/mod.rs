@@ -5,6 +5,7 @@
 //! `RuntimeContextUpdateFrame` 仅做编排：收集各维度产出并委托渲染。
 
 pub(crate) mod capability_key;
+pub(crate) mod companion_agent;
 pub(crate) mod mcp_server;
 pub(crate) mod skill;
 pub(crate) mod tool_path;

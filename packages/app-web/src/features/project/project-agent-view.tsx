@@ -533,7 +533,7 @@ export function ProjectAgentView({
                         {isCompanionTarget && (
                           <span
                             className="rounded-[8px] border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-[11px] text-accent"
-                            title={`可被其他 Agent 通过 companion_request(agent_key="${agent.display_name}") 调用`}
+                            title={`可被其他 Agent 通过 companion_request(agent_key="${agent.preset_name ?? agent.display_name}") 调用`}
                           >
                             Companion
                           </span>

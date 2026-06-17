@@ -22,6 +22,18 @@ pub mod action_type {
     /// Companion result is informational only; parent session may ignore.
     pub const SUGGESTION: &str = "suggestion";
 }
+
+/// Well-known model context usage bucket identifiers.
+///
+/// Runtime context producers write these values into `context_usage_kind`;
+/// projection consumers only read that explicit marker.
+pub mod context_usage_kind {
+    pub const SYSTEM_DEVELOPER: &str = "system_developer";
+    pub const SYSTEM_TOOLS: &str = "system_tools";
+    pub const MCP_TOOLS: &str = "mcp_tools";
+    pub const AGENTS: &str = "agents";
+    pub const SKILLS: &str = "skills";
+}
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -427,6 +439,8 @@ pub struct RuntimeToolSchemaEntry {
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -435,6 +449,8 @@ pub struct RuntimeHookInjectionEntry {
     pub slot: String,
     pub source: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -444,6 +460,8 @@ pub struct RuntimeContextFragmentEntry {
     pub label: String,
     pub source: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -466,6 +484,8 @@ pub struct RuntimeSkillEntry {
     pub exposure: crate::platform::skill_discovery::SkillContextExposure,
     #[serde(default)]
     pub disable_model_invocation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]

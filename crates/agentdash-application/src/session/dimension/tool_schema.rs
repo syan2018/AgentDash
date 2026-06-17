@@ -3,6 +3,7 @@
 //! 路径级的屏蔽 / 恢复 / 移除归 `ToolPathDelta`，此处不冗余。
 
 use agentdash_agent_types::{DynAgentTool, ToolDefinition};
+use agentdash_spi::context_usage_kind;
 use agentdash_spi::hooks::{ContextFrameSection, RuntimeToolSchemaEntry};
 use agentdash_spi::platform::tool_capability::{
     PlatformMcpScope, ToolDescriptor, ToolSource, platform_tool_descriptors,
@@ -328,6 +329,7 @@ struct ToolRuntimeMetadata {
     capability_key: String,
     source: String,
     tool_path: String,
+    context_usage_kind: &'static str,
 }
 
 fn runtime_tool_schema_entries(definitions: Vec<ToolDefinition>) -> Vec<RuntimeToolSchemaEntry> {
@@ -336,6 +338,7 @@ fn runtime_tool_schema_entries(definitions: Vec<ToolDefinition>) -> Vec<RuntimeT
         .into_iter()
         .map(|definition| {
             let metadata = metadata_for_tool(&definition.name, &metadata);
+            let source = metadata.as_ref().map(|metadata| metadata.source.clone());
             RuntimeToolSchemaEntry {
                 name: definition.name,
                 description: definition.description,
@@ -343,7 +346,10 @@ fn runtime_tool_schema_entries(definitions: Vec<ToolDefinition>) -> Vec<RuntimeT
                 capability_key: metadata
                     .as_ref()
                     .map(|metadata| metadata.capability_key.clone()),
-                source: metadata.as_ref().map(|metadata| metadata.source.clone()),
+                context_usage_kind: metadata
+                    .as_ref()
+                    .map(|metadata| metadata.context_usage_kind.to_string()),
+                source,
                 tool_path: metadata.as_ref().map(|metadata| metadata.tool_path.clone()),
             }
         })
@@ -365,11 +371,19 @@ fn tool_runtime_metadata(definitions: &[ToolDefinition]) -> Vec<ToolRuntimeMetad
                     capability_key: descriptor.capability_key.clone(),
                     source: format_tool_source(&descriptor.source),
                     tool_path,
+                    context_usage_kind: tool_source_context_usage_kind(&descriptor.source),
                 },
             )
         })
         .filter(|metadata| runtime_names.contains(metadata.runtime_name.as_str()))
         .collect()
+}
+
+fn tool_source_context_usage_kind(source: &ToolSource) -> &'static str {
+    match source {
+        ToolSource::Mcp { .. } | ToolSource::PlatformMcp { .. } => context_usage_kind::MCP_TOOLS,
+        ToolSource::Platform { .. } => context_usage_kind::SYSTEM_TOOLS,
+    }
 }
 
 fn metadata_for_tool(

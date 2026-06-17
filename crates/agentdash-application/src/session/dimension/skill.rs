@@ -1,6 +1,7 @@
 //! Skill 维度 — 追踪 skill 的增删与变更。
 
 use agentdash_spi::context::capability::SkillEntry;
+use agentdash_spi::context_usage_kind;
 use agentdash_spi::hooks::{ContextFrameSection, RuntimeSkillEntry};
 
 use super::DimensionDelta;
@@ -38,6 +39,7 @@ impl SkillDimensionDelta {
                     base_dir: entry.base_dir.clone(),
                     exposure: entry.exposure,
                     disable_model_invocation: entry.disable_model_invocation,
+                    context_usage_kind: Some(context_usage_kind::SKILLS.to_string()),
                 }
             } else {
                 RuntimeSkillEntry {
@@ -51,6 +53,7 @@ impl SkillDimensionDelta {
                     base_dir: None,
                     exposure: agentdash_spi::SkillContextExposure::DefaultExposed,
                     disable_model_invocation: false,
+                    context_usage_kind: Some(context_usage_kind::SKILLS.to_string()),
                 }
             }
         };

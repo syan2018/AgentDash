@@ -8,6 +8,7 @@ use agentdash_agent_types::{
     AgentContextEnvelope, AgentInputMessage, AgentMessage, ContentPart, MessageRef,
     ProjectionSourceRange, estimate_content_tokens, estimate_message_tokens,
 };
+use agentdash_spi::context_usage_kind;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, RuntimeSkillEntry, RuntimeToolSchemaEntry,
 };
@@ -719,12 +720,12 @@ fn context_item_categories(
     items: &[SessionContextUsageItemResponse],
 ) -> Vec<SessionContextUsageCategoryResponse> {
     [
-        ("system_developer", "System / Developer"),
-        ("system_tools", "System Tools"),
-        ("mcp_tools", "MCP Tools"),
-        ("agents", "Agents"),
+        (context_usage_kind::SYSTEM_DEVELOPER, "System / Developer"),
+        (context_usage_kind::SYSTEM_TOOLS, "System Tools"),
+        (context_usage_kind::MCP_TOOLS, "MCP Tools"),
+        (context_usage_kind::AGENTS, "Agents"),
         ("memory", "Memory"),
-        ("skills", "Skills"),
+        (context_usage_kind::SKILLS, "Skills"),
     ]
     .into_iter()
     .map(|(kind, label)| {
@@ -799,7 +800,7 @@ pub fn context_usage_items_from_context_frame(
 }
 
 fn context_usage_items_from_section(
-    frame: &ContextFrame,
+    _frame: &ContextFrame,
     section: &ContextFrameSection,
     source_event_seq: Option<u64>,
     turn_id: &Option<String>,
@@ -810,7 +811,7 @@ fn context_usage_items_from_section(
             effective_prompt,
             ..
         } => vec![context_usage_item(
-            "system_developer",
+            context_usage_kind::SYSTEM_DEVELOPER,
             "System / Developer",
             title,
             effective_prompt,
@@ -822,21 +823,54 @@ fn context_usage_items_from_section(
         ContextFrameSection::AssignmentContext {
             title, fragments, ..
         } => {
-            let text = fragments
+            let agent_text = fragments
                 .iter()
+                .filter(|fragment| {
+                    usage_kind_matches(
+                        fragment.context_usage_kind.as_deref(),
+                        context_usage_kind::AGENTS,
+                    )
+                })
                 .map(|fragment| fragment.content.as_str())
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            vec![context_usage_item(
-                "system_developer",
-                "System / Developer",
-                title,
-                non_empty_or(&text, &frame.rendered_text),
-                "context_frame",
-                false,
-                source_event_seq,
-                turn_id,
-            )]
+            let system_text = fragments
+                .iter()
+                .filter(|fragment| {
+                    usage_kind_matches(
+                        fragment.context_usage_kind.as_deref(),
+                        context_usage_kind::SYSTEM_DEVELOPER,
+                    )
+                })
+                .map(|fragment| fragment.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let mut items = Vec::new();
+            if !system_text.trim().is_empty() {
+                items.push(context_usage_item(
+                    context_usage_kind::SYSTEM_DEVELOPER,
+                    "System / Developer",
+                    title,
+                    &system_text,
+                    "context_frame",
+                    false,
+                    source_event_seq,
+                    turn_id,
+                ));
+            }
+            if !agent_text.trim().is_empty() {
+                items.push(context_usage_item(
+                    context_usage_kind::AGENTS,
+                    "Agents",
+                    "Companion Agents",
+                    &agent_text,
+                    "context_frame",
+                    false,
+                    source_event_seq,
+                    turn_id,
+                ));
+            }
+            items
         }
         ContextFrameSection::ContinuationContext {
             title,
@@ -846,7 +880,7 @@ fn context_usage_items_from_section(
             .as_deref()
             .map(|owner| {
                 context_usage_item(
-                    "system_developer",
+                    context_usage_kind::SYSTEM_DEVELOPER,
                     "System / Developer",
                     title,
                     owner,
@@ -861,28 +895,61 @@ fn context_usage_items_from_section(
         ContextFrameSection::HookInjection {
             title, injections, ..
         } => {
-            let text = injections
+            let agent_text = injections
                 .iter()
+                .filter(|injection| {
+                    usage_kind_matches(
+                        injection.context_usage_kind.as_deref(),
+                        context_usage_kind::AGENTS,
+                    )
+                })
                 .map(|injection| injection.content.as_str())
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            vec![context_usage_item(
-                "system_developer",
-                "System / Developer",
-                title,
-                non_empty_or(&text, &frame.rendered_text),
-                "context_frame",
-                false,
-                source_event_seq,
-                turn_id,
-            )]
+            let system_text = injections
+                .iter()
+                .filter(|injection| {
+                    usage_kind_matches(
+                        injection.context_usage_kind.as_deref(),
+                        context_usage_kind::SYSTEM_DEVELOPER,
+                    )
+                })
+                .map(|injection| injection.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let mut items = Vec::new();
+            if !system_text.trim().is_empty() {
+                items.push(context_usage_item(
+                    context_usage_kind::SYSTEM_DEVELOPER,
+                    "System / Developer",
+                    title,
+                    &system_text,
+                    "context_frame",
+                    false,
+                    source_event_seq,
+                    turn_id,
+                ));
+            }
+            if !agent_text.trim().is_empty() {
+                items.push(context_usage_item(
+                    context_usage_kind::AGENTS,
+                    "Agents",
+                    "Companion Agents",
+                    &agent_text,
+                    "context_frame",
+                    false,
+                    source_event_seq,
+                    turn_id,
+                ));
+            }
+            items
         }
         ContextFrameSection::SystemNotice {
             title,
             summary,
             body,
         } => vec![context_usage_item(
-            "system_developer",
+            context_usage_kind::SYSTEM_DEVELOPER,
             "System / Developer",
             title,
             body.as_deref().unwrap_or(summary),
@@ -901,10 +968,16 @@ fn context_usage_items_from_section(
             text_parts.extend(
                 injections
                     .iter()
+                    .filter(|injection| {
+                        usage_kind_matches(
+                            injection.context_usage_kind.as_deref(),
+                            context_usage_kind::SYSTEM_DEVELOPER,
+                        )
+                    })
                     .map(|injection| injection.content.as_str()),
             );
-            vec![context_usage_item(
-                "system_developer",
+            let mut items = vec![context_usage_item(
+                context_usage_kind::SYSTEM_DEVELOPER,
                 "System / Developer",
                 title,
                 &text_parts.join("\n\n"),
@@ -912,10 +985,34 @@ fn context_usage_items_from_section(
                 false,
                 source_event_seq,
                 turn_id,
-            )]
+            )];
+            let agent_text = injections
+                .iter()
+                .filter(|injection| {
+                    usage_kind_matches(
+                        injection.context_usage_kind.as_deref(),
+                        context_usage_kind::AGENTS,
+                    )
+                })
+                .map(|injection| injection.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            if !agent_text.trim().is_empty() {
+                items.push(context_usage_item(
+                    context_usage_kind::AGENTS,
+                    "Agents",
+                    "Companion Agents",
+                    &agent_text,
+                    "context_frame",
+                    false,
+                    source_event_seq,
+                    turn_id,
+                ));
+            }
+            items
         }
         ContextFrameSection::AutoResume { title, prompt, .. } => vec![context_usage_item(
-            "system_developer",
+            context_usage_kind::SYSTEM_DEVELOPER,
             "System / Developer",
             title,
             prompt,
@@ -953,11 +1050,11 @@ fn context_usage_items_from_section(
         }
         ContextFrameSection::ToolSchema { tools } => tools
             .iter()
-            .map(|tool| tool_schema_usage_item(tool, source_event_seq, turn_id))
+            .filter_map(|tool| tool_schema_usage_item(tool, source_event_seq, turn_id))
             .collect(),
         ContextFrameSection::ToolSchemaDelta { added_tools } => added_tools
             .iter()
-            .map(|tool| tool_schema_usage_item(tool, source_event_seq, turn_id))
+            .filter_map(|tool| tool_schema_usage_item(tool, source_event_seq, turn_id))
             .collect(),
         ContextFrameSection::SkillDelta {
             added_skills,
@@ -966,7 +1063,7 @@ fn context_usage_items_from_section(
         } => added_skills
             .iter()
             .chain(changed_skills.iter())
-            .map(|skill| skill_usage_item(skill, source_event_seq, turn_id))
+            .filter_map(|skill| skill_usage_item(skill, source_event_seq, turn_id))
             .collect(),
         _ => Vec::new(),
     }
@@ -976,18 +1073,9 @@ fn tool_schema_usage_item(
     tool: &RuntimeToolSchemaEntry,
     source_event_seq: Option<u64>,
     turn_id: &Option<String>,
-) -> SessionContextUsageItemResponse {
-    let source = tool.source.as_deref().unwrap_or("tool_schema");
-    let kind = if source.starts_with("mcp:") || source.starts_with("platform_mcp:") {
-        "mcp_tools"
-    } else {
-        "system_tools"
-    };
-    let label = if kind == "mcp_tools" {
-        "MCP Tools"
-    } else {
-        "System Tools"
-    };
+) -> Option<SessionContextUsageItemResponse> {
+    let kind = tool.context_usage_kind.as_deref()?;
+    let label = tool_usage_label(kind)?;
     let mut text = format!("{}\n{}", tool.name, tool.description);
     if let Some(capability_key) = tool.capability_key.as_deref() {
         text.push_str("\n");
@@ -999,7 +1087,7 @@ fn tool_schema_usage_item(
     }
     text.push_str("\n");
     text.push_str(&tool.parameters_schema.to_string());
-    context_usage_item(
+    Some(context_usage_item(
         kind,
         label,
         &tool.name,
@@ -1008,14 +1096,14 @@ fn tool_schema_usage_item(
         false,
         source_event_seq,
         turn_id,
-    )
+    ))
 }
 
 fn skill_usage_item(
     skill: &RuntimeSkillEntry,
     source_event_seq: Option<u64>,
     turn_id: &Option<String>,
-) -> SessionContextUsageItemResponse {
+) -> Option<SessionContextUsageItemResponse> {
     let name = skill
         .display_name
         .as_deref()
@@ -1029,16 +1117,41 @@ fn skill_usage_item(
         skill.provider_key.as_str(),
     ]
     .join("\n");
-    context_usage_item(
-        "skills",
-        "Skills",
+    let kind = skill.context_usage_kind.as_deref()?;
+    let label = skill_usage_label(kind)?;
+    Some(context_usage_item(
+        kind,
+        label,
         name,
         &text,
         "skill_registry",
         skill.disable_model_invocation,
         source_event_seq,
         turn_id,
-    )
+    ))
+}
+
+fn usage_kind_matches(value: Option<&str>, expected: &str) -> bool {
+    value
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case(expected))
+}
+
+fn tool_usage_label(kind: &str) -> Option<&'static str> {
+    if usage_kind_matches(Some(kind), context_usage_kind::MCP_TOOLS) {
+        return Some("MCP Tools");
+    }
+    if usage_kind_matches(Some(kind), context_usage_kind::SYSTEM_TOOLS) {
+        return Some("System Tools");
+    }
+    None
+}
+
+fn skill_usage_label(kind: &str) -> Option<&'static str> {
+    if usage_kind_matches(Some(kind), context_usage_kind::SKILLS) {
+        return Some("Skills");
+    }
+    None
 }
 
 fn context_usage_item(
@@ -1060,14 +1173,6 @@ fn context_usage_item(
         deferred,
         source_event_seq,
         turn_id: turn_id.clone(),
-    }
-}
-
-fn non_empty_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
-    if value.trim().is_empty() {
-        fallback
-    } else {
-        value
     }
 }
 
@@ -1221,8 +1326,8 @@ mod projection_tests {
         ProjectionKind, ProjectionOrigin, ProjectionSourceRange,
     };
     use agentdash_spi::hooks::{
-        ContextFrame, ContextFrameSection, RuntimeEventSource, RuntimeSkillEntry,
-        RuntimeToolSchemaEntry,
+        ContextFrame, ContextFrameSection, RuntimeContextFragmentEntry, RuntimeEventSource,
+        RuntimeSkillEntry, RuntimeToolSchemaEntry,
     };
 
     use super::SessionProjectionViewResponse;
@@ -1381,6 +1486,26 @@ mod projection_tests {
                         content: "Use Chinese for user-facing replies.".to_string(),
                     }],
                 },
+                ContextFrameSection::AssignmentContext {
+                    title: "Assignment Context".to_string(),
+                    summary: "assignment".to_string(),
+                    fragments: vec![
+                        RuntimeContextFragmentEntry {
+                            slot: "workflow".to_string(),
+                            label: "workflow".to_string(),
+                            source: "workflow:implement".to_string(),
+                            content: "Current workflow step".to_string(),
+                            context_usage_kind: Some("system_developer".to_string()),
+                        },
+                        RuntimeContextFragmentEntry {
+                            slot: "companion_agents".to_string(),
+                            label: "builtin:companion_agents".to_string(),
+                            source: "builtin:companion_agents".to_string(),
+                            content: "## Companion Agents\n- reviewer".to_string(),
+                            context_usage_kind: Some("agents".to_string()),
+                        },
+                    ],
+                },
                 ContextFrameSection::ToolSchema {
                     tools: vec![
                         RuntimeToolSchemaEntry {
@@ -1390,6 +1515,7 @@ mod projection_tests {
                             capability_key: None,
                             source: Some("platform:read".to_string()),
                             tool_path: None,
+                            context_usage_kind: Some("system_tools".to_string()),
                         },
                         RuntimeToolSchemaEntry {
                             name: "workflow_search".to_string(),
@@ -1398,6 +1524,7 @@ mod projection_tests {
                             capability_key: None,
                             source: Some("mcp:workflow".to_string()),
                             tool_path: None,
+                            context_usage_kind: Some("mcp_tools".to_string()),
                         },
                     ],
                 },
@@ -1413,6 +1540,7 @@ mod projection_tests {
                         base_dir: None,
                         exposure: Default::default(),
                         disable_model_invocation: false,
+                        context_usage_kind: Some("skills".to_string()),
                     }],
                     removed_skills: Vec::new(),
                     changed_skills: Vec::new(),
@@ -1427,13 +1555,14 @@ mod projection_tests {
 
         let view = SessionProjectionViewResponse::from_envelope_and_context_items(envelope, items);
 
-        assert_eq!(view.context_usage.items.len(), 5);
+        assert_eq!(view.context_usage.items.len(), 7);
         assert!(
             view.token_estimate.expect("combined token estimate") > 20,
             "top-level token estimate should include non-message context items"
         );
         for kind in [
             "system_developer",
+            "agents",
             "memory",
             "system_tools",
             "mcp_tools",

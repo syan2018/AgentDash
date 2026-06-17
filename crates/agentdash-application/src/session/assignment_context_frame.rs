@@ -5,6 +5,7 @@ use agentdash_spi::hooks::{
 use agentdash_spi::{ASSIGNMENT_CONTEXT_SLOTS, ContextFragment};
 
 use crate::session::context_frame::{self, ContextFramePayload};
+use crate::session::context_usage_marking::context_fragment_usage_kind;
 
 #[derive(Debug, Clone)]
 struct AssignmentContextFrame {
@@ -113,6 +114,7 @@ fn fragment_entry(fragment: &ContextFragment) -> RuntimeContextFragmentEntry {
         label: fragment.label.clone(),
         source: fragment.source.clone(),
         content: fragment.content.clone(),
+        context_usage_kind: context_fragment_usage_kind(fragment),
     }
 }
 
@@ -170,7 +172,39 @@ mod tests {
 
         assert_eq!(frame.fragments.len(), 1);
         assert!(frame.fragments.iter().any(|entry| entry.slot == "task"));
+        assert_eq!(
+            frame.fragments[0].context_usage_kind.as_deref(),
+            Some("system_developer")
+        );
         assert!(!frame.fragments.iter().any(|entry| entry.slot == "vfs"));
         assert!(frame.rendered_text().contains("Assignment Context"));
+    }
+
+    #[test]
+    fn assignment_context_frame_marks_companion_agents_usage_kind() {
+        let runtime_fragments = vec![
+            fragment("companion_agents", "## Companion Agents\n- reviewer"),
+            fragment("workflow", "Active workflow step"),
+        ];
+
+        let frame = AssignmentContextFrame::from_parts(Some("task_start"), &runtime_fragments)
+            .expect("frame metadata");
+
+        let companion = frame
+            .fragments
+            .iter()
+            .find(|entry| entry.slot == "companion_agents")
+            .expect("companion agents fragment");
+        let workflow = frame
+            .fragments
+            .iter()
+            .find(|entry| entry.slot == "workflow")
+            .expect("workflow fragment");
+
+        assert_eq!(companion.context_usage_kind.as_deref(), Some("agents"));
+        assert_eq!(
+            workflow.context_usage_kind.as_deref(),
+            Some("system_developer")
+        );
     }
 }

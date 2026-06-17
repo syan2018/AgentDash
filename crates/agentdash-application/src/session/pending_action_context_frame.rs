@@ -5,6 +5,7 @@ use agentdash_spi::hooks::{
 };
 
 use super::context_frame::{self, ContextFramePayload};
+use super::context_usage_marking::hook_injection_usage_kind;
 use super::hook_messages as msg;
 
 #[derive(Debug, Clone)]
@@ -78,6 +79,7 @@ impl ContextFramePayload for PendingActionFrame {
                     slot: injection.slot.clone(),
                     source: injection.source.clone(),
                     content: injection.content.clone(),
+                    context_usage_kind: hook_injection_usage_kind(injection),
                 })
                 .collect(),
         }]
@@ -112,6 +114,7 @@ impl ContextFramePayload for PendingActionFrame {
                     label: injection.slot.clone(),
                     source: injection.source.clone(),
                     content: injection.content.clone(),
+                    context_usage_kind: hook_injection_usage_kind(injection),
                 })
                 .collect::<Vec<_>>();
             sections.push(format_injection_fragments(&fragments));

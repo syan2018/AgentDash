@@ -82,7 +82,7 @@ pub use hooks::{
     HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
     RuntimeAdapterProvenance, RuntimeContextFragmentEntry, RuntimeEventSource,
     RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry, SessionSnapshotMetadata,
-    SharedHookRuntime, SubjectRunContext, action_type,
+    SharedHookRuntime, SubjectRunContext, action_type, context_usage_kind,
 };
 
 // ─── workflow scripts ──────────────────────────────────────

@@ -62,6 +62,7 @@ export interface RuntimeContextFragmentEntry {
   label: string;
   source: string;
   content: string;
+  context_usage_kind?: string;
 }
 
 export interface CapabilityKeyDeltaSection {
@@ -111,6 +112,7 @@ export interface RuntimeToolSchemaEntry {
   capability_key?: string;
   source?: string;
   tool_path?: string;
+  context_usage_kind?: string;
 }
 
 export interface HookInjectionSection {
@@ -138,6 +140,7 @@ export interface RuntimeSkillEntry {
   base_dir?: string;
   exposure: SkillContextExposure;
   disable_model_invocation: boolean;
+  context_usage_kind?: string;
 }
 
 export interface SkillDeltaSection {
@@ -190,6 +193,7 @@ export interface RuntimeHookInjectionEntry {
   slot: string;
   source: string;
   content: string;
+  context_usage_kind?: string;
 }
 
 export function parseContextFrame(value: Record<string, unknown>): ContextFrame | null {
@@ -386,6 +390,7 @@ function parseFragmentEntry(value: unknown): RuntimeContextFragmentEntry | null 
     label: readString(value.label) ?? slot ?? "context",
     source: readString(value.source) ?? "unknown",
     content,
+    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
   };
 }
 
@@ -401,6 +406,7 @@ function parseToolSchemaEntry(value: unknown): RuntimeToolSchemaEntry | null {
     capability_key: readString(value.capability_key) ?? undefined,
     source: readString(value.source) ?? undefined,
     tool_path: readString(value.tool_path) ?? undefined,
+    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
   };
 }
 
@@ -410,6 +416,7 @@ function parseInjectionEntry(value: unknown): RuntimeHookInjectionEntry | null {
     slot: readString(value.slot) ?? "context",
     source: readString(value.source) ?? "unknown",
     content: readString(value.content) ?? "",
+    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
   };
 }
 
@@ -435,6 +442,7 @@ function parseSkillEntry(value: unknown): RuntimeSkillEntry | null {
     base_dir: readString(value.base_dir) ?? undefined,
     exposure: readSkillExposure(value.exposure),
     disable_model_invocation: value.disable_model_invocation === true,
+    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
   };
 }
 

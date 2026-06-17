@@ -41,13 +41,19 @@
 - Turn 开始产出 `BackboneEvent::TurnStarted`；
 - Turn 结束产出 `BackboneEvent::TurnCompleted`。
 
-### 5. 上下文压缩 lifecycle
+### 5. Token usage 更新
+
+- `AgentEvent::MessageEnd` 携带 provider usage 时，映射为 `BackboneEvent::TokenUsageUpdated`。
+- `NormalizedContextUsage.provider_context_tokens/current_context_tokens` 使用 provider 可见输入压力：`input + cache_read_input + cache_creation_input`。
+- `model_context_window/effective_context_window` 来自本次执行解析出的 provider model profile，供前端比例显示与压缩统计使用。
+
+### 6. 上下文压缩 lifecycle
 
 - `AgentEvent::ContextCompactionStarted` 映射为 `BackboneEvent::ItemStarted`，item 为 `ThreadItem::ContextCompaction`。
 - `AgentEvent::ContextCompacted` 先映射为 `PlatformEvent::SessionMetaUpdate(key="context_compacted")`，再映射为 `BackboneEvent::ItemCompleted`。应用层使用 `context_compacted` metadata 提交 checkpoint / projection，再让 completed marker 进入普通事件流。
 - `AgentEvent::ContextCompactionFailed` 映射为 `PlatformEvent::SessionMetaUpdate(key="context_compaction_failed")` 与 `BackboneEvent::Error`。结构化 diagnostic 服务审计和熔断；Error 服务现有错误消费路径。
 
-### 6. entry_index 递增
+### 7. entry_index 递增
 
 - 保持原契约：本条 assistant 消息处理完成后再递增 `entry_index`。
 

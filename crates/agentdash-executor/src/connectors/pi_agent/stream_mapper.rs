@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
-use agentdash_agent::{AgentEvent, AgentMessage, AgentToolResult, ContentPart};
+use agentdash_agent::{AgentEvent, AgentMessage, AgentToolResult, ContentPart, TokenUsage};
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
-    PlatformEvent, SourceInfo, TraceInfo, backbone::thread_item,
+    PlatformEvent, SourceInfo, ThreadTokenUsage, ThreadTokenUsageUpdatedNotification, TraceInfo,
+    backbone::thread_item,
 };
+use agentdash_agent_protocol::{ContextUsageSource, NormalizedContextUsage, TokenUsageBreakdown};
 use agentdash_agent_types::{
     AgentDashNativeThreadItem, AgentDashThreadItem, ShellExecExecutionMode,
 };
@@ -39,6 +41,12 @@ pub(super) struct ToolCallEmitState {
     entry_index: u32,
     tool_name: String,
     raw_input: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct StreamMapperRuntimeContext {
+    pub model_context_window: Option<u64>,
+    pub reserve_tokens: u64,
 }
 
 fn chunk_stream_key(turn_id: &str, entry_index: u32, chunk_kind: &str) -> String {
@@ -431,6 +439,53 @@ fn usize_arg(args: &serde_json::Value, key: &str) -> Option<usize> {
         .and_then(|value| usize::try_from(value).ok())
 }
 
+fn usage_to_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn token_usage_notification_from_usage(
+    session_id: &str,
+    turn_id: &str,
+    usage: &TokenUsage,
+    runtime_context: StreamMapperRuntimeContext,
+) -> ThreadTokenUsageUpdatedNotification {
+    let provider_context_tokens = usage.context_input_tokens();
+    let total_tokens = provider_context_tokens.saturating_add(usage.output);
+    let cached_input_tokens = usage
+        .cache_read_input
+        .saturating_add(usage.cache_creation_input);
+    let breakdown = TokenUsageBreakdown {
+        total_tokens: usage_to_i64(total_tokens),
+        input_tokens: usage_to_i64(usage.input),
+        cached_input_tokens: usage_to_i64(cached_input_tokens),
+        output_tokens: usage_to_i64(usage.output),
+        reasoning_output_tokens: 0,
+    };
+    let model_context_window = runtime_context.model_context_window.map(usage_to_i64);
+    let reserve_tokens = usage_to_i64(runtime_context.reserve_tokens);
+    let current_context_tokens = usage_to_i64(provider_context_tokens);
+
+    ThreadTokenUsageUpdatedNotification {
+        thread_id: session_id.to_string(),
+        turn_id: turn_id.to_string(),
+        token_usage: ThreadTokenUsage {
+            total: breakdown.clone(),
+            last: breakdown,
+            model_context_window,
+            context: NormalizedContextUsage {
+                provider_context_tokens: current_context_tokens,
+                pending_estimate_tokens: 0,
+                current_context_tokens,
+                cumulative_total_tokens: usage_to_i64(total_tokens),
+                model_context_window,
+                effective_context_window: model_context_window,
+                reserve_tokens,
+                source: ContextUsageSource::Provider,
+            },
+        },
+    }
+}
+
 pub(super) fn convert_event_to_envelopes(
     event: &AgentEvent,
     session_id: &str,
@@ -439,6 +494,28 @@ pub(super) fn convert_event_to_envelopes(
     entry_index: &mut u32,
     chunk_emit_states: &mut HashMap<String, ChunkEmitState>,
     tool_call_states: &mut HashMap<String, ToolCallEmitState>,
+) -> Vec<BackboneEnvelope> {
+    convert_event_to_envelopes_with_runtime_context(
+        event,
+        session_id,
+        source,
+        turn_id,
+        entry_index,
+        chunk_emit_states,
+        tool_call_states,
+        StreamMapperRuntimeContext::default(),
+    )
+}
+
+pub(super) fn convert_event_to_envelopes_with_runtime_context(
+    event: &AgentEvent,
+    session_id: &str,
+    source: &SourceInfo,
+    turn_id: &str,
+    entry_index: &mut u32,
+    chunk_emit_states: &mut HashMap<String, ChunkEmitState>,
+    tool_call_states: &mut HashMap<String, ToolCallEmitState>,
+    runtime_context: StreamMapperRuntimeContext,
 ) -> Vec<BackboneEnvelope> {
     let wrap =
         |event: BackboneEvent, idx: u32| make_envelope(event, session_id, source, turn_id, idx);
@@ -562,6 +639,8 @@ pub(super) fn convert_event_to_envelopes(
                 content,
                 error_message,
                 tool_calls,
+                stop_reason,
+                usage,
                 ..
             } = message
             {
@@ -672,8 +751,24 @@ pub(super) fn convert_event_to_envelopes(
                 let has_streamable_content = content.iter().any(|part| {
                     part.extract_text().is_some() || part.extract_reasoning().is_some()
                 });
+                let message_entry_index = *entry_index;
                 if has_streamable_content || error_message.is_some() || !tool_calls.is_empty() {
                     *entry_index += 1;
+                }
+                if !matches!(
+                    stop_reason,
+                    Some(agentdash_agent::StopReason::Error | agentdash_agent::StopReason::Aborted)
+                ) && let Some(usage) = usage.as_ref()
+                {
+                    envelopes.push(wrap(
+                        BackboneEvent::TokenUsageUpdated(token_usage_notification_from_usage(
+                            session_id,
+                            turn_id,
+                            usage,
+                            runtime_context,
+                        )),
+                        message_entry_index,
+                    ));
                 }
                 return envelopes;
             }

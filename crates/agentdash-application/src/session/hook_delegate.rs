@@ -171,6 +171,29 @@ impl HookRuntimeDelegate {
         }
     }
 
+    fn snapshot_model_context_window(&self) -> Option<u64> {
+        self.hook_runtime
+            .snapshot()
+            .metadata
+            .as_ref()
+            .and_then(|m| m.extra.get("model_context_window"))
+            .and_then(|v| v.as_u64())
+            .filter(|value| *value > 0)
+    }
+
+    fn resolve_model_context_window(&self, explicit: u64, previous: &ContextTokenStats) -> u64 {
+        if explicit > 0 {
+            return explicit;
+        }
+        if let Some(context_window) = self.snapshot_model_context_window() {
+            return context_window;
+        }
+        previous
+            .effective_context_window
+            .max(previous.context_window)
+            .max(0)
+    }
+
     /// 从消息中提取最新的 LLM usage 并更新 session runtime 的 token stats
     fn update_token_stats_from_messages(&self, messages: &[AgentMessage]) {
         let last_usage = messages.iter().rev().find_map(|m| match m {
@@ -185,13 +208,8 @@ impl HookRuntimeDelegate {
         });
 
         if let Some(usage) = last_usage {
-            let snapshot = self.hook_runtime.snapshot();
-            let context_window = snapshot
-                .metadata
-                .as_ref()
-                .and_then(|m| m.extra.get("model_context_window"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            let previous = self.hook_runtime.token_stats();
+            let context_window = self.resolve_model_context_window(0, &previous);
 
             self.hook_runtime.update_token_stats(ContextTokenStats {
                 last_input_tokens: usage.context_input_tokens(),
@@ -199,7 +217,7 @@ impl HookRuntimeDelegate {
                 pending_estimate_tokens: 0,
                 context_window,
                 effective_context_window: context_window,
-                reserve_tokens: 0,
+                reserve_tokens: previous.reserve_tokens,
             });
         }
     }
@@ -254,13 +272,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         let last_usage = self.hook_runtime.token_stats();
         let default_keep_last_n = 20_u32;
         let default_reserve_tokens = 16_384_u64;
-        let snapshot = self.hook_runtime.snapshot();
-        let context_window = snapshot
-            .metadata
-            .as_ref()
-            .and_then(|m| m.extra.get("model_context_window"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(last_usage.context_window);
+        let context_window = self.resolve_model_context_window(0, &last_usage);
         let effective_context_window = context_window;
         let provider_estimate = input
             .provider_visible
@@ -732,6 +744,22 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         input: BeforeProviderRequestInput,
         _cancel: CancellationToken,
     ) -> Result<(), AgentRuntimeError> {
+        let previous = self.hook_runtime.token_stats();
+        let context_window = self.resolve_model_context_window(input.context_window, &previous);
+        let reserve_tokens = if input.reserve_tokens > 0 {
+            input.reserve_tokens
+        } else {
+            previous.reserve_tokens
+        };
+        let token_stats = ContextTokenStats {
+            last_input_tokens: input.estimated_input_tokens,
+            current_context_tokens: input.estimated_input_tokens,
+            pending_estimate_tokens: 0,
+            context_window,
+            effective_context_window: context_window,
+            reserve_tokens,
+        };
+        self.hook_runtime.update_token_stats(token_stats.clone());
         let evaluated = self
             .evaluate(
                 HookTrigger::BeforeProviderRequest,
@@ -743,17 +771,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                     "message_count": input.message_count,
                     "tool_count": input.tool_count,
                     "estimated_input_tokens": input.estimated_input_tokens,
-                    "context_window": input.context_window,
-                    "reserve_tokens": input.reserve_tokens,
+                    "context_window": context_window,
+                    "reserve_tokens": reserve_tokens,
                 })),
-                Some(ContextTokenStats {
-                    last_input_tokens: input.estimated_input_tokens,
-                    current_context_tokens: input.estimated_input_tokens,
-                    pending_estimate_tokens: 0,
-                    context_window: input.context_window,
-                    effective_context_window: input.context_window,
-                    reserve_tokens: input.reserve_tokens,
-                }),
+                Some(token_stats),
             )
             .await?;
         self.record_trace(
@@ -914,8 +935,8 @@ mod tests {
     use std::sync::Mutex;
 
     use agentdash_spi::{
-        AgentContext, AgentMessage, CompactionFailureInput, CompactionResult, StopDecision,
-        StopReason, TokenUsage,
+        AgentContext, AgentMessage, BeforeProviderRequestInput, CompactionFailureInput,
+        CompactionResult, StopDecision, StopReason, TokenUsage,
     };
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
@@ -1425,6 +1446,61 @@ mod tests {
                 .expect("triggers lock poisoned")
                 .last(),
             Some(&HookTrigger::BeforeCompact)
+        );
+    }
+
+    #[tokio::test]
+    async fn before_provider_request_uses_runtime_context_window_when_input_is_zero() {
+        let provider = RecordingCompactionProvider::default();
+        let snapshot = provider
+            .load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: HookControlTarget {
+                    run_id: uuid::Uuid::nil(),
+                    agent_id: uuid::Uuid::nil(),
+                    frame_id: uuid::Uuid::nil(),
+                },
+                provenance: agentdash_spi::hooks::RuntimeAdapterProvenance::runtime_session(
+                    "sess-hook".to_string(),
+                    None,
+                    "test",
+                ),
+            })
+            .await
+            .expect("snapshot should load");
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+            "sess-hook".to_string(),
+            Arc::new(provider.clone()),
+            snapshot,
+        ));
+        let delegate = HookRuntimeDelegate::new(hook_runtime.clone());
+
+        delegate
+            .on_before_provider_request(
+                BeforeProviderRequestInput {
+                    system_prompt_len: 12,
+                    message_count: 3,
+                    tool_count: 2,
+                    estimated_input_tokens: 42_000,
+                    context_window: 0,
+                    reserve_tokens: 0,
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("before provider request should be observed");
+
+        let stats = hook_runtime.token_stats();
+        assert_eq!(stats.last_input_tokens, 42_000);
+        assert_eq!(stats.current_context_tokens, 42_000);
+        assert_eq!(stats.context_window, 64_000);
+        assert_eq!(stats.effective_context_window, 64_000);
+        assert_eq!(
+            provider
+                .triggers
+                .lock()
+                .expect("triggers lock poisoned")
+                .last(),
+            Some(&HookTrigger::BeforeProviderRequest)
         );
     }
 

@@ -2,6 +2,7 @@ use super::*;
 use crate::connectors::pi_agent::factory::{NoopBridge, build_pi_agent_connector};
 use agentdash_agent::{
     AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, MessageRef, StopReason,
+    TokenUsage,
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{BackboneEvent, SourceInfo};
@@ -821,6 +822,68 @@ fn message_end_without_streamed_tool_call_emits_pending_tool_call() {
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
+}
+
+#[test]
+fn message_end_with_usage_emits_token_usage_update_with_context_window() {
+    let event = AgentEvent::MessageEnd {
+        message: AgentMessage::Assistant {
+            content: vec![ContentPart::text("done")],
+            tool_calls: vec![],
+            stop_reason: Some(StopReason::Stop),
+            error_message: None,
+            usage: Some(TokenUsage {
+                input: 100,
+                cache_read_input: 20,
+                cache_creation_input: 30,
+                output: 40,
+            }),
+            timestamp: Some(agentdash_agent::types::now_millis()),
+        },
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes_with_runtime_context(
+        &event,
+        "session-usage",
+        &test_source(),
+        "turn-usage",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+        StreamMapperRuntimeContext {
+            model_context_window: Some(200_000),
+            reserve_tokens: 16_384,
+        },
+    );
+
+    let usage = envelopes
+        .iter()
+        .find_map(|envelope| match &envelope.event {
+            BackboneEvent::TokenUsageUpdated(notification) => Some(notification),
+            _ => None,
+        })
+        .expect("MessageEnd usage should emit token usage update");
+
+    assert_eq!(usage.thread_id, "session-usage");
+    assert_eq!(usage.turn_id, "turn-usage");
+    assert_eq!(usage.token_usage.last.input_tokens, 100);
+    assert_eq!(usage.token_usage.last.cached_input_tokens, 50);
+    assert_eq!(usage.token_usage.last.output_tokens, 40);
+    assert_eq!(usage.token_usage.last.total_tokens, 190);
+    assert_eq!(usage.token_usage.model_context_window, Some(200_000));
+    assert_eq!(
+        usage.token_usage.context.provider_context_tokens, 150,
+        "cache tokens count toward provider-visible context pressure"
+    );
+    assert_eq!(usage.token_usage.context.current_context_tokens, 150);
+    assert_eq!(
+        usage.token_usage.context.effective_context_window,
+        Some(200_000)
+    );
+    assert_eq!(usage.token_usage.context.reserve_tokens, 16_384);
 }
 
 #[test]
@@ -2550,6 +2613,7 @@ async fn update_session_tools_replaces_all_tools() {
                 provider_id: None,
                 model_id: None,
             },
+            model_context_window: Some(CONTEXT_WINDOW_STANDARD),
         },
     );
 

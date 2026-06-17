@@ -54,6 +54,13 @@ struct PiAgentSessionRuntime {
     last_system_prompt: Option<String>,
     /// 当前 Agent 内部 bridge 对应的模型选择。
     model_selection: PiAgentModelSelection,
+    /// 当前执行模型的真实上下文窗口，来自 provider catalog/model profile。
+    model_context_window: Option<u64>,
+}
+
+struct ResolvedExecutionBridge {
+    bridge: Arc<dyn LlmBridge>,
+    model_context_window: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -222,7 +229,7 @@ impl PiAgentConnector {
         provider_state: &ProviderRuntimeState,
         provider_id: Option<&str>,
         model_id: Option<&str>,
-    ) -> Result<Arc<dyn LlmBridge>, ConnectorError> {
+    ) -> Result<ResolvedExecutionBridge, ConnectorError> {
         let provider_id = provider_id.map(str::trim).filter(|item| !item.is_empty());
         let model_id = model_id.map(str::trim).filter(|item| !item.is_empty());
         tracing::debug!(
@@ -250,7 +257,10 @@ impl PiAgentConnector {
                 model_id = %resolved_model.id,
                 "Pi Agent explicit provider model resolved"
             );
-            return Ok(provider.create_bridge(&resolved_model.id));
+            return Ok(ResolvedExecutionBridge {
+                bridge: provider.create_bridge(&resolved_model.id),
+                model_context_window: Some(resolved_model.context_window),
+            });
         }
 
         if let Some(provider_id) = provider_id
@@ -276,14 +286,24 @@ impl PiAgentConnector {
                         &error,
                     ))
                 })?;
-                return Ok(provider.create_bridge(&resolved_model.id));
+                return Ok(ResolvedExecutionBridge {
+                    bridge: provider.create_bridge(&resolved_model.id),
+                    model_context_window: Some(resolved_model.context_window),
+                });
             }
 
-            return provider_state.default_bridge.clone().ok_or_else(|| {
-                ConnectorError::InvalidConfig(
-                    "Pi Agent 尚未配置任何可用的 LLM Provider".to_string(),
-                )
-            });
+            return provider_state
+                .default_bridge
+                .clone()
+                .map(|bridge| ResolvedExecutionBridge {
+                    bridge,
+                    model_context_window: Some(CONTEXT_WINDOW_STANDARD),
+                })
+                .ok_or_else(|| {
+                    ConnectorError::InvalidConfig(
+                        "Pi Agent 尚未配置任何可用的 LLM Provider".to_string(),
+                    )
+                });
         }
 
         if let Some(provider_id) = provider_id {
@@ -302,7 +322,7 @@ impl PiAgentConnector {
                     "Pi Agent probing provider for model"
                 );
                 match provider.resolve_model(Some(model_id)).await {
-                    Ok(model) => matches.push((provider, model.id)),
+                    Ok(model) => matches.push((provider, model)),
                     Err(ProviderModelResolveError::BlockedModel { .. }) => {
                         blocked_providers.push(provider.provider_id.clone());
                     }
@@ -312,8 +332,11 @@ impl PiAgentConnector {
             }
 
             if matches.len() == 1 {
-                let (provider, resolved_model_id) = matches.remove(0);
-                return Ok(provider.create_bridge(&resolved_model_id));
+                let (provider, resolved_model) = matches.remove(0);
+                return Ok(ResolvedExecutionBridge {
+                    bridge: provider.create_bridge(&resolved_model.id),
+                    model_context_window: Some(resolved_model.context_window),
+                });
             }
 
             if matches.len() > 1 {
@@ -639,6 +662,9 @@ impl AgentConnector for PiAgentConnector {
             .as_ref()
             .and_then(|runtime| runtime.last_system_prompt.clone());
         let mut current_tools: Vec<DynAgentTool> = Vec::new();
+        let mut current_model_context_window = existing_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.model_context_window);
         let mut agent = if let Some(runtime) = existing_runtime {
             if should_recreate_agent {
                 tracing::debug!(
@@ -655,15 +681,16 @@ impl AgentConnector for PiAgentConnector {
                     provider_count = provider_state.providers.len(),
                     "Pi Agent prompt provider runtime state ready for recreation"
                 );
-                let bridge = self
+                let resolved_bridge = self
                     .resolve_bridge_for_execution(
                         &provider_state,
                         context.session.executor_config.provider_id.as_deref(),
                         context.session.executor_config.model_id.as_deref(),
                     )
                     .await?;
+                current_model_context_window = resolved_bridge.model_context_window;
                 tracing::debug!(session_id, "Pi Agent prompt bridge resolved for recreation");
-                let agent = self.create_agent_with_bridge(bridge);
+                let agent = self.create_agent_with_bridge(resolved_bridge.bridge);
                 agent
                     .replace_messages_with_refs(preserved_messages, preserved_message_refs)
                     .await;
@@ -692,18 +719,19 @@ impl AgentConnector for PiAgentConnector {
                 provider_count = provider_state.providers.len(),
                 "Pi Agent prompt provider runtime state ready"
             );
-            let bridge = self
+            let resolved_bridge = self
                 .resolve_bridge_for_execution(
                     &provider_state,
                     context.session.executor_config.provider_id.as_deref(),
                     context.session.executor_config.model_id.as_deref(),
                 )
                 .await?;
+            current_model_context_window = resolved_bridge.model_context_window;
             tracing::debug!(
                 session_id = %session_id,
                 "Pi Agent prompt bridge resolved for new session agent"
             );
-            self.create_agent_with_bridge(bridge)
+            self.create_agent_with_bridge(resolved_bridge.bridge)
         };
 
         if is_new_agent || should_recreate_agent {
@@ -770,6 +798,7 @@ impl AgentConnector for PiAgentConnector {
                 tools: current_tools,
                 last_system_prompt: cached_system_prompt,
                 model_selection: requested_model_selection,
+                model_context_window: current_model_context_window,
             },
         );
 
@@ -780,6 +809,10 @@ impl AgentConnector for PiAgentConnector {
         };
         let turn_id = context.session.turn_id.clone();
         let session_id_owned = session_id.to_string();
+        let stream_runtime_context = StreamMapperRuntimeContext {
+            model_context_window: current_model_context_window,
+            reserve_tokens: 0,
+        };
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<BackboneEnvelope, ConnectorError>>(8192);
 
@@ -798,7 +831,7 @@ impl AgentConnector for PiAgentConnector {
                             let Some(event) = maybe_event else {
                                 break;
                             };
-                            let envelopes = convert_event_to_envelopes(
+                            let envelopes = convert_event_to_envelopes_with_runtime_context(
                                 &event,
                                 &session_id_owned,
                                 &source,
@@ -806,6 +839,7 @@ impl AgentConnector for PiAgentConnector {
                                 &mut entry_index,
                                 &mut chunk_emit_states,
                                 &mut tool_call_states,
+                                stream_runtime_context,
                             );
 
                             for e in envelopes {
@@ -835,7 +869,7 @@ impl AgentConnector for PiAgentConnector {
                     break;
                 };
 
-                let envelopes = convert_event_to_envelopes(
+                let envelopes = convert_event_to_envelopes_with_runtime_context(
                     &event,
                     &session_id_owned,
                     &source,
@@ -843,6 +877,7 @@ impl AgentConnector for PiAgentConnector {
                     &mut entry_index,
                     &mut chunk_emit_states,
                     &mut tool_call_states,
+                    stream_runtime_context,
                 );
 
                 for e in envelopes {
@@ -1047,7 +1082,10 @@ async fn emit_pending_hook_trace_envelopes(
     }
 }
 
-use super::stream_mapper::{ChunkEmitState, ToolCallEmitState, convert_event_to_envelopes};
+use super::stream_mapper::{
+    ChunkEmitState, StreamMapperRuntimeContext, ToolCallEmitState, convert_event_to_envelopes,
+    convert_event_to_envelopes_with_runtime_context,
+};
 
 #[cfg(test)]
 #[path = "connector_tests.rs"]

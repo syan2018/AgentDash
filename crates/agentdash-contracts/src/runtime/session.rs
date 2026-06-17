@@ -8,11 +8,15 @@ use agentdash_agent_types::{
     AgentContextEnvelope, AgentInputMessage, AgentMessage, ContentPart, MessageRef,
     ProjectionSourceRange, estimate_content_tokens, estimate_message_tokens,
 };
+use agentdash_spi::hooks::{
+    ContextFrame, ContextFrameSection, RuntimeSkillEntry, RuntimeToolSchemaEntry,
+};
 use agentdash_spi::session_persistence::{
     PersistedSessionEvent, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
 };
 
 const PROJECTION_PREVIEW_MAX_CHARS: usize = 360;
+const TEXT_TOKEN_CHARS_PER_TOKEN: u64 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -231,6 +235,24 @@ pub struct SessionContextUsageCategoryResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct SessionContextUsageItemResponse {
+    pub kind: String,
+    pub label: String,
+    pub name: String,
+    #[ts(type = "number")]
+    pub token_estimate: u64,
+    pub source: String,
+    pub deferred: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub source_event_seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct SessionMessageContextBreakdownResponse {
     #[ts(type = "number")]
     pub user_message_tokens: u64,
@@ -266,6 +288,7 @@ pub struct SessionAttachmentContextContributionResponse {
 #[serde(rename_all = "snake_case")]
 pub struct SessionContextUsageAnalysisResponse {
     pub categories: Vec<SessionContextUsageCategoryResponse>,
+    pub items: Vec<SessionContextUsageItemResponse>,
     pub messages: SessionMessageContextBreakdownResponse,
     pub top_tools: Vec<SessionToolContextContributionResponse>,
     pub top_attachments: Vec<SessionAttachmentContextContributionResponse>,
@@ -479,6 +502,15 @@ pub struct SessionProjectionRollbackResponse {
 
 impl From<AgentContextEnvelope> for SessionProjectionViewResponse {
     fn from(envelope: AgentContextEnvelope) -> Self {
+        Self::from_envelope_and_context_items(envelope, Vec::new())
+    }
+}
+
+impl SessionProjectionViewResponse {
+    pub fn from_envelope_and_context_items(
+        envelope: AgentContextEnvelope,
+        context_items: Vec<SessionContextUsageItemResponse>,
+    ) -> Self {
         let message_count = u64::try_from(envelope.messages.len()).unwrap_or(u64::MAX);
         let segments: Vec<_> = envelope
             .messages
@@ -486,14 +518,18 @@ impl From<AgentContextEnvelope> for SessionProjectionViewResponse {
             .enumerate()
             .map(|(index, message)| projection_segment_from_message(index, message))
             .collect();
-        let context_usage = context_usage_analysis(&segments);
+        let context_item_token_estimate = context_items_token_estimate(&context_items);
+        let context_usage = context_usage_analysis(&segments, context_items);
+        let token_estimate = envelope
+            .token_estimate
+            .map(|tokens| tokens.saturating_add(context_item_token_estimate));
         Self {
             session_id: envelope.session_id,
             projection_kind: envelope.projection_kind.as_str().to_string(),
             projection_version: envelope.projection_version,
             head_event_seq: envelope.head_event_seq,
             active_compaction_id: envelope.active_compaction_id,
-            token_estimate: envelope.token_estimate,
+            token_estimate,
             message_count,
             segments,
             context_usage,
@@ -633,6 +669,7 @@ fn message_attachment_names(message: &AgentMessage) -> Vec<String> {
 
 fn context_usage_analysis(
     segments: &[SessionProjectionSegmentViewResponse],
+    context_items: Vec<SessionContextUsageItemResponse>,
 ) -> SessionContextUsageAnalysisResponse {
     let summary_tokens = sum_segment_tokens(segments, |segment| {
         segment.role == "compaction_summary" || segment.origin == "projection"
@@ -645,19 +682,8 @@ fn context_usage_analysis(
         .map(|segment| segment.attachment_tokens)
         .fold(0_u64, u64::saturating_add);
     let message_tokens = raw_message_tokens.saturating_sub(attachment_tokens);
-    let categories = vec![
-        context_category(
-            "system_developer",
-            "System / Developer",
-            0,
-            "not_loaded",
-            true,
-        ),
-        context_category("system_tools", "System Tools", 0, "not_loaded", true),
-        context_category("mcp_tools", "MCP Tools", 0, "not_loaded", true),
-        context_category("agents", "Agents", 0, "not_loaded", true),
-        context_category("memory", "Memory", 0, "not_loaded", true),
-        context_category("skills", "Skills", 0, "not_loaded", true),
+    let mut categories = context_item_categories(&context_items);
+    categories.extend([
         context_category(
             "messages",
             "Messages",
@@ -679,12 +705,66 @@ fn context_usage_analysis(
             "projected",
             false,
         ),
-    ];
+    ]);
     SessionContextUsageAnalysisResponse {
         categories,
+        items: context_items,
         messages: message_context_breakdown(segments),
         top_tools: top_tools(segments),
         top_attachments: top_attachments(segments),
+    }
+}
+
+fn context_item_categories(
+    items: &[SessionContextUsageItemResponse],
+) -> Vec<SessionContextUsageCategoryResponse> {
+    [
+        ("system_developer", "System / Developer"),
+        ("system_tools", "System Tools"),
+        ("mcp_tools", "MCP Tools"),
+        ("agents", "Agents"),
+        ("memory", "Memory"),
+        ("skills", "Skills"),
+    ]
+    .into_iter()
+    .map(|(kind, label)| {
+        let category_items = items
+            .iter()
+            .filter(|item| item.kind == kind)
+            .collect::<Vec<_>>();
+        let token_estimate = category_items
+            .iter()
+            .filter(|item| !item.deferred)
+            .map(|item| item.token_estimate)
+            .fold(0_u64, u64::saturating_add);
+        let source = context_item_category_source(&category_items);
+        let deferred =
+            !category_items.is_empty() && category_items.iter().all(|item| item.deferred);
+        context_category(kind, label, token_estimate, &source, deferred)
+    })
+    .collect()
+}
+
+fn context_items_token_estimate(items: &[SessionContextUsageItemResponse]) -> u64 {
+    items
+        .iter()
+        .filter(|item| !item.deferred)
+        .map(|item| item.token_estimate)
+        .fold(0_u64, u64::saturating_add)
+}
+
+fn context_item_category_source(items: &[&SessionContextUsageItemResponse]) -> String {
+    let mut sources = items
+        .iter()
+        .map(|item| item.source.as_str())
+        .filter(|source| !source.is_empty())
+        .collect::<Vec<_>>();
+    sources.sort_unstable();
+    sources.dedup();
+    match sources.as_slice() {
+        [] => "projected".to_string(),
+        [source] => (*source).to_string(),
+        _ => "mixed".to_string(),
     }
 }
 
@@ -702,6 +782,305 @@ fn context_category(
         source: source.to_string(),
         deferred,
     }
+}
+
+pub fn context_usage_items_from_context_frame(
+    frame: &ContextFrame,
+    source_event_seq: Option<u64>,
+    turn_id: Option<String>,
+) -> Vec<SessionContextUsageItemResponse> {
+    frame
+        .sections
+        .iter()
+        .flat_map(|section| {
+            context_usage_items_from_section(frame, section, source_event_seq, &turn_id)
+        })
+        .collect()
+}
+
+fn context_usage_items_from_section(
+    frame: &ContextFrame,
+    section: &ContextFrameSection,
+    source_event_seq: Option<u64>,
+    turn_id: &Option<String>,
+) -> Vec<SessionContextUsageItemResponse> {
+    match section {
+        ContextFrameSection::Identity {
+            title,
+            effective_prompt,
+            ..
+        } => vec![context_usage_item(
+            "system_developer",
+            "System / Developer",
+            title,
+            effective_prompt,
+            "context_frame",
+            false,
+            source_event_seq,
+            turn_id,
+        )],
+        ContextFrameSection::AssignmentContext {
+            title, fragments, ..
+        } => {
+            let text = fragments
+                .iter()
+                .map(|fragment| fragment.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            vec![context_usage_item(
+                "system_developer",
+                "System / Developer",
+                title,
+                non_empty_or(&text, &frame.rendered_text),
+                "context_frame",
+                false,
+                source_event_seq,
+                turn_id,
+            )]
+        }
+        ContextFrameSection::ContinuationContext {
+            title,
+            owner_context,
+            ..
+        } => owner_context
+            .as_deref()
+            .map(|owner| {
+                context_usage_item(
+                    "system_developer",
+                    "System / Developer",
+                    title,
+                    owner,
+                    "context_frame",
+                    false,
+                    source_event_seq,
+                    turn_id,
+                )
+            })
+            .into_iter()
+            .collect(),
+        ContextFrameSection::HookInjection {
+            title, injections, ..
+        } => {
+            let text = injections
+                .iter()
+                .map(|injection| injection.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            vec![context_usage_item(
+                "system_developer",
+                "System / Developer",
+                title,
+                non_empty_or(&text, &frame.rendered_text),
+                "context_frame",
+                false,
+                source_event_seq,
+                turn_id,
+            )]
+        }
+        ContextFrameSection::SystemNotice {
+            title,
+            summary,
+            body,
+        } => vec![context_usage_item(
+            "system_developer",
+            "System / Developer",
+            title,
+            body.as_deref().unwrap_or(summary),
+            "context_frame",
+            false,
+            source_event_seq,
+            turn_id,
+        )],
+        ContextFrameSection::PendingAction {
+            title,
+            instructions,
+            injections,
+            ..
+        } => {
+            let mut text_parts = instructions.iter().map(String::as_str).collect::<Vec<_>>();
+            text_parts.extend(
+                injections
+                    .iter()
+                    .map(|injection| injection.content.as_str()),
+            );
+            vec![context_usage_item(
+                "system_developer",
+                "System / Developer",
+                title,
+                &text_parts.join("\n\n"),
+                "context_frame",
+                false,
+                source_event_seq,
+                turn_id,
+            )]
+        }
+        ContextFrameSection::AutoResume { title, prompt, .. } => vec![context_usage_item(
+            "system_developer",
+            "System / Developer",
+            title,
+            prompt,
+            "context_frame",
+            false,
+            source_event_seq,
+            turn_id,
+        )],
+        ContextFrameSection::UserPreferences { title, items, .. } => vec![context_usage_item(
+            "memory",
+            "Memory",
+            title,
+            &items.join("\n"),
+            "context_frame",
+            false,
+            source_event_seq,
+            turn_id,
+        )],
+        ContextFrameSection::ProjectGuidelines { title, entries, .. } => {
+            let text = entries
+                .iter()
+                .map(|entry| format!("{}\n{}", entry.path, entry.content))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            vec![context_usage_item(
+                "memory",
+                "Memory",
+                title,
+                &text,
+                "context_frame",
+                false,
+                source_event_seq,
+                turn_id,
+            )]
+        }
+        ContextFrameSection::ToolSchema { tools } => tools
+            .iter()
+            .map(|tool| tool_schema_usage_item(tool, source_event_seq, turn_id))
+            .collect(),
+        ContextFrameSection::ToolSchemaDelta { added_tools } => added_tools
+            .iter()
+            .map(|tool| tool_schema_usage_item(tool, source_event_seq, turn_id))
+            .collect(),
+        ContextFrameSection::SkillDelta {
+            added_skills,
+            changed_skills,
+            ..
+        } => added_skills
+            .iter()
+            .chain(changed_skills.iter())
+            .map(|skill| skill_usage_item(skill, source_event_seq, turn_id))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn tool_schema_usage_item(
+    tool: &RuntimeToolSchemaEntry,
+    source_event_seq: Option<u64>,
+    turn_id: &Option<String>,
+) -> SessionContextUsageItemResponse {
+    let source = tool.source.as_deref().unwrap_or("tool_schema");
+    let kind = if source.starts_with("mcp:") || source.starts_with("platform_mcp:") {
+        "mcp_tools"
+    } else {
+        "system_tools"
+    };
+    let label = if kind == "mcp_tools" {
+        "MCP Tools"
+    } else {
+        "System Tools"
+    };
+    let mut text = format!("{}\n{}", tool.name, tool.description);
+    if let Some(capability_key) = tool.capability_key.as_deref() {
+        text.push_str("\n");
+        text.push_str(capability_key);
+    }
+    if let Some(tool_path) = tool.tool_path.as_deref() {
+        text.push_str("\n");
+        text.push_str(tool_path);
+    }
+    text.push_str("\n");
+    text.push_str(&tool.parameters_schema.to_string());
+    context_usage_item(
+        kind,
+        label,
+        &tool.name,
+        &text,
+        "tool_schema",
+        false,
+        source_event_seq,
+        turn_id,
+    )
+}
+
+fn skill_usage_item(
+    skill: &RuntimeSkillEntry,
+    source_event_seq: Option<u64>,
+    turn_id: &Option<String>,
+) -> SessionContextUsageItemResponse {
+    let name = skill
+        .display_name
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&skill.name);
+    let text = [
+        name,
+        skill.description.as_str(),
+        skill.file_path.as_str(),
+        skill.capability_key.as_str(),
+        skill.provider_key.as_str(),
+    ]
+    .join("\n");
+    context_usage_item(
+        "skills",
+        "Skills",
+        name,
+        &text,
+        "skill_registry",
+        skill.disable_model_invocation,
+        source_event_seq,
+        turn_id,
+    )
+}
+
+fn context_usage_item(
+    kind: &str,
+    label: &str,
+    name: &str,
+    text: &str,
+    source: &str,
+    deferred: bool,
+    source_event_seq: Option<u64>,
+    turn_id: &Option<String>,
+) -> SessionContextUsageItemResponse {
+    SessionContextUsageItemResponse {
+        kind: kind.to_string(),
+        label: label.to_string(),
+        name: name.trim().to_string(),
+        token_estimate: estimate_text_tokens(text),
+        source: source.to_string(),
+        deferred,
+        source_event_seq,
+        turn_id: turn_id.clone(),
+    }
+}
+
+fn non_empty_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.trim().is_empty() {
+        fallback
+    } else {
+        value
+    }
+}
+
+fn estimate_text_tokens(text: &str) -> u64 {
+    let text = text.trim();
+    if text.is_empty() {
+        return 0;
+    }
+    let chars = u64::try_from(text.chars().count()).unwrap_or(u64::MAX);
+    chars
+        .saturating_add(TEXT_TOKEN_CHARS_PER_TOKEN - 1)
+        .saturating_div(TEXT_TOKEN_CHARS_PER_TOKEN)
+        .max(1)
 }
 
 fn sum_segment_tokens(
@@ -841,6 +1220,10 @@ mod projection_tests {
         AgentContextEnvelope, AgentInputMessage, AgentMessage, ContentPart, MessageRef,
         ProjectionKind, ProjectionOrigin, ProjectionSourceRange,
     };
+    use agentdash_spi::hooks::{
+        ContextFrame, ContextFrameSection, RuntimeEventSource, RuntimeSkillEntry,
+        RuntimeToolSchemaEntry,
+    };
 
     use super::SessionProjectionViewResponse;
 
@@ -957,5 +1340,114 @@ mod projection_tests {
                 .name
                 .contains("image/png")
         );
+    }
+
+    #[test]
+    fn projection_view_aggregates_context_frame_usage_items() {
+        let envelope = AgentContextEnvelope {
+            session_id: "sess-1".to_string(),
+            projection_kind: ProjectionKind::ModelContext,
+            projection_version: 0,
+            head_event_seq: 10,
+            active_compaction_id: None,
+            token_estimate: Some(20),
+            messages: Vec::new(),
+        };
+        let frame = ContextFrame {
+            id: "frame-1".to_string(),
+            kind: "system_guidelines".to_string(),
+            source: RuntimeEventSource::RuntimeContextUpdate,
+            phase_node: None,
+            apply_mode: None,
+            delivery_status: "prepared_for_connector".to_string(),
+            delivery_channel: "connector_context".to_string(),
+            message_role: "system".to_string(),
+            rendered_text: String::new(),
+            created_at_ms: 1,
+            sections: vec![
+                ContextFrameSection::Identity {
+                    title: "Identity".to_string(),
+                    summary: "identity".to_string(),
+                    base_prompt: "base".to_string(),
+                    agent_prompt: None,
+                    mode: "default".to_string(),
+                    effective_prompt: "You are Codex.".to_string(),
+                },
+                ContextFrameSection::ProjectGuidelines {
+                    title: "Project Guidelines".to_string(),
+                    summary: "guidelines".to_string(),
+                    entries: vec![agentdash_spi::hooks::ProjectGuidelineEntry {
+                        path: "AGENTS.md".to_string(),
+                        content: "Use Chinese for user-facing replies.".to_string(),
+                    }],
+                },
+                ContextFrameSection::ToolSchema {
+                    tools: vec![
+                        RuntimeToolSchemaEntry {
+                            name: "read_file".to_string(),
+                            description: "Read files".to_string(),
+                            parameters_schema: serde_json::json!({"type": "object"}),
+                            capability_key: None,
+                            source: Some("platform:read".to_string()),
+                            tool_path: None,
+                        },
+                        RuntimeToolSchemaEntry {
+                            name: "workflow_search".to_string(),
+                            description: "Search workflow state".to_string(),
+                            parameters_schema: serde_json::json!({"type": "object"}),
+                            capability_key: None,
+                            source: Some("mcp:workflow".to_string()),
+                            tool_path: None,
+                        },
+                    ],
+                },
+                ContextFrameSection::SkillDelta {
+                    added_skills: vec![RuntimeSkillEntry {
+                        name: "trellis-start".to_string(),
+                        capability_key: "skill:trellis-start".to_string(),
+                        provider_key: "local".to_string(),
+                        local_name: "trellis-start".to_string(),
+                        display_name: None,
+                        description: "Start a Trellis session".to_string(),
+                        file_path: ".agents/skills/trellis-start/SKILL.md".to_string(),
+                        base_dir: None,
+                        exposure: Default::default(),
+                        disable_model_invocation: false,
+                    }],
+                    removed_skills: Vec::new(),
+                    changed_skills: Vec::new(),
+                },
+            ],
+        };
+        let items = super::context_usage_items_from_context_frame(
+            &frame,
+            Some(8),
+            Some("turn-1".to_string()),
+        );
+
+        let view = SessionProjectionViewResponse::from_envelope_and_context_items(envelope, items);
+
+        assert_eq!(view.context_usage.items.len(), 5);
+        assert!(
+            view.token_estimate.expect("combined token estimate") > 20,
+            "top-level token estimate should include non-message context items"
+        );
+        for kind in [
+            "system_developer",
+            "memory",
+            "system_tools",
+            "mcp_tools",
+            "skills",
+        ] {
+            let category = view
+                .context_usage
+                .categories
+                .iter()
+                .find(|category| category.kind == kind)
+                .expect("category should exist");
+            assert!(category.token_estimate > 0);
+            assert_ne!(category.source, "not_loaded");
+            assert!(!category.deferred);
+        }
     }
 }

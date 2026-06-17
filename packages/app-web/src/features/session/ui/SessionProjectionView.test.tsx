@@ -73,9 +73,9 @@ function sampleProjection(): SessionProjectionViewResponse {
         {
           kind: "system_developer",
           label: "System / Developer",
-          token_estimate: 0,
-          source: "not_loaded",
-          deferred: true,
+          token_estimate: 18,
+          source: "context_frame",
+          deferred: false,
         },
         {
           kind: "messages",
@@ -90,6 +90,18 @@ function sampleProjection(): SessionProjectionViewResponse {
           token_estimate: 96,
           source: "projected",
           deferred: false,
+        },
+      ],
+      items: [
+        {
+          kind: "system_developer",
+          label: "System / Developer",
+          name: "Identity",
+          token_estimate: 18,
+          source: "context_frame",
+          deferred: false,
+          source_event_seq: 2,
+          turn_id: "turn-1",
         },
       ],
       messages: {

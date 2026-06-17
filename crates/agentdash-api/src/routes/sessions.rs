@@ -517,8 +517,16 @@ pub async fn get_session_context_projection(
         .build_agent_context_envelope(&session_id)
         .await
         .map_err(ApiError::from)?;
+    let context_items = state
+        .services
+        .session_eventing
+        .build_context_usage_items(&session_id, envelope.head_event_seq)
+        .await
+        .map_err(ApiError::from)?;
 
-    Ok(Json(SessionProjectionViewResponse::from(envelope)))
+    Ok(Json(
+        SessionProjectionViewResponse::from_envelope_and_context_items(envelope, context_items),
+    ))
 }
 
 /// POST /sessions/{id}/fork — 基于当前模型投影创建可独立恢复的 child session。

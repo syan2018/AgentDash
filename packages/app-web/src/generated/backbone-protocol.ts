@@ -209,7 +209,7 @@ export type HookTraceSeverity = "error" | "warning" | "success" | "info";
 
 export type HookTraceTrigger = "session_start" | "user_prompt_submit" | "before_tool" | "after_tool" | "after_turn" | "before_stop" | "session_terminal" | "before_subagent_dispatch" | "after_subagent_dispatch" | "before_compact" | "after_compact" | "before_provider_request";
 
-export type ImageDetail = "high" | "original";
+export type ImageDetail = "auto" | "low" | "high" | "original";
 
 export type ItemCompletedNotification = { item: AgentDashThreadItem, threadId: string, turnId: string, completedAtMs: number, };
 
@@ -251,7 +251,7 @@ export type PatchApplyStatus = "inProgress" | "completed" | "failed" | "declined
 
 export type PatchChangeKind = { "type": "add" } | { "type": "delete" } | { "type": "update", move_path: string | null, };
 
-export type PermissionsRequestApprovalParams = { threadId: string, turnId: string, itemId: string,
+export type PermissionsRequestApprovalParams = { threadId: string, turnId: string, itemId: string, environmentId: string | null,
 /**
  * Unix timestamp (in milliseconds) when this approval request started.
  */
@@ -271,7 +271,7 @@ export type PlatformEvent = { "kind": "executor_session_bound", "data": { execut
 /**
  * See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning
  */
-export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ReasoningEffort = string;
 
 export type ReasoningSummaryTextDeltaNotification = { threadId: string, turnId: string, itemId: string, delta: string, summaryIndex: number, };
 
@@ -288,6 +288,8 @@ export type ShellExecExecutionMode = "platform" | "mountExec";
  */
 export type SourceInfo = { connectorId: string, connectorType: string, executorId: string | null, };
 
+export type SubAgentActivityKind = "started" | "interacted" | "interrupted";
+
 export type TextElement = {
 /**
  * Byte range in the parent `text` buffer that this element occupies.
@@ -300,7 +302,7 @@ placeholder: string | null, };
 
 export type ThreadActiveFlag = "waitingOnApproval" | "waitingOnUserInput";
 
-export type ThreadItem = { "type": "userMessage", id: string, content: Array<UserInput>, } | { "type": "hookPrompt", id: string, fragments: Array<HookPromptFragment>, } | { "type": "agentMessage", id: string, text: string, phase: MessagePhase | null, memoryCitation: MemoryCitation | null, } | { "type": "plan", id: string, text: string, } | { "type": "reasoning", id: string, summary: Array<string>, content: Array<string>, } | { "type": "commandExecution", id: string,
+export type ThreadItem = { "type": "userMessage", id: string, clientId: string | null, content: Array<UserInput>, } | { "type": "hookPrompt", id: string, fragments: Array<HookPromptFragment>, } | { "type": "agentMessage", id: string, text: string, phase: MessagePhase | null, memoryCitation: MemoryCitation | null, } | { "type": "plan", id: string, text: string, } | { "type": "reasoning", id: string, summary: Array<string>, content: Array<string>, } | { "type": "commandExecution", id: string,
 /**
  * The command to be executed.
  */
@@ -375,7 +377,7 @@ reasoningEffort: ReasoningEffort | null,
 /**
  * Last known status of the target agents, when available.
  */
-agentsStates: { [key in string]?: CollabAgentState }, } | { "type": "webSearch", id: string, query: string, action: WebSearchAction | null, } | { "type": "imageView", id: string, path: AbsolutePathBuf, } | { "type": "imageGeneration", id: string, status: string, revisedPrompt: string | null, result: string, savedPath?: AbsolutePathBuf, } | { "type": "enteredReviewMode", id: string, review: string, } | { "type": "exitedReviewMode", id: string, review: string, } | { "type": "contextCompaction", id: string, };
+agentsStates: { [key in string]?: CollabAgentState }, } | { "type": "subAgentActivity", id: string, kind: SubAgentActivityKind, agentThreadId: string, agentPath: string, } | { "type": "webSearch", id: string, query: string, action: WebSearchAction | null, } | { "type": "imageView", id: string, path: AbsolutePathBuf, } | { "type": "imageGeneration", id: string, status: string, revisedPrompt: string | null, result: string, savedPath?: AbsolutePathBuf, } | { "type": "enteredReviewMode", id: string, review: string, } | { "type": "exitedReviewMode", id: string, review: string, } | { "type": "contextCompaction", id: string, };
 
 export type ThreadStatus = { "type": "notLoaded" } | { "type": "idle" } | { "type": "systemError" } | { "type": "active", activeFlags: Array<ThreadActiveFlag>, };
 
@@ -395,7 +397,7 @@ export type ToolRequestUserInputOption = { label: string, description: string, }
 /**
  * EXPERIMENTAL. Params sent with a request_user_input event.
  */
-export type ToolRequestUserInputParams = { threadId: string, turnId: string, itemId: string, questions: Array<ToolRequestUserInputQuestion>, };
+export type ToolRequestUserInputParams = { threadId: string, turnId: string, itemId: string, questions: Array<ToolRequestUserInputQuestion>, autoResolutionMs: number | null, };
 
 /**
  * EXPERIMENTAL. Represents one request_user_input question and its required options.

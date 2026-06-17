@@ -5,6 +5,9 @@ use agentdash_agent_protocol::{
     codex_app_server_protocol as codex,
 };
 use agentdash_agent_types::MessageRef;
+use agentdash_contracts::session::{
+    SessionContextUsageItemResponse, context_usage_items_from_context_frame,
+};
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 use agentdash_spi::hooks::ContextFrame;
 use tokio::sync::broadcast;
@@ -319,6 +322,47 @@ impl SessionEventingService {
         ContextProjector::new(self.stores.clone())
             .build_model_context(session_id)
             .await
+    }
+
+    pub async fn build_context_usage_items(
+        &self,
+        session_id: &str,
+        head_event_seq: u64,
+    ) -> io::Result<Vec<SessionContextUsageItemResponse>> {
+        let events = self.stores.events.list_all_events(session_id).await?;
+        let mut frames = Vec::new();
+        let mut seen_frame_ids = std::collections::HashSet::new();
+        for event in events
+            .iter()
+            .filter(|event| event.event_seq <= head_event_seq)
+            .rev()
+        {
+            let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) =
+                &event.notification.event
+            else {
+                continue;
+            };
+            if key != "context_frame" {
+                continue;
+            }
+            let Ok(frame) = serde_json::from_value::<ContextFrame>(value.clone()) else {
+                continue;
+            };
+            if !seen_frame_ids.insert(frame.id.clone()) {
+                continue;
+            }
+            frames.push((event.event_seq, event.turn_id.clone(), frame));
+        }
+        frames.reverse();
+        let mut items = Vec::new();
+        for (event_seq, turn_id, frame) in frames {
+            items.extend(context_usage_items_from_context_frame(
+                &frame,
+                Some(event_seq),
+                turn_id,
+            ));
+        }
+        Ok(items)
     }
 
     async fn maybe_commit_compaction_projection(

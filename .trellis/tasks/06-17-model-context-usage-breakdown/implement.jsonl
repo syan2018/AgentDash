@@ -1,0 +1,12 @@
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"跨层 DTO 与 generated TypeScript 的事实源约束"}
+{"file":".trellis/spec/backend/session/context-compaction-projection.md","reason":"模型上下文 projection 与 context_usage 的职责契约"}
+{"file":".trellis/spec/backend/session/execution-context-frames.md","reason":"context frames、MCP、tools 在 connector-facing ExecutionContext 中的来源"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"前端 generated DTO 消费与禁止手写兼容 mapper 的约束"}
+{"file":".trellis/tasks/06-17-model-context-usage-breakdown/research.md","reason":"Claude Code /context 与 analyzeContextUsage 参考实现结论"}
+{"file":"crates/agentdash-contracts/src/runtime/session.rs","reason":"新增 context usage item DTO、ContextFrame section 分桶、非消息上下文聚合与顶部 token estimate 合并"}
+{"file":"crates/agentdash-application/src/session/eventing.rs","reason":"从持久化 context_frame session events 读取投影头之前的非消息上下文事实"}
+{"file":"crates/agentdash-api/src/routes/sessions.rs","reason":"在 /sessions/{id}/context/projection 组合 AgentContextEnvelope 与 context usage items"}
+{"file":"packages/app-web/src/generated/session-contracts.ts","reason":"同步新增 SessionContextUsageItemResponse 与 context_usage.items"}
+{"file":"packages/app-web/src/features/session/ui/SessionProjectionView.test.tsx","reason":"测试样例改为真实 context_frame source，不再使用 not_loaded 占位"}
+{"file":"packages/app-web/src/generated/backbone-protocol.ts","reason":"contract generator 同步现有 backbone protocol drift，确保 contracts:check 通过"}
+{"file":"packages/app-web/src/features/session/model/sessionStreamReducer.test.ts","reason":"补齐生成协议要求的 request_user_input autoResolutionMs fixture 字段"}

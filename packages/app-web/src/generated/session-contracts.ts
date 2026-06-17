@@ -18,9 +18,11 @@ export type SessionAttachmentContextContributionResponse = { name: string, token
 
 export type SessionCommandStateResponse = { status: string, turn_id?: string, message?: string, };
 
-export type SessionContextUsageAnalysisResponse = { categories: Array<SessionContextUsageCategoryResponse>, messages: SessionMessageContextBreakdownResponse, top_tools: Array<SessionToolContextContributionResponse>, top_attachments: Array<SessionAttachmentContextContributionResponse>, };
+export type SessionContextUsageAnalysisResponse = { categories: Array<SessionContextUsageCategoryResponse>, items: Array<SessionContextUsageItemResponse>, messages: SessionMessageContextBreakdownResponse, top_tools: Array<SessionToolContextContributionResponse>, top_attachments: Array<SessionAttachmentContextContributionResponse>, };
 
 export type SessionContextUsageCategoryResponse = { kind: string, label: string, token_estimate: number, source: string, deferred: boolean, };
+
+export type SessionContextUsageItemResponse = { kind: string, label: string, name: string, token_estimate: number, source: string, deferred: boolean, source_event_seq?: number, turn_id?: string, };
 
 export type SessionEventResponse = { session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, };
 

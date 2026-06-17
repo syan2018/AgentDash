@@ -104,6 +104,7 @@ describe("sessionStreamReducer", () => {
             turnId: "turn-1",
             itemId: "item-1",
             questions: [],
+            autoResolutionMs: null,
           },
         },
       },

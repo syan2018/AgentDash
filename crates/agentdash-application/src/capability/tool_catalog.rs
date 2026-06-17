@@ -10,9 +10,9 @@ use agentdash_contracts::workflow::{
 use agentdash_spi::connector::ToolCluster;
 use agentdash_spi::platform::tool_capability::{
     self, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_RELAY_MANAGEMENT,
-    CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK, CAP_WORKFLOW,
-    CAP_WORKFLOW_MANAGEMENT, CAP_WORKSPACE_MODULE, CapabilityScope, PlatformMcpScope,
-    ToolDescriptor, ToolSource, WELL_KNOWN_KEYS, default_visibility_rules, is_known_key,
+    CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK, CAP_WORKFLOW, CAP_WORKFLOW_MANAGEMENT,
+    CAP_WORKSPACE_MODULE, CapabilityScope, PlatformMcpScope, ToolDescriptor, ToolSource,
+    WELL_KNOWN_KEYS, default_visibility_rules, is_known_key,
 };
 
 /// 按 capability keys 查询工具目录。

@@ -11,11 +11,10 @@ use agentdash_application::runtime_tools::{
     VfsRuntimeToolProvider, WorkflowRuntimeToolProvider, WorkspaceModuleRuntimeToolProvider,
 };
 use agentdash_application::session::{
-    EmptyTerminalHookEffectHandlerRegistry,
-    SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
-    SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
-    SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService, SessionTerminalCallback,
-    SessionTitleService,
+    EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionCapabilityService,
+    SessionControlService, SessionCoreService, SessionEffectsService, SessionEventingService,
+    SessionHookService, SessionLaunchService, SessionPersistence, SessionRuntimeBuilder,
+    SessionRuntimeService, SessionTerminalCallback, SessionTitleService,
 };
 use agentdash_application::vfs::VfsMaterializationService;
 use agentdash_application::vfs::VfsService;

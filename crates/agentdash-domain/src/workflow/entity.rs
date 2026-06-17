@@ -385,7 +385,10 @@ impl LifecycleRun {
         let now = Utc::now();
         let mut reordered = Vec::with_capacity(self.tasks.len());
         for task_id in ordered_task_ids {
-            let mut task = self.task_by_id(*task_id).expect("validated task id").clone();
+            let mut task = self
+                .task_by_id(*task_id)
+                .expect("validated task id")
+                .clone();
             task.updated_at = now;
             reordered.push(task);
         }

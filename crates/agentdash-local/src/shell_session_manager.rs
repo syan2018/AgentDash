@@ -314,12 +314,7 @@ impl ShellSessionManager {
             Some(0)
         };
         let read = self
-            .read_session(
-                &payload.session_id,
-                after_seq,
-                read_wait,
-                payload.max_bytes,
-            )
+            .read_session(&payload.session_id, after_seq, read_wait, payload.max_bytes)
             .await?;
         Ok(ToolShellInputResponse {
             session_id: payload.session_id,
@@ -616,14 +611,16 @@ impl ShellSessionManager {
             session.exited_at = Some(Instant::now());
             session.updated_at = Instant::now();
             session.notify.notify_waiters();
-            let event = session.terminal_id.clone().map(|terminal_id| {
-                TerminalStateChangedPayload {
-                    terminal_id,
-                    state: TerminalProcessState::Killed,
-                    exit_code: None,
-                    message: Some("timeout reached".to_string()),
-                }
-            });
+            let event =
+                session
+                    .terminal_id
+                    .clone()
+                    .map(|terminal_id| TerminalStateChangedPayload {
+                        terminal_id,
+                        state: TerminalProcessState::Killed,
+                        exit_code: None,
+                        message: Some("timeout reached".to_string()),
+                    });
             event
         };
         if let Some(payload) = event {
@@ -861,9 +858,12 @@ mod tests {
         );
         assert!(response.exit_code.is_none());
 
-        let read =
-            wait_until_terminal(&manager, &response.session_id, response.next_seq.checked_sub(1))
-                .await;
+        let read = wait_until_terminal(
+            &manager,
+            &response.session_id,
+            response.next_seq.checked_sub(1),
+        )
+        .await;
         assert_eq!(read.state, ToolShellSessionState::Completed);
         let final_snapshot = manager
             .read_session(&response.session_id, None, Some(0), Some(16 * 1024))
@@ -943,9 +943,12 @@ mod tests {
 
         assert_eq!(response.state, ToolShellSessionState::Running);
 
-        let read =
-            wait_until_terminal(&manager, &response.session_id, response.next_seq.checked_sub(1))
-                .await;
+        let read = wait_until_terminal(
+            &manager,
+            &response.session_id,
+            response.next_seq.checked_sub(1),
+        )
+        .await;
         assert_eq!(read.state, ToolShellSessionState::TimedOut);
     }
 
@@ -977,9 +980,12 @@ mod tests {
             .await
             .expect("start shell");
 
-        let read =
-            wait_until_terminal(&manager, &response.session_id, response.next_seq.checked_sub(1))
-                .await;
+        let read = wait_until_terminal(
+            &manager,
+            &response.session_id,
+            response.next_seq.checked_sub(1),
+        )
+        .await;
         assert!(read.truncation.truncated, "read={read:?}");
         assert!(read.truncation.omitted_bytes > 0);
     }

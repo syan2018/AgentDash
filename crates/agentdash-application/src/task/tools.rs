@@ -1,4 +1,3 @@
-use std::collections::{BTreeMap, HashSet};
 use agentdash_domain::context_source::{
     ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
 };
@@ -13,6 +12,7 @@ use agentdash_spi::{
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashSet};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -53,10 +53,10 @@ impl TaskToolScope {
         context: &TaskToolContext,
     ) -> Result<Self, AgentToolError> {
         let session_id = context.runtime_session_id.clone().ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "当前 session 缺少 hook runtime，无法定位 Task scope".to_string(),
-                )
-            })?;
+            AgentToolError::ExecutionFailed(
+                "当前 session 缺少 hook runtime，无法定位 Task scope".to_string(),
+            )
+        })?;
         let anchor = repos
             .execution_anchor_repo
             .find_by_session(&session_id)
@@ -329,8 +329,12 @@ pub enum TaskWriteOperation {
         task_id: String,
         status: TaskStatusInput,
     },
-    ReorderTasks { task_ids: Vec<Uuid> },
-    DropTask { task_id: String },
+    ReorderTasks {
+        task_ids: Vec<Uuid>,
+    },
+    DropTask {
+        task_id: String,
+    },
     ReplaceContextRefs {
         task_id: String,
         context_refs: Vec<ContextSourceRefInput>,
@@ -696,8 +700,7 @@ async fn read_task_status(
         .get_by_id(run_id)
         .await
         .map_err(tool_error)?;
-    Ok(run
-        .and_then(|run| run.task_by_id(task_id).map(|task| task.status)))
+    Ok(run.and_then(|run| run.task_by_id(task_id).map(|task| task.status)))
 }
 
 async fn apply_snapshot(
@@ -714,7 +717,11 @@ async fn apply_snapshot(
         .await
         .map_err(tool_error)?
         .ok_or_else(|| AgentToolError::ExecutionFailed(format!("LifecycleRun {run_id} 不存在")))?;
-    let existing_ids = existing.tasks.iter().map(|task| task.id).collect::<Vec<_>>();
+    let existing_ids = existing
+        .tasks
+        .iter()
+        .map(|task| task.id)
+        .collect::<Vec<_>>();
     let mut title_matches = existing
         .tasks
         .iter()
@@ -730,16 +737,14 @@ async fn apply_snapshot(
         let normalized_title = normalize_title(&item.title)?;
         let status = item.status;
         let maybe_id = item.id.or_else(|| {
-            title_matches
-                .get_mut(&normalized_title)
-                .and_then(|ids| {
-                    while let Some(task_id) = ids.pop() {
-                        if matched_ids.insert(task_id) {
-                            return Some(task_id);
-                        }
+            title_matches.get_mut(&normalized_title).and_then(|ids| {
+                while let Some(task_id) = ids.pop() {
+                    if matched_ids.insert(task_id) {
+                        return Some(task_id);
                     }
-                    None
-                })
+                }
+                None
+            })
         });
         let change = if let Some(task_id) = maybe_id {
             if let Some(prior) = existing.task_by_id(task_id) {
@@ -801,9 +806,13 @@ async fn apply_snapshot(
         changes.push(change);
     }
 
-    reorder_run_tasks(repos.lifecycle_run_repo.as_ref(), run_id, ordered_ids.clone())
-        .await
-        .map_err(tool_error)?;
+    reorder_run_tasks(
+        repos.lifecycle_run_repo.as_ref(),
+        run_id,
+        ordered_ids.clone(),
+    )
+    .await
+    .map_err(tool_error)?;
     if drop_missing {
         for task_id in existing_ids {
             if !ordered_ids.contains(&task_id) {
@@ -935,7 +944,9 @@ fn overview_view(
 ) -> serde_json::Value {
     let mut counts = BTreeMap::<String, usize>::new();
     for task in tasks {
-        *counts.entry(status_key(task.status).to_string()).or_default() += 1;
+        *counts
+            .entry(status_key(task.status).to_string())
+            .or_default() += 1;
     }
     // current_items = 进行中（active/review/blocked），命名避免与单一 active 状态混淆。
     let current = tasks
@@ -962,7 +973,11 @@ fn overview_view(
     })
 }
 
-fn context_view(scope: &TaskToolScope, run_id: Uuid, tasks: &[LifecycleTaskPlanItem]) -> serde_json::Value {
+fn context_view(
+    scope: &TaskToolScope,
+    run_id: Uuid,
+    tasks: &[LifecycleTaskPlanItem],
+) -> serde_json::Value {
     serde_json::json!({
         "mode": "context",
         "scope": scope_json(scope, run_id),
@@ -1075,7 +1090,9 @@ fn draft_from_snapshot(
     })
 }
 
-fn patch_from_snapshot(item: TaskSnapshotItem) -> Result<LifecycleTaskPlanItemPatch, AgentToolError> {
+fn patch_from_snapshot(
+    item: TaskSnapshotItem,
+) -> Result<LifecycleTaskPlanItemPatch, AgentToolError> {
     Ok(LifecycleTaskPlanItemPatch {
         title: Some(normalize_title(&item.title)?),
         body: Some(item.body),
@@ -1090,16 +1107,17 @@ fn patch_from_snapshot(item: TaskSnapshotItem) -> Result<LifecycleTaskPlanItemPa
 
 fn patch_from_input(input: TaskPatchInput) -> Result<LifecycleTaskPlanItemPatch, AgentToolError> {
     Ok(LifecycleTaskPlanItemPatch {
-        title: input.title.map(|title| normalize_title(&title)).transpose()?,
+        title: input
+            .title
+            .map(|title| normalize_title(&title))
+            .transpose()?,
         body: input.body,
         priority: input.priority.map(|value| value.map(TaskPriority::from)),
         owner_agent_id: input.owner_agent_id,
         assigned_agent_id: input.assigned_agent_id,
         source_task_id: input.source_task_id,
         context_refs: input.context_refs.map(convert_context_refs).transpose()?,
-        story_ref: input
-            .story_ref
-            .map(|value| value.map(SubjectRef::from)),
+        story_ref: input.story_ref.map(|value| value.map(SubjectRef::from)),
     })
 }
 
@@ -1234,7 +1252,10 @@ impl TryFrom<ContextSourceRefInput> for ContextSourceRef {
             priority: value.priority.unwrap_or_default(),
             required: value.required,
             max_chars: value.max_chars,
-            delivery: value.delivery.map(ContextDelivery::from).unwrap_or_default(),
+            delivery: value
+                .delivery
+                .map(ContextDelivery::from)
+                .unwrap_or_default(),
         })
     }
 }
@@ -1298,7 +1319,10 @@ mod tests {
             ContentPart::Text { text } => text,
             other => panic!("expected text content, got {other:?}"),
         };
-        assert!(text.contains("示例 Task"), "content 应包含 Task 数据: {text}");
+        assert!(
+            text.contains("示例 Task"),
+            "content 应包含 Task 数据: {text}"
+        );
         assert!(text.starts_with("Task view 已读取"));
         assert!(result.details.is_some(), "details 仍保留供持久化");
     }
@@ -1312,7 +1336,10 @@ mod tests {
         assert!(preview.ends_with('…'));
         assert_eq!(preview.chars().count(), COMPACT_BODY_MAX_CHARS + 1); // +1 = 省略号
         assert_eq!(compact["context_refs_count"], 0);
-        assert!(compact.get("created_at").is_none(), "compact 不带审计时间戳");
+        assert!(
+            compact.get("created_at").is_none(),
+            "compact 不带审计时间戳"
+        );
     }
 
     #[test]
@@ -1341,7 +1368,8 @@ mod tests {
     #[test]
     fn task_change_simple_omits_status_fields() {
         let task = sample_task(None);
-        let value = serde_json::to_value(TaskChange::simple(&task, TaskChangeKind::Created)).unwrap();
+        let value =
+            serde_json::to_value(TaskChange::simple(&task, TaskChangeKind::Created)).unwrap();
         assert_eq!(value["change_kind"], "created");
         assert!(value.get("status_from").is_none());
         assert!(value.get("status_to").is_none());

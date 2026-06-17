@@ -644,7 +644,10 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        assert!(output.has(ToolCluster::Task), "task session 应启用 Task tools");
+        assert!(
+            output.has(ToolCluster::Task),
+            "task session 应启用 Task tools"
+        );
         let has_task_mcp = state_has_mcp_url(&output, "/mcp/task/");
         assert!(!has_task_mcp, "task session 不再注入 TaskMcpServer");
 
@@ -1244,7 +1247,10 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        assert!(output.has(ToolCluster::Task), "task owner 应启用 Task runtime tools");
+        assert!(
+            output.has(ToolCluster::Task),
+            "task owner 应启用 Task runtime tools"
+        );
         assert!(
             !output.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,

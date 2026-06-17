@@ -617,3 +617,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: 模型上下文消耗统计真实化
+
+**Date**: 2026-06-17
+**Task**: 模型上下文消耗统计真实化
+**Branch**: `main`
+
+### Summary
+
+修复 Session context usage 非消息类目长期 not_loaded 的数据模型；从持久化 context_frame 事件抽取 system、memory、tool、MCP、skill usage items，合并 projection segments 生成真实 categories，并同步前端 generated contracts 与 focused tests。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b21ed09e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端测试和质量门槛"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误映射回归检查"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "VFS exec 行为回归检查"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "DTO 与生成类型一致性检查"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "本机 runtime/relay/terminal 跨层行为检查"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端类型和 mapper 检查"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "terminal store 状态事实源检查"}

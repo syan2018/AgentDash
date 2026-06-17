@@ -8,6 +8,8 @@ import {
   getFileKindLabel,
   toFileUri,
 } from "../../file-reference/fileReferenceUi";
+import { SessionUserImageBlock } from "./SessionUserImageBlock";
+import type { UserMessageImage } from "../model/types";
 
 export interface SessionMessageCardProps {
   type: "user" | "agent" | "thinking";
@@ -17,6 +19,8 @@ export interface SessionMessageCardProps {
   defaultCollapsed?: boolean;
   badgeOverride?: string;
   labelOverride?: string;
+  /** 仅用户消息：随文本一起展示的图片块。 */
+  images?: UserMessageImage[];
 }
 
 function renderTextWithFilePills(text: string): ReactNode[] {
@@ -63,9 +67,12 @@ export const SessionMessageCard = memo(function SessionMessageCard({
   defaultCollapsed = false,
   badgeOverride,
   labelOverride,
+  images,
 }: SessionMessageCardProps) {
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
   const config = MESSAGE_CONFIG[type];
+  const hasImages = type === "user" && Boolean(images && images.length > 0);
+  const hasText = content.trim().length > 0;
 
   if (type === "thinking" && !collapsible) {
     return (
@@ -105,9 +112,14 @@ export const SessionMessageCard = memo(function SessionMessageCard({
       <div className="min-w-0 flex-1">
         <div className={config.contentClass}>
           {type === "user" ? (
-            <p className="whitespace-pre-wrap text-sm leading-7 text-foreground">
-              {renderTextWithFilePills(content)}
-            </p>
+            <div className="space-y-2.5">
+              {hasText && (
+                <p className="whitespace-pre-wrap text-sm leading-7 text-foreground">
+                  {renderTextWithFilePills(content)}
+                </p>
+              )}
+              {hasImages && <SessionUserImageBlock images={images!} />}
+            </div>
           ) : (
             <MarkdownRenderer content={content} isStreaming={isStreaming} />
           )}

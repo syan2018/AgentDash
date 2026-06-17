@@ -20,7 +20,7 @@ import {
   isAggregatedContextFrameGroup,
   isAggregatedThinkingGroup,
   isDisplayEntry,
-  extractTextFromUserInputs,
+  partitionUserInputs,
   getThreadItemStatus,
 } from "../model/types";
 import { resolveKind, KIND_REGISTRY, type ThreadItemKind } from "../model/threadItemKind";
@@ -147,12 +147,8 @@ export function SingleEntry({
     }
 
     case "user_input_submitted": {
-      return (
-        <SessionMessageCard
-          type="user"
-          content={accumulatedText ?? extractTextFromUserInputs(event.payload.content)}
-        />
-      );
+      const { text, images } = partitionUserInputs(event.payload.content);
+      return <SessionMessageCard type="user" content={text} images={images} />;
     }
 
     case "platform": {

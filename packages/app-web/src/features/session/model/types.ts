@@ -249,6 +249,41 @@ export function extractTextFromUserInputs(input: readonly UserInput[]): string {
     .join("\n");
 }
 
+/** 用户消息中的图片块（用专有 block 渲染，而非拍扁成文本）。 */
+export interface UserMessageImage {
+  /** 可直接作为 <img src> 的地址（data URL 或远程 URL）。 */
+  url: string;
+  /** 无障碍文本 / lightbox 标题。 */
+  alt: string;
+}
+
+/** 用户输入拆分结果：文本部分仍走文本气泡，图片部分走专有图片 block。 */
+export interface PartitionedUserInputs {
+  text: string;
+  images: UserMessageImage[];
+}
+
+/**
+ * 将用户输入拆为「文本」与「图片」两部分。
+ * image 块（含 data URL）单独成图片 block 渲染，避免把 base64 拍扁成文本；
+ * 其余块（text / localImage / skill / mention）仍按既有文本语义拼接。
+ */
+export function partitionUserInputs(input: readonly UserInput[]): PartitionedUserInputs {
+  const images: UserMessageImage[] = [];
+  const textParts: string[] = [];
+
+  for (const block of input) {
+    if (block.type === "image") {
+      images.push({ url: block.url, alt: `用户图片 ${images.length + 1}` });
+      continue;
+    }
+    const text = extractTextFromUserInput(block).trim();
+    if (text.length > 0) textParts.push(text);
+  }
+
+  return { text: textParts.join("\n"), images };
+}
+
 // ==================== 前端扩展类型 ====================
 
 export type SessionEventEnvelope = SessionEventResponse;

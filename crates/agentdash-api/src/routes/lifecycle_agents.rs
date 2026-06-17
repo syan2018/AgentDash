@@ -1308,7 +1308,7 @@ mod tests {
 
     #[test]
     fn list_entry_from_projection_carries_source_and_count() {
-        let run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
         let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         let projection = app_workspace::AgentRunListProjection {
             run: run.clone(),

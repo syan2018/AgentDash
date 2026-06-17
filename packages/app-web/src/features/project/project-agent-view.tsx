@@ -85,7 +85,7 @@ function CreateAgentDialog({
   };
 
   // status 字段自 migration 0013 起已废弃，后端不再维护；直接透传全部定义。
-  const activeLifecycles = lifecycles;
+  const activeWorkflows = lifecycles;
 
   return (
     <>
@@ -125,7 +125,7 @@ function CreateAgentDialog({
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    {mode === "none" ? "无" : "Lifecycle"}
+                    {mode === "none" ? "Plain" : "Workflow"}
                   </button>
                 ))}
               </div>
@@ -136,8 +136,8 @@ function CreateAgentDialog({
                   onChange={(e) => setSelectedLifecycleKey(e.target.value)}
                   className="mt-2 w-full rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
                 >
-                  <option value="">选择 Lifecycle…</option>
-                  {activeLifecycles.map((l) => (
+                  <option value="">选择 Workflow…</option>
+                  {activeWorkflows.map((l) => (
                     <option key={l.key} value={l.key}>{l.name} ({l.key})</option>
                   ))}
                 </select>
@@ -565,7 +565,7 @@ export function ProjectAgentView({
                         )}
                         {projectAgentConfig?.default_lifecycle_key && (
                           <span className="rounded-[8px] border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] text-primary">
-                            Lifecycle: {projectAgentConfig.default_lifecycle_key}
+                            Workflow: {projectAgentConfig.default_lifecycle_key}
                           </span>
                         )}
                       </div>

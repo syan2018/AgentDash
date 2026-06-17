@@ -17,8 +17,8 @@ use crate::backend_execution_placement::ExecutionPlacementPlan;
 use crate::session::post_turn_handler::DynPostTurnHandler;
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
-    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
-    SessionPromptLifecycle,
+    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, PromptLaunchPath,
+    ResolvedPromptPayload,
 };
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchFollowUpSource {
@@ -38,7 +38,7 @@ pub enum LaunchRestoreMode {
 pub struct LaunchSummary {
     pub session_id: String,
     pub turn_id: String,
-    pub lifecycle: SessionPromptLifecycle,
+    pub launch_path: PromptLaunchPath,
     pub restore_mode: LaunchRestoreMode,
     pub hook_snapshot_reload: HookSnapshotReloadTrigger,
     pub follow_up_session_id: Option<String>,
@@ -58,8 +58,8 @@ pub struct LaunchSummary {
 }
 
 #[derive(Debug, Clone)]
-pub struct LifecycleLaunchPlan {
-    pub lifecycle: SessionPromptLifecycle,
+pub struct PromptLaunchPathPlan {
+    pub launch_path: PromptLaunchPath,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,7 +113,7 @@ pub struct LaunchPlan {
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
     pub context_bundle: Option<SessionContextBundle>,
     pub continuation_context_frame: Option<ContextFrame>,
-    pub lifecycle: LifecycleLaunchPlan,
+    pub launch_path: PromptLaunchPathPlan,
     pub restore: RestoreLaunchPlan,
     pub hooks: HookLaunchPlan,
     pub runtime_commands: RuntimeCommandLaunchPlan,
@@ -130,7 +130,7 @@ pub struct LaunchPlanInput {
     pub launch_envelope: FrameLaunchEnvelope,
     pub session_id: String,
     pub turn_id: String,
-    pub lifecycle: SessionPromptLifecycle,
+    pub launch_path: PromptLaunchPath,
     pub restore_mode: LaunchRestoreMode,
     pub hook_snapshot_reload: HookSnapshotReloadTrigger,
     pub hook_snapshot_contribution: Option<Vec<ContextFragment>>,
@@ -173,7 +173,7 @@ impl LaunchPlan {
         let summary = LaunchSummary {
             session_id: input.session_id,
             turn_id: input.turn_id.clone(),
-            lifecycle: input.lifecycle,
+            launch_path: input.launch_path,
             restore_mode: input.restore_mode.clone(),
             hook_snapshot_reload: input.hook_snapshot_reload,
             follow_up_session_id: input.follow_up_session_id,
@@ -204,8 +204,8 @@ impl LaunchPlan {
             restored_executor_state,
             capability_keys,
         };
-        let lifecycle = LifecycleLaunchPlan {
-            lifecycle: input.lifecycle,
+        let launch_path = PromptLaunchPathPlan {
+            launch_path: input.launch_path,
         };
         let restore = RestoreLaunchPlan {
             mode: input.restore_mode,
@@ -285,7 +285,7 @@ impl LaunchPlan {
             discovered_guidelines: input.launch_envelope.intent.discovered_guidelines.clone(),
             context_bundle,
             continuation_context_frame,
-            lifecycle,
+            launch_path,
             restore,
             hooks,
             runtime_commands,
@@ -333,7 +333,7 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
 
-    fn input_for(lifecycle: SessionPromptLifecycle) -> LaunchPlanInput {
+    fn input_for(launch_path: PromptLaunchPath) -> LaunchPlanInput {
         let owner = ResolvedSessionOwner {
             owner_type: agentdash_spi::CapabilityScope::Project,
             project_id: Some(uuid::Uuid::new_v4()),
@@ -393,7 +393,7 @@ mod tests {
             launch_envelope,
             session_id: "sess-launch".to_string(),
             turn_id: "t1".to_string(),
-            lifecycle,
+            launch_path,
             restore_mode: LaunchRestoreMode::None,
             hook_snapshot_reload: HookSnapshotReloadTrigger::Reload,
             hook_snapshot_contribution: None,
@@ -484,8 +484,8 @@ mod tests {
 
     #[test]
     fn launch_plan_projects_connector_context_and_summary() {
-        let lifecycle = SessionPromptLifecycle::OwnerBootstrap;
-        let input = input_for(lifecycle);
+        let launch_path = PromptLaunchPath::OwnerBootstrap;
+        let input = input_for(launch_path);
 
         let execution = LaunchPlan::build(input);
 
@@ -498,7 +498,7 @@ mod tests {
         );
         assert_eq!(execution.context.session.environment_variables["A"], "B");
         assert_eq!(execution.summary.session_id, "sess-launch");
-        assert_eq!(execution.summary.lifecycle, lifecycle);
+        assert_eq!(execution.summary.launch_path, launch_path);
         assert_eq!(execution.summary.restore_mode, LaunchRestoreMode::None);
         assert_eq!(
             execution.summary.follow_up_source,
@@ -551,7 +551,7 @@ mod tests {
 
     #[test]
     fn launch_summary_marks_repository_restore_state() {
-        let mut input = input_for(SessionPromptLifecycle::RepositoryRehydrate(
+        let mut input = input_for(PromptLaunchPath::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::ExecutorState,
         ));
         input.restore_mode = LaunchRestoreMode::ExecutorState;
@@ -561,16 +561,14 @@ mod tests {
 
         assert!(execution.summary.restored_executor_state);
         assert_eq!(
-            execution.summary.lifecycle,
-            SessionPromptLifecycle::RepositoryRehydrate(
-                SessionRepositoryRehydrateMode::ExecutorState
-            )
+            execution.summary.launch_path,
+            PromptLaunchPath::RepositoryRehydrate(SessionRepositoryRehydrateMode::ExecutorState)
         );
     }
 
     #[test]
     fn launch_summary_records_construction_sources() {
-        let mut input = input_for(SessionPromptLifecycle::Plain);
+        let mut input = input_for(PromptLaunchPath::Plain);
         input.follow_up_session_id = Some("executor-session-1".to_string());
         input.follow_up_source = LaunchFollowUpSource::SessionMeta;
         input.pending_capability_transitions = vec![PendingCapabilityStateTransition {

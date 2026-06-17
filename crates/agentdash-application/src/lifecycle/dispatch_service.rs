@@ -334,7 +334,7 @@ impl<'a> LifecycleDispatchService<'a> {
         plan: DispatchPlan,
     ) -> Result<DispatchFacts, WorkflowApplicationError> {
         if plan.workflow_graph_ref.is_none() {
-            return self.dispatch_graphless(plan).await;
+            return self.dispatch_plain(plan).await;
         }
 
         let workflow_graph_ref = plan
@@ -443,11 +443,11 @@ impl<'a> LifecycleDispatchService<'a> {
         })
     }
 
-    async fn dispatch_graphless(
+    async fn dispatch_plain(
         &self,
         plan: DispatchPlan,
     ) -> Result<DispatchFacts, WorkflowApplicationError> {
-        let run = self.resolve_or_create_graphless_run(&plan).await?;
+        let run = self.resolve_or_create_plain_run(&plan).await?;
         let agent = self.resolve_or_create_agent(&run, &plan).await?;
         let association = if let Some(subject_ref) = &plan.subject_ref {
             Some(
@@ -461,7 +461,7 @@ impl<'a> LifecycleDispatchService<'a> {
             .resolve_or_create_runtime_session(&plan, &run, &agent)
             .await?;
         let frame = self
-            .create_graphless_initial_frame(&agent, runtime_session_ref)
+            .create_plain_initial_frame(&agent, runtime_session_ref)
             .await?;
         let mut agent = agent;
         agent.set_current_frame(frame.id);
@@ -544,7 +544,7 @@ impl<'a> LifecycleDispatchService<'a> {
         }
     }
 
-    async fn resolve_or_create_graphless_run(
+    async fn resolve_or_create_plain_run(
         &self,
         plan: &DispatchPlan,
     ) -> Result<LifecycleRun, WorkflowApplicationError> {
@@ -562,7 +562,7 @@ impl<'a> LifecycleDispatchService<'a> {
                 "RunPolicy::AppendGraph 需要 parent_run_id".to_string(),
             )),
             _ => {
-                let run = LifecycleRun::new_graphless(plan.project_id);
+                let run = LifecycleRun::new_plain(plan.project_id);
                 self.run_repo.create(&run).await?;
                 Ok(run)
             }
@@ -671,7 +671,7 @@ impl<'a> LifecycleDispatchService<'a> {
         Ok(frame)
     }
 
-    async fn create_graphless_initial_frame(
+    async fn create_plain_initial_frame(
         &self,
         agent: &LifecycleAgent,
         runtime_session_ref: Option<Uuid>,
@@ -1458,7 +1458,7 @@ mod tests {
     // Tests
 
     #[tokio::test]
-    async fn agent_launch_creates_graphless_surface_without_orchestration_binding() {
+    async fn agent_launch_creates_plain_surface_without_orchestration_binding() {
         let project_id = Uuid::new_v4();
         let run_repo = InMemoryRunRepo::default();
         let workflow_repo = InMemoryWorkflowGraphRepo::default();
@@ -1488,7 +1488,7 @@ mod tests {
 
         let runs = run_repo.items.lock().unwrap().clone();
         assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].topology, LifecycleRunTopology::Graphless);
+        assert_eq!(runs[0].topology, LifecycleRunTopology::Plain);
         assert!(runs[0].orchestrations.is_empty());
         assert_eq!(result.runtime_refs.orchestration_ref(), None);
         assert_eq!(agent_repo.items.lock().unwrap().len(), 1);

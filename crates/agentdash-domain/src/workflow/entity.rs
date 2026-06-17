@@ -151,7 +151,7 @@ impl WorkflowGraph {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleRunTopology {
-    Graphless,
+    Plain,
     WorkflowGraph,
 }
 
@@ -195,12 +195,12 @@ impl LifecycleRun {
         }
     }
 
-    pub fn new_graphless(project_id: Uuid) -> Self {
+    pub fn new_plain(project_id: Uuid) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             project_id,
-            topology: LifecycleRunTopology::Graphless,
+            topology: LifecycleRunTopology::Plain,
             context: LifecycleContext::default(),
             orchestrations: Vec::new(),
             tasks: Vec::new(),
@@ -667,16 +667,16 @@ mod tests {
         assert!(control.tasks.is_empty());
         assert!(control.view_projection.is_none());
 
-        let graphless = LifecycleRun::new_graphless(Uuid::new_v4());
-        assert_eq!(graphless.context, LifecycleContext::default());
-        assert!(graphless.orchestrations.is_empty());
-        assert!(graphless.tasks.is_empty());
-        assert!(graphless.view_projection.is_none());
+        let plain = LifecycleRun::new_plain(Uuid::new_v4());
+        assert_eq!(plain.context, LifecycleContext::default());
+        assert!(plain.orchestrations.is_empty());
+        assert!(plain.tasks.is_empty());
+        assert!(plain.view_projection.is_none());
     }
 
     #[test]
     fn lifecycle_run_task_plan_create_writes_plan_facts_only() {
-        let mut run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
         let creator_agent_id = Uuid::new_v4();
         let owner_agent_id = Uuid::new_v4();
         let story_id = Uuid::new_v4();
@@ -708,7 +708,7 @@ mod tests {
 
     #[test]
     fn lifecycle_run_task_plan_update_changes_editable_plan_fields() {
-        let mut run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
         let created = run
             .create_task(LifecycleTaskPlanItemDraft::new("Initial title"))
             .expect("create task");
@@ -740,7 +740,7 @@ mod tests {
 
     #[test]
     fn lifecycle_run_task_plan_archive_marks_dropped_and_archived() {
-        let mut run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
         let task = run
             .create_task(LifecycleTaskPlanItemDraft::new("Archive me"))
             .expect("create task");
@@ -757,7 +757,7 @@ mod tests {
 
     #[test]
     fn lifecycle_run_task_plan_status_transition_allows_flexible_plan_updates() {
-        let mut run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
         let task = run
             .create_task(LifecycleTaskPlanItemDraft::new("Transition me"))
             .expect("create task");

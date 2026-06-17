@@ -96,7 +96,7 @@ fn lifecycle_topology_to_contract(
     topology: app::LifecycleRunTopologyView,
 ) -> contract::LifecycleRunTopology {
     match topology {
-        app::LifecycleRunTopologyView::Graphless => contract::LifecycleRunTopology::Graphless,
+        app::LifecycleRunTopologyView::Plain => contract::LifecycleRunTopology::Plain,
         app::LifecycleRunTopologyView::WorkflowGraph => {
             contract::LifecycleRunTopology::WorkflowGraph
         }

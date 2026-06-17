@@ -232,7 +232,7 @@ export type WorkflowGraph = WorkflowGraphResponse;
 export interface WorkflowRun {
   id: string;
   project_id: string;
-  topology: "graphless" | "workflow_graph";
+  topology: "plain" | "workflow_graph";
   status: WorkflowRunStatus;
   execution_log: LifecycleExecutionEntry[];
   created_at: string;

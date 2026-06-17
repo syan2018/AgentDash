@@ -17,7 +17,7 @@ use crate::session::construction_provider::SessionConstructionProviderInput;
 
 use super::{
     AgentLevelMcp, FrameConstructionService, OwnerBootstrapSpec, OwnerScope, connector_internal,
-    frame_builder_from_existing, merge_user_executor_config, owner_prompt_lifecycle,
+    frame_builder_from_existing, merge_user_executor_config, owner_prompt_launch_path,
     required_user_input,
 };
 
@@ -71,7 +71,8 @@ pub(super) async fn compose(
         input.command.user_input().executor_config.clone(),
         &agent_context.executor_config,
     );
-    let lifecycle = owner_prompt_lifecycle(svc.prompt_lifecycle(Some(&executor_config), input));
+    let launch_path =
+        owner_prompt_launch_path(svc.prompt_launch_path(Some(&executor_config), input));
     let user_input = required_user_input(input.command.user_input())?;
     let identity = input.command.identity();
     let active_workflow = resolve_active_workflow_projection_from_message_stream_trace(
@@ -131,7 +132,7 @@ pub(super) async fn compose(
                     .visible_workspace_module_refs
                     .clone(),
                 active_workflow,
-                lifecycle,
+                launch_path,
                 audit_session_key: Some(input.session_id.clone()),
                 caller_agent_id: Some(project_agent.id),
             },

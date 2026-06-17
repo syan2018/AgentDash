@@ -640,7 +640,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolver_returns_none_for_graphless_anchor() {
+    async fn resolver_returns_none_for_plain_anchor() {
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
@@ -665,7 +665,7 @@ mod tests {
         let association = resolver
             .resolve_by_message_stream_trace("sess-1")
             .await
-            .expect("graphless anchor should not error");
+            .expect("plain anchor should not error");
         assert!(association.is_none());
     }
 

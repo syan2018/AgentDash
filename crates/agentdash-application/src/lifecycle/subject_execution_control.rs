@@ -755,7 +755,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_graphless_subject_execution_delivers_runtime_without_orchestration_binding() {
+    async fn cancel_plain_subject_execution_delivers_runtime_without_orchestration_binding() {
         let project_id = Uuid::new_v4();
         let subject = SubjectRef::new("task", Uuid::new_v4());
         let run_repo = RunRepo::default();
@@ -764,7 +764,7 @@ mod tests {
         let frame_repo = FrameRepo::default();
         let anchor_repo = AnchorRepo::default();
 
-        let run = LifecycleRun::new_graphless(project_id);
+        let run = LifecycleRun::new_plain(project_id);
         run_repo.create(&run).await.expect("run");
         let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
         let frame = AgentFrame::new_revision(agent.id, 1, "test");
@@ -772,7 +772,7 @@ mod tests {
         agent_repo.create(&agent).await.expect("agent");
         frame_repo.create(&frame).await.expect("frame");
         anchor_repo.insert(RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-graphless-1",
+            "runtime-plain-1",
             run.id,
             frame.id,
             agent.id,
@@ -812,7 +812,7 @@ mod tests {
         assert_eq!(result.activity_key, None);
         assert_eq!(result.attempt, None);
         let command = result.runtime_delivery.expect("runtime delivery");
-        assert_eq!(command.runtime_session_id, "runtime-graphless-1");
+        assert_eq!(command.runtime_session_id, "runtime-plain-1");
         assert_eq!(command.runtime_refs.orchestration_ref(), None);
     }
 

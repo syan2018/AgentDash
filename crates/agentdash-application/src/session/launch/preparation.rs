@@ -19,9 +19,7 @@ use crate::session::hub_support::{SessionProfile, TurnExecution};
 use crate::session::identity_context_frame::{IdentityFrameInput, build_identity_context_frame};
 use crate::session::pending_action_context_frame::build_pending_action_context_frame;
 use crate::session::post_turn_handler::DynPostTurnHandler;
-use crate::session::types::{
-    HookSnapshotReloadTrigger, ResolvedPromptPayload, SessionPromptLifecycle,
-};
+use crate::session::types::{HookSnapshotReloadTrigger, PromptLaunchPath, ResolvedPromptPayload};
 
 pub(in crate::session) struct TurnPreparationInput {
     pub launch_plan: LaunchPlan,
@@ -85,7 +83,7 @@ impl TurnPreparer {
         tracing::debug!(
             session_id = %launch_plan.summary.session_id,
             turn_id = %launch_plan.summary.turn_id,
-            lifecycle = ?launch_plan.summary.lifecycle,
+            launch_path = ?launch_plan.summary.launch_path,
             restore_mode = ?launch_plan.summary.restore_mode,
             follow_up_source = ?launch_plan.summary.follow_up_source,
             pending_transition_count = launch_plan.summary.pending_transition_count,
@@ -102,7 +100,7 @@ impl TurnPreparer {
         context.turn.assembled_tools = deps.assemble_tools(&session_id, &context).await;
 
         let include_connector_startup_context = should_include_connector_startup_context(
-            launch_plan.summary.lifecycle,
+            launch_plan.summary.launch_path,
             had_existing_runtime,
             &launch_plan.summary.follow_up_source,
         );
@@ -400,15 +398,13 @@ fn dedupe_context_frames(frames: Vec<ContextFrame>) -> Vec<ContextFrame> {
 }
 
 fn should_include_connector_startup_context(
-    lifecycle: SessionPromptLifecycle,
+    launch_path: PromptLaunchPath,
     had_existing_runtime: bool,
     follow_up_source: &LaunchFollowUpSource,
 ) -> bool {
-    match lifecycle {
-        SessionPromptLifecycle::OwnerBootstrap | SessionPromptLifecycle::RepositoryRehydrate(_) => {
-            true
-        }
-        SessionPromptLifecycle::Plain => {
+    match launch_path {
+        PromptLaunchPath::OwnerBootstrap | PromptLaunchPath::RepositoryRehydrate(_) => true,
+        PromptLaunchPath::Plain => {
             !had_existing_runtime && matches!(follow_up_source, LaunchFollowUpSource::None)
         }
     }
@@ -446,34 +442,32 @@ fn enqueue_context_frames_for_transform_context(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::types::{SessionPromptLifecycle, SessionRepositoryRehydrateMode};
+    use crate::session::types::{PromptLaunchPath, SessionRepositoryRehydrateMode};
 
     #[test]
     fn connector_startup_context_is_only_sent_when_connector_needs_initializing() {
         assert!(should_include_connector_startup_context(
-            SessionPromptLifecycle::OwnerBootstrap,
+            PromptLaunchPath::OwnerBootstrap,
             true,
             &LaunchFollowUpSource::SessionMeta,
         ));
         assert!(should_include_connector_startup_context(
-            SessionPromptLifecycle::RepositoryRehydrate(
-                SessionRepositoryRehydrateMode::ExecutorState,
-            ),
+            PromptLaunchPath::RepositoryRehydrate(SessionRepositoryRehydrateMode::ExecutorState,),
             false,
             &LaunchFollowUpSource::None,
         ));
         assert!(should_include_connector_startup_context(
-            SessionPromptLifecycle::Plain,
+            PromptLaunchPath::Plain,
             false,
             &LaunchFollowUpSource::None,
         ));
         assert!(!should_include_connector_startup_context(
-            SessionPromptLifecycle::Plain,
+            PromptLaunchPath::Plain,
             true,
             &LaunchFollowUpSource::None,
         ));
         assert!(!should_include_connector_startup_context(
-            SessionPromptLifecycle::Plain,
+            PromptLaunchPath::Plain,
             false,
             &LaunchFollowUpSource::SessionMeta,
         ));

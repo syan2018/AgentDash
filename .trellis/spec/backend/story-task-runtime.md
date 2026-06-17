@@ -8,7 +8,7 @@
 
 - **Story** 是 Project 下的 subject / context aggregate，表达一条持久化的业务工作单元。Story 不绑定 `RuntimeSession`，也不拥有 Task domain facts。
 - **Task** 是 `LifecycleRun` aggregate 内的计划项事实，保存在 `LifecycleRun.tasks` 结构化字段。Task 不做 Project/global 任务池，不拥有 runtime truth。
-- **LifecycleRun** 是被追踪的执行生命过程 / control ledger。普通 Agent runtime 使用 `topology=graphless`；显式 workflow runtime 使用 `topology=workflow_graph`，并通过 `LifecycleRun.orchestrations[]` 承载 0..N 个内部编排实例。
+- **LifecycleRun** 是被追踪的执行生命过程 / control ledger。普通 Agent runtime 使用 `topology=plain`；显式 workflow runtime 使用 `topology=workflow_graph`，并通过 `LifecycleRun.orchestrations[]` 承载 0..N 个内部编排实例。
 - **LifecycleSubjectAssociation** 是关联层实体，用 `(anchor_run_id, anchor_agent_id?, subject_kind, subject_id, role)` 显式表达 whole-run 或 agent-scoped subject 关系。
 - **SubjectContextAssignment** 是 `SubjectRef` 到 AgentFrame context / capability / VFS surface 的应用层解析结果。Story / Task 通过该模型作为 ProjectAgent 的 subject profile 注入上下文，不拥有独立 Agent owner。
 - **RuntimeSession** 是 runtime trace 容器：承载 event log、debug replay、agent 交互轨迹。不承载 ownership、permission scope 或 lifecycle progress truth。
@@ -46,7 +46,7 @@
 - 不拥有 `RuntimeSession`；runtime session 到 run / agent / frame 的关系由 `RuntimeSessionExecutionAnchor` 索引。
 - 业务归属通过 `LifecycleSubjectAssociation` 表达。
 - 拥有 `tasks` 计划项事实集合；repository create / update / select 需要对该集合做整体 roundtrip。
-- `topology=graphless` 的运行态由 run / agent / frame / runtime session anchor 与 subject association 表达。`topology=workflow_graph` 的运行态按 `OrchestrationInstance.orchestration_id` 分 namespace；runtime node key 必须包含 `orchestration_id + node_path + attempt`。
+- `topology=plain` 的运行态由 run / agent / frame / runtime session anchor 与 subject association 表达。`topology=workflow_graph` 的运行态按 `OrchestrationInstance.orchestration_id` 分 namespace；runtime node key 必须包含 `orchestration_id + node_path + attempt`。
 - 推进规则见 [workflow/lifecycle-edge.md](./workflow/lifecycle-edge.md)。
 
 ### LifecycleSubjectAssociation

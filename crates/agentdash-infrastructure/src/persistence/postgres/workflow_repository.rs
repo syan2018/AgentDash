@@ -689,14 +689,14 @@ fn parse_uuid(raw: &str, entity: &'static str) -> Result<uuid::Uuid, DomainError
 
 fn topology_to_db(topology: LifecycleRunTopology) -> &'static str {
     match topology {
-        LifecycleRunTopology::Graphless => "graphless",
+        LifecycleRunTopology::Plain => "plain",
         LifecycleRunTopology::WorkflowGraph => "workflow_graph",
     }
 }
 
 fn parse_topology(raw: &str) -> Result<LifecycleRunTopology, DomainError> {
     match raw {
-        "graphless" => Ok(LifecycleRunTopology::Graphless),
+        "plain" => Ok(LifecycleRunTopology::Plain),
         "workflow_graph" => Ok(LifecycleRunTopology::WorkflowGraph),
         other => Err(DomainError::InvalidConfig(format!(
             "lifecycle_runs.topology 无效: {other}"
@@ -794,7 +794,7 @@ mod workflow_claim_tests {
         LifecycleRunRow {
             id: uuid::Uuid::new_v4().to_string(),
             project_id: uuid::Uuid::new_v4().to_string(),
-            topology: "graphless".to_string(),
+            topology: "plain".to_string(),
             context: "{}".to_string(),
             orchestrations: "[]".to_string(),
             tasks: "[]".to_string(),

@@ -210,7 +210,7 @@ export type LifecycleExecutionEventKind = "activity_activated" | "activity_compl
 
 export type LifecycleRunStatus = "draft" | "ready" | "running" | "blocked" | "completed" | "failed" | "cancelled";
 
-export type LifecycleRunTopology = "graphless" | "workflow_graph";
+export type LifecycleRunTopology = "plain" | "workflow_graph";
 
 export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string, topology: LifecycleRunTopology, status: LifecycleRunStatus, orchestrations: Array<OrchestrationInstanceView>, active_runtime_node_refs: Array<ActiveRuntimeNodeRefDto>, agents: Array<AgentRunView>, subject_associations: Array<LifecycleSubjectAssociationDto>, runtime_trace_refs: Array<RuntimeSessionRefDto>, execution_log: Array<LifecycleExecutionEntry>, created_at: string, updated_at: string, last_activity_at: string, };
 

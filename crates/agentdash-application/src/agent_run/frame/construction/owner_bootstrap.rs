@@ -137,13 +137,13 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     /// `None` / `Some([])` 代表全集可见，非空列表代表 allowlist。
     pub visible_workspace_module_refs: Option<Vec<String>>,
     pub active_workflow: Option<ActiveWorkflowProjection>,
-    pub lifecycle: OwnerPromptLifecycle,
+    pub launch_path: OwnerPromptLaunchPath,
     pub audit_session_key: Option<String>,
     pub caller_agent_id: Option<Uuid>,
 }
 
-/// Owner bootstrap 的 prompt lifecycle 模式。
-pub(crate) enum OwnerPromptLifecycle {
+/// Owner bootstrap 的 prompt launch path。
+pub(crate) enum OwnerPromptLaunchPath {
     OwnerBootstrap,
     RepositoryRehydrate {
         prebuilt_continuation_bundle: Option<SessionContextBundle>,
@@ -153,7 +153,7 @@ pub(crate) enum OwnerPromptLifecycle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OwnerAuditLifecycle {
+enum OwnerAuditLaunchPath {
     Bootstrap,
     Rehydrate,
     Plain,
@@ -276,10 +276,12 @@ impl<'a> OwnerBootstrapComposer<'a> {
                 subject_context_contributions,
             )
             .await?;
-        let audit_lifecycle = owner_audit_lifecycle(&spec.lifecycle);
-        let (user_input, effective_bundle) = match spec.lifecycle {
-            OwnerPromptLifecycle::OwnerBootstrap => (spec.user_input.clone(), Some(context_bundle)),
-            OwnerPromptLifecycle::RepositoryRehydrate {
+        let audit_launch_path = owner_audit_launch_path(&spec.launch_path);
+        let (user_input, effective_bundle) = match spec.launch_path {
+            OwnerPromptLaunchPath::OwnerBootstrap => {
+                (spec.user_input.clone(), Some(context_bundle))
+            }
+            OwnerPromptLaunchPath::RepositoryRehydrate {
                 ref prebuilt_continuation_bundle,
                 include_owner_bundle,
             } => {
@@ -292,11 +294,11 @@ impl<'a> OwnerBootstrapComposer<'a> {
                 });
                 (spec.user_input.clone(), chosen_bundle)
             }
-            OwnerPromptLifecycle::Plain => (spec.user_input.clone(), None),
+            OwnerPromptLaunchPath::Plain => (spec.user_input.clone(), None),
         };
         if let (Some(bundle), Some(trigger)) = (
             effective_bundle.as_ref(),
-            resolve_owner_audit_trigger(audit_lifecycle, effective_bundle.is_some()),
+            resolve_owner_audit_trigger(audit_launch_path, effective_bundle.is_some()),
         ) {
             self.audit_bundle(bundle, spec.audit_session_key.as_deref(), trigger);
         }
@@ -655,26 +657,26 @@ fn build_companion_agents_context_contribution(
     }]))
 }
 
-fn owner_audit_lifecycle(lifecycle: &OwnerPromptLifecycle) -> OwnerAuditLifecycle {
-    match lifecycle {
-        OwnerPromptLifecycle::OwnerBootstrap => OwnerAuditLifecycle::Bootstrap,
-        OwnerPromptLifecycle::RepositoryRehydrate { .. } => OwnerAuditLifecycle::Rehydrate,
-        OwnerPromptLifecycle::Plain => OwnerAuditLifecycle::Plain,
+fn owner_audit_launch_path(launch_path: &OwnerPromptLaunchPath) -> OwnerAuditLaunchPath {
+    match launch_path {
+        OwnerPromptLaunchPath::OwnerBootstrap => OwnerAuditLaunchPath::Bootstrap,
+        OwnerPromptLaunchPath::RepositoryRehydrate { .. } => OwnerAuditLaunchPath::Rehydrate,
+        OwnerPromptLaunchPath::Plain => OwnerAuditLaunchPath::Plain,
     }
 }
 
 fn resolve_owner_audit_trigger(
-    lifecycle: OwnerAuditLifecycle,
+    launch_path: OwnerAuditLaunchPath,
     has_effective_bundle: bool,
 ) -> Option<AuditTrigger> {
     if !has_effective_bundle {
         return None;
     }
 
-    match lifecycle {
-        OwnerAuditLifecycle::Bootstrap => Some(AuditTrigger::SessionBootstrap),
-        OwnerAuditLifecycle::Rehydrate => Some(AuditTrigger::ComposerRebuild),
-        OwnerAuditLifecycle::Plain => None,
+    match launch_path {
+        OwnerAuditLaunchPath::Bootstrap => Some(AuditTrigger::SessionBootstrap),
+        OwnerAuditLaunchPath::Rehydrate => Some(AuditTrigger::ComposerRebuild),
+        OwnerAuditLaunchPath::Plain => None,
     }
 }
 
@@ -1109,11 +1111,11 @@ mod tests {
     #[test]
     fn owner_bootstrap_audit_trigger_requires_effective_bundle() {
         assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLifecycle::Bootstrap, true),
+            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Bootstrap, true),
             Some(AuditTrigger::SessionBootstrap),
         );
         assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLifecycle::Bootstrap, false),
+            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Bootstrap, false),
             None,
         );
     }
@@ -1121,23 +1123,23 @@ mod tests {
     #[test]
     fn owner_rehydrate_audit_trigger_maps_to_composer_rebuild() {
         assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLifecycle::Rehydrate, true),
+            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Rehydrate, true),
             Some(AuditTrigger::ComposerRebuild),
         );
         assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLifecycle::Rehydrate, false),
+            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Rehydrate, false),
             None,
         );
     }
 
     #[test]
-    fn owner_plain_lifecycle_never_emits_owner_audit() {
+    fn owner_plain_launch_path_never_emits_owner_audit() {
         assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLifecycle::Plain, true),
+            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Plain, true),
             None,
         );
         assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLifecycle::Plain, false),
+            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Plain, false),
             None,
         );
     }

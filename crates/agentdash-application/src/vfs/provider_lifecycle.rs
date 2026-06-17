@@ -1259,8 +1259,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn agent_run_session_mount_lists_graphless_session_log_surface() {
-        let run = LifecycleRun::new_graphless(Uuid::new_v4());
+    async fn agent_run_session_mount_lists_plain_session_log_surface() {
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
         let (provider, mount) = provider_for_agent_run_session(run);
 
         let paths = entry_paths(

@@ -2358,6 +2358,35 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
     assert_eq!(runtime.last_identity_prompt.as_deref(), Some("SP_B"));
 }
 
+#[test]
+fn extract_identity_prompt_preserves_rendered_guidelines() {
+    let frame = agentdash_spi::hooks::ContextFrame {
+        id: "identity-guidelines".to_string(),
+        kind: "identity".to_string(),
+        source: agentdash_spi::hooks::RuntimeEventSource::RuntimeContextUpdate,
+        phase_node: None,
+        apply_mode: None,
+        delivery_status: "prepared_for_connector".to_string(),
+        delivery_channel: "connector_context".to_string(),
+        message_role: "system".to_string(),
+        rendered_text: "## Identity\n\nbase\n\n## Project Guidelines\n\n### AGENTS.md\n\n使用中文交流"
+            .to_string(),
+        sections: vec![agentdash_spi::hooks::ContextFrameSection::Identity {
+            title: "Identity".to_string(),
+            summary: "test".to_string(),
+            base_prompt: "base".to_string(),
+            agent_prompt: None,
+            mode: "base_only".to_string(),
+            effective_prompt: "base".to_string(),
+        }],
+        created_at_ms: 1,
+    };
+
+    let prompt = extract_identity_prompt(&[frame]).expect("identity prompt should exist");
+    assert!(prompt.contains("## Project Guidelines"));
+    assert!(prompt.contains("使用中文交流"));
+}
+
 #[tokio::test]
 async fn prompt_rebuilds_live_agent_when_model_selection_changes() {
     let state = Arc::new(ModelRecordingState::default());

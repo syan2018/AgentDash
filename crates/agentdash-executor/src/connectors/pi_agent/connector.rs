@@ -1006,6 +1006,11 @@ impl AgentConnector for PiAgentConnector {
 
 fn extract_identity_prompt(frames: &[ContextFrame]) -> Option<String> {
     let identity_frame = frames.iter().find(|frame| frame.kind == "identity")?;
+    let rendered = identity_frame.rendered_text.trim();
+    if !rendered.is_empty() {
+        return Some(rendered.to_string());
+    }
+
     if let Some(prompt) = identity_frame
         .sections
         .iter()
@@ -1021,8 +1026,7 @@ fn extract_identity_prompt(frames: &[ContextFrame]) -> Option<String> {
     {
         return Some(prompt);
     }
-    let rendered = identity_frame.rendered_text.trim();
-    (!rendered.is_empty()).then(|| rendered.to_string())
+    None
 }
 
 async fn emit_pending_hook_trace_envelopes(

@@ -18,8 +18,19 @@ use base64::Engine;
 use crate::relay::registry::{BackendCommandError, BackendRegistry};
 use crate::runtime_bridge::relay_file_entries_to_runtime;
 
+const DEFAULT_SHELL_EXEC_TIMEOUT_MS: u64 = 30_000;
+const SHELL_EXEC_RESPONSE_GRACE_MS: u64 = 5_000;
+
 fn map_relay_err(e: BackendCommandError) -> MountError {
     MountError::OperationFailed(e.to_string())
+}
+
+fn shell_exec_relay_timeout(timeout_ms: Option<u64>) -> std::time::Duration {
+    std::time::Duration::from_millis(
+        timeout_ms
+            .unwrap_or(DEFAULT_SHELL_EXEC_TIMEOUT_MS)
+            .saturating_add(SHELL_EXEC_RESPONSE_GRACE_MS),
+    )
 }
 
 /// 通过 `BackendRegistry` 将文件与 shell 操作转发到本机后端。
@@ -589,7 +600,7 @@ impl MountProvider for RelayFsMountProvider {
         );
         let response = self
             .backends
-            .send_command(
+            .send_command_with_timeout(
                 &mount.backend_id,
                 RelayMessage::CommandToolShellExec {
                     id: RelayMessage::new_id("mp-exec"),
@@ -601,6 +612,7 @@ impl MountProvider for RelayFsMountProvider {
                         timeout_ms: request.timeout_ms,
                     },
                 },
+                shell_exec_relay_timeout(request.timeout_ms),
             )
             .await
             .map_err(map_relay_err)?;
@@ -623,5 +635,26 @@ impl MountProvider for RelayFsMountProvider {
                 other.id()
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_exec_relay_timeout_outlives_default_process_timeout() {
+        assert_eq!(
+            shell_exec_relay_timeout(None),
+            std::time::Duration::from_millis(35_000)
+        );
+    }
+
+    #[test]
+    fn shell_exec_relay_timeout_outlives_requested_process_timeout() {
+        assert_eq!(
+            shell_exec_relay_timeout(Some(120_000)),
+            std::time::Duration::from_millis(125_000)
+        );
     }
 }

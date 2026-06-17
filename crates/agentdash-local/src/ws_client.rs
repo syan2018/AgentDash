@@ -172,7 +172,15 @@ async fn run_session(
         Err(_) => anyhow::bail!("等待注册响应超时"),
     }
 
-    // 进入消息循环（三路复用：WS 读取、事件通道、心跳检测）
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<RelayMessage>();
+    let mut writer_task = tokio::spawn(async move {
+        while let Some(relay_msg) = outbound_rx.recv().await {
+            send_message(&mut write, &relay_msg).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    });
+
+    // 进入消息循环：WS 读取不直接执行命令，避免长耗时工具调用阻塞后续命令和事件写出。
     let mut ping_interval = tokio::time::interval(Duration::from_secs(30));
     ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ping_interval.tick().await;
@@ -183,9 +191,30 @@ async fn run_session(
                 match msg {
                     Some(Ok(ws_msg)) => {
                         if let Some(relay_msg) = parse_ws_message(&ws_msg) {
-                            let responses = handler.handle(relay_msg).await;
-                            for resp in responses {
-                                send_message(&mut write, &resp).await?;
+                            if should_handle_in_background(&relay_msg) {
+                                let handler = handler.clone();
+                                let outbound_tx = outbound_tx.clone();
+                                tokio::spawn(async move {
+                                    let msg_id = relay_msg.id().to_string();
+                                    let responses = handler.handle(relay_msg).await;
+                                    for resp in responses {
+                                        if outbound_tx.send(resp).is_err() {
+                                            tracing::debug!(
+                                                msg_id = %msg_id,
+                                                "relay response 写出通道已关闭"
+                                            );
+                                            break;
+                                        }
+                                    }
+                                });
+                            } else {
+                                let responses = handler.handle(relay_msg).await;
+                                for resp in responses {
+                                    if outbound_tx.send(resp).is_err() {
+                                        tracing::debug!("relay response 写出通道已关闭");
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
@@ -202,7 +231,10 @@ async fn run_session(
             event = event_rx.recv() => {
                 match event {
                     Some(relay_msg) => {
-                        send_message(&mut write, &relay_msg).await?;
+                        if outbound_tx.send(relay_msg).is_err() {
+                            tracing::warn!("relay event 写出通道已关闭");
+                            break;
+                        }
                     }
                     None => {
                         tracing::warn!("事件通道关闭");
@@ -219,10 +251,27 @@ async fn run_session(
                     break;
                 }
             }
+            writer_result = &mut writer_task => {
+                match writer_result {
+                    Ok(Ok(())) => tracing::info!("WebSocket 写出任务结束"),
+                    Ok(Err(e)) => tracing::error!(error = %e, "WebSocket 写出错误"),
+                    Err(e) => tracing::error!(error = %e, "WebSocket 写出任务异常结束"),
+                }
+                break;
+            }
         }
     }
 
+    if !writer_task.is_finished() {
+        writer_task.abort();
+        let _ = writer_task.await;
+    }
+
     Ok(())
+}
+
+fn should_handle_in_background(msg: &RelayMessage) -> bool {
+    matches!(msg, RelayMessage::CommandToolShellExec { .. })
 }
 
 fn build_capabilities(
@@ -272,4 +321,35 @@ async fn send_message(
 fn reconnect_delay(retry_count: u32) -> Duration {
     let secs = (1u64 << retry_count.min(6)).min(60);
     Duration::from_secs(secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_exec_is_handled_in_background() {
+        let msg = RelayMessage::CommandToolShellExec {
+            id: "shell-1".to_string(),
+            payload: ToolShellExecPayload {
+                call_id: "call-1".to_string(),
+                command: "cargo check".to_string(),
+                mount_root_ref: "D:/workspace".to_string(),
+                cwd: None,
+                timeout_ms: Some(30_000),
+            },
+        };
+
+        assert!(should_handle_in_background(&msg));
+    }
+
+    #[test]
+    fn ordinary_relay_messages_keep_inline_ordering() {
+        let msg = RelayMessage::Ping {
+            id: "ping-1".to_string(),
+            payload: PingPayload { server_time: 1 },
+        };
+
+        assert!(!should_handle_in_background(&msg));
+    }
 }

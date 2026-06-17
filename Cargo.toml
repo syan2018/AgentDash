@@ -84,8 +84,10 @@ agentdash-local = { path = "crates/agentdash-local" }
 agentdash-integration-api = { path = "crates/agentdash-integration-api" }
 agentdash-contracts = { path = "crates/agentdash-contracts" }
 
-# Codex App Server Protocol
-codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.133.0", package = "codex-app-server-protocol" }
+# Codex Rust crates
+codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.140.0", package = "codex-app-server-protocol" }
+codex-utils-pty = { git = "https://github.com/openai/codex.git", tag = "rust-v0.140.0", package = "codex-utils-pty" }
+codex-utils-output-truncation = { git = "https://github.com/openai/codex.git", tag = "rust-v0.140.0", package = "codex-utils-output-truncation" }
 
 # Agent 事件流传输协议
 agentdash-agent-protocol = { path = "crates/agentdash-agent-protocol" }

@@ -38,7 +38,7 @@ use crate::LocalExtensionHostManager;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::materialization::MaterializationStore;
 use crate::mcp_client_manager::McpClientManager;
-use crate::terminal_manager::TerminalManager;
+use crate::shell_session_manager::ShellSessionManager;
 use crate::tool_executor::ToolExecutor;
 use agentdash_application::session::SessionRuntimeServices;
 use agentdash_spi::AgentConnector;
@@ -72,7 +72,10 @@ pub struct LocalCommandRouterConfig {
 
 impl LocalCommandRouter {
     pub fn new(config: LocalCommandRouterConfig) -> Self {
-        let terminal_manager = Arc::new(TerminalManager::new(config.event_tx.clone()));
+        let shell_session_manager = Arc::new(ShellSessionManager::new(
+            config.tool_executor.clone(),
+            config.event_tx.clone(),
+        ));
         let materialization_store = Arc::new(MaterializationStore::new(config.backend_id.clone()));
         let session_forwarders = Arc::new(Mutex::new(HashSet::new()));
 
@@ -86,7 +89,11 @@ impl LocalCommandRouter {
                 session_forwarders,
             }),
             workspace: WorkspaceCommandHandler,
-            tool: ToolCommandHandler::new(config.tool_executor.clone(), config.event_tx.clone()),
+            tool: ToolCommandHandler::new(
+                config.tool_executor.clone(),
+                config.event_tx.clone(),
+                Arc::clone(&shell_session_manager),
+            ),
             materialization: MaterializationCommandHandler::new(materialization_store),
             mcp: McpCommandHandler::new(config.mcp_manager),
             extension: ExtensionCommandHandler::new(ExtensionCommandHandlerConfig {
@@ -97,7 +104,7 @@ impl LocalCommandRouter {
                 artifact_access_token: config.extension_artifact_access_token,
                 artifact_cache_root: config.extension_artifact_cache_root,
             }),
-            terminal: TerminalCommandHandler::new(config.tool_executor, terminal_manager),
+            terminal: TerminalCommandHandler::new(config.tool_executor, shell_session_manager),
         }
     }
 
@@ -173,6 +180,15 @@ impl LocalCommandRouter {
             RelayMessage::CommandToolShellExec { id, payload } => {
                 vec![self.tool.handle_tool_shell_exec(id, payload).await]
             }
+            RelayMessage::CommandToolShellRead { id, payload } => {
+                vec![self.tool.handle_tool_shell_read(id, payload).await]
+            }
+            RelayMessage::CommandToolShellInput { id, payload } => {
+                vec![self.tool.handle_tool_shell_input(id, payload).await]
+            }
+            RelayMessage::CommandToolShellTerminate { id, payload } => {
+                vec![self.tool.handle_tool_shell_terminate(id, payload).await]
+            }
             RelayMessage::CommandVfsMaterialize { id, payload } => {
                 vec![
                     self.materialization
@@ -218,16 +234,16 @@ impl LocalCommandRouter {
 
             // ── 交互式终端 ──
             RelayMessage::CommandTerminalSpawn { id, payload } => {
-                vec![self.terminal.handle_terminal_spawn(id, payload)]
+                vec![self.terminal.handle_terminal_spawn(id, payload).await]
             }
             RelayMessage::CommandTerminalInput { id, payload } => {
-                vec![self.terminal.handle_terminal_input(id, payload)]
+                vec![self.terminal.handle_terminal_input(id, payload).await]
             }
             RelayMessage::CommandTerminalResize { id, payload } => {
-                vec![self.terminal.handle_terminal_resize(id, payload)]
+                vec![self.terminal.handle_terminal_resize(id, payload).await]
             }
             RelayMessage::CommandTerminalKill { id, payload } => {
-                vec![self.terminal.handle_terminal_kill(id, payload)]
+                vec![self.terminal.handle_terminal_kill(id, payload).await]
             }
 
             other => {

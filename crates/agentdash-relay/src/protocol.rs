@@ -166,6 +166,24 @@ pub enum RelayMessage {
         payload: ToolShellExecPayload,
     },
 
+    #[serde(rename = "command.tool.shell_read")]
+    CommandToolShellRead {
+        id: String,
+        payload: ToolShellReadPayload,
+    },
+
+    #[serde(rename = "command.tool.shell_input")]
+    CommandToolShellInput {
+        id: String,
+        payload: ToolShellInputPayload,
+    },
+
+    #[serde(rename = "command.tool.shell_terminate")]
+    CommandToolShellTerminate {
+        id: String,
+        payload: ToolShellTerminatePayload,
+    },
+
     /// 将云端 VFS 资源物化到本机 backend 的 session cache / working copy
     #[serde(rename = "command.vfs.materialize")]
     CommandVfsMaterialize {
@@ -311,6 +329,33 @@ pub enum RelayMessage {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<ToolShellExecResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.tool.shell_read")]
+    ResponseToolShellRead {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ToolShellReadResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.tool.shell_input")]
+    ResponseToolShellInput {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ToolShellInputResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.tool.shell_terminate")]
+    ResponseToolShellTerminate {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ToolShellTerminateResponse>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -580,6 +625,9 @@ impl RelayMessage {
             | Self::CommandToolFileRename { id, .. }
             | Self::CommandToolApplyPatch { id, .. }
             | Self::CommandToolShellExec { id, .. }
+            | Self::CommandToolShellRead { id, .. }
+            | Self::CommandToolShellInput { id, .. }
+            | Self::CommandToolShellTerminate { id, .. }
             | Self::CommandVfsMaterialize { id, .. }
             | Self::CommandToolFileList { id, .. }
             | Self::CommandToolSearch { id, .. }
@@ -597,6 +645,9 @@ impl RelayMessage {
             | Self::ResponseToolFileRename { id, .. }
             | Self::ResponseToolApplyPatch { id, .. }
             | Self::ResponseToolShellExec { id, .. }
+            | Self::ResponseToolShellRead { id, .. }
+            | Self::ResponseToolShellInput { id, .. }
+            | Self::ResponseToolShellTerminate { id, .. }
             | Self::ResponseVfsMaterialize { id, .. }
             | Self::ResponseToolFileList { id, .. }
             | Self::ResponseToolSearch { id, .. }
@@ -994,5 +1045,81 @@ mod tests {
         assert_eq!(json["payload"]["entry_count"], 1);
         let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
         assert_eq!(deser.id(), "mat-1");
+    }
+
+    #[test]
+    fn shell_session_commands_roundtrip() {
+        let start = RelayMessage::CommandToolShellExec {
+            id: "shell-start-1".to_string(),
+            payload: ToolShellExecPayload {
+                call_id: "call-1".to_string(),
+                command: "cargo check".to_string(),
+                mount_root_ref: "D:/workspace".to_string(),
+                cwd: Some("crates/agentdash-local".to_string()),
+                timeout_ms: None,
+                yield_time_ms: Some(750),
+                max_output_bytes: Some(65_536),
+                tty: false,
+            },
+        };
+        let json = serde_json::to_value(&start).expect("serialize start");
+        assert_eq!(json["type"], "command.tool.shell_exec");
+        assert_eq!(json["payload"]["yield_time_ms"], 750);
+        assert_eq!(json["payload"]["max_output_bytes"], 65_536);
+        let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize start");
+        assert_eq!(decoded.id(), "shell-start-1");
+
+        let read = RelayMessage::CommandToolShellRead {
+            id: "shell-read-1".to_string(),
+            payload: ToolShellReadPayload {
+                session_id: "shell-1".to_string(),
+                after_seq: Some(3),
+                wait_ms: Some(1_000),
+                max_bytes: Some(8_192),
+            },
+        };
+        let json = serde_json::to_value(&read).expect("serialize read");
+        assert_eq!(json["type"], "command.tool.shell_read");
+        assert_eq!(json["payload"]["after_seq"], 3);
+        let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize read");
+        assert_eq!(decoded.id(), "shell-read-1");
+    }
+
+    #[test]
+    fn shell_running_response_carries_session_seq_and_truncation() {
+        let msg = RelayMessage::ResponseToolShellExec {
+            id: "shell-start-1".to_string(),
+            payload: Some(ToolShellExecResponse {
+                call_id: "call-1".to_string(),
+                session_id: "shell-1".to_string(),
+                terminal_id: Some("shell-1".to_string()),
+                state: ToolShellSessionState::Running,
+                exit_code: None,
+                stdout: "ready\n".to_string(),
+                stderr: String::new(),
+                pty: String::new(),
+                chunks: vec![ToolShellOutputChunk {
+                    seq: 0,
+                    stream: ShellOutputStream::Stdout,
+                    data: "ready\n".to_string(),
+                }],
+                next_seq: 1,
+                truncation: ToolShellTruncationInfo {
+                    truncated: true,
+                    omitted_bytes: 1024,
+                    omitted_chunks: 2,
+                    omitted_tokens_estimate: Some(256),
+                },
+            }),
+            error: None,
+        };
+        let json = serde_json::to_value(&msg).expect("serialize response");
+        assert_eq!(json["type"], "response.tool.shell_exec");
+        assert_eq!(json["payload"]["state"], "running");
+        assert_eq!(json["payload"]["next_seq"], 1);
+        assert_eq!(json["payload"]["truncation"]["truncated"], true);
+
+        let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize response");
+        assert_eq!(decoded.id(), "shell-start-1");
     }
 }

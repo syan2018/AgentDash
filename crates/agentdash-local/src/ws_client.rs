@@ -271,7 +271,13 @@ async fn run_session(
 }
 
 fn should_handle_in_background(msg: &RelayMessage) -> bool {
-    matches!(msg, RelayMessage::CommandToolShellExec { .. })
+    matches!(
+        msg,
+        RelayMessage::CommandToolShellExec { .. }
+            | RelayMessage::CommandToolShellRead { .. }
+            | RelayMessage::CommandToolShellInput { .. }
+            | RelayMessage::CommandToolShellTerminate { .. }
+    )
 }
 
 fn build_capabilities(
@@ -337,6 +343,9 @@ mod tests {
                 mount_root_ref: "D:/workspace".to_string(),
                 cwd: None,
                 timeout_ms: Some(30_000),
+                yield_time_ms: Some(1_000),
+                max_output_bytes: None,
+                tty: false,
             },
         };
 

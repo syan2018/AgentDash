@@ -322,9 +322,16 @@ pub struct ExecRequest {
 
 #[derive(Debug, Clone)]
 pub struct ExecResult {
-    pub exit_code: i32,
+    pub state: String,
+    pub exit_code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
+    pub pty: String,
+    pub session_id: Option<String>,
+    pub terminal_id: Option<String>,
+    pub next_seq: Option<u64>,
+    pub truncated: bool,
+    pub omitted_bytes: usize,
 }
 
 // ============================================================================

@@ -67,6 +67,45 @@ pub struct ToolShellExecPayload {
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+    /// 单次 shell_start 等待首包输出/终态的窗口；到期后进程继续由本机 runtime 持有。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yield_time_ms: Option<u64>,
+    /// retained output buffer 的每 session 上限。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_bytes: Option<usize>,
+    /// 使用 PTY 执行；省略或 false 时使用 stdout/stderr pipe。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub tty: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolShellReadPayload {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after_seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolShellInputPayload {
+    pub session_id: String,
+    /// 空字符串表示 poll/read wait，不向 stdin 写入字节。
+    pub data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolShellTerminatePayload {
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +145,10 @@ pub struct ToolSearchPayload {
 
 fn default_utf8() -> String {
     "utf-8".to_string()
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,14 +197,95 @@ pub struct ToolApplyPatchResponse {
     pub deleted: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolShellSessionState {
+    Starting,
+    Running,
+    Completed,
+    Failed,
+    TimedOut,
+    Killed,
+    Lost,
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolShellTerminateStatus {
+    Killed,
+    AlreadyExited,
+    UnknownSession,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ToolShellTruncationInfo {
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub omitted_bytes: usize,
+    #[serde(default)]
+    pub omitted_chunks: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omitted_tokens_estimate: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolShellOutputChunk {
+    pub seq: u64,
+    pub stream: ShellOutputStream,
+    pub data: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolShellExecResponse {
     pub call_id: String,
-    pub exit_code: i32,
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_id: Option<String>,
+    pub state: ToolShellSessionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
     #[serde(default)]
     pub stdout: String,
     #[serde(default)]
     pub stderr: String,
+    #[serde(default)]
+    pub pty: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chunks: Vec<ToolShellOutputChunk>,
+    pub next_seq: u64,
+    #[serde(default)]
+    pub truncation: ToolShellTruncationInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolShellReadResponse {
+    pub session_id: String,
+    pub state: ToolShellSessionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    pub chunks: Vec<ToolShellOutputChunk>,
+    pub next_seq: u64,
+    #[serde(default)]
+    pub truncation: ToolShellTruncationInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolShellInputResponse {
+    pub session_id: String,
+    pub accepted: bool,
+    pub stdin_closed: bool,
+    pub read: ToolShellReadResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolShellTerminateResponse {
+    pub session_id: String,
+    pub status: ToolShellTerminateStatus,
+    pub state: ToolShellSessionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolFileListResponse {
@@ -202,6 +326,7 @@ pub struct ToolShellOutputPayload {
 pub enum ShellOutputStream {
     Stdout,
     Stderr,
+    Pty,
 }
 
 #[cfg(test)]

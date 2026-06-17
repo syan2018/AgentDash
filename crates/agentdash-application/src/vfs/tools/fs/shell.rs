@@ -86,7 +86,7 @@ pub struct ShellExecParams {
     pub cwd: Option<String>,
     /// The shell command to execute.
     pub command: String,
-    /// Command timeout in seconds. If omitted, the system default timeout applies.
+    /// Hard process timeout in seconds. If omitted, the process may continue as a background session after the initial yield.
     pub timeout_secs: Option<u64>,
 }
 
@@ -106,7 +106,7 @@ impl AgentTool for ShellExecTool {
          - Platform shell supports VFS command primitives plus narrow `>` redirection for `echo` and `cat`; shell operators, variables, globbing, and command substitution are not expanded or executed.\n\
          - stdout and stderr are returned separately, labeled as [stdout] and [stderr].\n\
          - The exit code is included in the output; non-zero exit codes are flagged as errors.\n\
-         - timeout_secs applies to real OS shell execution; platform shell commands are bounded VFS operations.\n\
+         - timeout_secs is a hard process timeout for real OS shell execution; long-running commands return a background session after the initial yield.\n\
          - Prefer dedicated tools (fs_read, fs_glob, fs_grep) for focused read/search work."
     }
     fn parameters_schema(&self) -> serde_json::Value {
@@ -139,7 +139,10 @@ impl AgentTool for ShellExecTool {
                 content: vec![ContentPart::text(platform_shell_result_text(
                     &params.command,
                     &result.cwd,
-                    result.exit_code,
+                    Some(result.exit_code),
+                    "completed",
+                    None,
+                    None,
                     &result.stdout,
                     &result.stderr,
                 ))],
@@ -266,8 +269,11 @@ impl AgentTool for ShellExecTool {
             handle.abort();
         }
 
-        let merged = if result.stderr.trim().is_empty() {
-            result.stdout
+        let exit_code = result.exit_code;
+        let merged = if !result.pty.trim().is_empty() {
+            result.pty.clone()
+        } else if result.stderr.trim().is_empty() {
+            result.stdout.clone()
         } else if result.stdout.trim().is_empty() {
             format!("[stderr]\n{}", result.stderr)
         } else {
@@ -279,14 +285,20 @@ impl AgentTool for ShellExecTool {
                 &rewritten_command,
                 &display_cwd,
                 result.exit_code,
+                &result.state,
+                result.session_id.as_deref(),
+                result.next_seq,
                 &merged,
                 !rewrite_output.rewrites.is_empty(),
+                result.truncated,
+                result.omitted_bytes,
             ))],
-            is_error: result.exit_code != 0,
+            is_error: exit_code.is_some_and(|code| code != 0),
             details: shell_exec_result_details(
                 &params.command,
                 &rewritten_command,
                 &rewrite_output.rewrites,
+                &result,
             ),
         })
     }
@@ -350,19 +362,39 @@ fn shell_exec_result_text(
     original_command: &str,
     rewritten_command: &str,
     display_cwd: &str,
-    exit_code: i32,
+    exit_code: Option<i32>,
+    state: &str,
+    session_id: Option<&str>,
+    next_seq: Option<u64>,
     merged_output: &str,
     has_rewrite: bool,
+    truncated: bool,
+    omitted_bytes: usize,
 ) -> String {
+    let mut lines = vec![format!("command: {original_command}")];
     if has_rewrite {
-        format!(
-            "command: {original_command}\nexecuted_command: {rewritten_command}\ncwd: {display_cwd}\nexit_code: {exit_code}\n{merged_output}"
-        )
-    } else {
-        format!(
-            "command: {original_command}\ncwd: {display_cwd}\nexit_code: {exit_code}\n{merged_output}"
-        )
+        lines.push(format!("executed_command: {rewritten_command}"));
     }
+    lines.push(format!("cwd: {display_cwd}"));
+    lines.push(format!("state: {state}"));
+    if let Some(exit_code) = exit_code {
+        lines.push(format!("exit_code: {exit_code}"));
+    }
+    if let Some(session_id) = session_id {
+        lines.push(format!("session_id: {session_id}"));
+    }
+    if let Some(next_seq) = next_seq {
+        lines.push(format!("next_seq: {next_seq}"));
+    }
+    if truncated {
+        lines.push(format!(
+            "output_truncated: true (omitted_bytes={omitted_bytes})"
+        ));
+    }
+    if !merged_output.is_empty() {
+        lines.push(merged_output.to_string());
+    }
+    lines.join("\n")
 }
 
 fn cwd_for_display(cwd: &str) -> String {
@@ -376,15 +408,27 @@ fn cwd_for_display(cwd: &str) -> String {
 fn platform_shell_result_text(
     command: &str,
     cwd: &str,
-    exit_code: i32,
+    exit_code: Option<i32>,
+    state: &str,
+    session_id: Option<&str>,
+    next_seq: Option<u64>,
     stdout: &str,
     stderr: &str,
 ) -> String {
     let mut lines = vec![
         format!("command: {command}"),
         format!("cwd: {cwd}"),
-        format!("exit_code: {exit_code}"),
+        format!("state: {state}"),
     ];
+    if let Some(exit_code) = exit_code {
+        lines.push(format!("exit_code: {exit_code}"));
+    }
+    if let Some(session_id) = session_id {
+        lines.push(format!("session_id: {session_id}"));
+    }
+    if let Some(next_seq) = next_seq {
+        lines.push(format!("next_seq: {next_seq}"));
+    }
     if !stdout.is_empty() {
         lines.push(stdout.to_string());
     }
@@ -398,13 +442,21 @@ fn shell_exec_result_details(
     original_command: &str,
     rewritten_command: &str,
     rewrites: &[MaterializationRewrite],
+    result: &crate::vfs::ExecResult,
 ) -> Option<serde_json::Value> {
-    (!rewrites.is_empty()).then(|| {
+    (!rewrites.is_empty() || result.session_id.is_some()).then(|| {
         serde_json::json!({
             "type": "shell_exec",
             "original_command": original_command,
             "executed_command": rewritten_command,
-            "rewrite": vfs_uri_rewrite_details(original_command, rewritten_command, rewrites),
+            "state": result.state.as_str(),
+            "exit_code": result.exit_code,
+            "session_id": result.session_id.as_deref(),
+            "terminal_id": result.terminal_id.as_deref(),
+            "next_seq": result.next_seq,
+            "truncated": result.truncated,
+            "omitted_bytes": result.omitted_bytes,
+            "rewrite": (!rewrites.is_empty()).then(|| vfs_uri_rewrite_details(original_command, rewritten_command, rewrites)),
         })
     })
 }
@@ -488,6 +540,21 @@ mod shell_exec_rewrite_tests {
         }
     }
 
+    fn exec_result_fixture() -> crate::vfs::ExecResult {
+        crate::vfs::ExecResult {
+            state: "completed".to_string(),
+            exit_code: Some(0),
+            stdout: String::new(),
+            stderr: String::new(),
+            pty: String::new(),
+            session_id: None,
+            terminal_id: None,
+            next_seq: None,
+            truncated: false,
+            omitted_bytes: 0,
+        }
+    }
+
     #[test]
     fn rewrite_notice_exposes_mapping_and_rewritten_command() {
         let rewrites = vec![rewrite()];
@@ -521,13 +588,30 @@ mod shell_exec_rewrite_tests {
             "python skill-assets://skills/foo/scripts/run.py",
             "python \"C:\\agentdash\\materialized\\readonly\\skill-assets\\skills\\foo\\scripts\\run.py\"",
             "main://",
-            0,
+            Some(0),
+            "completed",
+            None,
+            None,
             "ok",
             true,
+            false,
+            0,
         );
         assert!(rewritten.contains("executed_command:"));
 
-        let plain = shell_exec_result_text("echo ok", "echo ok", "main://", 0, "ok", false);
+        let plain = shell_exec_result_text(
+            "echo ok",
+            "echo ok",
+            "main://",
+            Some(0),
+            "completed",
+            None,
+            None,
+            "ok",
+            false,
+            false,
+            0,
+        );
         assert!(!plain.contains("executed_command:"));
     }
 
@@ -580,13 +664,16 @@ mod shell_exec_rewrite_tests {
 
     #[test]
     fn shell_exec_result_details_are_absent_without_rewrite() {
-        assert!(shell_exec_result_details("echo ok", "echo ok", &[]).is_none());
+        assert!(
+            shell_exec_result_details("echo ok", "echo ok", &[], &exec_result_fixture()).is_none()
+        );
 
         let rewrites = vec![rewrite()];
         let details = shell_exec_result_details(
             "python skill-assets://skills/abc-user-lookup/scripts/lookup.py yihao.liao",
             "python \"C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\" yihao.liao",
             &rewrites,
+            &exec_result_fixture(),
         )
         .expect("rewrite details");
         assert_eq!(details["type"], "shell_exec");

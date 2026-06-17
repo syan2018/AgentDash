@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use agentdash_application::vfs::{ApplyPatchAffectedPaths, FsPatchTarget, apply_patch_to_target};
-use agentdash_relay::{FileEntryRelay, SearchHit, ShellOutputStream};
+use agentdash_relay::{FileEntryRelay, SearchHit};
 use ignore::WalkBuilder;
 
 use crate::file_discovery_policy::FileDiscoveryPolicy;
@@ -240,29 +240,6 @@ impl ToolExecutor {
         );
         self.process_executor
             .shell_exec(command, workspace_root, cwd, timeout_ms, &[])
-            .await
-    }
-
-    /// 流式 shell 执行 — 逐行推送 stdout/stderr 到回调，完成后返回最终结果。
-    pub async fn shell_exec_streaming<F>(
-        &self,
-        command: &str,
-        workspace_root: &str,
-        cwd: Option<&str>,
-        timeout_ms: Option<u64>,
-        on_output: F,
-    ) -> Result<ShellResult, ToolError>
-    where
-        F: FnMut(&str, ShellOutputStream) + Send,
-    {
-        tracing::debug!(
-            command = %command,
-            workspace_root = workspace_root,
-            requested_cwd = ?cwd,
-            "shell_exec_streaming"
-        );
-        self.process_executor
-            .shell_exec_streaming(command, workspace_root, cwd, timeout_ms, &[], on_output)
             .await
     }
 
@@ -913,53 +890,5 @@ mod tests {
 
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "quoted ok");
-    }
-
-    #[tokio::test]
-    async fn shell_exec_streaming_captures_stdout() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let file = temp.path().join("demo.txt");
-        std::fs::write(&file, "stream ok").expect("write");
-        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
-        let root = temp.path().to_string_lossy().to_string();
-        let file_path = file.to_string_lossy();
-        let command = if cfg!(windows) {
-            format!("Get-Content -LiteralPath '{file_path}'")
-        } else {
-            format!("cat \"{file_path}\"")
-        };
-        let mut streamed = String::new();
-
-        let result = executor
-            .shell_exec_streaming(&command, &root, None, Some(10_000), |delta, stream| {
-                if matches!(stream, ShellOutputStream::Stdout) {
-                    streamed.push_str(delta);
-                }
-            })
-            .await
-            .expect("streaming stdout should run");
-
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "stream ok");
-        assert_eq!(streamed.trim(), "stream ok");
-    }
-
-    #[tokio::test]
-    async fn shell_exec_streaming_timeout_returns_tool_timeout() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
-        let root = temp.path().to_string_lossy().to_string();
-        let command = if cfg!(windows) {
-            "Start-Sleep -Milliseconds 1000"
-        } else {
-            "sleep 1"
-        };
-
-        let error = executor
-            .shell_exec_streaming(command, &root, None, Some(50), |_, _| {})
-            .await
-            .expect_err("streaming shell timeout should stay a tool timeout");
-
-        assert!(matches!(error, ToolError::Timeout(50)));
     }
 }

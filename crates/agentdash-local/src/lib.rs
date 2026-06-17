@@ -13,7 +13,7 @@ mod mcp_client_manager;
 mod mcp_connect;
 mod process_executor;
 mod search_executor;
-mod terminal_manager;
+mod shell_session_manager;
 mod tool_executor;
 mod workspace_prepare;
 mod workspace_probe;

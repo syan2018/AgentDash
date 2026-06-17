@@ -2,9 +2,6 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use agentdash_relay::ShellOutputStream;
-use tokio::io::{AsyncBufReadExt, BufReader};
-
 use crate::tool_executor::{
     ToolError, canonicalize_workspace_roots, is_absolute_like, resolve_existing_path_with_root,
 };
@@ -133,110 +130,6 @@ impl ProcessExecutor {
         child.args(args).current_dir(cwd);
         apply_env_overlay(&mut child, env);
         run_output_command(child, timeout_ms).await
-    }
-
-    /// 流式 shell 执行 — 逐行推送 stdout/stderr 到回调，完成后返回最终结果。
-    pub async fn shell_exec_streaming<F>(
-        &self,
-        command: &str,
-        workspace_root: &str,
-        cwd: Option<&str>,
-        timeout_ms: Option<u64>,
-        env: &[(String, String)],
-        mut on_output: F,
-    ) -> Result<ProcessOutput, ToolError>
-    where
-        F: FnMut(&str, ShellOutputStream) + Send,
-    {
-        let cwd = self.resolve_cwd(workspace_root, cwd)?;
-        let timeout_value = timeout_ms.unwrap_or(DEFAULT_PROCESS_TIMEOUT_MS);
-        let timeout = Duration::from_millis(timeout_value);
-
-        tracing::debug!(
-            command = %command,
-            cwd = %cwd.display(),
-            "process_shell_exec_streaming"
-        );
-
-        let mut command = shell_command(command, &cwd);
-        apply_env_overlay(&mut command, env);
-        let mut child = command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        let stdout = child.stdout.take().expect("stdout piped");
-        let stderr = child.stderr.take().expect("stderr piped");
-
-        let mut stdout_reader = BufReader::new(stdout);
-        let mut stderr_reader = BufReader::new(stderr);
-        let mut stdout_buf = String::new();
-        let mut stderr_buf = String::new();
-
-        let read_loop = async {
-            let mut stdout_done = false;
-            let mut stderr_done = false;
-            let mut stdout_line = Vec::new();
-            let mut stderr_line = Vec::new();
-
-            while !stdout_done || !stderr_done {
-                tokio::select! {
-                    read = stdout_reader.read_until(b'\n', &mut stdout_line), if !stdout_done => {
-                        match read {
-                            Ok(0) => {
-                                stdout_done = true;
-                            }
-                            Ok(_) => {
-                                let chunk = decode_output_chunk(&stdout_line);
-                                stdout_line.clear();
-                                on_output(&chunk, ShellOutputStream::Stdout);
-                                stdout_buf.push_str(&chunk);
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "stdout read error");
-                                return Err(e);
-                            }
-                        }
-                    }
-                    read = stderr_reader.read_until(b'\n', &mut stderr_line), if !stderr_done => {
-                        match read {
-                            Ok(0) => {
-                                stderr_done = true;
-                            }
-                            Ok(_) => {
-                                let chunk = decode_output_chunk(&stderr_line);
-                                stderr_line.clear();
-                                on_output(&chunk, ShellOutputStream::Stderr);
-                                stderr_buf.push_str(&chunk);
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "stderr read error");
-                                return Err(e);
-                            }
-                        }
-                    }
-                }
-            }
-
-            Ok::<(), std::io::Error>(())
-        };
-
-        match tokio::time::timeout(timeout, read_loop).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(ToolError::Io(e)),
-            Err(_) => {
-                let _ = child.kill().await;
-                return Err(ToolError::Timeout(timeout_value));
-            }
-        }
-
-        let status = child.wait().await.map_err(ToolError::Io)?;
-
-        Ok(ProcessOutput {
-            exit_code: status.code().unwrap_or(-1),
-            stdout: stdout_buf,
-            stderr: stderr_buf,
-        })
     }
 }
 

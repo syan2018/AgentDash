@@ -557,6 +557,9 @@ fn is_pending_response_message(msg: &RelayMessage) -> bool {
             | RelayMessage::ResponseToolFileRename { .. }
             | RelayMessage::ResponseToolApplyPatch { .. }
             | RelayMessage::ResponseToolShellExec { .. }
+            | RelayMessage::ResponseToolShellRead { .. }
+            | RelayMessage::ResponseToolShellInput { .. }
+            | RelayMessage::ResponseToolShellTerminate { .. }
             | RelayMessage::ResponseToolFileList { .. }
             | RelayMessage::ResponseToolSearch { .. }
             | RelayMessage::ResponseBrowseDirectory { .. }

@@ -998,6 +998,8 @@ impl AgentConnector for CodexBridgeConnector {
                 input,
                 responsesapi_client_metadata: None,
                 expected_turn_id: expected_turn_id.to_string(),
+                additional_context: None,
+                client_user_message_id: None,
             },
         };
         let response: TurnSteerResponse =

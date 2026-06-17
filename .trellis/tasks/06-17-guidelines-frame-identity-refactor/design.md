@@ -66,8 +66,13 @@ discovered_guidelines + user_preferences
 build_identity_context_frame(IdentityFrameInput{ base, agent, mode })   ← 不再含 preferences/guidelines
   └─ identity 帧:
        sections = [Identity{ effective_prompt }]
-       rendered_text = "## Identity\n\n{effective_prompt}"   ← 仅由身份派生
+       rendered_text = effective_prompt（原样，无 "## Identity" 脚手架）   ← 仅由身份派生
 ```
+
+> 注：identity 帧 `rendered_text` 刻意保持「原样身份提示词」，不包裹 `## Identity`
+> 标题。历史上 connector 直接用 `effective_prompt` 投递给模型，无 AGENTS.md/偏好
+> 时系统提示词与改造前逐字节一致（零回归）；guidelines 帧自带 `## User Preferences`
+> / `## Project Guidelines` 标题来界定新增内容，assemble 时以 `\n\n` 顺序拼接。
 
 消费侧：
 

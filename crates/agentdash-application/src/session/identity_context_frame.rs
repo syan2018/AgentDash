@@ -1,23 +1,22 @@
 use agentdash_domain::common::SystemPromptMode;
-use agentdash_spi::DiscoveredGuideline;
 use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, RuntimeEventSource};
 
 use super::context_frame::{self, ContextFramePayload};
 
+/// identity 帧输入。
+///
+/// 仅承载系统身份（base + agent prompt）。用户偏好与项目指引已迁出至
+/// `guidelines_context_frame`，以消除同一份系统提示词在 `effective_prompt`
+/// 与 `rendered_text` 之间的双写。
 pub(crate) struct IdentityFrameInput<'a> {
     pub base_system_prompt: &'a str,
     pub agent_system_prompt: Option<&'a str>,
     pub agent_system_prompt_mode: Option<SystemPromptMode>,
-    pub user_preferences: &'a [String],
-    pub discovered_guidelines: &'a [DiscoveredGuideline],
 }
 
 pub(crate) fn build_identity_context_frame(input: &IdentityFrameInput<'_>) -> Option<ContextFrame> {
     let effective_prompt = resolve_identity_prompt(input);
-    if effective_prompt.trim().is_empty()
-        && input.user_preferences.is_empty()
-        && input.discovered_guidelines.is_empty()
-    {
+    if effective_prompt.trim().is_empty() {
         return None;
     }
     let payload = IdentityContextFrame {
@@ -33,8 +32,6 @@ pub(crate) fn build_identity_context_frame(input: &IdentityFrameInput<'_>) -> Op
             input.agent_system_prompt_mode,
         ),
         effective_prompt,
-        user_preferences: input.user_preferences.to_vec(),
-        discovered_guidelines: input.discovered_guidelines.to_vec(),
     };
     Some(context_frame::build_context_frame(&payload))
 }
@@ -76,8 +73,6 @@ struct IdentityContextFrame {
     agent_prompt: Option<String>,
     mode: String,
     effective_prompt: String,
-    user_preferences: Vec<String>,
-    discovered_guidelines: Vec<DiscoveredGuideline>,
 }
 
 impl ContextFramePayload for IdentityContextFrame {
@@ -117,35 +112,17 @@ impl ContextFramePayload for IdentityContextFrame {
     }
 
     fn rendered_text(&self) -> String {
-        let mut parts = vec![format!("## Identity\n\n{}", self.effective_prompt)];
-        if !self.user_preferences.is_empty() {
-            let prefs = self
-                .user_preferences
-                .iter()
-                .map(|p| format!("- {p}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            parts.push(format!("## User Preferences\n\n{prefs}"));
-        }
-        if !self.discovered_guidelines.is_empty() {
-            let guidelines = self
-                .discovered_guidelines
-                .iter()
-                .filter(|g| !g.content.trim().is_empty())
-                .map(|g| format!("### {}\n\n{}", g.path, g.content))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            if !guidelines.is_empty() {
-                parts.push(format!("## Project Guidelines\n\n{guidelines}"));
-            }
-        }
-        parts.join("\n\n")
+        // 单一真相源：identity 帧仅承载身份提示词本身，且为「原样」文本——
+        // 不再包裹 `## Identity` 等 markdown 脚手架，保持与历史上 connector 直接
+        // 使用 effective_prompt 投递给模型的行为一致（无 AGENTS.md/偏好时，系统
+        // 提示词与改造前逐字节相同）。偏好/指引由独立 guidelines 帧承载。
+        self.effective_prompt.clone()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{IdentityFrameInput, resolve_identity_prompt};
+    use super::{IdentityFrameInput, build_identity_context_frame, resolve_identity_prompt};
 
     #[test]
     fn resolve_identity_prompt_handles_append_override_and_agent_only() {
@@ -153,8 +130,6 @@ mod tests {
             base_system_prompt: "base",
             agent_system_prompt: Some("agent"),
             agent_system_prompt_mode: None,
-            user_preferences: &[],
-            discovered_guidelines: &[],
         });
         assert!(append_prompt.contains("base"));
         assert!(append_prompt.contains("agent"));
@@ -163,8 +138,6 @@ mod tests {
             base_system_prompt: "base",
             agent_system_prompt: Some("agent"),
             agent_system_prompt_mode: Some(agentdash_domain::common::SystemPromptMode::Override),
-            user_preferences: &[],
-            discovered_guidelines: &[],
         });
         assert_eq!(override_prompt, "agent");
 
@@ -172,9 +145,21 @@ mod tests {
             base_system_prompt: "",
             agent_system_prompt: Some("agent only"),
             agent_system_prompt_mode: None,
-            user_preferences: &[],
-            discovered_guidelines: &[],
         });
         assert_eq!(agent_only_prompt, "agent only");
+    }
+
+    #[test]
+    fn identity_frame_rendered_text_only_carries_identity() {
+        let frame = build_identity_context_frame(&IdentityFrameInput {
+            base_system_prompt: "base identity",
+            agent_system_prompt: None,
+            agent_system_prompt_mode: None,
+        })
+        .expect("identity frame");
+        // 原样身份提示词，不含任何 markdown 脚手架或偏好/指引段。
+        assert_eq!(frame.rendered_text, "base identity");
+        assert!(!frame.rendered_text.contains("## User Preferences"));
+        assert!(!frame.rendered_text.contains("## Project Guidelines"));
     }
 }

@@ -2257,7 +2257,8 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
                         delivery_status: "prepared_for_connector".to_string(),
                         delivery_channel: "connector_context".to_string(),
                         message_role: "system".to_string(),
-                        rendered_text: format!("## Identity\n\n{prompt}"),
+                        // identity 帧 rendered_text 为原样身份提示词（无 markdown 脚手架）。
+                        rendered_text: prompt.to_string(),
                         sections: vec![agentdash_spi::hooks::ContextFrameSection::Identity {
                             title: "Identity".to_string(),
                             summary: "test".to_string(),
@@ -2355,36 +2356,48 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
     let runtime = agents
         .get(session_id)
         .expect("session runtime should be retained");
-    assert_eq!(runtime.last_identity_prompt.as_deref(), Some("SP_B"));
+    assert_eq!(runtime.last_system_prompt.as_deref(), Some("SP_B"));
 }
 
+/// 系统提示词由 identity 帧 + system_guidelines 帧按序组装。
 #[test]
-fn extract_identity_prompt_preserves_rendered_guidelines() {
-    let frame = agentdash_spi::hooks::ContextFrame {
-        id: "identity-guidelines".to_string(),
-        kind: "identity".to_string(),
-        source: agentdash_spi::hooks::RuntimeEventSource::RuntimeContextUpdate,
-        phase_node: None,
-        apply_mode: None,
-        delivery_status: "prepared_for_connector".to_string(),
-        delivery_channel: "connector_context".to_string(),
-        message_role: "system".to_string(),
-        rendered_text: "## Identity\n\nbase\n\n## Project Guidelines\n\n### AGENTS.md\n\n使用中文交流"
-            .to_string(),
-        sections: vec![agentdash_spi::hooks::ContextFrameSection::Identity {
-            title: "Identity".to_string(),
-            summary: "test".to_string(),
-            base_prompt: "base".to_string(),
-            agent_prompt: None,
-            mode: "base_only".to_string(),
-            effective_prompt: "base".to_string(),
-        }],
-        created_at_ms: 1,
-    };
+fn assemble_system_prompt_combines_identity_and_guidelines() {
+    fn frame(kind: &str, rendered: &str) -> agentdash_spi::hooks::ContextFrame {
+        agentdash_spi::hooks::ContextFrame {
+            id: format!("{kind}-1"),
+            kind: kind.to_string(),
+            source: agentdash_spi::hooks::RuntimeEventSource::RuntimeContextUpdate,
+            phase_node: None,
+            apply_mode: None,
+            delivery_status: "prepared_for_connector".to_string(),
+            delivery_channel: "connector_context".to_string(),
+            message_role: "system".to_string(),
+            rendered_text: rendered.to_string(),
+            sections: Vec::new(),
+            created_at_ms: 1,
+        }
+    }
 
-    let prompt = extract_identity_prompt(&[frame]).expect("identity prompt should exist");
+    let identity = frame("identity", "## Identity\n\nbase");
+    let guidelines = frame(
+        "system_guidelines",
+        "## Project Guidelines\n\n### AGENTS.md\n\n使用中文交流",
+    );
+
+    // 帧顺序不应影响结果：身份在前、指引在后。
+    let prompt = assemble_system_prompt(&[guidelines.clone(), identity.clone()])
+        .expect("system prompt should exist");
+    assert!(prompt.starts_with("## Identity"));
+    assert!(prompt.contains("base"));
     assert!(prompt.contains("## Project Guidelines"));
     assert!(prompt.contains("使用中文交流"));
+
+    // 仅有身份帧时也成立。
+    let identity_only = assemble_system_prompt(&[identity]).expect("identity only");
+    assert_eq!(identity_only, "## Identity\n\nbase");
+
+    // 无任何系统帧时返回 None。
+    assert!(assemble_system_prompt(&[]).is_none());
 }
 
 #[tokio::test]
@@ -2532,7 +2545,7 @@ async fn update_session_tools_replaces_all_tools() {
         PiAgentSessionRuntime {
             agent,
             tools: vec![old_tool],
-            last_identity_prompt: None,
+            last_system_prompt: None,
             model_selection: PiAgentModelSelection {
                 provider_id: None,
                 model_id: None,

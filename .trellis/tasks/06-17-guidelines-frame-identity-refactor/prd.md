@@ -49,14 +49,14 @@
 
 ## Acceptance Criteria
 
-- [ ] AC1：存在工作区 AGENTS.md 时，pi_agent 实际 system prompt 同时包含基础身份与项目指引；删除 AGENTS.md 后再启动则不含。（覆盖 R1/R2/R3）
-- [ ] AC2：identity 帧结构化表达与 `rendered_text` 不再对 guidelines/preferences 产生分歧——单测断言二者来源一致（无第二份手写拷贝）。（R1）
-- [ ] AC3：连接器侧仅有一处组装系统提示词；移除原 `extract_identity_prompt` 的 effective_prompt/rendered_text fallback 分支，单测覆盖"身份+指引"合并结果。（R3）
-- [ ] AC4：guidelines 帧不会同时作为 turn-start notice 重复出现；单测/集成断言 turn 上下文不重复包含项目指引。（R4）
-- [ ] AC5：user_preferences 在重构后仍正确进入系统提示词（不因 identity 净化而丢失）。（R1/R2）
-- [ ] AC6：多个 AGENTS.md（根 + 子目录）发现后按确定顺序合并、重复路径去重，就近优先语义有单测。（R5）
-- [ ] AC7：codex_bridge 对应单测/行为显示项目指引仍在 prompt 文本中。（R6）
-- [ ] AC8：`cargo build` + 相关 crate `cargo test`（application / executor / spi）通过；新增/调整单测全绿。
+- [x] AC1：guidelines 帧在偏好/指引非空时构建并经 connector_context 通道进系统提示词，`assemble_system_prompt` 合并身份+指引；空时 `build_guidelines_context_frame` 返回 None（删除 AGENTS.md → 不含）。单测 `assemble_system_prompt_combines_identity_and_guidelines` / `empty_inputs_produce_no_frame`。（R1/R2/R3）
+- [x] AC2：identity 帧 `rendered_text` 为原样身份（`identity_frame_rendered_text_only_carries_identity`）；guidelines 帧 `rendered_text == render_sections(sections)`（`rendered_text_is_derived_from_sections`），无第二份手写拷贝。（R1）
+- [x] AC3：`extract_identity_prompt` 重构为单一 `assemble_system_prompt`，删除 effective_prompt/rendered_text fallback 分支；单测覆盖合并结果。（R3）
+- [x] AC4：`preparation.rs::enqueue_context_frames_for_transform_context` 排除名单加入 `system_guidelines`，不重复作为 turn-notice 投递。（R4）
+- [x] AC5：user_preferences 迁入 guidelines 帧并进系统提示词（`preferences_only_omits_guidelines_section` + assemble 合并）。（R1/R2）
+- [x] AC6：`merge_discovered_guideline_files` 稳定排序 (mount_id, 深度, 规范化路径) + 去重；单测 `merge_guidelines_sorts_by_mount_depth_path_and_dedupes`。（R5）
+- [x] AC7：codex_bridge 走 `compose_prompt_text` 渲染全部帧（含新 guidelines 帧、identity 帧内容不变），路径未改动，指引仍在 prompt 文本中。（R6）
+- [x] AC8：`cargo build`（全 workspace）+ application/executor/spi `cargo test --lib` 通过；新增/调整单测全绿。唯一失败 `hooks::script_engine::tests::script_reads_ctx_params` 经 `git stash` 验证为 HEAD 既有、与本任务无关（script_engine.rs 与 rhai 依赖均未改动）。
 
 ## Constraints
 

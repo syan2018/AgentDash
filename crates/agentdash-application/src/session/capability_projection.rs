@@ -11,7 +11,9 @@ use agentdash_spi::{
     SkillDiscoveryProvider, SkillDiscoveryUserContext, Vfs, skill_capability_key,
 };
 
-use crate::context::mount_file_discovery::{BUILTIN_GUIDELINE_RULES, discover_mount_files};
+use crate::context::mount_file_discovery::{
+    BUILTIN_GUIDELINE_RULES, DiscoveredMountFile, discover_mount_files,
+};
 use crate::vfs::VfsService;
 
 use super::baseline_capabilities::{
@@ -158,9 +160,39 @@ pub async fn derive_session_guidelines(
         );
     }
 
-    guideline_result
-        .files
+    merge_discovered_guideline_files(guideline_result.files)
+}
+
+/// 把发现到的原始文件合并为确定性的指引列表。
+///
+/// 合并语义：
+/// - 稳定排序：按 (mount_id, 路径深度, 路径字典序)，保证多次发现顺序可复现；
+///   更深目录（更靠近被操作文件）的指引排在更后，视为更具体/优先，由模型裁决冲突。
+/// - 去重：按 (mount_id, 规范化路径) 去重，避免同一文件重复注入。
+///
+/// 注意：当前发现机制仅扫描 mount 根 + 一级子目录（见 mount_file_discovery
+/// `BUILTIN_GUIDELINE_RULES`），不递归更深层级；亦不做"深层覆盖同名段"——
+/// 后者需要"相对某个被编辑文件逐级解析"的锚点，本架构不具备，属未来独立增强。
+fn merge_discovered_guideline_files(
+    mut files: Vec<DiscoveredMountFile>,
+) -> Vec<DiscoveredGuideline> {
+    // 排序键与去重键一致（均基于规范化路径），且 sort_by 稳定：规范化后相同的
+    // 重复项保持输入顺序，去重时保留首个（surface 出规范形态的路径）。
+    files.sort_by(|a, b| {
+        let (na, nb) = (
+            normalize_guideline_path(&a.path),
+            normalize_guideline_path(&b.path),
+        );
+        a.mount_id
+            .cmp(&b.mount_id)
+            .then_with(|| path_depth(&a.path).cmp(&path_depth(&b.path)))
+            .then_with(|| na.cmp(&nb))
+    });
+
+    let mut seen = HashSet::new();
+    files
         .into_iter()
+        .filter(|file| seen.insert((file.mount_id.clone(), normalize_guideline_path(&file.path))))
         .map(|file| DiscoveredGuideline {
             file_name: file
                 .path
@@ -173,6 +205,22 @@ pub async fn derive_session_guidelines(
             content: file.content,
         })
         .collect()
+}
+
+/// 路径深度（`/` 分隔的层级数），用于就近排序。
+fn path_depth(path: &str) -> usize {
+    normalize_guideline_path(path)
+        .split('/')
+        .filter(|seg| !seg.is_empty())
+        .count()
+}
+
+/// 规范化指引路径用于去重：统一分隔符、去掉前导 `./` 与首尾 `/`。
+fn normalize_guideline_path(path: &str) -> String {
+    path.replace('\\', "/")
+        .trim_start_matches("./")
+        .trim_matches('/')
+        .to_string()
 }
 
 pub fn normalize_capability_state_dimensions(
@@ -398,6 +446,51 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use std::sync::Mutex;
+
+    fn mount_file(mount_id: &str, path: &str, content: &str) -> DiscoveredMountFile {
+        DiscoveredMountFile {
+            rule_key: "agents_md".to_string(),
+            mount_id: mount_id.to_string(),
+            path: path.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    #[test]
+    fn merge_guidelines_sorts_by_mount_depth_path_and_dedupes() {
+        let merged = merge_discovered_guideline_files(vec![
+            mount_file("workspace", "packages/b/AGENTS.md", "B"),
+            mount_file("workspace", "AGENTS.md", "ROOT"),
+            mount_file("workspace", "packages/a/AGENTS.md", "A"),
+            // 重复路径（规范化后相同），应去重保留首个。
+            mount_file("workspace", "./AGENTS.md", "ROOT-DUP"),
+            // 不同 mount 即便同路径也保留。
+            mount_file("docs", "AGENTS.md", "DOCS"),
+        ]);
+
+        let paths: Vec<(&str, &str)> = merged
+            .iter()
+            .map(|g| (g.mount_id.as_str(), g.path.as_str()))
+            .collect();
+
+        // docs 在 workspace 之前（mount_id 字典序）；workspace 内根在前、深层在后。
+        assert_eq!(
+            paths,
+            vec![
+                ("docs", "AGENTS.md"),
+                ("workspace", "AGENTS.md"),
+                ("workspace", "packages/a/AGENTS.md"),
+                ("workspace", "packages/b/AGENTS.md"),
+            ]
+        );
+        // 去重：./AGENTS.md 与 AGENTS.md 视为同一文件，仅保留首个 ROOT。
+        let root = merged
+            .iter()
+            .find(|g| g.mount_id == "workspace" && g.path == "AGENTS.md")
+            .expect("root guideline");
+        assert_eq!(root.content, "ROOT");
+        assert_eq!(merged.len(), 4);
+    }
 
     fn identity_for_projection() -> AuthIdentity {
         AuthIdentity {

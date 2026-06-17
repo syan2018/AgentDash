@@ -22,8 +22,8 @@ use super::bridges::provider_registry::{
     CONTEXT_WINDOW_STANDARD, EffectiveLlmProviderProfile, ProviderEntry, ProviderModelResolveError,
     ProviderUnavailableReason, build_effective_profile_catalog_from_db,
 };
+use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::hooks::trace::build_hook_trace_envelope;
-use agentdash_spi::hooks::{ContextFrame, ContextFrameSection};
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     DiscoveryContext, ExecutionContext, ExecutionStream, PromptPayload,
@@ -49,8 +49,9 @@ struct PiAgentSessionRuntime {
     agent: Agent,
     /// 当前生效的完整工具列表（由 application 层预构建）。
     tools: Vec<DynAgentTool>,
-    /// 上一次应用到 agent 的 identity prompt（用于跨 turn 判断是否需要热更新）。
-    last_identity_prompt: Option<String>,
+    /// 上一次应用到 agent 的 system prompt（身份 + 项目指引组装结果，
+    /// 用于跨 turn 判断是否需要热更新；指引变化也会触发重置）。
+    last_system_prompt: Option<String>,
     /// 当前 Agent 内部 bridge 对应的模型选择。
     model_selection: PiAgentModelSelection,
 }
@@ -633,10 +634,10 @@ impl AgentConnector for PiAgentConnector {
             should_recreate_agent,
             "Pi Agent prompt resolved runtime reuse state"
         );
-        let incoming_identity_prompt = extract_identity_prompt(&context.turn.context_frames);
-        let mut cached_identity_prompt = existing_runtime
+        let incoming_system_prompt = assemble_system_prompt(&context.turn.context_frames);
+        let mut cached_system_prompt = existing_runtime
             .as_ref()
-            .and_then(|runtime| runtime.last_identity_prompt.clone());
+            .and_then(|runtime| runtime.last_system_prompt.clone());
         let mut current_tools: Vec<DynAgentTool> = Vec::new();
         let mut agent = if let Some(runtime) = existing_runtime {
             if should_recreate_agent {
@@ -710,12 +711,12 @@ impl AgentConnector for PiAgentConnector {
                 current_tools = context.turn.assembled_tools.clone();
             }
 
-            if let Some(system_prompt) = incoming_identity_prompt
+            if let Some(system_prompt) = incoming_system_prompt
                 .as_ref()
-                .or(cached_identity_prompt.as_ref())
+                .or(cached_system_prompt.as_ref())
             {
                 agent.set_system_prompt(system_prompt.clone());
-                cached_identity_prompt = Some(system_prompt.clone());
+                cached_system_prompt = Some(system_prompt.clone());
             }
             tracing::debug!(
                 session_id,
@@ -733,11 +734,11 @@ impl AgentConnector for PiAgentConnector {
                     .replace_messages_with_refs(state.messages, state.message_refs)
                     .await;
             }
-        } else if incoming_identity_prompt.as_deref() != cached_identity_prompt.as_deref()
-            && let Some(system_prompt) = incoming_identity_prompt.as_ref()
+        } else if incoming_system_prompt.as_deref() != cached_system_prompt.as_deref()
+            && let Some(system_prompt) = incoming_system_prompt.as_ref()
         {
             agent.set_system_prompt(system_prompt.clone());
-            cached_identity_prompt = Some(system_prompt.clone());
+            cached_system_prompt = Some(system_prompt.clone());
         }
 
         let hook_trace_rx = context
@@ -767,7 +768,7 @@ impl AgentConnector for PiAgentConnector {
             PiAgentSessionRuntime {
                 agent,
                 tools: current_tools,
-                last_identity_prompt: cached_identity_prompt,
+                last_system_prompt: cached_system_prompt,
                 model_selection: requested_model_selection,
             },
         );
@@ -1004,29 +1005,27 @@ impl AgentConnector for PiAgentConnector {
     }
 }
 
-fn extract_identity_prompt(frames: &[ContextFrame]) -> Option<String> {
-    let identity_frame = frames.iter().find(|frame| frame.kind == "identity")?;
-    let rendered = identity_frame.rendered_text.trim();
-    if !rendered.is_empty() {
-        return Some(rendered.to_string());
-    }
+/// identity 帧 / system_guidelines 帧的 `kind` 标识（与 application 层帧组装约定一致）。
+const IDENTITY_FRAME_KIND: &str = "identity";
+const SYSTEM_GUIDELINES_FRAME_KIND: &str = "system_guidelines";
 
-    if let Some(prompt) = identity_frame
-        .sections
-        .iter()
-        .find_map(|section| match section {
-            ContextFrameSection::Identity {
-                effective_prompt, ..
-            } => {
-                let prompt = effective_prompt.trim();
-                (!prompt.is_empty()).then(|| prompt.to_string())
+/// 由 identity 帧与 system_guidelines 帧按序组装最终 system prompt。
+///
+/// 两帧的 `rendered_text` 均为各自结构化数据的**单一派生**（见 application 层
+/// `identity_context_frame` / `guidelines_context_frame`），因此这里只需按
+/// 「身份 → 项目指引」顺序拼接非空 `rendered_text`，不再需要原先
+/// effective_prompt / rendered_text 的 fallback 兜底。
+fn assemble_system_prompt(frames: &[ContextFrame]) -> Option<String> {
+    let mut parts = Vec::new();
+    for kind in [IDENTITY_FRAME_KIND, SYSTEM_GUIDELINES_FRAME_KIND] {
+        if let Some(frame) = frames.iter().find(|frame| frame.kind == kind) {
+            let rendered = frame.rendered_text.trim();
+            if !rendered.is_empty() {
+                parts.push(rendered.to_string());
             }
-            _ => None,
-        })
-    {
-        return Some(prompt);
+        }
     }
-    None
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
 async fn emit_pending_hook_trace_envelopes(

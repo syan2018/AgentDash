@@ -389,6 +389,30 @@ pub enum ContextFrameSection {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timestamp_ms: Option<u64>,
     },
+    /// 用户级偏好（来自 settings）。作为系统级指引随 `system_guidelines` 帧投递。
+    UserPreferences {
+        title: String,
+        summary: String,
+        #[serde(default)]
+        items: Vec<String>,
+    },
+    /// 项目级指引（来自 VFS 发现的 AGENTS.md / MEMORY.md 等）。
+    ProjectGuidelines {
+        title: String,
+        summary: String,
+        #[serde(default)]
+        entries: Vec<ProjectGuidelineEntry>,
+    },
+}
+
+/// `ProjectGuidelines` section 中的单条指引条目。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ProjectGuidelineEntry {
+    /// 相对于 mount 根的路径（如 `AGENTS.md` 或 `packages/foo/AGENTS.md`）。
+    pub path: String,
+    /// 文件全文内容。
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

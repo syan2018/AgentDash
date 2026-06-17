@@ -24,6 +24,7 @@ pub mod core;
 pub(crate) mod dimension;
 pub mod effects_service;
 pub mod eventing;
+mod guidelines_context_frame;
 pub mod hook_delegate;
 pub mod hook_events;
 pub(crate) mod hook_injection_sink;

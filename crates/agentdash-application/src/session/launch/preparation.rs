@@ -9,6 +9,9 @@ use agentdash_spi::{CapabilityState, ConnectorError, ExecutionContext};
 use super::deps::TurnPreparationDeps;
 use super::{LaunchFollowUpSource, LaunchPlan};
 use crate::session::assignment_context_frame::build_assignment_context_frame;
+use crate::session::guidelines_context_frame::{
+    GuidelinesFrameInput, SYSTEM_GUIDELINES_FRAME_KIND, build_guidelines_context_frame,
+};
 use crate::session::hub::{
     HookTriggerInput, PendingRuntimeContextApplication, build_initial_capability_state_frame,
 };
@@ -117,6 +120,13 @@ impl TurnPreparer {
                 base_system_prompt: &deps.base_system_prompt,
                 agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
                 agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
+            })
+        } else {
+            None
+        };
+        // 用户偏好与项目指引迁出 identity 帧，走独立的系统级 guidelines 帧。
+        let guidelines_frame = if include_connector_startup_context {
+            build_guidelines_context_frame(&GuidelinesFrameInput {
                 user_preferences: &user_preferences,
                 discovered_guidelines: &discovered_guidelines,
             })
@@ -248,6 +258,10 @@ impl TurnPreparer {
 
         let mut turn_context_frames: Vec<ContextFrame> = Vec::new();
         if let Some(frame) = identity_frame {
+            accepted_context_frames_to_emit.push(frame.clone());
+            turn_context_frames.push(frame);
+        }
+        if let Some(frame) = guidelines_frame {
             accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
@@ -408,7 +422,12 @@ fn enqueue_context_frames_for_transform_context(
         return;
     };
     for frame in frames {
-        if frame.kind == "identity" || frame.kind == "pending_action" {
+        // identity / system_guidelines 走系统通道（由连接器拼进 system prompt），
+        // 不再作为 turn-start notice 重复投递。
+        if frame.kind == "identity"
+            || frame.kind == SYSTEM_GUIDELINES_FRAME_KIND
+            || frame.kind == "pending_action"
+        {
             continue;
         }
         if frame.rendered_text.trim().is_empty() {

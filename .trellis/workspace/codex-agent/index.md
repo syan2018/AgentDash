@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
+- **Total Sessions**: 19
 - **Last Active**: 2026-06-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~652 | Active |
+| `journal-1.md` | ~685 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-06-17 | 修复 PiAgent 上下文用量链路 | `6d01717d` | `main` |
 | 18 | 2026-06-17 | 模型上下文消耗统计真实化 | `b21ed09e` | `main` |
 | 17 | 2026-06-17 | Shell 工具 Codex 对齐与格式化收尾 | `6c53e7b6`, `15791fa8`, `12549206` | `main` |
 | 16 | 2026-06-17 | Story Task subject 模型清理 | `12f17940`, `d22d2470`, `097ff7f2`, `e243c832`, `f1e1a3ad`, `8a45899e`, `71d8f5fd`, `eb8570de`, `6013a29b` | `codex/refactor-story-task-subject-model-cleanup` |

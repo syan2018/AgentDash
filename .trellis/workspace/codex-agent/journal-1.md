@@ -650,3 +650,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 修复 PiAgent 上下文用量链路
+
+**Date**: 2026-06-17
+**Task**: 修复 PiAgent 上下文用量链路
+**Branch**: `main`
+
+### Summary
+
+补齐 PiAgent TokenUsageUpdated 标准事件、模型 context window 贯通，以及 hook/compact 统计窗口回填；新增 executor/application 聚焦测试并更新流式映射规格。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6d01717d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

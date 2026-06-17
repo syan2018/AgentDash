@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { Task, TaskPlanStatus, TaskPriority } from "../../types";
 import { TaskStatusBadge } from "../../components/ui/status-badge";
 import { useTaskPlanStore } from "../../stores/taskPlanStore";
@@ -68,19 +68,8 @@ export function TaskDrawer({
   const [isArchiveConfirmOpen, setIsArchiveConfirmOpen] = useState(false);
   const [archiveConfirmValue, setArchiveConfirmValue] = useState("");
 
-  useEffect(() => {
-    if (!task) return;
-    setEditTitle(task.title);
-    setEditBody(task.body ?? "");
-    setEditPriority(task.priority ?? "");
-    setEditOwnerAgentId(task.owner_agent_id ?? "");
-    setEditAssignedAgentId(task.assigned_agent_id ?? "");
-    setEditSourceTaskId(task.source_task_id ?? "");
-    setEditStatus(task.status);
-    setFormMessage(null);
-    setIsArchiveConfirmOpen(false);
-    setArchiveConfirmValue("");
-  }, [task?.id]);
+  // 表单初值在挂载时从 task 读取（见上方 useState）。消费方对 TaskDrawer 传 `key={task.id}`，
+  // 切换 Task 时组件 remount 重新初始化，无需在 effect 内同步 props → state。
 
   if (!task) return null;
 

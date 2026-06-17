@@ -26,14 +26,49 @@ const storyTypeConfig: Record<StoryType, { label: string; icon: string; classNam
   other: { label: "other", icon: "OTHR", className: "border-border bg-secondary text-muted-foreground", tooltip: "OTHR · 其他" },
 };
 
-const taskStatusConfig: Record<TaskStatus, { label: string; className: string }> = {
-  open: { label: "open", className: "border-border bg-secondary text-muted-foreground" },
-  active: { label: "active", className: "border-primary/20 bg-primary/10 text-primary" },
-  review: { label: "review", className: "border-warning/20 bg-warning/10 text-warning" },
-  blocked: { label: "blocked", className: "border-destructive/20 bg-destructive/10 text-destructive" },
-  done: { label: "done", className: "border-success/20 bg-success/10 text-success" },
-  dropped: { label: "dropped", className: "border-border bg-secondary text-muted-foreground" },
+const taskStatusConfig: Record<
+  TaskStatus,
+  { label: string; className: string; progress: number; mark?: "blocked" | "dropped" }
+> = {
+  open: { label: "open", className: "border-border bg-secondary text-muted-foreground", progress: 0 },
+  active: { label: "active", className: "border-primary/20 bg-primary/10 text-primary", progress: 0.55 },
+  review: { label: "review", className: "border-warning/20 bg-warning/10 text-warning", progress: 0.8 },
+  blocked: { label: "blocked", className: "border-destructive/20 bg-destructive/10 text-destructive", progress: 0, mark: "blocked" },
+  done: { label: "done", className: "border-success/20 bg-success/10 text-success", progress: 1 },
+  dropped: { label: "dropped", className: "border-border bg-secondary text-muted-foreground", progress: 0, mark: "dropped" },
 };
+
+/** Task 状态图标，复用 Story 的圆环进度视觉语言（StoryStatusIcon）。 */
+export function TaskStatusIcon({ status, className = "h-3.5 w-3.5" }: BadgeProps & { status: TaskStatus }) {
+  const config = taskStatusConfig[status];
+  return (
+    <svg viewBox="0 0 14 14" fill="none" className={`${className} shrink-0 ${config.className.split(" ").find((c) => c.startsWith("text-")) ?? ""}`} aria-hidden="true">
+      <circle cx="7" cy="7" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      {config.progress === 1 ? (
+        <>
+          <circle cx="7" cy="7" r="6" fill="currentColor" />
+          <path d="M10.8 4.6 6.1 9.3 3.6 6.8" fill="none" stroke="white" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+        </>
+      ) : config.progress > 0 ? (
+        <path d={storyStatusPath(config.progress)} fill="currentColor" />
+      ) : null}
+      {config.mark === "blocked" && <path d="M4.8 4.8 9.2 9.2 M9.2 4.8 4.8 9.2" stroke="currentColor" strokeLinecap="round" strokeWidth="1.4" />}
+      {config.mark === "dropped" && <path d="M4.5 9.5 9.5 4.5" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />}
+    </svg>
+  );
+}
+
+/** 图标 + 状态文案的 token，用于会话卡片 / 状态栏紧凑展示。 */
+export function TaskStatusToken({ status, className = "" }: BadgeProps & { status: TaskStatus }) {
+  const config = taskStatusConfig[status];
+  const textColor = config.className.split(" ").find((c) => c.startsWith("text-")) ?? "";
+  return (
+    <span className={`inline-flex min-w-0 items-center gap-1 text-xs font-medium ${className}`}>
+      <TaskStatusIcon status={status} className="h-3 w-3" />
+      <span className={`font-mono text-[11px] ${textColor}`}>{config.label}</span>
+    </span>
+  );
+}
 
 interface BadgeProps {
   className?: string;
@@ -97,6 +132,7 @@ export function TaskStatusBadge({ status, className = "" }: BadgeProps & { statu
   const config = taskStatusConfig[status];
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs font-medium ${config.className} ${className}`}>
+      <TaskStatusIcon status={status} className="h-3 w-3" />
       {config.label}
     </span>
   );

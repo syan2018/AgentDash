@@ -17,7 +17,6 @@ import { extractPlatformEventData } from "../features/session/model/platformEven
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import { agentSourceLabel } from "../lib/agent-source";
 import { useAgentRunWorkspaceCommands } from "../features/agent-run-workspace/model/useAgentRunWorkspaceCommands";
-import { TaskPlanPanel } from "../features/task/task-plan-panel";
 import {
   WorkspacePanel,
   type WorkspacePanelHandle,
@@ -27,6 +26,7 @@ import { useAgentRunWorkspaceState } from "../features/workspace-panel/model/use
 import type { ExecutorConfig } from "../services/executor";
 import { useLifecycleStore } from "../stores/lifecycleStore";
 import { useProjectStore } from "../stores/projectStore";
+import { useTaskPlanStore } from "../stores/taskPlanStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
 import { useWorkspaceModuleStore } from "../features/workspace-module";
@@ -425,7 +425,14 @@ export function AgentRunWorkspacePage({
   const handleTurnEnd = useCallback(() => {
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("turn_end", true);
-  }, [refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh]);
+    // Agent 可能在本轮通过 task_write 改了 Task plan；刷新综合状态栏数据源。
+    if (currentRunId && currentAgentId) {
+      void useTaskPlanStore
+        .getState()
+        .fetchAgentRunTasks(currentRunId, currentAgentId)
+        .catch(() => {});
+    }
+  }, [refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh, currentRunId, currentAgentId]);
 
   const handleSystemEvent = useCallback((eventType: string, _event: BackboneEvent) => {
     switch (eventType) {
@@ -740,7 +747,6 @@ export function AgentRunWorkspacePage({
       <Group orientation="horizontal" className="flex-1 overflow-hidden">
         <Panel minSize="30%">
           <div className="flex h-full flex-col overflow-hidden">
-            <TaskPlanPanel runId={currentRunId} agentId={currentAgentId} />
             <div className="min-h-0 flex-1 overflow-hidden">
               <SessionChatView
                 sessionId={deliveryRuntimeSessionId}
@@ -755,6 +761,8 @@ export function AgentRunWorkspacePage({
                 onCommand={handleAgentRunCommand}
                 onCancelAction={handleCancelAgentRun}
                 onExecutorConfigOverrideChange={setExplicitExecutorConfigOverride}
+                statusBarRunId={currentRunId}
+                statusBarAgentId={currentAgentId}
                 mailboxSnapshot={conversationMailbox}
                 onPromoteMailboxMessage={(id) => { void handlePromoteMailboxMessage(id); }}
                 onDeleteMailboxMessage={(id) => { void handleDeleteMailboxMessage(id); }}

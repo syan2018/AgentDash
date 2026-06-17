@@ -12,7 +12,7 @@ use agentdash_spi::{
 };
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -146,10 +146,28 @@ fn default_read_mode() -> TaskReadMode {
     TaskReadMode::Overview
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskReadFormat {
+    /// 紧凑：每个 Task 仅核心字段，body 截断、context_refs 仅计数。默认。
+    Compact,
+    /// 完整：返回全部字段。
+    Full,
+}
+
+fn default_read_format() -> TaskReadFormat {
+    TaskReadFormat::Compact
+}
+
+const COMPACT_BODY_MAX_CHARS: usize = 160;
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TaskReadParams {
     #[serde(default = "default_read_mode")]
     pub mode: TaskReadMode,
+    /// compact（默认）只返回核心字段；full 返回完整 Task。detail mode 始终 full。
+    #[serde(default = "default_read_format")]
+    pub format: TaskReadFormat,
     #[serde(default)]
     pub run_id: Option<Uuid>,
     #[serde(default)]
@@ -379,8 +397,8 @@ impl AgentTool for TaskReadTool {
         let params: TaskReadParams = serde_json::from_value(args)
             .map_err(|error| AgentToolError::InvalidArguments(format!("参数解析失败: {error}")))?;
         let scope = TaskToolScope::from_tool_context(&self.repos, &self.tool_context).await?;
-        let details = build_read_view(&self.repos, &scope, params).await?;
-        Ok(result_from_details("Task view 已读取", details, false))
+        let view = build_read_view(&self.repos, &scope, params).await?;
+        Ok(result_with_view("Task view 已读取", view, false))
     }
 }
 
@@ -410,12 +428,11 @@ impl AgentTool for TaskWriteTool {
         let scope = TaskToolScope::from_tool_context(&self.repos, &self.tool_context).await?;
         let run_id = params.run_id.unwrap_or(scope.run_id);
         ensure_run_scope(&self.repos, &scope, run_id).await?;
-        let mut changed_task_ids = Vec::new();
+        let mut changes: Vec<TaskChange> = Vec::new();
         match params.mode {
             TaskWriteMode::Patch => {
                 for operation in params.operations {
-                    apply_operation(&self.repos, &scope, run_id, operation, &mut changed_task_ids)
-                        .await?;
+                    apply_operation(&self.repos, &scope, run_id, operation, &mut changes).await?;
                 }
             }
             TaskWriteMode::Snapshot => {
@@ -425,30 +442,63 @@ impl AgentTool for TaskWriteTool {
                     run_id,
                     params.snapshot,
                     params.drop_missing,
-                    &mut changed_task_ids,
+                    &mut changes,
                 )
                 .await?;
             }
         }
 
-        let details = build_read_view(
+        // 写后回传等价于一次 task_read，且额外带上本次变更清单，供模型与 UI 卡片消费。
+        // 不按单个 task_id 过滤：批量写入时模型期望拿到完整 plan，具体变更由 changes 表达。
+        let mut view = build_read_view(
             &self.repos,
             &scope,
             TaskReadParams {
                 mode: params.return_mode,
+                format: TaskReadFormat::Compact,
                 run_id: Some(run_id),
-                task_id: changed_task_ids.first().copied(),
+                task_id: None,
                 story_id: None,
-                include_archived: true,
+                include_archived: false,
                 owner_agent_id: None,
                 assigned_agent_id: None,
                 statuses: Vec::new(),
             },
         )
         .await?;
-        let message = format!("Task 写入完成，变更 {} 个 Task。", changed_task_ids.len());
-        Ok(result_from_details(&message, details, false))
+        if let Some(object) = view.as_object_mut() {
+            object.insert(
+                "changes".to_string(),
+                serde_json::to_value(&changes).unwrap_or(serde_json::Value::Null),
+            );
+        }
+        let message = format!("Task 写入完成，变更 {} 个 Task。", changes.len());
+        Ok(result_with_view(&message, view, false))
     }
+}
+
+/// 单次 task_write operation 产生的变更摘要。既进 tool result `content`（模型可读），
+/// 也进 `details`（前端卡片渲染），是 R2 自定义卡片的数据源。
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskChange {
+    pub task_id: Uuid,
+    pub title: String,
+    pub change_kind: TaskChangeKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_from: Option<TaskPlanStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_to: Option<TaskPlanStatus>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskChangeKind {
+    Created,
+    Updated,
+    StatusChanged,
+    Reordered,
+    Dropped,
+    ContextRefsReplaced,
 }
 
 async fn apply_operation(
@@ -456,7 +506,7 @@ async fn apply_operation(
     scope: &TaskToolScope,
     run_id: Uuid,
     operation: TaskWriteOperation,
-    changed_task_ids: &mut Vec<Uuid>,
+    changes: &mut Vec<TaskChange>,
 ) -> Result<(), AgentToolError> {
     match operation {
         TaskWriteOperation::CreateTask {
@@ -490,7 +540,7 @@ async fn apply_operation(
             )
             .await
             .map_err(tool_error)?;
-            changed_task_ids.push(result.task.id);
+            changes.push(TaskChange::simple(&result.task, TaskChangeKind::Created));
         }
         TaskWriteOperation::PatchTask {
             task_id,
@@ -522,10 +572,11 @@ async fn apply_operation(
             )
             .await
             .map_err(tool_error)?;
-            changed_task_ids.push(result.task.id);
+            changes.push(TaskChange::simple(&result.task, TaskChangeKind::Updated));
         }
         TaskWriteOperation::SetStatus { task_id, status } => {
             let task_id = resolve_task_selector(repos, run_id, &task_id).await?;
+            let status_from = read_task_status(repos, run_id, task_id).await?;
             let result = transition_run_task_status(
                 repos.lifecycle_run_repo.as_ref(),
                 run_id,
@@ -534,20 +585,40 @@ async fn apply_operation(
             )
             .await
             .map_err(tool_error)?;
-            changed_task_ids.push(result.task.id);
+            changes.push(TaskChange {
+                task_id: result.task.id,
+                title: result.task.title.clone(),
+                change_kind: TaskChangeKind::StatusChanged,
+                status_from,
+                status_to: Some(result.task.status),
+            });
         }
         TaskWriteOperation::ReorderTasks { task_ids } => {
             reorder_run_tasks(repos.lifecycle_run_repo.as_ref(), run_id, task_ids.clone())
                 .await
                 .map_err(tool_error)?;
-            changed_task_ids.extend(task_ids);
+            // 排序后读回标题，避免回传里出现裸 UUID。
+            let run = ensure_run_scope(repos, scope, run_id).await?;
+            for task_id in task_ids {
+                let title = run
+                    .task_by_id(task_id)
+                    .map(|task| task.title.clone())
+                    .unwrap_or_default();
+                changes.push(TaskChange {
+                    task_id,
+                    title,
+                    change_kind: TaskChangeKind::Reordered,
+                    status_from: None,
+                    status_to: None,
+                });
+            }
         }
         TaskWriteOperation::DropTask { task_id } => {
             let task_id = resolve_task_selector(repos, run_id, &task_id).await?;
             let result = archive_run_task(repos.lifecycle_run_repo.as_ref(), run_id, task_id)
                 .await
                 .map_err(tool_error)?;
-            changed_task_ids.push(result.task.id);
+            changes.push(TaskChange::simple(&result.task, TaskChangeKind::Dropped));
         }
         TaskWriteOperation::ReplaceContextRefs {
             task_id,
@@ -565,10 +636,39 @@ async fn apply_operation(
             )
             .await
             .map_err(tool_error)?;
-            changed_task_ids.push(result.task.id);
+            changes.push(TaskChange::simple(
+                &result.task,
+                TaskChangeKind::ContextRefsReplaced,
+            ));
         }
     }
     Ok(())
+}
+
+impl TaskChange {
+    fn simple(task: &LifecycleTaskPlanItem, change_kind: TaskChangeKind) -> Self {
+        Self {
+            task_id: task.id,
+            title: task.title.clone(),
+            change_kind,
+            status_from: None,
+            status_to: None,
+        }
+    }
+}
+
+async fn read_task_status(
+    repos: &RepositorySet,
+    run_id: Uuid,
+    task_id: Uuid,
+) -> Result<Option<TaskPlanStatus>, AgentToolError> {
+    let run = repos
+        .lifecycle_run_repo
+        .get_by_id(run_id)
+        .await
+        .map_err(tool_error)?;
+    Ok(run
+        .and_then(|run| run.task_by_id(task_id).map(|task| task.status)))
 }
 
 async fn apply_snapshot(
@@ -577,7 +677,7 @@ async fn apply_snapshot(
     run_id: Uuid,
     snapshot: Vec<TaskSnapshotItem>,
     drop_missing: bool,
-    changed_task_ids: &mut Vec<Uuid>,
+    changes: &mut Vec<TaskChange>,
 ) -> Result<(), AgentToolError> {
     let existing = repos
         .lifecycle_run_repo
@@ -612,9 +712,10 @@ async fn apply_snapshot(
                     None
                 })
         });
-        let task_id = if let Some(task_id) = maybe_id {
-            if existing.task_by_id(task_id).is_some() {
-                update_run_task(
+        let change = if let Some(task_id) = maybe_id {
+            if let Some(prior) = existing.task_by_id(task_id) {
+                let status_from = prior.status;
+                let result = update_run_task(
                     repos.lifecycle_run_repo.as_ref(),
                     run_id,
                     task_id,
@@ -622,8 +723,10 @@ async fn apply_snapshot(
                 )
                 .await
                 .map_err(tool_error)?;
+                let mut task = result.task;
+                let mut status_changed = false;
                 if let Some(status) = status {
-                    transition_run_task_status(
+                    let transitioned = transition_run_task_status(
                         repos.lifecycle_run_repo.as_ref(),
                         run_id,
                         task_id,
@@ -631,32 +734,42 @@ async fn apply_snapshot(
                     )
                     .await
                     .map_err(tool_error)?;
+                    status_changed = transitioned.task.status != status_from;
+                    task = transitioned.task;
                 }
-                task_id
+                if status_changed {
+                    TaskChange {
+                        task_id: task.id,
+                        title: task.title.clone(),
+                        change_kind: TaskChangeKind::StatusChanged,
+                        status_from: Some(status_from),
+                        status_to: Some(task.status),
+                    }
+                } else {
+                    TaskChange::simple(&task, TaskChangeKind::Updated)
+                }
             } else {
-                create_run_task(
+                let result = create_run_task(
                     repos.lifecycle_run_repo.as_ref(),
                     run_id,
                     draft_from_snapshot(item, scope)?,
                 )
                 .await
-                .map_err(tool_error)?
-                .task
-                .id
+                .map_err(tool_error)?;
+                TaskChange::simple(&result.task, TaskChangeKind::Created)
             }
         } else {
-            create_run_task(
+            let result = create_run_task(
                 repos.lifecycle_run_repo.as_ref(),
                 run_id,
                 draft_from_snapshot(item, scope)?,
             )
             .await
-            .map_err(tool_error)?
-            .task
-            .id
+            .map_err(tool_error)?;
+            TaskChange::simple(&result.task, TaskChangeKind::Created)
         };
-        ordered_ids.push(task_id);
-        changed_task_ids.push(task_id);
+        ordered_ids.push(change.task_id);
+        changes.push(change);
     }
 
     reorder_run_tasks(repos.lifecycle_run_repo.as_ref(), run_id, ordered_ids.clone())
@@ -665,10 +778,10 @@ async fn apply_snapshot(
     if drop_missing {
         for task_id in existing_ids {
             if !ordered_ids.contains(&task_id) {
-                archive_run_task(repos.lifecycle_run_repo.as_ref(), run_id, task_id)
+                let result = archive_run_task(repos.lifecycle_run_repo.as_ref(), run_id, task_id)
                     .await
                     .map_err(tool_error)?;
-                changed_task_ids.push(task_id);
+                changes.push(TaskChange::simple(&result.task, TaskChangeKind::Dropped));
             }
         }
     }
@@ -725,16 +838,17 @@ async fn build_read_view(
     }
 
     Ok(match params.mode {
-        TaskReadMode::Overview => overview_view(scope, run_id, &tasks),
+        TaskReadMode::Overview => overview_view(scope, run_id, &tasks, params.format),
         TaskReadMode::List => serde_json::json!({
             "mode": "list",
             "scope": scope_json(scope, run_id),
-            "tasks": tasks,
+            "tasks": render_tasks(&tasks, params.format),
         }),
+        // detail 始终 full：它本就是为读取单个 Task 的完整内容设计。
         TaskReadMode::Detail => serde_json::json!({
             "mode": "detail",
             "scope": scope_json(scope, run_id),
-            "tasks": tasks,
+            "tasks": render_tasks(&tasks, TaskReadFormat::Full),
         }),
         TaskReadMode::Context => context_view(scope, run_id, &tasks),
         TaskReadMode::Execution => serde_json::json!({
@@ -746,18 +860,56 @@ async fn build_read_view(
         TaskReadMode::Projection => serde_json::json!({
             "mode": "projection",
             "scope": scope_json(scope, run_id),
-            "tasks": tasks,
+            "tasks": render_tasks(&tasks, params.format),
             "source": "run",
         }),
     })
 }
 
-fn overview_view(scope: &TaskToolScope, run_id: Uuid, tasks: &[LifecycleTaskPlanItem]) -> serde_json::Value {
+/// 按 format 把 Task 列表投影成 JSON：compact 仅核心字段（body 截断、context_refs 计数），
+/// full 序列化完整 Task。
+fn render_tasks(tasks: &[LifecycleTaskPlanItem], format: TaskReadFormat) -> Vec<serde_json::Value> {
+    tasks.iter().map(|task| task_json(task, format)).collect()
+}
+
+fn task_json(task: &LifecycleTaskPlanItem, format: TaskReadFormat) -> serde_json::Value {
+    match format {
+        TaskReadFormat::Full => serde_json::to_value(task).unwrap_or(serde_json::Value::Null),
+        TaskReadFormat::Compact => {
+            let body_preview = task.body.as_ref().map(|body| {
+                if body.chars().count() > COMPACT_BODY_MAX_CHARS {
+                    let truncated: String = body.chars().take(COMPACT_BODY_MAX_CHARS).collect();
+                    format!("{truncated}…")
+                } else {
+                    body.clone()
+                }
+            });
+            serde_json::json!({
+                "id": task.id,
+                "title": task.title,
+                "status": task.status,
+                "priority": task.priority,
+                "assigned_agent_id": task.assigned_agent_id,
+                "body_preview": body_preview,
+                "context_refs_count": task.context_refs.len(),
+                "archived": task.archived_at.is_some(),
+            })
+        }
+    }
+}
+
+fn overview_view(
+    scope: &TaskToolScope,
+    run_id: Uuid,
+    tasks: &[LifecycleTaskPlanItem],
+    format: TaskReadFormat,
+) -> serde_json::Value {
     let mut counts = BTreeMap::<String, usize>::new();
     for task in tasks {
         *counts.entry(status_key(task.status).to_string()).or_default() += 1;
     }
-    let active = tasks
+    // current_items = 进行中（active/review/blocked），命名避免与单一 active 状态混淆。
+    let current = tasks
         .iter()
         .filter(|task| {
             matches!(
@@ -765,13 +917,18 @@ fn overview_view(scope: &TaskToolScope, run_id: Uuid, tasks: &[LifecycleTaskPlan
                 TaskPlanStatus::Active | TaskPlanStatus::Review | TaskPlanStatus::Blocked
             )
         })
-        .cloned()
+        .map(|task| task_json(task, format))
         .collect::<Vec<_>>();
+    let done = tasks
+        .iter()
+        .filter(|task| task.status == TaskPlanStatus::Done)
+        .count();
     serde_json::json!({
         "mode": "overview",
         "scope": scope_json(scope, run_id),
         "counts": counts,
-        "active_items": active,
+        "current_items": current,
+        "done": done,
         "total": tasks.len(),
     })
 }
@@ -1037,7 +1194,7 @@ fn parse_context_kind(value: &str) -> Result<ContextSourceKind, AgentToolError> 
         "mcp_resource" => Ok(ContextSourceKind::McpResource),
         "entity_ref" => Ok(ContextSourceKind::EntityRef),
         other => Err(AgentToolError::InvalidArguments(format!(
-            "未知 context kind: {other}"
+            "未知 context kind `{other}`，可用值: manual_text | file | project_snapshot | http_fetch | mcp_resource | entity_ref"
         ))),
     }
 }
@@ -1050,7 +1207,7 @@ fn parse_context_slot(value: &str) -> Result<ContextSlot, AgentToolError> {
         "references" => Ok(ContextSlot::References),
         "instruction_append" => Ok(ContextSlot::InstructionAppend),
         other => Err(AgentToolError::InvalidArguments(format!(
-            "未知 context slot: {other}"
+            "未知 context slot `{other}`，可用值: requirements | constraints | codebase | references | instruction_append"
         ))),
     }
 }
@@ -1061,7 +1218,7 @@ fn parse_context_delivery(value: &str) -> Result<ContextDelivery, AgentToolError
         "resource" => Ok(ContextDelivery::Resource),
         "lazy" => Ok(ContextDelivery::Lazy),
         other => Err(AgentToolError::InvalidArguments(format!(
-            "未知 context delivery: {other}"
+            "未知 context delivery `{other}`，可用值: inline | resource | lazy"
         ))),
     }
 }
@@ -1077,14 +1234,100 @@ fn status_key(status: TaskPlanStatus) -> &'static str {
     }
 }
 
-fn result_from_details(message: &str, details: serde_json::Value, is_error: bool) -> AgentToolResult {
+/// 构造工具结果：把 view JSON 既写进 `content`（模型可读 —— 所有 connector bridge 仅从
+/// content 构造模型可见 output，details 永不进模型），也写进 `details`（持久化/调试）。
+fn result_with_view(summary: &str, view: serde_json::Value, is_error: bool) -> AgentToolResult {
+    let body = serde_json::to_string_pretty(&view).unwrap_or_else(|_| view.to_string());
     AgentToolResult {
-        content: vec![ContentPart::text(message.to_string())],
+        content: vec![ContentPart::text(format!("{summary}\n{body}"))],
         is_error,
-        details: Some(details),
+        details: Some(view),
     }
 }
 
 fn tool_error(error: impl std::fmt::Display) -> AgentToolError {
     AgentToolError::ExecutionFailed(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn sample_task(body: Option<String>) -> LifecycleTaskPlanItem {
+        LifecycleTaskPlanItem {
+            id: Uuid::nil(),
+            title: "示例 Task".to_string(),
+            body,
+            status: TaskPlanStatus::Active,
+            priority: Some(TaskPriority::P1),
+            created_by_agent_id: None,
+            owner_agent_id: None,
+            assigned_agent_id: None,
+            source_task_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            archived_at: None,
+            context_refs: Vec::new(),
+            story_ref: None,
+        }
+    }
+
+    #[test]
+    fn result_with_view_puts_json_into_content_for_model() {
+        // P0 回归保护：模型可见 output 仅来自 content，因此 view 必须进 content。
+        let view = serde_json::json!({ "mode": "list", "tasks": [{ "title": "示例 Task" }] });
+        let result = result_with_view("Task view 已读取", view, false);
+        let text = match &result.content[0] {
+            ContentPart::Text { text } => text,
+            other => panic!("expected text content, got {other:?}"),
+        };
+        assert!(text.contains("示例 Task"), "content 应包含 Task 数据: {text}");
+        assert!(text.starts_with("Task view 已读取"));
+        assert!(result.details.is_some(), "details 仍保留供持久化");
+    }
+
+    #[test]
+    fn compact_projection_truncates_body_and_counts_refs() {
+        let long_body = "字".repeat(COMPACT_BODY_MAX_CHARS + 50);
+        let task = sample_task(Some(long_body));
+        let compact = task_json(&task, TaskReadFormat::Compact);
+        let preview = compact["body_preview"].as_str().unwrap();
+        assert!(preview.ends_with('…'));
+        assert_eq!(preview.chars().count(), COMPACT_BODY_MAX_CHARS + 1); // +1 = 省略号
+        assert_eq!(compact["context_refs_count"], 0);
+        assert!(compact.get("created_at").is_none(), "compact 不带审计时间戳");
+    }
+
+    #[test]
+    fn full_projection_keeps_all_fields() {
+        let task = sample_task(Some("短内容".to_string()));
+        let full = task_json(&task, TaskReadFormat::Full);
+        assert!(full.get("created_at").is_some(), "full 应保留完整字段");
+        assert_eq!(full["body"], "短内容");
+    }
+
+    #[test]
+    fn task_change_serializes_status_transition() {
+        let change = TaskChange {
+            task_id: Uuid::nil(),
+            title: "示例 Task".to_string(),
+            change_kind: TaskChangeKind::StatusChanged,
+            status_from: Some(TaskPlanStatus::Open),
+            status_to: Some(TaskPlanStatus::Active),
+        };
+        let value = serde_json::to_value(&change).unwrap();
+        assert_eq!(value["change_kind"], "status_changed");
+        assert_eq!(value["status_from"], "open");
+        assert_eq!(value["status_to"], "active");
+    }
+
+    #[test]
+    fn task_change_simple_omits_status_fields() {
+        let task = sample_task(None);
+        let value = serde_json::to_value(TaskChange::simple(&task, TaskChangeKind::Created)).unwrap();
+        assert_eq!(value["change_kind"], "created");
+        assert!(value.get("status_from").is_none());
+        assert!(value.get("status_to").is_none());
+    }
 }

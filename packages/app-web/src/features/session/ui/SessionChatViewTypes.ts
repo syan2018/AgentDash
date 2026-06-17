@@ -100,6 +100,12 @@ export interface SessionChatViewProps {
   onRecallMailboxMessage?: (messageId: string) => void;
   /** 重排序 mailbox 消息 */
   onMoveMailboxMessage?: (messageId: string, afterMessageId: string | null) => void;
+
+  // ─── 综合状态栏 Task scope ────────────────────────────
+
+  /** AgentRun scope：用于在输入栏上方的综合状态栏展示 Task 进度（缺省则只展示 mailbox） */
+  statusBarRunId?: string | null;
+  statusBarAgentId?: string | null;
   /** 外部注入的输入值（recall 后填充 composer），设置后立即消费 */
   injectedInputValue?: string | null;
   onInjectedInputConsumed?: () => void;

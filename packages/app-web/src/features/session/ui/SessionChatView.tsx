@@ -23,7 +23,6 @@ import {
   type RichInputRef,
 } from "../../file-reference";
 import type { FileEntry } from "../../../services/filePicker";
-import { SessionProjectionView } from "./SessionProjectionView";
 import { SessionLineageView } from "./SessionLineageView";
 import {
   SessionChatComposer,
@@ -102,7 +101,6 @@ export function SessionChatView({
   const [optimisticRunning, setOptimisticRunning] = useState(false);
   const [stableActionRunning, setStableActionRunning] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [showProjectionView, setShowProjectionView] = useState(false);
   const [showLineageView, setShowLineageView] = useState(false);
 
   const richInputRef = useRef<RichInputRef>(null);
@@ -149,7 +147,6 @@ export function SessionChatView({
   }, [sessionId]);
 
   useEffect(() => {
-    setShowProjectionView(false);
     setShowLineageView(false);
   }, [sessionId]);
 
@@ -633,10 +630,7 @@ export function SessionChatView({
           isConnected={isConnected}
           sessionId={sessionId}
           showLineageView={showLineageView}
-          showProjectionView={showProjectionView}
-          tokenUsage={tokenUsage}
           onToggleLineage={() => setShowLineageView((value) => !value)}
-          onToggleProjection={() => setShowProjectionView((value) => !value)}
         />
       )}
 
@@ -644,14 +638,6 @@ export function SessionChatView({
         <SessionLineageView
           sessionId={sessionId}
           refreshKey={projectionRefreshKey}
-        />
-      )}
-
-      {showProjectionView && sessionId && (
-        <SessionProjectionView
-          sessionId={sessionId}
-          refreshKey={projectionRefreshKey}
-          tokenUsage={tokenUsage}
         />
       )}
 
@@ -720,6 +706,9 @@ export function SessionChatView({
           richInputRef={richInputRef}
           showExecutorSelector={showExecutorSelector}
           workspaceId={workspaceId}
+          tokenUsage={tokenUsage}
+          sessionId={sessionId}
+          projectionRefreshKey={projectionRefreshKey}
           onAtTrigger={handleAtTrigger}
           onFileSelected={handleFileSelected}
           onInputChange={setInputValue}

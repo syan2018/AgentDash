@@ -29,10 +29,6 @@ export {
   type SessionSystemEventCardProps as SessionSystemEventCardProps,
 } from "./SessionSystemEventCard";
 export {
-  SessionUsageCard as SessionUsageCard,
-  type SessionUsageCardProps as SessionUsageCardProps,
-} from "./SessionUsageCard";
-export {
   SessionProjectionView,
   SessionProjectionViewPanel,
   type SessionProjectionViewPanelProps,

@@ -582,3 +582,38 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: Shell 工具 Codex 对齐与格式化收尾
+
+**Date**: 2026-06-17
+**Task**: Shell 工具 Codex 对齐与格式化收尾
+**Branch**: `main`
+
+### Summary
+
+规划并实现 Codex 风格 shell session 执行模型，复用 Codex pty/output truncation 轻量实现，提交全局 Rust 格式化并归档任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6c53e7b6` | (see git log) |
+| `15791fa8` | (see git log) |
+| `12549206` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

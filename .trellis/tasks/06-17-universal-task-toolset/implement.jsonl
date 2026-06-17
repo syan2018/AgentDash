@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/story-task-runtime.md", "reason": "Task 事实源和 Story projection 边界"}
+{"file": ".trellis/tasks/06-17-universal-task-toolset/research/embedded-task-list-tool-review.md", "reason": "Codex、Claude Code、pi-mono 参考模式和 AgentDash Task-only 落点"}
+{"file": ".trellis/tasks/archive/2026-06/06-16-story-task-subject-model-cleanup/design.md", "reason": "上一轮 Task aggregate、状态机、assignment、Story projection 边界"}
+{"file": ".trellis/tasks/archive/2026-06/06-16-story-task-subject-model-cleanup/implement.md", "reason": "上一轮实现 DAG 与 Task 模型迁移风险文件"}

@@ -7,10 +7,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::ApplicationError;
+use crate::agent_run::AgentFrameBuilder;
 use crate::session::capability_state::{
     ToolCapabilityDimensionModule, project_capability_state_from_frame,
 };
-use crate::agent_run::AgentFrameBuilder;
 use agentdash_domain::DomainError;
 use agentdash_domain::permission::{
     GrantScope, PermissionGrant, PermissionGrantRepository, PolicyOutcome, ScopeEscalationIntent,

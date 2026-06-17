@@ -23,9 +23,9 @@ use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 
 use super::session_association::resolve_activity_runtime_association_from_message_stream_trace;
-use crate::session::SessionTerminalCallback;
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, load_scoped_port_output_map};
 use crate::lifecycle::session_terminal_summary;
+use crate::session::SessionTerminalCallback;
 use crate::workflow::orchestration::{
     OrchestrationExecutorLauncher, OrchestrationRuntimeError, OrchestrationRuntimeEvent,
     apply_orchestration_event_to_run,

@@ -7,7 +7,8 @@ use agentdash_agent_protocol::{
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::workflow::{
     AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, GatePolicy,
-    InteractionDispatchIntent, RunPolicy, RuntimePolicy,
+    InteractionDispatchIntent, LifecycleTaskPlanItem, LifecycleTaskPlanItemPatch, RunPolicy,
+    RuntimePolicy,
 };
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
@@ -32,13 +33,12 @@ use super::{
     OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
     build_companion_event_notification,
 };
+use crate::lifecycle::{LifecycleDispatchService, resolve_current_frame_from_delivery_trace_ref};
+use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::session::{
     AgentFrameRuntimeTarget, CompanionLaunchSource, LaunchCommand, UserPromptInput,
 };
-use crate::lifecycle::{
-    LifecycleDispatchService, resolve_current_frame_from_delivery_trace_ref,
-};
-use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
+use crate::task::plan::update_run_task;
 
 pub use agentdash_spi::CompanionSliceMode;
 
@@ -112,6 +112,104 @@ impl<'a> CompanionGateControlFactory<'a> {
             self.repos.agent_lineage_repo.clone(),
             session_services.eventing.clone(),
         )
+    }
+}
+
+fn payload_task_id(payload: &serde_json::Value) -> Result<Option<Uuid>, AgentToolError> {
+    match payload.get("task_id") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(raw)) => Uuid::parse_str(raw).map(Some).map_err(|_| {
+            AgentToolError::InvalidArguments(format!("payload.task_id 不是有效 UUID: {raw}"))
+        }),
+        Some(other) => Err(AgentToolError::InvalidArguments(format!(
+            "payload.task_id 必须是 UUID 字符串，当前为 {other}"
+        ))),
+    }
+}
+
+async fn load_companion_task_context(
+    repos: &crate::repository_set::RepositorySet,
+    parent_run_id: Uuid,
+    task_id: Uuid,
+) -> Result<LifecycleTaskPlanItem, AgentToolError> {
+    let run = repos
+        .lifecycle_run_repo
+        .get_by_id(parent_run_id)
+        .await
+        .map_err(|error| {
+            AgentToolError::ExecutionFailed(format!(
+                "读取 parent LifecycleRun `{parent_run_id}` 失败: {error}"
+            ))
+        })?
+        .ok_or_else(|| {
+            AgentToolError::ExecutionFailed(format!(
+                "parent LifecycleRun `{parent_run_id}` 不存在，无法指派 Task"
+            ))
+        })?;
+    run.task_by_id(task_id).cloned().ok_or_else(|| {
+        AgentToolError::InvalidArguments(format!(
+            "Task `{task_id}` 不属于当前 parent run `{parent_run_id}`"
+        ))
+    })
+}
+
+fn companion_task_prompt_block(task: &LifecycleTaskPlanItem) -> String {
+    let mut lines = vec![
+        "## Assigned Task".to_string(),
+        format!("- id: {}", task.id),
+        format!("- title: {}", task.title),
+        format!("- status: {}", task_status_key(task.status)),
+    ];
+    if let Some(body) = task.body.as_deref().filter(|body| !body.trim().is_empty()) {
+        lines.push(format!("- body: {body}"));
+    }
+    if let Some(priority) = task.priority {
+        lines.push(format!("- priority: {priority:?}"));
+    }
+    if let Some(story_ref) = &task.story_ref {
+        lines.push(format!("- story_ref: {}/{}", story_ref.kind, story_ref.id));
+    }
+    if !task.context_refs.is_empty() {
+        lines.push("- context_refs:".to_string());
+        for context_ref in &task.context_refs {
+            let label = context_ref.label.as_deref().unwrap_or(&context_ref.locator);
+            lines.push(format!(
+                "  - {} [{}] {}",
+                label,
+                context_ref.slot_key(),
+                context_ref.locator
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+fn task_status_key(status: agentdash_domain::workflow::TaskPlanStatus) -> &'static str {
+    match status {
+        agentdash_domain::workflow::TaskPlanStatus::Open => "open",
+        agentdash_domain::workflow::TaskPlanStatus::Active => "active",
+        agentdash_domain::workflow::TaskPlanStatus::Review => "review",
+        agentdash_domain::workflow::TaskPlanStatus::Blocked => "blocked",
+        agentdash_domain::workflow::TaskPlanStatus::Done => "done",
+        agentdash_domain::workflow::TaskPlanStatus::Dropped => "dropped",
+    }
+}
+
+trait ContextSourceRefCompanionExt {
+    fn slot_key(&self) -> &'static str;
+}
+
+impl ContextSourceRefCompanionExt for agentdash_domain::context_source::ContextSourceRef {
+    fn slot_key(&self) -> &'static str {
+        match self.slot {
+            agentdash_domain::context_source::ContextSlot::Requirements => "requirements",
+            agentdash_domain::context_source::ContextSlot::Constraints => "constraints",
+            agentdash_domain::context_source::ContextSlot::Codebase => "codebase",
+            agentdash_domain::context_source::ContextSlot::References => "references",
+            agentdash_domain::context_source::ContextSlot::InstructionAppend => {
+                "instruction_append"
+            }
+        }
     }
 }
 
@@ -249,6 +347,7 @@ impl CompanionRequestTool {
                 .unwrap_or(at::SUGGESTION),
         );
         let agent_key = payload.get("agent_key").and_then(|v| v.as_str());
+        let requested_task_id = payload_task_id(payload)?;
         let max_fragments = payload
             .get("max_fragments")
             .and_then(|v| v.as_u64())
@@ -276,6 +375,7 @@ impl CompanionRequestTool {
                 "companion_label": companion_label,
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
+                "task_id": requested_task_id.map(|id| id.to_string()),
             })),
         )
         .await?;
@@ -311,6 +411,16 @@ impl CompanionRequestTool {
         let parent_run_id = anchor.run_id;
         let parent_agent_id = anchor.agent_id;
         let parent_frame_id = anchor.frame_id;
+        let task_context = if let Some(task_id) = requested_task_id {
+            Some(load_companion_task_context(&self.repos, parent_run_id, task_id).await?)
+        } else {
+            None
+        };
+        let dispatch_message = if let Some(task) = task_context.as_ref() {
+            format!("{prompt}\n\n{}", companion_task_prompt_block(task))
+        } else {
+            prompt.to_string()
+        };
         let dispatch_plan = build_companion_dispatch_plan(
             hook_runtime.as_ref(),
             &before_resolution,
@@ -324,7 +434,7 @@ impl CompanionRequestTool {
                 max_constraints,
             },
         );
-        let dispatch_prompt = build_companion_dispatch_prompt(&dispatch_plan, prompt);
+        let dispatch_prompt = build_companion_dispatch_prompt(&dispatch_plan, &dispatch_message);
         record_subagent_trace(
             hook_runtime.as_ref(),
             Some(&session_services),
@@ -379,6 +489,7 @@ impl CompanionRequestTool {
                                 "companion_label": companion_label,
                                 "adoption_mode": companion_adoption_mode_key(adoption_mode),
                                 "dispatch_id": dispatch_plan.dispatch_id,
+                                "task_id": requested_task_id.map(|id| id.to_string()),
                             })),
                         },
                     })
@@ -432,6 +543,24 @@ impl CompanionRequestTool {
             }
         };
 
+        if let Some(task_id) = requested_task_id {
+            update_run_task(
+                self.repos.lifecycle_run_repo.as_ref(),
+                parent_run_id,
+                task_id,
+                LifecycleTaskPlanItemPatch {
+                    assigned_agent_id: Some(Some(dispatch_result.agent_ref)),
+                    ..LifecycleTaskPlanItemPatch::default()
+                },
+            )
+            .await
+            .map_err(|error| {
+                AgentToolError::ExecutionFailed(format!(
+                    "Companion 已创建但 Task 指派关系写回失败: {error}"
+                ))
+            })?;
+        }
+
         let launch_outcome = session_services
             .launch
             .launch_command_with_outcome(
@@ -471,6 +600,7 @@ impl CompanionRequestTool {
                 "turn_id": child_turn_id.clone(),
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
+                "task_id": requested_task_id.map(|id| id.to_string()),
             })),
         )
         .await?;
@@ -535,6 +665,7 @@ impl CompanionRequestTool {
                     "child_session_id": dispatch_result.delivery_runtime_session_id.clone(),
                     "child_turn_id": child_turn_id.clone(),
                     "context_sources": child_context_sources.clone(),
+                    "task_id": requested_task_id.map(|id| id.to_string()),
                     "status": status,
                     "summary": summary,
                     "result": result_payload,
@@ -566,6 +697,7 @@ impl CompanionRequestTool {
                 "child_session_id": dispatch_result.delivery_runtime_session_id,
                 "child_turn_id": child_turn_id,
                 "context_sources": child_context_sources,
+                "task_id": requested_task_id.map(|id| id.to_string()),
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
                 "matched_rule_keys": after_resolution.matched_rule_keys,

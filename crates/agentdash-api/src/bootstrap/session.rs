@@ -5,16 +5,17 @@ use crate::agent_run_mailbox::AgentRunMailboxTerminalCallback;
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
+use agentdash_application::runtime_tools::{
+    CollaborationRuntimeToolProvider, SessionRuntimeToolComposer, SessionToolServices,
+    SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle, TaskRuntimeToolProvider,
+    VfsRuntimeToolProvider, WorkflowRuntimeToolProvider, WorkspaceModuleRuntimeToolProvider,
+};
 use agentdash_application::session::{
+    EmptyTerminalHookEffectHandlerRegistry,
     SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
     SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
     SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService, SessionTerminalCallback,
     SessionTitleService,
-};
-use agentdash_application::runtime_tools::{
-    CollaborationRuntimeToolProvider, SessionRuntimeToolComposer, SessionToolServices,
-    SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle, VfsRuntimeToolProvider,
-    WorkflowRuntimeToolProvider, WorkspaceModuleRuntimeToolProvider,
 };
 use agentdash_application::vfs::VfsMaterializationService;
 use agentdash_application::vfs::VfsService;
@@ -203,6 +204,9 @@ pub(crate) async fn build_session_runtime(
             callbacks: vec![orchestrator, mailbox_terminal_callback],
         }))
         .await;
+    session_runtime_builder
+        .set_hook_effect_handler_registry(Arc::new(EmptyTerminalHookEffectHandlerRegistry))
+        .await;
 
     session_services_handle
         .set(SessionToolServices {
@@ -271,6 +275,7 @@ fn build_session_runtime_tool_composer(
         deps.repos.clone(),
         deps.session_services_handle.clone(),
     );
+    let task_provider = TaskRuntimeToolProvider::new(deps.repos.clone());
     let workspace_module_provider = WorkspaceModuleRuntimeToolProvider::new(
         deps.repos.project_extension_installation_repo.clone(),
         deps.repos.canvas_repo.clone(),
@@ -283,6 +288,7 @@ fn build_session_runtime_tool_composer(
         Arc::new(vfs_provider) as Arc<dyn RuntimeToolProvider>,
         Arc::new(workflow_provider) as Arc<dyn RuntimeToolProvider>,
         Arc::new(collaboration_provider) as Arc<dyn RuntimeToolProvider>,
+        Arc::new(task_provider) as Arc<dyn RuntimeToolProvider>,
         Arc::new(workspace_module_provider) as Arc<dyn RuntimeToolProvider>,
     ]))
 }

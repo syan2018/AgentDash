@@ -10,7 +10,6 @@ use agentdash_domain::DomainError;
 use agentdash_domain::identity::{Group, User, UserProfile};
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
-use agentdash_domain::task::Task;
 use agentdash_domain::workspace::Workspace;
 use agentdash_integration_api::{AuthError, AuthIdentity, AuthRequest};
 use axum::extract::{FromRef, FromRequestParts, Request, State};
@@ -322,28 +321,6 @@ pub async fn load_story_and_project_with_permission(
     let project =
         load_project_with_permission(state, current_user, story.project_id, permission).await?;
     Ok((story, project))
-}
-
-pub async fn load_task_story_project_with_permission(
-    state: &AppState,
-    current_user: &AuthIdentity,
-    task_id: Uuid,
-    permission: ProjectPermission,
-) -> Result<(Task, Story, Project), ApiError> {
-    // M1-b：Task 查询经 Story aggregate；`find_by_task_id` 一次性拿到 Story + Task
-    let story = state
-        .repos
-        .story_repo
-        .find_by_task_id(task_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
-    let task = story
-        .find_task(task_id)
-        .cloned()
-        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
-    let project =
-        load_project_with_permission(state, current_user, task.project_id, permission).await?;
-    Ok((task, story, project))
 }
 
 pub async fn load_workspace_and_project_with_permission(

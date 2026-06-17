@@ -3,11 +3,11 @@
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent};
 use agentdash_spi::ConnectorError;
 
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::session::construction_provider::{
     CompanionLaunchSource, SessionConstructionProviderInput,
 };
 use crate::session::{CompanionParentSpec, CompanionParentWorkflowSpec};
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 
 use super::{FrameConstructionService, frame_builder_from_existing};
 

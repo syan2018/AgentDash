@@ -419,6 +419,7 @@ dependencies = [
 name = "agentdash-mcp"
 version = "0.1.0"
 dependencies = [
+ "agentdash-application",
  "agentdash-domain",
  "agentdash-spi",
  "async-trait",

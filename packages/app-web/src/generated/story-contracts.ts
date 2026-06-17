@@ -2,13 +2,23 @@
 // Do not edit manually.
 
 import type { ContextContainerDefinition, ContextSourceRef, SessionComposition } from "./context-contracts";
+import type { SubjectRefDto } from "./project-agent-contracts";
+import type { TaskResponse } from "./task-contracts";
 
 export type StoryContext = { source_refs: Array<ContextSourceRef>, context_containers: Array<ContextContainerDefinition>, disabled_container_ids: Array<string>, session_composition: SessionComposition | null, };
 
 export type StoryPriority = "p0" | "p1" | "p2" | "p3";
 
-export type StoryResponse = { id: string, project_id: string, default_workspace_id: string | null, title: string, description: string, status: StoryStatus, priority: StoryPriority, story_type: StoryType, tags: Array<string>, task_count: number, context: StoryContext, created_at: string, updated_at: string, };
+export type StoryResponse = { id: string, project_id: string, default_workspace_id: string | null, title: string, description: string, status: StoryStatus, priority: StoryPriority, story_type: StoryType, tags: Array<string>, context: StoryContext, created_at: string, updated_at: string, };
 
 export type StoryStatus = "created" | "context_ready" | "decomposed" | "executing" | "completed" | "failed" | "cancelled";
+
+export type StoryTaskProjectionItem = { task: TaskResponse, sources: Array<StoryTaskProjectionSource>, };
+
+export type StoryTaskProjectionResponse = { story_id: string, tasks: Array<StoryTaskProjectionItem>, };
+
+export type StoryTaskProjectionSource = { kind: StoryTaskProjectionSourceKind, run_id: string, agent_id?: string, story_ref?: SubjectRefDto, reason: string, };
+
+export type StoryTaskProjectionSourceKind = "owning_run" | "linked_run" | "story_ref";
 
 export type StoryType = "feature" | "bugfix" | "refactor" | "docs" | "test" | "other";

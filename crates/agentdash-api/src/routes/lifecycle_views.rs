@@ -7,11 +7,11 @@ use axum::{
 use serde_json::Value;
 use uuid::Uuid;
 
+use agentdash_application::agent_run::AgentFrameSurfaceExt;
+use agentdash_application::agent_run::ConversationModelConfigResolver;
 use agentdash_application::lifecycle::run_view_builder::{
     self, SubjectExecutionView as SubjectExecutionReadModel,
 };
-use agentdash_application::agent_run::ConversationModelConfigResolver;
-use agentdash_application::agent_run::AgentFrameSurfaceExt;
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentFrameRuntimeView, ConversationModelConfigSource, LifecycleRunView,
     ProjectActiveAgentsView, RuntimeSessionRefDto, RuntimeSessionTraceView, SubjectExecutionView,
@@ -24,7 +24,7 @@ use crate::{
     app_state::AppState,
     auth::{
         CurrentUser, ProjectPermission, load_project_with_permission,
-        load_story_and_project_with_permission, load_task_story_project_with_permission,
+        load_story_and_project_with_permission,
     },
     rpc::ApiError,
 };
@@ -84,8 +84,7 @@ pub async fn get_subject_execution(
 ) -> Result<Json<SubjectExecutionView>, ApiError> {
     let subject = SubjectRef::new(kind, parse_uuid(&id, "subject_id")?);
     let view =
-        run_view_builder::build_subject_execution_view(&state.repos, subject.clone())
-            .await?;
+        run_view_builder::build_subject_execution_view(&state.repos, subject.clone()).await?;
     authorize_subject_execution_view(&state, &current_user, &subject, &view).await?;
     Ok(Json(subject_execution_view_to_contract(view)))
 }
@@ -178,9 +177,7 @@ pub async fn get_project_active_agents(
     )
     .await?;
 
-    let view =
-        run_view_builder::build_project_active_agents_view(&state.repos, project_id)
-            .await?;
+    let view = run_view_builder::build_project_active_agents_view(&state.repos, project_id).await?;
     Ok(Json(project_active_agents_view_to_contract(view)))
 }
 
@@ -208,16 +205,6 @@ async fn authorize_subject_execution_view(
         }
         "story" => {
             load_story_and_project_with_permission(
-                state,
-                current_user,
-                subject.id,
-                ProjectPermission::View,
-            )
-            .await?;
-            Ok(())
-        }
-        "task" => {
-            load_task_story_project_with_permission(
                 state,
                 current_user,
                 subject.id,

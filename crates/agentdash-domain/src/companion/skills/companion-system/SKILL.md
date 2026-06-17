@@ -50,6 +50,12 @@ Use `target: "platform"` with `payload.type: "capability_grant_request"` when th
 
 The companion response is only a conversation receipt. The platform grant record and applied `RuntimeCapabilityTransition` are the authority. For required fields and result shape, read `references/capability-grant-request.md`.
 
+## Task Plan Tools
+
+Task tools operate on run-scoped Task plan facts. Create, update, assignment, review, and done transitions go through the LifecycleRun Task command surface because Task identity belongs to the active run plan, while Story only reads a projection of related run tasks.
+
+Task tool artifacts should be reported as `artifact_refs` or SubjectExecution-linked paths. Runtime evidence lives in Lifecycle / SubjectExecution projections, so companion completion payloads can point at files or durable execution records without turning Task plan DTOs into artifact stores.
+
 ## Workflow Script Preflight
 
 Use workflow script preflight when a model or companion drafts a dynamic orchestration script for a multi-agent workflow, such as research fanout, review/approval pipelines, local capability effects, or generated runbooks that need inspection before runtime execution.

@@ -18,13 +18,9 @@ use agentdash_domain::workflow::{
 use agentdash_spi::platform::auth::AuthIdentity;
 use agentdash_spi::{AgentConfig, AgentMessage, ContentPart};
 
-use crate::session::{
-    LaunchCommand, SessionControlService, SessionCoreService, SessionEventingService,
-    SessionExecutionState, SessionLaunchService, SessionTurnSteerCommand, UserPromptInput,
-};
 use crate::agent_run::{
-    AgentRunCommandReceiptView,
-    AgentRunMessageDelivery, AgentRunMessageDeliveryPort, SessionTurnMessageDeliveryPort,
+    AgentRunCommandReceiptView, AgentRunMessageDelivery, AgentRunMessageDeliveryPort,
+    SessionTurnMessageDeliveryPort,
     command_receipt::{
         claim_agent_run_command_receipt, digest_command_request, mark_command_terminal_failed,
     },
@@ -32,6 +28,10 @@ use crate::agent_run::{
 use crate::lifecycle::{
     AgentRunRuntimeAddress, MessageStreamProjectionRef, MessageStreamTraceKind,
     WorkflowApplicationError,
+};
+use crate::session::{
+    LaunchCommand, SessionControlService, SessionCoreService, SessionEventingService,
+    SessionExecutionState, SessionLaunchService, SessionTurnSteerCommand, UserPromptInput,
 };
 
 const CLAIM_LEASE_SECONDS: i64 = 300;

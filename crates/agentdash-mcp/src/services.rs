@@ -3,7 +3,10 @@ use std::sync::Arc;
 use agentdash_domain::{
     project::ProjectRepository,
     story::{StateChangeRepository, StoryRepository},
-    workflow::{AgentProcedureRepository, WorkflowGraphRepository},
+    workflow::{
+        AgentProcedureRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+        WorkflowGraphRepository,
+    },
     workspace::WorkspaceRepository,
 };
 
@@ -25,6 +28,8 @@ pub struct McpServices {
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
     pub workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
+    pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     /// M2-c：命令路径（MCP 主动改 task 状态 / 上报 artifact）也需要归口写
     /// `state_changes` 投影索引，保持与 API PATCH / repo_ops 命令路径一致。
     pub state_change_repo: Arc<dyn StateChangeRepository>,

@@ -41,9 +41,7 @@ use super::super::MemorySessionPersistence;
 use super::super::construction::{ConstructionResolutionPlan, RuntimeContextInspectionPlan};
 use super::super::construction_provider::SessionConstructionProviderInput;
 use super::super::hook_messages as msg;
-use super::super::hub_support::{
-    TurnExecution, TurnState, build_user_input_submitted_envelope,
-};
+use super::super::hub_support::{TurnExecution, TurnState, build_user_input_submitted_envelope};
 use super::super::local_workspace_vfs;
 use super::super::types::{
     BackendSelectionInput, BackendSelectionInputMode, EFFECT_TYPE_APPLY_VFS_OVERLAY,
@@ -53,6 +51,8 @@ use super::super::{AgentFrameTransitionRecord, RuntimeCommandStatus, RuntimeDeli
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
 };
+use crate::agent_run::AgentRunSteeringService;
+use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use crate::session::SetToolAccessEffect;
 use crate::session::capability_state::{
     CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
@@ -68,8 +68,6 @@ use crate::vfs::{
     MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
     VfsService,
 };
-use crate::agent_run::AgentRunSteeringService;
-use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use agentdash_application_ports::mcp_discovery::{
     DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryRequest,
 };
@@ -124,8 +122,9 @@ async fn attach_test_lifecycle_frame(hub: &SessionRuntimeInner, session_id: &str
         .await
         .expect("anchor lookup should succeed")
         .expect("test frame should attach runtime anchor");
-    let mut agent = LifecycleAgent::new_root(anchor.run_id, uuid::Uuid::new_v4(), AgentSource::Unknown)
-        .with_bootstrap_status("not_applicable");
+    let mut agent =
+        LifecycleAgent::new_root(anchor.run_id, uuid::Uuid::new_v4(), AgentSource::Unknown)
+            .with_bootstrap_status("not_applicable");
     agent.id = frame.agent_id;
     agent.set_current_frame(frame.id);
     hub.lifecycle_agent_repo
@@ -2504,7 +2503,8 @@ async fn start_prompt_triggers_session_start_before_connector_prompt() {
         .await
         .expect("anchor lookup should succeed")
         .expect("test frame should attach runtime anchor");
-    let mut agent = LifecycleAgent::new_root(anchor.run_id, uuid::Uuid::new_v4(), AgentSource::Unknown);
+    let mut agent =
+        LifecycleAgent::new_root(anchor.run_id, uuid::Uuid::new_v4(), AgentSource::Unknown);
     agent.id = frame.agent_id;
     agent_repo.create(&agent).await.expect("create agent");
 
@@ -3304,8 +3304,8 @@ async fn accepted_turn_commits_hook_runtime_target_to_new_frame() {
 
 #[tokio::test]
 async fn planner_invalid_config_leaves_current_frame_unchanged() {
-    use crate::session::SessionConstructionProvider;
     use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
+    use crate::session::SessionConstructionProvider;
 
     struct StaticConstructionProvider {
         hub: SessionRuntimeInner,
@@ -3658,8 +3658,8 @@ async fn schedule_unanchored_hook_auto_resume_strict_mode_requires_provider() {
 
 #[tokio::test]
 async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
-    use crate::session::{SessionConstructionProvider, SessionConstructionProviderInput};
     use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
+    use crate::session::{SessionConstructionProvider, SessionConstructionProviderInput};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct SpyConstructionProvider {

@@ -162,11 +162,26 @@ mod agent_source_tests {
 
     #[test]
     fn legacy_aliases_and_unknown_normalize() {
-        assert_eq!(AgentSource::from_str("routine_agent").unwrap(), AgentSource::Routine);
-        assert_eq!(AgentSource::from_str("child_agent").unwrap(), AgentSource::Subagent);
+        assert_eq!(
+            AgentSource::from_str("routine_agent").unwrap(),
+            AgentSource::Routine
+        );
+        assert_eq!(
+            AgentSource::from_str("child_agent").unwrap(),
+            AgentSource::Subagent
+        );
         // 已废弃 / 测试遗留 slug 落 Unknown，不再是独立变体。
-        assert_eq!(AgentSource::from_str("migration_agent").unwrap(), AgentSource::Unknown);
-        assert_eq!(AgentSource::from_str("task_agent").unwrap(), AgentSource::Unknown);
-        assert_eq!(AgentSource::from_str("PI_AGENT").unwrap(), AgentSource::Unknown);
+        assert_eq!(
+            AgentSource::from_str("migration_agent").unwrap(),
+            AgentSource::Unknown
+        );
+        assert_eq!(
+            AgentSource::from_str("task_agent").unwrap(),
+            AgentSource::Unknown
+        );
+        assert_eq!(
+            AgentSource::from_str("PI_AGENT").unwrap(),
+            AgentSource::Unknown
+        );
     }
 }

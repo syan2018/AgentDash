@@ -12,6 +12,7 @@ use agentdash_spi::{
     RuntimeMcpServer, SessionContextBundle,
 };
 
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::backend_execution_placement::ExecutionPlacementPlan;
 use crate::session::post_turn_handler::DynPostTurnHandler;
 use crate::session::runtime_commands::RuntimeCommandRecord;
@@ -19,7 +20,6 @@ use crate::session::types::{
     HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
     SessionPromptLifecycle,
 };
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchFollowUpSource {
     Explicit,
@@ -318,6 +318,11 @@ mod tests {
     use agentdash_spi::Vfs;
 
     use super::*;
+    use crate::agent_run::FrameSurfaceDraft;
+    use crate::agent_run::frame::runtime_launch::{
+        FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
+        LaunchResolutionTrace,
+    };
     use crate::session::construction::{
         ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
         RuntimeContextInspectionPlan, SessionConstructionContextProjection,
@@ -325,11 +330,6 @@ mod tests {
     use crate::session::launch::{LaunchCommand, LaunchSource};
     use crate::session::types::{
         RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, UserPromptInput,
-    };
-    use crate::agent_run::FrameSurfaceDraft;
-    use crate::agent_run::frame::runtime_launch::{
-        FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
-        LaunchResolutionTrace,
     };
     use std::path::{Path, PathBuf};
 

@@ -16,6 +16,14 @@ use std::sync::Arc;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::{AgentConfig, AgentConnector, ConnectorError, SkillDiscoveryProvider};
 
+use crate::agent_run::frame::builder::AgentFrameBuilder;
+use crate::agent_run::frame::runtime_launch::{
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
+    LaunchResolutionTrace,
+};
+use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
+use crate::agent_run::frame::surface::FrameSurfaceDraft;
+use crate::agent_run::merge_executor_config_fields;
 use crate::context::SharedContextAuditBus;
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -30,14 +38,6 @@ use crate::session::{
     AssemblyLaunchExtras, LaunchCommand, SessionRequestAssembler, TerminalHookEffectBinding,
 };
 use crate::vfs::VfsService;
-use crate::agent_run::frame::builder::AgentFrameBuilder;
-use crate::agent_run::merge_executor_config_fields;
-use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
-use crate::agent_run::frame::surface::FrameSurfaceDraft;
-use crate::agent_run::frame::runtime_launch::{
-    FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
-    LaunchResolutionTrace,
-};
 use crate::workspace::resolution::BackendAvailability;
 
 // ─── FrameConstructionService ───

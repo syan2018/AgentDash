@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Story } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
@@ -39,14 +39,6 @@ export function StoryTabView() {
     clearSelection();
   }, [clearSelection, currentProjectId]);
 
-  const taskCountByStoryId = useMemo(() => {
-    const result: Record<string, number> = {};
-    stories.forEach((story) => {
-      result[story.id] = story.task_count ?? 0;
-    });
-    return result;
-  }, [stories]);
-
   const handleOpenStory = (story: Story) => {
     navigate(`/story/${story.id}`);
   };
@@ -75,7 +67,6 @@ export function StoryTabView() {
     <>
       <StoryListView
         stories={stories}
-        taskCountByStoryId={taskCountByStoryId}
         onOpenStory={handleOpenStory}
         projectId={currentProjectId}
       />

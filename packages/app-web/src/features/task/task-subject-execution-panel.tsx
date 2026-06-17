@@ -4,17 +4,15 @@
  * Task 本身只作为 SubjectRef，运行状态由 lifecycle target view 投影。
  */
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import type { SubjectExecutionView, Task } from "../../types";
 import { subjectExecutionKey } from "../../types";
 import { useLifecycleStore } from "../../stores/lifecycleStore";
-import { useStoryStore } from "../../stores/storyStore";
 import { agentRunWorkspacePath } from "../agent/agent-run-paths";
 
 interface TaskSubjectExecutionPanelProps {
   task: Task;
-  onTaskUpdated: (task: Task) => void;
 }
 
 function JsonBlock({ value }: { value: unknown }) {
@@ -117,15 +115,9 @@ function SubjectExecutionSummary({ view }: { view: SubjectExecutionView | null }
   );
 }
 
-export function TaskSubjectExecutionPanel({ task, onTaskUpdated }: TaskSubjectExecutionPanelProps) {
-  const refreshTask = useStoryStore((s) => s.refreshTask);
+export function TaskSubjectExecutionPanel({ task }: TaskSubjectExecutionPanelProps) {
   const fetchSubjectExecution = useLifecycleStore((s) => s.fetchSubjectExecution);
   const view = useLifecycleStore((s) => s.subjectExecutions.get(subjectExecutionKey("task", task.id)) ?? null);
-
-  const onTaskUpdatedRef = useRef(onTaskUpdated);
-  useEffect(() => {
-    onTaskUpdatedRef.current = onTaskUpdated;
-  }, [onTaskUpdated]);
 
   const reloadExecution = useCallback(async () => {
     await fetchSubjectExecution("task", task.id);
@@ -134,11 +126,6 @@ export function TaskSubjectExecutionPanel({ task, onTaskUpdated }: TaskSubjectEx
   useEffect(() => {
     void reloadExecution();
   }, [reloadExecution, task.status, task.updated_at]);
-
-  const syncTask = useCallback(async () => {
-    const latest = await refreshTask(task.id);
-    if (latest) onTaskUpdatedRef.current(latest);
-  }, [refreshTask, task.id]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -154,7 +141,6 @@ export function TaskSubjectExecutionPanel({ task, onTaskUpdated }: TaskSubjectEx
           <button
             type="button"
             onClick={() => {
-              void syncTask();
               void reloadExecution();
             }}
             className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"

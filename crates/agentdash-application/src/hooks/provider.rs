@@ -19,13 +19,13 @@ use async_trait::async_trait;
 
 use agentdash_spi::ExecutionHookProvider;
 
+use super::active_workflow_contribution::build_active_workflow_step_fragments;
+use super::active_workflow_snapshot::ActiveWorkflowSnapshotBuilder;
 use super::owner_resolver::SessionOwnerResolver;
 use super::presets::builtin_preset_scripts;
 use super::rules::*;
 use super::script_engine::HookScriptEngine;
 use super::snapshot_helpers::*;
-use super::active_workflow_contribution::build_active_workflow_step_fragments;
-use super::active_workflow_snapshot::ActiveWorkflowSnapshotBuilder;
 use super::{dedupe_tags, global_builtin_source, workflow_scope_key, workflow_source};
 use crate::ApplicationError;
 
@@ -61,11 +61,13 @@ impl AppExecutionHookProvider {
     {
         let preset_scripts = builtin_preset_scripts();
         let evaluator = script_evaluator_factory(&preset_scripts);
+        let lifecycle_run_repo = repos.lifecycle_run_repo.clone();
         Self {
             inline_file_repo: repos.inline_file_repo,
             owner_resolver: SessionOwnerResolver::new(
                 repos.project_repo,
                 repos.story_repo,
+                lifecycle_run_repo,
                 repos.lifecycle_subject_association_repo,
             ),
             workflow_builder: ActiveWorkflowSnapshotBuilder::new(
@@ -362,9 +364,8 @@ impl AppExecutionHookProvider {
                 );
             }
             HookTrigger::SessionTerminal => {
-                // owner_default_hook_rules 会为 task owner 自动注入
-                // task_session_terminal preset；port 完成门禁由 port_output_gate
-                // preset 在 BeforeStop 阶段驱动。
+                // SessionTerminal rules evaluate declared hook effects. Port 完成门禁由
+                // port_output_gate preset 在 BeforeStop 阶段驱动。
                 apply_hook_rules(
                     HookEvaluationContext { snapshot, query },
                     &mut resolution,
@@ -418,8 +419,8 @@ fn seed_snapshot_injections_for_trigger(
 mod tests {
     use std::sync::Arc;
 
-    use crate::session::HookRuntimeDelegate;
     use crate::agent_run::frame::hook_runtime::AgentFrameHookRuntime;
+    use crate::session::HookRuntimeDelegate;
     use agentdash_spi::hooks::HookRuntimeAccess;
     use agentdash_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,

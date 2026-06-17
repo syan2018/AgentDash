@@ -10,8 +10,8 @@
 //! - module_id 约定见 §4：`ext:{extension_key}` / `canvas:{mount_id}` /
 //!   `builtin:{key}`。
 
-pub(crate) mod skill_projection;
 pub mod runtime_tool_provider;
+pub(crate) mod skill_projection;
 mod tools;
 
 use agentdash_contracts::workspace_module::{
@@ -29,11 +29,11 @@ use crate::runtime_gateway::ExtensionInvocationWorkspaceContext;
 use agentdash_domain::common::Vfs;
 use thiserror::Error;
 
+pub use runtime_tool_provider::WorkspaceModuleRuntimeToolProvider;
 pub use tools::{
     WorkspaceModuleCreateTool, WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool,
     WorkspaceModuleListTool, WorkspaceModulePresentTool,
 };
-pub use runtime_tool_provider::WorkspaceModuleRuntimeToolProvider;
 
 /// invoke 解析出的 backend target + workspace 上下文。
 ///

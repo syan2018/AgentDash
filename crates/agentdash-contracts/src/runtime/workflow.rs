@@ -47,6 +47,7 @@ pub enum ToolClusterDto {
     Execute,
     Workflow,
     Collaboration,
+    Task,
     WorkspaceModule,
 }
 
@@ -55,7 +56,6 @@ pub enum ToolClusterDto {
 pub enum PlatformMcpScopeDto {
     Relay,
     Story,
-    Task,
     Workflow,
 }
 

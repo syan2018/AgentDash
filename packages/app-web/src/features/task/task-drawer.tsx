@@ -1,103 +1,86 @@
-import { useMemo, useState } from "react";
-import type { TaskDispatchPreference, Artifact, ProjectConfig, Task, Workspace } from "../../types";
+import { useState } from "react";
+import type { Task, TaskPlanStatus, TaskPriority } from "../../types";
 import { TaskStatusBadge } from "../../components/ui/status-badge";
-import { useStoryStore } from "../../stores/storyStore";
+import { useTaskPlanStore } from "../../stores/taskPlanStore";
 import {
   DangerConfirmDialog,
   DetailMenu,
   DetailPanel,
   DetailSection,
 } from "@agentdash/ui";
-import { DispatchPreferenceFields } from "./dispatch-preference-fields";
-import {
-  createDefaultDispatchPreference,
-  hasDispatchPreferenceSelection,
-  normalizeDispatchPreference,
-} from "./dispatch-preference";
 import { TaskSubjectExecutionPanel } from "./task-subject-execution-panel";
 
 interface TaskDrawerProps {
   task: Task | null;
-  workspaces: Workspace[];
-  projectConfig?: ProjectConfig;
   onTaskUpdated: (task: Task) => void;
   onTaskDeleted: (taskId: string) => void;
   onClose: () => void;
 }
 
-function ArtifactBlock({ artifact }: { artifact: Artifact }) {
-  const [isCollapsed, setIsCollapsed] = useState(true);
+const TASK_STATUS_OPTIONS: TaskPlanStatus[] = [
+  "open",
+  "active",
+  "review",
+  "blocked",
+  "done",
+  "dropped",
+];
 
+const TASK_PRIORITY_OPTIONS: TaskPriority[] = ["p0", "p1", "p2", "p3"];
+
+function isTaskPlanStatus(value: string): value is TaskPlanStatus {
+  return value === "open"
+    || value === "active"
+    || value === "review"
+    || value === "blocked"
+    || value === "done"
+    || value === "dropped";
+}
+
+function isTaskPriority(value: string): value is TaskPriority {
+  return value === "p0" || value === "p1" || value === "p2" || value === "p3";
+}
+
+function OptionalMetaRow({ label, value }: { label: string; value?: string | null }) {
   return (
-    <div className="rounded-[12px] border border-border bg-background p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs font-medium text-muted-foreground">
-          {artifact.artifact_type}
-        </p>
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-muted-foreground">
-            {new Date(artifact.created_at).toLocaleString("zh-CN")}
-          </span>
-          <button
-            type="button"
-            onClick={() => setIsCollapsed((value) => !value)}
-            aria-expanded={!isCollapsed}
-            className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary"
-          >
-            {isCollapsed ? "展开" : "收起"}
-          </button>
-        </div>
-      </div>
-      {isCollapsed ? (
-        <p className="text-xs text-muted-foreground">内容已折叠，点击展开查看详情</p>
-      ) : (
-        <pre className="agentdash-chat-code-block whitespace-pre-wrap">
-          {JSON.stringify(artifact.content, null, 2)}
-        </pre>
-      )}
+    <div className="rounded-[8px] border border-border bg-background px-3 py-2">
+      <p className="text-[10px] font-medium text-muted-foreground">{label}</p>
+      <p className="mt-1 truncate font-mono text-xs text-foreground">{value?.trim() || "未设置"}</p>
     </div>
   );
 }
 
 export function TaskDrawer({
   task,
-  workspaces,
-  projectConfig,
   onTaskUpdated,
   onTaskDeleted,
   onClose,
 }: TaskDrawerProps) {
-  const { updateTask, deleteTask, error } = useStoryStore();
+  const { updateTask, updateTaskStatus, archiveTask, error } = useTaskPlanStore();
   const [editTitle, setEditTitle] = useState(task?.title ?? "");
-  const [editDescription, setEditDescription] = useState(task?.description ?? "");
-  const [editWorkspaceId, setEditWorkspaceId] = useState(task?.workspace_id ?? "");
-  const [editDispatchPref, setEditDispatchPref] = useState<TaskDispatchPreference>(
-    task?.dispatch_preference ?? createDefaultDispatchPreference(projectConfig),
-  );
+  const [editBody, setEditBody] = useState(task?.body ?? "");
+  const [editPriority, setEditPriority] = useState<TaskPriority | "">(task?.priority ?? "");
+  const [editOwnerAgentId, setEditOwnerAgentId] = useState(task?.owner_agent_id ?? "");
+  const [editAssignedAgentId, setEditAssignedAgentId] = useState(task?.assigned_agent_id ?? "");
+  const [editSourceTaskId, setEditSourceTaskId] = useState(task?.source_task_id ?? "");
+  const [editStatus, setEditStatus] = useState<TaskPlanStatus>(task?.status ?? "open");
   const [formMessage, setFormMessage] = useState<string | null>(null);
-  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
-  const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
-  const [isArtifactsCollapsed, setIsArtifactsCollapsed] = useState(true);
-  const sortedArtifacts = useMemo(
-    () => {
-      if (!task) return [];
-      return [...task.artifacts].sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-      );
-    },
-    [task],
-  );
+  const [isArchiveConfirmOpen, setIsArchiveConfirmOpen] = useState(false);
+  const [archiveConfirmValue, setArchiveConfirmValue] = useState("");
+
+  // 表单初值在挂载时从 task 读取（见上方 useState）。消费方对 TaskDrawer 传 `key={task.id}`，
+  // 切换 Task 时组件 remount 重新初始化，无需在 effect 内同步 props → state。
 
   if (!task) return null;
 
-  const agentLabel = task.dispatch_preference?.agent_type ?? "未指定 Agent";
-  const hasArtifacts = sortedArtifacts.length > 0;
-
   const applyTaskSnapshot = (nextTask: Task) => {
     setEditTitle(nextTask.title);
-    setEditDescription(nextTask.description ?? "");
-    setEditWorkspaceId(nextTask.workspace_id ?? "");
-    setEditDispatchPref(nextTask.dispatch_preference ?? createDefaultDispatchPreference(projectConfig));
+    setEditBody(nextTask.body ?? "");
+    setEditPriority(nextTask.priority ?? "");
+    setEditOwnerAgentId(nextTask.owner_agent_id ?? "");
+    setEditAssignedAgentId(nextTask.assigned_agent_id ?? "");
+    setEditSourceTaskId(nextTask.source_task_id ?? "");
+    setEditStatus(nextTask.status);
     setFormMessage(null);
   };
 
@@ -107,30 +90,36 @@ export function TaskDrawer({
       setFormMessage("Task 标题不能为空");
       return;
     }
-    if (!hasDispatchPreferenceSelection(editDispatchPref, projectConfig)) {
-      setFormMessage("请指定 Agent 类型或预设，或先在 Project 配置中设置 default_agent_type");
-      return;
-    }
 
-    const updated = await updateTask(task.id, {
+    const updated = await updateTask(task.owning_run_id, task.id, {
       title: trimmedTitle,
-      description: editDescription,
-      workspace_id: editWorkspaceId || null,
-      dispatch_preference: normalizeDispatchPreference(editDispatchPref),
+      body: editBody.trim() || null,
+      priority: editPriority || null,
+      owner_agent_id: editOwnerAgentId.trim() || null,
+      assigned_agent_id: editAssignedAgentId.trim() || null,
+      source_task_id: editSourceTaskId.trim() || null,
     });
     if (!updated) return;
 
-    applyTaskSnapshot(updated);
-    onTaskUpdated(updated);
+    const statusUpdated = editStatus !== updated.status
+      ? await updateTaskStatus(task.owning_run_id, task.id, editStatus)
+      : updated;
+    if (!statusUpdated) return;
+
+    applyTaskSnapshot(statusUpdated);
+    onTaskUpdated(statusUpdated);
   };
 
-  const handleDeleteTask = async () => {
-    if (deleteConfirmValue.trim() !== task.title) {
-      setFormMessage("请输入完整 Task 标题后再删除");
+  const handleArchiveTask = async () => {
+    if (archiveConfirmValue.trim() !== task.title) {
+      setFormMessage("请输入完整 Task 标题后再归档");
       return;
     }
-    await deleteTask(task.id, task.story_id);
-    setIsDeleteConfirmOpen(false);
+    const archived = await archiveTask(task.owning_run_id, task.id);
+    if (!archived) return;
+
+    setIsArchiveConfirmOpen(false);
+    onTaskUpdated(archived);
     onTaskDeleted(task.id);
   };
 
@@ -147,23 +136,22 @@ export function TaskDrawer({
         headerExtra={
           <div className="flex items-center gap-2">
             <TaskStatusBadge status={task.status} />
-            <span className="text-xs text-muted-foreground">{agentLabel}</span>
             <DetailMenu
               items={[
                 {
-                  key: "delete",
-                  label: "删除 Task",
+                  key: "archive",
+                  label: "归档 Task",
                   danger: true,
-                  onSelect: () => setIsDeleteConfirmOpen(true),
+                  onSelect: () => setIsArchiveConfirmOpen(true),
                 },
               ]}
             />
           </div>
         }
       >
-        <div className="grid gap-4 p-5 lg:grid-cols-[22rem_minmax(0,1fr)]">
+        <div className="grid gap-4 p-5 lg:grid-cols-[24rem_minmax(0,1fr)]">
           <div className="space-y-4">
-            <DetailSection title="任务详情">
+            <DetailSection title="计划字段">
               <input
                 value={editTitle}
                 onChange={(event) => setEditTitle(event.target.value)}
@@ -171,71 +159,115 @@ export function TaskDrawer({
                 className="agentdash-form-input"
               />
               <textarea
-                value={editDescription}
-                onChange={(event) => setEditDescription(event.target.value)}
-                rows={3}
-                placeholder="Task 描述"
+                value={editBody}
+                onChange={(event) => setEditBody(event.target.value)}
+                rows={4}
+                placeholder="Task body / 验收口径 / 实现边界"
                 className="agentdash-form-textarea"
               />
-              <div className="flex items-center justify-between rounded-[8px] border border-border bg-secondary/30 px-3 py-2">
-                <span className="text-xs text-muted-foreground">运行状态</span>
-                <TaskStatusBadge status={task.status} />
-              </div>
 
-              <select
-                value={editWorkspaceId}
-                onChange={(event) => setEditWorkspaceId(event.target.value)}
-                className="agentdash-form-select"
-              >
-                <option value="">不绑定 Workspace</option>
-                {workspaces.map((workspace) => (
-                  <option key={workspace.id} value={workspace.id}>
-                    {workspace.name}
-                  </option>
-                ))}
-              </select>
-
-              <div className="rounded-[12px] border border-border bg-background p-3">
-                <p className="mb-2 text-xs text-muted-foreground">Agent 绑定</p>
-                <DispatchPreferenceFields
-                  value={editDispatchPref}
-                  projectConfig={projectConfig}
-                  onChange={setEditDispatchPref}
-                />
-
-                {editDispatchPref.context_sources.length > 0 && (
-                  <div className="mt-3 space-y-2 border-t border-border pt-3">
-                    <p className="text-xs text-muted-foreground">已分配 Story 上下文</p>
-                    {editDispatchPref.context_sources.map((context, index) => (
-                      <div
-                        key={`${context.label ?? "task-context"}-${index}`}
-                        className="rounded-[8px] border border-border bg-secondary/25 px-3 py-2"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-medium text-foreground">
-                            {context.label?.trim() || `上下文 ${index + 1}`}
-                          </span>
-                          <span className="rounded-[6px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
-                            {context.slot}
-                          </span>
-                        </div>
-                        <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
-                          {context.locator}
-                        </p>
-                      </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="agentdash-form-label">计划状态</span>
+                  <select
+                    value={editStatus}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (isTaskPlanStatus(value)) setEditStatus(value);
+                    }}
+                    className="agentdash-form-select"
+                  >
+                    {TASK_STATUS_OPTIONS.map((status) => (
+                      <option key={status} value={status}>{status}</option>
                     ))}
-                  </div>
-                )}
+                  </select>
+                </label>
+
+                <label className="space-y-1">
+                  <span className="agentdash-form-label">优先级</span>
+                  <select
+                    value={editPriority}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setEditPriority(isTaskPriority(value) ? value : "");
+                    }}
+                    className="agentdash-form-select"
+                  >
+                    <option value="">未设置</option>
+                    {TASK_PRIORITY_OPTIONS.map((priority) => (
+                      <option key={priority} value={priority}>{priority}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
+
+              <div className="grid gap-2">
+                <label className="space-y-1">
+                  <span className="agentdash-form-label">Owner Agent ID</span>
+                  <input
+                    value={editOwnerAgentId}
+                    onChange={(event) => setEditOwnerAgentId(event.target.value)}
+                    placeholder="owner_agent_id"
+                    className="agentdash-form-input font-mono"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="agentdash-form-label">Assigned Agent ID</span>
+                  <input
+                    value={editAssignedAgentId}
+                    onChange={(event) => setEditAssignedAgentId(event.target.value)}
+                    placeholder="assigned_agent_id"
+                    className="agentdash-form-input font-mono"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="agentdash-form-label">Source Task ID</span>
+                  <input
+                    value={editSourceTaskId}
+                    onChange={(event) => setEditSourceTaskId(event.target.value)}
+                    placeholder="source_task_id"
+                    className="agentdash-form-input font-mono"
+                  />
+                </label>
+              </div>
+
               <div className="flex justify-end">
                 <button
                   type="button"
                   onClick={() => void handleSaveTask()}
                   className="agentdash-button-secondary"
                 >
-                  保存 Task
+                  保存计划项
                 </button>
               </div>
+            </DetailSection>
+
+            <DetailSection title="关联">
+              <div className="grid gap-2">
+                <OptionalMetaRow label="Owning Run" value={task.owning_run_id} />
+                <OptionalMetaRow label="Created By Agent" value={task.created_by_agent_id} />
+                <OptionalMetaRow label="Owner Agent" value={task.owner_agent_id} />
+                <OptionalMetaRow label="Assigned Agent" value={task.assigned_agent_id} />
+                <OptionalMetaRow label="Story Ref" value={task.story_ref ? `${task.story_ref.kind}:${task.story_ref.id}` : null} />
+              </div>
+              {task.context_refs.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Context Refs</p>
+                  {task.context_refs.map((context, index) => (
+                    <div
+                      key={`${context.kind}:${context.locator}:${index}`}
+                      className="rounded-[8px] border border-border bg-background px-3 py-2"
+                    >
+                      <p className="text-xs font-medium text-foreground">
+                        {context.label?.trim() || context.kind}
+                      </p>
+                      <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                        {context.locator}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </DetailSection>
 
             {(formMessage || error) && (
@@ -245,68 +277,30 @@ export function TaskDrawer({
 
           <div className="space-y-4">
             <DetailSection
-              title="Subject Execution"
-              description="从 lifecycle target view 查看当前 Agent、attempt 与产物投影。"
+              title="Linked Runs"
+              description="执行事实来自 SubjectExecutionView。"
             >
-              <div className="h-[32rem] overflow-hidden rounded-[12px] border border-border">
-                <TaskSubjectExecutionPanel
-                  task={task}
-                  onTaskUpdated={(updated) => {
-                    applyTaskSnapshot(updated);
-                    onTaskUpdated(updated);
-                  }}
-                />
+              <div className="h-[38rem] overflow-hidden rounded-[8px] border border-border">
+                <TaskSubjectExecutionPanel task={task} />
               </div>
-            </DetailSection>
-
-            <DetailSection
-              title="执行产物"
-              extra={
-                hasArtifacts ? (
-                  <button
-                    type="button"
-                    onClick={() => setIsArtifactsCollapsed((value) => !value)}
-                    aria-expanded={!isArtifactsCollapsed}
-                    className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary"
-                  >
-                    {isArtifactsCollapsed ? `展开（${sortedArtifacts.length}）` : "收起"}
-                  </button>
-                ) : null
-              }
-            >
-              {!hasArtifacts ? (
-                <p className="rounded-[12px] border border-dashed border-border bg-secondary/25 px-3 py-6 text-center text-sm text-muted-foreground">
-                  暂无执行产物
-                </p>
-              ) : isArtifactsCollapsed ? (
-                <p className="rounded-[12px] border border-dashed border-border bg-secondary/25 px-3 py-6 text-center text-sm text-muted-foreground">
-                  已折叠执行产物，点击右上角展开（共 {sortedArtifacts.length} 条）
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {sortedArtifacts.map((artifact) => (
-                    <ArtifactBlock key={artifact.id} artifact={artifact} />
-                  ))}
-                </div>
-              )}
             </DetailSection>
           </div>
         </div>
       </DetailPanel>
 
       <DangerConfirmDialog
-        open={isDeleteConfirmOpen}
-        title="删除 Task"
-        description="删除后不可恢复，请确认。"
+        open={isArchiveConfirmOpen}
+        title="归档 Task"
+        description="Task 会从默认计划视图隐藏，关联运行记录仍保留在执行投影中。"
         expectedValue={task.title}
-        inputValue={deleteConfirmValue}
-        onInputValueChange={setDeleteConfirmValue}
-        confirmLabel="确认删除"
+        inputValue={archiveConfirmValue}
+        onInputValueChange={setArchiveConfirmValue}
+        confirmLabel="确认归档"
         onClose={() => {
-          setIsDeleteConfirmOpen(false);
-          setDeleteConfirmValue("");
+          setIsArchiveConfirmOpen(false);
+          setArchiveConfirmValue("");
         }}
-        onConfirm={() => void handleDeleteTask()}
+        onConfirm={() => void handleArchiveTask()}
       />
     </>
   );

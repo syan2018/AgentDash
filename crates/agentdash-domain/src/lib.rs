@@ -22,7 +22,6 @@ pub mod settings;
 pub mod shared_library;
 pub mod skill_asset;
 pub mod story;
-pub mod task;
 pub mod workflow;
 pub mod workspace;
 pub mod workspace_module;

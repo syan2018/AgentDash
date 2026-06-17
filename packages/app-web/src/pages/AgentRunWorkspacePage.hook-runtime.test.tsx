@@ -84,7 +84,7 @@ const hookRuntime: AgentFrameHookRuntimeInfo = {
         mode: "checklist_passed",
         satisfied: false,
         advanced: false,
-        reason: "Task 还没有进入 awaiting_verification/completed。",
+        reason: "Task 还没有进入 review/done。",
       },
     },
   ],
@@ -163,7 +163,7 @@ describe("AgentRunWorkspacePage hook runtime cards", () => {
     expect(traceHtml).toContain("workflow_completion:checklist_pending:stop_gate");
     expect(traceHtml).toContain("subagent: companion");
     expect(traceHtml).toContain("completion: checklist_passed");
-    expect(traceHtml).toContain("Task 还没有进入 awaiting_verification/completed。");
+    expect(traceHtml).toContain("Task 还没有进入 review/done。");
   });
 
   it("渲染 pending hook actions", () => {

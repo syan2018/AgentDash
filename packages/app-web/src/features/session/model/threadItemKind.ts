@@ -19,6 +19,7 @@ export type ThreadItemKind =
   | "image"
   | "collab"
   | "context"
+  | "task"
   | "tool"
   | "mcp"
   | "other";
@@ -46,6 +47,7 @@ export type DynamicToolFamily =
   | "fetch"
   | "todo"
   | "question"
+  | "task"
   | "generic";
 
 export interface DynamicToolMeta {
@@ -63,6 +65,7 @@ export const KIND_REGISTRY: Record<ThreadItemKind, KindMeta> = {
   image:   { kind: "image",   badge: "IMG",  label: "图片",   summaryUnit: "项", summaryVerb: "图片" },
   collab:  { kind: "collab",  badge: "COLL", label: "协作",   summaryUnit: "项", summaryVerb: "协作" },
   context: { kind: "context", badge: "CTX",  label: "上下文", summaryUnit: "次", summaryVerb: "上下文" },
+  task:    { kind: "task",    badge: "TASK", label: "任务",   summaryUnit: "项", summaryVerb: "维护任务" },
   mcp:     { kind: "mcp",     badge: "MCP",  label: "MCP",    summaryUnit: "个", summaryVerb: "调用 MCP" },
   tool:    { kind: "tool",    badge: "TOOL", label: "工具",   summaryUnit: "个", summaryVerb: "调用" },
   other:   { kind: "other",   badge: "TOOL", label: "工具",   summaryUnit: "项", summaryVerb: "其他" },
@@ -123,6 +126,10 @@ export function resolveDynamicToolMeta(tool: string): DynamicToolMeta {
       return { kind: KIND_REGISTRY.fetch, family: "fetch", fallbackLabel: "WebFetch" };
     case "todowrite":
       return { kind: KIND_REGISTRY.tool, family: "todo", fallbackLabel: "TodoWrite" };
+    case "task_read":
+      return { kind: KIND_REGISTRY.task, family: "task", fallbackLabel: "task_read" };
+    case "task_write":
+      return { kind: KIND_REGISTRY.task, family: "task", fallbackLabel: "task_write" };
     case "askquestion":
     case "askuserquestion":
       return { kind: KIND_REGISTRY.tool, family: "question", fallbackLabel: "AskQuestion" };

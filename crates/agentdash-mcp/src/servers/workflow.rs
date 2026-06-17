@@ -80,7 +80,7 @@ pub struct HookRuleInput {
     pub trigger: String,
     #[schemars(description = "规则描述")]
     pub description: String,
-    #[schemars(description = "预设名称（如 task_session_terminal），与 script 二选一")]
+    #[schemars(description = "预设名称（如 session_terminal_advance），与 script 二选一")]
     pub preset: Option<String>,
     #[schemars(description = "预设参数")]
     pub params: Option<serde_json::Value>,

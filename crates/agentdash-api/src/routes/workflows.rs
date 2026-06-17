@@ -517,8 +517,7 @@ pub async fn submit_orchestration_human_decision(
                 .unwrap_or_else(|| current_user.user_id.to_string()),
         })
         .await?;
-    let view =
-        run_view_builder::build_lifecycle_run_view(&state.repos, &result.run).await?;
+    let view = run_view_builder::build_lifecycle_run_view(&state.repos, &result.run).await?;
     Ok(Json(SubmitOrchestrationHumanDecisionResponse {
         run: lifecycle_run_view_to_contract(view),
         gate_id: result.gate_id.to_string(),

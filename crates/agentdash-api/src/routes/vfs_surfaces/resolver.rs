@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
+use agentdash_application::agent_run::AgentFrameSurfaceExt;
+use agentdash_application::lifecycle::build_agent_run_lifecycle_vfs;
 use agentdash_application::session::construction_planner::resolve_project_workspace;
+use agentdash_application::task::plan::find_task_plan_item_for_subject;
 use agentdash_application::vfs::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource, SessionMountTarget,
     build_project_agent_knowledge_vfs, build_project_skill_asset_management_mount,
     build_project_vfs_mount_mount,
 };
-use agentdash_application::agent_run::AgentFrameSurfaceExt;
-use agentdash_application::lifecycle::build_agent_run_lifecycle_vfs;
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use agentdash_spi::Vfs;
 
@@ -15,7 +16,6 @@ use crate::{
     app_state::AppState,
     auth::{
         ProjectPermission, load_project_with_permission, load_story_and_project_with_permission,
-        load_task_story_project_with_permission,
     },
     routes::sessions::ensure_session_permission,
     rpc::ApiError,
@@ -102,30 +102,35 @@ pub(crate) async fn resolve_surface_bundle(
             project_id,
             task_id,
         } => {
-            let (task, story, project) = load_task_story_project_with_permission(
-                state.as_ref(),
-                current_user,
+            let project =
+                load_project_with_permission(state.as_ref(), current_user, *project_id, permission)
+                    .await?;
+            let located = find_task_plan_item_for_subject(
+                state.repos.lifecycle_run_repo.as_ref(),
+                state.repos.lifecycle_subject_association_repo.as_ref(),
+                project.id,
                 *task_id,
-                permission,
             )
-            .await?;
-            if project.id != *project_id {
-                return Err(ApiError::Conflict(
-                    "task_id 与 project_id 不属于同一 Project".into(),
-                ));
-            }
-            let workspace = if let Some(workspace_id) = task.workspace_id {
+            .await?
+            .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
+            let story = if let Some(story_ref) = located
+                .task
+                .story_ref
+                .as_ref()
+                .filter(|subject| subject.kind == "story")
+            {
                 state
                     .repos
-                    .workspace_repo
-                    .get_by_id(workspace_id)
+                    .story_repo
+                    .get_by_id(story_ref.id)
                     .await
                     .map_err(ApiError::from)?
             } else {
-                resolve_project_workspace(&state.repos, &project)
-                    .await
-                    .map_err(ApiError::Internal)?
+                None
             };
+            let workspace = resolve_project_workspace(&state.repos, &project)
+                .await
+                .map_err(ApiError::Internal)?;
             let project_vfs_mounts = load_project_vfs_mounts(state, project.id).await?;
             state
                 .services
@@ -133,7 +138,7 @@ pub(crate) async fn resolve_surface_bundle(
                 .build_vfs(
                     &project,
                     &project_vfs_mounts,
-                    Some(&story),
+                    story.as_ref(),
                     workspace.as_ref(),
                     SessionMountTarget::Task,
                     None,

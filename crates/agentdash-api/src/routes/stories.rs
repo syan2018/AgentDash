@@ -1,28 +1,31 @@
 use std::sync::Arc;
 
 use agentdash_application::story::{
-    CreateStoryInput, StoryMutationInput, TaskDispatchPreferenceInput, TaskMutationInput,
-    apply_task_mutation, build_dispatch_preference, build_task, create_story_record,
-    delete_story_record, list_project_stories, update_story_record,
+    CreateStoryInput, StoryMutationInput, create_story_record, delete_story_record,
+    list_project_stories, update_story_record,
+};
+use agentdash_application::task::plan::{
+    StoryTaskProjectionSourceKind as AppProjectionSourceKind, build_story_task_projection,
 };
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use uuid::Uuid;
 
 use agentdash_contracts::common_response::DeletedIdResponse;
-use agentdash_domain::story::ChangeKind;
+use agentdash_contracts::story::{
+    StoryTaskProjectionItem, StoryTaskProjectionResponse, StoryTaskProjectionSource,
+    StoryTaskProjectionSourceKind,
+};
+use agentdash_contracts::task::TaskResponse as ContractTaskResponse;
+use agentdash_contracts::workflow::SubjectRefDto;
 
 use crate::app_state::AppState;
 use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
-    load_story_and_project_with_permission, load_task_story_project_with_permission,
+    load_story_and_project_with_permission,
 };
-use crate::dto::{
-    CreateStoryRequest, CreateTaskRequest, ListStoriesQuery, StoryResponse, TaskResponse,
-    UpdateStoryRequest, UpdateTaskRequest,
-};
+use crate::dto::{CreateStoryRequest, ListStoriesQuery, StoryResponse, UpdateStoryRequest};
 use crate::rpc::ApiError;
-use agentdash_domain::story::StateChangeRepository;
 
 pub async fn list_stories(
     State(state): State<Arc<AppState>>,
@@ -55,14 +58,8 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
                 .delete(delete_story),
         )
         .route(
-            "/stories/{id}/tasks",
-            axum::routing::get(list_tasks).post(create_task),
-        )
-        .route(
-            "/tasks/{id}",
-            axum::routing::get(get_task)
-                .put(update_task)
-                .delete(delete_task),
+            "/stories/{id}/task-projection",
+            axum::routing::get(get_story_task_projection),
         )
 }
 
@@ -230,392 +227,64 @@ pub async fn delete_story(
     Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
-pub async fn list_tasks(
+pub async fn get_story_task_projection(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<Vec<TaskResponse>>, ApiError> {
+) -> Result<Json<StoryTaskProjectionResponse>, ApiError> {
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
-    load_story_and_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        story_id,
-        ProjectPermission::View,
-    )
-    .await?;
-    // M1-b：Story aggregate 已持有 tasks
-    let story = state
-        .repos
-        .story_repo
-        .get_by_id(story_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Story {story_id} 不存在")))?;
-    Ok(Json(
-        story.tasks.into_iter().map(TaskResponse::from).collect(),
-    ))
-}
-
-pub async fn create_task(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(id): Path<String>,
-    Json(req): Json<CreateTaskRequest>,
-) -> Result<Json<TaskResponse>, ApiError> {
-    let story_id =
-        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
-
-    let title = req.title.trim();
-    if title.is_empty() {
-        return Err(ApiError::BadRequest("Task 标题不能为空".into()));
-    }
-
     let (story, project) = load_story_and_project_with_permission(
         state.as_ref(),
         &current_user,
         story_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-
-    let workspace_id = match req.workspace_id.as_deref() {
-        Some(raw) if !raw.trim().is_empty() => {
-            let ws_id = Uuid::parse_str(raw.trim())
-                .map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
-
-            let workspace = state
-                .repos
-                .workspace_repo
-                .get_by_id(ws_id)
-                .await?
-                .ok_or_else(|| ApiError::NotFound(format!("Workspace {ws_id} 不存在")))?;
-
-            if workspace.project_id != story.project_id {
-                return Err(ApiError::Conflict(
-                    "Workspace 与 Story 不属于同一 Project".into(),
-                ));
-            }
-
-            Some(ws_id)
-        }
-        _ => None,
-    };
-
-    let mut dispatch_preference = build_dispatch_preference(req.dispatch_preference.map(|value| {
-        TaskDispatchPreferenceInput {
-            agent_type: value.agent_type,
-            agent_pid: value.agent_pid,
-            preset_name: value.preset_name,
-            prompt_template: value.prompt_template,
-            initial_context: value.initial_context,
-            context_sources: value.context_sources,
-        }
-    }));
-
-    if let Some(preset_name) = dispatch_preference.preset_name.clone() {
-        let preset = project
-            .config
-            .agent_presets
-            .iter()
-            .find(|p| p.name == preset_name)
-            .ok_or_else(|| ApiError::BadRequest(format!("Project 中不存在预设: {preset_name}")))?;
-
-        if dispatch_preference.agent_type.is_none() {
-            dispatch_preference.agent_type = Some(preset.agent_type.clone());
-        }
-    }
-
-    if dispatch_preference.agent_type.is_none() {
-        dispatch_preference.agent_type = project.config.default_agent_type.clone();
-    }
-
-    if dispatch_preference.agent_type.is_none() && dispatch_preference.preset_name.is_none() {
-        return Err(ApiError::UnprocessableEntity(
-            "请指定 Agent 类型或预设，或在 Project 配置中设置 default_agent_type".into(),
-        ));
-    }
-
-    let task = build_task(
-        story.project_id,
-        story_id,
-        title.to_string(),
-        req.description.unwrap_or_default(),
-        workspace_id,
-        dispatch_preference,
-    );
-
-    // M1-b：task create 走 Story aggregate 命令路径；Postgres 实现在同一事务内
-    // 更新 stories.tasks 并追加 TaskCreated / StoryUpdated。
-    state
-        .repos
-        .story_repo
-        .add_task_to_story(story_id, &task)
-        .await?;
-
-    Ok(Json(TaskResponse::from(task)))
-}
-
-pub async fn get_task(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(id): Path<String>,
-) -> Result<Json<TaskResponse>, ApiError> {
-    let task_id =
-        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
-
-    let (task, _, _) = load_task_story_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        task_id,
         ProjectPermission::View,
     )
     .await?;
-
-    Ok(Json(TaskResponse::from(task)))
-}
-
-pub async fn update_task(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateTaskRequest>,
-) -> Result<Json<TaskResponse>, ApiError> {
-    let task_id =
-        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
-
-    let (mut task, story, _) = load_task_story_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        task_id,
-        ProjectPermission::Edit,
+    let view = build_story_task_projection(
+        state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.lifecycle_subject_association_repo.as_ref(),
+        project.id,
+        story.id,
     )
     .await?;
 
-    let title = match req.title {
-        Some(title) => {
-            let trimmed = title.trim();
-            if trimmed.is_empty() {
-                return Err(ApiError::BadRequest("Task 标题不能为空".into()));
-            }
-            Some(trimmed.to_string())
-        }
-        None => None,
-    };
-
-    let workspace_id = if let Some(workspace_id_raw) = req.workspace_id {
-        let normalized = workspace_id_raw.trim();
-        if normalized.is_empty() {
-            Some(None)
-        } else {
-            let ws_id = Uuid::parse_str(normalized)
-                .map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
-            let workspace = state
-                .repos
-                .workspace_repo
-                .get_by_id(ws_id)
-                .await?
-                .ok_or_else(|| ApiError::NotFound(format!("Workspace {ws_id} 不存在")))?;
-            if workspace.project_id != story.project_id {
-                return Err(ApiError::Conflict(
-                    "Workspace 与 Task 所属 Story 不属于同一 Project".into(),
-                ));
-            }
-            Some(Some(ws_id))
-        }
-    } else {
-        None
-    };
-
-    let dispatch_preference = req.dispatch_preference.map(|value| {
-        build_dispatch_preference(Some(TaskDispatchPreferenceInput {
-            agent_type: value.agent_type,
-            agent_pid: value.agent_pid,
-            preset_name: value.preset_name,
-            prompt_template: value.prompt_template,
-            initial_context: value.initial_context,
-            context_sources: value.context_sources,
-        }))
-    });
-    apply_task_mutation(
-        &mut task,
-        TaskMutationInput {
-            title,
-            description: req.description,
-            workspace_id,
-            dispatch_preference,
-        },
-    );
-
-    let mut story_aggregate = state
-        .repos
-        .story_repo
-        .get_by_id(task.story_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Task 所属 Story {} 不存在", task.story_id)))?;
-    let updated_spec = story_aggregate.update_task(task.id, |view| {
-        *view.title = task.title.clone();
-        *view.description = task.description.clone();
-        *view.workspace_id = task.workspace_id;
-        *view.dispatch_preference = task.dispatch_preference.clone();
-    });
-    if updated_spec.is_none() {
-        return Err(ApiError::NotFound(format!(
-            "Task {} 不属于 Story {}",
-            task.id, task.story_id
-        )));
-    }
-    state.repos.story_repo.update(&story_aggregate).await?;
-
-    let payload = serde_json::to_value(&task)
-        .map_err(|err| ApiError::Internal(format!("序列化 Task 更新失败: {err}")))?;
-    append_required_story_change(
-        state.repos.state_change_repo.as_ref(),
-        task.project_id,
-        task.id,
-        ChangeKind::TaskUpdated,
-        payload,
-        None,
-    )
-    .await?;
-
-    Ok(Json(TaskResponse::from(task)))
-}
-
-pub async fn delete_task(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(id): Path<String>,
-) -> Result<Json<DeletedIdResponse>, ApiError> {
-    let task_id =
-        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
-    load_task_story_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        task_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-
-    // M1-b：task delete 走 Story aggregate 命令路径；Postgres 实现在同一事务内
-    // 更新 stories.tasks 并追加 TaskDeleted / StoryUpdated。
-    state
-        .repos
-        .story_repo
-        .remove_task_from_story(task_id)
-        .await?;
-
-    Ok(Json(DeletedIdResponse { deleted: id }))
-}
-
-async fn append_required_story_change(
-    repo: &dyn StateChangeRepository,
-    project_id: Uuid,
-    entity_id: Uuid,
-    kind: ChangeKind,
-    payload: serde_json::Value,
-    backend_id: Option<&str>,
-) -> Result<(), ApiError> {
-    repo.append_change(project_id, entity_id, kind, payload, backend_id)
-        .await
-        .map_err(|err| {
-            tracing::error!(error = %err, "failed to append required story state change");
-            ApiError::Internal(String::from("写入 StateChange 失败"))
-        })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use agentdash_domain::common::error::DomainError;
-    use agentdash_domain::story::StateChange;
-    use async_trait::async_trait;
-    use std::sync::Mutex;
-
-    struct RecordingStoryRepo {
-        append_error: Mutex<Option<DomainError>>,
-        recorded: Mutex<Vec<(Uuid, Uuid, ChangeKind)>>,
-    }
-
-    #[async_trait]
-    impl StateChangeRepository for RecordingStoryRepo {
-        async fn get_changes_since(
-            &self,
-            _since_id: i64,
-            _limit: i64,
-        ) -> Result<Vec<StateChange>, DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn get_changes_since_by_project(
-            &self,
-            _project_id: Uuid,
-            _since_id: i64,
-            _limit: i64,
-        ) -> Result<Vec<StateChange>, DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn latest_event_id(&self) -> Result<i64, DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn latest_event_id_by_project(&self, _project_id: Uuid) -> Result<i64, DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn append_change(
-            &self,
-            project_id: Uuid,
-            entity_id: Uuid,
-            kind: ChangeKind,
-            _payload: serde_json::Value,
-            _backend_id: Option<&str>,
-        ) -> Result<(), DomainError> {
-            if let Some(err) = self.append_error.lock().expect("lock append_error").take() {
-                return Err(err);
-            }
-            self.recorded
-                .lock()
-                .expect("lock recorded")
-                .push((project_id, entity_id, kind));
-            Ok(())
-        }
-
-        async fn delete_by_project(&self, project_id: Uuid) -> Result<u64, DomainError> {
-            let mut recorded = self.recorded.lock().expect("lock recorded");
-            let before = recorded.len();
-            recorded.retain(|(change_project_id, _, _)| *change_project_id != project_id);
-            Ok((before - recorded.len()) as u64)
-        }
-    }
-
-    #[tokio::test]
-    async fn append_required_story_change_maps_repo_failure_to_internal_error() {
-        let repo = RecordingStoryRepo {
-            append_error: Mutex::new(Some(DomainError::Database {
-                operation: "append_state_change",
-                message: "db down".to_string(),
-            })),
-            recorded: Mutex::new(Vec::new()),
-        };
-
-        let err = append_required_story_change(
-            &repo,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            ChangeKind::TaskUpdated,
-            serde_json::json!({ "ok": true }),
-            None,
-        )
-        .await
-        .expect_err("应返回内部错误");
-
-        match err {
-            ApiError::Internal(message) => {
-                assert!(message.contains("写入 StateChange 失败"));
-                assert!(!message.contains("db down"));
-            }
-            other => panic!("unexpected error: {other:?}"),
-        }
-    }
+    Ok(Json(StoryTaskProjectionResponse {
+        story_id: view.story_id.to_string(),
+        tasks: view
+            .tasks
+            .into_iter()
+            .map(|item| StoryTaskProjectionItem {
+                task: ContractTaskResponse::from_plan_item(
+                    item.project_id.to_string(),
+                    item.owning_run_id.to_string(),
+                    item.task,
+                ),
+                sources: item
+                    .sources
+                    .into_iter()
+                    .map(|source| StoryTaskProjectionSource {
+                        kind: match source.kind {
+                            AppProjectionSourceKind::OwningRun => {
+                                StoryTaskProjectionSourceKind::OwningRun
+                            }
+                            AppProjectionSourceKind::LinkedRun => {
+                                StoryTaskProjectionSourceKind::LinkedRun
+                            }
+                            AppProjectionSourceKind::StoryRef => {
+                                StoryTaskProjectionSourceKind::StoryRef
+                            }
+                        },
+                        run_id: source.run_id.to_string(),
+                        agent_id: source.agent_id.map(|id| id.to_string()),
+                        story_ref: source.story_ref.map(|subject| SubjectRefDto {
+                            kind: subject.kind,
+                            id: subject.id.to_string(),
+                        }),
+                        reason: source.reason,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }))
 }

@@ -8,9 +8,7 @@ use agentdash_domain::workflow::{
 };
 
 use super::WorkflowApplicationError;
-use crate::workflow::orchestration::{
-    OrchestrationRuntimeEvent, apply_orchestration_event_to_run,
-};
+use crate::workflow::orchestration::{OrchestrationRuntimeEvent, apply_orchestration_event_to_run};
 
 #[derive(Debug, Clone)]
 pub struct CancelSubjectExecutionCommand {
@@ -310,9 +308,9 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentSource, LifecycleRun, LifecycleRunStatus, OrchestrationInstance, OrchestrationPlanSnapshot,
-        OrchestrationSourceRef, OrchestrationStatus, PlanNodeKind, RuntimeNodeState,
-        RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
+        AgentSource, LifecycleRun, LifecycleRunStatus, OrchestrationInstance,
+        OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus, PlanNodeKind,
+        RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
     };
     use chrono::Utc;
 

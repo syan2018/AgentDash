@@ -361,17 +361,6 @@ impl AppState {
                 .await;
         }
 
-        {
-            let registry = Arc::new(
-                agentdash_application::task::gateway::effect_executor::TaskHookEffectHandlerRegistry {
-                    repos: state.repos.clone(),
-                },
-            );
-            session_runtime_builder
-                .set_hook_effect_handler_registry(registry)
-                .await;
-        }
-
         session_runtime_builder
             .assert_ready_for_app_state()
             .await

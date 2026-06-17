@@ -6,12 +6,12 @@ use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::repository_set::RepositorySet;
 use crate::agent_run::{
-    AgentConversationSnapshotInput, AgentConversationSnapshotResolver,
-    conversation_command_id_for, conversation_execution_state_code,
+    AgentConversationSnapshotInput, AgentConversationSnapshotResolver, conversation_command_id_for,
+    conversation_execution_state_code,
 };
 use crate::lifecycle::WorkflowApplicationError;
+use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionExecutionState};
 
 use super::projection::is_terminal_agent_status;

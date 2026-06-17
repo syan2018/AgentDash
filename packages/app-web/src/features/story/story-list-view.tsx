@@ -57,7 +57,6 @@ const CREATE_TYPE_OPTIONS: PropertyPickerOption<StoryType>[] = [
 
 interface StoryListViewProps {
   stories: Story[];
-  taskCountByStoryId: Record<string, number>;
   onOpenStory: (story: Story) => void;
   projectId: string;
 }
@@ -240,11 +239,10 @@ function CreateStoryDrawer({
 
 interface StoryListRowProps {
   story: Story;
-  taskCount: number;
   onOpenStory: (story: Story) => void;
 }
 
-function StoryListRow({ story, taskCount, onOpenStory }: StoryListRowProps) {
+function StoryListRow({ story, onOpenStory }: StoryListRowProps) {
   const isSelected = useStoryViewStore((s) => s.selectedIds.has(story.id));
   const toggleSelect = useStoryViewStore((s) => s.toggleSelect);
   const setFocused = useStoryViewStore((s) => s.setFocusedStory);
@@ -280,7 +278,7 @@ function StoryListRow({ story, taskCount, onOpenStory }: StoryListRowProps) {
       onKeyDown={handleKeyDown}
       onFocus={() => setFocused(story.id)}
       onBlur={() => setFocused(null)}
-      className={`group/row grid min-h-12 w-full cursor-pointer grid-cols-[minmax(0,1fr)] items-center gap-3 border-b border-border px-4 py-2 text-left text-sm outline-none transition-colors focus-visible:bg-secondary/40 lg:grid-cols-[2rem_8rem_minmax(0,1fr)_5rem_5rem_5rem_5rem_6rem] ${
+      className={`group/row grid min-h-12 w-full cursor-pointer grid-cols-[minmax(0,1fr)] items-center gap-3 border-b border-border px-4 py-2 text-left text-sm outline-none transition-colors focus-visible:bg-secondary/40 lg:grid-cols-[2rem_8rem_minmax(0,1fr)_5rem_5rem_5rem_6rem] ${
         isSelected ? "bg-primary/5" : "hover:bg-secondary/30"
       }`}
     >
@@ -329,7 +327,6 @@ function StoryListRow({ story, taskCount, onOpenStory }: StoryListRowProps) {
       <div className="shrink-0">
         <EditablePriorityBadge story={story} />
       </div>
-      <span className="hidden shrink-0 text-xs text-muted-foreground lg:block">{taskCount}</span>
       <span className="hidden shrink-0 text-xs text-muted-foreground lg:block">{contextCount}</span>
       <span className="hidden shrink-0 text-right text-xs text-muted-foreground lg:block">
         {new Date(story.updated_at).toLocaleDateString("zh-CN")}
@@ -340,7 +337,6 @@ function StoryListRow({ story, taskCount, onOpenStory }: StoryListRowProps) {
 
 export function StoryListView({
   stories,
-  taskCountByStoryId,
   onOpenStory,
   projectId,
 }: StoryListViewProps) {
@@ -431,7 +427,6 @@ export function StoryListView({
           ) : viewMode === "board" ? (
             <StoryBoard
               stories={filtered}
-              taskCountByStoryId={taskCountByStoryId}
               projectId={projectId}
               onOpenStory={onOpenStory}
               onOpenFullCreate={(status) => openCreate(status)}
@@ -445,13 +440,12 @@ export function StoryListView({
                 sticky
               />
               <div className="min-h-0 flex-1 overflow-y-auto">
-                <div className="hidden grid-cols-[2rem_8rem_minmax(0,1fr)_5rem_5rem_5rem_5rem_6rem] gap-3 border-b border-border bg-secondary/20 px-4 py-2 text-[10px] font-medium text-muted-foreground lg:grid">
+                <div className="hidden grid-cols-[2rem_8rem_minmax(0,1fr)_5rem_5rem_5rem_6rem] gap-3 border-b border-border bg-secondary/20 px-4 py-2 text-[10px] font-medium text-muted-foreground lg:grid">
                   <span></span>
                   <span>status</span>
                   <span>story</span>
                   <span>type</span>
                   <span>priority</span>
-                  <span>task</span>
                   <span>context</span>
                   <span className="text-right">updated</span>
                 </div>
@@ -459,7 +453,6 @@ export function StoryListView({
                   <StoryListRow
                     key={story.id}
                     story={story}
-                    taskCount={taskCountByStoryId[story.id] ?? 0}
                     onOpenStory={onOpenStory}
                   />
                 ))}

@@ -109,7 +109,6 @@ apply_hook_rules() — Phase 2: contract-driven 规则
 | `session_terminal_advance` | `BeforeStop` | Session 终态自动推进 lifecycle step |
 | `stop_gate_checks_pending` | `BeforeStop` | 完成条件门禁 |
 | `manual_step_notice` | `BeforeStop` | 通知 Agent 当前 step 使用手动推进 |
-| `task_session_terminal` | `SessionTerminal` | Task session 终态处理 |
 | `context_compaction_trigger` | `AfterCompaction` | 压缩后刷新 snapshot |
 | `subagent_inherit_context` | `BeforeSubagentDispatch` | 子 Agent 继承注入和约束 |
 | `subagent_record_result` | `AfterSubagentDispatch` | 记录子 Agent 派发结果 |

@@ -39,7 +39,7 @@ import {
 } from "./SessionChatViewModel";
 import type { SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
-import { MailboxMessageList } from "../../agent-run-workspace/ui";
+import { SessionStatusBar } from "../../agent-run-workspace/ui";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -84,6 +84,8 @@ export function SessionChatView({
   onResumeMailbox,
   onRecallMailboxMessage,
   onMoveMailboxMessage,
+  statusBarRunId,
+  statusBarAgentId,
   injectedInputValue,
   onInjectedInputConsumed,
   headerSlot,
@@ -588,9 +590,6 @@ export function SessionChatView({
   const displayError = sendError ?? (hasSession ? wsError?.message : null) ?? null;
   const mailboxMessages = mailboxSnapshot?.messages ?? [];
   const mailboxState = mailboxSnapshot?.state;
-  const shouldShowMailboxList = Boolean(
-    mailboxMessages.length > 0 || mailboxSnapshot?.user_attention || mailboxState?.paused,
-  );
 
   // ─── 渲染 ────────────────────────────────────────────
 
@@ -656,24 +655,24 @@ export function SessionChatView({
 
       {/* Mailbox 消息 + 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
-        {shouldShowMailboxList && (
-          <MailboxMessageList
-            messages={mailboxMessages}
-            mailbox={mailboxSnapshot}
-            mailboxState={mailboxState}
-            promoteCommand={commandState.commands.commands.find(
-              (command) => command.kind === "promote_mailbox_message" && command.placement.includes("mailbox_row"),
-            )}
-            deleteCommand={commandState.commands.commands.find(
-              (command) => command.kind === "delete_mailbox_message" && command.placement.includes("mailbox_row"),
-            )}
-            onPromote={onPromoteMailboxMessage ?? (() => {})}
-            onDelete={onDeleteMailboxMessage ?? (() => {})}
-            onResume={onResumeMailbox}
-            onRecall={onRecallMailboxMessage}
-            onMove={onMoveMailboxMessage}
-          />
-        )}
+        <SessionStatusBar
+          runId={statusBarRunId}
+          agentId={statusBarAgentId}
+          messages={mailboxMessages}
+          mailbox={mailboxSnapshot}
+          mailboxState={mailboxState}
+          promoteCommand={commandState.commands.commands.find(
+            (command) => command.kind === "promote_mailbox_message" && command.placement.includes("mailbox_row"),
+          )}
+          deleteCommand={commandState.commands.commands.find(
+            (command) => command.kind === "delete_mailbox_message" && command.placement.includes("mailbox_row"),
+          )}
+          onPromote={onPromoteMailboxMessage ?? (() => {})}
+          onDelete={onDeleteMailboxMessage ?? (() => {})}
+          onResume={onResumeMailbox}
+          onRecall={onRecallMailboxMessage}
+          onMove={onMoveMailboxMessage}
+        />
 
         <SessionChatComposer
           commandState={commandState}

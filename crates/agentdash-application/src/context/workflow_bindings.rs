@@ -1,5 +1,5 @@
-use crate::vfs::ResolveBindingsOutput;
 use crate::lifecycle::ActiveWorkflowProjection;
+use crate::vfs::ResolveBindingsOutput;
 use agentdash_spi::{ContextFragment, MergeStrategy};
 
 use super::Contribution;
@@ -77,8 +77,8 @@ fn enum_tag<T: serde::Serialize>(value: &T) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vfs::{ResolveBindingsOutput, ResolvedBinding};
     use crate::lifecycle::activity_projection;
+    use crate::vfs::{ResolveBindingsOutput, ResolvedBinding};
 
     fn sample_workflow() -> ActiveWorkflowProjection {
         activity_projection(None)

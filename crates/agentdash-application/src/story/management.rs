@@ -12,7 +12,6 @@ use agentdash_domain::story::{
     ChangeKind, StateChangeRepository, Story, StoryPriority, StoryRepository, StoryStatus,
     StoryType,
 };
-use agentdash_domain::task::{Task, TaskDispatchPreference};
 
 use crate::ApplicationError;
 use crate::repository_set::RepositorySet;
@@ -30,24 +29,6 @@ pub struct StoryMutationInput {
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     pub disabled_container_ids: Option<Vec<String>>,
     pub session_composition: Option<Option<SessionComposition>>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct TaskMutationInput {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub workspace_id: Option<Option<Uuid>>,
-    pub dispatch_preference: Option<TaskDispatchPreference>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct TaskDispatchPreferenceInput {
-    pub agent_type: Option<String>,
-    pub agent_pid: Option<String>,
-    pub preset_name: Option<String>,
-    pub prompt_template: Option<String>,
-    pub initial_context: Option<String>,
-    pub context_sources: Option<Vec<ContextSourceRef>>,
 }
 
 #[derive(Debug, Clone)]
@@ -188,65 +169,6 @@ pub fn apply_story_mutation(story: &mut Story, input: StoryMutationInput) {
     }
 }
 
-pub fn build_task(
-    project_id: Uuid,
-    story_id: Uuid,
-    title: String,
-    description: String,
-    workspace_id: Option<Uuid>,
-    dispatch_preference: TaskDispatchPreference,
-) -> Task {
-    let mut task = Task::new(project_id, story_id, title, description);
-    task.workspace_id = workspace_id;
-    task.dispatch_preference = dispatch_preference;
-    task
-}
-
-pub fn apply_task_mutation(task: &mut Task, input: TaskMutationInput) {
-    if let Some(title) = input.title {
-        task.title = title;
-    }
-    if let Some(description) = input.description {
-        task.description = description;
-    }
-    if let Some(workspace_id) = input.workspace_id {
-        task.workspace_id = workspace_id;
-    }
-    if let Some(dispatch_preference) = input.dispatch_preference {
-        task.dispatch_preference = dispatch_preference;
-    }
-}
-
-pub fn build_dispatch_preference(
-    input: Option<TaskDispatchPreferenceInput>,
-) -> TaskDispatchPreference {
-    if let Some(value) = input {
-        TaskDispatchPreference {
-            agent_type: normalize_option(value.agent_type),
-            agent_pid: normalize_option(value.agent_pid),
-            preset_name: normalize_option(value.preset_name),
-            prompt_template: normalize_option(value.prompt_template),
-            initial_context: normalize_option(value.initial_context),
-            context_sources: value.context_sources.unwrap_or_default(),
-        }
-    } else {
-        TaskDispatchPreference::default()
-    }
-}
-
-fn normalize_option(value: Option<String>) -> Option<String> {
-    value.and_then(normalize_string)
-}
-
-fn normalize_string(value: String) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
 fn normalize_string_list(values: Vec<String>) -> Vec<String> {
     values
         .into_iter()
@@ -260,7 +182,6 @@ pub async fn delete_story_aggregate(
     state_change_repo: &dyn StateChangeRepository,
     story: &Story,
 ) -> Result<(), agentdash_domain::DomainError> {
-    // Story aggregate 持有 Vec<Task>，删 story 即级联清理 tasks（`stories.tasks` JSONB）。
     story_repo.delete(story.id).await?;
     state_change_repo
         .append_change(
@@ -298,25 +219,6 @@ mod tests {
     use agentdash_domain::story::StoryStatus;
 
     #[test]
-    fn build_dispatch_preference_trims_empty_fields() {
-        let binding = build_dispatch_preference(Some(TaskDispatchPreferenceInput {
-            agent_type: Some("  gpt-5  ".to_string()),
-            agent_pid: Some("   ".to_string()),
-            preset_name: Some(" preset-a ".to_string()),
-            prompt_template: Some("   tpl   ".to_string()),
-            initial_context: Some(" ".to_string()),
-            context_sources: None,
-        }));
-
-        assert_eq!(binding.agent_type.as_deref(), Some("gpt-5"));
-        assert_eq!(binding.agent_pid, None);
-        assert_eq!(binding.preset_name.as_deref(), Some("preset-a"));
-        assert_eq!(binding.prompt_template.as_deref(), Some("tpl"));
-        assert_eq!(binding.initial_context, None);
-        assert!(binding.context_sources.is_empty());
-    }
-
-    #[test]
     fn apply_story_mutation_normalizes_tag_and_disabled_lists() {
         let mut story = Story::new(Uuid::new_v4(), "title".to_string(), "desc".to_string());
         apply_story_mutation(
@@ -343,33 +245,5 @@ mod tests {
             vec!["one".to_string(), "two".to_string()]
         );
         assert_eq!(story.status, StoryStatus::Executing);
-    }
-
-    #[test]
-    fn apply_task_mutation_overwrites_workspace_and_binding() {
-        let story_id = Uuid::new_v4();
-        let mut task = Task::new(
-            Uuid::new_v4(),
-            story_id,
-            "task".to_string(),
-            "desc".to_string(),
-        );
-        let workspace_id = Uuid::new_v4();
-        let binding = build_dispatch_preference(Some(TaskDispatchPreferenceInput {
-            agent_type: Some("runner".to_string()),
-            ..TaskDispatchPreferenceInput::default()
-        }));
-
-        apply_task_mutation(
-            &mut task,
-            TaskMutationInput {
-                workspace_id: Some(Some(workspace_id)),
-                dispatch_preference: Some(binding.clone()),
-                ..TaskMutationInput::default()
-            },
-        );
-
-        assert_eq!(task.workspace_id, Some(workspace_id));
-        assert_eq!(task.dispatch_preference.agent_type, binding.agent_type);
     }
 }

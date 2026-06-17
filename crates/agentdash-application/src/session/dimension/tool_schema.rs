@@ -400,7 +400,6 @@ fn platform_mcp_runtime_name(scope: PlatformMcpScope, tool_name: &str) -> String
     let server_name = match scope {
         PlatformMcpScope::Relay => "agentdash-relay-tools",
         PlatformMcpScope::Story => "agentdash-story-tools",
-        PlatformMcpScope::Task => "agentdash-task-tools",
         PlatformMcpScope::Workflow => "agentdash-workflow-tools",
     };
     format!(
@@ -441,6 +440,7 @@ fn tool_cluster_key(cluster: agentdash_spi::ToolCluster) -> &'static str {
         agentdash_spi::ToolCluster::Execute => "execute",
         agentdash_spi::ToolCluster::Workflow => "workflow",
         agentdash_spi::ToolCluster::Collaboration => "collaboration",
+        agentdash_spi::ToolCluster::Task => "task",
         agentdash_spi::ToolCluster::WorkspaceModule => "workspace_module",
     }
 }
@@ -449,7 +449,6 @@ fn platform_mcp_scope_key(scope: PlatformMcpScope) -> &'static str {
     match scope {
         PlatformMcpScope::Relay => "relay",
         PlatformMcpScope::Story => "story",
-        PlatformMcpScope::Task => "task",
         PlatformMcpScope::Workflow => "workflow",
     }
 }

@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS permission_grants (
     source_runtime_session_id TEXT NOT NULL,
     source_turn_id TEXT,
     source_tool_call_id TEXT,
-    requested_paths TEXT NOT NULL,     -- JSON array: ["story_management", "task_management::execution_view"]
+    requested_paths TEXT NOT NULL,     -- JSON array: ["story_management", "task::read"]
     reason TEXT NOT NULL,
     grant_scope TEXT NOT NULL,         -- enum: turn / agent_frame / activity
     expires_at TEXT,                   -- ISO 8601
@@ -122,7 +122,7 @@ CREATE INDEX idx_permission_grants_status
 | run_id | String | UUID |
 | effect_frame_id | Option\<String\> | AgentFrame UUID when grant is frame-scoped |
 | source_runtime_session_id | String | Runtime trace audit ref |
-| requested_paths | Vec\<String\> | e.g. `["story_management", "task_management::execution_view"]` |
+| requested_paths | Vec\<String\> | e.g. `["story_management", "task::read"]` |
 | reason | String | Agent-provided justification |
 | grant_scope | String | `turn` / `agent_frame` / `activity` |
 | expires_at | Option\<String\> | ISO 8601 |

@@ -541,3 +541,44 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Story Task subject 模型清理
+
+**Date**: 2026-06-17
+**Task**: Story Task subject 模型清理
+**Branch**: `codex/refactor-story-task-subject-model-cleanup`
+
+### Summary
+
+完成 Story-owned Task 到 LifecycleRun.tasks 的模型收束：补齐执行 DAG 文档，迁移 domain/repository/contracts/API/frontend/MCP/fanout，删除旧 dispatch_preference/artifact/status surface，完成 W8 总清理与验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `12f17940` | (see git log) |
+| `d22d2470` | (see git log) |
+| `097ff7f2` | (see git log) |
+| `e243c832` | (see git log) |
+| `f1e1a3ad` | (see git log) |
+| `8a45899e` | (see git log) |
+| `71d8f5fd` | (see git log) |
+| `eb8570de` | (see git log) |
+| `6013a29b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

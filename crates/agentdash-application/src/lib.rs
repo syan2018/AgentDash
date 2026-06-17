@@ -1,5 +1,5 @@
-pub mod auth;
 pub mod agent_run;
+pub mod auth;
 pub mod backend;
 pub mod backend_execution_placement;
 pub mod canvas;

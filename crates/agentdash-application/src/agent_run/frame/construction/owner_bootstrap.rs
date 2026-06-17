@@ -15,6 +15,7 @@ use agentdash_spi::{AuthIdentity, CapabilityScopeCtx, SkillDiscoveryProvider};
 use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, ToolCluster, Vfs};
 use uuid::Uuid;
 
+use crate::agent_run::frame::builder::AgentFrameBuilder;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
     CapabilityResolver, CapabilityResolverInput, CompanionContribution, ContextContributionSource,
@@ -28,6 +29,13 @@ use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     build_session_context_bundle, emit_bundle_fragments, resolve_workspace_declared_sources,
 };
+use crate::lifecycle::{
+    ActiveWorkflowProjection, AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode,
+    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, BuiltinLifecycleSkill,
+    BuiltinLifecycleSkillPolicy, MessageStreamProjectionRef, MessageStreamTraceKind,
+    OrchestrationNodeProjectionInput, project_active_workflow_lifecycle_vfs,
+    writable_port_keys_for_active_workflow,
+};
 use crate::mcp_preset::{McpRuntimeBindingContext, resolve_preset_mcp_server};
 use crate::platform_config::PlatformConfig;
 use crate::project::context_builder::{ProjectContextBuildInput, contribute_project_context};
@@ -40,14 +48,6 @@ use crate::session::capability_projection::{
 };
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::vfs::{SessionMountTarget, VfsService, apply_agent_vfs_access_grants};
-use crate::agent_run::frame::builder::AgentFrameBuilder;
-use crate::lifecycle::{
-    ActiveWorkflowProjection, AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode,
-    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, BuiltinLifecycleSkill,
-    BuiltinLifecycleSkillPolicy, MessageStreamProjectionRef, MessageStreamTraceKind,
-    OrchestrationNodeProjectionInput, project_active_workflow_lifecycle_vfs,
-    writable_port_keys_for_active_workflow,
-};
 use crate::workspace::BackendAvailability;
 use crate::workspace_module::skill_projection::project_workspace_module_system_skill_to_vfs;
 
@@ -397,8 +397,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
                             node_path: workflow.node_path.clone(),
                             lifecycle_key: workflow.lifecycle_key.clone(),
                             attempt: workflow.active_attempt.attempt,
-                            writable_port_keys:
-                                writable_port_keys_for_active_workflow(workflow),
+                            writable_port_keys: writable_port_keys_for_active_workflow(workflow),
                         });
                     let surface = AgentRunLifecycleSurfaceProjector::new(self.repos)
                         .project(AgentRunLifecycleSurfaceInput {
@@ -872,9 +871,6 @@ fn capability_for_runtime_mcp_server(server: &agentdash_spi::RuntimeMcpServer) -
         "agentdash-story-tools" => {
             ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_STORY_MANAGEMENT)
         }
-        "agentdash-task-tools" => {
-            ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_TASK_MANAGEMENT)
-        }
         "agentdash-workflow-tools" => {
             ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_WORKFLOW_MANAGEMENT)
         }
@@ -885,7 +881,6 @@ fn capability_for_runtime_mcp_server(server: &agentdash_spi::RuntimeMcpServer) -
 fn agent_facing_mcp_server_name(server_name: &str) -> String {
     const PLATFORM_SCOPED_PREFIXES: &[(&str, &str)] = &[
         ("agentdash-story-tools-", "agentdash-story-tools"),
-        ("agentdash-task-tools-", "agentdash-task-tools"),
         ("agentdash-workflow-tools-", "agentdash-workflow-tools"),
     ];
 

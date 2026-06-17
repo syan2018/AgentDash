@@ -7,12 +7,11 @@
 
 import { api } from "../api/client";
 import type {
-  TaskDispatchPreference,
   ContextContainerDefinition,
   ContextSourceRef,
   SessionComposition,
   Story,
-  Task,
+  StoryTaskProjectionResponse,
 } from "../types";
 
 // ─── Generated contract payload guards ───────────────────
@@ -28,20 +27,9 @@ const storyStatusValues = [
 ] satisfies Array<Story["status"]>;
 const storyPriorityValues = ["p0", "p1", "p2", "p3"] satisfies Array<Story["priority"]>;
 const storyTypeValues = ["feature", "bugfix", "refactor", "docs", "test", "other"] satisfies Array<Story["story_type"]>;
-const taskStatusValues = [
-  "pending",
-  "assigned",
-  "running",
-  "awaiting_verification",
-  "completed",
-  "failed",
-  "cancelled",
-] satisfies Array<Task["status"]>;
-
 const storyStatuses = new Set<string>(storyStatusValues);
 const storyPriorities = new Set<string>(storyPriorityValues);
 const storyTypes = new Set<string>(storyTypeValues);
-const taskStatuses = new Set<string>(taskStatusValues);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -71,32 +59,13 @@ export const canMapStoryFromPayload = (payload: Record<string, unknown>): payloa
     typeof payload.story_type === "string" &&
     storyTypes.has(payload.story_type) &&
     Array.isArray(payload.tags) &&
-    typeof payload.task_count === "number" &&
     isRecord(payload.context) &&
     hasString(payload, "created_at") &&
     hasString(payload, "updated_at")
   );
 };
 
-export const canMapTaskFromPayload = (payload: Record<string, unknown>): payload is Task => {
-  return (
-    hasString(payload, "id") &&
-    hasString(payload, "project_id") &&
-    hasString(payload, "story_id") &&
-    hasStringOrNull(payload, "workspace_id") &&
-    hasString(payload, "title") &&
-    hasString(payload, "description") &&
-    typeof payload.status === "string" &&
-    taskStatuses.has(payload.status) &&
-    isRecord(payload.dispatch_preference) &&
-    Array.isArray(payload.artifacts) &&
-    hasString(payload, "created_at") &&
-    hasString(payload, "updated_at")
-  );
-};
-
 export const mapStoryFromPayload = (payload: Story): Story => payload;
-export const mapTaskFromPayload = (payload: Task): Task => payload;
 
 // ─── Story API ───────────────────────────────────────────
 
@@ -175,40 +144,8 @@ export async function deleteStory(storyId: string): Promise<void> {
 
 // ─── Task API ────────────────────────────────────────────
 
-export interface CreateTaskPayload {
-  title: string;
-  description?: string;
-  workspace_id?: string | null;
-  dispatch_preference?: TaskDispatchPreference;
-}
-
-export async function createTask(storyId: string, payload: CreateTaskPayload): Promise<Task> {
-  return await api.post<Task>(`/stories/${storyId}/tasks`, payload);
-}
-
-export interface UpdateTaskPayload {
-  title?: string;
-  description?: string;
-  workspace_id?: string | null;
-  dispatch_preference?: TaskDispatchPreference;
-}
-
-export async function updateTask(taskId: string, payload: UpdateTaskPayload): Promise<Task> {
-  const requestPayload = {
-    ...payload,
-    workspace_id: payload.workspace_id,
-  };
-  return await api.put<Task>(`/tasks/${taskId}`, requestPayload);
-}
-
-export async function fetchTask(taskId: string): Promise<Task> {
-  return await api.get<Task>(`/tasks/${taskId}`);
-}
-
-export async function deleteTask(taskId: string): Promise<void> {
-  await api.delete(`/tasks/${taskId}`);
-}
-
-export async function fetchTasks(storyId: string): Promise<Task[]> {
-  return await api.get<Task[]>(`/stories/${storyId}/tasks`);
+export async function fetchStoryTaskProjection(storyId: string): Promise<StoryTaskProjectionResponse> {
+  return await api.get<StoryTaskProjectionResponse>(
+    `/stories/${encodeURIComponent(storyId)}/task-projection`,
+  );
 }

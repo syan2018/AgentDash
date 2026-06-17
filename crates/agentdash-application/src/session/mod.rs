@@ -58,8 +58,8 @@ pub mod turn_processor;
 mod turn_supervisor;
 pub mod types;
 
-pub use crate::lifecycle::WorkflowApplicationError;
 pub use crate::agent_run::frame::hook_runtime::AgentFrameHookRuntime;
+pub use crate::lifecycle::WorkflowApplicationError;
 pub use assembler::{
     CompanionParentSpec, CompanionParentWorkflowSpec, CompanionSpec, CompanionWorkflowSpec,
     LifecycleNodeSpec, SessionRequestAssembler, compose_lifecycle_node_to_frame_with_audit,
@@ -112,8 +112,8 @@ pub use persistence::{
 };
 pub use post_turn_handler::{
     DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,
-    PostTurnHandler, SessionTerminalCallback, TerminalHookEffectBinding,
-    TerminalHookEffectHandlerRegistry,
+    EmptyTerminalHookEffectHandlerRegistry, PostTurnHandler, SessionTerminalCallback,
+    TerminalHookEffectBinding, TerminalHookEffectHandlerRegistry,
 };
 pub use prompt_vfs::local_workspace_vfs;
 pub use runtime_builder::SessionRuntimeBuilder;

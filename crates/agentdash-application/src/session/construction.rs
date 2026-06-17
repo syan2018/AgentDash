@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use agentdash_domain::common::AgentConfig;
-use agentdash_domain::task::TaskDispatchPreference;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
     AuthIdentity, CapabilityState, DiscoveredGuideline, SessionBaselineCapabilities,
@@ -62,8 +61,8 @@ impl ResolvedSessionOwner {
         }
     }
 }
-use crate::vfs::ResolvedVfsSurface;
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
+use crate::vfs::ResolvedVfsSurface;
 
 /// 测试 fixture：launch envelope 测试所需的完整投影形态。
 #[derive(Debug, Clone)]
@@ -160,7 +159,6 @@ pub struct ConstructionResolutionPlan {
 #[derive(Debug, Clone, Default)]
 pub struct SessionConstructionContextProjection {
     pub workspace_id: Option<Uuid>,
-    pub dispatch_preference: Option<TaskDispatchPreference>,
     pub vfs: Option<Vfs>,
     pub runtime_surface: Option<ResolvedVfsSurface>,
     pub context_snapshot: Option<SessionContextSnapshot>,

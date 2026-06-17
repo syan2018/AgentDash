@@ -259,6 +259,25 @@ function getDynamicToolHeader(item: DynamicItem, meta: DynamicToolMeta): ToolCar
       const count = Array.isArray(todos) ? todos.length : 0;
       return { primary: count > 0 ? `更新 ${count} 项 todo` : meta.fallbackLabel };
     }
+    case "task": {
+      if (item.tool === "task_write") {
+        const ops = args?.operations;
+        const snapshot = args?.snapshot;
+        const count = Array.isArray(ops)
+          ? ops.length
+          : Array.isArray(snapshot)
+            ? snapshot.length
+            : 0;
+        const mode = str(args, "mode");
+        return {
+          primary: count > 0 ? `更新 ${count} 项 Task` : "更新 Task",
+          secondary: mode ?? undefined,
+        };
+      }
+      // task_read
+      const mode = str(args, "mode") ?? "overview";
+      return { primary: `读取 Task · ${mode}` };
+    }
     case "question": {
       const questions = args?.questions;
       const first =

@@ -7,6 +7,7 @@ import type {
   MailboxStateView,
   MailboxMessageView,
 } from "../../../generated/agent-run-mailbox-contracts";
+import { mailboxHasContent } from "./mailboxContent";
 
 interface MailboxMessageListProps {
   messages: MailboxMessageView[];
@@ -21,7 +22,21 @@ interface MailboxMessageListProps {
   onMove?: (messageId: string, afterMessageId: string | null) => void;
 }
 
-export function MailboxMessageList({
+export function MailboxMessageList(props: MailboxMessageListProps) {
+  if (!mailboxHasContent(props.messages, props.mailbox, props.mailboxState)) return null;
+  return (
+    <div className="shrink-0 pb-2">
+      <div className="mx-auto w-full max-w-4xl px-5">
+        <div className="relative rounded-[12px] border border-border/60 bg-background pb-1 shadow-sm">
+          <MailboxSections {...props} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** mailbox 内部分区（banner + steer + pending），不含外层卡片 chrome；供状态栏内嵌。 */
+export function MailboxSections({
   messages,
   mailbox,
   mailboxState,
@@ -41,10 +56,6 @@ export function MailboxMessageList({
     (m) => m.delivery.kind !== "steer_active_turn",
   );
 
-  const hasContent = steerMessages.length > 0 || pendingMessages.length > 0 ||
-    mailbox?.user_attention || mailboxState?.paused;
-  if (!hasContent) return null;
-
   const resumeCommand = mailbox?.resume_command;
   const showBanner = Boolean(
     mailboxState?.paused || (mailbox?.user_attention && (mailbox.paused || resumeCommand)),
@@ -52,34 +63,32 @@ export function MailboxMessageList({
   const canResume = Boolean(mailboxState?.can_resume && resumeCommand?.enabled && onResume);
 
   return (
-    <div className="shrink-0 pb-2">
-      <div className="mx-auto w-full max-w-4xl px-5">
-        <div className="relative rounded-[12px] border border-border/60 bg-background pb-1 shadow-sm">
-          {/* Banner */}
-          {showBanner && (
-            <div className="border-b border-border/40 bg-warning/5 px-3 py-2">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-xs font-medium text-warning">消息投递已暂停</div>
-                  <div className="truncate text-[11px] text-warning/70">
-                    等待恢复后继续投递排队消息
-                  </div>
-                </div>
-                {canResume && (
-                  <button
-                    type="button"
-                    onClick={onResume}
-                    className="shrink-0 rounded-[8px] border border-warning/30 bg-background px-2.5 py-1 text-[11px] font-medium text-warning transition-colors hover:bg-warning/10"
-                  >
-                    恢复
-                  </button>
-                )}
+    <>
+      {/* Banner */}
+      {showBanner && (
+        <div className="border-b border-border/40 bg-warning/5 px-3 py-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-warning">消息投递已暂停</div>
+              <div className="truncate text-[11px] text-warning/70">
+                等待恢复后继续投递排队消息
               </div>
             </div>
-          )}
+            {canResume && (
+              <button
+                type="button"
+                onClick={onResume}
+                className="shrink-0 rounded-[8px] border border-warning/30 bg-background px-2.5 py-1 text-[11px] font-medium text-warning transition-colors hover:bg-warning/10"
+              >
+                恢复
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
-          {/* Steer 区 */}
-          {steerMessages.length > 0 && (
+      {/* Steer 区 */}
+      {steerMessages.length > 0 && (
             <div>
               <SectionLabel label="Steer" count={steerMessages.length} />
               {steerMessages.map((msg, i) => (
@@ -134,9 +143,7 @@ export function MailboxMessageList({
               ))}
             </div>
           )}
-        </div>
-      </div>
-    </div>
+    </>
   );
 }
 

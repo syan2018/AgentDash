@@ -10,7 +10,7 @@ use agentdash_contracts::workflow::{
 use agentdash_spi::connector::ToolCluster;
 use agentdash_spi::platform::tool_capability::{
     self, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_RELAY_MANAGEMENT,
-    CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT, CAP_WORKFLOW,
+    CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK, CAP_WORKFLOW,
     CAP_WORKFLOW_MANAGEMENT, CAP_WORKSPACE_MODULE, CapabilityScope, PlatformMcpScope,
     ToolDescriptor, ToolSource, WELL_KNOWN_KEYS, default_visibility_rules, is_known_key,
 };
@@ -127,7 +127,7 @@ fn capability_metadata(key: &str) -> (&'static str, &'static str) {
         CAP_WORKFLOW => ("工作流", "工作流汇报与推进"),
         CAP_COLLABORATION => ("协作", "多 agent 协作通道"),
         CAP_STORY_MANAGEMENT => ("Story 管理", "创建 / 调整 Story"),
-        CAP_TASK_MANAGEMENT => ("Task 管理", "创建 / 调整 Task"),
+        CAP_TASK => ("Task", "读取 / 维护 run-scoped Task"),
         CAP_RELAY_MANAGEMENT => ("Relay 管理", "Relay 后端管理"),
         CAP_WORKFLOW_MANAGEMENT => ("工作流管理", "MCP workflow 管理工具"),
         _ => ("未知能力", "未登记的 capability key"),
@@ -163,6 +163,7 @@ fn tool_cluster_to_dto(cluster: ToolCluster) -> ToolClusterDto {
         ToolCluster::Execute => ToolClusterDto::Execute,
         ToolCluster::Workflow => ToolClusterDto::Workflow,
         ToolCluster::Collaboration => ToolClusterDto::Collaboration,
+        ToolCluster::Task => ToolClusterDto::Task,
         ToolCluster::WorkspaceModule => ToolClusterDto::WorkspaceModule,
     }
 }
@@ -171,7 +172,6 @@ fn platform_mcp_scope_to_dto(scope: PlatformMcpScope) -> PlatformMcpScopeDto {
     match scope {
         PlatformMcpScope::Relay => PlatformMcpScopeDto::Relay,
         PlatformMcpScope::Story => PlatformMcpScopeDto::Story,
-        PlatformMcpScope::Task => PlatformMcpScopeDto::Task,
         PlatformMcpScope::Workflow => PlatformMcpScopeDto::Workflow,
     }
 }

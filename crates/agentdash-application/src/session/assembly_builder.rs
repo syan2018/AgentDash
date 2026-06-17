@@ -6,9 +6,11 @@ use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
+use crate::agent_run::frame::surface::{FrameContextBundleSummary, FrameSurfaceDraft};
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
+use crate::lifecycle::LifecycleMountSurface;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 #[cfg(test)]
 #[allow(deprecated)]
@@ -17,8 +19,6 @@ use crate::session::construction::RuntimeContextInspectionPlan;
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::UserPromptInput;
 use crate::vfs::build_lifecycle_mount_with_node_scope;
-use crate::lifecycle::LifecycleMountSurface;
-use crate::agent_run::frame::surface::{FrameContextBundleSummary, FrameSurfaceDraft};
 
 /// 把 `SessionAssemblyBuilder` 的累积声明合并进 frame construction handoff。
 ///

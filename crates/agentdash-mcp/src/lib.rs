@@ -8,14 +8,12 @@
 //!
 //! - **Relay 层** (`RelayMcpServer`)：面向用户，支持看板全局操作
 //! - **Story 层** (`StoryMcpServer`)：面向编排 Agent，支持 Story 上下文管理
-//! - **Task 层** (`TaskMcpServer`)：面向执行 Agent，支持 Task 粒度操作
 //!
 //! ## 传输
 //!
 //! 通过 Streamable HTTP 与现有 Axum 服务集成，不同路径映射到不同层级的 Server：
 //! - `POST /mcp/relay` → Relay 工具
 //! - `POST /mcp/story/{story_id}` → Story 工具
-//! - `POST /mcp/task/{task_id}` → Task 工具
 
 pub mod authz;
 pub mod error;

@@ -422,17 +422,25 @@ export function AgentRunWorkspacePage({
     onDraftStarted: handleDraftAgentRunStarted,
   });
 
-  const handleTurnEnd = useCallback(() => {
-    void refreshAgentRunWorkspaceState().catch(() => {});
-    scheduleHookRuntimeRefresh("turn_end", true);
-    // Agent 可能在本轮通过 task_write 改了 Task plan；刷新综合状态栏数据源。
+  const refreshStatusBarTasks = useCallback(() => {
     if (currentRunId && currentAgentId) {
       void useTaskPlanStore
         .getState()
         .fetchAgentRunTasks(currentRunId, currentAgentId)
         .catch(() => {});
     }
-  }, [refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh, currentRunId, currentAgentId]);
+  }, [currentRunId, currentAgentId]);
+
+  const handleTurnEnd = useCallback(() => {
+    void refreshAgentRunWorkspaceState().catch(() => {});
+    scheduleHookRuntimeRefresh("turn_end", true);
+    // Agent 可能在本轮通过 task_write 改了 Task plan；刷新综合状态栏数据源。
+    refreshStatusBarTasks();
+  }, [refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh, refreshStatusBarTasks]);
+
+  const handleTaskPlanChanged = useCallback(() => {
+    refreshStatusBarTasks();
+  }, [refreshStatusBarTasks]);
 
   const handleSystemEvent = useCallback((eventType: string, _event: BackboneEvent) => {
     switch (eventType) {
@@ -754,6 +762,7 @@ export function AgentRunWorkspacePage({
                 onMessageSent={handleMessageSent}
                 onTurnEnd={handleTurnEnd}
                 onSystemEvent={handleSystemEvent}
+                onTaskPlanChanged={handleTaskPlanChanged}
                 executorHint={executorHint}
                 agentDefaults={draftProjectAgent?.effective_executor_config ?? runtimeControl?.conversation?.model_config.effective_executor_config ?? taskExecutorSummary}
                 executorStateKey={executorStateKey}

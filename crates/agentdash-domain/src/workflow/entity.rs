@@ -753,35 +753,35 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_run_task_plan_status_transition_enforces_plan_language() {
+    fn lifecycle_run_task_plan_status_transition_allows_flexible_plan_updates() {
         let mut run = LifecycleRun::new_graphless(Uuid::new_v4());
         let task = run
             .create_task(LifecycleTaskPlanItemDraft::new("Transition me"))
             .expect("create task");
 
-        let active = run
-            .transition_task_status(task.id, TaskPlanStatus::Active)
-            .expect("open to active");
-        assert_eq!(active.status, TaskPlanStatus::Active);
-
-        let blocked = run
-            .transition_task_status(task.id, TaskPlanStatus::Blocked)
-            .expect("active to blocked");
-        assert_eq!(blocked.status, TaskPlanStatus::Blocked);
-
-        let active = run
-            .transition_task_status(task.id, TaskPlanStatus::Active)
-            .expect("blocked to active");
-        assert_eq!(active.status, TaskPlanStatus::Active);
-
         let done = run
             .transition_task_status(task.id, TaskPlanStatus::Done)
-            .expect("active to done");
+            .expect("open can move directly to done");
         assert_eq!(done.status, TaskPlanStatus::Done);
 
-        let err = run
+        let review = run
             .transition_task_status(task.id, TaskPlanStatus::Review)
-            .expect_err("done cannot move to review");
+            .expect("done can be reopened for review");
+        assert_eq!(review.status, TaskPlanStatus::Review);
+
+        let active = run
+            .transition_task_status(task.id, TaskPlanStatus::Active)
+            .expect("review can move back to active");
+        assert_eq!(active.status, TaskPlanStatus::Active);
+
+        let dropped = run
+            .transition_task_status(task.id, TaskPlanStatus::Dropped)
+            .expect("active can be dropped");
+        assert_eq!(dropped.status, TaskPlanStatus::Dropped);
+
+        let err = run
+            .transition_task_status(task.id, TaskPlanStatus::Open)
+            .expect_err("dropped remains terminal");
         assert!(matches!(err, DomainError::InvalidTransition { .. }));
     }
 

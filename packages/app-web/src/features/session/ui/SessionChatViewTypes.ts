@@ -50,6 +50,9 @@ export interface SessionChatViewProps {
   /** 收到系统事件时回调，用于父层按事件驱动刷新额外状态面板 */
   onSystemEvent?: (eventType: string, event: BackboneEvent) => void;
 
+  /** task_write 工具完成时回调；用于刷新外部 Task plan 展示。 */
+  onTaskPlanChanged?: () => void;
+
   // ─── 执行器 ──────────────────────────────────────────
 
   /** 执行器提示（如 task 的 agent_type），自动映射为执行器选择 */

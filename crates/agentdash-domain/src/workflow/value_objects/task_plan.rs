@@ -25,17 +25,7 @@ impl TaskPlanStatus {
             return true;
         }
 
-        matches!(
-            (self, next),
-            (Open, Active)
-                | (Open, Dropped)
-                | (Active, Review)
-                | (Active, Done)
-                | (Active, Blocked)
-                | (Blocked, Active)
-                | (Review, Active)
-                | (Review, Done)
-        )
+        !matches!(self, Dropped)
     }
 }
 

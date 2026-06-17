@@ -212,12 +212,12 @@ pub struct SubjectRefInput {
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct ContextSourceRefInput {
-    pub kind: String,
+    pub kind: ContextSourceKindInput,
     pub locator: String,
     #[serde(default)]
     pub label: Option<String>,
     #[serde(default)]
-    pub slot: Option<String>,
+    pub slot: Option<ContextSlotInput>,
     #[serde(default)]
     pub priority: Option<i32>,
     #[serde(default)]
@@ -225,7 +225,36 @@ pub struct ContextSourceRefInput {
     #[serde(default)]
     pub max_chars: Option<usize>,
     #[serde(default)]
-    pub delivery: Option<String>,
+    pub delivery: Option<ContextDeliveryInput>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextSourceKindInput {
+    ManualText,
+    File,
+    ProjectSnapshot,
+    HttpFetch,
+    McpResource,
+    EntityRef,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextSlotInput {
+    Requirements,
+    Constraints,
+    Codebase,
+    References,
+    InstructionAppend,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextDeliveryInput {
+    Inline,
+    Resource,
+    Lazy,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -1152,6 +1181,41 @@ impl From<TaskPriorityInput> for TaskPriority {
     }
 }
 
+impl From<ContextSourceKindInput> for ContextSourceKind {
+    fn from(value: ContextSourceKindInput) -> Self {
+        match value {
+            ContextSourceKindInput::ManualText => Self::ManualText,
+            ContextSourceKindInput::File => Self::File,
+            ContextSourceKindInput::ProjectSnapshot => Self::ProjectSnapshot,
+            ContextSourceKindInput::HttpFetch => Self::HttpFetch,
+            ContextSourceKindInput::McpResource => Self::McpResource,
+            ContextSourceKindInput::EntityRef => Self::EntityRef,
+        }
+    }
+}
+
+impl From<ContextSlotInput> for ContextSlot {
+    fn from(value: ContextSlotInput) -> Self {
+        match value {
+            ContextSlotInput::Requirements => Self::Requirements,
+            ContextSlotInput::Constraints => Self::Constraints,
+            ContextSlotInput::Codebase => Self::Codebase,
+            ContextSlotInput::References => Self::References,
+            ContextSlotInput::InstructionAppend => Self::InstructionAppend,
+        }
+    }
+}
+
+impl From<ContextDeliveryInput> for ContextDelivery {
+    fn from(value: ContextDeliveryInput) -> Self {
+        match value {
+            ContextDeliveryInput::Inline => Self::Inline,
+            ContextDeliveryInput::Resource => Self::Resource,
+            ContextDeliveryInput::Lazy => Self::Lazy,
+        }
+    }
+}
+
 impl From<SubjectRefInput> for SubjectRef {
     fn from(value: SubjectRefInput) -> Self {
         SubjectRef::new(value.kind, value.id)
@@ -1163,63 +1227,15 @@ impl TryFrom<ContextSourceRefInput> for ContextSourceRef {
 
     fn try_from(value: ContextSourceRefInput) -> Result<Self, Self::Error> {
         Ok(Self {
-            kind: parse_context_kind(&value.kind)?,
+            kind: value.kind.into(),
             locator: value.locator,
             label: value.label,
-            slot: value
-                .slot
-                .as_deref()
-                .map(parse_context_slot)
-                .transpose()?
-                .unwrap_or_default(),
+            slot: value.slot.map(ContextSlot::from).unwrap_or_default(),
             priority: value.priority.unwrap_or_default(),
             required: value.required,
             max_chars: value.max_chars,
-            delivery: value
-                .delivery
-                .as_deref()
-                .map(parse_context_delivery)
-                .transpose()?
-                .unwrap_or_default(),
+            delivery: value.delivery.map(ContextDelivery::from).unwrap_or_default(),
         })
-    }
-}
-
-fn parse_context_kind(value: &str) -> Result<ContextSourceKind, AgentToolError> {
-    match value {
-        "manual_text" => Ok(ContextSourceKind::ManualText),
-        "file" => Ok(ContextSourceKind::File),
-        "project_snapshot" => Ok(ContextSourceKind::ProjectSnapshot),
-        "http_fetch" => Ok(ContextSourceKind::HttpFetch),
-        "mcp_resource" => Ok(ContextSourceKind::McpResource),
-        "entity_ref" => Ok(ContextSourceKind::EntityRef),
-        other => Err(AgentToolError::InvalidArguments(format!(
-            "未知 context kind `{other}`，可用值: manual_text | file | project_snapshot | http_fetch | mcp_resource | entity_ref"
-        ))),
-    }
-}
-
-fn parse_context_slot(value: &str) -> Result<ContextSlot, AgentToolError> {
-    match value {
-        "requirements" => Ok(ContextSlot::Requirements),
-        "constraints" => Ok(ContextSlot::Constraints),
-        "codebase" => Ok(ContextSlot::Codebase),
-        "references" => Ok(ContextSlot::References),
-        "instruction_append" => Ok(ContextSlot::InstructionAppend),
-        other => Err(AgentToolError::InvalidArguments(format!(
-            "未知 context slot `{other}`，可用值: requirements | constraints | codebase | references | instruction_append"
-        ))),
-    }
-}
-
-fn parse_context_delivery(value: &str) -> Result<ContextDelivery, AgentToolError> {
-    match value {
-        "inline" => Ok(ContextDelivery::Inline),
-        "resource" => Ok(ContextDelivery::Resource),
-        "lazy" => Ok(ContextDelivery::Lazy),
-        other => Err(AgentToolError::InvalidArguments(format!(
-            "未知 context delivery `{other}`，可用值: inline | resource | lazy"
-        ))),
     }
 }
 

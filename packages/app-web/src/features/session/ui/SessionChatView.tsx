@@ -70,6 +70,7 @@ export function SessionChatView({
   onMessageSent,
   onTurnEnd,
   onSystemEvent,
+  onTaskPlanChanged,
   executorHint,
   agentDefaults,
   executorStateKey,
@@ -350,8 +351,12 @@ export function SessionChatView({
   const onSystemEventRef = useRef(onSystemEvent);
   const lastSystemEventSeqRef = useRef(0);
   useEffect(() => { onSystemEventRef.current = onSystemEvent; }, [onSystemEvent]);
+  const onTaskPlanChangedRef = useRef(onTaskPlanChanged);
+  const lastTaskToolEventSeqRef = useRef(0);
+  useEffect(() => { onTaskPlanChangedRef.current = onTaskPlanChanged; }, [onTaskPlanChanged]);
   useEffect(() => {
     lastSystemEventSeqRef.current = 0;
+    lastTaskToolEventSeqRef.current = 0;
   }, [sessionId]);
 
   useEffect(() => {
@@ -382,6 +387,29 @@ export function SessionChatView({
     for (const item of result.items) {
       onSystemEventRef.current?.(item.eventType, item.event);
     }
+  }, [hasSession, rawEvents]);
+
+  useEffect(() => {
+    if (!hasSession || rawEvents.length === 0) return;
+    let lastSeenSeq = lastTaskToolEventSeqRef.current;
+    let changed = false;
+    for (const event of rawEvents) {
+      if (!event || event.event_seq <= lastTaskToolEventSeqRef.current) continue;
+      lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
+      const bbEvent = event.notification.event;
+      if (bbEvent.type !== "item_completed") continue;
+      const item = bbEvent.payload.item;
+      if (
+        item.type === "dynamicToolCall"
+        && item.tool === "task_write"
+        && item.status === "completed"
+        && item.success !== false
+      ) {
+        changed = true;
+      }
+    }
+    lastTaskToolEventSeqRef.current = lastSeenSeq;
+    if (changed) onTaskPlanChangedRef.current?.();
   }, [hasSession, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────

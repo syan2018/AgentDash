@@ -91,8 +91,31 @@
 - `allowed_companions` 已替换为目标侧 `default_companion_enabled` 与调用侧 `extra_companions`；roster 规则为 default-enabled siblings ∪ caller extras - self。
 - `companion_request(payload.agent_key)` 现在必须选择当前 roster 中的 ProjectAgent；selected identity 会进入 dispatch result、launch source、child `LifecycleAgent.project_agent_id` 与 frame construction。
 - selected companion child 在 parent slice 上叠加 selected ProjectAgent executor config、capability directives、MCP presets、VFS grants 与 skill assets。
-- `AuthorityState` 已接入 resolver；main ProjectAgent 保留 dispatch / human / workspace module / dynamic workflow authoring，companion child 隐藏 dispatch / human / workspace module，拒绝 dynamic workflow authoring，同时保留 `companion.respond` 回流通道。
-- 当前剩余接入点：用户主动向 companion run 发送消息后打开 human route 需要把 launch provenance 投到 execution context，再由 `human.ask` authority 判断。
+- `AuthorityState` 已接入 resolver；main ProjectAgent 保留 dispatch / workspace module / dynamic workflow authoring，companion child 隐藏 dispatch / workspace module，拒绝 dynamic workflow authoring，同时保留 `companion.respond` 回流通道。
+- 当前剩余接入点：用户主动向 companion run 发送消息后打开 human route 需要先把 launch provenance 投到 execution context，再把 `human.ask` 作为后续 operation authority 接入。
+
+## Phase 5: Review 收束
+
+- 修复 companion + workflow launch 路径，确保它和普通 companion child 一样叠加 selected ProjectAgent preset facts：
+  - executor config；
+  - capability directives；
+  - Project MCP presets；
+  - VFS grants；
+  - explicit skill assets；
+  - companion return-channel baseline。
+- 将 selected `agent_key` 明确为 launch/audit snapshot，而不是第二身份事实源：
+  - `selected_project_agent_id` 继续作为 frame construction 与 `LifecycleAgent.project_agent_id` 的事实源；
+  - frame construction 解析 selected ProjectAgent 后校验 snapshot key 与 `ProjectAgent.name` 一致；
+  - 不在 composer 内以 `selected_agent_key` 重新查询 ProjectAgent。
+- 收窄当前 `AuthorityState` 实现到已经消费的 operation projection：
+  - 保留 `companion.dispatch` / `companion.respond` / `workspace_module.present` / `dynamic_workflow.author`；
+  - 删除暂未由统一 authority pipeline 消费的 `human.ask` 字段，避免形成未落地的第二套 guard 表达；
+  - `target=human` 仍由当前 companion tool 的 child source guard 拒绝，待后续 execution provenance 接入后再统一回收。
+- 更新 capability spec 中的 Authority 描述，记录当前收束后的事实源和后续 human route 前置条件。
+- 补充 focused tests：
+  - companion + workflow compose 路径会消费 selected ProjectAgent executor/capability/MCP facts；
+  - selected `agent_key` snapshot 与 selected ProjectAgent 不一致时拒绝 frame construction；
+  - resolver 的 authority projection 不包含未消费的人类路由字段。
 
 ## Validation Run
 
@@ -101,3 +124,12 @@
 - `cargo test -p agentdash-application capability`
 - `cargo test -p agentdash-application companion`
 - `pnpm --filter app-web run typecheck`
+
+## Review 收束 Validation Run
+
+- `cargo fmt`
+- `cargo check -p agentdash-application`
+- `cargo test -p agentdash-application selected_agent_key_snapshot_must_match_project_agent_name`
+- `cargo test -p agentdash-application capability`
+- `cargo test -p agentdash-application companion`
+- `git diff --check`

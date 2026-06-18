@@ -63,6 +63,9 @@ pub struct ActivityActivationInput<'a> {
     pub available_presets: AvailableMcpPresets,
     /// 当前运行身份对应的 authority；resolver 以它裁剪能力与工具入口。
     pub authority_state: AuthorityState,
+    /// Agent 侧 capability directives。Companion child 选择 ProjectAgent 时通过此字段
+    /// 保留 selected Agent preset 与 workflow contract 的来源边界。
+    pub agent_tool_directives: Vec<ToolCapabilityDirective>,
     /// Companion 子 session 的 slice 裁剪模式（resolve 后应用，不混入 resolver 输入）。
     pub companion_slice_mode: Option<CompanionSliceMode>,
     /// capability baseline 覆盖:PhaseNode 热更新时传入当前 hook runtime 的能力指令序列,
@@ -166,6 +169,16 @@ pub fn activate_activity_with_platform(
 
     // ── 3. 调 Resolver ──
     let mut contributions = Vec::new();
+    if !input.agent_tool_directives.is_empty() {
+        contributions.push(ContextContributions {
+            source: ContextContributionSource::Agent,
+            tool: Some(ToolContribution {
+                directives: input.agent_tool_directives.clone(),
+                has_active_workflow: false,
+            }),
+            companion: None,
+        });
+    }
     contributions.push(ContextContributions {
         source: ContextContributionSource::Workflow,
         tool: Some(ToolContribution {
@@ -396,6 +409,7 @@ mod tests {
             lifecycle_key: "trellis_dev_task",
             available_presets: empty_presets(),
             authority_state: AuthorityState::main_project_agent(),
+            agent_tool_directives: Vec::new(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -434,6 +448,7 @@ mod tests {
             lifecycle_key: "lc_admin",
             available_presets: empty_presets(),
             authority_state: AuthorityState::main_project_agent(),
+            agent_tool_directives: Vec::new(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -470,6 +485,7 @@ mod tests {
             lifecycle_key: "lc_child",
             available_presets: empty_presets(),
             authority_state: AuthorityState::companion_child(),
+            agent_tool_directives: Vec::new(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -511,6 +527,7 @@ mod tests {
             lifecycle_key: "lc_phase",
             available_presets: empty_presets(),
             authority_state: AuthorityState::main_project_agent(),
+            agent_tool_directives: Vec::new(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -552,6 +569,7 @@ mod tests {
             lifecycle_key: "lc_phase",
             available_presets: empty_presets(),
             authority_state: AuthorityState::main_project_agent(),
+            agent_tool_directives: Vec::new(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -624,6 +642,7 @@ mod tests {
             lifecycle_key: "lc_phase",
             available_presets: empty_presets(),
             authority_state: AuthorityState::main_project_agent(),
+            agent_tool_directives: Vec::new(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -689,6 +708,7 @@ mod tests {
             lifecycle_key: "lc",
             available_presets: empty_presets(),
             authority_state: AuthorityState::main_project_agent(),
+            agent_tool_directives: Vec::new(),
             companion_slice_mode: None,
             baseline_override: Some(vec![
                 ToolCapabilityDirective::add_simple("workspace_module"),
@@ -736,6 +756,7 @@ mod tests {
             lifecycle_key: "lc",
             available_presets: empty_presets(),
             authority_state: AuthorityState::main_project_agent(),
+            agent_tool_directives: Vec::new(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -796,6 +817,7 @@ mod tests {
             lifecycle_key: "lc",
             available_presets: empty_presets(),
             authority_state: AuthorityState::main_project_agent(),
+            agent_tool_directives: Vec::new(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],

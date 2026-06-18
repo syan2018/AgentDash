@@ -150,7 +150,8 @@ companion_request(target="sub", payload.agent_key="<CompanionAgentEntry.name>", 
 - companion child frame construction 在 parent slice 上叠加 selected ProjectAgent preset facts：executor config、capability directives、MCP presets、VFS grants、skill assets 与 companion return-channel baseline。
 - `project_id` 来自当前 delivery runtime session 的 `RuntimeSessionExecutionAnchor`，原因是 hook snapshot 的 `run_context` 只表达 active workflow 投影，不是通用 owner 事实源。
 - `AuthorityState.companion.dispatch` 是 roster 投影与 `companion_request(target="sub")` 执行 guard 的上游事实；`AuthorityState.companion.respond` 由 child lineage / gate runtime channel 提供，不依赖 parent dispatch authority。这样禁止发起新 sub companion 不会切断已启动 child 的 `companion_respond` 回流通道。
-- `AuthorityState.workspace_module.present`、`AuthorityState.dynamic_workflow.author` 与 human route 是同一 operation guard 模型的静态边界：workspace module 展示和 dynamic workflow authoring 默认只面向 main/root ProjectAgent；background companion child 默认隐藏 human route。
+- `AuthorityState.workspace_module.present`、`AuthorityState.dynamic_workflow.author` 是当前已接入 capability projection 的静态边界：workspace module 展示和 dynamic workflow authoring 默认只面向 main/root ProjectAgent。
+- background companion child 默认隐藏 human route；该 guard 当前由 companion tool 根据 child source fail-closed 执行，后续需要在 execution context 携带用户主动进入 companion run 的 provenance 后再统一纳入 Authority projection。
 
 ### Validation & Error Matrix
 

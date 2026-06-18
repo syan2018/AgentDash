@@ -88,7 +88,6 @@ pub enum OperationAuthorityStatus {
 pub struct AuthorityState {
     pub companion_dispatch: OperationAuthorityStatus,
     pub companion_respond: OperationAuthorityStatus,
-    pub human_ask: OperationAuthorityStatus,
     pub workspace_module_present: OperationAuthorityStatus,
     pub dynamic_workflow_author: OperationAuthorityStatus,
 }
@@ -98,7 +97,6 @@ impl AuthorityState {
         Self {
             companion_dispatch: OperationAuthorityStatus::Allowed,
             companion_respond: OperationAuthorityStatus::Hidden,
-            human_ask: OperationAuthorityStatus::Allowed,
             workspace_module_present: OperationAuthorityStatus::Allowed,
             dynamic_workflow_author: OperationAuthorityStatus::Allowed,
         }
@@ -108,7 +106,6 @@ impl AuthorityState {
         Self {
             companion_dispatch: OperationAuthorityStatus::Hidden,
             companion_respond: OperationAuthorityStatus::Allowed,
-            human_ask: OperationAuthorityStatus::Hidden,
             workspace_module_present: OperationAuthorityStatus::Hidden,
             dynamic_workflow_author: OperationAuthorityStatus::Denied,
         }

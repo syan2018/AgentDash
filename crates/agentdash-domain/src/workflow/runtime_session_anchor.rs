@@ -43,7 +43,7 @@ pub struct RuntimeSessionExecutionAnchor {
 }
 
 impl RuntimeSessionExecutionAnchor {
-    /// Graphless AgentRun 写入：runtime_session + frame 创建后即可锚定控制面。
+    /// Plain AgentRun 写入：runtime_session + frame 创建后即可锚定控制面。
     pub fn new_dispatch(
         runtime_session_id: impl Into<String>,
         run_id: Uuid,

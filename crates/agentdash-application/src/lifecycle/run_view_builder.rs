@@ -65,7 +65,7 @@ pub enum LifecycleRunStatusView {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LifecycleRunTopologyView {
-    Graphless,
+    Plain,
     WorkflowGraph,
 }
 
@@ -502,7 +502,7 @@ fn status_to_view(status: DomainLifecycleRunStatus) -> LifecycleRunStatusView {
 
 fn topology_to_view(topology: DomainLifecycleRunTopology) -> LifecycleRunTopologyView {
     match topology {
-        DomainLifecycleRunTopology::Graphless => LifecycleRunTopologyView::Graphless,
+        DomainLifecycleRunTopology::Plain => LifecycleRunTopologyView::Plain,
         DomainLifecycleRunTopology::WorkflowGraph => LifecycleRunTopologyView::WorkflowGraph,
     }
 }

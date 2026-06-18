@@ -14,7 +14,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `LifecycleContext` | `LifecycleRun` 内的上下文快照，保存主 AgentRun、AgentRun refs、AgentFrame refs、权限和预算摘要 |
 | `OrchestrationInstance` | `LifecycleRun` 内部 0..N 个编排状态容器，保存 plan snapshot、runtime node state、dispatch 摘要和 state exchange snapshot；`orchestration_id` 是运行实例身份 |
 | `OrchestrationPlanSnapshot` | 静态 graph、workflow script 或 run artifact 编译后的不可变 runtime plan |
-| `LifecycleRunTopology` | run 的控制面拓扑：`graphless` 表示普通 Agent runtime，`workflow_graph` 表示显式 Activity graph runtime |
+| `LifecycleRunTopology` | run 的控制面拓扑：`plain` 表示普通 Agent runtime，`workflow_graph` 表示显式 Activity graph runtime |
 | `RuntimeNodeState` | `orchestration_id + node_path + attempt` 定位的运行节点状态 |
 | `NodeDispatchLease` | scheduler 对 runtime node 的 operational lease |
 | `LifecycleAgent` | run-scoped Agent runtime identity |
@@ -58,7 +58,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `../story-task-runtime.md` | Story / Task / Session / LifecycleRun 关系拓扑 |
 | `../../frontend/workflow-activity-lifecycle.md` | 前端 Activity lifecycle 编辑与运行观察契约 |
 
-`LifecycleRun.topology=graphless` 是普通 Agent runtime 的当前默认形态，只创建 run / agent / frame / runtime session anchor 与 subject association。`LifecycleRun.topology=workflow_graph` 表示显式 workflow runtime，拥有 root definition refs 与 `OrchestrationInstance`。
+`LifecycleRun.topology=plain` 是普通 Agent runtime 的当前默认形态，只创建 run / agent / frame / runtime session anchor 与 subject association。`LifecycleRun.topology=workflow_graph` 表示显式 workflow runtime，拥有 root definition refs 与 `OrchestrationInstance`。
 
 跨业务 dispatch / cancel / routine response 使用 `AgentRuntimeRefs` 作为统一控制面 envelope。显式 workflow runtime 的节点绑定使用 orchestration/node refs，原因是同一 Lifecycle 内可以同时存在多个 orchestration。
 
@@ -86,7 +86,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 
 ## Local Decisions
 
-- 普通 Agent runtime 默认使用 graphless 拓扑，原因是多数 Agent 会话只需要控制面、runtime trace 与 subject 归属；Activity graph 只在需要节点流转、attempt state、claim 和 assignment 的显式 workflow 中引入。
+- 普通 Agent runtime 默认使用 plain 拓扑，原因是多数 Agent 会话只需要控制面、runtime trace 与 subject 归属；Activity graph 只在需要节点流转、attempt state、claim 和 assignment 的显式 workflow 中引入。
 - 业务 result 不平铺 run / graph / agent / frame / node refs，原因是 run / agent / frame 是通用控制面，而 orchestration/node refs 是显式 workflow binding；统一 envelope 可以让调用方先处理 Agent runtime，再按拓扑决定是否进入 workflow 节点细节。
 - artifact edge 自动提供 flow dependency，原因是数据依赖本身已经表达执行顺序，重复 flow edge 会制造两套 dependency 事实。
 - `RuntimeSessionExecutionAnchor` 是 runtime trace/delivery refs 的索引和 read model projection 来源，原因是运行时 trace 反查需要稳定索引，且不应随 frame revision surface 变化。
@@ -155,7 +155,7 @@ view_projection text
 
 | 条件 | 结果 |
 | --- | --- |
-| `LifecycleRun` constructor 创建 graphless / workflow_graph run | `context={}`、`orchestrations=[]`、`view_projection=None` |
+| `LifecycleRun` constructor 创建 plain / workflow_graph run | `context={}`、`orchestrations=[]`、`view_projection=None` |
 | `add_orchestration` 收到重复 `orchestration_id` | 返回 `false`，不修改 aggregate |
 | `replace_orchestration` 找不到 `orchestration_id` | 返回 `None` |
 | repository 读取无效 `orchestrations` JSON 文本 | 返回带 `lifecycle_runs.orchestrations` 上下文的 `DomainError` |
@@ -165,7 +165,7 @@ view_projection text
 ### 5. Good/Base/Bad Cases
 
 - Good: `LifecycleRunRepository` create/update/select 对 `context`、`orchestrations`、`view_projection` 做整体 roundtrip。
-- Base: graphless run 没有 orchestration instance，但仍能保存空 context 和空数组。
+- Base: plain run 没有 orchestration instance，但仍能保存空 context 和空数组。
 - Good: 同一 run 内 root workflow、append workflow、review flow 或 dynamic script 分别拥有独立 `orchestration_id`，从而共享 Lifecycle 容器但隔离 runtime node state。
 
 ### 6. Tests Required

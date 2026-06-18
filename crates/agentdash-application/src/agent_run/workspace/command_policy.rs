@@ -558,7 +558,7 @@ mod tests {
     use agentdash_domain::workflow::{AgentSource, LifecycleRun};
 
     fn test_context() -> (LifecycleRun, LifecycleAgent) {
-        let run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
         let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         (run, agent)
     }

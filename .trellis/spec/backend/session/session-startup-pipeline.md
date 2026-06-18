@@ -302,14 +302,14 @@ Payload contract:
 - frame transition 语义是 intent，不是 full `CapabilityState` projection
 - 写入 delivery outbox 前必须通过 `CapabilityDimensionRegistry::validate_transition`，并校验 delivery target 与 frame transition target 一致
 
-## Graphless RuntimeSession Dispatch
+## Plain RuntimeSession Dispatch
 
-普通 Agent 会话进入 `LifecycleRun(topology=graphless)` 过程归属模型，避免 RuntimeSession 与 lifecycle 控制面形成两套事实源。
+普通 Agent 会话进入 `LifecycleRun(topology=plain)` 过程归属模型，避免 RuntimeSession 与 lifecycle 控制面形成两套事实源。
 
 Contract:
 
 - `POST /sessions` 创建 project-scoped 业务会话，必须先校验调用者对 `project_id` 有 `Edit` 权限。
-- 新入口提交 graphless `ExecutionIntent(subject_ref=Project, agent_policy=create/reuse, runtime_policy=create_runtime_session)`，由 dispatch 创建或复用 `LifecycleRun`、`LifecycleAgent`、`AgentFrame`、`RuntimeSession` 和 `RuntimeSessionExecutionAnchor`。
+- 新入口提交 plain `ExecutionIntent(subject_ref=Project, agent_policy=create/reuse, runtime_policy=create_runtime_session)`，由 dispatch 创建或复用 `LifecycleRun`、`LifecycleAgent`、`AgentFrame`、`RuntimeSession` 和 `RuntimeSessionExecutionAnchor`。
 - Project 归属写入 `LifecycleSubjectAssociation`，runtime trace/delivery refs 写入 `RuntimeSessionExecutionAnchor`，原因是 Session shell 只承载消息流，业务控制面反查需要稳定索引。
 - 显式 workflow launch 会创建或复用 `LifecycleRun.orchestrations[]` 中的 `OrchestrationInstance`，并把 runtime session trace anchor 绑定到 `orchestration_id + node_path + attempt`。
 

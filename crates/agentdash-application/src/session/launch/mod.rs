@@ -17,7 +17,7 @@ pub(in crate::session) use ingestion::StreamIngestionAttacher;
 pub(in crate::session) use orchestrator::SessionLaunchOrchestrator;
 pub use plan::{
     ConnectorInputPlan, HookLaunchPlan, LaunchFollowUpSource, LaunchPlan, LaunchPlanInput,
-    LaunchPlanTrace, LaunchPlanTraceEntry, LaunchRestoreMode, LaunchSummary, LifecycleLaunchPlan,
+    LaunchPlanTrace, LaunchPlanTraceEntry, LaunchRestoreMode, LaunchSummary, PromptLaunchPathPlan,
     RestoreLaunchPlan, RuntimeCommandLaunchPlan, TerminalEffectPlan,
 };
 pub(in crate::session) use planner::{LaunchPlanner, LaunchPlannerInput};

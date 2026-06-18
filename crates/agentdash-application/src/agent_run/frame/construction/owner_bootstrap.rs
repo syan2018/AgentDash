@@ -11,8 +11,12 @@ use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
+use agentdash_spi::context::capability::CompanionAgentEntry;
 use agentdash_spi::{AuthIdentity, CapabilityScopeCtx, SkillDiscoveryProvider};
-use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, ToolCluster, Vfs};
+use agentdash_spi::{
+    CapabilityState, ContextFragment, MergeStrategy, SessionContextBundle, ToolCapability,
+    ToolCluster, Vfs,
+};
 use uuid::Uuid;
 
 use crate::agent_run::frame::builder::AgentFrameBuilder;
@@ -133,13 +137,13 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     /// `None` / `Some([])` 代表全集可见，非空列表代表 allowlist。
     pub visible_workspace_module_refs: Option<Vec<String>>,
     pub active_workflow: Option<ActiveWorkflowProjection>,
-    pub lifecycle: OwnerPromptLifecycle,
+    pub launch_path: OwnerPromptLaunchPath,
     pub audit_session_key: Option<String>,
     pub caller_agent_id: Option<Uuid>,
 }
 
-/// Owner bootstrap 的 prompt lifecycle 模式。
-pub(crate) enum OwnerPromptLifecycle {
+/// Owner bootstrap 的 prompt launch path。
+pub(crate) enum OwnerPromptLaunchPath {
     OwnerBootstrap,
     RepositoryRehydrate {
         prebuilt_continuation_bundle: Option<SessionContextBundle>,
@@ -149,7 +153,7 @@ pub(crate) enum OwnerPromptLifecycle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OwnerAuditLifecycle {
+enum OwnerAuditLaunchPath {
     Bootstrap,
     Rehydrate,
     Plain,
@@ -268,13 +272,16 @@ impl<'a> OwnerBootstrapComposer<'a> {
                 &spec,
                 vfs.as_ref(),
                 &runtime_mcp_servers,
+                &cap_output.companion.agents,
                 subject_context_contributions,
             )
             .await?;
-        let audit_lifecycle = owner_audit_lifecycle(&spec.lifecycle);
-        let (user_input, effective_bundle) = match spec.lifecycle {
-            OwnerPromptLifecycle::OwnerBootstrap => (spec.user_input.clone(), Some(context_bundle)),
-            OwnerPromptLifecycle::RepositoryRehydrate {
+        let audit_launch_path = owner_audit_launch_path(&spec.launch_path);
+        let (user_input, effective_bundle) = match spec.launch_path {
+            OwnerPromptLaunchPath::OwnerBootstrap => {
+                (spec.user_input.clone(), Some(context_bundle))
+            }
+            OwnerPromptLaunchPath::RepositoryRehydrate {
                 ref prebuilt_continuation_bundle,
                 include_owner_bundle,
             } => {
@@ -287,11 +294,11 @@ impl<'a> OwnerBootstrapComposer<'a> {
                 });
                 (spec.user_input.clone(), chosen_bundle)
             }
-            OwnerPromptLifecycle::Plain => (spec.user_input.clone(), None),
+            OwnerPromptLaunchPath::Plain => (spec.user_input.clone(), None),
         };
         if let (Some(bundle), Some(trigger)) = (
             effective_bundle.as_ref(),
-            resolve_owner_audit_trigger(audit_lifecycle, effective_bundle.is_some()),
+            resolve_owner_audit_trigger(audit_launch_path, effective_bundle.is_some()),
         ) {
             self.audit_bundle(bundle, spec.audit_session_key.as_deref(), trigger);
         }
@@ -550,6 +557,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
         spec: &OwnerBootstrapSpec<'_>,
         vfs: Option<&Vfs>,
         runtime_mcp_servers: &[agentdash_spi::RuntimeMcpServer],
+        companion_agents: &[CompanionAgentEntry],
         subject_context_contributions: Vec<Contribution>,
     ) -> Result<SessionContextBundle, String> {
         let runtime_mcp_servers = runtime_mcp_servers_to_summaries(runtime_mcp_servers);
@@ -583,6 +591,11 @@ impl<'a> OwnerBootstrapComposer<'a> {
         let mut contributions = Vec::with_capacity(2 + subject_context_contributions.len());
         contributions.push(owner_contribution);
         contributions.extend(subject_context_contributions);
+        if let Some(companion_contribution) =
+            build_companion_agents_context_contribution(companion_agents)
+        {
+            contributions.push(companion_contribution);
+        }
         contributions.push(session_plan_contribution);
 
         Ok(build_session_context_bundle(
@@ -608,26 +621,62 @@ impl<'a> OwnerBootstrapComposer<'a> {
     }
 }
 
-fn owner_audit_lifecycle(lifecycle: &OwnerPromptLifecycle) -> OwnerAuditLifecycle {
-    match lifecycle {
-        OwnerPromptLifecycle::OwnerBootstrap => OwnerAuditLifecycle::Bootstrap,
-        OwnerPromptLifecycle::RepositoryRehydrate { .. } => OwnerAuditLifecycle::Rehydrate,
-        OwnerPromptLifecycle::Plain => OwnerAuditLifecycle::Plain,
+fn build_companion_agents_context_contribution(
+    agents: &[CompanionAgentEntry],
+) -> Option<Contribution> {
+    if agents.is_empty() {
+        return None;
+    }
+
+    let mut lines = vec![
+        "## Companion Agents".to_string(),
+        "可通过 `companion_request` 派发以下协作 Agent；调用时使用 `payload.agent_key` 填写 agent_key。"
+            .to_string(),
+    ];
+    for agent in agents {
+        let display = agent.display_name.trim();
+        let display_suffix = if display.is_empty() || display.eq_ignore_ascii_case(&agent.name) {
+            String::new()
+        } else {
+            format!("; display_name: {}", display)
+        };
+        lines.push(format!(
+            "- agent_key: `{}`; executor: `{}`{}",
+            agent.name, agent.executor, display_suffix
+        ));
+    }
+
+    Some(Contribution::fragments_only(vec![ContextFragment {
+        slot: "companion_agents".to_string(),
+        label: "available_companion_agents".to_string(),
+        order: 60,
+        strategy: MergeStrategy::Override,
+        scope: ContextFragment::default_scope(),
+        source: "capability:companion".to_string(),
+        content: lines.join("\n"),
+    }]))
+}
+
+fn owner_audit_launch_path(launch_path: &OwnerPromptLaunchPath) -> OwnerAuditLaunchPath {
+    match launch_path {
+        OwnerPromptLaunchPath::OwnerBootstrap => OwnerAuditLaunchPath::Bootstrap,
+        OwnerPromptLaunchPath::RepositoryRehydrate { .. } => OwnerAuditLaunchPath::Rehydrate,
+        OwnerPromptLaunchPath::Plain => OwnerAuditLaunchPath::Plain,
     }
 }
 
 fn resolve_owner_audit_trigger(
-    lifecycle: OwnerAuditLifecycle,
+    launch_path: OwnerAuditLaunchPath,
     has_effective_bundle: bool,
 ) -> Option<AuditTrigger> {
     if !has_effective_bundle {
         return None;
     }
 
-    match lifecycle {
-        OwnerAuditLifecycle::Bootstrap => Some(AuditTrigger::SessionBootstrap),
-        OwnerAuditLifecycle::Rehydrate => Some(AuditTrigger::ComposerRebuild),
-        OwnerAuditLifecycle::Plain => None,
+    match launch_path {
+        OwnerAuditLaunchPath::Bootstrap => Some(AuditTrigger::SessionBootstrap),
+        OwnerAuditLaunchPath::Rehydrate => Some(AuditTrigger::ComposerRebuild),
+        OwnerAuditLaunchPath::Plain => None,
     }
 }
 
@@ -930,6 +979,32 @@ mod tests {
     }
 
     #[test]
+    fn companion_agents_context_contribution_renders_agent_key_roster() {
+        let agents = vec![CompanionAgentEntry {
+            name: "reviewer".to_string(),
+            executor: "pi_agent".to_string(),
+            display_name: "Review Agent".to_string(),
+        }];
+
+        let contribution =
+            build_companion_agents_context_contribution(&agents).expect("companion contribution");
+
+        assert_eq!(contribution.fragments.len(), 1);
+        let fragment = &contribution.fragments[0];
+        assert_eq!(fragment.slot, "companion_agents");
+        assert_eq!(fragment.label, "available_companion_agents");
+        assert_eq!(fragment.source, "capability:companion");
+        assert_eq!(fragment.strategy, MergeStrategy::Override);
+        assert!(fragment.content.contains("agent_key: `reviewer`"));
+        assert!(fragment.content.contains("display_name: Review Agent"));
+    }
+
+    #[test]
+    fn companion_agents_context_contribution_skips_empty_roster() {
+        assert!(build_companion_agents_context_contribution(&[]).is_none());
+    }
+
+    #[test]
     fn owner_bootstrap_mcp_projection_grants_agent_preset_without_directive() {
         let agent_server = runtime_mcp_server("code_analyzer", "http://agent/mcp");
         let mut capability_state = CapabilityState::default();
@@ -1036,11 +1111,11 @@ mod tests {
     #[test]
     fn owner_bootstrap_audit_trigger_requires_effective_bundle() {
         assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLifecycle::Bootstrap, true),
+            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Bootstrap, true),
             Some(AuditTrigger::SessionBootstrap),
         );
         assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLifecycle::Bootstrap, false),
+            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Bootstrap, false),
             None,
         );
     }
@@ -1048,23 +1123,23 @@ mod tests {
     #[test]
     fn owner_rehydrate_audit_trigger_maps_to_composer_rebuild() {
         assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLifecycle::Rehydrate, true),
+            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Rehydrate, true),
             Some(AuditTrigger::ComposerRebuild),
         );
         assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLifecycle::Rehydrate, false),
+            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Rehydrate, false),
             None,
         );
     }
 
     #[test]
-    fn owner_plain_lifecycle_never_emits_owner_audit() {
+    fn owner_plain_launch_path_never_emits_owner_audit() {
         assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLifecycle::Plain, true),
+            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Plain, true),
             None,
         );
         assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLifecycle::Plain, false),
+            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Plain, false),
             None,
         );
     }

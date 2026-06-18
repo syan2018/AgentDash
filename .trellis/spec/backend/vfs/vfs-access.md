@@ -213,7 +213,7 @@ Provider `agent_run_session` 路径：
 
 `agent_run_session` mount 的 path set 收口在当前 delivery session 证据面与 anchor node evidence。历史 run inventory 属于独立资源入口，因为 AgentRun workspace 的 lifecycle mount 需要表达当前 delivery session 的执行证据，而不是数据库层 run inventory。
 AgentRun resource surface 从 frame typed VFS 叠加 session-scoped lifecycle mount 时，需要保留同 Project
-已有 lifecycle mount 上的 SkillAsset projection metadata；这样 graphless ProjectAgent、plain companion
+已有 lifecycle mount 上的 SkillAsset projection metadata；这样 plain ProjectAgent、plain companion
 child、workflow node 的 workspace browser 和执行器 baseline 能看到同一组 builtin skill 文件。
 
 ## Lifecycle Runtime Mount

@@ -429,8 +429,8 @@ pub async fn list_session_events(
 mod tests {
     use super::*;
     use agentdash_application::session::{
-        ExecutionStatus, RuntimeTraceLaunchState, SessionPromptLifecycle,
-        SessionRepositoryRehydrateMode, TitleSource, resolve_session_prompt_lifecycle,
+        ExecutionStatus, PromptLaunchPath, RuntimeTraceLaunchState, SessionRepositoryRehydrateMode,
+        TitleSource, resolve_prompt_launch_path,
     };
 
     fn test_meta(id: &str, event_seq: u64, executor_session_id: Option<&str>) -> SessionMeta {
@@ -461,46 +461,42 @@ mod tests {
     }
 
     #[test]
-    fn session_prompt_lifecycle_kind_marks_pending_as_owner_bootstrap() {
+    fn prompt_launch_path_marks_pending_as_owner_bootstrap() {
         let meta = test_meta("sess-1", 0, None);
         assert_eq!(
-            resolve_session_prompt_lifecycle(&trace_state(&meta), false, false, true),
-            SessionPromptLifecycle::OwnerBootstrap
+            resolve_prompt_launch_path(&trace_state(&meta), false, false, true),
+            PromptLaunchPath::OwnerBootstrap
         );
     }
 
     #[test]
-    fn session_prompt_lifecycle_kind_requires_repository_rehydrate_after_cold_restart() {
+    fn prompt_launch_path_requires_repository_rehydrate_after_cold_restart() {
         let meta = test_meta("sess-2", 12, None);
         assert_eq!(
-            resolve_session_prompt_lifecycle(&trace_state(&meta), false, false, false),
-            SessionPromptLifecycle::RepositoryRehydrate(
-                SessionRepositoryRehydrateMode::SystemContext,
-            )
+            resolve_prompt_launch_path(&trace_state(&meta), false, false, false),
+            PromptLaunchPath::RepositoryRehydrate(SessionRepositoryRehydrateMode::SystemContext,)
         );
         assert_eq!(
-            resolve_session_prompt_lifecycle(&trace_state(&meta), true, false, false),
-            SessionPromptLifecycle::Plain
+            resolve_prompt_launch_path(&trace_state(&meta), true, false, false),
+            PromptLaunchPath::Plain
         );
     }
 
     #[test]
-    fn session_prompt_lifecycle_prefers_executor_follow_up_when_available() {
+    fn prompt_launch_path_prefers_executor_follow_up_when_available() {
         let meta = test_meta("sess-3", 5, Some("exec-1"));
         assert_eq!(
-            resolve_session_prompt_lifecycle(&trace_state(&meta), false, true, false),
-            SessionPromptLifecycle::Plain
+            resolve_prompt_launch_path(&trace_state(&meta), false, true, false),
+            PromptLaunchPath::Plain
         );
     }
 
     #[test]
-    fn session_prompt_lifecycle_uses_executor_state_restore_when_supported() {
+    fn prompt_launch_path_uses_executor_state_restore_when_supported() {
         let meta = test_meta("sess-4", 7, None);
         assert_eq!(
-            resolve_session_prompt_lifecycle(&trace_state(&meta), false, true, false),
-            SessionPromptLifecycle::RepositoryRehydrate(
-                SessionRepositoryRehydrateMode::ExecutorState,
-            )
+            resolve_prompt_launch_path(&trace_state(&meta), false, true, false),
+            PromptLaunchPath::RepositoryRehydrate(SessionRepositoryRehydrateMode::ExecutorState,)
         );
     }
 }

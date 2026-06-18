@@ -31,9 +31,7 @@ use crate::session::assembler::CompanionParentFactsProvider;
 use crate::session::capability_state::replay_runtime_capability_transitions;
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::runtime_commands::RuntimeCommandRecord;
-use crate::session::types::{
-    SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
-};
+use crate::session::types::{PromptLaunchPath, SessionRepositoryRehydrateMode, UserPromptInput};
 use crate::session::{
     AssemblyLaunchExtras, LaunchCommand, SessionRequestAssembler, TerminalHookEffectBinding,
 };
@@ -71,7 +69,7 @@ pub struct FrameConstructionDeps {
 }
 
 pub(crate) use owner_bootstrap::{
-    AgentLevelMcp, OwnerBootstrapComposer, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
+    AgentLevelMcp, OwnerBootstrapComposer, OwnerBootstrapSpec, OwnerPromptLaunchPath, OwnerScope,
 };
 
 impl FrameConstructionService {
@@ -184,18 +182,18 @@ impl FrameConstructionService {
         .with_skill_discovery(&self.extra_skill_dirs, &self.skill_discovery_providers)
     }
 
-    pub(crate) fn prompt_lifecycle(
+    pub(crate) fn prompt_launch_path(
         &self,
         executor_config: Option<&AgentConfig>,
         input: &SessionConstructionProviderInput,
-    ) -> SessionPromptLifecycle {
+    ) -> PromptLaunchPath {
         let supports_repository_restore = executor_config
             .map(|config| {
                 self.connector
                     .supports_repository_restore(config.executor.as_str())
             })
             .unwrap_or(false);
-        crate::session::types::resolve_session_prompt_lifecycle(
+        crate::session::types::resolve_prompt_launch_path(
             &input.runtime_trace_state,
             input.had_existing_runtime,
             supports_repository_restore,
@@ -246,22 +244,22 @@ pub(crate) fn frame_surface_ready(frame: &AgentFrame) -> bool {
             .unwrap_or(false)
 }
 
-pub(crate) fn owner_prompt_lifecycle(lifecycle: SessionPromptLifecycle) -> OwnerPromptLifecycle {
-    match lifecycle {
-        SessionPromptLifecycle::OwnerBootstrap => OwnerPromptLifecycle::OwnerBootstrap,
-        SessionPromptLifecycle::RepositoryRehydrate(
-            SessionRepositoryRehydrateMode::SystemContext,
-        ) => OwnerPromptLifecycle::RepositoryRehydrate {
-            prebuilt_continuation_bundle: None,
-            include_owner_bundle: false,
-        },
-        SessionPromptLifecycle::RepositoryRehydrate(
-            SessionRepositoryRehydrateMode::ExecutorState,
-        ) => OwnerPromptLifecycle::RepositoryRehydrate {
-            prebuilt_continuation_bundle: None,
-            include_owner_bundle: true,
-        },
-        SessionPromptLifecycle::Plain => OwnerPromptLifecycle::Plain,
+pub(crate) fn owner_prompt_launch_path(launch_path: PromptLaunchPath) -> OwnerPromptLaunchPath {
+    match launch_path {
+        PromptLaunchPath::OwnerBootstrap => OwnerPromptLaunchPath::OwnerBootstrap,
+        PromptLaunchPath::RepositoryRehydrate(SessionRepositoryRehydrateMode::SystemContext) => {
+            OwnerPromptLaunchPath::RepositoryRehydrate {
+                prebuilt_continuation_bundle: None,
+                include_owner_bundle: false,
+            }
+        }
+        PromptLaunchPath::RepositoryRehydrate(SessionRepositoryRehydrateMode::ExecutorState) => {
+            OwnerPromptLaunchPath::RepositoryRehydrate {
+                prebuilt_continuation_bundle: None,
+                include_owner_bundle: true,
+            }
+        }
+        PromptLaunchPath::Plain => OwnerPromptLaunchPath::Plain,
     }
 }
 

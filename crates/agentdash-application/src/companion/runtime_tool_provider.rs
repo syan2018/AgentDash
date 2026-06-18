@@ -55,6 +55,7 @@ impl RuntimeToolProvider for CollaborationRuntimeToolProvider {
                 self.session_services_handle.clone(),
                 companion_tool_context.clone(),
                 context.session.executor_config.clone(),
+                flow.companion.agents.clone(),
             )));
         }
         if flow.is_capability_tool_enabled(

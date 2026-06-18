@@ -865,7 +865,7 @@ async fn seed_refreshed_agent_run_for_command_test(
         .await
         .expect("anchor lookup should succeed")
         .expect("session should have anchor");
-    let mut run = LifecycleRun::new_graphless(uuid::Uuid::new_v4());
+    let mut run = LifecycleRun::new_plain(uuid::Uuid::new_v4());
     run.id = anchor.run_id;
     run_repo.create(&run).await.expect("seed lifecycle run");
 

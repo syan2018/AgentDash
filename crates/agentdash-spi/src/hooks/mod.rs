@@ -343,6 +343,16 @@ pub enum ContextFrameSection {
         #[serde(default)]
         changed_skills: Vec<RuntimeSkillEntry>,
     },
+    CompanionAgentRosterDelta {
+        #[serde(default)]
+        added_agents: Vec<RuntimeCompanionAgentEntry>,
+        #[serde(default)]
+        removed_agent_keys: Vec<String>,
+        #[serde(default)]
+        changed_agents: Vec<RuntimeCompanionAgentEntry>,
+        #[serde(default)]
+        effective_agents: Vec<RuntimeCompanionAgentEntry>,
+    },
     HookInjection {
         title: String,
         summary: String,
@@ -484,6 +494,16 @@ pub struct RuntimeSkillEntry {
     pub exposure: crate::platform::skill_discovery::SkillContextExposure,
     #[serde(default)]
     pub disable_model_invocation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeCompanionAgentEntry {
+    pub agent_key: String,
+    pub executor: String,
+    pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_usage_kind: Option<String>,
 }

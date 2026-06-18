@@ -12,6 +12,7 @@ use agentdash_domain::workflow::{
 };
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
+use agentdash_spi::context::capability::CompanionAgentEntry;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::hooks::{HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery};
 use agentdash_spi::{
@@ -220,6 +221,7 @@ pub struct CompanionRequestTool {
     session_services_handle: SharedSessionToolServicesHandle,
     current_executor_config: AgentConfig,
     tool_context: CompanionToolContext,
+    companion_agents: Vec<CompanionAgentEntry>,
 }
 
 impl CompanionRequestTool {
@@ -229,6 +231,7 @@ impl CompanionRequestTool {
         session_services_handle: SharedSessionToolServicesHandle,
         tool_context: CompanionToolContext,
         current_executor_config: AgentConfig,
+        companion_agents: Vec<CompanionAgentEntry>,
     ) -> Self {
         Self {
             project_agent_repo,
@@ -236,6 +239,7 @@ impl CompanionRequestTool {
             session_services_handle,
             current_executor_config,
             tool_context,
+            companion_agents,
         }
     }
 }
@@ -357,9 +361,21 @@ impl CompanionRequestTool {
             .and_then(|v| v.as_u64())
             .map(|v| v as usize);
 
+        let current_session_id = self
+            .tool_context
+            .require_delivery_runtime_session_id("派发 companion agent")?
+            .to_string();
+        let anchor = self
+            .tool_context
+            .require_lifecycle_anchor("派发 companion agent", &self.repos)
+            .await?;
+        let project_id = anchor.project_id;
+        let parent_run_id = anchor.run_id;
+        let parent_agent_id = anchor.agent_id;
+        let parent_frame_id = anchor.frame_id;
+
         let companion_executor_config = if let Some(key) = agent_key {
-            self.resolve_companion_agent_config(hook_runtime.as_ref(), key)
-                .await?
+            self.resolve_companion_agent_config(project_id, key).await?
         } else {
             self.current_executor_config.clone()
         };
@@ -399,18 +415,6 @@ impl CompanionRequestTool {
         }
 
         // ─── 构建 dispatch plan（用于 context slice / prompt 生成） ──────
-        let current_session_id = self
-            .tool_context
-            .require_delivery_runtime_session_id("派发 companion agent")?
-            .to_string();
-        let anchor = self
-            .tool_context
-            .require_lifecycle_anchor("派发 companion agent", &self.repos)
-            .await?;
-        let project_id = anchor.project_id;
-        let parent_run_id = anchor.run_id;
-        let parent_agent_id = anchor.agent_id;
-        let parent_frame_id = anchor.frame_id;
         let task_context = if let Some(task_id) = requested_task_id {
             Some(load_companion_task_context(&self.repos, parent_run_id, task_id).await?)
         } else {
@@ -1071,40 +1075,56 @@ impl CompanionRequestTool {
 
     async fn resolve_companion_agent_config(
         &self,
-        hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
+        project_id: Uuid,
         agent_name: &str,
     ) -> Result<AgentConfig, AgentToolError> {
-        let snapshot = hook_runtime.snapshot();
-        let project_id = snapshot
-            .run_context
-            .as_ref()
-            .map(|ctx| ctx.project_id)
-            .ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "无法从当前 session 确定 project_id，无法解析 agent_key".to_string(),
-                )
-            })?;
-
-        let agents = self
-            .project_agent_repo
-            .list_by_project(project_id)
-            .await
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
-
-        for agent in &agents {
-            if agent.name.eq_ignore_ascii_case(agent_name) {
-                let preset = agent
-                    .preset_config()
-                    .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-                return Ok(preset.to_agent_config(&agent.agent_type));
-            }
+        let requested = agent_name.trim();
+        if requested.is_empty() {
+            return Err(AgentToolError::InvalidArguments(
+                "payload.agent_key 不能为空".to_string(),
+            ));
         }
 
-        let available: Vec<String> = agents.into_iter().map(|agent| agent.name).collect();
-        Err(AgentToolError::InvalidArguments(format!(
-            "当前项目中未找到名为 `{agent_name}` 的 agent。可用 agent: [{}]",
-            available.join(", ")
-        )))
+        let Some(entry) = self
+            .companion_agents
+            .iter()
+            .find(|agent| agent.name.eq_ignore_ascii_case(requested))
+        else {
+            let available = self
+                .companion_agents
+                .iter()
+                .map(|agent| {
+                    if agent.display_name.trim().is_empty()
+                        || agent.display_name.eq_ignore_ascii_case(&agent.name)
+                    {
+                        agent.name.clone()
+                    } else {
+                        format!("{} ({})", agent.name, agent.display_name)
+                    }
+                })
+                .collect::<Vec<_>>();
+            return Err(AgentToolError::InvalidArguments(format!(
+                "当前 session 不可调用 agent_key=`{requested}` 的 companion agent。可用 agent_key: [{}]",
+                available.join(", ")
+            )));
+        };
+
+        let agent = self
+            .project_agent_repo
+            .get_by_project_and_name(project_id, &entry.name)
+            .await
+            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed(format!(
+                    "frame 中声明的 companion agent `{}` 在当前 Project 中不存在",
+                    entry.name
+                ))
+            })?;
+
+        let preset = agent
+            .preset_config()
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        Ok(preset.to_agent_config(&agent.agent_type))
     }
 }
 
@@ -1518,7 +1538,9 @@ fn companion_request_payload_schema(_: &mut schemars::SchemaGenerator) -> schema
                         "type": "string",
                         "enum": ["suggestion", "follow_up_required", "blocking_review"]
                     },
-                    "agent_key": { "type": "string" },
+                    "agent_key": {
+                        "type": "string"
+                    },
                     "max_fragments": { "type": "integer", "minimum": 1 },
                     "max_constraints": { "type": "integer", "minimum": 1 }
                 }

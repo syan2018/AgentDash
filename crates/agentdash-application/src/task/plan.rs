@@ -622,7 +622,7 @@ mod tests {
     }
 
     fn run(project_id: Uuid) -> LifecycleRun {
-        LifecycleRun::new_graphless(project_id)
+        LifecycleRun::new_plain(project_id)
     }
 
     #[tokio::test]

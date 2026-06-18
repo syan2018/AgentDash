@@ -118,11 +118,11 @@ pub enum SessionRepositoryRehydrateMode {
     ExecutorState,
 }
 
-/// Session prompt 的生命周期阶段判定结果。
+/// 单次 prompt launch 的启动路径判定结果。
 ///
 /// 决定了 prompt pipeline 在发起 connector.prompt 前需要执行哪些前置准备。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionPromptLifecycle {
+pub enum PromptLaunchPath {
     /// 普通对话轮：无需额外上下文准备（首轮 / 已有 live runtime / 有 executor follow-up）。
     Plain,
     /// Owner 首轮 bootstrap：session 尚未完成 owner 初始化（`bootstrap_state == Pending`）。
@@ -156,7 +156,7 @@ impl From<&SessionMeta> for RuntimeTraceLaunchState {
     }
 }
 
-/// 根据 runtime trace launch state + LifecycleAgent bootstrap 状态判定 prompt 应走哪种生命周期路径。
+/// 根据 runtime trace launch state + LifecycleAgent bootstrap 状态判定 prompt 应走哪种启动路径。
 ///
 /// 判定优先级：
 /// 1. Agent bootstrap 未完成 → **OwnerBootstrap**
@@ -165,15 +165,15 @@ impl From<&SessionMeta> for RuntimeTraceLaunchState {
 ///
 /// `agent_needs_bootstrap` 来自 `LifecycleAgent.needs_bootstrap()`，取代原
 /// `SessionMeta.bootstrap_state` 的判断。
-pub fn resolve_session_prompt_lifecycle(
+pub fn resolve_prompt_launch_path(
     runtime_trace_state: &RuntimeTraceLaunchState,
     has_live_executor_session: bool,
     supports_repository_restore: bool,
     agent_needs_bootstrap: bool,
-) -> SessionPromptLifecycle {
+) -> PromptLaunchPath {
     // P1: Agent 未完成首轮 bootstrap
     if agent_needs_bootstrap {
-        return SessionPromptLifecycle::OwnerBootstrap;
+        return PromptLaunchPath::OwnerBootstrap;
     }
 
     // P2: 冷启动恢复（三个条件同时满足）：
@@ -184,7 +184,7 @@ pub fn resolve_session_prompt_lifecycle(
         && runtime_trace_state.last_event_seq > 0
         && !runtime_trace_state.has_executor_follow_up()
     {
-        return SessionPromptLifecycle::RepositoryRehydrate(if supports_repository_restore {
+        return PromptLaunchPath::RepositoryRehydrate(if supports_repository_restore {
             SessionRepositoryRehydrateMode::ExecutorState
         } else {
             SessionRepositoryRehydrateMode::SystemContext
@@ -192,7 +192,7 @@ pub fn resolve_session_prompt_lifecycle(
     }
 
     // P3: 默认 — 普通对话轮
-    SessionPromptLifecycle::Plain
+    PromptLaunchPath::Plain
 }
 
 #[derive(Debug, Clone)]

@@ -18,9 +18,8 @@ use crate::session::mailbox_delegate::AgentRunMailboxRuntimeDelegate;
 use crate::session::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
-    BackendSelectionInput, BackendSelectionInputMode, HookSnapshotReloadTrigger,
-    RuntimeTraceLaunchState, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
-    resolve_session_prompt_lifecycle,
+    BackendSelectionInput, BackendSelectionInputMode, HookSnapshotReloadTrigger, PromptLaunchPath,
+    RuntimeTraceLaunchState, SessionRepositoryRehydrateMode, resolve_prompt_launch_path,
 };
 
 pub(in crate::session) struct LaunchPlanner<'a> {
@@ -100,18 +99,18 @@ impl<'a> LaunchPlanner<'a> {
             .deps
             .connector
             .supports_repository_restore(executor_config.executor.as_str());
-        let prompt_lifecycle = resolve_session_prompt_lifecycle(
+        let prompt_launch_path = resolve_prompt_launch_path(
             &input.runtime_trace_state,
             input.had_existing_runtime,
             supports_repository_restore,
             input.agent_needs_bootstrap,
         );
-        let hook_snapshot_reload =
-            if matches!(prompt_lifecycle, SessionPromptLifecycle::OwnerBootstrap) {
-                HookSnapshotReloadTrigger::Reload
-            } else {
-                HookSnapshotReloadTrigger::None
-            };
+        let hook_snapshot_reload = if matches!(prompt_launch_path, PromptLaunchPath::OwnerBootstrap)
+        {
+            HookSnapshotReloadTrigger::Reload
+        } else {
+            HookSnapshotReloadTrigger::None
+        };
         let is_owner_bootstrap = hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
         let hook_runtime = match self
             .deps
@@ -166,17 +165,17 @@ impl<'a> LaunchPlanner<'a> {
             )) as DynAgentRuntimeDelegate),
             None => hook_runtime_delegate,
         };
-        let restore_mode = match prompt_lifecycle {
-            SessionPromptLifecycle::RepositoryRehydrate(
+        let restore_mode = match prompt_launch_path {
+            PromptLaunchPath::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::SystemContext,
             ) => LaunchRestoreMode::SystemContext,
-            SessionPromptLifecycle::RepositoryRehydrate(
+            PromptLaunchPath::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::ExecutorState,
             ) => LaunchRestoreMode::ExecutorState,
             _ => LaunchRestoreMode::None,
         };
-        let restored_session_state = match prompt_lifecycle {
-            SessionPromptLifecycle::RepositoryRehydrate(
+        let restored_session_state = match prompt_launch_path {
+            PromptLaunchPath::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::ExecutorState,
             ) => {
                 let transcript = self
@@ -241,7 +240,7 @@ impl<'a> LaunchPlanner<'a> {
             launch_envelope,
             session_id: sid,
             turn_id: input.turn_id.to_string(),
-            lifecycle: prompt_lifecycle,
+            launch_path: prompt_launch_path,
             restore_mode,
             hook_snapshot_reload,
             hook_snapshot_contribution,

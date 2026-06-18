@@ -449,7 +449,7 @@ mod tests {
     async fn root_selector_filters_plan_tasks_without_runtime_status() {
         let lifecycle_repo = InMemoryLifecycleRunRepo::default();
         let association_repo = InMemoryAssociationRepo::default();
-        let mut run = LifecycleRun::new_graphless(Uuid::new_v4());
+        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
         let first = run
             .create_task(agentdash_domain::workflow::LifecycleTaskPlanItemDraft::new(
                 "Fanout candidate",
@@ -483,7 +483,7 @@ mod tests {
         let association_repo = InMemoryAssociationRepo::default();
         let project_id = Uuid::new_v4();
         let story_id = Uuid::new_v4();
-        let mut run = LifecycleRun::new_graphless(project_id);
+        let mut run = LifecycleRun::new_plain(project_id);
         let task = run
             .create_task(agentdash_domain::workflow::LifecycleTaskPlanItemDraft::new(
                 "Story visible",
@@ -529,7 +529,7 @@ mod tests {
             .expect("next agents")
             .push(assigned_agent_id);
         let project_id = Uuid::new_v4();
-        let mut run = LifecycleRun::new_graphless(project_id);
+        let mut run = LifecycleRun::new_plain(project_id);
         let mut draft =
             agentdash_domain::workflow::LifecycleTaskPlanItemDraft::new("Fanout this task");
         draft.status = TaskPlanStatus::Active;

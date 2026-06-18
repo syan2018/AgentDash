@@ -113,6 +113,59 @@ AgentFrame revision 的 MCP surface。
 
 所有工具发现入口必须调用 `capability_state.is_capability_tool_enabled()` 进行 capability-aware 判定。
 
+## Companion Agent Roster Surface
+
+Project Agent 使用 `collaboration` capability 调用 `companion_request(payload.agent_key)` 派发协作 Agent。
+Companion roster 是运行态能力状态，不是工具 schema 的一部分；工具 schema 只声明静态参数结构，
+可用 `agent_key` 列表必须由 frame context surface 承载。
+
+### Signatures
+
+```rust
+pub struct CompanionAgentEntry {
+    pub name: String,         // canonical agent_key
+    pub executor: String,
+    pub display_name: String,
+}
+
+pub struct CompanionDimension {
+    pub agents: Vec<CompanionAgentEntry>,
+}
+```
+
+```text
+companion_request(target="sub", payload.agent_key="<CompanionAgentEntry.name>", ...)
+```
+
+### Contracts
+
+- `CapabilityState.companion.agents` 是当前 frame 可调用 companion roster 的运行态事实源。
+- `CompanionAgentEntry.name` 是 `payload.agent_key` 的 canonical 值；`display_name` 只用于展示和模型可读辅助说明。
+- Owner bootstrap 必须把非空 roster 渲染为 slot=`companion_agents` 的 `ContextFragment`，并进入 assignment context frame，原因是初始 roster 需要随 frame bootstrapping 进入模型上下文。
+- runtime capability transition 必须把 `SetCompanionAgentRosterEffect` 产生的变化写入 `CapabilityStateDelta.companion_agents`，并渲染为 `companion_agent_roster_delta` ContextFrame section，原因是后续动态变更需要通过上下文 delta 通知 Agent。
+- `CompanionRequestTool` 解析 `agent_key` 时必须先在当前 frame roster 中匹配，再按 `project_id + name` 读取 ProjectAgent executor config。
+- `project_id` 来自当前 delivery runtime session 的 `RuntimeSessionExecutionAnchor`，原因是 hook snapshot 的 `run_context` 只表达 active workflow 投影，不是通用 owner 事实源。
+- `allowed_companions` 使用 `ProjectAgent.name` 匹配，产出的 roster 与模型可见 `agent_key` 保持同源。
+
+### Validation & Error Matrix
+
+| 条件 | 语义 |
+| --- | --- |
+| `collaboration` 未启用 | 不暴露 `companion_request` / `companion_respond` 工具 |
+| roster 为空 | 不注入 `companion_agents` fragment；带 `agent_key` 的调用返回可用列表为空 |
+| `payload.agent_key` 为空 | invalid arguments |
+| `payload.agent_key` 不在当前 frame roster | invalid arguments，并列出当前可用 `agent_key` |
+| frame roster 指向的 ProjectAgent 不存在 | tool execution failed，说明 frame surface 与 ProjectAgent 存储不一致 |
+| delivery runtime session 缺少 execution anchor | tool execution failed，拒绝派发 companion |
+
+### Tests Required
+
+- Capability/frame test asserts `CapabilityState.companion.agents` roundtrip through AgentFrame surface.
+- Owner bootstrap test asserts non-empty roster renders slot=`companion_agents` with `agent_key` lines.
+- Runtime context transition test asserts companion roster delta renders `companion_agent_roster_delta` section and model-visible `agent_key` lines.
+- Companion tool test asserts `run_context=None` + valid execution anchor still resolves `agent_key` from frame roster.
+- Frontend hint test or typecheck asserts UI examples use `preset_name`/canonical key, not display-only label.
+
 ## Workspace Module Agent Surface
 
 Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `workspace_module` capability 暴露。Canvas 仍保留自己的 domain、repository、VFS provider 与 panel runtime；`workspace_module` 只承担 Agent-facing lifecycle、operation schema、invoke routing 和 presentation facade。

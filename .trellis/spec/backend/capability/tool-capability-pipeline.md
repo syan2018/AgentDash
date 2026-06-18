@@ -141,17 +141,24 @@ companion_request(target="sub", payload.agent_key="<CompanionAgentEntry.name>", 
 
 - `CapabilityState.companion.agents` 是当前 frame 可调用 companion roster 的运行态事实源。
 - `CompanionAgentEntry.name` 是 `payload.agent_key` 的 canonical 值；`display_name` 只用于展示和模型可读辅助说明。
+- ProjectAgent 配置使用目标侧 `default_companion_enabled` 声明是否默认进入同项目 sibling roster；调用侧 `extra_companions` 只额外加入未默认开放的 sibling agents。
+- owner bootstrap 生成 roster 的规则是 default-enabled sibling agents ∪ caller extra companions - caller self，并按 canonical `ProjectAgent.name` 去重。这样做的原因是 companion 可用性由目标 Agent 自身声明，caller 配置只表达例外加法。
 - Owner bootstrap 必须把非空 roster 渲染为 slot=`companion_agents` 的 `ContextFragment`，并进入 assignment context frame，原因是初始 roster 需要随 frame bootstrapping 进入模型上下文。
 - runtime capability transition 必须把 `SetCompanionAgentRosterEffect` 产生的变化写入 `CapabilityStateDelta.companion_agents`，并渲染为 `companion_agent_roster_delta` ContextFrame section，原因是后续动态变更需要通过上下文 delta 通知 Agent。
-- `CompanionRequestTool` 解析 `agent_key` 时必须先在当前 frame roster 中匹配，再按 `project_id + name` 读取 ProjectAgent executor config。
+- `CompanionRequestTool` 解析 `agent_key` 时必须先在当前 frame roster 中匹配，再按 `project_id + name` 读取 selected ProjectAgent identity。
+- companion child launch source 必须携带 selected ProjectAgent id 和 canonical agent_key；child `LifecycleAgent.project_agent_id` 绑定 selected ProjectAgent。这样 frame construction、AgentRun 展示与实际 child executor/capability/VFS/skill facts 使用同一个身份来源。
+- companion child frame construction 在 parent slice 上叠加 selected ProjectAgent preset facts：executor config、capability directives、MCP presets、VFS grants、skill assets 与 companion return-channel baseline。
 - `project_id` 来自当前 delivery runtime session 的 `RuntimeSessionExecutionAnchor`，原因是 hook snapshot 的 `run_context` 只表达 active workflow 投影，不是通用 owner 事实源。
-- `allowed_companions` 使用 `ProjectAgent.name` 匹配，产出的 roster 与模型可见 `agent_key` 保持同源。
+- `AuthorityState.companion.dispatch` 是 roster 投影与 `companion_request(target="sub")` 执行 guard 的上游事实；`AuthorityState.companion.respond` 由 child lineage / gate runtime channel 提供，不依赖 parent dispatch authority。这样禁止发起新 sub companion 不会切断已启动 child 的 `companion_respond` 回流通道。
+- `AuthorityState.workspace_module.present`、`AuthorityState.dynamic_workflow.author` 是当前已接入 capability projection 的静态边界：workspace module 展示和 dynamic workflow authoring 默认只面向 main/root ProjectAgent。
+- background companion child 默认隐藏 human route；该 guard 当前由 companion tool 根据 child source fail-closed 执行，后续需要在 execution context 携带用户主动进入 companion run 的 provenance 后再统一纳入 Authority projection。
 
 ### Validation & Error Matrix
 
 | 条件 | 语义 |
 | --- | --- |
 | `collaboration` 未启用 | 不暴露 `companion_request` / `companion_respond` 工具 |
+| `companion.dispatch` 未开放 | roster 为空，不注入 `companion_agents` fragment，`target=sub` 执行拒绝 |
 | roster 为空 | 不注入 `companion_agents` fragment；带 `agent_key` 的调用返回可用列表为空 |
 | `payload.agent_key` 为空 | invalid arguments |
 | `payload.agent_key` 不在当前 frame roster | invalid arguments，并列出当前可用 `agent_key` |
@@ -164,6 +171,8 @@ companion_request(target="sub", payload.agent_key="<CompanionAgentEntry.name>", 
 - Owner bootstrap test asserts non-empty roster renders slot=`companion_agents` with `agent_key` lines.
 - Runtime context transition test asserts companion roster delta renders `companion_agent_roster_delta` section and model-visible `agent_key` lines.
 - Companion tool test asserts `run_context=None` + valid execution anchor still resolves `agent_key` from frame roster.
+- Roster test asserts default-enabled agents, caller `extra_companions`, self exclusion and duplicate de-duplication.
+- Companion launch test asserts selected `agent_key` binds child ProjectAgent identity and selected preset facts.
 - Frontend hint test or typecheck asserts UI examples use `preset_name`/canonical key, not display-only label.
 
 ## Workspace Module Agent Surface

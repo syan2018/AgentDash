@@ -34,7 +34,10 @@ use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::capability::load_available_presets;
+use crate::capability::{
+    AuthorityState, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
+    ContextContributions, McpCandidates, ToolContribution, load_available_presets,
+};
 use crate::companion::{
     skill_projection::project_companion_system_skill_to_activation, tools::CompanionSliceMode,
 };
@@ -55,7 +58,11 @@ use crate::runtime::McpServerSummary;
 use crate::session::assembly_builder::SessionAssemblyBuilder;
 #[cfg(test)]
 use crate::session::assembly_builder::slice_companion_bundle;
-use crate::vfs::VfsService;
+use crate::session::capability_projection::{
+    SessionCapabilityProjectionInput, derive_session_skill_baseline,
+};
+use crate::session::construction_planner::ResolvedProjectAgentContext;
+use crate::vfs::{VfsService, apply_agent_vfs_access_grants};
 use crate::workspace::BackendAvailability;
 
 // ═══════════════════════════════════════════════════════════════════
@@ -200,9 +207,31 @@ impl<'a> SessionRequestAssembler<'a> {
             slice_mode: spec.slice_mode,
             companion_executor_config: spec.companion_executor_config,
             dispatch_prompt: spec.dispatch_prompt,
+            selected_project_agent_id: spec.selected_project_agent_id,
+            selected_agent_key: spec.selected_agent_key.clone(),
+            selected_context: None,
         })?;
-        self.project_companion_system_to_agent_run_lifecycle(spec.child_session_id, &mut prepared)
+        let selected_context = self
+            .apply_selected_companion_project_agent(
+                &mut prepared,
+                spec.selected_project_agent_id,
+                spec.selected_agent_key.as_deref(),
+            )
             .await?;
+        let selected_skill_keys = selected_context
+            .as_ref()
+            .and_then(|context| context.preset_config.skill_asset_keys.clone())
+            .unwrap_or_default();
+        self.project_companion_system_to_agent_run_lifecycle(
+            spec.child_session_id,
+            &mut prepared,
+            selected_skill_keys,
+        )
+        .await?;
+        if let Some(context) = selected_context.as_ref() {
+            self.resolve_selected_companion_capabilities(&mut prepared, context, spec.slice_mode)
+                .await?;
+        }
         Ok(crate::session::assembly_builder::project_assembly_to_frame(
             frame_builder,
             prepared,
@@ -224,6 +253,12 @@ impl<'a> SessionRequestAssembler<'a> {
         let parent_facts = self
             .resolve_companion_parent_facts(spec.companion.parent_session_id)
             .await?;
+        let selected_context = self
+            .resolve_selected_companion_project_agent_context(
+                spec.companion.selected_project_agent_id,
+                spec.companion.selected_agent_key.as_deref(),
+            )
+            .await?;
         let prepared = compose_companion_with_workflow(
             self.repos,
             self.platform_config,
@@ -235,6 +270,9 @@ impl<'a> SessionRequestAssembler<'a> {
                     slice_mode: spec.companion.slice_mode,
                     companion_executor_config: spec.companion.companion_executor_config,
                     dispatch_prompt: spec.companion.dispatch_prompt,
+                    selected_project_agent_id: spec.companion.selected_project_agent_id,
+                    selected_agent_key: spec.companion.selected_agent_key.clone(),
+                    selected_context,
                 },
                 run: spec.run,
                 orchestration_id: spec.orchestration_id,
@@ -275,10 +313,65 @@ impl<'a> SessionRequestAssembler<'a> {
         })
     }
 
+    async fn apply_selected_companion_project_agent(
+        &self,
+        prepared: &mut SessionAssemblyBuilder,
+        selected_project_agent_id: Option<Uuid>,
+        selected_agent_key_snapshot: Option<&str>,
+    ) -> Result<Option<crate::session::construction_planner::ResolvedProjectAgentContext>, String>
+    {
+        let Some(context) = self
+            .resolve_selected_companion_project_agent_context(
+                selected_project_agent_id,
+                selected_agent_key_snapshot,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        if let Some(vfs) = prepared.vfs.as_mut() {
+            apply_agent_vfs_access_grants(
+                vfs,
+                Some(
+                    context
+                        .preset_config
+                        .vfs_access_grants
+                        .as_deref()
+                        .unwrap_or_default(),
+                ),
+            );
+        }
+        prepared.executor_config = Some(context.executor_config.clone());
+        Ok(Some(context))
+    }
+
+    async fn resolve_selected_companion_project_agent_context(
+        &self,
+        selected_project_agent_id: Option<Uuid>,
+        selected_agent_key_snapshot: Option<&str>,
+    ) -> Result<Option<ResolvedProjectAgentContext>, String> {
+        let Some(project_agent_id) = selected_project_agent_id else {
+            return Ok(None);
+        };
+        let agent = self
+            .repos
+            .project_agent_repo
+            .get_by_id(project_agent_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("selected companion ProjectAgent {project_agent_id} 不存在"))?;
+        let context =
+            crate::session::construction_planner::build_project_agent_context(self.repos, &agent)
+                .await?;
+        validate_selected_agent_key_snapshot(&context, selected_agent_key_snapshot)?;
+        Ok(Some(context))
+    }
+
     async fn project_companion_system_to_agent_run_lifecycle(
         &self,
         child_session_id: &str,
         prepared: &mut SessionAssemblyBuilder,
+        explicit_skill_asset_keys: Vec<String>,
     ) -> Result<(), String> {
         let Some(anchor) = self
             .repos
@@ -315,7 +408,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 }),
                 project_id: run.project_id,
                 mode: AgentRunLifecycleSurfaceMode::CompanionChildSurface,
-                explicit_skill_asset_keys: Vec::new(),
+                explicit_skill_asset_keys,
                 builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
                     BuiltinLifecycleSkill::CompanionSystem,
                 ]),
@@ -327,6 +420,74 @@ impl<'a> SessionRequestAssembler<'a> {
         if let Some(capability_state) = prepared.capability_state.as_mut() {
             capability_state.vfs.active = Some(vfs);
         }
+        Ok(())
+    }
+
+    async fn resolve_selected_companion_capabilities(
+        &self,
+        prepared: &mut SessionAssemblyBuilder,
+        context: &crate::session::construction_planner::ResolvedProjectAgentContext,
+        slice_mode: CompanionSliceMode,
+    ) -> Result<(), String> {
+        let active_vfs = prepared.vfs.as_ref();
+        let cap_input = CapabilityResolverInput {
+            owner_ctx: CapabilityScopeCtx::Project {
+                project_id: context.project_agent.project_id,
+            },
+            contributions: vec![ContextContributions {
+                source: ContextContributionSource::Agent,
+                tool: Some(ToolContribution {
+                    directives: context
+                        .preset_config
+                        .capability_directives
+                        .clone()
+                        .unwrap_or_default(),
+                    has_active_workflow: false,
+                }),
+                companion: None,
+            }],
+            mcp_candidates: McpCandidates {
+                presets: load_available_presets(self.repos, context.project_agent.project_id).await,
+            },
+            mcp_runtime_context: Some(crate::mcp_preset::McpRuntimeBindingContext {
+                vfs: active_vfs,
+            }),
+            capability_context: None,
+            authority_state: AuthorityState::companion_child(),
+        };
+        let mut capability_state =
+            CapabilityResolver::resolve_checked(&cap_input, self.platform_config)?;
+        capability_state = CapabilityResolver::apply_companion_slice(capability_state, slice_mode);
+
+        for preset in &context.preset_mcp_presets {
+            let server = crate::mcp_preset::resolve_preset_mcp_server(
+                preset,
+                Some(&crate::mcp_preset::McpRuntimeBindingContext { vfs: active_vfs }),
+            )
+            .map_err(|error| error.to_string())?;
+            capability_state
+                .tool
+                .capabilities
+                .insert(agentdash_spi::ToolCapability::custom_mcp(&server.name));
+            capability_state.tool.mcp_servers.push(server);
+        }
+        dedupe_runtime_mcp_servers(&mut capability_state.tool.mcp_servers);
+
+        if let Some(caps) = derive_session_skill_baseline(SessionCapabilityProjectionInput {
+            vfs_service: Some(self.vfs_service),
+            active_vfs,
+            identity: None,
+            extra_skill_dirs: self.extra_skill_dirs,
+            skill_discovery_providers: self.skill_discovery_providers,
+            diagnostics_label: "companion_selected_project_agent",
+        })
+        .await
+        {
+            capability_state.skill.skills = caps.skills;
+        }
+
+        prepared.mcp_servers = capability_state.tool.mcp_servers.clone();
+        prepared.capability_state = Some(capability_state);
         Ok(())
     }
 }
@@ -393,6 +554,8 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
             attempt: spec.attempt,
             lifecycle_key: spec.lifecycle_key,
             available_presets: load_available_presets(repos, spec.run.project_id).await,
+            authority_state: AuthorityState::main_project_agent(),
+            agent_tool_directives: Vec::new(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -629,6 +792,31 @@ pub(in crate::session) fn compose_companion(
         .build())
 }
 
+fn dedupe_runtime_mcp_servers(servers: &mut Vec<agentdash_spi::RuntimeMcpServer>) {
+    let mut seen = BTreeSet::<String>::new();
+    servers.retain(|server| seen.insert(server.name.clone()));
+}
+
+fn validate_selected_agent_key_snapshot(
+    context: &ResolvedProjectAgentContext,
+    selected_agent_key_snapshot: Option<&str>,
+) -> Result<(), String> {
+    let Some(snapshot) = selected_agent_key_snapshot
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let expected = context.project_agent.name.as_str();
+    if snapshot.eq_ignore_ascii_case(expected) {
+        return Ok(());
+    }
+    Err(format!(
+        "selected companion agent_key snapshot `{snapshot}` 与 ProjectAgent `{}` 的 canonical name `{expected}` 不一致",
+        context.project_agent.id
+    ))
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 5:其余 Spec 结构 + 辅助函数
 // ═══════════════════════════════════════════════════════════════════
@@ -656,6 +844,9 @@ pub struct CompanionSpec<'a> {
     pub slice_mode: CompanionSliceMode,
     pub companion_executor_config: AgentConfig,
     pub dispatch_prompt: String,
+    pub selected_project_agent_id: Option<Uuid>,
+    pub selected_agent_key: Option<String>,
+    pub selected_context: Option<ResolvedProjectAgentContext>,
 }
 
 pub struct CompanionParentSpec<'a> {
@@ -664,6 +855,8 @@ pub struct CompanionParentSpec<'a> {
     pub slice_mode: CompanionSliceMode,
     pub companion_executor_config: AgentConfig,
     pub dispatch_prompt: String,
+    pub selected_project_agent_id: Option<Uuid>,
+    pub selected_agent_key: Option<String>,
 }
 
 pub struct CompanionParentWorkflowSpec<'a> {
@@ -712,8 +905,22 @@ pub(in crate::session) async fn compose_companion_with_workflow(
     let comp = &spec.companion;
 
     // ── 1. Companion VFS slice 作为基础 ──
-    let slice =
+    let mut slice =
         build_companion_execution_slice(comp.parent_vfs, comp.parent_mcp_servers, comp.slice_mode)?;
+    if let Some(context) = comp.selected_context.as_ref()
+        && let Some(vfs) = slice.vfs.as_mut()
+    {
+        apply_agent_vfs_access_grants(
+            vfs,
+            Some(
+                context
+                    .preset_config
+                    .vfs_access_grants
+                    .as_deref()
+                    .unwrap_or_default(),
+            ),
+        );
+    }
 
     // ── 2. Workflow activity activation（产出 lifecycle mount + 能力 + MCP） ──
     let owner_ctx = CapabilityScopeCtx::Project { project_id };
@@ -739,6 +946,12 @@ pub(in crate::session) async fn compose_companion_with_workflow(
             attempt: spec.attempt,
             lifecycle_key: &spec.lifecycle.key,
             available_presets: load_available_presets(repos, project_id).await,
+            authority_state: AuthorityState::companion_child(),
+            agent_tool_directives: comp
+                .selected_context
+                .as_ref()
+                .and_then(|context| context.preset_config.capability_directives.clone())
+                .unwrap_or_default(),
             companion_slice_mode: Some(comp.slice_mode),
             baseline_override: None,
             tool_directives: &[],
@@ -770,7 +983,11 @@ pub(in crate::session) async fn compose_companion_with_workflow(
                     }),
                     project_id,
                     mode: AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
-                    explicit_skill_asset_keys: Vec::new(),
+                    explicit_skill_asset_keys: comp
+                        .selected_context
+                        .as_ref()
+                        .and_then(|context| context.preset_config.skill_asset_keys.clone())
+                        .unwrap_or_default(),
                     builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
                         BuiltinLifecycleSkill::CompanionSystem,
                     ]),
@@ -794,6 +1011,29 @@ pub(in crate::session) async fn compose_companion_with_workflow(
         project_companion_system_skill_to_activation(repos, project_id, &mut activation)
             .await
             .map_err(|error| error.to_string())?;
+    }
+    if let Some(context) = comp.selected_context.as_ref() {
+        let active_vfs = Some(&activation.lifecycle_vfs);
+        for preset in &context.preset_mcp_presets {
+            let server = crate::mcp_preset::resolve_preset_mcp_server(
+                preset,
+                Some(&crate::mcp_preset::McpRuntimeBindingContext { vfs: active_vfs }),
+            )
+            .map_err(|error| error.to_string())?;
+            activation
+                .capability_state
+                .tool
+                .capabilities
+                .insert(agentdash_spi::ToolCapability::custom_mcp(&server.name));
+            activation
+                .capability_state
+                .tool
+                .mcp_servers
+                .push(server.clone());
+            activation.mcp_servers.push(server);
+        }
+        dedupe_runtime_mcp_servers(&mut activation.capability_state.tool.mcp_servers);
+        dedupe_runtime_mcp_servers(&mut activation.mcp_servers);
     }
 
     // ── 3. 用 builder 组合 companion + workflow 两个层 ──
@@ -838,7 +1078,15 @@ pub(in crate::session) async fn compose_companion_with_workflow(
         .with_vfs(slice.vfs.ok_or_else(|| {
             "companion workflow compose 未产出 VFS，拒绝构造 child session".to_string()
         })?)
-        .apply_lifecycle_activation(&activation, Some(comp.companion_executor_config.clone()))
+        .apply_lifecycle_activation(
+            &activation,
+            Some(
+                comp.selected_context
+                    .as_ref()
+                    .map(|context| context.executor_config.clone())
+                    .unwrap_or_else(|| comp.companion_executor_config.clone()),
+            ),
+        )
         .append_mcp_servers(slice.mcp_servers)
         .with_optional_context_bundle(merged_bundle)
         .with_input(user_input)
@@ -854,6 +1102,8 @@ pub(in crate::session) async fn compose_companion_with_workflow(
 mod tests {
     use super::*;
     use crate::vfs::build_lifecycle_mount_with_ports;
+    use agentdash_domain::agent::ProjectAgent;
+    use agentdash_domain::common::AgentPresetConfig;
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
         AgentProcedureContract, DefinitionSource, InputPortDefinition, LifecycleNodeType,
@@ -909,6 +1159,32 @@ mod tests {
             });
         }
         bundle
+    }
+
+    fn selected_context_with_name(name: &str) -> ResolvedProjectAgentContext {
+        let project_id = Uuid::new_v4();
+        let project_agent = ProjectAgent::new(project_id, name, "PI_AGENT");
+        ResolvedProjectAgentContext {
+            key: project_agent.id.to_string(),
+            display_name: name.to_string(),
+            description: String::new(),
+            executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            preset_config: AgentPresetConfig::default(),
+            preset_name: Some(name.to_string()),
+            source: "test".to_string(),
+            preset_mcp_presets: Vec::new(),
+            project_agent,
+        }
+    }
+
+    #[test]
+    fn selected_agent_key_snapshot_must_match_project_agent_name() {
+        let context = selected_context_with_name("reviewer");
+
+        assert!(validate_selected_agent_key_snapshot(&context, Some("reviewer")).is_ok());
+        assert!(validate_selected_agent_key_snapshot(&context, Some("Reviewer")).is_ok());
+        assert!(validate_selected_agent_key_snapshot(&context, None).is_ok());
+        assert!(validate_selected_agent_key_snapshot(&context, Some("planner")).is_err());
     }
 
     fn slot_set(bundle: &agentdash_spi::SessionContextBundle) -> std::collections::HashSet<String> {

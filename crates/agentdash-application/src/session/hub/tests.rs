@@ -3685,7 +3685,11 @@ async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
                 .map(ToString::to_string);
             *self.captured_prompt.lock().await = text;
             self.captured_mcp_len.store(
-                input.command.local_relay_mcp_servers().len(),
+                input
+                    .command
+                    .local_relay_modifier()
+                    .map(|payload| payload.mcp_servers.len())
+                    .unwrap_or_default(),
                 Ordering::SeqCst,
             );
             Err(ConnectorError::InvalidConfig(

@@ -270,6 +270,8 @@ mod tests {
         ToolCapabilityDirective, WorkflowGraph, WorkflowGraphDraft, WorkflowGraphRepository,
     };
 
+    use crate::capability::AuthorityState;
+
     use super::*;
 
     const ENTRY_PROCEDURE_KEY: &str = "builtin_workflow_admin_plan";
@@ -792,6 +794,7 @@ mod tests {
                 mcp_candidates: Default::default(),
                 mcp_runtime_context: None,
                 capability_context: None,
+                authority_state: AuthorityState::main_project_agent(),
             },
             &platform,
         );

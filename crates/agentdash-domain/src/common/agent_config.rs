@@ -75,9 +75,12 @@ pub struct AgentPresetConfig {
     /// Project SkillAsset key 引用列表（如 `["research", "writer"]`）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_asset_keys: Option<Vec<String>>,
-    /// 允许此 Agent 调用的 companion agent 名称白名单。
+    /// 此 Agent 是否默认进入同项目其它 Agent 的 companion roster。
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub allowed_companions: Option<Vec<String>>,
+    pub default_companion_enabled: Option<bool>,
+    /// 调用侧额外加入的非默认 companion agent 名称。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_companions: Option<Vec<String>>,
     /// 此 Agent 可见的 Workspace Module ref 白名单（形如 `ext:{key}` / `canvas:{mount_id}`）。
     ///
     /// 事实源为 ProjectAgent 定义，frame construction 据此填充
@@ -115,7 +118,8 @@ impl AgentPresetConfig {
             mcp_preset_keys,
             vfs_access_grants,
             skill_asset_keys,
-            allowed_companions,
+            default_companion_enabled,
+            extra_companions,
             visible_workspace_module_refs,
         )
     }
@@ -218,6 +222,8 @@ mod tests {
             "description": "检查代码结构",
             "skill_asset_keys": ["research", "review"],
             "vfs_access_grants": [{ "mount_id": "brief", "capabilities": ["read", "list"] }],
+            "default_companion_enabled": true,
+            "extra_companions": ["deep-reviewer"],
             "capability_directives": [{ "add": "workflow_management" }]
         }))
         .expect("valid preset config");
@@ -230,6 +236,11 @@ mod tests {
         );
         assert_eq!(config.capability_directives.as_ref().map(Vec::len), Some(1));
         assert_eq!(config.vfs_access_grants.as_ref().map(Vec::len), Some(1));
+        assert_eq!(config.default_companion_enabled, Some(true));
+        assert_eq!(
+            config.extra_companions.as_deref(),
+            Some(["deep-reviewer".to_string()].as_slice())
+        );
     }
 
     #[test]

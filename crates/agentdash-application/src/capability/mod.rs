@@ -22,9 +22,10 @@ pub use notification::{
     build_capability_delta_markdown, capability_description, is_known_capability_key,
 };
 pub use resolver::{
-    AvailableMcpPresets, CapabilityContext, CapabilityResolver, CapabilityResolverInput,
-    CapabilityResolverOutput, CompanionContribution, ContextContributionSource,
-    ContextContributions, McpCandidates, ToolContribution,
+    AuthorityState, AvailableMcpPresets, CapabilityContext, CapabilityResolver,
+    CapabilityResolverInput, CapabilityResolverOutput, CompanionContribution,
+    ContextContributionSource, ContextContributions, McpCandidates, OperationAuthorityStatus,
+    ToolContribution,
 };
 pub use session_workflow_context::{
     SessionWorkflowOwner, SessionWorkflowRepos, resolve_session_workflow_context,

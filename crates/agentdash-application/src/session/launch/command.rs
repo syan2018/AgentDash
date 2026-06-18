@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use agentdash_spi::RuntimeMcpServer;
 
@@ -22,10 +22,21 @@ pub struct LaunchCommand {
     source: LaunchSource,
     follow_up_session_id: Option<String>,
     identity: Option<agentdash_spi::AuthIdentity>,
-    routine: Option<RoutineLaunchSource>,
-    companion: Option<CompanionLaunchSource>,
-    local_relay_mcp_servers: Vec<RuntimeMcpServer>,
-    local_relay_workspace_root: Option<PathBuf>,
+    modifiers: Vec<LaunchModifier>,
+}
+
+#[derive(Clone)]
+pub enum LaunchModifier {
+    Companion(CompanionLaunchSource),
+    Routine(RoutineLaunchSource),
+    LocalRelay(LocalRelayLaunchPayload),
+    HookAutoResume,
+}
+
+#[derive(Clone)]
+pub struct LocalRelayLaunchPayload {
+    pub mcp_servers: Vec<RuntimeMcpServer>,
+    pub workspace_root: PathBuf,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -41,10 +52,7 @@ impl LaunchCommand {
             source,
             follow_up_session_id: None,
             identity: None,
-            routine: None,
-            companion: None,
-            local_relay_mcp_servers: Vec::new(),
-            local_relay_workspace_root: None,
+            modifiers: Vec::new(),
         }
     }
 
@@ -61,20 +69,29 @@ impl LaunchCommand {
         self.identity.clone()
     }
 
-    pub fn companion_hint(&self) -> Option<CompanionLaunchSource> {
-        self.companion.clone()
+    pub fn companion_modifier(&self) -> Option<CompanionLaunchSource> {
+        self.modifiers.iter().find_map(|modifier| match modifier {
+            LaunchModifier::Companion(companion) => Some(companion.clone()),
+            _ => None,
+        })
     }
 
-    pub fn routine_hint(&self) -> Option<RoutineLaunchSource> {
-        self.routine.clone()
+    pub fn routine_modifier(&self) -> Option<RoutineLaunchSource> {
+        self.modifiers.iter().find_map(|modifier| match modifier {
+            LaunchModifier::Routine(routine) => Some(routine.clone()),
+            _ => None,
+        })
     }
 
-    pub fn local_relay_mcp_servers(&self) -> &[RuntimeMcpServer] {
-        &self.local_relay_mcp_servers
+    pub fn local_relay_modifier(&self) -> Option<&LocalRelayLaunchPayload> {
+        self.modifiers.iter().find_map(|modifier| match modifier {
+            LaunchModifier::LocalRelay(payload) => Some(payload),
+            _ => None,
+        })
     }
 
-    pub fn local_relay_workspace_root(&self) -> Option<&Path> {
-        self.local_relay_workspace_root.as_deref()
+    pub fn modifiers(&self) -> &[LaunchModifier] {
+        &self.modifiers
     }
 
     pub fn source(&self) -> LaunchSource {
@@ -105,14 +122,12 @@ impl LaunchCommand {
     fn command_with(
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
-        routine: Option<RoutineLaunchSource>,
-        companion: Option<CompanionLaunchSource>,
+        modifiers: Vec<LaunchModifier>,
         source: LaunchSource,
     ) -> Self {
         let mut command = Self::new(input, source);
         command.identity = identity;
-        command.routine = routine;
-        command.companion = companion;
+        command.modifiers = modifiers;
         command
     }
 
@@ -120,7 +135,7 @@ impl LaunchCommand {
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
     ) -> Self {
-        Self::command_with(input, identity, None, None, LaunchSource::HttpPrompt)
+        Self::command_with(input, identity, Vec::new(), LaunchSource::HttpPrompt)
     }
 
     pub fn lifecycle_agent_user_message_input(
@@ -130,14 +145,18 @@ impl LaunchCommand {
         Self::command_with(
             input,
             identity,
-            None,
-            None,
+            Vec::new(),
             LaunchSource::LifecycleAgentUserMessage,
         )
     }
 
     pub fn hook_auto_resume_input(input: UserPromptInput) -> Self {
-        Self::source_input(input, LaunchSource::HookAutoResume)
+        Self::command_with(
+            input,
+            None,
+            vec![LaunchModifier::HookAutoResume],
+            LaunchSource::HookAutoResume,
+        )
     }
 
     pub fn companion_parent_resume_input(input: UserPromptInput) -> Self {
@@ -151,8 +170,7 @@ impl LaunchCommand {
         Self::command_with(
             input,
             None,
-            None,
-            Some(companion),
+            vec![LaunchModifier::Companion(companion)],
             LaunchSource::CompanionDispatch,
         )
     }
@@ -169,8 +187,7 @@ impl LaunchCommand {
         Self::command_with(
             input,
             identity,
-            Some(routine),
-            None,
+            vec![LaunchModifier::Routine(routine)],
             LaunchSource::RoutineExecutor,
         )
     }
@@ -181,8 +198,117 @@ impl LaunchCommand {
         workspace_root: PathBuf,
     ) -> Self {
         let mut command = Self::new(input, LaunchSource::LocalRelayPrompt);
-        command.local_relay_mcp_servers = mcp_servers;
-        command.local_relay_workspace_root = Some(workspace_root);
         command
+            .modifiers
+            .push(LaunchModifier::LocalRelay(LocalRelayLaunchPayload {
+                mcp_servers,
+                workspace_root,
+            }));
+        command
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use agentdash_spi::{AgentConfig, CompanionSliceMode, McpTransportConfig};
+    use uuid::Uuid;
+
+    use super::{LaunchCommand, LaunchModifier, LaunchSource};
+    use crate::session::construction_provider::{CompanionLaunchSource, RoutineLaunchSource};
+    use crate::session::types::UserPromptInput;
+
+    #[test]
+    fn source_specific_facts_are_stored_as_modifiers() {
+        let mcp_server = agentdash_spi::RuntimeMcpServer {
+            name: "local-tools".to_string(),
+            transport: McpTransportConfig::Stdio {
+                command: "tool".to_string(),
+                args: Vec::new(),
+                env: Vec::new(),
+                cwd: None,
+            },
+            uses_relay: false,
+        };
+        let command = LaunchCommand::local_relay_prompt_input(
+            UserPromptInput::from_text("ping"),
+            vec![mcp_server.clone()],
+            PathBuf::from("/workspace"),
+        );
+
+        assert_eq!(command.source(), LaunchSource::LocalRelayPrompt);
+        let local_relay = command
+            .local_relay_modifier()
+            .expect("local relay modifier");
+        assert_eq!(local_relay.mcp_servers, vec![mcp_server]);
+        assert_eq!(
+            local_relay.workspace_root.as_path(),
+            std::path::Path::new("/workspace")
+        );
+        assert!(matches!(
+            command.modifiers().first(),
+            Some(LaunchModifier::LocalRelay(_))
+        ));
+    }
+
+    #[test]
+    fn companion_and_routine_constructors_push_typed_modifiers() {
+        let companion = CompanionLaunchSource {
+            parent_session_id: "parent-session".to_string(),
+            selected_project_agent_id: Some(Uuid::new_v4()),
+            selected_agent_key: Some("reviewer".to_string()),
+            slice_mode: CompanionSliceMode::Compact,
+            companion_executor_config: AgentConfig::new("codex".to_string()),
+            dispatch_prompt: "review this".to_string(),
+            workflow: None,
+        };
+        let companion_command = LaunchCommand::companion_dispatch_input(
+            UserPromptInput::from_text("review this"),
+            companion.clone(),
+        );
+
+        assert_eq!(companion_command.source(), LaunchSource::CompanionDispatch);
+        assert_eq!(
+            companion_command
+                .companion_modifier()
+                .expect("companion modifier")
+                .parent_session_id,
+            companion.parent_session_id
+        );
+        assert!(matches!(
+            companion_command.modifiers().first(),
+            Some(LaunchModifier::Companion(_))
+        ));
+
+        let routine = RoutineLaunchSource {
+            routine_id: Uuid::new_v4(),
+            execution_id: Uuid::new_v4(),
+            trigger_source: "manual".to_string(),
+            entity_key: Some("entity-1".to_string()),
+        };
+        let routine_command = LaunchCommand::routine_executor_input(
+            UserPromptInput::from_text("run"),
+            None,
+            routine.clone(),
+        );
+
+        assert_eq!(routine_command.source(), LaunchSource::RoutineExecutor);
+        assert_eq!(routine_command.routine_modifier(), Some(routine));
+        assert!(matches!(
+            routine_command.modifiers().first(),
+            Some(LaunchModifier::Routine(_))
+        ));
+    }
+
+    #[test]
+    fn hook_auto_resume_keeps_source_tag_as_modifier() {
+        let command = LaunchCommand::hook_auto_resume_input(UserPromptInput::from_text("resume"));
+
+        assert_eq!(command.source(), LaunchSource::HookAutoResume);
+        assert!(matches!(
+            command.modifiers().first(),
+            Some(LaunchModifier::HookAutoResume)
+        ));
     }
 }

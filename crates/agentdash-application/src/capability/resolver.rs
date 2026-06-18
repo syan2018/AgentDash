@@ -77,6 +77,63 @@ pub struct CapabilityContext {
     pub granted_capability_keys: BTreeSet<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperationAuthorityStatus {
+    Allowed,
+    Hidden,
+    Denied,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthorityState {
+    pub companion_dispatch: OperationAuthorityStatus,
+    pub companion_respond: OperationAuthorityStatus,
+    pub workspace_module_present: OperationAuthorityStatus,
+    pub dynamic_workflow_author: OperationAuthorityStatus,
+}
+
+impl AuthorityState {
+    pub fn main_project_agent() -> Self {
+        Self {
+            companion_dispatch: OperationAuthorityStatus::Allowed,
+            companion_respond: OperationAuthorityStatus::Hidden,
+            workspace_module_present: OperationAuthorityStatus::Allowed,
+            dynamic_workflow_author: OperationAuthorityStatus::Allowed,
+        }
+    }
+
+    pub fn companion_child() -> Self {
+        Self {
+            companion_dispatch: OperationAuthorityStatus::Hidden,
+            companion_respond: OperationAuthorityStatus::Allowed,
+            workspace_module_present: OperationAuthorityStatus::Hidden,
+            dynamic_workflow_author: OperationAuthorityStatus::Denied,
+        }
+    }
+
+    pub fn allows_companion_dispatch(&self) -> bool {
+        self.companion_dispatch == OperationAuthorityStatus::Allowed
+    }
+
+    pub fn allows_companion_respond(&self) -> bool {
+        self.companion_respond == OperationAuthorityStatus::Allowed
+    }
+
+    pub fn allows_workspace_module_present(&self) -> bool {
+        self.workspace_module_present == OperationAuthorityStatus::Allowed
+    }
+
+    pub fn allows_dynamic_workflow_author(&self) -> bool {
+        self.dynamic_workflow_author == OperationAuthorityStatus::Allowed
+    }
+}
+
+impl Default for AuthorityState {
+    fn default() -> Self {
+        Self::main_project_agent()
+    }
+}
+
 /// Resolver 输入 — 纯粹的 session 上下文描述。
 #[derive(Debug, Clone)]
 pub struct CapabilityResolverInput<'a> {
@@ -91,6 +148,7 @@ pub struct CapabilityResolverInput<'a> {
     /// LifecycleSubjectAssociation-based 解析上下文（可选，新路径）。
     #[allow(dead_code)]
     pub capability_context: Option<CapabilityContext>,
+    pub authority_state: AuthorityState,
 }
 
 // ── Resolver 内部合并中间态 ──────────────────────────────────────────
@@ -273,6 +331,16 @@ impl CapabilityResolver {
             }
         }
 
+        if !input.authority_state.allows_workspace_module_present() {
+            effective_caps.remove(&ToolCapability::new(tool_capability::CAP_WORKSPACE_MODULE));
+        }
+
+        if !input.authority_state.allows_dynamic_workflow_author() {
+            effective_caps.remove(&ToolCapability::new(
+                tool_capability::CAP_WORKFLOW_MANAGEMENT,
+            ));
+        }
+
         // ── effective_caps → ToolCluster / platform MCP scope ──
         let mut enabled_clusters = BTreeSet::<ToolCluster>::new();
         for cap in &effective_caps {
@@ -290,10 +358,17 @@ impl CapabilityResolver {
             }
         }
 
+        if input.authority_state.allows_companion_respond() {
+            effective_caps.insert(ToolCapability::new(CAP_COLLABORATION));
+            enabled_clusters.insert(ToolCluster::Collaboration);
+        }
+
         let tool_policy = compute_tool_policy(&reduction, &effective_caps);
 
         let companion_candidates = merge_companion_candidates(&input.contributions);
-        let companion = if effective_caps.contains(&ToolCapability::new(CAP_COLLABORATION)) {
+        let companion = if effective_caps.contains(&ToolCapability::new(CAP_COLLABORATION))
+            && input.authority_state.allows_companion_dispatch()
+        {
             agentdash_spi::CompanionDimension {
                 agents: companion_candidates,
             }
@@ -530,6 +605,7 @@ mod tests {
             mcp_candidates: McpCandidates::default(),
             mcp_runtime_context: None,
             capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
         }
     }
 
@@ -586,6 +662,37 @@ mod tests {
     }
 
     #[test]
+    fn companion_child_keeps_respond_channel_without_dispatch_roster() {
+        let mut input = base_input();
+        input.authority_state = AuthorityState::companion_child();
+        input.contributions.push(ContextContributions {
+            source: ContextContributionSource::Agent,
+            tool: Some(ToolContribution {
+                directives: vec![ToolCapabilityDirective::remove_simple("collaboration")],
+                has_active_workflow: false,
+            }),
+            companion: Some(CompanionContribution {
+                available: vec![agentdash_spi::context::capability::CompanionAgentEntry {
+                    name: "reviewer".to_string(),
+                    executor: "PI_AGENT".to_string(),
+                    display_name: "Reviewer".to_string(),
+                }],
+            }),
+        });
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            output.has(ToolCluster::Collaboration),
+            "companion.respond return channel must survive selected preset capability cropping",
+        );
+        assert!(
+            output.companion.agents.is_empty(),
+            "companion.dispatch is hidden for child runs, so no roster should be projected",
+        );
+    }
+
+    #[test]
     fn project_session_gets_relay_mcp() {
         let input = base_input();
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -610,6 +717,38 @@ mod tests {
 
         let has_workflow_mcp = state_has_mcp_url(&output, "/mcp/workflow/");
         assert!(has_workflow_mcp, "应注入 WorkflowMcpServer");
+    }
+
+    #[test]
+    fn companion_child_denies_workflow_management_authority() {
+        let mut input = base_input();
+        input.authority_state = AuthorityState::companion_child();
+        input.contributions.push(ContextContributions {
+            source: ContextContributionSource::Workflow,
+            tool: Some(ToolContribution {
+                directives: vec![ToolCapabilityDirective::add_simple("workflow_management")],
+                has_active_workflow: true,
+            }),
+            companion: None,
+        });
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            output.has(ToolCluster::Workflow),
+            "companion child 可继续执行已派发的 lifecycle workflow",
+        );
+        assert!(
+            !output
+                .tool
+                .capabilities
+                .contains(&ToolCapability::new("workflow_management")),
+            "companion child 不应获得动态 workflow 管理能力",
+        );
+        assert!(
+            !state_has_mcp_url(&output, "/mcp/workflow/"),
+            "被 authority 裁剪的 workflow_management 不应注入 Workflow MCP",
+        );
     }
 
     #[test]
@@ -640,6 +779,7 @@ mod tests {
             mcp_candidates: McpCandidates::default(),
             mcp_runtime_context: None,
             capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -669,6 +809,7 @@ mod tests {
             mcp_candidates: McpCandidates::default(),
             mcp_runtime_context: None,
             capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -1169,6 +1310,7 @@ mod tests {
             mcp_candidates: McpCandidates::default(),
             mcp_runtime_context: None,
             capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -1208,6 +1350,7 @@ mod tests {
             mcp_candidates: McpCandidates::default(),
             mcp_runtime_context: None,
             capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -1243,6 +1386,7 @@ mod tests {
             mcp_candidates: McpCandidates::default(),
             mcp_runtime_context: None,
             capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());

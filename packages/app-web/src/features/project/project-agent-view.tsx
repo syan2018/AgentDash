@@ -47,7 +47,7 @@ function CreateAgentDialog({
 }: {
   open: boolean;
   projectId: string;
-  siblingAgents: Array<{ name: string; display_name: string }>;
+  siblingAgents: Array<{ name: string; display_name: string; default_companion_enabled?: boolean }>;
   onClose: () => void;
 }) {
   const { createProjectAgent, fetchProjectAgents } = useProjectStore();
@@ -358,14 +358,15 @@ export function ProjectAgentView({
               const toolClusters: CapabilityKey[] = rawDirectives
                 .filter((d): d is { add: CapabilityKey } => "add" in d)
                 .map((d) => d.add);
-              const allowedCompanions = Array.isArray(config.allowed_companions)
-                ? (config.allowed_companions as string[])
+              const isDefaultCompanion = config.default_companion_enabled === true;
+              const extraCompanions = Array.isArray(config.extra_companions)
+                ? (config.extra_companions as string[])
                 : [];
-              const isCompanionTarget = projectAgentConfigs.some(
+              const isExtraCompanionTarget = projectAgentConfigs.some(
                 (otherAgent) =>
                   otherAgent.id !== agent.key &&
-                  Array.isArray(otherAgent.config?.allowed_companions) &&
-                  (otherAgent.config.allowed_companions as string[]).includes(
+                  Array.isArray(otherAgent.config?.extra_companions) &&
+                  (otherAgent.config.extra_companions as string[]).includes(
                     agent.preset_name ?? agent.display_name,
                   ),
               );
@@ -530,12 +531,20 @@ export function ProjectAgentView({
 
                       {/* 能力标签 */}
                       <div className="flex flex-wrap gap-1.5">
-                        {isCompanionTarget && (
+                        {isDefaultCompanion && (
                           <span
                             className="rounded-[8px] border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-[11px] text-accent"
-                            title={`可被其他 Agent 通过 companion_request(agent_key="${agent.preset_name ?? agent.display_name}") 调用`}
+                            title={`默认进入同项目其它 Agent 的 companion roster，agent_key="${agent.preset_name ?? agent.display_name}"`}
                           >
-                            Companion
+                            默认 Companion
+                          </span>
+                        )}
+                        {isExtraCompanionTarget && (
+                          <span
+                            className="rounded-[8px] border border-info/30 bg-info/10 px-2.5 py-0.5 text-[11px] text-info"
+                            title={`已有其它 Agent 额外加入 agent_key="${agent.preset_name ?? agent.display_name}"`}
+                          >
+                            额外 Companion
                           </span>
                         )}
                         {toolClusters.length > 0 ? toolClusters.map((capKey) => {
@@ -555,12 +564,12 @@ export function ProjectAgentView({
                         }) : (
                           <span className="rounded-[8px] border border-border/40 px-2 py-0.5 text-[10px] text-muted-foreground/40" title="未限制工具集（全部可用）">全部工具</span>
                         )}
-                        {allowedCompanions.length > 0 && (
+                        {extraCompanions.length > 0 && (
                           <span
                             className="rounded-[8px] border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] text-primary/70"
-                            title={`可调用: ${allowedCompanions.join(", ")}`}
+                            title={`额外加入: ${extraCompanions.join(", ")}`}
                           >
-                            → {allowedCompanions.length} companion{allowedCompanions.length > 1 ? "s" : ""}
+                            + {extraCompanions.length} companion{extraCompanions.length > 1 ? "s" : ""}
                           </span>
                         )}
                         {projectAgentConfig?.default_lifecycle_key && (
@@ -603,7 +612,14 @@ export function ProjectAgentView({
       <CreateAgentDialog
         open={isCreateOpen}
         projectId={project.id}
-        siblingAgents={agents.map((a) => ({ name: a.preset_name ?? a.display_name, display_name: a.display_name }))}
+        siblingAgents={agents.map((a) => {
+          const config = projectAgentConfigs.find((item) => item.id === a.key)?.config;
+          return {
+            name: a.preset_name ?? a.display_name,
+            display_name: a.display_name,
+            default_companion_enabled: config?.default_companion_enabled === true,
+          };
+        })}
         onClose={() => setIsCreateOpen(false)}
       />
 
@@ -614,7 +630,14 @@ export function ProjectAgentView({
         onSave={handleSaveEditConfig}
         onClose={() => setEditingAgent(null)}
         isSaving={isEditSaving}
-        siblingAgents={agents.map((a) => ({ name: a.preset_name ?? a.display_name, display_name: a.display_name }))}
+        siblingAgents={agents.map((a) => {
+          const config = projectAgentConfigs.find((item) => item.id === a.key)?.config;
+          return {
+            name: a.preset_name ?? a.display_name,
+            display_name: a.display_name,
+            default_companion_enabled: config?.default_companion_enabled === true,
+          };
+        })}
         knowledgeEnabled={
           editingAgent
             ? projectAgentConfigs.find((item) => item.id === editingAgent.agentId)?.knowledge_enabled

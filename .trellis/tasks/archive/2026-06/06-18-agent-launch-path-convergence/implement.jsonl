@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"定义 LaunchCommand -> FrameLaunchEnvelope -> LaunchPlan 主线和 source adapter 合同。"}
+{"file":".trellis/spec/backend/session/execution-context-frames.md","reason":"定义 connector-facing ExecutionContext 的投影边界，防止把运行 projection 当架构事实源。"}
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"定义 RuntimeSession / AgentRun workspace / mailbox / internal follow-up 的运行态边界。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"Workflow lifecycle 与 AgentCall materialization 需要对齐 workflow 架构。"}
+{"file":".trellis/spec/backend/capability/architecture.md","reason":"Launch modifier 涉及 capability/VFS/MCP/companion 维度收束。"}
+{"file":".trellis/spec/backend/permission/architecture.md","reason":"Companion authority 和 ProjectAgent dispatch 权限边界需要保持一致。"}
+{"file":".trellis/spec/cross-layer/architecture.md","reason":"AgentRun workspace、RuntimeSession trace 和前后端 contract 是跨层投影。"}

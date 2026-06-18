@@ -98,7 +98,7 @@ persist terminal event -> clear_active_turn -> if persist failed: stop effects a
 Hook auto-resume、companion parent resume 等内部 follow-up 仍从主数据流进入：
 
 ```text
-LaunchCommand -> FrameLaunchEnvelope -> LaunchPlan
+LaunchCommand(+LaunchModifier) -> FrameLaunchEnvelope -> LaunchPlan
 ```
 
 follow-up 来源只表达 resume intent、parent/session 引用和 source policy。VFS、MCP、
@@ -162,6 +162,13 @@ receipt，再写 AgentRun mailbox envelope，由 scheduler 使用当前 runtime 
 drain mode 产生 `launched | queued | steered | blocked | failed` 等 outcome。这样做的原因是
 keyboard snapshot 可能滞后，而用户输入的执行语义必须以后端 durable mailbox 和当前 active
 AgentRunTurn 为准。
+
+Mailbox scheduler 是 AgentRun 用户输入的 launch / steer 判定边界。launch 消费通过
+`SessionTurnMessageDeliveryPort` 构造普通 `LaunchCommand` 并进入 session launch pipeline；
+steer 消费通过 `SessionTurnSteerCommand` 投递到当前 active turn。route、workspace snapshot、
+ProjectAgent start 和 frame construction 只能写 envelope、读取 projection 或返回 receipt，不直接
+根据 runtime state 分叉执行 launch / steer，原因是 recovery、幂等 replay 和 user attention 都以
+mailbox envelope 为唯一 durable 命令队列。
 
 `SessionExecutionState::Running { turn_id: None }` 投影为 `starting_claimed`，表示 runtime 已被
 claim 但 active AgentRunTurn 尚未建立；`Running { turn_id: Some(_) }` 投影为 `running_active`。

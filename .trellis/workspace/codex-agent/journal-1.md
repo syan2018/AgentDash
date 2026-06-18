@@ -683,3 +683,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: 收束 Agent 启动路径主轴
+
+**Date**: 2026-06-18
+**Task**: 收束 Agent 启动路径主轴
+**Branch**: `codex/companion-agent-authority-convergence`
+
+### Summary
+
+将 workflow AgentCall、companion child dispatch、LaunchCommand modifier 与 frame construction owner/modifier pipeline 收束到统一启动主轴，并同步 session/workflow specs。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `77f4fe7b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

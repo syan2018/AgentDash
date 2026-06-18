@@ -11,7 +11,7 @@ export interface SinglePresetDialogProps {
   onSave: (preset: AgentPreset) => Promise<void>;
   onClose: () => void;
   isSaving?: boolean;
-  siblingAgents?: Array<{ name: string; display_name: string }>;
+  siblingAgents?: Array<{ name: string; display_name: string; default_companion_enabled?: boolean }>;
   /** 是否启用 Agent 知识库 */
   knowledgeEnabled?: boolean;
   /** 切换知识库开关 */

@@ -4,12 +4,8 @@ use crate::session::build_hook_trace_envelope;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
-use agentdash_domain::agent::ProjectAgentRepository;
-use agentdash_domain::workflow::{
-    AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, GatePolicy,
-    InteractionDispatchIntent, LifecycleTaskPlanItem, LifecycleTaskPlanItemPatch, RunPolicy,
-    RuntimePolicy,
-};
+use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
+use agentdash_domain::workflow::LifecycleTaskPlanItem;
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
 use agentdash_spi::context::capability::CompanionAgentEntry;
@@ -26,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use super::dispatch::{CompanionChildDispatchRequest, CompanionChildDispatchService};
 use super::tool_context::{
     CompanionHookProvenance, CompanionHookProvenanceSource, CompanionToolContext,
 };
@@ -34,21 +31,16 @@ use super::{
     OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
     build_companion_event_notification,
 };
-use crate::lifecycle::{LifecycleDispatchService, resolve_current_frame_from_delivery_trace_ref};
+use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
-use crate::session::{
-    AgentFrameRuntimeTarget, CompanionLaunchSource, LaunchCommand, UserPromptInput,
-};
-use crate::task::plan::update_run_task;
+use crate::session::{AgentFrameRuntimeTarget, LaunchCommand, UserPromptInput};
 
 pub use agentdash_spi::CompanionSliceMode;
 
-struct CompanionDispatchOutcome {
-    run_ref: Uuid,
-    agent_ref: Uuid,
-    frame_ref: Uuid,
-    gate_ref: Option<Uuid>,
-    delivery_runtime_session_id: String,
+struct SelectedCompanionAgent {
+    project_agent: ProjectAgent,
+    agent_key: String,
+    executor_config: AgentConfig,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
@@ -219,7 +211,6 @@ pub struct CompanionRequestTool {
     project_agent_repo: Arc<dyn ProjectAgentRepository>,
     repos: crate::repository_set::RepositorySet,
     session_services_handle: SharedSessionToolServicesHandle,
-    current_executor_config: AgentConfig,
     tool_context: CompanionToolContext,
     companion_agents: Vec<CompanionAgentEntry>,
 }
@@ -230,14 +221,12 @@ impl CompanionRequestTool {
         repos: crate::repository_set::RepositorySet,
         session_services_handle: SharedSessionToolServicesHandle,
         tool_context: CompanionToolContext,
-        current_executor_config: AgentConfig,
         companion_agents: Vec<CompanionAgentEntry>,
     ) -> Self {
         Self {
             project_agent_repo,
             repos,
             session_services_handle,
-            current_executor_config,
             tool_context,
             companion_agents,
         }
@@ -307,8 +296,8 @@ impl AgentTool for CompanionRequestTool {
 }
 
 impl CompanionRequestTool {
-    /// target=sub: 构造 ExecutionIntent 通过 LifecycleDispatchService 派发 companion child agent。
-    /// wait 语义通过 durable LifecycleGate 实现。
+    /// target=sub: 校验 payload、构造 prompt/hook 上下文，并委托 companion dispatch service
+    /// materialize child agent；wait 轮询 durable LifecycleGate。
     async fn execute_sub_request(
         &self,
         _target: CompanionRequestTarget,
@@ -326,6 +315,12 @@ impl CompanionRequestTool {
         if prompt.is_empty() {
             return Err(AgentToolError::InvalidArguments(
                 "payload.message 不能为空".to_string(),
+            ));
+        }
+        if self.companion_agents.is_empty() {
+            return Err(AgentToolError::ExecutionFailed(
+                "当前 runtime authority 未开放 companion.dispatch，不能派发 sub companion"
+                    .to_string(),
             ));
         }
 
@@ -350,7 +345,17 @@ impl CompanionRequestTool {
                 .and_then(|v| v.as_str())
                 .unwrap_or(at::SUGGESTION),
         );
-        let agent_key = payload.get("agent_key").and_then(|v| v.as_str());
+        let agent_key = payload
+            .get("agent_key")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                AgentToolError::InvalidArguments(
+                    "payload.agent_key 不能为空；sub companion 必须选择当前 roster 中的 ProjectAgent"
+                        .to_string(),
+                )
+            })?;
         let requested_task_id = payload_task_id(payload)?;
         let max_fragments = payload
             .get("max_fragments")
@@ -374,11 +379,8 @@ impl CompanionRequestTool {
         let parent_agent_id = anchor.agent_id;
         let parent_frame_id = anchor.frame_id;
 
-        let companion_executor_config = if let Some(key) = agent_key {
-            self.resolve_companion_agent_config(project_id, key).await?
-        } else {
-            self.current_executor_config.clone()
-        };
+        let selected_companion = self.resolve_companion_agent(project_id, agent_key).await?;
+        let companion_executor_config = selected_companion.executor_config.clone();
 
         // ─── Hook: before_subagent_dispatch ─────────────────────────────
         let before_resolution = evaluate_subagent_hook(
@@ -450,134 +452,33 @@ impl CompanionRequestTool {
         )
         .await;
 
-        // ─── 构造 ExecutionIntent 并通过 LifecycleDispatchService 派发 ──
-        let gate_kind = match adoption_mode {
-            CompanionAdoptionMode::BlockingReview => "companion_wait_blocking",
-            CompanionAdoptionMode::FollowUpRequired => "companion_wait_follow_up",
-            CompanionAdoptionMode::Suggestion => "companion_wait",
-        };
-
-        let context_policy = match slice_mode {
-            CompanionSliceMode::Full => ContextPolicy::Inherit,
-            _ => ContextPolicy::Slice,
-        };
-        let dispatch_result: CompanionDispatchOutcome = {
-            let dispatch_svc = LifecycleDispatchService::new(
-                self.repos.lifecycle_run_repo.as_ref(),
-                self.repos.workflow_graph_repo.as_ref(),
-                self.repos.lifecycle_agent_repo.as_ref(),
-                self.repos.agent_frame_repo.as_ref(),
-                self.repos.lifecycle_subject_association_repo.as_ref(),
-                self.repos.lifecycle_gate_repo.as_ref(),
-                self.repos.agent_lineage_repo.as_ref(),
-            )
-            .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
-            .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
-            if wait {
-                let result = dispatch_svc
-                    .open_interaction_gate(&InteractionDispatchIntent {
-                        project_id,
-                        source: ExecutionSource::ParentAgent,
-                        parent_run_id,
-                        parent_agent_id,
-                        workflow_graph_ref: None,
-                        context_policy,
-                        capability_policy: CapabilityPolicy::InheritedSlice,
-                        runtime_policy: RuntimePolicy::CreateRuntimeSession,
-                        gate_policy: GatePolicy {
-                            gate_kind: gate_kind.to_string(),
-                            correlation_id: Some(dispatch_plan.dispatch_id.clone()),
-                            payload: Some(serde_json::json!({
-                                "parent_agent_id": parent_agent_id,
-                                "parent_frame_id": parent_frame_id,
-                                "companion_label": companion_label,
-                                "adoption_mode": companion_adoption_mode_key(adoption_mode),
-                                "dispatch_id": dispatch_plan.dispatch_id,
-                                "task_id": requested_task_id.map(|id| id.to_string()),
-                            })),
-                        },
-                    })
-                    .await
-                    .map_err(|e| AgentToolError::ExecutionFailed(format!("dispatch 失败: {e}")))?;
-                CompanionDispatchOutcome {
-                    run_ref: result.runtime_refs.run_ref,
-                    agent_ref: result.runtime_refs.agent_ref,
-                    frame_ref: result.runtime_refs.frame_ref,
-                    gate_ref: Some(result.gate_ref),
-                    delivery_runtime_session_id: result
-                        .delivery_runtime_ref
-                        .ok_or_else(|| {
-                            AgentToolError::ExecutionFailed(
-                                "dispatch 未创建 child delivery runtime session".to_string(),
-                            )
-                        })?
-                        .to_string(),
-                }
-            } else {
-                let result = dispatch_svc
-                    .launch_agent(&AgentLaunchIntent {
-                        project_id,
-                        source: ExecutionSource::ParentAgent,
-                        subject_ref: None,
-                        parent_run_id: Some(parent_run_id),
-                        parent_agent_id: Some(parent_agent_id),
-                        workflow_graph_ref: None,
-                        run_policy: RunPolicy::AppendGraph,
-                        agent_policy: AgentPolicy::SpawnChild,
-                        context_policy,
-                        capability_policy: CapabilityPolicy::InheritedSlice,
-                        runtime_policy: RuntimePolicy::CreateRuntimeSession,
-                    })
-                    .await
-                    .map_err(|e| AgentToolError::ExecutionFailed(format!("dispatch 失败: {e}")))?;
-                CompanionDispatchOutcome {
-                    run_ref: result.runtime_refs.run_ref,
-                    agent_ref: result.runtime_refs.agent_ref,
-                    frame_ref: result.runtime_refs.frame_ref,
-                    gate_ref: None,
-                    delivery_runtime_session_id: result
-                        .delivery_runtime_ref
-                        .ok_or_else(|| {
-                            AgentToolError::ExecutionFailed(
-                                "dispatch 未创建 child delivery runtime session".to_string(),
-                            )
-                        })?
-                        .to_string(),
-                }
-            }
-        };
-
-        if let Some(task_id) = requested_task_id {
-            update_run_task(
-                self.repos.lifecycle_run_repo.as_ref(),
+        let dispatch_result = CompanionChildDispatchService::new(&self.repos)
+            .dispatch_child(CompanionChildDispatchRequest {
+                project_id,
                 parent_run_id,
-                task_id,
-                LifecycleTaskPlanItemPatch {
-                    assigned_agent_id: Some(Some(dispatch_result.agent_ref)),
-                    ..LifecycleTaskPlanItemPatch::default()
-                },
-            )
-            .await
-            .map_err(|error| {
-                AgentToolError::ExecutionFailed(format!(
-                    "Companion 已创建但 Task 指派关系写回失败: {error}"
-                ))
-            })?;
-        }
+                parent_agent_id,
+                parent_frame_id,
+                wait,
+                slice_mode,
+                adoption_mode,
+                dispatch_id: dispatch_plan.dispatch_id.clone(),
+                companion_label: companion_label.clone(),
+                task_id: requested_task_id,
+                selected_project_agent_id: selected_companion.project_agent.id,
+                selected_agent_key: selected_companion.agent_key.clone(),
+                companion_executor_config,
+                parent_session_id: current_session_id.clone(),
+                dispatch_prompt: dispatch_prompt.clone(),
+            })
+            .await?;
 
         let launch_outcome = session_services
             .launch
             .launch_command_with_outcome(
                 &dispatch_result.delivery_runtime_session_id,
                 LaunchCommand::companion_dispatch_input(
-                    UserPromptInput::from_text(&dispatch_prompt),
-                    CompanionLaunchSource {
-                        parent_session_id: current_session_id.clone(),
-                        slice_mode,
-                        companion_executor_config,
-                        dispatch_prompt: dispatch_prompt.clone(),
-                        workflow: None,
-                    },
+                    UserPromptInput::from_text(&dispatch_result.launch_source.dispatch_prompt),
+                    dispatch_result.launch_source.clone(),
                 ),
             )
             .await
@@ -670,6 +571,8 @@ impl CompanionRequestTool {
                     "child_turn_id": child_turn_id.clone(),
                     "context_sources": child_context_sources.clone(),
                     "task_id": requested_task_id.map(|id| id.to_string()),
+                    "selected_project_agent_id": selected_companion.project_agent.id.to_string(),
+                    "selected_agent_key": selected_companion.agent_key,
                     "status": status,
                     "summary": summary,
                     "result": result_payload,
@@ -702,6 +605,8 @@ impl CompanionRequestTool {
                 "child_turn_id": child_turn_id,
                 "context_sources": child_context_sources,
                 "task_id": requested_task_id.map(|id| id.to_string()),
+                "selected_project_agent_id": selected_companion.project_agent.id.to_string(),
+                "selected_agent_key": selected_companion.agent_key,
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
                 "matched_rule_keys": after_resolution.matched_rule_keys,
@@ -867,6 +772,24 @@ impl CompanionRequestTool {
             .tool_context
             .require_lifecycle_anchor("向用户发起请求", &self.repos)
             .await?;
+        let agent = self
+            .repos
+            .lifecycle_agent_repo
+            .get(anchor.agent_id)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed(format!(
+                    "LifecycleAgent {} 不存在，无法判断 human route authority",
+                    anchor.agent_id
+                ))
+            })?;
+        if agent.source == agentdash_domain::workflow::AgentSource::Subagent {
+            return Err(AgentToolError::ExecutionFailed(
+                "当前 companion child 默认未开放 human route，请通过 companion_respond 回流父会话"
+                    .to_string(),
+            ));
+        }
 
         let request_id = format!("human-{}", Uuid::new_v4().simple());
         let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -1073,11 +996,11 @@ impl CompanionRequestTool {
         }
     }
 
-    async fn resolve_companion_agent_config(
+    async fn resolve_companion_agent(
         &self,
         project_id: Uuid,
         agent_name: &str,
-    ) -> Result<AgentConfig, AgentToolError> {
+    ) -> Result<SelectedCompanionAgent, AgentToolError> {
         let requested = agent_name.trim();
         if requested.is_empty() {
             return Err(AgentToolError::InvalidArguments(
@@ -1124,7 +1047,11 @@ impl CompanionRequestTool {
         let preset = agent
             .preset_config()
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-        Ok(preset.to_agent_config(&agent.agent_type))
+        Ok(SelectedCompanionAgent {
+            agent_key: entry.name.clone(),
+            executor_config: preset.to_agent_config(&agent.agent_type),
+            project_agent: agent,
+        })
     }
 }
 
@@ -2188,14 +2115,6 @@ fn build_companion_owner_summary(
         lines.push(format!("- Task: {} ({})", task_id, label));
     }
     Some(format!("## 当前归属\n{}", lines.join("\n")))
-}
-
-fn companion_adoption_mode_key(mode: CompanionAdoptionMode) -> &'static str {
-    match mode {
-        CompanionAdoptionMode::Suggestion => at::SUGGESTION,
-        CompanionAdoptionMode::FollowUpRequired => at::FOLLOW_UP_REQUIRED,
-        CompanionAdoptionMode::BlockingReview => at::BLOCKING_REVIEW,
-    }
 }
 
 pub fn companion_owner_candidates(

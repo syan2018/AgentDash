@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, AgentProcedureContract, AgentProcedureExecutionSpec,
-    AgentProcedureRepository, AgentReusePolicy, AgentSource, ExecutorRunRef, ExecutorSpec,
-    LifecycleAgent, LifecycleAgentRepository, LifecycleRun, OrchestrationInstance, PlanNode,
-    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy,
+    AgentFrameRepository, AgentProcedureContract, AgentProcedureExecutionSpec,
+    AgentProcedureRepository, AgentReusePolicy, ExecutorRunRef, ExecutorSpec,
+    LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    LifecycleSubjectAssociationRepository, OrchestrationBindingRefs, OrchestrationInstance,
+    PlanNode, RuntimePolicy, RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy,
+    WorkflowGraphRepository,
 };
 use async_trait::async_trait;
 
@@ -13,7 +15,8 @@ use crate::lifecycle::projection::{
     activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
 };
 use crate::lifecycle::{
-    RuntimeSessionCreationRequest, RuntimeSessionCreator, WorkflowApplicationError,
+    LifecycleDispatchService, RuntimeSessionCreator, WorkflowAgentNodeFrameComposer,
+    WorkflowAgentNodeMaterializationRequest, WorkflowApplicationError,
 };
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -26,8 +29,13 @@ use super::runtime::OrchestrationRuntimeEvent;
 #[derive(Clone)]
 pub(super) struct AgentNodeLauncher {
     agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
+    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
     lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     agent_frame_repo: Arc<dyn AgentFrameRepository>,
+    lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
+    lifecycle_gate_repo: Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>,
+    agent_lineage_repo: Arc<dyn agentdash_domain::workflow::AgentLineageRepository>,
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
     frame_composer: Arc<dyn AgentNodeFrameComposer>,
@@ -36,16 +44,26 @@ pub(super) struct AgentNodeLauncher {
 impl AgentNodeLauncher {
     pub(super) fn new(
         agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
+        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         agent_frame_repo: Arc<dyn AgentFrameRepository>,
+        lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
+        lifecycle_gate_repo: Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>,
+        agent_lineage_repo: Arc<dyn agentdash_domain::workflow::AgentLineageRepository>,
         execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
         runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
         frame_composer: Arc<dyn AgentNodeFrameComposer>,
     ) -> Self {
         Self {
             agent_procedure_repo,
+            lifecycle_run_repo,
+            workflow_graph_repo,
             lifecycle_agent_repo,
             agent_frame_repo,
+            lifecycle_subject_association_repo,
+            lifecycle_gate_repo,
+            agent_lineage_repo,
             execution_anchor_repo,
             runtime_session_creator,
             frame_composer,
@@ -101,25 +119,9 @@ impl AgentNodeLauncher {
             .map(|workflow| format!("`{}` ({})", workflow.key, workflow.name))
             .or(snapshot_label);
 
-        let (mut agent, session_id) = match (agent_reuse_policy, runtime_session_policy) {
+        let runtime_policy = match (agent_reuse_policy, runtime_session_policy) {
             (AgentReusePolicy::CreateActivityAgent, RuntimeSessionPolicy::CreateNew) => {
-                let agent =
-                    LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent)
-                        .with_bootstrap_status(
-                            agentdash_domain::workflow::bootstrap_status::NOT_APPLICABLE,
-                        );
-                self.lifecycle_agent_repo.create(&agent).await?;
-                let session_id = self
-                    .runtime_session_creator
-                    .create_runtime_session(RuntimeSessionCreationRequest {
-                        project_id: run.project_id,
-                        run_id: run.id,
-                        agent_id: agent.id,
-                        source: agentdash_domain::workflow::ExecutionSource::ParentAgent,
-                    })
-                    .await?
-                    .to_string();
-                (agent, session_id)
+                RuntimePolicy::CreateRuntimeSession
             }
             (
                 AgentReusePolicy::ContinueCurrentAgent,
@@ -140,33 +142,48 @@ impl AgentNodeLauncher {
             }
         };
 
-        let frame = self
-            .create_frame(
-                &agent,
-                run,
-                coordinate,
-                plan_node,
-                workflow_contract,
-                workflow_label.as_deref(),
-                Some(session_id.clone()),
-            )
-            .await?;
-        agent.set_current_frame(frame.id);
-        self.lifecycle_agent_repo.update(&agent).await?;
-        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-            session_id.clone(),
-            run.id,
-            frame.id,
-            agent.id,
+        let orchestration_binding = OrchestrationBindingRefs::new(
             coordinate.orchestration_id,
             coordinate.node_path.clone(),
             coordinate.attempt,
         );
-        self.execution_anchor_repo.upsert(&anchor).await?;
+        let frame_composer = AgentNodeMaterializationFrameComposer {
+            inner: self.frame_composer.clone(),
+            coordinate: coordinate.clone(),
+            plan_node,
+            workflow_contract,
+            workflow_label: workflow_label.as_deref(),
+        };
+        let dispatch_service = LifecycleDispatchService::new(
+            self.lifecycle_run_repo.as_ref(),
+            self.workflow_graph_repo.as_ref(),
+            self.lifecycle_agent_repo.as_ref(),
+            self.agent_frame_repo.as_ref(),
+            self.lifecycle_subject_association_repo.as_ref(),
+            self.lifecycle_gate_repo.as_ref(),
+            self.agent_lineage_repo.as_ref(),
+        )
+        .with_anchor_repo(self.execution_anchor_repo.as_ref())
+        .with_runtime_session_creator(self.runtime_session_creator.as_ref());
+        let materialized = dispatch_service
+            .materialize_workflow_agent_node(
+                WorkflowAgentNodeMaterializationRequest {
+                    run_id: run.id,
+                    orchestration_binding,
+                    runtime_policy,
+                    frame_created_by_id: Some(format!(
+                        "{}:{}#{}",
+                        coordinate.orchestration_id, coordinate.node_path, coordinate.attempt
+                    )),
+                },
+                &frame_composer,
+            )
+            .await?;
+        let session_id = materialized.delivery_runtime_ref.to_string();
 
         Ok(AgentNodeLaunchOutcome::Launched {
             launched: LaunchedAgentNode {
-                run_id: anchor.run_id,
+                run_id: materialized.runtime_refs.run_ref,
                 orchestration_id: coordinate.orchestration_id,
                 node_path: coordinate.node_path.clone(),
                 attempt: coordinate.attempt,
@@ -180,41 +197,36 @@ impl AgentNodeLauncher {
             }),
         })
     }
+}
 
-    async fn create_frame(
+struct AgentNodeMaterializationFrameComposer<'a> {
+    inner: Arc<dyn AgentNodeFrameComposer>,
+    coordinate: RuntimeNodeCoordinate,
+    plan_node: &'a PlanNode,
+    workflow_contract: Option<&'a AgentProcedureContract>,
+    workflow_label: Option<&'a str>,
+}
+
+#[async_trait]
+impl WorkflowAgentNodeFrameComposer for AgentNodeMaterializationFrameComposer<'_> {
+    async fn compose_workflow_agent_node_frame(
         &self,
-        agent: &LifecycleAgent,
+        builder: AgentFrameBuilder,
         run: &LifecycleRun,
-        coordinate: &RuntimeNodeCoordinate,
-        plan_node: &PlanNode,
-        workflow_contract: Option<&AgentProcedureContract>,
-        workflow_label: Option<&str>,
-        runtime_session_ref: Option<String>,
-    ) -> Result<AgentFrame, WorkflowApplicationError> {
-        let runtime_session_id = runtime_session_ref.clone();
-        let mut builder = AgentFrameBuilder::new(agent.id).with_created_by(
-            "orchestration_executor",
-            Some(format!(
-                "{}:{}#{}",
-                coordinate.orchestration_id, coordinate.node_path, coordinate.attempt
-            )),
-        );
-        if let Some(session_id) = runtime_session_ref {
-            builder = builder.with_runtime_session(session_id);
-        }
-        builder = self
-            .frame_composer
+        runtime_session_ref: uuid::Uuid,
+    ) -> Result<AgentFrameBuilder, WorkflowApplicationError> {
+        let runtime_session_id = runtime_session_ref.to_string();
+        self.inner
             .compose_frame(
                 builder,
                 run,
-                coordinate,
-                plan_node,
-                workflow_contract,
-                workflow_label,
-                runtime_session_id.as_deref(),
+                &self.coordinate,
+                self.plan_node,
+                self.workflow_contract,
+                self.workflow_label,
+                Some(runtime_session_id.as_str()),
             )
-            .await?;
-        Ok(builder.build(self.agent_frame_repo.as_ref()).await?)
+            .await
     }
 }
 

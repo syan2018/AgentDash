@@ -20,8 +20,8 @@ use agentdash_spi::ToolCluster;
 use uuid::Uuid;
 
 use crate::capability::{
-    CapabilityResolver, CapabilityResolverInput, ContextContributionSource, ContextContributions,
-    McpCandidates, ToolContribution, build_capability_delta_markdown,
+    AuthorityState, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
+    ContextContributions, McpCandidates, ToolContribution, build_capability_delta_markdown,
 };
 use crate::platform_config::PlatformConfig;
 
@@ -83,6 +83,7 @@ fn agent_node_step_directives_produce_expected_session_tools() {
         mcp_candidates: mcp_candidates("code_analyzer", "http://external:8080/mcp"),
         mcp_runtime_context: None,
         capability_context: None,
+        authority_state: AuthorityState::main_project_agent(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
@@ -132,6 +133,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
         mcp_candidates: mcp_candidates("external_analyzer", "http://external:9000/mcp"),
         mcp_runtime_context: None,
         capability_context: None,
+        authority_state: AuthorityState::main_project_agent(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
@@ -188,6 +190,7 @@ fn phase_node_without_directives_inherits_baseline_and_emits_no_delta() {
         mcp_candidates: McpCandidates::default(),
         mcp_runtime_context: None,
         capability_context: None,
+        authority_state: AuthorityState::main_project_agent(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
@@ -229,6 +232,7 @@ fn phase_node_invalid_directives_are_tolerated() {
         mcp_candidates: McpCandidates::default(),
         mcp_runtime_context: None,
         capability_context: None,
+        authority_state: AuthorityState::main_project_agent(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
     assert!(

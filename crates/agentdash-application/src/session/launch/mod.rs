@@ -9,7 +9,9 @@ mod planner;
 mod preparation;
 mod service;
 
-pub use command::{LaunchCommand, LaunchCommandOutcome, LaunchSource};
+pub use command::{
+    LaunchCommand, LaunchCommandOutcome, LaunchModifier, LaunchSource, LocalRelayLaunchPayload,
+};
 pub(in crate::session) use commit::TurnCommitter;
 pub(in crate::session) use connector_start::ConnectorStarter;
 pub(in crate::session) use deps::SessionLaunchDeps;

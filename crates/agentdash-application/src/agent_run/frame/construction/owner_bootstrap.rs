@@ -5,6 +5,7 @@
 
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
+use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::{AgentConfig, AgentVfsAccessGrant};
 use agentdash_domain::project::Project;
@@ -22,9 +23,10 @@ use uuid::Uuid;
 use crate::agent_run::frame::builder::AgentFrameBuilder;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
-    CapabilityResolver, CapabilityResolverInput, CompanionContribution, ContextContributionSource,
-    ContextContributions, McpCandidates, ToolContribution, load_available_presets,
-    tool_directives_from_active_workflow, tool_directives_from_active_workflow_projection,
+    AuthorityState, CapabilityResolver, CapabilityResolverInput, CompanionContribution,
+    ContextContributionSource, ContextContributions, McpCandidates, ToolContribution,
+    load_available_presets, tool_directives_from_active_workflow,
+    tool_directives_from_active_workflow_projection,
 };
 use crate::companion::skill_projection::{
     append_companion_system_skill_key, ensure_companion_system_skill_asset,
@@ -522,6 +524,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             },
             mcp_runtime_context: Some(McpRuntimeBindingContext { vfs }),
             capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
         };
         let mut capability_state =
             CapabilityResolver::resolve_checked(&cap_input, self.platform_config)?;
@@ -789,35 +792,55 @@ async fn load_companion_candidates(
         return Ok(Vec::new());
     }
 
-    let caller_allowed: Option<Vec<String>> = if let Some(caller_id) = caller_agent_id {
+    build_companion_roster_from_project_agents(&agents, caller_agent_id)
+}
+
+fn build_companion_roster_from_project_agents(
+    agents: &[ProjectAgent],
+    caller_agent_id: Option<Uuid>,
+) -> Result<Vec<agentdash_spi::context::capability::CompanionAgentEntry>, String> {
+    let caller_extra: BTreeSet<String> = if let Some(caller_id) = caller_agent_id {
         if let Some(agent) = agents.iter().find(|item| item.id == caller_id) {
             let preset = agent.preset_config().map_err(|error| error.to_string())?;
-            preset.allowed_companions.filter(|v| !v.is_empty())
+            preset
+                .extra_companions
+                .unwrap_or_default()
+                .into_iter()
+                .map(|value| value.to_ascii_lowercase())
+                .collect()
         } else {
-            None
+            BTreeSet::new()
         }
     } else {
-        None
+        BTreeSet::new()
     };
 
     let mut entries = Vec::new();
-    for agent in agents {
-        if let Some(ref allowed) = caller_allowed
-            && !allowed.iter().any(|a| a.eq_ignore_ascii_case(&agent.name))
-        {
+    let mut seen = BTreeSet::new();
+    for agent in agents.iter() {
+        if caller_agent_id.is_some_and(|caller_id| caller_id == agent.id) {
             continue;
         }
         let preset = agent.preset_config().map_err(|error| error.to_string())?;
+        let agent_key = agent.name.clone();
+        let is_default_enabled = preset.default_companion_enabled.unwrap_or(false);
+        let is_extra_enabled = caller_extra.contains(&agent_key.to_ascii_lowercase());
+        if !is_default_enabled && !is_extra_enabled {
+            continue;
+        }
+        if !seen.insert(agent_key.to_ascii_lowercase()) {
+            continue;
+        }
         let display = preset
             .display_name
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(String::from)
-            .unwrap_or_else(|| agent.name.clone());
+            .unwrap_or_else(|| agent_key.clone());
         entries.push(agentdash_spi::context::capability::CompanionAgentEntry {
-            name: agent.name,
-            executor: agent.agent_type,
+            name: agent_key,
+            executor: agent.agent_type.clone(),
             display_name: display,
         });
     }
@@ -971,6 +994,21 @@ mod tests {
         )
     }
 
+    fn project_agent_with_companion_config(
+        project_id: Uuid,
+        name: &str,
+        default_companion_enabled: bool,
+        extra_companions: &[&str],
+    ) -> ProjectAgent {
+        let mut agent = ProjectAgent::new(project_id, name, "PI_AGENT");
+        agent.config = serde_json::json!({
+            "display_name": format!("{name} Agent"),
+            "default_companion_enabled": default_companion_enabled,
+            "extra_companions": extra_companions,
+        });
+        agent
+    }
+
     fn server_url(server: &agentdash_spi::RuntimeMcpServer) -> &str {
         match &server.transport {
             agentdash_spi::McpTransportConfig::Http { url, .. } => url.as_str(),
@@ -1002,6 +1040,33 @@ mod tests {
     #[test]
     fn companion_agents_context_contribution_skips_empty_roster() {
         assert!(build_companion_agents_context_contribution(&[]).is_none());
+    }
+
+    #[test]
+    fn companion_roster_uses_default_enabled_union_extra_minus_self() {
+        let project_id = Uuid::new_v4();
+        let caller = project_agent_with_companion_config(
+            project_id,
+            "caller",
+            true,
+            &["special", "reviewer"],
+        );
+        let reviewer = project_agent_with_companion_config(project_id, "reviewer", true, &[]);
+        let special = project_agent_with_companion_config(project_id, "special", false, &[]);
+        let hidden = project_agent_with_companion_config(project_id, "hidden", false, &[]);
+
+        let roster = build_companion_roster_from_project_agents(
+            &[caller.clone(), reviewer, special, hidden],
+            Some(caller.id),
+        )
+        .expect("roster");
+
+        let keys = roster
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["reviewer", "special"]);
+        assert!(!keys.contains(&"caller"));
     }
 
     #[test]

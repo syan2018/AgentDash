@@ -1,1 +1,17 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务跨 backend capability/session、前端配置与 runtime projection，需要先确认事实源、权限与 UI 投影的数据流边界。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "任务会新增/替换 capability、authority、ProjectAgent config 字段与前端 mapper，需要先搜索现有模式并复用归属模块。"}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "AuthorityState 必须作为 CapabilityState 上游投影，本规范定义 capability resolver 与维度投影的现有职责。"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "companion roster、tool exposure、workspace_module 与 PermissionGrant 当前耦合都记录在这里，实现后也需要更新该契约。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "companion child 身份和 frame surface 必须落在 AgentFrame / FrameLaunchEnvelope，而不是 RuntimeSession trace 自行推断。"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "CompanionDispatch launch source、FrameConstructionService 与 launch envelope 是本次身份收束的核心链路。"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "工具装配与 connector-facing capability/context frame 都从 ExecutionContext projection 消费，authority 裁剪必须落到该投影前。"}
+{"file": ".trellis/spec/backend/session/session-lineage-projection.md", "reason": "companion child 需要保留 parent-child/companion 关系，同时不要误用普通 session fork lineage 表达业务身份。"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "本任务需要区分不可提权 runtime guard 与 PermissionGrant 体系，避免把 Authority invariant 错放到 grant。"}
+{"file": ".trellis/spec/backend/permission/grant-lifecycle.md", "reason": "companion capability_grant_request 与 PermissionGrant 生命周期仍需保持结构化边界，authority guard 不应破坏现有 grant flow。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "ProjectAgent config、AgentRun companion 身份展示和 generated TS contract 都属于前后端 wire 契约。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "AgentRun / RuntimeSession 展示 companion 派发结果时应消费结构化事件与 projection，不应新增自由文本事实源。"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "前端应以后端 ProjectAgent / AgentRun projection 为事实源，不在本地推导 companion authority 或 runtime 身份。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "ProjectAgent config 类型与 generated contract 改动必须保持 snake_case、generated wire 单源和严格类型约束。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "AgentRun workspace、conversation snapshot 与 ProjectAgent 配置状态应由后端投影和 feature state 分层消费。"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "ProjectAgent 表单、picker、Agent 卡片和 AgentRun 身份展示需要遵循现有组件拆分约束。"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "配置 UI 和状态标记需要使用既有 token、radius 与 @agentdash/ui primitive。"}

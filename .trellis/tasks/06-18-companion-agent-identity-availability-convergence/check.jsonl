@@ -1,1 +1,10 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查跨层事实源是否一致：roster、tool validation、launch identity、UI projection 必须同源。"}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "检查 AuthorityState -> CapabilityState 的数据方向是否被遵守，capability resolver 是否没有重新内联身份规则。"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "检查 companion roster、tool exposure、workspace_module 和 PermissionGrant 相关契约是否被代码与 spec 同步更新。"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "检查 CompanionDispatch launch source、FrameLaunchEnvelope 与 AgentFrame surface 是否携带 selected ProjectAgent identity。"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "检查 runtime tools、context frames 与 capability_state 是否消费同一 frame projection。"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "检查不可提权 operation guard 是否没有被建模成 PermissionGrant 或 requestable capability。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 Rust contract、generated TypeScript、前端 service/store 是否无 drift 和无手写影子 DTO。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端 ProjectAgent config、form state、picker 与 AgentRun view 是否保持严格类型与 snake_case wire 字段。"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "检查新增配置 UI 与状态展示是否使用语义 token、primitive 和既有布局规则。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查前端无 any、非空断言、console.log、双字段兼容等质量问题。"}

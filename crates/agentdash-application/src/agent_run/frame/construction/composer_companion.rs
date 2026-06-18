@@ -32,6 +32,8 @@ pub(super) async fn compose(
                         slice_mode: companion.slice_mode,
                         companion_executor_config: companion.companion_executor_config,
                         dispatch_prompt: companion.dispatch_prompt,
+                        selected_project_agent_id: companion.selected_project_agent_id,
+                        selected_agent_key: companion.selected_agent_key.clone(),
                     },
                     run: &workflow.run,
                     orchestration_id: workflow.orchestration_id,
@@ -53,6 +55,8 @@ pub(super) async fn compose(
                     slice_mode: companion.slice_mode,
                     companion_executor_config: companion.companion_executor_config,
                     dispatch_prompt: companion.dispatch_prompt,
+                    selected_project_agent_id: companion.selected_project_agent_id,
+                    selected_agent_key: companion.selected_agent_key.clone(),
                 },
             )
             .await

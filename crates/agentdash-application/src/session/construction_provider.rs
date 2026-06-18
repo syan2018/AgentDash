@@ -40,6 +40,8 @@ pub struct CompanionLaunchWorkflowSource {
 #[derive(Clone)]
 pub struct CompanionLaunchSource {
     pub parent_session_id: String,
+    pub selected_project_agent_id: Option<Uuid>,
+    pub selected_agent_key: Option<String>,
     pub slice_mode: agentdash_spi::CompanionSliceMode,
     pub companion_executor_config: agentdash_spi::AgentConfig,
     pub dispatch_prompt: String,

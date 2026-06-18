@@ -258,7 +258,8 @@ export interface AgentPresetConfig extends Record<string, unknown> {
   mcp_preset_keys?: string[];
   vfs_access_grants?: AgentVfsAccessGrant[];
   skill_asset_keys?: string[];
-  allowed_companions?: string[];
+  default_companion_enabled?: boolean;
+  extra_companions?: string[];
 }
 
 export interface AgentVfsAccessGrant {

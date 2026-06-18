@@ -50,21 +50,27 @@
 
 ## Acceptance Criteria
 
-- [ ] 新增 ProjectAgentConfig 字段能在 Rust domain、API contract、前端类型、编辑表单中完整往返。
-- [ ] roster 生成规则改为“默认开放 + caller 额外添加非默认”，并有单元测试覆盖默认开放、额外添加、自身排除、重复去重。
-- [ ] caller 手动添加 companion 的 UI 不再展示默认开放 Agents，只展示非默认 Agents。
-- [ ] 前端 ProjectAgent 配置 UI、Agent 卡片提示、companion picker 文案不再使用旧白名单语义。
-- [ ] 前端 AgentRun / companion 派发展示能呈现 selected ProjectAgent 身份，避免把 companion child 展示成无来源的匿名 subagent。
-- [ ] `companion_request` 使用 `agent_key` 解析 selected ProjectAgent identity，并在 launch source / dispatch result / frame construction 中保留该身份。
-- [ ] child companion 的 `LifecycleAgent` 或等价 runtime identity surface 能关联 selected ProjectAgent，而不是仅作为匿名 spawned child。
-- [ ] child companion 的 frame construction 消费 selected ProjectAgent preset facts，不再只消费 selected executor config。
-- [ ] 模型上下文中的 `## Companion Agents`、工具参数校验和实际 child launch 使用同一 roster 数据源。
-- [ ] companion 操作面设计明确区分 tool exposure、context projection 与 non-escalatable runtime guard；禁止发起协作时不注入 companion roster，且不影响 child result return channel。
+- [x] 新增 ProjectAgentConfig 字段能在 Rust domain、API contract、前端类型、编辑表单中完整往返。
+- [x] roster 生成规则改为“默认开放 + caller 额外添加非默认”，并有单元测试覆盖默认开放、额外添加、自身排除、重复去重。
+- [x] caller 手动添加 companion 的 UI 不再展示默认开放 Agents，只展示非默认 Agents。
+- [x] 前端 ProjectAgent 配置 UI、Agent 卡片提示、companion picker 文案不再使用旧白名单语义。
+- [x] 前端 AgentRun / companion 派发展示能呈现 selected ProjectAgent 身份，避免把 companion child 展示成无来源的匿名 subagent。
+- [x] `companion_request` 使用 `agent_key` 解析 selected ProjectAgent identity，并在 launch source / dispatch result / frame construction 中保留该身份。
+- [x] child companion 的 `LifecycleAgent` 或等价 runtime identity surface 能关联 selected ProjectAgent，而不是仅作为匿名 spawned child。
+- [x] child companion 的 frame construction 消费 selected ProjectAgent preset facts，不再只消费 selected executor config。
+- [x] 模型上下文中的 `## Companion Agents`、工具参数校验和实际 child launch 使用同一 roster 数据源。
+- [x] companion 操作面设计明确区分 tool exposure、context projection 与 non-escalatable runtime guard；禁止发起协作时不注入 companion roster，且不影响 child result return channel。
 - [ ] companion child 默认没有 human route；用户主动向 companion run 发送消息后，human route 可按 Authority 状态打开。
-- [ ] `design.md` 给出通用 Authority Model，并说明 companion dispatch、companion respond、dynamic workflow authoring 如何落入该模型。
-- [ ] `design.md` 明确 `AuthorityState -> CapabilityState` 的数据方向，并说明 workspace module 展示这类身份约束如何由 Authority 裁剪下游 capability。
-- [ ] 更新相关 spec，记录 companion roster 与 identity launch 的新事实源和数据流原因。
-- [ ] 通过聚焦测试验证 Rust companion/tool/capability 链路与前端 ProjectAgent 配置链路。
+- [x] `design.md` 给出通用 Authority Model，并说明 companion dispatch、companion respond、dynamic workflow authoring 如何落入该模型。
+- [x] `design.md` 明确 `AuthorityState -> CapabilityState` 的数据方向，并说明 workspace module 展示这类身份约束如何由 Authority 裁剪下游 capability。
+- [x] 更新相关 spec，记录 companion roster 与 identity launch 的新事实源和数据流原因。
+- [x] 通过聚焦测试验证 Rust companion/tool/capability 链路与前端 ProjectAgent 配置链路。
+
+## Implementation Status Notes
+
+- 已落地：companion child 默认拒绝 `target=human`，并要求通过 `companion_respond` 回流父会话。
+- 尚未落地：用户主动向 companion run 发送消息后打开 human route。当前 `ExecutionContext` 未携带 `LaunchSource::LifecycleAgentUserMessage` 或等价 turn provenance，后续应先把该 provenance 投到 authority 输入，再在 `human.ask` guard 中打开该 route。
+- 已落地：`AuthorityState::companion_child()` 裁剪 `workspace_module.present`、`dynamic_workflow.author`、`companion.dispatch`，同时保留 `companion.respond` return channel。
 
 ## Out Of Scope
 

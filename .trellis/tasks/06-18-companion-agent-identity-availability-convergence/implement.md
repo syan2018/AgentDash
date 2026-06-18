@@ -85,3 +85,19 @@
 
 - Before implementation starts, decide how this task represents non-escalatable operation surfaces separately from tool exposure and PermissionGrant.
 - Before finishing, verify that a model-visible `agent_key` cannot launch a child whose identity differs from the roster entry.
+
+## Current Implementation Notes
+
+- `allowed_companions` 已替换为目标侧 `default_companion_enabled` 与调用侧 `extra_companions`；roster 规则为 default-enabled siblings ∪ caller extras - self。
+- `companion_request(payload.agent_key)` 现在必须选择当前 roster 中的 ProjectAgent；selected identity 会进入 dispatch result、launch source、child `LifecycleAgent.project_agent_id` 与 frame construction。
+- selected companion child 在 parent slice 上叠加 selected ProjectAgent executor config、capability directives、MCP presets、VFS grants 与 skill assets。
+- `AuthorityState` 已接入 resolver；main ProjectAgent 保留 dispatch / human / workspace module / dynamic workflow authoring，companion child 隐藏 dispatch / human / workspace module，拒绝 dynamic workflow authoring，同时保留 `companion.respond` 回流通道。
+- 当前剩余接入点：用户主动向 companion run 发送消息后打开 human route 需要把 launch provenance 投到 execution context，再由 `human.ask` authority 判断。
+
+## Validation Run
+
+- `cargo fmt`
+- `cargo check -p agentdash-application`
+- `cargo test -p agentdash-application capability`
+- `cargo test -p agentdash-application companion`
+- `pnpm --filter app-web run typecheck`

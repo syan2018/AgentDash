@@ -39,7 +39,7 @@ export function PresetFormFields({
   patchForm: (patch: Partial<PresetFormState>) => void;
   agentTypeOptions: Array<{ value: string; label: string }>;
   isDiscoveryLoading: boolean;
-  siblingAgents?: Array<{ name: string; display_name: string }>;
+  siblingAgents?: Array<{ name: string; display_name: string; default_companion_enabled?: boolean }>;
   projectId?: string;
   knowledgeEnabled?: boolean;
   onToggleKnowledge?: (enabled: boolean) => void;
@@ -123,7 +123,11 @@ export function PresetFormFields({
     patchForm({ provider_id: nextProviderId, model_id: nextModelId });
   };
 
-  const companionCount = siblingAgents?.filter((a) => a.name !== form.name).length ?? 0;
+  const extraCompanionCandidates = useMemo(
+    () => (siblingAgents ?? []).filter((a) => a.name !== form.name && a.default_companion_enabled !== true),
+    [form.name, siblingAgents],
+  );
+  const companionCount = extraCompanionCandidates.length;
 
   // ── 字段渲染（从 Tab 容器调用） ─────────────────────────────
   const renderIdentityGroup = () => (
@@ -346,44 +350,60 @@ export function PresetFormFields({
   );
 
   const renderCompanionContent = () => {
+    const toggleDefaultCompanion = (
+      <label className="flex items-start gap-2 rounded-[8px] border border-border bg-secondary/25 p-3 text-xs">
+        <input
+          type="checkbox"
+          checked={form.default_companion_enabled}
+          onChange={(event) => patchForm({ default_companion_enabled: event.target.checked })}
+          className="mt-0.5 h-4 w-4 rounded-[4px] border-input"
+        />
+        <span className="space-y-0.5">
+          <span className="block font-medium text-foreground">默认作为协作 Agent 开放</span>
+          <span className="block text-muted-foreground/70">
+            开启后，同项目其它 Agent 会默认在 companion roster 中看到此 Agent。
+          </span>
+        </span>
+      </label>
+    );
     if (companionCount === 0) {
       return (
-        <p className="text-xs text-muted-foreground/70">
-          项目内暂无其它 Agent 可作为 companion。先在项目里添加更多 Agent 后再回来配置。
-        </p>
+        <div className="space-y-3">
+          {toggleDefaultCompanion}
+          <p className="text-xs text-muted-foreground/70">
+            其它 Agent 当前都已默认开放，或项目内暂无可额外加入的非默认 companion。
+          </p>
+        </div>
       );
     }
-    const others = siblingAgents!.filter((a) => a.name !== form.name);
     const toggleCompanion = (name: string) => {
-      const next = form.allowed_companions.includes(name)
-        ? form.allowed_companions.filter((c) => c !== name)
-        : [...form.allowed_companions, name];
-      patchForm({ allowed_companions: next });
+      const next = form.extra_companions.includes(name)
+        ? form.extra_companions.filter((c) => c !== name)
+        : [...form.extra_companions, name];
+      patchForm({ extra_companions: next });
     };
-    const isWhitelistMode = form.allowed_companions.length > 0;
     return (
-      <CapabilityPicker
-        hint={
-          isWhitelistMode
-            ? "白名单模式：仅勾选的 companion 可被调用。清空后回到默认（全部可用）。"
-            : "默认模式：所有 companion 都可被调用。点击下方任一卡片即切换为白名单模式。"
-        }
-        isLoading={false}
-        error={null}
-        items={others}
-        selectedKeys={form.allowed_companions}
-        itemKey={(a) => a.name}
-        itemToCardProps={(a) => ({
-          reactKey: a.name,
-          title: a.display_name && a.display_name !== a.name ? a.display_name : a.name,
-          subtitle: a.display_name && a.display_name !== a.name ? a.name : undefined,
-        })}
-        onToggle={toggleCompanion}
-        loadingText=""
-        emptyAllText=""
-        enabledEmptyText="尚未在白名单中加入 companion；当前为默认模式（全部可用）。"
-        availableEmptyText="所有 companion 都已加入白名单。"
-      />
+      <div className="space-y-3">
+        {toggleDefaultCompanion}
+        <CapabilityPicker
+          hint="额外 companion 只用于加入未默认开放的 sibling Agent；默认开放的 Agent 会自动进入 roster。"
+          isLoading={false}
+          error={null}
+          items={extraCompanionCandidates}
+          selectedKeys={form.extra_companions}
+          itemKey={(a) => a.name}
+          itemToCardProps={(a) => ({
+            reactKey: a.name,
+            title: a.display_name && a.display_name !== a.name ? a.display_name : a.name,
+            subtitle: a.display_name && a.display_name !== a.name ? a.name : undefined,
+          })}
+          onToggle={toggleCompanion}
+          loadingText=""
+          emptyAllText=""
+          enabledEmptyText="尚未额外加入非默认 companion。"
+          availableEmptyText="所有非默认 companion 都已额外加入。"
+        />
+      </div>
     );
   };
 
@@ -394,7 +414,8 @@ export function PresetFormFields({
     form.vfs_access_grants.length +
     form.skill_asset_keys.length +
     form.visible_workspace_module_refs.length +
-    form.allowed_companions.length;
+    form.extra_companions.length +
+    (form.default_companion_enabled ? 1 : 0);
 
   const tabs: Array<{
     key: 'basic' | 'capability' | 'memory';
@@ -446,11 +467,11 @@ export function PresetFormFields({
       key: 'companion',
       label: 'Companion',
       badge: companionCount === 0
-        ? undefined
-        : form.allowed_companions.length > 0
-          ? `${form.allowed_companions.length}/${companionCount}`
-          : '全部',
-      disabled: companionCount === 0,
+        ? (form.default_companion_enabled ? '默认' : undefined)
+        : form.extra_companions.length > 0
+          ? `${form.extra_companions.length}/${companionCount}`
+          : (form.default_companion_enabled ? '默认' : undefined),
+      disabled: false,
     },
   ];
 

@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
-    CapabilityResolver, CapabilityResolverInput, ContextContributionSource, ContextContributions,
-    McpCandidates, ToolContribution, load_available_presets,
+    AuthorityState, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
+    ContextContributions, McpCandidates, ToolContribution, load_available_presets,
     tool_directives_from_active_workflow_projection,
 };
 use crate::lifecycle::{
@@ -107,6 +107,7 @@ pub async fn build_task_session_context(
         },
         mcp_runtime_context: None,
         capability_context: None,
+        authority_state: AuthorityState::main_project_agent(),
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, platform_config);
     let mcp_servers: Vec<agentdash_spi::RuntimeMcpServer> = cap_output.tool.mcp_servers.clone();

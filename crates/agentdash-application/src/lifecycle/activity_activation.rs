@@ -26,9 +26,9 @@ use agentdash_spi::{CapabilityState, Vfs};
 use uuid::Uuid;
 
 use crate::capability::{
-    AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput, CompanionContribution,
-    CompanionSliceMode, ContextContributionSource, ContextContributions, McpCandidates,
-    ToolContribution,
+    AuthorityState, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
+    CompanionContribution, CompanionSliceMode, ContextContributionSource, ContextContributions,
+    McpCandidates, ToolContribution,
 };
 use crate::platform_config::PlatformConfig;
 use crate::vfs::build_lifecycle_mount_with_node_scope;
@@ -61,6 +61,8 @@ pub struct ActivityActivationInput<'a> {
     pub lifecycle_key: &'a str,
     /// project 级 MCP Preset 预展开字典。
     pub available_presets: AvailableMcpPresets,
+    /// 当前运行身份对应的 authority；resolver 以它裁剪能力与工具入口。
+    pub authority_state: AuthorityState,
     /// Companion 子 session 的 slice 裁剪模式（resolve 后应用，不混入 resolver 输入）。
     pub companion_slice_mode: Option<CompanionSliceMode>,
     /// capability baseline 覆盖:PhaseNode 热更新时传入当前 hook runtime 的能力指令序列,
@@ -188,6 +190,7 @@ pub fn activate_activity_with_platform(
             vfs: Some(&effective_vfs),
         }),
         capability_context: None,
+        authority_state: input.authority_state.clone(),
     };
     let mut cap_output = CapabilityResolver::resolve_checked(&cap_input, platform)?;
     if let Some(slice_mode) = input.companion_slice_mode {
@@ -392,6 +395,7 @@ mod tests {
             attempt: 1,
             lifecycle_key: "trellis_dev_task",
             available_presets: empty_presets(),
+            authority_state: AuthorityState::main_project_agent(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -429,6 +433,7 @@ mod tests {
             attempt: 1,
             lifecycle_key: "lc_admin",
             available_presets: empty_presets(),
+            authority_state: AuthorityState::main_project_agent(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -442,6 +447,48 @@ mod tests {
         assert!(out.capability_keys.contains("file_read"));
         assert!(out.capability_keys.contains("file_write"));
         assert!(out.capability_keys.contains("shell_execute"));
+    }
+
+    #[test]
+    fn activate_activity_companion_child_applies_authority_to_workflow_capabilities() {
+        let workflow = sample_workflow(vec![
+            ToolCapabilityDirective::add_simple("workflow_management"),
+            ToolCapabilityDirective::add_simple("workspace_module"),
+        ]);
+        let step = sample_activity(vec![]);
+        let project_id = Uuid::new_v4();
+
+        let input = ActivityActivationInput {
+            owner_ctx: CapabilityScopeCtx::Project { project_id },
+            active_activity: &step,
+            workflow_contract: Some(&workflow.contract),
+            base_vfs: None,
+            run_id: Uuid::new_v4(),
+            orchestration_id: Uuid::new_v4(),
+            node_path: "implement",
+            attempt: 1,
+            lifecycle_key: "lc_child",
+            available_presets: empty_presets(),
+            authority_state: AuthorityState::companion_child(),
+            companion_slice_mode: None,
+            baseline_override: None,
+            tool_directives: &[],
+            ready_port_keys: BTreeSet::new(),
+            available_companions: Vec::new(),
+        };
+
+        let out = activate_activity_with_platform(&input, &test_platform()).expect("activate");
+
+        assert!(out.capability_keys.contains("workflow"));
+        assert!(out.capability_keys.contains("collaboration"));
+        assert!(!out.capability_keys.contains("workspace_module"));
+        assert!(!out.capability_keys.contains("workflow_management"));
+        assert!(
+            !out.mcp_servers
+                .iter()
+                .any(|server| server.name.contains("workflow")),
+            "companion child 不应注入 workflow authoring MCP"
+        );
     }
 
     #[test]
@@ -463,6 +510,7 @@ mod tests {
             attempt: 1,
             lifecycle_key: "lc_phase",
             available_presets: empty_presets(),
+            authority_state: AuthorityState::main_project_agent(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -503,6 +551,7 @@ mod tests {
             attempt: 1,
             lifecycle_key: "lc_phase",
             available_presets: empty_presets(),
+            authority_state: AuthorityState::main_project_agent(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -574,6 +623,7 @@ mod tests {
             attempt: 1,
             lifecycle_key: "lc_phase",
             available_presets: empty_presets(),
+            authority_state: AuthorityState::main_project_agent(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -638,6 +688,7 @@ mod tests {
             attempt: 1,
             lifecycle_key: "lc",
             available_presets: empty_presets(),
+            authority_state: AuthorityState::main_project_agent(),
             companion_slice_mode: None,
             baseline_override: Some(vec![
                 ToolCapabilityDirective::add_simple("workspace_module"),
@@ -684,6 +735,7 @@ mod tests {
             attempt: 1,
             lifecycle_key: "lc",
             available_presets: empty_presets(),
+            authority_state: AuthorityState::main_project_agent(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],
@@ -743,6 +795,7 @@ mod tests {
             attempt: 1,
             lifecycle_key: "lc",
             available_presets: empty_presets(),
+            authority_state: AuthorityState::main_project_agent(),
             companion_slice_mode: None,
             baseline_override: None,
             tool_directives: &[],

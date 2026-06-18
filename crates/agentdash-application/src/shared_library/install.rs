@@ -453,7 +453,8 @@ async fn install_agent_template(
         mcp_preset_keys: (!mcp_preset_keys.is_empty()).then_some(mcp_preset_keys),
         vfs_access_grants: None,
         skill_asset_keys: None,
-        allowed_companions: None,
+        default_companion_enabled: None,
+        extra_companions: None,
         // 模板安装不预设 module 可见性（module 为项目作用域），项目内按 agent 编辑。
         visible_workspace_module_refs: None,
     };

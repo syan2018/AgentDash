@@ -105,6 +105,10 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 - Task runtime projection 使用显式 `run_id + agent_id + frame_id + orchestration_id + node_path + attempt`
   coordinate，原因是 task view、terminal effect artifact/status 和 journey node lookup 都需要消费同一
   runtime node identity，同时保留 RuntimeSession trace 下钻能力。
+- Workflow AgentCall node materialization 归属 `LifecycleDispatchService::materialize_workflow_agent_node`。
+  node launcher 只解析 ready-node policy、调用 materialization use case、提交 `NodeStarted` reducer event
+  和返回 executor refs；原因是 LifecycleAgent、AgentFrame、RuntimeSession 和 anchor 的创建必须和
+  plain / ProjectAgent dispatch 共享同一套控制面事实闭包。
 
 ## Scenario: Lifecycle Orchestration Contract
 
@@ -295,7 +299,7 @@ RuntimeSession terminal -> RuntimeTraceAnchor -> OrchestrationRuntimeEvent -> re
 ### 1. Scope / Trigger
 
 - Trigger: `LifecycleDispatchService::dispatch_common` 已为 graph-backed dispatch 创建 runtime session、AgentFrame、current agent frame 和 `RuntimeSessionExecutionAnchor`。
-- Scope: graph-backed entry `AgentCall` 的 launch evidence materialization；不包含完整 scheduler / executor launcher。
+- Scope: graph-backed entry `AgentCall` 的 launch evidence materialization，以及 scheduler ready `AgentCall` node 通过 `LifecycleDispatchService` materialize 相同 evidence；不包含 connector turn launch。
 
 ### 2. Signatures
 
@@ -310,6 +314,20 @@ OrchestrationRuntimeEvent::NodeStarted {
 }
 ```
 
+Scheduler ready AgentCall materialization entry:
+
+```rust
+LifecycleDispatchService::materialize_workflow_agent_node(
+    WorkflowAgentNodeMaterializationRequest {
+        run_id,
+        orchestration_binding,
+        runtime_policy,
+        frame_created_by_id,
+    },
+    frame_composer,
+) -> WorkflowAgentNodeMaterializationResult
+```
+
 ### 3. Contracts
 
 - Graph-backed dispatch 创建 runtime session 后，entry runtime node 必须通过 reducer 从 `Ready` 转为 `Running`。
@@ -317,6 +335,12 @@ OrchestrationRuntimeEvent::NodeStarted {
 - 更新后的 `LifecycleRun` 必须回写 repository，且 dispatch result 的 `runtime_refs` 仍使用同一个 `orchestration_id + node_path + attempt`。
 - `start_lifecycle_run` 只初始化 orchestration，不创建 runtime session，因此 entry node 仍为 `Ready`。
 - 如果 graph-backed dispatch 无法取得 runtime session id，不能伪造 `NodeStarted`；应返回内部错误并保持事实一致。
+- Scheduler ready `AgentCall` node materialization 必须通过 `LifecycleDispatchService` 创建 `LifecycleAgent`、
+  `AgentFrame`、`RuntimeSession` 和 `RuntimeSessionExecutionAnchor`，并返回同一组 `AgentRuntimeRefs`。
+  `AgentNodeLauncher` 在收到 materialization result 后提交 `NodeStarted`，原因是 node state transition
+  属于 orchestration reducer，而 runtime identity materialization 属于 lifecycle dispatch use case。
+- `WorkflowAgentNodeMaterializationResult.runtime_refs` 必须携带 `orchestration_id + node_path + attempt`，
+  并与 anchor 的 orchestration binding 一致。
 
 ### 4. Validation & Error Matrix
 
@@ -325,16 +349,19 @@ OrchestrationRuntimeEvent::NodeStarted {
 | graph-backed dispatch 成功创建 runtime session | entry node `Running`，ready queues 为空 |
 | `RuntimePolicy` 未提供 session id | 返回 internal error，不写 fake executor ref |
 | `start_lifecycle_run` | entry node `Ready`，无 executor ref |
+| scheduler ready `AgentCall` materialization 成功 | node `Running`，executor ref 指向创建的 runtime session，anchor refs 与 node coordinate 一致 |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: subject execution with workflow graph creates one runtime session anchor and the root node has matching `ExecutorRunRef::RuntimeSession` plus trace ref.
+- Good: scheduler consumes a ready `AgentCall`, dispatch service creates the agent/frame/session/anchor evidence, then reducer records `NodeStarted` with the same runtime session ref.
 - Base: lifecycle start API creates orchestration only; no agent/frame/session side effect.
 - Bad: dispatch returns a delivery runtime session while `RuntimeNodeState` stays `Ready` with no executor ref.
 
 ### 6. Tests Required
 
 - Dispatch service graph-backed subject execution asserts node `Running`、empty ready queues、executor ref、trace ref、anchor refs。
+- Agent node launcher test asserts ready `AgentCall` materialization delegates identity/session/anchor creation to dispatch service and only applies `NodeStarted` after materialization result is available。
 - Project agent graph dispatch by key asserts the same started materialization。
 - Lifecycle run start test asserts entry remains `Ready`。
 

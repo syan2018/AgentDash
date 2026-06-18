@@ -147,6 +147,30 @@ impl DispatchFacts {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct WorkflowAgentNodeMaterializationRequest {
+    pub run_id: Uuid,
+    pub orchestration_binding: OrchestrationBindingRefs,
+    pub runtime_policy: RuntimePolicy,
+    pub frame_created_by_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowAgentNodeMaterializationResult {
+    pub runtime_refs: AgentRuntimeRefs,
+    pub delivery_runtime_ref: Uuid,
+}
+
+#[async_trait]
+pub trait WorkflowAgentNodeFrameComposer: Send + Sync {
+    async fn compose_workflow_agent_node_frame(
+        &self,
+        builder: AgentFrameBuilder,
+        run: &LifecycleRun,
+        runtime_session_ref: Uuid,
+    ) -> Result<AgentFrameBuilder, WorkflowApplicationError>;
+}
+
 impl From<&AgentLaunchIntent> for DispatchPlan {
     fn from(intent: &AgentLaunchIntent) -> Self {
         Self {
@@ -326,6 +350,86 @@ impl<'a> LifecycleDispatchService<'a> {
         Ok(LifecycleRunStartDispatchResult {
             run_ref: run.id,
             orchestration_ref: orchestration_binding.orchestration_ref,
+        })
+    }
+
+    pub async fn materialize_workflow_agent_node(
+        &self,
+        request: WorkflowAgentNodeMaterializationRequest,
+        frame_composer: &dyn WorkflowAgentNodeFrameComposer,
+    ) -> Result<WorkflowAgentNodeMaterializationResult, WorkflowApplicationError> {
+        let run = self
+            .run_repo
+            .get_by_id(request.run_id)
+            .await?
+            .ok_or_else(|| {
+                WorkflowApplicationError::BadRequest(format!(
+                    "LifecycleRun {} 不存在",
+                    request.run_id
+                ))
+            })?;
+        ensure_orchestration_node_binding(&run, &request.orchestration_binding)?;
+
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent)
+            .with_bootstrap_status(agentdash_domain::workflow::bootstrap_status::NOT_APPLICABLE);
+        self.agent_repo.create(&agent).await?;
+
+        let runtime_session_ref = match request.runtime_policy {
+            RuntimePolicy::CreateRuntimeSession => {
+                let creator = self.runtime_session_creator.ok_or_else(|| {
+                    WorkflowApplicationError::Internal(
+                        "Workflow AgentCall materialization 缺少 RuntimeSessionCreator".to_string(),
+                    )
+                })?;
+                creator
+                    .create_runtime_session(RuntimeSessionCreationRequest {
+                        project_id: run.project_id,
+                        run_id: run.id,
+                        agent_id: agent.id,
+                        source: ExecutionSource::ParentAgent,
+                    })
+                    .await?
+            }
+            RuntimePolicy::AttachExisting(id) | RuntimePolicy::ContinueCurrent(id) => id,
+        };
+
+        let mut builder =
+            AgentFrameBuilder::new_launch_anchor(agent.id, request.frame_created_by_id.clone())
+                .with_runtime_session(runtime_session_ref.to_string());
+        builder = frame_composer
+            .compose_workflow_agent_node_frame(builder, &run, runtime_session_ref)
+            .await?;
+        let frame = builder.build(self.frame_repo).await?;
+
+        let mut agent = agent;
+        agent.set_current_frame(frame.id);
+        self.agent_repo.update(&agent).await?;
+
+        let anchor_repo = self.anchor_repo.ok_or_else(|| {
+            WorkflowApplicationError::Internal(
+                "Workflow AgentCall materialization 缺少 RuntimeSessionExecutionAnchorRepository"
+                    .to_string(),
+            )
+        })?;
+        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
+            runtime_session_ref.to_string(),
+            run.id,
+            frame.id,
+            agent.id,
+            request.orchestration_binding.orchestration_ref,
+            request.orchestration_binding.node_path.clone(),
+            request.orchestration_binding.attempt,
+        );
+        anchor_repo.upsert(&anchor).await?;
+
+        Ok(WorkflowAgentNodeMaterializationResult {
+            runtime_refs: AgentRuntimeRefs::new(
+                run.id,
+                agent.id,
+                frame.id,
+                Some(request.orchestration_binding),
+            ),
+            delivery_runtime_ref: runtime_session_ref,
         })
     }
 
@@ -838,6 +942,34 @@ fn orchestration_entry_binding(
         node.node_path.clone(),
         node.attempt,
     ))
+}
+
+fn ensure_orchestration_node_binding(
+    run: &LifecycleRun,
+    binding: &OrchestrationBindingRefs,
+) -> Result<(), WorkflowApplicationError> {
+    let orchestration = run
+        .orchestrations
+        .iter()
+        .find(|item| item.orchestration_id == binding.orchestration_ref)
+        .ok_or_else(|| {
+            WorkflowApplicationError::Internal(format!(
+                "LifecycleRun {} 中不存在 orchestration {}",
+                run.id, binding.orchestration_ref
+            ))
+        })?;
+    let exists = orchestration
+        .node_tree
+        .iter()
+        .any(|node| node.node_path == binding.node_path && node.attempt == binding.attempt);
+    if exists {
+        Ok(())
+    } else {
+        Err(WorkflowApplicationError::Internal(format!(
+            "Orchestration {} 中不存在节点 {}#{}",
+            binding.orchestration_ref, binding.node_path, binding.attempt
+        )))
+    }
 }
 
 fn orchestration_role_for_dispatch(plan: &DispatchPlan) -> &str {

@@ -542,7 +542,9 @@ mod tests {
 
         assert_eq!(command.source(), LaunchSource::LocalRelayPrompt);
         assert_eq!(
-            command.local_relay_workspace_root(),
+            command
+                .local_relay_modifier()
+                .map(|payload| payload.workspace_root.as_path()),
             Some(Path::new("/workspace"))
         );
         assert_eq!(command.follow_up_session_id(), Some("follow-up-1"));

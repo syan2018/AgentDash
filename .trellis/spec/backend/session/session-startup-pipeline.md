@@ -20,7 +20,7 @@ LaunchCommand
 
 | 阶段 | 输入 | 输出 | 职责 |
 | --- | --- | --- | --- |
-| Source adapter | HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 请求 | `LaunchCommand` | 保留来源身份、请求意图、source policy、prompt payload、executor override、follow-up hint |
+| Source adapter | HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 请求 | `LaunchCommand` | 保留来源身份、请求意图、source policy、prompt payload、executor override、follow-up hint；来源专属附加事实进入 typed `LaunchModifier` |
 | Frame construction | `LaunchCommand` + runtime session anchor + lifecycle/domain/runtime facts | `FrameLaunchEnvelope` | 解析 `RuntimeSessionExecutionAnchor`、current/pending `AgentFrame`、working dir、VFS、MCP、capability、context bundle/frame、identity、query/audit/inspector projection、resolution trace |
 | Launch planning | `LaunchCommand` + `FrameLaunchEnvelope` + runtime facts | `LaunchPlan` | 解析 resolved prompt payload、lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input |
 | Turn preparation | `LaunchPlan` | `PreparedTurn` | claim/activate turn，准备 runtime tools、MCP tools、hook runtime、context frames、pending runtime context application 与 connector `ExecutionContext` |
@@ -33,7 +33,7 @@ LaunchCommand
 
 ## Source Adapter Contract
 
-Source adapter 只做来源语义转换，不能预先组装最终运行事实。
+Source adapter 只做来源语义转换，不能预先组装最终运行事实。`LaunchCommand` 的核心字段表达通用 turn launch intent；Routine、Companion、Hook resume、Local relay 等来源差异通过 typed `LaunchModifier` 携带。modifier 是 frame construction / launch planning 的输入事实，不是并列启动路径，原因是所有入口都需要经过同一套 anchor 解析、surface 校验、capability projection 和 accepted 边界。
 
 | 来源 | `LaunchCommand` 应携带 |
 | --- | --- |
@@ -57,7 +57,7 @@ ProjectAgent AgentRun start 是两层 receipt：外层 `project_agent_start` rec
 
 `SessionConstructionProvider::build_frame_construction` 直接输出 launch-ready `FrameLaunchEnvelope`，不是 seed、partial plan 或等待 planner 补齐的中间形态。生产实现是 `FrameConstructionService::construct_launch_envelope`。
 
-`FrameConstructionService` 通过 `RuntimeSessionExecutionAnchor` 反查 `LifecycleRun` / `LifecycleAgent` / current `AgentFrame`，再按 companion、lifecycle node、ProjectAgent 或 existing frame surface 路径生成 envelope。ProjectAgent / owner bootstrap 路径由 `workflow::frame_construction::owner_bootstrap` 组合 owner surface，原因是该路径产出写入 `AgentFrame` 的 VFS、MCP、capability、context bundle 与 execution profile。业务模块不得绕过该服务自行组装 connector facts。
+`FrameConstructionService` 通过 `RuntimeSessionExecutionAnchor` 反查 `LifecycleRun` / `LifecycleAgent` / current `AgentFrame`，先选择 owner surface composer：ProjectAgent、LifecycleNode 或 ExistingSurface；再把 companion 等 source modifier 应用到 owner surface 上生成 envelope。ProjectAgent / owner bootstrap 路径由 `workflow::frame_construction::owner_bootstrap` 组合 owner surface，原因是该路径产出写入 `AgentFrame` 的 VFS、MCP、capability、context bundle 与 execution profile。modifier 只能补充或约束来源语义，不能替代 owner route，原因是 AgentRun 的 workspace、权限、VFS/MCP、capability 与 context 必须先有明确控制面 owner。业务模块不得绕过该服务自行组装 connector facts。
 
 `FrameLaunchEnvelope` 至少覆盖：
 

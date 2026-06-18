@@ -1,6 +1,6 @@
-//! Compose 路径分类 — 决定 frame construction 走哪个 composer。
+//! Compose owner route 分类 — 先决定 frame construction 的 owner surface。
 //!
-//! 分类优先级：companion_hint → project_agent → lifecycle node → existing frame surface。
+//! Companion 不是顶层互斥 route；它只能在 owner route 已经明确后作为 modifier 应用。
 
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::ConnectorError;
@@ -19,7 +19,7 @@ enum ComposeRoute {
     ExistingSurface,
 }
 
-/// 根据 frame/agent/run 状态分类后路由到对应的 composer。
+/// 根据 frame/agent/run 状态先解析 owner route，再按 launch modifier 路由到对应 composer。
 pub(super) async fn route_and_compose(
     svc: &FrameConstructionService,
     frame: AgentFrame,
@@ -27,24 +27,46 @@ pub(super) async fn route_and_compose(
     run: LifecycleRun,
     input: SessionConstructionProviderInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
-    // 1. companion hint 优先
-    if let Some(companion) = input.command.companion_hint() {
-        return super::composer_companion::compose(svc, &frame, agent, companion, &input).await;
-    }
-
     let has_orchestration = if agent.project_agent_id.is_some() {
         false
     } else {
         has_orchestration_anchor(svc, input.session_id.as_str()).await?
     };
-    match classify_primary_route(&agent, has_orchestration, frame_surface_ready(&frame)) {
-        Some(ComposeRoute::ProjectAgent) => {
+    let owner_route = classify_owner_route(&agent, has_orchestration, frame_surface_ready(&frame));
+    let companion_modifier = input.command.companion_modifier();
+
+    match (owner_route, companion_modifier) {
+        (Some(ComposeRoute::ProjectAgent), Some(companion)) => {
+            return super::composer_companion::compose_project_agent_owner_modifier(
+                svc, &frame, companion, &input,
+            )
+            .await;
+        }
+        (Some(ComposeRoute::ProjectAgent), None) => {
             return super::composer_project_agent::compose(svc, &frame, agent, run, &input).await;
         }
-        Some(ComposeRoute::LifecycleNode) => {
+        (Some(ComposeRoute::LifecycleNode), Some(companion)) if companion.workflow.is_some() => {
+            return super::composer_companion::compose_lifecycle_node_owner_modifier(
+                svc, &frame, companion, &input,
+            )
+            .await;
+        }
+        (Some(ComposeRoute::LifecycleNode), Some(_)) => {
+            return Err(ConnectorError::InvalidConfig(format!(
+                "RuntimeSession {} 的 LifecycleNode owner 收到 companion modifier，但缺少 companion.workflow owner facts",
+                input.session_id
+            )));
+        }
+        (Some(ComposeRoute::LifecycleNode), None) => {
             return super::composer_lifecycle_node::compose(svc, &frame, agent, run, &input).await;
         }
-        Some(ComposeRoute::ExistingSurface) => {
+        (Some(ComposeRoute::ExistingSurface), Some(_)) => {
+            return Err(ConnectorError::InvalidConfig(format!(
+                "RuntimeSession {} 的 ExistingSurface owner 不支持 companion modifier：缺少 ProjectAgent 或 LifecycleNode owner facts",
+                input.session_id
+            )));
+        }
+        (Some(ComposeRoute::ExistingSurface), None) => {
             return build_envelope_from_frame(
                 &frame,
                 None,
@@ -54,7 +76,13 @@ pub(super) async fn route_and_compose(
                 &input.requested_runtime_commands,
             );
         }
-        None => {}
+        (None, Some(_)) => {
+            return Err(ConnectorError::InvalidConfig(format!(
+                "AgentFrame {} 无法判定 owner route，拒绝仅凭 companion modifier 启动",
+                frame.id
+            )));
+        }
+        (None, None) => {}
     }
 
     Err(ConnectorError::InvalidConfig(format!(
@@ -63,7 +91,7 @@ pub(super) async fn route_and_compose(
     )))
 }
 
-fn classify_primary_route(
+fn classify_owner_route(
     agent: &LifecycleAgent,
     has_orchestration_anchor: bool,
     has_frame_surface: bool,
@@ -105,7 +133,7 @@ async fn has_orchestration_anchor(
 mod tests {
     use uuid::Uuid;
 
-    use super::{ComposeRoute, classify_primary_route};
+    use super::{ComposeRoute, classify_owner_route};
     use agentdash_domain::workflow::{AgentSource, LifecycleAgent};
 
     #[test]
@@ -117,7 +145,7 @@ mod tests {
             .with_project_agent(project_agent_id);
 
         assert_eq!(
-            classify_primary_route(&agent, true, false),
+            classify_owner_route(&agent, true, false),
             Some(ComposeRoute::ProjectAgent)
         );
     }
@@ -129,8 +157,41 @@ mod tests {
         let agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::WorkflowAgent);
 
         assert_eq!(
-            classify_primary_route(&agent, true, false),
+            classify_owner_route(&agent, true, false),
             Some(ComposeRoute::LifecycleNode)
         );
+    }
+
+    #[test]
+    fn existing_surface_routes_only_after_owner_facts_are_absent() {
+        let project_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::Unknown);
+
+        assert_eq!(
+            classify_owner_route(&agent, false, true),
+            Some(ComposeRoute::ExistingSurface)
+        );
+    }
+
+    #[test]
+    fn companion_modifier_does_not_participate_in_owner_classification() {
+        let project_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let project_agent_id = Uuid::new_v4();
+        let project_agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::ProjectAgent)
+            .with_project_agent(project_agent_id);
+        let workflow_agent =
+            LifecycleAgent::new_root(run_id, project_id, AgentSource::WorkflowAgent);
+
+        assert_eq!(
+            classify_owner_route(&project_agent, true, false),
+            Some(ComposeRoute::ProjectAgent)
+        );
+        assert_eq!(
+            classify_owner_route(&workflow_agent, true, false),
+            Some(ComposeRoute::LifecycleNode)
+        );
+        assert_eq!(classify_owner_route(&workflow_agent, false, false), None);
     }
 }

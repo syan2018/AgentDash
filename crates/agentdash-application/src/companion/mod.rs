@@ -1,3 +1,4 @@
+pub(crate) mod dispatch;
 pub mod gate_control;
 pub mod notifications;
 pub mod payload_types;

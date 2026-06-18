@@ -18,11 +18,16 @@ pub struct ExecutionContext {
 生产构造路径：
 
 ```text
-LaunchPlan -> TurnPreparer -> PreparedTurn.connector_context -> ConnectorStarter
+LaunchCommand(+LaunchModifier) -> FrameLaunchEnvelope -> LaunchPlan -> TurnPreparer -> PreparedTurn.connector_context -> ConnectorStarter
 ```
 
 其它路径可以 clone/read active turn 的 frame 用于工具热更新，但不把该 projection 写回为
 session 架构事实源。
+
+`LaunchModifier` 在 frame construction / launch planning 阶段被消化为 owner surface、source
+policy、prompt plan 或 follow-up plan；它不进入 connector-facing `ExecutionContext`。connector
+只消费本次 prompt 的闭包事实，原因是 connector 不应理解 ProjectAgent、Companion、Routine、
+Local relay 等 application 来源差异。
 
 ## `ExecutionSessionFrame` — Who + Where
 

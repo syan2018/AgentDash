@@ -5,11 +5,7 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
-use agentdash_domain::workflow::{
-    AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, GatePolicy,
-    InteractionDispatchIntent, LifecycleTaskPlanItem, LifecycleTaskPlanItemPatch, RunPolicy,
-    RuntimePolicy,
-};
+use agentdash_domain::workflow::LifecycleTaskPlanItem;
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
 use agentdash_spi::context::capability::CompanionAgentEntry;
@@ -26,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use super::dispatch::{CompanionChildDispatchRequest, CompanionChildDispatchService};
 use super::tool_context::{
     CompanionHookProvenance, CompanionHookProvenanceSource, CompanionToolContext,
 };
@@ -34,22 +31,11 @@ use super::{
     OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
     build_companion_event_notification,
 };
-use crate::lifecycle::{LifecycleDispatchService, resolve_current_frame_from_delivery_trace_ref};
+use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
-use crate::session::{
-    AgentFrameRuntimeTarget, CompanionLaunchSource, LaunchCommand, UserPromptInput,
-};
-use crate::task::plan::update_run_task;
+use crate::session::{AgentFrameRuntimeTarget, LaunchCommand, UserPromptInput};
 
 pub use agentdash_spi::CompanionSliceMode;
-
-struct CompanionDispatchOutcome {
-    run_ref: Uuid,
-    agent_ref: Uuid,
-    frame_ref: Uuid,
-    gate_ref: Option<Uuid>,
-    delivery_runtime_session_id: String,
-}
 
 struct SelectedCompanionAgent {
     project_agent: ProjectAgent,
@@ -310,8 +296,8 @@ impl AgentTool for CompanionRequestTool {
 }
 
 impl CompanionRequestTool {
-    /// target=sub: 构造 ExecutionIntent 通过 LifecycleDispatchService 派发 companion child agent。
-    /// wait 语义通过 durable LifecycleGate 实现。
+    /// target=sub: 校验 payload、构造 prompt/hook 上下文，并委托 companion dispatch service
+    /// materialize child agent；wait 轮询 durable LifecycleGate。
     async fn execute_sub_request(
         &self,
         _target: CompanionRequestTarget,
@@ -466,143 +452,33 @@ impl CompanionRequestTool {
         )
         .await;
 
-        // ─── 构造 ExecutionIntent 并通过 LifecycleDispatchService 派发 ──
-        let gate_kind = match adoption_mode {
-            CompanionAdoptionMode::BlockingReview => "companion_wait_blocking",
-            CompanionAdoptionMode::FollowUpRequired => "companion_wait_follow_up",
-            CompanionAdoptionMode::Suggestion => "companion_wait",
-        };
-
-        let context_policy = match slice_mode {
-            CompanionSliceMode::Full => ContextPolicy::Inherit,
-            _ => ContextPolicy::Slice,
-        };
-        let dispatch_result: CompanionDispatchOutcome = {
-            let dispatch_svc = LifecycleDispatchService::new(
-                self.repos.lifecycle_run_repo.as_ref(),
-                self.repos.workflow_graph_repo.as_ref(),
-                self.repos.lifecycle_agent_repo.as_ref(),
-                self.repos.agent_frame_repo.as_ref(),
-                self.repos.lifecycle_subject_association_repo.as_ref(),
-                self.repos.lifecycle_gate_repo.as_ref(),
-                self.repos.agent_lineage_repo.as_ref(),
-            )
-            .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
-            .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
-            if wait {
-                let result = dispatch_svc
-                    .open_interaction_gate(&InteractionDispatchIntent {
-                        project_id,
-                        source: ExecutionSource::ParentAgent,
-                        parent_run_id,
-                        parent_agent_id,
-                        workflow_graph_ref: None,
-                        context_policy,
-                        capability_policy: CapabilityPolicy::InheritedSlice,
-                        runtime_policy: RuntimePolicy::CreateRuntimeSession,
-                        gate_policy: GatePolicy {
-                            gate_kind: gate_kind.to_string(),
-                            correlation_id: Some(dispatch_plan.dispatch_id.clone()),
-                            payload: Some(serde_json::json!({
-                                "parent_agent_id": parent_agent_id,
-                                "parent_frame_id": parent_frame_id,
-                                "companion_label": companion_label,
-                                "adoption_mode": companion_adoption_mode_key(adoption_mode),
-                                "dispatch_id": dispatch_plan.dispatch_id,
-                                "task_id": requested_task_id.map(|id| id.to_string()),
-                            })),
-                        },
-                    })
-                    .await
-                    .map_err(|e| AgentToolError::ExecutionFailed(format!("dispatch 失败: {e}")))?;
-                CompanionDispatchOutcome {
-                    run_ref: result.runtime_refs.run_ref,
-                    agent_ref: result.runtime_refs.agent_ref,
-                    frame_ref: result.runtime_refs.frame_ref,
-                    gate_ref: Some(result.gate_ref),
-                    delivery_runtime_session_id: result
-                        .delivery_runtime_ref
-                        .ok_or_else(|| {
-                            AgentToolError::ExecutionFailed(
-                                "dispatch 未创建 child delivery runtime session".to_string(),
-                            )
-                        })?
-                        .to_string(),
-                }
-            } else {
-                let result = dispatch_svc
-                    .launch_agent(&AgentLaunchIntent {
-                        project_id,
-                        source: ExecutionSource::ParentAgent,
-                        subject_ref: None,
-                        parent_run_id: Some(parent_run_id),
-                        parent_agent_id: Some(parent_agent_id),
-                        workflow_graph_ref: None,
-                        run_policy: RunPolicy::AppendGraph,
-                        agent_policy: AgentPolicy::SpawnChild,
-                        context_policy,
-                        capability_policy: CapabilityPolicy::InheritedSlice,
-                        runtime_policy: RuntimePolicy::CreateRuntimeSession,
-                    })
-                    .await
-                    .map_err(|e| AgentToolError::ExecutionFailed(format!("dispatch 失败: {e}")))?;
-                CompanionDispatchOutcome {
-                    run_ref: result.runtime_refs.run_ref,
-                    agent_ref: result.runtime_refs.agent_ref,
-                    frame_ref: result.runtime_refs.frame_ref,
-                    gate_ref: None,
-                    delivery_runtime_session_id: result
-                        .delivery_runtime_ref
-                        .ok_or_else(|| {
-                            AgentToolError::ExecutionFailed(
-                                "dispatch 未创建 child delivery runtime session".to_string(),
-                            )
-                        })?
-                        .to_string(),
-                }
-            }
-        };
-
-        if let Some(task_id) = requested_task_id {
-            update_run_task(
-                self.repos.lifecycle_run_repo.as_ref(),
+        let dispatch_result = CompanionChildDispatchService::new(&self.repos)
+            .dispatch_child(CompanionChildDispatchRequest {
+                project_id,
                 parent_run_id,
-                task_id,
-                LifecycleTaskPlanItemPatch {
-                    assigned_agent_id: Some(Some(dispatch_result.agent_ref)),
-                    ..LifecycleTaskPlanItemPatch::default()
-                },
-            )
-            .await
-            .map_err(|error| {
-                AgentToolError::ExecutionFailed(format!(
-                    "Companion 已创建但 Task 指派关系写回失败: {error}"
-                ))
-            })?;
-        }
-
-        bind_selected_project_agent_to_lifecycle_agent(
-            self.repos.lifecycle_agent_repo.as_ref(),
-            dispatch_result.agent_ref,
-            selected_companion.project_agent.id,
-        )
-        .await?;
+                parent_agent_id,
+                parent_frame_id,
+                wait,
+                slice_mode,
+                adoption_mode,
+                dispatch_id: dispatch_plan.dispatch_id.clone(),
+                companion_label: companion_label.clone(),
+                task_id: requested_task_id,
+                selected_project_agent_id: selected_companion.project_agent.id,
+                selected_agent_key: selected_companion.agent_key.clone(),
+                companion_executor_config,
+                parent_session_id: current_session_id.clone(),
+                dispatch_prompt: dispatch_prompt.clone(),
+            })
+            .await?;
 
         let launch_outcome = session_services
             .launch
             .launch_command_with_outcome(
                 &dispatch_result.delivery_runtime_session_id,
                 LaunchCommand::companion_dispatch_input(
-                    UserPromptInput::from_text(&dispatch_prompt),
-                    CompanionLaunchSource {
-                        parent_session_id: current_session_id.clone(),
-                        selected_project_agent_id: Some(selected_companion.project_agent.id),
-                        selected_agent_key: Some(selected_companion.agent_key.clone()),
-                        slice_mode,
-                        companion_executor_config,
-                        dispatch_prompt: dispatch_prompt.clone(),
-                        workflow: None,
-                    },
+                    UserPromptInput::from_text(&dispatch_result.launch_source.dispatch_prompt),
+                    dispatch_result.launch_source.clone(),
                 ),
             )
             .await
@@ -1177,27 +1053,6 @@ impl CompanionRequestTool {
             project_agent: agent,
         })
     }
-}
-
-async fn bind_selected_project_agent_to_lifecycle_agent(
-    repo: &dyn agentdash_domain::workflow::LifecycleAgentRepository,
-    lifecycle_agent_id: Uuid,
-    project_agent_id: Uuid,
-) -> Result<(), AgentToolError> {
-    let Some(mut lifecycle_agent) = repo
-        .get(lifecycle_agent_id)
-        .await
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
-    else {
-        return Err(AgentToolError::ExecutionFailed(format!(
-            "LifecycleAgent {lifecycle_agent_id} 不存在，无法绑定 selected companion ProjectAgent"
-        )));
-    };
-    lifecycle_agent.project_agent_id = Some(project_agent_id);
-    repo.update(&lifecycle_agent)
-        .await
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-    Ok(())
 }
 
 // ─── companion_respond ──────────────────────────────────────────────
@@ -2260,14 +2115,6 @@ fn build_companion_owner_summary(
         lines.push(format!("- Task: {} ({})", task_id, label));
     }
     Some(format!("## 当前归属\n{}", lines.join("\n")))
-}
-
-fn companion_adoption_mode_key(mode: CompanionAdoptionMode) -> &'static str {
-    match mode {
-        CompanionAdoptionMode::Suggestion => at::SUGGESTION,
-        CompanionAdoptionMode::FollowUpRequired => at::FOLLOW_UP_REQUIRED,
-        CompanionAdoptionMode::BlockingReview => at::BLOCKING_REVIEW,
-    }
 }
 
 pub fn companion_owner_candidates(

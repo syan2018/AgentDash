@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentProcedureRepository, ArtifactAliasPolicy, ExecutorRunRef,
-    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRun, LifecycleRunRepository,
-    PlanNode, PlanNodeKind, RuntimeNodeError, RuntimeSessionExecutionAnchorRepository,
+    AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository, ArtifactAliasPolicy,
+    ExecutorRunRef, LifecycleAgentRepository, LifecycleGateRepository, LifecycleRun,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository, PlanNode, PlanNodeKind,
+    RuntimeNodeError, RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
 };
 use agentdash_spi::FunctionRunner;
 use serde_json::Value;
@@ -78,10 +79,13 @@ pub struct OrchestrationExecutorLauncher {
 #[derive(Clone)]
 struct OrchestrationExecutorRepositories {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
     agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
     lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     agent_frame_repo: Arc<dyn AgentFrameRepository>,
+    lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
+    agent_lineage_repo: Arc<dyn AgentLineageRepository>,
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
 }
@@ -90,10 +94,13 @@ impl From<RepositorySet> for OrchestrationExecutorRepositories {
     fn from(repos: RepositorySet) -> Self {
         Self {
             lifecycle_run_repo: repos.lifecycle_run_repo,
+            workflow_graph_repo: repos.workflow_graph_repo,
             agent_procedure_repo: repos.agent_procedure_repo,
             lifecycle_agent_repo: repos.lifecycle_agent_repo,
             agent_frame_repo: repos.agent_frame_repo,
+            lifecycle_subject_association_repo: repos.lifecycle_subject_association_repo,
             lifecycle_gate_repo: repos.lifecycle_gate_repo,
+            agent_lineage_repo: repos.agent_lineage_repo,
             execution_anchor_repo: repos.execution_anchor_repo,
             runtime_session_creator: repos.runtime_session_creator,
         }
@@ -126,8 +133,13 @@ impl OrchestrationExecutorLauncher {
     ) -> Self {
         let agent_node_launcher = AgentNodeLauncher::new(
             repos.agent_procedure_repo.clone(),
+            repos.lifecycle_run_repo.clone(),
+            repos.workflow_graph_repo.clone(),
             repos.lifecycle_agent_repo.clone(),
             repos.agent_frame_repo.clone(),
+            repos.lifecycle_subject_association_repo.clone(),
+            repos.lifecycle_gate_repo.clone(),
+            repos.agent_lineage_repo.clone(),
             repos.execution_anchor_repo.clone(),
             repos.runtime_session_creator.clone(),
             frame_composer,
@@ -458,14 +470,16 @@ mod launcher_drain_tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         ActivationRule, ActivityCompletionPolicy, ActivityIterationPolicy, AgentFrame,
-        AgentFrameRepository, AgentProcedure, AgentProcedureContract, AgentProcedureExecutionSpec,
-        AgentProcedureRepository, AgentReusePolicy, ApiRequestExecutorSpec, BashExecExecutorSpec,
-        DefinitionSource, ExecutorSpec, FunctionActivityExecutorSpec, GateStrategy,
-        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleAgent,
-        LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, LifecycleRunRepository,
+        AgentFrameRepository, AgentLineage, AgentProcedure, AgentProcedureContract,
+        AgentProcedureExecutionSpec, AgentProcedureRepository, AgentReusePolicy,
+        ApiRequestExecutorSpec, BashExecExecutorSpec, DefinitionSource, ExecutorSpec,
+        FunctionActivityExecutorSpec, GateStrategy, HumanActivityExecutorSpec,
+        HumanApprovalExecutorSpec, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
+        LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociation,
         OrchestrationLimits, OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition,
         RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
-        RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy, RuntimeTraceRef,
+        RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy, RuntimeTraceRef, SubjectRef,
+        WorkflowGraph,
     };
     use agentdash_spi::Vfs;
     use agentdash_spi::{ApiRequestOutcome, BashExecOutcome};
@@ -702,6 +716,103 @@ mod launcher_drain_tests {
 
         async fn update(&self, _agent: &LifecycleAgent) -> Result<(), DomainError> {
             Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct EmptyWorkflowGraphRepo;
+
+    #[async_trait]
+    impl WorkflowGraphRepository for EmptyWorkflowGraphRepo {
+        async fn create(&self, _graph: &WorkflowGraph) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn get_by_id(&self, _id: Uuid) -> Result<Option<WorkflowGraph>, DomainError> {
+            Ok(None)
+        }
+
+        async fn get_by_project_and_key(
+            &self,
+            _project_id: Uuid,
+            _key: &str,
+        ) -> Result<Option<WorkflowGraph>, DomainError> {
+            Ok(None)
+        }
+
+        async fn list_by_project(
+            &self,
+            _project_id: Uuid,
+        ) -> Result<Vec<WorkflowGraph>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn update(&self, _graph: &WorkflowGraph) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct EmptyAssociationRepo;
+
+    #[async_trait]
+    impl LifecycleSubjectAssociationRepository for EmptyAssociationRepo {
+        async fn create(
+            &self,
+            _association: &LifecycleSubjectAssociation,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn list_by_subject(
+            &self,
+            _subject: &SubjectRef,
+        ) -> Result<Vec<LifecycleSubjectAssociation>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn list_by_anchor(
+            &self,
+            _run_id: Uuid,
+            _agent_id: Option<Uuid>,
+        ) -> Result<Vec<LifecycleSubjectAssociation>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct EmptyLineageRepo;
+
+    #[async_trait]
+    impl AgentLineageRepository for EmptyLineageRepo {
+        async fn create(&self, _lineage: &AgentLineage) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn list_by_run(&self, _run_id: Uuid) -> Result<Vec<AgentLineage>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn list_children(
+            &self,
+            _parent_agent_id: Uuid,
+        ) -> Result<Vec<AgentLineage>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn find_parent(
+            &self,
+            _child_agent_id: Uuid,
+        ) -> Result<Option<AgentLineage>, DomainError> {
+            Ok(None)
         }
     }
 
@@ -1041,10 +1152,13 @@ mod launcher_drain_tests {
         let launcher = OrchestrationExecutorLauncher::from_repositories(
             OrchestrationExecutorRepositories {
                 lifecycle_run_repo: run_repo,
+                workflow_graph_repo: Arc::new(EmptyWorkflowGraphRepo),
                 agent_procedure_repo: procedure_repo,
                 lifecycle_agent_repo: Arc::new(EmptyAgentRepo),
                 agent_frame_repo: frame_repo.clone(),
+                lifecycle_subject_association_repo: Arc::new(EmptyAssociationRepo),
                 lifecycle_gate_repo: gate_repo,
+                agent_lineage_repo: Arc::new(EmptyLineageRepo),
                 execution_anchor_repo: anchor_repo.clone(),
                 runtime_session_creator: Arc::new(EmptyRuntimeSessionCreator),
             },

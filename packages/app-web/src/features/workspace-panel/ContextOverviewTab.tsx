@@ -10,7 +10,6 @@ import { SurfaceCard } from "../session-context";
 import { RUNTIME_NODE_STATUS_LABEL, RUN_STATUS_LABEL } from "../workflow/shared-labels";
 import {
   isDefaultExposedSkill,
-  isModelInvocationVisibleSkill,
   skillDisplayLabel,
   skillIdentityKey,
 } from "../../types";
@@ -559,28 +558,20 @@ function SessionCapabilitiesCard({
   capabilities: SessionBaselineCapabilities;
 }) {
   const clusters = visibleCapabilityClusters(capabilities);
-  const usesClusters = clusters.length > 0;
-  const visibleSkills = usesClusters ? [] : capabilities.skills.filter(isModelInvocationVisibleSkill);
-  const skillCount = usesClusters
-    ? clusters.reduce((total, cluster) => total + defaultExposedSkills(cluster).length, 0)
-    : visibleSkills.length;
+  const skillCount = clusters.reduce((total, cluster) => total + defaultExposedSkills(cluster).length, 0);
 
-  if (!usesClusters && skillCount === 0) return null;
+  if (clusters.length === 0 && skillCount === 0) return null;
 
   return (
     <SurfaceCard
       eyebrow="Session 能力基线"
-      title={usesClusters ? `${clusters.length} 个 Skill Provider` : `${skillCount} 个默认暴露 Skill`}
+      title={`${clusters.length} 个 Skill Provider`}
     >
-      {usesClusters ? (
-        <div className="space-y-2">
-          {clusters.map((cluster) => (
-            <SkillProviderClusterBlock key={cluster.provider_key} cluster={cluster} />
-          ))}
-        </div>
-      ) : (
-        <SkillListBlock skills={visibleSkills} title={`Skills (${skillCount})`} />
-      )}
+      <div className="space-y-2">
+        {clusters.map((cluster) => (
+          <SkillProviderClusterBlock key={cluster.provider_key} cluster={cluster} />
+        ))}
+      </div>
     </SurfaceCard>
   );
 }

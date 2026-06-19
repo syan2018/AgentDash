@@ -22,28 +22,6 @@ describe("SessionCapabilityCard", () => {
     expect(html).toContain("copilot/config-edit");
     expect(html).toContain("Workspace Skills");
     expect(html).toContain("workspace/config-edit");
-    expect(html).not.toContain("legacy-flat-only");
-  });
-
-  it("没有 cluster 时回退旧 flat skills", () => {
-    const html = renderToStaticMarkup(
-      <SessionCapabilityCard
-        block={capabilitiesBlock({
-          skills: [
-            {
-              name: "runtime-skill",
-              description: "旧 flat skills 仍可展示",
-              file_path: "workspace://skills/runtime-skill/SKILL.md",
-            },
-          ],
-        })}
-        defaultExpanded
-      />,
-    );
-
-    expect(html).toContain("1 个默认暴露 Skill");
-    expect(html).toContain("runtime-skill");
-    expect(html).toContain("旧 flat skills 仍可展示");
   });
 
   it("跨 provider 同 local_name 时使用 capability key 区分条目", () => {
@@ -74,13 +52,7 @@ function capabilitiesBlock(capabilities: Partial<SessionBaselineCapabilities>): 
 
 function clusterCapabilities(): SessionBaselineCapabilities {
   return {
-    skills: [
-      {
-        name: "legacy-flat-only",
-        description: "cluster 存在时不优先展示旧 flat fallback",
-        file_path: "workspace://skills/legacy-flat-only/SKILL.md",
-      },
-    ],
+    skills: [],
     skill_clusters: [
       {
         provider_key: "copilot",

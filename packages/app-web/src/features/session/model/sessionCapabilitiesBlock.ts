@@ -1,6 +1,5 @@
 import {
   isDefaultExposedSkill,
-  isModelInvocationVisibleSkill,
 } from "../../../types/context";
 import type {
   SessionBaselineCapabilities,
@@ -17,8 +16,6 @@ type ResourceContentBlock = Extract<ContentBlock, { type: "resource" }>;
 
 export interface SessionCapabilitiesBlockViewModel {
   clusters: SkillProviderCluster[];
-  usesClusters: boolean;
-  visibleSkills: SkillEntry[];
   skillCount: number;
   summaryParts: string[];
 }
@@ -49,22 +46,16 @@ export function buildSessionCapabilitiesBlockViewModel(
   if (!capabilities) return null;
 
   const clusters = getVisibleCapabilityClusters(capabilities);
-  const usesClusters = clusters.length > 0;
-  const visibleSkills = usesClusters ? [] : getVisibleDefaultSkills(capabilities);
-  const skillCount = usesClusters
-    ? clusters.reduce((total, cluster) => total + getDefaultExposedSkills(cluster).length, 0)
-    : visibleSkills.length;
+  const skillCount = clusters.reduce((total, cluster) => total + getDefaultExposedSkills(cluster).length, 0);
 
-  if (!usesClusters && skillCount === 0) return null;
+  if (clusters.length === 0 && skillCount === 0) return null;
 
   const summaryParts: string[] = [];
-  if (usesClusters) summaryParts.push(`${clusters.length} 个 Provider`);
+  summaryParts.push(`${clusters.length} 个 Provider`);
   if (skillCount > 0) summaryParts.push(`${skillCount} 个默认暴露 Skill`);
 
   return {
     clusters,
-    usesClusters,
-    visibleSkills,
     skillCount,
     summaryParts,
   };
@@ -80,12 +71,6 @@ export function getVisibleCapabilityClusters(
     || cluster.inventory_count != null
     || getDefaultExposedSkills(cluster).length > 0
   ));
-}
-
-export function getVisibleDefaultSkills(
-  capabilities: SessionBaselineCapabilities,
-): SkillEntry[] {
-  return capabilities.skills.filter(isModelInvocationVisibleSkill);
 }
 
 export function getDefaultExposedSkills(

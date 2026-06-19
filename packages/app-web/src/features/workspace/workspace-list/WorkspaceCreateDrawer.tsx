@@ -17,11 +17,10 @@ import {
   bindingToInput,
   buildDefaultWorkspaceName,
   candidateToDraft,
-  identityKindLabels,
   identitySummary,
   localAuthorizedBackends,
 } from "../model/workspaceRouting";
-import { TERMS } from "../model/workspaceTerms";
+import { IDENTITY_KIND_LABELS, TERMS } from "../model/workspaceTerms";
 import { BindingStatusBadge } from "./badges";
 import { CandidateList } from "./CandidateList";
 import { DirectoryDetector } from "./DirectoryDetector";
@@ -276,7 +275,7 @@ export function WorkspaceCreateDrawer({
               onChange={(event) => handleIdentityKindChange(event.target.value as WorkspaceIdentityKind)}
               className="agentdash-form-select"
             >
-              {Object.entries(identityKindLabels).map(([value, label]) => (
+              {Object.entries(IDENTITY_KIND_LABELS).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>

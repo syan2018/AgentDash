@@ -35,12 +35,6 @@ export interface SessionChatViewProps {
 
   // ─── 会话生命周期 ────────────────────────────────────
 
-  /** @deprecated RuntimeSession 不再提供默认创建入口；业务执行必须从 lifecycle 入口派发。 */
-  onCreateSession?: (title: string) => Promise<string>;
-
-  /** @deprecated RuntimeSession 不再由聊天 UI 创建或切换。 */
-  onSessionIdChange?: (id: string) => void;
-
   /** 消息发送成功后回调（父组件可刷新列表等） */
   onMessageSent?: () => void;
 

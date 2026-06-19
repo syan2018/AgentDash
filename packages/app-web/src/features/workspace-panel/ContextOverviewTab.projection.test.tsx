@@ -95,24 +95,7 @@ const runtimeSurface: ResolvedVfsSurface = {
 };
 
 const sessionCapabilities: SessionBaselineCapabilities = {
-  skills: [
-    {
-      name: "runtime-skill",
-      description: "Skill from final projection",
-      file_path: "runtime-shared://skills/runtime-skill/SKILL.md",
-      disable_model_invocation: false,
-    },
-  ],
-};
-
-const clusteredSessionCapabilities: SessionBaselineCapabilities = {
-  skills: [
-    {
-      name: "legacy-flat-only",
-      description: "cluster 存在时不作为主展示",
-      file_path: "runtime-shared://skills/legacy-flat-only/SKILL.md",
-    },
-  ],
+  skills: [],
   skill_clusters: [
     {
       provider_key: "copilot",
@@ -253,7 +236,7 @@ describe("ContextOverviewTab projection contract", () => {
     expect(html).toContain("Runtime Shared");
     expect(html).toContain("Runtime Lifecycle");
     expect(html).toContain("2 个运行时 mount");
-    expect(html).toContain("runtime-skill");
+    expect(html).toContain("copilot/config-edit");
   });
 
   it("从 lifecycle run view 的 orchestration projection 展示活跃 runtime node", () => {
@@ -305,7 +288,7 @@ describe("ContextOverviewTab projection contract", () => {
         executorSummary={contextSnapshot.executor}
         runtimeSurface={runtimeSurface}
         hookRuntime={null}
-        sessionCapabilities={clusteredSessionCapabilities}
+        sessionCapabilities={sessionCapabilities}
         lifecycleRun={null}
       />,
     );
@@ -317,6 +300,5 @@ describe("ContextOverviewTab projection contract", () => {
     expect(html).toContain("inventory 9");
     expect(html).toContain("copilot/config-edit");
     expect(html).toContain("workspace/config-edit");
-    expect(html).not.toContain("legacy-flat-only");
   });
 });

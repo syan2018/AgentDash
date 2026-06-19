@@ -33,8 +33,6 @@ export function SessionCapabilityCard({ block, defaultExpanded = false }: Sessio
 
   const {
     clusters,
-    usesClusters,
-    visibleSkills,
     summaryParts,
   } = viewModel;
 
@@ -61,11 +59,7 @@ export function SessionCapabilityCard({ block, defaultExpanded = false }: Sessio
 
       {expanded && (
         <div className="border-t border-border px-3 py-2.5 space-y-3">
-          {usesClusters ? (
-            <SkillClustersSection clusters={clusters} />
-          ) : (
-            <SkillsSection skills={visibleSkills} title="默认暴露 Skills" />
-          )}
+          <SkillClustersSection clusters={clusters} />
         </div>
       )}
     </div>

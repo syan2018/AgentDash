@@ -1,9 +1,9 @@
 import type { BackendConfig, WorkspaceInventoryCandidate } from "../../../types";
 import {
   backendDisplayName,
-  identityKindLabels,
   identitySummary,
 } from "../model/workspaceRouting";
+import { IDENTITY_KIND_LABELS } from "../model/workspaceTerms";
 import { candidateKey } from "./editorHelpers";
 
 interface CandidateListProps {
@@ -47,7 +47,7 @@ export function CandidateList({
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-[8px] border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
-                    {identityKindLabels[candidate.identity_kind]}
+                    {IDENTITY_KIND_LABELS[candidate.identity_kind]}
                   </span>
                   <span className="truncate font-mono text-xs text-foreground">{candidate.root_ref}</span>
                 </div>

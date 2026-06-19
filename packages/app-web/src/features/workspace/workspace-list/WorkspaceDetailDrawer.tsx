@@ -26,12 +26,11 @@ import {
   bindingToInput,
   candidateToBindingInput,
   detectedFactsSummary,
-  identityKindLabels,
   identitySummary,
   localAuthorizedBackends,
   summarizeResolution,
 } from "../model/workspaceRouting";
-import { TERMS } from "../model/workspaceTerms";
+import { IDENTITY_KIND_LABELS, TERMS } from "../model/workspaceTerms";
 import { BindingStatusBadge, ResolutionBadge } from "./badges";
 import { CandidateList } from "./CandidateList";
 import { DirectoryDetector } from "./DirectoryDetector";
@@ -265,7 +264,7 @@ export function WorkspaceDetailDrawer({
                 onChange={(event) => handleIdentityKindChange(event.target.value as WorkspaceIdentityKind)}
                 className="agentdash-form-select"
               >
-                {Object.entries(identityKindLabels).map(([value, label]) => (
+                {Object.entries(IDENTITY_KIND_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>{label}</option>
                 ))}
               </select>

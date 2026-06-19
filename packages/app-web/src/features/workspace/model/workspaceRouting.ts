@@ -9,16 +9,11 @@ import type {
   WorkspaceInventoryCandidate,
 } from "../../../types";
 import type { WorkspaceBindingInput } from "../../../stores/workspaceStore";
-import { BINDING_STATUS_LABELS, IDENTITY_KIND_LABELS } from "./workspaceTerms";
+import { BINDING_STATUS_LABELS } from "./workspaceTerms";
 
 function bindingStatusText(status: WorkspaceBindingStatus): string {
   return BINDING_STATUS_LABELS[status] ?? status;
 }
-
-/**
- * @deprecated 文案统一收口到 workspaceTerms.ts；此处保留 re-export 以兼容现有 import。
- */
-export const identityKindLabels: Record<WorkspaceIdentityKind, string> = IDENTITY_KIND_LABELS;
 
 export interface WorkspaceResolutionSummary {
   state: "resolved" | "warning" | "blocked";

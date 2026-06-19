@@ -11,11 +11,11 @@ import {
   listWorkspaceInventoryCandidates,
 } from "../../../services/backendAccess";
 import {
-  identityKindLabels,
   identitySummary,
   summarizeAvailability,
   summarizeResolution,
 } from "../model/workspaceRouting";
+import { IDENTITY_KIND_LABELS } from "../model/workspaceTerms";
 import {
   BindingStatusBadge,
   ResolutionBadge,
@@ -174,7 +174,7 @@ export function WorkspaceList({
                     )}
                     <WorkspaceStatusBadge status={workspace.status} />
                     <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
-                      {identityKindLabels[workspace.identity_kind]}
+                      {IDENTITY_KIND_LABELS[workspace.identity_kind]}
                     </span>
                     <ResolutionBadge state={resolution.state} />
                   </div>

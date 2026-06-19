@@ -26,7 +26,9 @@ fn empty_vfs() -> Vfs {
     }
 }
 
-pub fn writable_port_keys_for_active_workflow(workflow: &ActiveWorkflowProjection) -> Vec<String> {
+pub(crate) fn writable_port_keys_for_active_workflow(
+    workflow: &ActiveWorkflowProjection,
+) -> Vec<String> {
     workflow
         .active_activity
         .output_ports
@@ -35,7 +37,7 @@ pub fn writable_port_keys_for_active_workflow(workflow: &ActiveWorkflowProjectio
         .collect()
 }
 
-pub struct LifecycleMountSurface<'a> {
+pub(crate) struct LifecycleMountSurface<'a> {
     pub run_id: Uuid,
     pub orchestration_id: Uuid,
     pub node_path: &'a str,
@@ -44,7 +46,7 @@ pub struct LifecycleMountSurface<'a> {
     pub writable_port_keys: Vec<String>,
 }
 
-pub fn lifecycle_mount_surface_for_active_workflow(
+pub(crate) fn lifecycle_mount_surface_for_active_workflow(
     workflow: &ActiveWorkflowProjection,
 ) -> LifecycleMountSurface<'_> {
     LifecycleMountSurface {
@@ -57,17 +59,31 @@ pub fn lifecycle_mount_surface_for_active_workflow(
     }
 }
 
-pub fn append_active_workflow_lifecycle_mount(vfs: &mut Vfs, workflow: &ActiveWorkflowProjection) {
+pub(crate) fn lifecycle_mount_overlay_for_surface(surface: &LifecycleMountSurface<'_>) -> Vfs {
+    Vfs {
+        mounts: vec![build_lifecycle_mount_with_node_scope(
+            surface.run_id,
+            surface.orchestration_id,
+            surface.node_path,
+            surface.lifecycle_key,
+            &surface.writable_port_keys,
+            Some(surface.attempt),
+        )],
+        default_mount_id: None,
+        source_project_id: None,
+        source_story_id: None,
+        links: Vec::new(),
+    }
+}
+
+fn append_active_workflow_lifecycle_mount(vfs: &mut Vfs, workflow: &ActiveWorkflowProjection) {
     let existing_skill_projection = lifecycle_skill_projection(vfs);
     let surface = lifecycle_mount_surface_for_active_workflow(workflow);
-    let mount = build_lifecycle_mount_with_node_scope(
-        surface.run_id,
-        surface.orchestration_id,
-        surface.node_path,
-        surface.lifecycle_key,
-        &surface.writable_port_keys,
-        Some(surface.attempt),
-    );
+    let mut overlay = lifecycle_mount_overlay_for_surface(&surface);
+    let mount = overlay
+        .mounts
+        .pop()
+        .expect("lifecycle surface overlay must contain one mount");
 
     if let Some(existing) = vfs
         .mounts
@@ -147,7 +163,7 @@ fn lifecycle_skill_projection(vfs: &Vfs) -> Option<(Uuid, Vec<String>)> {
         .filter(|(_, keys)| !keys.is_empty())
 }
 
-pub fn project_active_workflow_lifecycle_vfs(
+pub(crate) fn project_active_workflow_lifecycle_vfs(
     vfs: Option<Vfs>,
     workflow: Option<&ActiveWorkflowProjection>,
 ) -> Option<Vfs> {
@@ -164,7 +180,7 @@ pub fn project_active_workflow_lifecycle_vfs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vfs::{append_lifecycle_skill_asset_projection, build_lifecycle_mount_with_ports};
+    use crate::vfs::append_lifecycle_skill_asset_projection;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, BashExecExecutorSpec, DefinitionSource,
@@ -292,13 +308,18 @@ mod tests {
         let base = Vfs {
             mounts: vec![
                 workspace_mount(),
-                build_lifecycle_mount_with_ports(
-                    stale_run_id,
-                    Uuid::new_v4(),
-                    "stale-node",
-                    "stale",
-                    &[],
-                ),
+                lifecycle_mount_overlay_for_surface(&LifecycleMountSurface {
+                    run_id: stale_run_id,
+                    orchestration_id: Uuid::new_v4(),
+                    node_path: "stale-node",
+                    lifecycle_key: "stale",
+                    attempt: 1,
+                    writable_port_keys: Vec::new(),
+                })
+                .mounts
+                .into_iter()
+                .next()
+                .expect("lifecycle mount"),
             ],
             default_mount_id: Some("main".to_string()),
             source_project_id: None,

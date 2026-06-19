@@ -1100,7 +1100,7 @@ pub(in crate::session) async fn compose_companion_with_workflow(
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::vfs::build_lifecycle_mount_with_ports;
+    use crate::lifecycle::{LifecycleMountSurface, lifecycle_mount_overlay_for_surface};
     use agentdash_domain::agent::ProjectAgent;
     use agentdash_domain::common::AgentPresetConfig;
     use agentdash_domain::workflow::{
@@ -1269,13 +1269,34 @@ mod tests {
         }
     }
 
+    fn test_lifecycle_mount(
+        run_id: Uuid,
+        orchestration_id: Uuid,
+        node_path: &str,
+        lifecycle_key: &str,
+        writable_port_keys: Vec<String>,
+    ) -> agentdash_domain::common::Mount {
+        lifecycle_mount_overlay_for_surface(&LifecycleMountSurface {
+            run_id,
+            orchestration_id,
+            node_path,
+            lifecycle_key,
+            attempt: 1,
+            writable_port_keys,
+        })
+        .mounts
+        .into_iter()
+        .next()
+        .expect("lifecycle mount")
+    }
+
     fn test_activity_activation(run_id: Uuid) -> crate::lifecycle::ActivityActivation {
-        let lifecycle_mount = build_lifecycle_mount_with_ports(
+        let lifecycle_mount = test_lifecycle_mount(
             run_id,
             Uuid::new_v4(),
             "test-node",
             "test-lifecycle",
-            &["report".to_string()],
+            vec!["report".to_string()],
         );
         crate::lifecycle::ActivityActivation {
             capability_state: Default::default(),
@@ -1301,7 +1322,7 @@ mod tests {
     #[test]
     fn append_lifecycle_mount_creates_vfs_when_base_is_absent() {
         let prepared = SessionAssemblyBuilder::new()
-            .append_lifecycle_mount(crate::lifecycle::LifecycleMountSurface {
+            .append_lifecycle_mount(LifecycleMountSurface {
                 run_id: Uuid::new_v4(),
                 orchestration_id: Uuid::new_v4(),
                 node_path: "test-node",
@@ -1404,12 +1425,12 @@ mod tests {
             },
         )
         .expect("workflow");
-        let mount = crate::vfs::build_lifecycle_mount_with_ports(
+        let mount = test_lifecycle_mount(
             run.id,
             uuid::Uuid::new_v4(),
             "implement",
             &lifecycle.key,
-            &["summary".into()],
+            vec!["summary".into()],
         );
         let activation = crate::lifecycle::ActivityActivation {
             capability_state: Default::default(),

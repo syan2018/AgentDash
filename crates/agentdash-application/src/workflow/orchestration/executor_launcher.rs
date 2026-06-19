@@ -481,15 +481,16 @@ mod launcher_drain_tests {
         RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy, RuntimeTraceRef, SubjectRef,
         WorkflowGraph,
     };
-    use agentdash_spi::Vfs;
     use agentdash_spi::{ApiRequestOutcome, BashExecOutcome};
     use async_trait::async_trait;
     use chrono::Utc;
     use serde_json::json;
 
     use crate::agent_run::AgentFrameBuilder;
-    use crate::lifecycle::{RuntimeSessionCreationRequest, RuntimeSessionCreator};
-    use crate::vfs::build_lifecycle_mount_with_node_scope;
+    use crate::lifecycle::{
+        LifecycleMountSurface, RuntimeSessionCreationRequest, RuntimeSessionCreator,
+        lifecycle_mount_overlay_for_surface,
+    };
     use crate::workflow::orchestration::runtime::activate_root_orchestration;
 
     use super::*;
@@ -898,21 +899,15 @@ mod launcher_drain_tests {
                 .iter()
                 .map(|port| port.key.clone())
                 .collect::<Vec<_>>();
-            let mount = build_lifecycle_mount_with_node_scope(
-                run.id,
-                coordinate.orchestration_id,
-                &coordinate.node_path,
-                "test_lifecycle",
-                &writable_port_keys,
-                Some(coordinate.attempt),
-            );
-            let vfs = Vfs {
-                mounts: vec![mount],
-                default_mount_id: None,
-                source_project_id: None,
-                source_story_id: None,
-                links: Vec::new(),
-            };
+            let overlay = lifecycle_mount_overlay_for_surface(&LifecycleMountSurface {
+                run_id: run.id,
+                orchestration_id: coordinate.orchestration_id,
+                node_path: &coordinate.node_path,
+                lifecycle_key: "test_lifecycle",
+                attempt: coordinate.attempt,
+                writable_port_keys,
+            });
+            let vfs = overlay;
             Ok(builder.with_vfs_typed(&vfs))
         }
     }

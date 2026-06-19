@@ -10,7 +10,9 @@ use crate::agent_run::frame::surface::{FrameContextBundleSummary, FrameSurfaceDr
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
-use crate::lifecycle::LifecycleMountSurface;
+#[cfg(test)]
+use crate::lifecycle::{LifecycleMountSurface, lifecycle_mount_overlay_for_surface};
+#[cfg(test)]
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 #[cfg(test)]
 #[allow(deprecated)]
@@ -18,7 +20,6 @@ use crate::session::construction::RuntimeContextInspectionPlan;
 #[cfg(test)]
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::UserPromptInput;
-use crate::vfs::build_lifecycle_mount_with_node_scope;
 
 /// 把 `SessionAssemblyBuilder` 的累积声明合并进 frame construction handoff。
 ///
@@ -150,17 +151,9 @@ impl SessionAssemblyBuilder {
     }
 
     /// 在已有 VFS 上追加 lifecycle mount（story step activation 场景）。
+    #[cfg(test)]
     pub(super) fn append_lifecycle_mount(mut self, surface: LifecycleMountSurface<'_>) -> Self {
-        let lifecycle_mount = build_lifecycle_mount_with_node_scope(
-            surface.run_id,
-            surface.orchestration_id,
-            surface.node_path,
-            surface.lifecycle_key,
-            &surface.writable_port_keys,
-            Some(surface.attempt),
-        );
-        let mut overlay = Vfs::default();
-        overlay.mounts.push(lifecycle_mount);
+        let overlay = lifecycle_mount_overlay_for_surface(&surface);
         self.vfs = Some(compose_vfs_with_overlay_and_directives(
             self.vfs.as_ref(),
             &overlay,

@@ -4,16 +4,7 @@ use uuid::Uuid;
 use super::lifecycle_catalog::lifecycle_directory_hint;
 use super::mount::PROVIDER_LIFECYCLE_VFS;
 
-pub fn build_lifecycle_mount(
-    run_id: Uuid,
-    orchestration_id: Uuid,
-    node_path: &str,
-    lifecycle_key: &str,
-) -> Mount {
-    build_lifecycle_mount_with_ports(run_id, orchestration_id, node_path, lifecycle_key, &[])
-}
-
-pub fn build_agent_run_session_lifecycle_mount(
+pub(crate) fn build_agent_run_session_lifecycle_mount(
     run_id: Uuid,
     agent_id: Uuid,
     runtime_session_id: &str,
@@ -59,27 +50,7 @@ pub fn build_agent_run_session_lifecycle_mount(
     }
 }
 
-/// 构建 attempt=1 且带 output port 写入权限的 lifecycle mount。
-/// mount 始终启用 Write capability 以支持 `records/{name}` overlay；
-/// `artifacts/{port_key}` 仍由 `writable_port_keys` 做路径级白名单控制。
-pub fn build_lifecycle_mount_with_ports(
-    run_id: Uuid,
-    orchestration_id: Uuid,
-    node_path: &str,
-    lifecycle_key: &str,
-    writable_port_keys: &[String],
-) -> Mount {
-    build_lifecycle_mount_with_node_scope(
-        run_id,
-        orchestration_id,
-        node_path,
-        lifecycle_key,
-        writable_port_keys,
-        Some(1),
-    )
-}
-
-pub fn build_lifecycle_mount_with_node_scope(
+pub(crate) fn build_lifecycle_mount_with_node_scope(
     run_id: Uuid,
     orchestration_id: Uuid,
     node_path: &str,

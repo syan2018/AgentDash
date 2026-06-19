@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned.
+Completed in `9b71034c`.
 
 ## Goal
 
@@ -39,7 +39,17 @@ Planned.
 
 ## Validation
 
-- `cargo test -p agentdash-domain workflow`
-- `cargo test -p agentdash-spi context`
-- `cargo test -p agentdash-application session::capability_state`
-- `cargo check --workspace`
+- Passed: `cargo test -p agentdash-domain workflow`
+- Passed: `cargo test -p agentdash-spi context`
+- Passed: `cargo test -p agentdash-application session::capability_state`
+- Passed: `cargo test -p agentdash-application workspace_module::tools`
+- Passed: `cargo test -p agentdash-application lifecycle::dispatch_service`
+- Passed: `cargo check --workspace`
+
+## Outcome
+
+- Removed dead protocol compat module.
+- Removed `ExecutionSource::Migration`, `SkillEntry::legacy`, and deprecated bundle rendering API.
+- Rejected legacy workflow contract fields instead of silently ignoring them.
+- Removed `AgentSource` legacy aliases.
+- Made `workspace_module` capability state explicit and changed default visibility to empty allowlist.

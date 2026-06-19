@@ -39,9 +39,12 @@
 
 ## Validation
 
-- `cargo fmt`
-- `cargo test -p agentdash-application lifecycle::surface`
-- `cargo test -p agentdash-application agent_run::workspace`
-- `cargo test -p agentdash-application session::assembler`
-- `cargo check -p agentdash-api`
-- 前端 legacy cleanup 工作项另跑对应 `pnpm` 测试切片。
+- Passed: `cargo fmt --check`
+- Passed: `cargo check --workspace`
+- Passed: `cargo test -p agentdash-application lifecycle::surface`
+- Passed: `cargo test -p agentdash-application lifecycle_skill_projection`
+- Passed: `cargo test -p agentdash-application agent_run::workspace`
+- Passed: `cargo test -p agentdash-application session::assembler`
+- Passed: `cargo check -p agentdash-api`
+- Passed: `pnpm --filter app-web run typecheck`
+- Passed: `pnpm --filter app-web test -- src/features/session/ui/SessionCapabilityCard.test.tsx src/features/workspace-panel/ContextOverviewTab.projection.test.tsx src/features/workspace/model/workspaceRouting.test.ts`

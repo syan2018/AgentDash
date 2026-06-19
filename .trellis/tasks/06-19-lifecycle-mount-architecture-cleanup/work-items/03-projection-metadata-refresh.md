@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned.
+Completed in `36420d4f`.
 
 ## Goal
 
@@ -28,6 +28,13 @@ Planned.
 
 ## Validation
 
-- `cargo test -p agentdash-application lifecycle_skill_projection`
-- `cargo test -p agentdash-application lifecycle::surface::surface_projector`
-- `cargo test -p agentdash-application vfs::provider_lifecycle`
+- Passed: `cargo test -p agentdash-application lifecycle_skill_projection`
+- Passed: `cargo test -p agentdash-application lifecycle::surface::surface_projector`
+- Passed: `cargo test -p agentdash-application vfs::provider_lifecycle`
+
+## Outcome
+
+- Removed duplicate `agent_run_lifecycle_surface` runtime metadata envelope.
+- Kept provider flat metadata as the lifecycle mount runtime contract.
+- Added SkillAsset projection refresh semantics so empty facts clear stale projected keys.
+- Updated VFS architecture spec with projection refresh and overlay replace boundaries.

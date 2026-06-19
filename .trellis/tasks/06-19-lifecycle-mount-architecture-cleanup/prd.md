@@ -26,13 +26,13 @@
 
 ## Acceptance Criteria
 
-- [ ] AgentRun workspace query、VFS surface resolver、owner bootstrap、session assembler 的 lifecycle surface 构建路径归并到统一 projector 或明确的 projector 子入口。
-- [ ] `lifecycle` mount 替换不会丢失同 Project 的 SkillAsset projection、message stream projection 或 node anchor projection。
-- [ ] node runtime mount 和 AgentRun session evidence mount 的路径集合有测试覆盖，且不会因同一个 anchor 同时存在 session 与 node facts 而混淆。
-- [ ] 不再通过 public helper 暴露裸 AgentRun lifecycle mount 重建能力。
-- [ ] 相关 backend spec 记录最终 owner、projection facts 和 replace/merge 边界。
-- [ ] VFS surface resolver 不再通过空 `lifecycle_key` / 空 writable ports 构造可写 node projection。
-- [ ] `work-items/` 中列出的 legacy cleanup 项完成时，必须连同对应生产数据结构、调用点和测试一起清理；拒绝旧 schema 的守卫测试不能被误删。
+- [x] AgentRun workspace query、VFS surface resolver、owner bootstrap、session assembler 的 lifecycle surface 构建路径归并到统一 projector 或明确的 projector 子入口。
+- [x] `lifecycle` mount 替换不会丢失同 Project 的 SkillAsset projection、message stream projection 或 node anchor projection。
+- [x] node runtime mount 和 AgentRun session evidence mount 的路径集合有测试覆盖，且不会因同一个 anchor 同时存在 session 与 node facts 而混淆。
+- [x] 不再通过 public helper 暴露裸 AgentRun lifecycle mount 重建能力。
+- [x] 相关 backend spec 记录最终 owner、projection facts 和 replace/merge 边界。
+- [x] VFS surface resolver 不再通过空 `lifecycle_key` / 空 writable ports 构造可写 node projection。
+- [x] `work-items/` 中列出的 legacy cleanup 项完成时，必须连同对应生产数据结构、调用点和测试一起清理；拒绝旧 schema 的守卫测试不能被误删。
 
 ## Notes
 

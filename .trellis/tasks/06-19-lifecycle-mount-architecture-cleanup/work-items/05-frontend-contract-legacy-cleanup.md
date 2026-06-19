@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned.
+Completed in `30a12285`.
 
 ## Goal
 
@@ -36,6 +36,13 @@ Planned.
 
 ## Validation
 
-- 对应前端单测切片。
-- contracts 生成/检查命令。
-- `pnpm --filter app-web test -- --runInBand` 或项目当前等价测试切片。
+- Passed: `pnpm --filter app-web test -- src/features/session/ui/SessionCapabilityCard.test.tsx src/features/workspace-panel/ContextOverviewTab.projection.test.tsx src/features/workspace/model/workspaceRouting.test.ts`
+- Passed: `pnpm --filter app-web run typecheck`
+- Passed: `git diff --check` for the frontend file slice.
+
+## Outcome
+
+- Removed old RuntimeSession chat props.
+- Removed deprecated workspace routing re-export and updated callers.
+- Removed flat skills fallback from session capability display paths.
+- Evaluated deprecated Backbone generated events and kept them because current server/runtime code still emits or consumes the corresponding events.

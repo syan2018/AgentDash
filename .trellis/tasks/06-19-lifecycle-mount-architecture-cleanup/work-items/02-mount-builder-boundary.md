@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned.
+Completed in `ba0b7fc3`; test-fixture export follow-up in `82996e7c`.
 
 ## Goal
 
@@ -30,6 +30,15 @@ Planned.
 
 ## Validation
 
-- `cargo test -p agentdash-application lifecycle::surface::mount`
-- `cargo test -p agentdash-application session::assembly_builder`
-- `cargo test -p agentdash-application workflow::orchestration`
+- Passed: `cargo test -p agentdash-application lifecycle::surface::mount`
+- Passed: `cargo test -p agentdash-application session::assembly_builder`
+- Passed: `cargo test -p agentdash-application workflow::orchestration`
+- Passed: `cargo test -p agentdash-application session::assembler`
+
+## Outcome
+
+- Removed lifecycle mount wrapper builders.
+- Lowered lifecycle mount builder visibility and removed `vfs` public facade exports.
+- Kept active workflow lifecycle helper inside crate-local lifecycle surface boundary.
+- Restricted test-only lifecycle mount helpers to test builds.
+- Updated session/workflow test fixtures to avoid public VFS builder calls.

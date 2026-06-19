@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned.
+Completed in `ef83557e`.
 
 ## Goal
 
@@ -29,6 +29,14 @@ Planned.
 
 ## Validation
 
-- `cargo test -p agentdash-application lifecycle::surface`
-- `cargo test -p agentdash-application agent_run::workspace`
-- `cargo check -p agentdash-api`
+- Passed: `cargo test -p agentdash-application lifecycle::surface`
+- Passed: `cargo test -p agentdash-application agent_run::workspace`
+- Passed: `cargo test -p agentdash-application session::assembler`
+- Passed: `cargo test -p agentdash-application agent_run::frame::construction::owner_bootstrap`
+- Passed: `cargo check -p agentdash-api`
+
+## Outcome
+
+- Added typed lifecycle facts and scenario projector entries.
+- AgentRun workspace query, VFS surface resolver, owner bootstrap and session assembler now call projector scenario entries.
+- VFS surface resolver uses read-only node evidence instead of filling writable node runtime fields with empty values.

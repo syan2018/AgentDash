@@ -58,8 +58,9 @@ pub use subject_execution_control::{
     CancelSubjectExecutionCommand, RuntimeCancelDeliveryCommand, SubjectExecutionCancelResult,
     SubjectExecutionControlService,
 };
+#[cfg(test)]
+pub(crate) use surface::mount::{LifecycleMountSurface, lifecycle_mount_overlay_for_surface};
 pub(crate) use surface::mount::{
-    LifecycleMountSurface, lifecycle_mount_overlay_for_surface,
     project_active_workflow_lifecycle_vfs, writable_port_keys_for_active_workflow,
 };
 pub use surface::surface_projector::{

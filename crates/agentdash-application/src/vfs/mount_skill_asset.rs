@@ -98,6 +98,51 @@ pub fn append_lifecycle_skill_asset_projection(
     false
 }
 
+pub fn refresh_lifecycle_skill_asset_projection(
+    vfs: &mut Vfs,
+    project_id: Uuid,
+    skill_asset_keys: &[String],
+) -> bool {
+    let keys = normalized_skill_asset_keys(skill_asset_keys);
+    if let Some(lifecycle) = vfs
+        .mounts
+        .iter_mut()
+        .find(|mount| mount.id == "lifecycle" && mount.provider == PROVIDER_LIFECYCLE_VFS)
+    {
+        let mut metadata = match std::mem::take(&mut lifecycle.metadata) {
+            serde_json::Value::Object(object) => object,
+            serde_json::Value::Null => serde_json::Map::new(),
+            other => {
+                let mut object = serde_json::Map::new();
+                object.insert("raw_metadata".to_string(), other);
+                object
+            }
+        };
+        if keys.is_empty() {
+            metadata.remove(SKILL_ASSET_PROJECT_ID_METADATA_KEY);
+            metadata.remove(SKILL_ASSET_KEYS_METADATA_KEY);
+        } else {
+            metadata.insert(
+                SKILL_ASSET_PROJECT_ID_METADATA_KEY.to_string(),
+                serde_json::Value::String(project_id.to_string()),
+            );
+            metadata.insert(
+                SKILL_ASSET_KEYS_METADATA_KEY.to_string(),
+                serde_json::Value::Array(
+                    keys.iter()
+                        .cloned()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            );
+        }
+        lifecycle.metadata = serde_json::Value::Object(metadata);
+        return true;
+    }
+
+    false
+}
+
 fn normalized_skill_asset_keys(skill_asset_keys: &[String]) -> Vec<String> {
     let mut seen = BTreeSet::new();
     skill_asset_keys
@@ -189,5 +234,55 @@ mod tests {
             .filter_map(serde_json::Value::as_str)
             .collect::<Vec<_>>();
         assert_eq!(keys, vec!["companion-system"]);
+    }
+
+    #[test]
+    fn lifecycle_skill_projection_refresh_replaces_same_project_keys() {
+        let project_id = Uuid::new_v4();
+        let mut vfs = lifecycle_vfs(project_id, &["stale-skill"]);
+
+        assert!(refresh_lifecycle_skill_asset_projection(
+            &mut vfs,
+            project_id,
+            &[
+                "companion-system".to_string(),
+                "workspace-module-system".to_string(),
+            ],
+        ));
+
+        let keys = vfs.mounts[0]
+            .metadata
+            .get(SKILL_ASSET_KEYS_METADATA_KEY)
+            .and_then(serde_json::Value::as_array)
+            .expect("skill keys")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["companion-system", "workspace-module-system"]);
+    }
+
+    #[test]
+    fn lifecycle_skill_projection_refresh_clears_empty_keys() {
+        let project_id = Uuid::new_v4();
+        let mut vfs = lifecycle_vfs(project_id, &["stale-skill"]);
+
+        assert!(refresh_lifecycle_skill_asset_projection(
+            &mut vfs,
+            project_id,
+            &[],
+        ));
+
+        assert!(
+            vfs.mounts[0]
+                .metadata
+                .get(SKILL_ASSET_PROJECT_ID_METADATA_KEY)
+                .is_none()
+        );
+        assert!(
+            vfs.mounts[0]
+                .metadata
+                .get(SKILL_ASSET_KEYS_METADATA_KEY)
+                .is_none()
+        );
     }
 }

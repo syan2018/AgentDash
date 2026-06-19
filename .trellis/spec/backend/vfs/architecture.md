@@ -56,6 +56,8 @@ Tool module baseline：
 - `lifecycle_vfs` 在 AgentRun resource surface 中是只读 session log surface。resolver 读取 latest delivery anchor、current frame / anchor frame 和 typed VFS 后安装 `scope = "agent_run_session"` mount；plain AgentRun 只要存在 `RuntimeSessionExecutionAnchor`，就必须能看到 `session/*` 日志投影。可选 orchestration node anchor 只附带当前 node 的执行证据，不从 graph 或 active workflow 猜测节点。
 - ProjectAgent explicit lifecycle 和 Workflow AgentCall 通过 frame construction / lifecycle activation 把 `scope = "node_runtime"` lifecycle mount 写入 runtime frame VFS；该 mount 以 `orchestration_id + node_path + attempt` 作为执行节点身份，提供当前 node 的可写 `artifacts` / `records` 和只读 `session` 视角。这样做的原因是写入边界属于正在执行的 runtime node，而 workspace browser 的只读证据面属于 AgentRun delivery session。
 - AgentRun surface resolver 在应用层输出已闭包的 resource surface，原因是 resource browser、Agent connector launch 和 conversation snapshot 都需要消费同一份包含 lifecycle mount 的 AgentRun resource surface。
+- AgentRun lifecycle mount 的运行时 contract 是 `lifecycle_vfs` provider 必需的扁平 metadata：`scope`、run/session/node identity、`writable_port_keys`、`skill_asset_project_id` 和 `skill_asset_keys`。Projector 的 typed facts 留在 application 内存投影中，原因是 provider dispatch、SkillAsset 文件解析和 artifact 写入只需要稳定 provider metadata，不需要额外的调试 envelope 成为第二事实源。
+- VFS overlay / mount directive 保持整 mount replace 语义；AgentRun lifecycle projection refresh 在 projector 内对同一 Project 的 SkillAsset、message stream 和 node facts 重新闭包。这样做的原因是 overlay 只表达 mount 集合替换，而 lifecycle refresh 要保证单个 `lifecycle` aggregate mount 上的 skills、session evidence 与 node runtime metadata 来自同一次 projection facts。
 
 ## Scenario: Session Runtime Tool Composition
 

@@ -12,7 +12,8 @@ use crate::lifecycle::ActivityActivation;
 use crate::repository_set::RepositorySet;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 use crate::skill_asset::SkillAssetService;
-use crate::vfs::{append_lifecycle_skill_asset_projection, build_lifecycle_mount_with_node_scope};
+use crate::vfs::build_lifecycle_mount_with_node_scope;
+use crate::vfs::mount_skill_asset::refresh_lifecycle_skill_asset_projection;
 
 use super::mount::install_agent_run_lifecycle_mount;
 
@@ -201,38 +202,6 @@ pub struct OrchestrationNodeProjectionFacts {
     pub writable_port_keys: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentRunLifecycleMountMetadata {
-    pub run_id: Uuid,
-    pub agent_id: Uuid,
-    pub frame_id: Uuid,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message_stream: Option<MessageStreamProjectionMetadata>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub orchestration_node: Option<OrchestrationNodeProjectionMetadata>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub skill_asset_project_id: Option<Uuid>,
-    #[serde(default)]
-    pub skill_asset_keys: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MessageStreamProjectionMetadata {
-    pub runtime_session_id: String,
-    pub trace_kind: MessageStreamTraceKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OrchestrationNodeProjectionMetadata {
-    pub orchestration_id: Uuid,
-    pub node_path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lifecycle_key: Option<String>,
-    pub attempt: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub writable_port_keys: Option<Vec<String>>,
-}
-
 pub struct AgentRunLifecycleSurfaceProjector<'a> {
     repos: &'a RepositorySet,
 }
@@ -295,8 +264,12 @@ impl<'a> AgentRunLifecycleSurfaceProjector<'a> {
         &self,
         input: AgentRunLifecycleSurfaceInput,
     ) -> Result<AgentRunLifecycleSurface, String> {
-        let mut skill_asset_keys =
-            projected_skill_keys_for_project(input.base_vfs.as_ref(), input.project_id);
+        let mut skill_asset_keys = match &input.builtin_skills {
+            BuiltinLifecycleSkillPolicy::PreserveProjected => {
+                projected_skill_keys_for_project(input.base_vfs.as_ref(), input.project_id)
+            }
+            BuiltinLifecycleSkillPolicy::EnsureAndProject(_) => Vec::new(),
+        };
         skill_asset_keys.extend(input.explicit_skill_asset_keys.iter().cloned());
 
         if let BuiltinLifecycleSkillPolicy::EnsureAndProject(skills) = &input.builtin_skills {
@@ -379,14 +352,13 @@ fn project_surface_with_effective_skill_keys(
                 &node.writable_port_keys,
                 Some(node.attempt),
             );
-            let mut overlay = Vfs {
+            let overlay = Vfs {
                 mounts: vec![lifecycle_mount],
                 default_mount_id: None,
                 source_project_id: None,
                 source_story_id: None,
                 links: Vec::new(),
             };
-            annotate_mount_with_projector_metadata(&mut overlay, &input, &skill_asset_keys);
             vfs = compose_vfs_with_overlay_and_directives(Some(&vfs), &overlay, &[]);
         }
         _ => {
@@ -407,13 +379,10 @@ fn project_surface_with_effective_skill_keys(
                 node_evidence.as_ref(),
             );
             install_agent_run_lifecycle_mount(&mut vfs, &anchor);
-            annotate_mount_with_projector_metadata(&mut vfs, &input, &skill_asset_keys);
         }
     }
 
-    if !skill_asset_keys.is_empty() {
-        append_lifecycle_skill_asset_projection(&mut vfs, input.project_id, &skill_asset_keys);
-    }
+    refresh_lifecycle_projection_metadata(&mut vfs, input.project_id, &skill_asset_keys);
     let lifecycle_mounts = vfs
         .mounts
         .iter()
@@ -504,70 +473,20 @@ fn agent_run_session_anchor_from_projector_input(
     }
 }
 
-fn annotate_mount_with_projector_metadata(
+fn refresh_lifecycle_projection_metadata(
     vfs: &mut Vfs,
-    input: &AgentRunLifecycleSurfaceInput,
+    project_id: Uuid,
     skill_asset_keys: &[String],
 ) {
-    let metadata = AgentRunLifecycleMountMetadata {
-        run_id: input.address.run_id,
-        agent_id: input.address.agent_id,
-        frame_id: input.address.frame_id,
-        message_stream: input.message_stream.as_ref().map(|message_stream| {
-            MessageStreamProjectionMetadata {
-                runtime_session_id: message_stream.runtime_session_id.clone(),
-                trace_kind: message_stream.trace_kind,
-            }
-        }),
-        orchestration_node: input
-            .node_projection
-            .as_ref()
-            .map(|node| OrchestrationNodeProjectionMetadata {
-                orchestration_id: node.orchestration_id,
-                node_path: node.node_path.clone(),
-                lifecycle_key: Some(node.lifecycle_key.clone()),
-                attempt: node.attempt,
-                writable_port_keys: Some(node.writable_port_keys.clone()),
-            })
-            .or_else(|| {
-                input
-                    .node_evidence
-                    .as_ref()
-                    .map(|node| OrchestrationNodeProjectionMetadata {
-                        orchestration_id: node.orchestration_id,
-                        node_path: node.node_path.clone(),
-                        lifecycle_key: None,
-                        attempt: node.attempt,
-                        writable_port_keys: None,
-                    })
-            }),
-        skill_asset_project_id: (!skill_asset_keys.is_empty()).then_some(input.project_id),
-        skill_asset_keys: skill_asset_keys.to_vec(),
-    };
-    let typed_metadata = serde_json::to_value(metadata).unwrap_or(serde_json::Value::Null);
-
     let Some(lifecycle) = vfs.mounts.iter_mut().find(|mount| mount.id == "lifecycle") else {
         return;
     };
-    let mut existing = match std::mem::take(&mut lifecycle.metadata) {
-        serde_json::Value::Object(object) => object,
-        serde_json::Value::Null => serde_json::Map::new(),
-        other => {
-            let mut object = serde_json::Map::new();
-            object.insert("raw_metadata".to_string(), other);
-            object
-        }
-    };
-    existing.insert(
-        "agent_run_lifecycle_surface".to_string(),
-        typed_metadata.clone(),
-    );
-    if let serde_json::Value::Object(projector_object) = typed_metadata {
-        for (key, value) in projector_object {
-            existing.entry(key).or_insert(value);
-        }
+
+    if let serde_json::Value::Object(metadata) = &mut lifecycle.metadata {
+        metadata.remove("agent_run_lifecycle_surface");
     }
-    lifecycle.metadata = serde_json::Value::Object(existing);
+
+    refresh_lifecycle_skill_asset_projection(vfs, project_id, skill_asset_keys);
 }
 
 fn projection_set(
@@ -619,6 +538,7 @@ fn projection_set(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vfs::append_lifecycle_skill_asset_projection;
     use agentdash_domain::common::{Mount, MountCapability};
 
     fn lifecycle_node_vfs(project_id: Uuid) -> Vfs {
@@ -864,90 +784,120 @@ mod tests {
     }
 
     #[test]
-    fn projector_metadata_roundtrips() {
-        let metadata = AgentRunLifecycleMountMetadata {
-            run_id: Uuid::new_v4(),
-            agent_id: Uuid::new_v4(),
-            frame_id: Uuid::new_v4(),
-            message_stream: Some(MessageStreamProjectionMetadata {
-                runtime_session_id: "session".to_string(),
-                trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-            }),
-            orchestration_node: None,
-            skill_asset_project_id: None,
-            skill_asset_keys: Vec::new(),
-        };
-        let json = serde_json::to_value(&metadata).expect("json");
-        let parsed: AgentRunLifecycleMountMetadata =
-            serde_json::from_value(json).expect("metadata");
-        assert_eq!(parsed, metadata);
+    fn projection_refresh_clears_stale_skill_metadata_when_facts_are_empty() {
+        let project_id = Uuid::new_v4();
+        let surface = project_surface_with_effective_skill_keys(
+            projector_input(
+                project_id,
+                Some(lifecycle_node_vfs(project_id)),
+                AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface,
+            ),
+            Vec::new(),
+        )
+        .expect("surface");
+
+        assert!(
+            surface
+                .lifecycle_mount
+                .metadata
+                .get("skill_asset_project_id")
+                .is_none()
+        );
+        assert!(
+            surface
+                .lifecycle_mount
+                .metadata
+                .get("skill_asset_keys")
+                .is_none()
+        );
     }
 
     #[test]
-    fn node_projection_input_keeps_node_ownership_out_of_message_stream() {
+    fn node_projection_refreshes_provider_metadata_without_debug_envelope() {
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
-        let input = AgentRunLifecycleSurfaceInput {
-            base_vfs: Some(Vfs {
-                mounts: vec![workspace_mount()],
-                default_mount_id: Some("main".to_string()),
-                source_project_id: None,
-                source_story_id: None,
-                links: Vec::new(),
-            }),
-            address: AgentRunRuntimeAddress {
-                run_id,
-                agent_id: Uuid::new_v4(),
-                frame_id: Uuid::new_v4(),
+        let orchestration_id = Uuid::new_v4();
+        let surface = project_surface_with_effective_skill_keys(
+            AgentRunLifecycleSurfaceInput {
+                base_vfs: Some(Vfs {
+                    mounts: vec![workspace_mount()],
+                    default_mount_id: Some("main".to_string()),
+                    source_project_id: None,
+                    source_story_id: None,
+                    links: Vec::new(),
+                }),
+                address: AgentRunRuntimeAddress {
+                    run_id,
+                    agent_id: Uuid::new_v4(),
+                    frame_id: Uuid::new_v4(),
+                },
+                message_stream: Some(MessageStreamProjectionRef {
+                    runtime_session_id: "session-1".to_string(),
+                    trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
+                }),
+                project_id,
+                mode: AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
+                explicit_skill_asset_keys: vec!["companion-system".to_string()],
+                builtin_skills: BuiltinLifecycleSkillPolicy::PreserveProjected,
+                node_evidence: None,
+                node_projection: Some(OrchestrationNodeProjectionInput {
+                    run_id,
+                    orchestration_id,
+                    node_path: "phase/plan".to_string(),
+                    lifecycle_key: "dev".to_string(),
+                    attempt: 2,
+                    writable_port_keys: vec!["summary".to_string()],
+                }),
             },
-            message_stream: Some(MessageStreamProjectionRef {
-                runtime_session_id: "session-1".to_string(),
-                trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-            }),
-            project_id,
-            mode: AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
-            explicit_skill_asset_keys: vec!["companion-system".to_string()],
-            builtin_skills: BuiltinLifecycleSkillPolicy::PreserveProjected,
-            node_evidence: None,
-            node_projection: Some(OrchestrationNodeProjectionInput {
-                run_id,
-                orchestration_id: Uuid::new_v4(),
-                node_path: "phase/plan".to_string(),
-                lifecycle_key: "dev".to_string(),
-                attempt: 2,
-                writable_port_keys: vec!["summary".to_string()],
-            }),
-        };
-        let mut vfs = input.base_vfs.clone().unwrap();
-        let keys = input.explicit_skill_asset_keys.clone();
-        let lifecycle_mount = build_lifecycle_mount_with_node_scope(
-            run_id,
-            input.node_projection.as_ref().unwrap().orchestration_id,
-            "phase/plan",
-            "dev",
-            &["summary".to_string()],
-            Some(2),
+            vec!["companion-system".to_string()],
+        )
+        .expect("surface");
+        let lifecycle = surface.lifecycle_mount;
+
+        assert!(
+            lifecycle
+                .metadata
+                .get("agent_run_lifecycle_surface")
+                .is_none()
         );
-        vfs.mounts.push(lifecycle_mount);
-        annotate_mount_with_projector_metadata(&mut vfs, &input, &keys);
-        let lifecycle = vfs
-            .mounts
-            .iter()
-            .find(|mount| mount.id == "lifecycle")
-            .expect("lifecycle");
         assert_eq!(
             lifecycle
                 .metadata
-                .pointer("/agent_run_lifecycle_surface/orchestration_node/node_path")
+                .get("scope")
+                .and_then(serde_json::Value::as_str),
+            Some("node_runtime")
+        );
+        assert_eq!(
+            lifecycle
+                .metadata
+                .get("orchestration_id")
+                .and_then(serde_json::Value::as_str),
+            Some(orchestration_id.to_string().as_str())
+        );
+        assert_eq!(
+            lifecycle
+                .metadata
+                .get("node_path")
                 .and_then(serde_json::Value::as_str),
             Some("phase/plan")
         );
         assert_eq!(
             lifecycle
                 .metadata
-                .pointer("/agent_run_lifecycle_surface/message_stream/runtime_session_id")
+                .get("writable_port_keys")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|items| items.first())
                 .and_then(serde_json::Value::as_str),
-            Some("session-1")
+            Some("summary")
+        );
+        assert_eq!(
+            lifecycle
+                .metadata
+                .get("skill_asset_keys")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(serde_json::Value::as_str),
+            Some("companion-system")
         );
     }
 }

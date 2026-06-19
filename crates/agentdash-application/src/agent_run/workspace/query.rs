@@ -16,9 +16,12 @@ use crate::agent_run::{
 use crate::lifecycle::run_view_builder::{
     LifecycleSubjectAssociationView, RuntimeSessionRefView, build_lifecycle_run_view,
 };
+use crate::lifecycle::surface::surface_projector::{
+    AgentRunLifecycleSessionEvidenceFacts, AgentRunLifecycleSkillProjectionFacts,
+    OrchestrationNodeEvidenceRef,
+};
 use crate::lifecycle::{
-    AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode, AgentRunLifecycleSurfaceProjector,
-    AgentRunRuntimeAddress, BuiltinLifecycleSkillPolicy, MessageStreamProjectionRef,
+    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, MessageStreamProjectionRef,
     MessageStreamTraceKind, WorkflowApplicationError,
 };
 use crate::repository_set::RepositorySet;
@@ -347,22 +350,21 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         let vfs = match anchor.as_ref() {
             Some(anchor) => {
                 AgentRunLifecycleSurfaceProjector::new(self.repos)
-                    .project(AgentRunLifecycleSurfaceInput {
+                    .project_workspace_read_surface(AgentRunLifecycleSessionEvidenceFacts {
                         base_vfs: frame.typed_vfs(),
                         address: AgentRunRuntimeAddress {
                             run_id: anchor.run_id,
                             agent_id: anchor.agent_id,
                             frame_id: anchor.launch_frame_id,
                         },
-                        message_stream: Some(MessageStreamProjectionRef {
+                        message_stream: MessageStreamProjectionRef {
                             runtime_session_id: anchor.runtime_session_id.clone(),
                             trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-                        }),
+                        },
                         project_id: run.project_id,
-                        mode: AgentRunLifecycleSurfaceMode::WorkspaceReadSurface,
-                        explicit_skill_asset_keys: Vec::new(),
-                        builtin_skills: BuiltinLifecycleSkillPolicy::PreserveProjected,
-                        node_projection: None,
+                        node_evidence: orchestration_node_evidence_from_anchor(anchor),
+                        skill_projection: AgentRunLifecycleSkillProjectionFacts::preserve_projected(
+                        ),
                     })
                     .await
                     .map_err(WorkflowApplicationError::Internal)?
@@ -403,6 +405,26 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .get_by_project_and_id(run.project_id, project_agent_id)
             .await
             .map_err(WorkflowApplicationError::from)
+    }
+}
+
+fn orchestration_node_evidence_from_anchor(
+    anchor: &agentdash_domain::workflow::RuntimeSessionExecutionAnchor,
+) -> Option<OrchestrationNodeEvidenceRef> {
+    match (
+        anchor.orchestration_id,
+        anchor.node_path.as_ref(),
+        anchor.node_attempt,
+    ) {
+        (Some(orchestration_id), Some(node_path), Some(attempt)) => {
+            Some(OrchestrationNodeEvidenceRef {
+                run_id: anchor.run_id,
+                orchestration_id,
+                node_path: node_path.clone(),
+                attempt,
+            })
+        }
+        _ => None,
     }
 }
 

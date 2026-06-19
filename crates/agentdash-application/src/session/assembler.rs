@@ -45,10 +45,13 @@ use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     build_session_context_bundle, emit_bundle_fragments,
 };
+use crate::lifecycle::surface::surface_projector::{
+    AgentRunLifecycleNodeRuntimeFacts, AgentRunLifecycleSessionEvidenceFacts,
+    AgentRunLifecycleSkillProjectionFacts,
+};
 use crate::lifecycle::{
-    ActivityActivationInput, AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode,
-    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, BuiltinLifecycleSkill,
-    BuiltinLifecycleSkillPolicy, MessageStreamProjectionRef, MessageStreamTraceKind,
+    ActivityActivationInput, AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress,
+    BuiltinLifecycleSkill, MessageStreamProjectionRef, MessageStreamTraceKind,
     OrchestrationNodeProjectionInput, RuntimeNodeArtifactScope, activate_activity_with_platform,
     load_scoped_port_output_map,
 };
@@ -395,24 +398,23 @@ impl<'a> SessionRequestAssembler<'a> {
                 )
             })?;
         let surface = AgentRunLifecycleSurfaceProjector::new(self.repos)
-            .project(AgentRunLifecycleSurfaceInput {
+            .project_companion_child_surface(AgentRunLifecycleSessionEvidenceFacts {
                 base_vfs: prepared.vfs.take(),
                 address: AgentRunRuntimeAddress {
                     run_id: anchor.run_id,
                     agent_id: anchor.agent_id,
                     frame_id: anchor.launch_frame_id,
                 },
-                message_stream: Some(MessageStreamProjectionRef {
+                message_stream: MessageStreamProjectionRef {
                     runtime_session_id: anchor.runtime_session_id,
                     trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-                }),
+                },
                 project_id: run.project_id,
-                mode: AgentRunLifecycleSurfaceMode::CompanionChildSurface,
-                explicit_skill_asset_keys,
-                builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
-                    BuiltinLifecycleSkill::CompanionSystem,
-                ]),
-                node_projection: None,
+                node_evidence: None,
+                skill_projection: AgentRunLifecycleSkillProjectionFacts::ensure(
+                    explicit_skill_asset_keys,
+                    [BuiltinLifecycleSkill::CompanionSystem],
+                ),
             })
             .await?;
         let vfs = surface.vfs;
@@ -574,9 +576,9 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
     } {
         let base_vfs = activation.lifecycle_vfs.clone();
         AgentRunLifecycleSurfaceProjector::new(repos)
-            .project_activation(
+            .project_workflow_node_activation(
                 &mut activation,
-                AgentRunLifecycleSurfaceInput {
+                AgentRunLifecycleNodeRuntimeFacts {
                     base_vfs: Some(base_vfs),
                     address: AgentRunRuntimeAddress {
                         run_id: anchor.run_id,
@@ -588,12 +590,7 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
                         trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
                     }),
                     project_id: spec.run.project_id,
-                    mode: AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
-                    explicit_skill_asset_keys: Vec::new(),
-                    builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
-                        BuiltinLifecycleSkill::CompanionSystem,
-                    ]),
-                    node_projection: Some(OrchestrationNodeProjectionInput {
+                    node_projection: OrchestrationNodeProjectionInput {
                         run_id: spec.run.id,
                         orchestration_id: spec.orchestration_id,
                         node_path: spec.node_path.to_string(),
@@ -605,7 +602,11 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
                             .iter()
                             .map(|port| port.key.clone())
                             .collect(),
-                    }),
+                    },
+                    skill_projection: AgentRunLifecycleSkillProjectionFacts::ensure(
+                        Vec::new(),
+                        [BuiltinLifecycleSkill::CompanionSystem],
+                    ),
                 },
             )
             .await?;
@@ -968,9 +969,9 @@ pub(in crate::session) async fn compose_companion_with_workflow(
     {
         let base_vfs = activation.lifecycle_vfs.clone();
         AgentRunLifecycleSurfaceProjector::new(repos)
-            .project_activation(
+            .project_workflow_node_activation(
                 &mut activation,
-                AgentRunLifecycleSurfaceInput {
+                AgentRunLifecycleNodeRuntimeFacts {
                     base_vfs: Some(base_vfs),
                     address: AgentRunRuntimeAddress {
                         run_id: anchor.run_id,
@@ -982,16 +983,7 @@ pub(in crate::session) async fn compose_companion_with_workflow(
                         trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
                     }),
                     project_id,
-                    mode: AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
-                    explicit_skill_asset_keys: comp
-                        .selected_context
-                        .as_ref()
-                        .and_then(|context| context.preset_config.skill_asset_keys.clone())
-                        .unwrap_or_default(),
-                    builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
-                        BuiltinLifecycleSkill::CompanionSystem,
-                    ]),
-                    node_projection: Some(OrchestrationNodeProjectionInput {
+                    node_projection: OrchestrationNodeProjectionInput {
                         run_id: spec.run.id,
                         orchestration_id: spec.orchestration_id,
                         node_path: spec.node_path.to_string(),
@@ -1003,7 +995,14 @@ pub(in crate::session) async fn compose_companion_with_workflow(
                             .iter()
                             .map(|port| port.key.clone())
                             .collect(),
-                    }),
+                    },
+                    skill_projection: AgentRunLifecycleSkillProjectionFacts::ensure(
+                        comp.selected_context
+                            .as_ref()
+                            .and_then(|context| context.preset_config.skill_asset_keys.clone())
+                            .unwrap_or_default(),
+                        [BuiltinLifecycleSkill::CompanionSystem],
+                    ),
                 },
             )
             .await?;

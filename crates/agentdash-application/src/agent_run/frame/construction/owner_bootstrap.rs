@@ -35,10 +35,13 @@ use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     build_session_context_bundle, emit_bundle_fragments, resolve_workspace_declared_sources,
 };
+use crate::lifecycle::surface::surface_projector::{
+    AgentRunLifecycleNodeRuntimeFacts, AgentRunLifecycleSessionEvidenceFacts,
+    AgentRunLifecycleSkillProjectionFacts,
+};
 use crate::lifecycle::{
-    ActiveWorkflowProjection, AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode,
-    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, BuiltinLifecycleSkill,
-    BuiltinLifecycleSkillPolicy, MessageStreamProjectionRef, MessageStreamTraceKind,
+    ActiveWorkflowProjection, AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress,
+    BuiltinLifecycleSkill, MessageStreamProjectionRef, MessageStreamTraceKind,
     OrchestrationNodeProjectionInput, project_active_workflow_lifecycle_vfs,
     writable_port_keys_for_active_workflow,
 };
@@ -399,40 +402,56 @@ impl<'a> OwnerBootstrapComposer<'a> {
             };
             match anchor {
                 Some(anchor) => {
-                    let node_projection =
-                        active_workflow.map(|workflow| OrchestrationNodeProjectionInput {
-                            run_id: workflow.run.id,
-                            orchestration_id: workflow.orchestration_id,
-                            node_path: workflow.node_path.clone(),
-                            lifecycle_key: workflow.lifecycle_key.clone(),
-                            attempt: workflow.active_attempt.attempt,
-                            writable_port_keys: writable_port_keys_for_active_workflow(workflow),
-                        });
-                    let surface = AgentRunLifecycleSurfaceProjector::new(self.repos)
-                        .project(AgentRunLifecycleSurfaceInput {
-                            base_vfs: vfs,
-                            address: AgentRunRuntimeAddress {
-                                run_id: anchor.run_id,
-                                agent_id: anchor.agent_id,
-                                frame_id: anchor.launch_frame_id,
-                            },
-                            message_stream: Some(MessageStreamProjectionRef {
-                                runtime_session_id: anchor.runtime_session_id,
-                                trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-                            }),
-                            project_id,
-                            mode: if node_projection.is_some() {
-                                AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface
-                            } else {
-                                AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface
-                            },
-                            explicit_skill_asset_keys: skill_asset_keys.clone(),
-                            builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
-                                BuiltinLifecycleSkill::CompanionSystem,
-                            ]),
-                            node_projection,
-                        })
-                        .await?;
+                    let projector = AgentRunLifecycleSurfaceProjector::new(self.repos);
+                    let address = AgentRunRuntimeAddress {
+                        run_id: anchor.run_id,
+                        agent_id: anchor.agent_id,
+                        frame_id: anchor.launch_frame_id,
+                    };
+                    let message_stream = MessageStreamProjectionRef {
+                        runtime_session_id: anchor.runtime_session_id,
+                        trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
+                    };
+                    let skill_projection = AgentRunLifecycleSkillProjectionFacts::ensure(
+                        skill_asset_keys.clone(),
+                        [BuiltinLifecycleSkill::CompanionSystem],
+                    );
+                    let surface = if let Some(workflow) = active_workflow {
+                        projector
+                            .project_workflow_node_execution_surface(
+                                AgentRunLifecycleNodeRuntimeFacts {
+                                    base_vfs: vfs,
+                                    address,
+                                    message_stream: Some(message_stream),
+                                    project_id,
+                                    node_projection: OrchestrationNodeProjectionInput {
+                                        run_id: workflow.run.id,
+                                        orchestration_id: workflow.orchestration_id,
+                                        node_path: workflow.node_path.clone(),
+                                        lifecycle_key: workflow.lifecycle_key.clone(),
+                                        attempt: workflow.active_attempt.attempt,
+                                        writable_port_keys: writable_port_keys_for_active_workflow(
+                                            workflow,
+                                        ),
+                                    },
+                                    skill_projection,
+                                },
+                            )
+                            .await?
+                    } else {
+                        projector
+                            .project_launch_evidence_surface(
+                                AgentRunLifecycleSessionEvidenceFacts {
+                                    base_vfs: vfs,
+                                    address,
+                                    message_stream,
+                                    project_id,
+                                    node_evidence: None,
+                                    skill_projection,
+                                },
+                            )
+                            .await?
+                    };
                     Some(surface.vfs)
                 }
                 None => project_active_workflow_lifecycle_vfs(vfs, active_workflow),

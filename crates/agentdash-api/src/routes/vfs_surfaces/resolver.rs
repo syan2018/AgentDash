@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
 use agentdash_application::agent_run::AgentFrameSurfaceExt;
+use agentdash_application::lifecycle::surface::surface_projector::{
+    AgentRunLifecycleSessionEvidenceFacts, AgentRunLifecycleSkillProjectionFacts,
+    OrchestrationNodeEvidenceRef,
+};
 use agentdash_application::lifecycle::{
-    AgentRunLifecycleSurfaceInput, AgentRunLifecycleSurfaceMode, AgentRunLifecycleSurfaceProjector,
-    AgentRunRuntimeAddress, BuiltinLifecycleSkillPolicy, MessageStreamProjectionRef,
-    MessageStreamTraceKind, OrchestrationNodeProjectionInput,
+    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, MessageStreamProjectionRef,
+    MessageStreamTraceKind,
 };
 use agentdash_application::session::construction_planner::resolve_project_workspace;
 use agentdash_application::task::plan::find_task_plan_item_for_subject;
@@ -315,40 +318,36 @@ pub(crate) async fn resolve_agent_run_frame_vfs_for_agent(
     };
     let vfs = match anchor.as_ref() {
         Some(anchor) => {
-            let node_projection = match (
+            let node_evidence = match (
                 anchor.orchestration_id,
                 anchor.node_path.as_ref(),
                 anchor.node_attempt,
             ) {
                 (Some(orchestration_id), Some(node_path), Some(attempt)) => {
-                    Some(OrchestrationNodeProjectionInput {
+                    Some(OrchestrationNodeEvidenceRef {
                         run_id: anchor.run_id,
                         orchestration_id,
                         node_path: node_path.clone(),
-                        lifecycle_key: String::new(),
                         attempt,
-                        writable_port_keys: Vec::new(),
                     })
                 }
                 _ => None,
             };
             let surface = AgentRunLifecycleSurfaceProjector::new(&state.repos)
-                .project(AgentRunLifecycleSurfaceInput {
+                .project_launch_evidence_surface(AgentRunLifecycleSessionEvidenceFacts {
                     base_vfs: frame.typed_vfs(),
                     address: AgentRunRuntimeAddress {
                         run_id: anchor.run_id,
                         agent_id: anchor.agent_id,
                         frame_id: anchor.launch_frame_id,
                     },
-                    message_stream: Some(MessageStreamProjectionRef {
+                    message_stream: MessageStreamProjectionRef {
                         runtime_session_id: anchor.runtime_session_id.clone(),
                         trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-                    }),
+                    },
                     project_id: run.project_id,
-                    mode: AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface,
-                    explicit_skill_asset_keys: Vec::new(),
-                    builtin_skills: BuiltinLifecycleSkillPolicy::PreserveProjected,
-                    node_projection,
+                    node_evidence,
+                    skill_projection: AgentRunLifecycleSkillProjectionFacts::preserve_projected(),
                 })
                 .await
                 .map_err(|error| {

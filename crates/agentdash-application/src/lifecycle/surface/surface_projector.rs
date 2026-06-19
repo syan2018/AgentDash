@@ -46,6 +46,25 @@ pub struct OrchestrationNodeProjectionInput {
     pub writable_port_keys: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrchestrationNodeEvidenceRef {
+    pub run_id: Uuid,
+    pub orchestration_id: Uuid,
+    pub node_path: String,
+    pub attempt: u32,
+}
+
+impl OrchestrationNodeProjectionInput {
+    pub fn evidence_ref(&self) -> OrchestrationNodeEvidenceRef {
+        OrchestrationNodeEvidenceRef {
+            run_id: self.run_id,
+            orchestration_id: self.orchestration_id,
+            node_path: self.node_path.clone(),
+            attempt: self.attempt,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinLifecycleSkill {
     CompanionSystem,
@@ -75,6 +94,31 @@ impl BuiltinLifecycleSkillPolicy {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunLifecycleSkillProjectionFacts {
+    pub explicit_skill_asset_keys: Vec<String>,
+    pub builtin_skills: BuiltinLifecycleSkillPolicy,
+}
+
+impl AgentRunLifecycleSkillProjectionFacts {
+    pub fn preserve_projected() -> Self {
+        Self {
+            explicit_skill_asset_keys: Vec::new(),
+            builtin_skills: BuiltinLifecycleSkillPolicy::PreserveProjected,
+        }
+    }
+
+    pub fn ensure(
+        explicit_skill_asset_keys: Vec<String>,
+        skills: impl IntoIterator<Item = BuiltinLifecycleSkill>,
+    ) -> Self {
+        Self {
+            explicit_skill_asset_keys,
+            builtin_skills: BuiltinLifecycleSkillPolicy::ensure(skills),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentRunLifecycleSurfaceMode {
     WorkspaceReadSurface,
@@ -92,7 +136,28 @@ pub struct AgentRunLifecycleSurfaceInput {
     pub mode: AgentRunLifecycleSurfaceMode,
     pub explicit_skill_asset_keys: Vec<String>,
     pub builtin_skills: BuiltinLifecycleSkillPolicy,
+    pub node_evidence: Option<OrchestrationNodeEvidenceRef>,
     pub node_projection: Option<OrchestrationNodeProjectionInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunLifecycleSessionEvidenceFacts {
+    pub base_vfs: Option<Vfs>,
+    pub address: AgentRunRuntimeAddress,
+    pub message_stream: MessageStreamProjectionRef,
+    pub project_id: Uuid,
+    pub node_evidence: Option<OrchestrationNodeEvidenceRef>,
+    pub skill_projection: AgentRunLifecycleSkillProjectionFacts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunLifecycleNodeRuntimeFacts {
+    pub base_vfs: Option<Vfs>,
+    pub address: AgentRunRuntimeAddress,
+    pub message_stream: Option<MessageStreamProjectionRef>,
+    pub project_id: Uuid,
+    pub node_projection: OrchestrationNodeProjectionInput,
+    pub skill_projection: AgentRunLifecycleSkillProjectionFacts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,6 +172,7 @@ pub struct AgentRunLifecycleSurface {
 pub struct AgentRunLifecycleProjectionSet {
     pub agent_run_identity: bool,
     pub message_stream: Option<MessageStreamProjectionFacts>,
+    pub node_evidence: Option<OrchestrationNodeEvidenceFacts>,
     pub orchestration_node: Option<OrchestrationNodeProjectionFacts>,
     pub skill_assets: Vec<String>,
 }
@@ -115,6 +181,14 @@ pub struct AgentRunLifecycleProjectionSet {
 pub struct MessageStreamProjectionFacts {
     pub runtime_session_id: String,
     pub trace_kind: MessageStreamTraceKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrchestrationNodeEvidenceFacts {
+    pub run_id: Uuid,
+    pub orchestration_id: Uuid,
+    pub node_path: String,
+    pub attempt: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,9 +226,11 @@ pub struct MessageStreamProjectionMetadata {
 pub struct OrchestrationNodeProjectionMetadata {
     pub orchestration_id: Uuid,
     pub node_path: String,
-    pub lifecycle_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle_key: Option<String>,
     pub attempt: u32,
-    pub writable_port_keys: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub writable_port_keys: Option<Vec<String>>,
 }
 
 pub struct AgentRunLifecycleSurfaceProjector<'a> {
@@ -164,6 +240,55 @@ pub struct AgentRunLifecycleSurfaceProjector<'a> {
 impl<'a> AgentRunLifecycleSurfaceProjector<'a> {
     pub fn new(repos: &'a RepositorySet) -> Self {
         Self { repos }
+    }
+
+    pub async fn project_workspace_read_surface(
+        &self,
+        facts: AgentRunLifecycleSessionEvidenceFacts,
+    ) -> Result<AgentRunLifecycleSurface, String> {
+        self.project(session_evidence_input(
+            AgentRunLifecycleSurfaceMode::WorkspaceReadSurface,
+            facts,
+        ))
+        .await
+    }
+
+    pub async fn project_launch_evidence_surface(
+        &self,
+        facts: AgentRunLifecycleSessionEvidenceFacts,
+    ) -> Result<AgentRunLifecycleSurface, String> {
+        self.project(session_evidence_input(
+            AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface,
+            facts,
+        ))
+        .await
+    }
+
+    pub async fn project_companion_child_surface(
+        &self,
+        facts: AgentRunLifecycleSessionEvidenceFacts,
+    ) -> Result<AgentRunLifecycleSurface, String> {
+        self.project(session_evidence_input(
+            AgentRunLifecycleSurfaceMode::CompanionChildSurface,
+            facts,
+        ))
+        .await
+    }
+
+    pub async fn project_workflow_node_execution_surface(
+        &self,
+        facts: AgentRunLifecycleNodeRuntimeFacts,
+    ) -> Result<AgentRunLifecycleSurface, String> {
+        self.project(node_runtime_input(facts)).await
+    }
+
+    pub async fn project_workflow_node_activation(
+        &self,
+        activation: &mut ActivityActivation,
+        facts: AgentRunLifecycleNodeRuntimeFacts,
+    ) -> Result<AgentRunLifecycleSurface, String> {
+        self.project_activation(activation, node_runtime_input(facts))
+            .await
     }
 
     pub async fn project(
@@ -199,6 +324,37 @@ impl<'a> AgentRunLifecycleSurfaceProjector<'a> {
         activation.lifecycle_vfs = surface.vfs.clone();
         activation.lifecycle_mount = surface.lifecycle_mount.clone();
         Ok(surface)
+    }
+}
+
+fn session_evidence_input(
+    mode: AgentRunLifecycleSurfaceMode,
+    facts: AgentRunLifecycleSessionEvidenceFacts,
+) -> AgentRunLifecycleSurfaceInput {
+    AgentRunLifecycleSurfaceInput {
+        base_vfs: facts.base_vfs,
+        address: facts.address,
+        message_stream: Some(facts.message_stream),
+        project_id: facts.project_id,
+        mode,
+        explicit_skill_asset_keys: facts.skill_projection.explicit_skill_asset_keys,
+        builtin_skills: facts.skill_projection.builtin_skills,
+        node_evidence: facts.node_evidence,
+        node_projection: None,
+    }
+}
+
+fn node_runtime_input(facts: AgentRunLifecycleNodeRuntimeFacts) -> AgentRunLifecycleSurfaceInput {
+    AgentRunLifecycleSurfaceInput {
+        base_vfs: facts.base_vfs,
+        address: facts.address,
+        message_stream: facts.message_stream,
+        project_id: facts.project_id,
+        mode: AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
+        explicit_skill_asset_keys: facts.skill_projection.explicit_skill_asset_keys,
+        builtin_skills: facts.skill_projection.builtin_skills,
+        node_evidence: Some(facts.node_projection.evidence_ref()),
+        node_projection: Some(facts.node_projection),
     }
 }
 
@@ -239,10 +395,16 @@ fn project_surface_with_effective_skill_keys(
                     "AgentRun lifecycle surface 缺少 message stream 或 node projection".to_string(),
                 );
             };
+            let node_evidence = input.node_evidence.clone().or_else(|| {
+                input
+                    .node_projection
+                    .as_ref()
+                    .map(|node| node.evidence_ref())
+            });
             let anchor = agent_run_session_anchor_from_projector_input(
                 &input.address,
                 message_stream,
-                input.node_projection.as_ref(),
+                node_evidence.as_ref(),
             );
             install_agent_run_lifecycle_mount(&mut vfs, &anchor);
             annotate_mount_with_projector_metadata(&mut vfs, &input, &skill_asset_keys);
@@ -319,9 +481,9 @@ fn normalized_skill_asset_keys(keys: impl IntoIterator<Item = String>) -> Vec<St
 fn agent_run_session_anchor_from_projector_input(
     address: &AgentRunRuntimeAddress,
     message_stream: &MessageStreamProjectionRef,
-    node_projection: Option<&OrchestrationNodeProjectionInput>,
+    node_evidence: Option<&OrchestrationNodeEvidenceRef>,
 ) -> agentdash_domain::workflow::RuntimeSessionExecutionAnchor {
-    match node_projection {
+    match node_evidence {
         Some(node) => {
             agentdash_domain::workflow::RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
                 message_stream.runtime_session_id.clone(),
@@ -357,15 +519,28 @@ fn annotate_mount_with_projector_metadata(
                 trace_kind: message_stream.trace_kind,
             }
         }),
-        orchestration_node: input.node_projection.as_ref().map(|node| {
-            OrchestrationNodeProjectionMetadata {
+        orchestration_node: input
+            .node_projection
+            .as_ref()
+            .map(|node| OrchestrationNodeProjectionMetadata {
                 orchestration_id: node.orchestration_id,
                 node_path: node.node_path.clone(),
-                lifecycle_key: node.lifecycle_key.clone(),
+                lifecycle_key: Some(node.lifecycle_key.clone()),
                 attempt: node.attempt,
-                writable_port_keys: node.writable_port_keys.clone(),
-            }
-        }),
+                writable_port_keys: Some(node.writable_port_keys.clone()),
+            })
+            .or_else(|| {
+                input
+                    .node_evidence
+                    .as_ref()
+                    .map(|node| OrchestrationNodeProjectionMetadata {
+                        orchestration_id: node.orchestration_id,
+                        node_path: node.node_path.clone(),
+                        lifecycle_key: None,
+                        attempt: node.attempt,
+                        writable_port_keys: None,
+                    })
+            }),
         skill_asset_project_id: (!skill_asset_keys.is_empty()).then_some(input.project_id),
         skill_asset_keys: skill_asset_keys.to_vec(),
     };
@@ -407,6 +582,26 @@ fn projection_set(
                 trace_kind: message_stream.trace_kind,
             }
         }),
+        node_evidence: input
+            .node_evidence
+            .as_ref()
+            .map(|node| OrchestrationNodeEvidenceFacts {
+                run_id: node.run_id,
+                orchestration_id: node.orchestration_id,
+                node_path: node.node_path.clone(),
+                attempt: node.attempt,
+            })
+            .or_else(|| {
+                input
+                    .node_projection
+                    .as_ref()
+                    .map(|node| OrchestrationNodeEvidenceFacts {
+                        run_id: node.run_id,
+                        orchestration_id: node.orchestration_id,
+                        node_path: node.node_path.clone(),
+                        attempt: node.attempt,
+                    })
+            }),
         orchestration_node: input.node_projection.as_ref().map(|node| {
             OrchestrationNodeProjectionFacts {
                 run_id: node.run_id,
@@ -482,6 +677,7 @@ mod tests {
             mode,
             explicit_skill_asset_keys: Vec::new(),
             builtin_skills: BuiltinLifecycleSkillPolicy::PreserveProjected,
+            node_evidence: None,
             node_projection: None,
         }
     }
@@ -606,14 +802,13 @@ mod tests {
                 mode: AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface,
                 explicit_skill_asset_keys: Vec::new(),
                 builtin_skills: BuiltinLifecycleSkillPolicy::PreserveProjected,
-                node_projection: Some(OrchestrationNodeProjectionInput {
+                node_evidence: Some(OrchestrationNodeEvidenceRef {
                     run_id,
                     orchestration_id: Uuid::new_v4(),
                     node_path: "phase/plan".to_string(),
-                    lifecycle_key: "dev".to_string(),
                     attempt: 2,
-                    writable_port_keys: vec!["summary".to_string()],
                 }),
+                node_projection: None,
             },
             vec!["companion-system".to_string()],
         )
@@ -642,6 +837,14 @@ mod tests {
                 .and_then(|items| items.first())
                 .and_then(serde_json::Value::as_str),
             Some("companion-system")
+        );
+        assert!(
+            lifecycle.metadata.get("lifecycle_key").is_none(),
+            "session evidence mount must not expose writable node runtime metadata"
+        );
+        assert!(
+            lifecycle.metadata.get("writable_port_keys").is_none(),
+            "session evidence mount must not expose writable node runtime metadata"
         );
     }
 
@@ -705,6 +908,7 @@ mod tests {
             mode: AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
             explicit_skill_asset_keys: vec!["companion-system".to_string()],
             builtin_skills: BuiltinLifecycleSkillPolicy::PreserveProjected,
+            node_evidence: None,
             node_projection: Some(OrchestrationNodeProjectionInput {
                 run_id,
                 orchestration_id: Uuid::new_v4(),

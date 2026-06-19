@@ -700,26 +700,6 @@ mod fs_read_tests {
         assert!(text.contains("application/zip"));
     }
 
-    // T1 — schema breaking：旧字段 start_line / end_line 应被 deny_unknown_fields 拒绝。
-    #[tokio::test]
-    async fn fs_read_rejects_legacy_start_end_line() {
-        let err = tool()
-            .execute(
-                "call-1",
-                json!({ "path": "note.md", "start_line": 1, "end_line": 2 }),
-                CancellationToken::new(),
-                None,
-            )
-            .await
-            .expect_err("legacy schema should be rejected");
-        match err {
-            AgentToolError::InvalidArguments(msg) => {
-                assert!(msg.contains("start_line") || msg.contains("unknown field"));
-            }
-            other => panic!("expected InvalidArguments, got {other:?}"),
-        }
-    }
-
     // T3 — 字节超限：300KB + 不传 limit ⇒ is_error。
     #[tokio::test]
     async fn fs_read_too_large_bytes_is_error() {

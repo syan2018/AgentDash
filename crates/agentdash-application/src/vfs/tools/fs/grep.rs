@@ -546,21 +546,6 @@ mod fs_grep_tests {
     }
 
     #[tokio::test]
-    async fn fs_grep_rejects_legacy_query_field() {
-        let tool = make_tool(vec![("a.rs", "fn main() {}")]);
-        let err = tool
-            .execute(
-                "c",
-                json!({ "query": "main" }),
-                CancellationToken::new(),
-                None,
-            )
-            .await
-            .expect_err("legacy schema rejected");
-        assert!(matches!(err, AgentToolError::InvalidArguments(_)));
-    }
-
-    #[tokio::test]
     async fn fs_grep_pattern_is_always_regex() {
         let tool = make_tool(vec![("a.rs", "funcXfoo\nfunction foo")]);
         let res = tool

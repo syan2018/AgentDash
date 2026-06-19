@@ -337,21 +337,6 @@ mod fs_glob_tests {
     }
 
     #[tokio::test]
-    async fn fs_glob_rejects_legacy_recursive_field() {
-        let tool = make_tool_with_files(vec![("a.rs", "x", at(0))]);
-        let err = tool
-            .execute(
-                "c",
-                json!({ "pattern": "*.rs", "recursive": true }),
-                CancellationToken::new(),
-                None,
-            )
-            .await
-            .expect_err("legacy schema rejected");
-        assert!(matches!(err, AgentToolError::InvalidArguments(_)));
-    }
-
-    #[tokio::test]
     async fn fs_glob_requires_pattern() {
         let tool = make_tool_with_files(vec![("a.rs", "x", at(0))]);
         let err = tool

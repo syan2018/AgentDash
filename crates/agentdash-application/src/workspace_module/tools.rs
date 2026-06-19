@@ -1467,6 +1467,7 @@ mod tests {
         let vfs = local_workspace_vfs(working_dir);
         let mut capability_state =
             CapabilityState::from_clusters([agentdash_spi::ToolCluster::WorkspaceModule]);
+        capability_state.workspace_module = WorkspaceModuleDimension::all();
         capability_state.vfs.active = Some(vfs.clone());
         construction.workspace.working_directory = Some(working_dir.to_path_buf());
         construction.execution_profile.executor_config = user_input.executor_config;
@@ -1522,7 +1523,7 @@ mod tests {
             install_repo,
             canvas_repo,
             project_id,
-            WorkspaceModuleDimension::default(),
+            WorkspaceModuleDimension::all(),
         );
         let result = tool
             .execute("t", serde_json::json!({}), CancellationToken::new(), None)
@@ -1546,7 +1547,7 @@ mod tests {
             install_repo,
             canvas_repo,
             project_id,
-            WorkspaceModuleDimension::default(),
+            WorkspaceModuleDimension::all(),
         );
         let result = tool
             .execute(
@@ -1579,7 +1580,7 @@ mod tests {
             install_repo,
             canvas_repo,
             project_id,
-            WorkspaceModuleDimension::default(),
+            WorkspaceModuleDimension::all(),
         );
         let result = tool
             .execute(
@@ -2036,7 +2037,7 @@ mod tests {
             install_repo,
             canvas_repo,
             project_id,
-            WorkspaceModuleDimension::default(),
+            WorkspaceModuleDimension::all(),
             shared_vfs,
             handle,
             session.id.clone(),
@@ -2230,7 +2231,7 @@ mod tests {
             install_repo,
             canvas_repo,
             project_id,
-            WorkspaceModuleDimension::default(),
+            WorkspaceModuleDimension::all(),
             "session-1".to_string(),
             None,
             backend,
@@ -2252,6 +2253,7 @@ mod tests {
         let mut vfs = local_workspace_vfs(&working_directory);
         vfs.source_project_id = Some(project_id.to_string());
         let mut capability_state = CapabilityState::from_clusters([ToolCluster::WorkspaceModule]);
+        capability_state.workspace_module = WorkspaceModuleDimension::all();
         capability_state
             .tool
             .capabilities

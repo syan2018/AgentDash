@@ -119,27 +119,6 @@ impl SkillEntry {
             disable_model_invocation: entry.disable_model_invocation,
         }
     }
-
-    pub fn legacy(
-        name: impl Into<String>,
-        description: impl Into<String>,
-        file_path: impl Into<String>,
-        disable_model_invocation: bool,
-    ) -> Self {
-        let name = name.into();
-        Self {
-            capability_key: name.clone(),
-            provider_key: String::new(),
-            local_name: name.clone(),
-            name,
-            display_name: None,
-            description: description.into(),
-            file_path: file_path.into(),
-            base_dir: None,
-            exposure: SkillContextExposure::DefaultExposed,
-            disable_model_invocation,
-        }
-    }
 }
 
 impl SkillCapabilityEntry {

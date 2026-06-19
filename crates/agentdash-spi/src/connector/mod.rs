@@ -273,11 +273,10 @@ pub struct SkillDimension {
 }
 
 /// Workspace module 可见性裁切模式。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceModuleVisibilityMode {
-    /// 默认：全集 = Project enabled extension + project visible canvas。
-    #[default]
+    /// 全集 = Project enabled extension + project visible canvas。
     All,
     /// 仅 `allowed_module_ids` 列出的 module 可见。
     Allowlist,
@@ -286,17 +285,32 @@ pub enum WorkspaceModuleVisibilityMode {
 /// Workspace module 维度的运行态——可见性裁切的唯一权威来源。
 ///
 /// 声明式可见性的唯一 upstream 是 ProjectAgent preset 的 `visible_workspace_module_refs`，
-/// 经 base `CapabilityState.workspace_module` 投影（`effective_capability_json`）流转：
-/// preset 非空 → `Allowlist`；`None`/空集 → `All`。工具在返回 projection 前按此维度过滤。
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// 经 base `CapabilityState.workspace_module` 投影（`effective_capability_json`）流转。
+/// 工具在返回 projection 前按此维度过滤。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceModuleDimension {
-    #[serde(default)]
     pub mode: WorkspaceModuleVisibilityMode,
     #[serde(default)]
     pub allowed_module_ids: Vec<String>,
 }
 
+impl Default for WorkspaceModuleDimension {
+    fn default() -> Self {
+        Self {
+            mode: WorkspaceModuleVisibilityMode::Allowlist,
+            allowed_module_ids: Vec::new(),
+        }
+    }
+}
+
 impl WorkspaceModuleDimension {
+    pub fn all() -> Self {
+        Self {
+            mode: WorkspaceModuleVisibilityMode::All,
+            allowed_module_ids: Vec::new(),
+        }
+    }
+
     /// 判断给定 module_id 是否对当前 session 可见。
     pub fn allows(&self, module_id: &str) -> bool {
         match self.mode {
@@ -332,7 +346,6 @@ pub struct CapabilityState {
     #[serde(default)]
     pub skill: SkillDimension,
     /// Workspace module 可见性维度。
-    #[serde(default)]
     pub workspace_module: WorkspaceModuleDimension,
 }
 

@@ -110,40 +110,6 @@ impl SessionContextBundle {
     pub fn push_raw(&mut self, fragment: ContextFragment) {
         self.bootstrap_fragments.push(fragment);
     }
-
-    /// 按 scope 过滤、按 `slots` 白名单拼接 Markdown section。
-    ///
-    /// 规则：
-    /// 1. 先按 scope 过滤；
-    /// 2. 再按 `slots` 白名单保留（保留顺序按 `slots` 参数的顺序，而不是 fragment 的 order）；
-    /// 3. 同一 slot 内部合并全部 fragment，按 `order` 升序、用 `\n\n` 拼接；
-    /// 4. 空 content 的 fragment 跳过。
-    ///
-    /// **Deprecated**: 渲染决策已由 ContextFrame builder（`assignment_context_frame.rs`）承担。
-    /// Bundle 的职责收束为纯合并容器；请直接使用 `iter_fragments()` / `filter_for()` 取得
-    /// fragment 后交由 Frame builder 渲染。
-    #[deprecated(note = "渲染逻辑已迁移到 ContextFrame builder，请使用 iter_fragments/filter_for")]
-    pub fn render_section(&self, scope: FragmentScope, slots: &[&str]) -> String {
-        let mut sections: Vec<String> = Vec::with_capacity(slots.len());
-        for slot_name in slots {
-            let mut slot_fragments: Vec<&ContextFragment> = self
-                .iter_fragments()
-                .filter(|fragment| fragment.scope.contains(scope))
-                .filter(|fragment| fragment.slot == *slot_name)
-                .collect();
-            slot_fragments.sort_by_key(|fragment| fragment.order);
-            let merged = slot_fragments
-                .into_iter()
-                .map(|fragment| fragment.content.clone())
-                .filter(|content| !content.trim().is_empty())
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            if !merged.trim().is_empty() {
-                sections.push(merged);
-            }
-        }
-        sections.join("\n\n")
-    }
 }
 
 fn now_millis_u64() -> u64 {
@@ -196,38 +162,6 @@ mod tests {
         assert_eq!(bundle.bootstrap_fragments.len(), 1);
         assert_eq!(bundle.bootstrap_fragments[0].content, "second");
         assert_eq!(bundle.bootstrap_fragments[0].order, 5);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn render_section_orders_fragments_by_order() {
-        let session = Uuid::new_v4();
-        let mut bundle = SessionContextBundle::new(session, "task_start");
-        bundle.push_raw(frag("task", 50, "runtime-task"));
-        bundle.push_raw(frag("task", 10, "bootstrap-task"));
-
-        let rendered = bundle.render_section(FragmentScope::RuntimeAgent, &["task"]);
-        let bootstrap_pos = rendered.find("bootstrap-task").unwrap();
-        let runtime_pos = rendered.find("runtime-task").unwrap();
-        assert!(bootstrap_pos < runtime_pos);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn render_section_orders_within_slot_by_order_field() {
-        let session = Uuid::new_v4();
-        let mut bundle = SessionContextBundle::new(session, "story_owner");
-        bundle.push_raw(frag("workflow_context", 20, "second"));
-        bundle.push_raw(frag("workflow_context", 10, "first"));
-        bundle.push_raw(frag("task", 5, "task-body"));
-
-        let rendered =
-            bundle.render_section(FragmentScope::RuntimeAgent, &["task", "workflow_context"]);
-        let task_pos = rendered.find("task-body").unwrap();
-        let first_pos = rendered.find("first").unwrap();
-        let second_pos = rendered.find("second").unwrap();
-        assert!(task_pos < first_pos);
-        assert!(first_pos < second_pos);
     }
 
     #[test]

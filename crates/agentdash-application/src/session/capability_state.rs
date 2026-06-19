@@ -99,8 +99,8 @@ pub fn capability_state_to_frame_surfaces(state: &CapabilityState) -> FrameCapab
 /// `CapabilityState.workspace_module` 维度（三态直达）。
 ///
 /// 语义（workspace_module 属 `Replace` 策略）：
-/// - `None`（Unspecified，未声明）   → `mode = All`（全集可见）
-/// - `Some([])`（Cleared，显式清空） → `mode = All`（**清空回全集**，修复 carry-forward bug）
+/// - `None`（Unspecified，未声明）   → 显式投影 `mode = All`
+/// - `Some([])`（Cleared，显式清空） → 显式投影 `mode = All`
 /// - `Some([..非空])`（Allowlist）   → `mode = Allowlist` + allowed_module_ids
 ///
 /// base 每 revision 由当前 config 重新投影，不存在"继承上一版白名单"，
@@ -113,7 +113,7 @@ pub fn project_workspace_module_dimension(
             mode: agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist,
             allowed_module_ids: ids.to_vec(),
         },
-        _ => agentdash_spi::WorkspaceModuleDimension::default(),
+        _ => agentdash_spi::WorkspaceModuleDimension::all(),
     }
 }
 
@@ -1365,21 +1365,35 @@ mod tests {
     }
 
     #[test]
-    fn legacy_frame_without_workspace_module_defaults_to_all() {
-        // 旧 frame：effective_capability_json 无 workspace_module 字段 → serde(default) → All
+    fn capability_state_json_requires_workspace_module_dimension() {
         let json = serde_json::json!({
             "tool": {},
             "companion": {},
             "vfs": {},
             "skill": {}
         });
-        let mut frame = AgentFrame::new_initial(Uuid::new_v4());
-        frame.effective_capability_json = Some(json);
-        let projected = project_capability_state_from_frame(&frame);
+        serde_json::from_value::<CapabilityState>(json).expect_err("workspace_module 必须显式存在");
+
+        let empty_dimension = serde_json::json!({
+            "tool": {},
+            "companion": {},
+            "vfs": {},
+            "skill": {},
+            "workspace_module": {}
+        });
+        serde_json::from_value::<CapabilityState>(empty_dimension)
+            .expect_err("workspace_module.mode 必须显式存在");
+    }
+
+    #[test]
+    fn workspace_module_dimension_default_is_empty_allowlist() {
+        let dim = agentdash_spi::WorkspaceModuleDimension::default();
         assert_eq!(
-            projected.workspace_module.mode,
-            agentdash_spi::WorkspaceModuleVisibilityMode::All
+            dim.mode,
+            agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist
         );
+        assert!(dim.allowed_module_ids.is_empty());
+        assert!(!dim.allows("ext:demo"));
     }
 
     #[test]

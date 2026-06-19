@@ -51,12 +51,12 @@ impl std::fmt::Display for AgentSource {
 impl FromStr for AgentSource {
     type Err = std::convert::Infallible;
 
-    /// 宽松解析：兼容历史别名（routine_agent / child_agent 等）；未识别值落 [`AgentSource::Unknown`]。
+    /// 只解析当前 canonical slug；未识别值落 [`AgentSource::Unknown`]。
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let source = match s {
             "project_agent" => AgentSource::ProjectAgent,
-            "routine" | "routine_agent" => AgentSource::Routine,
-            "subagent" | "child_agent" => AgentSource::Subagent,
+            "routine" => AgentSource::Routine,
+            "subagent" => AgentSource::Subagent,
             "workflow_agent" => AgentSource::WorkflowAgent,
             _ => AgentSource::Unknown,
         };
@@ -161,16 +161,15 @@ mod agent_source_tests {
     }
 
     #[test]
-    fn legacy_aliases_and_unknown_normalize() {
+    fn unknown_source_slugs_normalize_to_unknown() {
         assert_eq!(
             AgentSource::from_str("routine_agent").unwrap(),
-            AgentSource::Routine
+            AgentSource::Unknown
         );
         assert_eq!(
             AgentSource::from_str("child_agent").unwrap(),
-            AgentSource::Subagent
+            AgentSource::Unknown
         );
-        // 已废弃 / 测试遗留 slug 落 Unknown，不再是独立变体。
         assert_eq!(
             AgentSource::from_str("migration_agent").unwrap(),
             AgentSource::Unknown

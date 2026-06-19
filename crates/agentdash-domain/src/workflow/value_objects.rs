@@ -641,12 +641,10 @@ mod tests {
     }
 
     #[test]
-    fn workflow_contract_ignores_legacy_fields_gracefully() {
-        // 旧数据可能残留 constraints / completion / capabilities 字段，
-        // 移除 deny_unknown_fields 后应静默忽略
+    fn workflow_contract_rejects_legacy_fields() {
         let json = r#"{"constraints":[],"completion":{"checks":[]},"capabilities":["workflow_management"]}"#;
-        let contract: AgentProcedureContract =
-            serde_json::from_str(json).expect("旧数据应当可反序列化");
-        assert!(contract.output_ports.is_empty());
+        let error = serde_json::from_str::<AgentProcedureContract>(json)
+            .expect_err("旧 workflow contract 字段必须被拒绝");
+        assert!(error.to_string().contains("unknown field"));
     }
 }

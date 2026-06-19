@@ -6,6 +6,7 @@ use super::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
 pub struct AgentProcedureContract {
     #[serde(default)]
     pub injection: WorkflowInjectionSpec,
@@ -32,6 +33,7 @@ pub enum WorkflowSessionTerminalState {
     Interrupted,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
 pub struct EffectiveSessionContract {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_key: Option<String>,

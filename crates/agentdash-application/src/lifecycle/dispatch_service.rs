@@ -991,7 +991,6 @@ fn append_orchestration_role_from_source(source: &ExecutionSource) -> &'static s
 fn association_role_from_source(source: &ExecutionSource) -> &'static str {
     match source {
         ExecutionSource::Routine => "source",
-        ExecutionSource::Migration => "lineage",
         _ => "subject",
     }
 }
@@ -1001,7 +1000,6 @@ fn runtime_session_title(request: &RuntimeSessionCreationRequest) -> String {
         ExecutionSource::User | ExecutionSource::ProjectAgent | ExecutionSource::Api => "新会话",
         ExecutionSource::Routine => "定时任务",
         ExecutionSource::ParentAgent => "子任务",
-        ExecutionSource::Migration => "迁移",
     };
     let now = chrono::Local::now().format("%m/%d %H:%M");
     format!("{kind_label} · {now}")
@@ -1015,8 +1013,6 @@ fn agent_source_from_execution_source(source: &ExecutionSource) -> AgentSource {
         }
         ExecutionSource::Routine => AgentSource::Routine,
         ExecutionSource::ParentAgent => AgentSource::Subagent,
-        // Migration 是 ExecutionSource 的死变体（全仓库无构造点），防御性落 Unknown。
-        ExecutionSource::Migration => AgentSource::Unknown,
     }
 }
 

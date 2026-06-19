@@ -58,6 +58,7 @@ pub fn lifecycle_mount_surface_for_active_workflow(
 }
 
 pub fn append_active_workflow_lifecycle_mount(vfs: &mut Vfs, workflow: &ActiveWorkflowProjection) {
+    let existing_skill_projection = lifecycle_skill_projection(vfs);
     let surface = lifecycle_mount_surface_for_active_workflow(workflow);
     let mount = build_lifecycle_mount_with_node_scope(
         surface.run_id,
@@ -77,6 +78,9 @@ pub fn append_active_workflow_lifecycle_mount(vfs: &mut Vfs, workflow: &ActiveWo
     } else {
         vfs.mounts.push(mount);
     }
+    if let Some((project_id, keys)) = existing_skill_projection {
+        append_lifecycle_skill_asset_projection(vfs, project_id, &keys);
+    }
 }
 
 fn normalize_default_mount(vfs: &mut Vfs) {
@@ -95,7 +99,11 @@ fn normalize_default_mount(vfs: &mut Vfs) {
         .map(|mount| mount.id.clone());
 }
 
-pub fn install_agent_run_lifecycle_mount(vfs: &mut Vfs, anchor: &RuntimeSessionExecutionAnchor) {
+pub(super) fn install_agent_run_lifecycle_mount(
+    vfs: &mut Vfs,
+    anchor: &RuntimeSessionExecutionAnchor,
+) {
+    let existing_skill_projection = lifecycle_skill_projection(vfs);
     vfs.mounts.retain(|candidate| candidate.id != "lifecycle");
     vfs.mounts.push(build_agent_run_session_lifecycle_mount(
         anchor.run_id,
@@ -106,67 +114,37 @@ pub fn install_agent_run_lifecycle_mount(vfs: &mut Vfs, anchor: &RuntimeSessionE
         anchor.node_path.as_deref(),
         anchor.node_attempt,
     ));
+    if let Some((project_id, keys)) = existing_skill_projection {
+        append_lifecycle_skill_asset_projection(vfs, project_id, &keys);
+    }
     normalize_default_mount(vfs);
 }
 
-pub fn build_agent_run_lifecycle_vfs(
-    vfs: Option<Vfs>,
-    anchor: &RuntimeSessionExecutionAnchor,
-) -> Vfs {
-    let mut vfs = vfs.unwrap_or_else(empty_vfs);
-    install_agent_run_lifecycle_mount(&mut vfs, anchor);
-    vfs
-}
-
-fn lifecycle_skill_projection_keys(vfs: &Vfs, project_id: Uuid) -> Vec<String> {
+fn lifecycle_skill_projection(vfs: &Vfs) -> Option<(Uuid, Vec<String>)> {
     vfs.mounts
         .iter()
         .find(|mount| mount.id == "lifecycle")
-        .filter(|mount| {
-            mount
+        .and_then(|mount| {
+            let project_id = mount
                 .metadata
                 .get(SKILL_ASSET_PROJECT_ID_METADATA_KEY)
                 .and_then(serde_json::Value::as_str)
-                .and_then(|value| Uuid::parse_str(value).ok())
-                == Some(project_id)
-        })
-        .and_then(|mount| {
-            mount
+                .and_then(|value| Uuid::parse_str(value).ok())?;
+            let keys = mount
                 .metadata
                 .get(SKILL_ASSET_KEYS_METADATA_KEY)
                 .and_then(serde_json::Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Some((project_id, keys))
         })
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-pub fn install_agent_run_lifecycle_mount_with_skills(
-    vfs: &mut Vfs,
-    anchor: &RuntimeSessionExecutionAnchor,
-    project_id: Uuid,
-    skill_asset_keys: &[String],
-) {
-    let mut keys = lifecycle_skill_projection_keys(vfs, project_id);
-    keys.extend(skill_asset_keys.iter().cloned());
-    install_agent_run_lifecycle_mount(vfs, anchor);
-    append_lifecycle_skill_asset_projection(vfs, project_id, &keys);
-}
-
-pub fn build_agent_run_lifecycle_vfs_with_skills(
-    vfs: Option<Vfs>,
-    anchor: &RuntimeSessionExecutionAnchor,
-    project_id: Uuid,
-    skill_asset_keys: &[String],
-) -> Vfs {
-    let mut vfs = vfs.unwrap_or_else(empty_vfs);
-    install_agent_run_lifecycle_mount_with_skills(&mut vfs, anchor, project_id, skill_asset_keys);
-    vfs
+        .filter(|(_, keys)| !keys.is_empty())
 }
 
 pub fn project_active_workflow_lifecycle_vfs(
@@ -359,7 +337,8 @@ mod tests {
     #[test]
     fn agent_run_lifecycle_vfs_installs_session_scoped_mount() {
         let anchor = agent_run_anchor();
-        let vfs = build_agent_run_lifecycle_vfs(Some(workflow_vfs()), &anchor);
+        let mut vfs = workflow_vfs();
+        install_agent_run_lifecycle_mount(&mut vfs, &anchor);
 
         let lifecycle = vfs
             .mounts
@@ -406,7 +385,8 @@ mod tests {
             "phase/plan",
             3,
         );
-        let vfs = build_agent_run_lifecycle_vfs(Some(vfs), &anchor);
+        let mut vfs = vfs;
+        install_agent_run_lifecycle_mount(&mut vfs, &anchor);
         let lifecycle_mounts = vfs
             .mounts
             .iter()
@@ -438,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_run_lifecycle_vfs_with_skills_preserves_existing_projection_metadata() {
+    fn agent_run_lifecycle_vfs_preserves_existing_projection_metadata() {
         let project_id = Uuid::new_v4();
         let workflow = active_workflow_projection();
         let mut vfs = project_active_workflow_lifecycle_vfs(Some(workflow_vfs()), Some(&workflow))
@@ -458,12 +438,13 @@ mod tests {
             "phase/plan",
             3,
         );
-        let vfs = build_agent_run_lifecycle_vfs_with_skills(
-            Some(vfs),
-            &anchor,
+        let mut vfs = vfs;
+        install_agent_run_lifecycle_mount(&mut vfs, &anchor);
+        assert!(append_lifecycle_skill_asset_projection(
+            &mut vfs,
             project_id,
             &["workspace-module-system".to_string()],
-        );
+        ));
         let lifecycle = vfs
             .mounts
             .iter()
@@ -498,7 +479,8 @@ mod tests {
     #[test]
     fn agent_run_lifecycle_vfs_uses_lifecycle_default_when_base_is_absent() {
         let anchor = agent_run_anchor();
-        let vfs = build_agent_run_lifecycle_vfs(None, &anchor);
+        let mut vfs = empty_vfs();
+        install_agent_run_lifecycle_mount(&mut vfs, &anchor);
 
         assert_eq!(vfs.mounts.len(), 1);
         assert_eq!(vfs.mounts[0].id, "lifecycle");

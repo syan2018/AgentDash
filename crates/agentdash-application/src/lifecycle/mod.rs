@@ -59,8 +59,7 @@ pub use subject_execution_control::{
     SubjectExecutionControlService,
 };
 pub use surface::mount::{
-    LifecycleMountSurface, append_active_workflow_lifecycle_mount, build_agent_run_lifecycle_vfs,
-    build_agent_run_lifecycle_vfs_with_skills, install_agent_run_lifecycle_mount,
+    LifecycleMountSurface, append_active_workflow_lifecycle_mount,
     lifecycle_mount_surface_for_active_workflow, project_active_workflow_lifecycle_vfs,
     writable_port_keys_for_active_workflow,
 };

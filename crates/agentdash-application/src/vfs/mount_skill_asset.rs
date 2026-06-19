@@ -56,17 +56,26 @@ pub fn append_lifecycle_skill_asset_projection(
                 object
             }
         };
-        let mut keys = metadata
-            .get(SKILL_ASSET_KEYS_METADATA_KEY)
-            .and_then(serde_json::Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let existing_project_matches = metadata
+            .get(SKILL_ASSET_PROJECT_ID_METADATA_KEY)
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok())
+            == Some(project_id);
+        let mut keys = if existing_project_matches {
+            metadata
+                .get(SKILL_ASSET_KEYS_METADATA_KEY)
+                .and_then(serde_json::Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         keys.extend(new_keys);
         let keys = normalized_skill_asset_keys(&keys);
         metadata.insert(
@@ -103,4 +112,82 @@ fn normalized_skill_asset_keys(skill_asset_keys: &[String]) -> Vec<String> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lifecycle_vfs(project_id: Uuid, keys: &[&str]) -> Vfs {
+        Vfs {
+            mounts: vec![Mount {
+                id: "lifecycle".to_string(),
+                provider: PROVIDER_LIFECYCLE_VFS.to_string(),
+                backend_id: String::new(),
+                root_ref: "lifecycle://run/test".to_string(),
+                capabilities: vec![MountCapability::Read, MountCapability::List],
+                default_write: false,
+                display_name: "Lifecycle".to_string(),
+                metadata: serde_json::json!({
+                    SKILL_ASSET_PROJECT_ID_METADATA_KEY: project_id.to_string(),
+                    SKILL_ASSET_KEYS_METADATA_KEY: keys,
+                }),
+            }],
+            default_mount_id: None,
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn lifecycle_skill_projection_appends_for_same_project() {
+        let project_id = Uuid::new_v4();
+        let mut vfs = lifecycle_vfs(project_id, &["companion-system"]);
+
+        assert!(append_lifecycle_skill_asset_projection(
+            &mut vfs,
+            project_id,
+            &["workspace-module-system".to_string()],
+        ));
+
+        let keys = vfs.mounts[0]
+            .metadata
+            .get(SKILL_ASSET_KEYS_METADATA_KEY)
+            .and_then(serde_json::Value::as_array)
+            .expect("skill keys")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["companion-system", "workspace-module-system"]);
+    }
+
+    #[test]
+    fn lifecycle_skill_projection_replaces_keys_for_different_project() {
+        let mut vfs = lifecycle_vfs(Uuid::new_v4(), &["foreign-project-skill"]);
+        let project_id = Uuid::new_v4();
+
+        assert!(append_lifecycle_skill_asset_projection(
+            &mut vfs,
+            project_id,
+            &["companion-system".to_string()],
+        ));
+
+        assert_eq!(
+            vfs.mounts[0]
+                .metadata
+                .get(SKILL_ASSET_PROJECT_ID_METADATA_KEY)
+                .and_then(serde_json::Value::as_str),
+            Some(project_id.to_string().as_str())
+        );
+        let keys = vfs.mounts[0]
+            .metadata
+            .get(SKILL_ASSET_KEYS_METADATA_KEY)
+            .and_then(serde_json::Value::as_array)
+            .expect("skill keys")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["companion-system"]);
+    }
 }

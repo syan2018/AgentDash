@@ -14,7 +14,7 @@ use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 use crate::skill_asset::SkillAssetService;
 use crate::vfs::{append_lifecycle_skill_asset_projection, build_lifecycle_mount_with_node_scope};
 
-use super::mount::install_agent_run_lifecycle_mount_with_skills;
+use super::mount::install_agent_run_lifecycle_mount;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunRuntimeAddress {
@@ -208,8 +208,13 @@ fn project_surface_with_effective_skill_keys(
 ) -> Result<AgentRunLifecycleSurface, String> {
     let skill_asset_keys = normalized_skill_asset_keys(skill_asset_keys);
     let mut vfs = input.base_vfs.take().unwrap_or_default();
-    match input.node_projection.as_ref() {
-        Some(node) => {
+    match input.mode {
+        AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface => {
+            let Some(node) = input.node_projection.as_ref() else {
+                return Err(
+                    "Workflow node execution lifecycle surface 缺少 node projection".to_string(),
+                );
+            };
             let lifecycle_mount = build_lifecycle_mount_with_node_scope(
                 node.run_id,
                 node.orchestration_id,
@@ -228,20 +233,18 @@ fn project_surface_with_effective_skill_keys(
             annotate_mount_with_projector_metadata(&mut overlay, &input, &skill_asset_keys);
             vfs = compose_vfs_with_overlay_and_directives(Some(&vfs), &overlay, &[]);
         }
-        None => {
+        _ => {
             let Some(message_stream) = input.message_stream.as_ref() else {
                 return Err(
                     "AgentRun lifecycle surface 缺少 message stream 或 node projection".to_string(),
                 );
             };
-            let anchor =
-                agent_run_session_anchor_from_projector_input(&input.address, message_stream);
-            install_agent_run_lifecycle_mount_with_skills(
-                &mut vfs,
-                &anchor,
-                input.project_id,
-                &skill_asset_keys,
+            let anchor = agent_run_session_anchor_from_projector_input(
+                &input.address,
+                message_stream,
+                input.node_projection.as_ref(),
             );
+            install_agent_run_lifecycle_mount(&mut vfs, &anchor);
             annotate_mount_with_projector_metadata(&mut vfs, &input, &skill_asset_keys);
         }
     }
@@ -316,13 +319,27 @@ fn normalized_skill_asset_keys(keys: impl IntoIterator<Item = String>) -> Vec<St
 fn agent_run_session_anchor_from_projector_input(
     address: &AgentRunRuntimeAddress,
     message_stream: &MessageStreamProjectionRef,
+    node_projection: Option<&OrchestrationNodeProjectionInput>,
 ) -> agentdash_domain::workflow::RuntimeSessionExecutionAnchor {
-    agentdash_domain::workflow::RuntimeSessionExecutionAnchor::new_dispatch(
-        message_stream.runtime_session_id.clone(),
-        address.run_id,
-        address.frame_id,
-        address.agent_id,
-    )
+    match node_projection {
+        Some(node) => {
+            agentdash_domain::workflow::RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
+                message_stream.runtime_session_id.clone(),
+                address.run_id,
+                address.frame_id,
+                address.agent_id,
+                node.orchestration_id,
+                node.node_path.clone(),
+                node.attempt,
+            )
+        }
+        None => agentdash_domain::workflow::RuntimeSessionExecutionAnchor::new_dispatch(
+            message_stream.runtime_session_id.clone(),
+            address.run_id,
+            address.frame_id,
+            address.agent_id,
+        ),
+    }
 }
 
 fn annotate_mount_with_projector_metadata(
@@ -560,6 +577,71 @@ mod tests {
         assert_eq!(
             surface.skill_asset_keys,
             vec!["writer".to_string(), "companion-system".to_string()]
+        );
+    }
+
+    #[test]
+    fn launch_projection_with_node_anchor_keeps_session_scope() {
+        let project_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let surface = project_surface_with_effective_skill_keys(
+            AgentRunLifecycleSurfaceInput {
+                base_vfs: Some(Vfs {
+                    mounts: vec![workspace_mount()],
+                    default_mount_id: Some("main".to_string()),
+                    source_project_id: None,
+                    source_story_id: None,
+                    links: Vec::new(),
+                }),
+                address: AgentRunRuntimeAddress {
+                    run_id,
+                    agent_id: Uuid::new_v4(),
+                    frame_id: Uuid::new_v4(),
+                },
+                message_stream: Some(MessageStreamProjectionRef {
+                    runtime_session_id: "session-node".to_string(),
+                    trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
+                }),
+                project_id,
+                mode: AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface,
+                explicit_skill_asset_keys: Vec::new(),
+                builtin_skills: BuiltinLifecycleSkillPolicy::PreserveProjected,
+                node_projection: Some(OrchestrationNodeProjectionInput {
+                    run_id,
+                    orchestration_id: Uuid::new_v4(),
+                    node_path: "phase/plan".to_string(),
+                    lifecycle_key: "dev".to_string(),
+                    attempt: 2,
+                    writable_port_keys: vec!["summary".to_string()],
+                }),
+            },
+            vec!["companion-system".to_string()],
+        )
+        .expect("surface");
+        let lifecycle = surface.lifecycle_mount;
+
+        assert_eq!(
+            lifecycle
+                .metadata
+                .get("scope")
+                .and_then(serde_json::Value::as_str),
+            Some("agent_run_session")
+        );
+        assert_eq!(
+            lifecycle
+                .metadata
+                .get("node_path")
+                .and_then(serde_json::Value::as_str),
+            Some("phase/plan")
+        );
+        assert_eq!(
+            lifecycle
+                .metadata
+                .get("skill_asset_keys")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(serde_json::Value::as_str),
+            Some("companion-system")
         );
     }
 

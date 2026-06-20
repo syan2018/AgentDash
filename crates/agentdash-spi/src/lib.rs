@@ -48,8 +48,8 @@ pub use connector::{
 
 pub use context::injection::{
     ASSIGNMENT_CONTEXT_SLOTS, ContextFragment, FragmentScope, FragmentScopeSet, InjectionError,
-    MergeStrategy, RUNTIME_AGENT_CONTEXT_SLOTS, ResolveSourcesOutput, ResolveSourcesRequest,
-    SelectorHint, SourceResolver, VfsContext, VfsDescriptor, VfsDiscoveryProvider,
+    MergeStrategy, ResolveSourcesOutput, ResolveSourcesRequest, SelectorHint, SourceResolver,
+    VfsContext, VfsDescriptor, VfsDiscoveryProvider,
 };
 
 // ─── context bundle & capabilities ──────────────────────────

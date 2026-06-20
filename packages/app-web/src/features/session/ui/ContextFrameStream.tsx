@@ -133,7 +133,8 @@ function summarizeFrames(frames: ContextFrame[]): string {
 const FRAME_KIND_LABELS: Record<string, string> = {
   identity: "IDENTITY",
   continuation_context: "CONTINUATION",
-  capability_state_update: "CAPABILITY",
+  capability_state_snapshot: "CAPABILITY SNAPSHOT",
+  capability_state_delta: "CAPABILITY DELTA",
   assignment_context: "ASSIGNMENT",
   pending_action: "ACTION",
   auto_resume: "RESUME",
@@ -152,7 +153,7 @@ function describeFrameSet(frames: ContextFrame[]): string {
 /**
  * 单个 frame tab 上的文字描述：优先展示阶段/关键变化，退化为 kind。
  *
- * - capability_state_update：展示能力/工具 delta 的增减统计
+ * - capability_state_snapshot / capability_state_delta：展示能力/工具统计
  * - auto_resume：展示 reason
  * - compaction_summary：展示压缩条数
  * - 其他：phase_node 或 kind
@@ -162,7 +163,10 @@ function frameTabLabel(frame: ContextFrame): string {
   if (frame.phase_node) parts.push(frame.phase_node);
   else parts.push(frame.kind);
 
-  if (frame.kind === "capability_state_update") {
+  if (
+    frame.kind === "capability_state_snapshot" ||
+    frame.kind === "capability_state_delta"
+  ) {
     const diff = summarizeRuntimeUpdate(frame);
     if (diff) parts.push(diff);
   } else if (frame.kind === "auto_resume") {

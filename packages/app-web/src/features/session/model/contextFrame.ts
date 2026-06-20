@@ -23,17 +23,16 @@ export type ContextFrameSection =
   | ToolPathDeltaSection
   | McpServerDeltaSection
   | VfsDeltaSection
-  | ToolSchemaSection
   | ToolSchemaDeltaSection
   | SkillDeltaSection
   | CompanionAgentRosterDeltaSection
-  | HookInjectionSection
   | SystemNoticeSection
   | PendingActionSection
   | AutoResumeSection
   | CompactionSummarySection
   | UserPreferencesSection
-  | ProjectGuidelinesSection;
+  | ProjectGuidelinesSection
+  | UnknownSection;
 
 export interface AssignmentContextSection {
   kind: "assignment_context";
@@ -98,11 +97,6 @@ export interface VfsDeltaSection {
   default_mount_after?: string;
 }
 
-export interface ToolSchemaSection {
-  kind: "tool_schema";
-  tools: RuntimeToolSchemaEntry[];
-}
-
 export interface ToolSchemaDeltaSection {
   kind: "tool_schema_delta";
   added_tools: RuntimeToolSchemaEntry[];
@@ -116,13 +110,6 @@ export interface RuntimeToolSchemaEntry {
   source?: string;
   tool_path?: string;
   context_usage_kind?: string;
-}
-
-export interface HookInjectionSection {
-  kind: "hook_injection";
-  title: string;
-  summary: string;
-  injections: RuntimeHookInjectionEntry[];
 }
 
 export interface SystemNoticeSection {
@@ -226,6 +213,12 @@ export interface ProjectGuidelinesSection {
   entries: ProjectGuidelineEntry[];
 }
 
+export interface UnknownSection {
+  kind: "unknown_section";
+  original_kind: string;
+  raw: Record<string, unknown>;
+}
+
 export interface RuntimeHookInjectionEntry {
   slot: string;
   source: string;
@@ -326,13 +319,6 @@ function parseSection(value: unknown): ContextFrameSection | null {
       default_mount_after: readString(value.default_mount_after) ?? undefined,
     };
   }
-  if (kind === "tool_schema") {
-    const tools = Array.isArray(value.tools) ? value.tools : [];
-    return {
-      kind,
-      tools: tools.map(parseToolSchemaEntry).filter((item): item is RuntimeToolSchemaEntry => item != null),
-    };
-  }
   if (kind === "tool_schema_delta") {
     const addedTools = Array.isArray(value.added_tools) ? value.added_tools : [];
     return {
@@ -368,17 +354,6 @@ function parseSection(value: unknown): ContextFrameSection | null {
       effective_agents: effective
         .map(parseCompanionAgentEntry)
         .filter((item): item is RuntimeCompanionAgentEntry => item != null),
-    };
-  }
-  if (kind === "hook_injection") {
-    const title = readString(value.title) ?? "Hook Injection";
-    const summary = readString(value.summary) ?? "";
-    const injections = Array.isArray(value.injections) ? value.injections : [];
-    return {
-      kind,
-      title,
-      summary,
-      injections: injections.map(parseInjectionEntry).filter((item): item is RuntimeHookInjectionEntry => item != null),
     };
   }
   if (kind === "system_notice") {
@@ -453,7 +428,11 @@ function parseSection(value: unknown): ContextFrameSection | null {
         .filter((item): item is ProjectGuidelineEntry => item != null),
     };
   }
-  return null;
+  return {
+    kind: "unknown_section",
+    original_kind: kind ?? "unknown",
+    raw: value,
+  };
 }
 
 function parseFragmentEntry(value: unknown): RuntimeContextFragmentEntry | null {
@@ -589,7 +568,9 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
   switch (kind) {
     case "identity":
       return { token: "IDN", variant: "primary" };
-    case "capability_state_update":
+    case "capability_state_snapshot":
+      return { token: "CAPS", variant: "primary" };
+    case "capability_state_delta":
       return { token: "CAP", variant: "neutral" };
     case "assignment_context":
       return { token: "ASN", variant: "primary" };
@@ -628,15 +609,12 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
       return { token: "MCP", variant: "neutral" };
     case "vfs_delta":
       return { token: "VFS", variant: "neutral" };
-    case "tool_schema":
     case "tool_schema_delta":
       return { token: "TOOL", variant: "neutral" };
     case "skill_delta":
       return { token: "SKL", variant: "neutral" };
     case "companion_agent_roster_delta":
       return { token: "AGNT", variant: "primary" };
-    case "hook_injection":
-      return { token: "HOOK", variant: "neutral" };
     case "system_notice":
       return { token: "SYS", variant: "neutral" };
     case "pending_action":
@@ -649,5 +627,7 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
       return { token: "PREF", variant: "primary" };
     case "project_guidelines":
       return { token: "GUID", variant: "primary" };
+    case "unknown_section":
+      return { token: "UNK", variant: "warning" };
   }
 }

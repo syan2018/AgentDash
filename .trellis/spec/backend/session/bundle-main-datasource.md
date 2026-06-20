@@ -41,15 +41,15 @@ impl SessionContextBundle {
 Application 层、connector 侧自渲染、title/summarizer/bridge replay 都使用这一套
 Bundle API。
 
-## Runtime Agent Slot Whitelist
+## Assignment Slot Whitelist
 
 定义位置：`crates/agentdash-spi/src/context_injection.rs`：
-`RUNTIME_AGENT_CONTEXT_SLOTS`。
+`ASSIGNMENT_CONTEXT_SLOTS`。
 
-新增 RuntimeAgent 可见 slot 时同步处理：
+新增 assignment context 可见 slot 时同步处理：
 
 1. contributor 或 hook bridge 产出明确 slot。
-2. slot 加入 `RUNTIME_AGENT_CONTEXT_SLOTS`。
+2. slot 加入 `ASSIGNMENT_CONTEXT_SLOTS`。
 3. 设置默认 order。
 4. 若 hook injection 可产出该 slot，同步 `HOOK_SLOT_ORDERS`。
 
@@ -101,8 +101,10 @@ flowchart LR
 
 ## Invariants
 
-- `companion_agents`、project/story/task/workspace context、workflow context 与 declared
-  sources 通过 Bundle/ContextFrame 主数据面进入 agent context。
+- project/story/task/workspace context、workflow context 与 declared sources 通过
+  Bundle/ContextFrame 主数据面进入 agent context。
+- capability、VFS、MCP、skills、tool schema 与 companion roster 属于 capability
+  frame 事实域，不通过 assignment slot 表达。
 - `bootstrap_fragments` 与 `turn_delta` 物理分离。
 - 新增 context slot 必须同时考虑 runtime 渲染白名单、order 与 hook bridge。
 - `TransformContextOutput` 只承载 steering 与 block 结果。

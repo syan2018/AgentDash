@@ -2,7 +2,7 @@
 
 ## Status
 
-planned
+completed
 
 ## Goal
 
@@ -25,9 +25,15 @@ planned
 
 ## Acceptance
 
-- [ ] spec 记录最终事实域契约。
-- [ ] targeted tests 覆盖关键数据流。
-- [ ] frontend check 通过。
-- [ ] backend broader test 通过，或无关失败有具体测试名和现象。
-- [ ] `work-items.md` 中所有 WI 状态完成并记录验证结果。
+- [x] spec 记录最终事实域契约。
+- [x] targeted tests 覆盖关键数据流。
+- [x] frontend check 通过。
+- [x] backend broader test 通过，或无关失败有具体测试名和现象。
+- [x] `work-items.md` 中所有 WI 状态完成并记录验证结果。
 
+## Result
+
+- capability 与 session bundle spec 已记录 companion roster、CAP snapshot/delta 和 assignment slot 的最终事实域。
+- targeted 后端与前端 context frame 测试在各工作项中执行。
+- `cargo test -p agentdash-application --lib` 通过 822 项，失败项为既有无关测试 `hooks::script_engine::tests::script_reads_ctx_params`，现象是 `left: None` / `right: Some("params work")`。
+- `cargo fmt --check`、`pnpm run contracts:check` 与 `pnpm --filter app-web run check` 均通过。

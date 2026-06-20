@@ -5,7 +5,7 @@
  * section，末尾附加 "Agent 实际原文" 与 "调试信息" 两个折叠块。
  *
  * 设计原则见 PRD 「所见即所得（WYSIWYG-for-Agent）」：不排序、不跳过、
- * 不按重要性合并；section 自身不再独立折叠（唯一例外是 tool_schema 单项的
+ * 不按重要性合并；section 自身不再独立折叠（唯一例外是 tool_schema_delta 单项的
  * parameters JSON）。
  */
 

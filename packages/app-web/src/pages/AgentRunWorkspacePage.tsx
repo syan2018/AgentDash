@@ -453,7 +453,10 @@ export function AgentRunWorkspacePage({
         break;
       case "context_frame": {
         const frameData = extractPlatformEventData(_event);
-        if (frameData?.kind === "capability_state_update") {
+        if (
+          frameData?.kind === "capability_state_snapshot" ||
+          frameData?.kind === "capability_state_delta"
+        ) {
           void refreshAgentRunWorkspaceState();
           refreshWorkspaceModuleCatalog();
           scheduleHookRuntimeRefresh(eventType);

@@ -21,15 +21,14 @@ pub struct TransformContextInput {
 ///    `ContextAuditBus` 以独立数据面传递（保留 SPI crate 边界，不让
 ///    `agentdash-agent-types` 反向依赖 `agentdash-spi`）。
 /// 2. **Per-turn steering** — `steering_messages`，只承每轮 agent loop 之间的
-///    user message 级动态内容；静态上下文（companion_agents / workflow 等）
-///    已经进入 Bundle，**不应**再出现在此字段。
+///    user message 级动态内容；静态任务语义应通过 ContextFrame 投递，
+///    **不应**绕过 frame 直接出现在此字段。
 /// 3. **控制决策** — `blocked`，当 Hook 决定阻止本轮 agent 前进时带上原因。
 #[derive(Debug, Clone)]
 pub struct TransformContextOutput {
     /// 本轮要追加到 agent context 的 user message 列表。
     ///
-    /// 禁令：不得包含已进入 Bundle 的 slot 内容（companion_agents / workflow /
-    /// 等静态上下文）。这条命名本身就是对此语义的约束。
+    /// 禁令：不得包含绕过 ContextFrame 的静态任务语义。这条命名本身就是对此语义的约束。
     pub steering_messages: Vec<AgentMessage>,
     /// 当 hook 规则阻止当前用户输入时设置。
     /// agent loop 检测到此字段后应终止当前轮次并向用户报告原因。

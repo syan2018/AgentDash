@@ -29,16 +29,9 @@ pub const ASSIGNMENT_CONTEXT_SLOTS: &[&str] = &[
     "constraint",
     "codebase",
     "references",
-    "project_guidelines",
     "instruction",
     "instruction_append",
-    // companion_agents: 从独立 section 统一归入 Bundle 主数据面；
-    // ContextFrame 收束后由 assignment_context frame 按白名单注入给 Agent。
-    "companion_agents",
 ];
-
-/// 兼容旧调用点的别名。
-pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = ASSIGNMENT_CONTEXT_SLOTS;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InjectionError {

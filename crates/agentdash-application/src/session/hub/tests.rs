@@ -1393,10 +1393,10 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
                     BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
                         if key == "context_frame"
                             && value.get("kind").and_then(serde_json::Value::as_str)
-                                == Some("capability_state_update")
+                                == Some("capability_state_delta")
                 )
         })
-        .expect("capability state update frame should exist");
+        .expect("capability state delta frame should exist");
     match &context_frame.notification.event {
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
             let capability_key_section = value["sections"]
@@ -1518,10 +1518,10 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
                     BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
                         if key == "context_frame"
                             && value.get("kind").and_then(serde_json::Value::as_str)
-                                == Some("capability_state_update")
+                                == Some("capability_state_delta")
                 )
         })
-        .expect("capability state update context_frame should exist");
+        .expect("capability state delta context_frame should exist");
     match &event.notification.event {
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
             assert_eq!(value["apply_mode"], "pending_next_turn");
@@ -1635,7 +1635,7 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
             BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
                 if key == "context_frame"
                     && value.get("kind").and_then(serde_json::Value::as_str)
-                        == Some("capability_state_update")
+                        == Some("capability_state_delta")
                     && value.get("apply_mode").and_then(serde_json::Value::as_str)
                         == Some("applied_on_next_turn")
         )
@@ -2433,15 +2433,17 @@ async fn emit_context_frame_persists_agent_visible_frame() {
 
     let notice = ContextFrame {
         id: "runtime-context-apply-1".to_string(),
-        kind: "capability_state_update".to_string(),
+        kind: "capability_state_delta".to_string(),
         source: RuntimeEventSource::RuntimeContextUpdate,
         phase_node: Some("apply".to_string()),
         apply_mode: Some("live".to_string()),
         delivery_status: "queued_for_transform_context".to_string(),
         delivery_channel: "turn_start".to_string(),
         message_role: "user".to_string(),
-        rendered_text: "## Capability State Update — Step Transition: apply".to_string(),
-        sections: vec![ContextFrameSection::ToolSchema { tools: vec![] }],
+        rendered_text: "## Capability State Delta — Step Transition: apply".to_string(),
+        sections: vec![ContextFrameSection::ToolSchemaDelta {
+            added_tools: vec![],
+        }],
         created_at_ms: 1,
     };
 

@@ -62,7 +62,6 @@ pub const INSTRUCTION_ADDITIONAL: i32 = 100;
 // 常量保持语义一致：`workflow` hook fragment (83) 与 `workflow_projection_snapshot`
 // (83) / `lifecycle_workflow_injection` (83) 对齐，确保 hook 注入的 workflow
 // fragment 与 contributor 产出的 workflow fragment 在 bundle 排序中位于同一区段。
-pub const HOOK_COMPANION_AGENTS: i32 = 60;
 pub const HOOK_WORKFLOW: i32 = WORKFLOW_PROJECTION_SNAPSHOT; // = 83
 pub const HOOK_CONSTRAINT: i32 = LIFECYCLE_RUNTIME_POLICY; // = 84
 pub const HOOK_DEFAULT: i32 = 200;

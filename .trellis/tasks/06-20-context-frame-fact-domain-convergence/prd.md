@@ -16,11 +16,11 @@
 ## Confirmed Facts
 
 - `CapabilityState.companion.agents` 已是 runtime companion roster 的真实事实源；`companion_request` 工具也消费这份 roster。
-- `capability_state_update` 当前是 sparse delta frame；前端 CAP 卡只展示后端当次发出的 section，不会凭空展示未发出的 MCP、ToolPath、Companion 等维度。
+- CAP frame 已收束为 `capability_state_snapshot` 与 `capability_state_delta` 两类语义：initial/bootstrap 表达完整能力面，live transition 表达本次变化。
 - `assignment_context` 当前汇聚 `ContextFragment` / `HookInjection` 任务语义，包含 workflow guidance、context bindings、requirements、constraints 等 ProcedureContract 派生内容。
 - `system_guidelines` 已承载用户偏好与项目指引。
 - `ContextFrame.rendered_text` 既用于模型可见投递，也与 `sections` 一起用于前端展示和统计；这要求每个 section 的事实域边界必须稳定。
-- `ContextFrameSection::HookInjection`、`ToolSchema` full section、`RUNTIME_AGENT_CONTEXT_SLOTS`、`bootstrap_context` 命名和 `companion_agents` assignment slot 都需要在本重构中重新定性。
+- `ContextFrameSection::HookInjection`、`ToolSchema` full section、`RUNTIME_AGENT_CONTEXT_SLOTS` 和 `companion_agents` assignment slot 已定性为残留协议并移除；`bootstrap_fragments` 命名保留为 Bundle 物理字段，语义由 assignment frame 收束。
 
 ## Requirements
 
@@ -42,16 +42,16 @@
 
 ## Acceptance Criteria
 
-- [ ] 后端协议中每个 `ContextFrameSection` 都有明确生产者、事实源、模型投递规则和前端展示语义。
-- [ ] companion roster 不再通过 assignment slot / hook fragment / owner bootstrap 文本片段表达；CAP frame 是唯一结构化投递面。
-- [ ] CAP snapshot / delta 语义明确，前端 CAP 卡能区分完整状态与本次变化。
-- [ ] `assignment_context` 只包含任务语义和 ProcedureContract 的 assignment 投影，不包含能力事实或系统指引事实。
-- [ ] `system_guidelines` 是用户偏好与项目指引的标准投递面。
-- [ ] `ContextFrameSection::HookInjection`、`ToolSchema` full section、`RUNTIME_AGENT_CONTEXT_SLOTS` 等残留协议已完成保留/删除/重定义决策并落地。
-- [ ] `context_usage_items_from_context_frame` 覆盖所有模型可见 ContextFrame section。
-- [ ] 前端 parser/renderer 覆盖后端有效 section，并为未知 section 提供可诊断 fallback。
-- [ ] 后端、前端和 Trellis spec 对同一事实域使用一致命名。
-- [ ] 关键路径有测试覆盖：owner bootstrap、runtime transition、ProcedureContract projection、frontend ContextFrame rendering、context usage 统计。
+- [x] 后端协议中每个 `ContextFrameSection` 都有明确生产者、事实源、模型投递规则和前端展示语义。
+- [x] companion roster 不再通过 assignment slot / hook fragment / owner bootstrap 文本片段表达；CAP frame 是唯一结构化投递面。
+- [x] CAP snapshot / delta 语义明确，前端 CAP 卡能区分完整状态与本次变化。
+- [x] `assignment_context` 只包含任务语义和 ProcedureContract 的 assignment 投影，不包含能力事实或系统指引事实。
+- [x] `system_guidelines` 是用户偏好与项目指引的标准投递面。
+- [x] `ContextFrameSection::HookInjection`、`ToolSchema` full section、`RUNTIME_AGENT_CONTEXT_SLOTS` 等残留协议已完成保留/删除/重定义决策并落地。
+- [x] `context_usage_items_from_context_frame` 覆盖所有模型可见 ContextFrame section。
+- [x] 前端 parser/renderer 覆盖后端有效 section，并为未知 section 提供可诊断 fallback。
+- [x] 后端、前端和 Trellis spec 对同一事实域使用一致命名。
+- [x] 关键路径有测试覆盖：owner bootstrap、runtime transition、ProcedureContract projection、frontend ContextFrame rendering、context usage 统计。
 
 ## Scope Notes
 

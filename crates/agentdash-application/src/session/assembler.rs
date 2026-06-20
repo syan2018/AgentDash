@@ -740,35 +740,24 @@ fn contribute_lifecycle_context(
         });
     }
 
-    let mut runtime_parts = vec![format!(
-        "## Lifecycle Runtime Policy\n{}\n\n完成当前节点后调用 `complete_lifecycle_node` 提交总结与产物。",
+    let mut delivery_parts = vec![format!(
+        "## Lifecycle Delivery Contract\n{}\n\n完成当前节点后调用 `complete_lifecycle_node` 提交总结与产物。",
         activation.kickoff_prompt.title_line
     )];
     if !activation.kickoff_prompt.output_section.trim().is_empty() {
-        runtime_parts.push(activation.kickoff_prompt.output_section.trim().to_string());
+        delivery_parts.push(activation.kickoff_prompt.output_section.trim().to_string());
     }
     if !activation.kickoff_prompt.input_section.trim().is_empty() {
-        runtime_parts.push(activation.kickoff_prompt.input_section.trim().to_string());
-    }
-    if !activation.capability_keys.is_empty() {
-        runtime_parts.push(format!(
-            "## Effective Capabilities\n{}",
-            activation
-                .capability_keys
-                .iter()
-                .map(|key| format!("- `{key}`"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
+        delivery_parts.push(activation.kickoff_prompt.input_section.trim().to_string());
     }
     fragments.push(agentdash_spi::ContextFragment {
-        slot: "runtime_policy".to_string(),
-        label: "lifecycle_runtime_policy".to_string(),
+        slot: "workflow_context".to_string(),
+        label: "lifecycle_delivery_contract".to_string(),
         order: 84,
         strategy: agentdash_spi::MergeStrategy::Append,
         scope: agentdash_spi::ContextFragment::default_scope(),
-        source: "lifecycle:runtime_policy".to_string(),
-        content: runtime_parts.join("\n\n"),
+        source: "lifecycle:delivery_contract".to_string(),
+        content: delivery_parts.join("\n\n"),
     });
 
     Contribution::fragments_only(fragments)
@@ -1373,7 +1362,7 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_context_contribution_contains_workflow_and_runtime_fragments() {
+    fn lifecycle_context_contribution_contains_workflow_assignment_fragments() {
         let project_id = Uuid::new_v4();
         let activity = ActivityDefinition {
             key: "implement".to_string(),
@@ -1476,7 +1465,7 @@ mod tests {
         );
         let relevant_content: String = bundle
             .filter_for(agentdash_spi::FragmentScope::RuntimeAgent)
-            .filter(|f| f.slot == "workflow_context" || f.slot == "runtime_policy")
+            .filter(|f| f.slot == "workflow_context")
             .map(|f| f.content.clone())
             .collect::<Vec<_>>()
             .join("\n\n");
@@ -1484,7 +1473,14 @@ mod tests {
         assert!(relevant_content.contains("## Lifecycle Node"));
         assert!(relevant_content.contains("交付可验证实现"));
         assert!(relevant_content.contains("complete_lifecycle_node"));
-        assert!(relevant_content.contains("workflow_management"));
+        assert!(relevant_content.contains("## 必须交付的产出"));
+        assert!(relevant_content.contains("## 输入上下文"));
+        assert!(!relevant_content.contains("workflow_management"));
+        assert!(
+            !bundle
+                .filter_for(agentdash_spi::FragmentScope::RuntimeAgent)
+                .any(|f| f.slot == "runtime_policy")
+        );
     }
 
     // ═══════════════════════════════════════════════════════════

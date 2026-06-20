@@ -27,7 +27,7 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("Tool Schema");
     // tool_schema_delta after dedup: 1 added tool
     expect(markup).toContain("+1");
-    // tab bar contains CAP token (capability_state_update)
+    // tab bar contains CAP token (capability_state_delta)
     expect(markup).toContain("CAP");
     // Agent 原文折叠块
     expect(markup).toContain("Agent 实际原文");
@@ -144,7 +144,7 @@ function readFrame(value: Record<string, unknown>): ContextFrame {
 function sampleNotice(): Record<string, unknown> {
   return {
       id: "runtime-context-apply-1",
-      kind: "capability_state_update",
+      kind: "capability_state_delta",
       source: "runtime_context_update",
       phase_node: "apply",
       apply_mode: "live",
@@ -357,7 +357,7 @@ function sampleContinuationNotice(): Record<string, unknown> {
 function sampleSkillDeltaNotice(): Record<string, unknown> {
   return {
     id: "skill-delta-1",
-    kind: "capability_state_update",
+    kind: "capability_state_delta",
     source: "runtime_context_update",
     phase_node: "apply",
     delivery_status: "queued_for_transform_context",
@@ -414,7 +414,7 @@ function sampleSkillDeltaNotice(): Record<string, unknown> {
 function sampleCompanionRosterNotice(): Record<string, unknown> {
   return {
     id: "companion-delta-1",
-    kind: "capability_state_update",
+    kind: "capability_state_snapshot",
     source: "runtime_context_update",
     phase_node: "apply",
     delivery_status: "queued_for_transform_context",

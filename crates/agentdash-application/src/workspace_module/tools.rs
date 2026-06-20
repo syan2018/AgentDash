@@ -1895,10 +1895,10 @@ mod tests {
                     agentdash_agent_protocol::BackboneEvent::Platform(
                         agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value }
                     ) if key == "context_frame"
-                        && value.get("kind").and_then(|v| v.as_str()) == Some("capability_state_update")
+                        && value.get("kind").and_then(|v| v.as_str()) == Some("capability_state_delta")
                 )
             })
-            .expect("should write capability_state_update context_frame");
+            .expect("should write capability_state_delta context_frame");
         assert!(
             events.iter().all(|event| {
                 !matches!(
@@ -2120,10 +2120,10 @@ mod tests {
                     agentdash_agent_protocol::BackboneEvent::Platform(
                         agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value }
                     ) if key == "context_frame"
-                        && value.get("kind").and_then(|v| v.as_str()) == Some("capability_state_update")
+                        && value.get("kind").and_then(|v| v.as_str()) == Some("capability_state_delta")
                 )
             })
-            .expect("should write capability_state_update context_frame");
+            .expect("should write capability_state_delta context_frame");
         let presented = events
             .iter()
             .enumerate()

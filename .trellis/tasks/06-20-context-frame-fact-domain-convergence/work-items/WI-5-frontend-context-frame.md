@@ -2,7 +2,7 @@
 
 ## Status
 
-planned
+completed
 
 ## Goal
 
@@ -27,8 +27,14 @@ planned
 
 ## Acceptance
 
-- [ ] 前端有效 section 覆盖后端协议。
-- [ ] CAP snapshot/delta 视觉和文案语义清晰。
-- [ ] 未知 section 不会静默丢失。
-- [ ] context frame 测试覆盖 capability、assignment、guidelines、unknown section。
+- [x] 前端有效 section 覆盖后端协议。
+- [x] CAP snapshot/delta 视觉和文案语义清晰。
+- [x] 未知 section 不会静默丢失。
+- [x] context frame 测试覆盖 capability、assignment、guidelines、unknown section。
 
+## Result
+
+- 前端 frame kind 支持 `capability_state_snapshot` / `capability_state_delta`。
+- `ContextFrameSection::ToolSchema` full section 与 `HookInjection` section 的前端分支已移除。
+- `unknown_section` fallback 保留原始 section payload，避免后端新增 section 时静默丢失。
+- CAP summary 区分 snapshot 与 delta，assignment/guidelines section 继续按各自事实域展示。

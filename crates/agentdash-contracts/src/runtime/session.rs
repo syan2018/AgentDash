@@ -10,7 +10,8 @@ use agentdash_agent_types::{
 };
 use agentdash_spi::context_usage_kind;
 use agentdash_spi::hooks::{
-    ContextFrame, ContextFrameSection, RuntimeSkillEntry, RuntimeToolSchemaEntry,
+    ContextFrame, ContextFrameSection, RuntimeCompanionAgentEntry, RuntimeSkillEntry,
+    RuntimeToolSchemaEntry,
 };
 use agentdash_spi::session_persistence::{
     PersistedSessionEvent, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
@@ -683,6 +684,22 @@ fn context_usage_analysis(
         .map(|segment| segment.attachment_tokens)
         .fold(0_u64, u64::saturating_add);
     let message_tokens = raw_message_tokens.saturating_sub(attachment_tokens);
+    let compaction_item_refs = context_items
+        .iter()
+        .filter(|item| item.kind == "compaction_summary")
+        .collect::<Vec<_>>();
+    let compaction_item_tokens = compaction_item_refs
+        .iter()
+        .filter(|item| !item.deferred)
+        .map(|item| item.token_estimate)
+        .fold(0_u64, u64::saturating_add);
+    let compaction_source = if compaction_item_refs.is_empty() {
+        "projected".to_string()
+    } else if summary_tokens > 0 {
+        "mixed".to_string()
+    } else {
+        context_item_category_source(&compaction_item_refs)
+    };
     let mut categories = context_item_categories(&context_items);
     categories.extend([
         context_category(
@@ -702,8 +719,8 @@ fn context_usage_analysis(
         context_category(
             "compaction_summary",
             "Compaction Summary",
-            summary_tokens,
-            "projected",
+            summary_tokens.saturating_add(compaction_item_tokens),
+            &compaction_source,
             false,
         ),
     ]);
@@ -721,6 +738,7 @@ fn context_item_categories(
 ) -> Vec<SessionContextUsageCategoryResponse> {
     [
         (context_usage_kind::SYSTEM_DEVELOPER, "System / Developer"),
+        (context_usage_kind::CAPABILITY_STATE, "Capability State"),
         (context_usage_kind::SYSTEM_TOOLS, "System Tools"),
         (context_usage_kind::MCP_TOOLS, "MCP Tools"),
         (context_usage_kind::AGENTS, "Agents"),
@@ -892,58 +910,6 @@ fn context_usage_items_from_section(
             })
             .into_iter()
             .collect(),
-        ContextFrameSection::HookInjection {
-            title, injections, ..
-        } => {
-            let agent_text = injections
-                .iter()
-                .filter(|injection| {
-                    usage_kind_matches(
-                        injection.context_usage_kind.as_deref(),
-                        context_usage_kind::AGENTS,
-                    )
-                })
-                .map(|injection| injection.content.as_str())
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let system_text = injections
-                .iter()
-                .filter(|injection| {
-                    usage_kind_matches(
-                        injection.context_usage_kind.as_deref(),
-                        context_usage_kind::SYSTEM_DEVELOPER,
-                    )
-                })
-                .map(|injection| injection.content.as_str())
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let mut items = Vec::new();
-            if !system_text.trim().is_empty() {
-                items.push(context_usage_item(
-                    context_usage_kind::SYSTEM_DEVELOPER,
-                    "System / Developer",
-                    title,
-                    &system_text,
-                    "context_frame",
-                    false,
-                    source_event_seq,
-                    turn_id,
-                ));
-            }
-            if !agent_text.trim().is_empty() {
-                items.push(context_usage_item(
-                    context_usage_kind::AGENTS,
-                    "Agents",
-                    "Companion Agents",
-                    &agent_text,
-                    "context_frame",
-                    false,
-                    source_event_seq,
-                    turn_id,
-                ));
-            }
-            items
-        }
         ContextFrameSection::SystemNotice {
             title,
             summary,
@@ -1048,25 +1014,258 @@ fn context_usage_items_from_section(
                 turn_id,
             )]
         }
-        ContextFrameSection::ToolSchema { tools } => tools
-            .iter()
-            .filter_map(|tool| tool_schema_usage_item(tool, source_event_seq, turn_id))
-            .collect(),
+        ContextFrameSection::CapabilityKeyDelta {
+            added_capabilities,
+            removed_capabilities,
+            effective_capabilities,
+        } => capability_state_usage_items(
+            "Capability Keys",
+            [
+                ("added_capabilities", added_capabilities.as_slice()),
+                ("removed_capabilities", removed_capabilities.as_slice()),
+                ("effective_capabilities", effective_capabilities.as_slice()),
+            ],
+            source_event_seq,
+            turn_id,
+        ),
+        ContextFrameSection::ToolPathDelta {
+            blocked_tool_paths,
+            unblocked_tool_paths,
+            whitelisted_tool_paths,
+            removed_whitelist_paths,
+        } => capability_state_usage_items(
+            "Tool Path Delta",
+            [
+                ("blocked_tool_paths", blocked_tool_paths.as_slice()),
+                ("unblocked_tool_paths", unblocked_tool_paths.as_slice()),
+                ("whitelisted_tool_paths", whitelisted_tool_paths.as_slice()),
+                (
+                    "removed_whitelist_paths",
+                    removed_whitelist_paths.as_slice(),
+                ),
+            ],
+            source_event_seq,
+            turn_id,
+        ),
+        ContextFrameSection::McpServerDelta {
+            added_mcp_servers,
+            removed_mcp_servers,
+            changed_mcp_servers,
+        } => capability_state_usage_items(
+            "MCP Server Delta",
+            [
+                ("added_mcp_servers", added_mcp_servers.as_slice()),
+                ("removed_mcp_servers", removed_mcp_servers.as_slice()),
+                ("changed_mcp_servers", changed_mcp_servers.as_slice()),
+            ],
+            source_event_seq,
+            turn_id,
+        ),
+        ContextFrameSection::VfsDelta {
+            vfs_mounts_added,
+            vfs_mounts_removed,
+            default_mount_before,
+            default_mount_after,
+        } => {
+            let mut text = named_values_text([
+                ("vfs_mounts_added", vfs_mounts_added.as_slice()),
+                ("vfs_mounts_removed", vfs_mounts_removed.as_slice()),
+            ]);
+            if default_mount_before != default_mount_after {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(&format!(
+                    "default_mount: {} -> {}",
+                    default_mount_before.as_deref().unwrap_or("none"),
+                    default_mount_after.as_deref().unwrap_or("none")
+                ));
+            }
+            non_empty_usage_item(
+                context_usage_kind::CAPABILITY_STATE,
+                "Capability State",
+                "VFS Delta",
+                &text,
+                "capability_state",
+                source_event_seq,
+                turn_id,
+            )
+            .into_iter()
+            .collect()
+        }
         ContextFrameSection::ToolSchemaDelta { added_tools } => added_tools
             .iter()
             .filter_map(|tool| tool_schema_usage_item(tool, source_event_seq, turn_id))
             .collect(),
         ContextFrameSection::SkillDelta {
             added_skills,
+            removed_skills,
             changed_skills,
-            ..
         } => added_skills
             .iter()
+            .chain(removed_skills.iter())
             .chain(changed_skills.iter())
             .filter_map(|skill| skill_usage_item(skill, source_event_seq, turn_id))
             .collect(),
-        _ => Vec::new(),
+        ContextFrameSection::CompanionAgentRosterDelta {
+            effective_agents, ..
+        } => effective_agents
+            .iter()
+            .filter_map(|agent| companion_agent_usage_item(agent, source_event_seq, turn_id))
+            .collect(),
+        ContextFrameSection::CompactionSummary {
+            title,
+            summary,
+            tokens_before,
+            messages_compacted,
+            compaction_id,
+            projection_version,
+            strategy,
+            trigger,
+            phase,
+            source_start_event_seq,
+            source_end_event_seq,
+            first_kept_event_seq,
+            compacted_until_ref,
+            timestamp_ms,
+        } => {
+            let text = compaction_summary_usage_text(
+                summary,
+                *tokens_before,
+                *messages_compacted,
+                compaction_id.as_deref(),
+                *projection_version,
+                strategy.as_deref(),
+                trigger.as_deref(),
+                phase.as_deref(),
+                *source_start_event_seq,
+                *source_end_event_seq,
+                *first_kept_event_seq,
+                compacted_until_ref.as_ref(),
+                *timestamp_ms,
+            );
+            vec![context_usage_item(
+                "compaction_summary",
+                "Compaction Summary",
+                title,
+                &text,
+                "context_frame",
+                false,
+                source_event_seq,
+                turn_id,
+            )]
+        }
     }
+}
+
+fn capability_state_usage_items<const N: usize>(
+    label: &str,
+    values: [(&str, &[String]); N],
+    source_event_seq: Option<u64>,
+    turn_id: &Option<String>,
+) -> Vec<SessionContextUsageItemResponse> {
+    let text = named_values_text(values);
+    non_empty_usage_item(
+        context_usage_kind::CAPABILITY_STATE,
+        "Capability State",
+        label,
+        &text,
+        "capability_state",
+        source_event_seq,
+        turn_id,
+    )
+    .into_iter()
+    .collect()
+}
+
+fn named_values_text<const N: usize>(values: [(&str, &[String]); N]) -> String {
+    let mut lines = Vec::new();
+    for (name, entries) in values {
+        if entries.is_empty() {
+            continue;
+        }
+        lines.push(format!("{name}:"));
+        lines.extend(entries.iter().map(|entry| format!("- {entry}")));
+    }
+    lines.join("\n")
+}
+
+fn non_empty_usage_item(
+    kind: &str,
+    label: &str,
+    name: &str,
+    text: &str,
+    source: &str,
+    source_event_seq: Option<u64>,
+    turn_id: &Option<String>,
+) -> Option<SessionContextUsageItemResponse> {
+    (!text.trim().is_empty()).then(|| {
+        context_usage_item(
+            kind,
+            label,
+            name,
+            text,
+            source,
+            false,
+            source_event_seq,
+            turn_id,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compaction_summary_usage_text(
+    summary: &str,
+    tokens_before: u64,
+    messages_compacted: u32,
+    compaction_id: Option<&str>,
+    projection_version: Option<u64>,
+    strategy: Option<&str>,
+    trigger: Option<&str>,
+    phase: Option<&str>,
+    source_start_event_seq: Option<u64>,
+    source_end_event_seq: Option<u64>,
+    first_kept_event_seq: Option<u64>,
+    compacted_until_ref: Option<&serde_json::Value>,
+    timestamp_ms: Option<u64>,
+) -> String {
+    let mut lines = vec![
+        format!("messages_compacted: {messages_compacted}"),
+        format!("tokens_before: {tokens_before}"),
+    ];
+    if let Some(value) = timestamp_ms {
+        lines.push(format!("timestamp_ms: {value}"));
+    }
+    if let Some(value) = compaction_id {
+        lines.push(format!("compaction_id: {value}"));
+    }
+    if let Some(value) = projection_version {
+        lines.push(format!("projection_version: {value}"));
+    }
+    if let Some(value) = strategy {
+        lines.push(format!("strategy: {value}"));
+    }
+    if let Some(value) = trigger {
+        lines.push(format!("trigger: {value}"));
+    }
+    if let Some(value) = phase {
+        lines.push(format!("phase: {value}"));
+    }
+    if let Some(value) = source_start_event_seq {
+        lines.push(format!("source_start_event_seq: {value}"));
+    }
+    if let Some(value) = source_end_event_seq {
+        lines.push(format!("source_end_event_seq: {value}"));
+    }
+    if let Some(value) = first_kept_event_seq {
+        lines.push(format!("first_kept_event_seq: {value}"));
+    }
+    if let Some(value) = compacted_until_ref {
+        lines.push(format!("compacted_until_ref: {value}"));
+    }
+    lines.push(String::new());
+    lines.push(summary.to_string());
+    lines.join("\n")
 }
 
 fn tool_schema_usage_item(
@@ -1126,6 +1325,38 @@ fn skill_usage_item(
         &text,
         "skill_registry",
         skill.disable_model_invocation,
+        source_event_seq,
+        turn_id,
+    ))
+}
+
+fn companion_agent_usage_item(
+    agent: &RuntimeCompanionAgentEntry,
+    source_event_seq: Option<u64>,
+    turn_id: &Option<String>,
+) -> Option<SessionContextUsageItemResponse> {
+    let kind = agent.context_usage_kind.as_deref()?;
+    if !usage_kind_matches(Some(kind), context_usage_kind::AGENTS) {
+        return None;
+    }
+    let name = if agent.display_name.trim().is_empty() {
+        agent.agent_key.as_str()
+    } else {
+        agent.display_name.as_str()
+    };
+    let text = [
+        agent.agent_key.as_str(),
+        agent.executor.as_str(),
+        agent.display_name.as_str(),
+    ]
+    .join("\n");
+    Some(context_usage_item(
+        context_usage_kind::AGENTS,
+        "Agents",
+        name,
+        &text,
+        "capability_state",
+        false,
         source_event_seq,
         turn_id,
     ))
@@ -1326,8 +1557,8 @@ mod projection_tests {
         ProjectionKind, ProjectionOrigin, ProjectionSourceRange,
     };
     use agentdash_spi::hooks::{
-        ContextFrame, ContextFrameSection, RuntimeContextFragmentEntry, RuntimeEventSource,
-        RuntimeSkillEntry, RuntimeToolSchemaEntry,
+        ContextFrame, ContextFrameSection, RuntimeCompanionAgentEntry, RuntimeContextFragmentEntry,
+        RuntimeEventSource, RuntimeSkillEntry, RuntimeToolSchemaEntry,
     };
 
     use super::SessionProjectionViewResponse;
@@ -1489,25 +1720,38 @@ mod projection_tests {
                 ContextFrameSection::AssignmentContext {
                     title: "Assignment Context".to_string(),
                     summary: "assignment".to_string(),
-                    fragments: vec![
-                        RuntimeContextFragmentEntry {
-                            slot: "workflow".to_string(),
-                            label: "workflow".to_string(),
-                            source: "workflow:implement".to_string(),
-                            content: "Current workflow step".to_string(),
-                            context_usage_kind: Some("system_developer".to_string()),
-                        },
-                        RuntimeContextFragmentEntry {
-                            slot: "companion_agents".to_string(),
-                            label: "builtin:companion_agents".to_string(),
-                            source: "builtin:companion_agents".to_string(),
-                            content: "## Companion Agents\n- reviewer".to_string(),
-                            context_usage_kind: Some("agents".to_string()),
-                        },
-                    ],
+                    fragments: vec![RuntimeContextFragmentEntry {
+                        slot: "workflow".to_string(),
+                        label: "workflow".to_string(),
+                        source: "workflow:implement".to_string(),
+                        content: "Current workflow step".to_string(),
+                        context_usage_kind: Some("system_developer".to_string()),
+                    }],
                 },
-                ContextFrameSection::ToolSchema {
-                    tools: vec![
+                ContextFrameSection::CapabilityKeyDelta {
+                    added_capabilities: vec!["workflow_management".to_string()],
+                    removed_capabilities: Vec::new(),
+                    effective_capabilities: vec!["workflow_management".to_string()],
+                },
+                ContextFrameSection::ToolPathDelta {
+                    blocked_tool_paths: vec!["shell.exec".to_string()],
+                    unblocked_tool_paths: Vec::new(),
+                    whitelisted_tool_paths: vec!["workflow.complete".to_string()],
+                    removed_whitelist_paths: Vec::new(),
+                },
+                ContextFrameSection::McpServerDelta {
+                    added_mcp_servers: vec!["agentdash-workflow-tools".to_string()],
+                    removed_mcp_servers: Vec::new(),
+                    changed_mcp_servers: Vec::new(),
+                },
+                ContextFrameSection::VfsDelta {
+                    vfs_mounts_added: vec!["lifecycle".to_string()],
+                    vfs_mounts_removed: Vec::new(),
+                    default_mount_before: Some("main".to_string()),
+                    default_mount_after: Some("lifecycle".to_string()),
+                },
+                ContextFrameSection::ToolSchemaDelta {
+                    added_tools: vec![
                         RuntimeToolSchemaEntry {
                             name: "read_file".to_string(),
                             description: "Read files".to_string(),
@@ -1528,6 +1772,22 @@ mod projection_tests {
                         },
                     ],
                 },
+                ContextFrameSection::CompanionAgentRosterDelta {
+                    added_agents: vec![RuntimeCompanionAgentEntry {
+                        agent_key: "reviewer".to_string(),
+                        executor: "PI_AGENT".to_string(),
+                        display_name: "Review Agent".to_string(),
+                        context_usage_kind: Some("agents".to_string()),
+                    }],
+                    removed_agent_keys: Vec::new(),
+                    changed_agents: Vec::new(),
+                    effective_agents: vec![RuntimeCompanionAgentEntry {
+                        agent_key: "reviewer".to_string(),
+                        executor: "PI_AGENT".to_string(),
+                        display_name: "Review Agent".to_string(),
+                        context_usage_kind: Some("agents".to_string()),
+                    }],
+                },
                 ContextFrameSection::SkillDelta {
                     added_skills: vec![RuntimeSkillEntry {
                         name: "trellis-start".to_string(),
@@ -1542,8 +1802,39 @@ mod projection_tests {
                         disable_model_invocation: false,
                         context_usage_kind: Some("skills".to_string()),
                     }],
-                    removed_skills: Vec::new(),
+                    removed_skills: vec![RuntimeSkillEntry {
+                        name: "legacy-review".to_string(),
+                        capability_key: "skill:legacy-review".to_string(),
+                        provider_key: "local".to_string(),
+                        local_name: "legacy-review".to_string(),
+                        display_name: None,
+                        description: "Old review skill".to_string(),
+                        file_path: ".agents/skills/legacy-review/SKILL.md".to_string(),
+                        base_dir: None,
+                        exposure: Default::default(),
+                        disable_model_invocation: false,
+                        context_usage_kind: Some("skills".to_string()),
+                    }],
                     changed_skills: Vec::new(),
+                },
+                ContextFrameSection::CompactionSummary {
+                    title: "Compaction Summary".to_string(),
+                    summary: "压缩后的上下文摘要".to_string(),
+                    tokens_before: 48_000,
+                    messages_compacted: 12,
+                    compaction_id: Some("compact-1".to_string()),
+                    projection_version: Some(2),
+                    strategy: Some("summary_prefix".to_string()),
+                    trigger: Some("auto".to_string()),
+                    phase: Some("pre_provider".to_string()),
+                    source_start_event_seq: Some(1),
+                    source_end_event_seq: Some(8),
+                    first_kept_event_seq: Some(9),
+                    compacted_until_ref: Some(serde_json::json!({
+                        "turn_id": "turn-0",
+                        "entry_index": 3
+                    })),
+                    timestamp_ms: Some(1_710_000_000_000),
                 },
             ],
         };
@@ -1555,18 +1846,20 @@ mod projection_tests {
 
         let view = SessionProjectionViewResponse::from_envelope_and_context_items(envelope, items);
 
-        assert_eq!(view.context_usage.items.len(), 7);
+        assert_eq!(view.context_usage.items.len(), 13);
         assert!(
             view.token_estimate.expect("combined token estimate") > 20,
             "top-level token estimate should include non-message context items"
         );
         for kind in [
             "system_developer",
+            "capability_state",
             "agents",
             "memory",
             "system_tools",
             "mcp_tools",
             "skills",
+            "compaction_summary",
         ] {
             let category = view
                 .context_usage

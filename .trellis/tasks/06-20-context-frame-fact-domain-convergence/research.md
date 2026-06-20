@@ -33,7 +33,7 @@ Three read-only subagents audited the module from separate angles:
 - `rendered_text` can be model-visible through turn-start notice or connector rendering.
 - Frontend parser/renderers currently cover known backend section kinds after local frontend edits, but manual parser drift remains a risk.
 - `context_usage_items_from_section` does not cover several model-visible CAP dimensions.
-- Current `capability_state_update` is sparse delta; UI expectations for full current state require explicit snapshot semantics.
+- CAP frame split into `capability_state_snapshot` for initial/bootstrap and `capability_state_delta` for live transition semantics.
 
 ## Candidate Cleanup Items
 
@@ -44,4 +44,3 @@ Three read-only subagents audited the module from separate angles:
 - `RUNTIME_AGENT_CONTEXT_SLOTS` alias.
 - `bootstrap_context` comments and `bootstrap_fragments` naming.
 - `runtime_policy` fragments that carry capability facts while scoped to RuntimeAgent.
-

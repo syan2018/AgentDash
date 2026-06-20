@@ -193,7 +193,7 @@ describe("SessionSystemEventCard", () => {
 function sampleContextFrameData(): JsonObject {
   return {
     id: "runtime-context-1",
-    kind: "capability_state_update",
+    kind: "capability_state_delta",
     source: "runtime_context_update",
     phase_node: "apply",
     apply_mode: "live",

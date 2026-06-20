@@ -2,7 +2,7 @@
 
 ## Status
 
-planned
+completed
 
 ## Goal
 
@@ -27,8 +27,21 @@ planned
 
 ## Acceptance
 
-- [ ] owner bootstrap 不再生成 companion roster assignment fragment。
-- [ ] CAP snapshot/delta section 中能表达 effective companion roster。
-- [ ] `companion_request` 工具、模型上下文、前端 CAP 使用同一 roster。
-- [ ] `companion_agents` 作为 roster slot 的协议残留已清理。
+- [x] owner bootstrap 不再生成 companion roster assignment fragment。
+- [x] CAP snapshot/delta section 中能表达 effective companion roster。
+- [x] `companion_request` 工具、模型上下文、前端 CAP 使用同一 roster。
+- [x] `companion_agents` 作为 roster slot 的协议残留已清理。
 
+## Implementation Notes
+
+- `ASSIGNMENT_CONTEXT_SLOTS` 不再包含 `companion_agents`，hook bridge 也不再为该 slot 分配 roster 专用 order。
+- `CompanionAgentRosterDelta` 继续由 `CapabilityState.companion.agents` 派生，并在 initial snapshot 中携带 effective roster；context usage 的 Agents 项从 CAP roster section 计算。
+- 前端 CAP 卡通过 `capability_state_snapshot` / `capability_state_delta` 区分完整状态与增量变化，workspace 刷新逻辑同时响应两种 kind。
+
+## Validation
+
+- `pnpm --filter app-web test -- contextFrame ContextFrameCard`
+- `pnpm --filter app-web run check`
+- `cargo test -p agentdash-application runtime_context_transition --lib`
+- `cargo test -p agentdash-application assignment_context_frame --lib`
+- `cargo test -p agentdash-contracts projection_view_aggregates_context_frame_usage_items --lib`

@@ -2,7 +2,7 @@
 
 ## Status
 
-planned
+completed
 
 ## Goal
 
@@ -29,8 +29,24 @@ planned
 
 ## Acceptance
 
-- [ ] assignment frame 不承载能力事实或系统指引事实。
-- [ ] ProcedureContract 字段有明确投影目标。
-- [ ] workflow guidance/context bindings 仍模型可见。
-- [ ] ports 的 Agent 可见表达有稳定 section 或 assignment fragment 规则。
+- [x] assignment frame 不承载能力事实或系统指引事实。
+- [x] ProcedureContract 字段有明确投影目标。
+- [x] workflow guidance/context bindings 仍模型可见。
+- [x] ports 的 Agent 可见表达有稳定 section 或 assignment fragment 规则。
 
+## Implementation Notes
+
+- `ASSIGNMENT_CONTEXT_SLOTS` 保留 task/story/project/workflow/instruction 等任务语义 slot，项目指引由 `system_guidelines` frame 的 `project_guidelines` section 承载。
+- lifecycle activation 的节点说明、input/output port 交付要求投影为 `workflow_context` assignment fragment，继续通过 `assignment_context` 进入模型。
+- lifecycle activation 不再把 capability keys 拼进 RuntimeAgent 可见的 `runtime_policy` fragment；能力事实继续由 `CapabilityState` 派生的 CAP sections 表达。
+
+## Validation
+
+- `cargo test -p agentdash-application assignment_context_frame --lib`
+- `cargo test -p agentdash-application build_session_plan_fragments --lib`
+- `cargo test -p agentdash-application capability_surface_fragments_are_audit_only --lib`
+- `cargo test -p agentdash-application lifecycle_context_contribution_contains_workflow_assignment_fragments --lib`
+
+## Remaining Follow-up
+
+- `bootstrap_fragments` 命名仍属于更大范围的 bundle 语义清理，未在本切片内改动。

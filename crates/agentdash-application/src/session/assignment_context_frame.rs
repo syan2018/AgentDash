@@ -160,51 +160,29 @@ mod tests {
     }
 
     #[test]
-    fn assignment_context_frame_filters_runtime_slots() {
+    fn assignment_context_frame_keeps_assignment_semantic_slots_only() {
         let runtime_fragments = vec![
             fragment("task", "## Task\n处理上下文可视化"),
-            fragment("vfs", "不应进入 assignment context frame"),
-            fragment("tools", "不应进入 assignment context frame"),
+            fragment("workflow", "Active workflow step"),
+            fragment("instruction", "按当前任务要求执行"),
         ];
 
         let frame = AssignmentContextFrame::from_parts(Some("task_start"), &runtime_fragments)
             .expect("frame metadata");
 
-        assert_eq!(frame.fragments.len(), 1);
+        assert_eq!(frame.fragments.len(), 3);
         assert!(frame.fragments.iter().any(|entry| entry.slot == "task"));
+        assert!(frame.fragments.iter().any(|entry| entry.slot == "workflow"));
+        assert!(
+            frame
+                .fragments
+                .iter()
+                .any(|entry| entry.slot == "instruction")
+        );
         assert_eq!(
             frame.fragments[0].context_usage_kind.as_deref(),
             Some("system_developer")
         );
-        assert!(!frame.fragments.iter().any(|entry| entry.slot == "vfs"));
         assert!(frame.rendered_text().contains("Assignment Context"));
-    }
-
-    #[test]
-    fn assignment_context_frame_marks_companion_agents_usage_kind() {
-        let runtime_fragments = vec![
-            fragment("companion_agents", "## Companion Agents\n- reviewer"),
-            fragment("workflow", "Active workflow step"),
-        ];
-
-        let frame = AssignmentContextFrame::from_parts(Some("task_start"), &runtime_fragments)
-            .expect("frame metadata");
-
-        let companion = frame
-            .fragments
-            .iter()
-            .find(|entry| entry.slot == "companion_agents")
-            .expect("companion agents fragment");
-        let workflow = frame
-            .fragments
-            .iter()
-            .find(|entry| entry.slot == "workflow")
-            .expect("workflow fragment");
-
-        assert_eq!(companion.context_usage_kind.as_deref(), Some("agents"));
-        assert_eq!(
-            workflow.context_usage_kind.as_deref(),
-            Some("system_developer")
-        );
     }
 }

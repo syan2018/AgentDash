@@ -10,9 +10,6 @@ pub(crate) fn hook_injection_usage_kind(injection: &HookInjection) -> Option<Str
 }
 
 fn usage_kind_for_slot(slot: &str) -> Option<&'static str> {
-    if slot == "companion_agents" {
-        return Some(context_usage_kind::AGENTS);
-    }
     if ASSIGNMENT_CONTEXT_SLOTS.contains(&slot) {
         return Some(context_usage_kind::SYSTEM_DEVELOPER);
     }

@@ -112,8 +112,8 @@ pub(super) async fn stream_assistant_response(
     // `output.steering_messages` 作为"本轮最终要发给 LLM 的完整消息列表"，
     // 其中已合并原 context.messages + 改写后的 user message + hook 注入 +
     // pending steering/follow-up。字段名从 `messages` 改为 `steering_messages`
-    // 以强调语义：静态上下文（companion_agents / workflow 等）不应由此路径
-    // 承载（它们走 Bundle 主数据面），此字段只承 per-turn 动态 steering。
+    // 以强调语义：静态任务语义应通过 ContextFrame 投递，此字段只承 per-turn
+    // 动态 steering。
     let mut messages_for_llm = if let Some(delegate) = config.runtime_delegate.as_ref() {
         let output = delegate
             .transform_context(

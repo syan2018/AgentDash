@@ -16,7 +16,6 @@ use crate::context::slot_orders;
 /// 保证 hook fragment 在 bundle 排序中位于期望区段（workflow/constraint 与
 /// lifecycle / contribute_workflow_binding 同位）。
 const HOOK_SLOT_ORDERS: &[(&str, i32)] = &[
-    ("companion_agents", slot_orders::HOOK_COMPANION_AGENTS),
     ("workflow", slot_orders::HOOK_WORKFLOW),
     ("constraint", slot_orders::HOOK_CONSTRAINT),
 ];
@@ -65,18 +64,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn companion_agents_slot_maps_to_order_60() {
+    fn unknown_assignment_slot_maps_to_default_order() {
         let injection = HookInjection {
-            slot: "companion_agents".to_string(),
-            content: "## Companion Agents\n- agent_a".to_string(),
-            source: "builtin:companion_agents".to_string(),
+            slot: "custom_assignment_fact".to_string(),
+            content: "## Custom Assignment Fact\n- fact_a".to_string(),
+            source: "custom:assignment".to_string(),
         };
         let fragment = hook_injection_to_fragment(injection);
-        assert_eq!(fragment.slot, "companion_agents");
-        assert_eq!(fragment.order, 60);
-        assert_eq!(fragment.source, "builtin:companion_agents");
-        assert_eq!(fragment.label, "builtin:companion_agents");
-        assert!(fragment.content.contains("agent_a"));
+        assert_eq!(fragment.slot, "custom_assignment_fact");
+        assert_eq!(fragment.order, 200);
+        assert_eq!(fragment.source, "custom:assignment");
+        assert_eq!(fragment.label, "custom:assignment");
+        assert!(fragment.content.contains("fact_a"));
         assert!(matches!(fragment.strategy, MergeStrategy::Append));
     }
 
@@ -121,7 +120,7 @@ mod tests {
             runtime_adapter_session_id: "sess-1".to_string(),
             injections: vec![
                 HookInjection {
-                    slot: "companion_agents".to_string(),
+                    slot: "custom_a".to_string(),
                     content: "a".to_string(),
                     source: "src_a".to_string(),
                 },
@@ -136,7 +135,7 @@ mod tests {
         let contribution: Contribution = (&snapshot).into();
         assert_eq!(contribution.fragments.len(), 2);
         assert!(contribution.mcp_servers.is_empty());
-        assert_eq!(contribution.fragments[0].order, 60);
+        assert_eq!(contribution.fragments[0].order, 200);
         assert_eq!(contribution.fragments[1].order, 200);
     }
 }

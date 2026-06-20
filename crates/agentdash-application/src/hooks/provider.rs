@@ -337,9 +337,9 @@ impl AppExecutionHookProvider {
             HookTrigger::SessionStart => {}
             HookTrigger::UserPromptSubmit => {
                 // PR 4（04-30-session-pipeline-architecture-refactor）：静态
-                // `snapshot.injections`（companion_agents / workflow / constraint
-                // 等"预装"条目）由 prompt_pipeline 在启动阶段合并进 Bundle 的
-                // `bootstrap_fragments`，再由 bootstrap_context ContextFrame 投递。
+                // `snapshot.injections`（workflow / constraint 等"预装"条目）
+                // 由 prompt_pipeline 在启动阶段合并进 assignment fragments，
+                // 再由 assignment_context ContextFrame 投递。
                 // UserPromptSubmit 不重新渲染这些静态条目，避免 Agent 可见上下文双写。
                 // 此分支只应用动态 hook 规则（如 rhai 规则产出的 per-turn
                 // dynamic 注入）。

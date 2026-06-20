@@ -32,7 +32,7 @@ describe("parseContextFrame", () => {
   it("解析后端新增的 guidelines 与 companion section", () => {
     const frame = parseContextFrame({
       id: "ctx-2",
-      kind: "capability_state_update",
+      kind: "capability_state_snapshot",
       source: "runtime_context_update",
       delivery_status: "queued_for_transform_context",
       delivery_channel: "turn_start",
@@ -84,6 +84,36 @@ describe("parseContextFrame", () => {
       "companion_agent_roster_delta",
       "user_preferences",
       "project_guidelines",
+    ]);
+  });
+
+  it("保留未知 section 以便诊断协议漂移", () => {
+    const frame = parseContextFrame({
+      id: "ctx-3",
+      kind: "assignment_context",
+      source: "runtime_context_update",
+      delivery_status: "queued_for_transform_context",
+      delivery_channel: "turn_start",
+      message_role: "user",
+      rendered_text: "",
+      created_at_ms: 123,
+      sections: [
+        {
+          kind: "future_section",
+          payload: { value: 1 },
+        },
+      ],
+    });
+
+    expect(frame?.sections).toEqual([
+      {
+        kind: "unknown_section",
+        original_kind: "future_section",
+        raw: {
+          kind: "future_section",
+          payload: { value: 1 },
+        },
+      },
     ]);
   });
 });

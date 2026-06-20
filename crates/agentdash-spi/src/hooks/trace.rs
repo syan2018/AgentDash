@@ -285,9 +285,9 @@ mod tests {
             trigger: HookTrigger::UserPromptSubmit,
             decision: "context_injected".to_string(),
             injections: vec![HookInjection {
-                slot: "companion_agents".to_string(),
-                content: "## Companion Agents\n- reviewer".to_string(),
-                source: "builtin:companion_agents".to_string(),
+                slot: "workflow".to_string(),
+                content: "## Workflow\n- review current step".to_string(),
+                source: "workflow:review".to_string(),
             }],
             ..silent_entry("context_injected")
         };
@@ -296,7 +296,7 @@ mod tests {
             BackboneEvent::Platform(PlatformEvent::HookTrace(payload)) => {
                 let data = payload.data.as_ref().unwrap();
                 assert_eq!(data.injections.len(), 1);
-                assert_eq!(data.injections[0].slot.as_deref(), Some("companion_agents"));
+                assert_eq!(data.injections[0].slot.as_deref(), Some("workflow"));
             }
             other => panic!("unexpected event: {other:?}"),
         }

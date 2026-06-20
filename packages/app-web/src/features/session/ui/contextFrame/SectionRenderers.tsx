@@ -33,7 +33,7 @@ import type {
   SystemNoticeSection,
   ToolPathDeltaSection,
   ToolSchemaDeltaSection,
-  ToolSchemaSection,
+  UnknownSection,
   UserPreferencesSection,
   VfsDeltaSection,
 } from "../../model/contextFrame";
@@ -81,16 +81,12 @@ function sectionTitle(section: ContextFrameSection): string {
       return "MCP Servers";
     case "vfs_delta":
       return "VFS Mounts";
-    case "tool_schema":
-      return "Tool Schema (init)";
     case "tool_schema_delta":
       return "Tool Schema";
     case "skill_delta":
       return "Skills";
     case "companion_agent_roster_delta":
       return "Companion Agents";
-    case "hook_injection":
-      return section.title || "Hook Injection";
     case "system_notice":
       return section.title || "System Notice";
     case "pending_action":
@@ -103,6 +99,8 @@ function sectionTitle(section: ContextFrameSection): string {
       return section.title || "User Preferences";
     case "project_guidelines":
       return section.title || "Project Guidelines";
+    case "unknown_section":
+      return `Unknown Section: ${section.original_kind}`;
   }
 }
 
@@ -140,8 +138,6 @@ function sectionHint(section: ContextFrameSection): string | null {
       if (added + removed === 0 && !mountChanged) return "no change";
       return `+${added} −${removed}${mountChanged ? " ↻default" : ""}`;
     }
-    case "tool_schema":
-      return `${section.tools.length} tools`;
     case "tool_schema_delta": {
       const count = section.added_tools.length;
       return count > 0 ? `+${count}` : "no change";
@@ -162,8 +158,6 @@ function sectionHint(section: ContextFrameSection): string | null {
       }
       return `+${added} −${removed}${changed > 0 ? ` ↻${changed}` : ""}`;
     }
-    case "hook_injection":
-      return `${section.injections.length} injected`;
     case "system_notice":
       return null;
     case "pending_action":
@@ -176,6 +170,8 @@ function sectionHint(section: ContextFrameSection): string | null {
       return `${section.items.length} items`;
     case "project_guidelines":
       return `${section.entries.length} files`;
+    case "unknown_section":
+      return section.original_kind;
   }
 }
 
@@ -195,16 +191,12 @@ function renderSectionBody(section: ContextFrameSection) {
       return <McpServerDeltaBody section={section} />;
     case "vfs_delta":
       return <VfsDeltaBody section={section} />;
-    case "tool_schema":
-      return <ToolSchemaBody section={section} />;
     case "tool_schema_delta":
       return <ToolSchemaDeltaBody section={section} />;
     case "skill_delta":
       return <SkillDeltaBody section={section} />;
     case "companion_agent_roster_delta":
       return <CompanionAgentRosterDeltaBody section={section} />;
-    case "hook_injection":
-      return <InjectionBody injections={section.injections} />;
     case "system_notice":
       return <SystemNoticeBody section={section} />;
     case "pending_action":
@@ -217,6 +209,8 @@ function renderSectionBody(section: ContextFrameSection) {
       return <UserPreferencesBody section={section} />;
     case "project_guidelines":
       return <ProjectGuidelinesBody section={section} />;
+    case "unknown_section":
+      return <UnknownSectionBody section={section} />;
   }
 }
 
@@ -445,19 +439,6 @@ function DiffLine({
       <span className="shrink-0 text-muted-foreground/80">{label}</span>
       <span className="min-w-0 break-all font-mono text-foreground/80">{value}</span>
     </p>
-  );
-}
-
-function ToolSchemaBody({ section }: { section: ToolSchemaSection }) {
-  if (section.tools.length === 0) {
-    return <p className="text-xs text-muted-foreground/60">暂无工具 schema</p>;
-  }
-  return (
-    <div className="max-h-96 overflow-auto space-y-1.5">
-      {section.tools.map((tool) => (
-        <ToolSchemaItem key={tool.name} tool={tool} />
-      ))}
-    </div>
   );
 }
 
@@ -850,6 +831,14 @@ function ProjectGuidelinesBody({ section }: { section: ProjectGuidelinesSection 
         </article>
       ))}
     </div>
+  );
+}
+
+function UnknownSectionBody({ section }: { section: UnknownSection }) {
+  return (
+    <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-background p-2 text-[11px] leading-relaxed text-muted-foreground">
+      {formatJson(section.raw)}
+    </pre>
   );
 }
 

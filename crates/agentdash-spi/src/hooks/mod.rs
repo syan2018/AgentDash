@@ -29,6 +29,7 @@ pub mod action_type {
 /// projection consumers only read that explicit marker.
 pub mod context_usage_kind {
     pub const SYSTEM_DEVELOPER: &str = "system_developer";
+    pub const CAPABILITY_STATE: &str = "capability_state";
     pub const SYSTEM_TOOLS: &str = "system_tools";
     pub const MCP_TOOLS: &str = "mcp_tools";
     pub const AGENTS: &str = "agents";
@@ -327,10 +328,6 @@ pub enum ContextFrameSection {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_mount_after: Option<String>,
     },
-    ToolSchema {
-        #[serde(default)]
-        tools: Vec<RuntimeToolSchemaEntry>,
-    },
     ToolSchemaDelta {
         #[serde(default)]
         added_tools: Vec<RuntimeToolSchemaEntry>,
@@ -352,12 +349,6 @@ pub enum ContextFrameSection {
         changed_agents: Vec<RuntimeCompanionAgentEntry>,
         #[serde(default)]
         effective_agents: Vec<RuntimeCompanionAgentEntry>,
-    },
-    HookInjection {
-        title: String,
-        summary: String,
-        #[serde(default)]
-        injections: Vec<RuntimeHookInjectionEntry>,
     },
     SystemNotice {
         title: String,

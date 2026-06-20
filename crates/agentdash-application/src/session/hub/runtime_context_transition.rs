@@ -541,7 +541,11 @@ impl ContextFramePayload for RuntimeContextUpdateFrame {
     }
 
     fn kind(&self) -> &'static str {
-        "capability_state_update"
+        if self.apply_mode.as_deref() == Some("initial") {
+            "capability_state_snapshot"
+        } else {
+            "capability_state_delta"
+        }
     }
 
     fn source(&self) -> RuntimeEventSource {
@@ -653,7 +657,7 @@ mod tests {
 
         let notice = build_live_context_frame(&input, &SetDelta::default(), &state_delta, &tools);
 
-        assert_eq!(notice.kind, "capability_state_update");
+        assert_eq!(notice.kind, "capability_state_delta");
         assert_eq!(notice.phase_node.as_deref(), Some("apply"));
         assert_eq!(notice.apply_mode.as_deref(), Some("live"));
         // TOOL section 只承载 added_tools;路径级变化全部归 CAP。
@@ -666,7 +670,7 @@ mod tests {
             })
             .expect("tool_schema_delta section should exist with added_tools");
         assert_eq!(tool_section.len(), 1);
-        // assignment_context section 不应混入 capability_state_update frame。
+        // assignment_context section 不应混入 capability_state_delta frame。
         assert!(
             !notice
                 .sections
@@ -722,6 +726,7 @@ mod tests {
 
         let notice = build_live_context_frame(&input, &SetDelta::default(), &state_delta, &[]);
 
+        assert_eq!(notice.kind, "capability_state_delta");
         let (added_agents, effective_agents) = notice
             .sections
             .iter()
@@ -768,6 +773,7 @@ mod tests {
 
         let notice = build_live_context_frame(&input, &SetDelta::default(), &state_delta, &[]);
 
+        assert_eq!(notice.kind, "capability_state_snapshot");
         let effective_agents = notice
             .sections
             .iter()

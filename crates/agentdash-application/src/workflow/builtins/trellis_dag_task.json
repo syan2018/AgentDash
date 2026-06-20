@@ -20,10 +20,6 @@
             "enabled": true
           }
         ],
-        "completion": {
-          "default_artifact_type": "phase_note",
-          "default_artifact_title": "调研记录"
-        },
         "output_ports": [
           {
             "key": "research_report",
@@ -50,10 +46,6 @@
             "enabled": true
           }
         ],
-        "completion": {
-          "default_artifact_type": "phase_note",
-          "default_artifact_title": "实现记录"
-        },
         "input_ports": [
           {
             "key": "research_input",

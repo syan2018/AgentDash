@@ -1083,7 +1083,7 @@ async fn emit_pending_hook_trace_envelopes(
 }
 
 use super::stream_mapper::{
-    ChunkEmitState, StreamMapperRuntimeContext, ToolCallEmitState, convert_event_to_envelopes,
+    ChunkEmitState, StreamMapperRuntimeContext, ToolCallEmitState,
     convert_event_to_envelopes_with_runtime_context,
 };
 

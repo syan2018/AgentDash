@@ -1,5 +1,6 @@
 use super::*;
 use crate::connectors::pi_agent::factory::{NoopBridge, build_pi_agent_connector};
+use crate::connectors::pi_agent::stream_mapper::convert_event_to_envelopes;
 use agentdash_agent::{
     AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, MessageRef, StopReason,
     TokenUsage,

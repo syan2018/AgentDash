@@ -486,6 +486,7 @@ fn token_usage_notification_from_usage(
     }
 }
 
+#[cfg(test)]
 pub(super) fn convert_event_to_envelopes(
     event: &AgentEvent,
     session_id: &str,

@@ -112,6 +112,8 @@ CapabilityDimensionRegistry::validate_transition(&RuntimeCapabilityTransition) -
 >
 > **Skill 权限 vs 发现**：skill 的"授予"是 `skill_asset_keys`（声明式 Replace，种进 lifecycle mount metadata）；`CapabilityState.skill.skills`（`SkillEntry`）是 `load_skills_from_vfs` 扫 mount 的**发现物化结果**，供上下文展示和执行侧读取。`frame_builder` 的 `inherit_skills_from` carry-forward 是发现缓存（热修订不重扫 VFS），与权限原语无关。
 
+> **Companion roster 事实源**：可派发 companion agent 列表归属 `CapabilityState.companion.agents`。`capability_state_update` ContextFrame 从该投影生成 companion roster section，供模型上下文、前端 timeline 和调试视图消费。这样 companion 工具可用性（`tool.capabilities` 中的 `collaboration`）与可派发对象列表（`companion.agents`）在同一能力状态闭包下观察，runtime transition、context query 和前端展示使用同一份投影。
+
 ## Canvas Workspace Module Grants
 
 `workspace_module_create(kind="canvas")` 同时做两件事：创建或接入 Canvas 资产，并把对应 `canvas:{mount_id}` module grant 到当前 session 的 runtime visible module set。这样 Agent 在同一轮可立即 `workspace_module_describe`、`workspace_module_invoke` 或 `workspace_module_present` 该实例。

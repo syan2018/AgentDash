@@ -28,4 +28,62 @@ describe("parseContextFrame", () => {
     expect(frame?.rendered_text).toBe("");
     expect(frame?.sections).toHaveLength(1);
   });
+
+  it("解析后端新增的 guidelines 与 companion section", () => {
+    const frame = parseContextFrame({
+      id: "ctx-2",
+      kind: "capability_state_update",
+      source: "runtime_context_update",
+      delivery_status: "queued_for_transform_context",
+      delivery_channel: "turn_start",
+      message_role: "user",
+      rendered_text: "## Companion Agent Roster Delta",
+      created_at_ms: 123,
+      sections: [
+        {
+          kind: "companion_agent_roster_delta",
+          added_agents: [
+            {
+              agent_key: "reviewer",
+              executor: "PI_AGENT",
+              display_name: "Review Agent",
+              context_usage_kind: "agents",
+            },
+          ],
+          removed_agent_keys: ["legacy-reviewer"],
+          changed_agents: [],
+          effective_agents: [
+            {
+              agent_key: "reviewer",
+              executor: "PI_AGENT",
+              display_name: "Review Agent",
+            },
+          ],
+        },
+        {
+          kind: "user_preferences",
+          title: "User Preferences",
+          summary: "用户级偏好设置。",
+          items: ["使用中文"],
+        },
+        {
+          kind: "project_guidelines",
+          title: "Project Guidelines",
+          summary: "工作区中发现的项目级指引文件。",
+          entries: [
+            {
+              path: "AGENTS.md",
+              content: "项目约定",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(frame?.sections.map((section) => section.kind)).toEqual([
+      "companion_agent_roster_delta",
+      "user_preferences",
+      "project_guidelines",
+    ]);
+  });
 });

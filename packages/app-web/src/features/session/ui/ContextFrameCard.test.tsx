@@ -106,6 +106,31 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("capability: workspace/config-edit");
     expect(markup).toContain("explicit only");
   });
+
+  it("渲染 companion agent roster delta", () => {
+    const markup = renderToStaticMarkup(
+      <ContextFrameCard frame={readFrame(sampleCompanionRosterNotice())} defaultExpanded />,
+    );
+    expect(markup).toContain("Companion Agents");
+    expect(markup).toContain("+1");
+    expect(markup).toContain("−1");
+    expect(markup).toContain("Review Agent");
+    expect(markup).toContain("agent: reviewer");
+    expect(markup).toContain("executor: PI_AGENT");
+    expect(markup).toContain("当前可用 companion");
+  });
+
+  it("渲染 system_guidelines frame", () => {
+    const markup = renderToStaticMarkup(
+      <ContextFrameCard frame={readFrame(sampleGuidelinesNotice())} defaultExpanded />,
+    );
+    expect(markup).toContain("GUIDELINES");
+    expect(markup).toContain("User Preferences");
+    expect(markup).toContain("Project Guidelines");
+    expect(markup).toContain("使用中文");
+    expect(markup).toContain("AGENTS.md");
+    expect(markup).toContain("项目约定");
+  });
 });
 
 function readFrame(value: Record<string, unknown>): ContextFrame {
@@ -379,6 +404,75 @@ function sampleSkillDeltaNotice(): Record<string, unknown> {
             description: "Explicit path only",
             file_path: "provider-x://skills/manual-only/SKILL.md",
             exposure: "explicit_only",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function sampleCompanionRosterNotice(): Record<string, unknown> {
+  return {
+    id: "companion-delta-1",
+    kind: "capability_state_update",
+    source: "runtime_context_update",
+    phase_node: "apply",
+    delivery_status: "queued_for_transform_context",
+    delivery_channel: "turn_start",
+    message_role: "user",
+    rendered_text: "## Companion Agent Roster Delta",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "companion_agent_roster_delta",
+        added_agents: [
+          {
+            agent_key: "reviewer",
+            executor: "PI_AGENT",
+            display_name: "Review Agent",
+            context_usage_kind: "agents",
+          },
+        ],
+        removed_agent_keys: ["legacy-reviewer"],
+        changed_agents: [],
+        effective_agents: [
+          {
+            agent_key: "reviewer",
+            executor: "PI_AGENT",
+            display_name: "Review Agent",
+            context_usage_kind: "agents",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function sampleGuidelinesNotice(): Record<string, unknown> {
+  return {
+    id: "system-guidelines-1",
+    kind: "system_guidelines",
+    source: "runtime_context_update",
+    delivery_status: "prepared_for_connector",
+    delivery_channel: "connector_context",
+    message_role: "system",
+    rendered_text: "## User Preferences\n\n- 使用中文\n\n## Project Guidelines\n\n### AGENTS.md\n\n项目约定",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "user_preferences",
+        title: "User Preferences",
+        summary: "用户级偏好设置。",
+        items: ["使用中文"],
+      },
+      {
+        kind: "project_guidelines",
+        title: "Project Guidelines",
+        summary: "工作区中发现的项目级指引文件。",
+        entries: [
+          {
+            path: "AGENTS.md",
+            content: "项目约定",
           },
         ],
       },

@@ -26,11 +26,14 @@ export type ContextFrameSection =
   | ToolSchemaSection
   | ToolSchemaDeltaSection
   | SkillDeltaSection
+  | CompanionAgentRosterDeltaSection
   | HookInjectionSection
   | SystemNoticeSection
   | PendingActionSection
   | AutoResumeSection
-  | CompactionSummarySection;
+  | CompactionSummarySection
+  | UserPreferencesSection
+  | ProjectGuidelinesSection;
 
 export interface AssignmentContextSection {
   kind: "assignment_context";
@@ -143,6 +146,21 @@ export interface RuntimeSkillEntry {
   context_usage_kind?: string;
 }
 
+export interface RuntimeCompanionAgentEntry {
+  agent_key: string;
+  executor: string;
+  display_name: string;
+  context_usage_kind?: string;
+}
+
+export interface CompanionAgentRosterDeltaSection {
+  kind: "companion_agent_roster_delta";
+  added_agents: RuntimeCompanionAgentEntry[];
+  removed_agent_keys: string[];
+  changed_agents: RuntimeCompanionAgentEntry[];
+  effective_agents: RuntimeCompanionAgentEntry[];
+}
+
 export interface SkillDeltaSection {
   kind: "skill_delta";
   added_skills: RuntimeSkillEntry[];
@@ -187,6 +205,25 @@ export interface CompactionSummarySection {
   first_kept_event_seq?: number;
   compacted_until_ref?: unknown;
   timestamp_ms?: number;
+}
+
+export interface UserPreferencesSection {
+  kind: "user_preferences";
+  title: string;
+  summary: string;
+  items: string[];
+}
+
+export interface ProjectGuidelineEntry {
+  path: string;
+  content: string;
+}
+
+export interface ProjectGuidelinesSection {
+  kind: "project_guidelines";
+  title: string;
+  summary: string;
+  entries: ProjectGuidelineEntry[];
 }
 
 export interface RuntimeHookInjectionEntry {
@@ -314,6 +351,25 @@ function parseSection(value: unknown): ContextFrameSection | null {
       changed_skills: changed.map(parseSkillEntry).filter((item): item is RuntimeSkillEntry => item != null),
     };
   }
+  if (kind === "companion_agent_roster_delta") {
+    const added = Array.isArray(value.added_agents) ? value.added_agents : [];
+    const removed = Array.isArray(value.removed_agent_keys) ? value.removed_agent_keys : [];
+    const changed = Array.isArray(value.changed_agents) ? value.changed_agents : [];
+    const effective = Array.isArray(value.effective_agents) ? value.effective_agents : [];
+    return {
+      kind,
+      added_agents: added
+        .map(parseCompanionAgentEntry)
+        .filter((item): item is RuntimeCompanionAgentEntry => item != null),
+      removed_agent_keys: removed.map(readString).filter((item): item is string => item != null),
+      changed_agents: changed
+        .map(parseCompanionAgentEntry)
+        .filter((item): item is RuntimeCompanionAgentEntry => item != null),
+      effective_agents: effective
+        .map(parseCompanionAgentEntry)
+        .filter((item): item is RuntimeCompanionAgentEntry => item != null),
+    };
+  }
   if (kind === "hook_injection") {
     const title = readString(value.title) ?? "Hook Injection";
     const summary = readString(value.summary) ?? "";
@@ -375,6 +431,26 @@ function parseSection(value: unknown): ContextFrameSection | null {
       first_kept_event_seq: readNumber(value.first_kept_event_seq) ?? undefined,
       compacted_until_ref: value.compacted_until_ref,
       timestamp_ms: readNumber(value.timestamp_ms) ?? undefined,
+    };
+  }
+  if (kind === "user_preferences") {
+    const items = Array.isArray(value.items) ? value.items : [];
+    return {
+      kind,
+      title: readString(value.title) ?? "User Preferences",
+      summary: readString(value.summary) ?? "",
+      items: items.map(readString).filter((item): item is string => item != null),
+    };
+  }
+  if (kind === "project_guidelines") {
+    const entries = Array.isArray(value.entries) ? value.entries : [];
+    return {
+      kind,
+      title: readString(value.title) ?? "Project Guidelines",
+      summary: readString(value.summary) ?? "",
+      entries: entries
+        .map(parseProjectGuidelineEntry)
+        .filter((item): item is ProjectGuidelineEntry => item != null),
     };
   }
   return null;
@@ -446,6 +522,26 @@ function parseSkillEntry(value: unknown): RuntimeSkillEntry | null {
   };
 }
 
+function parseCompanionAgentEntry(value: unknown): RuntimeCompanionAgentEntry | null {
+  if (!isRecord(value)) return null;
+  const agentKey = readString(value.agent_key);
+  if (!agentKey) return null;
+  return {
+    agent_key: agentKey,
+    executor: readString(value.executor) ?? "",
+    display_name: readString(value.display_name) ?? agentKey,
+    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
+  };
+}
+
+function parseProjectGuidelineEntry(value: unknown): ProjectGuidelineEntry | null {
+  if (!isRecord(value)) return null;
+  const path = readString(value.path);
+  const content = readRenderedText(value.content);
+  if (!path || content == null) return null;
+  return { path, content };
+}
+
 function readSkillExposure(value: unknown): SkillContextExposure {
   if (value === "explicit_only") return "explicit_only";
   return "default_exposed";
@@ -505,6 +601,8 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
       return { token: "RSM", variant: "warning" };
     case "compaction_summary":
       return { token: "CMP", variant: "warning" };
+    case "system_guidelines":
+      return { token: "GUID", variant: "primary" };
     default:
       return {
         token: (kind.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4) || "CTX").toUpperCase(),
@@ -535,6 +633,8 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
       return { token: "TOOL", variant: "neutral" };
     case "skill_delta":
       return { token: "SKL", variant: "neutral" };
+    case "companion_agent_roster_delta":
+      return { token: "AGNT", variant: "primary" };
     case "hook_injection":
       return { token: "HOOK", variant: "neutral" };
     case "system_notice":
@@ -545,5 +645,9 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
       return { token: "RSM", variant: "warning" };
     case "compaction_summary":
       return { token: "CMP", variant: "warning" };
+    case "user_preferences":
+      return { token: "PREF", variant: "primary" };
+    case "project_guidelines":
+      return { token: "GUID", variant: "primary" };
   }
 }

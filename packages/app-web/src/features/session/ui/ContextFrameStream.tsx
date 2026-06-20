@@ -138,6 +138,7 @@ const FRAME_KIND_LABELS: Record<string, string> = {
   pending_action: "ACTION",
   auto_resume: "RESUME",
   compaction_summary: "COMPACTION",
+  system_guidelines: "GUIDELINES",
 };
 
 function describeFrameSet(frames: ContextFrame[]): string {
@@ -176,6 +177,12 @@ function frameTabLabel(frame: ContextFrame): string {
     if (compaction && compaction.kind === "compaction_summary") {
       parts.push(`${compaction.messages_compacted} msg`);
     }
+  } else if (frame.kind === "system_guidelines") {
+    const preferences = frame.sections.find((section) => section.kind === "user_preferences");
+    const guidelines = frame.sections.find((section) => section.kind === "project_guidelines");
+    const prefCount = preferences && preferences.kind === "user_preferences" ? preferences.items.length : 0;
+    const fileCount = guidelines && guidelines.kind === "project_guidelines" ? guidelines.entries.length : 0;
+    if (prefCount + fileCount > 0) parts.push(`${prefCount} prefs / ${fileCount} files`);
   }
 
   return parts.join(" · ");
@@ -205,6 +212,10 @@ function summarizeRuntimeUpdate(frame: ContextFrame): string | null {
       added += section.added_skills.length;
       removed += section.removed_skills.length;
       changed += section.changed_skills.length;
+    } else if (section.kind === "companion_agent_roster_delta") {
+      added += section.added_agents.length;
+      removed += section.removed_agent_keys.length;
+      changed += section.changed_agents.length;
     }
   }
   if (added + removed + changed === 0) return null;

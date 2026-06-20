@@ -19,9 +19,10 @@ impl CompanionAgentDimensionDelta {
     pub fn from_state_delta(
         state_delta: Option<&CapabilityStateDelta>,
         companion_agents: &[CompanionAgentEntry],
+        include_when_unchanged: bool,
     ) -> Option<Box<dyn DimensionDelta>> {
         let state_delta = state_delta?;
-        if state_delta.companion_agents.is_empty() {
+        if state_delta.companion_agents.is_empty() && !include_when_unchanged {
             return None;
         }
 

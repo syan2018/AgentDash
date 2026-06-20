@@ -15,6 +15,7 @@ import type {
   AutoResumeSection,
   CapabilityKeyDeltaSection,
   CompactionSummarySection,
+  CompanionAgentRosterDeltaSection,
   ContinuationContextSection,
   ContextFrameSection,
   ContextTokenInfo,
@@ -22,7 +23,9 @@ import type {
   McpServerDeltaSection,
   AssignmentContextSection,
   PendingActionSection,
+  ProjectGuidelinesSection,
   RuntimeContextFragmentEntry,
+  RuntimeCompanionAgentEntry,
   RuntimeHookInjectionEntry,
   RuntimeSkillEntry,
   SkillDeltaSection,
@@ -31,6 +34,7 @@ import type {
   ToolPathDeltaSection,
   ToolSchemaDeltaSection,
   ToolSchemaSection,
+  UserPreferencesSection,
   VfsDeltaSection,
 } from "../../model/contextFrame";
 import { sectionKindToToken } from "../../model/contextFrame";
@@ -83,6 +87,8 @@ function sectionTitle(section: ContextFrameSection): string {
       return "Tool Schema";
     case "skill_delta":
       return "Skills";
+    case "companion_agent_roster_delta":
+      return "Companion Agents";
     case "hook_injection":
       return section.title || "Hook Injection";
     case "system_notice":
@@ -93,6 +99,10 @@ function sectionTitle(section: ContextFrameSection): string {
       return section.title || "Auto Resume";
     case "compaction_summary":
       return section.title || "Compaction Summary";
+    case "user_preferences":
+      return section.title || "User Preferences";
+    case "project_guidelines":
+      return section.title || "Project Guidelines";
   }
 }
 
@@ -143,6 +153,15 @@ function sectionHint(section: ContextFrameSection): string | null {
       if (added + removed + changed === 0) return "no change";
       return `+${added} −${removed}${changed > 0 ? ` ↻${changed}` : ""}`;
     }
+    case "companion_agent_roster_delta": {
+      const added = section.added_agents.length;
+      const removed = section.removed_agent_keys.length;
+      const changed = section.changed_agents.length;
+      if (added + removed + changed === 0) {
+        return `${section.effective_agents.length} available`;
+      }
+      return `+${added} −${removed}${changed > 0 ? ` ↻${changed}` : ""}`;
+    }
     case "hook_injection":
       return `${section.injections.length} injected`;
     case "system_notice":
@@ -153,6 +172,10 @@ function sectionHint(section: ContextFrameSection): string | null {
       return section.reason || "auto";
     case "compaction_summary":
       return `${section.messages_compacted} messages`;
+    case "user_preferences":
+      return `${section.items.length} items`;
+    case "project_guidelines":
+      return `${section.entries.length} files`;
   }
 }
 
@@ -178,6 +201,8 @@ function renderSectionBody(section: ContextFrameSection) {
       return <ToolSchemaDeltaBody section={section} />;
     case "skill_delta":
       return <SkillDeltaBody section={section} />;
+    case "companion_agent_roster_delta":
+      return <CompanionAgentRosterDeltaBody section={section} />;
     case "hook_injection":
       return <InjectionBody injections={section.injections} />;
     case "system_notice":
@@ -188,6 +213,10 @@ function renderSectionBody(section: ContextFrameSection) {
       return <AutoResumeBody section={section} />;
     case "compaction_summary":
       return <CompactionSummaryBody section={section} />;
+    case "user_preferences":
+      return <UserPreferencesBody section={section} />;
+    case "project_guidelines":
+      return <ProjectGuidelinesBody section={section} />;
   }
 }
 
@@ -549,6 +578,127 @@ function SkillDiffLine({
   );
 }
 
+function CompanionAgentRosterDeltaBody({
+  section,
+}: {
+  section: CompanionAgentRosterDeltaSection;
+}) {
+  const hasDelta =
+    section.added_agents.length +
+      section.removed_agent_keys.length +
+      section.changed_agents.length >
+    0;
+
+  return (
+    <div className="space-y-2">
+      {hasDelta ? (
+        <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+          {section.added_agents.map((agent, index) => (
+            <CompanionAgentDiffLine
+              key={`add-${agent.agent_key}-${index}`}
+              symbol="+"
+              label="companion"
+              agent={agent}
+            />
+          ))}
+          {section.removed_agent_keys.map((agentKey, index) => (
+            <DiffLine
+              key={`rm-${agentKey}-${index}`}
+              symbol="−"
+              label="companion"
+              value={agentKey}
+            />
+          ))}
+          {section.changed_agents.map((agent, index) => (
+            <CompanionAgentDiffLine
+              key={`ch-${agent.agent_key}-${index}`}
+              symbol="↻"
+              label="companion"
+              agent={agent}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground/60">
+          {section.effective_agents.length === 0
+            ? "当前没有可用 companion agent"
+            : "本次无 companion roster 变更"}
+        </p>
+      )}
+      {section.effective_agents.length > 0 && (
+        <EffectiveCompanionAgentsBlock agents={section.effective_agents} />
+      )}
+    </div>
+  );
+}
+
+function CompanionAgentDiffLine({
+  symbol,
+  label,
+  agent,
+}: {
+  symbol: string;
+  label: string;
+  agent: RuntimeCompanionAgentEntry;
+}) {
+  const display = agent.display_name || agent.agent_key;
+  return (
+    <div className="space-y-1 rounded-[6px] border border-border/60 bg-secondary/15 px-2 py-1.5">
+      <p className="flex items-start gap-2 text-xs leading-5">
+        <span className="shrink-0 w-4 select-none text-muted-foreground/70">{symbol}</span>
+        <span className="shrink-0 text-muted-foreground/80">{label}</span>
+        <span className="min-w-0 break-all font-mono text-foreground/80">{display}</span>
+      </p>
+      <div className="flex flex-wrap gap-1.5 pl-8">
+        <Chip label={`agent: ${agent.agent_key}`} />
+        {agent.executor && <Chip label={`executor: ${agent.executor}`} />}
+      </div>
+    </div>
+  );
+}
+
+function EffectiveCompanionAgentsBlock({
+  agents,
+}: {
+  agents: RuntimeCompanionAgentEntry[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-[6px] border border-border/70 bg-background overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-secondary/35"
+      >
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          当前可用 companion ({agents.length} 项)
+        </span>
+        <span className="shrink-0 text-[10px] text-muted-foreground/40">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="max-h-48 overflow-auto border-t border-border/70 px-2.5 py-2">
+          <ul className="space-y-1">
+            {agents.map((agent) => (
+              <li
+                key={agent.agent_key}
+                className="space-y-0.5 rounded-[4px] bg-secondary/20 px-2 py-1"
+              >
+                <div className="font-mono text-[11px] leading-5 text-foreground/80">
+                  {agent.display_name || agent.agent_key}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <Chip label={`agent: ${agent.agent_key}`} />
+                  {agent.executor && <Chip label={`executor: ${agent.executor}`} />}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InjectionBody({ injections }: { injections: RuntimeHookInjectionEntry[] }) {
   if (injections.length === 0) {
     return <p className="text-xs text-muted-foreground/60">无注入内容</p>;
@@ -659,6 +809,46 @@ function CompactionSummaryBody({ section }: { section: CompactionSummarySection 
       {section.compacted_until_ref != null && (
         <CompactedUntilRefBlock value={section.compacted_until_ref} />
       )}
+    </div>
+  );
+}
+
+function UserPreferencesBody({ section }: { section: UserPreferencesSection }) {
+  if (section.items.length === 0) {
+    return <p className="text-xs text-muted-foreground/60">暂无用户偏好</p>;
+  }
+  return (
+    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+      {section.items.map((item, index) => (
+        <p key={`${item}-${index}`} className="text-xs leading-5 text-foreground/75">
+          {item}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function ProjectGuidelinesBody({ section }: { section: ProjectGuidelinesSection }) {
+  if (section.entries.length === 0) {
+    return <p className="text-xs text-muted-foreground/60">暂无项目指引</p>;
+  }
+  return (
+    <div className="space-y-2">
+      {section.entries.map((entry, index) => (
+        <article
+          key={`${entry.path}-${index}`}
+          className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2"
+        >
+          <div className="flex flex-wrap gap-1.5">
+            <Chip label={entry.path} />
+          </div>
+          {entry.content && (
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground/75">
+              {entry.content}
+            </pre>
+          )}
+        </article>
+      ))}
     </div>
   );
 }

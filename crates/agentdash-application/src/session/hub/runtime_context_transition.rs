@@ -11,6 +11,7 @@ use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookInjection, RuntimeEventSource, SetDelta,
     SharedHookRuntime,
 };
+use agentdash_spi::platform::tool_capability::CAP_COLLABORATION;
 use uuid::Uuid;
 
 use super::super::assignment_context_frame::build_runtime_assignment_context_frame;
@@ -447,6 +448,12 @@ impl RuntimeContextUpdateFrame {
         if let Some(d) = dimension::companion_agent::CompanionAgentDimensionDelta::from_state_delta(
             input.state_delta,
             input.companion_agents,
+            should_include_companion_state_section(
+                input.apply_mode,
+                input.effective_capabilities,
+                input.state_delta,
+                input.companion_agents,
+            ),
         ) {
             dimensions.push(d);
         }
@@ -475,6 +482,29 @@ impl RuntimeContextUpdateFrame {
             dimensions,
         }
     }
+}
+
+fn should_include_companion_state_section(
+    apply_mode: Option<&str>,
+    effective_capabilities: &BTreeSet<String>,
+    state_delta: Option<&CapabilityStateDelta>,
+    companion_agents: &[agentdash_spi::context::capability::CompanionAgentEntry],
+) -> bool {
+    let collaboration_enabled = effective_capabilities.contains(CAP_COLLABORATION);
+    let collaboration_changed = state_delta.is_some_and(|delta| {
+        delta
+            .tool_capabilities
+            .added
+            .iter()
+            .chain(delta.tool_capabilities.removed.iter())
+            .any(|capability| capability == CAP_COLLABORATION)
+    });
+    let roster_changed = state_delta.is_some_and(|delta| !delta.companion_agents.is_empty());
+    let initial_snapshot = matches!(apply_mode, Some("initial"));
+
+    roster_changed
+        || (collaboration_enabled && (initial_snapshot || collaboration_changed))
+        || (!companion_agents.is_empty() && initial_snapshot)
 }
 
 /// 根据 hook injections 构造独立的 `assignment_context` frame。
@@ -713,6 +743,83 @@ mod tests {
                 .contains("## Companion Agent Roster Delta — Step Transition: apply")
         );
         assert!(notice.rendered_text.contains("agent_key: `reviewer`"));
+    }
+
+    #[test]
+    fn capability_frame_includes_empty_companion_roster_when_collaboration_enabled() {
+        let input = LiveRuntimeContextTransitionInput {
+            target_frame_id: Uuid::new_v4(),
+            delivery_runtime_session_id: "session-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            phase_node: "bootstrap".to_string(),
+            run_id: None,
+            lifecycle_key: None,
+            before_state: None,
+            after_state: CapabilityState::default(),
+            capability_keys: BTreeSet::from([CAP_COLLABORATION.to_string()]),
+            key_delta: SetDelta::default(),
+            apply_mode: "initial",
+        };
+        let state_delta = compute_capability_state_delta(
+            input.before_state.as_ref(),
+            &input.after_state,
+            &input.capability_keys,
+        );
+
+        let notice = build_live_context_frame(&input, &SetDelta::default(), &state_delta, &[]);
+
+        let effective_agents = notice
+            .sections
+            .iter()
+            .find_map(|section| match section {
+                ContextFrameSection::CompanionAgentRosterDelta {
+                    effective_agents, ..
+                } => Some(effective_agents),
+                _ => None,
+            })
+            .expect("collaboration capability should surface companion roster state");
+        assert!(effective_agents.is_empty());
+        assert!(
+            notice
+                .rendered_text
+                .contains("## Companion Agent Roster Delta")
+        );
+        assert!(notice.rendered_text.contains("- （无）"));
+    }
+
+    #[test]
+    fn live_capability_frame_does_not_repeat_unchanged_empty_companion_roster() {
+        let mut before_state = CapabilityState::default();
+        before_state
+            .tool
+            .capabilities
+            .insert(agentdash_spi::ToolCapability::new(CAP_COLLABORATION));
+        let after_state = before_state.clone();
+        let input = LiveRuntimeContextTransitionInput {
+            target_frame_id: Uuid::new_v4(),
+            delivery_runtime_session_id: "session-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            phase_node: "apply".to_string(),
+            run_id: None,
+            lifecycle_key: None,
+            before_state: Some(before_state),
+            after_state,
+            capability_keys: BTreeSet::from([CAP_COLLABORATION.to_string()]),
+            key_delta: SetDelta::default(),
+            apply_mode: "live",
+        };
+        let state_delta = compute_capability_state_delta(
+            input.before_state.as_ref(),
+            &input.after_state,
+            &input.capability_keys,
+        );
+
+        let notice = build_live_context_frame(&input, &SetDelta::default(), &state_delta, &[]);
+
+        assert!(!notice.sections.iter().any(|section| matches!(
+            section,
+            ContextFrameSection::CompanionAgentRosterDelta { .. }
+        )));
     }
 
     #[test]

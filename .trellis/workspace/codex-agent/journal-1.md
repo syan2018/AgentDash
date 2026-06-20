@@ -716,3 +716,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: ContextFrame 事实域收束重构
+
+**Date**: 2026-06-20
+**Task**: ContextFrame 事实域收束重构
+**Branch**: `main`
+
+### Summary
+
+完成 ContextFrame 事实域标准化：拆分 CAP snapshot/delta，收束 companion roster 到 CapabilityState，清理 assignment/hook 残留路径，补齐 usage 与前端展示，并更新 Trellis spec。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7286ef13` | (see git log) |
+| `b9a7ce16` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
-- **Last Active**: 2026-06-18
+- **Total Sessions**: 21
+- **Last Active**: 2026-06-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~718 | Active |
+| `journal-1.md` | ~752 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-06-20 | ContextFrame 事实域收束重构 | `7286ef13`, `b9a7ce16` | `main` |
 | 20 | 2026-06-18 | 收束 Agent 启动路径主轴 | `77f4fe7b` | `codex/companion-agent-authority-convergence` |
 | 19 | 2026-06-17 | 修复 PiAgent 上下文用量链路 | `6d01717d` | `main` |
 | 18 | 2026-06-17 | 模型上下文消耗统计真实化 | `b21ed09e` | `main` |

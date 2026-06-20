@@ -390,7 +390,6 @@ export function SessionChatComposer({
     (command) => command.placement.includes("composer_primary"),
   );
   const cancelCommand = commandState.commands.commands.find((command) => command.kind === "cancel");
-  const inputDisabled = isSending || !submitCommand?.enabled;
 
   const hasContent = Boolean(inputValue.trim()) || imageAttachments.length > 0;
   // 展开条件：有效多行（trim 后仍含换行） OR 有附件 OR 有文件引用
@@ -507,7 +506,6 @@ export function SessionChatComposer({
                 onKeyDown={onKeyDown}
                 onAtTrigger={onAtTrigger}
                 onFileReferenceRemoved={(relPath) => { fileRef.removeReference(relPath); }}
-                disabled={inputDisabled}
               />
             </div>
           </div>
@@ -515,7 +513,7 @@ export function SessionChatComposer({
           {/* ② + 菜单 */}
           <div className={isExpanded ? "order-2" : "order-1"}>
             <ComposerPlusMenu
-              disabled={inputDisabled}
+              disabled={isSending}
               onSelectFiles={onPlusMenuFiles}
             />
           </div>

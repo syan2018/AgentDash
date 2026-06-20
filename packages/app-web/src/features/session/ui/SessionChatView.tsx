@@ -529,12 +529,15 @@ export function SessionChatView({
       if (e.key !== "Enter") return;
       if (e.shiftKey) return; // Shift+Enter = 换行
 
-      e.preventDefault();
       const isSteer = e.ctrlKey || e.metaKey;
       const keyboardCommandId = isSteer
         ? commandState.commands.keyboard.ctrl_enter
         : commandState.commands.keyboard.enter;
-      void handleSubmit(commandById(keyboardCommandId), isSteer ? "steer" : undefined);
+      const command = commandById(keyboardCommandId);
+      if (!command) return;
+
+      e.preventDefault();
+      void handleSubmit(command, isSteer ? "steer" : undefined);
     },
     [commandById, commandState.commands.keyboard.ctrl_enter, commandState.commands.keyboard.enter, fileRef, handleSubmit],
   );

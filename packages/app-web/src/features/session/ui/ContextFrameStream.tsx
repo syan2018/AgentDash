@@ -15,6 +15,7 @@ import type { ContextFrame } from "../model/contextFrame";
 import { frameKindToToken } from "../model/contextFrame";
 import { ContextFrameBody } from "./ContextFrameBody";
 import { TokenBadge } from "./contextFrame/SectionRenderers";
+import { CB } from "./bodies/cardBodyTokens";
 
 export interface ContextFrameStreamProps {
   frames: ContextFrame[];
@@ -72,13 +73,13 @@ export function ContextFrameStream({
       </button>
 
       {expanded && (
-        <div className="ml-6 mt-1 rounded-[8px] border border-border/50 bg-secondary/15 overflow-hidden">
+        <div className={`ml-6 mt-1 overflow-hidden ${CB.expandPanel}`}>
           <FrameTabBar
             frames={frames}
             activeId={activeFrame.id}
             onSelect={setActiveId}
           />
-          <div className="border-t border-border/40 px-3 py-2.5">
+          <div className="border-t border-border/30 px-2.5 py-2">
             <ContextFrameBody frame={activeFrame} />
           </div>
         </div>
@@ -97,7 +98,7 @@ function FrameTabBar({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-1.5 px-3 py-2">
+    <div className="flex flex-wrap gap-1 px-2.5 py-1.5">
       {frames.map((frame) => {
         const token = frameKindToToken(frame.kind);
         const active = frame.id === activeId;
@@ -106,14 +107,14 @@ function FrameTabBar({
             key={frame.id}
             type="button"
             onClick={() => onSelect(frame.id)}
-            className={`inline-flex items-center gap-1.5 rounded-[6px] border px-2 py-1 text-[11px] font-mono transition-colors ${
+            className={`inline-flex items-center gap-1 rounded-[4px] border px-1.5 py-0.5 text-[10px] font-mono transition-colors ${
               active
-                ? "border-border bg-secondary/50 text-foreground"
-                : "border-border/70 bg-background text-muted-foreground hover:bg-secondary/35"
+                ? "border-border/50 bg-secondary/40 text-foreground"
+                : "border-border/30 text-muted-foreground/60 hover:bg-secondary/20"
             }`}
           >
             <TokenBadge token={token} />
-            <span className="truncate max-w-[18rem] tracking-tight">{frameTabLabel(frame)}</span>
+            <span className="truncate max-w-[16rem] tracking-tight">{frameTabLabel(frame)}</span>
           </button>
         );
       })}

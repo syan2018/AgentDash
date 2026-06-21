@@ -8,6 +8,7 @@ import { memo, useEffect, useRef, useState, useCallback } from "react";
 import type { AgentDashThreadItem, ThreadItem } from "../../../../generated/backbone-protocol";
 import { useWorkspaceTabStore } from "../../../../stores/workspaceTabStore";
 import { useTerminalStore } from "../../model/useTerminalStore";
+import { CB } from "./cardBodyTokens";
 
 type CommandItem =
   | Extract<ThreadItem, { type: "commandExecution" }>
@@ -62,18 +63,18 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
   const maxH = collapsed ? "max-h-16" : shouldCollapse ? "max-h-96" : "max-h-64";
 
   return (
-    <div className="space-y-0">
+    <div className={CB.sectionGap}>
       {item.cwd && (
-        <div className="text-[11px] text-muted-foreground/60">
+        <div className={CB.meta}>
           cwd: <span className="font-mono">{item.cwd}</span>
         </div>
       )}
 
       {(renderedOutput || isRunning) && (
-        <div className="relative mt-1.5">
+        <div className="relative">
           <pre
             ref={outputRef}
-            className={`overflow-auto rounded-[6px] bg-muted/30 px-2.5 py-2 font-mono text-xs leading-relaxed text-foreground/80 transition-[max-height] ${maxH}`}
+            className={`overflow-auto ${CB.codeBlock} transition-[max-height] ${maxH}`}
           >
             {renderedOutput || (
               <span className="animate-pulse text-muted-foreground/40">
@@ -89,7 +90,7 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
             <button
               type="button"
               onClick={() => setCollapsed(!collapsed)}
-              className="absolute bottom-1 right-2 rounded bg-background/80 px-2 py-0.5 text-[10px] text-muted-foreground shadow-sm hover:bg-muted"
+              className={`absolute bottom-1 right-2 ${CB.actionButton} bg-background/80 shadow-sm`}
             >
               {collapsed ? "展开" : "折叠"}
             </button>
@@ -97,19 +98,19 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
         </div>
       )}
 
-      <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+      <div className={`mt-1.5 flex items-center gap-2 ${CB.meta}`}>
         {item.exitCode !== undefined && item.exitCode !== null && (
-          <span className={item.exitCode === 0 ? "text-success" : "text-destructive"}>
+          <span className={item.exitCode === 0 ? CB.statusSuccess : CB.statusFailed}>
             exit: {item.exitCode}
           </span>
         )}
         {lineCount > 0 && (
-          <span className="text-muted-foreground/50">{lineCount} 行</span>
+          <span>{lineCount} 行</span>
         )}
         <button
           type="button"
           onClick={handlePromote}
-          className="ml-auto rounded px-2 py-0.5 text-[10px] text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+          className={`ml-auto ${CB.actionButton}`}
         >
           在终端中查看
         </button>

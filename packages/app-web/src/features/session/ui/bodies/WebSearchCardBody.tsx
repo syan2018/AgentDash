@@ -3,19 +3,20 @@
  */
 
 import type { ThreadItem } from "../../../../generated/backbone-protocol";
+import { CB } from "./cardBodyTokens";
 
 type WebSearchItem = Extract<ThreadItem, { type: "webSearch" }>;
 
 export function WebSearchCardBody({ item }: { item: WebSearchItem }) {
   return (
-    <div className="space-y-2 text-xs">
+    <div className={`${CB.sectionGap} text-xs`}>
       <div>
-        <p className="mb-1 text-muted-foreground/60 font-medium">查询</p>
-        <p className="text-foreground">{item.query}</p>
+        <p className={`mb-0.5 ${CB.sectionTitle}`}>查询</p>
+        <p className="text-foreground/80">{item.query}</p>
       </div>
       {item.action && (
         <div>
-          <p className="mb-1 text-muted-foreground/60 font-medium">操作</p>
+          <p className={`mb-0.5 ${CB.sectionTitle}`}>操作</p>
           <p className="font-mono text-foreground/80">{describeAction(item.action)}</p>
         </div>
       )}

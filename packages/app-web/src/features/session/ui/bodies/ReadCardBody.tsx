@@ -11,6 +11,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { ThreadItem, AgentDashThreadItem } from "../../../../generated/backbone-protocol";
 import { parseReadToolText, type ParsedReadOutput } from "./readPayload";
+import { CB } from "./cardBodyTokens";
 
 const PREVIEW_LINES = 24;
 
@@ -41,8 +42,8 @@ export function ReadCardBody({ item }: ReadCardBodyProps): ReactNode {
   };
 
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-[11px] text-muted-foreground/60">
+    <div className={CB.sectionGap}>
+      <div className={`flex items-center justify-between ${CB.meta}`}>
         <div className="flex items-center gap-2">
           {parsed.filePath && (
             <span className="truncate font-mono text-foreground/70" title={parsed.filePath}>
@@ -55,21 +56,21 @@ export function ReadCardBody({ item }: ReadCardBodyProps): ReactNode {
           <button
             type="button"
             onClick={() => void handleCopy("body")}
-            className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+            className={CB.actionButton}
           >
             {copied === "body" ? "已复制" : "复制正文"}
           </button>
           <button
             type="button"
             onClick={() => void handleCopy("raw")}
-            className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+            className={CB.actionButton}
           >
             {copied === "raw" ? "已复制" : "复制原始"}
           </button>
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-[8px] border border-border bg-muted/20">
+      <div className={`overflow-hidden ${CB.inlineEntry}`}>
         <pre
           className={`overflow-auto font-mono text-xs leading-relaxed ${
             expanded ? "max-h-[60vh]" : ""
@@ -80,10 +81,10 @@ export function ReadCardBody({ item }: ReadCardBodyProps): ReactNode {
               key={idx}
               className="grid grid-cols-[3.5rem_1fr] items-baseline"
             >
-              <span className="select-none px-2 text-right tabular-nums text-muted-foreground/40">
+              <span className={CB.lineNumber}>
                 {line.lineNo}
               </span>
-              <span className="whitespace-pre-wrap break-words pr-2 text-foreground/85">
+              <span className="whitespace-pre-wrap break-words pr-2 text-foreground/80">
                 {line.text || " "}
               </span>
             </div>
@@ -94,7 +95,7 @@ export function ReadCardBody({ item }: ReadCardBodyProps): ReactNode {
           <button
             type="button"
             onClick={() => setExpanded(true)}
-            className="block w-full border-t border-border bg-secondary/30 px-2.5 py-1 text-center text-[11px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+            className={`block w-full border-t border-border/30 bg-secondary/20 px-2.5 py-1 text-center ${CB.actionButton}`}
           >
             展开余下 {hidden} 行
           </button>
@@ -103,7 +104,7 @@ export function ReadCardBody({ item }: ReadCardBodyProps): ReactNode {
           <button
             type="button"
             onClick={() => setExpanded(false)}
-            className="block w-full border-t border-border bg-secondary/30 px-2.5 py-1 text-center text-[11px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+            className={`block w-full border-t border-border/30 bg-secondary/20 px-2.5 py-1 text-center ${CB.actionButton}`}
           >
             折叠
           </button>

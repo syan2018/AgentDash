@@ -8,6 +8,7 @@ import type { ThreadItem } from "../../../../generated/backbone-protocol";
 import { JsonTree, CopyJsonButton } from "./JsonTree";
 import { normalizeMcpOutput } from "./toolOutputContent";
 import { ToolOutputContentViewer } from "./ToolOutputContentViewer";
+import { CB } from "./cardBodyTokens";
 
 type McpItem = Extract<ThreadItem, { type: "mcpToolCall" }>;
 
@@ -25,11 +26,11 @@ export function McpCardBody({ item }: { item: McpItem }) {
   const hasMeta = result?._meta != null;
 
   return (
-    <div className="space-y-3">
+    <div className={CB.sectionGap}>
       {hasArgs && (
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <p className="text-xs font-medium text-muted-foreground/60">入参</p>
+            <p className={CB.sectionTitle}>入参</p>
             <CopyJsonButton data={args} />
           </div>
           <JsonTree data={args} defaultDepth={2} />
@@ -38,7 +39,7 @@ export function McpCardBody({ item }: { item: McpItem }) {
 
       {outputBlocks.length > 0 && (
         <div>
-          <p className="mb-1 text-xs font-medium text-muted-foreground/60">出参</p>
+          <p className={`mb-1 ${CB.sectionTitle}`}>出参</p>
           <ToolOutputContentViewer blocks={outputBlocks} />
         </div>
       )}
@@ -46,7 +47,7 @@ export function McpCardBody({ item }: { item: McpItem }) {
       {hasStructured && (
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <p className="text-xs font-medium text-muted-foreground/60">structuredContent</p>
+            <p className={CB.sectionTitle}>structuredContent</p>
             <CopyJsonButton data={result!.structuredContent} />
           </div>
           <JsonTree data={result!.structuredContent} defaultDepth={1} />
@@ -56,7 +57,7 @@ export function McpCardBody({ item }: { item: McpItem }) {
       {hasMeta && (
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <p className="text-xs font-medium text-muted-foreground/60">_meta</p>
+            <p className={CB.sectionTitle}>_meta</p>
             <CopyJsonButton data={result!._meta} />
           </div>
           <JsonTree data={result!._meta} defaultDepth={1} />
@@ -64,7 +65,7 @@ export function McpCardBody({ item }: { item: McpItem }) {
       )}
 
       {item.error && (
-        <div className="rounded-[8px] border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-xs text-destructive">
+        <div className={CB.errorBlock}>
           {item.error.message}
         </div>
       )}

@@ -14,6 +14,7 @@ import type { TaskStatus } from "../../../../types";
 import { TaskStatusToken } from "../../../../components/ui/status-badge";
 import { GenericJsonBody } from "./GenericJsonBody";
 import { normalizeDynamicOutput } from "./toolOutputContent";
+import { CB } from "./cardBodyTokens";
 
 type DynamicItem = Extract<ThreadItem, { type: "dynamicToolCall" }>;
 
@@ -81,18 +82,18 @@ function WriteChanges({ changes, item }: { changes: TaskChange[]; item: DynamicI
     return <GenericJsonBody arguments={item.arguments} contentItems={item.contentItems} />;
   }
   return (
-    <div className="space-y-1.5">
+    <div className={CB.itemGap}>
       {changes.map((change, index) => (
         <div
           key={`${change.task_id}-${index}`}
-          className="flex min-w-0 items-center gap-2 rounded-[8px] border border-border bg-background px-3 py-2"
+          className={`flex min-w-0 items-center gap-2 ${CB.inlineEntryButton}`}
         >
-          <span className="shrink-0 rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          <span className={CB.kindBadge}>
             {CHANGE_KIND_LABEL[change.change_kind] ?? change.change_kind}
           </span>
-          <span className="min-w-0 flex-1 truncate text-sm text-foreground">{change.title}</span>
+          <span className="min-w-0 flex-1 truncate text-xs text-foreground/80">{change.title}</span>
           {change.change_kind === "status_changed" && change.status_to && (
-            <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+            <span className={`flex shrink-0 items-center gap-1 ${CB.meta}`}>
               {change.status_from && <TaskStatusToken status={change.status_from} />}
               <span aria-hidden>→</span>
               <TaskStatusToken status={change.status_to} />
@@ -109,14 +110,14 @@ function Overview({ view }: { view: TaskView }) {
   const done = view.done ?? view.counts?.done ?? 0;
   const active = view.current_items ?? [];
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">
+    <div className={CB.sectionGap}>
+      <div className={`flex items-center gap-2 ${CB.meta}`}>
+        <span className="font-medium text-foreground/80">
           进度 {done}/{total}
         </span>
         {view.counts &&
           Object.entries(view.counts).map(([status, count]) => (
-            <span key={status} className="rounded-[6px] border border-border bg-secondary px-1.5 py-0.5">
+            <span key={status} className={CB.kindBadge}>
               {status} {count}
             </span>
           ))}
@@ -128,16 +129,16 @@ function Overview({ view }: { view: TaskView }) {
 
 function TaskRows({ tasks }: { tasks: CompactTask[] }) {
   return (
-    <div className="space-y-1.5">
+    <div className={CB.itemGap}>
       {tasks.map((task) => (
         <div
           key={task.id}
-          className="flex min-w-0 items-center gap-2 rounded-[8px] border border-border bg-background px-3 py-2"
+          className={`flex min-w-0 items-center gap-2 ${CB.inlineEntryButton}`}
         >
           <TaskStatusToken status={task.status} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate text-sm text-foreground">{task.title}</span>
+          <span className="min-w-0 flex-1 truncate text-xs text-foreground/80">{task.title}</span>
           {task.priority && (
-            <span className="shrink-0 rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            <span className={CB.kindBadge}>
               {task.priority}
             </span>
           )}

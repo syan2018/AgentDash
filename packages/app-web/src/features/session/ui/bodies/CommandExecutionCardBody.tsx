@@ -64,12 +64,6 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
 
   return (
     <div className={CB.sectionGap}>
-      {item.cwd && (
-        <div className={CB.meta}>
-          cwd: <span className="font-mono">{item.cwd}</span>
-        </div>
-      )}
-
       {(renderedOutput || isRunning) && (
         <div className="relative">
           <pre

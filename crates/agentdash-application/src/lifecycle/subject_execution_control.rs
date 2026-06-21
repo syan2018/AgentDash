@@ -120,9 +120,9 @@ impl<'a> SubjectExecutionControlService<'a> {
 
         let agent = self.resolve_associated_agent(&association).await?;
         let delivery_frame = self.resolve_delivery_frame(&agent).await?;
-        let anchor = self
+        let latest_updated_anchor = self
             .execution_anchor_repo
-            .latest_for_agent(agent.id)
+            .latest_updated_anchor_for_agent(agent.id)
             .await?
             .filter(|anchor| anchor.run_id == association.anchor_run_id);
 
@@ -130,7 +130,7 @@ impl<'a> SubjectExecutionControlService<'a> {
             association,
             agent,
             delivery_frame,
-            anchor,
+            anchor: latest_updated_anchor,
         })
     }
 
@@ -261,7 +261,7 @@ impl<'a> SubjectExecutionControlService<'a> {
                 .map(|anchor| anchor.runtime_session_id),
             RuntimeDeliverySelectionPolicy::LatestAttached => self
                 .execution_anchor_repo
-                .latest_for_agent(target.agent.id)
+                .latest_updated_anchor_for_agent(target.agent.id)
                 .await?
                 .map(|anchor| anchor.runtime_session_id),
         };
@@ -612,7 +612,7 @@ mod tests {
                 .collect())
         }
 
-        async fn latest_for_agent(
+        async fn latest_updated_anchor_for_agent(
             &self,
             agent_id: Uuid,
         ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {

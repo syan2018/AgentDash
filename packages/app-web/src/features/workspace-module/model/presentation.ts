@@ -1,11 +1,5 @@
-export interface WorkspaceModulePresentationPayload {
-  module_id?: string | null;
-  view_key: string;
-  renderer_kind: string;
-  presentation_uri?: string | null;
-  title?: string | null;
-  uri?: string | null;
-}
+import type { JsonValue } from "../../../generated/common-contracts";
+import type { WorkspaceModulePresentation } from "../../../generated/workspace-module-contracts";
 
 export interface WorkspaceModulePresentedTabTarget {
   typeId: string;
@@ -20,14 +14,46 @@ export function isConcreteCanvasPresentationUri(uri: string): boolean {
   return uri.slice(CANVAS_PRESENTATION_SCHEME.length).trim().length > 0;
 }
 
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value == null) return true;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (!isJsonRecord(value)) return false;
+  return Object.values(value).every(isJsonValue);
+}
+
+export function isWorkspaceModulePresentation(value: unknown): value is WorkspaceModulePresentation {
+  if (!isJsonRecord(value)) return false;
+  return (
+    typeof value.module_id === "string" &&
+    typeof value.view_key === "string" &&
+    typeof value.renderer_kind === "string" &&
+    typeof value.presentation_uri === "string" &&
+    typeof value.title === "string" &&
+    (value.payload === undefined || isJsonValue(value.payload)) &&
+    (value.diagnostics === undefined || isJsonValue(value.diagnostics))
+  );
+}
+
+export function workspaceModulePresentationFromPlatformEventData(
+  data: Record<string, unknown> | null,
+): WorkspaceModulePresentation | null {
+  return isWorkspaceModulePresentation(data) ? data : null;
+}
+
 export function workspaceModulePresentationTabTarget(
-  data: WorkspaceModulePresentationPayload | null,
+  data: WorkspaceModulePresentation | null,
 ): WorkspaceModulePresentedTabTarget | null {
   if (!data) return null;
   const rendererKind = data.renderer_kind.trim();
   const viewKey = data.view_key.trim();
-  const presentationUri = data.presentation_uri?.trim() ?? "";
-  const fallbackUri = data.uri?.trim() ?? "";
+  const presentationUri = data.presentation_uri.trim();
 
   if (rendererKind === "canvas") {
     if (!isConcreteCanvasPresentationUri(presentationUri)) return null;
@@ -41,29 +67,13 @@ export function workspaceModulePresentationTabTarget(
   if (!viewKey) return null;
   return {
     typeId: viewKey,
-    uri: presentationUri || fallbackUri || undefined,
+    uri: presentationUri || undefined,
     refreshRuntime: false,
   };
 }
 
 export function workspaceModulePresentedTabTarget(
-  data: Record<string, unknown> | null,
+  data: WorkspaceModulePresentation | null,
 ): WorkspaceModulePresentedTabTarget | null {
-  const rendererKind = typeof data?.renderer_kind === "string" ? data.renderer_kind : "";
-  const viewKey = typeof data?.view_key === "string" ? data.view_key : "";
-  const presentationUri = typeof data?.presentation_uri === "string"
-    ? data.presentation_uri
-    : null;
-  const fallbackUri = typeof data?.uri === "string" ? data.uri : null;
-  const moduleId = typeof data?.module_id === "string" ? data.module_id : null;
-  const title = typeof data?.title === "string" ? data.title : null;
-
-  return workspaceModulePresentationTabTarget({
-    module_id: moduleId,
-    view_key: viewKey,
-    renderer_kind: rendererKind,
-    presentation_uri: presentationUri,
-    title,
-    uri: fallbackUri,
-  });
+  return workspaceModulePresentationTabTarget(data);
 }

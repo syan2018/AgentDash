@@ -1454,7 +1454,7 @@ mod tests {
                 .collect())
         }
 
-        async fn latest_for_agent(
+        async fn latest_updated_anchor_for_agent(
             &self,
             agent_id: Uuid,
         ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {

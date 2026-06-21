@@ -21,19 +21,23 @@ use agentdash_application::runtime_gateway::{
     RuntimeInvocationResult, RuntimeSurface,
 };
 use agentdash_contracts::canvas::{
-    CanvasImportMapDto, CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto,
-    CanvasRuntimeFileDto, CanvasRuntimeSnapshotDto, RuntimeActionDescriptorDto,
-    RuntimeActionKindDto, RuntimeContextDto, RuntimeInvocationOutputDto,
-    RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto, RuntimeTraceDto,
+    CanvasDataBindingDto, CanvasFileDto, CanvasImportMapDto, CanvasResponse,
+    CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto, CanvasRuntimeFileDto,
+    CanvasRuntimeSnapshotDto, CanvasSandboxConfigDto, CreateCanvasRequest, DeleteCanvasResponse,
+    RuntimeActionDescriptorDto, RuntimeActionKindDto, RuntimeContextDto,
+    RuntimeInvocationOutputDto, RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto,
+    RuntimeTraceDto, UpdateCanvasRequest,
 };
-use agentdash_contracts::common_response::DeletedIdResponse;
 use agentdash_contracts::extension_package::ExtensionPackageInstallationResponse;
+use agentdash_domain::canvas::{
+    Canvas, CanvasDataBinding, CanvasFile, CanvasImportMap, CanvasSandboxConfig,
+};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    CanvasResponse, CanvasRuntimeInvokeRequest, CanvasRuntimeSnapshotQuery, CreateCanvasRequest,
-    ListProjectCanvasesPath, PromoteCanvasToExtensionRequest, UpdateCanvasRequest,
+    CanvasRuntimeInvokeRequest, CanvasRuntimeSnapshotQuery, ListProjectCanvasesPath,
+    PromoteCanvasToExtensionRequest,
 };
 use crate::rpc::ApiError;
 use crate::session_construction::resolve_session_frame_vfs;
@@ -53,9 +57,7 @@ pub async fn list_project_canvases(
     .await?;
 
     let canvases = list_project_canvases_use_case(&state.repos, project_id).await?;
-    Ok(Json(
-        canvases.into_iter().map(CanvasResponse::from).collect(),
-    ))
+    Ok(Json(canvases.into_iter().map(canvas_to_contract).collect()))
 }
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
@@ -108,16 +110,23 @@ pub async fn create_canvas(
             description: req.description,
             mutation: CanvasMutationInput {
                 entry_file: req.entry_file,
-                sandbox_config: req.sandbox_config,
-                files: req.files,
-                bindings: req.bindings,
+                sandbox_config: req.sandbox_config.map(sandbox_config_from_contract),
+                files: req
+                    .files
+                    .map(|files| files.into_iter().map(canvas_file_from_contract).collect()),
+                bindings: req.bindings.map(|bindings| {
+                    bindings
+                        .into_iter()
+                        .map(canvas_data_binding_from_contract)
+                        .collect()
+                }),
                 ..CanvasMutationInput::default()
             },
         },
     )
     .await?;
 
-    Ok(Json(CanvasResponse::from(canvas)))
+    Ok(Json(canvas_to_contract(canvas)))
 }
 
 pub async fn get_canvas(
@@ -129,7 +138,7 @@ pub async fn get_canvas(
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::View)
             .await?;
 
-    Ok(Json(CanvasResponse::from(canvas)))
+    Ok(Json(canvas_to_contract(canvas)))
 }
 
 pub async fn update_canvas(
@@ -149,27 +158,106 @@ pub async fn update_canvas(
             title: req.title,
             description: req.description,
             entry_file: req.entry_file,
-            sandbox_config: req.sandbox_config,
-            files: req.files,
-            bindings: req.bindings,
+            sandbox_config: req.sandbox_config.map(sandbox_config_from_contract),
+            files: req
+                .files
+                .map(|files| files.into_iter().map(canvas_file_from_contract).collect()),
+            bindings: req.bindings.map(|bindings| {
+                bindings
+                    .into_iter()
+                    .map(canvas_data_binding_from_contract)
+                    .collect()
+            }),
         },
     )
     .await?;
 
-    Ok(Json(CanvasResponse::from(canvas)))
+    Ok(Json(canvas_to_contract(canvas)))
 }
 
 pub async fn delete_canvas(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<DeletedIdResponse>, ApiError> {
+) -> Result<Json<DeleteCanvasResponse>, ApiError> {
     let canvas =
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
             .await?;
     delete_canvas_record(&state.repos, &canvas).await?;
 
-    Ok(Json(DeletedIdResponse { deleted: id }))
+    Ok(Json(DeleteCanvasResponse { deleted: id }))
+}
+
+fn canvas_to_contract(canvas: Canvas) -> CanvasResponse {
+    CanvasResponse {
+        id: canvas.id.to_string(),
+        project_id: canvas.project_id.to_string(),
+        mount_id: canvas.mount_id,
+        title: canvas.title,
+        description: canvas.description,
+        entry_file: canvas.entry_file,
+        sandbox_config: sandbox_config_to_contract(canvas.sandbox_config),
+        files: canvas
+            .files
+            .into_iter()
+            .map(canvas_file_to_contract)
+            .collect(),
+        bindings: canvas
+            .bindings
+            .into_iter()
+            .map(canvas_data_binding_to_contract)
+            .collect(),
+        created_at: canvas.created_at.to_rfc3339(),
+        updated_at: canvas.updated_at.to_rfc3339(),
+    }
+}
+
+fn sandbox_config_to_contract(config: CanvasSandboxConfig) -> CanvasSandboxConfigDto {
+    CanvasSandboxConfigDto {
+        libraries: config.libraries,
+        import_map: CanvasImportMapDto {
+            imports: config.import_map.imports,
+        },
+    }
+}
+
+fn sandbox_config_from_contract(config: CanvasSandboxConfigDto) -> CanvasSandboxConfig {
+    CanvasSandboxConfig {
+        libraries: config.libraries,
+        import_map: CanvasImportMap {
+            imports: config.import_map.imports,
+        },
+    }
+}
+
+fn canvas_file_to_contract(file: CanvasFile) -> CanvasFileDto {
+    CanvasFileDto {
+        path: file.path,
+        content: file.content,
+    }
+}
+
+fn canvas_file_from_contract(file: CanvasFileDto) -> CanvasFile {
+    CanvasFile {
+        path: file.path,
+        content: file.content,
+    }
+}
+
+fn canvas_data_binding_to_contract(binding: CanvasDataBinding) -> CanvasDataBindingDto {
+    CanvasDataBindingDto {
+        alias: binding.alias,
+        source_uri: binding.source_uri,
+        content_type: binding.content_type,
+    }
+}
+
+fn canvas_data_binding_from_contract(binding: CanvasDataBindingDto) -> CanvasDataBinding {
+    CanvasDataBinding {
+        alias: binding.alias,
+        source_uri: binding.source_uri,
+        content_type: binding.content_type,
+    }
 }
 
 pub async fn promote_canvas_to_extension(

@@ -66,21 +66,6 @@ export interface HookPendingAction {
   injections: HookInjection[];
 }
 
-export type SessionExecutionStatus =
-  | "idle"
-  | "running"
-  | "cancelling"
-  | "completed"
-  | "failed"
-  | "interrupted";
-
-export interface SessionExecutionState {
-  session_id: string;
-  status: SessionExecutionStatus;
-  turn_id?: string | null;
-  message?: string | null;
-}
-
 export interface ActiveWorkflowHookMetadata {
   workflow_graph_id?: string | null;
   lifecycle_key?: string | null;

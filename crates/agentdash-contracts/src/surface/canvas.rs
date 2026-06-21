@@ -5,9 +5,103 @@ use ts_rs::TS;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct CanvasFileDto {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct CanvasImportMapDto {
     #[serde(default)]
     pub imports: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasSandboxConfigDto {
+    #[serde(default)]
+    pub libraries: Vec<String>,
+    #[serde(default)]
+    pub import_map: CanvasImportMapDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasDataBindingDto {
+    pub alias: String,
+    pub source_uri: String,
+    #[serde(default = "default_binding_content_type")]
+    pub content_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasResponse {
+    pub id: String,
+    pub project_id: String,
+    pub mount_id: String,
+    pub title: String,
+    pub description: String,
+    pub entry_file: String,
+    pub sandbox_config: CanvasSandboxConfigDto,
+    pub files: Vec<CanvasFileDto>,
+    pub bindings: Vec<CanvasDataBindingDto>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CreateCanvasRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mount_id: Option<String>,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub entry_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sandbox_config: Option<CanvasSandboxConfigDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub files: Option<Vec<CanvasFileDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub bindings: Option<Vec<CanvasDataBindingDto>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct UpdateCanvasRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub entry_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sandbox_config: Option<CanvasSandboxConfigDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub files: Option<Vec<CanvasFileDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub bindings: Option<Vec<CanvasDataBindingDto>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct DeleteCanvasResponse {
+    pub deleted: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -156,4 +250,8 @@ pub struct RuntimeInvocationResultDto {
     pub action_key: String,
     pub trace: RuntimeTraceDto,
     pub output: RuntimeInvocationOutputDto,
+}
+
+fn default_binding_content_type() -> String {
+    "application/json".to_string()
 }

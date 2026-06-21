@@ -13,7 +13,6 @@ import type {
   SessionProjectionViewResponse,
 } from "../generated/session-contracts";
 import type { JsonValue } from "../generated/common-contracts";
-import type { SessionExecutionState, SessionExecutionStatus } from "../types";
 import type { SessionTabLayout } from "../features/workspace-runtime";
 
 export type TitleSource = "auto" | "source" | "user";
@@ -25,6 +24,15 @@ export type SessionExecutionStatusValue =
   | "completed"
   | "failed"
   | "interrupted";
+
+// `/sessions/{id}/state` 是 RuntimeSession trace 的诊断/legacy 查询入口。
+// AgentRun / workspace 控制 UI 使用 generated workspace/conversation DTO，不从这里派生命令事实。
+export interface RouteLocalSessionExecutionState {
+  session_id: string;
+  status: SessionExecutionStatusValue;
+  turn_id: string | null;
+  message: string | null;
+}
 
 export interface SessionMeta {
   id: string;
@@ -102,7 +110,7 @@ export async function rollbackSessionProjection(
   );
 }
 
-function normalizeSessionExecutionStatus(value: unknown): SessionExecutionStatus {
+function normalizeSessionExecutionStatus(value: unknown): SessionExecutionStatusValue {
   switch (value) {
     case "idle":
     case "running":
@@ -116,7 +124,7 @@ function normalizeSessionExecutionStatus(value: unknown): SessionExecutionStatus
   }
 }
 
-function mapSessionExecutionState(raw: Record<string, unknown>): SessionExecutionState {
+function mapSessionExecutionState(raw: Record<string, unknown>): RouteLocalSessionExecutionState {
   return {
     session_id: requireStringField(raw, "session_id"),
     status: normalizeSessionExecutionStatus(raw.status),
@@ -125,7 +133,9 @@ function mapSessionExecutionState(raw: Record<string, unknown>): SessionExecutio
   };
 }
 
-export async function fetchSessionExecutionState(id: string): Promise<SessionExecutionState> {
+export async function fetchSessionExecutionState(
+  id: string,
+): Promise<RouteLocalSessionExecutionState> {
   const raw = await api.get<Record<string, unknown>>(`/sessions/${encodeURIComponent(id)}/state`);
   return mapSessionExecutionState(raw);
 }

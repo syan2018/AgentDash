@@ -1810,9 +1810,9 @@ impl<'a> AgentRunMailboxService<'a> {
                 message_stream
             }
             None => {
-                let anchor = self
+                let latest_updated_anchor = self
                     .execution_anchor_repo
-                    .latest_for_agent(agent.id)
+                    .latest_updated_anchor_for_agent(agent.id)
                     .await?
                     .ok_or_else(|| {
                         WorkflowApplicationError::NotFound(format!(
@@ -1820,14 +1820,19 @@ impl<'a> AgentRunMailboxService<'a> {
                             run.id, agent.id
                         ))
                     })?;
-                if anchor.run_id != run.id || anchor.agent_id != agent.id {
+                if latest_updated_anchor.run_id != run.id
+                    || latest_updated_anchor.agent_id != agent.id
+                {
                     return Err(WorkflowApplicationError::Conflict(format!(
                         "latest RuntimeSessionExecutionAnchor 指向 {} / {}，不匹配 AgentRun {} / {}",
-                        anchor.run_id, anchor.agent_id, run.id, agent.id
+                        latest_updated_anchor.run_id,
+                        latest_updated_anchor.agent_id,
+                        run.id,
+                        agent.id
                     )));
                 }
                 MessageStreamProjectionRef {
-                    runtime_session_id: anchor.runtime_session_id,
+                    runtime_session_id: latest_updated_anchor.runtime_session_id,
                     trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
                 }
             }

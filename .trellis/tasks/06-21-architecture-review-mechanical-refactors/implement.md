@@ -4,10 +4,10 @@
 
 - [ ] M01 Project event NDJSON contract 化。
 - [ ] M02 ProjectBackendAccess / BackendWorkspaceInventory contract 化。
-- [ ] M03 Canvas CRUD contract 化。
+- [x] M03 Canvas CRUD contract 化。
 - [ ] M04 SkillAsset HTTP DTO contract 化。
 - [x] M05 ExtensionManagement service 回到 generated DTO。
-- [ ] M06 `workspace_module_presented` stream payload contract 化。
+- [x] M06 `workspace_module_presented` stream payload contract 化。
 - [ ] M07 Auth/current-user/identity-directory DTO contract 化或明确 route-local wrapper。
 
 建议验证：
@@ -20,10 +20,10 @@ pnpm run frontend:check
 ## Phase 2: Residual Surface Cleanup
 
 - [ ] M08 拆分 `types/index.ts`。
-- [ ] M09 确认 SessionExecutionState 消费面。
+- [x] M09 确认 SessionExecutionState 消费面。
 - [x] M10 移除或封装 `AgentRunSteeringService`。
 - [x] M11 清理 AppState 中未公开消费的 `StoryActivityActivationService`。
-- [ ] M12 raw anchor repository API 与 application selection API 分层命名。
+- [x] M12 raw anchor repository API 与 application selection API 分层命名。
 - [x] M13 RuntimeGateway `surface_for` debug 入口守卫。
 
 建议验证：
@@ -62,3 +62,9 @@ pnpm run frontend:check
 - M05, M10, M11, M13, M14, M15, M16, M17, M18, M19 已由并行 subagents 完成。
 - 第一轮刻意避开 `agentdash-contracts` 与 generated files，避免 Contract Surface 条目之间争用生成入口。
 - M01-M04, M06, M07 建议后续按 contract 生成入口单 worker 串行推进；M08, M09, M12 建议在下一轮按前端类型入口、session state、anchor repository 命名分别拆分。
+
+## Round 2 Completion Notes
+
+- M03, M06, M09, M12 已由并行 subagents 完成。
+- 第二轮仅指定 M03 为 contract/export owner；M06 复用现有 `WorkspaceModulePresentation` generated DTO，M09 明确 `/sessions/{id}/state` 为 route-local diagnostic wrapper，M12 只做 raw repository API 命名收口。
+- 剩余 M01, M02, M04, M07 仍涉及 contract export，建议继续按 1 个 export owner + 若干不碰导出的消费面 worker 分轮推进；M08 可独立做类型入口拆分。

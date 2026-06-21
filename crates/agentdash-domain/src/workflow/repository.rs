@@ -158,8 +158,10 @@ pub trait RuntimeSessionExecutionAnchorRepository: Send + Sync {
         &self,
         runtime_session_ids: &[String],
     ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError>;
-    /// 查询 agent 最新 delivery anchor。
-    async fn latest_for_agent(
+    /// 按 `updated_at DESC` 查询 agent 最新写入的 raw anchor row。
+    ///
+    /// 该方法只表达 repository order，不表达 delivery/runtime selection policy。
+    async fn latest_updated_anchor_for_agent(
         &self,
         agent_id: Uuid,
     ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError>;

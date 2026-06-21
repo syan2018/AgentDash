@@ -1,49 +1,40 @@
 // ─── Canvas ──────────────────────────────────────────
 import type {
+  CanvasDataBindingDto,
+  CanvasFileDto,
   CanvasImportMapDto,
+  CanvasResponse,
   CanvasRuntimeBindingDto,
   CanvasRuntimeBridgeSnapshotDto,
   CanvasRuntimeFileDto,
   CanvasRuntimeSnapshotDto,
+  CanvasSandboxConfigDto,
+  CreateCanvasRequest,
+  DeleteCanvasResponse,
   RuntimeActionDescriptorDto,
   RuntimeActionKindDto,
   RuntimeContextDto,
   RuntimeInvocationResultDto,
   RuntimePolicyDto,
   RuntimeSurfaceDto,
+  UpdateCanvasRequest,
 } from "../generated/canvas-contracts";
 
 export type CanvasImportMap = CanvasImportMapDto;
 
-export interface CanvasSandboxConfig {
-  libraries: string[];
-  import_map: CanvasImportMap;
-}
+export type CanvasSandboxConfig = CanvasSandboxConfigDto;
 
-export interface CanvasFile {
-  path: string;
-  content: string;
-}
+export type CanvasFile = CanvasFileDto;
 
-export interface CanvasDataBinding {
-  alias: string;
-  source_uri: string;
-  content_type: string;
-}
+export type CanvasDataBinding = CanvasDataBindingDto;
 
-export interface Canvas {
-  id: string;
-  project_id: string;
-  mount_id: string;
-  title: string;
-  description: string;
-  entry_file: string;
-  sandbox_config: CanvasSandboxConfig;
-  files: CanvasFile[];
-  bindings: CanvasDataBinding[];
-  created_at: string;
-  updated_at: string;
-}
+export type Canvas = CanvasResponse;
+
+export type CreateCanvasInput = CreateCanvasRequest;
+
+export type UpdateCanvasInput = UpdateCanvasRequest;
+
+export type DeleteCanvasResult = DeleteCanvasResponse;
 
 export type CanvasRuntimeFile = CanvasRuntimeFileDto;
 

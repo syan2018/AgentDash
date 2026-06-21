@@ -7,7 +7,10 @@ import {
   buildRuntimeSessionCommandState,
   resolveExecutorConfigForConversationCommand,
 } from "./AgentRunWorkspacePage.conversationCommandState";
-import type { WorkspaceModuleDescriptor } from "../generated/workspace-module-contracts";
+import type {
+  WorkspaceModuleDescriptor,
+  WorkspaceModulePresentation,
+} from "../generated/workspace-module-contracts";
 import type { ConversationCommandView, ConversationKeyboardMapView } from "../generated/workflow-contracts";
 import type { ProjectAgentSummary } from "../types";
 import {
@@ -17,6 +20,7 @@ import {
 } from "../features/workspace-panel/model/canvasModuleOpen";
 import {
   isConcreteCanvasPresentationUri,
+  workspaceModulePresentationFromPlatformEventData,
   workspaceModulePresentedTabTarget,
 } from "./AgentRunWorkspacePage.workspaceModulePresentation";
 
@@ -102,13 +106,28 @@ function command(kind: ConversationCommandView["kind"], commandId: string): Conv
   };
 }
 
+function presentation(params: {
+  renderer_kind: string;
+  presentation_uri: string;
+  view_key?: string;
+  module_id?: string;
+  title?: string;
+}): WorkspaceModulePresentation {
+  return {
+    module_id: params.module_id ?? "module-a",
+    view_key: params.view_key ?? "preview",
+    renderer_kind: params.renderer_kind,
+    presentation_uri: params.presentation_uri,
+    title: params.title ?? "Module A",
+  };
+}
+
 describe("workspaceModulePresentedTabTarget", () => {
   it("opens Canvas tabs from presentation_uri", () => {
-    expect(workspaceModulePresentedTabTarget({
+    expect(workspaceModulePresentedTabTarget(presentation({
       renderer_kind: "canvas",
-      view_key: "preview",
       presentation_uri: "canvas://dashboard-a",
-    })).toEqual({
+    }))).toEqual({
       typeId: "canvas",
       uri: "canvas://dashboard-a",
       refreshRuntime: true,
@@ -117,34 +136,57 @@ describe("workspaceModulePresentedTabTarget", () => {
 
   it("does not treat empty canvas:// as a concrete Canvas tab target", () => {
     expect(isConcreteCanvasPresentationUri("canvas://")).toBe(false);
-    expect(workspaceModulePresentedTabTarget({
+    expect(workspaceModulePresentedTabTarget(presentation({
       renderer_kind: "canvas",
-      view_key: "preview",
       presentation_uri: "canvas://",
-    })).toBeNull();
+    }))).toBeNull();
   });
 
-  it("does not infer Canvas URI from view_key", () => {
-    expect(workspaceModulePresentedTabTarget({
+  it("does not infer Canvas URI from view_key or module_id", () => {
+    expect(workspaceModulePresentedTabTarget(presentation({
+      module_id: "canvas:dashboard-a",
       renderer_kind: "canvas",
       view_key: "preview",
-    })).toBeNull();
+      presentation_uri: "",
+    }))).toBeNull();
   });
 
-  it("does not open Canvas tabs from legacy uri fallback", () => {
-    expect(workspaceModulePresentedTabTarget({
+  it("does not parse legacy uri fallback as presentation_uri", () => {
+    expect(workspaceModulePresentationFromPlatformEventData({
+      module_id: "canvas:dashboard-a",
       renderer_kind: "canvas",
       view_key: "preview",
       uri: "canvas://dashboard-a",
+      title: "Dashboard",
     })).toBeNull();
   });
 
+  it("parses stream payload with the generated presentation DTO shape", () => {
+    expect(workspaceModulePresentationFromPlatformEventData({
+      module_id: "canvas:dashboard-a",
+      renderer_kind: "canvas",
+      view_key: "preview",
+      presentation_uri: "canvas://dashboard-a",
+      title: "Dashboard",
+      payload: { source: "tool" },
+      diagnostics: null,
+    })).toEqual({
+      module_id: "canvas:dashboard-a",
+      renderer_kind: "canvas",
+      view_key: "preview",
+      presentation_uri: "canvas://dashboard-a",
+      title: "Dashboard",
+      payload: { source: "tool" },
+      diagnostics: null,
+    });
+  });
+
   it("opens non-Canvas module views by view_key", () => {
-    expect(workspaceModulePresentedTabTarget({
+    expect(workspaceModulePresentedTabTarget(presentation({
       renderer_kind: "webview",
       view_key: "inspector",
       presentation_uri: "ext-demo://panel",
-    })).toEqual({
+    }))).toEqual({
       typeId: "inspector",
       uri: "ext-demo://panel",
       refreshRuntime: false,

@@ -716,7 +716,7 @@ impl CompanionGateControlService {
                 .map(|anchor| anchor.runtime_session_id),
             RuntimeDeliverySelectionPolicy::LatestAttached => self
                 .anchor_repo
-                .latest_for_agent(agent_id)
+                .latest_updated_anchor_for_agent(agent_id)
                 .await?
                 .map(|anchor| anchor.runtime_session_id),
         };
@@ -1045,7 +1045,7 @@ mod tests {
                 .collect())
         }
 
-        async fn latest_for_agent(
+        async fn latest_updated_anchor_for_agent(
             &self,
             agent_id: Uuid,
         ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {

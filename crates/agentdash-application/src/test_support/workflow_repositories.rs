@@ -171,7 +171,7 @@ impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAn
             .collect())
     }
 
-    async fn latest_for_agent(
+    async fn latest_updated_anchor_for_agent(
         &self,
         agent_id: Uuid,
     ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
@@ -181,7 +181,7 @@ impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAn
             .await
             .iter()
             .filter(|anchor| anchor.agent_id == agent_id)
-            .max_by_key(|anchor| anchor.created_at)
+            .max_by_key(|anchor| anchor.updated_at)
             .cloned())
     }
 }

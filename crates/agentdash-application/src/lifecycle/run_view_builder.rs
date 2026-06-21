@@ -481,7 +481,7 @@ async fn resolve_agent_delivery_runtime_session_id(
 ) -> Result<Option<String>, DomainError> {
     Ok(repos
         .execution_anchor_repo
-        .latest_for_agent(agent.id)
+        .latest_updated_anchor_for_agent(agent.id)
         .await?
         .map(|anchor| anchor.runtime_session_id))
 }

@@ -20,10 +20,12 @@ use agentdash_contracts::backend::{
     RuntimeHealthStatus,
 };
 use agentdash_contracts::canvas::{
-    CanvasImportMapDto, CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto,
-    CanvasRuntimeFileDto, CanvasRuntimeSnapshotDto, RuntimeActionDescriptorDto,
-    RuntimeActionKindDto, RuntimeContextDto, RuntimeInvocationOutputDto,
-    RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto, RuntimeTraceDto,
+    CanvasDataBindingDto, CanvasFileDto, CanvasImportMapDto, CanvasResponse,
+    CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto, CanvasRuntimeFileDto,
+    CanvasRuntimeSnapshotDto, CanvasSandboxConfigDto, CreateCanvasRequest, DeleteCanvasResponse,
+    RuntimeActionDescriptorDto, RuntimeActionKindDto, RuntimeContextDto,
+    RuntimeInvocationOutputDto, RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto,
+    RuntimeTraceDto, UpdateCanvasRequest,
 };
 use agentdash_contracts::common_response::{
     DeletedFlagResponse, DeletedIdResponse, PendingExecutionResponse, RevokedIdResponse,
@@ -677,7 +679,14 @@ fn main() {
         &mut upstream,
         check,
         |dir| {
+            export_all::<CanvasFileDto>(dir);
             export_all::<CanvasImportMapDto>(dir);
+            export_all::<CanvasSandboxConfigDto>(dir);
+            export_all::<CanvasDataBindingDto>(dir);
+            export_all::<CanvasResponse>(dir);
+            export_all::<CreateCanvasRequest>(dir);
+            export_all::<UpdateCanvasRequest>(dir);
+            export_all::<DeleteCanvasResponse>(dir);
             export_all::<CanvasRuntimeFileDto>(dir);
             export_all::<CanvasRuntimeBindingDto>(dir);
             export_all::<RuntimeActionKindDto>(dir);

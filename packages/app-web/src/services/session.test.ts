@@ -35,5 +35,19 @@ describe("session service", () => {
       turn_id: "turn-1",
       message: "取消中",
     });
+    expect(mocks.apiGetMock).toHaveBeenCalledWith("/sessions/session-1/state");
+  });
+
+  it("rejects unknown route-local execution status", async () => {
+    mocks.apiGetMock.mockResolvedValue({
+      session_id: "session-1",
+      status: "ready",
+      turn_id: null,
+      message: null,
+    });
+
+    await expect(fetchSessionExecutionState("session-1")).rejects.toThrow(
+      "未知的会话执行状态: ready",
+    );
   });
 });

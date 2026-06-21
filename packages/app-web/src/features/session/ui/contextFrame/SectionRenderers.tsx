@@ -10,7 +10,7 @@
  */
 
 import { useState } from "react";
-import { BADGE } from "../EventCards";
+import { CB } from "../bodies/cardBodyTokens";
 import type {
   AutoResumeSection,
   CapabilityKeyDeltaSection,
@@ -43,24 +43,24 @@ import { skillDisplayLabel, skillIdentityKey } from "../../../../types/context";
 
 // ─── section header + body 组合 ──────────────────────────────────────────────
 
-/** 渲染单个 section：顶部一行 token badge + 标题 + 计数；下方直出 body，不再独立折叠 */
+/** 渲染单个 section：标题行 + body 平铺，不加外框 */
 export function SectionBlock({ section }: { section: ContextFrameSection }) {
   const token = sectionKindToToken(section.kind);
   const title = sectionTitle(section);
   const hint = sectionHint(section);
 
   return (
-    <section className="space-y-2 rounded-[8px] border border-border/70 bg-secondary/15 px-3 py-2.5">
+    <section className={CB.sectionGap}>
       <header className="flex items-center gap-2">
         <TokenBadge token={token} />
-        <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium tracking-tight text-foreground/85">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/70">
           {title}
         </span>
         {hint && (
-          <span className="shrink-0 font-mono text-[10px] tracking-tight text-muted-foreground/50">{hint}</span>
+          <span className={CB.meta}>{hint}</span>
         )}
       </header>
-      <div className="space-y-2">{renderSectionBody(section)}</div>
+      <div className={CB.sectionGap}>{renderSectionBody(section)}</div>
     </section>
   );
 }
@@ -225,7 +225,7 @@ function IdentityBody({ section }: { section: IdentitySection }) {
       {section.summary && (
         <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
       )}
-      <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-background p-2 text-xs leading-relaxed text-foreground/75">
+      <pre className={`max-h-64 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
         {section.effective_prompt || section.base_prompt}
       </pre>
     </div>
@@ -255,12 +255,12 @@ function ContinuationContextBody({ section }: { section: ContinuationContextSect
         <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
       )}
       {section.owner_context && (
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-background p-2 text-xs leading-relaxed text-foreground/75">
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap ${CB.codeBlock}">
           {section.owner_context}
         </pre>
       )}
       {section.transcript_markdown ? (
-        <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-background p-2 text-xs leading-relaxed text-foreground/75">
+        <pre className="max-h-72 overflow-auto whitespace-pre-wrap ${CB.codeBlock}">
           {section.transcript_markdown}
         </pre>
       ) : (
@@ -272,7 +272,7 @@ function ContinuationContextBody({ section }: { section: ContinuationContextSect
 
 function FragmentItem({ fragment }: { fragment: RuntimeContextFragmentEntry }) {
   return (
-    <article className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+    <article className="space-y-1 space-y-1">
       <div className="flex flex-wrap gap-1.5">
         <Chip label={fragment.slot || "slot"} />
         <Chip label={fragment.label || "context"} />
@@ -295,7 +295,7 @@ function CapabilityKeyDeltaBody({ section }: { section: CapabilityKeyDeltaSectio
   return (
     <div className="space-y-2">
       {hasDiff ? (
-        <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+        <div className="space-y-1 space-y-1">
           {added.map((row, index) => (
             <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
           ))}
@@ -328,7 +328,7 @@ function ToolPathDeltaBody({ section }: { section: ToolPathDeltaSection }) {
     return <p className="text-xs text-muted-foreground/60">本次无工具路径变更</p>;
   }
   return (
-    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+    <div className="space-y-1 space-y-1">
       {added.map((row, index) => (
         <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
       ))}
@@ -349,7 +349,7 @@ function McpServerDeltaBody({ section }: { section: McpServerDeltaSection }) {
     return <p className="text-xs text-muted-foreground/60">本次无 MCP 变更</p>;
   }
   return (
-    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+    <div className="space-y-1 space-y-1">
       {added.map((row, index) => (
         <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
       ))}
@@ -374,7 +374,7 @@ function VfsDeltaBody({ section }: { section: VfsDeltaSection }) {
     return <p className="text-xs text-muted-foreground/60">本次无 VFS 变更</p>;
   }
   return (
-    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+    <div className="space-y-1 space-y-1">
       {added.map((row, index) => (
         <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
       ))}
@@ -395,11 +395,11 @@ function VfsDeltaBody({ section }: { section: VfsDeltaSection }) {
 function EffectiveCapabilitiesBlock({ capabilities }: { capabilities: string[] }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-[6px] border border-border/70 bg-background overflow-hidden">
+    <div className="overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-secondary/35"
+        className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40"
       >
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           当前生效能力 ({capabilities.length} 项)
@@ -459,7 +459,7 @@ function ToolSchemaItem({ tool }: { tool: RuntimeToolSchemaEntry }) {
   const [open, setOpen] = useState(false);
   const fieldNames = schemaFieldNames(tool.parameters_schema);
   return (
-    <div className="rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+    <div className="space-y-1">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -493,7 +493,7 @@ function ToolSchemaItem({ tool }: { tool: RuntimeToolSchemaEntry }) {
         </span>
       </button>
       {open && (
-        <pre className="mt-2 max-h-64 overflow-auto rounded-[6px] border border-border/70 bg-secondary/20 p-2 text-[11px] leading-relaxed text-muted-foreground">
+        <pre className="mt-1.5 max-h-64 overflow-auto ${CB.codeBlock}">
           {formatJson(tool.parameters_schema)}
         </pre>
       )}
@@ -523,7 +523,7 @@ function SkillDeltaBody({ section }: { section: SkillDeltaSection }) {
   }
 
   return (
-    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+    <div className="space-y-1 space-y-1">
       {render(section.added_skills, "+", "skill")}
       {render(section.removed_skills, "−", "skill")}
       {render(section.changed_skills, "↻", "skill")}
@@ -543,7 +543,7 @@ function SkillDiffLine({
   const displayLabel = skillDisplayLabel(skill);
   const identity = skillIdentityKey(skill);
   return (
-    <div className="space-y-1 rounded-[6px] border border-border/60 bg-secondary/15 px-2 py-1.5">
+    <div className="space-y-1 space-y-0.5">
       <p className="flex items-start gap-2 text-xs leading-5">
         <span className="shrink-0 w-4 select-none text-muted-foreground/70">{symbol}</span>
         <span className="shrink-0 text-muted-foreground/80">{label}</span>
@@ -573,7 +573,7 @@ function CompanionAgentRosterDeltaBody({
   return (
     <div className="space-y-2">
       {hasDelta ? (
-        <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+        <div className="space-y-1 space-y-1">
           {section.added_agents.map((agent, index) => (
             <CompanionAgentDiffLine
               key={`add-${agent.agent_key}-${index}`}
@@ -624,7 +624,7 @@ function CompanionAgentDiffLine({
 }) {
   const display = agent.display_name || agent.agent_key;
   return (
-    <div className="space-y-1 rounded-[6px] border border-border/60 bg-secondary/15 px-2 py-1.5">
+    <div className="space-y-1 space-y-0.5">
       <p className="flex items-start gap-2 text-xs leading-5">
         <span className="shrink-0 w-4 select-none text-muted-foreground/70">{symbol}</span>
         <span className="shrink-0 text-muted-foreground/80">{label}</span>
@@ -645,11 +645,11 @@ function EffectiveCompanionAgentsBlock({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-[6px] border border-border/70 bg-background overflow-hidden">
+    <div className="overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-secondary/35"
+        className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40"
       >
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           当前可用 companion ({agents.length} 项)
@@ -710,7 +710,7 @@ function PendingActionBody({ section }: { section: PendingActionSection }) {
         <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
       )}
       {section.instructions.length > 0 && (
-        <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+        <div className="space-y-1 space-y-1">
           {section.instructions.map((line, index) => (
             <pre
               key={`${section.action_id}-inst-${index}`}
@@ -728,7 +728,7 @@ function PendingActionBody({ section }: { section: PendingActionSection }) {
 
 function InjectionItem({ injection }: { injection: RuntimeHookInjectionEntry }) {
   return (
-    <article className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+    <article className="space-y-1 space-y-1">
       <div className="flex flex-wrap gap-1.5">
         <Chip label={injection.slot || "slot"} />
         <Chip label={injection.source || "unknown"} />
@@ -758,7 +758,7 @@ function AutoResumeBody({ section }: { section: AutoResumeSection }) {
     <div className="space-y-1.5">
       {section.reason && <Chip label={`reason: ${section.reason}`} />}
       {section.prompt && (
-        <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-background p-2 text-xs leading-relaxed text-foreground/75">
+        <pre className="max-h-96 overflow-auto whitespace-pre-wrap ${CB.codeBlock}">
           {section.prompt}
         </pre>
       )}
@@ -799,7 +799,7 @@ function UserPreferencesBody({ section }: { section: UserPreferencesSection }) {
     return <p className="text-xs text-muted-foreground/60">暂无用户偏好</p>;
   }
   return (
-    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+    <div className="space-y-1 space-y-1">
       {section.items.map((item, index) => (
         <p key={`${item}-${index}`} className="text-xs leading-5 text-foreground/75">
           {item}
@@ -818,7 +818,7 @@ function ProjectGuidelinesBody({ section }: { section: ProjectGuidelinesSection 
       {section.entries.map((entry, index) => (
         <article
           key={`${entry.path}-${index}`}
-          className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2"
+          className="space-y-1 space-y-1"
         >
           <div className="flex flex-wrap gap-1.5">
             <Chip label={entry.path} />
@@ -836,7 +836,7 @@ function ProjectGuidelinesBody({ section }: { section: ProjectGuidelinesSection 
 
 function UnknownSectionBody({ section }: { section: UnknownSection }) {
   return (
-    <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-background p-2 text-[11px] leading-relaxed text-muted-foreground">
+    <pre className="max-h-64 overflow-auto whitespace-pre-wrap ${CB.codeBlock}">
       {formatJson(section.raw)}
     </pre>
   );
@@ -845,11 +845,11 @@ function UnknownSectionBody({ section }: { section: UnknownSection }) {
 function CompactedUntilRefBlock({ value }: { value: unknown }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-[6px] border border-border/70 bg-background overflow-hidden">
+    <div className="overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-secondary/35"
+        className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40"
       >
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           compacted_until_ref
@@ -869,9 +869,7 @@ function CompactedUntilRefBlock({ value }: { value: unknown }) {
 
 export function TokenBadge({ token }: { token: ContextTokenInfo }) {
   return (
-    <span
-      className={`inline-flex shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${BADGE[token.variant]}`}
-    >
+    <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60">
       {token.token}
     </span>
   );

@@ -109,18 +109,23 @@ function Overview({ view }: { view: TaskView }) {
   const total = view.total ?? 0;
   const done = view.done ?? view.counts?.done ?? 0;
   const active = view.current_items ?? [];
+  const countEntries = view.counts ? Object.entries(view.counts).filter(([, c]) => c > 0) : [];
+
+  if (total === 0 && active.length === 0) {
+    return <p className={CB.meta}>暂无任务</p>;
+  }
+
   return (
     <div className={CB.sectionGap}>
       <div className={`flex items-center gap-2 ${CB.meta}`}>
-        <span className="font-medium text-foreground/80">
-          进度 {done}/{total}
+        <span className="text-foreground/70">
+          {done}/{total}
         </span>
-        {view.counts &&
-          Object.entries(view.counts).map(([status, count]) => (
-            <span key={status} className={CB.kindBadge}>
-              {status} {count}
-            </span>
-          ))}
+        {countEntries.map(([status, count]) => (
+          <span key={status} className={CB.kindBadge}>
+            {status} {count}
+          </span>
+        ))}
       </div>
       {active.length > 0 && <TaskRows tasks={active} />}
     </div>

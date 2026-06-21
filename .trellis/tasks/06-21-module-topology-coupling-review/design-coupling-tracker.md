@@ -18,7 +18,7 @@
 | D04 | P0 | Lifecycle start vs drain | public `start_lifecycle_run` 是否只创建 Ready run，drain 是否成为显式 command | 拆成 create Ready run 与 explicit drain/continue command | open |
 | D05 | P0 | PermissionGrant runtime fact | grant status、RuntimeCapabilityTransition、AgentFrame capability 谁是运行态授权事实源 | AgentFrame/capability transition 应成为 runtime tool surface 的可恢复事实；grant status 负责审批/审计 | open |
 | D06 | P0 | Canvas exposure fact | Canvas live VFS、AgentFrame visible refs、hook capability refresh 的恢复顺序 | 先确定 frame refs 或 capability transition 为可恢复事实源，再刷新 live VFS | open |
-| D07 | P0 | AgentFrame exposure model | visible canvas/module refs 是 frame revision、独立 exposure 表，还是 capability dimension | 需要决定后再创建实现任务；不要继续直接 UPDATE 当前 frame 扩张语义 | open |
+| D07 | P0 | AgentFrame exposure model | visible canvas/module refs 是 frame revision、独立 exposure 表，还是 capability dimension | 需要决定后再创建实现任务；runtime exposure 写入应绑定到可审计事实源 | open |
 | D08 | P0 | Extension backend target | panel API、workspace module tool、RuntimeGateway 的 backend target resolver 如何统一 | 后端 resolver 统一 target；frontend 只表达 intent/context | open |
 | D09 | P0 | Relay command target taxonomy | prompt/cancel/MCP/extension/terminal/VFS 分别绑定 execution placement、session route、mount utility 还是 setup | 先写命令分类 contract，再分批收敛调用点 | open |
 | D10 | P1 | Command policy vs ConversationSnapshot | command availability 是否应从 UI snapshot 中抽出 core resolver | 抽出 command availability core，policy 与 snapshot 共用 | open |
@@ -30,6 +30,28 @@
 | D16 | P1 | Backend disconnect terminal projection | backend disconnect 如何转成用户可见 lost/terminal projection | 需要先验证当前 stream/feed 行为，再定 projection owner | open |
 | D17 | P1 | MCP backend fallback | session context 下 MCP 是否允许 VFS/catalog/any backend fallback | 推荐 session context 强制 session route/backend execution；setup/probe 才允许 fallback | open |
 | D18 | P1 | Terminal vs execution lease | terminal 是 mount utility 还是 session execution surface | 先定产品语义，再决定是否引入 lease/active-session 投影 | open |
+
+## Discussion Clusters
+
+| Cluster | Items | Owner Modules | Discussion Focus | Task Creation Direction |
+| --- | --- | --- | --- | --- |
+| Runtime Coordinate | D02, D03, D12, D15 | AgentRun workspace, RuntimeSessionExecutionAnchor, SubjectExecutionView, VFS surface | 统一 run / agent / frame / node / attempt 到 delivery runtime 的选择策略，并让 resource surface 坐标与 anchor selection 共享同一套语义。 | 先创建 design task 定义 selection policy，再拆 workspace、cancel、mailbox、SubjectExecutionView 消费面实现任务。 |
+| Control Surface | D04, D08, D09, D10, D18 | Lifecycle command, ConversationSnapshot, Extension RuntimeGateway, Relay, Terminal | 区分 execution-placement-bound、session-route-bound、mount-utility-bound 与 setup-bound command，明确 UI snapshot 与 command policy 的共享 resolver。 | 先产出 command taxonomy / lifecycle command contract，再分批收敛 lifecycle start-drain、extension target、terminal 语义。 |
+| Capability / Exposure Fact | D05, D06, D07, D13, D14 | PermissionGrant, AgentFrame, Canvas expose, WorkspaceModule visibility, RuntimeGateway admission | 确定 grant status、frame revision、capability transition、workspace module refs 中哪一个承载运行态可见能力事实，并定义恢复顺序。 | 先做事实源设计任务，再拆 PermissionGrant effect、Canvas expose recovery、WorkspaceModule visibility resolver、channel admission parity。 |
+| Contract Boundary | D01 | application, contracts, API adapter, frontend generated contracts | 确定 application read model 与 browser-facing wire DTO 的 owner，梳理 `agentdash-contracts` 内部 conversion 的允许边界。 | 先做 import-level audit task，输出 application read model / API adapter / contract DTO owner map，再按 owner 迁移高风险入口。 |
+| Runtime Failure / Placement | D16, D17 | Relay, BackendRegistry, MCP relay, local backend, session route | 将 backend disconnect、MCP backend fallback、local backend identity 投影到用户可见状态和执行目标选择。 | 先做 characterization task 验证当前 stream/feed/route 行为，再创建 projection 或 fallback 收敛任务。 |
+
+## Direct Refactor Candidates
+
+这些候选项可以先作为较小 Trellis task 推进，原因是它们有明确行为边界或验证入口，不依赖完整簇级设计定稿。
+
+| Candidate | Related Items | Module Scope | Acceptance Direction |
+| --- | --- | --- | --- |
+| Hook mailbox NotFound fallback 收口 | D02, D03 | `session/mailbox_delegate.rs`, AgentRun mailbox, Agent loop turn boundary | anchored AgentRun mailbox missing 进入 diagnostic/error；unbound trace 继续通过 direct path 表达。 |
+| Task execution surface 收敛 | D12 | SubjectExecutionView, TaskExecutionView, `task_read` tool | public execution projection 从 SubjectExecutionView 读取；narrow TaskExecutionView service 或 execution mode 有明确私有/移除结论。 |
+| Backend disconnect terminal projection 验证 | D16 | Relay registry, lease repo, session stream, frontend feed | 用测试或 trace 验证 disconnect 后 running prompt 是否产生 lost/terminal projection，并记录 projection owner。 |
+| Extension channel admission parity | D13 | RuntimeGateway, extension channel, local host bridge | channel method permission known-key 预检与 action admission 对齐，local host 继续执行运行时二次裁决。 |
+| Standalone local backend id 来源收口 | Runtime Failure / Placement | `agentdash-local` CLI, desktop ensure, dev runtime | standalone identity 来源被明确为 claim/ensure 或 debug/internal path，runtime-summary 与配置文案一致。 |
 
 ## Decision Notes Template
 
@@ -50,11 +72,13 @@
 
 建议后续设计讨论按以下顺序拆：
 
-1. Runtime coordinate design：D02、D03、D15。
-2. Control surface design：D04、D08、D09、D18。
-3. Capability surface design：D05、D06、D07、D13、D14。
-4. Contract boundary design：D01。
-5. Runtime failure projection design：D16、D17。
+1. Runtime Coordinate：D02、D03、D12、D15。
+2. Control Surface：D04、D08、D09、D10、D18。
+3. Capability / Exposure Fact：D05、D06、D07、D13、D14。
+4. Contract Boundary：D01。
+5. Runtime Failure / Placement：D16、D17。
+
+小重构候选可以穿插执行，执行前应声明它依赖的簇级 owner 决策边界。
 
 ## Source Map
 

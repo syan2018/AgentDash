@@ -51,34 +51,34 @@ export function ContextFrameStream({
   const summary = summarizeFrames(frames);
 
   return (
-    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
+    <div>
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors cursor-pointer hover:bg-secondary/35"
+        className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors cursor-pointer hover:bg-secondary/30"
       >
         <span
-          className={`inline-flex shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${BADGE.neutral}`}
+          className={`inline-flex shrink-0 rounded-[4px] border px-1 py-px text-[9px] font-semibold uppercase tracking-[0.08em] ${BADGE.neutral}`}
         >
           CTX
         </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium tracking-wide text-foreground/85">
+        <span className="min-w-0 flex-1 truncate text-xs text-foreground/60">
           上下文已更新 {describeFrameSet(frames)}
         </span>
-        <span className="shrink-0 font-mono text-[10px] tracking-tight text-muted-foreground/50">{summary}</span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">
+        <span className="shrink-0 text-[10px] text-muted-foreground/40">{summary}</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground/30">
           {expanded ? "▲" : "▼"}
         </span>
       </button>
 
       {expanded && (
-        <div className="border-t border-border">
+        <div className="ml-6 mt-1 rounded-[8px] border border-border/50 bg-secondary/15 overflow-hidden">
           <FrameTabBar
             frames={frames}
             activeId={activeFrame.id}
             onSelect={setActiveId}
           />
-          <div className="border-t border-border px-3 py-2.5">
+          <div className="border-t border-border/40 px-3 py-2.5">
             <ContextFrameBody frame={activeFrame} />
           </div>
         </div>

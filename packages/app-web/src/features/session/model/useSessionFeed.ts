@@ -28,6 +28,7 @@ export interface UseSessionFeedOptions {
 
 export interface UseSessionFeedResult {
   displayItems: SessionDisplayItem[];
+  turnSegments: TurnSegment[];
   rawEntries: SessionDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
   isConnected: boolean;
@@ -162,11 +163,6 @@ function pushToolGroup(
   group: AggregatedEntryGroup | null,
 ): null {
   if (!group) return null;
-  if (group.entries.length === 1) {
-    const only = group.entries[0];
-    if (only) result.push(only);
-    return null;
-  }
   result.push(group);
   return null;
 }
@@ -285,6 +281,95 @@ function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] 
 
 export { aggregateEntries };
 
+// ── Turn 分段 ──
+
+export type TurnStatus = "active" | "completed" | "failed" | "interrupted";
+
+export interface TurnSegment {
+  turnId: string | null;
+  status: TurnStatus;
+  durationMs?: number;
+  items: SessionDisplayItem[];
+  /** 最后一条 agent message（轮次折叠时只显示这个） */
+  finalOutput: SessionDisplayItem | null;
+}
+
+function extractTurnId(item: SessionDisplayItem): string | undefined {
+  if ("type" in item && (item as AggregatedEntryGroup).type === "aggregated_group") {
+    const group = item as AggregatedEntryGroup;
+    return group.entries[0]?.turnId;
+  }
+  if ("turnId" in item) {
+    return (item as SessionDisplayEntry).turnId;
+  }
+  return undefined;
+}
+
+function isAgentMessageItem(item: SessionDisplayItem): boolean {
+  if (!("event" in item)) return false;
+  return (item as SessionDisplayEntry).event.type === "agent_message_delta";
+}
+
+export function segmentByTurn(
+  displayItems: SessionDisplayItem[],
+  rawEvents: SessionEventEnvelope[],
+): TurnSegment[] {
+  const turnMeta = new Map<string, { status: TurnStatus; durationMs?: number }>();
+  for (const event of rawEvents) {
+    const bbEvent = event.notification.event;
+    if (bbEvent.type === "turn_completed") {
+      const turn = bbEvent.payload.turn;
+      const status: TurnStatus =
+        turn.status === "completed" ? "completed"
+        : turn.status === "failed" ? "failed"
+        : turn.status === "interrupted" ? "interrupted"
+        : "active";
+      turnMeta.set(turn.id, {
+        status,
+        durationMs: turn.durationMs ?? undefined,
+      });
+    }
+  }
+
+  if (displayItems.length === 0) return [];
+
+  const segments: TurnSegment[] = [];
+  let currentTurnId: string | null = null;
+  let currentItems: SessionDisplayItem[] = [];
+
+  const flush = () => {
+    if (currentItems.length === 0) return;
+    const meta = currentTurnId ? turnMeta.get(currentTurnId) : undefined;
+    let finalOutput: SessionDisplayItem | null = null;
+    for (let i = currentItems.length - 1; i >= 0; i -= 1) {
+      if (isAgentMessageItem(currentItems[i]!)) {
+        finalOutput = currentItems[i]!;
+        break;
+      }
+    }
+    segments.push({
+      turnId: currentTurnId,
+      status: meta?.status ?? "active",
+      durationMs: meta?.durationMs,
+      items: currentItems,
+      finalOutput,
+    });
+    currentItems = [];
+  };
+
+  for (const item of displayItems) {
+    const turnId = extractTurnId(item) ?? null;
+    if (turnId !== currentTurnId) {
+      flush();
+      currentTurnId = turnId;
+    }
+    currentItems.push(item);
+  }
+  flush();
+
+  return segments;
+}
+
 export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedResult {
   const { sessionId, endpoint, enableAggregation = true, enabled } = options;
 
@@ -311,6 +396,11 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
       : (entries as SessionDisplayItem[]);
   }, [entries, enableAggregation]);
 
+  const turnSegments = useMemo(
+    () => segmentByTurn(displayItems, rawEvents),
+    [displayItems, rawEvents],
+  );
+
   const streamingEntryId = useMemo(() => {
     if (!isReceiving || entries.length === 0) return null;
     const last = entries[entries.length - 1]!;
@@ -320,6 +410,7 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
 
   return {
     displayItems,
+    turnSegments,
     rawEntries: entries,
     rawEvents,
     isConnected,

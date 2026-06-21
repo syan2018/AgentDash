@@ -44,11 +44,13 @@ export interface SessionEntryProps {
   item: SessionDisplayItem;
   isStreaming?: boolean;
   sessionId?: string | null;
+  /** 该条目后面是否紧跟 agent message（用于 tool group 自动折叠） */
+  followedByMessage?: boolean;
 }
 
-export const SessionEntry = memo(function SessionEntry({ item, isStreaming, sessionId }: SessionEntryProps) {
+export const SessionEntry = memo(function SessionEntry({ item, isStreaming, sessionId, followedByMessage }: SessionEntryProps) {
   if (isAggregatedGroup(item)) {
-    return <AggregatedToolGroupEntry group={item} sessionId={sessionId} />;
+    return <AggregatedToolGroupEntry group={item} sessionId={sessionId} followedByMessage={followedByMessage} />;
   }
 
   if (isAggregatedThinkingGroup(item)) {
@@ -126,22 +128,22 @@ export function SingleEntry({
 
     case "approval_request": {
       return (
-        <div className="rounded-[12px] border border-warning/30 bg-warning/5 px-3 py-2.5 text-sm text-warning">
-          <span className="inline-flex rounded-[6px] border border-warning/25 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em]">
+        <div className="flex items-center gap-2 px-2 py-1 text-xs text-warning">
+          <span className="inline-flex rounded-[4px] border border-warning/25 bg-warning/10 px-1 py-px text-[9px] font-semibold tracking-[0.08em]">
             审批
           </span>
-          <span className="ml-2">等待审批</span>
+          <span>等待审批</span>
         </div>
       );
     }
 
     case "error": {
       return (
-        <div className="rounded-[12px] border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm">
-          <span className="inline-flex rounded-[6px] border border-destructive/25 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-destructive">
+        <div className="flex items-center gap-2 px-2 py-1 text-xs">
+          <span className="inline-flex rounded-[4px] border border-destructive/25 bg-destructive/10 px-1 py-px text-[9px] font-semibold tracking-[0.08em] text-destructive">
             错误
           </span>
-          <span className="ml-2 text-destructive">{event.payload.error.message}</span>
+          <span className="text-destructive">{event.payload.error.message}</span>
         </div>
       );
     }
@@ -193,38 +195,42 @@ function AggregatedContextFrameGroupEntry({
 function AggregatedToolGroupEntry({
   group,
   sessionId,
+  followedByMessage = false,
 }: {
   group: AggregatedEntryGroup;
   sessionId?: string | null;
+  /** 后续有 agent message 时自动折叠 */
+  followedByMessage?: boolean;
 }) {
   const { entries } = group;
   const hasPendingApproval = entries.some((e) => e.isPendingApproval);
-  const [expanded, setExpanded] = useState(hasPendingApproval);
+  // 默认展开；有后续 agent 消息后才折叠
+  const [expanded, setExpanded] = useState(!followedByMessage || hasPendingApproval);
+  const [prevFollowed, setPrevFollowed] = useState(followedByMessage);
   const [prevPending, setPrevPending] = useState(hasPendingApproval);
+
   if (hasPendingApproval !== prevPending) {
     setPrevPending(hasPendingApproval);
     if (hasPendingApproval) setExpanded(true);
   }
+  if (followedByMessage !== prevFollowed) {
+    setPrevFollowed(followedByMessage);
+    if (followedByMessage && !hasPendingApproval) setExpanded(false);
+  }
   const summary = buildKindSummary(entries);
 
   return (
-    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
+    <div>
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-secondary/35"
+        className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-xs transition-colors hover:bg-secondary/40"
       >
-        <span className="inline-flex min-w-10 shrink-0 items-center justify-center rounded-[8px] border border-border bg-secondary px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          TOOLS
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">工具调用</p>
-          <p className="text-xs text-muted-foreground">{summary}</p>
-        </div>
-        <span className="text-xs text-muted-foreground/70">{expanded ? "收起" : "展开"}</span>
+        <span className="text-muted-foreground/50">{expanded ? "▼" : "▶"}</span>
+        <span className="text-muted-foreground">{summary}</span>
       </button>
       {expanded && (
-        <div className="space-y-1.5 border-t border-border px-3 py-2.5">
+        <div className="ml-1 space-y-0.5 pl-2 border-l border-border/40">
           {entries.map((entry) => (
             <SingleEntry key={entry.id} entry={entry} sessionId={sessionId} />
           ))}
@@ -243,26 +249,20 @@ function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGrou
     .join("");
 
   return (
-    <div className="overflow-hidden rounded-[12px] border border-dashed border-border bg-secondary/45">
+    <div className="group">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition-colors hover:bg-secondary/60"
+        className="flex w-full items-center gap-2 py-1 text-left text-xs text-muted-foreground/70 transition-colors hover:text-muted-foreground"
       >
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="inline-flex min-w-10 shrink-0 items-center justify-center rounded-[8px] border border-border bg-background px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            THINK
-          </span>
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-foreground">思考摘录</p>
-            <p className="text-xs text-muted-foreground">{entries.length} 条思考已折叠聚合</p>
-          </div>
-        </div>
-        <span className="text-xs text-muted-foreground/70">{expanded ? "收起" : "展开"}</span>
+        <span className="inline-block h-px flex-1 max-w-4 bg-border/60" />
+        <span className="shrink-0 font-medium">思考 · {entries.length} 条</span>
+        <span className="inline-block h-px flex-1 bg-border/60" />
+        <span className="shrink-0 text-[10px]">{expanded ? "收起" : "展开"}</span>
       </button>
       {expanded && (
-        <div className="border-t border-border/80 px-3 py-2.5">
-          <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-muted-foreground/85">
+        <div className="pl-1 pt-1">
+          <pre className="whitespace-pre-wrap text-xs leading-6 text-muted-foreground/75">
             {combinedContent}
           </pre>
         </div>

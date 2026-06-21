@@ -16,8 +16,9 @@ import {
   RichInput,
   type RichInputRef,
 } from "../../file-reference";
-import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
-import type { SessionDisplayItem, TokenUsageInfo } from "../model/types";
+import { isAggregatedGroup, isAggregatedThinkingGroup, isDisplayEntry } from "../model/types";
+import type { SessionDisplayItem, SessionDisplayEntry, TokenUsageInfo } from "../model/types";
+import type { TurnSegment } from "../model/useSessionFeed";
 import { isSessionComposerSubmitDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
 import type { SessionChatCommand, SessionChatCommandState } from "./SessionChatViewTypes";
@@ -257,6 +258,7 @@ export function SessionChatStatusBar({
 export function SessionChatStream({
   containerRef,
   displayItems,
+  turnSegments,
   hasSession,
   isLoading,
   sessionId,
@@ -266,6 +268,7 @@ export function SessionChatStream({
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
   displayItems: SessionDisplayItem[];
+  turnSegments?: TurnSegment[];
   hasSession: boolean;
   isLoading: boolean;
   sessionId: string | null;
@@ -283,20 +286,33 @@ export function SessionChatStream({
           </div>
         </div>
       ) : (hasSession && displayItems.length > 0) || streamPrefixContent ? (
-        <div className="mx-auto w-full max-w-4xl space-y-3 px-5 py-6">
+        <div className="mx-auto w-full max-w-4xl space-y-1.5 px-5 py-6">
           {streamPrefixContent}
-          {displayItems.map((item) => {
-            const key = getItemKey(item);
-            return (
-              <div key={key}>
-                <SessionEntry
-                  item={item}
-                  isStreaming={key === streamingEntryId}
-                  sessionId={sessionId}
-                />
-              </div>
-            );
-          })}
+          {turnSegments && turnSegments.length > 0 ? (
+            turnSegments.map((segment, idx) => (
+              <TurnSection
+                key={segment.turnId ?? `gap-${idx}`}
+                segment={segment}
+                sessionId={sessionId}
+                streamingEntryId={streamingEntryId}
+              />
+            ))
+          ) : (
+            displayItems.map((item, idx) => {
+              const key = getItemKey(item);
+              const followed = isToolGroup(item) && hasFollowingAgentMessage(displayItems, idx);
+              return (
+                <div key={key}>
+                  <SessionEntry
+                    item={item}
+                    isStreaming={key === streamingEntryId}
+                    sessionId={sessionId}
+                    followedByMessage={followed}
+                  />
+                </div>
+              );
+            })
+          )}
         </div>
       ) : (
         <div className="flex h-full items-center justify-center">
@@ -309,6 +325,112 @@ export function SessionChatStream({
             </p>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/** 判断 displayItem 是否是 agent 文本消息 */
+function isAgentMessage(item: SessionDisplayItem): boolean {
+  if (!isDisplayEntry(item)) return false;
+  return (item as SessionDisplayEntry).event.type === "agent_message_delta";
+}
+
+/** 判断当前 item 是否是 aggregated tool group */
+function isToolGroup(item: SessionDisplayItem): boolean {
+  return isAggregatedGroup(item);
+}
+
+/** 列表中某 tool group 后面是否紧跟 agent message */
+function hasFollowingAgentMessage(items: SessionDisplayItem[], idx: number): boolean {
+  for (let i = idx + 1; i < items.length; i++) {
+    const next = items[i]!;
+    if (isAgentMessage(next)) return true;
+    if (isToolGroup(next)) continue;
+    if (isAggregatedThinkingGroup(next)) continue;
+    break;
+  }
+  return false;
+}
+
+function formatTurnDuration(ms: number): string {
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}m ${s}s`;
+}
+
+function TurnSection({
+  segment,
+  sessionId,
+  streamingEntryId,
+}: {
+  segment: TurnSegment;
+  sessionId: string | null;
+  streamingEntryId: string | null;
+}) {
+  const isCompleted = segment.status === "completed";
+  const [collapsed, setCollapsed] = useState(false);
+  const [prevStatus, setPrevStatus] = useState(segment.status);
+
+  if (segment.status !== prevStatus) {
+    setPrevStatus(segment.status);
+    if (segment.status === "completed" && prevStatus === "active") {
+      setCollapsed(true);
+    }
+  }
+
+  if (!isCompleted || !collapsed) {
+    return (
+      <div className="space-y-1.5">
+        {isCompleted && (
+          <button
+            type="button"
+            onClick={() => setCollapsed(true)}
+            className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/40 transition-colors hover:text-muted-foreground/60 hover:bg-secondary/30"
+          >
+            <span className="h-px flex-1 max-w-6 bg-border/40" />
+            <span>已处理{segment.durationMs ? ` ${formatTurnDuration(segment.durationMs)}` : ""}</span>
+            <span className="h-px flex-1 bg-border/40" />
+          </button>
+        )}
+        {segment.items.map((item, idx) => {
+          const key = getItemKey(item);
+          const followed = isToolGroup(item) && hasFollowingAgentMessage(segment.items, idx);
+          return (
+            <div key={key}>
+              <SessionEntry
+                item={item}
+                isStreaming={key === streamingEntryId}
+                sessionId={sessionId}
+                followedByMessage={followed}
+              />
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // 折叠态：只显示 summary bar + 最终输出
+  return (
+    <div className="space-y-1.5">
+      <button
+        type="button"
+        onClick={() => setCollapsed(false)}
+        className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/50 transition-colors hover:text-muted-foreground/70 hover:bg-secondary/30"
+      >
+        <span className="text-muted-foreground/40">▶</span>
+        <span>已处理{segment.durationMs ? ` ${formatTurnDuration(segment.durationMs)}` : ""}</span>
+        <span className="h-px flex-1 bg-border/40" />
+      </button>
+      {segment.finalOutput && (
+        <SessionEntry
+          item={segment.finalOutput}
+          isStreaming={false}
+          sessionId={sessionId}
+        />
       )}
     </div>
   );

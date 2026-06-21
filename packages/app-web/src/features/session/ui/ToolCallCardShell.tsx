@@ -8,7 +8,7 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import type { KindMeta } from "../model/threadItemKind";
 import { approveToolCall, rejectToolCall } from "../../../services/executor";
-import { ToolCardHeader, type ToolCardHeaderModel } from "./ToolCardHeader";
+import type { ToolCardHeaderModel } from "./ToolCardHeader";
 
 export type DisplayStatus =
   | "inProgress"
@@ -42,18 +42,21 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
   defaultExpanded,
   children,
 }: ToolCallCardShellProps) {
+  const needsAttention = Boolean(isPendingApproval) || status === "failed" || status === "declined";
+  const isRunning = status === "inProgress" || status === "pending";
+  const useStripMode = !needsAttention && !isRunning;
+
   const shouldDefaultExpand =
-    defaultExpanded ?? (Boolean(isPendingApproval) || status === "failed");
+    defaultExpanded ?? needsAttention;
   const [expanded, setExpanded] = useState(shouldDefaultExpand);
   const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [renderStatus, setRenderStatus] = useState<DisplayStatus>(status);
   const inProgressSinceRef = useRef<number | null>(null);
 
-  // 最小 inProgress 可见时间，避免闪烁
   useEffect(() => {
-    const isRunning = status === "inProgress" || status === "pending";
-    if (isRunning) {
+    const running = status === "inProgress" || status === "pending";
+    if (running) {
       inProgressSinceRef.current = Date.now();
       setRenderStatus(status);
       return;
@@ -113,41 +116,76 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
       ? formatDuration(durationMs)
       : elapsed;
 
-  return (
-    <div
-      className={`rounded-[12px] border border-border bg-background transition-colors ${
-        renderStatus === "failed" || renderStatus === "declined" ? "opacity-90" : ""
-      }`}
-    >
-      {/* Header */}
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-secondary/35"
-      >
-        <ToolCardHeader kind={kind} header={header} />
-
-        <div className="mt-0.5 flex shrink-0 items-center gap-1.5">
-          <span className={`inline-block h-1.5 w-1.5 rounded-full ${statusConfig.dot}`} />
-          <span className={`text-xs ${statusConfig.color}`}>{statusConfig.label}</span>
+  // ── Strip 模式：已完成工具的单行轻量展示 ──
+  if (useStripMode) {
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40"
+        >
+          <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${statusConfig.dot}`} />
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60">
+            {kind.badge}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs text-foreground/70">
+            {header.primary}
+          </span>
           {displayDuration && (
-            <span className="ml-1 tabular-nums text-[10px] text-muted-foreground/50">
+            <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground/40">
               {displayDuration}
             </span>
           )}
-        </div>
+        </button>
+        {expanded && (
+          <div className="ml-5 mt-1 space-y-2 rounded-[8px] border border-border/60 bg-secondary/20 px-3 py-2.5">
+            {header.secondary != null && header.secondary !== "" && (
+              <p className="text-xs text-muted-foreground/60">{header.secondary}</p>
+            )}
+            {children}
+          </div>
+        )}
+      </div>
+    );
+  }
 
-        <span className="mt-1 shrink-0 text-[10px] text-muted-foreground/40">
-          {expanded ? "▲" : "▼"}
+  // ── Card 模式：执行中 / 失败 / 审批 ──
+  // 执行中用 strip + 动画指示，失败/审批用轻量高亮
+  const cardBorder =
+    renderStatus === "failed" || renderStatus === "declined"
+      ? "border-destructive/30 bg-destructive/5"
+      : isPendingApproval
+        ? "border-warning/30 bg-warning/5"
+        : "border-primary/20 bg-primary/5";
+
+  return (
+    <div className={`rounded-[8px] border ${cardBorder} transition-colors`}>
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-secondary/20"
+      >
+        <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-[8px] ${statusConfig.dot}`} />
+        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60">
+          {kind.badge}
         </span>
+        <span className="min-w-0 flex-1 truncate text-xs text-foreground/80">
+          {header.primary}
+        </span>
+        <span className={`shrink-0 text-[10px] ${statusConfig.color}`}>{statusConfig.label}</span>
+        {displayDuration && (
+          <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground/40">
+            {displayDuration}
+          </span>
+        )}
       </button>
 
-      {/* Expanded body */}
       {expanded && (
-        <div className="space-y-3 border-t border-border px-3 py-3">
+        <div className="space-y-2.5 border-t border-border/40 px-2.5 py-2.5">
           {isPendingApproval && (
-            <div className="flex items-center gap-2 rounded-[8px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
-              <span className="inline-flex rounded-[6px] border border-warning/25 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-warning">
+            <div className="flex items-center gap-2 text-xs text-warning">
+              <span className="inline-flex rounded-[4px] border border-warning/25 bg-warning/10 px-1 py-px text-[9px] font-semibold tracking-[0.08em]">
                 审批
               </span>
               等待用户审批
@@ -155,8 +193,8 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
           )}
 
           {renderStatus === "declined" && (
-            <div className="flex items-center gap-2 rounded-[8px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
-              <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-muted-foreground">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="inline-flex rounded-[4px] border border-border bg-secondary px-1 py-px text-[9px] font-semibold tracking-[0.08em]">
                 拒绝
               </span>
               已拒绝执行
@@ -169,7 +207,7 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
                 type="button"
                 onClick={() => { void handleApprove(); }}
                 disabled={isSubmittingApproval}
-                className="rounded-[8px] border border-success/30 bg-success/10 px-3 py-1.5 text-sm text-success transition-colors hover:bg-success/15 disabled:opacity-50"
+                className="rounded-[6px] border border-success/30 bg-success/10 px-2.5 py-1 text-xs text-success transition-colors hover:bg-success/15 disabled:opacity-50"
               >
                 {isSubmittingApproval ? "处理中…" : "批准"}
               </button>
@@ -177,7 +215,7 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
                 type="button"
                 onClick={() => { void handleReject(); }}
                 disabled={isSubmittingApproval}
-                className="rounded-[8px] border border-warning/30 bg-warning/10 px-3 py-1.5 text-sm text-warning transition-colors hover:bg-warning/15 disabled:opacity-50"
+                className="rounded-[6px] border border-warning/30 bg-warning/10 px-2.5 py-1 text-xs text-warning transition-colors hover:bg-warning/15 disabled:opacity-50"
               >
                 拒绝
               </button>
@@ -185,16 +223,12 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
           )}
 
           {approvalError && (
-            <div className="rounded-[8px] border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+            <div className="rounded-[6px] border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
               {approvalError}
             </div>
           )}
 
           {children}
-
-          <p className="select-none font-mono text-[10px] text-muted-foreground/25">
-            {itemId.slice(0, 8)}
-          </p>
         </div>
       )}
     </div>

@@ -279,6 +279,7 @@ export function SessionChatView({
 
   const {
     displayItems,
+    turnSegments,
     rawEntries,
     rawEvents,
     isConnected,
@@ -668,6 +669,7 @@ export function SessionChatView({
       <SessionChatStream
         containerRef={containerRef}
         displayItems={displayItems}
+        turnSegments={turnSegments}
         hasSession={hasSession}
         isLoading={isLoading}
         sessionId={sessionId}

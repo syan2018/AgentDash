@@ -19,7 +19,12 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "06-21-architecture-review-mechanical-refactors"
+    "06-21-architecture-review-mechanical-refactors",
+    "06-21-runtime-coordinate-convergence",
+    "06-21-control-surface-command-boundary",
+    "06-21-capability-exposure-fact-convergence",
+    "06-21-contract-boundary-ownership-audit",
+    "06-21-runtime-failure-placement-convergence"
   ],
   "parent": null,
   "relatedFiles": [],

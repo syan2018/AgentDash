@@ -41,6 +41,16 @@
 | Contract Boundary | D01 | application, contracts, API adapter, frontend generated contracts | 确定 application read model 与 browser-facing wire DTO 的 owner，梳理 `agentdash-contracts` 内部 conversion 的允许边界。 | 先做 import-level audit task，输出 application read model / API adapter / contract DTO owner map，再按 owner 迁移高风险入口。 |
 | Runtime Failure / Placement | D16, D17 | Relay, BackendRegistry, MCP relay, local backend, session route | 将 backend disconnect、MCP backend fallback、local backend identity 投影到用户可见状态和执行目标选择。 | 先做 characterization task 验证当前 stream/feed/route 行为，再创建 projection 或 fallback 收敛任务。 |
 
+## Follow-up Parent Tasks
+
+| Cluster | Trellis Task | Status |
+| --- | --- | --- |
+| Runtime Coordinate | `.trellis/tasks/06-21-runtime-coordinate-convergence/` | planning |
+| Control Surface | `.trellis/tasks/06-21-control-surface-command-boundary/` | planning |
+| Capability / Exposure Fact | `.trellis/tasks/06-21-capability-exposure-fact-convergence/` | planning |
+| Contract Boundary | `.trellis/tasks/06-21-contract-boundary-ownership-audit/` | planning |
+| Runtime Failure / Placement | `.trellis/tasks/06-21-runtime-failure-placement-convergence/` | planning |
+
 ## Direct Refactor Candidates
 
 这些候选项可以先作为较小 Trellis task 推进，原因是它们有明确行为边界或验证入口，不依赖完整簇级设计定稿。
@@ -79,6 +89,26 @@
 5. Runtime Failure / Placement：D16、D17。
 
 小重构候选可以穿插执行，执行前应声明它依赖的簇级 owner 决策边界。
+
+## Decision Notes
+
+### D02 / D03 Decision Notes
+
+- Decision: AgentRun delivery runtime selection 必须全系统统一；AgentRun 应持有或可唯一解析 current delivery binding。
+- Why: workspace、cancel、mailbox、SubjectExecutionView 和 resource surface 各自查询并解释 latest anchor，会在多 run、多 frame、retry、append orchestration、replacement session 场景中选择不同执行目标。
+- Owner modules: `agentdash-application::agent_run`, `agentdash-application::lifecycle`, RuntimeSessionExecutionAnchor repository, AgentRun workspace, mailbox, subject execution control。
+- Rejected alternatives: 让各消费方继续按自己的局部上下文查询 anchors；让 repository `latest` 承担业务 selection 语义。
+- Follow-up Trellis task: `.trellis/tasks/06-21-runtime-coordinate-convergence/`
+- Acceptance direction: workspace、cancel、mailbox、SubjectExecutionView 通过统一 delivery binding / selection service 消费当前执行目标；repository raw latest API 降级为底层排序查询。
+
+### D05 / D06 / D07 Decision Notes
+
+- Decision: AgentFrame 是 runtime capability / exposure 的唯一锚定事实源。
+- Why: PermissionGrant status 负责审批和审计；live VFS、WorkspaceModule visibility、hook runtime refresh 都是运行态派生面。如果这些面并列承载事实，失败恢复会产生中间态。
+- Owner modules: AgentFrame domain/repository, permission service, canvas expose tools, WorkspaceModule visibility, session capability service, RuntimeGateway admission。
+- Rejected alternatives: PermissionGrant status 直接作为 runtime capability；Canvas expose 先更新 live VFS 再补 frame refs；WorkspaceModule runtime refs 分散在 CapabilityState 与 AgentFrame JSON 中。
+- Follow-up Trellis task: `.trellis/tasks/06-21-capability-exposure-fact-convergence/`
+- Acceptance direction: approve/revoke/expire、Canvas expose、WorkspaceModule visibility 都写入或读取 AgentFrame capability/exposure fact；live VFS 与 hook runtime surface 从该 fact 派生并可恢复。
 
 ## Source Map
 

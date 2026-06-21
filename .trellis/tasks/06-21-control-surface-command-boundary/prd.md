@@ -18,10 +18,11 @@
 
 ## Open Decisions
 
-- 用户点击“开始”时，产品语义是否等价于 create + continue 的组合命令。
-- public API 是否拆为 create Ready run + explicit continue/drain command。
-- Terminal 是 mount utility，还是 session execution surface。
-- route policy 是否必须消费 command availability core，而不是重建完整 UI snapshot。
+- 已决策：`POST /lifecycle-runs` 只创建 Ready run。
+- 已决策：一键开始由显式后端组合 command 表达 create + continue，不隐藏在 create API。
+- 已决策：Terminal 是 mount utility；Terminal completion 通过可恢复 outbox 回调进入 AgentRun steer / turn-boundary。
+- 已决策：session-bound extension action/channel 只能绑定对应 session backend；Project-level 非 session invocation 暂不实现，仅预留设计入口。
+- 待实现设计：route policy 应消费 command availability core，而不是重建完整 UI snapshot。
 
 ## Acceptance Criteria
 
@@ -29,4 +30,3 @@
 - [ ] `work-items/index.md` 覆盖 D04、D08、D09、D10、D18。
 - [ ] 可执行任务明确哪些 command 依赖 Runtime Coordinate selection。
 - [ ] Lifecycle start/drain 的后续实现验收包含 Ready run 可观察性。
-

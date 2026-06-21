@@ -13,13 +13,13 @@
 
 ## Open Decisions
 
-- 执行期 backend 缺失时，系统应失败并暴露 lost 状态，还是尝试 fallback 到其它 backend。
-- standalone local backend 是正式路径还是 debug/internal path。
+- 已决策：执行期 backend disconnect / missing 不 fallback，必须暴露用户可见 lost 状态。
+- 已决策：session context 下 MCP list/call 只绑定当前 session route/backend；setup/probe 才允许 discovery fallback。
+- 已决策：standalone local backend id 必须显式消费 server ensure/claim 或 token-bound input。
 
 ## Acceptance Criteria
 
-- [ ] `design.md` 定义 execution placement failure 的产品语义。
+- [x] `design.md` 定义 execution placement failure 的产品语义。
 - [ ] `work-items/index.md` 覆盖 D16、D17 及 standalone backend id 来源。
-- [ ] characterization task 验证当前 disconnect / MCP fallback / backend identity 行为。
+- [x] characterization task 验证当前 disconnect / MCP fallback / backend identity 行为。
 - [ ] 后续实现任务不改变 setup/probe 与 session execution 的目标边界。
-

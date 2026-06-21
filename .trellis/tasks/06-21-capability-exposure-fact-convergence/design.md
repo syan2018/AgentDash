@@ -15,17 +15,13 @@ Command intent
   -> diagnostics records derivation failures
 ```
 
-## Fact Model Options
+## Fact Model Decision
 
-| Option | Description | Notes |
-| --- | --- | --- |
-| Frame revision carries exposure | exposure changes create new frame revision | strongest audit, potentially more frame churn |
-| AgentFrame exposure table | separate exposure rows keyed by frame | keeps frame stable, adds table/repository |
-| Capability dimension transition | exposure enters existing capability transition model | aligns with capability state, requires clear projection owner |
-
-Decision must pick one primary model before broad implementation.
+- runtime exposure / capability 变更通过新的 `AgentFrame` revision 表达。
+- `AgentFrame` revision 是可更新可替换 runtime ability state 的唯一事实锚点；每个 revision 必须能恢复 effective capability、VFS、MCP 与 workspace module visibility。
+- 不使用独立 exposure table 作为第一版事实源，原因是会引入第二套 owner/repository。
+- 不原地更新当前 frame exposure 字段，原因是 revision history 将无法解释能力状态变化。
 
 ## Recovery Rule
 
 On recovery, live VFS / WorkspaceModule visibility / hook runtime state must be reconstructed from AgentFrame exposure fact. Runtime caches may fail independently but cannot become the source of truth.
-

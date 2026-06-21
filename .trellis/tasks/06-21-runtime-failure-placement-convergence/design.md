@@ -11,7 +11,7 @@
 | session execution | 强制 session route / backend execution |
 | setup / probe | 可以使用 catalog / discovery fallback |
 | VFS utility | 绑定 mount backend/root |
-| terminal | 待确认：mount utility 或 execution surface |
+| terminal | mount utility；可通过 completion outbox 回调进入 AgentRun steer / turn-boundary，但不占 execution lease |
 
 ## Local Backend Identity
 
@@ -19,5 +19,13 @@ standalone `agentdash-local` 是已领取 backend identity 的消费入口：`ba
 
 ## Failure Projection
 
-- backend disconnect for running execution should produce user-visible lost / terminal projection if confirmed by design.
-- runtime-summary、feed、AgentRun shell、session route cleanup 必须一致。
+- backend disconnect / execution backend missing 是独立 lost 终态，不映射为 completed、failed 或 interrupted。
+- session terminal event 使用 `turn_lost`，delivery / runtime projection status 使用 `lost`。
+- backend disconnect cleanup 必须先持久化或投递 lost terminal，再清理 session route / sink 和 lease，原因是 route 先删除会让 connector stream close 被解析成 completed。
+- runtime-summary、feed、AgentRun shell、session route cleanup 必须一致；lost lease 不再作为 active session，但 feed / AgentRun 必须保留 lost diagnostic。
+
+## MCP Fallback
+
+- session context 下 MCP list/call 是 session-route-bound command。
+- session route 缺失或 route backend 离线时直接失败，不 fallback 到 VFS default mount、advertised catalog 或任意在线 backend。
+- setup/probe 是 setup-bound command，继续允许 catalog / discovery fallback。

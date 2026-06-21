@@ -2,8 +2,8 @@
 
 | ID | Title | Kind | Status | Related Design | Scope |
 | --- | --- | --- | --- | --- | --- |
-| RC01 | AgentRun current delivery binding 设计 | design | pending | D02, D03 | 定义 binding 字段、持久化位置、状态与更新时间语义 |
-| RC02 | DeliveryRuntimeSelectionService 设计与测试 | design+implementation | pending | D02, D03 | application-level resolver，覆盖 current/run-scoped/launch-primary/subject-latest policy |
+| RC01 | AgentRun current delivery binding 设计 | design | completed | D02, D03 | current delivery binding 落在 `LifecycleAgent` 粒度，表达当前 runtime session/frame/node/attempt/status/observed_at |
+| RC02 | DeliveryRuntimeSelectionService 设计与测试 | design+implementation | ready | D02, D03 | application-level resolver，覆盖 current/run-scoped/launch-primary/subject-latest policy |
 | RC03 | raw anchor repository API 降级命名 | implementation | completed | D03 | 已由机械重构任务 M12 完成；raw latest API 命名表达 `updated_at` 排序，不承载业务 latest |
 | RC04 | Workspace query 迁移到 unified selection | implementation | blocked_by_RC02 | D02, D03, D15 | AgentRun workspace delivery refs 与 resource surface 来源 |
 | RC05 | Cancel / subject control 迁移到 unified selection | implementation | blocked_by_RC02 | D02, D03 | cancel target 不再 global latest 后过滤 run |

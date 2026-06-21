@@ -17,10 +17,21 @@
 
 - `create lifecycle run` 只创建 Ready run。
 - `continue/drain ready nodes` 显式推进 Ready nodes。
-- UI 可以保留一键开始，但应建模为组合 intent，而不是让 create API 隐含 drain side effect。
+- UI 可以保留一键开始，但必须进入后端显式组合 command；组合 command 语义是 create Ready run + continue/drain，不复用 `POST /lifecycle-runs` 的隐式 side effect。
+
+## Terminal Completion Protocol
+
+- Terminal 归属 `mount-utility-bound`，绑定 workspace mount/backend，不占 AgentRun execution lease。
+- Terminal completion 是 mount utility event，但可以成为 AgentRun 输入信号。
+- canonical 路径是写入可恢复 outbox，再由 AgentRun mailbox 消费为 steer 或 turn-boundary 调度。
+- hook 可以参与 Terminal completion 行为，但不能成为唯一默认协议。
+
+## Extension Target Resolver
+
+- session-bound extension action/channel 只能使用当前 session 关联 backend，不能 fallback 到 Project workspace binding 或任意在线 backend。
+- API / panel / iframe 只表达 action/channel intent 和 input；backend target 由宿主/API 后端 resolver 组装。
+- Project-level 非 session invocation 是后续能力，本轮只保留 contract/design 扩展点，不实现 fallback。
 
 ## Pending Product Decisions
 
-- Terminal 是否确认归为 mount utility。
-- UI 一键开始是否需要保留，以及由 frontend 组合调用还是 backend 提供组合 command。
-
+- route policy 是否必须消费 command availability core，而不是重建完整 UI snapshot。

@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-21-contract-boundary-ownership-audit/owner-map.md", "reason": "AgentRun workspace snapshot ownership target."}
+{"file": ".trellis/tasks/06-21-runtime-coordinate-convergence/design.md", "reason": "Current delivery binding and selection service dependency."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "API adapter mapping boundary."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "AgentRun resource surface frontend contract."}

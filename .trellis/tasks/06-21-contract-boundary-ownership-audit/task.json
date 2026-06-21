@@ -18,7 +18,14 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "06-21-cb04-mcp-preset-incoming-conversion",
+    "06-21-cb04-agentrun-workspace-snapshot-split",
+    "06-21-cb04-session-context-usage-projection",
+    "06-21-cb04-capability-catalog-read-model",
+    "06-21-cb04-routine-llm-settings-reverse-conversion",
+    "06-21-cb04-backend-access-command-conversion"
+  ],
   "parent": "06-21-module-topology-coupling-review",
   "relatedFiles": [],
   "notes": "",

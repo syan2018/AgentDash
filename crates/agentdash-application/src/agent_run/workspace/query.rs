@@ -1,10 +1,3 @@
-use agentdash_contracts::vfs as contract_vfs;
-use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentRunResourceSurfaceCoordinateView,
-    AgentRunResourceSurfaceSourceAnchorView, ConversationDiagnosticView,
-    ConversationModelConfigSource, LifecycleSubjectAssociationDto, RuntimeSessionRefDto,
-    SubjectRefDto, ValidationSeverity,
-};
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxState;
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
@@ -13,8 +6,9 @@ use uuid::Uuid;
 
 use crate::agent_run::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
-    ConversationModelConfigInput, ConversationModelConfigResolver, DeliveryRuntimeSelection,
-    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService,
+    ConversationModelConfigInput, ConversationModelConfigResolver,
+    ConversationModelConfigSourceModel, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
+    DeliveryRuntimeSelectionService, ValidationSeverityModel,
 };
 use crate::lifecycle::run_view_builder::{
     LifecycleSubjectAssociationView, RuntimeSessionRefView, build_lifecycle_run_view,
@@ -29,8 +23,8 @@ use crate::lifecycle::{
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionExecutionState};
 use crate::vfs::{
-    ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary, ResolvedVfsSurface,
-    ResolvedVfsSurfaceSource, VfsSurfaceRuntimeProjection, build_surface_summary,
+    ResolvedVfsSurface, ResolvedVfsSurfaceSource, VfsSurfaceRuntimeProjection,
+    build_surface_summary,
 };
 
 use super::projection::{AgentRunWorkspaceProjection, is_terminal_agent_status};
@@ -39,7 +33,7 @@ use super::types::{
     AgentRunWorkspaceFrameRefModel, AgentRunWorkspaceFrameRuntimeModel,
     AgentRunWorkspaceMailboxStateModel, AgentRunWorkspaceProjectionInput,
     AgentRunWorkspaceQueryInput, AgentRunWorkspaceShellModel, AgentRunWorkspaceSnapshot,
-    AgentRunWorkspaceTraceMetaModel,
+    AgentRunWorkspaceTraceMetaModel, SubjectRefModel,
 };
 
 pub struct AgentRunWorkspaceQueryService<'a> {
@@ -135,11 +129,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         }
         let subject_associations =
             filter_agent_subject_associations(run_view.subject_associations, agent.id);
-        let subject_association_contracts = subject_associations
-            .iter()
-            .cloned()
-            .map(subject_association_to_contract)
-            .collect::<Vec<_>>();
         let execution_state = match delivery_runtime_session_id.as_deref() {
             Some(session_id) => {
                 self.session_core
@@ -215,10 +204,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             ..Default::default()
         })
         .view;
-        let resource_surface_contract = resource_surface.clone().map(resolved_surface_to_contract);
-        let resource_surface_coordinate_contract = resource_surface_coordinate
-            .clone()
-            .map(resource_surface_coordinate_to_contract);
         let resource_diagnostics =
             workspace_resource_diagnostics(run.id, resource_surface.as_ref());
         let conversation =
@@ -228,14 +213,14 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 agent_id: agent.id,
                 frame_ref,
                 delivery_runtime_session_id: delivery_runtime_session_id.clone(),
-                subject_associations: subject_association_contracts,
+                subject_associations: subject_associations.clone(),
                 execution_state: execution_state.clone(),
                 terminal_agent,
                 supports_steering,
                 mailbox_paused: mailbox.paused,
                 mailbox_visible_message_count,
-                resource_surface: resource_surface_contract,
-                resource_surface_coordinate: resource_surface_coordinate_contract,
+                resource_surface: resource_surface.clone(),
+                resource_surface_coordinate: resource_surface_coordinate.clone(),
                 resource_diagnostics,
                 model_config,
             });
@@ -315,7 +300,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .map_err(WorkflowApplicationError::from)?
             .into_iter()
             .next();
-        let subject_ref = association.as_ref().map(|assoc| SubjectRefDto {
+        let subject_ref = association.as_ref().map(|assoc| SubjectRefModel {
             kind: assoc.subject_kind.clone(),
             id: assoc.subject_id.to_string(),
         });
@@ -571,7 +556,7 @@ fn frame_runtime_model(
         effective_executor_config: frame.typed_execution_profile().map(|config| {
             ConversationModelConfigResolver::view_for_config(
                 &config,
-                ConversationModelConfigSource::FrameExecutionProfile,
+                ConversationModelConfigSourceModel::FrameExecutionProfile,
             )
         }),
     }
@@ -643,7 +628,7 @@ pub fn mailbox_message_visible(
 fn workspace_resource_diagnostics(
     run_id: Uuid,
     resource_surface: Option<&ResolvedVfsSurface>,
-) -> Vec<ConversationDiagnosticView> {
+) -> Vec<crate::agent_run::ConversationDiagnosticModel> {
     let has_lifecycle_mount = resource_surface
         .map(|surface| {
             surface
@@ -656,165 +641,14 @@ fn workspace_resource_diagnostics(
         return Vec::new();
     }
 
-    vec![ConversationDiagnosticView {
+    vec![crate::agent_run::ConversationDiagnosticModel {
         code: "resource_surface_lifecycle_mount_missing".to_string(),
-        severity: ValidationSeverity::Error,
+        severity: ValidationSeverityModel::Error,
         message: "当前 AgentRun workspace resource_surface 缺少 lifecycle_vfs mount。".to_string(),
         detail: Some(serde_json::json!({
             "run_id": run_id,
         })),
     }]
-}
-
-fn subject_association_to_contract(
-    association: LifecycleSubjectAssociationView,
-) -> LifecycleSubjectAssociationDto {
-    LifecycleSubjectAssociationDto {
-        id: association.id,
-        anchor_run_id: association.anchor_run_id,
-        anchor_agent_id: association.anchor_agent_id,
-        subject_ref: SubjectRefDto {
-            kind: association.subject_ref.kind,
-            id: association.subject_ref.id,
-        },
-        role: association.role,
-        metadata: association.metadata,
-        created_at: association.created_at,
-    }
-}
-
-fn resolved_surface_to_contract(surface: ResolvedVfsSurface) -> contract_vfs::ResolvedVfsSurface {
-    contract_vfs::ResolvedVfsSurface {
-        surface_ref: surface.surface_ref,
-        source: surface_source_to_contract(surface.source),
-        mounts: surface
-            .mounts
-            .into_iter()
-            .map(mount_summary_to_contract)
-            .collect(),
-        default_mount_id: surface.default_mount_id,
-    }
-}
-
-fn resource_surface_coordinate_to_contract(
-    coordinate: AgentRunResourceSurfaceCoordinateModel,
-) -> AgentRunResourceSurfaceCoordinateView {
-    AgentRunResourceSurfaceCoordinateView {
-        surface_frame_ref: AgentFrameRefDto {
-            agent_id: coordinate.surface_frame_ref.agent_id,
-            frame_id: coordinate.surface_frame_ref.frame_id,
-            revision: coordinate.surface_frame_ref.revision,
-        },
-        source_anchor: coordinate.source_anchor.map(|anchor| {
-            AgentRunResourceSurfaceSourceAnchorView {
-                runtime_session_ref: RuntimeSessionRefDto {
-                    runtime_session_id: anchor.runtime_session_id,
-                },
-                launch_frame_id: anchor.launch_frame_id,
-                orchestration_id: anchor.orchestration_id,
-                node_path: anchor.node_path,
-                node_attempt: anchor.node_attempt,
-                delivery_status: anchor.delivery_status,
-                observed_at: anchor.observed_at,
-            }
-        }),
-    }
-}
-
-fn surface_source_to_contract(
-    source: ResolvedVfsSurfaceSource,
-) -> contract_vfs::ResolvedVfsSurfaceSource {
-    match source {
-        ResolvedVfsSurfaceSource::ProjectPreview { project_id } => {
-            contract_vfs::ResolvedVfsSurfaceSource::ProjectPreview {
-                project_id: project_id.to_string(),
-            }
-        }
-        ResolvedVfsSurfaceSource::StoryPreview {
-            project_id,
-            story_id,
-        } => contract_vfs::ResolvedVfsSurfaceSource::StoryPreview {
-            project_id: project_id.to_string(),
-            story_id: story_id.to_string(),
-        },
-        ResolvedVfsSurfaceSource::TaskPreview {
-            project_id,
-            task_id,
-        } => contract_vfs::ResolvedVfsSurfaceSource::TaskPreview {
-            project_id: project_id.to_string(),
-            task_id: task_id.to_string(),
-        },
-        ResolvedVfsSurfaceSource::SessionRuntime { session_id } => {
-            contract_vfs::ResolvedVfsSurfaceSource::SessionRuntime { session_id }
-        }
-        ResolvedVfsSurfaceSource::AgentRun { run_id, agent_id } => {
-            contract_vfs::ResolvedVfsSurfaceSource::AgentRun {
-                run_id: run_id.to_string(),
-                agent_id: agent_id.to_string(),
-            }
-        }
-        ResolvedVfsSurfaceSource::ProjectSkillAssets { project_id } => {
-            contract_vfs::ResolvedVfsSurfaceSource::ProjectSkillAssets {
-                project_id: project_id.to_string(),
-            }
-        }
-        ResolvedVfsSurfaceSource::ProjectVfsMount {
-            project_id,
-            mount_id,
-        } => contract_vfs::ResolvedVfsSurfaceSource::ProjectVfsMount {
-            project_id: project_id.to_string(),
-            mount_id,
-        },
-        ResolvedVfsSurfaceSource::ProjectAgentKnowledge {
-            project_id,
-            project_agent_id,
-        } => contract_vfs::ResolvedVfsSurfaceSource::ProjectAgentKnowledge {
-            project_id: project_id.to_string(),
-            project_agent_id: project_agent_id.to_string(),
-        },
-    }
-}
-
-fn mount_summary_to_contract(mount: ResolvedMountSummary) -> contract_vfs::ResolvedMountSummary {
-    contract_vfs::ResolvedMountSummary {
-        id: mount.id,
-        display_name: mount.display_name,
-        provider: mount.provider,
-        backend_id: mount.backend_id,
-        capabilities: mount.capabilities,
-        default_write: mount.default_write,
-        purpose: mount_purpose_to_contract(mount.purpose),
-        backend_online: mount.backend_online,
-        file_count: mount.file_count,
-        edit_capabilities: mount_edit_capabilities_to_contract(mount.edit_capabilities),
-    }
-}
-
-fn mount_purpose_to_contract(purpose: ResolvedMountPurpose) -> contract_vfs::ResolvedMountPurpose {
-    match purpose {
-        ResolvedMountPurpose::Workspace => contract_vfs::ResolvedMountPurpose::Workspace,
-        ResolvedMountPurpose::ProjectContainer => {
-            contract_vfs::ResolvedMountPurpose::ProjectContainer
-        }
-        ResolvedMountPurpose::VfsMount => contract_vfs::ResolvedMountPurpose::VfsMount,
-        ResolvedMountPurpose::StoryContainer => contract_vfs::ResolvedMountPurpose::StoryContainer,
-        ResolvedMountPurpose::AgentKnowledge => contract_vfs::ResolvedMountPurpose::AgentKnowledge,
-        ResolvedMountPurpose::Lifecycle => contract_vfs::ResolvedMountPurpose::Lifecycle,
-        ResolvedMountPurpose::Canvas => contract_vfs::ResolvedMountPurpose::Canvas,
-        ResolvedMountPurpose::ExternalService => {
-            contract_vfs::ResolvedMountPurpose::ExternalService
-        }
-    }
-}
-
-fn mount_edit_capabilities_to_contract(
-    capabilities: ResolvedMountEditCapabilities,
-) -> contract_vfs::ResolvedMountEditCapabilities {
-    contract_vfs::ResolvedMountEditCapabilities {
-        create: capabilities.create,
-        delete: capabilities.delete,
-        rename: capabilities.rename,
-    }
 }
 
 fn empty_vfs() -> Vfs {

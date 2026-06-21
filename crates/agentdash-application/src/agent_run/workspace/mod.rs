@@ -17,5 +17,5 @@ pub use types::{
     AgentRunWorkspaceProjectionInput, AgentRunWorkspaceProjectionModel,
     AgentRunWorkspaceQueryInput, AgentRunWorkspaceRuntimeCommandStateModel,
     AgentRunWorkspaceRuntimeCommandStatus, AgentRunWorkspaceShellModel, AgentRunWorkspaceSnapshot,
-    AgentRunWorkspaceStateCode, AgentRunWorkspaceTraceMetaModel,
+    AgentRunWorkspaceStateCode, AgentRunWorkspaceTraceMetaModel, SubjectRefModel,
 };

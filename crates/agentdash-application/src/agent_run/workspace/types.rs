@@ -1,12 +1,10 @@
+use crate::agent_run::{AgentConversationSnapshotModel, ConversationEffectiveExecutorConfigModel};
 use crate::lifecycle::run_view_builder::{
     AgentRunView, LifecycleSubjectAssociationView, RuntimeSessionRefView,
 };
 use crate::session::SessionExecutionState;
 use crate::session::SessionMeta;
 use crate::vfs::ResolvedVfsSurface;
-use agentdash_contracts::workflow::{
-    AgentConversationSnapshot, ConversationEffectiveExecutorConfigView, SubjectRefDto,
-};
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage;
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use serde_json::Value;
@@ -32,7 +30,7 @@ pub struct AgentRunWorkspaceSnapshot {
     pub mailbox_messages: Vec<AgentRunMailboxMessage>,
     pub resource_surface: Option<ResolvedVfsSurface>,
     pub resource_surface_coordinate: Option<AgentRunResourceSurfaceCoordinateModel>,
-    pub conversation: AgentConversationSnapshot,
+    pub conversation: AgentConversationSnapshotModel,
 }
 
 /// 列表视图专用的轻量投影。
@@ -50,8 +48,14 @@ pub struct AgentRunListProjection {
     pub project_agent_label: Option<String>,
     pub delivery_runtime_session_id: Option<String>,
     pub delivery_trace_meta: Option<AgentRunWorkspaceTraceMetaModel>,
-    pub subject_ref: Option<SubjectRefDto>,
+    pub subject_ref: Option<SubjectRefModel>,
     pub subject_label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubjectRefModel {
+    pub kind: String,
+    pub id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,7 +106,7 @@ pub struct AgentRunWorkspaceFrameRuntimeModel {
     pub mcp_surface: Value,
     pub runtime_session_refs: Vec<RuntimeSessionRefView>,
     pub execution_profile: Option<Value>,
-    pub effective_executor_config: Option<ConversationEffectiveExecutorConfigView>,
+    pub effective_executor_config: Option<ConversationEffectiveExecutorConfigModel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -13,6 +13,7 @@
 pub mod runtime_tool_provider;
 pub(crate) mod skill_projection;
 mod tools;
+pub mod visibility;
 
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
@@ -33,6 +34,10 @@ pub use runtime_tool_provider::WorkspaceModuleRuntimeToolProvider;
 pub use tools::{
     WorkspaceModuleCreateTool, WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool,
     WorkspaceModuleListTool, WorkspaceModulePresentTool,
+};
+pub use visibility::{
+    WorkspaceModuleVisibilityDiagnostic, WorkspaceModuleVisibilityProjection,
+    resolve_workspace_module_visibility,
 };
 
 /// invoke 解析出的 backend target + workspace 上下文。

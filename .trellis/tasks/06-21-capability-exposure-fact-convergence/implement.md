@@ -13,14 +13,14 @@
 - [x] CE02b: Classify grants that extend Agent toolset; only those model-visible effects write AgentFrame revision through AgentRun capability service.
 - [x] Shared helper: persist AgentFrame revision for surface-changing commands, then adopt that persisted revision into active runtime cache/tools/hook runtime and emit runtime context notifications when a delivery runtime exists.
 - [x] CE03: Canvas expose writes AgentFrame revision first through AgentRun capability service, then reconstructs live VFS / hook runtime / WorkspaceModule presentation.
-- [ ] CE04: Extract WorkspaceModule visibility resolver from tool code; resolver reads final visible capability via AgentRun effective capability view and selected current frame.
+- [x] CE04: Extract WorkspaceModule visibility resolver from tool code; resolver reads final visible capability via AgentRun effective capability view and selected current frame.
 - [ ] Cleanup: fold replaced paths into AgentRun boundary, including active-grant resolver input, production row-update exposure append writers, live VFS-first Canvas exposure and local WorkspaceModule visibility bypass.
 
 ## Phase 2: Implementation Slices
 
 - [x] PermissionGrant approve/revoke/expire 与 AgentRun admission projection 一致；工具级 grant 进入生产 runtime tool assembly，工具集拓展类 grant 在改变模型可见 surface 时写 AgentFrame revision。
 - [x] Canvas expose 从 AgentFrame exposure 派生 live VFS / hook runtime refresh。
-- [ ] WorkspaceModule visibility resolver 从 AgentFrame exposure 读取 runtime refs。
+- [x] WorkspaceModule visibility resolver 从 AgentFrame exposure 读取 runtime refs。
 - [ ] RuntimeGateway action/channel admission 对齐。
 
 ## CE02 First Slice Notes
@@ -43,6 +43,13 @@
 - Canvas create/present 生产路径不再先更新 live VFS，也不再调用 row-update append writer；`SessionCapabilityService::expose_canvas_mount_revision_and_adopt` 先基于当前 AgentFrame VFS surface 写入新的 `canvas_expose` revision。
 - 新 revision 同时携带 Canvas mount、visible canvas mount id、`canvas:{mount_id}` workspace module ref 与派生后的 skill baseline；缺少 AgentFrame VFS fact 时显式失败，避免把 live cache 作为事实源。
 - 持久化 revision 后复用 `adopt_persisted_agent_frame_revision` 同步 active runtime cache、connector tools、hook runtime 与 runtime context 通知；`workspace_module_present` 只在 Canvas exposure/adoption 成功后 emit `workspace_module_presented`。
+
+## CE04 Completion Notes
+
+- WorkspaceModule visibility 解析已从 tool-local helper 提取到 `workspace_module::visibility`；输出包含可见 modules、base visibility、runtime refs 与缺失 runtime ref 诊断。
+- WorkspaceModule list/describe/invoke/present 生产路径通过 `SessionCapabilityService::effective_capability_view_for_runtime_session` 读取 AgentRun effective capability view，再由 resolver 使用该 view 的 `CapabilityState.workspace_module` 与 `visible_workspace_module_refs` 计算最终可见模块。
+- Runtime tool provider 不再把 `ExecutionContext.turn.capability_state.workspace_module` 作为 WorkspaceModule visibility 输入传给工具；selected current frame 只保留在 AgentRun capability service 内部解析。
+- Focused validation 已通过 `cargo test -p agentdash-application workspace_module --lib`、`cargo test -p agentdash-application workspace --lib`、`cargo check -p agentdash-application` 与 `cargo check -p agentdash-api`；WorkspaceModule visibility 已无 tool-local capability bypass。
 
 ## Validation
 

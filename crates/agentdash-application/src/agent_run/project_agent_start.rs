@@ -22,7 +22,9 @@ use async_trait::async_trait;
 
 use crate::agent_run::{
     AgentRunCommandReceiptView, AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult,
-    AgentRunMailboxService, AgentRunMailboxUserMessageCommand, ConversationModelConfigResolver,
+    AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
+    ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
+    ConversationModelConfigSourceModel,
     command_receipt::{
         accepted_refs_from_record, claim_agent_run_command_receipt, digest_command_request,
         mark_command_terminal_failed,
@@ -264,9 +266,11 @@ impl<'a> ProjectAgentRunStartService<'a> {
             .unwrap_or_else(|| {
                 ConversationModelConfigResolver::view_for_config(
                     &model_resolution.config,
-                    ConversationModelConfigSource::ProjectAgentPreset,
+                    ConversationModelConfigSourceModel::ProjectAgentPreset,
                 )
             });
+        let effective_executor_config =
+            effective_executor_config_to_contract(effective_executor_config);
         command.executor_config = Some(model_resolution.config.clone());
         tracing::info!(
             project_id = %command.project_id,
@@ -775,6 +779,36 @@ fn project_agent_start_dispatch_from_refs(
         subject_ref,
         command_receipt,
         initial_message,
+    }
+}
+
+fn effective_executor_config_to_contract(
+    config: ConversationEffectiveExecutorConfigModel,
+) -> ConversationEffectiveExecutorConfigView {
+    ConversationEffectiveExecutorConfigView {
+        executor: config.executor,
+        provider_id: config.provider_id,
+        model_id: config.model_id,
+        agent_id: config.agent_id,
+        thinking_level: config.thinking_level,
+        permission_policy: config.permission_policy,
+        source: match config.source {
+            ConversationModelConfigSourceModel::ProjectAgentPreset => {
+                ConversationModelConfigSource::ProjectAgentPreset
+            }
+            ConversationModelConfigSourceModel::FrameExecutionProfile => {
+                ConversationModelConfigSource::FrameExecutionProfile
+            }
+            ConversationModelConfigSourceModel::UserOverride => {
+                ConversationModelConfigSource::UserOverride
+            }
+            ConversationModelConfigSourceModel::ExecutorDiscoveryDefault => {
+                ConversationModelConfigSource::ExecutorDiscoveryDefault
+            }
+            ConversationModelConfigSourceModel::Unspecified => {
+                ConversationModelConfigSource::Unspecified
+            }
+        },
     }
 }
 

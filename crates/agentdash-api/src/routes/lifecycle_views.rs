@@ -8,13 +8,17 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use agentdash_application::agent_run::AgentFrameSurfaceExt;
-use agentdash_application::agent_run::ConversationModelConfigResolver;
+use agentdash_application::agent_run::{
+    ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
+    ConversationModelConfigSourceModel,
+};
 use agentdash_application::lifecycle::run_view_builder::{
     self, SubjectExecutionView as SubjectExecutionReadModel,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentFrameRuntimeView, ConversationModelConfigSource, LifecycleRunView,
-    ProjectActiveAgentsView, RuntimeSessionRefDto, RuntimeSessionTraceView, SubjectExecutionView,
+    AgentFrameRefDto, AgentFrameRuntimeView, ConversationEffectiveExecutorConfigView,
+    ConversationModelConfigSource, LifecycleRunView, ProjectActiveAgentsView, RuntimeSessionRefDto,
+    RuntimeSessionTraceView, SubjectExecutionView,
 };
 use agentdash_domain::workflow::{
     AgentFrame, LifecycleRun, RuntimeSessionExecutionAnchor, SubjectRef,
@@ -346,11 +350,43 @@ pub(crate) fn agent_frame_runtime_to_view(
         runtime_session_refs,
         execution_profile: frame.execution_profile_json.clone(),
         effective_executor_config: frame.typed_execution_profile().map(|config| {
-            ConversationModelConfigResolver::view_for_config(
-                &config,
-                ConversationModelConfigSource::FrameExecutionProfile,
+            conversation_effective_executor_config_to_contract(
+                ConversationModelConfigResolver::view_for_config(
+                    &config,
+                    ConversationModelConfigSourceModel::FrameExecutionProfile,
+                ),
             )
         }),
+    }
+}
+
+fn conversation_effective_executor_config_to_contract(
+    config: ConversationEffectiveExecutorConfigModel,
+) -> ConversationEffectiveExecutorConfigView {
+    ConversationEffectiveExecutorConfigView {
+        executor: config.executor,
+        provider_id: config.provider_id,
+        model_id: config.model_id,
+        agent_id: config.agent_id,
+        thinking_level: config.thinking_level,
+        permission_policy: config.permission_policy,
+        source: match config.source {
+            ConversationModelConfigSourceModel::ProjectAgentPreset => {
+                ConversationModelConfigSource::ProjectAgentPreset
+            }
+            ConversationModelConfigSourceModel::FrameExecutionProfile => {
+                ConversationModelConfigSource::FrameExecutionProfile
+            }
+            ConversationModelConfigSourceModel::UserOverride => {
+                ConversationModelConfigSource::UserOverride
+            }
+            ConversationModelConfigSourceModel::ExecutorDiscoveryDefault => {
+                ConversationModelConfigSource::ExecutorDiscoveryDefault
+            }
+            ConversationModelConfigSourceModel::Unspecified => {
+                ConversationModelConfigSource::Unspecified
+            }
+        },
     }
 }
 

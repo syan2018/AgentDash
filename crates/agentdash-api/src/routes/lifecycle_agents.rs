@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use agentdash_application::agent_run::workspace as app_workspace;
+use agentdash_application::agent_run::{self as app_agent_run, workspace as app_workspace};
 use agentdash_application::agent_run::{
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
     DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService,
@@ -10,15 +10,22 @@ use agentdash_application::repository_set::RepositorySet;
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView,
     AgentRunMailboxMoveRequest, AgentRunMailboxView, AgentRunMessageCommandResponse,
-    MailboxStateView,
+    MailboxMessageView, MailboxStateView,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunLineageRef,
-    AgentRunListChild, AgentRunRefDto, AgentRunResourceSurfaceCoordinateView,
-    AgentRunResourceSurfaceSourceAnchorView, AgentRunWorkspaceControlPlaneStatus,
-    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
-    AgentRunWorkspaceShell, AgentRunWorkspaceView, ConversationExecutionStatus, LifecycleRunRefDto,
-    RuntimeSessionRefDto, RuntimeSessionTraceMeta,
+    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
+    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest,
+    AgentRunCommandPreconditionView, AgentRunLineageRef, AgentRunListChild, AgentRunRefDto,
+    AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView,
+    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
+    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
+    AgentRunWorkspaceView, ConversationCommandKind, ConversationCommandPlacement,
+    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
+    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
+    ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
+    ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
+    ConversationModelConfigView, LifecycleRunRefDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta,
+    SubjectRefDto, ValidationSeverity,
 };
 use agentdash_domain::workflow::{
     AgentLineage, AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind,
@@ -431,7 +438,7 @@ pub async fn submit_agent_run_composer_input(
     agent_run_workspace_command_policy(state.as_ref())
         .ensure_composer_submit_allowed(
             command_policy_context(&context, &runtime_session_id),
-            &req.command,
+            &command_precondition_to_application(req.command),
         )
         .await
         .map_err(command_policy_error)?;
@@ -514,7 +521,7 @@ async fn delete_agent_run_mailbox_message(
         .ensure_command_allowed(
             command_policy_context(&context, &runtime_session_id),
             app_workspace::AgentRunWorkspaceCommandPrecondition::DeleteMailboxMessage {
-                command: body.command.clone(),
+                command: command_precondition_to_application(body.command.clone()),
             },
         )
         .await
@@ -557,7 +564,7 @@ async fn resume_agent_run_mailbox(
         .ensure_command_allowed(
             command_policy_context(&context, &runtime_session_id),
             app_workspace::AgentRunWorkspaceCommandPrecondition::ResumeMailbox {
-                command: body.command.clone(),
+                command: command_precondition_to_application(body.command.clone()),
             },
         )
         .await
@@ -602,7 +609,7 @@ async fn promote_agent_run_mailbox_message(
         .ensure_command_allowed(
             command_policy_context(&context, &runtime_session_id),
             app_workspace::AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage {
-                command: body.command.clone(),
+                command: command_precondition_to_application(body.command.clone()),
             },
         )
         .await
@@ -711,7 +718,7 @@ async fn cancel_agent_run(
         .ensure_command_allowed(
             command_policy_context(&context, &runtime_session_id),
             app_workspace::AgentRunWorkspaceCommandPrecondition::Cancel {
-                command: body.command.clone(),
+                command: command_precondition_to_application(body.command.clone()),
             },
         )
         .await
@@ -992,7 +999,7 @@ fn list_entry_from_projection(
             .map(workspace_trace_meta_to_contract),
         // 列表 UI 不消费 frame_ref，省去 frame runtime 解析。
         frame_ref: None,
-        subject_ref: projection.subject_ref,
+        subject_ref: projection.subject_ref.map(subject_ref_to_contract),
         subject_label: projection.subject_label,
     }
 }
@@ -1012,9 +1019,8 @@ fn agent_run_workspace_view(
         .into_iter()
         .map(mailbox_message_view)
         .collect();
-    let mut conversation = snapshot.conversation;
-    conversation.mailbox.state = Some(mailbox);
-    conversation.mailbox.messages = mailbox_messages;
+    let conversation =
+        conversation_to_contract(snapshot.conversation, Some(mailbox), mailbox_messages);
     let control_plane = workspace_control_plane_from_conversation(&conversation);
 
     AgentRunWorkspaceView {
@@ -1079,6 +1085,318 @@ fn resource_surface_coordinate_to_contract(
                 observed_at: anchor.observed_at,
             }
         }),
+    }
+}
+
+fn conversation_to_contract(
+    conversation: app_agent_run::AgentConversationSnapshotModel,
+    mailbox_state: Option<MailboxStateView>,
+    mailbox_messages: Vec<MailboxMessageView>,
+) -> AgentConversationSnapshot {
+    AgentConversationSnapshot {
+        snapshot_id: conversation.snapshot_id,
+        identity: AgentConversationIdentity {
+            run_ref: LifecycleRunRefDto {
+                run_id: conversation.identity.run_id.clone(),
+            },
+            agent_ref: AgentRunRefDto {
+                run_id: conversation.identity.run_id,
+                agent_id: conversation.identity.agent_id,
+            },
+            project_id: conversation.identity.project_id,
+        },
+        lifecycle_context: AgentConversationLifecycleContext {
+            frame_ref: conversation
+                .lifecycle_context
+                .frame_ref
+                .map(|frame| AgentFrameRefDto {
+                    agent_id: frame.agent_id,
+                    frame_id: frame.frame_id,
+                    revision: frame.revision,
+                }),
+            delivery_runtime_ref: conversation
+                .lifecycle_context
+                .delivery_runtime_session_id
+                .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
+            subject_associations: conversation
+                .lifecycle_context
+                .subject_associations
+                .into_iter()
+                .map(subject_association_to_contract)
+                .collect(),
+        },
+        execution: conversation_execution_to_contract(conversation.execution),
+        model_config: conversation_model_config_to_contract(conversation.model_config),
+        commands: conversation_command_set_to_contract(conversation.commands),
+        mailbox: ConversationMailboxSnapshotView {
+            visible_message_count: conversation.mailbox.visible_message_count,
+            paused: conversation.mailbox.paused,
+            user_attention: conversation.mailbox.user_attention,
+            resume_command: conversation
+                .mailbox
+                .resume_command
+                .map(conversation_command_to_contract),
+            state: mailbox_state,
+            messages: mailbox_messages,
+        },
+        resource_surface: conversation
+            .resource_surface
+            .map(vfs_surface_dto::surface_from_application),
+        resource_surface_coordinate: conversation
+            .resource_surface_coordinate
+            .map(resource_surface_coordinate_to_contract),
+        diagnostics: conversation
+            .diagnostics
+            .into_iter()
+            .map(conversation_diagnostic_to_contract)
+            .collect(),
+    }
+}
+
+fn conversation_execution_to_contract(
+    execution: app_agent_run::ConversationExecutionModel,
+) -> ConversationExecutionView {
+    ConversationExecutionView {
+        status: conversation_execution_status_to_contract(execution.status),
+        runtime_session_ref: execution
+            .runtime_session_id
+            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
+        active_turn_id: execution.active_turn_id,
+        reason: execution.reason,
+    }
+}
+
+fn conversation_execution_status_to_contract(
+    status: app_agent_run::ConversationExecutionStatusModel,
+) -> ConversationExecutionStatus {
+    match status {
+        app_agent_run::ConversationExecutionStatusModel::Draft => {
+            ConversationExecutionStatus::Draft
+        }
+        app_agent_run::ConversationExecutionStatusModel::ModelRequired => {
+            ConversationExecutionStatus::ModelRequired
+        }
+        app_agent_run::ConversationExecutionStatusModel::Ready => {
+            ConversationExecutionStatus::Ready
+        }
+        app_agent_run::ConversationExecutionStatusModel::StartingClaimed => {
+            ConversationExecutionStatus::StartingClaimed
+        }
+        app_agent_run::ConversationExecutionStatusModel::RunningActive => {
+            ConversationExecutionStatus::RunningActive
+        }
+        app_agent_run::ConversationExecutionStatusModel::Cancelling => {
+            ConversationExecutionStatus::Cancelling
+        }
+        app_agent_run::ConversationExecutionStatusModel::Terminal => {
+            ConversationExecutionStatus::Terminal
+        }
+        app_agent_run::ConversationExecutionStatusModel::FrameMissing => {
+            ConversationExecutionStatus::FrameMissing
+        }
+        app_agent_run::ConversationExecutionStatusModel::DeliveryMissing => {
+            ConversationExecutionStatus::DeliveryMissing
+        }
+    }
+}
+
+fn conversation_model_config_to_contract(
+    config: app_agent_run::ConversationModelConfigModel,
+) -> ConversationModelConfigView {
+    ConversationModelConfigView {
+        status: match config.status {
+            app_agent_run::ConversationModelConfigStatusModel::Resolved => {
+                ConversationModelConfigStatus::Resolved
+            }
+            app_agent_run::ConversationModelConfigStatusModel::ModelRequired => {
+                ConversationModelConfigStatus::ModelRequired
+            }
+        },
+        effective_executor_config: config
+            .effective_executor_config
+            .map(conversation_effective_executor_config_to_contract),
+        missing_fields: config.missing_fields,
+        message: config.message,
+    }
+}
+
+fn conversation_effective_executor_config_to_contract(
+    config: app_agent_run::ConversationEffectiveExecutorConfigModel,
+) -> ConversationEffectiveExecutorConfigView {
+    ConversationEffectiveExecutorConfigView {
+        executor: config.executor,
+        provider_id: config.provider_id,
+        model_id: config.model_id,
+        agent_id: config.agent_id,
+        thinking_level: config.thinking_level,
+        permission_policy: config.permission_policy,
+        source: match config.source {
+            app_agent_run::ConversationModelConfigSourceModel::ProjectAgentPreset => {
+                ConversationModelConfigSource::ProjectAgentPreset
+            }
+            app_agent_run::ConversationModelConfigSourceModel::FrameExecutionProfile => {
+                ConversationModelConfigSource::FrameExecutionProfile
+            }
+            app_agent_run::ConversationModelConfigSourceModel::UserOverride => {
+                ConversationModelConfigSource::UserOverride
+            }
+            app_agent_run::ConversationModelConfigSourceModel::ExecutorDiscoveryDefault => {
+                ConversationModelConfigSource::ExecutorDiscoveryDefault
+            }
+            app_agent_run::ConversationModelConfigSourceModel::Unspecified => {
+                ConversationModelConfigSource::Unspecified
+            }
+        },
+    }
+}
+
+fn conversation_command_set_to_contract(
+    commands: app_agent_run::ConversationCommandSetModel,
+) -> ConversationCommandSetView {
+    ConversationCommandSetView {
+        commands: commands
+            .commands
+            .into_iter()
+            .map(conversation_command_to_contract)
+            .collect(),
+        keyboard: ConversationKeyboardMapView {
+            enter: commands.keyboard.enter,
+            ctrl_enter: commands.keyboard.ctrl_enter,
+        },
+    }
+}
+
+fn conversation_command_to_contract(
+    command: app_agent_run::ConversationCommandModel,
+) -> ConversationCommandView {
+    ConversationCommandView {
+        kind: conversation_command_kind_to_contract(command.kind),
+        command_id: command.command_id,
+        enabled: command.enabled,
+        unavailable_reason: command.unavailable_reason,
+        disabled_code: command.disabled_code,
+        shortcut: command.shortcut,
+        requires_input: command.requires_input,
+        executor_config_policy: command.executor_config_policy,
+        placement: command
+            .placement
+            .into_iter()
+            .map(conversation_command_placement_to_contract)
+            .collect(),
+        stale_guard: conversation_stale_guard_to_contract(command.stale_guard),
+    }
+}
+
+fn conversation_command_kind_to_contract(
+    kind: app_agent_run::ConversationCommandKindModel,
+) -> ConversationCommandKind {
+    match kind {
+        app_agent_run::ConversationCommandKindModel::SubmitMessage => {
+            ConversationCommandKind::SubmitMessage
+        }
+        app_agent_run::ConversationCommandKindModel::PromoteMailboxMessage => {
+            ConversationCommandKind::PromoteMailboxMessage
+        }
+        app_agent_run::ConversationCommandKindModel::DeleteMailboxMessage => {
+            ConversationCommandKind::DeleteMailboxMessage
+        }
+        app_agent_run::ConversationCommandKindModel::ResumeMailbox => {
+            ConversationCommandKind::ResumeMailbox
+        }
+        app_agent_run::ConversationCommandKindModel::Cancel => ConversationCommandKind::Cancel,
+    }
+}
+
+fn conversation_command_kind_to_application(
+    kind: ConversationCommandKind,
+) -> app_agent_run::ConversationCommandKindModel {
+    match kind {
+        ConversationCommandKind::SubmitMessage => {
+            app_agent_run::ConversationCommandKindModel::SubmitMessage
+        }
+        ConversationCommandKind::PromoteMailboxMessage => {
+            app_agent_run::ConversationCommandKindModel::PromoteMailboxMessage
+        }
+        ConversationCommandKind::DeleteMailboxMessage => {
+            app_agent_run::ConversationCommandKindModel::DeleteMailboxMessage
+        }
+        ConversationCommandKind::ResumeMailbox => {
+            app_agent_run::ConversationCommandKindModel::ResumeMailbox
+        }
+        ConversationCommandKind::Cancel => app_agent_run::ConversationCommandKindModel::Cancel,
+    }
+}
+
+fn conversation_command_placement_to_contract(
+    placement: app_agent_run::ConversationCommandPlacementModel,
+) -> ConversationCommandPlacement {
+    match placement {
+        app_agent_run::ConversationCommandPlacementModel::ComposerPrimary => {
+            ConversationCommandPlacement::ComposerPrimary
+        }
+        app_agent_run::ConversationCommandPlacementModel::ComposerSecondary => {
+            ConversationCommandPlacement::ComposerSecondary
+        }
+        app_agent_run::ConversationCommandPlacementModel::MailboxRow => {
+            ConversationCommandPlacement::MailboxRow
+        }
+        app_agent_run::ConversationCommandPlacementModel::MailboxBanner => {
+            ConversationCommandPlacement::MailboxBanner
+        }
+        app_agent_run::ConversationCommandPlacementModel::Header => {
+            ConversationCommandPlacement::Header
+        }
+    }
+}
+
+fn conversation_stale_guard_to_contract(
+    guard: app_agent_run::ConversationCommandStaleGuardModel,
+) -> ConversationCommandStaleGuardView {
+    ConversationCommandStaleGuardView {
+        snapshot_id: guard.snapshot_id,
+        run_id: guard.run_id,
+        agent_id: guard.agent_id,
+        frame_id: guard.frame_id,
+        runtime_session_id: guard.runtime_session_id,
+        active_turn_id: guard.active_turn_id,
+    }
+}
+
+fn command_precondition_to_application(
+    command: AgentRunCommandPreconditionView,
+) -> app_agent_run::AgentRunCommandPreconditionModel {
+    app_agent_run::AgentRunCommandPreconditionModel {
+        command_id: command.command_id,
+        command_kind: conversation_command_kind_to_application(command.command_kind),
+        stale_guard: app_agent_run::ConversationCommandStaleGuardModel {
+            snapshot_id: command.stale_guard.snapshot_id,
+            run_id: command.stale_guard.run_id,
+            agent_id: command.stale_guard.agent_id,
+            frame_id: command.stale_guard.frame_id,
+            runtime_session_id: command.stale_guard.runtime_session_id,
+            active_turn_id: command.stale_guard.active_turn_id,
+        },
+    }
+}
+
+fn conversation_diagnostic_to_contract(
+    diagnostic: app_agent_run::ConversationDiagnosticModel,
+) -> ConversationDiagnosticView {
+    ConversationDiagnosticView {
+        code: diagnostic.code,
+        severity: match diagnostic.severity {
+            app_agent_run::ValidationSeverityModel::Warning => ValidationSeverity::Warning,
+            app_agent_run::ValidationSeverityModel::Error => ValidationSeverity::Error,
+        },
+        message: diagnostic.message,
+        detail: diagnostic.detail,
+    }
+}
+
+fn subject_ref_to_contract(subject_ref: app_workspace::SubjectRefModel) -> SubjectRefDto {
+    SubjectRefDto {
+        kind: subject_ref.kind,
+        id: subject_ref.id,
     }
 }
 
@@ -1159,7 +1477,9 @@ fn frame_runtime_to_contract(
             })
             .collect(),
         execution_profile: frame.execution_profile,
-        effective_executor_config: frame.effective_executor_config,
+        effective_executor_config: frame
+            .effective_executor_config
+            .map(conversation_effective_executor_config_to_contract),
     }
 }
 

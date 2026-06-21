@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use agentdash_application::agent_run::{
     AgentRunMailboxCommandOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
-    ConversationModelConfigResolver, ProjectAgentRunStartCommand, ProjectAgentRunStartRepos,
+    ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
+    ConversationModelConfigSourceModel, ProjectAgentRunStartCommand, ProjectAgentRunStartRepos,
     ProjectAgentRunStartService,
 };
 use agentdash_application::session::construction_planner::{
@@ -26,8 +27,8 @@ use agentdash_contracts::project_agent::{
     UpdateProjectAgentRequest,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentRunRefDto, ConversationModelConfigSource, LifecycleRunRefDto,
-    RuntimeSessionRefDto, SubjectRefDto,
+    AgentFrameRefDto, AgentRunRefDto, ConversationEffectiveExecutorConfigView,
+    ConversationModelConfigSource, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
 };
 
 use crate::{
@@ -360,12 +361,44 @@ fn build_project_agent_summary(
                 .map(thinking_level_response),
             permission_policy: agent.executor_config.permission_policy.clone(),
         },
-        effective_executor_config: Some(ConversationModelConfigResolver::view_for_config(
-            &agent.executor_config,
-            ConversationModelConfigSource::ProjectAgentPreset,
+        effective_executor_config: Some(conversation_effective_executor_config_to_contract(
+            ConversationModelConfigResolver::view_for_config(
+                &agent.executor_config,
+                ConversationModelConfigSourceModel::ProjectAgentPreset,
+            ),
         )),
         preset_name: agent.preset_name.clone(),
         source: agent.source.clone(),
+    }
+}
+
+fn conversation_effective_executor_config_to_contract(
+    config: ConversationEffectiveExecutorConfigModel,
+) -> ConversationEffectiveExecutorConfigView {
+    ConversationEffectiveExecutorConfigView {
+        executor: config.executor,
+        provider_id: config.provider_id,
+        model_id: config.model_id,
+        agent_id: config.agent_id,
+        thinking_level: config.thinking_level,
+        permission_policy: config.permission_policy,
+        source: match config.source {
+            ConversationModelConfigSourceModel::ProjectAgentPreset => {
+                ConversationModelConfigSource::ProjectAgentPreset
+            }
+            ConversationModelConfigSourceModel::FrameExecutionProfile => {
+                ConversationModelConfigSource::FrameExecutionProfile
+            }
+            ConversationModelConfigSourceModel::UserOverride => {
+                ConversationModelConfigSource::UserOverride
+            }
+            ConversationModelConfigSourceModel::ExecutorDiscoveryDefault => {
+                ConversationModelConfigSource::ExecutorDiscoveryDefault
+            }
+            ConversationModelConfigSourceModel::Unspecified => {
+                ConversationModelConfigSource::Unspecified
+            }
+        },
     }
 }
 

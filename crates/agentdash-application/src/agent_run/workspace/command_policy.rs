@@ -1,15 +1,13 @@
-use agentdash_contracts::workflow::{
-    AgentRunCommandPreconditionView, ConversationCommandKind, ConversationCommandView,
-    ConversationExecutionStatus, ConversationModelConfigStatus,
-};
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::agent_run::{
-    AgentFrameSurfaceExt, ConversationCommandAvailability, ConversationCommandAvailabilityInput,
-    ConversationCommandAvailabilityResolver, ConversationModelConfigInput,
-    ConversationModelConfigResolver, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
+    AgentFrameSurfaceExt, AgentRunCommandPreconditionModel, ConversationCommandAvailability,
+    ConversationCommandAvailabilityInput, ConversationCommandAvailabilityResolver,
+    ConversationCommandKindModel, ConversationCommandModel, ConversationExecutionStatusModel,
+    ConversationModelConfigInput, ConversationModelConfigResolver,
+    ConversationModelConfigStatusModel, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
     DeliveryRuntimeSelectionService, conversation_command_id_for,
 };
 use crate::lifecycle::WorkflowApplicationError;
@@ -98,7 +96,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
     pub async fn ensure_composer_submit_allowed(
         &self,
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
-        command: &AgentRunCommandPreconditionView,
+        command: &AgentRunCommandPreconditionModel,
     ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
         tracing::debug!(
             run_id = %context.run.id,
@@ -255,7 +253,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         &self,
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
         frame: Option<&AgentFrame>,
-    ) -> Result<ConversationModelConfigStatus, AgentRunWorkspaceCommandPolicyError> {
+    ) -> Result<ConversationModelConfigStatusModel, AgentRunWorkspaceCommandPolicyError> {
         let project_agent_preset_config =
             if let Some(project_agent_id) = context.agent.project_agent_id {
                 let project_agent = self
@@ -299,36 +297,38 @@ pub struct AgentRunWorkspaceCommandPolicyContext<'a> {
 #[derive(Debug, Clone)]
 pub enum AgentRunWorkspaceCommandPrecondition {
     DeleteMailboxMessage {
-        command: AgentRunCommandPreconditionView,
+        command: AgentRunCommandPreconditionModel,
     },
     PromoteMailboxMessage {
-        command: AgentRunCommandPreconditionView,
+        command: AgentRunCommandPreconditionModel,
     },
     ResumeMailbox {
-        command: AgentRunCommandPreconditionView,
+        command: AgentRunCommandPreconditionModel,
     },
     Cancel {
-        command: AgentRunCommandPreconditionView,
+        command: AgentRunCommandPreconditionModel,
     },
 }
 
 impl AgentRunWorkspaceCommandPrecondition {
-    fn expected_kind(&self) -> ConversationCommandKind {
+    fn expected_kind(&self) -> ConversationCommandKindModel {
         match self {
             AgentRunWorkspaceCommandPrecondition::DeleteMailboxMessage { .. } => {
-                ConversationCommandKind::DeleteMailboxMessage
+                ConversationCommandKindModel::DeleteMailboxMessage
             }
             AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage { .. } => {
-                ConversationCommandKind::PromoteMailboxMessage
+                ConversationCommandKindModel::PromoteMailboxMessage
             }
             AgentRunWorkspaceCommandPrecondition::ResumeMailbox { .. } => {
-                ConversationCommandKind::ResumeMailbox
+                ConversationCommandKindModel::ResumeMailbox
             }
-            AgentRunWorkspaceCommandPrecondition::Cancel { .. } => ConversationCommandKind::Cancel,
+            AgentRunWorkspaceCommandPrecondition::Cancel { .. } => {
+                ConversationCommandKindModel::Cancel
+            }
         }
     }
 
-    fn command_precondition(&self) -> &AgentRunCommandPreconditionView {
+    fn command_precondition(&self) -> &AgentRunCommandPreconditionModel {
         match self {
             AgentRunWorkspaceCommandPrecondition::DeleteMailboxMessage { command }
             | AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage { command }
@@ -361,8 +361,8 @@ impl std::fmt::Display for AgentRunWorkspaceCommandConflict {
 }
 
 fn ensure_command_submission_matches_availability(
-    command: &AgentRunCommandPreconditionView,
-    expected_kind: ConversationCommandKind,
+    command: &AgentRunCommandPreconditionModel,
+    expected_kind: ConversationCommandKindModel,
     context: AgentRunWorkspaceCommandPolicyContext<'_>,
     availability: &ConversationCommandAvailability,
 ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
@@ -486,7 +486,7 @@ fn workflow_error_from_selection_error(
 }
 
 fn ensure_composer_command_precondition_matches_availability(
-    command: &AgentRunCommandPreconditionView,
+    command: &AgentRunCommandPreconditionModel,
     context: AgentRunWorkspaceCommandPolicyContext<'_>,
     availability: &ConversationCommandAvailability,
 ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
@@ -498,7 +498,7 @@ fn ensure_composer_command_precondition_matches_availability(
             "state": availability.execution_status,
             "submitted_command_kind": command.command_kind,
             "submitted_command_id": command.command_id,
-            "expected_command_id": conversation_command_id_for(ConversationCommandKind::SubmitMessage),
+            "expected_command_id": conversation_command_id_for(ConversationCommandKindModel::SubmitMessage),
             "submitted_guard": &command.stale_guard,
         })
     };
@@ -522,7 +522,7 @@ fn ensure_composer_command_precondition_matches_availability(
         ));
     }
 
-    if command.command_kind != ConversationCommandKind::SubmitMessage {
+    if command.command_kind != ConversationCommandKindModel::SubmitMessage {
         return Err(conflict(
             "当前输入提交只能使用 submit_message 命令意图。",
             "command_unavailable",
@@ -531,7 +531,9 @@ fn ensure_composer_command_precondition_matches_availability(
         ));
     }
 
-    if command.command_id != conversation_command_id_for(ConversationCommandKind::SubmitMessage) {
+    if command.command_id
+        != conversation_command_id_for(ConversationCommandKindModel::SubmitMessage)
+    {
         return Err(stale_command_conflict(
             &availability_execution_state(availability),
             availability.terminal_agent,
@@ -541,9 +543,9 @@ fn ensure_composer_command_precondition_matches_availability(
                 "agent_id": context.agent.id.to_string(),
                 "runtime_session_id": context.runtime_session_id,
                 "state": availability.execution_status,
-                "expected_command_kind": ConversationCommandKind::SubmitMessage,
+                "expected_command_kind": ConversationCommandKindModel::SubmitMessage,
                 "submitted_command_kind": command.command_kind,
-                "expected_command_id": conversation_command_id_for(ConversationCommandKind::SubmitMessage),
+                "expected_command_id": conversation_command_id_for(ConversationCommandKindModel::SubmitMessage),
                 "submitted_command_id": command.command_id,
                 "snapshot_refresh_required": true,
             }),
@@ -552,7 +554,7 @@ fn ensure_composer_command_precondition_matches_availability(
 
     ensure_availability_command_enabled(
         availability,
-        ConversationCommandKind::SubmitMessage,
+        ConversationCommandKindModel::SubmitMessage,
         detail,
     )
 }
@@ -597,7 +599,7 @@ fn conflict(
 
 fn ensure_availability_command_enabled(
     availability: &ConversationCommandAvailability,
-    kind: ConversationCommandKind,
+    kind: ConversationCommandKindModel,
     detail: impl Fn() -> Value,
 ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
     let Some(command) = availability_command(availability, kind) else {
@@ -627,8 +629,8 @@ fn ensure_availability_command_enabled(
 
 fn availability_command(
     availability: &ConversationCommandAvailability,
-    kind: ConversationCommandKind,
-) -> Option<&ConversationCommandView> {
+    kind: ConversationCommandKindModel,
+) -> Option<&ConversationCommandModel> {
     availability
         .commands
         .commands
@@ -647,20 +649,20 @@ fn replacement_command_for_availability(
 }
 
 fn is_terminal_availability(availability: &ConversationCommandAvailability) -> bool {
-    availability.execution_status == ConversationExecutionStatus::Terminal
+    availability.execution_status == ConversationExecutionStatusModel::Terminal
 }
 
 fn availability_execution_state(
     availability: &ConversationCommandAvailability,
 ) -> SessionExecutionState {
     match availability.execution_status {
-        ConversationExecutionStatus::StartingClaimed => {
+        ConversationExecutionStatusModel::StartingClaimed => {
             SessionExecutionState::Running { turn_id: None }
         }
-        ConversationExecutionStatus::RunningActive => SessionExecutionState::Running {
+        ConversationExecutionStatusModel::RunningActive => SessionExecutionState::Running {
             turn_id: availability.active_turn_id.clone(),
         },
-        ConversationExecutionStatus::Cancelling => SessionExecutionState::Cancelling {
+        ConversationExecutionStatusModel::Cancelling => SessionExecutionState::Cancelling {
             turn_id: availability.active_turn_id.clone(),
         },
         _ => SessionExecutionState::Idle,
@@ -670,7 +672,6 @@ fn availability_execution_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_contracts::workflow::ConversationCommandStaleGuardView;
     use agentdash_domain::workflow::{AgentSource, LifecycleRun};
 
     fn test_context() -> (LifecycleRun, LifecycleAgent) {
@@ -691,13 +692,13 @@ mod tests {
     }
 
     fn command(
-        kind: ConversationCommandKind,
+        kind: ConversationCommandKindModel,
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
-    ) -> AgentRunCommandPreconditionView {
-        AgentRunCommandPreconditionView {
+    ) -> AgentRunCommandPreconditionModel {
+        AgentRunCommandPreconditionModel {
             command_id: conversation_command_id_for(kind).to_string(),
             command_kind: kind,
-            stale_guard: ConversationCommandStaleGuardView {
+            stale_guard: crate::agent_run::ConversationCommandStaleGuardModel {
                 snapshot_id: "stale-snapshot".to_string(),
                 run_id: context.run.id.to_string(),
                 agent_id: context.agent.id.to_string(),
@@ -722,7 +723,7 @@ mod tests {
             supports_steering: true,
             mailbox_paused: false,
             mailbox_visible_message_count: 0,
-            model_config_status: ConversationModelConfigStatus::Resolved,
+            model_config_status: ConversationModelConfigStatusModel::Resolved,
         })
     }
 
@@ -733,7 +734,7 @@ mod tests {
         };
         let (run, agent) = test_context();
         let context = policy_context(&run, &agent);
-        let command = command(ConversationCommandKind::SubmitMessage, context);
+        let command = command(ConversationCommandKindModel::SubmitMessage, context);
         let availability = availability(context, completed);
 
         ensure_composer_command_precondition_matches_availability(&command, context, &availability)
@@ -747,7 +748,7 @@ mod tests {
         };
         let (run, agent) = test_context();
         let context = policy_context(&run, &agent);
-        let command = command(ConversationCommandKind::Cancel, context);
+        let command = command(ConversationCommandKindModel::Cancel, context);
         let availability = availability(context, running);
 
         let error = ensure_composer_command_precondition_matches_availability(
@@ -772,7 +773,7 @@ mod tests {
         };
         let (run, agent) = test_context();
         let context = policy_context(&run, &agent);
-        let command = command(ConversationCommandKind::SubmitMessage, context);
+        let command = command(ConversationCommandKindModel::SubmitMessage, context);
         let availability = availability(context, running);
 
         ensure_composer_command_precondition_matches_availability(&command, context, &availability)

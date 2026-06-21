@@ -16,8 +16,10 @@ use super::runtime_commands::{
     AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeDeliveryCommand,
 };
 use super::types::{AgentFrameRuntimeTarget, CapabilityState};
-use crate::agent_run::AgentFrameBuilder;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
+use crate::agent_run::{
+    AgentFrameBuilder, AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView,
+};
 use crate::runtime_gateway::{
     McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
 };
@@ -140,22 +142,22 @@ impl SessionCapabilityService {
             .ok_or_else(|| format!("AgentFrame `{}` 写入后缺少 VFS surface", next_frame.id))
     }
 
-    pub(crate) async fn visible_workspace_module_refs_from_frame(
+    pub(crate) async fn effective_capability_view_for_runtime_session(
         &self,
         session_id: &str,
-    ) -> Result<Vec<String>, String> {
-        let frame_id = self.resolve_runtime_session_frame_id(session_id).await?;
+    ) -> Result<AgentRunEffectiveCapabilityView, String> {
+        let target = self.resolve_runtime_session_target(session_id).await?;
         let repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
             format!(
-                "session `{session_id}` 无 AgentFrame repository，无法读取 workspace module ref"
+                "session `{session_id}` 无 AgentFrame repository，无法读取 AgentRun capability view"
             )
         })?;
         let frame = repo
-            .get(frame_id)
+            .get(target.frame_id)
             .await
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("AgentFrame `{frame_id}` 不存在"))?;
-        Ok(frame.visible_workspace_module_refs())
+            .ok_or_else(|| format!("AgentFrame `{}` 不存在", target.frame_id))?;
+        Ok(AgentRunEffectiveCapabilityService::effective_view_from_frame(target, &frame))
     }
 
     pub async fn list_requested_runtime_commands(

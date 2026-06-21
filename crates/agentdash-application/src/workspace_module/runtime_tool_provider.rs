@@ -159,7 +159,6 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
 
         let shared_vfs = shared_runtime_vfs_from_context(context)?;
         let session_id = runtime_session_id_from_context(context);
-        let visibility = flow.workspace_module.clone();
         let mut tools: Vec<DynAgentTool> = Vec::new();
 
         if flow.is_capability_tool_enabled(
@@ -172,7 +171,6 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     self.installation_repo.clone(),
                     self.canvas_repo.clone(),
                     project_id,
-                    visibility.clone(),
                 )
                 .with_runtime_visibility(self.session_services_handle.clone(), session_id.clone()),
             ));
@@ -188,7 +186,6 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     self.installation_repo.clone(),
                     self.canvas_repo.clone(),
                     project_id,
-                    visibility.clone(),
                 )
                 .with_runtime_visibility(self.session_services_handle.clone(), session_id.clone()),
             ));
@@ -216,7 +213,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
             "workspace_module_invoke",
             Some(ToolCluster::WorkspaceModule),
         ) {
-            self.push_invoke_tool(context, project_id, &visibility, &session_id, &mut tools)
+            self.push_invoke_tool(context, project_id, &session_id, &mut tools)
                 .await;
         }
 
@@ -229,7 +226,6 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                 self.installation_repo.clone(),
                 self.canvas_repo.clone(),
                 project_id,
-                visibility.clone(),
                 shared_vfs,
                 self.session_services_handle.clone(),
                 session_id,
@@ -246,7 +242,6 @@ impl WorkspaceModuleRuntimeToolProvider {
         &self,
         context: &ExecutionContext,
         project_id: uuid::Uuid,
-        visibility: &agentdash_spi::WorkspaceModuleDimension,
         session_id: &str,
         tools: &mut Vec<DynAgentTool>,
     ) {
@@ -285,7 +280,6 @@ impl WorkspaceModuleRuntimeToolProvider {
                 self.installation_repo.clone(),
                 self.canvas_repo.clone(),
                 project_id,
-                visibility.clone(),
                 session_id.to_string(),
                 None,
                 backend,

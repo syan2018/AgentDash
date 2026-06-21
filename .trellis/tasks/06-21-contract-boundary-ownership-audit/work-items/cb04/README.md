@@ -7,7 +7,7 @@ CB04 不再拆成 Trellis 子任务；所有执行入口收束在 Contract Bound
 | ID | Work Item | Status | Parallel Slot | Scope |
 | --- | --- | --- | --- | --- |
 | CB04-A | `A-mcp-preset-incoming-conversion` | completed | wave 1 | MCP preset request DTO 到 domain command/value 的 incoming conversion 迁到 API adapter/application command boundary |
-| CB04-B | `B-agentrun-workspace-snapshot-split` | ready | next | AgentRun workspace snapshot 从 generated contract DTO 拆出 application read model |
+| CB04-B | `B-agentrun-workspace-snapshot-split` | completed | wave 3 | AgentRun workspace snapshot 从 generated contract DTO 拆出 application read model |
 | CB04-C | `C-session-context-usage-projection` | completed | wave 1 | Session context usage 的 SPI `ContextFrame` 分析迁到 application projection，API/stream boundary 映射 DTO |
 | CB04-D | `D-capability-catalog-read-model` | completed | wave 2 | Capability catalog 从 contract DTO 返回值拆出 application read model |
 | CB04-E | `E-routine-llm-settings-reverse-conversion` | completed | wave 1 | Routine / LLM Provider / Settings 的 request DTO reverse conversion 迁到对应 API route mapper |
@@ -21,15 +21,15 @@ CB04 不再拆成 Trellis 子任务；所有执行入口收束在 Contract Bound
 - CB04-F completed as a small backend access route-local command parsing cleanup.
 - CB04-G completed after review found `SessionMessageRefDto -> MessageRef` was request-facing fork command parsing.
 - CB04-D completed the capability catalog application read model split; workflow API route now owns contract DTO mapping.
-- CB04-B is ready after Runtime Coordinate current delivery binding and resource surface coordinate settled.
+- CB04-B completed the AgentRun workspace/conversation snapshot read model split; lifecycle API adapter now owns browser-facing contract DTO mapping.
 
-## Ready Follow-Up Tracking
+## Completed Follow-Up Tracking
 
-| ID | Constraint | Owning Parent Task | Resume Condition | Next Action |
-| --- | --- | --- | --- | --- |
-| CB04-B | AgentRun workspace snapshot split now depends on preserving the settled current delivery/resource surface coordinate semantics. | `.trellis/tasks/06-21-contract-boundary-ownership-audit/` | Ready after RC08 completed. | Implement `B-agentrun-workspace-snapshot-split` and keep `resource_surface_coordinate` mapped at the API adapter boundary. |
+| ID | Constraint | Owning Parent Task | Completion |
+| --- | --- | --- | --- |
+| CB04-B | AgentRun workspace snapshot split preserves settled current delivery/resource surface coordinate semantics. | `.trellis/tasks/06-21-contract-boundary-ownership-audit/` | Completed with `resource_surface_coordinate` mapped at the lifecycle API adapter boundary. |
 
-These follow-ups are tracked here so Contract Boundary cleanup can continue from the parent work-item queue without creating scattered Trellis tasks.
+These follow-ups stay tracked here so Contract Boundary cleanup remains recoverable from the parent work-item queue without scattered Trellis tasks.
 
 ## Validation Baseline
 

@@ -3,7 +3,7 @@
 //! 二者由 session runtime tool composer 通过 workspace-module provider 装配，
 //! 用当前 project context + repos 现取现算：每次调用拉 enabled installations + visible canvases，经聚合层
 //! `build_workspace_modules` 投影，再按 capability 的
-//! `WorkspaceModuleDimension` 过滤（可见性裁切的唯一来源，D4）。
+//! AgentRun effective capability view 过滤。
 
 use std::sync::Arc;
 
@@ -14,9 +14,8 @@ use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleOperation,
     WorkspaceModuleOperationDispatch,
 };
-use agentdash_domain::canvas::{Canvas, CanvasRepository};
+use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
-use agentdash_spi::WorkspaceModuleDimension;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -25,13 +24,12 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::agent_run::AgentRunEffectiveCapabilityView;
 use crate::canvas::{
     BindCanvasDataParams, StartCanvasParams, bind_canvas_data_for_project,
     create_or_attach_canvas_for_session, expose_existing_canvas_for_session,
 };
-use crate::extension_runtime::{
-    ExtensionRuntimeProjection, extension_runtime_projection_from_installations,
-};
+use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::runtime_gateway::{
     ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
     ExtensionRuntimeChannelInvoker, RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeGateway,
@@ -41,61 +39,82 @@ use crate::runtime_gateway::{
 use crate::runtime_tools::SharedSessionToolServicesHandle;
 use crate::workspace_module::{
     ResolvedInvocationBackend, build_workspace_module_presentation, build_workspace_modules,
-    validate_input_against_schema,
+    resolve_workspace_module_visibility, validate_input_against_schema,
 };
 
-/// 现取现算：拉 enabled extension projection + visible canvas，聚合 + capability 过滤。
-async fn resolve_visible_modules(
+#[derive(Clone, Default)]
+struct WorkspaceModuleVisibilitySource {
+    session_services_handle: Option<SharedSessionToolServicesHandle>,
+    session_id: Option<String>,
+    #[cfg(test)]
+    effective_view: Option<AgentRunEffectiveCapabilityView>,
+}
+
+impl WorkspaceModuleVisibilitySource {
+    fn with_runtime(
+        mut self,
+        session_services_handle: SharedSessionToolServicesHandle,
+        session_id: impl Into<String>,
+    ) -> Self {
+        self.session_services_handle = Some(session_services_handle);
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    #[cfg(test)]
+    fn with_effective_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
+        self.effective_view = Some(view);
+        self
+    }
+
+    async fn effective_view(&self) -> Result<AgentRunEffectiveCapabilityView, AgentToolError> {
+        #[cfg(test)]
+        if let Some(view) = self.effective_view.clone() {
+            return Ok(view);
+        }
+
+        let (Some(handle), Some(session_id)) = (
+            self.session_services_handle.as_ref(),
+            self.session_id.as_deref(),
+        ) else {
+            return Err(AgentToolError::ExecutionFailed(
+                "AgentRun effective capability view unavailable for workspace module visibility"
+                    .to_string(),
+            ));
+        };
+        let Some(session_services) = handle.get().await else {
+            return Err(AgentToolError::ExecutionFailed(
+                "Session services 尚未完成初始化".to_string(),
+            ));
+        };
+        session_services
+            .capability
+            .effective_capability_view_for_runtime_session(session_id)
+            .await
+            .map_err(AgentToolError::ExecutionFailed)
+    }
+}
+
+async fn resolve_visible_modules_for_tool(
     installation_repo: &Arc<dyn ProjectExtensionInstallationRepository>,
     canvas_repo: &Arc<dyn CanvasRepository>,
     project_id: Uuid,
-    visibility: &WorkspaceModuleDimension,
-    dynamic_module_refs: &[String],
+    visibility_source: &WorkspaceModuleVisibilitySource,
 ) -> Result<Vec<WorkspaceModuleDescriptor>, AgentToolError> {
-    let installations = installation_repo
-        .list_enabled_by_project(project_id)
-        .await
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-    let projection = extension_runtime_projection_from_installations(installations)
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-    let canvases: Vec<Canvas> = canvas_repo
-        .list_by_project(project_id)
-        .await
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-
-    let modules = build_workspace_modules(&projection, &canvases)
-        .into_iter()
-        .filter(|module| {
-            visibility.allows(&module.summary.module_id)
-                || dynamic_module_refs
-                    .iter()
-                    .any(|module_ref| module_ref == &module.summary.module_id)
-        })
-        .collect();
-    Ok(modules)
-}
-
-async fn runtime_visible_module_refs(
-    session_services_handle: Option<&SharedSessionToolServicesHandle>,
-    session_id: Option<&str>,
-) -> Vec<String> {
-    let (Some(handle), Some(session_id)) = (session_services_handle, session_id) else {
-        return Vec::new();
-    };
-    let Some(session_services) = handle.get().await else {
-        return Vec::new();
-    };
-    match session_services
-        .capability
-        .visible_workspace_module_refs_from_frame(session_id)
-        .await
-    {
-        Ok(refs) => refs,
-        Err(error) => {
-            tracing::warn!(%error, "读取运行时 workspace module grant 失败，降级为 base 可见性");
-            Vec::new()
-        }
+    let view = visibility_source.effective_view().await?;
+    let projection =
+        resolve_workspace_module_visibility(installation_repo, canvas_repo, project_id, &view)
+            .await
+            .map_err(AgentToolError::ExecutionFailed)?;
+    for diagnostic in &projection.diagnostics {
+        tracing::warn!(
+            code = %diagnostic.code,
+            module_ref = diagnostic.module_ref.as_deref().unwrap_or(""),
+            "workspace module visibility diagnostic: {}",
+            diagnostic.message
+        );
     }
+    Ok(projection.modules)
 }
 
 #[derive(Clone)]
@@ -103,9 +122,7 @@ pub struct WorkspaceModuleListTool {
     installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
     canvas_repo: Arc<dyn CanvasRepository>,
     project_id: Uuid,
-    visibility: WorkspaceModuleDimension,
-    session_services_handle: Option<SharedSessionToolServicesHandle>,
-    session_id: Option<String>,
+    visibility_source: WorkspaceModuleVisibilitySource,
 }
 
 impl WorkspaceModuleListTool {
@@ -113,15 +130,12 @@ impl WorkspaceModuleListTool {
         installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
         canvas_repo: Arc<dyn CanvasRepository>,
         project_id: Uuid,
-        visibility: WorkspaceModuleDimension,
     ) -> Self {
         Self {
             installation_repo,
             canvas_repo,
             project_id,
-            visibility,
-            session_services_handle: None,
-            session_id: None,
+            visibility_source: WorkspaceModuleVisibilitySource::default(),
         }
     }
 
@@ -130,8 +144,15 @@ impl WorkspaceModuleListTool {
         session_services_handle: SharedSessionToolServicesHandle,
         session_id: String,
     ) -> Self {
-        self.session_services_handle = Some(session_services_handle);
-        self.session_id = Some(session_id);
+        self.visibility_source = self
+            .visibility_source
+            .with_runtime(session_services_handle, session_id);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_effective_capability_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
+        self.visibility_source = self.visibility_source.with_effective_view(view);
         self
     }
 }
@@ -162,17 +183,11 @@ impl AgentTool for WorkspaceModuleListTool {
         _: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let dynamic_module_refs = runtime_visible_module_refs(
-            self.session_services_handle.as_ref(),
-            self.session_id.as_deref(),
-        )
-        .await;
-        let modules = resolve_visible_modules(
+        let modules = resolve_visible_modules_for_tool(
             &self.installation_repo,
             &self.canvas_repo,
             self.project_id,
-            &self.visibility,
-            &dynamic_module_refs,
+            &self.visibility_source,
         )
         .await?;
 
@@ -225,9 +240,7 @@ pub struct WorkspaceModuleDescribeTool {
     installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
     canvas_repo: Arc<dyn CanvasRepository>,
     project_id: Uuid,
-    visibility: WorkspaceModuleDimension,
-    session_services_handle: Option<SharedSessionToolServicesHandle>,
-    session_id: Option<String>,
+    visibility_source: WorkspaceModuleVisibilitySource,
 }
 
 impl WorkspaceModuleDescribeTool {
@@ -235,15 +248,12 @@ impl WorkspaceModuleDescribeTool {
         installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
         canvas_repo: Arc<dyn CanvasRepository>,
         project_id: Uuid,
-        visibility: WorkspaceModuleDimension,
     ) -> Self {
         Self {
             installation_repo,
             canvas_repo,
             project_id,
-            visibility,
-            session_services_handle: None,
-            session_id: None,
+            visibility_source: WorkspaceModuleVisibilitySource::default(),
         }
     }
 
@@ -252,8 +262,15 @@ impl WorkspaceModuleDescribeTool {
         session_services_handle: SharedSessionToolServicesHandle,
         session_id: String,
     ) -> Self {
-        self.session_services_handle = Some(session_services_handle);
-        self.session_id = Some(session_id);
+        self.visibility_source = self
+            .visibility_source
+            .with_runtime(session_services_handle, session_id);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_effective_capability_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
+        self.visibility_source = self.visibility_source.with_effective_view(view);
         self
     }
 }
@@ -290,17 +307,11 @@ impl AgentTool for WorkspaceModuleDescribeTool {
             ));
         }
 
-        let dynamic_module_refs = runtime_visible_module_refs(
-            self.session_services_handle.as_ref(),
-            self.session_id.as_deref(),
-        )
-        .await;
-        let modules = resolve_visible_modules(
+        let modules = resolve_visible_modules_for_tool(
             &self.installation_repo,
             &self.canvas_repo,
             self.project_id,
-            &self.visibility,
-            &dynamic_module_refs,
+            &self.visibility_source,
         )
         .await?;
 
@@ -589,13 +600,12 @@ pub struct WorkspaceModuleInvokeTool {
     installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
     canvas_repo: Arc<dyn CanvasRepository>,
     project_id: Uuid,
-    visibility: WorkspaceModuleDimension,
     session_id: String,
     agent_id: Option<String>,
     backend: Option<ResolvedInvocationBackend>,
     gateway: Arc<RuntimeGateway>,
     channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
-    session_services_handle: Option<SharedSessionToolServicesHandle>,
+    visibility_source: WorkspaceModuleVisibilitySource,
 }
 
 impl WorkspaceModuleInvokeTool {
@@ -604,7 +614,6 @@ impl WorkspaceModuleInvokeTool {
         installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
         canvas_repo: Arc<dyn CanvasRepository>,
         project_id: Uuid,
-        visibility: WorkspaceModuleDimension,
         session_id: String,
         agent_id: Option<String>,
         backend: Option<ResolvedInvocationBackend>,
@@ -615,13 +624,12 @@ impl WorkspaceModuleInvokeTool {
             installation_repo,
             canvas_repo,
             project_id,
-            visibility,
             session_id,
             agent_id,
             backend,
             gateway,
             channel_invoker,
-            session_services_handle: None,
+            visibility_source: WorkspaceModuleVisibilitySource::default(),
         }
     }
 
@@ -629,7 +637,15 @@ impl WorkspaceModuleInvokeTool {
         mut self,
         session_services_handle: SharedSessionToolServicesHandle,
     ) -> Self {
-        self.session_services_handle = Some(session_services_handle);
+        self.visibility_source = self
+            .visibility_source
+            .with_runtime(session_services_handle, self.session_id.clone());
+        self
+    }
+
+    #[cfg(test)]
+    fn with_effective_capability_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
+        self.visibility_source = self.visibility_source.with_effective_view(view);
         self
     }
 
@@ -677,18 +693,11 @@ impl AgentTool for WorkspaceModuleInvokeTool {
             ));
         }
 
-        // 现取现算：聚合 + 可见性裁切（与 list/describe 同源，capability 通道 D4）。
-        let dynamic_module_refs = runtime_visible_module_refs(
-            self.session_services_handle.as_ref(),
-            Some(&self.session_id),
-        )
-        .await;
-        let modules = resolve_visible_modules(
+        let modules = resolve_visible_modules_for_tool(
             &self.installation_repo,
             &self.canvas_repo,
             self.project_id,
-            &self.visibility,
-            &dynamic_module_refs,
+            &self.visibility_source,
         )
         .await?;
 
@@ -897,11 +906,11 @@ pub struct WorkspaceModulePresentTool {
     installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
     canvas_repo: Arc<dyn CanvasRepository>,
     project_id: Uuid,
-    visibility: WorkspaceModuleDimension,
     vfs: crate::vfs::tools::fs::SharedRuntimeVfs,
     session_services_handle: SharedSessionToolServicesHandle,
     session_id: String,
     turn_id: String,
+    visibility_source: WorkspaceModuleVisibilitySource,
 }
 
 impl WorkspaceModulePresentTool {
@@ -910,21 +919,22 @@ impl WorkspaceModulePresentTool {
         installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
         canvas_repo: Arc<dyn CanvasRepository>,
         project_id: Uuid,
-        visibility: WorkspaceModuleDimension,
         vfs: crate::vfs::tools::fs::SharedRuntimeVfs,
         session_services_handle: SharedSessionToolServicesHandle,
         session_id: String,
         turn_id: String,
     ) -> Self {
+        let visibility_source = WorkspaceModuleVisibilitySource::default()
+            .with_runtime(session_services_handle.clone(), session_id.clone());
         Self {
             installation_repo,
             canvas_repo,
             project_id,
-            visibility,
             vfs,
             session_services_handle,
             session_id,
             turn_id,
+            visibility_source,
         }
     }
 }
@@ -962,17 +972,11 @@ impl AgentTool for WorkspaceModulePresentTool {
             ));
         }
 
-        let dynamic_module_refs = runtime_visible_module_refs(
-            Some(&self.session_services_handle),
-            Some(&self.session_id),
-        )
-        .await;
-        let modules = resolve_visible_modules(
+        let modules = resolve_visible_modules_for_tool(
             &self.installation_repo,
             &self.canvas_repo,
             self.project_id,
-            &self.visibility,
-            &dynamic_module_refs,
+            &self.visibility_source,
         )
         .await?;
 
@@ -1107,6 +1111,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use agentdash_domain::DomainError;
+    use agentdash_domain::canvas::Canvas;
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionRuntimeActionDefinition,
@@ -1127,14 +1132,14 @@ mod tests {
     use agentdash_spi::{
         AgentConfig, AgentConnector, CapabilityState, ConnectorError, ExecutionContext,
         ExecutionSessionFrame, ExecutionTurnFrame, PromptPayload, ToolCapability, ToolCluster,
-        ToolDefinition,
+        ToolDefinition, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
     };
     use futures::stream;
     use tokio::sync::RwLock;
 
     use super::*;
-    use crate::agent_run::frame::builder::AgentFrameBuilder;
     use crate::agent_run::frame::surface::FrameSurfaceDraft;
+    use crate::agent_run::{AgentRunEffectiveCapabilityService, frame::builder::AgentFrameBuilder};
     use crate::canvas::build_canvas;
     use crate::runtime_tools::{
         SessionToolServices, SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
@@ -1144,7 +1149,9 @@ mod tests {
         RuntimeContextInspectionPlan,
     };
     use crate::session::hub::SessionRuntimeInner;
-    use crate::session::{MemorySessionPersistence, UserPromptInput, local_workspace_vfs};
+    use crate::session::{
+        AgentFrameRuntimeTarget, MemorySessionPersistence, UserPromptInput, local_workspace_vfs,
+    };
     use crate::test_support::{
         MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,
         MemoryRuntimeSessionExecutionAnchorRepository,
@@ -1516,15 +1523,30 @@ mod tests {
         (install_repo, canvas_repo, project_id)
     }
 
+    fn test_effective_capability_view(
+        workspace_module: WorkspaceModuleDimension,
+        runtime_refs: Vec<String>,
+    ) -> AgentRunEffectiveCapabilityView {
+        let mut capability_state = CapabilityState::from_clusters([ToolCluster::WorkspaceModule]);
+        capability_state.workspace_module = workspace_module;
+        AgentRunEffectiveCapabilityService::effective_view_from_state(
+            AgentFrameRuntimeTarget {
+                frame_id: Uuid::new_v4(),
+                delivery_runtime_session_id: "session-test".to_string(),
+            },
+            capability_state,
+            runtime_refs,
+        )
+    }
+
     #[tokio::test]
     async fn list_returns_extension_and_canvas_summaries() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
-        let tool = WorkspaceModuleListTool::new(
-            install_repo,
-            canvas_repo,
-            project_id,
-            WorkspaceModuleDimension::all(),
-        );
+        let tool = WorkspaceModuleListTool::new(install_repo, canvas_repo, project_id)
+            .with_effective_capability_view(test_effective_capability_view(
+                WorkspaceModuleDimension::all(),
+                Vec::new(),
+            ));
         let result = tool
             .execute("t", serde_json::json!({}), CancellationToken::new(), None)
             .await
@@ -1543,12 +1565,11 @@ mod tests {
     #[tokio::test]
     async fn describe_returns_full_descriptor_with_operations() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
-        let tool = WorkspaceModuleDescribeTool::new(
-            install_repo,
-            canvas_repo,
-            project_id,
-            WorkspaceModuleDimension::all(),
-        );
+        let tool = WorkspaceModuleDescribeTool::new(install_repo, canvas_repo, project_id)
+            .with_effective_capability_view(test_effective_capability_view(
+                WorkspaceModuleDimension::all(),
+                Vec::new(),
+            ));
         let result = tool
             .execute(
                 "t",
@@ -1576,12 +1597,11 @@ mod tests {
     #[tokio::test]
     async fn describe_unknown_module_returns_structured_error() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
-        let tool = WorkspaceModuleDescribeTool::new(
-            install_repo,
-            canvas_repo,
-            project_id,
-            WorkspaceModuleDimension::all(),
-        );
+        let tool = WorkspaceModuleDescribeTool::new(install_repo, canvas_repo, project_id)
+            .with_effective_capability_view(test_effective_capability_view(
+                WorkspaceModuleDimension::all(),
+                Vec::new(),
+            ));
         let result = tool
             .execute(
                 "t",
@@ -1604,10 +1624,11 @@ mod tests {
     async fn allowlist_visibility_filters_modules() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
         let visibility = WorkspaceModuleDimension {
-            mode: agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist,
+            mode: WorkspaceModuleVisibilityMode::Allowlist,
             allowed_module_ids: vec!["ext:demo".to_string()],
         };
-        let tool = WorkspaceModuleListTool::new(install_repo, canvas_repo, project_id, visibility);
+        let tool = WorkspaceModuleListTool::new(install_repo, canvas_repo, project_id)
+            .with_effective_capability_view(test_effective_capability_view(visibility, Vec::new()));
         let result = tool
             .execute("t", serde_json::json!({}), CancellationToken::new(), None)
             .await
@@ -1629,19 +1650,17 @@ mod tests {
     async fn runtime_visible_refs_extend_workspace_module_allowlist() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
         let visibility = WorkspaceModuleDimension {
-            mode: agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist,
+            mode: WorkspaceModuleVisibilityMode::Allowlist,
             allowed_module_ids: vec!["ext:demo".to_string()],
         };
-        let modules = resolve_visible_modules(
-            &install_repo,
-            &canvas_repo,
-            project_id,
-            &visibility,
-            &["canvas:dashboard-a".to_string()],
-        )
-        .await
-        .expect("resolve modules");
-        let module_ids = modules
+        let view =
+            test_effective_capability_view(visibility, vec!["canvas:dashboard-a".to_string()]);
+        let projection =
+            resolve_workspace_module_visibility(&install_repo, &canvas_repo, project_id, &view)
+                .await
+                .expect("resolve modules");
+        let module_ids = projection
+            .modules
             .iter()
             .map(|module| module.summary.module_id.as_str())
             .collect::<Vec<_>>();
@@ -1758,7 +1777,10 @@ mod tests {
         let stale_target = stale_runtime.control_target();
         let mut frame_state =
             CapabilityState::from_clusters([agentdash_spi::ToolCluster::WorkspaceModule]);
-        frame_state.workspace_module = WorkspaceModuleDimension::all();
+        frame_state.workspace_module = WorkspaceModuleDimension {
+            mode: WorkspaceModuleVisibilityMode::Allowlist,
+            allowed_module_ids: vec!["ext:demo".to_string()],
+        };
         frame_state.vfs.active = Some(local_workspace_vfs(base.path()));
         let switched_frame = AgentFrameBuilder::new(agent_id)
             .with_capability_state(&frame_state)
@@ -1898,17 +1920,8 @@ mod tests {
             "workspace_module_create should not open the Canvas tab"
         );
 
-        let describe_visibility = WorkspaceModuleDimension {
-            mode: agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist,
-            allowed_module_ids: vec!["ext:demo".to_string()],
-        };
-        let describe_tool = WorkspaceModuleDescribeTool::new(
-            install_repo,
-            canvas_repo,
-            project_id,
-            describe_visibility,
-        )
-        .with_runtime_visibility(handle, session.id.clone());
+        let describe_tool = WorkspaceModuleDescribeTool::new(install_repo, canvas_repo, project_id)
+            .with_runtime_visibility(handle, session.id.clone());
         let describe = describe_tool
             .execute(
                 "tool-describe",
@@ -2029,7 +2042,6 @@ mod tests {
             install_repo,
             canvas_repo,
             project_id,
-            WorkspaceModuleDimension::all(),
             shared_vfs,
             handle,
             session.id.clone(),
@@ -2223,13 +2235,16 @@ mod tests {
             install_repo,
             canvas_repo,
             project_id,
-            WorkspaceModuleDimension::all(),
             "session-1".to_string(),
             None,
             backend,
             gateway,
             channel_invoker,
-        );
+        )
+        .with_effective_capability_view(test_effective_capability_view(
+            WorkspaceModuleDimension::all(),
+            Vec::new(),
+        ));
         (tool, invoke_count)
     }
 

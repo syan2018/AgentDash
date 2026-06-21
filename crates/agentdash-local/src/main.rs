@@ -27,7 +27,7 @@ struct Cli {
     #[arg(long, default_value = "local-backend")]
     name: String,
 
-    /// 后端 ID（不指定则自动生成）
+    /// 后端 ID（来自 server ensure/claim 响应；standalone 必须显式传入）
     #[arg(long)]
     backend_id: Option<String>,
 
@@ -50,21 +50,31 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let cli = Cli::parse();
-    if matches!(cli.command, Some(Command::MachineIdentity)) {
-        let identity = load_or_create_machine_identity()?;
-        println!("{}", serde_json::to_string_pretty(&identity)?);
-        return Ok(());
+    match cli_action(Cli::parse())? {
+        CliAction::PrintMachineIdentity => {
+            let identity = load_or_create_machine_identity()?;
+            println!("{}", serde_json::to_string_pretty(&identity)?);
+            Ok(())
+        }
+        CliAction::Run(config) => run_standalone(config).await,
     }
+}
 
+#[derive(Debug)]
+enum CliAction {
+    PrintMachineIdentity,
+    Run(LocalRuntimeConfig),
+}
+
+fn cli_action(cli: Cli) -> anyhow::Result<CliAction> {
+    if matches!(cli.command, Some(Command::MachineIdentity)) {
+        return Ok(CliAction::PrintMachineIdentity);
+    }
     let cloud_url = cli
         .cloud_url
         .ok_or_else(|| anyhow::anyhow!("缺少 --cloud-url"))?;
     let token = cli.token.ok_or_else(|| anyhow::anyhow!("缺少 --token"))?;
-
-    let backend_id = cli
-        .backend_id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let backend_id = required_backend_id(cli.backend_id)?;
 
     let config = LocalRuntimeConfig::new(
         cloud_url,
@@ -74,6 +84,75 @@ async fn main() -> anyhow::Result<()> {
         cli.workspace_roots,
         !cli.no_executor,
     );
+    Ok(CliAction::Run(config))
+}
 
-    run_standalone(config).await
+fn required_backend_id(value: Option<String>) -> anyhow::Result<String> {
+    let Some(value) = value.map(|value| value.trim().to_string()) else {
+        anyhow::bail!(
+            "缺少 --backend-id；backend_id 必须来自 server ensure/claim 响应或显式 token-bound input"
+        );
+    };
+    if value.is_empty() {
+        anyhow::bail!(
+            "--backend-id 不能为空；backend_id 必须来自 server ensure/claim 响应或显式 token-bound input"
+        );
+    }
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standalone_cli_requires_explicit_backend_id() {
+        let cli = Cli::try_parse_from([
+            "agentdash-local",
+            "--cloud-url",
+            "ws://127.0.0.1:3001/api/relay",
+            "--token",
+            "token-1",
+        ])
+        .expect("参数形态应可解析");
+
+        let error = cli_action(cli).expect_err("standalone run 必须显式传入 backend id");
+
+        assert!(error.to_string().contains("缺少 --backend-id"));
+    }
+
+    #[test]
+    fn standalone_cli_accepts_claimed_backend_id() {
+        let cli = Cli::try_parse_from([
+            "agentdash-local",
+            "--cloud-url",
+            "ws://127.0.0.1:3001/api/relay",
+            "--token",
+            "token-1",
+            "--backend-id",
+            " local_claimed_1 ",
+            "--name",
+            "claimed-local",
+        ])
+        .expect("参数形态应可解析");
+
+        let CliAction::Run(config) = cli_action(cli).expect("显式 backend id 应可启动")
+        else {
+            panic!("应进入 standalone run 路径");
+        };
+
+        assert_eq!(config.backend_id, "local_claimed_1");
+        assert_eq!(config.name, "claimed-local");
+    }
+
+    #[test]
+    fn machine_identity_command_does_not_require_backend_id() {
+        let cli = Cli::try_parse_from(["agentdash-local", "machine-identity"])
+            .expect("machine-identity 命令应可解析");
+
+        assert!(matches!(
+            cli_action(cli).expect("machine-identity 不需要 runtime backend id"),
+            CliAction::PrintMachineIdentity
+        ));
+    }
 }

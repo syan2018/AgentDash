@@ -27,6 +27,7 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 - 机器级身份由 `agentdash-local` runtime library 负责识别、生成和持久化
 - Tauri / dev scripts 只能调用 local library 或 `agentdash-local machine-identity` 获取
 - `backend_id`、`relay_ws_url` 和 relay token 必须来自 server ensure/claim 响应
+- standalone `agentdash-local` 入口必须显式接收已领取的 `backend_id`，原因是本机 runtime 只能消费 server claim 结果，不能在本地创建正式 backend identity
 - server ensure API 使用 `machine_id + share_scope_kind + share_scope_id + capability_slot` 定位 local backend，原因是机器级身份与共享 scope 共同决定本机执行面的唯一归属
 - `machine_label` / hostname 只用于展示；profile load/save/start 都由 `agentdash-local` 持久化身份覆盖 canonical machine id
 - profile 保存当前 server、profile、workspace roots、backend claim 结果和启动偏好；机器身份事实由 `agentdash-local machine-identity` 独立持有

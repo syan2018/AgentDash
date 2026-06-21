@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { CB } from "../bodies/cardBodyTokens";
+import { JsonTree } from "../bodies/JsonTree";
 import type {
   AutoResumeSection,
   CapabilityKeyDeltaSection,
@@ -444,10 +445,10 @@ function DiffLine({
 
 function ToolSchemaDeltaBody({ section }: { section: ToolSchemaDeltaSection }) {
   if (section.added_tools.length === 0) {
-    return <p className="text-xs text-muted-foreground/60">无新增工具 schema</p>;
+    return <p className={CB.meta}>无新增工具 schema</p>;
   }
   return (
-    <div className="max-h-96 overflow-auto space-y-1.5">
+    <div className="max-h-96 overflow-auto space-y-0.5">
       {section.added_tools.map((tool) => (
         <ToolSchemaItem key={tool.name} tool={tool} />
       ))}
@@ -459,43 +460,40 @@ function ToolSchemaItem({ tool }: { tool: RuntimeToolSchemaEntry }) {
   const [open, setOpen] = useState(false);
   const fieldNames = schemaFieldNames(tool.parameters_schema);
   return (
-    <div className="space-y-1">
+    <div>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-start gap-2 text-left"
+        className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40 ${open ? "bg-secondary/30" : ""}`}
       >
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-mono text-[11px] text-foreground/85">
-            {tool.name}
-          </span>
-          {tool.description && (
-            <span className="block truncate text-[11px] text-muted-foreground/80">
-              {tool.description}
-            </span>
-          )}
-          {(tool.capability_key || tool.source || tool.tool_path) && (
-            <span className="mt-1 flex flex-wrap gap-1">
-              {tool.capability_key && <Chip label={tool.capability_key} />}
-              {tool.source && <Chip label={tool.source} />}
-              {tool.tool_path && <Chip label={tool.tool_path} />}
-            </span>
-          )}
+        <span className="shrink-0 w-3 select-none text-success text-[10px]">+</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/70">
+          {tool.name}
         </span>
-        {fieldNames.length > 0 && (
-          <span className="shrink-0 text-[10px] text-muted-foreground/50">
-            {fieldNames.slice(0, 3).join("，")}
-            {fieldNames.length > 3 ? ` 等 ${fieldNames.length} 项` : ""}
+        {(tool.capability_key || tool.source) && (
+          <span className="flex shrink-0 gap-1">
+            {tool.capability_key && <Chip label={tool.capability_key} />}
+            {tool.source && <Chip label={tool.source} />}
           </span>
         )}
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">
+        {fieldNames.length > 0 && (
+          <span className={CB.meta}>
+            {fieldNames.length} params
+          </span>
+        )}
+        <span className={CB.expandToggle}>
           {open ? "▲" : "▼"}
         </span>
       </button>
       {open && (
-        <pre className="mt-1.5 max-h-64 overflow-auto ${CB.codeBlock}">
-          {formatJson(tool.parameters_schema)}
-        </pre>
+        <div className="px-2 py-1.5">
+          {tool.description && (
+            <p className={`mb-1.5 ${CB.meta}`}>{tool.description}</p>
+          )}
+          {tool.parameters_schema != null && (
+            <JsonTree data={tool.parameters_schema} defaultDepth={1} />
+          )}
+        </div>
       )}
     </div>
   );

@@ -116,11 +116,19 @@ function Overview({ view }: { view: TaskView }) {
   }
 
   return (
-    <div className={CB.sectionGap}>
-      <div className={`flex items-center gap-2 ${CB.meta}`}>
-        <span className="text-foreground/70">
-          {done}/{total}
-        </span>
+    <div className={CB.itemGap}>
+      <div className="flex items-center gap-2">
+        {total > 0 && (
+          <>
+            <div className="h-1.5 flex-1 max-w-32 overflow-hidden rounded-[4px] bg-border/30">
+              <div
+                className="h-full rounded-[4px] bg-success/60 transition-[width]"
+                style={{ width: `${total > 0 ? (done / total) * 100 : 0}%` }}
+              />
+            </div>
+            <span className={CB.meta}>{done}/{total}</span>
+          </>
+        )}
         {countEntries.map(([status, count]) => (
           <span key={status} className={CB.kindBadge}>
             {status} {count}

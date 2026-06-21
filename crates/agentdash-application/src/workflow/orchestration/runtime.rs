@@ -996,8 +996,8 @@ fn collect_node_statuses(nodes: &[RuntimeNodeState]) -> Vec<RuntimeNodeStatus> {
 mod tests {
     use agentdash_domain::workflow::{
         ActivationRule, ActivityJoinPolicy, ArtifactAliasPolicy, ExecutorRunRef, ExecutorSpec,
-        NodePortValue, OrchestrationLimits, OrchestrationSourceRef, PlanNode, PlanNodeKind,
-        RuntimeNodeStatus, StateExchangeRule, TransitionCondition,
+        LifecycleRunStatus, NodePortValue, OrchestrationLimits, OrchestrationSourceRef, PlanNode,
+        PlanNodeKind, RuntimeNodeStatus, StateExchangeRule, TransitionCondition,
     };
     use chrono::Utc;
     use serde_json::json;
@@ -1032,6 +1032,23 @@ mod tests {
                 plan_node("entry", PlanNodeKind::AgentCall),
                 plan_node("follow_up", PlanNodeKind::Function),
             ],
+            entry_node_ids: vec!["entry".to_string()],
+            activation_rules: vec![ActivationRule::Entry {
+                node_id: "entry".to_string(),
+            }],
+            state_exchange_rules: Vec::new(),
+            limits: OrchestrationLimits::default(),
+            metadata: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    fn single_node_plan_snapshot(source_ref: OrchestrationSourceRef) -> OrchestrationPlanSnapshot {
+        OrchestrationPlanSnapshot {
+            plan_digest: "sha256:single-node-fixture".to_string(),
+            plan_version: 1,
+            source_ref,
+            nodes: vec![plan_node("entry", PlanNodeKind::AgentCall)],
             entry_node_ids: vec!["entry".to_string()],
             activation_rules: vec![ActivationRule::Entry {
                 node_id: "entry".to_string(),
@@ -1219,6 +1236,174 @@ mod tests {
             }]
         );
         assert!(entry.started_at.is_some());
+    }
+
+    #[test]
+    fn orchestration_runtime_node_started_refreshes_lifecycle_run_as_running() {
+        let source_ref = workflow_source();
+        let orchestration =
+            activate_root_orchestration(source_ref.clone(), single_node_plan_snapshot(source_ref));
+        let orchestration_id = orchestration.orchestration_id;
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        assert!(run.add_orchestration(orchestration));
+
+        let (run, _) = apply_orchestration_event_to_run(
+            run,
+            orchestration_id,
+            OrchestrationRuntimeEvent::NodeStarted {
+                node_path: "entry".to_string(),
+                attempt: 1,
+                executor_run_ref: Some(ExecutorRunRef::RuntimeSession {
+                    session_id: "session-1".to_string(),
+                }),
+                timestamp: Utc::now(),
+            },
+        )
+        .expect("node started");
+
+        assert_eq!(run.status, LifecycleRunStatus::Running);
+        assert_eq!(
+            run.orchestration_by_id(orchestration_id)
+                .expect("orchestration")
+                .status,
+            OrchestrationStatus::Running
+        );
+    }
+
+    #[test]
+    fn orchestration_runtime_terminal_events_refresh_lifecycle_run_status_matrix() {
+        for (event, expected_run_status, expected_orchestration_status) in [
+            (
+                OrchestrationRuntimeEvent::NodeCompleted {
+                    node_path: "entry".to_string(),
+                    attempt: 1,
+                    outputs: Vec::new(),
+                    timestamp: Utc::now(),
+                },
+                LifecycleRunStatus::Completed,
+                OrchestrationStatus::Completed,
+            ),
+            (
+                OrchestrationRuntimeEvent::NodeFailed {
+                    node_path: "entry".to_string(),
+                    attempt: 1,
+                    error: RuntimeNodeError {
+                        code: "executor_failed".to_string(),
+                        message: "executor failed".to_string(),
+                        retryable: false,
+                        detail: None,
+                    },
+                    timestamp: Utc::now(),
+                },
+                LifecycleRunStatus::Failed,
+                OrchestrationStatus::Failed,
+            ),
+            (
+                OrchestrationRuntimeEvent::NodeBlocked {
+                    node_path: "entry".to_string(),
+                    attempt: 1,
+                    error: RuntimeNodeError {
+                        code: "human_gate_waiting".to_string(),
+                        message: "waiting for decision".to_string(),
+                        retryable: false,
+                        detail: None,
+                    },
+                    timestamp: Utc::now(),
+                },
+                LifecycleRunStatus::Blocked,
+                OrchestrationStatus::Paused,
+            ),
+            (
+                OrchestrationRuntimeEvent::NodeCancelled {
+                    node_path: "entry".to_string(),
+                    attempt: 1,
+                    reason: Some("user cancelled".to_string()),
+                    timestamp: Utc::now(),
+                },
+                LifecycleRunStatus::Cancelled,
+                OrchestrationStatus::Cancelled,
+            ),
+        ] {
+            let source_ref = workflow_source();
+            let orchestration = activate_root_orchestration(
+                source_ref.clone(),
+                single_node_plan_snapshot(source_ref),
+            );
+            let orchestration_id = orchestration.orchestration_id;
+            let mut run = LifecycleRun::new_control(Uuid::new_v4());
+            assert!(run.add_orchestration(orchestration));
+
+            let (run, _) =
+                apply_orchestration_event_to_run(run, orchestration_id, event).expect("event");
+
+            assert_eq!(run.status, expected_run_status);
+            assert_eq!(
+                run.orchestration_by_id(orchestration_id)
+                    .expect("orchestration")
+                    .status,
+                expected_orchestration_status
+            );
+        }
+    }
+
+    #[test]
+    fn orchestration_runtime_append_orchestration_refreshes_run_status_from_all_instances() {
+        let root_source = workflow_source();
+        let root = activate_root_orchestration(
+            root_source.clone(),
+            single_node_plan_snapshot(root_source),
+        );
+        let root_id = root.orchestration_id;
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        assert!(run.add_orchestration(root));
+        let (mut run, _) = apply_orchestration_event_to_run(
+            run,
+            root_id,
+            OrchestrationRuntimeEvent::NodeCompleted {
+                node_path: "entry".to_string(),
+                attempt: 1,
+                outputs: Vec::new(),
+                timestamp: Utc::now(),
+            },
+        )
+        .expect("complete root");
+        assert_eq!(run.status, LifecycleRunStatus::Completed);
+
+        let append_source = workflow_source();
+        let append = activate_root_orchestration(
+            append_source.clone(),
+            single_node_plan_snapshot(append_source),
+        );
+        let append_id = append.orchestration_id;
+        assert!(run.add_orchestration(append));
+
+        let (run, _) = apply_orchestration_event_to_run(
+            run,
+            append_id,
+            OrchestrationRuntimeEvent::NodeStarted {
+                node_path: "entry".to_string(),
+                attempt: 1,
+                executor_run_ref: Some(ExecutorRunRef::FunctionRun {
+                    run_id: "append-function-1".to_string(),
+                }),
+                timestamp: Utc::now(),
+            },
+        )
+        .expect("start append");
+
+        assert_eq!(run.status, LifecycleRunStatus::Running);
+        assert_eq!(
+            run.orchestration_by_id(root_id)
+                .expect("root orchestration")
+                .status,
+            OrchestrationStatus::Completed
+        );
+        assert_eq!(
+            run.orchestration_by_id(append_id)
+                .expect("append orchestration")
+                .status,
+            OrchestrationStatus::Running
+        );
     }
 
     #[test]

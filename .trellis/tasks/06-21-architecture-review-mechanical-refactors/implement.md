@@ -6,7 +6,7 @@
 - [ ] M02 ProjectBackendAccess / BackendWorkspaceInventory contract 化。
 - [ ] M03 Canvas CRUD contract 化。
 - [ ] M04 SkillAsset HTTP DTO contract 化。
-- [ ] M05 ExtensionManagement service 回到 generated DTO。
+- [x] M05 ExtensionManagement service 回到 generated DTO。
 - [ ] M06 `workspace_module_presented` stream payload contract 化。
 - [ ] M07 Auth/current-user/identity-directory DTO contract 化或明确 route-local wrapper。
 
@@ -21,10 +21,10 @@ pnpm run frontend:check
 
 - [ ] M08 拆分 `types/index.ts`。
 - [ ] M09 确认 SessionExecutionState 消费面。
-- [ ] M10 移除或封装 `AgentRunSteeringService`。
-- [ ] M11 清理 AppState 中未公开消费的 `StoryActivityActivationService`。
+- [x] M10 移除或封装 `AgentRunSteeringService`。
+- [x] M11 清理 AppState 中未公开消费的 `StoryActivityActivationService`。
 - [ ] M12 raw anchor repository API 与 application selection API 分层命名。
-- [ ] M13 RuntimeGateway `surface_for` debug 入口守卫。
+- [x] M13 RuntimeGateway `surface_for` debug 入口守卫。
 
 建议验证：
 
@@ -36,12 +36,12 @@ rg "AgentRunSteeringService|StoryActivityActivationService|latest_for_agent|surf
 
 ## Phase 3: Tests / Diagnostics / UI Semantics
 
-- [ ] M14 固化 runtime status aggregation owner tests。
-- [ ] M15 top-level `AgentRunWorkspaceView.control_plane` 只作 display status 的测试/注释。
-- [ ] M16 WorkspaceModule runtime deps 缺失改为可观测诊断。
-- [ ] M17 前端 workspace routing 文案区分 binding availability 与 execution allocatable。
-- [ ] M18 Profile UI 把 machine id 表达为只读 runtime fact。
-- [ ] M19 extension relay payload 不携带 backend_id 的 regression test。
+- [x] M14 固化 runtime status aggregation owner tests。
+- [x] M15 top-level `AgentRunWorkspaceView.control_plane` 只作 display status 的测试/注释。
+- [x] M16 WorkspaceModule runtime deps 缺失改为可观测诊断。
+- [x] M17 前端 workspace routing 文案区分 binding availability 与 execution allocatable。
+- [x] M18 Profile UI 把 machine id 表达为只读 runtime fact。
+- [x] M19 extension relay payload 不携带 backend_id 的 regression test。
 
 建议验证：
 
@@ -57,3 +57,8 @@ pnpm run frontend:check
 - 每个实现 prompt 必须引用对应 `work-items/*.md` 文件和父任务 research 来源。
 - 如果执行时发现 item 需要新增事实源或改变控制面语义，停止实现，把该 item 移回父任务 `design-coupling-tracker.md`。
 
+## Round 1 Completion Notes
+
+- M05, M10, M11, M13, M14, M15, M16, M17, M18, M19 已由并行 subagents 完成。
+- 第一轮刻意避开 `agentdash-contracts` 与 generated files，避免 Contract Surface 条目之间争用生成入口。
+- M01-M04, M06, M07 建议后续按 contract 生成入口单 worker 串行推进；M08, M09, M12 建议在下一轮按前端类型入口、session state、anchor repository 命名分别拆分。

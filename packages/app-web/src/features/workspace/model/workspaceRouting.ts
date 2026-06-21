@@ -221,10 +221,10 @@ export function summarizeResolution(
   if (workspace.bindings.length === 0) {
     return {
       state: "blocked",
-      label: "等待运行位置",
-      description: "目前只有代码来源，还没有匹配到可运行的 Backend / 目录。",
+      label: "等待目录绑定",
+      description: "目前只有代码来源，还没有匹配到已确认的 Backend / 目录绑定。",
       binding: null,
-      warnings: ["还没有任何运行位置"],
+      warnings: ["还没有任何目录绑定"],
     };
   }
 
@@ -264,8 +264,8 @@ export function summarizeResolution(
   if (!selected) {
     return {
       state: "blocked",
-      label: "无法运行",
-      description: warnings[0] ?? "当前没有可用的运行位置。",
+      label: "目录不可用",
+      description: warnings[0] ?? "当前没有可用的目录绑定。",
       binding: null,
       warnings,
     };
@@ -276,7 +276,7 @@ export function summarizeResolution(
     && selected.binding.id !== workspace.default_binding_id;
   return {
     state: fallback || warnings.length > 0 ? "warning" : "resolved",
-    label: fallback ? "已切换到备用运行位置" : "已就绪",
+    label: fallback ? "已切换到备用目录绑定" : "目录已就绪",
     description: `${backendName} @ ${selected.binding.root_ref}`,
     binding: selected.binding,
     warnings,

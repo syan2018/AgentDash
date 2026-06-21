@@ -51,7 +51,6 @@ use super::super::{AgentFrameTransitionRecord, RuntimeCommandStatus, RuntimeDeli
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
 };
-use crate::agent_run::AgentRunSteeringService;
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use crate::session::SetToolAccessEffect;
 use crate::session::capability_state::{
@@ -60,7 +59,8 @@ use crate::session::capability_state::{
 };
 use crate::session::types::AgentFrameRuntimeTarget;
 use crate::test_support::{
-    MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,
+    AgentRunSteeringCommand, AgentRunSteeringService, MemoryAgentFrameRepository,
+    MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,
     MemoryRuntimeSessionExecutionAnchorRepository,
 };
 use crate::vfs::{
@@ -954,7 +954,7 @@ async fn agent_run_steer_uses_current_agent_frame_after_frame_refresh() {
     );
 
     let dispatch = service
-        .steer(crate::agent_run::AgentRunSteeringCommand {
+        .steer(AgentRunSteeringCommand {
             delivery_runtime_session_id: session.id.clone(),
             input: agentdash_agent_protocol::text_user_input_blocks("live steer"),
         })
@@ -1012,7 +1012,7 @@ async fn pending_promote_uses_current_agent_frame_after_frame_refresh() {
     );
 
     let dispatch = service
-        .steer(crate::agent_run::AgentRunSteeringCommand {
+        .steer(AgentRunSteeringCommand {
             delivery_runtime_session_id: session.id.clone(),
             input,
         })

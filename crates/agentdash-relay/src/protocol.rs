@@ -882,6 +882,13 @@ mod tests {
         assert_eq!(json["type"], "command.extension_action_invoke");
         assert_eq!(json["payload"]["action_key"], "local-hello.profile");
         assert_eq!(json["payload"]["workspace"]["mount_id"], "main");
+        assert!(
+            !json["payload"]
+                .as_object()
+                .expect("payload object")
+                .contains_key("backend_id"),
+            "extension action relay payload must not carry backend_id; routing owns the target"
+        );
 
         let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
         assert_eq!(deser.id(), "ext-1");
@@ -947,6 +954,13 @@ mod tests {
         assert_eq!(
             json["payload"]["workspace"]["root_ref"],
             "D:/Workspaces/demo"
+        );
+        assert!(
+            !json["payload"]
+                .as_object()
+                .expect("payload object")
+                .contains_key("backend_id"),
+            "extension channel relay payload must not carry backend_id; routing owns the target"
         );
 
         let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");

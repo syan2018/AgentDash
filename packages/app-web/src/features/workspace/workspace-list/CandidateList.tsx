@@ -74,7 +74,7 @@ export function CandidateList({
                     onClick={() => onAddBinding(candidate)}
                     className="agentdash-button-secondary text-xs"
                   >
-                    添加运行位置
+                    添加目录绑定
                   </button>
                 )}
               </div>

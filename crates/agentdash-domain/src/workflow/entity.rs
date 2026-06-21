@@ -870,6 +870,23 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_run_status_aggregates_failed_with_highest_precedence() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut failed = orchestration_instance("failed", agent_executor());
+        failed.status = OrchestrationStatus::Failed;
+        let mut running = orchestration_instance("running", function_executor());
+        running.status = OrchestrationStatus::Running;
+        let mut paused = orchestration_instance("paused", human_executor());
+        paused.status = OrchestrationStatus::Paused;
+
+        assert!(run.add_orchestration(running));
+        assert!(run.add_orchestration(paused));
+        assert!(run.add_orchestration(failed));
+
+        assert_eq!(run.status, LifecycleRunStatus::Failed);
+    }
+
+    #[test]
     fn lifecycle_run_status_aggregates_paused_as_blocked() {
         let mut run = LifecycleRun::new_control(Uuid::new_v4());
         let mut paused = orchestration_instance("paused", human_executor());
@@ -878,6 +895,53 @@ mod tests {
         assert!(run.add_orchestration(paused));
 
         assert_eq!(run.status, LifecycleRunStatus::Blocked);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_blocked_runtime_node_as_blocked() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut blocked = orchestration_instance("blocked_node", human_executor());
+        blocked.node_tree.push(RuntimeNodeState {
+            node_id: "blocked_node".to_string(),
+            node_path: "blocked_node".to_string(),
+            kind: PlanNodeKind::Activity,
+            status: RuntimeNodeStatus::Blocked,
+            attempt: 1,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            executor_run_ref: None,
+            children: Vec::new(),
+            phase_path: Vec::new(),
+            started_at: None,
+            completed_at: None,
+            error: None,
+            trace_refs: Vec::new(),
+            cache: None,
+        });
+
+        assert!(run.add_orchestration(blocked));
+
+        assert_eq!(run.status, LifecycleRunStatus::Blocked);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_running_orchestration_as_running() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut running = orchestration_instance("running", agent_executor());
+        running.status = OrchestrationStatus::Running;
+
+        assert!(run.add_orchestration(running));
+
+        assert_eq!(run.status, LifecycleRunStatus::Running);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_pending_orchestration_as_ready() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+
+        assert!(run.add_orchestration(orchestration_instance("pending", function_executor())));
+
+        assert_eq!(run.status, LifecycleRunStatus::Ready);
     }
 
     #[test]
@@ -892,5 +956,20 @@ mod tests {
         assert!(run.add_orchestration(second));
 
         assert_eq!(run.status, LifecycleRunStatus::Cancelled);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_append_orchestration_with_running_child_graph() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut root = orchestration_instance("root", agent_executor());
+        root.status = OrchestrationStatus::Completed;
+        let mut append = orchestration_instance("append_review", function_executor());
+        append.status = OrchestrationStatus::Running;
+
+        assert!(run.add_orchestration(root));
+        assert_eq!(run.status, LifecycleRunStatus::Completed);
+        assert!(run.add_orchestration(append));
+
+        assert_eq!(run.status, LifecycleRunStatus::Running);
     }
 }

@@ -321,6 +321,15 @@ describe("AgentRun workspace conversation command authority", () => {
     expect(state.commands.commands.find((item) => item.command_id === "cmd-submit")?.stale_guard.active_turn_id).toBe("turn-1");
   });
 
+  it("does not infer command enablement from top-level control_plane status", () => {
+    const state = commandState("ready", workspaceView("running"));
+
+    expect(state.executionStatus).toBe("running_active");
+    expect(state.commands.commands).toHaveLength(0);
+    expect(state.commands.keyboard.enter).toBeUndefined();
+    expect(state.commands.keyboard.ctrl_enter).toBeUndefined();
+  });
+
   it("does not fabricate commands while projection is refreshing", () => {
     const state = commandState("refreshing", workspaceView("running", [
       command("submit_message", "cmd-submit"),

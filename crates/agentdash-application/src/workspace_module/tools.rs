@@ -2321,6 +2321,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workspace_module_provider_declares_diagnostic_invoke_tool_when_runtime_deps_missing() {
+        let (install_repo, canvas_repo, project_id) = fixtures().await;
+        let provider = WorkspaceModuleRuntimeToolProvider::new(
+            install_repo,
+            canvas_repo,
+            SharedSessionToolServicesHandle::default(),
+            SharedRuntimeGatewayHandle::default(),
+        );
+        let context = workspace_module_execution_context(project_id);
+
+        let tools = provider
+            .build_tools(&context)
+            .await
+            .expect("workspace module tools should build with diagnostic tool");
+        let invoke_tool = tools
+            .iter()
+            .find(|tool| tool.name() == "workspace_module_invoke")
+            .expect("missing runtime deps should still expose invoke diagnostic tool");
+
+        let result = invoke_tool
+            .execute(
+                "tool-call-1",
+                serde_json::json!({
+                    "module_id": "ext:demo",
+                    "operation_key": "demo.profile",
+                    "input": {}
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("diagnostic tool should return structured result");
+
+        assert!(result.is_error);
+        let details = result.details.expect("diagnostic details");
+        assert_eq!(
+            details.get("error").and_then(serde_json::Value::as_str),
+            Some("workspace_module_runtime_dependencies_unavailable")
+        );
+        let missing = details
+            .get("missing_dependencies")
+            .and_then(serde_json::Value::as_array)
+            .expect("missing dependencies array")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>();
+        assert!(missing.contains(&"runtime_gateway"));
+        assert!(missing.contains(&"extension_channel_transport"));
+    }
+
+    #[tokio::test]
     async fn workspace_module_tool_schemas_are_provider_safe() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
         let gateway_handle = SharedRuntimeGatewayHandle::default();

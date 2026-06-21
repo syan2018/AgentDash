@@ -4,7 +4,6 @@ pub mod frame;
 pub mod mailbox;
 pub mod message_delivery;
 mod project_agent_start;
-pub mod steering;
 pub mod workspace;
 
 pub use command_receipt::AgentRunCommandReceiptView;
@@ -32,4 +31,3 @@ pub use project_agent_start::{
     ProjectAgentRunStartCommand, ProjectAgentRunStartDispatch, ProjectAgentRunStartRepos,
     ProjectAgentRunStartService,
 };
-pub use steering::{AgentRunSteeringCommand, AgentRunSteeringDispatch, AgentRunSteeringService};

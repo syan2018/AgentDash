@@ -110,7 +110,7 @@ export function DirectoryDetector({
     try {
       await registerBackendWorkspaceInventory(projectId, access.id, { root_ref: rootRef });
       await onInventoryRegistered?.();
-      onFeedback({ tone: "success", text: "已登记为可选目录，可在上方确认为运行位置" });
+      onFeedback({ tone: "success", text: "已登记为可选目录，可在上方确认为目录绑定" });
     } catch (registerError) {
       onFeedback({ tone: "error", text: (registerError as Error).message });
     } finally {

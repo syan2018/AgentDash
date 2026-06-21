@@ -3,10 +3,13 @@ use std::sync::Arc;
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeChannelTransport;
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
-use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE;
-use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext, ToolCluster};
+use agentdash_spi::{
+    AgentTool, AgentToolError, AgentToolResult, ConnectorError, ContentPart, DynAgentTool,
+    ExecutionContext, ToolCluster, ToolUpdateCallback, connector::RuntimeToolProvider,
+};
 use async_trait::async_trait;
+use tokio_util::sync::CancellationToken;
 
 use crate::runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
 use crate::runtime_tools::provider::{
@@ -49,6 +52,88 @@ impl WorkspaceModuleRuntimeToolProvider {
     ) -> Self {
         self.extension_channel_transport = Some(transport);
         self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InvokeRuntimeDependency {
+    RuntimeGateway,
+    ExtensionChannelTransport,
+}
+
+impl InvokeRuntimeDependency {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::RuntimeGateway => "runtime_gateway",
+            Self::ExtensionChannelTransport => "extension_channel_transport",
+        }
+    }
+}
+
+#[derive(Clone)]
+struct WorkspaceModuleInvokeUnavailableTool {
+    missing_dependencies: Vec<InvokeRuntimeDependency>,
+}
+
+impl WorkspaceModuleInvokeUnavailableTool {
+    fn new(missing_dependencies: Vec<InvokeRuntimeDependency>) -> Self {
+        Self {
+            missing_dependencies,
+        }
+    }
+
+    fn missing_dependency_names(&self) -> Vec<&'static str> {
+        self.missing_dependencies
+            .iter()
+            .map(|dependency| dependency.as_str())
+            .collect()
+    }
+}
+
+#[async_trait]
+impl AgentTool for WorkspaceModuleInvokeUnavailableTool {
+    fn name(&self) -> &str {
+        "workspace_module_invoke"
+    }
+
+    fn description(&self) -> &str {
+        "Invoke a workspace module operation. This session currently exposes a diagnostic because the runtime invocation dependencies were not assembled."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "module_id": { "type": "string" },
+                "operation_key": { "type": "string" },
+                "input": { "type": "object", "additionalProperties": true }
+            },
+            "required": ["module_id", "operation_key"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn execute(
+        &self,
+        _: &str,
+        _: serde_json::Value,
+        _: CancellationToken,
+        _: Option<ToolUpdateCallback>,
+    ) -> Result<AgentToolResult, AgentToolError> {
+        let missing_dependencies = self.missing_dependency_names();
+        let message = format!(
+            "workspace_module_invoke unavailable: missing runtime dependencies ({})",
+            missing_dependencies.join(", ")
+        );
+        Ok(AgentToolResult {
+            content: vec![ContentPart::text(message.clone())],
+            is_error: true,
+            details: Some(serde_json::json!({
+                "error": "workspace_module_runtime_dependencies_unavailable",
+                "message": message,
+                "missing_dependencies": missing_dependencies,
+            })),
+        })
     }
 }
 
@@ -165,11 +250,22 @@ impl WorkspaceModuleRuntimeToolProvider {
         session_id: &str,
         tools: &mut Vec<DynAgentTool>,
     ) {
-        let Some((gateway, transport)) = self.invoke_runtime_deps().await else {
-            tracing::warn!(
-                "workspace_module_invoke 未装配：缺少 RuntimeGateway 或 channel transport 注入"
-            );
-            return;
+        let (gateway, transport) = match self.invoke_runtime_deps().await {
+            Ok(deps) => deps,
+            Err(missing_dependencies) => {
+                let missing_names = missing_dependencies
+                    .iter()
+                    .map(|dependency| dependency.as_str())
+                    .collect::<Vec<_>>();
+                tracing::warn!(
+                    missing_dependencies = ?missing_names,
+                    "workspace_module_invoke 装配为诊断工具：缺少 RuntimeGateway 或 channel transport 注入"
+                );
+                tools.push(Arc::new(WorkspaceModuleInvokeUnavailableTool::new(
+                    missing_dependencies,
+                )));
+                return;
+            }
         };
 
         let backend = resolve_invocation_backend(
@@ -202,13 +298,29 @@ impl WorkspaceModuleRuntimeToolProvider {
 
     async fn invoke_runtime_deps(
         &self,
-    ) -> Option<(
-        Arc<RuntimeGateway>,
-        Arc<dyn ExtensionRuntimeChannelTransport>,
-    )> {
-        Some((
-            self.runtime_gateway_handle.get().await?,
-            self.extension_channel_transport.as_ref()?.clone(),
-        ))
+    ) -> Result<
+        (
+            Arc<RuntimeGateway>,
+            Arc<dyn ExtensionRuntimeChannelTransport>,
+        ),
+        Vec<InvokeRuntimeDependency>,
+    > {
+        let runtime_gateway = self.runtime_gateway_handle.get().await;
+        let extension_channel_transport = self.extension_channel_transport.as_ref().cloned();
+        let mut missing = Vec::new();
+        if runtime_gateway.is_none() {
+            missing.push(InvokeRuntimeDependency::RuntimeGateway);
+        }
+        if extension_channel_transport.is_none() {
+            missing.push(InvokeRuntimeDependency::ExtensionChannelTransport);
+        }
+        if missing.is_empty() {
+            Ok((
+                runtime_gateway.expect("checked runtime gateway"),
+                extension_channel_transport.expect("checked channel transport"),
+            ))
+        } else {
+            Err(missing)
+        }
     }
 }

@@ -21,7 +21,6 @@ use agentdash_application::session::{
     SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
     SessionRuntimeService, SessionTitleService,
 };
-use agentdash_application::task::service::StoryActivityActivationService;
 use agentdash_application::vfs::MountProviderRegistry;
 use agentdash_application::vfs::{VfsMutationDispatcher, VfsService};
 use agentdash_domain::llm_provider::LlmSecretCodec;
@@ -83,8 +82,6 @@ pub struct ServiceSet {
     pub vfs_registry: VfsDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
     pub mount_provider_registry: Arc<MountProviderRegistry>,
-    /// Story activity activation 服务 — 保留 Task lifecycle 只读投影。
-    pub story_activity_activation_service: Arc<StoryActivityActivationService>,
     /// Hook 提供者 — 供 API 层验证脚本等管理接口使用
     pub hook_provider: Arc<AppExecutionHookProvider>,
     /// 统一认证会话服务（application 层）
@@ -296,10 +293,6 @@ impl AppState {
             .set_context_audit_bus(audit_bus.clone())
             .await;
 
-        let story_activity_activation_service = Arc::new(StoryActivityActivationService {
-            repos: repos.clone(),
-        });
-
         let state = Self {
             repos,
             services: ServiceSet {
@@ -325,7 +318,6 @@ impl AppState {
                 terminal_cache,
                 vfs_registry,
                 mount_provider_registry,
-                story_activity_activation_service,
                 hook_provider,
                 auth_session_service,
                 terminal_cancel_coordinator,

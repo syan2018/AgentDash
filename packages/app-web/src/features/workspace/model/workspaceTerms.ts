@@ -25,13 +25,13 @@ export const PROPER_NOUNS = {
  */
 export const TERMS = {
   /** binding / 落点 */
-  binding: "运行位置",
+  binding: "目录绑定",
   /** inventory / candidate / 候选项 / 发现项 */
   inventory: "可选目录",
   /** identity */
   identity: "代码来源",
   /** resolution */
-  resolution: "运行解析",
+  resolution: "目录解析",
 } as const;
 
 /** 代码来源（identity_kind）的中文 label。 */
@@ -50,7 +50,7 @@ export const WORKSPACE_STATUS_LABELS: Record<WorkspaceStatus, string> = {
   error: "异常",
 };
 
-/** 运行位置（binding）状态 label。 */
+/** 目录绑定（binding）状态 label。 */
 export const BINDING_STATUS_LABELS: Record<WorkspaceBindingStatus, string> = {
   pending: "未确认",
   ready: "可用",
@@ -58,9 +58,9 @@ export const BINDING_STATUS_LABELS: Record<WorkspaceBindingStatus, string> = {
   error: "异常",
 };
 
-/** 运行解析（resolution）状态徽章 label。 */
+/** 目录解析（resolution）状态徽章 label。 */
 export const RESOLUTION_STATE_LABELS: Record<"resolved" | "warning" | "blocked", string> = {
-  resolved: "可运行",
+  resolved: "目录就绪",
   warning: "需注意",
-  blocked: "不可运行",
+  blocked: "目录不可用",
 };

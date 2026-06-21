@@ -68,7 +68,7 @@ export function WorkspaceList({
     return () => window.clearTimeout(timer);
   }, [fetchBackends, loadRoutingInputs]);
 
-  // 跟随 backend 上下线 / 健康变化重载运行位置输入，与 BackendAccessPanel 保持一致刷新。
+  // 跟随 backend 上下线 / 健康变化重载目录绑定输入，与 BackendAccessPanel 保持一致刷新。
   const backendRuntimeSignature = useMemo(
     () => backends
       .map((backend) => [
@@ -122,7 +122,7 @@ export function WorkspaceList({
           <div>
             <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Workspace</p>
             <p className="text-xs text-muted-foreground">
-              每个 Workspace 描述一处代码来源，运行位置来自已授权 Backend 的可选目录。
+              每个 Workspace 描述一处代码来源，目录绑定来自已授权 Backend 的可选目录。
             </p>
           </div>
           <button
@@ -182,7 +182,7 @@ export function WorkspaceList({
                     代码来源：{identitySummary(workspace.identity_kind, workspace.identity_payload)}
                   </p>
                   <p className="mt-1 truncate text-xs text-muted-foreground">
-                    运行解析：{resolution.label} · {resolution.description}
+                    目录解析：{resolution.label} · {resolution.description}
                   </p>
                   {resolution.warnings.length > 0 && (
                     <p className="mt-1 truncate text-xs text-warning">
@@ -194,7 +194,7 @@ export function WorkspaceList({
                 <div className="flex shrink-0 flex-col items-end gap-2">
                   <div className="text-right">
                     <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                      运行位置
+                      目录绑定
                     </p>
                     <p className="text-sm font-medium text-foreground">
                       {availability.online}/{availability.total}

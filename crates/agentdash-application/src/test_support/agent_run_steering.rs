@@ -13,21 +13,21 @@ use crate::session::{
 };
 
 #[derive(Debug, Clone)]
-pub struct AgentRunSteeringCommand {
-    pub delivery_runtime_session_id: String,
-    pub input: Vec<UserInputBlock>,
+pub(crate) struct AgentRunSteeringCommand {
+    pub(crate) delivery_runtime_session_id: String,
+    pub(crate) input: Vec<UserInputBlock>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunSteeringDispatch {
-    pub runtime_session_id: String,
-    pub run_id: Uuid,
-    pub agent_id: Uuid,
-    pub frame_id: Uuid,
-    pub active_turn_id: String,
+pub(crate) struct AgentRunSteeringDispatch {
+    pub(crate) runtime_session_id: String,
+    pub(crate) run_id: Uuid,
+    pub(crate) agent_id: Uuid,
+    pub(crate) frame_id: Uuid,
+    pub(crate) active_turn_id: String,
 }
 
-pub struct AgentRunSteeringService<'a> {
+pub(crate) struct AgentRunSteeringService<'a> {
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
@@ -38,7 +38,7 @@ pub struct AgentRunSteeringService<'a> {
 }
 
 impl<'a> AgentRunSteeringService<'a> {
-    pub fn new(
+    pub(crate) fn new(
         lifecycle_run_repo: &'a dyn LifecycleRunRepository,
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         agent_frame_repo: &'a dyn AgentFrameRepository,
@@ -58,7 +58,7 @@ impl<'a> AgentRunSteeringService<'a> {
         }
     }
 
-    pub async fn steer(
+    pub(crate) async fn steer(
         &self,
         command: AgentRunSteeringCommand,
     ) -> Result<AgentRunSteeringDispatch, WorkflowApplicationError> {

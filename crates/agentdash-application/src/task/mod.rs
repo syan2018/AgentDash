@@ -4,9 +4,7 @@ pub mod fanout;
 pub mod lock;
 pub mod meta;
 pub mod plan;
-pub(crate) mod runtime_coordinate;
 pub mod runtime_tool_provider;
-pub mod service;
 pub mod tools;
 pub mod view_projector;
 

@@ -178,7 +178,7 @@ export function WorkspaceCreateDrawer({
     <DetailPanel
       open={open}
       title="新建 Workspace"
-      subtitle="选择创建方式，再确认代码来源与运行位置"
+      subtitle="选择创建方式，再确认代码来源与目录绑定"
       onClose={onClose}
       widthClassName="max-w-5xl"
     >
@@ -187,7 +187,7 @@ export function WorkspaceCreateDrawer({
           title="创建方式"
           description={canManageBindings
             ? "默认从可选目录创建；管理员还可以浏览本机目录添加新的可选目录。"
-            : "默认从可选目录创建；当前权限只能从已有可选目录创建带运行位置的 Workspace。"}
+            : "默认从可选目录创建；当前权限只能从已有可选目录创建带目录绑定的 Workspace。"}
         >
           <div className="grid gap-2 md:grid-cols-2">
             {visibleCreateModes.map((value) => (
@@ -317,15 +317,15 @@ export function WorkspaceCreateDrawer({
 
         {createMode === "from_directory" && (
           <DetailSection
-            title="运行位置"
-            description="选择这个 Workspace 可以运行在哪个 Backend / 目录；运行时会优先使用在线的 Backend。"
+            title="目录绑定"
+            description="选择这个 Workspace 已确认的 Backend / 目录。"
           >
             <div className="space-y-4">
               <div className="space-y-2">
-                <p className="text-xs font-medium text-foreground">当前运行位置</p>
+                <p className="text-xs font-medium text-foreground">当前目录绑定</p>
                 {dedupeBindings(bindings).length === 0 ? (
                   <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                    当前还没有运行位置。请从下方可选目录确认一个 Backend / 目录。
+                    当前还没有目录绑定。请从下方可选目录确认一个 Backend / 目录。
                   </p>
                 ) : (
                   dedupeBindings(bindings).map((binding) => (

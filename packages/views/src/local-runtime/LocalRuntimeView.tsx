@@ -136,7 +136,6 @@ export function LocalRuntimeView({
         serverUrl,
         accessToken,
         profileId,
-        machineId,
         machineLabel,
         backendName,
         workspaceRoots,
@@ -180,7 +179,6 @@ export function LocalRuntimeView({
         serverUrl,
         accessToken,
         profileId,
-        machineId,
         machineLabel,
         backendName,
         workspaceRoots,
@@ -314,7 +312,7 @@ export function LocalRuntimeView({
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <RuntimeStat label="Backend" value={snapshot?.backend_id ?? '—'} />
-          <RuntimeStat label="机器" value={machineLabel || machineId || '保存 profile 后生成'} />
+          <RuntimeStat label="本机身份" value={machineLabel || machineId || '保存 profile 后生成'} />
           <RuntimeStat label="Scope" value="Personal / private" />
           <RuntimeStat label="能力" value={`${snapshot?.mcp_server_count ?? 0} MCP · ${snapshot?.executor_enabled ? 'Executor 开启' : 'Executor 关闭'}`} />
         </div>
@@ -396,8 +394,11 @@ export function LocalRuntimeView({
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
-            <Field label="Machine ID">
+            <Field label="本机身份 ID">
               <TextInput value={machineId || '保存 profile 后由桌面端生成'} readOnly />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                只读 local runtime identity，保存或启动时由桌面端覆盖。
+              </p>
             </Field>
             <Field label="Backend 名称">
               <TextInput
@@ -701,7 +702,6 @@ function buildStartRequest(
   serverUrl: string,
   accessToken: string,
   profileId: string,
-  machineId: string,
   machineLabel: string,
   backendName: string,
   roots: string[],
@@ -711,7 +711,7 @@ function buildStartRequest(
     server_url: serverUrl.trim(),
     access_token: accessToken.trim(),
     profile_id: profileId.trim() || DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
-    machine_id: machineId.trim(),
+    machine_id: '',
     machine_label: machineLabel.trim() || null,
     name: backendName.trim() || undefined,
     workspace_roots: roots.map((root) => root.trim()).filter(Boolean),

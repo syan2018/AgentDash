@@ -51,7 +51,8 @@ impl RuntimeGateway {
             .collect()
     }
 
-    pub fn surface_for(&self, context: RuntimeContext) -> RuntimeSurface {
+    #[cfg(test)]
+    pub(crate) fn debug_surface_for_unchecked(&self, context: RuntimeContext) -> RuntimeSurface {
         let actions = self
             .providers
             .values()
@@ -504,5 +505,31 @@ mod tests {
             .expect_err("session actor should not receive setup surface");
 
         assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
+    }
+
+    #[test]
+    fn debug_surface_for_unchecked_filters_only_by_context_kind() {
+        let gateway = RuntimeGateway::new()
+            .with_provider(Arc::new(FakeProvider::new(
+                "session.echo",
+                RuntimeActionKind::SessionRuntime,
+            )))
+            .with_provider(Arc::new(FakeProvider::new(
+                "workspace.detect",
+                RuntimeActionKind::Setup,
+            )));
+
+        let surface = gateway.debug_surface_for_unchecked(RuntimeContext::Session {
+            session_id: String::new(),
+            project_id: None,
+            workspace_id: None,
+        });
+        let keys = surface
+            .actions
+            .iter()
+            .map(|action| action.action_key.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(keys, vec!["session.echo"]);
     }
 }

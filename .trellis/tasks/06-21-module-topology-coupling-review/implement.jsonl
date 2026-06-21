@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/index.md", "reason": "review 编排需要遵守项目 spec 入口与阅读规则"}
+{"file": ".trellis/spec/backend/index.md", "reason": "第一轮后端模块拓扑 review 的 spec 索引"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "第一轮前端模块拓扑 review 的 spec 索引"}
+{"file": ".trellis/spec/cross-layer/index.md", "reason": "跨层协议与 cloud/local/desktop 边界 review 的 spec 索引"}
+{"file": ".trellis/tasks/06-14-module-overdesign-review/overdesign-review.md", "reason": "避免重复既有模块过度设计 review，作为已有问题基线"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/research/coupling-matrix.md", "reason": "后续子任务拆分需要读取跨模块耦合矩阵"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/research/followup-backlog.md", "reason": "后续子任务拆分需要读取候选 backlog 与验收方向"}

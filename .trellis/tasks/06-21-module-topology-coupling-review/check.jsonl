@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/shared/index.md", "reason": "检查 review 文档语言与命名规范"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/research/00-review-index.md", "reason": "检查 review 覆盖范围与 round 输出索引"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/research/coupling-matrix.md", "reason": "检查跨模块耦合矩阵是否引用 subagent 产物"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/research/followup-backlog.md", "reason": "检查后续 backlog 是否具备问题、影响范围和验收方向"}

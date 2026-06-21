@@ -9,7 +9,7 @@
 | Mechanical refactors | `.trellis/tasks/06-21-architecture-review-mechanical-refactors/` | completed | 已完成低风险机械整理 | 不阻塞后续 |
 | Contract Boundary | `.trellis/tasks/06-21-contract-boundary-ownership-audit/` | in_progress, closeout check passed | A/C/E/F/G 已完成；B/D 等待上游 | CB04-B waits RC02；CB04-D waits CE02-04 |
 | Runtime Coordinate | `.trellis/tasks/06-21-runtime-coordinate-convergence/` | planning, RC02 implementation-ready | RC02 current delivery binding / selection service 已补齐实现级规划 | 解锁 CB04-B、workspace/cancel/mailbox/SubjectExecutionView 迁移 |
-| Capability Exposure | `.trellis/tasks/06-21-capability-exposure-fact-convergence/` | planning, CE05 first | CE02-CE04 已补齐实现级规划；CE05 是 CE02 前置边界检查 | 解锁 CB04-D、PermissionGrant runtime effect、Canvas expose、WorkspaceModule visibility |
+| Capability Exposure | `.trellis/tasks/06-21-capability-exposure-fact-convergence/` | planning, CE05 first | 收束为 AgentRun effective capability/admission 唯一路径；PermissionGrant 是 AgentRun 独立授权/护栏系统，由 AgentRun 投影为 final capability 或 admission decision | 解锁 CB04-D、Canvas expose、WorkspaceModule visibility；清理 grant/live-cache/local-helper 旁路 |
 | Control Surface | `.trellis/tasks/06-21-control-surface-command-boundary/` | planning | 已定 create-only run、continue/drain、terminal outbox、session extension binding | 依赖 RC selection service 承接 cancel/command target |
 | Runtime Failure / Placement | `.trellis/tasks/06-21-runtime-failure-placement-convergence/` | planning | 已定 backend disconnect -> `turn_lost` / `lost`，session MCP no fallback | 与 Control Surface / RC delivery status 对齐 |
 
@@ -26,10 +26,10 @@
    - Dispatch RC02 implementation before migrating workspace/cancel/mailbox consumers.
 
 3. Lock CE05, then implement Capability Exposure CE02-CE04.
-   - Define AgentFrame revision/exposure fact shape.
-   - Define PermissionGrant runtime effect path through AgentFrame revision.
-   - Define Canvas expose recovery order and WorkspaceModule visibility resolver.
-   - Start with CE05 boundary check, then PermissionGrant approve/revoke frame revision effect.
+   - Define AgentRun effective capability/admission service as the only runtime capability access path.
+   - Treat AgentFrame as AgentRun model-visible surface revision.
+   - Treat PermissionGrant as AgentRun-scoped Grant system: tool-internal permission becomes admission projection; toolset expansion becomes AgentFrame surface revision.
+   - Fold replaced direct paths into the AgentRun resolver after it exists.
 
 4. Return to blocked Contract Boundary items.
    - CB04-B: split AgentRun workspace snapshot from generated contract DTO after RC02 stabilizes.
@@ -49,7 +49,7 @@ Runtime Coordinate RC02
 
 Capability Exposure CE02-CE04
   -> CB04-D Capability catalog read model split
-  -> PermissionGrant runtime effect convergence
+  -> PermissionGrant AgentRun admission/toolset expansion convergence
   -> Canvas expose recovery
   -> WorkspaceModule visibility resolver
 

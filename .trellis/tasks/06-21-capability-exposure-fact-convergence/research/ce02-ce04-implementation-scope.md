@@ -1,6 +1,6 @@
 # Research: CE02-CE04 implementation scope
 
-- Query: 为 Capability Exposure 事实源收敛补齐 CE02-CE04 实现级规划，使 PermissionGrant、Canvas expose、WorkspaceModule visibility 从 AgentFrame revision 派生。
+- Query: 为 Capability Exposure 事实源收敛补齐 CE02-CE04 实现级规划，使 PermissionGrant、Canvas expose、WorkspaceModule visibility 经 AgentRun effective capability/admission 唯一路径派生。
 - Scope: internal
 - Date: 2026-06-21
 
@@ -8,11 +8,11 @@
 
 ### Planning / spec baseline
 
-- `.trellis/tasks/06-21-capability-exposure-fact-convergence/prd.md`：要求 AgentFrame 成为 runtime capability / exposure 唯一锚点，PermissionGrant status 只负责审批和审计。
+- `.trellis/tasks/06-21-capability-exposure-fact-convergence/prd.md`：要求 AgentRun 成为 final visible capability / runtime admission 唯一入口；AgentFrame 承载 model-visible surface revision，PermissionGrant 作为 AgentRun 授权系统参与投影。
 - `.trellis/tasks/06-21-capability-exposure-fact-convergence/design.md`：CE01 已决策 runtime exposure / capability 变更通过新的 AgentFrame revision 表达，不使用独立 exposure table。
 - `.trellis/tasks/06-21-capability-exposure-fact-convergence/work-items/index.md`：CE02-CE04 已 ready，CE05 仍是边界设计项。
 - `.trellis/tasks/06-21-module-topology-coupling-review/design-coupling-tracker.md`：D05/D06/D07/D14 已决定 AgentFrame revision 承载 runtime exposure，live VFS / hook runtime / visibility 都从 frame 派生。
-- `.trellis/spec/backend/capability/tool-capability-pipeline.md`：CapabilityResolver 是工具集唯一计算入口；AgentRun 当前可执行 MCP surface 的事实源是 AgentFrame revision 的 MCP surface。
+- `.trellis/spec/backend/capability/tool-capability-pipeline.md`：CapabilityResolver 是声明式 `CapabilityState` 基线计算入口；运行期最终可见工具面由 AgentRun effective capability/admission 服务输出，AgentRun 当前可执行 MCP surface 的事实源是 AgentFrame revision 的 MCP surface。
 - `.trellis/spec/backend/permission/grant-lifecycle.md`：PermissionGrant lifecycle 已定义 approve/revoke/expire 状态机和 `effect_frame_id`。
 - `.trellis/spec/backend/hooks/execution-hook-runtime.md`：Hook runtime 应按当前 AgentFrame 与 RuntimeSessionExecutionAnchor 重建，delivery session 只是 trace/provenance。
 
@@ -54,33 +54,37 @@
 Fact shape:
 
 - Keep AgentFrame as the fact row; do not add an exposure table in the first batch.
-- PermissionGrant runtime effect writes a new AgentFrame revision with:
-  - `effective_capability_json`: full projected `CapabilityState` after grant add/remove.
+- PermissionGrant is an AgentRun-scoped Grant system, not a module-local capability source.
+- Grant effects are classified inside AgentRun:
+  - tool-internal capability permission -> AgentRun admission projection;
+  - Agent toolset expansion -> AgentFrame model-visible surface revision.
+- Toolset expansion writes a new AgentFrame revision with:
+  - `effective_capability_json`: full projected `CapabilityState` after the visible toolset change.
   - `vfs_surface_json`: carried forward from `CapabilityState.vfs.active`.
   - `mcp_surface_json`: carried forward from `CapabilityState.tool.mcp_servers`.
-  - `created_by_kind`: `permission_grant_approve`, `permission_grant_revoke`, `permission_grant_expire`.
+  - `created_by_kind`: grant-derived surface change such as `permission_grant_toolset_add` / `permission_grant_toolset_remove`.
   - `created_by_id`: grant id.
-- `RuntimeCapabilityTransition` remains an effect/audit value returned from compiler/service; the runtime fact is the resulting AgentFrame revision, not active grant status.
+- `RuntimeCapabilityTransition` remains an effect/audit value returned from compiler/service; external consumers receive AgentRun final visible capability or admission decision, not active grant status.
 
 Implementation flow:
 
 1. Keep `PermissionGrantCompiler::{compile, compile_revoke}` as transition builder.
-2. Replace `apply_requested_paths` manual mutation with the same replay path used by capability dimensions where feasible:
+2. Replace `apply_requested_paths` manual mutation with AgentRun-owned classification and replay where feasible:
    - base = `project_capability_state_from_frame(current_frame)`.
-   - transition = add/remove directives.
-   - after = `apply_runtime_capability_transition(base, transition)`.
-   - append `set_tool_access` effect if existing event payloads/tests need it.
-3. After new AgentFrame revision is built, live delivery needs a handoff:
+   - admission grant = stored in AgentRun admission projection.
+   - toolset expansion grant = transition add/remove directives.
+   - after = `apply_runtime_capability_transition(base, transition)` for model-visible changes.
+3. After a new AgentFrame revision is built for toolset expansion, live delivery needs a handoff:
    - If no active runtime exists, returning/persisting the new frame is enough; recovery reads latest AgentFrame.
    - If delivery runtime is active, call a session capability service method that aligns memory cache/tools/hook runtime to the new frame. Existing `replace_current_capability_state` writes another frame, so first batch should add a narrower “adopt persisted capability revision” helper instead of calling it directly.
-4. Revoke uses the same flow with remove directives and `created_by_kind=permission_grant_revoke`.
-5. Expire cannot stay as bulk SQL if it must revoke runtime capability. Add an application-owned expiry service that loads overdue active grants, applies remove effect per grant, then marks each grant Expired. Repository bulk `expire_overdue` may remain as low-level cleanup only, but should not be the CE runtime effect path.
+4. Revoke uses the same classification: admission-only grants update admission projection; toolset expansion grants apply remove directives and write a surface revision.
+5. Expire cannot stay as bulk SQL when it affects admission projection or model-visible toolset. Add an application-owned expiry service that loads overdue active grants, applies the AgentRun classification, then marks each grant Expired.
 
 Minimal first write set:
 
 - `crates/agentdash-application/src/permission/service.rs`
-  - Add `expire_overdue_with_frame_effects(now)` or equivalent service path.
-  - Change apply path to return `PermissionGrantEffectResult { grant, transition, effect_frame }` for approve/revoke/expire.
+  - Add `expire_overdue_with_agent_run_effects(now)` or equivalent service path.
+  - Change apply path to return a result that separates admission projection update from optional `effect_frame`.
   - Inject or call a live-runtime adoption port only when caller has delivery/session services; do not hide live update inside repository.
 - `crates/agentdash-domain/src/permission/repository.rs` and `crates/agentdash-infrastructure/src/persistence/postgres/permission_grant_repository.rs`
   - Add a query that returns overdue active grants, or change expiry use case to list active grants then filter by `expires_at`.
@@ -95,10 +99,10 @@ Migration:
 
 Roundtrip/recovery tests:
 
-- Approve creates a new AgentFrame revision whose `effective_capability_json` includes granted capability and whose previous VFS/MCP/execution profile are preserved.
-- Revoke creates a later revision removing the capability/tool policy.
-- Expire applies the same remove effect before status becomes Expired.
-- Recovery from latest AgentFrame projects the same `CapabilityState` as the live apply path.
+- Approve for tool-internal permission updates AgentRun admission projection without changing AgentFrame surface.
+- Approve for toolset expansion creates a new AgentFrame revision whose `effective_capability_json` includes the visible tool capability and whose previous VFS/MCP/execution profile are preserved.
+- Revoke/expire follow the same classification before status changes complete.
+- Recovery from latest AgentFrame plus AgentRun admission projection produces the same final visible capability/admission behavior as the live path.
 - Route test remains focused on status contract; service test owns frame effect.
 
 ### CE03 data model and flow
@@ -210,8 +214,8 @@ Roundtrip/recovery tests:
 
 Recommended order:
 
-1. CE05 first, as a narrow design/code-boundary check: define `CapabilityResolver.granted_capability_keys` as compile-time/input-only compatibility, not a runtime surface fact. This prevents CE02 from adding more direct active-grant reads into resolver paths.
-2. CE02 next: PermissionGrant approve/revoke/expire writes AgentFrame capability revisions. This establishes the runtime capability effect pattern.
+1. CE05 first, as a boundary check: define AgentRun effective capability/admission as the only consumer of Grant state. `CapabilityResolver.granted_capability_keys` is replaced by AgentRun final visible capability or admission result.
+2. CE02 next: PermissionGrant approve/revoke/expire classifies each grant as tool-internal admission or toolset expansion. Only toolset expansion writes AgentFrame capability revisions.
 3. CE03 after CE02: Canvas expose uses the same AgentFrame revision write/adopt pattern, but adds VFS, skill baseline and hook runtime surface.
 4. CE04 after CE03: WorkspaceModule resolver reads the final frame exposure shape and removes local visibility duplication.
 

@@ -2,7 +2,7 @@
 
 | ID | Title | Group | Status | Source |
 | --- | --- | --- | --- | --- |
-| M01 | Project event NDJSON contract 化 | Contract Surface | pending | `research/10-contract-boundary-deep-dive.md` |
+| M01 | Project event NDJSON contract 化 | Contract Surface | completed | `research/10-contract-boundary-deep-dive.md` |
 | M02 | ProjectBackendAccess / BackendWorkspaceInventory contract 化 | Contract Surface | completed | `research/10-contract-boundary-deep-dive.md` |
 | M03 | Canvas CRUD contract 化 | Contract Surface | completed | `research/10-contract-boundary-deep-dive.md` |
 | M04 | SkillAsset HTTP DTO contract 化 | Contract Surface | completed | `research/10-contract-boundary-deep-dive.md` |

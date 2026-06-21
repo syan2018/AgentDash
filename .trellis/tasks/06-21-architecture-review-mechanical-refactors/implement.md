@@ -2,7 +2,7 @@
 
 ## Phase 1: Contract Surface
 
-- [ ] M01 Project event NDJSON contract 化。
+- [x] M01 Project event NDJSON contract 化。
 - [x] M02 ProjectBackendAccess / BackendWorkspaceInventory contract 化。
 - [x] M03 Canvas CRUD contract 化。
 - [x] M04 SkillAsset HTTP DTO contract 化。
@@ -85,3 +85,9 @@ pnpm run frontend:check
 - M07 已完成，Auth/current-user/identity-directory app-wide DTO 进入 `auth-contracts.ts`，API `/auth`、`/me` 与 `/directory` 输出 generated contract DTO。
 - `TokenQuery`、`RevokeTokenRequest`、`OidcCallbackQuery` 保留在 route-local transport wrapper，原因是它们只服务 token/query/callback 传输，不形成前端共享事实。
 - 前端 `auth`、`currentUser`、`directory` service/store 直接消费 generated DTO，移除 `/me` 手写字段级 mapper 与 `types/index.ts` 中的 auth/directory wire DTO 重声明。
+
+## Round 6 Completion Notes
+
+- M01 已完成，Project event NDJSON envelope 与 `ProjectStateChange` 进入 `project-contracts.ts`，后端 stream route 通过显式 domain `StreamEvent` -> contract envelope 映射输出。
+- 前端 `eventStream` 消费 generated Project stream DTO，仅保留 route-local parser、cursor 与连接生命周期逻辑；`types/acp.ts` 不再承载 Project state stream DTO。
+- `StateChanged.payload` 以 `Record<string, JsonValue>` 作为 contract，原因是 story store 消费的是对象 payload，非对象 domain payload 不进入 Project NDJSON contract 输出。

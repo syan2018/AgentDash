@@ -107,15 +107,3 @@ export interface ViewConfig {
   filters: Record<string, unknown>;
   sort_by: string | null;
 }
-
-// ─── State change payload ─────────────────────────────
-
-export interface StateChange {
-  id: number;
-  project_id: string;
-  entity_id: string;
-  kind: string;
-  payload: Record<string, unknown>;
-  backend_id: string | null;
-  created_at: string;
-}

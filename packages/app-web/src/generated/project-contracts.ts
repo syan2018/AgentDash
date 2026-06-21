@@ -16,9 +16,15 @@ export type ProjectConfig = { default_agent_type: string | null, default_workspa
 
 export type ProjectDetailResponse = { workspaces: Array<WorkspaceResponse>, stories: Array<StoryResponse>, id: string, name: string, description: string, config: ProjectConfig, created_by_user_id: string, updated_by_user_id: string, visibility: ProjectVisibility, is_template: boolean, cloned_from_project_id: string | null, access: ProjectAccessSummaryResponse, created_at: string, updated_at: string, };
 
+export type ProjectEventStreamEnvelope = { "type": "Connected", "data": { last_event_id: number, } } | { "type": "StateChanged", "data": ProjectStateChange } | { "type": "BackendRuntimeChanged", "data": { backend_id: string, } } | { "type": "Heartbeat", "data": { timestamp: number, } };
+
 export type ProjectResponse = { id: string, name: string, description: string, config: ProjectConfig, created_by_user_id: string, updated_by_user_id: string, visibility: ProjectVisibility, is_template: boolean, cloned_from_project_id: string | null, access: ProjectAccessSummaryResponse, created_at: string, updated_at: string, };
 
 export type ProjectRole = "owner" | "editor" | "viewer";
+
+export type ProjectStateChange = { id: number, project_id: string, entity_id: string, kind: ProjectStateChangeKind, payload: Record<string, JsonValue>, backend_id: string | null, created_at: string, };
+
+export type ProjectStateChangeKind = "story_created" | "story_updated" | "story_status_changed" | "story_deleted" | "task_created" | "task_updated" | "task_status_changed" | "task_deleted";
 
 export type ProjectSubjectGrantResponse = { project_id: string, subject_type: ProjectSubjectType, subject_id: string, role: ProjectRole, granted_by_user_id: string, created_at: string, updated_at: string, };
 

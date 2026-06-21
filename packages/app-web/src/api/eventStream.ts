@@ -1,24 +1,17 @@
 import type { JsonValue } from "../generated/common-contracts";
+import type {
+  ProjectEventStreamEnvelope,
+  ProjectStateChangeKind,
+} from "../generated/project-contracts";
 import { buildApiPath } from './origin';
 import { FetchNdjsonStream, type NdjsonStreamLifecycle } from "./ndjsonStream";
 
 export type ProjectEventStreamLifecycle = NdjsonStreamLifecycle;
-
-export interface ProjectStateChange {
-  id: number;
-  project_id: string;
-  entity_id: string;
-  kind: string;
-  payload: Record<string, JsonValue>;
-  backend_id: string | null;
-  created_at: string;
-}
-
-export type ProjectEventStreamEnvelope =
-  | { type: "Connected"; data: { last_event_id: number } }
-  | { type: "StateChanged"; data: ProjectStateChange }
-  | { type: "BackendRuntimeChanged"; data: { backend_id: string } }
-  | { type: "Heartbeat"; data: { timestamp: number } };
+export type {
+  ProjectEventStreamEnvelope,
+  ProjectStateChange,
+  ProjectStateChangeKind,
+} from "../generated/project-contracts";
 
 export interface ProjectEventStreamConnection {
   close: () => void;
@@ -55,6 +48,46 @@ function isJsonObject(value: unknown): value is Record<string, JsonValue> {
   return isRecord(value) && Object.values(value).every(isJsonValue);
 }
 
+const PROJECT_STATE_CHANGE_KINDS = new Set<string>([
+  "story_created",
+  "story_updated",
+  "story_status_changed",
+  "story_deleted",
+  "task_created",
+  "task_updated",
+  "task_status_changed",
+  "task_deleted",
+]);
+
+function isProjectStateChangeKind(value: unknown): value is ProjectStateChangeKind {
+  return typeof value === "string" && PROJECT_STATE_CHANGE_KINDS.has(value);
+}
+
+function isProjectEventStreamEnvelope(value: unknown): value is ProjectEventStreamEnvelope {
+  if (!isRecord(value) || typeof value.type !== "string" || !isRecord(value.data)) {
+    return false;
+  }
+
+  switch (value.type) {
+    case "Connected":
+      return typeof value.data.last_event_id === "number";
+    case "StateChanged":
+      return typeof value.data.id === "number" &&
+        typeof value.data.project_id === "string" &&
+        typeof value.data.entity_id === "string" &&
+        isProjectStateChangeKind(value.data.kind) &&
+        isJsonObject(value.data.payload) &&
+        (value.data.backend_id === null || typeof value.data.backend_id === "string") &&
+        typeof value.data.created_at === "string";
+    case "BackendRuntimeChanged":
+      return typeof value.data.backend_id === "string";
+    case "Heartbeat":
+      return typeof value.data.timestamp === "number";
+    default:
+      return false;
+  }
+}
+
 export function readProjectEventStreamCursor(event: ProjectEventStreamEnvelope): number | null {
   switch (event.type) {
     case "Connected":
@@ -68,48 +101,7 @@ export function readProjectEventStreamCursor(event: ProjectEventStreamEnvelope):
 }
 
 export function parseProjectEventStreamEnvelope(value: unknown): ProjectEventStreamEnvelope | null {
-  if (!isRecord(value) || typeof value.type !== "string" || !isRecord(value.data)) {
-    return null;
-  }
-
-  switch (value.type) {
-    case "Connected":
-      return typeof value.data.last_event_id === "number"
-        ? { type: "Connected", data: { last_event_id: value.data.last_event_id } }
-        : null;
-    case "StateChanged": {
-      const payload = isJsonObject(value.data.payload) ? value.data.payload : null;
-      return typeof value.data.id === "number" &&
-        typeof value.data.project_id === "string" &&
-        typeof value.data.entity_id === "string" &&
-        typeof value.data.kind === "string" &&
-        typeof value.data.created_at === "string" &&
-        payload !== null
-        ? {
-            type: "StateChanged",
-            data: {
-              id: value.data.id,
-              project_id: value.data.project_id,
-              entity_id: value.data.entity_id,
-              kind: value.data.kind,
-              payload,
-              backend_id: typeof value.data.backend_id === "string" ? value.data.backend_id : null,
-              created_at: value.data.created_at,
-            },
-          }
-        : null;
-    }
-    case "BackendRuntimeChanged":
-      return typeof value.data.backend_id === "string"
-        ? { type: "BackendRuntimeChanged", data: { backend_id: value.data.backend_id } }
-        : null;
-    case "Heartbeat":
-      return typeof value.data.timestamp === "number"
-        ? { type: "Heartbeat", data: { timestamp: value.data.timestamp } }
-        : null;
-    default:
-      return null;
-  }
+  return isProjectEventStreamEnvelope(value) ? value : null;
 }
 
 export function connectProjectEventStream(

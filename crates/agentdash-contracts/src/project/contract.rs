@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
@@ -5,6 +7,103 @@ use ts_rs::TS;
 use crate::context::ContextContainerDefinition;
 use crate::story::StoryResponse;
 use crate::workspace::WorkspaceResponse;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectStateChangeKind {
+    StoryCreated,
+    StoryUpdated,
+    StoryStatusChanged,
+    StoryDeleted,
+    TaskCreated,
+    TaskUpdated,
+    TaskStatusChanged,
+    TaskDeleted,
+}
+
+impl From<agentdash_domain::story::ChangeKind> for ProjectStateChangeKind {
+    fn from(value: agentdash_domain::story::ChangeKind) -> Self {
+        match value {
+            agentdash_domain::story::ChangeKind::StoryCreated => Self::StoryCreated,
+            agentdash_domain::story::ChangeKind::StoryUpdated => Self::StoryUpdated,
+            agentdash_domain::story::ChangeKind::StoryStatusChanged => Self::StoryStatusChanged,
+            agentdash_domain::story::ChangeKind::StoryDeleted => Self::StoryDeleted,
+            agentdash_domain::story::ChangeKind::TaskCreated => Self::TaskCreated,
+            agentdash_domain::story::ChangeKind::TaskUpdated => Self::TaskUpdated,
+            agentdash_domain::story::ChangeKind::TaskStatusChanged => Self::TaskStatusChanged,
+            agentdash_domain::story::ChangeKind::TaskDeleted => Self::TaskDeleted,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ProjectStateChange {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub project_id: String,
+    pub entity_id: String,
+    pub kind: ProjectStateChangeKind,
+    #[ts(type = "Record<string, JsonValue>")]
+    pub payload: BTreeMap<String, Value>,
+    pub backend_id: Option<String>,
+    pub created_at: String,
+}
+
+impl ProjectStateChange {
+    pub fn from_domain(value: agentdash_domain::story::StateChange) -> Option<Self> {
+        let payload = match value.payload {
+            Value::Object(payload) => payload.into_iter().collect(),
+            _ => return None,
+        };
+
+        Some(Self {
+            id: value.id,
+            project_id: value.project_id.to_string(),
+            entity_id: value.entity_id.to_string(),
+            kind: ProjectStateChangeKind::from(value.kind),
+            payload,
+            backend_id: value.backend_id,
+            created_at: value.created_at.to_rfc3339(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "type", content = "data")]
+pub enum ProjectEventStreamEnvelope {
+    Connected {
+        #[ts(type = "number")]
+        last_event_id: i64,
+    },
+    StateChanged(ProjectStateChange),
+    BackendRuntimeChanged {
+        backend_id: String,
+    },
+    Heartbeat {
+        #[ts(type = "number")]
+        timestamp: i64,
+    },
+}
+
+impl ProjectEventStreamEnvelope {
+    pub fn connected(last_event_id: i64) -> Self {
+        Self::Connected { last_event_id }
+    }
+
+    pub fn state_changed(
+        change: agentdash_domain::story::StateChange,
+    ) -> Option<ProjectEventStreamEnvelope> {
+        ProjectStateChange::from_domain(change).map(Self::StateChanged)
+    }
+
+    pub fn backend_runtime_changed(backend_id: String) -> Self {
+        Self::BackendRuntimeChanged { backend_id }
+    }
+
+    pub fn heartbeat(timestamp: i64) -> Self {
+        Self::Heartbeat { timestamp }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct SchedulingConfig {

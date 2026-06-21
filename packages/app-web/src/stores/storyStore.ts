@@ -3,10 +3,10 @@ import type {
   ContextContainerDefinition,
   ContextSourceRef,
   SessionComposition,
-  StateChange,
   Story,
   StoryTaskProjectionItem,
 } from "../types";
+import type { ProjectStateChange } from "../generated/project-contracts";
 import * as storyService from "../services/story";
 import {
   canMapStoryFromPayload,
@@ -64,7 +64,7 @@ interface StoryState {
   fetchStoryTaskProjection: (storyId: string) => Promise<void>;
   selectStory: (id: string | null) => void;
   selectTask: (id: string | null) => void;
-  handleStateChange: (change: StateChange) => void;
+  handleStateChange: (change: ProjectStateChange) => void;
 }
 
 const upsertStoryInList = (stories: Story[], story: Story): Story[] => {
@@ -281,9 +281,7 @@ export const useStoryStore = create<StoryState>((set) => ({
 
   handleStateChange: (change) => {
     const entityId = change.entity_id;
-    const payload = (change.payload && typeof change.payload === "object"
-      ? change.payload
-      : {}) as Record<string, unknown>;
+    const payload = change.payload;
 
     const refreshStoryById = (storyId: string) => {
       if (storyRefreshInFlight.has(storyId)) return;

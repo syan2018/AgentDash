@@ -32,8 +32,10 @@
 
 ## Acceptance Criteria
 
-- [ ] 所有 card body 使用统一的设计 token
-- [ ] strip 模式和 card 模式的状态样式视觉连贯
-- [ ] CTX 与 TOOLS 使用对称的一级/二级结构
-- [ ] TypeScript 编译无错误
-- [ ] Lint 无新增 warning
+- [x] 所有 card body 使用统一的设计 token (ST / CB)
+- [x] strip 模式和 card 模式合并为单一渲染路径，状态仅通过背景色区分
+- [x] CTX 与 TOOLS 使用对称的一级/二级结构
+- [x] SectionRenderers 去卡片化，Chip / TokenBadge 统一
+- [x] TaskToolCardBody 进度展示 + ToolSchemaDelta JsonTree 展开
+- [x] TypeScript 编译无错误
+- [x] Lint 无新增 warning

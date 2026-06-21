@@ -30,7 +30,6 @@ import type {
   RuntimeHookInjectionEntry,
   RuntimeSkillEntry,
   SkillDeltaSection,
-  RuntimeToolSchemaEntry,
   SystemNoticeSection,
   ToolPathDeltaSection,
   ToolSchemaDeltaSection,
@@ -256,12 +255,12 @@ function ContinuationContextBody({ section }: { section: ContinuationContextSect
         <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
       )}
       {section.owner_context && (
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap ${CB.codeBlock}">
+        <pre className={`max-h-40 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
           {section.owner_context}
         </pre>
       )}
       {section.transcript_markdown ? (
-        <pre className="max-h-72 overflow-auto whitespace-pre-wrap ${CB.codeBlock}">
+        <pre className={`max-h-72 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
           {section.transcript_markdown}
         </pre>
       ) : (
@@ -273,7 +272,7 @@ function ContinuationContextBody({ section }: { section: ContinuationContextSect
 
 function FragmentItem({ fragment }: { fragment: RuntimeContextFragmentEntry }) {
   return (
-    <article className="space-y-1 space-y-1">
+    <article className="space-y-1">
       <div className="flex flex-wrap gap-1.5">
         <Chip label={fragment.slot || "slot"} />
         <Chip label={fragment.label || "context"} />
@@ -296,7 +295,7 @@ function CapabilityKeyDeltaBody({ section }: { section: CapabilityKeyDeltaSectio
   return (
     <div className="space-y-2">
       {hasDiff ? (
-        <div className="space-y-1 space-y-1">
+        <div className="space-y-1">
           {added.map((row, index) => (
             <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
           ))}
@@ -329,7 +328,7 @@ function ToolPathDeltaBody({ section }: { section: ToolPathDeltaSection }) {
     return <p className="text-xs text-muted-foreground/60">本次无工具路径变更</p>;
   }
   return (
-    <div className="space-y-1 space-y-1">
+    <div className="space-y-1">
       {added.map((row, index) => (
         <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
       ))}
@@ -350,7 +349,7 @@ function McpServerDeltaBody({ section }: { section: McpServerDeltaSection }) {
     return <p className="text-xs text-muted-foreground/60">本次无 MCP 变更</p>;
   }
   return (
-    <div className="space-y-1 space-y-1">
+    <div className="space-y-1">
       {added.map((row, index) => (
         <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
       ))}
@@ -375,7 +374,7 @@ function VfsDeltaBody({ section }: { section: VfsDeltaSection }) {
     return <p className="text-xs text-muted-foreground/60">本次无 VFS 变更</p>;
   }
   return (
-    <div className="space-y-1 space-y-1">
+    <div className="space-y-1">
       {added.map((row, index) => (
         <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
       ))}
@@ -443,73 +442,96 @@ function DiffLine({
   );
 }
 
-function ToolSchemaDeltaBody({ section }: { section: ToolSchemaDeltaSection }) {
-  if (section.added_tools.length === 0) {
-    return <p className={CB.meta}>无新增工具 schema</p>;
-  }
-  return (
-    <div className="max-h-96 overflow-auto space-y-0.5">
-      {section.added_tools.map((tool) => (
-        <ToolSchemaItem key={tool.name} tool={tool} />
-      ))}
-    </div>
-  );
-}
+// ── 滚动列表容器 ──
+const SCROLL_LIST = "max-h-96 space-y-0.5 overflow-auto scrollbar-thin";
 
-function ToolSchemaItem({ tool }: { tool: RuntimeToolSchemaEntry }) {
+/** 通用 delta 可展开行 — ToolSchema / Skill / 其他列表项共用 */
+function DeltaListItem({
+  symbol,
+  name,
+  description,
+  chips,
+  meta,
+  expandContent,
+}: {
+  symbol: string;
+  name: string;
+  description?: string;
+  chips?: string[];
+  meta?: string;
+  expandContent?: React.ReactNode;
+}) {
+  const hasDetail = Boolean(description || expandContent);
   const [open, setOpen] = useState(false);
-  const fieldNames = schemaFieldNames(tool.parameters_schema);
+
+  const symbolColor =
+    symbol === "+" ? "text-success" : symbol === "−" ? "text-destructive" : "text-warning";
+
   return (
     <div>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={hasDetail ? () => setOpen((v) => !v) : undefined}
         className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40 ${open ? "bg-secondary/30" : ""}`}
       >
-        <span className="shrink-0 w-3 select-none text-success text-[10px]">+</span>
+        <span className={`shrink-0 w-3 select-none text-[10px] ${symbolColor}`}>{symbol}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/70">
-          {tool.name}
+          {name}
         </span>
-        {(tool.capability_key || tool.source) && (
+        {chips && chips.length > 0 && (
           <span className="flex shrink-0 gap-1">
-            {tool.capability_key && <Chip label={tool.capability_key} />}
-            {tool.source && <Chip label={tool.source} />}
+            {chips.map((c) => (
+              <Chip key={c} label={c} />
+            ))}
           </span>
         )}
-        {fieldNames.length > 0 && (
-          <span className={CB.meta}>
-            {fieldNames.length} params
-          </span>
+        {meta && <span className={CB.meta}>{meta}</span>}
+        {hasDetail && (
+          <span className={CB.expandToggle}>{open ? "▲" : "▼"}</span>
         )}
-        <span className={CB.expandToggle}>
-          {open ? "▲" : "▼"}
-        </span>
       </button>
       {open && (
         <div className="px-2 py-1.5">
-          {tool.description && (
-            <p className={`mb-1.5 ${CB.meta}`}>{tool.description}</p>
+          {description && (
+            <p className={`mb-1.5 ${CB.meta}`}>{description}</p>
           )}
-          {tool.parameters_schema != null && (
-            <JsonTree data={tool.parameters_schema} defaultDepth={1} />
-          )}
+          {expandContent}
         </div>
       )}
     </div>
   );
 }
 
-function SkillDeltaBody({ section }: { section: SkillDeltaSection }) {
-  const render = (items: RuntimeSkillEntry[], symbol: string, label: string) =>
-    items.map((skill, index) => (
-      <SkillDiffLine
-        key={`${label}-${skillIdentityKey(skill)}-${index}`}
-        symbol={symbol}
-        label={label}
-        skill={skill}
-      />
-    ));
+function ToolSchemaDeltaBody({ section }: { section: ToolSchemaDeltaSection }) {
+  if (section.added_tools.length === 0) {
+    return <p className={CB.meta}>无新增工具 schema</p>;
+  }
+  return (
+    <div className={SCROLL_LIST}>
+      {section.added_tools.map((tool) => {
+        const fieldNames = schemaFieldNames(tool.parameters_schema);
+        const chips = [tool.capability_key, tool.source].filter(Boolean) as string[];
+        return (
+          <DeltaListItem
+            key={tool.name}
+            symbol="+"
+            name={tool.name}
+            description={tool.description}
+            chips={chips}
+            meta={fieldNames.length > 0 ? `${fieldNames.length} params` : undefined}
+            expandContent={
+              tool.parameters_schema != null ? (
+                <JsonTree data={tool.parameters_schema} defaultDepth={1} />
+              ) : undefined
+            }
+          />
+        );
+      })}
+    </div>
+  );
+}
 
+function SkillDeltaBody({ section }: { section: SkillDeltaSection }) {
   const hasDelta =
     section.added_skills.length +
       section.removed_skills.length +
@@ -517,42 +539,33 @@ function SkillDeltaBody({ section }: { section: SkillDeltaSection }) {
     0;
 
   if (!hasDelta) {
-    return <p className="text-xs text-muted-foreground/60">本次无 skill 变化</p>;
+    return <p className={CB.meta}>本次无 skill 变化</p>;
   }
 
-  return (
-    <div className="space-y-1 space-y-1">
-      {render(section.added_skills, "+", "skill")}
-      {render(section.removed_skills, "−", "skill")}
-      {render(section.changed_skills, "↻", "skill")}
-    </div>
-  );
-}
+  const renderSkills = (items: RuntimeSkillEntry[], symbol: string) =>
+    items.map((skill, index) => {
+      const displayName = skillDisplayLabel(skill);
+      const identity = skillIdentityKey(skill);
+      const chips: string[] = [];
+      if (skill.provider_key) chips.push(skill.provider_key);
+      if (identity !== displayName) chips.push(identity);
+      if (skill.exposure === "explicit_only") chips.push("explicit only");
+      return (
+        <DeltaListItem
+          key={`${symbol}-${identity}-${index}`}
+          symbol={symbol}
+          name={displayName}
+          description={skill.description || undefined}
+          chips={chips}
+        />
+      );
+    });
 
-function SkillDiffLine({
-  symbol,
-  label,
-  skill,
-}: {
-  symbol: string;
-  label: string;
-  skill: RuntimeSkillEntry;
-}) {
-  const displayLabel = skillDisplayLabel(skill);
-  const identity = skillIdentityKey(skill);
   return (
-    <div className="space-y-1 space-y-0.5">
-      <p className="flex items-start gap-2 text-xs leading-5">
-        <span className="shrink-0 w-4 select-none text-muted-foreground/70">{symbol}</span>
-        <span className="shrink-0 text-muted-foreground/80">{label}</span>
-        <span className="min-w-0 break-all font-mono text-foreground/80">{displayLabel}</span>
-      </p>
-      <div className="flex flex-wrap gap-1.5 pl-8">
-        {skill.provider_key && <Chip label={`provider: ${skill.provider_key}`} />}
-        {identity !== displayLabel && <Chip label={`capability: ${identity}`} />}
-        {skill.local_name && skill.local_name !== displayLabel && <Chip label={`local: ${skill.local_name}`} />}
-        {skill.exposure === "explicit_only" && <Chip label="explicit only" />}
-      </div>
+    <div className={SCROLL_LIST}>
+      {renderSkills(section.added_skills, "+")}
+      {renderSkills(section.removed_skills, "−")}
+      {renderSkills(section.changed_skills, "↻")}
     </div>
   );
 }
@@ -571,7 +584,7 @@ function CompanionAgentRosterDeltaBody({
   return (
     <div className="space-y-2">
       {hasDelta ? (
-        <div className="space-y-1 space-y-1">
+        <div className="space-y-1">
           {section.added_agents.map((agent, index) => (
             <CompanionAgentDiffLine
               key={`add-${agent.agent_key}-${index}`}
@@ -708,7 +721,7 @@ function PendingActionBody({ section }: { section: PendingActionSection }) {
         <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
       )}
       {section.instructions.length > 0 && (
-        <div className="space-y-1 space-y-1">
+        <div className="space-y-1">
           {section.instructions.map((line, index) => (
             <pre
               key={`${section.action_id}-inst-${index}`}
@@ -726,7 +739,7 @@ function PendingActionBody({ section }: { section: PendingActionSection }) {
 
 function InjectionItem({ injection }: { injection: RuntimeHookInjectionEntry }) {
   return (
-    <article className="space-y-1 space-y-1">
+    <article className="space-y-1">
       <div className="flex flex-wrap gap-1.5">
         <Chip label={injection.slot || "slot"} />
         <Chip label={injection.source || "unknown"} />
@@ -756,7 +769,7 @@ function AutoResumeBody({ section }: { section: AutoResumeSection }) {
     <div className="space-y-1.5">
       {section.reason && <Chip label={`reason: ${section.reason}`} />}
       {section.prompt && (
-        <pre className="max-h-96 overflow-auto whitespace-pre-wrap ${CB.codeBlock}">
+        <pre className={`max-h-96 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
           {section.prompt}
         </pre>
       )}
@@ -797,7 +810,7 @@ function UserPreferencesBody({ section }: { section: UserPreferencesSection }) {
     return <p className="text-xs text-muted-foreground/60">暂无用户偏好</p>;
   }
   return (
-    <div className="space-y-1 space-y-1">
+    <div className="space-y-1">
       {section.items.map((item, index) => (
         <p key={`${item}-${index}`} className="text-xs leading-5 text-foreground/75">
           {item}
@@ -816,7 +829,7 @@ function ProjectGuidelinesBody({ section }: { section: ProjectGuidelinesSection 
       {section.entries.map((entry, index) => (
         <article
           key={`${entry.path}-${index}`}
-          className="space-y-1 space-y-1"
+          className="space-y-1"
         >
           <div className="flex flex-wrap gap-1.5">
             <Chip label={entry.path} />
@@ -834,7 +847,7 @@ function ProjectGuidelinesBody({ section }: { section: ProjectGuidelinesSection 
 
 function UnknownSectionBody({ section }: { section: UnknownSection }) {
   return (
-    <pre className="max-h-64 overflow-auto whitespace-pre-wrap ${CB.codeBlock}">
+    <pre className={`max-h-64 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
       {formatJson(section.raw)}
     </pre>
   );

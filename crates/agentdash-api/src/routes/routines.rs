@@ -3,8 +3,8 @@ use std::sync::Arc;
 use agentdash_contracts::common_response::{DeletedFlagResponse, PendingExecutionResponse};
 use agentdash_contracts::routine::{
     CreateRoutineRequest, EnableRoutineRequest, FireWebhookRequest, ListExecutionsQuery,
-    RegenerateTokenResponse, RoutineCreationResponse, RoutineExecutionResponse, RoutineResponse,
-    RoutineTriggerConfigRequest, UpdateRoutineRequest,
+    RegenerateTokenResponse, RoutineCreationResponse, RoutineDispatchStrategyDto,
+    RoutineExecutionResponse, RoutineResponse, RoutineTriggerConfigRequest, UpdateRoutineRequest,
 };
 use agentdash_domain::routine::{DispatchStrategy, Routine, RoutineTriggerConfig};
 use axum::{
@@ -113,7 +113,7 @@ pub async fn create_routine(
     };
 
     let dispatch_strategy: DispatchStrategy = match req.dispatch_strategy {
-        Some(strategy) => strategy.into(),
+        Some(strategy) => routine_dispatch_strategy_into_domain(strategy),
         None => DispatchStrategy::default(),
     };
 
@@ -178,7 +178,7 @@ pub async fn update_routine(
             routine_trigger_update_into_domain(trigger_config, &routine.trigger_config)?;
     }
     if let Some(dispatch_strategy) = req.dispatch_strategy {
-        routine.dispatch_strategy = dispatch_strategy.into();
+        routine.dispatch_strategy = routine_dispatch_strategy_into_domain(dispatch_strategy);
     }
     if let Some(enabled) = req.enabled {
         routine.enabled = enabled;
@@ -379,6 +379,16 @@ fn routine_trigger_update_into_domain(
     }
 }
 
+fn routine_dispatch_strategy_into_domain(strategy: RoutineDispatchStrategyDto) -> DispatchStrategy {
+    match strategy {
+        RoutineDispatchStrategyDto::Fresh => DispatchStrategy::Fresh,
+        RoutineDispatchStrategyDto::Reuse => DispatchStrategy::Reuse,
+        RoutineDispatchStrategyDto::PerEntity { entity_key_path } => {
+            DispatchStrategy::PerEntity { entity_key_path }
+        }
+    }
+}
+
 async fn load_routine_with_permission(
     state: &AppState,
     current_user: &agentdash_spi::platform::auth::AuthIdentity,
@@ -447,4 +457,27 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
     value
         .strip_prefix("Bearer ")
         .or_else(|| value.strip_prefix("bearer "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_routine_dispatch_strategy_request_to_domain() {
+        assert!(matches!(
+            routine_dispatch_strategy_into_domain(RoutineDispatchStrategyDto::Fresh),
+            DispatchStrategy::Fresh
+        ));
+        assert!(matches!(
+            routine_dispatch_strategy_into_domain(RoutineDispatchStrategyDto::Reuse),
+            DispatchStrategy::Reuse
+        ));
+        assert!(matches!(
+            routine_dispatch_strategy_into_domain(RoutineDispatchStrategyDto::PerEntity {
+                entity_key_path: "payload.issue_id".to_string(),
+            }),
+            DispatchStrategy::PerEntity { entity_key_path } if entity_key_path == "payload.issue_id"
+        ));
+    }
 }

@@ -5,15 +5,16 @@ use agentdash_agent_protocol::{
     codex_app_server_protocol as codex,
 };
 use agentdash_agent_types::MessageRef;
-use agentdash_contracts::session::{
-    SessionContextUsageItemResponse, context_usage_items_from_context_frame,
-};
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 use agentdash_spi::hooks::ContextFrame;
 use tokio::sync::broadcast;
 
 use super::compaction_context_frame::build_compaction_context_frame;
 use super::context_projector::ContextProjector;
+use super::context_usage_projection::{
+    SessionContextProjectionReadModel, SessionContextUsageItem,
+    build_session_context_projection_read_model, context_usage_items_from_context_frame,
+};
 use super::continuation::build_raw_projected_transcript_from_events;
 use super::hub_support::SessionEventSubscription;
 use super::persistence::{
@@ -324,11 +325,25 @@ impl SessionEventingService {
             .await
     }
 
+    pub async fn build_context_projection_read_model(
+        &self,
+        session_id: &str,
+    ) -> io::Result<SessionContextProjectionReadModel> {
+        let envelope = self.build_agent_context_envelope(session_id).await?;
+        let context_items = self
+            .build_context_usage_items(session_id, envelope.head_event_seq)
+            .await?;
+        Ok(build_session_context_projection_read_model(
+            envelope,
+            context_items,
+        ))
+    }
+
     pub async fn build_context_usage_items(
         &self,
         session_id: &str,
         head_event_seq: u64,
-    ) -> io::Result<Vec<SessionContextUsageItemResponse>> {
+    ) -> io::Result<Vec<SessionContextUsageItem>> {
         let events = self.stores.events.list_all_events(session_id).await?;
         let mut frames = Vec::new();
         let mut seen_frame_ids = std::collections::HashSet::new();

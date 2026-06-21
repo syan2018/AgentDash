@@ -27,9 +27,9 @@ pub use session_actions::{
     RuntimeSessionMcpAccess, RuntimeSessionMcpError,
 };
 pub use setup_actions::{
-    MCP_PROBE_TRANSPORT_ACTION, McpProbeTransportProvider, WORKSPACE_BROWSE_DIRECTORY_ACTION,
-    WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION, WorkspaceBrowseDirectoryEntry,
-    WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
+    MCP_PROBE_TRANSPORT_ACTION, McpProbeTransportInput, McpProbeTransportProvider,
+    WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION,
+    WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
     WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
     WorkspaceDetectGitProvider, WorkspaceDetectInput, WorkspaceDetectProvider,
 };

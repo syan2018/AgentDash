@@ -227,18 +227,6 @@ impl From<DispatchStrategy> for RoutineDispatchStrategyDto {
     }
 }
 
-impl From<RoutineDispatchStrategyDto> for DispatchStrategy {
-    fn from(strategy: RoutineDispatchStrategyDto) -> Self {
-        match strategy {
-            RoutineDispatchStrategyDto::Fresh => Self::Fresh,
-            RoutineDispatchStrategyDto::Reuse => Self::Reuse,
-            RoutineDispatchStrategyDto::PerEntity { entity_key_path } => {
-                Self::PerEntity { entity_key_path }
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutineExecutionStatusDto {

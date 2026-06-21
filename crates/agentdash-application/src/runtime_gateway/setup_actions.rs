@@ -61,26 +61,10 @@ pub struct WorkspaceBrowseDirectoryEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(untagged)]
-enum McpProbeTransportInput {
-    Request {
-        transport: McpTransportConfig,
-        #[serde(default)]
-        runtime_binding: Option<McpRuntimeBindingConfig>,
-    },
-    Transport(McpTransportConfig),
-}
-
-impl McpProbeTransportInput {
-    fn into_parts(self) -> (McpTransportConfig, Option<McpRuntimeBindingConfig>) {
-        match self {
-            Self::Request {
-                transport,
-                runtime_binding,
-            } => (transport, runtime_binding),
-            Self::Transport(transport) => (transport, None),
-        }
-    }
+pub struct McpProbeTransportInput {
+    pub transport: McpTransportConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_binding: Option<McpRuntimeBindingConfig>,
 }
 
 pub struct McpProbeTransportProvider {
@@ -131,17 +115,14 @@ impl RuntimeProvider for McpProbeTransportProvider {
         let input = serde_json::from_value::<McpProbeTransportInput>(request.input.clone())
             .map_err(|error| {
                 RuntimeInvocationError::invalid_request(
-                    format!(
-                        "mcp.probe_transport 输入必须是 McpTransportConfig 或 ProbeMcpPresetRequest: {error}"
-                    ),
+                    format!("mcp.probe_transport 输入必须是 McpProbeTransportInput: {error}"),
                     Some(request.trace.clone()),
                 )
             })?;
-        let (transport, runtime_binding) = input.into_parts();
 
         let result = probe_transport_without_runtime_context(
-            &transport,
-            runtime_binding.as_ref(),
+            &input.transport,
+            input.runtime_binding.as_ref(),
             self.relay.as_deref(),
             self.http_probe.as_ref(),
         )
@@ -531,13 +512,16 @@ mod tests {
         let gateway = RuntimeGateway::new().with_provider(Arc::new(
             McpProbeTransportProvider::new(None, Arc::new(RmcpProbeTransport::new())),
         ));
-        let input = serde_json::to_value(McpTransportConfig::Stdio {
-            command: "npx".to_string(),
-            args: vec![],
-            env: vec![],
-            cwd: None,
+        let input = serde_json::to_value(McpProbeTransportInput {
+            transport: McpTransportConfig::Stdio {
+                command: "npx".to_string(),
+                args: vec![],
+                env: vec![],
+                cwd: None,
+            },
+            runtime_binding: None,
         })
-        .expect("serialize transport");
+        .expect("serialize input");
         let request = RuntimeInvocationRequest::new(
             RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION).expect("valid action key"),
             RuntimeActor::EnvironmentSetup { request_id: None },

@@ -8,10 +8,10 @@ use agentdash_application::llm_provider::{
 use agentdash_contracts::llm_provider::{
     CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
     DeleteLlmProviderResponse, DeleteLlmProviderUserCredentialResponse,
-    EffectiveLlmModelProfileDto, EffectiveLlmProviderDto, LlmProviderAdminDto,
-    ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest, ReorderLlmProvidersRequest,
-    ReorderLlmProvidersResponse, StartCodexOAuthResponse, UpdateLlmProviderRequest,
-    UpsertLlmProviderUserCredentialRequest,
+    EffectiveLlmModelProfileDto, EffectiveLlmProviderDto, LlmCredentialModeDto,
+    LlmProviderAdminDto, LlmProviderProtocol, ProbeLlmProviderModelDto,
+    ProbeLlmProviderModelsRequest, ReorderLlmProvidersRequest, ReorderLlmProvidersResponse,
+    StartCodexOAuthResponse, UpdateLlmProviderRequest, UpsertLlmProviderUserCredentialRequest,
 };
 use agentdash_domain::llm_provider::{
     LlmCredentialMode, LlmCredentialSource, LlmCredentialVerificationStatus, LlmProvider,
@@ -155,8 +155,8 @@ pub async fn create_provider(
         CreateLlmProviderInput {
             name: req.name,
             slug: req.slug,
-            protocol: req.protocol.into(),
-            credential_mode: req.credential_mode.map(Into::into),
+            protocol: llm_provider_protocol_into_domain(req.protocol),
+            credential_mode: req.credential_mode.map(llm_credential_mode_into_domain),
             global_api_key: req.global_api_key,
             base_url: req.base_url,
             wire_api: req.wire_api,
@@ -198,8 +198,8 @@ pub async fn update_provider(
         id,
         UpdateLlmProviderInput {
             name: req.name,
-            protocol: req.protocol.map(Into::into),
-            credential_mode: req.credential_mode.map(Into::into),
+            protocol: req.protocol.map(llm_provider_protocol_into_domain),
+            credential_mode: req.credential_mode.map(llm_credential_mode_into_domain),
             global_api_key: req.global_api_key,
             base_url: req.base_url,
             wire_api: req.wire_api,
@@ -470,7 +470,7 @@ pub async fn probe_models(
 ) -> Result<Json<Vec<ProbeLlmProviderModelDto>>, ApiError> {
     require_system_access(&current_user)?;
 
-    let protocol: WireProtocol = req.protocol.into();
+    let protocol = llm_provider_protocol_into_domain(req.protocol);
 
     let api_key = resolve_admin_probe_api_key(&req, &state).await?;
 
@@ -784,6 +784,23 @@ fn codex_oauth_status_dto(status: &oauth_flow::OAuthFlowStatus) -> CodexOAuthFlo
     }
 }
 
+fn llm_provider_protocol_into_domain(protocol: LlmProviderProtocol) -> WireProtocol {
+    match protocol {
+        LlmProviderProtocol::Anthropic => WireProtocol::Anthropic,
+        LlmProviderProtocol::Gemini => WireProtocol::Gemini,
+        LlmProviderProtocol::OpenaiCompatible => WireProtocol::OpenaiCompatible,
+        LlmProviderProtocol::OpenaiCodex => WireProtocol::OpenaiCodex,
+    }
+}
+
+fn llm_credential_mode_into_domain(mode: LlmCredentialModeDto) -> LlmCredentialMode {
+    match mode {
+        LlmCredentialModeDto::GlobalOnly => LlmCredentialMode::GlobalOnly,
+        LlmCredentialModeDto::GlobalOrUser => LlmCredentialMode::GlobalOrUser,
+        LlmCredentialModeDto::UserRequired => LlmCredentialMode::UserRequired,
+    }
+}
+
 fn credential_preview(protocol: WireProtocol, secret: &str) -> String {
     if protocol == WireProtocol::OpenaiCodex {
         return "ChatGPT OAuth".to_string();
@@ -1057,5 +1074,41 @@ mod tests {
     fn extracts_codex_account_id_from_access_token() {
         let token = jwt_with_account("acct_test");
         assert_eq!(extract_codex_account_id(&token).unwrap(), "acct_test");
+    }
+
+    #[test]
+    fn maps_llm_provider_protocol_request_to_domain() {
+        assert_eq!(
+            llm_provider_protocol_into_domain(LlmProviderProtocol::Anthropic),
+            WireProtocol::Anthropic
+        );
+        assert_eq!(
+            llm_provider_protocol_into_domain(LlmProviderProtocol::Gemini),
+            WireProtocol::Gemini
+        );
+        assert_eq!(
+            llm_provider_protocol_into_domain(LlmProviderProtocol::OpenaiCompatible),
+            WireProtocol::OpenaiCompatible
+        );
+        assert_eq!(
+            llm_provider_protocol_into_domain(LlmProviderProtocol::OpenaiCodex),
+            WireProtocol::OpenaiCodex
+        );
+    }
+
+    #[test]
+    fn maps_llm_credential_mode_request_to_domain() {
+        assert_eq!(
+            llm_credential_mode_into_domain(LlmCredentialModeDto::GlobalOnly),
+            LlmCredentialMode::GlobalOnly
+        );
+        assert_eq!(
+            llm_credential_mode_into_domain(LlmCredentialModeDto::GlobalOrUser),
+            LlmCredentialMode::GlobalOrUser
+        );
+        assert_eq!(
+            llm_credential_mode_into_domain(LlmCredentialModeDto::UserRequired),
+            LlmCredentialMode::UserRequired
+        );
     }
 }

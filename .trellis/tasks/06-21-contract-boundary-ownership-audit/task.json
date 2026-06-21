@@ -3,7 +3,7 @@
   "name": "contract-boundary-ownership-audit",
   "title": "Contract Boundary 分层审计",
   "description": "审计 application、contracts、API adapter、frontend generated contracts 的 DTO owner 与转换边界。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

@@ -18,6 +18,7 @@ pub mod context;
 mod context_frame;
 mod context_projector;
 mod context_usage_marking;
+mod context_usage_projection;
 // context_query_use_case 已删除：所有 API 消费者已迁移至 frame-based read model
 pub mod continuation;
 pub mod control;
@@ -95,6 +96,13 @@ pub use construction_provider::{
 };
 pub use context::ExecutorResolution;
 pub use context_projector::ContextProjector;
+pub use context_usage_projection::{
+    SessionAttachmentContextContribution, SessionContextProjectionReadModel,
+    SessionContextUsageCategory, SessionContextUsageItem, SessionContextUsageReadModel,
+    SessionMessageContextBreakdown, SessionProjectionMessageRefReadModel,
+    SessionProjectionSegmentProvenanceReadModel, SessionProjectionSegmentReadModel,
+    SessionProjectionSourceRangeReadModel, SessionToolContextContribution,
+};
 pub use control::{SessionControlService, SessionTurnSteerCommand};
 pub use core::SessionCoreService;
 pub use effects_service::SessionEffectsService;

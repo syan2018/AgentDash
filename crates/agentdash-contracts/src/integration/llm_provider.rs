@@ -24,17 +24,6 @@ impl From<domain::WireProtocol> for LlmProviderProtocol {
     }
 }
 
-impl From<LlmProviderProtocol> for domain::WireProtocol {
-    fn from(protocol: LlmProviderProtocol) -> Self {
-        match protocol {
-            LlmProviderProtocol::Anthropic => Self::Anthropic,
-            LlmProviderProtocol::Gemini => Self::Gemini,
-            LlmProviderProtocol::OpenaiCompatible => Self::OpenaiCompatible,
-            LlmProviderProtocol::OpenaiCodex => Self::OpenaiCodex,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmCredentialModeDto {
@@ -49,16 +38,6 @@ impl From<domain::LlmCredentialMode> for LlmCredentialModeDto {
             domain::LlmCredentialMode::GlobalOnly => Self::GlobalOnly,
             domain::LlmCredentialMode::GlobalOrUser => Self::GlobalOrUser,
             domain::LlmCredentialMode::UserRequired => Self::UserRequired,
-        }
-    }
-}
-
-impl From<LlmCredentialModeDto> for domain::LlmCredentialMode {
-    fn from(mode: LlmCredentialModeDto) -> Self {
-        match mode {
-            LlmCredentialModeDto::GlobalOnly => Self::GlobalOnly,
-            LlmCredentialModeDto::GlobalOrUser => Self::GlobalOrUser,
-            LlmCredentialModeDto::UserRequired => Self::UserRequired,
         }
     }
 }

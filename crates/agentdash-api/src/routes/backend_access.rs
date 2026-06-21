@@ -19,14 +19,15 @@ use agentdash_application::workspace::{
 };
 use agentdash_contracts::backend::{
     BackendWorkspaceInventoryResponse, CreateProjectBackendAccessRequest, InventoryRefreshResponse,
-    ProjectBackendAccessResponse, RegisterBackendWorkspaceInventoryRequest,
-    UpdateProjectBackendAccessRequest,
+    ProjectBackendAccessMode as ProjectBackendAccessModeDto, ProjectBackendAccessResponse,
+    ProjectBackendAccessStatus as ProjectBackendAccessStatusDto,
+    RegisterBackendWorkspaceInventoryRequest, UpdateProjectBackendAccessRequest,
 };
 use agentdash_contracts::common_response::RevokedIdResponse;
 use agentdash_contracts::workspace::{WorkspaceBindingSyncResult, WorkspaceInventoryCandidate};
 use agentdash_domain::backend::{
     BackendWorkspaceInventory, BackendWorkspaceInventorySource, BackendWorkspaceInventoryStatus,
-    ProjectBackendAccess, ProjectBackendAccessStatus,
+    ProjectBackendAccess, ProjectBackendAccessMode, ProjectBackendAccessStatus,
 };
 use agentdash_domain::workspace::{
     WorkspaceIdentityKind, identity_payload_from_detected_facts, normalize_path_key,
@@ -194,10 +195,10 @@ pub async fn update_project_backend_access(
     .await?;
     let mut access = load_access_for_project(&state, project_id, access_id).await?;
     if let Some(status) = req.status {
-        access.status = status.into();
+        access.status = project_backend_access_status_command(status);
     }
     if let Some(access_mode) = req.access_mode {
-        access.access_mode = access_mode.into();
+        access.access_mode = project_backend_access_mode_command(access_mode);
     }
     if let Some(priority) = req.priority {
         access.priority = priority;
@@ -635,6 +636,24 @@ fn workspace_inventory_candidate_response(
             .map(|id| id.to_string())
             .collect(),
         reason: value.reason,
+    }
+}
+
+fn project_backend_access_status_command(
+    value: ProjectBackendAccessStatusDto,
+) -> ProjectBackendAccessStatus {
+    match value {
+        ProjectBackendAccessStatusDto::Active => ProjectBackendAccessStatus::Active,
+        ProjectBackendAccessStatusDto::Paused => ProjectBackendAccessStatus::Paused,
+        ProjectBackendAccessStatusDto::Revoked => ProjectBackendAccessStatus::Revoked,
+    }
+}
+
+fn project_backend_access_mode_command(
+    value: ProjectBackendAccessModeDto,
+) -> ProjectBackendAccessMode {
+    match value {
+        ProjectBackendAccessModeDto::UseInventory => ProjectBackendAccessMode::UseInventory,
     }
 }
 

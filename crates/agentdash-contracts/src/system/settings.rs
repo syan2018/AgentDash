@@ -20,16 +20,6 @@ impl From<agentdash_domain::settings::SettingScopeKind> for SettingsScopeKind {
     }
 }
 
-impl From<SettingsScopeKind> for agentdash_domain::settings::SettingScopeKind {
-    fn from(value: SettingsScopeKind) -> Self {
-        match value {
-            SettingsScopeKind::System => Self::System,
-            SettingsScopeKind::User => Self::User,
-            SettingsScopeKind::Project => Self::Project,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, TS)]
 pub struct SettingsScopeQuery {
     #[serde(default)]

@@ -20,15 +20,6 @@ impl From<domain::McpHttpHeader> for McpHttpHeader {
     }
 }
 
-impl From<McpHttpHeader> for domain::McpHttpHeader {
-    fn from(header: McpHttpHeader) -> Self {
-        Self {
-            name: header.name,
-            value: header.value,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct McpEnvVar {
     pub name: String,
@@ -37,15 +28,6 @@ pub struct McpEnvVar {
 
 impl From<domain::McpEnvVar> for McpEnvVar {
     fn from(env: domain::McpEnvVar) -> Self {
-        Self {
-            name: env.name,
-            value: env.value,
-        }
-    }
-}
-
-impl From<McpEnvVar> for domain::McpEnvVar {
-    fn from(env: McpEnvVar) -> Self {
         Self {
             name: env.name,
             value: env.value,
@@ -104,32 +86,6 @@ impl From<domain::McpTransportConfig> for McpTransportConfigDto {
     }
 }
 
-impl From<McpTransportConfigDto> for domain::McpTransportConfig {
-    fn from(config: McpTransportConfigDto) -> Self {
-        match config {
-            McpTransportConfigDto::Http { url, headers } => Self::Http {
-                url,
-                headers: headers.into_iter().map(Into::into).collect(),
-            },
-            McpTransportConfigDto::Sse { url, headers } => Self::Sse {
-                url,
-                headers: headers.into_iter().map(Into::into).collect(),
-            },
-            McpTransportConfigDto::Stdio {
-                command,
-                args,
-                env,
-                cwd,
-            } => Self::Stdio {
-                command,
-                args,
-                env: env.into_iter().map(Into::into).collect(),
-                cwd,
-            },
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct McpRuntimeBindingConfigDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -148,15 +104,6 @@ impl From<domain::McpRuntimeBindingConfig> for McpRuntimeBindingConfigDto {
     }
 }
 
-impl From<McpRuntimeBindingConfigDto> for domain::McpRuntimeBindingConfig {
-    fn from(config: McpRuntimeBindingConfigDto) -> Self {
-        Self {
-            mount_id: config.mount_id,
-            bindings: config.bindings.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct McpRuntimeBindingRuleDto {
     pub source: McpRuntimeBindingSourceDto,
@@ -167,16 +114,6 @@ pub struct McpRuntimeBindingRuleDto {
 
 impl From<domain::McpRuntimeBindingRule> for McpRuntimeBindingRuleDto {
     fn from(rule: domain::McpRuntimeBindingRule) -> Self {
-        Self {
-            source: rule.source.into(),
-            target: rule.target.into(),
-            required: rule.required,
-        }
-    }
-}
-
-impl From<McpRuntimeBindingRuleDto> for domain::McpRuntimeBindingRule {
-    fn from(rule: McpRuntimeBindingRuleDto) -> Self {
         Self {
             source: rule.source.into(),
             target: rule.target.into(),
@@ -213,23 +150,6 @@ impl From<domain::McpRuntimeBindingSource> for McpRuntimeBindingSourceDto {
     }
 }
 
-impl From<McpRuntimeBindingSourceDto> for domain::McpRuntimeBindingSource {
-    fn from(source: McpRuntimeBindingSourceDto) -> Self {
-        match source {
-            McpRuntimeBindingSourceDto::VfsRootRef => Self::VfsRootRef,
-            McpRuntimeBindingSourceDto::VfsBackendId => Self::VfsBackendId,
-            McpRuntimeBindingSourceDto::WorkspaceId => Self::WorkspaceId,
-            McpRuntimeBindingSourceDto::WorkspaceBindingId => Self::WorkspaceBindingId,
-            McpRuntimeBindingSourceDto::WorkspaceIdentity { path } => {
-                Self::WorkspaceIdentity { path }
-            }
-            McpRuntimeBindingSourceDto::WorkspaceDetectedFact { path } => {
-                Self::WorkspaceDetectedFact { path }
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum McpRuntimeBindingTargetDto {
@@ -250,17 +170,6 @@ impl From<domain::McpRuntimeBindingTarget> for McpRuntimeBindingTargetDto {
     }
 }
 
-impl From<McpRuntimeBindingTargetDto> for domain::McpRuntimeBindingTarget {
-    fn from(target: McpRuntimeBindingTargetDto) -> Self {
-        match target {
-            McpRuntimeBindingTargetDto::HttpQuery { name } => Self::HttpQuery { name },
-            McpRuntimeBindingTargetDto::HttpHeader { name } => Self::HttpHeader { name },
-            McpRuntimeBindingTargetDto::StdioEnv { name } => Self::StdioEnv { name },
-            McpRuntimeBindingTargetDto::StdioCwd => Self::StdioCwd,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum McpRoutePolicy {
@@ -276,16 +185,6 @@ impl From<domain::McpRoutePolicy> for McpRoutePolicy {
             domain::McpRoutePolicy::Auto => Self::Auto,
             domain::McpRoutePolicy::Relay => Self::Relay,
             domain::McpRoutePolicy::Direct => Self::Direct,
-        }
-    }
-}
-
-impl From<McpRoutePolicy> for domain::McpRoutePolicy {
-    fn from(policy: McpRoutePolicy) -> Self {
-        match policy {
-            McpRoutePolicy::Auto => Self::Auto,
-            McpRoutePolicy::Relay => Self::Relay,
-            McpRoutePolicy::Direct => Self::Direct,
         }
     }
 }
@@ -497,5 +396,41 @@ mod tests {
         let raw = r#"{"description":"updated"}"#;
         let parsed: UpdateMcpPresetRequest = serde_json::from_str(raw).expect("parse value");
         assert_eq!(parsed.description, Some(Some("updated".to_string())));
+    }
+
+    #[test]
+    fn update_request_runtime_binding_triple_state_missing() {
+        let raw = r#"{"key":"new-key"}"#;
+        let parsed: UpdateMcpPresetRequest = serde_json::from_str(raw).expect("parse missing");
+        assert!(parsed.runtime_binding.is_none());
+    }
+
+    #[test]
+    fn update_request_runtime_binding_triple_state_null() {
+        let raw = r#"{"runtime_binding":null}"#;
+        let parsed: UpdateMcpPresetRequest = serde_json::from_str(raw).expect("parse null");
+        assert_eq!(parsed.runtime_binding, Some(None));
+    }
+
+    #[test]
+    fn update_request_runtime_binding_triple_state_value() {
+        let raw = r#"{
+            "runtime_binding": {
+                "mount_id": "main",
+                "bindings": [{
+                    "source": { "kind": "workspace_detected_fact", "path": ["p4", "client_name"] },
+                    "target": { "kind": "http_query", "name": "p4_client" },
+                    "required": true
+                }]
+            }
+        }"#;
+        let parsed: UpdateMcpPresetRequest = serde_json::from_str(raw).expect("parse value");
+        let binding = parsed
+            .runtime_binding
+            .expect("field should be present")
+            .expect("binding should be object");
+        assert_eq!(binding.mount_id.as_deref(), Some("main"));
+        assert_eq!(binding.bindings.len(), 1);
+        assert!(binding.bindings[0].required);
     }
 }

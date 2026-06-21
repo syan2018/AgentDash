@@ -191,16 +191,6 @@ impl From<agentdash_domain::backend::ProjectBackendAccessStatus> for ProjectBack
     }
 }
 
-impl From<ProjectBackendAccessStatus> for agentdash_domain::backend::ProjectBackendAccessStatus {
-    fn from(value: ProjectBackendAccessStatus) -> Self {
-        match value {
-            ProjectBackendAccessStatus::Active => Self::Active,
-            ProjectBackendAccessStatus::Paused => Self::Paused,
-            ProjectBackendAccessStatus::Revoked => Self::Revoked,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectBackendAccessMode {
@@ -211,14 +201,6 @@ impl From<agentdash_domain::backend::ProjectBackendAccessMode> for ProjectBacken
     fn from(value: agentdash_domain::backend::ProjectBackendAccessMode) -> Self {
         match value {
             agentdash_domain::backend::ProjectBackendAccessMode::UseInventory => Self::UseInventory,
-        }
-    }
-}
-
-impl From<ProjectBackendAccessMode> for agentdash_domain::backend::ProjectBackendAccessMode {
-    fn from(value: ProjectBackendAccessMode) -> Self {
-        match value {
-            ProjectBackendAccessMode::UseInventory => Self::UseInventory,
         }
     }
 }

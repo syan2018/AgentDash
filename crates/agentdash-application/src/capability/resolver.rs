@@ -63,18 +63,15 @@ pub struct ContextContributions {
     pub companion: Option<CompanionContribution>,
 }
 
-/// 增强型能力解析上下文 — 包含 session owner 与 subject association 两条解析路径。
+/// 增强型能力解析上下文 — 包含 session owner 与 subject association 解析路径。
 ///
 /// `owner_ctx` 为传统 Session-based visibility 路径（保留兼容）；
-/// `run_context` 为新的 LifecycleSubjectAssociation-based 路径（后续 AgentPermission 在此扩展）。
+/// `run_context` 为新的 LifecycleSubjectAssociation-based 路径。
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityContext {
     /// Run 关联的 subject kinds（由 LifecycleSubjectAssociation 投影）。
     /// 例如 run 关联 Story → 此处含 `story`。
     pub run_subject_kinds: Vec<String>,
-    /// Permission Grant 授予的 capability keys（由 active grants 解析）。
-    /// 任何出现在此集合中的 well-known key 视为已授权可见，绕过静态规则。
-    pub granted_capability_keys: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,12 +273,7 @@ impl CapabilityResolver {
         let merged = merge_contributions(&input.owner_ctx, &input.contributions);
 
         // baseline：只包含 well-known key 的 agent-level 能力
-        let granted_keys = input
-            .capability_context
-            .as_ref()
-            .map(|ctx| &ctx.granted_capability_keys);
-        let mut effective_caps =
-            default_visible_capabilities(&input.owner_ctx, &merged, granted_keys);
+        let mut effective_caps = default_visible_capabilities(&input.owner_ctx, &merged);
 
         let mut resolved_mcp_servers = Vec::<agentdash_spi::RuntimeMcpServer>::new();
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
@@ -439,17 +431,10 @@ fn compute_tool_policy(
 fn default_visible_capabilities(
     owner_ctx: &CapabilityScopeCtx,
     merged: &MergedToolInput,
-    granted_keys: Option<&BTreeSet<String>>,
 ) -> BTreeSet<ToolCapability> {
     let mut effective = BTreeSet::new();
     for &key in WELL_KNOWN_KEYS {
         let cap = ToolCapability::new(key);
-
-        // Permission Grant override: 如果 key 在 active grants 中，直接可见
-        if granted_keys.is_some_and(|gk| gk.contains(key)) {
-            effective.insert(cap);
-            continue;
-        }
 
         let agent_declares_this = merged.agent_declared_keys.contains(key);
         let workflow_declares_this = key == CAP_WORKFLOW && merged.has_active_workflow;
@@ -659,6 +644,28 @@ mod tests {
         assert!(output.has(ToolCluster::WorkspaceModule));
         assert!(output.has(ToolCluster::Collaboration));
         assert!(!output.has(ToolCluster::Workflow));
+    }
+
+    #[test]
+    fn capability_context_does_not_override_visibility() {
+        let mut input = base_input();
+        input.capability_context = Some(CapabilityContext {
+            run_subject_kinds: vec!["story".to_string()],
+        });
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            !output
+                .tool
+                .capabilities
+                .contains(&ToolCapability::new("story_management")),
+            "CapabilityResolver must remain a declarative baseline calculator; AgentRun owns runtime grants"
+        );
+        assert!(
+            !state_has_mcp_url(&output, "/mcp/story/"),
+            "runtime subject/grant context must not inject story MCP scope through resolver"
+        );
     }
 
     #[test]

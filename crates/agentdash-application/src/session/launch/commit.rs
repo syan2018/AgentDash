@@ -1,5 +1,7 @@
 use agentdash_spi::ConnectorError;
 
+use agentdash_domain::workflow::DeliveryBindingStatus;
+
 use super::connector_start::ConnectorAcceptedTurn;
 use super::deps::TurnCommitDeps;
 use crate::agent_run::AgentFrameBuilder;
@@ -172,6 +174,27 @@ impl TurnCommitter {
                     );
                     if let Ok(Some(mut agent)) = agent_repo.get(pending_frame.agent_id).await {
                         agent.set_current_frame(pending_frame.id);
+                        match anchor_repo.find_by_session(session_id).await {
+                            Ok(Some(anchor)) => {
+                                agent.bind_current_delivery_from_anchor(
+                                    &anchor,
+                                    DeliveryBindingStatus::Running,
+                                    chrono::Utc::now(),
+                                );
+                            }
+                            Ok(None) => {
+                                tracing::warn!(
+                                    session_id,
+                                    "accepted pending AgentFrame 已写入但缺少 current delivery anchor"
+                                );
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    session_id,
+                                    "accepted pending AgentFrame 查询 current delivery anchor 失败: {error}"
+                                );
+                            }
+                        }
                         if let Err(error) = agent_repo.update(&agent).await {
                             tracing::warn!(
                                 session_id,
@@ -205,7 +228,7 @@ impl TurnCommitter {
         )
         .await
         {
-            Ok(Some((_anchor, _agent, current_frame))) => {
+            Ok(Some((anchor, _agent, current_frame))) => {
                 let mut builder = AgentFrameBuilder::new(current_frame.agent_id)
                     .with_capability_state(&prepared.accepted_capability_state)
                     .with_created_by("session_launch", Some(session_id.to_string()));
@@ -225,6 +248,11 @@ impl TurnCommitter {
                         );
                         if let Ok(Some(mut agent)) = agent_repo.get(frame.agent_id).await {
                             agent.set_current_frame(frame.id);
+                            agent.bind_current_delivery_from_anchor(
+                                &anchor,
+                                DeliveryBindingStatus::Running,
+                                chrono::Utc::now(),
+                            );
                             if let Err(error) = agent_repo.update(&agent).await {
                                 tracing::warn!(
                                     session_id,

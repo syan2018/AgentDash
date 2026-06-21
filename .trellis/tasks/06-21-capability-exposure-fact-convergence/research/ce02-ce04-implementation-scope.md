@@ -10,7 +10,7 @@
 
 - `.trellis/tasks/06-21-capability-exposure-fact-convergence/prd.md`：要求 AgentRun 成为 final visible capability / runtime admission 唯一入口；AgentFrame 承载 model-visible surface revision，PermissionGrant 作为 AgentRun 授权系统参与投影。
 - `.trellis/tasks/06-21-capability-exposure-fact-convergence/design.md`：CE01 已决策 runtime exposure / capability 变更通过新的 AgentFrame revision 表达，不使用独立 exposure table。
-- `.trellis/tasks/06-21-capability-exposure-fact-convergence/work-items/index.md`：CE02-CE04 已 ready，CE05 仍是边界设计项。
+- `.trellis/tasks/06-21-capability-exposure-fact-convergence/work-items/index.md`：CE05 已完成 AgentRun effective capability/admission 边界；CE02 是下一步 implementation-ready 工作项。
 - `.trellis/tasks/06-21-module-topology-coupling-review/design-coupling-tracker.md`：D05/D06/D07/D14 已决定 AgentFrame revision 承载 runtime exposure，live VFS / hook runtime / visibility 都从 frame 派生。
 - `.trellis/spec/backend/capability/tool-capability-pipeline.md`：CapabilityResolver 是声明式 `CapabilityState` 基线计算入口；运行期最终可见工具面由 AgentRun effective capability/admission 服务输出，AgentRun 当前可执行 MCP surface 的事实源是 AgentFrame revision 的 MCP surface。
 - `.trellis/spec/backend/permission/grant-lifecycle.md`：PermissionGrant lifecycle 已定义 approve/revoke/expire 状态机和 `effect_frame_id`。

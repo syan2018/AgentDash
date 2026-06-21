@@ -5,14 +5,14 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     AgentFrame, AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage, AgentPolicy,
-    AgentRuntimeRefs, AgentSource, ExecutionDispatchResult, ExecutionIntent, ExecutionSource,
-    ExecutorRunRef, GatePolicy, InteractionDispatchIntent, InteractionGateOpenedDispatchResult,
-    LifecycleAgent, LifecycleGate, LifecycleRun, LifecycleRunStartDispatchResult,
-    LifecycleRunStartIntent, LifecycleSubjectAssociation, OrchestrationBindingRefs,
-    OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef, RunPolicy,
-    RuntimePolicy, RuntimeSessionExecutionAnchor, SubjectExecutionDispatchResult,
-    SubjectExecutionIntent, SubjectExecutionRef, SubjectRef, ValidationSeverity, WorkflowGraph,
-    WorkflowGraphRef,
+    AgentRuntimeRefs, AgentSource, DeliveryBindingStatus, ExecutionDispatchResult, ExecutionIntent,
+    ExecutionSource, ExecutorRunRef, GatePolicy, InteractionDispatchIntent,
+    InteractionGateOpenedDispatchResult, LifecycleAgent, LifecycleGate, LifecycleRun,
+    LifecycleRunStartDispatchResult, LifecycleRunStartIntent, LifecycleSubjectAssociation,
+    OrchestrationBindingRefs, OrchestrationInstance, OrchestrationPlanSnapshot,
+    OrchestrationSourceRef, RunPolicy, RuntimePolicy, RuntimeSessionExecutionAnchor,
+    SubjectExecutionDispatchResult, SubjectExecutionIntent, SubjectExecutionRef, SubjectRef,
+    ValidationSeverity, WorkflowGraph, WorkflowGraphRef,
 };
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository,
@@ -421,6 +421,13 @@ impl<'a> LifecycleDispatchService<'a> {
             request.orchestration_binding.attempt,
         );
         anchor_repo.upsert(&anchor).await?;
+        let mut agent = agent;
+        agent.bind_current_delivery_from_anchor(
+            &anchor,
+            DeliveryBindingStatus::Ready,
+            chrono::Utc::now(),
+        );
+        self.agent_repo.update(&agent).await?;
 
         Ok(WorkflowAgentNodeMaterializationResult {
             runtime_refs: AgentRuntimeRefs::new(
@@ -505,6 +512,12 @@ impl<'a> LifecycleDispatchService<'a> {
                 orchestration_binding.attempt,
             );
             anchor_repo.upsert(&anchor).await?;
+            agent.bind_current_delivery_from_anchor(
+                &anchor,
+                DeliveryBindingStatus::Ready,
+                chrono::Utc::now(),
+            );
+            self.agent_repo.update(&agent).await?;
         }
         let session_id = runtime_session_ref.ok_or_else(|| {
             WorkflowApplicationError::Internal(
@@ -597,6 +610,12 @@ impl<'a> LifecycleDispatchService<'a> {
                 agent.id,
             );
             anchor_repo.upsert(&anchor).await?;
+            agent.bind_current_delivery_from_anchor(
+                &anchor,
+                DeliveryBindingStatus::Ready,
+                chrono::Utc::now(),
+            );
+            self.agent_repo.update(&agent).await?;
         }
 
         let subject_execution_ref = association.as_ref().map(|assoc| SubjectExecutionRef {

@@ -8,12 +8,12 @@
 
 ## RC02 Implementation Slice
 
-- [ ] Domain: add `LifecycleAgentCurrentDeliveryBinding`, `DeliveryBindingStatus`, `LifecycleAgent.current_delivery` helpers and slug roundtrip tests.
-- [ ] Migration: add nullable current delivery binding columns to `lifecycle_agents`, with status check constraint and runtime-session lookup index.
-- [ ] Infrastructure: extend Postgres lifecycle agent row mapping, insert/select/update/list roundtrip and partial-row validation.
-- [ ] Application: add `DeliveryRuntimeSelectionService` with `CurrentDelivery`, `RunScopedLatest`, `LaunchPrimary` policies; define `SubjectLatestObserved` boundary without implementing history.
-- [ ] Dispatch/write points: after anchor upsert, persist `Ready` binding; after accepted turn commits new current frame, update binding status to `Running` without replacing launch frame evidence.
-- [ ] Tests: cover domain helper, repository roundtrip, selection errors, dispatch binding write and accepted-turn binding update.
+- [x] Domain: add `LifecycleAgentCurrentDeliveryBinding`, `DeliveryBindingStatus`, `LifecycleAgent.current_delivery` helpers and slug roundtrip tests.
+- [x] Migration: add nullable current delivery binding columns to `lifecycle_agents`, with status check constraint and runtime-session lookup index.
+- [x] Infrastructure: extend Postgres lifecycle agent row mapping, insert/select/update/list roundtrip and partial-row validation.
+- [x] Application: add `DeliveryRuntimeSelectionService` with `CurrentDelivery`, `RunScopedLatest`, `LaunchPrimary` policies; define `SubjectLatestObserved` boundary without implementing history.
+- [x] Dispatch/write points: after anchor upsert, persist `Ready` binding; after accepted turn commits new current frame, update binding status to `Running` without replacing launch frame evidence.
+- [x] Tests: cover domain helper, repository row mapping/partial validation, selection errors and policies.
 
 ## Phase 2: Consumer Migration
 

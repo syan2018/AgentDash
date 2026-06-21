@@ -9,46 +9,29 @@
  * 所有 frame 数据是 model 层已解析的 `ContextFrame`。UI 只负责展示。
  */
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { BADGE } from "./EventCards";
 import type { ContextFrame } from "../model/contextFrame";
 import { frameKindToToken } from "../model/contextFrame";
 import { ContextFrameBody } from "./ContextFrameBody";
 import { TokenBadge } from "./contextFrame/SectionRenderers";
-import { CB } from "./bodies/cardBodyTokens";
 
 export interface ContextFrameStreamProps {
   frames: ContextFrame[];
-  /** 默认激活的 frame id；用于测试或持久化恢复，未指定时使用首帧 */
-  defaultActiveFrameId?: string;
   /** 默认是否展开外层 shell；测试或持久化可覆盖，默认 false */
   defaultExpanded?: boolean;
 }
 
 export function ContextFrameStream({
   frames,
-  defaultActiveFrameId,
   defaultExpanded = false,
 }: ContextFrameStreamProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-
-  const initialActive = useMemo(() => {
-    if (frames.length === 0) return null;
-    if (defaultActiveFrameId) {
-      const match = frames.find((frame) => frame.id === defaultActiveFrameId);
-      if (match) return match.id;
-    }
-    return frames[0]!.id;
-  }, [frames, defaultActiveFrameId]);
-
-  const [activeId, setActiveId] = useState<string | null>(initialActive);
 
   if (frames.length === 0) {
     return null;
   }
 
-  const activeFrame =
-    frames.find((frame) => frame.id === activeId) ?? frames[0]!;
   const summary = summarizeFrames(frames);
 
   return (
@@ -73,51 +56,41 @@ export function ContextFrameStream({
       </button>
 
       {expanded && (
-        <div className={`ml-6 mt-1 overflow-hidden ${CB.expandPanel}`}>
-          <FrameTabBar
-            frames={frames}
-            activeId={activeFrame.id}
-            onSelect={setActiveId}
-          />
-          <div className="border-t border-border/30 px-2.5 py-2">
-            <ContextFrameBody frame={activeFrame} />
-          </div>
+        <div className="ml-1 space-y-0.5 pl-2 border-l border-border/40">
+          {frames.map((frame) => (
+            <FrameStripItem key={frame.id} frame={frame} />
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-function FrameTabBar({
-  frames,
-  activeId,
-  onSelect,
-}: {
-  frames: ContextFrame[];
-  activeId: string;
-  onSelect: (id: string) => void;
-}) {
+/** 每个 frame 渲染为一条 strip 行，结构对齐 ToolCallCardShell */
+function FrameStripItem({ frame }: { frame: ContextFrame }) {
+  const [open, setOpen] = useState(false);
+  const token = frameKindToToken(frame.kind);
+  const label = frameTabLabel(frame);
+
   return (
-    <div className="flex flex-wrap gap-1 px-2.5 py-1.5">
-      {frames.map((frame) => {
-        const token = frameKindToToken(frame.kind);
-        const active = frame.id === activeId;
-        return (
-          <button
-            key={frame.id}
-            type="button"
-            onClick={() => onSelect(frame.id)}
-            className={`inline-flex items-center gap-1 rounded-[4px] border px-1.5 py-0.5 text-[10px] font-mono transition-colors ${
-              active
-                ? "border-border/50 bg-secondary/40 text-foreground"
-                : "border-border/30 text-muted-foreground/60 hover:bg-secondary/20"
-            }`}
-          >
-            <TokenBadge token={token} />
-            <span className="truncate max-w-[16rem] tracking-tight">{frameTabLabel(frame)}</span>
-          </button>
-        );
-      })}
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40 ${open ? "bg-secondary/30" : ""}`}
+      >
+        <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-[8px] bg-success" />
+        <TokenBadge token={token} />
+        <span className="min-w-0 flex-1 truncate text-xs text-foreground/70">{label}</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground/40">
+          {open ? "▲" : "▼"}
+        </span>
+      </button>
+      {open && (
+        <div className="px-2 py-2">
+          <ContextFrameBody frame={frame} />
+        </div>
+      )}
     </div>
   );
 }

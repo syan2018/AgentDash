@@ -43,8 +43,6 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
   children,
 }: ToolCallCardShellProps) {
   const needsAttention = Boolean(isPendingApproval) || status === "failed" || status === "declined";
-  const isRunning = status === "inProgress" || status === "pending";
-  const useStripMode = !needsAttention && !isRunning;
 
   const shouldDefaultExpand =
     defaultExpanded ?? needsAttention;
@@ -116,64 +114,40 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
       ? formatDuration(durationMs)
       : elapsed;
 
-  // ── Strip 模式：已完成工具的单行轻量展示 ──
-  if (useStripMode) {
-    return (
-      <div>
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40"
-        >
-          <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${statusConfig.dot}`} />
-          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60">
-            {kind.badge}
-          </span>
-          <span className="min-w-0 flex-1 truncate text-xs text-foreground/70">
-            {header.primary}
-          </span>
-          {displayDuration && (
-            <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground/40">
-              {displayDuration}
-            </span>
-          )}
-        </button>
-        {expanded && (
-          <div className="ml-5 mt-1 space-y-2 rounded-[8px] border border-border/60 bg-secondary/20 px-3 py-2.5">
-            {header.secondary != null && header.secondary !== "" && (
-              <p className="text-xs text-muted-foreground/60">{header.secondary}</p>
-            )}
-            {children}
-          </div>
-        )}
-      </div>
-    );
-  }
+  // ── 统一渲染：标题栏 + body ──
+  // 所有状态共享同一结构：标题栏（可点击折叠）+ 展开后 body
+  // 状态差异仅通过标题栏背景色和状态指示器体现
 
-  // ── Card 模式：执行中 / 失败 / 审批 ──
-  // 执行中用 strip + 动画指示，失败/审批用轻量高亮
-  const cardBorder =
+  const headerBg =
     renderStatus === "failed" || renderStatus === "declined"
-      ? "border-destructive/30 bg-destructive/5"
+      ? "bg-destructive/5"
       : isPendingApproval
-        ? "border-warning/30 bg-warning/5"
-        : "border-primary/20 bg-primary/5";
+        ? "bg-warning/5"
+        : renderStatus === "inProgress" || renderStatus === "pending"
+          ? "bg-primary/5"
+          : expanded
+            ? "bg-secondary/30"
+            : "";
+
+  const statusLabel = needsAttention || renderStatus === "inProgress" || renderStatus === "pending";
 
   return (
-    <div className={`rounded-[8px] border ${cardBorder} transition-colors`}>
+    <div>
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-secondary/20"
+        className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40 ${headerBg}`}
       >
         <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-[8px] ${statusConfig.dot}`} />
         <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60">
           {kind.badge}
         </span>
-        <span className="min-w-0 flex-1 truncate text-xs text-foreground/80">
+        <span className="min-w-0 flex-1 truncate text-xs text-foreground/70">
           {header.primary}
         </span>
-        <span className={`shrink-0 text-[10px] ${statusConfig.color}`}>{statusConfig.label}</span>
+        {statusLabel && (
+          <span className={`shrink-0 text-[10px] ${statusConfig.color}`}>{statusConfig.label}</span>
+        )}
         {displayDuration && (
           <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground/40">
             {displayDuration}
@@ -182,7 +156,11 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
       </button>
 
       {expanded && (
-        <div className="space-y-2.5 border-t border-border/40 px-2.5 py-2.5">
+        <div className="space-y-2 px-2 py-2">
+          {header.secondary != null && header.secondary !== "" && (
+            <p className="text-[10px] text-muted-foreground/50">{header.secondary}</p>
+          )}
+
           {isPendingApproval && (
             <div className="flex items-center gap-2 text-xs text-warning">
               <span className="inline-flex rounded-[4px] border border-warning/25 bg-warning/10 px-1 py-px text-[9px] font-semibold tracking-[0.08em]">
@@ -223,7 +201,7 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
           )}
 
           {approvalError && (
-            <div className="rounded-[6px] border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+            <div className="rounded-[6px] bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
               {approvalError}
             </div>
           )}

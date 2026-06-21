@@ -22,6 +22,7 @@
  */
 
 import { useState } from "react";
+import { CB } from "./bodies/cardBodyTokens";
 
 // ─── 共用 badge class 常量（导出供调用方使用）────────────────────────────────
 
@@ -103,23 +104,23 @@ export function EventStripCard({
       </button>
 
       {expanded && hasExpand && (
-        <div className="ml-6 mt-1 space-y-2 rounded-[8px] border border-border/50 bg-secondary/15 px-3 py-2">
+        <div className={`${CB.sectionGap} px-2 py-2`}>
           {expandContent?.sections?.map((section, i) =>
             section.lines.length > 0 ? (
-              <div key={i} className="space-y-1">
+              <div key={i} className={CB.itemGap}>
                 {section.title && (
-                  <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60">
+                  <p className={CB.sectionTitle}>
                     {section.title}
                   </p>
                 )}
                 {section.lines.map((line, j) => (
-                  <p key={j} className="text-xs leading-5 text-foreground/75">{line}</p>
+                  <p key={j} className="text-xs leading-5 text-foreground/80">{line}</p>
                 ))}
               </div>
             ) : null
           )}
           {expandContent?.raw && (
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground/75">
+            <pre className={`max-h-48 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
               {expandContent.raw}
             </pre>
           )}
@@ -206,11 +207,11 @@ export function EventFullCard({
       )}
 
       {hasBody && (
-        <div className="ml-6 mt-0.5 space-y-1.5 px-2">
+        <div className={`${CB.itemGap} px-2 py-1`}>
           {detailLines.length > 0 && (
             <div className="space-y-0.5">
               {detailLines.map((line) => (
-                <p key={line} className="text-[11px] leading-4 text-muted-foreground/60">{line}</p>
+                <p key={line} className={CB.meta}>{line}</p>
               ))}
             </div>
           )}
@@ -219,28 +220,25 @@ export function EventFullCard({
       )}
 
       {hasDebug && showDebug && (
-        <div className="ml-6 mt-1 space-y-2 rounded-[8px] border border-border/50 bg-secondary/15 px-3 py-2">
+        <div className={`${CB.sectionGap} px-2 py-2`}>
           {debugChips.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1">
               {debugChips.map((chip) => (
-                <span
-                  key={chip}
-                  className="rounded-[4px] border border-border/60 bg-secondary/30 px-1 py-px text-[9px] text-muted-foreground/50"
-                >
+                <span key={chip} className={CB.kindBadge}>
                   {chip}
                 </span>
               ))}
             </div>
           )}
           {debugLines.length > 0 && (
-            <div className="space-y-1">
+            <div className={CB.itemGap}>
               {debugLines.map((line) => (
-                <p key={line} className="text-xs leading-5 text-muted-foreground">{line}</p>
+                <p key={line} className="text-xs leading-5 text-foreground/80">{line}</p>
               ))}
             </div>
           )}
           {debugRaw && (
-            <pre className="overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">
+            <pre className={`overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
               {debugRaw}
             </pre>
           )}

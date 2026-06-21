@@ -879,7 +879,7 @@ export function TokenBadge({ token }: { token: ContextTokenInfo }) {
 
 export function Chip({ label }: { label: string }) {
   return (
-    <span className="rounded-[6px] border border-border bg-secondary/35 px-1.5 py-0.5 text-[10px] text-muted-foreground/80">
+    <span className="shrink-0 rounded-[4px] bg-secondary/40 px-1 py-px text-[9px] font-semibold text-muted-foreground/60">
       {label}
     </span>
   );

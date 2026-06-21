@@ -6,6 +6,7 @@
 - 第一轮 6 个 `trellis-research` subagents 已完成，输出 `research/01` 到 `research/06`。
 - 第二轮 5 个 deep-dive `trellis-research` subagents 已完成，输出 `research/10` 到 `research/14`。
 - Round 3 综合产物已完成：`research/coupling-matrix.md` 与 `research/followup-backlog.md`。
+- 后续多模块收敛路线图维护在 `roadmap.md`，用于追踪 Contract Boundary、Runtime Coordinate、Capability Exposure、Control Surface 与 Runtime Failure 的跨簇进度和阻塞关系。
 - 当前 task 是只读 review 编排，不进入代码实现。
 
 ## Round 1: 主模块拓扑盘查

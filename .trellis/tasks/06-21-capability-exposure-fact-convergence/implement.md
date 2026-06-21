@@ -2,9 +2,18 @@
 
 ## Phase 1: Fact Source Design
 
-- [ ] 选择 AgentFrame exposure fact model。
-- [ ] 定义 PermissionGrant approve/revoke/expire 如何产生 AgentFrame runtime effect。
-- [ ] 定义 Canvas expose 与 WorkspaceModule visibility 的恢复顺序。
+- [x] 选择 AgentFrame exposure fact model，详见 `research/ce02-ce04-implementation-scope.md`。
+- [x] 定义 PermissionGrant approve/revoke/expire 如何产生 AgentFrame runtime effect；expire 需要新增 application-owned per-grant effect path。
+- [x] 定义 Canvas expose 与 WorkspaceModule visibility 的恢复顺序。
+
+## Implementation Order
+
+- [ ] CE05: confirm `CapabilityResolver.granted_capability_keys` is compile/input-only compatibility and not a runtime surface fact.
+- [ ] CE02a: PermissionGrant approve/revoke writes AgentFrame capability revisions and preserves VFS/MCP/execution profile.
+- [ ] CE02b: Add application-owned overdue grant expiry path that applies remove effect per grant before marking Expired.
+- [ ] Shared helper: persist AgentFrame revision, then adopt that persisted revision into active runtime cache/tools/hook runtime when a delivery runtime exists.
+- [ ] CE03: Canvas expose writes AgentFrame revision first, then reconstructs live VFS / hook runtime / WorkspaceModule presentation.
+- [ ] CE04: Extract WorkspaceModule visibility resolver from tool code; resolver reads base visibility from capability state and runtime refs from selected AgentFrame.
 
 ## Phase 2: Implementation Slices
 
@@ -17,8 +26,12 @@
 
 ```powershell
 cargo test -p agentdash-application permission
+cargo test -p agentdash-application permission::service
+cargo test -p agentdash-application permission::compiler
 cargo test -p agentdash-application canvas
 cargo test -p agentdash-application workspace_module
+cargo test -p agentdash-application session::capability_state
+pnpm --filter app-web test -- AgentRunWorkspacePage.workspace-module.test.ts
+pnpm run contracts:check
 pnpm run frontend:check
 ```
-

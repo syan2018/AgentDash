@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/shared/index.md", "reason": "检查文档语言、命名和基础规范"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 contract 化 item 是否遵守 generated DTO 合同"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端 service/mapper/type 拆分是否符合类型安全规则"}
+{"file": ".trellis/tasks/06-21-architecture-review-mechanical-refactors/work-items/index.md", "reason": "检查机械化 work item 范围和验收方向"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/design-coupling-tracker.md", "reason": "检查设计类耦合问题是否未混入机械执行池"}

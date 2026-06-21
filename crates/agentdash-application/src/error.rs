@@ -77,28 +77,6 @@ impl From<crate::skill_asset::SkillAssetApplicationError> for ApplicationError {
     }
 }
 
-impl From<crate::task::execution::TaskExecutionError> for ApplicationError {
-    fn from(error: crate::task::execution::TaskExecutionError) -> Self {
-        match error {
-            crate::task::execution::TaskExecutionError::BadRequest(message) => {
-                Self::BadRequest(message)
-            }
-            crate::task::execution::TaskExecutionError::NotFound(message) => {
-                Self::NotFound(message)
-            }
-            crate::task::execution::TaskExecutionError::Conflict(message) => {
-                Self::Conflict(message)
-            }
-            crate::task::execution::TaskExecutionError::UnprocessableEntity(message) => {
-                Self::BadRequest(message)
-            }
-            crate::task::execution::TaskExecutionError::Internal(message) => {
-                Self::Internal(message)
-            }
-        }
-    }
-}
-
 impl From<crate::backend::BackendAuthorizationError> for ApplicationError {
     fn from(error: crate::backend::BackendAuthorizationError) -> Self {
         match error {

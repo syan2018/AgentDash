@@ -277,19 +277,6 @@ impl From<agentdash_application::backend::BackendAuthorizationError> for ApiErro
     }
 }
 
-impl From<agentdash_application::task::execution::TaskExecutionError> for ApiError {
-    fn from(err: agentdash_application::task::execution::TaskExecutionError) -> Self {
-        use agentdash_application::task::execution::TaskExecutionError as E;
-        match err {
-            E::BadRequest(message) => ApiError::BadRequest(message),
-            E::NotFound(message) => ApiError::NotFound(message),
-            E::Conflict(message) => ApiError::Conflict(message),
-            E::UnprocessableEntity(message) => ApiError::UnprocessableEntity(message),
-            E::Internal(message) => ApiError::Internal(message),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use axum::body::to_bytes;

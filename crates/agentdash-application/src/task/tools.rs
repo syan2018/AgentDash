@@ -138,7 +138,6 @@ pub enum TaskReadMode {
     List,
     Detail,
     Context,
-    Execution,
     Projection,
 }
 
@@ -413,7 +412,7 @@ impl AgentTool for TaskReadTool {
     }
 
     fn description(&self) -> &str {
-        "读取当前 AgentRun / LifecycleRun 的 Task view。mode 支持 overview、list、detail、context、execution、projection；Task facts 来自 LifecycleRun.tasks，Story 只返回 projection。"
+        "读取当前 AgentRun / LifecycleRun 的 Task view。mode 支持 overview、list、detail、context、projection；Task facts 来自 LifecycleRun.tasks，执行事实通过 SubjectExecutionView 读取。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -889,12 +888,6 @@ async fn build_read_view(
             "tasks": render_tasks(&tasks, TaskReadFormat::Full),
         }),
         TaskReadMode::Context => context_view(scope, run_id, &tasks),
-        TaskReadMode::Execution => serde_json::json!({
-            "mode": "execution",
-            "scope": scope_json(scope, run_id),
-            "tasks": tasks.iter().map(execution_stub).collect::<Vec<_>>(),
-            "source": "SubjectExecutionView / linked run projection",
-        }),
         TaskReadMode::Projection => serde_json::json!({
             "mode": "projection",
             "scope": scope_json(scope, run_id),
@@ -988,18 +981,6 @@ fn context_view(
             "context_refs": task.context_refs,
             "story_ref": task.story_ref,
         })).collect::<Vec<_>>(),
-    })
-}
-
-fn execution_stub(task: &LifecycleTaskPlanItem) -> serde_json::Value {
-    serde_json::json!({
-        "task_id": task.id,
-        "title": task.title,
-        "status": task.status,
-        "assigned_agent_id": task.assigned_agent_id,
-        "source_task_id": task.source_task_id,
-        "execution_summary": null,
-        "note": "Task facts 不保存 runtime execution；执行事实由 SubjectExecutionView / linked run projection 读取。",
     })
 }
 
@@ -1348,6 +1329,17 @@ mod tests {
         let full = task_json(&task, TaskReadFormat::Full);
         assert!(full.get("created_at").is_some(), "full 应保留完整字段");
         assert_eq!(full["body"], "短内容");
+    }
+
+    #[test]
+    fn task_read_mode_rejects_execution_mode() {
+        let error =
+            serde_json::from_value::<TaskReadParams>(serde_json::json!({ "mode": "execution" }))
+                .expect_err("execution mode should not be accepted by task_read");
+        assert!(
+            error.to_string().contains("execution"),
+            "error should mention rejected mode: {error}"
+        );
     }
 
     #[test]

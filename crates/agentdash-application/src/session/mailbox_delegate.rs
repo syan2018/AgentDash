@@ -216,17 +216,43 @@ impl HookDeliveryRouter<'_> {
             Ok(_) => Ok(HookDeliveryRouting {
                 direct_messages: Vec::new(),
             }),
-            Err(WorkflowApplicationError::NotFound(_)) => Ok(HookDeliveryRouting {
-                direct_messages: direct_fallback,
-            }),
+            Err(WorkflowApplicationError::NotFound(message)) => {
+                route_hook_delivery_not_found(
+                    self.deps.execution_anchor_repo.as_ref(),
+                    self.runtime_session_id,
+                    direct_fallback,
+                    message,
+                )
+                .await
+            }
             Err(error) => Err(AgentRuntimeError::Runtime(error.to_string())),
         }
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct HookDeliveryRouting {
     direct_messages: Vec<AgentMessage>,
+}
+
+async fn route_hook_delivery_not_found(
+    execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+    runtime_session_id: &str,
+    direct_fallback: Vec<AgentMessage>,
+    not_found_message: String,
+) -> Result<HookDeliveryRouting, AgentRuntimeError> {
+    match execution_anchor_repo
+        .find_by_session(runtime_session_id)
+        .await
+    {
+        Ok(Some(_)) => Err(AgentRuntimeError::Runtime(format!(
+            "AgentRun mailbox hook delivery target missing for anchored runtime_session {runtime_session_id}: {not_found_message}"
+        ))),
+        Ok(None) => Ok(HookDeliveryRouting {
+            direct_messages: direct_fallback,
+        }),
+        Err(error) => Err(AgentRuntimeError::Runtime(error.to_string())),
+    }
 }
 
 #[async_trait]
@@ -452,6 +478,8 @@ fn stable_source_digest(value: serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::MemoryRuntimeSessionExecutionAnchorRepository;
+    use agentdash_domain::workflow::RuntimeSessionExecutionAnchor;
     use agentdash_spi::AgentContext;
 
     #[test]
@@ -508,5 +536,53 @@ mod tests {
                 runtime_session_id: "runtime-session-1".to_string(),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn hook_not_found_on_unbound_trace_keeps_direct_messages() {
+        let anchor_repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
+        let messages = vec![AgentMessage::user("legacy direct")];
+
+        let routing = route_hook_delivery_not_found(
+            &anchor_repo,
+            "unbound-runtime-session",
+            messages.clone(),
+            "runtime_session 缺少 RuntimeSessionExecutionAnchor".to_string(),
+        )
+        .await
+        .expect("unbound trace can use direct fallback");
+
+        assert_eq!(routing.direct_messages, messages);
+    }
+
+    #[tokio::test]
+    async fn hook_not_found_on_anchored_runtime_errors_without_direct_messages() {
+        let anchor_repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
+        let runtime_session_id = "anchored-runtime-session";
+        anchor_repo
+            .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
+                runtime_session_id,
+                uuid::Uuid::new_v4(),
+                uuid::Uuid::new_v4(),
+                uuid::Uuid::new_v4(),
+            ))
+            .await
+            .expect("seed runtime anchor");
+
+        let error = route_hook_delivery_not_found(
+            &anchor_repo,
+            runtime_session_id,
+            vec![AgentMessage::user("must not inject")],
+            "agent_frame 不存在".to_string(),
+        )
+        .await
+        .expect_err("anchored AgentRun must not fall back to direct messages");
+
+        match error {
+            AgentRuntimeError::Runtime(message) => {
+                assert!(message.contains("anchored runtime_session"));
+                assert!(message.contains(runtime_session_id));
+            }
+        }
     }
 }

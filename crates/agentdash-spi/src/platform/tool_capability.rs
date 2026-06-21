@@ -334,7 +334,7 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor::platform(
             "task_read",
             "Read Tasks",
-            "按 overview/list/detail/context/execution/projection 模式读取当前 run 的 Task view",
+            "按 overview/list/detail/context/projection 模式读取当前 run 的 Task view",
             ToolCluster::Task,
             CAP_TASK,
         ),

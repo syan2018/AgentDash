@@ -10,4 +10,4 @@
 | RC06 | Mailbox delivery target 迁移到 unified selection | implementation | blocked_by_RC02 | D02, D03 | mailbox command target 与 workspace/cancel 一致 |
 | RC07 | SubjectExecutionView execution history | design+implementation | blocked_by_RC02 | D12 | 增加 runtime attempts/history，latest 从列表派生 |
 | RC08 | AgentRun resource surface coordinate contract | design+implementation | blocked_by_RC02 | D15 | DTO 表达 current frame VFS 与 anchor launch frame source |
-| RC09 | Task execution surface 收敛 | implementation | ready | D12 | 删除/私有化 narrow TaskExecutionView surface，`task_read execution` 调用 SubjectExecutionView 或移除 execution mode |
+| RC09 | Task execution surface 收敛 | implementation | completed | D12 | 已删除 narrow TaskExecutionView surface，并从 `task_read` schema/description 移除 execution mode；执行事实继续由 SubjectExecutionView 统一投影 |

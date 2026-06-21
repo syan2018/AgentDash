@@ -259,14 +259,14 @@ pub const CLUSTER_TASK_TOOLS: &[&str] = &["task_read", "task_write"];
 ```
 
 ```text
-task_read(mode = overview | list | detail | context | execution | projection, ...)
+task_read(mode = overview | list | detail | context | projection, ...)
 task_write(mode = patch | snapshot, operations[], snapshot[], return_mode = ...)
 ```
 
 ### 3. Contracts
 
 - `task` 是 cluster-based runtime capability，不映射平台 MCP scope。
-- `task_read` 是唯一读取入口，mode 覆盖 overview/list/detail/context/execution/projection。
+- `task_read` 是 Task plan/context/projection 的读取入口，mode 覆盖 overview/list/detail/context/projection；Task runtime execution evidence 由 `SubjectExecutionView` 统一投影。
 - `task_write` 是唯一写入口，patch operations 覆盖 create/patch/status/reorder/drop/context refs；snapshot 写入同一组 Task facts。
 - 写入事实源固定为 `LifecycleRun.tasks`；Story 只读取 projection。
 - Companion 派发如携带 `payload.task_id`，由 companion 工具读取 Task context 并写回 `assigned_agent_id`。

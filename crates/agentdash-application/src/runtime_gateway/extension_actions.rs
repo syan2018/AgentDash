@@ -646,6 +646,7 @@ impl ExtensionRuntimeChannelInvoker {
                 Some(request.trace.clone()),
             )
         })?;
+        validate_channel_method_permissions(resolved.channel, resolved.method, &request)?;
         validate_json_schema_subset(
             &resolved.method.input_schema,
             &request.input,
@@ -717,6 +718,25 @@ impl ExtensionRuntimeChannelInvoker {
             },
         })
     }
+}
+
+fn validate_channel_method_permissions(
+    channel: &ExtensionProtocolChannelDefinition,
+    method: &ExtensionProtocolChannelMethodDefinition,
+    request: &ExtensionRuntimeChannelInvokeRequest,
+) -> Result<(), RuntimeInvocationError> {
+    for permission in &method.permissions {
+        if classify_runtime_extension_permission_key(permission).is_none() {
+            return Err(RuntimeInvocationError::capability_denied(
+                format!(
+                    "extension channel method `{}.{}` 声明了未知权限: {}",
+                    channel.channel_key, method.name, permission
+                ),
+                Some(request.trace.clone()),
+            ));
+        }
+    }
+    Ok(())
 }
 
 struct ResolvedChannelInvocation<'a> {
@@ -1499,6 +1519,35 @@ mod tests {
             .expect_err("invalid channel input schema");
 
         assert_eq!(err.kind(), RuntimeInvocationErrorKind::InvalidRequest);
+        assert!(transport.last_payload.lock().expect("lock").is_none());
+    }
+
+    #[tokio::test]
+    async fn gateway_rejects_unknown_channel_method_permission_before_transport() {
+        let project_id = Uuid::new_v4();
+        let mut provider = provider_channel_installation(project_id);
+        provider.manifest.protocol_channels[0].methods[0].permissions =
+            vec!["local.profile.admin".to_string()];
+        let transport = Arc::new(FakeChannelTransport {
+            result: Ok(channel_response_payload(json!({ "ok": true }))),
+            last_payload: StdMutex::new(None),
+        });
+        let invoker = ExtensionRuntimeChannelInvoker::new(
+            Arc::new(FakeInstallationRepo {
+                installations: vec![
+                    provider,
+                    consumer_channel_installation(project_id, "^1.0.0", true),
+                ],
+            }),
+            transport.clone(),
+        );
+
+        let err = invoker
+            .invoke(channel_request(project_id, "api", Some("provider")))
+            .await
+            .expect_err("unknown channel method permission");
+
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
         assert!(transport.last_payload.lock().expect("lock").is_none());
     }
 

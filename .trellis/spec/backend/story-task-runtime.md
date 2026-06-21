@@ -175,7 +175,7 @@ runtime_session_id → RuntimeSessionExecutionAnchor
 - ProjectAgent session start 接收可选 `subject_ref`。省略时为 Project context；传入 Story/Task 时由 SubjectContextAssignment 动态补齐 subject context。
 - Story 快速创建会话是 ProjectAgent session start 的薄入口：选择 ProjectAgent 后携带 `subject_ref=story`，返回同一套 run / agent / frame / runtime session refs。
 - Task plan API 面向 Run / AgentRun workspace scope：list / create / update / archive Task 都以 LifecycleRun 或 AgentRun workspace 为作用域。
-- Agent-facing Task 工具面使用 runtime tools：`task_read` 负责 overview/list/detail/context/execution/projection，`task_write` 负责 create/update/status/reorder/drop/context refs。
+- Agent-facing Task 工具面使用 runtime tools：`task_read` 负责 overview/list/detail/context/projection，`task_write` 负责 create/update/status/reorder/drop/context refs。
 - Story Task projection API 返回由 Story-bound run / linked run / optional `story_ref` 推导出的 projection DTO。
 - Task 执行面向 read projection：subject-oriented API 返回 `SubjectExecutionView`，包含 association、current agent、latest runtime node 和 artifacts。执行视图统一使用 `/subjects/task/{id}/execution`；Task plan DTO 不返回 runtime status 或 artifacts。
 - Subject / agent / run-oriented API 是 Story / Task 业务查询的主路径；session route 只提供 RuntimeTrace。
@@ -266,7 +266,7 @@ runtime tool: task_write
 - Task plan DTOs do not include `dispatch_preference`, execution status or artifacts.
 - `SubjectExecutionView` remains the runtime projection contract for linked runs, latest runtime node and artifacts.
 - Story page reads Task projection; AgentRun workspace owns Task create / update / archive / assignment commands.
-- Agent runtime uses `task_read` and `task_write` as the two Task tools. Status updates, reorder, drop and context refs are write operations, not separate tools.
+- Agent runtime uses `task_read` and `task_write` as the two Task tools. `task_read` keeps plan/context/projection facts; runtime execution evidence stays on `SubjectExecutionView` so the subject projector remains the single owner of linked runs, latest runtime node and artifacts. Status updates, reorder, drop and context refs are write operations, not separate tools.
 - `companion_request(target=sub, payload.task_id=...)` can attach Task context to the child prompt and write `assigned_agent_id` after companion launch.
 
 ### 4. Validation & Error Matrix
@@ -299,7 +299,7 @@ runtime tool: task_write
 - Story projection tests cover Story-bound run visibility, linked run visibility and unrelated run exclusion.
 - SubjectExecutionView tests cover Task subject association -> latest runtime node / artifacts.
 - Contract check asserts generated TypeScript contains only the plan status enum and omits Task artifact / dispatch fields.
-- Runtime tool tests assert `task_read` modes and `task_write` patch/snapshot operations write `LifecycleRun.tasks`.
+- Runtime tool tests assert `task_read` plan/context/projection modes and `task_write` patch/snapshot operations write `LifecycleRun.tasks`.
 - Companion tests assert `payload.task_id` adds Task context and writes `assigned_agent_id`.
 
 ### 7. Wrong vs Correct

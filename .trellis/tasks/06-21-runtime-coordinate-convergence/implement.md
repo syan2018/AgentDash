@@ -17,9 +17,9 @@
 
 ## Phase 2: Consumer Migration
 
-- [ ] Workspace query 使用 unified selection。
-- [ ] Cancel / subject execution control 使用 unified selection。
-- [ ] Mailbox delivery target 使用 unified selection。
+- [x] Workspace query 使用 unified selection：workspace detail/list delivery refs、command stale guard frame/runtime 校验、resource surface session evidence 均改用 `DeliveryRuntimeSelectionService::CurrentDelivery`；raw anchor latest 只保留在 selection service 显式 policy 与 workspace runtime refs 列表证据中。
+- [x] Cancel / subject execution control 使用 unified selection：subject execution cancel、terminal cancel reconcile、companion gate/control delivery target 均改用 `DeliveryRuntimeSelectionService::CurrentDelivery`；显式 runtime session 只作为 current delivery stale 校验。
+- [x] Mailbox delivery target 使用 unified selection：mailbox command target 通过 `DeliveryRuntimeSelectionService::CurrentDelivery` 解析 current frame/runtime session，并移除 latest anchor fallback。
 - [ ] API route-local duplicate resolver 移除或改为调用 selection service。
 
 ## Phase 3: Projection
@@ -38,6 +38,7 @@ cargo test -p agentdash-application accepted_turn_commits_agent_frame_revision_a
 cargo test -p agentdash-application lifecycle
 cargo test -p agentdash-application agent_run
 cargo test -p agentdash-domain workflow
+cargo test -p agentdash-application workspace
 cargo check -p agentdash-application
 cargo check -p agentdash-infrastructure
 ```

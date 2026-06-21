@@ -329,11 +329,15 @@ pub enum ExecutionStatus {
     Completed,
     Failed,
     Interrupted,
+    Lost,
 }
 
 impl ExecutionStatus {
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed | Self::Interrupted)
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::Interrupted | Self::Lost
+        )
     }
 }
 
@@ -345,6 +349,7 @@ impl std::fmt::Display for ExecutionStatus {
             Self::Completed => write!(f, "completed"),
             Self::Failed => write!(f, "failed"),
             Self::Interrupted => write!(f, "interrupted"),
+            Self::Lost => write!(f, "lost"),
         }
     }
 }

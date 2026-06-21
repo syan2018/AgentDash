@@ -353,6 +353,12 @@ pub async fn get_session_state(
             turn_id,
             message,
         },
+        SessionExecutionState::Lost { turn_id, message } => SessionExecutionStateResponse {
+            session_id,
+            status: "lost".to_string(),
+            turn_id,
+            message,
+        },
     };
 
     Ok(Json(response))

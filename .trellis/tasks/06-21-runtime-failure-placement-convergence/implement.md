@@ -14,8 +14,8 @@
 
 ## Phase 3: Implementation
 
-- [ ] backend disconnect terminal/lost projection。
-- [ ] MCP backend fallback 收口。
+- [x] backend disconnect terminal/lost projection。
+- [x] MCP backend fallback 收口。（session context 仅使用 session route；验证被当前 PermissionGrant 编译错误阻塞，待上游修复后重跑聚焦测试）
 - [x] standalone backend id 来源收口。
 
 ## Validation

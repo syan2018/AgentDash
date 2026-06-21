@@ -20,7 +20,8 @@ use agentdash_spi::{AgentConfig, AgentMessage, ContentPart};
 
 use crate::agent_run::{
     AgentRunCommandReceiptView, AgentRunMessageDelivery, AgentRunMessageDeliveryPort,
-    SessionTurnMessageDeliveryPort,
+    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
+    DeliveryRuntimeSelectionService, SessionTurnMessageDeliveryPort,
     command_receipt::{
         claim_agent_run_command_receipt, digest_command_request, mark_command_terminal_failed,
     },
@@ -1742,45 +1743,74 @@ impl<'a> AgentRunMailboxService<'a> {
         &self,
         target: AgentRunMailboxCommandTarget,
     ) -> Result<ResolvedAgentRunMailboxCommandTarget, WorkflowApplicationError> {
+        let resolved = self
+            .resolve_current_delivery_target(target.address.run_id, target.address.agent_id)
+            .await?;
+        if target.address.frame_id != resolved.frame.id {
+            return Err(WorkflowApplicationError::Conflict(format!(
+                "mailbox command target frame {} 不匹配当前 delivery frame {}",
+                target.address.frame_id, resolved.frame.id
+            )));
+        }
+        if let Some(message_stream) = target.message_stream
+            && message_stream != resolved.message_stream
+        {
+            return Err(WorkflowApplicationError::Conflict(format!(
+                "mailbox command target runtime_session {} 不匹配当前 delivery runtime_session {}",
+                message_stream.runtime_session_id, resolved.message_stream.runtime_session_id
+            )));
+        }
+        Ok(resolved)
+    }
+
+    async fn resolve_current_delivery_target(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<ResolvedAgentRunMailboxCommandTarget, WorkflowApplicationError> {
+        let selection =
+            DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
+                lifecycle_runs: self.lifecycle_run_repo,
+                lifecycle_agents: self.lifecycle_agent_repo,
+                agent_frames: self.agent_frame_repo,
+                execution_anchors: self.execution_anchor_repo,
+            })
+            .select_current_delivery(run_id, agent_id)
+            .await
+            .map_err(workflow_error_from_delivery_selection_error)?;
+        let run = self
+            .lifecycle_run_repo
+            .get_by_id(selection.run_id)
+            .await?
+            .ok_or_else(|| {
+                WorkflowApplicationError::NotFound(format!(
+                    "lifecycle_run 不存在: {}",
+                    selection.run_id
+                ))
+            })?;
         let agent = self
             .lifecycle_agent_repo
-            .get(target.address.agent_id)
+            .get(selection.agent_id)
             .await?
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!(
                     "lifecycle_agent 不存在: {}",
-                    target.address.agent_id
+                    selection.agent_id
                 ))
             })?;
-        if agent.run_id != target.address.run_id {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "LifecycleAgent {} 属于 run {}，不匹配请求 run {}",
-                agent.id, agent.run_id, target.address.run_id
-            )));
-        }
         if is_terminal_agent_status(&agent.status) {
             return Err(WorkflowApplicationError::Conflict(
                 "当前 Agent 已结束，不能继续发送消息".to_string(),
             ));
         }
-        let run = self
-            .lifecycle_run_repo
-            .get_by_id(target.address.run_id)
-            .await?
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "lifecycle_run 不存在: {}",
-                    target.address.run_id
-                ))
-            })?;
         let frame = self
             .agent_frame_repo
-            .get(target.address.frame_id)
+            .get(selection.current_frame_id)
             .await?
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!(
                     "agent_frame 不存在: {}",
-                    target.address.frame_id
+                    selection.current_frame_id
                 ))
             })?;
         if frame.agent_id != agent.id {
@@ -1789,59 +1819,11 @@ impl<'a> AgentRunMailboxService<'a> {
                 frame.id, agent.id
             )));
         }
-        let message_stream = match target.message_stream {
-            Some(message_stream) => {
-                let anchor = self
-                    .execution_anchor_repo
-                    .find_by_session(&message_stream.runtime_session_id)
-                    .await?
-                    .ok_or_else(|| {
-                        WorkflowApplicationError::NotFound(format!(
-                            "runtime_session 缺少 RuntimeSessionExecutionAnchor: {}",
-                            message_stream.runtime_session_id
-                        ))
-                    })?;
-                if anchor.run_id != run.id || anchor.agent_id != agent.id {
-                    return Err(WorkflowApplicationError::Conflict(format!(
-                        "RuntimeSessionExecutionAnchor 指向 {} / {}，不匹配 AgentRun {} / {}",
-                        anchor.run_id, anchor.agent_id, run.id, agent.id
-                    )));
-                }
-                message_stream
-            }
-            None => {
-                let latest_updated_anchor = self
-                    .execution_anchor_repo
-                    .latest_updated_anchor_for_agent(agent.id)
-                    .await?
-                    .ok_or_else(|| {
-                        WorkflowApplicationError::NotFound(format!(
-                            "AgentRun {} / {} 缺少可投递 RuntimeSession",
-                            run.id, agent.id
-                        ))
-                    })?;
-                if latest_updated_anchor.run_id != run.id
-                    || latest_updated_anchor.agent_id != agent.id
-                {
-                    return Err(WorkflowApplicationError::Conflict(format!(
-                        "latest RuntimeSessionExecutionAnchor 指向 {} / {}，不匹配 AgentRun {} / {}",
-                        latest_updated_anchor.run_id,
-                        latest_updated_anchor.agent_id,
-                        run.id,
-                        agent.id
-                    )));
-                }
-                MessageStreamProjectionRef {
-                    runtime_session_id: latest_updated_anchor.runtime_session_id,
-                    trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-                }
-            }
-        };
         Ok(ResolvedAgentRunMailboxCommandTarget {
             run,
             agent,
             frame,
-            message_stream,
+            message_stream: selection.message_stream,
         })
     }
 
@@ -1858,55 +1840,16 @@ impl<'a> AgentRunMailboxService<'a> {
                     "runtime_session 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
                 ))
             })?;
-        let agent = self
-            .lifecycle_agent_repo
-            .get(anchor.agent_id)
-            .await?
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "lifecycle_agent 不存在: {}",
-                    anchor.agent_id
-                ))
-            })?;
-        if agent.run_id != anchor.run_id {
+        let resolved = self
+            .resolve_current_delivery_target(anchor.run_id, anchor.agent_id)
+            .await?;
+        if resolved.message_stream.runtime_session_id != runtime_session_id {
             return Err(WorkflowApplicationError::Conflict(format!(
-                "RuntimeSessionExecutionAnchor run {} 与 LifecycleAgent run {} 不一致",
-                anchor.run_id, agent.run_id
+                "runtime_session {} 不匹配当前 delivery runtime_session {}",
+                runtime_session_id, resolved.message_stream.runtime_session_id
             )));
         }
-        if is_terminal_agent_status(&agent.status) {
-            return Err(WorkflowApplicationError::Conflict(
-                "当前 Agent 已结束，不能继续发送消息".to_string(),
-            ));
-        }
-        let run = self
-            .lifecycle_run_repo
-            .get_by_id(anchor.run_id)
-            .await?
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "lifecycle_run 不存在: {}",
-                    anchor.run_id
-                ))
-            })?;
-        let frame = self
-            .agent_frame_repo
-            .get_current(agent.id)
-            .await?
-            .or(self.agent_frame_repo.get(anchor.launch_frame_id).await?)
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "lifecycle_agent {} 没有 current AgentFrame",
-                    agent.id
-                ))
-            })?;
-        if frame.agent_id != agent.id {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "AgentFrame {} 不属于 LifecycleAgent {}",
-                frame.id, agent.id
-            )));
-        }
-        Ok((run, agent, frame))
+        Ok((resolved.run, resolved.agent, resolved.frame))
     }
 
     async fn base_refs_for_runtime(
@@ -2164,7 +2107,8 @@ fn user_message_policy(
         SessionExecutionState::Idle
         | SessionExecutionState::Completed { .. }
         | SessionExecutionState::Failed { .. }
-        | SessionExecutionState::Interrupted { .. } => UserMessagePolicy {
+        | SessionExecutionState::Interrupted { .. }
+        | SessionExecutionState::Lost { .. } => UserMessagePolicy {
             delivery: MailboxDelivery::LaunchOrContinueTurn,
             barrier: ConsumptionBarrier::ImmediateIfIdle,
             drain_mode: MailboxDrainMode::One,
@@ -2181,6 +2125,7 @@ fn runtime_can_launch(execution_state: &SessionExecutionState) -> bool {
             | SessionExecutionState::Completed { .. }
             | SessionExecutionState::Failed { .. }
             | SessionExecutionState::Interrupted { .. }
+            | SessionExecutionState::Lost { .. }
     )
 }
 
@@ -2338,6 +2283,22 @@ fn ensure_message_owner(
         )));
     }
     Ok(())
+}
+
+fn workflow_error_from_delivery_selection_error(
+    error: DeliveryRuntimeSelectionError,
+) -> WorkflowApplicationError {
+    match error {
+        DeliveryRuntimeSelectionError::RunNotFound { .. }
+        | DeliveryRuntimeSelectionError::AgentNotFound { .. }
+        | DeliveryRuntimeSelectionError::CurrentFrameNotFound { .. }
+        | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. }
+        | DeliveryRuntimeSelectionError::SubjectNotFound { .. } => {
+            WorkflowApplicationError::NotFound(error.to_string())
+        }
+        DeliveryRuntimeSelectionError::Repository(source) => WorkflowApplicationError::from(source),
+        other => WorkflowApplicationError::Conflict(other.to_string()),
+    }
 }
 
 pub(crate) fn outcome_from_message(

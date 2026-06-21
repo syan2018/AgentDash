@@ -47,6 +47,7 @@ fn state_code(execution_state: &SessionExecutionState) -> AgentRunWorkspaceState
         SessionExecutionState::Completed { .. } => AgentRunWorkspaceStateCode::Completed,
         SessionExecutionState::Failed { .. } => AgentRunWorkspaceStateCode::Failed,
         SessionExecutionState::Interrupted { .. } => AgentRunWorkspaceStateCode::Interrupted,
+        SessionExecutionState::Lost { .. } => AgentRunWorkspaceStateCode::Lost,
     }
 }
 
@@ -66,7 +67,8 @@ fn last_turn_id(execution_state: &SessionExecutionState) -> Option<String> {
     match execution_state {
         SessionExecutionState::Running { turn_id }
         | SessionExecutionState::Cancelling { turn_id }
-        | SessionExecutionState::Interrupted { turn_id, .. } => turn_id.clone(),
+        | SessionExecutionState::Interrupted { turn_id, .. }
+        | SessionExecutionState::Lost { turn_id, .. } => turn_id.clone(),
         SessionExecutionState::Completed { turn_id }
         | SessionExecutionState::Failed { turn_id, .. } => Some(turn_id.clone()),
         SessionExecutionState::Idle => None,
@@ -80,6 +82,7 @@ fn delivery_status(execution_state: &SessionExecutionState, agent_status: &str) 
         SessionExecutionState::Completed { .. } => "completed".to_string(),
         SessionExecutionState::Failed { .. } => "failed".to_string(),
         SessionExecutionState::Interrupted { .. } => "interrupted".to_string(),
+        SessionExecutionState::Lost { .. } => "lost".to_string(),
         SessionExecutionState::Idle if is_terminal_agent_status(agent_status) => {
             agent_status.to_string()
         }
@@ -123,6 +126,13 @@ fn runtime_command_state(
         SessionExecutionState::Interrupted { turn_id, message } => {
             AgentRunWorkspaceRuntimeCommandStateModel {
                 status: AgentRunWorkspaceRuntimeCommandStatus::Interrupted,
+                turn_id: turn_id.clone(),
+                message: message.clone(),
+            }
+        }
+        SessionExecutionState::Lost { turn_id, message } => {
+            AgentRunWorkspaceRuntimeCommandStateModel {
+                status: AgentRunWorkspaceRuntimeCommandStatus::Lost,
                 turn_id: turn_id.clone(),
                 message: message.clone(),
             }
@@ -292,6 +302,32 @@ mod tests {
             AgentRunWorkspaceRuntimeCommandStatus::Interrupted
         );
         assert_eq!(command_state.message.as_deref(), Some("user interrupted"));
+    }
+
+    #[test]
+    fn lost_turn_projects_lost_delivery_and_runtime_status() {
+        let model = project(&SessionExecutionState::Lost {
+            turn_id: Some("turn-1".to_string()),
+            message: Some("backend disconnected".to_string()),
+        });
+
+        assert_eq!(model.state_code, AgentRunWorkspaceStateCode::Lost);
+        assert_eq!(model.active_turn_id, None);
+        assert_eq!(model.last_turn_id.as_deref(), Some("turn-1"));
+        assert_eq!(model.delivery_status, "lost");
+        let command_state =
+            AgentRunWorkspaceProjection::runtime_command_state(&SessionExecutionState::Lost {
+                turn_id: Some("turn-1".to_string()),
+                message: Some("backend disconnected".to_string()),
+            });
+        assert_eq!(
+            command_state.status,
+            AgentRunWorkspaceRuntimeCommandStatus::Lost
+        );
+        assert_eq!(
+            command_state.message.as_deref(),
+            Some("backend disconnected")
+        );
     }
 
     #[test]

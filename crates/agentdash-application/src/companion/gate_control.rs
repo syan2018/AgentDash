@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository, LifecycleGate,
-    LifecycleGateRepository, RuntimeDeliverySelectionPolicy,
-    RuntimeSessionExecutionAnchorRepository,
+    LifecycleGateRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -11,6 +10,10 @@ use uuid::Uuid;
 use super::{
     PayloadTypeRegistry, build_companion_event_notification,
     build_companion_human_response_notification, payload_types,
+};
+use crate::agent_run::{
+    DeliveryRuntimeSelection, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
+    DeliveryRuntimeSelectionService,
 };
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::{ApplicationError, session::SessionEventingService};
@@ -193,6 +196,7 @@ impl CompanionGateNotificationDelivery for SessionEventingCompanionGateDelivery 
 
 pub struct CompanionGateControlService {
     gate_repo: Arc<dyn LifecycleGateRepository>,
+    run_repo: Arc<dyn LifecycleRunRepository>,
     frame_repo: Arc<dyn AgentFrameRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
     anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
@@ -203,6 +207,7 @@ pub struct CompanionGateControlService {
 impl CompanionGateControlService {
     pub fn new(
         gate_repo: Arc<dyn LifecycleGateRepository>,
+        run_repo: Arc<dyn LifecycleRunRepository>,
         frame_repo: Arc<dyn AgentFrameRepository>,
         agent_repo: Arc<dyn LifecycleAgentRepository>,
         anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
@@ -211,6 +216,7 @@ impl CompanionGateControlService {
     ) -> Self {
         Self {
             gate_repo,
+            run_repo,
             frame_repo,
             agent_repo,
             anchor_repo,
@@ -221,6 +227,7 @@ impl CompanionGateControlService {
 
     pub fn with_session_eventing(
         gate_repo: Arc<dyn LifecycleGateRepository>,
+        run_repo: Arc<dyn LifecycleRunRepository>,
         frame_repo: Arc<dyn AgentFrameRepository>,
         agent_repo: Arc<dyn LifecycleAgentRepository>,
         anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
@@ -229,6 +236,7 @@ impl CompanionGateControlService {
     ) -> Self {
         Self::new(
             gate_repo,
+            run_repo,
             frame_repo,
             agent_repo,
             anchor_repo,
@@ -374,17 +382,13 @@ impl CompanionGateControlService {
         self.gate_repo.update(&gate).await?;
 
         let parent_delivery_runtime_session_id = self
-            .select_delivery_runtime_session_id(
-                parent_agent_id,
-                RuntimeDeliverySelectionPolicy::LatestAttached,
-            )
+            .select_current_delivery_runtime_session_id(lineage.run_id, parent_agent_id)
             .await?;
         let child_delivery_runtime_session_id = self
-            .select_delivery_runtime_session_id(
+            .validate_current_delivery_runtime_session_id(
+                lineage.run_id,
                 child_frame.agent_id,
-                RuntimeDeliverySelectionPolicy::Specific {
-                    runtime_session_id: child_runtime_session_id,
-                },
+                &child_runtime_session_id,
             )
             .await?;
 
@@ -438,7 +442,7 @@ impl CompanionGateControlService {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| ApplicationError::BadRequest("payload.message 不能为空".to_string()))?;
 
-        let (_anchor, _agent, child_frame) = resolve_current_frame_from_delivery_trace_ref(
+        let (child_anchor, _agent, child_frame) = resolve_current_frame_from_delivery_trace_ref(
             &command.child_runtime_session_id,
             self.anchor_repo.as_ref(),
             self.agent_repo.as_ref(),
@@ -450,20 +454,6 @@ impl CompanionGateControlService {
                 "当前 runtime session 没有关联的 AgentFrame，无法向 parent 提审".to_string(),
             )
         })?;
-        let child_delivery_runtime_session_id = self
-            .select_delivery_runtime_session_id(
-                child_frame.agent_id,
-                RuntimeDeliverySelectionPolicy::Specific {
-                    runtime_session_id: command.child_runtime_session_id.clone(),
-                },
-            )
-            .await?
-            .ok_or_else(|| {
-                ApplicationError::Conflict(format!(
-                    "child agent {} 没有关联 runtime session {} 的 anchor",
-                    child_frame.agent_id, command.child_runtime_session_id
-                ))
-            })?;
         let lineage = self
             .lineage_repo
             .find_parent(child_frame.agent_id)
@@ -476,30 +466,35 @@ impl CompanionGateControlService {
         let parent_agent_id = lineage.parent_agent_id.ok_or_else(|| {
             ApplicationError::Conflict("lineage 中 parent_agent_id 为空".to_string())
         })?;
-        let parent_frame = self
-            .frame_repo
-            .get_current(parent_agent_id)
-            .await?
-            .ok_or_else(|| {
-                ApplicationError::Conflict("parent agent 没有活跃的 frame".to_string())
-            })?;
-        let parent_delivery_runtime_session_id = self
-            .select_delivery_runtime_session_id(
-                parent_agent_id,
-                RuntimeDeliverySelectionPolicy::LatestAttached,
+        let child_delivery_runtime_session_id = self
+            .validate_current_delivery_runtime_session_id(
+                child_anchor.run_id,
+                child_frame.agent_id,
+                &command.child_runtime_session_id,
             )
             .await?
             .ok_or_else(|| {
+                ApplicationError::Conflict(format!(
+                    "child agent {} 缺少 current delivery runtime session",
+                    child_frame.agent_id
+                ))
+            })?;
+        let parent_selection = self
+            .select_current_delivery(lineage.run_id, parent_agent_id)
+            .await?
+            .ok_or_else(|| {
                 ApplicationError::Conflict(
-                    "parent agent 没有关联的 runtime session anchor".to_string(),
+                    "parent agent 缺少 current delivery runtime session".to_string(),
                 )
             })?;
+        let parent_frame_id = parent_selection.current_frame_id;
+        let parent_delivery_runtime_session_id = parent_selection.runtime_session_id;
 
         let companion_label = format!("child:{}", child_frame.agent_id);
         let mut gate = LifecycleGate::open(
             lineage.run_id,
             Some(parent_agent_id),
-            Some(parent_frame.id),
+            Some(parent_frame_id),
             COMPANION_PARENT_REQUEST_GATE_KIND,
             "pending-parent-request",
             None,
@@ -513,7 +508,7 @@ impl CompanionGateControlService {
             "child_agent_id": child_frame.agent_id.to_string(),
             "child_frame_id": child_frame.id.to_string(),
             "parent_agent_id": parent_agent_id.to_string(),
-            "parent_frame_id": parent_frame.id.to_string(),
+            "parent_frame_id": parent_frame_id.to_string(),
             "companion_label": companion_label,
             "companion_session_id": child_delivery_runtime_session_id,
             "parent_session_id": parent_delivery_runtime_session_id,
@@ -544,7 +539,7 @@ impl CompanionGateControlService {
             request_id,
             run_id: gate.run_id,
             parent_agent_id,
-            parent_frame_id: parent_frame.id,
+            parent_frame_id,
             parent_delivery_runtime_session_id,
             child_agent_id: child_frame.agent_id,
             child_frame_id: child_frame.id,
@@ -577,7 +572,7 @@ impl CompanionGateControlService {
             return Ok(None);
         }
 
-        let (_anchor, _agent, parent_frame) = resolve_current_frame_from_delivery_trace_ref(
+        let (parent_anchor, _agent, parent_frame) = resolve_current_frame_from_delivery_trace_ref(
             &command.parent_runtime_session_id,
             self.anchor_repo.as_ref(),
             self.agent_repo.as_ref(),
@@ -603,17 +598,16 @@ impl CompanionGateControlService {
             )));
         }
         let parent_delivery_runtime_session_id = self
-            .select_delivery_runtime_session_id(
+            .validate_current_delivery_runtime_session_id(
+                parent_anchor.run_id,
                 parent_frame.agent_id,
-                RuntimeDeliverySelectionPolicy::Specific {
-                    runtime_session_id: command.parent_runtime_session_id.clone(),
-                },
+                &command.parent_runtime_session_id,
             )
             .await?
             .ok_or_else(|| {
                 ApplicationError::Conflict(format!(
-                    "parent agent {} 没有关联 runtime session {} 的 anchor",
-                    parent_frame.agent_id, command.parent_runtime_session_id
+                    "parent agent {} 缺少 current delivery runtime session",
+                    parent_frame.agent_id
                 ))
             })?;
 
@@ -688,39 +682,73 @@ impl CompanionGateControlService {
             )));
         }
 
-        self.select_delivery_runtime_session_id(
-            frame.agent_id,
-            RuntimeDeliverySelectionPolicy::LatestAttached,
-        )
-        .await
+        self.select_current_delivery_runtime_session_id(gate.run_id, frame.agent_id)
+            .await
     }
 
-    async fn select_delivery_runtime_session_id(
+    async fn select_current_delivery_runtime_session_id(
         &self,
+        run_id: Uuid,
         agent_id: Uuid,
-        policy: RuntimeDeliverySelectionPolicy,
     ) -> Result<Option<String>, ApplicationError> {
-        let runtime_session_id = match policy {
-            RuntimeDeliverySelectionPolicy::Specific { runtime_session_id } => self
-                .anchor_repo
-                .find_by_session(&runtime_session_id)
-                .await?
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .map(|anchor| anchor.runtime_session_id),
-            RuntimeDeliverySelectionPolicy::LaunchPrimary => self
-                .anchor_repo
-                .list_by_agent(agent_id)
-                .await?
-                .into_iter()
-                .min_by_key(|anchor| anchor.created_at)
-                .map(|anchor| anchor.runtime_session_id),
-            RuntimeDeliverySelectionPolicy::LatestAttached => self
-                .anchor_repo
-                .latest_updated_anchor_for_agent(agent_id)
-                .await?
-                .map(|anchor| anchor.runtime_session_id),
+        Ok(self
+            .select_current_delivery(run_id, agent_id)
+            .await?
+            .map(|selection| selection.runtime_session_id))
+    }
+
+    async fn validate_current_delivery_runtime_session_id(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        runtime_session_id: &str,
+    ) -> Result<Option<String>, ApplicationError> {
+        let Some(selection) = self.select_current_delivery(run_id, agent_id).await? else {
+            return Ok(None);
         };
-        Ok(runtime_session_id)
+        if selection.runtime_session_id == runtime_session_id {
+            return Ok(Some(selection.runtime_session_id));
+        }
+        Err(ApplicationError::Conflict(format!(
+            "agent {agent_id} current delivery runtime session {} 不匹配提交 runtime session {runtime_session_id}",
+            selection.runtime_session_id
+        )))
+    }
+
+    async fn select_current_delivery(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<Option<DeliveryRuntimeSelection>, ApplicationError> {
+        match DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
+            lifecycle_runs: self.run_repo.as_ref(),
+            lifecycle_agents: self.agent_repo.as_ref(),
+            agent_frames: self.frame_repo.as_ref(),
+            execution_anchors: self.anchor_repo.as_ref(),
+        })
+        .select_current_delivery(run_id, agent_id)
+        .await
+        {
+            Ok(selection) => Ok(Some(selection)),
+            Err(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { .. }) => Ok(None),
+            Err(error) => Err(application_error_from_selection_error(error)),
+        }
+    }
+}
+
+fn application_error_from_selection_error(
+    error: DeliveryRuntimeSelectionError,
+) -> ApplicationError {
+    match error {
+        DeliveryRuntimeSelectionError::RunNotFound { .. }
+        | DeliveryRuntimeSelectionError::AgentNotFound { .. }
+        | DeliveryRuntimeSelectionError::CurrentFrameNotFound { .. }
+        | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. }
+        | DeliveryRuntimeSelectionError::SubjectNotFound { .. } => {
+            ApplicationError::NotFound(error.to_string())
+        }
+        DeliveryRuntimeSelectionError::Repository(source) => ApplicationError::from(source),
+        other => ApplicationError::Conflict(other.to_string()),
     }
 }
 
@@ -748,7 +776,8 @@ mod tests {
     use agentdash_domain::{
         DomainError,
         workflow::{
-            AgentFrame, AgentLineage, AgentSource, LifecycleAgent, RuntimeSessionExecutionAnchor,
+            AgentFrame, AgentLineage, AgentSource, DeliveryBindingStatus, LifecycleAgent,
+            LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchor,
         },
     };
 
@@ -910,12 +939,51 @@ mod tests {
     impl MemoryAgentRepo {
         fn from_frame_repo(frame_repo: &MemoryFrameRepo, run_id: Uuid, project_id: Uuid) -> Self {
             let mut agents = HashMap::new();
-            for frame in frame_repo.frames.lock().unwrap().values() {
+            let frames: Vec<_> = frame_repo
+                .frames
+                .lock()
+                .unwrap()
+                .values()
+                .cloned()
+                .collect();
+            for frame in &frames {
                 let mut agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::Unknown);
                 agent.id = frame.agent_id;
                 agent.status = "running".to_string();
-                agent.set_current_frame(frame.id);
-                agents.insert(agent.id, agent);
+                let agent = agents.entry(agent.id).or_insert(agent);
+                let should_replace = agent
+                    .current_frame_id
+                    .and_then(|current_frame_id| {
+                        frames.iter().find(|item| item.id == current_frame_id)
+                    })
+                    .is_none_or(|current_frame| frame.revision > current_frame.revision);
+                if should_replace {
+                    agent.set_current_frame(frame.id);
+                }
+            }
+
+            let sessions_by_frame = frame_repo.runtime_sessions_by_frame.lock().unwrap();
+            for agent in agents.values_mut() {
+                let Some(frame_id) = agent.current_frame_id else {
+                    continue;
+                };
+                let Some(runtime_session_id) = sessions_by_frame
+                    .get(&frame_id)
+                    .and_then(|session_ids| session_ids.last())
+                else {
+                    continue;
+                };
+                let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+                    runtime_session_id.clone(),
+                    run_id,
+                    frame_id,
+                    agent.id,
+                );
+                agent.bind_current_delivery_from_anchor(
+                    &anchor,
+                    DeliveryBindingStatus::Running,
+                    anchor.updated_at,
+                );
             }
             Self {
                 agents: Mutex::new(agents),
@@ -1060,6 +1128,70 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct MemoryRunRepo {
+        runs: Mutex<HashMap<Uuid, LifecycleRun>>,
+    }
+
+    impl MemoryRunRepo {
+        fn with_run(run_id: Uuid, project_id: Uuid) -> Self {
+            let mut run = LifecycleRun::new_plain(project_id);
+            run.id = run_id;
+            let mut runs = HashMap::new();
+            runs.insert(run.id, run);
+            Self {
+                runs: Mutex::new(runs),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LifecycleRunRepository for MemoryRunRepo {
+        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+            self.runs.lock().unwrap().insert(run.id, run.clone());
+            Ok(())
+        }
+
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
+            Ok(self.runs.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|run| ids.contains(&run.id))
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|run| run.project_id == project_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+            self.runs.lock().unwrap().insert(run.id, run.clone());
+            Ok(())
+        }
+
+        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+            self.runs.lock().unwrap().remove(&id);
+            Ok(())
+        }
+    }
+
     fn service_for_test(
         gate_repo: Arc<MemoryGateRepo>,
         frame_repo: Arc<MemoryFrameRepo>,
@@ -1079,6 +1211,7 @@ mod tests {
         ));
         CompanionGateControlService::new(
             gate_repo,
+            Arc::new(MemoryRunRepo::with_run(run_id, project_id)),
             frame_repo,
             agent_repo,
             anchor_repo,

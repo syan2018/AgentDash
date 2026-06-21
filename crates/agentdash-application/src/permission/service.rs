@@ -4,10 +4,12 @@
 
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::ApplicationError;
 use crate::agent_run::AgentFrameBuilder;
+use crate::agent_run::AgentRunGrantProjection;
 use crate::session::capability_state::{
     ToolCapabilityDimensionModule, project_capability_state_from_frame,
 };
@@ -46,7 +48,7 @@ pub enum GrantRequestResult {
     AutoApproved {
         grant: PermissionGrant,
         transition: RuntimeCapabilityTransition,
-        effect_frame: Box<AgentFrame>,
+        effect_frame: Option<Box<AgentFrame>>,
     },
     /// 需要用户审批（grant 已持久化为 PendingUserApproval）
     PendingUserApproval { grant: PermissionGrant },
@@ -119,7 +121,7 @@ impl PermissionGrantService {
 
         match decision.outcome {
             PolicyOutcome::AutoApproved => {
-                let (transition, effect_frame) = self.apply_frame_effect(&grant, true).await?;
+                let (transition, effect_frame) = self.apply_grant_effect(&grant, true).await?;
                 grant.mark_applied().map_err(map_grant_transition_error)?;
                 self.repo
                     .update(&grant)
@@ -128,7 +130,7 @@ impl PermissionGrantService {
                 Ok(GrantRequestResult::AutoApproved {
                     grant,
                     transition,
-                    effect_frame: Box::new(effect_frame),
+                    effect_frame: effect_frame.map(Box::new),
                 })
             }
             PolicyOutcome::NeedsUserApproval => {
@@ -155,7 +157,7 @@ impl PermissionGrantService {
             .user_approve(user_id)
             .map_err(map_grant_transition_error)?;
 
-        let (transition, effect_frame) = self.apply_frame_effect(&grant, true).await?;
+        let (transition, effect_frame) = self.apply_grant_effect(&grant, true).await?;
 
         grant.mark_applied().map_err(map_grant_transition_error)?;
 
@@ -202,9 +204,47 @@ impl PermissionGrantService {
             .map_err(ApplicationError::from)?
             .ok_or_else(|| ApplicationError::NotFound(format!("grant not found: {grant_id}")))?;
 
-        let (transition, effect_frame) = self.apply_frame_effect(&grant, false).await?;
+        let (transition, effect_frame) = self.apply_grant_effect(&grant, false).await?;
 
         grant.revoke().map_err(map_grant_transition_error)?;
+
+        self.repo
+            .update(&grant)
+            .await
+            .map_err(ApplicationError::from)?;
+
+        Ok(PermissionGrantEffectResult {
+            grant,
+            transition,
+            effect_frame,
+        })
+    }
+
+    /// 将单个已到期的 active grant 过期，并按 CE02 分类撤销其 AgentRun effect。
+    pub async fn expire(
+        &self,
+        grant_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<PermissionGrantEffectResult, ApplicationError> {
+        let mut grant = self
+            .repo
+            .find_by_id(grant_id)
+            .await
+            .map_err(ApplicationError::from)?
+            .ok_or_else(|| ApplicationError::NotFound(format!("grant not found: {grant_id}")))?;
+
+        let expires_at = grant.expires_at.ok_or_else(|| {
+            ApplicationError::BadRequest(format!("grant {grant_id} has no expiry"))
+        })?;
+        if expires_at > now {
+            return Err(ApplicationError::BadRequest(format!(
+                "grant {grant_id} is not overdue"
+            )));
+        }
+
+        let (transition, effect_frame) = self.apply_grant_effect(&grant, false).await?;
+
+        grant.expire().map_err(map_grant_transition_error)?;
 
         self.repo
             .update(&grant)
@@ -262,11 +302,21 @@ impl PermissionGrantService {
         Ok(grant)
     }
 
-    async fn apply_frame_effect(
+    async fn apply_grant_effect(
         &self,
         grant: &PermissionGrant,
         approve: bool,
-    ) -> Result<(RuntimeCapabilityTransition, AgentFrame), ApplicationError> {
+    ) -> Result<(RuntimeCapabilityTransition, Option<AgentFrame>), ApplicationError> {
+        let mut transition = if approve {
+            PermissionGrantCompiler::compile(grant)
+        } else {
+            PermissionGrantCompiler::compile_revoke(grant)
+        };
+        let (_, surface_paths) = AgentRunGrantProjection::partition_paths(&grant.requested_paths);
+        if surface_paths.is_empty() {
+            return Ok((transition, None));
+        }
+
         let effect_frame_id = grant.effect_frame_id.ok_or_else(|| {
             ApplicationError::BadRequest(format!(
                 "permission grant {} missing effect_frame_id; cannot apply capability effect",
@@ -289,16 +339,16 @@ impl PermissionGrantService {
             .unwrap_or(anchor_frame);
 
         let mut next_state = project_capability_state_from_frame(&current_frame);
-        apply_requested_paths(&mut next_state, &grant.requested_paths, approve)?;
+        apply_requested_paths(&mut next_state, &surface_paths, approve)?;
 
-        let transition = transition_for_state(grant, &next_state, approve)?;
+        push_toolset_effect(&mut transition, &next_state)?;
         let mut builder = AgentFrameBuilder::new(current_frame.agent_id)
             .with_capability_state(&next_state)
             .with_created_by(
                 if approve {
-                    "permission_grant_approve"
+                    "permission_grant_toolset_add"
                 } else {
-                    "permission_grant_revoke"
+                    "permission_grant_toolset_remove"
                 },
                 Some(grant.id.to_string()),
             );
@@ -313,7 +363,7 @@ impl PermissionGrantService {
             .build(self.frame_repo.as_ref())
             .await
             .map_err(ApplicationError::from)?;
-        Ok((transition, effect_frame))
+        Ok((transition, Some(effect_frame)))
     }
 }
 
@@ -321,19 +371,13 @@ impl PermissionGrantService {
 pub struct PermissionGrantEffectResult {
     pub grant: PermissionGrant,
     pub transition: RuntimeCapabilityTransition,
-    pub effect_frame: AgentFrame,
+    pub effect_frame: Option<AgentFrame>,
 }
 
-fn transition_for_state(
-    grant: &PermissionGrant,
+fn push_toolset_effect(
+    transition: &mut RuntimeCapabilityTransition,
     state: &CapabilityState,
-    approve: bool,
-) -> Result<RuntimeCapabilityTransition, ApplicationError> {
-    let mut transition = if approve {
-        PermissionGrantCompiler::compile(grant)
-    } else {
-        PermissionGrantCompiler::compile_revoke(grant)
-    };
+) -> Result<(), ApplicationError> {
     transition.effects.push(
         ToolCapabilityDimensionModule::set_tool_access_effect(SetToolAccessEffect {
             capabilities: state.tool.capabilities.clone(),
@@ -342,7 +386,7 @@ fn transition_for_state(
         })
         .map_err(ApplicationError::Internal)?,
     );
-    Ok(transition)
+    Ok(())
 }
 
 fn apply_requested_paths(
@@ -674,7 +718,8 @@ mod tests {
             .expect("approve");
 
         assert_eq!(result.grant.status, GrantStatus::Applied);
-        assert_eq!(result.effect_frame.revision, 2);
+        let effect_frame = result.effect_frame.expect("toolset effect frame");
+        assert_eq!(effect_frame.revision, 2);
         assert_eq!(result.transition.effects.len(), 1);
 
         let current = frame_repo
@@ -773,7 +818,8 @@ mod tests {
         let result = service.revoke(grant.id).await.expect("revoke");
 
         assert_eq!(result.grant.status, GrantStatus::Revoked);
-        assert_eq!(result.effect_frame.revision, 3);
+        let effect_frame = result.effect_frame.expect("toolset revoke frame");
+        assert_eq!(effect_frame.revision, 3);
         assert_eq!(result.transition.effects.len(), 1);
 
         let current = frame_repo
@@ -789,5 +835,110 @@ mod tests {
                 .contains(&ToolCapability::new("file_write"))
         );
         assert!(!state.tool.enabled_clusters.contains(&ToolCluster::Write));
+    }
+
+    #[tokio::test]
+    async fn approve_tool_level_grant_uses_admission_projection_without_frame_revision() {
+        let grant_repo = Arc::new(InMemoryGrantRepo::default());
+        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let agent_id = Uuid::new_v4();
+        let initial_frame = AgentFrameBuilder::new(agent_id)
+            .with_runtime_session("runtime-session-1")
+            .build(frame_repo.as_ref())
+            .await
+            .expect("initial frame");
+        let grant = pending_grant(
+            &grant_repo,
+            initial_frame.id,
+            "workflow_management::upsert_workflow_tool",
+        )
+        .await;
+
+        let result = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone())
+            .approve(grant.id, "user-1")
+            .await
+            .expect("approve");
+
+        assert_eq!(result.grant.status, GrantStatus::Applied);
+        assert!(result.effect_frame.is_none());
+        assert!(
+            result.transition.effects.is_empty(),
+            "admission-only grants must not rewrite AgentFrame capability surface"
+        );
+
+        let current = frame_repo
+            .get_current(agent_id)
+            .await
+            .expect("current lookup")
+            .expect("current frame");
+        assert_eq!(current.revision, 1);
+
+        let active_grants = grant_repo
+            .list_active_by_run(result.grant.run_id)
+            .await
+            .expect("active grants");
+        let projection = AgentRunGrantProjection::from_active_grants(&active_grants);
+        let admission_request = crate::agent_run::AgentRunAdmissionRequest::tool(
+            "workflow_management",
+            "upsert_workflow_tool",
+            Some(ToolCluster::Workflow),
+        );
+        assert!(projection.admits_tool(&admission_request));
+    }
+
+    #[tokio::test]
+    async fn expire_tool_level_grant_revokes_admission_without_frame_revision() {
+        let grant_repo = Arc::new(InMemoryGrantRepo::default());
+        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let agent_id = Uuid::new_v4();
+        let initial_frame = AgentFrameBuilder::new(agent_id)
+            .with_runtime_session("runtime-session-1")
+            .build(frame_repo.as_ref())
+            .await
+            .expect("initial frame");
+        let mut grant = PermissionGrant::new(
+            Uuid::new_v4(),
+            "runtime-session-1",
+            vec![
+                ToolCapabilityPath::parse("workflow_management::upsert_workflow_tool")
+                    .expect("path"),
+            ],
+            "temporary tool admission",
+            GrantScope::AgentFrame,
+            Some(1),
+        )
+        .with_effect_frame(initial_frame.id);
+        grant.submit_for_policy().expect("submit");
+        grant
+            .apply_policy_decision(PolicyDecision {
+                outcome: PolicyOutcome::NeedsUserApproval,
+                matched_rules: Vec::new(),
+                reason: "manual".to_string(),
+            })
+            .expect("policy");
+        grant_repo.create(&grant).await.expect("persist");
+
+        let service = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone());
+        service.approve(grant.id, "user-1").await.expect("approve");
+        let result = service
+            .expire(grant.id, Utc::now() + chrono::Duration::seconds(2))
+            .await
+            .expect("expire");
+
+        assert_eq!(result.grant.status, GrantStatus::Expired);
+        assert!(result.effect_frame.is_none());
+        assert!(result.transition.effects.is_empty());
+
+        let active_grants = grant_repo
+            .list_active_by_run(result.grant.run_id)
+            .await
+            .expect("active grants");
+        let projection = AgentRunGrantProjection::from_active_grants(&active_grants);
+        let admission_request = crate::agent_run::AgentRunAdmissionRequest::tool(
+            "workflow_management",
+            "upsert_workflow_tool",
+            Some(ToolCluster::Workflow),
+        );
+        assert!(!projection.admits_tool(&admission_request));
     }
 }

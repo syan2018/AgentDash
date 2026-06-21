@@ -15,8 +15,7 @@ use uuid::Uuid;
 use agentdash_domain::story::{StoryRepository, StoryStatus};
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, RuntimeDeliverySelectionPolicy,
-    RuntimeSessionExecutionAnchorRepository, SubjectRef,
+    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository, SubjectRef,
 };
 
 use crate::lifecycle::SubjectExecutionControlService;
@@ -106,11 +105,7 @@ impl TerminalCancelCoordinator {
             self.execution_anchor_repo.as_ref(),
         );
         match service
-            .prepare_runtime_cancel_delivery(
-                &subject,
-                RuntimeDeliverySelectionPolicy::LatestAttached,
-                Some("terminal_status_cancel".to_string()),
-            )
+            .prepare_runtime_cancel_delivery(&subject, Some("terminal_status_cancel".to_string()))
             .await
         {
             Ok(command) => command,

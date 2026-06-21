@@ -8,9 +8,9 @@
 
 ## Phase 2: Independent Refactors
 
-- [ ] Lifecycle start API 拆分 create Ready run 与 continue/drain command。
+- [x] Lifecycle start API 拆分 create Ready run 与 continue/drain command。
 - [ ] Hook mailbox NotFound fallback 收口。
-- [ ] Extension backend target resolver 统一。
+- [x] Extension backend target resolver 统一。
 - [ ] Extension channel admission parity。
 
 ## Phase 3: Placement Boundaries
@@ -26,4 +26,3 @@ cargo test -p agentdash-application workflow
 cargo test -p agentdash-application agent_run
 pnpm run frontend:check
 ```
-

@@ -120,6 +120,7 @@ pub(super) fn parse_turn_terminal_event_from_envelope(
                 "turn_completed" => TurnTerminalKind::Completed,
                 "turn_failed" => TurnTerminalKind::Failed,
                 "turn_interrupted" => TurnTerminalKind::Interrupted,
+                "turn_lost" => TurnTerminalKind::Lost,
                 _ => return None,
             };
             let message = value
@@ -306,6 +307,7 @@ pub enum TurnTerminalKind {
     Completed,
     Failed,
     Interrupted,
+    Lost,
 }
 
 impl TurnTerminalKind {
@@ -314,6 +316,7 @@ impl TurnTerminalKind {
             Self::Completed => "turn_completed",
             Self::Failed => "turn_failed",
             Self::Interrupted => "turn_interrupted",
+            Self::Lost => "turn_lost",
         }
     }
 
@@ -322,6 +325,7 @@ impl TurnTerminalKind {
             Self::Completed => "info",
             Self::Failed => "error",
             Self::Interrupted => "warning",
+            Self::Lost => "error",
         }
     }
 
@@ -330,6 +334,7 @@ impl TurnTerminalKind {
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Interrupted => "interrupted",
+            Self::Lost => "lost",
         }
     }
 }
@@ -340,6 +345,7 @@ impl From<TurnTerminalKind> for super::types::ExecutionStatus {
             TurnTerminalKind::Completed => Self::Completed,
             TurnTerminalKind::Failed => Self::Failed,
             TurnTerminalKind::Interrupted => Self::Interrupted,
+            TurnTerminalKind::Lost => Self::Lost,
         }
     }
 }
@@ -369,6 +375,10 @@ pub(crate) fn meta_to_execution_state(
             message: meta.last_terminal_message.clone(),
         }),
         ExecutionStatus::Interrupted => Ok(SessionExecutionState::Interrupted {
+            turn_id: meta.last_turn_id.clone(),
+            message: meta.last_terminal_message.clone(),
+        }),
+        ExecutionStatus::Lost => Ok(SessionExecutionState::Lost {
             turn_id: meta.last_turn_id.clone(),
             message: meta.last_terminal_message.clone(),
         }),

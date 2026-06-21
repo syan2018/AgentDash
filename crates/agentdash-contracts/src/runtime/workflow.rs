@@ -528,6 +528,46 @@ pub struct SubmitOrchestrationHumanDecisionResponse {
     pub gate_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ContinueLifecycleRunResponse {
+    pub run: LifecycleRunView,
+    pub drain_result: OrchestrationExecutorDrainResultDto,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct OrchestrationExecutorDrainResultDto {
+    #[serde(default)]
+    pub launched_agent_nodes: Vec<LaunchedAgentNodeDto>,
+    #[serde(default)]
+    pub opened_human_gates: Vec<OpenedHumanGateDto>,
+    #[serde(default)]
+    pub completed_effect_nodes: Vec<String>,
+    #[serde(default)]
+    pub failed_nodes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct LaunchedAgentNodeDto {
+    pub run_id: String,
+    pub orchestration_id: String,
+    pub node_path: String,
+    pub attempt: u32,
+    pub runtime_session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct OpenedHumanGateDto {
+    pub run_id: String,
+    pub orchestration_id: String,
+    pub node_path: String,
+    pub attempt: u32,
+    pub gate_id: String,
+}
+
 fn default_attempt() -> u32 {
     1
 }

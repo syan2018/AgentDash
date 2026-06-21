@@ -234,7 +234,6 @@ pub struct ExtensionRuntimeProjectionResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ExtensionRuntimeInvokeActionRequest {
     pub session_id: String,
-    pub backend_id: String,
     pub action_key: String,
     #[serde(default)]
     pub input: Value,
@@ -243,7 +242,6 @@ pub struct ExtensionRuntimeInvokeActionRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ExtensionRuntimeInvokeChannelRequest {
     pub session_id: String,
-    pub backend_id: String,
     pub channel_key: String,
     pub method: String,
     #[serde(default)]

@@ -8,27 +8,32 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
-use agentdash_application::lifecycle::{LifecycleDispatchService, run_view_builder};
+use agentdash_application::lifecycle::{
+    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandService,
+    run_view_builder,
+};
 use agentdash_application::workflow::{
     ActivityLifecycleCatalogService, OrchestrationExecutorLauncher, ScriptCompiler,
     SubmitHumanGateDecisionInput, WorkflowScriptPreflightInput, WorkflowScriptPreflightService,
 };
 use agentdash_contracts::workflow::{
-    AgentProcedureResponse, CapabilityCatalogResponse, DeleteAgentProcedureResponse,
-    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, HookPresetResponse, HookPresetsResponse,
-    LifecycleRunView, PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse,
-    RegisterHookPresetResponse, SubmitOrchestrationHumanDecisionRequest,
-    SubmitOrchestrationHumanDecisionResponse, ValidateHookScriptResponse,
-    ValidationSeverity as ContractValidationSeverity, WorkflowGraphResponse,
-    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
-    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
-    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
+    AgentProcedureResponse, CapabilityCatalogResponse, ContinueLifecycleRunResponse,
+    DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
+    HookPresetResponse, HookPresetsResponse, LaunchedAgentNodeDto, LifecycleRunView,
+    OpenedHumanGateDto, OrchestrationExecutorDrainResultDto, PreflightWorkflowScriptRequest,
+    PreflightWorkflowScriptResponse, RegisterHookPresetResponse,
+    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
+    ValidateHookScriptResponse, ValidationSeverity as ContractValidationSeverity,
+    WorkflowGraphResponse, WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto,
+    WorkflowScriptCapabilitySummaryDto, WorkflowScriptHumanGateCapabilityDto,
+    WorkflowScriptPlanPreviewDto, WorkflowScriptPlanPreviewNodeDto,
+    WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, AgentProcedure, DefinitionSource, ExecutionSource, LifecycleRun,
-    LifecycleRunStartIntent, OrchestrationSourceRef, ValidationIssue, ValidationSeverity,
-    WorkflowGraph, WorkflowGraphDraft, WorkflowGraphRef, WorkflowScriptCapabilitySummary,
-    WorkflowScriptProvenance, WorkflowScriptProvenanceSource, workflow_script_source_digest,
+    OrchestrationSourceRef, ValidationIssue, ValidationSeverity, WorkflowGraph, WorkflowGraphDraft,
+    WorkflowGraphRef, WorkflowScriptCapabilitySummary, WorkflowScriptProvenance,
+    WorkflowScriptProvenanceSource, workflow_script_source_digest,
 };
 
 use super::lifecycle_contracts::lifecycle_run_view_to_contract;
@@ -117,10 +122,22 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             "/hook-presets/custom/{key}",
             axum::routing::delete(delete_hook_preset),
         )
-        .route("/lifecycle-runs", axum::routing::post(start_lifecycle_run))
+        .route("/lifecycle-runs", axum::routing::post(create_lifecycle_run))
+        .route(
+            "/lifecycle-runs/commands/create-and-continue",
+            axum::routing::post(create_and_continue_lifecycle_run),
+        )
         .route(
             "/lifecycle-runs/{id}",
             axum::routing::get(get_lifecycle_run),
+        )
+        .route(
+            "/lifecycle-runs/{id}/continue",
+            axum::routing::post(continue_lifecycle_run),
+        )
+        .route(
+            "/lifecycle-runs/{id}/drain",
+            axum::routing::post(continue_lifecycle_run),
         )
         .route(
             "/lifecycle-runs/{id}/orchestration-human-decisions",
@@ -406,7 +423,7 @@ pub async fn delete_workflow_graph(
     Ok(Json(DeleteWorkflowGraphResponse { deleted: true }))
 }
 
-pub async fn start_lifecycle_run(
+pub async fn create_lifecycle_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<StartWorkflowRunRequest>,
@@ -420,49 +437,61 @@ pub async fn start_lifecycle_run(
     )
     .await?;
     let workflow_graph_ref = workflow_graph_ref_from_start_request(project_id, &req)?;
-    let dispatch_service = LifecycleDispatchService::new(
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.workflow_graph_repo.as_ref(),
-        state.repos.lifecycle_agent_repo.as_ref(),
-        state.repos.agent_frame_repo.as_ref(),
-        state.repos.lifecycle_subject_association_repo.as_ref(),
-        state.repos.lifecycle_gate_repo.as_ref(),
-        state.repos.agent_lineage_repo.as_ref(),
-    )
-    .with_anchor_repo(state.repos.execution_anchor_repo.as_ref())
-    .with_runtime_session_creator(state.repos.runtime_session_creator.as_ref());
-    let dispatch_result = dispatch_service
-        .start_lifecycle_run(&LifecycleRunStartIntent {
+    let run = lifecycle_command_service(&state)
+        .create_lifecycle_run(CreateLifecycleRunCommand {
             project_id,
             source: ExecutionSource::Api,
             workflow_graph_ref,
         })
         .await?;
-    let run = state
-        .repos
-        .lifecycle_run_repo
-        .get_by_id(dispatch_result.run_ref)
-        .await?
-        .ok_or_else(|| {
-            ApiError::Internal(format!(
-                "Lifecycle dispatch 未持久化 run {}",
-                dispatch_result.run_ref
-            ))
-        })?;
-    let launcher = OrchestrationExecutorLauncher::new_with_platform_config(
-        state.repos.clone(),
-        state.config.platform_config.clone(),
+    Ok(Json(lifecycle_run_to_contract_view(&state, &run).await?))
+}
+
+pub async fn create_and_continue_lifecycle_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<StartWorkflowRunRequest>,
+) -> Result<Json<ContinueLifecycleRunResponse>, ApiError> {
+    let project_id = parse_uuid_required(&req.project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
     )
-    .with_function_runner(state.services.function_runner.clone());
-    launcher.drain_ready_nodes(run.id).await?;
-    let latest_run = state
-        .repos
-        .lifecycle_run_repo
-        .get_by_id(run.id)
-        .await?
-        .unwrap_or(run);
+    .await?;
+    let workflow_graph_ref = workflow_graph_ref_from_start_request(project_id, &req)?;
+    let result = lifecycle_command_service(&state)
+        .create_and_continue_lifecycle_run(CreateLifecycleRunCommand {
+            project_id,
+            source: ExecutionSource::Api,
+            workflow_graph_ref,
+        })
+        .await?;
     Ok(Json(
-        lifecycle_run_to_contract_view(&state, &latest_run).await?,
+        continue_lifecycle_run_result_to_contract(&state, result).await?,
+    ))
+}
+
+pub async fn continue_lifecycle_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(run_id): Path<String>,
+) -> Result<Json<ContinueLifecycleRunResponse>, ApiError> {
+    let run_id = parse_uuid(&run_id, "run_id")?;
+    let run = load_lifecycle_run(&state, run_id).await?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        run.project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let result = lifecycle_command_service(&state)
+        .continue_lifecycle_run(run_id)
+        .await?;
+    Ok(Json(
+        continue_lifecycle_run_result_to_contract(&state, result).await?,
     ))
 }
 
@@ -821,6 +850,52 @@ async fn lifecycle_run_to_contract_view(
         .await
         .map(lifecycle_run_view_to_contract)
         .map_err(ApiError::from)
+}
+
+fn lifecycle_command_service(state: &Arc<AppState>) -> LifecycleRunCommandService {
+    LifecycleRunCommandService::new(state.repos.clone(), state.config.platform_config.clone())
+        .with_function_runner(state.services.function_runner.clone())
+}
+
+async fn continue_lifecycle_run_result_to_contract(
+    state: &Arc<AppState>,
+    result: ContinueLifecycleRunResult,
+) -> Result<ContinueLifecycleRunResponse, ApiError> {
+    Ok(ContinueLifecycleRunResponse {
+        run: lifecycle_run_to_contract_view(state, &result.run).await?,
+        drain_result: orchestration_drain_result_to_contract(result.drain_result),
+    })
+}
+
+fn orchestration_drain_result_to_contract(
+    result: agentdash_application::workflow::OrchestrationExecutorDrainResult,
+) -> OrchestrationExecutorDrainResultDto {
+    OrchestrationExecutorDrainResultDto {
+        launched_agent_nodes: result
+            .launched_agent_nodes
+            .into_iter()
+            .map(|node| LaunchedAgentNodeDto {
+                run_id: node.run_id.to_string(),
+                orchestration_id: node.orchestration_id.to_string(),
+                node_path: node.node_path,
+                attempt: node.attempt,
+                runtime_session_id: node.runtime_session_id,
+            })
+            .collect(),
+        opened_human_gates: result
+            .opened_human_gates
+            .into_iter()
+            .map(|gate| OpenedHumanGateDto {
+                run_id: gate.run_id.to_string(),
+                orchestration_id: gate.orchestration_id.to_string(),
+                node_path: gate.node_path,
+                attempt: gate.attempt,
+                gate_id: gate.gate_id.to_string(),
+            })
+            .collect(),
+        completed_effect_nodes: result.completed_effect_nodes,
+        failed_nodes: result.failed_nodes,
+    }
 }
 
 async fn upsert_agent_procedure(

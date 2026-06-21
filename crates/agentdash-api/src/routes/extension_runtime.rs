@@ -130,15 +130,10 @@ pub async fn invoke_project_extension_runtime_action(
             "extension runtime invoke 缺少 session_id".into(),
         ));
     }
-    let backend_id = req.backend_id.trim();
-    if backend_id.is_empty() {
-        return Err(ApiError::BadRequest(
-            "extension runtime invoke 缺少 backend_id".into(),
-        ));
-    }
-    ensure_project_backend_access(&state, project_id, backend_id).await?;
+    let backend_id = resolve_extension_session_backend(&state, session_id)?;
+    ensure_project_backend_access(&state, project_id, &backend_id).await?;
     let workspace =
-        resolve_extension_invocation_workspace(&state, &current_user, session_id, backend_id)
+        resolve_extension_invocation_workspace(&state, &current_user, session_id, &backend_id)
             .await?;
 
     let action_key = RuntimeActionKey::parse(req.action_key)
@@ -157,7 +152,7 @@ pub async fn invoke_project_extension_runtime_action(
         req.input,
     );
     request.target = Some(RuntimeTarget::Backend {
-        backend_id: backend_id.to_string(),
+        backend_id: backend_id.clone(),
     });
     attach_extension_invocation_workspace(&mut request, workspace);
 
@@ -187,12 +182,7 @@ pub async fn invoke_project_extension_runtime_channel(
             "extension channel invoke 缺少 session_id".into(),
         ));
     }
-    let backend_id = req.backend_id.trim();
-    if backend_id.is_empty() {
-        return Err(ApiError::BadRequest(
-            "extension channel invoke 缺少 backend_id".into(),
-        ));
-    }
+    let backend_id = resolve_extension_session_backend(&state, session_id)?;
     if req.channel_key.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "extension channel invoke 缺少 channel_key".into(),
@@ -203,9 +193,9 @@ pub async fn invoke_project_extension_runtime_channel(
             "extension channel invoke 缺少 method".into(),
         ));
     }
-    ensure_project_backend_access(&state, project_id, backend_id).await?;
+    ensure_project_backend_access(&state, project_id, &backend_id).await?;
     let workspace =
-        resolve_extension_invocation_workspace(&state, &current_user, session_id, backend_id)
+        resolve_extension_invocation_workspace(&state, &current_user, session_id, &backend_id)
             .await?;
 
     let consumer = req
@@ -225,7 +215,7 @@ pub async fn invoke_project_extension_runtime_channel(
         .invoke(ExtensionRuntimeChannelInvokeRequest {
             project_id,
             session_id: session_id.to_string(),
-            backend_id: backend_id.to_string(),
+            backend_id,
             workspace,
             consumer,
             channel_key: req.channel_key,
@@ -323,6 +313,22 @@ async fn resolve_extension_invocation_workspace(
         return Ok(None);
     };
     Ok(select_extension_invocation_workspace(vfs, backend_id))
+}
+
+fn resolve_extension_session_backend(
+    state: &Arc<AppState>,
+    session_id: &str,
+) -> Result<String, ApiError> {
+    state
+        .services
+        .backend_registry
+        .session_route(session_id)
+        .map(|route| route.backend_id)
+        .ok_or_else(|| {
+            ApiError::Conflict(format!(
+                "extension invocation session `{session_id}` 缺少 backend route"
+            ))
+        })
 }
 
 fn select_extension_invocation_workspace(

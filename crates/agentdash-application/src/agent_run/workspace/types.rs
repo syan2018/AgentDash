@@ -129,6 +129,7 @@ pub enum AgentRunWorkspaceStateCode {
     Completed,
     Failed,
     Interrupted,
+    Lost,
 }
 
 impl AgentRunWorkspaceStateCode {
@@ -141,6 +142,7 @@ impl AgentRunWorkspaceStateCode {
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Interrupted => "interrupted",
+            Self::Lost => "lost",
         }
     }
 }
@@ -153,6 +155,7 @@ pub enum AgentRunWorkspaceRuntimeCommandStatus {
     Completed,
     Failed,
     Interrupted,
+    Lost,
 }
 
 impl AgentRunWorkspaceRuntimeCommandStatus {
@@ -164,6 +167,7 @@ impl AgentRunWorkspaceRuntimeCommandStatus {
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Interrupted => "interrupted",
+            Self::Lost => "lost",
         }
     }
 }

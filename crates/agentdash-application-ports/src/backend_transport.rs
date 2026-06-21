@@ -164,6 +164,7 @@ pub struct RelaySessionRoute {
     pub session_id: String,
     pub backend_id: String,
     pub lease_id: Uuid,
+    pub turn_id: String,
     pub tx: mpsc::UnboundedSender<RelaySessionEvent>,
 }
 
@@ -172,6 +173,7 @@ pub struct RelaySessionRouteInfo {
     pub session_id: String,
     pub backend_id: String,
     pub lease_id: Uuid,
+    pub turn_id: String,
 }
 
 /// relay session 终态类型。
@@ -180,6 +182,7 @@ pub enum RelayTerminalKind {
     Completed,
     Failed,
     Interrupted,
+    Lost,
 }
 
 #[derive(Debug, Clone, Default)]

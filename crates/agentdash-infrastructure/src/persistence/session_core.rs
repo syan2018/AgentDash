@@ -442,6 +442,7 @@ pub(crate) fn parse_execution_status(
         "completed" => Ok(ExecutionStatus::Completed),
         "failed" => Ok(ExecutionStatus::Failed),
         "interrupted" => Ok(ExecutionStatus::Interrupted),
+        "lost" => Ok(ExecutionStatus::Lost),
         other => Err(SessionStoreError::InvalidData(format!(
             "{field} 非法: {other}"
         ))),
@@ -718,6 +719,7 @@ pub(crate) fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionPr
                     "turn_completed" => "completed",
                     "turn_failed" => "failed",
                     "turn_interrupted" => "interrupted",
+                    "turn_lost" => "lost",
                     _ => "completed",
                 };
                 projection.last_delivery_status = Some(status.to_string());

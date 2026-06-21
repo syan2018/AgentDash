@@ -7,6 +7,7 @@ pub mod gate_service;
 pub mod orchestrator;
 pub mod projection;
 pub(crate) mod run;
+pub mod run_command_service;
 pub mod run_view_builder;
 mod session_association;
 mod session_run_context_resolver;
@@ -43,6 +44,9 @@ pub use projection::{
     resolve_active_workflow_projection_from_message_stream_trace,
 };
 pub use run::select_active_run;
+pub use run_command_service::{
+    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandService,
+};
 pub use session_association::{
     LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,
     build_lifecycle_node_label, lifecycle_activity_parts_from_label,

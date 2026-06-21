@@ -263,4 +263,8 @@ pub enum SessionExecutionState {
         turn_id: Option<String>,
         message: Option<String>,
     },
+    Lost {
+        turn_id: Option<String>,
+        message: Option<String>,
+    },
 }

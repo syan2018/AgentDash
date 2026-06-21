@@ -1,6 +1,8 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use agentdash_domain::permission::PermissionGrant;
 use agentdash_domain::workflow::AgentFrame;
+use agentdash_domain::workflow::ToolCapabilityPath;
 use agentdash_spi::{CapabilityState, RuntimeMcpServer, ToolCapability, ToolCluster, Vfs};
 use uuid::Uuid;
 
@@ -17,17 +19,77 @@ pub struct AgentRunEffectiveCapabilityRequest {
     pub command_key: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRunGrantEffectClass {
+    AdmissionProjection,
+    AgentFrameSurfaceRevision,
+}
+
 /// AgentRun-scoped 授权/护栏投影。
 ///
-/// CE05 先保留空投影，确保 Grant state 的唯一消费点已经位于 AgentRun
-/// boundary；CE02 在这里补齐 approve/revoke/expire 分类后的 admission/toolset
-/// projection。
+/// 只有工具级 Grant 会进入这里作为工具执行准入。能力级 / MCP server 级 Grant
+/// 会写入新的 AgentFrame revision，并由 frame 的 capability surface 表达模型可见效果。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AgentRunGrantProjection;
+pub struct AgentRunGrantProjection {
+    admitted_tools: BTreeMap<String, BTreeSet<String>>,
+}
 
 impl AgentRunGrantProjection {
     pub fn empty() -> Self {
-        Self
+        Self::default()
+    }
+
+    pub fn from_active_grants(grants: &[PermissionGrant]) -> Self {
+        let mut projection = Self::empty();
+        for grant in grants.iter().filter(|grant| grant.status.is_active()) {
+            projection.add_admission_paths(&grant.requested_paths);
+        }
+        projection
+    }
+
+    pub fn classify_path(path: &ToolCapabilityPath) -> AgentRunGrantEffectClass {
+        if path.tool.is_some() {
+            AgentRunGrantEffectClass::AdmissionProjection
+        } else {
+            AgentRunGrantEffectClass::AgentFrameSurfaceRevision
+        }
+    }
+
+    pub fn partition_paths(
+        paths: &[ToolCapabilityPath],
+    ) -> (Vec<ToolCapabilityPath>, Vec<ToolCapabilityPath>) {
+        let mut admission_paths = Vec::new();
+        let mut surface_paths = Vec::new();
+
+        for path in paths {
+            match Self::classify_path(path) {
+                AgentRunGrantEffectClass::AdmissionProjection => {
+                    admission_paths.push(path.clone());
+                }
+                AgentRunGrantEffectClass::AgentFrameSurfaceRevision => {
+                    surface_paths.push(path.clone());
+                }
+            }
+        }
+
+        (admission_paths, surface_paths)
+    }
+
+    pub fn add_admission_paths(&mut self, paths: &[ToolCapabilityPath]) {
+        for path in paths {
+            if let Some(tool) = &path.tool {
+                self.admitted_tools
+                    .entry(path.capability.clone())
+                    .or_default()
+                    .insert(tool.clone());
+            }
+        }
+    }
+
+    pub fn admits_tool(&self, request: &AgentRunAdmissionRequest) -> bool {
+        self.admitted_tools
+            .get(&request.capability_key)
+            .is_some_and(|tools| tools.contains(&request.tool_name))
     }
 }
 
@@ -39,6 +101,7 @@ pub struct AgentRunEffectiveCapabilityView {
     pub vfs_surface: Vfs,
     pub mcp_surface: Vec<RuntimeMcpServer>,
     pub visible_workspace_module_refs: Vec<String>,
+    pub grant_projection: AgentRunGrantProjection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,13 +164,14 @@ impl AgentRunEffectiveCapabilityService {
     pub fn effective_view_from_frame_with_projection(
         target: AgentFrameRuntimeTarget,
         frame: &AgentFrame,
-        _grant_projection: &AgentRunGrantProjection,
+        grant_projection: &AgentRunGrantProjection,
     ) -> AgentRunEffectiveCapabilityView {
         let capability_state = project_capability_state_from_frame(frame);
-        Self::effective_view_from_state(
+        Self::effective_view_from_state_with_projection(
             target,
             capability_state,
             frame.visible_workspace_module_refs(),
+            grant_projection.clone(),
         )
     }
 
@@ -116,6 +180,20 @@ impl AgentRunEffectiveCapabilityService {
         capability_state: CapabilityState,
         visible_workspace_module_refs: Vec<String>,
     ) -> AgentRunEffectiveCapabilityView {
+        Self::effective_view_from_state_with_projection(
+            target,
+            capability_state,
+            visible_workspace_module_refs,
+            AgentRunGrantProjection::empty(),
+        )
+    }
+
+    pub fn effective_view_from_state_with_projection(
+        target: AgentFrameRuntimeTarget,
+        capability_state: CapabilityState,
+        visible_workspace_module_refs: Vec<String>,
+        grant_projection: AgentRunGrantProjection,
+    ) -> AgentRunEffectiveCapabilityView {
         AgentRunEffectiveCapabilityView {
             target,
             visible_capabilities: capability_state.tool.capabilities.clone(),
@@ -123,6 +201,7 @@ impl AgentRunEffectiveCapabilityService {
             mcp_surface: capability_state.tool.mcp_servers.clone(),
             capability_state,
             visible_workspace_module_refs,
+            grant_projection,
         }
     }
 
@@ -138,6 +217,10 @@ impl AgentRunEffectiveCapabilityService {
             return AgentRunAdmissionDecision::allow();
         }
 
+        if view.grant_projection.admits_tool(request) {
+            return AgentRunAdmissionDecision::allow();
+        }
+
         AgentRunAdmissionDecision::deny(format!(
             "tool `{}` is not admitted for capability `{}`",
             request.tool_name, request.capability_key
@@ -148,6 +231,8 @@ impl AgentRunEffectiveCapabilityService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_domain::permission::{GrantScope, PermissionGrant};
+    use agentdash_domain::workflow::ToolCapabilityPath;
     use agentdash_spi::ToolCapabilityFilter;
 
     fn target() -> AgentFrameRuntimeTarget {
@@ -230,6 +315,75 @@ mod tests {
                 .reason
                 .as_deref()
                 .is_some_and(|reason| reason.contains("upsert_workflow_tool"))
+        );
+    }
+
+    #[test]
+    fn grant_projection_admits_tool_without_visible_capability_change() {
+        let path = ToolCapabilityPath::parse("workflow_management::upsert_workflow_tool")
+            .expect("tool path");
+        let mut grant = PermissionGrant::new(
+            Uuid::new_v4(),
+            "session-a",
+            vec![path],
+            "temporary tool admission",
+            GrantScope::AgentFrame,
+            None,
+        );
+        grant.submit_for_policy().expect("submit");
+        grant
+            .apply_policy_decision(agentdash_domain::permission::PolicyDecision {
+                outcome: agentdash_domain::permission::PolicyOutcome::AutoApproved,
+                matched_rules: Vec::new(),
+                reason: "auto".to_string(),
+            })
+            .expect("policy");
+        grant.mark_applied().expect("applied");
+
+        let projection = AgentRunGrantProjection::from_active_grants(&[grant]);
+        let frame = frame_with_state(&CapabilityState::default());
+        let view = AgentRunEffectiveCapabilityService::effective_view_from_frame_with_projection(
+            target(),
+            &frame,
+            &projection,
+        );
+
+        assert!(
+            !view
+                .visible_capabilities
+                .contains(&ToolCapability::new("workflow_management")),
+            "tool-internal grants must not expand the model-visible toolset"
+        );
+        let decision = AgentRunEffectiveCapabilityService::admit_tool(
+            &view,
+            &AgentRunAdmissionRequest::tool(
+                "workflow_management",
+                "upsert_workflow_tool",
+                Some(ToolCluster::Workflow),
+            ),
+        );
+        assert!(decision.allowed);
+    }
+
+    #[test]
+    fn grant_projection_classifies_tool_paths_separately_from_surface_paths() {
+        let paths = vec![
+            ToolCapabilityPath::parse("workflow_management").expect("cap path"),
+            ToolCapabilityPath::parse("workflow_management::upsert_workflow_tool")
+                .expect("tool path"),
+        ];
+
+        let (admission_paths, surface_paths) = AgentRunGrantProjection::partition_paths(&paths);
+
+        assert_eq!(admission_paths.len(), 1);
+        assert_eq!(
+            admission_paths[0].to_qualified_string(),
+            "workflow_management::upsert_workflow_tool"
+        );
+        assert_eq!(surface_paths.len(), 1);
+        assert_eq!(
+            surface_paths[0].to_qualified_string(),
+            "workflow_management"
         );
     }
 }

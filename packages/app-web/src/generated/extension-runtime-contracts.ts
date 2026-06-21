@@ -47,11 +47,11 @@ export type ExtensionRuntimeActionProjectionResponse = { extension_key: string, 
 
 export type ExtensionRuntimeInvocationOutputResponse = { output: JsonValue, metadata?: { [key in string]?: JsonValue }, };
 
-export type ExtensionRuntimeInvokeActionRequest = { session_id: string, backend_id: string, action_key: string, input: JsonValue, };
+export type ExtensionRuntimeInvokeActionRequest = { session_id: string, action_key: string, input: JsonValue, };
 
 export type ExtensionRuntimeInvokeActionResponse = { action_key: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
 
-export type ExtensionRuntimeInvokeChannelRequest = { session_id: string, backend_id: string, channel_key: string, method: string, input: JsonValue, consumer_extension_key?: string | null, dependency_alias?: string | null, };
+export type ExtensionRuntimeInvokeChannelRequest = { session_id: string, channel_key: string, method: string, input: JsonValue, consumer_extension_key?: string | null, dependency_alias?: string | null, };
 
 export type ExtensionRuntimeInvokeChannelResponse = { channel_key: string, method: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
 

@@ -42,6 +42,7 @@ pub async fn respond_companion_gate(
 
     let service = CompanionGateControlService::with_session_eventing(
         state.repos.lifecycle_gate_repo.clone(),
+        state.repos.lifecycle_run_repo.clone(),
         state.repos.agent_frame_repo.clone(),
         state.repos.lifecycle_agent_repo.clone(),
         state.repos.execution_anchor_repo.clone(),

@@ -11,7 +11,8 @@ use uuid::Uuid;
 
 use crate::agent_run::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
-    ConversationModelConfigInput, ConversationModelConfigResolver,
+    ConversationModelConfigInput, ConversationModelConfigResolver, DeliveryRuntimeSelection,
+    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService,
 };
 use crate::lifecycle::run_view_builder::{
     LifecycleSubjectAssociationView, RuntimeSessionRefView, build_lifecycle_run_view,
@@ -21,8 +22,7 @@ use crate::lifecycle::surface::surface_projector::{
     OrchestrationNodeEvidenceRef,
 };
 use crate::lifecycle::{
-    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, MessageStreamProjectionRef,
-    MessageStreamTraceKind, WorkflowApplicationError,
+    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, WorkflowApplicationError,
 };
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionExecutionState};
@@ -67,14 +67,17 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
     ) -> Result<AgentRunWorkspaceSnapshot, WorkflowApplicationError> {
         let run = input.run;
         let agent = input.agent;
-        let delivery_runtime_session_id = self
-            .delivery_runtime_session_for_agent_run(run.id, agent.id)
-            .await?;
+        let current_delivery = self.current_delivery_selection(&run, &agent).await?;
+        let delivery_runtime_session_id = current_delivery
+            .as_ref()
+            .map(|selection| selection.runtime_session_id.clone());
         let meta = match delivery_runtime_session_id.as_deref() {
             Some(session_id) => self.session_core.get_session_meta(session_id).await?,
             None => None,
         };
-        let frame_resolution = self.resolve_agent_run_frame_vfs(&run, &agent).await?;
+        let frame_resolution = self
+            .resolve_agent_run_frame_vfs(&run, &agent, current_delivery.as_ref())
+            .await?;
         let frame = frame_resolution
             .as_ref()
             .map(|resolution| resolution.frame.clone());
@@ -110,11 +113,16 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         let run_view = build_lifecycle_run_view(self.repos, &run)
             .await
             .map_err(WorkflowApplicationError::from)?;
-        let agent_view = run_view
+        let mut agent_view = run_view
             .agents
             .iter()
             .find(|view| view.agent_ref.agent_id == agent.id.to_string())
             .cloned();
+        if let Some(agent_view) = agent_view.as_mut() {
+            agent_view.delivery_runtime_ref = delivery_runtime_session_id
+                .clone()
+                .map(|runtime_session_id| RuntimeSessionRefView { runtime_session_id });
+        }
         let subject_associations =
             filter_agent_subject_associations(run_view.subject_associations, agent.id);
         let subject_association_contracts = subject_associations
@@ -253,9 +261,10 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
     ) -> Result<super::types::AgentRunListProjection, WorkflowApplicationError> {
         let run = input.run;
         let agent = input.agent;
-        let delivery_runtime_session_id = self
-            .delivery_runtime_session_for_agent_run(run.id, agent.id)
-            .await?;
+        let current_delivery = self.current_delivery_selection(&run, &agent).await?;
+        let delivery_runtime_session_id = current_delivery
+            .as_ref()
+            .map(|selection| selection.runtime_session_id.clone());
         let meta = match delivery_runtime_session_id.as_deref() {
             Some(session_id) => self.session_core.get_session_meta(session_id).await?,
             None => None,
@@ -311,58 +320,46 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         })
     }
 
-    async fn delivery_runtime_session_for_agent_run(
+    async fn current_delivery_selection(
         &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-    ) -> Result<Option<String>, WorkflowApplicationError> {
-        let anchors = self.repos.execution_anchor_repo.list_by_run(run_id).await?;
-        Ok(anchors
-            .into_iter()
-            .filter(|anchor| anchor.agent_id == agent_id)
-            .max_by_key(|anchor| anchor.updated_at)
-            .map(|anchor| anchor.runtime_session_id))
+        run: &LifecycleRun,
+        agent: &LifecycleAgent,
+    ) -> Result<Option<DeliveryRuntimeSelection>, WorkflowApplicationError> {
+        if agent.current_delivery.is_none() {
+            return Ok(None);
+        }
+        DeliveryRuntimeSelectionService::from_repository_set(self.repos)
+            .select_current_delivery(run.id, agent.id)
+            .await
+            .map(Some)
+            .map_err(workflow_error_from_selection_error)
     }
 
     async fn resolve_agent_run_frame_vfs(
         &self,
         run: &LifecycleRun,
         agent: &LifecycleAgent,
+        current_delivery: Option<&DeliveryRuntimeSelection>,
     ) -> Result<Option<AgentRunFrameVfsResolution>, WorkflowApplicationError> {
-        let anchor = self
-            .repos
-            .execution_anchor_repo
-            .list_by_run(run.id)
-            .await?
-            .into_iter()
-            .filter(|anchor| anchor.agent_id == agent.id)
-            .max_by_key(|anchor| anchor.updated_at);
-        let anchor_frame_id = anchor.as_ref().map(|anchor| anchor.launch_frame_id);
-        let current_frame = self.repos.agent_frame_repo.get_current(agent.id).await?;
-        let frame = match (current_frame, anchor_frame_id) {
-            (Some(frame), _) => Some(frame),
-            (None, Some(frame_id)) => self.repos.agent_frame_repo.get(frame_id).await?,
-            (None, None) => None,
-        };
+        let frame = self
+            .resolve_workspace_current_frame(agent, current_delivery)
+            .await?;
         let Some(frame) = frame else {
             return Ok(None);
         };
-        let vfs = match anchor.as_ref() {
-            Some(anchor) => {
+        let vfs = match current_delivery {
+            Some(selection) => {
                 AgentRunLifecycleSurfaceProjector::new(self.repos)
                     .project_workspace_read_surface(AgentRunLifecycleSessionEvidenceFacts {
                         base_vfs: frame.typed_vfs(),
                         address: AgentRunRuntimeAddress {
-                            run_id: anchor.run_id,
-                            agent_id: anchor.agent_id,
-                            frame_id: anchor.launch_frame_id,
+                            run_id: selection.run_id,
+                            agent_id: selection.agent_id,
+                            frame_id: selection.launch_frame_id,
                         },
-                        message_stream: MessageStreamProjectionRef {
-                            runtime_session_id: anchor.runtime_session_id.clone(),
-                            trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-                        },
+                        message_stream: selection.message_stream.clone(),
                         project_id: run.project_id,
-                        node_evidence: orchestration_node_evidence_from_anchor(anchor),
+                        node_evidence: orchestration_node_evidence_from_anchor(&selection.anchor),
                         skill_projection: AgentRunLifecycleSkillProjectionFacts::preserve_projected(
                         ),
                     })
@@ -374,6 +371,34 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         };
 
         Ok(Some(AgentRunFrameVfsResolution { frame, vfs }))
+    }
+
+    async fn resolve_workspace_current_frame(
+        &self,
+        agent: &LifecycleAgent,
+        current_delivery: Option<&DeliveryRuntimeSelection>,
+    ) -> Result<Option<AgentFrame>, WorkflowApplicationError> {
+        if let Some(selection) = current_delivery {
+            return self
+                .repos
+                .agent_frame_repo
+                .get(selection.current_frame_id)
+                .await
+                .map_err(WorkflowApplicationError::from);
+        }
+        if let Some(current_frame_id) = agent.current_frame_id {
+            return self
+                .repos
+                .agent_frame_repo
+                .get(current_frame_id)
+                .await
+                .map_err(WorkflowApplicationError::from);
+        }
+        self.repos
+            .agent_frame_repo
+            .get_current(agent.id)
+            .await
+            .map_err(WorkflowApplicationError::from)
     }
 
     async fn runtime_refs_for_agent(
@@ -425,6 +450,22 @@ fn orchestration_node_evidence_from_anchor(
             })
         }
         _ => None,
+    }
+}
+
+fn workflow_error_from_selection_error(
+    error: DeliveryRuntimeSelectionError,
+) -> WorkflowApplicationError {
+    match error {
+        DeliveryRuntimeSelectionError::RunNotFound { .. }
+        | DeliveryRuntimeSelectionError::AgentNotFound { .. }
+        | DeliveryRuntimeSelectionError::CurrentFrameNotFound { .. }
+        | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. }
+        | DeliveryRuntimeSelectionError::SubjectNotFound { .. } => {
+            WorkflowApplicationError::NotFound(error.to_string())
+        }
+        DeliveryRuntimeSelectionError::Repository(source) => WorkflowApplicationError::from(source),
+        other => WorkflowApplicationError::Conflict(other.to_string()),
     }
 }
 

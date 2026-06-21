@@ -1,19 +1,21 @@
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
-    OrchestrationBindingRefs, RuntimeControlRefs, RuntimeDeliverySelectionPolicy,
-    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, SubjectRef,
+    AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRunRepository,
+    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository, OrchestrationBindingRefs,
+    RuntimeControlRefs, RuntimeSessionExecutionAnchorRepository, SubjectRef,
 };
 
 use super::WorkflowApplicationError;
+use crate::agent_run::{
+    DeliveryRuntimeSelection, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
+    DeliveryRuntimeSelectionService,
+};
 use crate::workflow::orchestration::{OrchestrationRuntimeEvent, apply_orchestration_event_to_run};
 
 #[derive(Debug, Clone)]
 pub struct CancelSubjectExecutionCommand {
     pub subject_ref: SubjectRef,
-    pub runtime_selection_policy: RuntimeDeliverySelectionPolicy,
     pub reason: Option<String>,
 }
 
@@ -36,9 +38,7 @@ pub struct SubjectExecutionCancelResult {
 
 struct SubjectExecutionCancelTarget {
     association: LifecycleSubjectAssociation,
-    agent: LifecycleAgent,
-    delivery_frame: AgentFrame,
-    anchor: Option<RuntimeSessionExecutionAnchor>,
+    selection: DeliveryRuntimeSelection,
 }
 
 pub struct SubjectExecutionControlService<'a> {
@@ -76,11 +76,7 @@ impl<'a> SubjectExecutionControlService<'a> {
             .await?;
 
         let runtime_delivery = self
-            .runtime_delivery_command(
-                &target,
-                command.runtime_selection_policy,
-                command.reason.clone(),
-            )
+            .runtime_delivery_command(&target, command.reason.clone())
             .await?;
 
         Ok(SubjectExecutionCancelResult {
@@ -96,11 +92,10 @@ impl<'a> SubjectExecutionControlService<'a> {
     pub async fn prepare_runtime_cancel_delivery(
         &self,
         subject_ref: &SubjectRef,
-        policy: RuntimeDeliverySelectionPolicy,
         reason: Option<String>,
     ) -> Result<Option<RuntimeCancelDeliveryCommand>, WorkflowApplicationError> {
         let target = self.resolve_cancel_target(subject_ref).await?;
-        self.runtime_delivery_command(&target, policy, reason).await
+        self.runtime_delivery_command(&target, reason).await
     }
 
     async fn resolve_cancel_target(
@@ -119,18 +114,20 @@ impl<'a> SubjectExecutionControlService<'a> {
         })?;
 
         let agent = self.resolve_associated_agent(&association).await?;
-        let delivery_frame = self.resolve_delivery_frame(&agent).await?;
-        let latest_updated_anchor = self
-            .execution_anchor_repo
-            .latest_updated_anchor_for_agent(agent.id)
-            .await?
-            .filter(|anchor| anchor.run_id == association.anchor_run_id);
+        let selection =
+            DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
+                lifecycle_runs: self.lifecycle_run_repo,
+                lifecycle_agents: self.lifecycle_agent_repo,
+                agent_frames: self.agent_frame_repo,
+                execution_anchors: self.execution_anchor_repo,
+            })
+            .select_current_delivery(association.anchor_run_id, agent.id)
+            .await
+            .map_err(workflow_error_from_selection_error)?;
 
         Ok(SubjectExecutionCancelTarget {
             association,
-            agent,
-            delivery_frame,
-            anchor: latest_updated_anchor,
+            selection,
         })
     }
 
@@ -177,36 +174,12 @@ impl<'a> SubjectExecutionControlService<'a> {
             })
     }
 
-    async fn resolve_delivery_frame(
-        &self,
-        agent: &LifecycleAgent,
-    ) -> Result<AgentFrame, WorkflowApplicationError> {
-        let frame_id = agent.current_frame_id.ok_or_else(|| {
-            WorkflowApplicationError::Conflict(format!(
-                "lifecycle agent {} 缺少 current AgentFrame",
-                agent.id
-            ))
-        })?;
-        let frame = self.agent_frame_repo.get(frame_id).await?.ok_or_else(|| {
-            WorkflowApplicationError::NotFound(format!("agent frame 不存在: {frame_id}"))
-        })?;
-        if frame.agent_id != agent.id {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "agent frame {} 不属于 lifecycle agent {}",
-                frame.id, agent.id
-            )));
-        }
-        Ok(frame)
-    }
-
     async fn materialize_cancelled_node(
         &self,
         target: &SubjectExecutionCancelTarget,
         reason: Option<String>,
     ) -> Result<(), WorkflowApplicationError> {
-        let Some(anchor) = target.anchor.as_ref() else {
-            return Ok(());
-        };
+        let anchor = &target.selection.anchor;
         let Some(orchestration_id) = anchor.orchestration_id else {
             return Ok(());
         };
@@ -242,54 +215,48 @@ impl<'a> SubjectExecutionControlService<'a> {
     async fn runtime_delivery_command(
         &self,
         target: &SubjectExecutionCancelTarget,
-        policy: RuntimeDeliverySelectionPolicy,
         reason: Option<String>,
     ) -> Result<Option<RuntimeCancelDeliveryCommand>, WorkflowApplicationError> {
-        let runtime_session_id = match policy {
-            RuntimeDeliverySelectionPolicy::Specific { runtime_session_id } => self
-                .execution_anchor_repo
-                .find_by_session(&runtime_session_id)
-                .await?
-                .filter(|anchor| anchor.agent_id == target.agent.id)
-                .map(|anchor| anchor.runtime_session_id),
-            RuntimeDeliverySelectionPolicy::LaunchPrimary => self
-                .execution_anchor_repo
-                .list_by_agent(target.agent.id)
-                .await?
-                .into_iter()
-                .min_by_key(|anchor| anchor.created_at)
-                .map(|anchor| anchor.runtime_session_id),
-            RuntimeDeliverySelectionPolicy::LatestAttached => self
-                .execution_anchor_repo
-                .latest_updated_anchor_for_agent(target.agent.id)
-                .await?
-                .map(|anchor| anchor.runtime_session_id),
-        };
-
-        Ok(
-            runtime_session_id.map(|runtime_session_id| RuntimeCancelDeliveryCommand {
-                runtime_session_id,
-                runtime_refs: runtime_refs_for_target(target),
-                reason,
-            }),
-        )
+        Ok(Some(RuntimeCancelDeliveryCommand {
+            runtime_session_id: target.selection.runtime_session_id.clone(),
+            runtime_refs: runtime_refs_for_target(target),
+            reason,
+        }))
     }
 }
 
 fn runtime_refs_for_target(target: &SubjectExecutionCancelTarget) -> RuntimeControlRefs {
-    let orchestration_binding = target.anchor.as_ref().and_then(|anchor| {
-        Some(OrchestrationBindingRefs::new(
-            anchor.orchestration_id?,
-            anchor.node_path.clone()?,
+    let anchor = &target.selection.anchor;
+    let orchestration_binding = match (anchor.orchestration_id, anchor.node_path.clone()) {
+        (Some(orchestration_id), Some(node_path)) => Some(OrchestrationBindingRefs::new(
+            orchestration_id,
+            node_path,
             anchor.node_attempt.unwrap_or(1),
-        ))
-    });
+        )),
+        _ => None,
+    };
     RuntimeControlRefs::new(
-        target.agent.run_id,
-        target.agent.id,
-        target.delivery_frame.id,
+        target.selection.run_id,
+        target.selection.agent_id,
+        target.selection.current_frame_id,
         orchestration_binding,
     )
+}
+
+fn workflow_error_from_selection_error(
+    error: DeliveryRuntimeSelectionError,
+) -> WorkflowApplicationError {
+    match error {
+        DeliveryRuntimeSelectionError::RunNotFound { .. }
+        | DeliveryRuntimeSelectionError::AgentNotFound { .. }
+        | DeliveryRuntimeSelectionError::CurrentFrameNotFound { .. }
+        | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. }
+        | DeliveryRuntimeSelectionError::SubjectNotFound { .. } => {
+            WorkflowApplicationError::NotFound(error.to_string())
+        }
+        DeliveryRuntimeSelectionError::Repository(source) => WorkflowApplicationError::from(source),
+        other => WorkflowApplicationError::Conflict(other.to_string()),
+    }
 }
 
 fn select_subject_association(
@@ -308,9 +275,10 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentSource, LifecycleRun, LifecycleRunStatus, OrchestrationInstance,
-        OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus, PlanNodeKind,
-        RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
+        AgentFrame, AgentSource, DeliveryBindingStatus, LifecycleRun, LifecycleRunStatus,
+        OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef,
+        OrchestrationStatus, PlanNodeKind, RuntimeNodeState, RuntimeNodeStatus,
+        RuntimeSessionExecutionAnchor,
     };
     use chrono::Utc;
 
@@ -686,10 +654,7 @@ mod tests {
         let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
         let frame = AgentFrame::new_revision(agent.id, 1, "test");
         agent.set_current_frame(frame.id);
-        agent_repo.create(&agent).await.expect("agent");
-        frame_repo.create(&frame).await.expect("frame");
-
-        anchor_repo.insert(RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
+        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
             "runtime-2",
             run.id,
             frame.id,
@@ -697,7 +662,15 @@ mod tests {
             orchestration_id,
             "main",
             1,
-        ));
+        );
+        agent.bind_current_delivery_from_anchor(
+            &anchor,
+            DeliveryBindingStatus::Running,
+            anchor.updated_at,
+        );
+        agent_repo.create(&agent).await.expect("agent");
+        frame_repo.create(&frame).await.expect("frame");
+        anchor_repo.insert(anchor);
         association_repo
             .create(&LifecycleSubjectAssociation::new_agent_scoped(
                 run.id,
@@ -719,7 +692,6 @@ mod tests {
         let result = service
             .cancel_subject_execution(CancelSubjectExecutionCommand {
                 subject_ref: subject.clone(),
-                runtime_selection_policy: RuntimeDeliverySelectionPolicy::LatestAttached,
                 reason: Some("user cancel".to_string()),
             })
             .await
@@ -769,14 +741,20 @@ mod tests {
         let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
         let frame = AgentFrame::new_revision(agent.id, 1, "test");
         agent.set_current_frame(frame.id);
-        agent_repo.create(&agent).await.expect("agent");
-        frame_repo.create(&frame).await.expect("frame");
-        anchor_repo.insert(RuntimeSessionExecutionAnchor::new_dispatch(
+        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
             "runtime-plain-1",
             run.id,
             frame.id,
             agent.id,
-        ));
+        );
+        agent.bind_current_delivery_from_anchor(
+            &anchor,
+            DeliveryBindingStatus::Running,
+            anchor.updated_at,
+        );
+        agent_repo.create(&agent).await.expect("agent");
+        frame_repo.create(&frame).await.expect("frame");
+        anchor_repo.insert(anchor);
         association_repo
             .create(&LifecycleSubjectAssociation::new_agent_scoped(
                 run.id,
@@ -798,7 +776,6 @@ mod tests {
         let result = service
             .cancel_subject_execution(CancelSubjectExecutionCommand {
                 subject_ref: subject.clone(),
-                runtime_selection_policy: RuntimeDeliverySelectionPolicy::LatestAttached,
                 reason: Some("user cancel".to_string()),
             })
             .await

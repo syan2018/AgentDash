@@ -582,6 +582,7 @@ pub fn conversation_execution_state_code(execution_state: &SessionExecutionState
         SessionExecutionState::Completed { .. } => "completed",
         SessionExecutionState::Failed { .. } => "failed",
         SessionExecutionState::Interrupted { .. } => "interrupted",
+        SessionExecutionState::Lost { .. } => "lost",
     }
 }
 
@@ -645,7 +646,8 @@ fn active_turn_id(execution_state: &SessionExecutionState) -> Option<String> {
     match execution_state {
         SessionExecutionState::Running { turn_id }
         | SessionExecutionState::Cancelling { turn_id }
-        | SessionExecutionState::Interrupted { turn_id, .. } => turn_id.clone(),
+        | SessionExecutionState::Interrupted { turn_id, .. }
+        | SessionExecutionState::Lost { turn_id, .. } => turn_id.clone(),
         SessionExecutionState::Completed { turn_id }
         | SessionExecutionState::Failed { turn_id, .. } => Some(turn_id.clone()),
         SessionExecutionState::Idle => None,

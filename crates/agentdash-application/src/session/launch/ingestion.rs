@@ -2,7 +2,7 @@
 
 use super::commit::CommittedTurn;
 use super::deps::StreamIngestionDeps;
-use crate::session::hub_support::TurnTerminalKind;
+use crate::session::hub_support::{TurnTerminalKind, parse_turn_terminal_event_from_envelope};
 
 pub(in crate::session) struct AttachedTurn {
     pub turn_id: String,
@@ -74,6 +74,15 @@ fn spawn_stream_adapter(
         while let Some(next) = stream.next().await {
             match next {
                 Ok(notification) => {
+                    if let Some((terminal_turn_id, kind, message)) =
+                        parse_turn_terminal_event_from_envelope(&notification)
+                        && terminal_turn_id == turn_id
+                    {
+                        let _ = processor_tx.send(
+                            crate::session::turn_processor::TurnEvent::Terminal { kind, message },
+                        );
+                        return;
+                    }
                     let _ =
                         processor_tx.send(crate::session::turn_processor::TurnEvent::Notification(
                             Box::new(notification),

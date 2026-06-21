@@ -229,7 +229,18 @@ async fn handle_backend_connection(
         }
     }
 
-    state.services.backend_registry.unregister(&bid).await;
+    let lost_session_count = state.services.backend_registry.feed_backend_terminal(
+        &bid,
+        agentdash_application_ports::backend_transport::RelayTerminalKind::Lost,
+        Some("backend disconnected".to_string()),
+    );
+    if lost_session_count > 0 {
+        tracing::warn!(
+            backend_id = %bid,
+            count = lost_session_count,
+            "后端断连，已向 active relay session 投递 lost terminal"
+        );
+    }
     match state
         .repos
         .backend_execution_lease_repo
@@ -252,6 +263,7 @@ async fn handle_backend_connection(
             tracing::warn!(backend_id = %bid, error = %error, "标记 backend execution lease lost 失败");
         }
     }
+    state.services.backend_registry.unregister(&bid).await;
     if let Err(error) = state
         .repos
         .runtime_health_repo
@@ -273,7 +285,6 @@ async fn handle_backend_connection(
         .handle_backend_disconnect(&bid);
     for terminal_id in &lost_terminal_ids {
         if let Some(term_state) = state.services.terminal_cache.get_terminal(terminal_id) {
-            use agentdash_application_ports::backend_transport::RelaySessionEvent;
             let source = agentdash_agent_protocol::SourceInfo {
                 connector_id: "platform".to_string(),
                 connector_type: "terminal".to_string(),
@@ -291,10 +302,20 @@ async fn handle_backend_connection(
                 &term_state.session_id,
                 source,
             );
-            state.services.backend_registry.feed_session_event(
-                &term_state.session_id,
-                RelaySessionEvent::Notification(Box::new(envelope)),
-            );
+            if let Err(error) = state
+                .services
+                .session_eventing
+                .inject_notification(&term_state.session_id, envelope)
+                .await
+            {
+                tracing::warn!(
+                    backend_id = %bid,
+                    terminal_id = %terminal_id,
+                    session_id = %term_state.session_id,
+                    error = %error,
+                    "后端断连终端 lost 事件注入 session 失败"
+                );
+            }
         }
     }
     if !lost_terminal_ids.is_empty() {

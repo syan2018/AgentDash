@@ -96,7 +96,6 @@ export async function handleExtensionWebviewBridgeRequest({
       }
       const result = await services.invokeAction(projectId, {
         session_id: sessionId,
-        backend_id: backend.backend_id,
         action_key: actionKey,
         input: toJsonValue(message.params.input),
       });
@@ -111,7 +110,6 @@ export async function handleExtensionWebviewBridgeRequest({
       const dependencyAlias = bridgeParamString(message.params, "dependency_alias");
       const result = await services.invokeChannel(projectId, {
         session_id: sessionId,
-        backend_id: backend.backend_id,
         channel_key: channelKey,
         method,
         input: toJsonValue(message.params.input),

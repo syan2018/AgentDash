@@ -158,6 +158,8 @@ export type CapabilityScopeDto = "project" | "story" | "task";
 
 export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
 
+export type ContinueLifecycleRunResponse = { run: LifecycleRunView, drain_result: OrchestrationExecutorDrainResultDto, };
+
 export type ConversationCommandPlacement = "composer_primary" | "composer_secondary" | "mailbox_row" | "mailbox_banner" | "header";
 
 export type ConversationCommandSetView = { commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView, };
@@ -204,6 +206,8 @@ export type HumanApprovalExecutorSpec = { form_schema_key: string, title?: strin
 
 export type InputPortDefinition = { key: string, description: string, context_strategy: ContextStrategy, context_template?: string, standalone_fulfillment: StandaloneFulfillment, };
 
+export type LaunchedAgentNodeDto = { run_id: string, orchestration_id: string, node_path: string, attempt: number, runtime_session_id: string, };
+
 export type LifecycleExecutionEntry = { timestamp: string, activity_key: string, event_kind: LifecycleExecutionEventKind, summary: string, detail?: JsonValue, };
 
 export type LifecycleExecutionEventKind = "activity_activated" | "activity_completed" | "constraint_blocked" | "completion_evaluated" | "artifact_appended" | "context_injected";
@@ -215,6 +219,10 @@ export type LifecycleRunTopology = "plain" | "workflow_graph";
 export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string, topology: LifecycleRunTopology, status: LifecycleRunStatus, orchestrations: Array<OrchestrationInstanceView>, active_runtime_node_refs: Array<ActiveRuntimeNodeRefDto>, agents: Array<AgentRunView>, subject_associations: Array<LifecycleSubjectAssociationDto>, runtime_trace_refs: Array<RuntimeSessionRefDto>, execution_log: Array<LifecycleExecutionEntry>, created_at: string, updated_at: string, last_activity_at: string, };
 
 export type LifecycleSubjectAssociationDto = { id: string, anchor_run_id: string, anchor_agent_id?: string, subject_ref: SubjectRefDto, role: string, metadata?: JsonValue, created_at: string, };
+
+export type OpenedHumanGateDto = { run_id: string, orchestration_id: string, node_path: string, attempt: number, gate_id: string, };
+
+export type OrchestrationExecutorDrainResultDto = { launched_agent_nodes: Array<LaunchedAgentNodeDto>, opened_human_gates: Array<OpenedHumanGateDto>, completed_effect_nodes: Array<string>, failed_nodes: Array<string>, };
 
 export type OrchestrationInstanceView = { orchestration_id: string, role: string, status: string, plan_digest: string, source_ref: JsonValue, ready_node_ids: Array<string>, nodes: Array<RuntimeNodeView>, created_at: string, updated_at: string, };
 

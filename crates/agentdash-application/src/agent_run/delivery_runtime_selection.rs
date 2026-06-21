@@ -174,7 +174,7 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
         }
     }
 
-    async fn select_current_delivery(
+    pub async fn select_current_delivery(
         &self,
         run_id: Uuid,
         agent_id: Uuid,

@@ -9,8 +9,8 @@
 ## Implementation Order
 
 - [x] CE05: define AgentRun effective capability/admission boundary; replace `CapabilityResolver.granted_capability_keys` direct active-grant override with AgentRun final visible capability / admission result.
-- [ ] CE02a: PermissionGrant approve/revoke/expire remains AgentRun-scoped Grant system; tool-internal capability permission is read only through AgentRun admission projection.
-- [ ] CE02b: Classify grants that extend Agent toolset; only those model-visible effects write AgentFrame revision through AgentRun capability service.
+- [x] CE02a: PermissionGrant approve/revoke/expire remains AgentRun-scoped Grant system; tool-internal capability permission is read only through AgentRun admission projection.
+- [x] CE02b: Classify grants that extend Agent toolset; only those model-visible effects write AgentFrame revision through AgentRun capability service.
 - [ ] Shared helper: persist AgentFrame revision for surface-changing commands, then adopt that persisted revision into active runtime cache/tools/hook runtime when a delivery runtime exists.
 - [ ] CE03: Canvas expose writes AgentFrame revision first through AgentRun capability service, then reconstructs live VFS / hook runtime / WorkspaceModule presentation.
 - [ ] CE04: Extract WorkspaceModule visibility resolver from tool code; resolver reads final visible capability via AgentRun effective capability view and selected current frame.
@@ -18,10 +18,18 @@
 
 ## Phase 2: Implementation Slices
 
-- [ ] PermissionGrant approve/revoke/expire 与 AgentRun admission projection 一致；工具集拓展类 grant 在改变模型可见 surface 时写 AgentFrame revision。
+- [x] PermissionGrant approve/revoke/expire 与 AgentRun admission projection 一致；工具集拓展类 grant 在改变模型可见 surface 时写 AgentFrame revision。
 - [ ] Canvas expose 从 AgentFrame exposure 派生 live VFS / hook runtime refresh。
 - [ ] WorkspaceModule visibility resolver 从 AgentFrame exposure 读取 runtime refs。
 - [ ] RuntimeGateway action/channel admission 对齐。
+
+## CE02 First Slice Notes
+
+- `AgentRunGrantProjection` 已按路径粒度分类：工具级路径进入 admission projection，能力级路径写入 AgentFrame surface revision。
+- PermissionGrant approve/revoke 与单个 grant expiry 已使用同一分类：admission-only grant 不创建 AgentFrame revision，工具集拓展类 grant 写入模型可见的 AgentFrame revision。
+- Bulk overdue grant expiry 仍需要 application-owned scheduler/query path：先加载 grant，再在持久化终态前应用同一套单 grant 分类逻辑。
+- 持久化 surface revision 后的 active-runtime adoption 仍归上方 shared helper 项。
+- 当前切片只完成 CE02 的分类与单 grant 投影边界，不代表 CE02 后续 bulk expiry owner path 与 active runtime adoption 已完成。
 
 ## Validation
 

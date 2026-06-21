@@ -7,7 +7,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::agent_run::{
-    AgentConversationSnapshotInput, AgentConversationSnapshotResolver, conversation_command_id_for,
+    AgentConversationSnapshotInput, AgentConversationSnapshotResolver, DeliveryRuntimeSelection,
+    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService, conversation_command_id_for,
     conversation_execution_state_code,
 };
 use crate::lifecycle::WorkflowApplicationError;
@@ -41,13 +42,19 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
         command: AgentRunWorkspaceCommandPrecondition,
     ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
+        let current_delivery = self.resolve_current_delivery(context).await?;
+        ensure_context_targets_current_delivery(context, current_delivery.as_ref())?;
+        let runtime_session_id = current_delivery
+            .as_ref()
+            .map(|selection| selection.runtime_session_id.as_str())
+            .unwrap_or(context.runtime_session_id);
         let execution_state = self
             .session_core
-            .inspect_session_execution_state(context.runtime_session_id)
+            .inspect_session_execution_state(runtime_session_id)
             .await
             .map_err(WorkflowApplicationError::from)?;
         let frame_ref = self
-            .resolve_current_frame_ref(context.run, context.agent)
+            .resolve_current_frame_ref(context.agent, current_delivery.as_ref())
             .await?;
         let terminal_agent = is_terminal_agent_status(&context.agent.status);
         let policy_snapshot = self
@@ -57,7 +64,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             serde_json::json!({
                 "run_id": context.run.id.to_string(),
                 "agent_id": context.agent.id.to_string(),
-                "runtime_session_id": context.runtime_session_id,
+                "runtime_session_id": runtime_session_id,
                 "state": policy_snapshot.execution.status,
                 "active_turn_id": &policy_snapshot.execution.active_turn_id,
             })
@@ -91,15 +98,21 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             runtime_session_id = %context.runtime_session_id,
             "AgentRun composer policy inspect state"
         );
+        let current_delivery = self.resolve_current_delivery(context).await?;
+        ensure_context_targets_current_delivery(context, current_delivery.as_ref())?;
+        let runtime_session_id = current_delivery
+            .as_ref()
+            .map(|selection| selection.runtime_session_id.as_str())
+            .unwrap_or(context.runtime_session_id);
         let execution_state = self
             .session_core
-            .inspect_session_execution_state(context.runtime_session_id)
+            .inspect_session_execution_state(runtime_session_id)
             .await
             .map_err(WorkflowApplicationError::from)?;
         tracing::debug!(
             run_id = %context.run.id,
             agent_id = %context.agent.id,
-            runtime_session_id = %context.runtime_session_id,
+            runtime_session_id = %runtime_session_id,
             execution_state = ?execution_state,
             "AgentRun composer policy state resolved"
         );
@@ -111,7 +124,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
                 serde_json::json!({
                     "run_id": context.run.id.to_string(),
                     "agent_id": context.agent.id.to_string(),
-                    "runtime_session_id": context.runtime_session_id,
+                    "runtime_session_id": runtime_session_id,
                     "state": conversation_execution_state_code(&execution_state),
                 }),
             ));
@@ -185,36 +198,44 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         ))
     }
 
+    async fn resolve_current_delivery(
+        &self,
+        context: AgentRunWorkspaceCommandPolicyContext<'_>,
+    ) -> Result<Option<DeliveryRuntimeSelection>, AgentRunWorkspaceCommandPolicyError> {
+        if context.agent.current_delivery.is_none() {
+            return Ok(None);
+        }
+        DeliveryRuntimeSelectionService::from_repository_set(self.repos)
+            .select_current_delivery(context.run.id, context.agent.id)
+            .await
+            .map(Some)
+            .map_err(workflow_error_from_selection_error)
+            .map_err(AgentRunWorkspaceCommandPolicyError::from)
+    }
+
     async fn resolve_current_frame_ref(
         &self,
-        run: &LifecycleRun,
         agent: &LifecycleAgent,
+        current_delivery: Option<&DeliveryRuntimeSelection>,
     ) -> Result<Option<(Uuid, i32)>, AgentRunWorkspaceCommandPolicyError> {
-        let anchor_frame_id = self
-            .repos
-            .execution_anchor_repo
-            .list_by_run(run.id)
-            .await
-            .map_err(WorkflowApplicationError::from)?
-            .into_iter()
-            .filter(|anchor| anchor.agent_id == agent.id)
-            .max_by_key(|anchor| anchor.updated_at)
-            .map(|anchor| anchor.launch_frame_id);
-        let current_frame = self
-            .repos
-            .agent_frame_repo
-            .get_current(agent.id)
-            .await
-            .map_err(WorkflowApplicationError::from)?;
-        let frame = match (current_frame, anchor_frame_id) {
-            (Some(frame), _) => Some(frame),
-            (None, Some(frame_id)) => self
-                .repos
+        let frame = if let Some(selection) = current_delivery {
+            self.repos
                 .agent_frame_repo
-                .get(frame_id)
+                .get(selection.current_frame_id)
                 .await
-                .map_err(WorkflowApplicationError::from)?,
-            (None, None) => None,
+                .map_err(WorkflowApplicationError::from)?
+        } else if let Some(current_frame_id) = agent.current_frame_id {
+            self.repos
+                .agent_frame_repo
+                .get(current_frame_id)
+                .await
+                .map_err(WorkflowApplicationError::from)?
+        } else {
+            self.repos
+                .agent_frame_repo
+                .get_current(agent.id)
+                .await
+                .map_err(WorkflowApplicationError::from)?
         };
         Ok(frame.map(|frame: AgentFrame| (frame.id, frame.revision)))
     }
@@ -382,6 +403,46 @@ fn ensure_command_submission_matches_snapshot(
     }
 
     Ok(())
+}
+
+fn ensure_context_targets_current_delivery(
+    context: AgentRunWorkspaceCommandPolicyContext<'_>,
+    current_delivery: Option<&DeliveryRuntimeSelection>,
+) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
+    let Some(selection) = current_delivery else {
+        return Ok(());
+    };
+    if selection.runtime_session_id == context.runtime_session_id {
+        return Ok(());
+    }
+    Err(stale_command_conflict(
+        &SessionExecutionState::Idle,
+        false,
+        serde_json::json!({
+            "reason": "runtime_session_mismatch",
+            "run_id": context.run.id.to_string(),
+            "agent_id": context.agent.id.to_string(),
+            "expected_runtime_session_id": selection.runtime_session_id,
+            "submitted_runtime_session_id": context.runtime_session_id,
+            "snapshot_refresh_required": true,
+        }),
+    ))
+}
+
+fn workflow_error_from_selection_error(
+    error: DeliveryRuntimeSelectionError,
+) -> WorkflowApplicationError {
+    match error {
+        DeliveryRuntimeSelectionError::RunNotFound { .. }
+        | DeliveryRuntimeSelectionError::AgentNotFound { .. }
+        | DeliveryRuntimeSelectionError::CurrentFrameNotFound { .. }
+        | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. }
+        | DeliveryRuntimeSelectionError::SubjectNotFound { .. } => {
+            WorkflowApplicationError::NotFound(error.to_string())
+        }
+        DeliveryRuntimeSelectionError::Repository(source) => WorkflowApplicationError::from(source),
+        other => WorkflowApplicationError::Conflict(other.to_string()),
+    }
 }
 
 fn ensure_composer_command_precondition_matches_agent_run(

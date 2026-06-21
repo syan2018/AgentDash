@@ -170,15 +170,16 @@ use agentdash_contracts::workflow::{
     AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
     AgentRunWorkspaceView, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
-    CapabilityScopeDto, ConversationCommandKind, ConversationCommandPlacement,
-    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
-    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
+    CapabilityScopeDto, ContinueLifecycleRunResponse, ConversationCommandKind,
+    ConversationCommandPlacement, ConversationCommandSetView, ConversationCommandStaleGuardView,
+    ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
     ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
     ConversationModelConfigView, DefinitionSource, DeleteAgentProcedureResponse,
     DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
-    HookPresetResponse, HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunRefDto,
-    LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto,
+    HookPresetResponse, HookPresetsResponse, LaunchedAgentNodeDto, LifecycleExecutionEntry,
+    LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView,
+    LifecycleSubjectAssociationDto, OpenedHumanGateDto, OrchestrationExecutorDrainResultDto,
     OrchestrationInstanceView, PlatformMcpScopeDto, PreflightWorkflowScriptRequest,
     PreflightWorkflowScriptResponse, ProjectActiveAgentsView, RegisterHookPresetResponse,
     RuntimeNodeView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
@@ -686,6 +687,10 @@ fn main() {
             export_all::<LifecycleRunView>(dir);
             export_all::<SubmitOrchestrationHumanDecisionRequest>(dir);
             export_all::<SubmitOrchestrationHumanDecisionResponse>(dir);
+            export_all::<ContinueLifecycleRunResponse>(dir);
+            export_all::<OrchestrationExecutorDrainResultDto>(dir);
+            export_all::<LaunchedAgentNodeDto>(dir);
+            export_all::<OpenedHumanGateDto>(dir);
             export_all::<AgentRunView>(dir);
             export_all::<AgentFrameRuntimeView>(dir);
             export_all::<RuntimeSessionTraceMeta>(dir);

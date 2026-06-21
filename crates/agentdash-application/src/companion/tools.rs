@@ -99,6 +99,7 @@ impl<'a> CompanionGateControlFactory<'a> {
     ) -> CompanionGateControlService {
         CompanionGateControlService::with_session_eventing(
             self.repos.lifecycle_gate_repo.clone(),
+            self.repos.lifecycle_run_repo.clone(),
             self.repos.agent_frame_repo.clone(),
             self.repos.lifecycle_agent_repo.clone(),
             self.repos.execution_anchor_repo.clone(),

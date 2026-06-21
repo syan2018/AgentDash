@@ -116,7 +116,6 @@ describe("extension bridge message validation", () => {
       projectId: "project-1",
       request: {
         session_id: "session-1",
-        backend_id: "backend-1",
         action_key: "protocol-demo.greet",
         input: { value: null },
       },
@@ -139,7 +138,6 @@ describe("extension bridge message validation", () => {
       projectId: "project-1",
       request: {
         session_id: "session-1",
-        backend_id: "backend-1",
         channel_key: "api",
         method: "greet",
         input: { source: "panel" },
@@ -310,7 +308,6 @@ describe("extension bridge message validation", () => {
       projectId: "project-1",
       request: {
         session_id: "session-1",
-        backend_id: "backend-1",
         channel_key: "api",
         method: "greet",
         input: { value: null },

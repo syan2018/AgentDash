@@ -156,6 +156,140 @@ impl SessionRuntimeInner {
         Ok(frame.id)
     }
 
+    /// 将已持久化的 AgentFrame revision 采用到 active runtime。
+    ///
+    /// 该 helper 不写入新的 frame；它只读取当前最新 frame fact，并同步 active
+    /// turn cache、connector tools 与 hook runtime target。
+    pub(crate) async fn adopt_persisted_agent_frame_revision(
+        &self,
+        target: AgentFrameRuntimeTarget,
+    ) -> Result<Vec<DynAgentTool>, ConnectorError> {
+        let session_id = target.delivery_runtime_session_id.as_str();
+        let frame_repo = self.agent_frame_repo.as_ref().ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 无 AgentFrame repository，无法采用已持久化能力状态"
+            ))
+        })?;
+        let anchor_repo = self.execution_anchor_repo.as_ref().ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 无 RuntimeSessionExecutionAnchor repository，无法采用已持久化能力状态"
+            ))
+        })?;
+        let target_frame = frame_repo
+            .get(target.frame_id)
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!(
+                    "查找 AgentFrame `{}` 失败，无法采用已持久化能力状态: {error}",
+                    target.frame_id
+                ))
+            })?
+            .ok_or_else(|| {
+                ConnectorError::Runtime(format!(
+                    "AgentFrame `{}` 不存在，拒绝采用已持久化能力状态",
+                    target.frame_id
+                ))
+            })?;
+        let delivery_anchor = anchor_repo
+            .find_by_session(&target.delivery_runtime_session_id)
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!(
+                    "查找 delivery RuntimeSession `{session_id}` anchor 失败，无法采用已持久化能力状态: {error}"
+                ))
+            })?;
+        if delivery_anchor.is_none_or(|anchor| anchor.agent_id != target_frame.agent_id) {
+            return Err(ConnectorError::Runtime(format!(
+                "Agent `{}` 未绑定 delivery RuntimeSession `{session_id}` 的 anchor，拒绝采用已持久化能力状态",
+                target_frame.agent_id
+            )));
+        }
+        let adopted_frame = frame_repo
+            .get_current(target_frame.agent_id)
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!(
+                    "查找 Agent `{}` 当前 AgentFrame 失败，无法采用已持久化能力状态: {error}",
+                    target_frame.agent_id
+                ))
+            })?
+            .unwrap_or(target_frame);
+        let state = project_capability_state_from_frame(&adopted_frame);
+        let mcp_servers = adopted_frame.typed_mcp_servers();
+
+        let turn_snapshot = self
+            .runtime_registry
+            .with_runtime(session_id, |runtime| {
+                let runtime = runtime.ok_or_else(|| {
+                    ConnectorError::Runtime(format!(
+                        "session `{session_id}` 当前没有运行态，无法采用已持久化能力状态"
+                    ))
+                })?;
+                let turn = runtime.turn_state.active_turn().cloned().ok_or_else(|| {
+                    ConnectorError::Runtime(format!(
+                        "session `{session_id}` 没有活跃 turn，无法采用已持久化能力状态"
+                    ))
+                })?;
+                Ok::<_, ConnectorError>(turn)
+            })
+            .await?;
+        let hook_runtime = self
+            .hook_service()
+            .ensure_hook_runtime_for_target(
+                &AgentFrameRuntimeTarget {
+                    frame_id: adopted_frame.id,
+                    delivery_runtime_session_id: session_id.to_string(),
+                },
+                Some(&turn_snapshot.turn_id),
+            )
+            .await?;
+
+        let mut session_frame = turn_snapshot.session_frame.clone();
+        session_frame.turn_id = turn_snapshot.turn_id.clone();
+        session_frame.mcp_servers = mcp_servers.clone();
+        session_frame.vfs = state.vfs.active.clone();
+        let context = ExecutionContext {
+            session: session_frame,
+            turn: agentdash_spi::ExecutionTurnFrame {
+                hook_runtime,
+                capability_state: state.clone(),
+                ..Default::default()
+            },
+        };
+        let all_tools = self
+            .assemble_tools_for_execution_context(session_id, &context)
+            .await;
+
+        self.connector
+            .update_session_tools(session_id, all_tools.clone())
+            .await?;
+
+        self.runtime_registry
+            .with_runtime_mut(session_id, |runtime| {
+                if let Some(runtime) = runtime {
+                    runtime.session_profile = Some(super::super::hub_support::SessionProfile {
+                        capability_state: state.clone(),
+                    });
+                    if let Some(turn) = runtime.turn_state.active_turn_mut() {
+                        turn.session_frame.mcp_servers = mcp_servers.clone();
+                        turn.session_frame.vfs = state.vfs.active.clone();
+                        turn.capability_state = state;
+                    }
+                }
+            })
+            .await;
+
+        tracing::debug!(
+            session_id,
+            target_frame_id = %target.frame_id,
+            adopted_frame_id = %adopted_frame.id,
+            agent_id = %adopted_frame.agent_id,
+            revision = adopted_frame.revision,
+            "已采用持久化 AgentFrame capability revision"
+        );
+        Ok(all_tools)
+    }
+
     /// 替换运行中 session 的能力状态并同步 connector。
     ///
     /// 写入路径：AgentFrame revision（持久化权威） → 内存 cache → connector 同步。
@@ -164,7 +298,7 @@ impl SessionRuntimeInner {
     pub(crate) async fn replace_current_capability_state(
         &self,
         target: AgentFrameRuntimeTarget,
-        mut state: CapabilityState,
+        state: CapabilityState,
     ) -> Result<Vec<DynAgentTool>, ConnectorError> {
         let session_id = target.delivery_runtime_session_id.as_str();
         // === Phase 1: AgentFrame revision 持久化 ===
@@ -235,8 +369,6 @@ impl SessionRuntimeInner {
                 "AgentFrame revision 写入失败，拒绝热更新能力状态: {error}"
             ))
         })?;
-        state = project_capability_state_from_frame(&new_frame);
-        let mcp_servers = new_frame.typed_mcp_servers();
         tracing::debug!(
             session_id,
             target_frame_id = %target.frame_id,
@@ -245,69 +377,11 @@ impl SessionRuntimeInner {
             "AgentFrame capability revision 已写入"
         );
 
-        // === Phase 2: 内存 cache 更新 + connector 同步 ===
-        let turn_snapshot = self
-            .runtime_registry
-            .with_runtime(session_id, |runtime| {
-                let runtime = runtime.ok_or_else(|| {
-                    ConnectorError::Runtime(format!(
-                        "session `{session_id}` 当前没有运行态，无法热更新能力状态"
-                    ))
-                })?;
-                let turn = runtime.turn_state.active_turn().cloned().ok_or_else(|| {
-                    ConnectorError::Runtime(format!(
-                        "session `{session_id}` 没有活跃 turn，无法热更新能力状态"
-                    ))
-                })?;
-                Ok::<_, ConnectorError>(turn)
-            })
-            .await?;
-        let hook_runtime = self
-            .hook_service()
-            .ensure_hook_runtime_for_target(
-                &AgentFrameRuntimeTarget {
-                    frame_id: new_frame.id,
-                    delivery_runtime_session_id: session_id.to_string(),
-                },
-                Some(&turn_snapshot.turn_id),
-            )
-            .await?;
-
-        let mut session_frame = turn_snapshot.session_frame.clone();
-        session_frame.turn_id = turn_snapshot.turn_id.clone();
-        session_frame.mcp_servers = mcp_servers.clone();
-        session_frame.vfs = state.vfs.active.clone();
-        let context = ExecutionContext {
-            session: session_frame,
-            turn: agentdash_spi::ExecutionTurnFrame {
-                hook_runtime,
-                capability_state: state.clone(),
-                ..Default::default()
-            },
-        };
-        let all_tools = self
-            .assemble_tools_for_execution_context(session_id, &context)
-            .await;
-
-        self.connector
-            .update_session_tools(session_id, all_tools.clone())
-            .await?;
-
-        self.runtime_registry
-            .with_runtime_mut(session_id, |runtime| {
-                if let Some(runtime) = runtime {
-                    runtime.session_profile = Some(super::super::hub_support::SessionProfile {
-                        capability_state: state.clone(),
-                    });
-                    if let Some(turn) = runtime.turn_state.active_turn_mut() {
-                        turn.session_frame.mcp_servers = mcp_servers.clone();
-                        turn.session_frame.vfs = state.vfs.active.clone();
-                        turn.capability_state = state;
-                    }
-                }
-            })
-            .await;
-        Ok(all_tools)
+        self.adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
+            frame_id: new_frame.id,
+            delivery_runtime_session_id: session_id.to_string(),
+        })
+        .await
     }
 
     pub(crate) async fn assemble_tools_for_execution_context(

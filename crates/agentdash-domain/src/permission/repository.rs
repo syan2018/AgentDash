@@ -51,6 +51,9 @@ pub trait PermissionGrantRepository: Send + Sync {
         target_subject_kind: &str,
     ) -> Result<Option<PermissionGrant>, DomainError>;
 
-    /// 批量标记过期的 grant（TTL 到期），返回受影响行数。
-    async fn expire_overdue(&self) -> Result<u64, DomainError>;
+    /// 查询已到期且可进入 Expired 终态的 active grants，过期效果由 application service 按单 grant 分类应用。
+    async fn list_overdue_active(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<PermissionGrant>, DomainError>;
 }

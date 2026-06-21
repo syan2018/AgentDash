@@ -4,13 +4,14 @@
 
 - [ ] 固化 command taxonomy。
 - [ ] 定义 lifecycle create / continue command contract。
-- [ ] 定义 command availability core resolver 与 ConversationSnapshot 的关系。
+- [x] 定义 command availability core resolver 与 ConversationSnapshot 的关系。
 
 ## Phase 2: Independent Refactors
 
 - [x] Lifecycle start API 拆分 create Ready run 与 continue/drain command。
 - [ ] Hook mailbox NotFound fallback 收口。
 - [x] Extension backend target resolver 统一。
+- [x] Command availability core resolver 接入 ConversationSnapshot 与 workspace route policy。
 - [ ] Extension channel admission parity。
 
 ## Phase 3: Placement Boundaries

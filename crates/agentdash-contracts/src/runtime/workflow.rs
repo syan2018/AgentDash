@@ -1314,6 +1314,26 @@ pub struct AgentFrameRuntimeView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct SubjectRuntimeAttemptView {
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    pub runtime_session_ref: RuntimeSessionRefDto,
+    pub launch_frame_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current_frame_id: Option<String>,
+    pub orchestration_id: String,
+    pub node_path: String,
+    pub attempt: u32,
+    pub status: String,
+    pub observed_at: String,
+    pub runtime_node: RuntimeNodeView,
+    #[serde(default)]
+    pub artifacts: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct SubjectExecutionView {
     pub subject_ref: SubjectRefDto,
     #[serde(default)]
@@ -1323,6 +1343,8 @@ pub struct SubjectExecutionView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub current_agent: Option<AgentRunView>,
+    #[serde(default)]
+    pub runtime_attempts: Vec<SubjectRuntimeAttemptView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub latest_runtime_node: Option<RuntimeNodeView>,

@@ -27,7 +27,7 @@ pub struct LaunchCommand {
 
 #[derive(Clone)]
 pub enum LaunchModifier {
-    Companion(CompanionLaunchSource),
+    Companion(Box<CompanionLaunchSource>),
     Routine(RoutineLaunchSource),
     LocalRelay(LocalRelayLaunchPayload),
     HookAutoResume,
@@ -71,7 +71,7 @@ impl LaunchCommand {
 
     pub fn companion_modifier(&self) -> Option<CompanionLaunchSource> {
         self.modifiers.iter().find_map(|modifier| match modifier {
-            LaunchModifier::Companion(companion) => Some(companion.clone()),
+            LaunchModifier::Companion(companion) => Some(companion.as_ref().clone()),
             _ => None,
         })
     }
@@ -170,7 +170,7 @@ impl LaunchCommand {
         Self::command_with(
             input,
             None,
-            vec![LaunchModifier::Companion(companion)],
+            vec![LaunchModifier::Companion(Box::new(companion))],
             LaunchSource::CompanionDispatch,
         )
     }

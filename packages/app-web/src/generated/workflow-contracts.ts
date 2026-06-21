@@ -258,7 +258,9 @@ export type SessionShellDto = { id: string, title: string, title_source: string,
 
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
 
-export type SubjectExecutionView = { subject_ref: SubjectRefDto, associations: Array<LifecycleSubjectAssociationDto>, runs: Array<LifecycleRunView>, current_agent?: AgentRunView, latest_runtime_node?: RuntimeNodeView, artifacts: JsonValue, };
+export type SubjectExecutionView = { subject_ref: SubjectRefDto, associations: Array<LifecycleSubjectAssociationDto>, runs: Array<LifecycleRunView>, current_agent?: AgentRunView, runtime_attempts: Array<SubjectRuntimeAttemptView>, latest_runtime_node?: RuntimeNodeView, artifacts: JsonValue, };
+
+export type SubjectRuntimeAttemptView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, runtime_session_ref: RuntimeSessionRefDto, launch_frame_id: string, current_frame_id?: string, orchestration_id: string, node_path: string, attempt: number, status: string, observed_at: string, runtime_node: RuntimeNodeView, artifacts: JsonValue, };
 
 export type SubmitOrchestrationHumanDecisionRequest = { orchestration_id: string, node_path: string, attempt: number, decision: JsonValue, resolved_by?: string, };
 

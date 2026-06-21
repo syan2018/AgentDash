@@ -6,7 +6,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application::permission::PermissionGrantService;
+use agentdash_application::{permission::PermissionGrantService, session::AgentFrameRuntimeTarget};
 use agentdash_contracts::permission::{
     ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
     PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PolicyDecisionDto, PolicyOutcomeDto,
@@ -15,6 +15,7 @@ use agentdash_contracts::permission::{
 use agentdash_domain::permission::{
     GrantStatus, PermissionGrant, PermissionGrantStatusFilter, PolicyOutcome,
 };
+use agentdash_domain::workflow::AgentFrame;
 
 use crate::{app_state::AppState, auth::CurrentUser, rpc::ApiError};
 
@@ -229,6 +230,7 @@ pub async fn approve_grant(
     )
     .approve(id, &current_user.user_id)
     .await?;
+    adopt_effect_frame_if_present(&state, &result.grant, result.effect_frame.as_ref()).await;
 
     Ok(Json(grant_to_dto(&result.grant)))
 }
@@ -269,6 +271,33 @@ pub async fn revoke_grant(
     )
     .revoke(id)
     .await?;
+    adopt_effect_frame_if_present(&state, &result.grant, result.effect_frame.as_ref()).await;
 
     Ok(Json(grant_to_dto(&result.grant)))
+}
+
+async fn adopt_effect_frame_if_present(
+    state: &AppState,
+    grant: &PermissionGrant,
+    effect_frame: Option<&AgentFrame>,
+) {
+    let Some(effect_frame) = effect_frame else {
+        return;
+    };
+    if let Err(error) = state
+        .services
+        .session_capability
+        .adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
+            frame_id: effect_frame.id,
+            delivery_runtime_session_id: grant.source_runtime_session_id.clone(),
+        })
+        .await
+    {
+        tracing::warn!(
+            grant_id = %grant.id,
+            effect_frame_id = %effect_frame.id,
+            delivery_runtime_session_id = grant.source_runtime_session_id,
+            "PermissionGrant effect frame active-runtime adoption skipped: {error}"
+        );
+    }
 }

@@ -1,3 +1,4 @@
+use agentdash_agent_types::DynAgentTool;
 use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{RuntimeMcpServer, Vfs};
 use async_trait::async_trait;
@@ -71,6 +72,17 @@ impl SessionCapabilityService {
             frame_id,
             delivery_runtime_session_id: session_id.to_string(),
         })
+    }
+
+    /// 将已持久化的 AgentFrame revision 采用到 active runtime。
+    pub async fn adopt_persisted_agent_frame_revision(
+        &self,
+        target: AgentFrameRuntimeTarget,
+    ) -> Result<Vec<DynAgentTool>, String> {
+        self.hub
+            .adopt_persisted_agent_frame_revision(target)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     /// Canvas mount 写入 AgentFrame（通过 AgentFrameRepository 追加）。

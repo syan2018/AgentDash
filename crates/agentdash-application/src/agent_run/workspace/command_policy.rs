@@ -1,15 +1,16 @@
 use agentdash_contracts::workflow::{
-    AgentConversationSnapshot, AgentRunCommandPreconditionView, ConversationCommandKind,
-    ConversationCommandView, ConversationModelConfigStatus, ConversationModelConfigView,
+    AgentRunCommandPreconditionView, ConversationCommandKind, ConversationCommandView,
+    ConversationExecutionStatus, ConversationModelConfigStatus,
 };
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::agent_run::{
-    AgentConversationSnapshotInput, AgentConversationSnapshotResolver, DeliveryRuntimeSelection,
-    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService, conversation_command_id_for,
-    conversation_execution_state_code,
+    AgentFrameSurfaceExt, ConversationCommandAvailability, ConversationCommandAvailabilityInput,
+    ConversationCommandAvailabilityResolver, ConversationModelConfigInput,
+    ConversationModelConfigResolver, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
+    DeliveryRuntimeSelectionService, conversation_command_id_for,
 };
 use crate::lifecycle::WorkflowApplicationError;
 use crate::repository_set::RepositorySet;
@@ -53,28 +54,35 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             .inspect_session_execution_state(runtime_session_id)
             .await
             .map_err(WorkflowApplicationError::from)?;
-        let frame_ref = self
-            .resolve_current_frame_ref(context.agent, current_delivery.as_ref())
+        let frame = self
+            .resolve_current_frame(context.agent, current_delivery.as_ref())
             .await?;
+        let frame_ref = frame.as_ref().map(|frame| (frame.id, frame.revision));
         let terminal_agent = is_terminal_agent_status(&context.agent.status);
-        let policy_snapshot = self
-            .resolve_policy_snapshot(context, frame_ref, execution_state.clone(), terminal_agent)
+        let availability = self
+            .resolve_command_availability(
+                context,
+                frame.as_ref(),
+                frame_ref,
+                execution_state.clone(),
+                terminal_agent,
+            )
             .await?;
         let detail = || {
             serde_json::json!({
                 "run_id": context.run.id.to_string(),
                 "agent_id": context.agent.id.to_string(),
                 "runtime_session_id": runtime_session_id,
-                "state": policy_snapshot.execution.status,
-                "active_turn_id": &policy_snapshot.execution.active_turn_id,
+                "state": availability.execution_status,
+                "active_turn_id": &availability.active_turn_id,
             })
         };
         let expected_kind = command.expected_kind();
-        ensure_command_submission_matches_snapshot(
+        ensure_command_submission_matches_availability(
             command.command_precondition(),
             expected_kind,
             context,
-            &policy_snapshot,
+            &availability,
         )?;
 
         match command {
@@ -82,7 +90,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             | AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage { .. }
             | AgentRunWorkspaceCommandPrecondition::ResumeMailbox { .. }
             | AgentRunWorkspaceCommandPrecondition::Cancel { .. } => {
-                ensure_snapshot_command_enabled(&policy_snapshot, expected_kind, detail)
+                ensure_availability_command_enabled(&availability, expected_kind, detail)
             }
         }
     }
@@ -116,23 +124,24 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             execution_state = ?execution_state,
             "AgentRun composer policy state resolved"
         );
-        if is_terminal_agent_status(&context.agent.status) {
-            return Err(conflict(
-                "当前 AgentRun 已结束，不能继续发送消息。",
-                "command_unavailable",
-                None,
-                serde_json::json!({
-                    "run_id": context.run.id.to_string(),
-                    "agent_id": context.agent.id.to_string(),
-                    "runtime_session_id": runtime_session_id,
-                    "state": conversation_execution_state_code(&execution_state),
-                }),
-            ));
-        }
-        let result = ensure_composer_command_precondition_matches_agent_run(
+        let frame = self
+            .resolve_current_frame(context.agent, current_delivery.as_ref())
+            .await?;
+        let frame_ref = frame.as_ref().map(|frame| (frame.id, frame.revision));
+        let terminal_agent = is_terminal_agent_status(&context.agent.status);
+        let availability = self
+            .resolve_command_availability(
+                context,
+                frame.as_ref(),
+                frame_ref,
+                execution_state,
+                terminal_agent,
+            )
+            .await?;
+        let result = ensure_composer_command_precondition_matches_availability(
             command,
             context,
-            &execution_state,
+            &availability,
         );
         tracing::debug!(
             run_id = %context.run.id,
@@ -144,13 +153,14 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         result
     }
 
-    async fn resolve_policy_snapshot(
+    async fn resolve_command_availability(
         &self,
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
+        frame: Option<&AgentFrame>,
         frame_ref: Option<(Uuid, i32)>,
         execution_state: SessionExecutionState,
         terminal_agent: bool,
-    ) -> Result<AgentConversationSnapshot, AgentRunWorkspaceCommandPolicyError> {
+    ) -> Result<ConversationCommandAvailability, AgentRunWorkspaceCommandPolicyError> {
         let supports_steering = match &execution_state {
             SessionExecutionState::Running { turn_id: Some(_) } => {
                 self.session_control
@@ -177,23 +187,20 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             .map_err(WorkflowApplicationError::from)?;
         let mailbox_paused = mailbox_state.as_ref().is_some_and(|state| state.paused)
             && mailbox_visible_message_count > 0;
+        let model_config_status = self.resolve_model_config_status(context, frame).await?;
 
-        Ok(AgentConversationSnapshotResolver::resolve(
-            AgentConversationSnapshotInput {
-                project_id: context.run.project_id,
+        Ok(ConversationCommandAvailabilityResolver::resolve(
+            ConversationCommandAvailabilityInput {
                 run_id: context.run.id,
                 agent_id: context.agent.id,
                 frame_ref,
                 delivery_runtime_session_id: Some(context.runtime_session_id.to_string()),
-                subject_associations: Vec::new(),
                 execution_state,
                 terminal_agent,
                 supports_steering,
                 mailbox_paused,
                 mailbox_visible_message_count,
-                resource_surface: None,
-                resource_diagnostics: Vec::new(),
-                model_config: resolved_model_config(),
+                model_config_status,
             },
         ))
     }
@@ -213,31 +220,72 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             .map_err(AgentRunWorkspaceCommandPolicyError::from)
     }
 
-    async fn resolve_current_frame_ref(
+    async fn resolve_current_frame(
         &self,
         agent: &LifecycleAgent,
         current_delivery: Option<&DeliveryRuntimeSelection>,
-    ) -> Result<Option<(Uuid, i32)>, AgentRunWorkspaceCommandPolicyError> {
-        let frame = if let Some(selection) = current_delivery {
-            self.repos
+    ) -> Result<Option<AgentFrame>, AgentRunWorkspaceCommandPolicyError> {
+        if let Some(selection) = current_delivery {
+            return self
+                .repos
                 .agent_frame_repo
                 .get(selection.current_frame_id)
                 .await
-                .map_err(WorkflowApplicationError::from)?
-        } else if let Some(current_frame_id) = agent.current_frame_id {
-            self.repos
+                .map_err(WorkflowApplicationError::from)
+                .map_err(AgentRunWorkspaceCommandPolicyError::from);
+        }
+        if let Some(current_frame_id) = agent.current_frame_id {
+            return self
+                .repos
                 .agent_frame_repo
                 .get(current_frame_id)
                 .await
-                .map_err(WorkflowApplicationError::from)?
-        } else {
-            self.repos
-                .agent_frame_repo
-                .get_current(agent.id)
-                .await
-                .map_err(WorkflowApplicationError::from)?
-        };
-        Ok(frame.map(|frame: AgentFrame| (frame.id, frame.revision)))
+                .map_err(WorkflowApplicationError::from)
+                .map_err(AgentRunWorkspaceCommandPolicyError::from);
+        }
+        self.repos
+            .agent_frame_repo
+            .get_current(agent.id)
+            .await
+            .map_err(WorkflowApplicationError::from)
+            .map_err(AgentRunWorkspaceCommandPolicyError::from)
+    }
+
+    async fn resolve_model_config_status(
+        &self,
+        context: AgentRunWorkspaceCommandPolicyContext<'_>,
+        frame: Option<&AgentFrame>,
+    ) -> Result<ConversationModelConfigStatus, AgentRunWorkspaceCommandPolicyError> {
+        let project_agent_preset_config =
+            if let Some(project_agent_id) = context.agent.project_agent_id {
+                let project_agent = self
+                    .repos
+                    .project_agent_repo
+                    .get_by_project_and_id(context.run.project_id, project_agent_id)
+                    .await
+                    .map_err(WorkflowApplicationError::from)?
+                    .ok_or_else(|| {
+                        WorkflowApplicationError::NotFound(format!(
+                            "ProjectAgent {project_agent_id} not found"
+                        ))
+                    })?;
+                Some(
+                    project_agent
+                        .preset_config()
+                        .map(|preset| preset.to_agent_config(&project_agent.agent_type))
+                        .map_err(WorkflowApplicationError::from)?,
+                )
+            } else {
+                None
+            };
+        let frame_execution_profile = frame.and_then(|frame| frame.typed_execution_profile());
+        let model_config = ConversationModelConfigResolver::resolve(ConversationModelConfigInput {
+            project_agent_preset: project_agent_preset_config.as_ref(),
+            frame_execution_profile: frame_execution_profile.as_ref(),
+            ..Default::default()
+        })
+        .view;
+        Ok(model_config.status)
     }
 }
 
@@ -312,35 +360,27 @@ impl std::fmt::Display for AgentRunWorkspaceCommandConflict {
     }
 }
 
-fn ensure_command_submission_matches_snapshot(
+fn ensure_command_submission_matches_availability(
     command: &AgentRunCommandPreconditionView,
     expected_kind: ConversationCommandKind,
     context: AgentRunWorkspaceCommandPolicyContext<'_>,
-    snapshot: &AgentConversationSnapshot,
+    availability: &ConversationCommandAvailability,
 ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
-    let current_active_turn_id = snapshot.execution.active_turn_id.clone();
-    let current_frame_id = snapshot
-        .lifecycle_context
-        .frame_ref
-        .as_ref()
-        .map(|frame| frame.frame_id.clone());
-    let current_runtime_session_id = snapshot
-        .lifecycle_context
-        .delivery_runtime_ref
-        .as_ref()
-        .map(|runtime| runtime.runtime_session_id.as_str());
+    let current_active_turn_id = availability.active_turn_id.clone();
+    let current_frame_id = availability.frame_id.clone();
+    let current_runtime_session_id = availability.runtime_session_id.as_deref();
     let stale_detail = |reason: &str| {
         serde_json::json!({
             "reason": reason,
             "run_id": context.run.id.to_string(),
             "agent_id": context.agent.id.to_string(),
             "runtime_session_id": context.runtime_session_id,
-            "state": snapshot.execution.status,
+            "state": availability.execution_status,
             "expected_command_kind": expected_kind,
             "submitted_command_kind": command.command_kind,
             "expected_command_id": conversation_command_id_for(expected_kind),
             "submitted_command_id": command.command_id,
-            "expected_snapshot_id": snapshot.snapshot_id,
+            "expected_snapshot_id": availability.snapshot_id,
             "submitted_snapshot_id": command.stale_guard.snapshot_id,
             "expected_frame_id": current_frame_id,
             "submitted_frame_id": command.stale_guard.frame_id,
@@ -352,15 +392,15 @@ fn ensure_command_submission_matches_snapshot(
 
     if command.command_kind != expected_kind {
         return Err(stale_command_conflict(
-            &snapshot_execution_state(snapshot),
-            is_terminal_snapshot(snapshot),
+            &availability_execution_state(availability),
+            is_terminal_availability(availability),
             stale_detail("command_kind_mismatch"),
         ));
     }
     if command.command_id != conversation_command_id_for(expected_kind) {
         return Err(stale_command_conflict(
-            &snapshot_execution_state(snapshot),
-            is_terminal_snapshot(snapshot),
+            &availability_execution_state(availability),
+            is_terminal_availability(availability),
             stale_detail("command_id_mismatch"),
         ));
     }
@@ -368,36 +408,36 @@ fn ensure_command_submission_matches_snapshot(
         || command.stale_guard.agent_id != context.agent.id.to_string()
     {
         return Err(stale_command_conflict(
-            &snapshot_execution_state(snapshot),
-            is_terminal_snapshot(snapshot),
+            &availability_execution_state(availability),
+            is_terminal_availability(availability),
             stale_detail("agent_run_identity_mismatch"),
         ));
     }
     if command.stale_guard.runtime_session_id.as_deref() != current_runtime_session_id {
         return Err(stale_command_conflict(
-            &snapshot_execution_state(snapshot),
-            is_terminal_snapshot(snapshot),
+            &availability_execution_state(availability),
+            is_terminal_availability(availability),
             stale_detail("runtime_session_mismatch"),
         ));
     }
     if command.stale_guard.frame_id != current_frame_id {
         return Err(stale_command_conflict(
-            &snapshot_execution_state(snapshot),
-            is_terminal_snapshot(snapshot),
+            &availability_execution_state(availability),
+            is_terminal_availability(availability),
             stale_detail("frame_mismatch"),
         ));
     }
     if command.stale_guard.active_turn_id != current_active_turn_id {
         return Err(stale_command_conflict(
-            &snapshot_execution_state(snapshot),
-            is_terminal_snapshot(snapshot),
+            &availability_execution_state(availability),
+            is_terminal_availability(availability),
             stale_detail("active_turn_mismatch"),
         ));
     }
-    if command.stale_guard.snapshot_id != snapshot.snapshot_id {
+    if command.stale_guard.snapshot_id != availability.snapshot_id {
         return Err(stale_command_conflict(
-            &snapshot_execution_state(snapshot),
-            is_terminal_snapshot(snapshot),
+            &availability_execution_state(availability),
+            is_terminal_availability(availability),
             stale_detail("snapshot_id_mismatch"),
         ));
     }
@@ -445,20 +485,20 @@ fn workflow_error_from_selection_error(
     }
 }
 
-fn ensure_composer_command_precondition_matches_agent_run(
+fn ensure_composer_command_precondition_matches_availability(
     command: &AgentRunCommandPreconditionView,
     context: AgentRunWorkspaceCommandPolicyContext<'_>,
-    execution_state: &SessionExecutionState,
+    availability: &ConversationCommandAvailability,
 ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
-    let state_code = conversation_execution_state_code(execution_state);
     let detail = || {
         serde_json::json!({
             "run_id": context.run.id.to_string(),
             "agent_id": context.agent.id.to_string(),
             "runtime_session_id": context.runtime_session_id,
-            "state": state_code,
+            "state": availability.execution_status,
             "submitted_command_kind": command.command_kind,
             "submitted_command_id": command.command_id,
+            "expected_command_id": conversation_command_id_for(ConversationCommandKind::SubmitMessage),
             "submitted_guard": &command.stale_guard,
         })
     };
@@ -467,14 +507,14 @@ fn ensure_composer_command_precondition_matches_agent_run(
         || command.stale_guard.agent_id != context.agent.id.to_string()
     {
         return Err(stale_command_conflict(
-            execution_state,
-            false,
+            &availability_execution_state(availability),
+            availability.terminal_agent,
             serde_json::json!({
                 "reason": "agent_run_identity_mismatch",
                 "run_id": context.run.id.to_string(),
                 "agent_id": context.agent.id.to_string(),
                 "runtime_session_id": context.runtime_session_id,
-                "state": state_code,
+                "state": availability.execution_status,
                 "submitted_run_id": &command.stale_guard.run_id,
                 "submitted_agent_id": &command.stale_guard.agent_id,
                 "snapshot_refresh_required": true,
@@ -486,12 +526,35 @@ fn ensure_composer_command_precondition_matches_agent_run(
         return Err(conflict(
             "当前输入提交只能使用 submit_message 命令意图。",
             "command_unavailable",
-            replacement_command_for_state(execution_state, false),
+            replacement_command_for_availability(availability),
             detail(),
         ));
     }
 
-    Ok(())
+    if command.command_id != conversation_command_id_for(ConversationCommandKind::SubmitMessage) {
+        return Err(stale_command_conflict(
+            &availability_execution_state(availability),
+            availability.terminal_agent,
+            serde_json::json!({
+                "reason": "command_id_mismatch",
+                "run_id": context.run.id.to_string(),
+                "agent_id": context.agent.id.to_string(),
+                "runtime_session_id": context.runtime_session_id,
+                "state": availability.execution_status,
+                "expected_command_kind": ConversationCommandKind::SubmitMessage,
+                "submitted_command_kind": command.command_kind,
+                "expected_command_id": conversation_command_id_for(ConversationCommandKind::SubmitMessage),
+                "submitted_command_id": command.command_id,
+                "snapshot_refresh_required": true,
+            }),
+        ));
+    }
+
+    ensure_availability_command_enabled(
+        availability,
+        ConversationCommandKind::SubmitMessage,
+        detail,
+    )
 }
 
 fn stale_command_conflict(
@@ -532,21 +595,12 @@ fn conflict(
     }))
 }
 
-fn resolved_model_config() -> ConversationModelConfigView {
-    ConversationModelConfigView {
-        status: ConversationModelConfigStatus::Resolved,
-        effective_executor_config: None,
-        missing_fields: Vec::new(),
-        message: None,
-    }
-}
-
-fn ensure_snapshot_command_enabled(
-    snapshot: &AgentConversationSnapshot,
+fn ensure_availability_command_enabled(
+    availability: &ConversationCommandAvailability,
     kind: ConversationCommandKind,
     detail: impl Fn() -> Value,
 ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
-    let Some(command) = snapshot_command(snapshot, kind) else {
+    let Some(command) = availability_command(availability, kind) else {
         return Err(conflict(
             "当前 AgentRun command snapshot 缺少该命令。",
             "command_unavailable",
@@ -566,47 +620,48 @@ fn ensure_snapshot_command_enabled(
             .disabled_code
             .clone()
             .unwrap_or_else(|| "command_unavailable".to_string()),
-        replacement_command_for_snapshot(snapshot),
+        replacement_command_for_availability(availability),
         detail(),
     ))
 }
 
-fn snapshot_command(
-    snapshot: &AgentConversationSnapshot,
+fn availability_command(
+    availability: &ConversationCommandAvailability,
     kind: ConversationCommandKind,
 ) -> Option<&ConversationCommandView> {
-    snapshot
+    availability
         .commands
         .commands
         .iter()
         .find(|command| command.kind == kind)
 }
 
-fn replacement_command_for_snapshot(snapshot: &AgentConversationSnapshot) -> Option<&'static str> {
-    if is_terminal_snapshot(snapshot) {
+fn replacement_command_for_availability(
+    availability: &ConversationCommandAvailability,
+) -> Option<&'static str> {
+    if is_terminal_availability(availability) {
         None
     } else {
         Some("submit_message")
     }
 }
 
-fn is_terminal_snapshot(snapshot: &AgentConversationSnapshot) -> bool {
-    snapshot.execution.status
-        == agentdash_contracts::workflow::ConversationExecutionStatus::Terminal
+fn is_terminal_availability(availability: &ConversationCommandAvailability) -> bool {
+    availability.execution_status == ConversationExecutionStatus::Terminal
 }
 
-fn snapshot_execution_state(snapshot: &AgentConversationSnapshot) -> SessionExecutionState {
-    use agentdash_contracts::workflow::ConversationExecutionStatus;
-
-    match snapshot.execution.status {
+fn availability_execution_state(
+    availability: &ConversationCommandAvailability,
+) -> SessionExecutionState {
+    match availability.execution_status {
         ConversationExecutionStatus::StartingClaimed => {
             SessionExecutionState::Running { turn_id: None }
         }
         ConversationExecutionStatus::RunningActive => SessionExecutionState::Running {
-            turn_id: snapshot.execution.active_turn_id.clone(),
+            turn_id: availability.active_turn_id.clone(),
         },
         ConversationExecutionStatus::Cancelling => SessionExecutionState::Cancelling {
-            turn_id: snapshot.execution.active_turn_id.clone(),
+            turn_id: availability.active_turn_id.clone(),
         },
         _ => SessionExecutionState::Idle,
     }
@@ -653,6 +708,24 @@ mod tests {
         }
     }
 
+    fn availability(
+        context: AgentRunWorkspaceCommandPolicyContext<'_>,
+        execution_state: SessionExecutionState,
+    ) -> ConversationCommandAvailability {
+        ConversationCommandAvailabilityResolver::resolve(ConversationCommandAvailabilityInput {
+            run_id: context.run.id,
+            agent_id: context.agent.id,
+            frame_ref: Some((Uuid::new_v4(), 1)),
+            delivery_runtime_session_id: Some(context.runtime_session_id.to_string()),
+            execution_state,
+            terminal_agent: false,
+            supports_steering: true,
+            mailbox_paused: false,
+            mailbox_visible_message_count: 0,
+            model_config_status: ConversationModelConfigStatus::Resolved,
+        })
+    }
+
     #[test]
     fn composer_submit_accepts_single_submit_message_intent_after_terminal() {
         let completed = SessionExecutionState::Completed {
@@ -661,8 +734,9 @@ mod tests {
         let (run, agent) = test_context();
         let context = policy_context(&run, &agent);
         let command = command(ConversationCommandKind::SubmitMessage, context);
+        let availability = availability(context, completed);
 
-        ensure_composer_command_precondition_matches_agent_run(&command, context, &completed)
+        ensure_composer_command_precondition_matches_availability(&command, context, &availability)
             .expect("composer input should not require stale frame or turn guard");
     }
 
@@ -674,10 +748,14 @@ mod tests {
         let (run, agent) = test_context();
         let context = policy_context(&run, &agent);
         let command = command(ConversationCommandKind::Cancel, context);
+        let availability = availability(context, running);
 
-        let error =
-            ensure_composer_command_precondition_matches_agent_run(&command, context, &running)
-                .expect_err("cancel is not a composer input command");
+        let error = ensure_composer_command_precondition_matches_availability(
+            &command,
+            context,
+            &availability,
+        )
+        .expect_err("cancel is not a composer input command");
 
         match error {
             AgentRunWorkspaceCommandPolicyError::Conflict(payload) => {
@@ -695,8 +773,9 @@ mod tests {
         let (run, agent) = test_context();
         let context = policy_context(&run, &agent);
         let command = command(ConversationCommandKind::SubmitMessage, context);
+        let availability = availability(context, running);
 
-        ensure_composer_command_precondition_matches_agent_run(&command, context, &running)
+        ensure_composer_command_precondition_matches_availability(&command, context, &availability)
             .expect("scheduler owns running submit policy");
     }
 }

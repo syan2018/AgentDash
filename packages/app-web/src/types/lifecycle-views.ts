@@ -28,6 +28,7 @@ export type {
   SessionRuntimeControlView,
   SessionShellDto,
   SubjectExecutionView,
+  SubjectRuntimeAttemptView,
 } from "../generated/workflow-contracts";
 
 // ─── Subject Execution 索引 key ─────────────────────────

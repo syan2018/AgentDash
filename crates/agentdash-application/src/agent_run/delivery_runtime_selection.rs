@@ -223,7 +223,7 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
             .list_by_run(run_id)
             .await?
             .into_iter()
-            .filter(|anchor| agent_id.map_or(true, |id| anchor.agent_id == id))
+            .filter(|anchor| agent_id.is_none_or(|id| anchor.agent_id == id))
             .max_by_key(|anchor| anchor.updated_at)
             .ok_or(DeliveryRuntimeSelectionError::RuntimeDeliveryNotFound { run_id, agent_id })?;
         self.selection_from_raw_anchor(anchor).await

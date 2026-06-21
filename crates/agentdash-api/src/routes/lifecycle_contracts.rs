@@ -59,6 +59,11 @@ pub(crate) fn subject_execution_view_to_contract(
             .map(lifecycle_run_view_to_contract)
             .collect(),
         current_agent: view.current_agent.map(agent_run_to_contract),
+        runtime_attempts: view
+            .runtime_attempts
+            .into_iter()
+            .map(subject_runtime_attempt_to_contract)
+            .collect(),
         latest_runtime_node: view.latest_runtime_node.map(runtime_node_to_contract),
         artifacts: view.artifacts,
     }
@@ -187,6 +192,30 @@ fn runtime_node_to_contract(node: app::RuntimeNodeView) -> contract::RuntimeNode
             .into_iter()
             .map(runtime_node_to_contract)
             .collect(),
+    }
+}
+
+fn subject_runtime_attempt_to_contract(
+    attempt: app::SubjectRuntimeAttemptView,
+) -> contract::SubjectRuntimeAttemptView {
+    contract::SubjectRuntimeAttemptView {
+        run_ref: contract::LifecycleRunRefDto {
+            run_id: attempt.run_ref.run_id,
+        },
+        agent_ref: contract::AgentRunRefDto {
+            run_id: attempt.agent_ref.run_id,
+            agent_id: attempt.agent_ref.agent_id,
+        },
+        runtime_session_ref: runtime_session_ref_to_contract(attempt.runtime_session_ref),
+        launch_frame_id: attempt.launch_frame_id,
+        current_frame_id: attempt.current_frame_id,
+        orchestration_id: attempt.orchestration_id,
+        node_path: attempt.node_path,
+        attempt: attempt.attempt,
+        status: attempt.status,
+        observed_at: attempt.observed_at,
+        runtime_node: runtime_node_to_contract(attempt.runtime_node),
+        artifacts: attempt.artifacts,
     }
 }
 

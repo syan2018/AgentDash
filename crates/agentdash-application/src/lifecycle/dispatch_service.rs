@@ -421,7 +421,6 @@ impl<'a> LifecycleDispatchService<'a> {
             request.orchestration_binding.attempt,
         );
         anchor_repo.upsert(&anchor).await?;
-        let mut agent = agent;
         agent.bind_current_delivery_from_anchor(
             &anchor,
             DeliveryBindingStatus::Ready,

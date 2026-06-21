@@ -53,7 +53,7 @@ pub trait PermissionGrantRepository: Send + Sync {
     async fn list_active_by_frame(&self, effect_frame_id: Uuid) -> Result<Vec<PermissionGrant>, DomainError>;
     async fn list_active_by_run(&self, run_id: Uuid) -> Result<Vec<PermissionGrant>, DomainError>;
     async fn find_active_escalation_grant(&self, session_id: &str, target_subject_kind: &str) -> Result<Option<PermissionGrant>, DomainError>;
-    async fn expire_overdue(&self) -> Result<u64, DomainError>;
+    async fn list_overdue_active(&self, now: DateTime<Utc>) -> Result<Vec<PermissionGrant>, DomainError>;
 }
 ```
 
@@ -192,7 +192,8 @@ Agent requests unknown_capability
 | Integration | `PostgresPermissionGrantRepository::create` + `find_by_id` | Roundtrip preserves all fields |
 | Integration | `list_by_frame(..., Active)` filters non-active | Only Applied/ScopeEscalated returned |
 | Integration | `list_by_run(..., Pending/Terminal)` filters by status group | Pending and terminal groups do not rely on active-only query |
-| Integration | `expire_overdue` marks old grants | Applied + expired → Expired |
+| Integration | `list_overdue_active` finds old grants | Applied + expired grants are returned without mutating status |
+| Application | `PermissionGrantService::expire_overdue_with_agent_run_effects` | Reuses single-grant expiry classification; admission-only grants do not write AgentFrame revisions, surface-changing grants do |
 | API | `GET /permission-grants` without params | 400 error |
 | API | `POST /permission-grants/:id/approve` on Applied grant | 400 error |
 

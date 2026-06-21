@@ -191,7 +191,6 @@ impl HookRuntimeDelegate {
         previous
             .effective_context_window
             .max(previous.context_window)
-            .max(0)
     }
 
     /// 从消息中提取最新的 LLM usage 并更新 session runtime 的 token stats

@@ -185,12 +185,13 @@ use agentdash_contracts::workflow::{
     RuntimeNodeView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
     RuntimeSessionTraceMeta, RuntimeSessionTraceView, SessionRuntimeControlPlaneStatus,
     SessionRuntimeControlPlaneView, SessionRuntimeControlView, SessionShellDto,
-    SubjectExecutionView, SubjectRefDto, SubmitOrchestrationHumanDecisionRequest,
-    SubmitOrchestrationHumanDecisionResponse, ToolClusterDto, ToolDescriptorDto, ToolSourceDto,
-    ValidateHookScriptResponse, ValidationIssue, WorkflowGraphResponse,
-    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
-    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
-    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
+    SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
+    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
+    ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse, ValidationIssue,
+    WorkflowGraphResponse, WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto,
+    WorkflowScriptCapabilitySummaryDto, WorkflowScriptHumanGateCapabilityDto,
+    WorkflowScriptPlanPreviewDto, WorkflowScriptPlanPreviewNodeDto,
+    WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_contracts::workspace::{
     WorkspaceBindingResponse, WorkspaceBindingStatus, WorkspaceBindingSyncResult,
@@ -715,6 +716,7 @@ fn main() {
             export_all::<AgentConversationLifecycleContext>(dir);
             export_all::<AgentConversationSnapshot>(dir);
             export_all::<AgentRunWorkspaceView>(dir);
+            export_all::<SubjectRuntimeAttemptView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
             export_all::<RuntimeSessionTraceView>(dir);

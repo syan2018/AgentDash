@@ -40,7 +40,7 @@ crates/agentdash-api/src/routes/permission_grants.rs
 - Permission Grant 作为独立聚合根存在于 `agentdash-domain::permission`，不隶属于 workflow 或 session 模块。
 - Policy 评估不依赖 repository（纯函数），数据加载由 service 层负责传入。
 - Scope Escalation 通过创建 `LifecycleSubjectAssociation(role=ControlScope)` 实现，复用 workflow 模块的关联层。
-- TTL 过期当前由 `expire_overdue()` 提供 batch 清理接口，未来可加入后台 scheduler。
+- TTL 过期由 `PermissionGrantRepository::list_overdue_active(now)` 找出到期 active grants，再由 `PermissionGrantService::expire_overdue_with_agent_run_effects` 逐条进入 `PermissionGrant::expire()` 状态机并复用 AgentRun grant effect 分类路径；后台 scheduler 只负责触发 application service。
 
 ## Contract Appendices
 

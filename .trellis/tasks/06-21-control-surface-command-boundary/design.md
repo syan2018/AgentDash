@@ -32,6 +32,8 @@
 - API / panel / iframe 只表达 action/channel intent 和 input；backend target 由宿主/API 后端 resolver 组装。
 - Project-level 非 session invocation 是后续能力，本轮只保留 contract/design 扩展点，不实现 fallback。
 
-## Pending Product Decisions
+## Command Availability Resolver
 
-- route policy 是否必须消费 command availability core，而不是重建完整 UI snapshot。
+- ConversationSnapshot 与 workspace route policy 共用 application 层 command availability resolver。
+- resolver 输入是 AgentRun、frame/runtime、execution state、mailbox pause/visible count、model config status 和 steering support 这些控制面事实；输出 command set、snapshot id 和 stale guard 所需事实。
+- route policy 只消费 availability 输出校验 command kind/id、stale guard 和 enabled 状态，原因是 API command admission 不应通过重建完整 browser UI projection 获得命令可用性。

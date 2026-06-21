@@ -6,9 +6,10 @@ use crate::context_source::ContextSourceRef;
 
 use super::super::lifecycle_subject_association::SubjectRef;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskPlanStatus {
+    #[default]
     Open,
     Active,
     Review,
@@ -26,12 +27,6 @@ impl TaskPlanStatus {
         }
 
         !matches!(self, Dropped)
-    }
-}
-
-impl Default for TaskPlanStatus {
-    fn default() -> Self {
-        Self::Open
     }
 }
 

@@ -193,17 +193,24 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
         row.map(TryInto::try_into).transpose()
     }
 
-    async fn expire_overdue(&self) -> Result<u64, DomainError> {
-        let result = sqlx::query(
-            "UPDATE permission_grants SET status = 'expired', updated_at = $1 \
-             WHERE status = 'applied' AND expires_at IS NOT NULL AND expires_at < $1",
+    async fn list_overdue_active(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<PermissionGrant>, DomainError> {
+        sqlx::query_as::<_, GrantRow>(
+            "SELECT * FROM permission_grants \
+             WHERE status = 'applied' \
+               AND expires_at IS NOT NULL \
+               AND expires_at < $1 \
+             ORDER BY expires_at ASC, created_at ASC",
         )
-        .bind(chrono::Utc::now())
-        .execute(&self.pool)
+        .bind(now)
+        .fetch_all(&self.pool)
         .await
-        .map_err(db_err)?;
-
-        Ok(result.rows_affected())
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
     }
 }
 

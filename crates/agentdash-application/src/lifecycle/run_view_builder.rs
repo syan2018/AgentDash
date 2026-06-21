@@ -3,6 +3,8 @@
 //! 单一所有者：API 路由层不再内联投影逻辑，统一通过本模块构建 read model，
 //! 确保 `runtime_trace_refs`、`subject_associations` 等字段始终被正确填充。
 
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -167,7 +169,24 @@ pub struct SubjectExecutionView {
     pub associations: Vec<LifecycleSubjectAssociationView>,
     pub runs: Vec<LifecycleRunView>,
     pub current_agent: Option<AgentRunView>,
+    pub runtime_attempts: Vec<SubjectRuntimeAttemptView>,
     pub latest_runtime_node: Option<RuntimeNodeView>,
+    pub artifacts: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubjectRuntimeAttemptView {
+    pub run_ref: LifecycleRunRefView,
+    pub agent_ref: AgentRunRefView,
+    pub runtime_session_ref: RuntimeSessionRefView,
+    pub launch_frame_id: String,
+    pub current_frame_id: Option<String>,
+    pub orchestration_id: String,
+    pub node_path: String,
+    pub attempt: u32,
+    pub status: String,
+    pub observed_at: String,
+    pub runtime_node: RuntimeNodeView,
     pub artifacts: Value,
 }
 
@@ -239,12 +258,13 @@ pub async fn build_subject_execution_view(
 
     let mut run_views = Vec::with_capacity(runs.len());
     let mut current_agent: Option<AgentRunView> = None;
-    let runtime_projection = latest_subject_runtime_projection(repos, &associations, &runs).await?;
-    let latest_runtime_node = runtime_projection
-        .as_ref()
-        .map(|projection| projection.node.clone());
-    let artifacts = runtime_projection
-        .map(|projection| projection.artifacts)
+    let runtime_attempts = subject_runtime_attempt_history(repos, &associations, &runs).await?;
+    let latest_runtime_node = runtime_attempts
+        .first()
+        .map(|attempt| attempt.runtime_node.clone());
+    let artifacts = runtime_attempts
+        .first()
+        .map(|attempt| attempt.artifacts.clone())
         .unwrap_or_else(|| json!({}));
 
     for run in &runs {
@@ -265,6 +285,7 @@ pub async fn build_subject_execution_view(
         associations: associations.iter().map(association_to_view).collect(),
         runs: run_views,
         current_agent,
+        runtime_attempts,
         latest_runtime_node,
         artifacts,
     })
@@ -323,71 +344,72 @@ async fn collect_runtime_trace_refs(
         .collect())
 }
 
-struct SubjectRuntimeProjection {
-    node: RuntimeNodeView,
-    artifacts: Value,
-    observed_at: DateTime<Utc>,
-}
-
-async fn latest_subject_runtime_projection(
+async fn subject_runtime_attempt_history(
     repos: &RepositorySet,
     associations: &[LifecycleSubjectAssociation],
     runs: &[LifecycleRun],
-) -> Result<Option<SubjectRuntimeProjection>, DomainError> {
-    let mut latest: Option<SubjectRuntimeProjection> = None;
+) -> Result<Vec<SubjectRuntimeAttemptView>, DomainError> {
+    let mut attempts = Vec::new();
+    let mut seen_runtime_sessions = HashSet::new();
 
     for association in associations {
-        let Some(agent) = resolve_association_agent(repos, association).await? else {
-            continue;
-        };
-        let Some(current_frame_id) = agent.current_frame_id else {
-            continue;
-        };
+        let agents = resolve_association_history_agents(repos, association).await?;
         let Some(run) = runs.iter().find(|run| run.id == association.anchor_run_id) else {
             continue;
         };
-        let anchors = repos.execution_anchor_repo.list_by_agent(agent.id).await?;
-        for anchor in anchors {
-            if anchor.run_id != run.id || anchor.launch_frame_id != current_frame_id {
-                continue;
-            }
-            let Some(projection) = runtime_projection_from_anchor(run, &anchor) else {
-                continue;
-            };
-            if latest
-                .as_ref()
-                .map(|current| projection.observed_at > current.observed_at)
-                .unwrap_or(true)
-            {
-                latest = Some(projection);
+        for agent in agents {
+            let anchors = repos.execution_anchor_repo.list_by_agent(agent.id).await?;
+            for anchor in anchors {
+                if anchor.run_id != run.id
+                    || !seen_runtime_sessions.insert(anchor.runtime_session_id.clone())
+                {
+                    continue;
+                }
+                let Some(attempt) = runtime_attempt_from_anchor(run, &agent, &anchor) else {
+                    continue;
+                };
+                attempts.push(attempt);
             }
         }
     }
 
-    Ok(latest)
+    sort_subject_runtime_attempts(&mut attempts);
+
+    Ok(attempts)
 }
 
-async fn resolve_association_agent(
+async fn resolve_association_history_agents(
     repos: &RepositorySet,
     association: &LifecycleSubjectAssociation,
-) -> Result<Option<LifecycleAgent>, DomainError> {
+) -> Result<Vec<LifecycleAgent>, DomainError> {
     if let Some(agent_id) = association.anchor_agent_id {
         let agent = repos.lifecycle_agent_repo.get(agent_id).await?;
-        return Ok(agent.filter(|agent| agent.run_id == association.anchor_run_id));
+        return Ok(agent
+            .filter(|agent| agent.run_id == association.anchor_run_id)
+            .into_iter()
+            .collect());
     }
-    Ok(repos
+    repos
         .lifecycle_agent_repo
         .list_by_run(association.anchor_run_id)
-        .await?
-        .into_iter()
-        .filter(|agent| agent.status == "active")
-        .max_by_key(|agent| agent.updated_at))
+        .await
 }
 
-fn runtime_projection_from_anchor(
+fn sort_subject_runtime_attempts(attempts: &mut [SubjectRuntimeAttemptView]) {
+    attempts.sort_by(|a, b| {
+        b.observed_at.cmp(&a.observed_at).then_with(|| {
+            b.runtime_session_ref
+                .runtime_session_id
+                .cmp(&a.runtime_session_ref.runtime_session_id)
+        })
+    });
+}
+
+fn runtime_attempt_from_anchor(
     run: &LifecycleRun,
+    agent: &LifecycleAgent,
     anchor: &RuntimeSessionExecutionAnchor,
-) -> Option<SubjectRuntimeProjection> {
+) -> Option<SubjectRuntimeAttemptView> {
     let orchestration_id = anchor.orchestration_id?;
     let node_path = anchor.node_path.as_deref()?;
     let attempt = anchor.node_attempt.unwrap_or(1);
@@ -400,10 +422,28 @@ fn runtime_projection_from_anchor(
         .completed_at
         .or(node.started_at)
         .unwrap_or(anchor.updated_at);
-    Some(SubjectRuntimeProjection {
-        node: runtime_node_to_view(node),
-        artifacts: runtime_node_artifacts(orchestration, node),
-        observed_at,
+    let runtime_node = runtime_node_to_view(node);
+    let artifacts = runtime_node_artifacts(orchestration, node);
+    Some(SubjectRuntimeAttemptView {
+        run_ref: LifecycleRunRefView {
+            run_id: run.id.to_string(),
+        },
+        agent_ref: AgentRunRefView {
+            run_id: run.id.to_string(),
+            agent_id: anchor.agent_id.to_string(),
+        },
+        runtime_session_ref: RuntimeSessionRefView {
+            runtime_session_id: anchor.runtime_session_id.clone(),
+        },
+        launch_frame_id: anchor.launch_frame_id.to_string(),
+        current_frame_id: agent.current_frame_id.map(|id| id.to_string()),
+        orchestration_id: orchestration_id.to_string(),
+        node_path: node_path.to_string(),
+        attempt,
+        status: status_string(&node.status),
+        observed_at: observed_at.to_rfc3339(),
+        runtime_node,
+        artifacts,
     })
 }
 
@@ -732,4 +772,125 @@ fn unique_run_ids(associations: &[LifecycleSubjectAssociation]) -> Vec<Uuid> {
         }
     }
     run_ids
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, Utc};
+    use serde_json::json;
+
+    use agentdash_domain::workflow::{
+        AgentSource, LifecycleAgent, LifecycleRun, OrchestrationInstance, OrchestrationLimits,
+        OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNodeKind, RuntimeNodeState,
+        RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
+    };
+
+    use super::*;
+
+    #[test]
+    fn subject_runtime_attempt_history_items_sort_latest_and_preserve_coordinates() {
+        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
+        let source_ref = OrchestrationSourceRef::Inline {
+            source_digest: "sha256:test-subject-history".to_string(),
+        };
+        let plan_snapshot = OrchestrationPlanSnapshot {
+            plan_digest: "sha256:plan".to_string(),
+            plan_version: 1,
+            source_ref: source_ref.clone(),
+            nodes: Vec::new(),
+            entry_node_ids: Vec::new(),
+            activation_rules: Vec::new(),
+            state_exchange_rules: Vec::new(),
+            limits: OrchestrationLimits::default(),
+            metadata: None,
+            created_at: Utc::now(),
+        };
+        let mut orchestration = OrchestrationInstance::new("subject", source_ref, plan_snapshot);
+        let orchestration_id = orchestration.orchestration_id;
+        let older_time = Utc::now() - Duration::seconds(30);
+        let newer_time = Utc::now();
+        orchestration.node_tree = vec![
+            runtime_node("agent-node-1", 1, RuntimeNodeStatus::Failed, older_time),
+            runtime_node("agent-node-2", 2, RuntimeNodeStatus::Completed, newer_time),
+        ];
+        orchestration
+            .state_snapshot
+            .node_outputs
+            .insert("agent-node-2".to_string(), json!({"result": "newer"}));
+        run.orchestrations.push(orchestration);
+
+        let mut agent =
+            LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent);
+        let launch_frame_id = Uuid::new_v4();
+        let current_frame_id = Uuid::new_v4();
+        agent.set_current_frame(current_frame_id);
+
+        let older_anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
+            "runtime-old",
+            run.id,
+            launch_frame_id,
+            agent.id,
+            orchestration_id,
+            "root.agent",
+            1,
+        );
+        let newer_anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
+            "runtime-new",
+            run.id,
+            launch_frame_id,
+            agent.id,
+            orchestration_id,
+            "root.agent",
+            2,
+        );
+
+        let mut attempts = vec![
+            runtime_attempt_from_anchor(&run, &agent, &older_anchor).expect("older attempt"),
+            runtime_attempt_from_anchor(&run, &agent, &newer_anchor).expect("newer attempt"),
+        ];
+        sort_subject_runtime_attempts(&mut attempts);
+
+        let latest = attempts.first().expect("latest attempt");
+        assert_eq!(latest.runtime_session_ref.runtime_session_id, "runtime-new");
+        assert_eq!(latest.run_ref.run_id, run.id.to_string());
+        assert_eq!(latest.agent_ref.agent_id, agent.id.to_string());
+        assert_eq!(latest.launch_frame_id, launch_frame_id.to_string());
+        let current_frame_id_string = current_frame_id.to_string();
+        assert_eq!(
+            latest.current_frame_id.as_deref(),
+            Some(current_frame_id_string.as_str())
+        );
+        assert_eq!(latest.orchestration_id, orchestration_id.to_string());
+        assert_eq!(latest.node_path, "root.agent");
+        assert_eq!(latest.attempt, 2);
+        assert_eq!(latest.status, "completed");
+        assert_eq!(latest.runtime_node.node_id, "agent-node-2");
+        assert_eq!(latest.artifacts["node_outputs"]["result"], "newer");
+        assert!(attempts[0].observed_at > attempts[1].observed_at);
+    }
+
+    fn runtime_node(
+        node_id: &str,
+        attempt: u32,
+        status: RuntimeNodeStatus,
+        completed_at: chrono::DateTime<Utc>,
+    ) -> RuntimeNodeState {
+        RuntimeNodeState {
+            node_id: node_id.to_string(),
+            node_path: "root.agent".to_string(),
+            kind: PlanNodeKind::AgentCall,
+            status,
+            attempt,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            executor_run_ref: None,
+            children: Vec::new(),
+            phase_path: Vec::new(),
+            started_at: None,
+            completed_at: Some(completed_at),
+            error: None,
+            trace_refs: Vec::new(),
+            cache: None,
+        }
+    }
 }

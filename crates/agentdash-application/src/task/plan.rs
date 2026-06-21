@@ -396,7 +396,7 @@ pub async fn build_story_task_projection(
     }
 
     let mut tasks = items.into_values().collect::<Vec<_>>();
-    tasks.sort_by(|a, b| b.task.updated_at.cmp(&a.task.updated_at));
+    tasks.sort_by_key(|item| std::cmp::Reverse(item.task.updated_at));
     Ok(StoryTaskProjectionView { story_id, tasks })
 }
 

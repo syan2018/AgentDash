@@ -247,6 +247,81 @@ fn thinking_level_string(level: ThinkingLevel) -> String {
     .to_string()
 }
 
+#[derive(Debug, Clone)]
+pub struct ConversationCommandAvailabilityInput {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub frame_ref: Option<(Uuid, i32)>,
+    pub delivery_runtime_session_id: Option<String>,
+    pub execution_state: SessionExecutionState,
+    pub terminal_agent: bool,
+    pub supports_steering: bool,
+    pub mailbox_paused: bool,
+    pub mailbox_visible_message_count: usize,
+    pub model_config_status: ConversationModelConfigStatus,
+}
+
+impl ConversationCommandAvailabilityInput {
+    fn from_snapshot_input(input: &AgentConversationSnapshotInput) -> Self {
+        Self {
+            run_id: input.run_id,
+            agent_id: input.agent_id,
+            frame_ref: input.frame_ref,
+            delivery_runtime_session_id: input.delivery_runtime_session_id.clone(),
+            execution_state: input.execution_state.clone(),
+            terminal_agent: input.terminal_agent,
+            supports_steering: input.supports_steering,
+            mailbox_paused: input.mailbox_paused,
+            mailbox_visible_message_count: input.mailbox_visible_message_count,
+            model_config_status: input.model_config.status,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ConversationCommandAvailability {
+    pub snapshot_id: String,
+    pub execution_status: ConversationExecutionStatus,
+    pub frame_id: Option<String>,
+    pub runtime_session_id: Option<String>,
+    pub active_turn_id: Option<String>,
+    pub terminal_agent: bool,
+    pub commands: ConversationCommandSetView,
+}
+
+pub struct ConversationCommandAvailabilityResolver;
+
+impl ConversationCommandAvailabilityResolver {
+    pub fn resolve(input: ConversationCommandAvailabilityInput) -> ConversationCommandAvailability {
+        let active_turn_id = active_turn_id(&input.execution_state);
+        let execution_status = conversation_execution_status(&input);
+        let snapshot_id = conversation_snapshot_id(
+            input.run_id,
+            input.agent_id,
+            input.frame_ref,
+            input.delivery_runtime_session_id.as_deref(),
+            &input.execution_state,
+            input.terminal_agent,
+        );
+        let commands = conversation_commands(
+            &input,
+            execution_status,
+            active_turn_id.as_deref(),
+            &snapshot_id,
+        );
+
+        ConversationCommandAvailability {
+            snapshot_id,
+            execution_status,
+            frame_id: input.frame_ref.map(|(frame_id, _)| frame_id.to_string()),
+            runtime_session_id: input.delivery_runtime_session_id,
+            active_turn_id,
+            terminal_agent: input.terminal_agent,
+            commands,
+        }
+    }
+}
+
 pub struct AgentConversationSnapshotInput {
     pub project_id: Uuid,
     pub run_id: Uuid,
@@ -268,22 +343,15 @@ pub struct AgentConversationSnapshotResolver;
 
 impl AgentConversationSnapshotResolver {
     pub fn resolve(input: AgentConversationSnapshotInput) -> AgentConversationSnapshot {
-        let active_turn_id = active_turn_id(&input.execution_state);
-        let execution = conversation_execution_view(&input, active_turn_id.clone());
-        let snapshot_id = conversation_snapshot_id(
-            input.run_id,
-            input.agent_id,
-            input.frame_ref,
-            input.delivery_runtime_session_id.as_deref(),
-            &input.execution_state,
-            input.terminal_agent,
+        let availability = ConversationCommandAvailabilityResolver::resolve(
+            ConversationCommandAvailabilityInput::from_snapshot_input(&input),
         );
-        let commands = conversation_commands(
+        let execution = conversation_execution_view(
             &input,
-            execution.status,
-            active_turn_id.as_deref(),
-            &snapshot_id,
+            availability.execution_status,
+            availability.active_turn_id.clone(),
         );
+        let commands = availability.commands;
         let resume_command = commands
             .commands
             .iter()
@@ -293,7 +361,7 @@ impl AgentConversationSnapshotResolver {
         let diagnostics = conversation_diagnostics(&input.model_config, input.resource_diagnostics);
 
         AgentConversationSnapshot {
-            snapshot_id: snapshot_id.clone(),
+            snapshot_id: availability.snapshot_id.clone(),
             identity: AgentConversationIdentity {
                 run_ref: LifecycleRunRefDto {
                     run_id: input.run_id.to_string(),
@@ -337,44 +405,28 @@ impl AgentConversationSnapshotResolver {
 
 fn conversation_execution_view(
     input: &AgentConversationSnapshotInput,
+    status: ConversationExecutionStatus,
     active_turn_id: Option<String>,
 ) -> ConversationExecutionView {
-    let (status, reason) = if input.terminal_agent {
-        (
-            ConversationExecutionStatus::Terminal,
-            Some("当前 AgentRun 已结束。".to_string()),
-        )
-    } else if input.delivery_runtime_session_id.is_none() {
-        (
-            ConversationExecutionStatus::DeliveryMissing,
-            Some("当前 AgentRun 缺少可投递的 runtime 通道。".to_string()),
-        )
-    } else if input.frame_ref.is_none() {
-        (
-            ConversationExecutionStatus::FrameMissing,
-            Some("当前 AgentRun 没有可投递的 runtime frame。".to_string()),
-        )
-    } else if input.model_config.status == ConversationModelConfigStatus::ModelRequired {
-        (
-            ConversationExecutionStatus::ModelRequired,
-            input.model_config.message.clone(),
-        )
-    } else {
-        match input.execution_state {
-            SessionExecutionState::Running { turn_id: None } => (
-                ConversationExecutionStatus::StartingClaimed,
-                Some("当前 AgentRun 正在启动中，等待 active turn 建立。".to_string()),
-            ),
-            SessionExecutionState::Running { turn_id: Some(_) } => (
-                ConversationExecutionStatus::RunningActive,
-                Some("当前 AgentRun 正在执行中。".to_string()),
-            ),
-            SessionExecutionState::Cancelling { .. } => (
-                ConversationExecutionStatus::Cancelling,
-                Some("当前 AgentRun 正在取消中，等待执行器收口。".to_string()),
-            ),
-            _ => (ConversationExecutionStatus::Ready, None),
+    let reason = match status {
+        ConversationExecutionStatus::Terminal => Some("当前 AgentRun 已结束。".to_string()),
+        ConversationExecutionStatus::DeliveryMissing => {
+            Some("当前 AgentRun 缺少可投递的 runtime 通道。".to_string())
         }
+        ConversationExecutionStatus::FrameMissing => {
+            Some("当前 AgentRun 没有可投递的 runtime frame。".to_string())
+        }
+        ConversationExecutionStatus::ModelRequired => input.model_config.message.clone(),
+        ConversationExecutionStatus::StartingClaimed => {
+            Some("当前 AgentRun 正在启动中，等待 active turn 建立。".to_string())
+        }
+        ConversationExecutionStatus::RunningActive => {
+            Some("当前 AgentRun 正在执行中。".to_string())
+        }
+        ConversationExecutionStatus::Cancelling => {
+            Some("当前 AgentRun 正在取消中，等待执行器收口。".to_string())
+        }
+        ConversationExecutionStatus::Draft | ConversationExecutionStatus::Ready => None,
     };
     ConversationExecutionView {
         status,
@@ -387,13 +439,38 @@ fn conversation_execution_view(
     }
 }
 
+fn conversation_execution_status(
+    input: &ConversationCommandAvailabilityInput,
+) -> ConversationExecutionStatus {
+    if input.terminal_agent {
+        ConversationExecutionStatus::Terminal
+    } else if input.delivery_runtime_session_id.is_none() {
+        ConversationExecutionStatus::DeliveryMissing
+    } else if input.frame_ref.is_none() {
+        ConversationExecutionStatus::FrameMissing
+    } else if input.model_config_status == ConversationModelConfigStatus::ModelRequired {
+        ConversationExecutionStatus::ModelRequired
+    } else {
+        match input.execution_state {
+            SessionExecutionState::Running { turn_id: None } => {
+                ConversationExecutionStatus::StartingClaimed
+            }
+            SessionExecutionState::Running { turn_id: Some(_) } => {
+                ConversationExecutionStatus::RunningActive
+            }
+            SessionExecutionState::Cancelling { .. } => ConversationExecutionStatus::Cancelling,
+            _ => ConversationExecutionStatus::Ready,
+        }
+    }
+}
+
 fn conversation_commands(
-    input: &AgentConversationSnapshotInput,
+    input: &ConversationCommandAvailabilityInput,
     status: ConversationExecutionStatus,
     active_turn_id: Option<&str>,
     snapshot_id: &str,
 ) -> ConversationCommandSetView {
-    let model_ready = input.model_config.status == ConversationModelConfigStatus::Resolved;
+    let model_ready = input.model_config_status == ConversationModelConfigStatus::Resolved;
     let submit_message = !matches!(
         status,
         ConversationExecutionStatus::Draft
@@ -514,7 +591,7 @@ fn conversation_commands(
 }
 
 fn command_view(
-    input: &AgentConversationSnapshotInput,
+    input: &ConversationCommandAvailabilityInput,
     kind: ConversationCommandKind,
     snapshot_id: &str,
     enabled: bool,

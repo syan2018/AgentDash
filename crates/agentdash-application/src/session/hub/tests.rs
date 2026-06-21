@@ -1257,6 +1257,105 @@ async fn replace_current_capability_state_requires_matching_frame_target() {
 }
 
 #[tokio::test]
+async fn adopt_persisted_agent_frame_revision_updates_runtime_without_writing_frame() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None);
+    let session = hub
+        .create_session("persisted-adoption")
+        .await
+        .expect("create");
+    let initial_frame = attach_test_frame(&hub, &session.id).await;
+    let mut persisted_state = CapabilityState::default();
+    persisted_state
+        .tool
+        .capabilities
+        .insert(agentdash_spi::ToolCapability::new("file_write"));
+    persisted_state
+        .tool
+        .enabled_clusters
+        .insert(agentdash_spi::ToolCluster::Write);
+    let mut persisted_frame = AgentFrame::new_revision(
+        initial_frame.agent_id,
+        initial_frame.revision + 1,
+        "test_surface_change",
+    );
+    persisted_frame.effective_capability_json =
+        Some(serde_json::to_value(&persisted_state).expect("capability json"));
+    hub.agent_frame_repo
+        .as_ref()
+        .expect("frame repo")
+        .create(&persisted_frame)
+        .await
+        .expect("persist frame");
+    let frame_count_before = hub
+        .agent_frame_repo
+        .as_ref()
+        .expect("frame repo")
+        .list_by_agent(initial_frame.agent_id)
+        .await
+        .expect("frames before")
+        .len();
+
+    let _rx = hub.ensure_session(&session.id).await;
+    hub.runtime_registry
+        .with_runtime_mut(&session.id, |runtime| {
+            let runtime = runtime.expect("session runtime should exist");
+            runtime.turn_state = TurnState::Active(Box::new(TurnExecution::new(
+                "turn-1".to_string(),
+                ExecutionSessionFrame {
+                    turn_id: "turn-1".to_string(),
+                    working_directory: base.path().to_path_buf(),
+                    environment_variables: HashMap::new(),
+                    executor_config: AgentConfig::new("PI_AGENT"),
+                    mcp_servers: Vec::new(),
+                    vfs: None,
+                    backend_execution: None,
+                    identity: None,
+                },
+                CapabilityState::default(),
+                uuid::Uuid::new_v4(),
+                uuid::Uuid::new_v4(),
+            )));
+        })
+        .await;
+
+    hub.adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
+        frame_id: persisted_frame.id,
+        delivery_runtime_session_id: session.id.clone(),
+    })
+    .await
+    .expect("adopt persisted frame");
+
+    let cached_state = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            runtime
+                .and_then(|runtime| runtime.turn_state.active_turn())
+                .map(|turn| turn.capability_state.clone())
+        })
+        .await
+        .expect("active turn capability state");
+    assert!(
+        cached_state
+            .tool
+            .capabilities
+            .contains(&agentdash_spi::ToolCapability::new("file_write"))
+    );
+    let frame_count_after = hub
+        .agent_frame_repo
+        .as_ref()
+        .expect("frame repo")
+        .list_by_agent(initial_frame.agent_id)
+        .await
+        .expect("frames after")
+        .len();
+    assert_eq!(
+        frame_count_after, frame_count_before,
+        "adoption helper must not write another AgentFrame revision"
+    );
+}
+
+#[tokio::test]
 async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs() {
     let base = tempfile::tempdir().expect("tempdir");
     let queries = Arc::new(TokioMutex::new(Vec::new()));

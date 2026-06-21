@@ -24,8 +24,8 @@
 
 ## Phase 3: Projection
 
-- [ ] SubjectExecutionView 增加 execution history。
-- [ ] `latest_runtime_node` 从 history 派生。
+- [x] SubjectExecutionView 增加 execution history：`runtime_attempts` 表达 run / agent / runtime session / frame / orchestration node / attempt / status / observed_at / artifacts。
+- [x] `latest_runtime_node` 从 history 首项派生。
 - [ ] AgentRun resource surface DTO 表达 frame/source coordinate。
 
 ## Validation

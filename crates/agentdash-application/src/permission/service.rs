@@ -258,6 +258,23 @@ impl PermissionGrantService {
         })
     }
 
+    /// 批量过期已到期 grant，并逐条复用单 grant 的 AgentRun effect 分类路径。
+    pub async fn expire_overdue_with_agent_run_effects(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<PermissionGrantEffectResult>, ApplicationError> {
+        let overdue = self
+            .repo
+            .list_overdue_active(now)
+            .await
+            .map_err(ApplicationError::from)?;
+        let mut results = Vec::with_capacity(overdue.len());
+        for grant in overdue {
+            results.push(self.expire(grant.id, now).await?);
+        }
+        Ok(results)
+    }
+
     /// 查询 effect_frame_id 下活跃 grants。
     pub async fn list_active_by_frame(
         &self,
@@ -595,8 +612,19 @@ mod tests {
                 .cloned())
         }
 
-        async fn expire_overdue(&self) -> Result<u64, DomainError> {
-            Ok(0)
+        async fn list_overdue_active(
+            &self,
+            now: DateTime<Utc>,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .await
+                .iter()
+                .filter(|grant| grant.status == GrantStatus::Applied)
+                .filter(|grant| grant.expires_at.is_some_and(|expires_at| expires_at < now))
+                .cloned()
+                .collect())
         }
     }
 
@@ -679,13 +707,22 @@ mod tests {
         frame_id: Uuid,
         path: &str,
     ) -> PermissionGrant {
+        pending_grant_with_ttl(repo, frame_id, path, None).await
+    }
+
+    async fn pending_grant_with_ttl(
+        repo: &InMemoryGrantRepo,
+        frame_id: Uuid,
+        path: &str,
+        ttl_seconds: Option<u64>,
+    ) -> PermissionGrant {
         let mut grant = PermissionGrant::new(
             Uuid::new_v4(),
             "runtime-session-1",
             vec![ToolCapabilityPath::parse(path).expect("path")],
             "需要临时能力",
             GrantScope::AgentFrame,
-            None,
+            ttl_seconds,
         )
         .with_effect_frame(frame_id);
         grant.submit_for_policy().expect("submit");
@@ -940,5 +977,95 @@ mod tests {
             Some(ToolCluster::Workflow),
         );
         assert!(!projection.admits_tool(&admission_request));
+    }
+
+    #[tokio::test]
+    async fn expire_overdue_with_agent_run_effects_applies_each_grant_classification() {
+        let grant_repo = Arc::new(InMemoryGrantRepo::default());
+        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let agent_id = Uuid::new_v4();
+        let initial_frame = AgentFrameBuilder::new(agent_id)
+            .with_runtime_session("runtime-session-1")
+            .build(frame_repo.as_ref())
+            .await
+            .expect("initial frame");
+        let service = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone());
+        let surface_grant =
+            pending_grant_with_ttl(&grant_repo, initial_frame.id, "file_write", Some(1)).await;
+        let admission_grant = pending_grant_with_ttl(
+            &grant_repo,
+            initial_frame.id,
+            "workflow_management::upsert_workflow_tool",
+            Some(1),
+        )
+        .await;
+        service
+            .approve(surface_grant.id, "user-1")
+            .await
+            .expect("approve surface grant");
+        service
+            .approve(admission_grant.id, "user-1")
+            .await
+            .expect("approve admission grant");
+
+        let results = service
+            .expire_overdue_with_agent_run_effects(Utc::now() + chrono::Duration::seconds(2))
+            .await
+            .expect("bulk expire");
+
+        assert_eq!(results.len(), 2);
+        assert!(
+            results.iter().any(|result| result.effect_frame.is_some()),
+            "capability-level overdue grant must write remove surface revision"
+        );
+        assert!(
+            results.iter().any(|result| result.effect_frame.is_none()),
+            "tool-level overdue grant must stay admission-only"
+        );
+        assert!(
+            results
+                .iter()
+                .all(|result| result.grant.status == GrantStatus::Expired)
+        );
+
+        let current = frame_repo
+            .get_current(agent_id)
+            .await
+            .expect("current lookup")
+            .expect("current frame");
+        let state = project_capability_state_from_frame(&current);
+        assert!(
+            !state
+                .tool
+                .capabilities
+                .contains(&ToolCapability::new("file_write"))
+        );
+
+        let stored_surface = grant_repo
+            .find_by_id(surface_grant.id)
+            .await
+            .expect("surface lookup")
+            .expect("surface grant");
+        let stored_admission = grant_repo
+            .find_by_id(admission_grant.id)
+            .await
+            .expect("admission lookup")
+            .expect("admission grant");
+        assert_eq!(stored_surface.status, GrantStatus::Expired);
+        assert_eq!(stored_admission.status, GrantStatus::Expired);
+        assert!(
+            grant_repo
+                .list_active_by_run(stored_surface.run_id)
+                .await
+                .expect("surface active grants")
+                .is_empty()
+        );
+        assert!(
+            grant_repo
+                .list_active_by_run(stored_admission.run_id)
+                .await
+                .expect("admission active grants")
+                .is_empty()
+        );
     }
 }

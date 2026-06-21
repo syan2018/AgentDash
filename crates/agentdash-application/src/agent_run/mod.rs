@@ -11,9 +11,11 @@ pub mod workspace;
 pub use command_receipt::AgentRunCommandReceiptView;
 pub use conversation_snapshot::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver,
-    ConversationModelConfigInput, ConversationModelConfigResolution,
-    ConversationModelConfigResolver, conversation_command_id_for,
-    conversation_execution_state_code, conversation_snapshot_id, merge_executor_config_fields,
+    ConversationCommandAvailability, ConversationCommandAvailabilityInput,
+    ConversationCommandAvailabilityResolver, ConversationModelConfigInput,
+    ConversationModelConfigResolution, ConversationModelConfigResolver,
+    conversation_command_id_for, conversation_execution_state_code, conversation_snapshot_id,
+    merge_executor_config_fields,
 };
 pub use delivery_runtime_selection::{
     DeliveryRuntimeSelection, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionPolicy,

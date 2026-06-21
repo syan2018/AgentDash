@@ -144,7 +144,7 @@ pub async fn select_task_fanout_candidates(
     };
 
     candidates.retain(|candidate| selector_matches(selector, candidate));
-    candidates.sort_by(|a, b| b.task.updated_at.cmp(&a.task.updated_at));
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.task.updated_at));
     Ok(candidates)
 }
 

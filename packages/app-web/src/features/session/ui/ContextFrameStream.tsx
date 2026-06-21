@@ -10,11 +10,10 @@
  */
 
 import { useState } from "react";
-import { BADGE } from "./EventCards";
 import type { ContextFrame } from "../model/contextFrame";
 import { frameKindToToken } from "../model/contextFrame";
 import { ContextFrameBody } from "./ContextFrameBody";
-import { TokenBadge } from "./contextFrame/SectionRenderers";
+import { ST } from "./bodies/cardBodyTokens";
 
 export interface ContextFrameStreamProps {
   frames: ContextFrame[];
@@ -39,24 +38,17 @@ export function ContextFrameStream({
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors cursor-pointer hover:bg-secondary/30"
+        className={ST.groupRow}
       >
-        <span
-          className={`inline-flex shrink-0 rounded-[4px] border px-1 py-px text-[9px] font-semibold uppercase tracking-[0.08em] ${BADGE.neutral}`}
-        >
-          CTX
-        </span>
-        <span className="min-w-0 flex-1 truncate text-xs text-foreground/60">
-          上下文已更新 {describeFrameSet(frames)}
-        </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">{summary}</span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/30">
-          {expanded ? "▲" : "▼"}
+        <span className={ST.chevron}>{expanded ? "▼" : "▶"}</span>
+        <span className={ST.badge}>CTX</span>
+        <span className={ST.hint}>
+          上下文已更新 {describeFrameSet(frames)} {summary ? `· ${summary}` : ""}
         </span>
       </button>
 
       {expanded && (
-        <div className="ml-1 space-y-0.5 pl-2 border-l border-border/40">
+        <div className={ST.itemList}>
           {frames.map((frame) => (
             <FrameStripItem key={frame.id} frame={frame} />
           ))}
@@ -77,17 +69,14 @@ function FrameStripItem({ frame }: { frame: ContextFrame }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40 ${open ? "bg-secondary/30" : ""}`}
+        className={`${ST.itemRow} ${open ? "bg-secondary/30" : ""}`}
       >
-        <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-[8px] bg-success" />
-        <TokenBadge token={token} />
-        <span className="min-w-0 flex-1 truncate text-xs text-foreground/70">{label}</span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">
-          {open ? "▲" : "▼"}
-        </span>
+        <span className={`${ST.dot} bg-success`} />
+        <span className={ST.badge}>{token.token}</span>
+        <span className={ST.title}>{label}</span>
       </button>
       {open && (
-        <div className="px-2 py-2">
+        <div className={ST.bodyArea}>
           <ContextFrameBody frame={frame} />
         </div>
       )}

@@ -1,9 +1,45 @@
 /**
- * Card Body 统一设计 token
+ * 会话 UI 统一设计 token
  *
- * 所有 body 渲染器（CommandExecution, Read, FileChange, Mcp, ContextFrame 等）
- * 共享的样式常量。修改此处即可全局调整 body 内部视觉。
+ * 分两层：
+ * - ST (Shell Token)：一级 group / 二级 item 的标题栏、徽标、折叠行等外壳样式
+ * - CB (Content Body Token)：body 渲染器内部的代码块、分区、按钮等内容样式
+ *
+ * 修改此处即可全局调整视觉。
  */
+
+// ── Shell Token ──────────────────────────────────────────────────────────────
+
+export const ST = {
+  /** 一级 group 折叠行（TOOLS / CTX） */
+  groupRow:
+    "flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-xs transition-colors hover:bg-secondary/40",
+  /** 二级 item 标题栏（单条 tool / frame strip） */
+  itemRow:
+    "flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40",
+
+  /** 无边框粗体徽标 — 一级 group 和二级 item 共用 */
+  badge:
+    "shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60",
+
+  /** 折叠三角 */
+  chevron: "text-muted-foreground/50",
+
+  /** 标题文字 */
+  title: "min-w-0 flex-1 truncate text-xs text-foreground/70",
+  /** 摘要/辅助文字 */
+  hint: "shrink-0 text-muted-foreground/60 text-xs",
+
+  /** 状态 dot */
+  dot: "inline-block h-1.5 w-1.5 shrink-0 rounded-[8px]",
+
+  /** 展开后的 item 列表容器（左边线 + 缩进） */
+  itemList: "ml-1 space-y-0.5 pl-2 border-l border-border/40",
+  /** 展开后的 body 区 */
+  bodyArea: "space-y-2 px-2 py-2",
+} as const;
+
+// ── Content Body Token ───────────────────────────────────────────────────────
 
 export const CB = {
   /** 代码/终端输出/JSON 数据块 */

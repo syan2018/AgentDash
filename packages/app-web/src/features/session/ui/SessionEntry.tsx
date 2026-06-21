@@ -14,6 +14,7 @@
  */
 
 import { memo, useState } from "react";
+import { ST } from "./bodies/cardBodyTokens";
 import { ContextFrameStream } from "./ContextFrameStream";
 import {
   isAggregatedGroup,
@@ -224,13 +225,14 @@ function AggregatedToolGroupEntry({
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-xs transition-colors hover:bg-secondary/40"
+        className={ST.groupRow}
       >
-        <span className="text-muted-foreground/50">{expanded ? "▼" : "▶"}</span>
-        <span className="text-muted-foreground">{summary}</span>
+        <span className={ST.chevron}>{expanded ? "▼" : "▶"}</span>
+        <span className={ST.badge}>TOOLS</span>
+        <span className={ST.hint}>{summary}</span>
       </button>
       {expanded && (
-        <div className="ml-1 space-y-0.5 pl-2 border-l border-border/40">
+        <div className={ST.itemList}>
           {entries.map((entry) => (
             <SingleEntry key={entry.id} entry={entry} sessionId={sessionId} />
           ))}

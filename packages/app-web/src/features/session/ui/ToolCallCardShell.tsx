@@ -9,6 +9,7 @@ import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import type { KindMeta } from "../model/threadItemKind";
 import { approveToolCall, rejectToolCall } from "../../../services/executor";
 import type { ToolCardHeaderModel } from "./ToolCardHeader";
+import { ST } from "./bodies/cardBodyTokens";
 
 export type DisplayStatus =
   | "inProgress"
@@ -136,13 +137,13 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40 ${headerBg}`}
+        className={`${ST.itemRow} ${headerBg}`}
       >
-        <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-[8px] ${statusConfig.dot}`} />
-        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60">
+        <span className={`${ST.dot} ${statusConfig.dot}`} />
+        <span className={ST.badge}>
           {kind.badge}
         </span>
-        <span className="min-w-0 flex-1 truncate text-xs text-foreground/70">
+        <span className={ST.title}>
           {header.primary}
         </span>
         {statusLabel && (
@@ -156,7 +157,7 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
       </button>
 
       {expanded && (
-        <div className="space-y-2 px-2 py-2">
+        <div className={ST.bodyArea}>
           {header.secondary != null && header.secondary !== "" && (
             <p className="text-[10px] text-muted-foreground/50">{header.secondary}</p>
           )}

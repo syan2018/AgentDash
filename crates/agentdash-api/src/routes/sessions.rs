@@ -18,6 +18,7 @@ use crate::routes::lifecycle_contracts::{
 };
 use crate::routes::lifecycle_views::{agent_frame_runtime_to_view, runtime_refs_for_agent};
 use crate::{app_state::AppState, rpc::ApiError};
+use agentdash_agent::MessageRef;
 use agentdash_application::lifecycle::run_view_builder;
 use agentdash_application::session::{
     ExecutionStatus, SessionContextProjectionReadModel, SessionExecutionState, SessionForkRequest,
@@ -30,8 +31,8 @@ use agentdash_contracts::session::{
     SessionAttachmentContextContributionResponse, SessionContextUsageAnalysisResponse,
     SessionContextUsageCategoryResponse, SessionContextUsageItemResponse, SessionEventResponse,
     SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
-    SessionLineageViewResponse, SessionMessageContextBreakdownResponse, SessionNdjsonEnvelope,
-    SessionProjectionMessageRefResponse, SessionProjectionRollbackResponse,
+    SessionLineageViewResponse, SessionMessageContextBreakdownResponse, SessionMessageRefDto,
+    SessionNdjsonEnvelope, SessionProjectionMessageRefResponse, SessionProjectionRollbackResponse,
     SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
     SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
     SessionToolContextContributionResponse,
@@ -615,6 +616,17 @@ mod tests {
             "image/png image #0"
         );
     }
+
+    #[test]
+    fn session_message_ref_mapper_preserves_fork_point_coordinate() {
+        let message_ref = session_message_ref_to_application(SessionMessageRefDto {
+            turn_id: "turn-1".to_string(),
+            entry_index: 7,
+        });
+
+        assert_eq!(message_ref.turn_id, "turn-1");
+        assert_eq!(message_ref.entry_index, 7);
+    }
 }
 
 /// GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。
@@ -743,6 +755,13 @@ fn session_context_projection_to_response(
     }
 }
 
+fn session_message_ref_to_application(value: SessionMessageRefDto) -> MessageRef {
+    MessageRef {
+        turn_id: value.turn_id,
+        entry_index: value.entry_index,
+    }
+}
+
 /// POST /sessions/{id}/fork — 基于当前模型投影创建可独立恢复的 child session。
 pub async fn fork_session(
     State(state): State<Arc<AppState>>,
@@ -756,7 +775,7 @@ pub async fn fork_session(
         .fork_session(SessionForkRequest {
             parent_session_id: session_id.clone(),
             title: req.title,
-            fork_point_ref: req.fork_point_ref.map(Into::into),
+            fork_point_ref: req.fork_point_ref.map(session_message_ref_to_application),
             fork_point_compaction_id: req.fork_point_compaction_id,
             metadata_json: req.metadata_json.unwrap_or_else(|| serde_json::json!({})),
         })

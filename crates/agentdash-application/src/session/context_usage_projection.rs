@@ -442,6 +442,10 @@ fn context_usage_items_from_section(
     source_event_seq: Option<u64>,
     turn_id: &Option<String>,
 ) -> Vec<SessionContextUsageItem> {
+    let trace = ContextUsageItemTrace {
+        source_event_seq,
+        turn_id: turn_id.clone(),
+    };
     match section {
         ContextFrameSection::Identity {
             title,
@@ -454,8 +458,7 @@ fn context_usage_items_from_section(
             effective_prompt,
             "context_frame",
             false,
-            source_event_seq,
-            turn_id,
+            &trace,
         )],
         ContextFrameSection::AssignmentContext {
             title, fragments, ..
@@ -491,8 +494,7 @@ fn context_usage_items_from_section(
                     &system_text,
                     "context_frame",
                     false,
-                    source_event_seq,
-                    turn_id,
+                    &trace,
                 ));
             }
             if !agent_text.trim().is_empty() {
@@ -503,8 +505,7 @@ fn context_usage_items_from_section(
                     &agent_text,
                     "context_frame",
                     false,
-                    source_event_seq,
-                    turn_id,
+                    &trace,
                 ));
             }
             items
@@ -523,8 +524,7 @@ fn context_usage_items_from_section(
                     owner,
                     "context_frame",
                     false,
-                    source_event_seq,
-                    turn_id,
+                    &trace,
                 )
             })
             .into_iter()
@@ -540,8 +540,7 @@ fn context_usage_items_from_section(
             body.as_deref().unwrap_or(summary),
             "context_frame",
             false,
-            source_event_seq,
-            turn_id,
+            &trace,
         )],
         ContextFrameSection::PendingAction {
             title,
@@ -568,8 +567,7 @@ fn context_usage_items_from_section(
                 &text_parts.join("\n\n"),
                 "context_frame",
                 false,
-                source_event_seq,
-                turn_id,
+                &trace,
             )];
             let agent_text = injections
                 .iter()
@@ -590,8 +588,7 @@ fn context_usage_items_from_section(
                     &agent_text,
                     "context_frame",
                     false,
-                    source_event_seq,
-                    turn_id,
+                    &trace,
                 ));
             }
             items
@@ -603,8 +600,7 @@ fn context_usage_items_from_section(
             prompt,
             "context_frame",
             false,
-            source_event_seq,
-            turn_id,
+            &trace,
         )],
         ContextFrameSection::UserPreferences { title, items, .. } => vec![context_usage_item(
             "memory",
@@ -613,8 +609,7 @@ fn context_usage_items_from_section(
             &items.join("\n"),
             "context_frame",
             false,
-            source_event_seq,
-            turn_id,
+            &trace,
         )],
         ContextFrameSection::ProjectGuidelines { title, entries, .. } => {
             let text = entries
@@ -629,8 +624,7 @@ fn context_usage_items_from_section(
                 &text,
                 "context_frame",
                 false,
-                source_event_seq,
-                turn_id,
+                &trace,
             )]
         }
         ContextFrameSection::CapabilityKeyDelta {
@@ -770,8 +764,7 @@ fn context_usage_items_from_section(
                 &text,
                 "context_frame",
                 false,
-                source_event_seq,
-                turn_id,
+                &trace,
             )]
         }
     }
@@ -819,16 +812,11 @@ fn non_empty_usage_item(
     turn_id: &Option<String>,
 ) -> Option<SessionContextUsageItem> {
     (!text.trim().is_empty()).then(|| {
-        context_usage_item(
-            kind,
-            label,
-            name,
-            text,
-            source,
-            false,
+        let trace = ContextUsageItemTrace {
             source_event_seq,
-            turn_id,
-        )
+            turn_id: turn_id.clone(),
+        };
+        context_usage_item(kind, label, name, text, source, false, &trace)
     })
 }
 
@@ -905,6 +893,10 @@ fn tool_schema_usage_item(
     }
     text.push('\n');
     text.push_str(&tool.parameters_schema.to_string());
+    let trace = ContextUsageItemTrace {
+        source_event_seq,
+        turn_id: turn_id.clone(),
+    };
     Some(context_usage_item(
         kind,
         label,
@@ -912,8 +904,7 @@ fn tool_schema_usage_item(
         &text,
         "tool_schema",
         false,
-        source_event_seq,
-        turn_id,
+        &trace,
     ))
 }
 
@@ -937,6 +928,10 @@ fn skill_usage_item(
     .join("\n");
     let kind = skill.context_usage_kind.as_deref()?;
     let label = skill_usage_label(kind)?;
+    let trace = ContextUsageItemTrace {
+        source_event_seq,
+        turn_id: turn_id.clone(),
+    };
     Some(context_usage_item(
         kind,
         label,
@@ -944,8 +939,7 @@ fn skill_usage_item(
         &text,
         "skill_registry",
         skill.disable_model_invocation,
-        source_event_seq,
-        turn_id,
+        &trace,
     ))
 }
 
@@ -969,6 +963,10 @@ fn companion_agent_usage_item(
         agent.display_name.as_str(),
     ]
     .join("\n");
+    let trace = ContextUsageItemTrace {
+        source_event_seq,
+        turn_id: turn_id.clone(),
+    };
     Some(context_usage_item(
         context_usage_kind::AGENTS,
         "Agents",
@@ -976,8 +974,7 @@ fn companion_agent_usage_item(
         &text,
         "capability_state",
         false,
-        source_event_seq,
-        turn_id,
+        &trace,
     ))
 }
 
@@ -1004,6 +1001,12 @@ fn skill_usage_label(kind: &str) -> Option<&'static str> {
     None
 }
 
+#[derive(Debug, Clone)]
+struct ContextUsageItemTrace {
+    source_event_seq: Option<u64>,
+    turn_id: Option<String>,
+}
+
 fn context_usage_item(
     kind: &str,
     label: &str,
@@ -1011,8 +1014,7 @@ fn context_usage_item(
     text: &str,
     source: &str,
     deferred: bool,
-    source_event_seq: Option<u64>,
-    turn_id: &Option<String>,
+    trace: &ContextUsageItemTrace,
 ) -> SessionContextUsageItem {
     SessionContextUsageItem {
         kind: kind.to_string(),
@@ -1021,8 +1023,8 @@ fn context_usage_item(
         token_estimate: estimate_text_tokens(text),
         source: source.to_string(),
         deferred,
-        source_event_seq,
-        turn_id: turn_id.clone(),
+        source_event_seq: trace.source_event_seq,
+        turn_id: trace.turn_id.clone(),
     }
 }
 

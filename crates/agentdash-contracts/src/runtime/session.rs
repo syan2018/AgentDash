@@ -360,15 +360,6 @@ impl From<MessageRef> for SessionMessageRefDto {
     }
 }
 
-impl From<SessionMessageRefDto> for MessageRef {
-    fn from(value: SessionMessageRefDto) -> Self {
-        Self {
-            turn_id: value.turn_id,
-            entry_index: value.entry_index,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct CreateSessionForkRequest {

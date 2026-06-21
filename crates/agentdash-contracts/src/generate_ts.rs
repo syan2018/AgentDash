@@ -17,7 +17,11 @@ use agentdash_contracts::backend::{
     BackendCapabilitiesResponse, BackendExecutorCapabilityResponse,
     BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeHealthResponse,
     BackendShareScopeKind, BackendType, BackendVisibility, BackendWithStatusResponse,
-    RuntimeHealthStatus,
+    BackendWorkspaceInventoryResponse, BackendWorkspaceInventorySource,
+    BackendWorkspaceInventoryStatus, CreateProjectBackendAccessRequest, InventoryRefreshResponse,
+    ProjectBackendAccessMode, ProjectBackendAccessResponse, ProjectBackendAccessStatus,
+    RegisterBackendWorkspaceInventoryRequest, RuntimeHealthStatus,
+    UpdateProjectBackendAccessRequest,
 };
 use agentdash_contracts::canvas::{
     CanvasDataBindingDto, CanvasFileDto, CanvasImportMapDto, CanvasResponse,
@@ -177,8 +181,9 @@ use agentdash_contracts::workflow::{
     WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_contracts::workspace::{
-    WorkspaceBindingResponse, WorkspaceBindingStatus, WorkspaceIdentityKind,
-    WorkspaceResolutionPolicy, WorkspaceResponse, WorkspaceStatus,
+    WorkspaceBindingResponse, WorkspaceBindingStatus, WorkspaceBindingSyncResult,
+    WorkspaceIdentityKind, WorkspaceInventoryCandidate, WorkspaceResolutionPolicy,
+    WorkspaceResponse, WorkspaceStatus,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
@@ -333,6 +338,16 @@ fn main() {
             export_all::<BackendCapabilitiesResponse>(dir);
             export_all::<BackendResponse>(dir);
             export_all::<BackendWithStatusResponse>(dir);
+            export_all::<ProjectBackendAccessStatus>(dir);
+            export_all::<ProjectBackendAccessMode>(dir);
+            export_all::<CreateProjectBackendAccessRequest>(dir);
+            export_all::<UpdateProjectBackendAccessRequest>(dir);
+            export_all::<ProjectBackendAccessResponse>(dir);
+            export_all::<BackendWorkspaceInventoryStatus>(dir);
+            export_all::<BackendWorkspaceInventorySource>(dir);
+            export_all::<BackendWorkspaceInventoryResponse>(dir);
+            export_all::<InventoryRefreshResponse>(dir);
+            export_all::<RegisterBackendWorkspaceInventoryRequest>(dir);
         },
     );
 
@@ -349,6 +364,8 @@ fn main() {
             export_all::<WorkspaceStatus>(dir);
             export_all::<WorkspaceBindingResponse>(dir);
             export_all::<WorkspaceResponse>(dir);
+            export_all::<WorkspaceInventoryCandidate>(dir);
+            export_all::<WorkspaceBindingSyncResult>(dir);
         },
     );
 

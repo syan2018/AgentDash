@@ -1,4 +1,4 @@
-import type { ThinkingLevel } from "./index";
+import type { ThinkingLevel } from "./project-agent";
 import type {
   ContextContainerDefinition,
   ContextContainerFile,

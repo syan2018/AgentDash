@@ -2,13 +2,18 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
+import type { BackendWorkspaceInventoryStatus } from "./backend-contracts";
 import type { VfsCapabilityDto } from "./context-contracts";
 
 export type WorkspaceBindingResponse = { id: string, workspace_id: string, backend_id: string, root_ref: string, status: WorkspaceBindingStatus, detected_facts: JsonValue, last_verified_at: string | null, priority: number, created_at: string, updated_at: string, };
 
 export type WorkspaceBindingStatus = "pending" | "ready" | "offline" | "error";
 
+export type WorkspaceBindingSyncResult = { updated_workspace_ids: Array<string>, created_bindings: number, updated_bindings: number, candidates: Array<WorkspaceInventoryCandidate>, conflicts: Array<WorkspaceInventoryCandidate>, };
+
 export type WorkspaceIdentityKind = "git_repo" | "p4_workspace" | "local_dir";
+
+export type WorkspaceInventoryCandidate = { backend_id: string, root_ref: string, identity_kind: WorkspaceIdentityKind, identity_payload: { [key in string]?: JsonValue }, detected_facts: { [key in string]?: JsonValue }, status: BackendWorkspaceInventoryStatus, matched_workspace_ids: Array<string>, reason: string, };
 
 export type WorkspaceResolutionPolicy = "prefer_default_binding" | "prefer_online";
 

@@ -1,28 +1,22 @@
 import { api } from "../api/client";
 import type {
-  BackendWorkspaceInventory,
-  InventoryRefreshResult,
-  ProjectBackendAccess,
-  ProjectBackendAccessStatus,
+  BackendWorkspaceInventoryResponse,
+  CreateProjectBackendAccessRequest,
+  InventoryRefreshResponse,
+  ProjectBackendAccessResponse,
+  RegisterBackendWorkspaceInventoryRequest,
+  UpdateProjectBackendAccessRequest,
+} from "../generated/backend-contracts";
+import type {
   WorkspaceBindingSyncResult,
   WorkspaceInventoryCandidate,
-} from "../types";
+} from "../generated/workspace-contracts";
 
-export interface CreateProjectBackendAccessPayload {
-  backend_id: string;
-  priority?: number;
-  root_policy?: Record<string, unknown>;
-  capability_policy?: Record<string, unknown>;
-  note?: string | null;
-}
-
-export interface UpdateProjectBackendAccessPayload {
-  status?: ProjectBackendAccessStatus;
-  priority?: number;
-  root_policy?: Record<string, unknown>;
-  capability_policy?: Record<string, unknown>;
-  note?: string | null;
-}
+export type ProjectBackendAccess = ProjectBackendAccessResponse;
+export type BackendWorkspaceInventory = BackendWorkspaceInventoryResponse;
+export type InventoryRefreshResult = InventoryRefreshResponse;
+export type CreateProjectBackendAccessPayload = CreateProjectBackendAccessRequest;
+export type UpdateProjectBackendAccessPayload = UpdateProjectBackendAccessRequest;
 
 export function listProjectBackendAccess(projectId: string): Promise<ProjectBackendAccess[]> {
   return api.get<ProjectBackendAccess[]>(`/projects/${projectId}/backend-access`);
@@ -72,7 +66,7 @@ export function refreshBackendWorkspaceInventory(
 export function registerBackendWorkspaceInventory(
   projectId: string,
   accessId: string,
-  payload: { root_ref: string },
+  payload: RegisterBackendWorkspaceInventoryRequest,
 ): Promise<BackendWorkspaceInventory> {
   return api.post<BackendWorkspaceInventory>(
     `/projects/${projectId}/backend-access/${accessId}/inventory/register`,

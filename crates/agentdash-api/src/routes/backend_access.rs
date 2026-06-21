@@ -11,10 +11,19 @@ use agentdash_application::runtime_gateway::{
     WorkspaceBrowseDirectoryOutput, WorkspaceDetectInput,
 };
 use agentdash_application::workspace::{
-    WorkspaceBindingSyncResult, WorkspaceDetectionResult, WorkspaceInventoryCandidate,
+    WorkspaceBindingSyncResult as ApplicationWorkspaceBindingSyncResult, WorkspaceDetectionResult,
+    WorkspaceInventoryCandidate as ApplicationWorkspaceInventoryCandidate,
+};
+use agentdash_application::workspace::{
     list_project_workspace_candidates, sync_project_backend_workspace_bindings,
 };
+use agentdash_contracts::backend::{
+    BackendWorkspaceInventoryResponse, CreateProjectBackendAccessRequest, InventoryRefreshResponse,
+    ProjectBackendAccessResponse, RegisterBackendWorkspaceInventoryRequest,
+    UpdateProjectBackendAccessRequest,
+};
 use agentdash_contracts::common_response::RevokedIdResponse;
+use agentdash_contracts::workspace::{WorkspaceBindingSyncResult, WorkspaceInventoryCandidate};
 use agentdash_domain::backend::{
     BackendWorkspaceInventory, BackendWorkspaceInventorySource, BackendWorkspaceInventoryStatus,
     ProjectBackendAccess, ProjectBackendAccessStatus,
@@ -26,10 +35,7 @@ use agentdash_domain::workspace::{
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    BackendWorkspaceInventoryResponse, BrowseAccessDirectoryRequest, BrowseDirectoryEntryResponse,
-    BrowseDirectoryResponse, CreateProjectBackendAccessRequest, InventoryRefreshResponse,
-    ProjectBackendAccessResponse, RegisterBackendWorkspaceInventoryRequest,
-    UpdateProjectBackendAccessRequest,
+    BrowseAccessDirectoryRequest, BrowseDirectoryEntryResponse, BrowseDirectoryResponse,
 };
 use crate::rpc::ApiError;
 
@@ -188,10 +194,10 @@ pub async fn update_project_backend_access(
     .await?;
     let mut access = load_access_for_project(&state, project_id, access_id).await?;
     if let Some(status) = req.status {
-        access.status = status;
+        access.status = status.into();
     }
     if let Some(access_mode) = req.access_mode {
-        access.access_mode = access_mode;
+        access.access_mode = access_mode.into();
     }
     if let Some(priority) = req.priority {
         access.priority = priority;
@@ -341,7 +347,7 @@ pub async fn refresh_project_backend_inventory(
         .count();
     let failed = items.len().saturating_sub(refreshed);
     Ok(Json(InventoryRefreshResponse {
-        access_id: access.id,
+        access_id: access.id.to_string(),
         backend_id: access.backend_id,
         refreshed,
         failed,
@@ -412,7 +418,11 @@ pub async fn list_workspace_candidates(
     )
     .await?;
     Ok(Json(
-        list_project_workspace_candidates(&state.repos, project_id).await?,
+        list_project_workspace_candidates(&state.repos, project_id)
+            .await?
+            .into_iter()
+            .map(workspace_inventory_candidate_response)
+            .collect(),
     ))
 }
 
@@ -429,9 +439,8 @@ pub async fn sync_workspace_bindings(
         ProjectPermission::Edit,
     )
     .await?;
-    Ok(Json(
-        sync_project_backend_workspace_bindings(&state.repos, project_id).await?,
-    ))
+    let result = sync_project_backend_workspace_bindings(&state.repos, project_id).await?;
+    Ok(Json(workspace_binding_sync_response(result)))
 }
 
 pub async fn browse_project_backend_access(
@@ -582,6 +591,51 @@ fn inventory_from_detected(
     item.status = status;
     item.last_error = last_error;
     item
+}
+
+fn workspace_binding_sync_response(
+    value: ApplicationWorkspaceBindingSyncResult,
+) -> WorkspaceBindingSyncResult {
+    WorkspaceBindingSyncResult {
+        updated_workspace_ids: value
+            .updated_workspace_ids
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect(),
+        created_bindings: value.created_bindings,
+        updated_bindings: value.updated_bindings,
+        candidates: value
+            .candidates
+            .into_iter()
+            .map(workspace_inventory_candidate_response)
+            .collect(),
+        conflicts: value
+            .conflicts
+            .into_iter()
+            .map(workspace_inventory_candidate_response)
+            .collect(),
+    }
+}
+
+fn workspace_inventory_candidate_response(
+    value: ApplicationWorkspaceInventoryCandidate,
+) -> WorkspaceInventoryCandidate {
+    WorkspaceInventoryCandidate {
+        backend_id: value.backend_id,
+        root_ref: value.root_ref,
+        identity_kind: agentdash_contracts::workspace::WorkspaceIdentityKind::from(
+            value.identity_kind,
+        ),
+        identity_payload: value.identity_payload,
+        detected_facts: value.detected_facts,
+        status: agentdash_contracts::backend::BackendWorkspaceInventoryStatus::from(value.status),
+        matched_workspace_ids: value
+            .matched_workspace_ids
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect(),
+        reason: value.reason,
+    }
 }
 
 fn error_inventory(

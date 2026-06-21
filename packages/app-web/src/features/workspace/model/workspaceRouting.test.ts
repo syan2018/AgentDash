@@ -51,6 +51,8 @@ function access(backend_id: string, status: ProjectBackendAccess["status"] = "ac
     priority: 0,
     root_policy: {},
     capability_policy: {},
+    note: null,
+    created_by: null,
     created_at: "2026-05-17T00:00:00Z",
     updated_at: "2026-05-17T00:00:00Z",
   };

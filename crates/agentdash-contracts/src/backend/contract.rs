@@ -172,3 +172,238 @@ pub struct BackendWithStatusResponse {
     pub workspace_roots: Option<Vec<String>>,
     pub capabilities: Option<BackendCapabilitiesResponse>,
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectBackendAccessStatus {
+    Active,
+    Paused,
+    Revoked,
+}
+
+impl From<agentdash_domain::backend::ProjectBackendAccessStatus> for ProjectBackendAccessStatus {
+    fn from(value: agentdash_domain::backend::ProjectBackendAccessStatus) -> Self {
+        match value {
+            agentdash_domain::backend::ProjectBackendAccessStatus::Active => Self::Active,
+            agentdash_domain::backend::ProjectBackendAccessStatus::Paused => Self::Paused,
+            agentdash_domain::backend::ProjectBackendAccessStatus::Revoked => Self::Revoked,
+        }
+    }
+}
+
+impl From<ProjectBackendAccessStatus> for agentdash_domain::backend::ProjectBackendAccessStatus {
+    fn from(value: ProjectBackendAccessStatus) -> Self {
+        match value {
+            ProjectBackendAccessStatus::Active => Self::Active,
+            ProjectBackendAccessStatus::Paused => Self::Paused,
+            ProjectBackendAccessStatus::Revoked => Self::Revoked,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectBackendAccessMode {
+    UseInventory,
+}
+
+impl From<agentdash_domain::backend::ProjectBackendAccessMode> for ProjectBackendAccessMode {
+    fn from(value: agentdash_domain::backend::ProjectBackendAccessMode) -> Self {
+        match value {
+            agentdash_domain::backend::ProjectBackendAccessMode::UseInventory => Self::UseInventory,
+        }
+    }
+}
+
+impl From<ProjectBackendAccessMode> for agentdash_domain::backend::ProjectBackendAccessMode {
+    fn from(value: ProjectBackendAccessMode) -> Self {
+        match value {
+            ProjectBackendAccessMode::UseInventory => Self::UseInventory,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct CreateProjectBackendAccessRequest {
+    pub backend_id: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub priority: Option<i32>,
+    #[serde(default)]
+    #[ts(optional, type = "{ [key in string]?: JsonValue }")]
+    pub root_policy: Option<Value>,
+    #[serde(default)]
+    #[ts(optional, type = "{ [key in string]?: JsonValue }")]
+    pub capability_policy: Option<Value>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct UpdateProjectBackendAccessRequest {
+    #[serde(default)]
+    #[ts(optional)]
+    pub status: Option<ProjectBackendAccessStatus>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub access_mode: Option<ProjectBackendAccessMode>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub priority: Option<i32>,
+    #[serde(default)]
+    #[ts(optional, type = "{ [key in string]?: JsonValue }")]
+    pub root_policy: Option<Value>,
+    #[serde(default)]
+    #[ts(optional, type = "{ [key in string]?: JsonValue }")]
+    pub capability_policy: Option<Value>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ProjectBackendAccessResponse {
+    pub id: String,
+    pub project_id: String,
+    pub backend_id: String,
+    pub status: ProjectBackendAccessStatus,
+    pub access_mode: ProjectBackendAccessMode,
+    pub priority: i32,
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub root_policy: Value,
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub capability_policy: Value,
+    pub note: Option<String>,
+    pub created_by: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<agentdash_domain::backend::ProjectBackendAccess> for ProjectBackendAccessResponse {
+    fn from(value: agentdash_domain::backend::ProjectBackendAccess) -> Self {
+        Self {
+            id: value.id.to_string(),
+            project_id: value.project_id.to_string(),
+            backend_id: value.backend_id,
+            status: ProjectBackendAccessStatus::from(value.status),
+            access_mode: ProjectBackendAccessMode::from(value.access_mode),
+            priority: value.priority,
+            root_policy: value.root_policy,
+            capability_policy: value.capability_policy,
+            note: value.note,
+            created_by: value.created_by,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendWorkspaceInventoryStatus {
+    Available,
+    Stale,
+    Offline,
+    Error,
+}
+
+impl From<agentdash_domain::backend::BackendWorkspaceInventoryStatus>
+    for BackendWorkspaceInventoryStatus
+{
+    fn from(value: agentdash_domain::backend::BackendWorkspaceInventoryStatus) -> Self {
+        match value {
+            agentdash_domain::backend::BackendWorkspaceInventoryStatus::Available => {
+                Self::Available
+            }
+            agentdash_domain::backend::BackendWorkspaceInventoryStatus::Stale => Self::Stale,
+            agentdash_domain::backend::BackendWorkspaceInventoryStatus::Offline => Self::Offline,
+            agentdash_domain::backend::BackendWorkspaceInventoryStatus::Error => Self::Error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendWorkspaceInventorySource {
+    RuntimeRegister,
+    ManualRefresh,
+    ScheduledRefresh,
+    CapabilityExpansionAck,
+}
+
+impl From<agentdash_domain::backend::BackendWorkspaceInventorySource>
+    for BackendWorkspaceInventorySource
+{
+    fn from(value: agentdash_domain::backend::BackendWorkspaceInventorySource) -> Self {
+        match value {
+            agentdash_domain::backend::BackendWorkspaceInventorySource::RuntimeRegister => {
+                Self::RuntimeRegister
+            }
+            agentdash_domain::backend::BackendWorkspaceInventorySource::ManualRefresh => {
+                Self::ManualRefresh
+            }
+            agentdash_domain::backend::BackendWorkspaceInventorySource::ScheduledRefresh => {
+                Self::ScheduledRefresh
+            }
+            agentdash_domain::backend::BackendWorkspaceInventorySource::CapabilityExpansionAck => {
+                Self::CapabilityExpansionAck
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct BackendWorkspaceInventoryResponse {
+    pub id: String,
+    pub backend_id: String,
+    pub root_ref: String,
+    #[ts(type = "\"git_repo\" | \"p4_workspace\" | \"local_dir\"")]
+    pub identity_kind: crate::workspace::WorkspaceIdentityKind,
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub identity_payload: Value,
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub detected_facts: Value,
+    pub status: BackendWorkspaceInventoryStatus,
+    pub source: BackendWorkspaceInventorySource,
+    pub last_seen_at: DateTime<Utc>,
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<agentdash_domain::backend::BackendWorkspaceInventory>
+    for BackendWorkspaceInventoryResponse
+{
+    fn from(value: agentdash_domain::backend::BackendWorkspaceInventory) -> Self {
+        Self {
+            id: value.id.to_string(),
+            backend_id: value.backend_id,
+            root_ref: value.root_ref,
+            identity_kind: crate::workspace::WorkspaceIdentityKind::from(value.identity_kind),
+            identity_payload: value.identity_payload,
+            detected_facts: value.detected_facts,
+            status: BackendWorkspaceInventoryStatus::from(value.status),
+            source: BackendWorkspaceInventorySource::from(value.source),
+            last_seen_at: value.last_seen_at,
+            last_error: value.last_error,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InventoryRefreshResponse {
+    pub access_id: String,
+    pub backend_id: String,
+    pub refreshed: usize,
+    pub failed: usize,
+    pub items: Vec<BackendWorkspaceInventoryResponse>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct RegisterBackendWorkspaceInventoryRequest {
+    pub root_ref: String,
+}

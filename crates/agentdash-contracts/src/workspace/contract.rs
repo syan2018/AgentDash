@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::backend::BackendWorkspaceInventoryStatus;
 use crate::context::VfsCapabilityDto;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -156,4 +157,27 @@ impl From<agentdash_domain::workspace::Workspace> for WorkspaceResponse {
             updated_at: value.updated_at.to_rfc3339(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct WorkspaceInventoryCandidate {
+    pub backend_id: String,
+    pub root_ref: String,
+    pub identity_kind: WorkspaceIdentityKind,
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub identity_payload: Value,
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub detected_facts: Value,
+    pub status: BackendWorkspaceInventoryStatus,
+    pub matched_workspace_ids: Vec<String>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct WorkspaceBindingSyncResult {
+    pub updated_workspace_ids: Vec<String>,
+    pub created_bindings: usize,
+    pub updated_bindings: usize,
+    pub candidates: Vec<WorkspaceInventoryCandidate>,
+    pub conflicts: Vec<WorkspaceInventoryCandidate>,
 }
